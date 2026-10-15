@@ -60,6 +60,11 @@ Or from this directory via SwiftPM:
 swift run TurboSparkApp
 ```
 
+An unbundled build is attributed to the app that launched it, so microphone
+and screen recording prompts and System Settings rows name Terminal or Xcode,
+not TurboSpark. Test recording permissions in the bundle from
+`make app-bundle`.
+
 ### 3. Build Release Bundle
 
 ```sh

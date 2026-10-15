@@ -1,6 +1,3412 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Records your voice from the selected input.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Records your voice from the selected input."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Graba tu voz desde la entrada seleccionada."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enregistre votre voix depuis l'entr\u00e9e s\u00e9lectionn\u00e9e."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nimmt deine Stimme \u00fcber den ausgew\u00e4hlten Eingang auf."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Registra la tua voce dall'ingresso selezionato."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Grava sua voz pela entrada selecionada."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0417\u0430\u043f\u0438\u0441\u044b\u0432\u0430\u0435\u0442 \u0432\u0430\u0448 \u0433\u043e\u043b\u043e\u0441 \u0441 \u0432\u044b\u0431\u0440\u0430\u043d\u043d\u043e\u0433\u043e \u0432\u0445\u043e\u0434\u0430."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u9078\u629e\u3057\u305f\u5165\u529b\u304b\u3089\u3042\u306a\u305f\u306e\u58f0\u3092\u9332\u97f3\u3057\u307e\u3059\u3002"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uc120\ud0dd\ud55c \uc785\ub825\uc5d0\uc11c \uc0ac\uc6a9\uc790\uc758 \uc74c\uc131\uc744 \ub179\uc74c\ud569\ub2c8\ub2e4."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u4ece\u6240\u9009\u8f93\u5165\u5f55\u5236\u60a8\u7684\u58f0\u97f3\u3002"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5f9e\u6240\u9078\u8f38\u5165\u9304\u88fd\u60a8\u7684\u8072\u97f3\u3002"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u064a\u0633\u062c\u0651\u0644 \u0635\u0648\u062a\u0643 \u0645\u0646 \u0627\u0644\u0625\u062f\u062e\u0627\u0644 \u0627\u0644\u0645\u062d\u062f\u062f."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05de\u05e7\u05dc\u05d9\u05d8 \u05d0\u05ea \u05d4\u05e7\u05d5\u05dc \u05e9\u05dc\u05da \u05de\u05d4\u05e7\u05dc\u05d8 \u05e9\u05e0\u05d1\u05d7\u05e8."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u091a\u0941\u0928\u0947 \u0917\u090f \u0907\u0928\u092a\u0941\u091f \u0938\u0947 \u0906\u092a\u0915\u0940 \u0906\u0935\u093e\u091c\u093c \u0930\u093f\u0915\u0949\u0930\u094d\u0921 \u0915\u0930\u0924\u093e \u0939\u0948\u0964"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Neemt je stem op via de geselecteerde invoer."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nagrywa Tw\u00f3j g\u0142os z wybranego wej\u015bcia."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Se\u00e7ili giri\u015ften sesinizi kaydeder."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0417\u0430\u043f\u0438\u0441\u0443\u0454 \u0432\u0430\u0448 \u0433\u043e\u043b\u043e\u0441 \u0456\u0437 \u0432\u0438\u0431\u0440\u0430\u043d\u043e\u0433\u043e \u0432\u0445\u043e\u0434\u0443."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Spelar in din r\u00f6st fr\u00e5n den valda ing\u00e5ngen."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ghi gi\u1ecdng n\u00f3i c\u1ee7a b\u1ea1n t\u1eeb \u0111\u1ea7u v\u00e0o \u0111\u00e3 ch\u1ecdn."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Merekam suara Anda dari input yang dipilih."
+          }
+        }
+      }
+    },
+    "Records audio from meeting apps or the whole system. macOS lists this under screen recording.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Records audio from meeting apps or the whole system. macOS lists this under screen recording."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Graba el audio de apps de reuniones o de todo el sistema. macOS incluye este permiso en la grabaci\u00f3n de pantalla."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enregistre l'audio des apps de r\u00e9union ou de tout le syst\u00e8me. macOS classe cette autorisation sous l'enregistrement de l'\u00e9cran."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nimmt Audio von Meeting-Apps oder vom gesamten System auf. macOS f\u00fchrt diese Berechtigung unter Bildschirmaufnahme."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Registra l'audio delle app per riunioni o dell'intero sistema. macOS elenca questo permesso sotto la registrazione dello schermo."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Grava o \u00e1udio de apps de reuni\u00e3o ou de todo o sistema. O macOS lista essa permiss\u00e3o em grava\u00e7\u00e3o de tela."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0417\u0430\u043f\u0438\u0441\u044b\u0432\u0430\u0435\u0442 \u0437\u0432\u0443\u043a \u0438\u0437 \u043f\u0440\u0438\u043b\u043e\u0436\u0435\u043d\u0438\u0439 \u0434\u043b\u044f \u0432\u0441\u0442\u0440\u0435\u0447 \u0438\u043b\u0438 \u0432\u0441\u0435\u0439 \u0441\u0438\u0441\u0442\u0435\u043c\u044b. \u0412 macOS \u044d\u0442\u043e \u0440\u0430\u0437\u0440\u0435\u0448\u0435\u043d\u0438\u0435 \u043d\u0430\u0445\u043e\u0434\u0438\u0442\u0441\u044f \u0432 \u0440\u0430\u0437\u0434\u0435\u043b\u0435 \u0437\u0430\u043f\u0438\u0441\u0438 \u044d\u043a\u0440\u0430\u043d\u0430."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u4f1a\u8b70\u30a2\u30d7\u30ea\u307e\u305f\u306f\u30b7\u30b9\u30c6\u30e0\u5168\u4f53\u306e\u97f3\u58f0\u3092\u9332\u97f3\u3057\u307e\u3059\u3002macOS\u3067\u306f\u3053\u306e\u6a29\u9650\u306f\u753b\u9762\u53ce\u9332\u306e\u9805\u76ee\u306b\u3042\u308a\u307e\u3059\u3002"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\ud68c\uc758 \uc571 \ub610\ub294 \uc2dc\uc2a4\ud15c \uc804\uccb4\uc758 \uc624\ub514\uc624\ub97c \ub179\uc74c\ud569\ub2c8\ub2e4. macOS\uc5d0\uc11c\ub294 \uc774 \uad8c\ud55c\uc774 \ud654\uba74 \uae30\ub85d \ud56d\ubaa9\uc5d0 \uc788\uc2b5\ub2c8\ub2e4."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5f55\u5236\u4f1a\u8bae\u5e94\u7528\u6216\u6574\u4e2a\u7cfb\u7edf\u7684\u97f3\u9891\u3002macOS \u5c06\u6b64\u6743\u9650\u5217\u5728\u5c4f\u5e55\u5f55\u5236\u4e0b\u3002"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u9304\u88fd\u6703\u8b70 App \u6216\u6574\u500b\u7cfb\u7d71\u7684\u97f3\u8a0a\u3002macOS \u5c07\u6b64\u6b0a\u9650\u5217\u5728\u87a2\u5e55\u9304\u88fd\u4e4b\u4e0b\u3002"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u064a\u0633\u062c\u0651\u0644 \u0627\u0644\u0635\u0648\u062a \u0645\u0646 \u062a\u0637\u0628\u064a\u0642\u0627\u062a \u0627\u0644\u0627\u062c\u062a\u0645\u0627\u0639\u0627\u062a \u0623\u0648 \u0645\u0646 \u0627\u0644\u0646\u0638\u0627\u0645 \u0628\u0627\u0644\u0643\u0627\u0645\u0644. \u064a\u062f\u0631\u062c macOS \u0647\u0630\u0627 \u0627\u0644\u0625\u0630\u0646 \u0636\u0645\u0646 \u062a\u0633\u062c\u064a\u0644 \u0627\u0644\u0634\u0627\u0634\u0629."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05de\u05e7\u05dc\u05d9\u05d8 \u05e9\u05de\u05e2 \u05de\u05d9\u05d9\u05e9\u05d5\u05de\u05d9 \u05e4\u05d2\u05d9\u05e9\u05d5\u05ea \u05d0\u05d5 \u05de\u05db\u05dc \u05d4\u05de\u05e2\u05e8\u05db\u05ea. \u05d1-macOS \u05d4\u05e8\u05e9\u05d0\u05d4 \u05d6\u05d5 \u05de\u05d5\u05e4\u05d9\u05e2\u05d4 \u05ea\u05d7\u05ea \u05d4\u05e7\u05dc\u05d8\u05ea \u05de\u05e1\u05da."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u092e\u0940\u091f\u093f\u0902\u0917 \u0910\u092a\u094d\u0938 \u092f\u093e \u092a\u0942\u0930\u0947 \u0938\u093f\u0938\u094d\u091f\u092e \u0915\u093e \u0911\u0921\u093f\u092f\u094b \u0930\u093f\u0915\u0949\u0930\u094d\u0921 \u0915\u0930\u0924\u093e \u0939\u0948\u0964 macOS \u0907\u0938 \u0905\u0928\u0941\u092e\u0924\u093f \u0915\u094b \u0938\u094d\u0915\u094d\u0930\u0940\u0928 \u0930\u093f\u0915\u0949\u0930\u094d\u0921\u093f\u0902\u0917 \u0915\u0947 \u0905\u0902\u0924\u0930\u094d\u0917\u0924 \u0926\u093f\u0916\u093e\u0924\u093e \u0939\u0948\u0964"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Neemt audio op van vergaderapps of het hele systeem. macOS plaatst deze toestemming onder schermopname."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nagrywa d\u017awi\u0119k z aplikacji do spotka\u0144 lub z ca\u0142ego systemu. macOS umieszcza to uprawnienie w sekcji nagrywania ekranu."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Toplant\u0131 uygulamalar\u0131ndan veya t\u00fcm sistemden gelen sesi kaydeder. macOS bu izni ekran kayd\u0131 alt\u0131nda listeler."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0417\u0430\u043f\u0438\u0441\u0443\u0454 \u0437\u0432\u0443\u043a \u0456\u0437 \u0437\u0430\u0441\u0442\u043e\u0441\u0443\u043d\u043a\u0456\u0432 \u0434\u043b\u044f \u0437\u0443\u0441\u0442\u0440\u0456\u0447\u0435\u0439 \u0430\u0431\u043e \u0432\u0441\u0456\u0454\u0457 \u0441\u0438\u0441\u0442\u0435\u043c\u0438. \u0423 macOS \u0446\u0435\u0439 \u0434\u043e\u0437\u0432\u0456\u043b \u0440\u043e\u0437\u043c\u0456\u0449\u0435\u043d\u043e \u0432 \u0440\u043e\u0437\u0434\u0456\u043b\u0456 \u0437\u0430\u043f\u0438\u0441\u0443 \u0435\u043a\u0440\u0430\u043d\u0430."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Spelar in ljud fr\u00e5n m\u00f6tesappar eller hela systemet. macOS listar den h\u00e4r beh\u00f6righeten under sk\u00e4rminspelning."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ghi \u00e2m thanh t\u1eeb \u1ee9ng d\u1ee5ng h\u1ecdp ho\u1eb7c to\u00e0n b\u1ed9 h\u1ec7 th\u1ed1ng. macOS li\u1ec7t k\u00ea quy\u1ec1n n\u00e0y trong m\u1ee5c ghi m\u00e0n h\u00ecnh."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Merekam audio dari aplikasi rapat atau seluruh sistem. macOS mencantumkan izin ini di bagian perekaman layar."
+          }
+        }
+      }
+    },
+    "Allow recording access": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow recording access"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permitir el acceso para grabar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Autoriser l'acc\u00e8s \u00e0 l'enregistrement"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zugriff f\u00fcr Aufnahmen erlauben"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consenti l'accesso alla registrazione"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permitir acesso \u00e0 grava\u00e7\u00e3o"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0420\u0430\u0437\u0440\u0435\u0448\u0438\u0442\u044c \u0434\u043e\u0441\u0442\u0443\u043f \u0434\u043b\u044f \u0437\u0430\u043f\u0438\u0441\u0438"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u9332\u97f3\u3078\u306e\u30a2\u30af\u30bb\u30b9\u3092\u8a31\u53ef"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\ub179\uc74c \uc811\uadfc \ud5c8\uc6a9"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5141\u8bb8\u5f55\u97f3\u8bbf\u95ee"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5141\u8a31\u9304\u97f3\u5b58\u53d6\u6b0a"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0627\u0644\u0633\u0645\u0627\u062d \u0628\u0627\u0644\u0648\u0635\u0648\u0644 \u0644\u0644\u062a\u0633\u062c\u064a\u0644"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05d0\u05d9\u05e9\u05d5\u05e8 \u05d2\u05d9\u05e9\u05d4 \u05dc\u05d4\u05e7\u05dc\u05d8\u05d4"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0930\u093f\u0915\u0949\u0930\u094d\u0921\u093f\u0902\u0917 \u090f\u0915\u094d\u0938\u0947\u0938 \u0915\u0940 \u0905\u0928\u0941\u092e\u0924\u093f \u0926\u0947\u0902"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Toegang voor opnemen toestaan"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zezw\u00f3l na dost\u0119p do nagrywania"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kay\u0131t eri\u015fimine izin ver"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0414\u043e\u0437\u0432\u043e\u043b\u0438\u0442\u0438 \u0434\u043e\u0441\u0442\u0443\u043f \u0434\u043b\u044f \u0437\u0430\u043f\u0438\u0441\u0443"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Till\u00e5t \u00e5tkomst f\u00f6r inspelning"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cho ph\u00e9p quy\u1ec1n truy c\u1eadp ghi \u00e2m"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Izinkan akses perekaman"
+          }
+        }
+      }
+    },
+    "macOS asks once for each source you record. Nothing is recorded until you press Start recording.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS asks once for each source you record. Nothing is recorded until you press Start recording."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS pregunta una sola vez por cada fuente que grabas. No se graba nada hasta que pulsas Iniciar grabaci\u00f3n."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS demande une seule fois pour chaque source que vous enregistrez. Rien n'est enregistr\u00e9 tant que vous n'avez pas cliqu\u00e9 sur D\u00e9marrer l'enregistrement."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS fragt f\u00fcr jede Quelle, die du aufnimmst, nur einmal. Es wird nichts aufgenommen, bis du auf \u201eAufnahme starten\u201c klickst."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS chiede una sola volta per ogni sorgente che registri. Non viene registrato nulla finch\u00e9 non premi Avvia registrazione."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O macOS pergunta uma \u00fanica vez para cada fonte que voc\u00ea grava. Nada \u00e9 gravado at\u00e9 voc\u00ea clicar em Iniciar grava\u00e7\u00e3o."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS \u0441\u043f\u0440\u0430\u0448\u0438\u0432\u0430\u0435\u0442 \u043e\u0434\u0438\u043d \u0440\u0430\u0437 \u0434\u043b\u044f \u043a\u0430\u0436\u0434\u043e\u0433\u043e \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0430 \u0437\u0430\u043f\u0438\u0441\u0438. \u041d\u0438\u0447\u0435\u0433\u043e \u043d\u0435 \u0437\u0430\u043f\u0438\u0441\u044b\u0432\u0430\u0435\u0442\u0441\u044f, \u043f\u043e\u043a\u0430 \u0432\u044b \u043d\u0435 \u043d\u0430\u0436\u043c\u0451\u0442\u0435 \u00ab\u041d\u0430\u0447\u0430\u0442\u044c \u0437\u0430\u043f\u0438\u0441\u044c\u00bb."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS\u306f\u9332\u97f3\u3059\u308b\u30bd\u30fc\u30b9\u3054\u3068\u306b\u4e00\u5ea6\u3060\u3051\u78ba\u8a8d\u3057\u307e\u3059\u3002\u300c\u9332\u97f3\u3092\u958b\u59cb\u300d\u3092\u62bc\u3059\u307e\u3067\u4f55\u3082\u9332\u97f3\u3055\u308c\u307e\u305b\u3093\u3002"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS\ub294 \ub179\uc74c\ud558\ub294 \uc18c\uc2a4\ub9c8\ub2e4 \ud55c \ubc88\ub9cc \ubb3b\uc2b5\ub2c8\ub2e4. \ub179\uc74c \uc2dc\uc791\uc744 \ub204\ub974\uae30 \uc804\uc5d0\ub294 \uc544\ubb34\uac83\ub3c4 \ub179\uc74c\ub418\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS \u5bf9\u60a8\u5f55\u5236\u7684\u6bcf\u4e2a\u6765\u6e90\u53ea\u8be2\u95ee\u4e00\u6b21\u3002\u5728\u60a8\u6309\u4e0b\u201c\u5f00\u59cb\u5f55\u97f3\u201d\u4e4b\u524d\uff0c\u4e0d\u4f1a\u5f55\u5236\u4efb\u4f55\u5185\u5bb9\u3002"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS \u5c0d\u60a8\u9304\u88fd\u7684\u6bcf\u500b\u4f86\u6e90\u53ea\u6703\u8a62\u554f\u4e00\u6b21\u3002\u5728\u60a8\u6309\u4e0b\u300c\u958b\u59cb\u9304\u97f3\u300d\u4e4b\u524d\uff0c\u4e0d\u6703\u9304\u88fd\u4efb\u4f55\u5167\u5bb9\u3002"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u064a\u0633\u0623\u0644 macOS \u0645\u0631\u0629 \u0648\u0627\u062d\u062f\u0629 \u0644\u0643\u0644 \u0645\u0635\u062f\u0631 \u062a\u0633\u062c\u0651\u0644\u0647. \u0644\u0627 \u064a\u062a\u0645 \u062a\u0633\u062c\u064a\u0644 \u0623\u064a \u0634\u064a\u0621 \u062d\u062a\u0649 \u062a\u0636\u063a\u0637 \u0639\u0644\u0649 \u0628\u062f\u0621 \u0627\u0644\u062a\u0633\u062c\u064a\u0644."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS \u05e9\u05d5\u05d0\u05dc \u05e4\u05e2\u05dd \u05d0\u05d7\u05ea \u05e2\u05d1\u05d5\u05e8 \u05db\u05dc \u05de\u05e7\u05d5\u05e8 \u05d4\u05e7\u05dc\u05d8\u05d4. \u05e9\u05d5\u05dd \u05d3\u05d1\u05e8 \u05dc\u05d0 \u05de\u05d5\u05e7\u05dc\u05d8 \u05dc\u05e4\u05e0\u05d9 \u05dc\u05d7\u05d9\u05e6\u05d4 \u05e2\u05dc \u05d4\u05ea\u05d7\u05dc\u05ea \u05d4\u05e7\u05dc\u05d8\u05d4."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS \u0906\u092a\u0915\u0947 \u0926\u094d\u0935\u093e\u0930\u093e \u0930\u093f\u0915\u0949\u0930\u094d\u0921 \u0915\u093f\u090f \u091c\u093e\u0928\u0947 \u0935\u093e\u0932\u0947 \u0939\u0930 \u0938\u094d\u0930\u094b\u0924 \u0915\u0947 \u0932\u093f\u090f \u0915\u0947\u0935\u0932 \u090f\u0915 \u092c\u093e\u0930 \u092a\u0942\u091b\u0924\u093e \u0939\u0948\u0964 \u091c\u092c \u0924\u0915 \u0906\u092a \u201c\u0930\u093f\u0915\u0949\u0930\u094d\u0921\u093f\u0902\u0917 \u0936\u0941\u0930\u0942 \u0915\u0930\u0947\u0902\u201d \u0928\u0939\u0940\u0902 \u0926\u092c\u093e\u0924\u0947, \u0924\u092c \u0924\u0915 \u0915\u0941\u091b \u092d\u0940 \u0930\u093f\u0915\u0949\u0930\u094d\u0921 \u0928\u0939\u0940\u0902 \u0939\u094b\u0924\u093e\u0964"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS vraagt \u00e9\u00e9n keer per bron die je opneemt. Er wordt niets opgenomen totdat je op Opname starten drukt."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS pyta tylko raz o ka\u017cde nagrywane \u017ar\u00f3d\u0142o. Nic nie jest nagrywane, dop\u00f3ki nie naci\u015bniesz \u201eRozpocznij nagrywanie\u201d."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS kaydetti\u011finiz her kaynak i\u00e7in yaln\u0131zca bir kez sorar. \u201cKayd\u0131 ba\u015flat\u201d d\u00fc\u011fmesine basana kadar hi\u00e7bir \u015fey kaydedilmez."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS \u0437\u0430\u043f\u0438\u0442\u0443\u0454 \u043b\u0438\u0448\u0435 \u043e\u0434\u0438\u043d \u0440\u0430\u0437 \u0434\u043b\u044f \u043a\u043e\u0436\u043d\u043e\u0433\u043e \u0434\u0436\u0435\u0440\u0435\u043b\u0430, \u044f\u043a\u0435 \u0432\u0438 \u0437\u0430\u043f\u0438\u0441\u0443\u0454\u0442\u0435. \u041d\u0456\u0447\u043e\u0433\u043e \u043d\u0435 \u0437\u0430\u043f\u0438\u0441\u0443\u0454\u0442\u044c\u0441\u044f, \u0434\u043e\u043a\u0438 \u0432\u0438 \u043d\u0435 \u043d\u0430\u0442\u0438\u0441\u043d\u0435\u0442\u0435 \u00ab\u041f\u043e\u0447\u0430\u0442\u0438 \u0437\u0430\u043f\u0438\u0441\u00bb."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS fr\u00e5gar en g\u00e5ng f\u00f6r varje k\u00e4lla du spelar in. Inget spelas in f\u00f6rr\u00e4n du trycker p\u00e5 Starta inspelning."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS ch\u1ec9 h\u1ecfi m\u1ed9t l\u1ea7n cho m\u1ed7i ngu\u1ed3n b\u1ea1n ghi. Kh\u00f4ng c\u00f3 g\u00ec \u0111\u01b0\u1ee3c ghi cho \u0111\u1ebfn khi b\u1ea1n nh\u1ea5n B\u1eaft \u0111\u1ea7u ghi \u00e2m."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS hanya bertanya sekali untuk setiap sumber yang Anda rekam. Tidak ada yang direkam sampai Anda menekan Mulai merekam."
+          }
+        }
+      }
+    },
+    "A device policy blocks a selected source. Turn that source off to record without it.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A device policy blocks a selected source. Turn that source off to record without it."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Una pol\u00edtica del dispositivo bloquea una fuente seleccionada. Desactiva esa fuente para grabar sin ella."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Une r\u00e8gle de l'appareil bloque une source s\u00e9lectionn\u00e9e. D\u00e9sactivez cette source pour enregistrer sans elle."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eine Ger\u00e4terichtlinie blockiert eine ausgew\u00e4hlte Quelle. Schalte diese Quelle aus, um ohne sie aufzunehmen."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un criterio del dispositivo blocca una sorgente selezionata. Disattiva quella sorgente per registrare senza di essa."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uma pol\u00edtica do dispositivo bloqueia uma fonte selecionada. Desative essa fonte para gravar sem ela."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041f\u043e\u043b\u0438\u0442\u0438\u043a\u0430 \u0443\u0441\u0442\u0440\u043e\u0439\u0441\u0442\u0432\u0430 \u0431\u043b\u043e\u043a\u0438\u0440\u0443\u0435\u0442 \u0432\u044b\u0431\u0440\u0430\u043d\u043d\u044b\u0439 \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a. \u041e\u0442\u043a\u043b\u044e\u0447\u0438\u0442\u0435 \u044d\u0442\u043e\u0442 \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a, \u0447\u0442\u043e\u0431\u044b \u0437\u0430\u043f\u0438\u0441\u044b\u0432\u0430\u0442\u044c \u0431\u0435\u0437 \u043d\u0435\u0433\u043e."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u30c7\u30d0\u30a4\u30b9\u306e\u30dd\u30ea\u30b7\u30fc\u306b\u3088\u308a\u3001\u9078\u629e\u3057\u305f\u30bd\u30fc\u30b9\u304c\u30d6\u30ed\u30c3\u30af\u3055\u308c\u3066\u3044\u307e\u3059\u3002\u305d\u306e\u30bd\u30fc\u30b9\u3092\u30aa\u30d5\u306b\u3059\u308b\u3068\u3001\u305d\u308c\u4ee5\u5916\u3067\u9332\u97f3\u3067\u304d\u307e\u3059\u3002"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uae30\uae30 \uc815\ucc45\uc774 \uc120\ud0dd\ud55c \uc18c\uc2a4\ub97c \ucc28\ub2e8\ud569\ub2c8\ub2e4. \ud574\ub2f9 \uc18c\uc2a4\ub97c \ub044\uba74 \uadf8 \uc18c\uc2a4 \uc5c6\uc774 \ub179\uc74c\ud560 \uc218 \uc788\uc2b5\ub2c8\ub2e4."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u8bbe\u5907\u7b56\u7565\u963b\u6b62\u4e86\u6240\u9009\u6765\u6e90\u3002\u5173\u95ed\u8be5\u6765\u6e90\u5373\u53ef\u5728\u4e0d\u4f7f\u7528\u5b83\u7684\u60c5\u51b5\u4e0b\u5f55\u97f3\u3002"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u88dd\u7f6e\u539f\u5247\u5c01\u9396\u4e86\u6240\u9078\u4f86\u6e90\u3002\u95dc\u9589\u8a72\u4f86\u6e90\u5373\u53ef\u5728\u4e0d\u4f7f\u7528\u5b83\u7684\u60c5\u6cc1\u4e0b\u9304\u97f3\u3002"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u062a\u062d\u0638\u0631 \u0633\u064a\u0627\u0633\u0629 \u0627\u0644\u062c\u0647\u0627\u0632 \u0645\u0635\u062f\u0631\u064b\u0627 \u0645\u062d\u062f\u062f\u064b\u0627. \u0623\u0648\u0642\u0641 \u062a\u0634\u063a\u064a\u0644 \u0647\u0630\u0627 \u0627\u0644\u0645\u0635\u062f\u0631 \u0644\u0644\u062a\u0633\u062c\u064a\u0644 \u0628\u062f\u0648\u0646\u0647."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05de\u05d3\u05d9\u05e0\u05d9\u05d5\u05ea \u05de\u05db\u05e9\u05d9\u05e8 \u05d7\u05d5\u05e1\u05de\u05ea \u05de\u05e7\u05d5\u05e8 \u05e9\u05e0\u05d1\u05d7\u05e8. \u05d9\u05e9 \u05dc\u05db\u05d1\u05d5\u05ea \u05d0\u05ea \u05d4\u05de\u05e7\u05d5\u05e8 \u05d4\u05d6\u05d4 \u05db\u05d3\u05d9 \u05dc\u05d4\u05e7\u05dc\u05d9\u05d8 \u05d1\u05dc\u05e2\u05d3\u05d9\u05d5."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0921\u093f\u0935\u093e\u0907\u0938 \u0928\u0940\u0924\u093f \u0915\u093f\u0938\u0940 \u091a\u0941\u0928\u0947 \u0917\u090f \u0938\u094d\u0930\u094b\u0924 \u0915\u094b \u092c\u094d\u0932\u0949\u0915 \u0915\u0930\u0924\u0940 \u0939\u0948\u0964 \u0909\u0938\u0915\u0947 \u092c\u093f\u0928\u093e \u0930\u093f\u0915\u0949\u0930\u094d\u0921 \u0915\u0930\u0928\u0947 \u0915\u0947 \u0932\u093f\u090f \u0909\u0938 \u0938\u094d\u0930\u094b\u0924 \u0915\u094b \u092c\u0902\u0926 \u0915\u0930\u0947\u0902\u0964"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Een apparaatbeleid blokkeert een geselecteerde bron. Schakel die bron uit om zonder die bron op te nemen."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zasady urz\u0105dzenia blokuj\u0105 wybrane \u017ar\u00f3d\u0142o. Wy\u0142\u0105cz to \u017ar\u00f3d\u0142o, aby nagrywa\u0107 bez niego."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bir cihaz politikas\u0131 se\u00e7ili bir kayna\u011f\u0131 engelliyor. Onsuz kay\u0131t yapmak i\u00e7in o kayna\u011f\u0131 kapat\u0131n."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041f\u043e\u043b\u0456\u0442\u0438\u043a\u0430 \u043f\u0440\u0438\u0441\u0442\u0440\u043e\u044e \u0431\u043b\u043e\u043a\u0443\u0454 \u0432\u0438\u0431\u0440\u0430\u043d\u0435 \u0434\u0436\u0435\u0440\u0435\u043b\u043e. \u0412\u0438\u043c\u043a\u043d\u0456\u0442\u044c \u0446\u0435 \u0434\u0436\u0435\u0440\u0435\u043b\u043e, \u0449\u043e\u0431 \u0437\u0430\u043f\u0438\u0441\u0443\u0432\u0430\u0442\u0438 \u0431\u0435\u0437 \u043d\u044c\u043e\u0433\u043e."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "En enhetspolicy blockerar en vald k\u00e4lla. St\u00e4ng av den k\u00e4llan f\u00f6r att spela in utan den."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ch\u00ednh s\u00e1ch thi\u1ebft b\u1ecb \u0111ang ch\u1eb7n m\u1ed9t ngu\u1ed3n \u0111\u00e3 ch\u1ecdn. H\u00e3y t\u1eaft ngu\u1ed3n \u0111\u00f3 \u0111\u1ec3 ghi m\u00e0 kh\u00f4ng c\u00f3 n\u00f3."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kebijakan perangkat memblokir sumber yang dipilih. Matikan sumber tersebut untuk merekam tanpanya."
+          }
+        }
+      }
+    },
+    "Not now": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not now"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ahora no"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pas maintenant"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Jetzt nicht"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Non ora"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agora n\u00e3o"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041d\u0435 \u0441\u0435\u0439\u0447\u0430\u0441"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u4eca\u306f\u3057\u306a\u3044"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uc9c0\uae08 \uc548 \ud568"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u6682\u4e0d"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u66ab\u6642\u4e0d\u8981"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0644\u064a\u0633 \u0627\u0644\u0622\u0646"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05dc\u05d0 \u05e2\u05db\u05e9\u05d9\u05d5"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0905\u092d\u0940 \u0928\u0939\u0940\u0902"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nu niet"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nie teraz"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u015eimdi de\u011fil"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041d\u0435 \u0437\u0430\u0440\u0430\u0437"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Inte nu"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0110\u1ec3 sau"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Jangan sekarang"
+          }
+        }
+      }
+    },
+    "Allow access": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow access"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permitir acceso"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Autoriser l'acc\u00e8s"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zugriff erlauben"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consenti accesso"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permitir acesso"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0420\u0430\u0437\u0440\u0435\u0448\u0438\u0442\u044c \u0434\u043e\u0441\u0442\u0443\u043f"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u30a2\u30af\u30bb\u30b9\u3092\u8a31\u53ef"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uc811\uadfc \ud5c8\uc6a9"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5141\u8bb8\u8bbf\u95ee"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5141\u8a31\u5b58\u53d6"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0627\u0644\u0633\u0645\u0627\u062d \u0628\u0627\u0644\u0648\u0635\u0648\u0644"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05d0\u05d9\u05e9\u05d5\u05e8 \u05d2\u05d9\u05e9\u05d4"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u090f\u0915\u094d\u0938\u0947\u0938 \u0915\u0940 \u0905\u0928\u0941\u092e\u0924\u093f \u0926\u0947\u0902"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Toegang toestaan"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zezw\u00f3l na dost\u0119p"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eri\u015fime izin ver"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0414\u043e\u0437\u0432\u043e\u043b\u0438\u0442\u0438 \u0434\u043e\u0441\u0442\u0443\u043f"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Till\u00e5t \u00e5tkomst"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cho ph\u00e9p truy c\u1eadp"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Izinkan akses"
+          }
+        }
+      }
+    },
+    "Not allowed yet": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not allowed yet"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A\u00fan no permitido"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pas encore autoris\u00e9"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Noch nicht erlaubt"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Non ancora consentito"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ainda n\u00e3o permitido"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0415\u0449\u0451 \u043d\u0435 \u0440\u0430\u0437\u0440\u0435\u0448\u0435\u043d\u043e"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u307e\u3060\u8a31\u53ef\u3055\u308c\u3066\u3044\u307e\u305b\u3093"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uc544\uc9c1 \ud5c8\uc6a9\ub418\uc9c0 \uc54a\uc74c"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5c1a\u672a\u5141\u8bb8"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5c1a\u672a\u5141\u8a31"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u063a\u064a\u0631 \u0645\u0633\u0645\u0648\u062d \u0628\u0639\u062f"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05e2\u05d3\u05d9\u05d9\u05df \u05dc\u05d0 \u05d0\u05d5\u05e9\u05e8"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0905\u092d\u0940 \u0905\u0928\u0941\u092e\u0924\u093f \u0928\u0939\u0940\u0902 \u0939\u0948"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nog niet toegestaan"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Jeszcze nie zezwolono"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hen\u00fcz izin verilmedi"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0429\u0435 \u043d\u0435 \u0434\u043e\u0437\u0432\u043e\u043b\u0435\u043d\u043e"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Inte till\u00e5tet \u00e4n"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ch\u01b0a \u0111\u01b0\u1ee3c cho ph\u00e9p"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Belum diizinkan"
+          }
+        }
+      }
+    },
+    "Off in System Settings": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Off in System Settings"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Desactivado en Ajustes del Sistema"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "D\u00e9sactiv\u00e9 dans R\u00e9glages Syst\u00e8me"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "In den Systemeinstellungen deaktiviert"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Disattivato in Impostazioni di Sistema"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Desativado nos Ajustes do Sistema"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0412\u044b\u043a\u043b\u044e\u0447\u0435\u043d\u043e \u0432 \u0421\u0438\u0441\u0442\u0435\u043c\u043d\u044b\u0445 \u043d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0430\u0445"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u30b7\u30b9\u30c6\u30e0\u8a2d\u5b9a\u3067\u30aa\u30d5\u306b\u306a\u3063\u3066\u3044\u307e\u3059"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uc2dc\uc2a4\ud15c \uc124\uc815\uc5d0\uc11c \uaebc\uc9d0"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5df2\u5728\u7cfb\u7edf\u8bbe\u7f6e\u4e2d\u5173\u95ed"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5df2\u5728\u7cfb\u7d71\u8a2d\u5b9a\u4e2d\u95dc\u9589"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0645\u062a\u0648\u0642\u0641 \u0641\u064a \u0625\u0639\u062f\u0627\u062f\u0627\u062a \u0627\u0644\u0646\u0638\u0627\u0645"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05db\u05d1\u05d5\u05d9 \u05d1\u05d4\u05d2\u05d3\u05e8\u05d5\u05ea \u05d4\u05de\u05e2\u05e8\u05db\u05ea"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0938\u093f\u0938\u094d\u091f\u092e \u0938\u0947\u091f\u093f\u0902\u0917\u094d\u091c\u093c \u092e\u0947\u0902 \u092c\u0902\u0926 \u0939\u0948"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uit in Systeeminstellingen"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wy\u0142\u0105czone w Ustawieniach systemowych"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sistem Ayarlar\u0131'nda kapal\u0131"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0412\u0438\u043c\u043a\u043d\u0435\u043d\u043e \u0432 \u0421\u0438\u0441\u0442\u0435\u043c\u043d\u0438\u0445 \u043f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u0430\u0445"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Av i Systeminst\u00e4llningar"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0110\u00e3 t\u1eaft trong C\u00e0i \u0111\u1eb7t h\u1ec7 th\u1ed1ng"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nonaktif di Pengaturan Sistem"
+          }
+        }
+      }
+    },
+    "Blocked by a device policy": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Blocked by a device policy"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bloqueado por una pol\u00edtica del dispositivo"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bloqu\u00e9 par une r\u00e8gle de l'appareil"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Durch eine Ger\u00e4terichtlinie blockiert"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bloccato da un criterio del dispositivo"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bloqueado por uma pol\u00edtica do dispositivo"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0417\u0430\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u043d\u043e \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u043e\u0439 \u0443\u0441\u0442\u0440\u043e\u0439\u0441\u0442\u0432\u0430"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u30c7\u30d0\u30a4\u30b9\u306e\u30dd\u30ea\u30b7\u30fc\u306b\u3088\u308a\u30d6\u30ed\u30c3\u30af\u3055\u308c\u3066\u3044\u307e\u3059"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uae30\uae30 \uc815\ucc45\uc5d0 \uc758\ud574 \ucc28\ub2e8\ub428"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5df2\u88ab\u8bbe\u5907\u7b56\u7565\u963b\u6b62"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5df2\u88ab\u88dd\u7f6e\u539f\u5247\u5c01\u9396"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0645\u062d\u0638\u0648\u0631 \u0628\u0648\u0627\u0633\u0637\u0629 \u0633\u064a\u0627\u0633\u0629 \u0627\u0644\u062c\u0647\u0627\u0632"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05d7\u05e1\u05d5\u05dd \u05e2\u05dc \u05d9\u05d3\u05d9 \u05de\u05d3\u05d9\u05e0\u05d9\u05d5\u05ea \u05de\u05db\u05e9\u05d9\u05e8"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0921\u093f\u0935\u093e\u0907\u0938 \u0928\u0940\u0924\u093f \u0926\u094d\u0935\u093e\u0930\u093e \u092c\u094d\u0932\u0949\u0915 \u0915\u093f\u092f\u093e \u0917\u092f\u093e"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Geblokkeerd door een apparaatbeleid"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zablokowane przez zasady urz\u0105dzenia"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bir cihaz politikas\u0131 taraf\u0131ndan engellendi"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0417\u0430\u0431\u043b\u043e\u043a\u043e\u0432\u0430\u043d\u043e \u043f\u043e\u043b\u0456\u0442\u0438\u043a\u043e\u044e \u043f\u0440\u0438\u0441\u0442\u0440\u043e\u044e"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Blockerad av en enhetspolicy"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "B\u1ecb ch\u1eb7n b\u1edfi ch\u00ednh s\u00e1ch thi\u1ebft b\u1ecb"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Diblokir oleh kebijakan perangkat"
+          }
+        }
+      }
+    },
+    "Not needed for the sources you selected.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not needed for the sources you selected."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No es necesario para las fuentes que seleccionaste."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Inutile pour les sources s\u00e9lectionn\u00e9es."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "F\u00fcr die ausgew\u00e4hlten Quellen nicht erforderlich."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Non necessario per le sorgenti selezionate."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "N\u00e3o \u00e9 necess\u00e1rio para as fontes selecionadas."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041d\u0435 \u0442\u0440\u0435\u0431\u0443\u0435\u0442\u0441\u044f \u0434\u043b\u044f \u0432\u044b\u0431\u0440\u0430\u043d\u043d\u044b\u0445 \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u043e\u0432."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u9078\u629e\u3057\u305f\u30bd\u30fc\u30b9\u306b\u306f\u5fc5\u8981\u3042\u308a\u307e\u305b\u3093\u3002"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uc120\ud0dd\ud55c \uc18c\uc2a4\uc5d0\ub294 \ud544\uc694\ud558\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u6240\u9009\u6765\u6e90\u4e0d\u9700\u8981\u6b64\u6743\u9650\u3002"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u6240\u9078\u4f86\u6e90\u4e0d\u9700\u8981\u6b64\u6b0a\u9650\u3002"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u063a\u064a\u0631 \u0645\u0637\u0644\u0648\u0628 \u0644\u0644\u0645\u0635\u0627\u062f\u0631 \u0627\u0644\u062a\u064a \u062d\u062f\u062f\u062a\u0647\u0627."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05dc\u05d0 \u05e0\u05d3\u05e8\u05e9 \u05e2\u05d1\u05d5\u05e8 \u05d4\u05de\u05e7\u05d5\u05e8\u05d5\u05ea \u05e9\u05e0\u05d1\u05d7\u05e8\u05d5."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0906\u092a\u0915\u0947 \u091a\u0941\u0928\u0947 \u0917\u090f \u0938\u094d\u0930\u094b\u0924\u094b\u0902 \u0915\u0947 \u0932\u093f\u090f \u0906\u0935\u0936\u094d\u092f\u0915 \u0928\u0939\u0940\u0902 \u0939\u0948\u0964"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Niet nodig voor de geselecteerde bronnen."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Niepotrzebne dla wybranych \u017ar\u00f3de\u0142."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Se\u00e7ti\u011finiz kaynaklar i\u00e7in gerekli de\u011fil."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041d\u0435 \u043f\u043e\u0442\u0440\u0456\u0431\u043d\u043e \u0434\u043b\u044f \u0432\u0438\u0431\u0440\u0430\u043d\u0438\u0445 \u0434\u0436\u0435\u0440\u0435\u043b."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beh\u00f6vs inte f\u00f6r de k\u00e4llor du valt."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kh\u00f4ng c\u1ea7n cho c\u00e1c ngu\u1ed3n b\u1ea1n \u0111\u00e3 ch\u1ecdn."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tidak diperlukan untuk sumber yang Anda pilih."
+          }
+        }
+      }
+    },
+    "Turn on TurboSpark in System Settings, then return here.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Turn on TurboSpark in System Settings, then return here."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activa TurboSpark en Ajustes del Sistema y luego vuelve aqu\u00ed."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activez TurboSpark dans R\u00e9glages Syst\u00e8me, puis revenez ici."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aktiviere TurboSpark in den Systemeinstellungen und kehre dann hierher zur\u00fcck."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Attiva TurboSpark in Impostazioni di Sistema, poi torna qui."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ative o TurboSpark nos Ajustes do Sistema e depois volte aqui."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0412\u043a\u043b\u044e\u0447\u0438\u0442\u0435 TurboSpark \u0432 \u0421\u0438\u0441\u0442\u0435\u043c\u043d\u044b\u0445 \u043d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0430\u0445, \u0437\u0430\u0442\u0435\u043c \u0432\u0435\u0440\u043d\u0438\u0442\u0435\u0441\u044c \u0441\u044e\u0434\u0430."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u30b7\u30b9\u30c6\u30e0\u8a2d\u5b9a\u3067TurboSpark\u3092\u30aa\u30f3\u306b\u3057\u3066\u304b\u3089\u3001\u3053\u3053\u306b\u623b\u3063\u3066\u304f\u3060\u3055\u3044\u3002"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uc2dc\uc2a4\ud15c \uc124\uc815\uc5d0\uc11c TurboSpark\ub97c \ucf20 \ub2e4\uc74c \uc5ec\uae30\ub85c \ub3cc\uc544\uc624\uc138\uc694."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u8bf7\u5728\u7cfb\u7edf\u8bbe\u7f6e\u4e2d\u6253\u5f00 TurboSpark\uff0c\u7136\u540e\u8fd4\u56de\u6b64\u5904\u3002"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u8acb\u5728\u7cfb\u7d71\u8a2d\u5b9a\u4e2d\u958b\u555f TurboSpark\uff0c\u7136\u5f8c\u8fd4\u56de\u9019\u88e1\u3002"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0641\u0639\u0651\u0644 TurboSpark \u0641\u064a \u0625\u0639\u062f\u0627\u062f\u0627\u062a \u0627\u0644\u0646\u0638\u0627\u0645\u060c \u062b\u0645 \u0639\u062f \u0625\u0644\u0649 \u0647\u0646\u0627."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05d9\u05e9 \u05dc\u05d4\u05e4\u05e2\u05d9\u05dc \u05d0\u05ea TurboSpark \u05d1\u05d4\u05d2\u05d3\u05e8\u05d5\u05ea \u05d4\u05de\u05e2\u05e8\u05db\u05ea \u05d5\u05dc\u05d0\u05d7\u05e8 \u05de\u05db\u05df \u05dc\u05d7\u05d6\u05d5\u05e8 \u05dc\u05db\u05d0\u05df."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0938\u093f\u0938\u094d\u091f\u092e \u0938\u0947\u091f\u093f\u0902\u0917\u094d\u091c\u093c \u092e\u0947\u0902 TurboSpark \u0915\u094b \u091a\u093e\u0932\u0942 \u0915\u0930\u0947\u0902, \u092b\u093f\u0930 \u092f\u0939\u093e\u0901 \u0932\u094c\u091f\u0947\u0902\u0964"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Schakel TurboSpark in via Systeeminstellingen en kom dan hier terug."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "W\u0142\u0105cz TurboSpark w Ustawieniach systemowych, a nast\u0119pnie wr\u00f3\u0107 tutaj."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sistem Ayarlar\u0131'nda TurboSpark'\u0131 a\u00e7\u0131n, ard\u0131ndan buraya d\u00f6n\u00fcn."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0423\u0432\u0456\u043c\u043a\u043d\u0456\u0442\u044c TurboSpark \u0443 \u0421\u0438\u0441\u0442\u0435\u043c\u043d\u0438\u0445 \u043f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u0430\u0445, \u0430 \u043f\u043e\u0442\u0456\u043c \u043f\u043e\u0432\u0435\u0440\u043d\u0456\u0442\u044c\u0441\u044f \u0441\u044e\u0434\u0438."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aktivera TurboSpark i Systeminst\u00e4llningar och g\u00e5 sedan tillbaka hit."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "H\u00e3y b\u1eadt TurboSpark trong C\u00e0i \u0111\u1eb7t h\u1ec7 th\u1ed1ng, r\u1ed3i quay l\u1ea1i \u0111\u00e2y."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aktifkan TurboSpark di Pengaturan Sistem, lalu kembali ke sini."
+          }
+        }
+      }
+    },
+    "An administrator or Screen Time controls this setting.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "An administrator or Screen Time controls this setting."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un administrador o Tiempo de uso controla este ajuste."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un administrateur ou Temps d'\u00e9cran contr\u00f4le ce r\u00e9glage."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ein Administrator oder die Bildschirmzeit steuert diese Einstellung."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Questa impostazione \u00e8 controllata da un amministratore o da Tempo di utilizzo."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Um administrador ou o Tempo de Uso controla este ajuste."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u042d\u0442\u0438\u043c \u043f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u043e\u043c \u0443\u043f\u0440\u0430\u0432\u043b\u044f\u0435\u0442 \u0430\u0434\u043c\u0438\u043d\u0438\u0441\u0442\u0440\u0430\u0442\u043e\u0440 \u0438\u043b\u0438 \u042d\u043a\u0440\u0430\u043d\u043d\u043e\u0435 \u0432\u0440\u0435\u043c\u044f."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u3053\u306e\u8a2d\u5b9a\u306f\u7ba1\u7406\u8005\u307e\u305f\u306f\u30b9\u30af\u30ea\u30fc\u30f3\u30bf\u30a4\u30e0\u306b\u3088\u3063\u3066\u7ba1\u7406\u3055\u308c\u3066\u3044\u307e\u3059\u3002"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uad00\ub9ac\uc790 \ub610\ub294 \uc2a4\ud06c\ub9b0 \ud0c0\uc784\uc774 \uc774 \uc124\uc815\uc744 \uad00\ub9ac\ud569\ub2c8\ub2e4."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u6b64\u8bbe\u7f6e\u7531\u7ba1\u7406\u5458\u6216\u5c4f\u5e55\u4f7f\u7528\u65f6\u95f4\u63a7\u5236\u3002"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u6b64\u8a2d\u5b9a\u7531\u7ba1\u7406\u54e1\u6216\u87a2\u5e55\u4f7f\u7528\u6642\u9593\u63a7\u5236\u3002"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u064a\u062a\u062d\u0643\u0645 \u0627\u0644\u0645\u0633\u0624\u0648\u0644 \u0623\u0648 \u0645\u062f\u0629 \u0627\u0633\u062a\u062e\u062f\u0627\u0645 \u0627\u0644\u062c\u0647\u0627\u0632 \u0641\u064a \u0647\u0630\u0627 \u0627\u0644\u0625\u0639\u062f\u0627\u062f."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05de\u05e0\u05d4\u05dc \u05de\u05e2\u05e8\u05db\u05ea \u05d0\u05d5 \u05d6\u05de\u05df \u05de\u05e1\u05da \u05e9\u05d5\u05dc\u05d8\u05d9\u05dd \u05d1\u05d4\u05d2\u05d3\u05e8\u05d4 \u05d6\u05d5."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u092f\u0939 \u0938\u0947\u091f\u093f\u0902\u0917 \u0915\u093f\u0938\u0940 \u0935\u094d\u092f\u0935\u0938\u094d\u0925\u093e\u092a\u0915 \u092f\u093e \u0938\u094d\u0915\u094d\u0930\u0940\u0928 \u091f\u093e\u0907\u092e \u0926\u094d\u0935\u093e\u0930\u093e \u0928\u093f\u092f\u0902\u0924\u094d\u0930\u093f\u0924 \u0939\u0948\u0964"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Een beheerder of Schermtijd beheert deze instelling."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tym ustawieniem zarz\u0105dza administrator lub Czas przed ekranem."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu ayar\u0131 bir y\u00f6netici veya Ekran S\u00fcresi denetliyor."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0426\u0438\u043c \u043f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u043e\u043c \u043a\u0435\u0440\u0443\u0454 \u0430\u0434\u043c\u0456\u043d\u0456\u0441\u0442\u0440\u0430\u0442\u043e\u0440 \u0430\u0431\u043e \u0415\u043a\u0440\u0430\u043d\u043d\u0438\u0439 \u0447\u0430\u0441."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "En administrat\u00f6r eller Sk\u00e4rmtid styr den h\u00e4r inst\u00e4llningen."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Qu\u1ea3n tr\u1ecb vi\u00ean ho\u1eb7c Th\u1eddi gian s\u1eed d\u1ee5ng ki\u1ec3m so\u00e1t c\u00e0i \u0111\u1eb7t n\u00e0y."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Administrator atau Durasi Layar mengontrol pengaturan ini."
+          }
+        }
+      }
+    },
+    "macOS may ask you to quit and reopen TurboSpark before the change applies.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS may ask you to quit and reopen TurboSpark before the change applies."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Es posible que macOS te pida salir de TurboSpark y volver a abrirlo para aplicar el cambio."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS peut vous demander de quitter puis de rouvrir TurboSpark pour appliquer la modification."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS fordert dich m\u00f6glicherweise auf, TurboSpark zu beenden und erneut zu \u00f6ffnen, damit die \u00c4nderung wirksam wird."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS potrebbe chiederti di uscire da TurboSpark e riaprirlo per applicare la modifica."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O macOS pode pedir que voc\u00ea encerre e reabra o TurboSpark para aplicar a altera\u00e7\u00e3o."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS \u043c\u043e\u0436\u0435\u0442 \u043f\u043e\u043f\u0440\u043e\u0441\u0438\u0442\u044c \u0432\u0430\u0441 \u0437\u0430\u043a\u0440\u044b\u0442\u044c \u0438 \u0441\u043d\u043e\u0432\u0430 \u043e\u0442\u043a\u0440\u044b\u0442\u044c TurboSpark, \u0447\u0442\u043e\u0431\u044b \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0435 \u0432\u0441\u0442\u0443\u043f\u0438\u043b\u043e \u0432 \u0441\u0438\u043b\u0443."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5909\u66f4\u3092\u53cd\u6620\u3059\u308b\u305f\u3081\u306b\u3001macOS\u304b\u3089TurboSpark\u306e\u7d42\u4e86\u3068\u518d\u8d77\u52d5\u3092\u6c42\u3081\u3089\u308c\u308b\u5834\u5408\u304c\u3042\u308a\u307e\u3059\u3002"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\ubcc0\uacbd \uc0ac\ud56d\uc744 \uc801\uc6a9\ud558\ub824\uba74 macOS\uc5d0\uc11c TurboSpark\ub97c \uc885\ub8cc\ud55c \ud6c4 \ub2e4\uc2dc \uc5f4\ub3c4\ub85d \uc694\uccad\ud560 \uc218 \uc788\uc2b5\ub2c8\ub2e4."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS \u53ef\u80fd\u4f1a\u8981\u6c42\u60a8\u9000\u51fa\u5e76\u91cd\u65b0\u6253\u5f00 TurboSpark \u4ee5\u4f7f\u66f4\u6539\u751f\u6548\u3002"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS \u53ef\u80fd\u6703\u8981\u6c42\u60a8\u7d50\u675f\u4e26\u91cd\u65b0\u6253\u958b TurboSpark\uff0c\u8b8a\u66f4\u624d\u6703\u751f\u6548\u3002"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0642\u062f \u064a\u0637\u0644\u0628 \u0645\u0646\u0643 macOS \u0625\u0646\u0647\u0627\u0621 TurboSpark \u0648\u0625\u0639\u0627\u062f\u0629 \u0641\u062a\u062d\u0647 \u0642\u0628\u0644 \u062a\u0637\u0628\u064a\u0642 \u0627\u0644\u062a\u063a\u064a\u064a\u0631."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05d9\u05d9\u05ea\u05db\u05df \u05e9-macOS \u05d9\u05d1\u05e7\u05e9 \u05dc\u05e6\u05d0\u05ea \u05de-TurboSpark \u05d5\u05dc\u05e4\u05ea\u05d5\u05d7 \u05d0\u05d5\u05ea\u05d5 \u05de\u05d7\u05d3\u05e9 \u05db\u05d3\u05d9 \u05e9\u05d4\u05e9\u05d9\u05e0\u05d5\u05d9 \u05d9\u05d9\u05db\u05e0\u05e1 \u05dc\u05ea\u05d5\u05e7\u05e3."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u092c\u0926\u0932\u093e\u0935 \u0932\u093e\u0917\u0942 \u0939\u094b\u0928\u0947 \u0938\u0947 \u092a\u0939\u0932\u0947 macOS \u0906\u092a\u0938\u0947 TurboSpark \u0915\u094b \u092c\u0902\u0926 \u0915\u0930\u0915\u0947 \u092b\u093f\u0930 \u0938\u0947 \u0916\u094b\u0932\u0928\u0947 \u0915\u0947 \u0932\u093f\u090f \u0915\u0939 \u0938\u0915\u0924\u093e \u0939\u0948\u0964"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS kan je vragen TurboSpark te stoppen en opnieuw te openen voordat de wijziging van kracht wordt."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS mo\u017ce poprosi\u0107 o zamkni\u0119cie i ponowne otwarcie TurboSpark, aby zmiana zacz\u0119\u0142a obowi\u0105zywa\u0107."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "De\u011fi\u015fikli\u011fin uygulanmas\u0131 i\u00e7in macOS sizden TurboSpark'tan \u00e7\u0131k\u0131p yeniden a\u00e7man\u0131z\u0131 isteyebilir."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS \u043c\u043e\u0436\u0435 \u043f\u043e\u043f\u0440\u043e\u0441\u0438\u0442\u0438 \u0432\u0430\u0441 \u0437\u0430\u043a\u0440\u0438\u0442\u0438 \u0439 \u0437\u043d\u043e\u0432\u0443 \u0432\u0456\u0434\u043a\u0440\u0438\u0442\u0438 TurboSpark, \u0449\u043e\u0431 \u0437\u043c\u0456\u043d\u0430 \u043d\u0430\u0431\u0443\u043b\u0430 \u0447\u0438\u043d\u043d\u043e\u0441\u0442\u0456."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS kan be dig avsluta och \u00f6ppna TurboSpark igen innan \u00e4ndringen g\u00e4ller."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS c\u00f3 th\u1ec3 y\u00eau c\u1ea7u b\u1ea1n tho\u00e1t v\u00e0 m\u1edf l\u1ea1i TurboSpark tr\u01b0\u1edbc khi thay \u0111\u1ed5i c\u00f3 hi\u1ec7u l\u1ef1c."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS mungkin meminta Anda keluar dan membuka kembali TurboSpark sebelum perubahan diterapkan."
+          }
+        }
+      }
+    },
+    "How TurboSpark uses audio": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "How TurboSpark uses audio"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "C\u00f3mo usa TurboSpark el audio"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Comment TurboSpark utilise l'audio"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "So verwendet TurboSpark Audio"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Come TurboSpark usa l'audio"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Como o TurboSpark usa o \u00e1udio"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041a\u0430\u043a TurboSpark \u0438\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0435\u0442 \u0437\u0432\u0443\u043a"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark\u3067\u306e\u97f3\u58f0\u306e\u4f7f\u3044\u65b9"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark\uc758 \uc624\ub514\uc624 \uc0ac\uc6a9 \ubc29\uc2dd"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark \u5982\u4f55\u4f7f\u7528\u97f3\u9891"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark \u5982\u4f55\u4f7f\u7528\u97f3\u8a0a"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0643\u064a\u0641 \u064a\u0633\u062a\u062e\u062f\u0645 TurboSpark \u0627\u0644\u0635\u0648\u062a"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05db\u05d9\u05e6\u05d3 TurboSpark \u05de\u05e9\u05ea\u05de\u05e9 \u05d1\u05e9\u05de\u05e2"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark \u0911\u0921\u093f\u092f\u094b \u0915\u093e \u0909\u092a\u092f\u094b\u0917 \u0915\u0948\u0938\u0947 \u0915\u0930\u0924\u093e \u0939\u0948"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hoe TurboSpark audio gebruikt"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Jak TurboSpark u\u017cywa d\u017awi\u0119ku"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark sesi nas\u0131l kullan\u0131r"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u042f\u043a TurboSpark \u0432\u0438\u043a\u043e\u0440\u0438\u0441\u0442\u043e\u0432\u0443\u0454 \u0437\u0432\u0443\u043a"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "S\u00e5 anv\u00e4nder TurboSpark ljud"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "C\u00e1ch TurboSpark s\u1eed d\u1ee5ng \u00e2m thanh"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cara TurboSpark menggunakan audio"
+          }
+        }
+      }
+    },
+    "Audio is transcribed on this Mac by the model you choose.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Audio is transcribed on this Mac by the model you choose."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El audio se transcribe en este Mac con el modelo que elijas."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L'audio est transcrit sur ce Mac par le mod\u00e8le de votre choix."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Audio wird auf diesem Mac mit dem Modell deiner Wahl transkribiert."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L'audio viene trascritto su questo Mac dal modello che scegli."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O \u00e1udio \u00e9 transcrito neste Mac pelo modelo que voc\u00ea escolher."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0417\u0432\u0443\u043a \u0440\u0430\u0441\u0448\u0438\u0444\u0440\u043e\u0432\u044b\u0432\u0430\u0435\u0442\u0441\u044f \u043d\u0430 \u044d\u0442\u043e\u043c Mac \u0432\u044b\u0431\u0440\u0430\u043d\u043d\u043e\u0439 \u0432\u0430\u043c\u0438 \u043c\u043e\u0434\u0435\u043b\u044c\u044e."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u97f3\u58f0\u306f\u3001\u9078\u629e\u3057\u305f\u30e2\u30c7\u30eb\u306b\u3088\u3063\u3066\u3053\u306eMac\u4e0a\u3067\u6587\u5b57\u8d77\u3053\u3057\u3055\u308c\u307e\u3059\u3002"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uc624\ub514\uc624\ub294 \uc120\ud0dd\ud55c \ubaa8\ub378\ub85c \uc774 Mac\uc5d0\uc11c \ud14d\uc2a4\ud2b8\ub85c \ubcc0\ud658\ub429\ub2c8\ub2e4."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u97f3\u9891\u7531\u60a8\u9009\u62e9\u7684\u6a21\u578b\u5728\u8fd9\u53f0 Mac \u4e0a\u8f6c\u5f55\u3002"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u97f3\u8a0a\u6703\u7531\u60a8\u9078\u64c7\u7684\u6a21\u578b\u5728\u9019\u53f0 Mac \u4e0a\u8f49\u9304\u3002"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u064a\u062a\u0645 \u062a\u0641\u0631\u064a\u063a \u0627\u0644\u0635\u0648\u062a \u0639\u0644\u0649 \u062c\u0647\u0627\u0632 Mac \u0647\u0630\u0627 \u0628\u0648\u0627\u0633\u0637\u0629 \u0627\u0644\u0646\u0645\u0648\u0630\u062c \u0627\u0644\u0630\u064a \u062a\u062e\u062a\u0627\u0631\u0647."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05d4\u05e9\u05de\u05e2 \u05de\u05ea\u05d5\u05de\u05dc\u05dc \u05d1-Mac \u05d4\u05d6\u05d4 \u05e2\u05dc \u05d9\u05d3\u05d9 \u05d4\u05de\u05d5\u05d3\u05dc \u05e9\u05d1\u05d7\u05e8\u05ea."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0911\u0921\u093f\u092f\u094b \u0915\u094b \u0907\u0938\u0940 Mac \u092a\u0930 \u0906\u092a\u0915\u0947 \u091a\u0941\u0928\u0947 \u0917\u090f \u092e\u0949\u0921\u0932 \u0926\u094d\u0935\u093e\u0930\u093e \u091f\u094d\u0930\u093e\u0902\u0938\u0915\u094d\u0930\u093e\u0907\u092c \u0915\u093f\u092f\u093e \u091c\u093e\u0924\u093e \u0939\u0948\u0964"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Audio wordt op deze Mac getranscribeerd door het model dat je kiest."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "D\u017awi\u0119k jest transkrybowany na tym Macu przez wybrany przez Ciebie model."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ses, se\u00e7ti\u011finiz model taraf\u0131ndan bu Mac'te yaz\u0131ya d\u00f6k\u00fcl\u00fcr."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0417\u0432\u0443\u043a \u0440\u043e\u0437\u0448\u0438\u0444\u0440\u043e\u0432\u0443\u0454\u0442\u044c\u0441\u044f \u043d\u0430 \u0446\u044c\u043e\u043c\u0443 Mac \u0432\u0438\u0431\u0440\u0430\u043d\u043e\u044e \u0432\u0430\u043c\u0438 \u043c\u043e\u0434\u0435\u043b\u043b\u044e."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ljudet transkriberas p\u00e5 den h\u00e4r Macen av den modell du v\u00e4ljer."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u00c2m thanh \u0111\u01b0\u1ee3c ch\u00e9p l\u1eddi tr\u00ean m\u00e1y Mac n\u00e0y b\u1eb1ng m\u00f4 h\u00ecnh b\u1ea1n ch\u1ecdn."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Audio ditranskripsikan di Mac ini oleh model yang Anda pilih."
+          }
+        }
+      }
+    },
+    "Transcripts are generated by a model. Review them for accuracy.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transcripts are generated by a model. Review them for accuracy."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Las transcripciones las genera un modelo. Revisa que sean precisas."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les transcriptions sont g\u00e9n\u00e9r\u00e9es par un mod\u00e8le. V\u00e9rifiez leur exactitude."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transkripte werden von einem Modell erstellt. Pr\u00fcfe sie auf Richtigkeit."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le trascrizioni sono generate da un modello. Verificane l'accuratezza."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "As transcri\u00e7\u00f5es s\u00e3o geradas por um modelo. Revise-as para verificar a precis\u00e3o."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0420\u0430\u0441\u0448\u0438\u0444\u0440\u043e\u0432\u043a\u0438 \u0441\u043e\u0437\u0434\u0430\u044e\u0442\u0441\u044f \u043c\u043e\u0434\u0435\u043b\u044c\u044e. \u041f\u0440\u043e\u0432\u0435\u0440\u044c\u0442\u0435 \u0438\u0445 \u0442\u043e\u0447\u043d\u043e\u0441\u0442\u044c."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u6587\u5b57\u8d77\u3053\u3057\u306f\u30e2\u30c7\u30eb\u306b\u3088\u3063\u3066\u751f\u6210\u3055\u308c\u307e\u3059\u3002\u6b63\u78ba\u304b\u3069\u3046\u304b\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044\u3002"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uc804\uc0ac\ubcf8\uc740 \ubaa8\ub378\uc774 \uc0dd\uc131\ud569\ub2c8\ub2e4. \uc815\ud655\ud55c\uc9c0 \uac80\ud1a0\ud558\uc138\uc694."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u8f6c\u5f55\u5185\u5bb9\u7531\u6a21\u578b\u751f\u6210\u3002\u8bf7\u68c0\u67e5\u5176\u51c6\u786e\u6027\u3002"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u8f49\u9304\u5167\u5bb9\u7531\u6a21\u578b\u7522\u751f\u3002\u8acb\u6aa2\u67e5\u5176\u6e96\u78ba\u6027\u3002"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u064a\u062a\u0645 \u0625\u0646\u0634\u0627\u0621 \u0627\u0644\u062a\u0641\u0631\u064a\u063a\u0627\u062a \u0628\u0648\u0627\u0633\u0637\u0629 \u0646\u0645\u0648\u0630\u062c. \u0631\u0627\u062c\u0639\u0647\u0627 \u0644\u0644\u062a\u0623\u0643\u062f \u0645\u0646 \u062f\u0642\u062a\u0647\u0627."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05d4\u05ea\u05de\u05dc\u05d5\u05dc\u05d9\u05dd \u05e0\u05d5\u05e6\u05e8\u05d9\u05dd \u05e2\u05dc \u05d9\u05d3\u05d9 \u05de\u05d5\u05d3\u05dc. \u05d9\u05e9 \u05dc\u05d1\u05d3\u05d5\u05e7 \u05d0\u05ea \u05d4\u05d3\u05d9\u05d5\u05e7 \u05e9\u05dc\u05d4\u05dd."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u091f\u094d\u0930\u093e\u0902\u0938\u0915\u094d\u0930\u093f\u092a\u094d\u091f \u090f\u0915 \u092e\u0949\u0921\u0932 \u0926\u094d\u0935\u093e\u0930\u093e \u092c\u0928\u093e\u090f \u091c\u093e\u0924\u0947 \u0939\u0948\u0902\u0964 \u0938\u091f\u0940\u0915\u0924\u093e \u0915\u0947 \u0932\u093f\u090f \u0909\u0928\u0915\u0940 \u0938\u092e\u0940\u0915\u094d\u0937\u093e \u0915\u0930\u0947\u0902\u0964"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transcripties worden door een model gegenereerd. Controleer ze op juistheid."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transkrypcje s\u0105 generowane przez model. Sprawd\u017a ich dok\u0142adno\u015b\u0107."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transkriptler bir model taraf\u0131ndan olu\u015fturulur. Do\u011fruluklar\u0131n\u0131 kontrol edin."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0420\u043e\u0437\u0448\u0438\u0444\u0440\u043e\u0432\u043a\u0438 \u0441\u0442\u0432\u043e\u0440\u044e\u0454 \u043c\u043e\u0434\u0435\u043b\u044c. \u041f\u0435\u0440\u0435\u0432\u0456\u0440\u0442\u0435 \u0457\u0445\u043d\u044e \u0442\u043e\u0447\u043d\u0456\u0441\u0442\u044c."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transkriptioner genereras av en modell. Granska dem s\u00e5 att de st\u00e4mmer."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "B\u1ea3n ch\u00e9p l\u1eddi do m\u00f4 h\u00ecnh t\u1ea1o ra. H\u00e3y xem l\u1ea1i \u0111\u1ec3 \u0111\u1ea3m b\u1ea3o \u0111\u1ed9 ch\u00ednh x\u00e1c."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Transkrip dibuat oleh model. Periksa keakuratannya."
+          }
+        }
+      }
+    },
+    "Tell others before you record a meeting. Some places require their consent.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tell others before you record a meeting. Some places require their consent."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Avisa a los dem\u00e1s antes de grabar una reuni\u00f3n. En algunos lugares se requiere su consentimiento."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pr\u00e9venez les autres avant d'enregistrer une r\u00e9union. Certains endroits exigent leur consentement."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Informiere andere, bevor du ein Meeting aufnimmst. Mancherorts ist ihre Zustimmung erforderlich."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Avvisa gli altri prima di registrare una riunione. In alcuni luoghi \u00e8 richiesto il loro consenso."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Avise os outros antes de gravar uma reuni\u00e3o. Alguns lugares exigem o consentimento deles."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041f\u0440\u0435\u0434\u0443\u043f\u0440\u0435\u0434\u0438\u0442\u0435 \u0434\u0440\u0443\u0433\u0438\u0445, \u043f\u0440\u0435\u0436\u0434\u0435 \u0447\u0435\u043c \u0437\u0430\u043f\u0438\u0441\u044b\u0432\u0430\u0442\u044c \u0432\u0441\u0442\u0440\u0435\u0447\u0443. \u0412 \u043d\u0435\u043a\u043e\u0442\u043e\u0440\u044b\u0445 \u043c\u0435\u0441\u0442\u0430\u0445 \u0442\u0440\u0435\u0431\u0443\u0435\u0442\u0441\u044f \u0438\u0445 \u0441\u043e\u0433\u043b\u0430\u0441\u0438\u0435."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u4f1a\u8b70\u3092\u9332\u97f3\u3059\u308b\u524d\u306b\u3001\u53c2\u52a0\u8005\u306b\u77e5\u3089\u305b\u3066\u304f\u3060\u3055\u3044\u3002\u5730\u57df\u306b\u3088\u3063\u3066\u306f\u540c\u610f\u304c\u5fc5\u8981\u3067\u3059\u3002"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\ud68c\uc758\ub97c \ub179\uc74c\ud558\uae30 \uc804\uc5d0 \ub2e4\ub978 \uc0ac\ub78c\uc5d0\uac8c \uc54c\ub9ac\uc138\uc694. \uc77c\ubd80 \uc9c0\uc5ed\uc5d0\uc11c\ub294 \ub3d9\uc758\uac00 \ud544\uc694\ud569\ub2c8\ub2e4."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5f55\u5236\u4f1a\u8bae\u524d\u8bf7\u544a\u77e5\u5176\u4ed6\u4eba\u3002\u67d0\u4e9b\u5730\u533a\u8981\u6c42\u5f81\u5f97\u4ed6\u4eec\u7684\u540c\u610f\u3002"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u9304\u88fd\u6703\u8b70\u524d\u8acb\u544a\u77e5\u5176\u4ed6\u4eba\u3002\u67d0\u4e9b\u5730\u5340\u9700\u8981\u53d6\u5f97\u4ed6\u5011\u7684\u540c\u610f\u3002"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0623\u062e\u0628\u0631 \u0627\u0644\u0622\u062e\u0631\u064a\u0646 \u0642\u0628\u0644 \u062a\u0633\u062c\u064a\u0644 \u0627\u062c\u062a\u0645\u0627\u0639. \u062a\u0634\u062a\u0631\u0637 \u0628\u0639\u0636 \u0627\u0644\u0623\u0645\u0627\u0643\u0646 \u0645\u0648\u0627\u0641\u0642\u062a\u0647\u0645."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05d9\u05e9 \u05dc\u05d9\u05d9\u05d3\u05e2 \u05d0\u05d7\u05e8\u05d9\u05dd \u05dc\u05e4\u05e0\u05d9 \u05d4\u05e7\u05dc\u05d8\u05ea \u05e4\u05d2\u05d9\u05e9\u05d4. \u05d1\u05de\u05e7\u05d5\u05de\u05d5\u05ea \u05de\u05e1\u05d5\u05d9\u05de\u05d9\u05dd \u05e0\u05d3\u05e8\u05e9\u05ea \u05d4\u05e1\u05db\u05de\u05ea\u05dd."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u092e\u0940\u091f\u093f\u0902\u0917 \u0930\u093f\u0915\u0949\u0930\u094d\u0921 \u0915\u0930\u0928\u0947 \u0938\u0947 \u092a\u0939\u0932\u0947 \u0926\u0942\u0938\u0930\u094b\u0902 \u0915\u094b \u092c\u0924\u093e\u090f\u0901\u0964 \u0915\u0941\u091b \u091c\u0917\u0939\u094b\u0902 \u092a\u0930 \u0909\u0928\u0915\u0940 \u0938\u0939\u092e\u0924\u093f \u0906\u0935\u0936\u094d\u092f\u0915 \u0939\u094b\u0924\u0940 \u0939\u0948\u0964"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Laat anderen het weten voordat je een vergadering opneemt. Op sommige plaatsen is hun toestemming vereist."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Poinformuj innych, zanim nagrasz spotkanie. W niekt\u00f3rych miejscach wymagana jest ich zgoda."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bir toplant\u0131y\u0131 kaydetmeden \u00f6nce di\u011ferlerini bilgilendirin. Baz\u0131 yerlerde onlar\u0131n onay\u0131 gerekir."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041f\u043e\u043f\u0435\u0440\u0435\u0434\u044c\u0442\u0435 \u0456\u043d\u0448\u0438\u0445, \u043f\u0435\u0440\u0448 \u043d\u0456\u0436 \u0437\u0430\u043f\u0438\u0441\u0443\u0432\u0430\u0442\u0438 \u0437\u0443\u0441\u0442\u0440\u0456\u0447. \u0423 \u0434\u0435\u044f\u043a\u0438\u0445 \u043c\u0456\u0441\u0446\u044f\u0445 \u043f\u043e\u0442\u0440\u0456\u0431\u043d\u0430 \u0457\u0445\u043d\u044f \u0437\u0433\u043e\u0434\u0430."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ber\u00e4tta f\u00f6r andra innan du spelar in ett m\u00f6te. P\u00e5 vissa platser kr\u00e4vs deras samtycke."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "H\u00e3y b\u00e1o cho ng\u01b0\u1eddi kh\u00e1c tr\u01b0\u1edbc khi ghi \u00e2m cu\u1ed9c h\u1ecdp. M\u1ed9t s\u1ed1 n\u01a1i y\u00eau c\u1ea7u h\u1ecd \u0111\u1ed3ng \u00fd."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beri tahu orang lain sebelum Anda merekam rapat. Beberapa tempat mewajibkan persetujuan mereka."
+          }
+        }
+      }
+    },
+    "A selected source needs macOS access before you can record.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A selected source needs macOS access before you can record."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Una fuente seleccionada necesita acceso de macOS antes de que puedas grabar."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Une source s\u00e9lectionn\u00e9e a besoin d'un acc\u00e8s macOS avant que vous puissiez enregistrer."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eine ausgew\u00e4hlte Quelle braucht macOS-Zugriff, bevor du aufnehmen kannst."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Una sorgente selezionata richiede l'accesso di macOS prima che tu possa registrare."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uma fonte selecionada precisa de acesso do macOS antes que voc\u00ea possa gravar."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0412\u044b\u0431\u0440\u0430\u043d\u043d\u043e\u043c\u0443 \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0443 \u043d\u0443\u0436\u0435\u043d \u0434\u043e\u0441\u0442\u0443\u043f macOS, \u043f\u0440\u0435\u0436\u0434\u0435 \u0447\u0435\u043c \u043c\u043e\u0436\u043d\u043e \u0431\u0443\u0434\u0435\u0442 \u0437\u0430\u043f\u0438\u0441\u044b\u0432\u0430\u0442\u044c."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u9332\u97f3\u3059\u308b\u306b\u306f\u3001\u9078\u629e\u3057\u305f\u30bd\u30fc\u30b9\u306bmacOS\u306e\u30a2\u30af\u30bb\u30b9\u8a31\u53ef\u304c\u5fc5\u8981\u3067\u3059\u3002"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\ub179\uc74c\ud558\ub824\uba74 \uc120\ud0dd\ud55c \uc18c\uc2a4\uc5d0 macOS \uc811\uadfc \uad8c\ud55c\uc774 \ud544\uc694\ud569\ub2c8\ub2e4."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u6240\u9009\u6765\u6e90\u9700\u8981 macOS \u8bbf\u95ee\u6743\u9650\u624d\u80fd\u5f55\u97f3\u3002"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u6240\u9078\u4f86\u6e90\u9700\u8981 macOS \u5b58\u53d6\u6b0a\u624d\u80fd\u9304\u97f3\u3002"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u064a\u062d\u062a\u0627\u062c \u0645\u0635\u062f\u0631 \u0645\u062d\u062f\u062f \u0625\u0644\u0649 \u0625\u0630\u0646 \u0627\u0644\u0648\u0635\u0648\u0644 \u0641\u064a macOS \u0642\u0628\u0644 \u0623\u0646 \u062a\u062a\u0645\u0643\u0646 \u0645\u0646 \u0627\u0644\u062a\u0633\u062c\u064a\u0644."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05de\u05e7\u05d5\u05e8 \u05e9\u05e0\u05d1\u05d7\u05e8 \u05d6\u05e7\u05d5\u05e7 \u05dc\u05d2\u05d9\u05e9\u05d4 \u05e9\u05dc macOS \u05dc\u05e4\u05e0\u05d9 \u05e9\u05e0\u05d9\u05ea\u05df \u05dc\u05d4\u05e7\u05dc\u05d9\u05d8."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0930\u093f\u0915\u0949\u0930\u094d\u0921 \u0915\u0930\u0928\u0947 \u0938\u0947 \u092a\u0939\u0932\u0947 \u0915\u093f\u0938\u0940 \u091a\u0941\u0928\u0947 \u0917\u090f \u0938\u094d\u0930\u094b\u0924 \u0915\u094b macOS \u090f\u0915\u094d\u0938\u0947\u0938 \u0915\u0940 \u0906\u0935\u0936\u094d\u092f\u0915\u0924\u093e \u0939\u0948\u0964"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Een geselecteerde bron heeft macOS-toegang nodig voordat je kunt opnemen."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wybrane \u017ar\u00f3d\u0142o wymaga dost\u0119pu macOS, zanim b\u0119dzie mo\u017cna nagrywa\u0107."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kay\u0131t yapabilmeniz i\u00e7in se\u00e7ili bir kayna\u011f\u0131n macOS eri\u015fimine ihtiyac\u0131 var."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0412\u0438\u0431\u0440\u0430\u043d\u043e\u043c\u0443 \u0434\u0436\u0435\u0440\u0435\u043b\u0443 \u043f\u043e\u0442\u0440\u0456\u0431\u0435\u043d \u0434\u043e\u0441\u0442\u0443\u043f macOS, \u043f\u0435\u0440\u0448 \u043d\u0456\u0436 \u0432\u0438 \u0437\u043c\u043e\u0436\u0435\u0442\u0435 \u0437\u0430\u043f\u0438\u0441\u0443\u0432\u0430\u0442\u0438."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "En vald k\u00e4lla beh\u00f6ver macOS-\u00e5tkomst innan du kan spela in."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "M\u1ed9t ngu\u1ed3n \u0111\u00e3 ch\u1ecdn c\u1ea7n quy\u1ec1n truy c\u1eadp macOS tr\u01b0\u1edbc khi b\u1ea1n c\u00f3 th\u1ec3 ghi."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sumber yang dipilih memerlukan akses macOS sebelum Anda dapat merekam."
+          }
+        }
+      }
+    },
+    "Microphone access is not allowed. Open Check devices and permissions on the Record page to allow it.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Microphone access is not allowed. Open Check devices and permissions on the Record page to allow it."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El acceso al micr\u00f3fono no est\u00e1 permitido. Abre Comprobar dispositivos y permisos en la p\u00e1gina Grabar para permitirlo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L'acc\u00e8s au microphone n'est pas autoris\u00e9. Ouvrez V\u00e9rifier les appareils et les autorisations dans la page Enregistrer pour l'autoriser."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Mikrofonzugriff ist nicht erlaubt. \u00d6ffne \u201eGer\u00e4te und Berechtigungen pr\u00fcfen\u201c auf der Seite \u201eAufnehmen\u201c, um ihn zu erlauben."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L'accesso al microfono non \u00e8 consentito. Apri Verifica dispositivi e autorizzazioni nella pagina Registra per consentirlo."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O acesso ao microfone n\u00e3o est\u00e1 permitido. Abra Verificar dispositivos e permiss\u00f5es na p\u00e1gina Gravar para permitir."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0414\u043e\u0441\u0442\u0443\u043f \u043a \u043c\u0438\u043a\u0440\u043e\u0444\u043e\u043d\u0443 \u043d\u0435 \u0440\u0430\u0437\u0440\u0435\u0448\u0451\u043d. \u041e\u0442\u043a\u0440\u043e\u0439\u0442\u0435 \u00ab\u041f\u0440\u043e\u0432\u0435\u0440\u0438\u0442\u044c \u0443\u0441\u0442\u0440\u043e\u0439\u0441\u0442\u0432\u0430 \u0438 \u0440\u0430\u0437\u0440\u0435\u0448\u0435\u043d\u0438\u044f\u00bb \u043d\u0430 \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u0435 \u00ab\u0417\u0430\u043f\u0438\u0441\u0430\u0442\u044c\u00bb, \u0447\u0442\u043e\u0431\u044b \u0440\u0430\u0437\u0440\u0435\u0448\u0438\u0442\u044c \u0435\u0433\u043e."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u30de\u30a4\u30af\u3078\u306e\u30a2\u30af\u30bb\u30b9\u304c\u8a31\u53ef\u3055\u308c\u3066\u3044\u307e\u305b\u3093\u3002\u300c\u9332\u97f3\u300d\u30da\u30fc\u30b8\u3067\u300c\u30c7\u30d0\u30a4\u30b9\u3068\u6a29\u9650\u3092\u78ba\u8a8d\u300d\u3092\u958b\u3044\u3066\u8a31\u53ef\u3057\u3066\u304f\u3060\u3055\u3044\u3002"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\ub9c8\uc774\ud06c \uc811\uadfc\uc774 \ud5c8\uc6a9\ub418\uc9c0 \uc54a\uc558\uc2b5\ub2c8\ub2e4. \ub179\uc74c \ud398\uc774\uc9c0\uc5d0\uc11c \uae30\uae30 \ubc0f \uad8c\ud55c \ud655\uc778\uc744 \uc5f4\uc5b4 \ud5c8\uc6a9\ud558\uc138\uc694."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u672a\u5141\u8bb8\u8bbf\u95ee\u9ea6\u514b\u98ce\u3002\u8bf7\u5728\u201c\u5f55\u97f3\u201d\u9875\u9762\u6253\u5f00\u201c\u68c0\u67e5\u8bbe\u5907\u548c\u6743\u9650\u201d\u6765\u5141\u8bb8\u8bbf\u95ee\u3002"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u672a\u5141\u8a31\u5b58\u53d6\u9ea5\u514b\u98a8\u3002\u8acb\u5728\u300c\u9304\u97f3\u300d\u9801\u9762\u958b\u555f\u300c\u6aa2\u67e5\u88dd\u7f6e\u548c\u6b0a\u9650\u300d\u4ee5\u5141\u8a31\u5b58\u53d6\u3002"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0627\u0644\u0648\u0635\u0648\u0644 \u0625\u0644\u0649 \u0627\u0644\u0645\u064a\u0643\u0631\u0648\u0641\u0648\u0646 \u063a\u064a\u0631 \u0645\u0633\u0645\u0648\u062d. \u0627\u0641\u062a\u062d \u0627\u0644\u062a\u062d\u0642\u0642 \u0645\u0646 \u0627\u0644\u0623\u062c\u0647\u0632\u0629 \u0648\u0627\u0644\u0623\u0630\u0648\u0646\u0627\u062a \u0641\u064a \u0635\u0641\u062d\u0629 \u062a\u0633\u062c\u064a\u0644 \u0644\u0644\u0633\u0645\u0627\u062d \u0628\u0647."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05d4\u05d2\u05d9\u05e9\u05d4 \u05dc\u05de\u05d9\u05e7\u05e8\u05d5\u05e4\u05d5\u05df \u05d0\u05d9\u05e0\u05d4 \u05de\u05d5\u05ea\u05e8\u05ea. \u05d9\u05e9 \u05dc\u05e4\u05ea\u05d5\u05d7 \u05d0\u05ea \u05d1\u05d3\u05d9\u05e7\u05ea \u05d4\u05ea\u05e7\u05e0\u05d9\u05dd \u05d5\u05d4\u05e8\u05e9\u05d0\u05d5\u05ea \u05d1\u05d3\u05e3 \u05d4\u05e7\u05dc\u05d8\u05d4 \u05db\u05d3\u05d9 \u05dc\u05d0\u05e4\u05e9\u05e8 \u05d0\u05d5\u05ea\u05d4."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u092e\u093e\u0907\u0915\u094d\u0930\u094b\u092b\u093c\u094b\u0928 \u090f\u0915\u094d\u0938\u0947\u0938 \u0915\u0940 \u0905\u0928\u0941\u092e\u0924\u093f \u0928\u0939\u0940\u0902 \u0939\u0948\u0964 \u0907\u0938\u0915\u0940 \u0905\u0928\u0941\u092e\u0924\u093f \u0926\u0947\u0928\u0947 \u0915\u0947 \u0932\u093f\u090f \u0930\u093f\u0915\u0949\u0930\u094d\u0921 \u0915\u0930\u0947\u0902 \u092a\u0947\u091c \u092a\u0930 \u0921\u093f\u0935\u093e\u0907\u0938 \u0914\u0930 \u0905\u0928\u0941\u092e\u0924\u093f\u092f\u093e\u0901 \u091c\u093e\u0901\u091a\u0947\u0902 \u0916\u094b\u0932\u0947\u0902\u0964"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Microfoontoegang is niet toegestaan. Open Apparaten en machtigingen controleren op de pagina Opnemen om dit toe te staan."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dost\u0119p do mikrofonu nie jest dozwolony. Otw\u00f3rz Sprawd\u017a urz\u0105dzenia i uprawnienia na stronie Nagraj, aby na niego zezwoli\u0107."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mikrofon eri\u015fimine izin verilmedi. \u0130zin vermek i\u00e7in Kaydet sayfas\u0131nda Ayg\u0131tlar\u0131 ve izinleri kontrol et se\u00e7ene\u011fini a\u00e7\u0131n."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0414\u043e\u0441\u0442\u0443\u043f \u0434\u043e \u043c\u0456\u043a\u0440\u043e\u0444\u043e\u043d\u0430 \u043d\u0435 \u0434\u043e\u0437\u0432\u043e\u043b\u0435\u043d\u043e. \u0412\u0456\u0434\u043a\u0440\u0438\u0439\u0442\u0435 \u00ab\u041f\u0435\u0440\u0435\u0432\u0456\u0440\u0438\u0442\u0438 \u043f\u0440\u0438\u0441\u0442\u0440\u043e\u0457 \u0442\u0430 \u0434\u043e\u0437\u0432\u043e\u043b\u0438\u00bb \u043d\u0430 \u0441\u0442\u043e\u0440\u0456\u043d\u0446\u0456 \u00ab\u0417\u0430\u043f\u0438\u0441\u0430\u0442\u0438\u00bb, \u0449\u043e\u0431 \u0434\u043e\u0437\u0432\u043e\u043b\u0438\u0442\u0438 \u0439\u043e\u0433\u043e."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mikrofon\u00e5tkomst \u00e4r inte till\u00e5ten. \u00d6ppna Kontrollera enheter och beh\u00f6righeter p\u00e5 sidan Spela in f\u00f6r att till\u00e5ta den."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ch\u01b0a \u0111\u01b0\u1ee3c ph\u00e9p truy c\u1eadp micr\u00f4. H\u00e3y m\u1edf Ki\u1ec3m tra thi\u1ebft b\u1ecb v\u00e0 quy\u1ec1n truy c\u1eadp tr\u00ean trang Ghi \u00e2m \u0111\u1ec3 cho ph\u00e9p."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Akses mikrofon tidak diizinkan. Buka Periksa perangkat dan izin di halaman Rekam untuk mengizinkannya."
+          }
+        }
+      }
+    },
+    "App or system audio access is not allowed. Open Check devices and permissions on the Record page to allow it.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "App or system audio access is not allowed. Open Check devices and permissions on the Record page to allow it."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El acceso al audio de apps o del sistema no est\u00e1 permitido. Abre Comprobar dispositivos y permisos en la p\u00e1gina Grabar para permitirlo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L'acc\u00e8s \u00e0 l'audio d'une app ou du syst\u00e8me n'est pas autoris\u00e9. Ouvrez V\u00e9rifier les appareils et les autorisations dans la page Enregistrer pour l'autoriser."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Zugriff auf App- oder Systemaudio ist nicht erlaubt. \u00d6ffne \u201eGer\u00e4te und Berechtigungen pr\u00fcfen\u201c auf der Seite \u201eAufnehmen\u201c, um ihn zu erlauben."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L'accesso all'audio delle app o di sistema non \u00e8 consentito. Apri Verifica dispositivi e autorizzazioni nella pagina Registra per consentirlo."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O acesso ao \u00e1udio de apps ou do sistema n\u00e3o est\u00e1 permitido. Abra Verificar dispositivos e permiss\u00f5es na p\u00e1gina Gravar para permitir."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0414\u043e\u0441\u0442\u0443\u043f \u043a \u0437\u0432\u0443\u043a\u0443 \u043f\u0440\u0438\u043b\u043e\u0436\u0435\u043d\u0438\u0439 \u0438\u043b\u0438 \u0441\u0438\u0441\u0442\u0435\u043c\u044b \u043d\u0435 \u0440\u0430\u0437\u0440\u0435\u0448\u0451\u043d. \u041e\u0442\u043a\u0440\u043e\u0439\u0442\u0435 \u00ab\u041f\u0440\u043e\u0432\u0435\u0440\u0438\u0442\u044c \u0443\u0441\u0442\u0440\u043e\u0439\u0441\u0442\u0432\u0430 \u0438 \u0440\u0430\u0437\u0440\u0435\u0448\u0435\u043d\u0438\u044f\u00bb \u043d\u0430 \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u0435 \u00ab\u0417\u0430\u043f\u0438\u0441\u0430\u0442\u044c\u00bb, \u0447\u0442\u043e\u0431\u044b \u0440\u0430\u0437\u0440\u0435\u0448\u0438\u0442\u044c \u0435\u0433\u043e."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u30a2\u30d7\u30ea\u307e\u305f\u306f\u30b7\u30b9\u30c6\u30e0\u306e\u97f3\u58f0\u3078\u306e\u30a2\u30af\u30bb\u30b9\u304c\u8a31\u53ef\u3055\u308c\u3066\u3044\u307e\u305b\u3093\u3002\u300c\u9332\u97f3\u300d\u30da\u30fc\u30b8\u3067\u300c\u30c7\u30d0\u30a4\u30b9\u3068\u6a29\u9650\u3092\u78ba\u8a8d\u300d\u3092\u958b\u3044\u3066\u8a31\u53ef\u3057\u3066\u304f\u3060\u3055\u3044\u3002"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uc571 \ub610\ub294 \uc2dc\uc2a4\ud15c \uc624\ub514\uc624 \uc811\uadfc\uc774 \ud5c8\uc6a9\ub418\uc9c0 \uc54a\uc558\uc2b5\ub2c8\ub2e4. \ub179\uc74c \ud398\uc774\uc9c0\uc5d0\uc11c \uae30\uae30 \ubc0f \uad8c\ud55c \ud655\uc778\uc744 \uc5f4\uc5b4 \ud5c8\uc6a9\ud558\uc138\uc694."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u672a\u5141\u8bb8\u8bbf\u95ee\u5e94\u7528\u6216\u7cfb\u7edf\u97f3\u9891\u3002\u8bf7\u5728\u201c\u5f55\u97f3\u201d\u9875\u9762\u6253\u5f00\u201c\u68c0\u67e5\u8bbe\u5907\u548c\u6743\u9650\u201d\u6765\u5141\u8bb8\u8bbf\u95ee\u3002"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u672a\u5141\u8a31\u5b58\u53d6 App \u6216\u7cfb\u7d71\u97f3\u8a0a\u3002\u8acb\u5728\u300c\u9304\u97f3\u300d\u9801\u9762\u958b\u555f\u300c\u6aa2\u67e5\u88dd\u7f6e\u548c\u6b0a\u9650\u300d\u4ee5\u5141\u8a31\u5b58\u53d6\u3002"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0627\u0644\u0648\u0635\u0648\u0644 \u0625\u0644\u0649 \u0635\u0648\u062a \u0627\u0644\u062a\u0637\u0628\u064a\u0642 \u0623\u0648 \u0627\u0644\u0646\u0638\u0627\u0645 \u063a\u064a\u0631 \u0645\u0633\u0645\u0648\u062d. \u0627\u0641\u062a\u062d \u0627\u0644\u062a\u062d\u0642\u0642 \u0645\u0646 \u0627\u0644\u0623\u062c\u0647\u0632\u0629 \u0648\u0627\u0644\u0623\u0630\u0648\u0646\u0627\u062a \u0641\u064a \u0635\u0641\u062d\u0629 \u062a\u0633\u062c\u064a\u0644 \u0644\u0644\u0633\u0645\u0627\u062d \u0628\u0647."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05d4\u05d2\u05d9\u05e9\u05d4 \u05dc\u05e9\u05de\u05e2 \u05e9\u05dc \u05d9\u05d9\u05e9\u05d5\u05dd \u05d0\u05d5 \u05e9\u05dc \u05d4\u05de\u05e2\u05e8\u05db\u05ea \u05d0\u05d9\u05e0\u05d4 \u05de\u05d5\u05ea\u05e8\u05ea. \u05d9\u05e9 \u05dc\u05e4\u05ea\u05d5\u05d7 \u05d0\u05ea \u05d1\u05d3\u05d9\u05e7\u05ea \u05d4\u05ea\u05e7\u05e0\u05d9\u05dd \u05d5\u05d4\u05e8\u05e9\u05d0\u05d5\u05ea \u05d1\u05d3\u05e3 \u05d4\u05e7\u05dc\u05d8\u05d4 \u05db\u05d3\u05d9 \u05dc\u05d0\u05e4\u05e9\u05e8 \u05d0\u05d5\u05ea\u05d4."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0910\u092a \u092f\u093e \u0938\u093f\u0938\u094d\u091f\u092e \u0911\u0921\u093f\u092f\u094b \u090f\u0915\u094d\u0938\u0947\u0938 \u0915\u0940 \u0905\u0928\u0941\u092e\u0924\u093f \u0928\u0939\u0940\u0902 \u0939\u0948\u0964 \u0907\u0938\u0915\u0940 \u0905\u0928\u0941\u092e\u0924\u093f \u0926\u0947\u0928\u0947 \u0915\u0947 \u0932\u093f\u090f \u0930\u093f\u0915\u0949\u0930\u094d\u0921 \u0915\u0930\u0947\u0902 \u092a\u0947\u091c \u092a\u0930 \u0921\u093f\u0935\u093e\u0907\u0938 \u0914\u0930 \u0905\u0928\u0941\u092e\u0924\u093f\u092f\u093e\u0901 \u091c\u093e\u0901\u091a\u0947\u0902 \u0916\u094b\u0932\u0947\u0902\u0964"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Toegang tot app- of systeemaudio is niet toegestaan. Open Apparaten en machtigingen controleren op de pagina Opnemen om dit toe te staan."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dost\u0119p do d\u017awi\u0119ku aplikacji lub systemu nie jest dozwolony. Otw\u00f3rz Sprawd\u017a urz\u0105dzenia i uprawnienia na stronie Nagraj, aby na niego zezwoli\u0107."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uygulama veya sistem sesi eri\u015fimine izin verilmedi. \u0130zin vermek i\u00e7in Kaydet sayfas\u0131nda Ayg\u0131tlar\u0131 ve izinleri kontrol et se\u00e7ene\u011fini a\u00e7\u0131n."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0414\u043e\u0441\u0442\u0443\u043f \u0434\u043e \u0437\u0432\u0443\u043a\u0443 \u0437\u0430\u0441\u0442\u043e\u0441\u0443\u043d\u043a\u0456\u0432 \u0430\u0431\u043e \u0441\u0438\u0441\u0442\u0435\u043c\u0438 \u043d\u0435 \u0434\u043e\u0437\u0432\u043e\u043b\u0435\u043d\u043e. \u0412\u0456\u0434\u043a\u0440\u0438\u0439\u0442\u0435 \u00ab\u041f\u0435\u0440\u0435\u0432\u0456\u0440\u0438\u0442\u0438 \u043f\u0440\u0438\u0441\u0442\u0440\u043e\u0457 \u0442\u0430 \u0434\u043e\u0437\u0432\u043e\u043b\u0438\u00bb \u043d\u0430 \u0441\u0442\u043e\u0440\u0456\u043d\u0446\u0456 \u00ab\u0417\u0430\u043f\u0438\u0441\u0430\u0442\u0438\u00bb, \u0449\u043e\u0431 \u0434\u043e\u0437\u0432\u043e\u043b\u0438\u0442\u0438 \u0439\u043e\u0433\u043e."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u00c5tkomst till app- eller systemljud \u00e4r inte till\u00e5ten. \u00d6ppna Kontrollera enheter och beh\u00f6righeter p\u00e5 sidan Spela in f\u00f6r att till\u00e5ta den."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ch\u01b0a \u0111\u01b0\u1ee3c ph\u00e9p truy c\u1eadp \u00e2m thanh \u1ee9ng d\u1ee5ng ho\u1eb7c h\u1ec7 th\u1ed1ng. H\u00e3y m\u1edf Ki\u1ec3m tra thi\u1ebft b\u1ecb v\u00e0 quy\u1ec1n truy c\u1eadp tr\u00ean trang Ghi \u00e2m \u0111\u1ec3 cho ph\u00e9p."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Akses audio aplikasi atau sistem tidak diizinkan. Buka Periksa perangkat dan izin di halaman Rekam untuk mengizinkannya."
+          }
+        }
+      }
+    },
+    "Access is optional. Without it you can still import, transcribe, and edit audio files.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Access is optional. Without it you can still import, transcribe, and edit audio files."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El acceso es opcional. Sin \u00e9l, puedes importar, transcribir y editar archivos de audio."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L'acc\u00e8s est facultatif. Sans lui, vous pouvez toujours importer, transcrire et modifier des fichiers audio."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Zugriff ist optional. Ohne ihn kannst du weiterhin Audiodateien importieren, transkribieren und bearbeiten."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L'accesso \u00e8 facoltativo. Senza di esso puoi comunque importare, trascrivere e modificare file audio."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O acesso \u00e9 opcional. Sem ele, voc\u00ea ainda pode importar, transcrever e editar arquivos de \u00e1udio."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0414\u043e\u0441\u0442\u0443\u043f \u043d\u0435\u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u0435\u043d. \u0411\u0435\u0437 \u043d\u0435\u0433\u043e \u0432\u044b \u043f\u043e-\u043f\u0440\u0435\u0436\u043d\u0435\u043c\u0443 \u043c\u043e\u0436\u0435\u0442\u0435 \u0438\u043c\u043f\u043e\u0440\u0442\u0438\u0440\u043e\u0432\u0430\u0442\u044c, \u0440\u0430\u0441\u0448\u0438\u0444\u0440\u043e\u0432\u044b\u0432\u0430\u0442\u044c \u0438 \u0440\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0430\u0443\u0434\u0438\u043e\u0444\u0430\u0439\u043b\u044b."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u30a2\u30af\u30bb\u30b9\u306f\u4efb\u610f\u3067\u3059\u3002\u8a31\u53ef\u3057\u306a\u304f\u3066\u3082\u3001\u97f3\u58f0\u30d5\u30a1\u30a4\u30eb\u306e\u8aad\u307f\u8fbc\u307f\u3001\u6587\u5b57\u8d77\u3053\u3057\u3001\u7de8\u96c6\u306f\u3067\u304d\u307e\u3059\u3002"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uc811\uadfc \ud5c8\uc6a9\uc740 \uc120\ud0dd \uc0ac\ud56d\uc785\ub2c8\ub2e4. \ud5c8\uc6a9\ud558\uc9c0 \uc54a\uc544\ub3c4 \uc624\ub514\uc624 \ud30c\uc77c\uc744 \uac00\uc838\uc624\uace0, \ud14d\uc2a4\ud2b8\ub85c \ubcc0\ud658\ud558\uace0, \ud3b8\uc9d1\ud560 \uc218 \uc788\uc2b5\ub2c8\ub2e4."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u8bbf\u95ee\u6743\u9650\u662f\u53ef\u9009\u7684\u3002\u5373\u4f7f\u4e0d\u6388\u4e88\uff0c\u60a8\u4ecd\u53ef\u5bfc\u5165\u3001\u8f6c\u5f55\u548c\u7f16\u8f91\u97f3\u9891\u6587\u4ef6\u3002"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5b58\u53d6\u6b0a\u662f\u9078\u7528\u7684\u3002\u5373\u4f7f\u4e0d\u6388\u4e88\uff0c\u60a8\u4ecd\u53ef\u532f\u5165\u3001\u8f49\u9304\u548c\u7de8\u8f2f\u97f3\u8a0a\u6a94\u6848\u3002"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0627\u0644\u0648\u0635\u0648\u0644 \u0627\u062e\u062a\u064a\u0627\u0631\u064a. \u0628\u062f\u0648\u0646\u0647 \u064a\u0645\u0643\u0646\u0643 \u0645\u0639 \u0630\u0644\u0643 \u0627\u0633\u062a\u064a\u0631\u0627\u062f \u0627\u0644\u0645\u0644\u0641\u0627\u062a \u0627\u0644\u0635\u0648\u062a\u064a\u0629 \u0648\u062a\u0641\u0631\u064a\u063a\u0647\u0627 \u0648\u062a\u062d\u0631\u064a\u0631\u0647\u0627."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05d4\u05d2\u05d9\u05e9\u05d4 \u05d4\u05d9\u05d0 \u05d0\u05d5\u05e4\u05e6\u05d9\u05d5\u05e0\u05dc\u05d9\u05ea. \u05d2\u05dd \u05d1\u05dc\u05e2\u05d3\u05d9\u05d4 \u05e0\u05d9\u05ea\u05df \u05dc\u05d9\u05d9\u05d1\u05d0, \u05dc\u05ea\u05de\u05dc\u05dc \u05d5\u05dc\u05e2\u05e8\u05d5\u05da \u05e7\u05d5\u05d1\u05e6\u05d9 \u05e9\u05de\u05e2."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u090f\u0915\u094d\u0938\u0947\u0938 \u0935\u0948\u0915\u0932\u094d\u092a\u093f\u0915 \u0939\u0948\u0964 \u0907\u0938\u0915\u0947 \u092c\u093f\u0928\u093e \u092d\u0940 \u0906\u092a \u0911\u0921\u093f\u092f\u094b \u092b\u093c\u093e\u0907\u0932\u0947\u0902 \u0907\u092e\u094d\u092a\u094b\u0930\u094d\u091f, \u091f\u094d\u0930\u093e\u0902\u0938\u0915\u094d\u0930\u093e\u0907\u092c \u0914\u0930 \u0938\u0902\u092a\u093e\u0926\u093f\u0924 \u0915\u0930 \u0938\u0915\u0924\u0947 \u0939\u0948\u0902\u0964"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Toegang is optioneel. Zonder toegang kun je nog steeds audiobestanden importeren, transcriberen en bewerken."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dost\u0119p jest opcjonalny. Bez niego nadal mo\u017cesz importowa\u0107, transkrybowa\u0107 i edytowa\u0107 pliki audio."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eri\u015fim iste\u011fe ba\u011fl\u0131d\u0131r. Eri\u015fim olmadan da ses dosyalar\u0131n\u0131 i\u00e7e aktarabilir, yaz\u0131ya d\u00f6kebilir ve d\u00fczenleyebilirsiniz."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0414\u043e\u0441\u0442\u0443\u043f \u043d\u0435\u043e\u0431\u043e\u0432\u2019\u044f\u0437\u043a\u043e\u0432\u0438\u0439. \u0411\u0435\u0437 \u043d\u044c\u043e\u0433\u043e \u0432\u0438 \u0432\u0441\u0435 \u043e\u0434\u043d\u043e \u043c\u043e\u0436\u0435\u0442\u0435 \u0456\u043c\u043f\u043e\u0440\u0442\u0443\u0432\u0430\u0442\u0438, \u0440\u043e\u0437\u0448\u0438\u0444\u0440\u043e\u0432\u0443\u0432\u0430\u0442\u0438 \u0439 \u0440\u0435\u0434\u0430\u0433\u0443\u0432\u0430\u0442\u0438 \u0430\u0443\u0434\u0456\u043e\u0444\u0430\u0439\u043b\u0438."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u00c5tkomst \u00e4r valfri. Utan den kan du fortfarande importera, transkribera och redigera ljudfiler."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quy\u1ec1n truy c\u1eadp l\u00e0 t\u00f9y ch\u1ecdn. Kh\u00f4ng c\u00f3 quy\u1ec1n n\u00e0y, b\u1ea1n v\u1eabn c\u00f3 th\u1ec3 nh\u1eadp, ch\u00e9p l\u1eddi v\u00e0 ch\u1ec9nh s\u1eeda t\u1ec7p \u00e2m thanh."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Akses bersifat opsional. Tanpa akses, Anda tetap dapat mengimpor, mentranskripsikan, dan mengedit file audio."
+          }
+        }
+      }
+    },
+    "Record microphone only": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Record microphone only"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Grabar solo el micr\u00f3fono"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enregistrer uniquement le microphone"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nur Mikrofon aufnehmen"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Registra solo il microfono"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gravar s\u00f3 o microfone"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0417\u0430\u043f\u0438\u0441\u044b\u0432\u0430\u0442\u044c \u0442\u043e\u043b\u044c\u043a\u043e \u043c\u0438\u043a\u0440\u043e\u0444\u043e\u043d"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u30de\u30a4\u30af\u306e\u307f\u9332\u97f3"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\ub9c8\uc774\ud06c\ub9cc \ub179\uc74c"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u4ec5\u5f55\u5236\u9ea6\u514b\u98ce"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u50c5\u9304\u88fd\u9ea5\u514b\u98a8"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u062a\u0633\u062c\u064a\u0644 \u0627\u0644\u0645\u064a\u0643\u0631\u0648\u0641\u0648\u0646 \u0641\u0642\u0637"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05d4\u05e7\u05dc\u05d8\u05ea \u05d4\u05de\u05d9\u05e7\u05e8\u05d5\u05e4\u05d5\u05df \u05d1\u05dc\u05d1\u05d3"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0915\u0947\u0935\u0932 \u092e\u093e\u0907\u0915\u094d\u0930\u094b\u092b\u093c\u094b\u0928 \u0930\u093f\u0915\u0949\u0930\u094d\u0921 \u0915\u0930\u0947\u0902"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Alleen microfoon opnemen"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nagrywaj tylko mikrofon"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yaln\u0131zca mikrofonu kaydet"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0417\u0430\u043f\u0438\u0441\u0443\u0432\u0430\u0442\u0438 \u043b\u0438\u0448\u0435 \u043c\u0456\u043a\u0440\u043e\u0444\u043e\u043d"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Spela bara in mikrofonen"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ch\u1ec9 ghi micr\u00f4"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rekam mikrofon saja"
+          }
+        }
+      }
+    },
+    "Record app or system audio only": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Record app or system audio only"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Grabar solo el audio de apps o del sistema"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enregistrer uniquement l'audio d'une app ou du syst\u00e8me"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nur App- oder Systemaudio aufnehmen"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Registra solo l'audio delle app o di sistema"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gravar s\u00f3 o \u00e1udio de apps ou do sistema"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0417\u0430\u043f\u0438\u0441\u044b\u0432\u0430\u0442\u044c \u0442\u043e\u043b\u044c\u043a\u043e \u0437\u0432\u0443\u043a \u043f\u0440\u0438\u043b\u043e\u0436\u0435\u043d\u0438\u0439 \u0438\u043b\u0438 \u0441\u0438\u0441\u0442\u0435\u043c\u044b"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u30a2\u30d7\u30ea\u307e\u305f\u306f\u30b7\u30b9\u30c6\u30e0\u306e\u97f3\u58f0\u306e\u307f\u9332\u97f3"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uc571 \ub610\ub294 \uc2dc\uc2a4\ud15c \uc624\ub514\uc624\ub9cc \ub179\uc74c"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u4ec5\u5f55\u5236\u5e94\u7528\u6216\u7cfb\u7edf\u97f3\u9891"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u50c5\u9304\u88fd App \u6216\u7cfb\u7d71\u97f3\u8a0a"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u062a\u0633\u062c\u064a\u0644 \u0635\u0648\u062a \u0627\u0644\u062a\u0637\u0628\u064a\u0642 \u0623\u0648 \u0627\u0644\u0646\u0638\u0627\u0645 \u0641\u0642\u0637"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05d4\u05e7\u05dc\u05d8\u05ea \u05e9\u05de\u05e2 \u05e9\u05dc \u05d9\u05d9\u05e9\u05d5\u05dd \u05d0\u05d5 \u05e9\u05dc \u05d4\u05de\u05e2\u05e8\u05db\u05ea \u05d1\u05dc\u05d1\u05d3"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0915\u0947\u0935\u0932 \u0910\u092a \u092f\u093e \u0938\u093f\u0938\u094d\u091f\u092e \u0911\u0921\u093f\u092f\u094b \u0930\u093f\u0915\u0949\u0930\u094d\u0921 \u0915\u0930\u0947\u0902"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Alleen app- of systeemaudio opnemen"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nagrywaj tylko d\u017awi\u0119k aplikacji lub systemu"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yaln\u0131zca uygulama veya sistem sesini kaydet"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0417\u0430\u043f\u0438\u0441\u0443\u0432\u0430\u0442\u0438 \u043b\u0438\u0448\u0435 \u0437\u0432\u0443\u043a \u0437\u0430\u0441\u0442\u043e\u0441\u0443\u043d\u043a\u0456\u0432 \u0430\u0431\u043e \u0441\u0438\u0441\u0442\u0435\u043c\u0438"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Spela bara in app- eller systemljud"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ch\u1ec9 ghi \u00e2m thanh \u1ee9ng d\u1ee5ng ho\u1eb7c h\u1ec7 th\u1ed1ng"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rekam audio aplikasi atau sistem saja"
+          }
+        }
+      }
+    },
+    "Checking microphone access...": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Checking microphone access..."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Comprobando el acceso al micr\u00f3fono..."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "V\u00e9rification de l'acc\u00e8s au microphone..."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mikrofonzugriff wird gepr\u00fcft..."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verifica dell'accesso al microfono..."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verificando o acesso ao microfone..."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041f\u0440\u043e\u0432\u0435\u0440\u043a\u0430 \u0434\u043e\u0441\u0442\u0443\u043f\u0430 \u043a \u043c\u0438\u043a\u0440\u043e\u0444\u043e\u043d\u0443..."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u30de\u30a4\u30af\u3078\u306e\u30a2\u30af\u30bb\u30b9\u3092\u78ba\u8a8d\u3057\u3066\u3044\u307e\u3059..."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\ub9c8\uc774\ud06c \uc811\uadfc \ud655\uc778 \uc911..."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u6b63\u5728\u68c0\u67e5\u9ea6\u514b\u98ce\u8bbf\u95ee\u6743\u9650..."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u6b63\u5728\u6aa2\u67e5\u9ea5\u514b\u98a8\u5b58\u53d6\u6b0a..."
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u062c\u0627\u0631\u064d \u0627\u0644\u062a\u062d\u0642\u0642 \u0645\u0646 \u0627\u0644\u0648\u0635\u0648\u0644 \u0625\u0644\u0649 \u0627\u0644\u0645\u064a\u0643\u0631\u0648\u0641\u0648\u0646..."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05d1\u05d3\u05d9\u05e7\u05ea \u05d2\u05d9\u05e9\u05d4 \u05dc\u05de\u05d9\u05e7\u05e8\u05d5\u05e4\u05d5\u05df..."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u092e\u093e\u0907\u0915\u094d\u0930\u094b\u092b\u093c\u094b\u0928 \u090f\u0915\u094d\u0938\u0947\u0938 \u091c\u093e\u0901\u091a\u0940 \u091c\u093e \u0930\u0939\u0940 \u0939\u0948..."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Microfoontoegang controleren..."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sprawdzanie dost\u0119pu do mikrofonu..."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mikrofon eri\u015fimi denetleniyor..."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041f\u0435\u0440\u0435\u0432\u0456\u0440\u043a\u0430 \u0434\u043e\u0441\u0442\u0443\u043f\u0443 \u0434\u043e \u043c\u0456\u043a\u0440\u043e\u0444\u043e\u043d\u0430..."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kontrollerar mikrofon\u00e5tkomst..."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0110ang ki\u1ec3m tra quy\u1ec1n truy c\u1eadp micr\u00f4..."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Memeriksa akses mikrofon..."
+          }
+        }
+      }
+    },
+    "Preparing app and system audio...": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preparing app and system audio..."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preparando el audio de apps y del sistema..."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pr\u00e9paration de l'audio des apps et du syst\u00e8me..."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "App- und Systemaudio wird vorbereitet..."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preparazione dell'audio delle app e di sistema..."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preparando o \u00e1udio de apps e do sistema..."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041f\u043e\u0434\u0433\u043e\u0442\u043e\u0432\u043a\u0430 \u0437\u0432\u0443\u043a\u0430 \u043f\u0440\u0438\u043b\u043e\u0436\u0435\u043d\u0438\u0439 \u0438 \u0441\u0438\u0441\u0442\u0435\u043c\u044b..."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u30a2\u30d7\u30ea\u3068\u30b7\u30b9\u30c6\u30e0\u306e\u97f3\u58f0\u3092\u6e96\u5099\u3057\u3066\u3044\u307e\u3059..."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uc571 \ubc0f \uc2dc\uc2a4\ud15c \uc624\ub514\uc624 \uc900\ube44 \uc911..."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u6b63\u5728\u51c6\u5907\u5e94\u7528\u548c\u7cfb\u7edf\u97f3\u9891..."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u6b63\u5728\u6e96\u5099 App \u548c\u7cfb\u7d71\u97f3\u8a0a..."
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u062c\u0627\u0631\u064d \u062a\u062c\u0647\u064a\u0632 \u0635\u0648\u062a \u0627\u0644\u062a\u0637\u0628\u064a\u0642\u0627\u062a \u0648\u0627\u0644\u0646\u0638\u0627\u0645..."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05d4\u05db\u05e0\u05ea \u05e9\u05de\u05e2 \u05e9\u05dc \u05d9\u05d9\u05e9\u05d5\u05de\u05d9\u05dd \u05d5\u05e9\u05dc \u05d4\u05de\u05e2\u05e8\u05db\u05ea..."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0910\u092a \u0914\u0930 \u0938\u093f\u0938\u094d\u091f\u092e \u0911\u0921\u093f\u092f\u094b \u0924\u0948\u092f\u093e\u0930 \u0915\u093f\u092f\u093e \u091c\u093e \u0930\u0939\u093e \u0939\u0948..."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "App- en systeemaudio voorbereiden..."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Przygotowywanie d\u017awi\u0119ku aplikacji i systemu..."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uygulama ve sistem sesi haz\u0131rlan\u0131yor..."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041f\u0456\u0434\u0433\u043e\u0442\u043e\u0432\u043a\u0430 \u0437\u0432\u0443\u043a\u0443 \u0437\u0430\u0441\u0442\u043e\u0441\u0443\u043d\u043a\u0456\u0432 \u0456 \u0441\u0438\u0441\u0442\u0435\u043c\u0438..."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "F\u00f6rbereder app- och systemljud..."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0110ang chu\u1ea9n b\u1ecb \u00e2m thanh \u1ee9ng d\u1ee5ng v\u00e0 h\u1ec7 th\u1ed1ng..."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Menyiapkan audio aplikasi dan sistem..."
+          }
+        }
+      }
+    },
     "The model store is on '%@', which is not connected. Connect the drive or move the model store in Settings.": {
       "extractionState": "manual",
       "localizations": {
@@ -68373,7 +71779,7 @@
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Modeles d'image"
+            "value": "Mod\u00e8les d'image"
           }
         },
         "he": {
@@ -68421,7 +71827,7 @@
         "pl": {
           "stringUnit": {
             "state": "translated",
-            "value": "Modele obrazow"
+            "value": "Modele obraz\u00f3w"
           }
         },
         "pt-BR": {
@@ -68433,7 +71839,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Modeli izobrazheniy"
+            "value": "\u041c\u043e\u0434\u0435\u043b\u0438 \u0438\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u0439"
           }
         },
         "sv": {
@@ -68445,19 +71851,19 @@
         "tr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Goruntu modelleri"
+            "value": "G\u00f6r\u00fcnt\u00fc modelleri"
           }
         },
         "uk": {
           "stringUnit": {
             "state": "translated",
-            "value": "Modeli zobrazhen"
+            "value": "\u041c\u043e\u0434\u0435\u043b\u0456 \u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u044c"
           }
         },
         "vi": {
           "stringUnit": {
             "state": "translated",
-            "value": "Mo hinh hinh anh"
+            "value": "M\u00f4 h\u00ecnh h\u00ecnh \u1ea3nh"
           }
         },
         "zh-Hans": {
@@ -77780,7 +81186,7 @@
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Spater"
+            "value": "Sp\u00e4ter"
           }
         },
         "en": {
@@ -77792,7 +81198,7 @@
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Mas tarde"
+            "value": "M\u00e1s tarde"
           }
         },
         "fr": {
@@ -77822,7 +81228,7 @@
         "it": {
           "stringUnit": {
             "state": "translated",
-            "value": "Piu tardi"
+            "value": "Pi\u00f9 tardi"
           }
         },
         "ja": {
@@ -77846,7 +81252,7 @@
         "pl": {
           "stringUnit": {
             "state": "translated",
-            "value": "Pozniej"
+            "value": "P\u00f3\u017aniej"
           }
         },
         "pt-BR": {
@@ -77858,7 +81264,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Pozzhe"
+            "value": "\u041f\u043e\u0437\u0436\u0435"
           }
         },
         "sv": {
@@ -77882,7 +81288,7 @@
         "vi": {
           "stringUnit": {
             "state": "translated",
-            "value": "De sau"
+            "value": "\u0110\u1ec3 sau"
           }
         },
         "zh-Hans": {
@@ -103040,7 +106446,7 @@
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Bilder offnen"
+            "value": "Bilder \u00f6ffnen"
           }
         },
         "en": {
@@ -103052,7 +106458,7 @@
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Abrir imagenes"
+            "value": "Abrir im\u00e1genes"
           }
         },
         "fr": {
@@ -103106,7 +106512,7 @@
         "pl": {
           "stringUnit": {
             "state": "translated",
-            "value": "Otworz obrazy"
+            "value": "Otw\u00f3rz obrazy"
           }
         },
         "pt-BR": {
@@ -103118,19 +106524,19 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Otkryt izobrazheniya"
+            "value": "\u041e\u0442\u043a\u0440\u044b\u0442\u044c \u0438\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u044f"
           }
         },
         "sv": {
           "stringUnit": {
             "state": "translated",
-            "value": "Oppna bilder"
+            "value": "\u00d6ppna bilder"
           }
         },
         "tr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Gorselleri ac"
+            "value": "G\u00f6rselleri a\u00e7"
           }
         },
         "uk": {
@@ -103142,7 +106548,7 @@
         "vi": {
           "stringUnit": {
             "state": "translated",
-            "value": "Mo hinh anh"
+            "value": "M\u1edf h\u00ecnh \u1ea3nh"
           }
         },
         "zh-Hans": {
@@ -108141,7 +111547,7 @@
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Angeheftete MLX-Varianten mit abgeschlossenen Installationsprufungen. Die erste Wahl ist fur diesen Mac dimensioniert; die anderen bieten unterschiedliche Qualitats- und Speicherkompromisse."
+            "value": "Angeheftete MLX-Varianten mit abgeschlossenen Installationspr\u00fcfungen. Die erste Wahl ist f\u00fcr diesen Mac dimensioniert; die anderen bieten unterschiedliche Qualit\u00e4ts- und Speicherkompromisse."
           }
         },
         "en": {
@@ -108153,13 +111559,13 @@
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Variantes MLX fijadas con las comprobaciones de instalacion completadas. La primera opcion esta dimensionada para este Mac; las demas ofrecen distintos compromisos de calidad y disco."
+            "value": "Variantes MLX fijadas con las comprobaciones de instalaci\u00f3n completadas. La primera opci\u00f3n est\u00e1 dimensionada para este Mac; las dem\u00e1s ofrecen distintos compromisos de calidad y disco."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Variantes MLX epinglees dont les controles d'installation sont termines. Le premier choix est adapte a ce Mac; les autres offrent un compromis qualite-disque different."
+            "value": "Variantes MLX \u00e9pingl\u00e9es dont les contr\u00f4les d'installation sont termin\u00e9s. Le premier choix est adapt\u00e9 \u00e0 ce Mac ; les autres offrent un compromis qualit\u00e9-disque diff\u00e9rent."
           }
         },
         "he": {
@@ -108183,7 +111589,7 @@
         "it": {
           "stringUnit": {
             "state": "translated",
-            "value": "Varianti MLX fissate con i controlli di installazione completati. La prima scelta e dimensionata per questo Mac; le altre offrono compromessi diversi tra qualita e spazio."
+            "value": "Varianti MLX fissate con i controlli di installazione completati. La prima scelta \u00e8 dimensionata per questo Mac; le altre offrono compromessi diversi tra qualit\u00e0 e spazio."
           }
         },
         "ja": {
@@ -108207,31 +111613,31 @@
         "pl": {
           "stringUnit": {
             "state": "translated",
-            "value": "Przypiete warianty MLX z ukonczonymi testami instalacji. Pierwszy wybor jest dopasowany do tego Maca, a pozostale oferuja inne kompromisy jakosci i miejsca na dysku."
+            "value": "Przypi\u0119te warianty MLX z uko\u0144czonymi testami instalacji. Pierwszy wyb\u00f3r jest dopasowany do tego Maca, a pozosta\u0142e oferuj\u0105 inne kompromisy jako\u015bci i miejsca na dysku."
           }
         },
         "pt-BR": {
           "stringUnit": {
             "state": "translated",
-            "value": "Variantes MLX fixadas com os testes de instalacao concluidos. A primeira opcao e dimensionada para este Mac; as outras oferecem diferentes trocas entre qualidade e disco."
+            "value": "Variantes MLX fixadas com os testes de instala\u00e7\u00e3o conclu\u00eddos. A primeira op\u00e7\u00e3o \u00e9 dimensionada para este Mac; as outras oferecem diferentes trocas entre qualidade e disco."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Zakreplennye varianty MLX s zavershennymi prover\u043a\u0430\u043c\u0438 ustanovki. Pervyi variant podobr\u0430n dlya etogo Mac, ostalnye dayut drugoi balans kachestva i mesta."
+            "value": "\u0417\u0430\u043a\u0440\u0435\u043f\u043b\u0451\u043d\u043d\u044b\u0435 \u0432\u0430\u0440\u0438\u0430\u043d\u0442\u044b MLX \u0441 \u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043d\u043d\u044b\u043c\u0438 \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0430\u043c\u0438 \u0443\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0438. \u041f\u0435\u0440\u0432\u044b\u0439 \u0432\u0430\u0440\u0438\u0430\u043d\u0442 \u043f\u043e\u0434\u043e\u0431\u0440\u0430\u043d \u0434\u043b\u044f \u044d\u0442\u043e\u0433\u043e Mac, \u043e\u0441\u0442\u0430\u043b\u044c\u043d\u044b\u0435 \u0434\u0430\u044e\u0442 \u0434\u0440\u0443\u0433\u043e\u0439 \u0431\u0430\u043b\u0430\u043d\u0441 \u043a\u0430\u0447\u0435\u0441\u0442\u0432\u0430 \u0438 \u043c\u0435\u0441\u0442\u0430 \u043d\u0430 \u0434\u0438\u0441\u043a\u0435."
           }
         },
         "sv": {
           "stringUnit": {
             "state": "translated",
-            "value": "Fastasta MLX-varianter med slutforda installationskontroller. Det forsta valet ar dimensionerat for denna Mac; de andra ger andra avvagningar mellan kvalitet och diskutrymme."
+            "value": "F\u00e4sta MLX-varianter med slutf\u00f6rda installationskontroller. Det f\u00f6rsta valet \u00e4r dimensionerat f\u00f6r denna Mac; de andra ger andra avv\u00e4gningar mellan kvalitet och diskutrymme."
           }
         },
         "tr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Kurulum kontrolleri tamamlanmis sabitlenmis MLX varyantlari. Ilk secenek bu Mac icin boyutlandirildi; digerleri farkli kalite ve disk dengeleri sunar."
+            "value": "Kurulum kontrolleri tamamlanm\u0131\u015f sabitlenmi\u015f MLX varyantlar\u0131. \u0130lk se\u00e7enek bu Mac i\u00e7in boyutland\u0131r\u0131ld\u0131; di\u011ferleri farkl\u0131 kalite ve disk dengeleri sunar."
           }
         },
         "uk": {
@@ -108243,7 +111649,7 @@
         "vi": {
           "stringUnit": {
             "state": "translated",
-            "value": "Cac bien the MLX da ghim voi cac buoc cai dat da hoan tat. Lua chon dau tien vua voi Mac nay; cac lua chon khac co danh doi khac giua chat luong va dung luong dia."
+            "value": "C\u00e1c bi\u1ebfn th\u1ec3 MLX \u0111\u00e3 ghim v\u1edbi c\u00e1c b\u01b0\u1edbc c\u00e0i \u0111\u1eb7t \u0111\u00e3 ho\u00e0n t\u1ea5t. L\u1ef1a ch\u1ecdn \u0111\u1ea7u ti\u00ean v\u1eeba v\u1edbi Mac n\u00e0y; c\u00e1c l\u1ef1a ch\u1ecdn kh\u00e1c c\u00f3 \u0111\u00e1nh \u0111\u1ed5i kh\u00e1c gi\u1eefa ch\u1ea5t l\u01b0\u1ee3ng v\u00e0 dung l\u01b0\u1ee3ng \u0111\u0129a."
           }
         },
         "zh-Hans": {
@@ -151201,7 +154607,7 @@
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Modeles de texte"
+            "value": "Mod\u00e8les de texte"
           }
         },
         "he": {
@@ -151261,7 +154667,7 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Tekstovye modeli"
+            "value": "\u0422\u0435\u043a\u0441\u0442\u043e\u0432\u044b\u0435 \u043c\u043e\u0434\u0435\u043b\u0438"
           }
         },
         "sv": {
@@ -151279,13 +154685,13 @@
         "uk": {
           "stringUnit": {
             "state": "translated",
-            "value": "Tekstovi modeli"
+            "value": "\u0422\u0435\u043a\u0441\u0442\u043e\u0432\u0456 \u043c\u043e\u0434\u0435\u043b\u0456"
           }
         },
         "vi": {
           "stringUnit": {
             "state": "translated",
-            "value": "Mo hinh van ban"
+            "value": "M\u00f4 h\u00ecnh v\u0103n b\u1ea3n"
           }
         },
         "zh-Hans": {
@@ -163950,7 +167356,7 @@
         "pl": {
           "stringUnit": {
             "state": "translated",
-            "value": "Uzyj"
+            "value": "U\u017cyj"
           }
         },
         "pt-BR": {
@@ -163962,13 +167368,13 @@
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Ispolzovat"
+            "value": "\u0418\u0441\u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u044c"
           }
         },
         "sv": {
           "stringUnit": {
             "state": "translated",
-            "value": "Anvand"
+            "value": "Anv\u00e4nd"
           }
         },
         "tr": {
@@ -163986,7 +167392,7 @@
         "vi": {
           "stringUnit": {
             "state": "translated",
-            "value": "Su dung"
+            "value": "S\u1eed d\u1ee5ng"
           }
         },
         "zh-Hans": {
@@ -234789,137 +238195,6 @@
         }
       }
     },
-    "Microphone access is off. Allow TurboSpark in System Settings > Privacy & Security > Microphone, then try again.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Microphone access is off. Allow TurboSpark in System Settings > Privacy & Security > Microphone, then try again."
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "El acceso al micr\u00f3fono est\u00e1 desactivado. Permite TurboSpark en Ajustes del Sistema > Privacidad y seguridad > Micr\u00f3fono y vuelve a intentarlo."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "L'acc\u00e8s au microphone est d\u00e9sactiv\u00e9. Autorisez TurboSpark dans R\u00e9glages Syst\u00e8me > Confidentialit\u00e9 et s\u00e9curit\u00e9 > Microphone, puis r\u00e9essayez."
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Der Mikrofonzugriff ist deaktiviert. Erlaube TurboSpark unter Systemeinstellungen > Datenschutz & Sicherheit > Mikrofon und versuche es erneut."
-          }
-        },
-        "it": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "L'accesso al microfono \u00e8 disattivato. Consenti TurboSpark in Impostazioni di Sistema > Privacy e sicurezza > Microfono, poi riprova."
-          }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "O acesso ao microfone est\u00e1 desativado. Permita o TurboSpark em Ajustes do Sistema > Privacidade e Seguran\u00e7a > Microfone e tente novamente."
-          }
-        },
-        "nl": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Microfoontoegang staat uit. Sta TurboSpark toe in Systeeminstellingen > Privacy en beveiliging > Microfoon en probeer het opnieuw."
-          }
-        },
-        "sv": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Mikrofon\u00e5tkomst \u00e4r avst\u00e4ngd. Till\u00e5t TurboSpark i Systeminst\u00e4llningar > Integritet och s\u00e4kerhet > Mikrofon och f\u00f6rs\u00f6k igen."
-          }
-        },
-        "pl": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Dost\u0119p do mikrofonu jest wy\u0142\u0105czony. Zezw\u00f3l TurboSpark na dost\u0119p w Ustawieniach systemowych > Prywatno\u015b\u0107 i ochrona > Mikrofon, a nast\u0119pnie spr\u00f3buj ponownie."
-          }
-        },
-        "tr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Mikrofon eri\u015fimi kapal\u0131. Sistem Ayarlar\u0131 > Gizlilik ve G\u00fcvenlik > Mikrofon b\u00f6l\u00fcm\u00fcnde TurboSpark'a izin verin ve yeniden deneyin."
-          }
-        },
-        "id": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Akses mikrofon dimatikan. Izinkan TurboSpark di Pengaturan Sistem > Privasi & Keamanan > Mikrofon, lalu coba lagi."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "\u0414\u043e\u0441\u0442\u0443\u043f \u043a \u043c\u0438\u043a\u0440\u043e\u0444\u043e\u043d\u0443 \u043e\u0442\u043a\u043b\u044e\u0447\u0451\u043d. \u0420\u0430\u0437\u0440\u0435\u0448\u0438\u0442\u0435 TurboSpark \u0434\u043e\u0441\u0442\u0443\u043f \u0432 \u0421\u0438\u0441\u0442\u0435\u043c\u043d\u044b\u0435 \u043d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438 > \u041a\u043e\u043d\u0444\u0438\u0434\u0435\u043d\u0446\u0438\u0430\u043b\u044c\u043d\u043e\u0441\u0442\u044c \u0438 \u0431\u0435\u0437\u043e\u043f\u0430\u0441\u043d\u043e\u0441\u0442\u044c > \u041c\u0438\u043a\u0440\u043e\u0444\u043e\u043d \u0438 \u043f\u043e\u0432\u0442\u043e\u0440\u0438\u0442\u0435 \u043f\u043e\u043f\u044b\u0442\u043a\u0443."
-          }
-        },
-        "uk": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "\u0414\u043e\u0441\u0442\u0443\u043f \u0434\u043e \u043c\u0456\u043a\u0440\u043e\u0444\u043e\u043d\u0430 \u0432\u0438\u043c\u043a\u043d\u0435\u043d\u043e. \u0414\u043e\u0437\u0432\u043e\u043b\u044c\u0442\u0435 TurboSpark \u0434\u043e\u0441\u0442\u0443\u043f \u0443 \u0421\u0438\u0441\u0442\u0435\u043c\u043d\u0456 \u043f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u0438 > \u041f\u0440\u0438\u0432\u0430\u0442\u043d\u0456\u0441\u0442\u044c \u0456 \u0431\u0435\u0437\u043f\u0435\u043a\u0430 > \u041c\u0456\u043a\u0440\u043e\u0444\u043e\u043d \u0456 \u0441\u043f\u0440\u043e\u0431\u0443\u0439\u0442\u0435 \u0449\u0435 \u0440\u0430\u0437."
-          }
-        },
-        "vi": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Quy\u1ec1n truy c\u1eadp micr\u00f4 \u0111ang t\u1eaft. Cho ph\u00e9p TurboSpark trong C\u00e0i \u0111\u1eb7t h\u1ec7 th\u1ed1ng > Quy\u1ec1n ri\u00eang t\u01b0 & B\u1ea3o m\u1eadt > Micr\u00f4, r\u1ed3i th\u1eed l\u1ea1i."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "\u30de\u30a4\u30af\u3078\u306e\u30a2\u30af\u30bb\u30b9\u304c\u7121\u52b9\u3067\u3059\u3002\u300c\u30b7\u30b9\u30c6\u30e0\u8a2d\u5b9a\u300d>\u300c\u30d7\u30e9\u30a4\u30d0\u30b7\u30fc\u3068\u30bb\u30ad\u30e5\u30ea\u30c6\u30a3\u300d>\u300c\u30de\u30a4\u30af\u300d\u3067TurboSpark\u3092\u8a31\u53ef\u3057\u3001\u518d\u8a66\u884c\u3057\u3066\u304f\u3060\u3055\u3044\u3002"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "\ub9c8\uc774\ud06c \uc811\uadfc\uc774 \uaebc\uc838 \uc788\uc2b5\ub2c8\ub2e4. \uc2dc\uc2a4\ud15c \uc124\uc815 > \uac1c\uc778\uc815\ubcf4 \ubcf4\ud638 \ubc0f \ubcf4\uc548 > \ub9c8\uc774\ud06c\uc5d0\uc11c TurboSpark\ub97c \ud5c8\uc6a9\ud55c \ud6c4 \ub2e4\uc2dc \uc2dc\ub3c4\ud558\uc138\uc694."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "\u9ea6\u514b\u98ce\u8bbf\u95ee\u5df2\u5173\u95ed\u3002\u8bf7\u5728\u7cfb\u7edf\u8bbe\u7f6e > \u9690\u79c1\u4e0e\u5b89\u5168\u6027 > \u9ea6\u514b\u98ce\u4e2d\u5141\u8bb8 TurboSpark\uff0c\u7136\u540e\u91cd\u8bd5\u3002"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "\u9ea5\u514b\u98a8\u53d6\u7528\u6b0a\u9650\u5df2\u95dc\u9589\u3002\u8acb\u5728\u7cfb\u7d71\u8a2d\u5b9a > \u96b1\u79c1\u6b0a\u8207\u5b89\u5168\u6027 > \u9ea5\u514b\u98a8\u4e2d\u5141\u8a31 TurboSpark\uff0c\u7136\u5f8c\u518d\u8a66\u4e00\u6b21\u3002"
-          }
-        },
-        "ar": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "\u0627\u0644\u0648\u0635\u0648\u0644 \u0625\u0644\u0649 \u0627\u0644\u0645\u064a\u0643\u0631\u0648\u0641\u0648\u0646 \u0645\u062a\u0648\u0642\u0641. \u0627\u0633\u0645\u062d \u0644\u0640 TurboSpark \u0641\u064a \u0625\u0639\u062f\u0627\u062f\u0627\u062a \u0627\u0644\u0646\u0638\u0627\u0645 > \u0627\u0644\u062e\u0635\u0648\u0635\u064a\u0629 \u0648\u0627\u0644\u0623\u0645\u0627\u0646 > \u0627\u0644\u0645\u064a\u0643\u0631\u0648\u0641\u0648\u0646\u060c \u062b\u0645 \u062d\u0627\u0648\u0644 \u0645\u062c\u062f\u062f\u0627\u064b."
-          }
-        },
-        "he": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "\u05d4\u05d2\u05d9\u05e9\u05d4 \u05dc\u05de\u05d9\u05e7\u05e8\u05d5\u05e4\u05d5\u05df \u05db\u05d1\u05d5\u05d9\u05d4. \u05d0\u05e4\u05e9\u05e8 \u05dc-TurboSpark \u05d2\u05d9\u05e9\u05d4 \u05d1\u05d4\u05d2\u05d3\u05e8\u05d5\u05ea \u05d4\u05de\u05e2\u05e8\u05db\u05ea > \u05e4\u05e8\u05d8\u05d9\u05d5\u05ea \u05d5\u05d0\u05d1\u05d8\u05d7\u05d4 > \u05de\u05d9\u05e7\u05e8\u05d5\u05e4\u05d5\u05df, \u05d5\u05d0\u05d6 \u05e0\u05e1\u05d4 \u05e9\u05d5\u05d1."
-          }
-        },
-        "hi": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "\u092e\u093e\u0907\u0915\u094d\u0930\u094b\u092b\u093c\u094b\u0928 \u0915\u093e \u0910\u0915\u094d\u0938\u0947\u0938 \u092c\u0902\u0926 \u0939\u0948\u0964 \u0938\u093f\u0938\u094d\u091f\u092e \u0938\u0947\u091f\u093f\u0902\u0917\u094d\u0938 > \u0917\u094b\u092a\u0928\u0940\u092f\u0924\u093e \u0914\u0930 \u0938\u0941\u0930\u0915\u094d\u0937\u093e > \u092e\u093e\u0907\u0915\u094d\u0930\u094b\u092b\u093c\u094b\u0928 \u092e\u0947\u0902 TurboSpark \u0915\u094b \u0905\u0928\u0941\u092e\u0924\u093f \u0926\u0947\u0902, \u092b\u093f\u0930 \u0915\u094b\u0936\u093f\u0936 \u0915\u0930\u0947\u0902\u0964"
-          }
-        }
-      }
-    },
     "Not saved. Retry after checking available storage.": {
       "extractionState": "manual",
       "localizations": {
@@ -238715,268 +241990,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "\u0911\u0921\u093f\u092f\u094b"
-          }
-        }
-      }
-    },
-    "Allow microphone access in the macOS prompt to continue.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Allow microphone access in the macOS prompt to continue."
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Permite el acceso al micr\u00f3fono en el aviso de macOS para continuar."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Autorisez l\u2019acc\u00e8s au microphone dans la demande de macOS pour continuer."
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Erlaube den Mikrofonzugriff in der macOS-Abfrage, um fortzufahren."
-          }
-        },
-        "it": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Consenti l\u2019accesso al microfono nella richiesta di macOS per continuare."
-          }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Permita o acesso ao microfone na solicita\u00e7\u00e3o do macOS para continuar."
-          }
-        },
-        "nl": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Sta microfoontoegang toe in de macOS-melding om door te gaan."
-          }
-        },
-        "sv": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Till\u00e5t mikrofon\u00e5tkomst i macOS-dialogrutan f\u00f6r att forts\u00e4tta."
-          }
-        },
-        "pl": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Aby kontynuowa\u0107, zezw\u00f3l na dost\u0119p do mikrofonu w oknie macOS."
-          }
-        },
-        "tr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Devam etmek i\u00e7in macOS isteminde mikrofon eri\u015fimine izin verin."
-          }
-        },
-        "id": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Izinkan akses mikrofon pada permintaan macOS untuk melanjutkan."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "\u0427\u0442\u043e\u0431\u044b \u043f\u0440\u043e\u0434\u043e\u043b\u0436\u0438\u0442\u044c, \u0440\u0430\u0437\u0440\u0435\u0448\u0438\u0442\u0435 \u0434\u043e\u0441\u0442\u0443\u043f \u043a \u043c\u0438\u043a\u0440\u043e\u0444\u043e\u043d\u0443 \u0432 \u0437\u0430\u043f\u0440\u043e\u0441\u0435 macOS."
-          }
-        },
-        "uk": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "\u0429\u043e\u0431 \u043f\u0440\u043e\u0434\u043e\u0432\u0436\u0438\u0442\u0438, \u0434\u043e\u0437\u0432\u043e\u043b\u044c\u0442\u0435 \u0434\u043e\u0441\u0442\u0443\u043f \u0434\u043e \u043c\u0456\u043a\u0440\u043e\u0444\u043e\u043d\u0430 \u0432 \u0437\u0430\u043f\u0438\u0442\u0456 macOS."
-          }
-        },
-        "vi": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Cho ph\u00e9p truy c\u1eadp micr\u00f4 trong l\u1eddi nh\u1eafc c\u1ee7a macOS \u0111\u1ec3 ti\u1ebfp t\u1ee5c."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "\u7d9a\u884c\u3059\u308b\u306b\u306f\u3001macOS\u306e\u78ba\u8a8d\u753b\u9762\u3067\u30de\u30a4\u30af\u3078\u306e\u30a2\u30af\u30bb\u30b9\u3092\u8a31\u53ef\u3057\u3066\u304f\u3060\u3055\u3044\u3002"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "\uacc4\uc18d\ud558\ub824\uba74 macOS \uad8c\ud55c \uc694\uccad\uc5d0\uc11c \ub9c8\uc774\ud06c \uc811\uadfc\uc744 \ud5c8\uc6a9\ud558\uc138\uc694."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "\u8bf7\u5728 macOS \u63d0\u793a\u4e2d\u5141\u8bb8\u8bbf\u95ee\u9ea6\u514b\u98ce\u4ee5\u7ee7\u7eed\u3002"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "\u8acb\u5728 macOS \u63d0\u793a\u4e2d\u5141\u8a31\u53d6\u7528\u9ea5\u514b\u98a8\u4ee5\u7e7c\u7e8c\u3002"
-          }
-        },
-        "ar": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "\u0627\u0633\u0645\u062d \u0628\u0627\u0644\u0648\u0635\u0648\u0644 \u0625\u0644\u0649 \u0627\u0644\u0645\u064a\u0643\u0631\u0648\u0641\u0648\u0646 \u0641\u064a \u0645\u0637\u0627\u0644\u0628\u0629 macOS \u0644\u0644\u0645\u062a\u0627\u0628\u0639\u0629."
-          }
-        },
-        "he": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "\u05db\u05d3\u05d9 \u05dc\u05d4\u05de\u05e9\u05d9\u05da, \u05d9\u05e9 \u05dc\u05d0\u05e4\u05e9\u05e8 \u05d2\u05d9\u05e9\u05d4 \u05dc\u05de\u05d9\u05e7\u05e8\u05d5\u05e4\u05d5\u05df \u05d1\u05d1\u05e7\u05e9\u05d4 \u05e9\u05dc macOS."
-          }
-        },
-        "hi": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "\u091c\u093e\u0930\u0940 \u0930\u0916\u0928\u0947 \u0915\u0947 \u0932\u093f\u090f macOS \u0915\u0947 \u0905\u0928\u0941\u092e\u0924\u093f \u0938\u0902\u0926\u0947\u0936 \u092e\u0947\u0902 \u092e\u093e\u0907\u0915\u094d\u0930\u094b\u092b\u093c\u094b\u0928 \u0915\u093e \u0910\u0915\u094d\u0938\u0947\u0938 \u0926\u0947\u0902\u0964"
-          }
-        }
-      }
-    },
-    "Allow screen and system audio recording in System Settings if prompted.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Allow screen and system audio recording in System Settings if prompted."
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Si se solicita, permite la grabaci\u00f3n de pantalla y audio del sistema en Ajustes del Sistema."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Si cela vous est demand\u00e9, autorisez l\u2019enregistrement de l\u2019\u00e9cran et du son du syst\u00e8me dans R\u00e9glages Syst\u00e8me."
-          }
-        },
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Erlaube bei Aufforderung die Aufnahme von Bildschirm und Systemaudio in den Systemeinstellungen."
-          }
-        },
-        "it": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Se richiesto, consenti la registrazione dello schermo e dell\u2019audio di sistema in Impostazioni di Sistema."
-          }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Se solicitado, permita a grava\u00e7\u00e3o de tela e \u00e1udio do sistema nos Ajustes do Sistema."
-          }
-        },
-        "nl": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Sta scherm- en systeemaudio-opname toe in Systeeminstellingen als daarom wordt gevraagd."
-          }
-        },
-        "sv": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Till\u00e5t inspelning av sk\u00e4rm och systemljud i Systeminst\u00e4llningar om du uppmanas till det."
-          }
-        },
-        "pl": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Je\u015bli pojawi si\u0119 pro\u015bba, zezw\u00f3l na nagrywanie ekranu i d\u017awi\u0119ku systemowego w Ustawieniach systemowych."
-          }
-        },
-        "tr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "\u0130stendi\u011finde Sistem Ayarlar\u0131\u2019nda ekran ve sistem sesi kayd\u0131na izin verin."
-          }
-        },
-        "id": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Jika diminta, izinkan perekaman layar dan audio sistem di Pengaturan Sistem."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "\u041f\u0440\u0438 \u0437\u0430\u043f\u0440\u043e\u0441\u0435 \u0440\u0430\u0437\u0440\u0435\u0448\u0438\u0442\u0435 \u0437\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430 \u0438 \u0441\u0438\u0441\u0442\u0435\u043c\u043d\u043e\u0433\u043e \u0437\u0432\u0443\u043a\u0430 \u0432 \u0421\u0438\u0441\u0442\u0435\u043c\u043d\u044b\u0445 \u043d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0430\u0445."
-          }
-        },
-        "uk": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "\u042f\u043a\u0449\u043e \u0437\u2019\u044f\u0432\u0438\u0442\u044c\u0441\u044f \u0437\u0430\u043f\u0438\u0442, \u0434\u043e\u0437\u0432\u043e\u043b\u044c\u0442\u0435 \u0437\u0430\u043f\u0438\u0441 \u0435\u043a\u0440\u0430\u043d\u0430 \u0442\u0430 \u0441\u0438\u0441\u0442\u0435\u043c\u043d\u043e\u0433\u043e \u0437\u0432\u0443\u043a\u0443 \u0432 \u0421\u0438\u0441\u0442\u0435\u043c\u043d\u0438\u0445 \u043f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u0430\u0445."
-          }
-        },
-        "vi": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "N\u1ebfu \u0111\u01b0\u1ee3c nh\u1eafc, h\u00e3y cho ph\u00e9p ghi m\u00e0n h\u00ecnh v\u00e0 \u00e2m thanh h\u1ec7 th\u1ed1ng trong C\u00e0i \u0111\u1eb7t h\u1ec7 th\u1ed1ng."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "\u6c42\u3081\u3089\u308c\u305f\u5834\u5408\u306f\u3001\u30b7\u30b9\u30c6\u30e0\u8a2d\u5b9a\u3067\u753b\u9762\u3068\u30b7\u30b9\u30c6\u30e0\u30aa\u30fc\u30c7\u30a3\u30aa\u306e\u9332\u97f3\u3092\u8a31\u53ef\u3057\u3066\u304f\u3060\u3055\u3044\u3002"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "\uc694\uccad\uc774 \ud45c\uc2dc\ub418\uba74 \uc2dc\uc2a4\ud15c \uc124\uc815\uc5d0\uc11c \ud654\uba74 \ubc0f \uc2dc\uc2a4\ud15c \uc624\ub514\uc624 \ub179\uc74c\uc744 \ud5c8\uc6a9\ud558\uc138\uc694."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "\u5982\u679c\u51fa\u73b0\u63d0\u793a\uff0c\u8bf7\u5728\u7cfb\u7edf\u8bbe\u7f6e\u4e2d\u5141\u8bb8\u5f55\u5236\u5c4f\u5e55\u548c\u7cfb\u7edf\u97f3\u9891\u3002"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "\u5982\u51fa\u73fe\u63d0\u793a\uff0c\u8acb\u5728\u7cfb\u7d71\u8a2d\u5b9a\u4e2d\u5141\u8a31\u9304\u88fd\u87a2\u5e55\u548c\u7cfb\u7d71\u97f3\u8a0a\u3002"
-          }
-        },
-        "ar": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "\u0627\u0633\u0645\u062d \u0628\u062a\u0633\u062c\u064a\u0644 \u0627\u0644\u0634\u0627\u0634\u0629 \u0648\u0635\u0648\u062a \u0627\u0644\u0646\u0638\u0627\u0645 \u0641\u064a \u0625\u0639\u062f\u0627\u062f\u0627\u062a \u0627\u0644\u0646\u0638\u0627\u0645 \u0625\u0630\u0627 \u0637\u064f\u0644\u0628 \u0645\u0646\u0643 \u0630\u0644\u0643."
-          }
-        },
-        "he": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "\u05d0\u05dd \u05ea\u05d5\u05e4\u05d9\u05e2 \u05d1\u05e7\u05e9\u05d4, \u05d9\u05e9 \u05dc\u05d0\u05e4\u05e9\u05e8 \u05d4\u05e7\u05dc\u05d8\u05ea \u05de\u05e1\u05da \u05d5\u05e9\u05de\u05e2 \u05de\u05e2\u05e8\u05db\u05ea \u05d1\u05d4\u05d2\u05d3\u05e8\u05d5\u05ea \u05d4\u05de\u05e2\u05e8\u05db\u05ea."
-          }
-        },
-        "hi": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "\u092f\u0926\u093f \u0915\u0939\u093e \u091c\u093e\u090f, \u0924\u094b \u0938\u093f\u0938\u094d\u091f\u092e \u0938\u0947\u091f\u093f\u0902\u0917\u094d\u091c\u093c \u092e\u0947\u0902 \u0938\u094d\u0915\u094d\u0930\u0940\u0928 \u0914\u0930 \u0938\u093f\u0938\u094d\u091f\u092e \u0911\u0921\u093f\u092f\u094b \u0930\u093f\u0915\u0949\u0930\u094d\u0921\u093f\u0902\u0917 \u0915\u0940 \u0905\u0928\u0941\u092e\u0924\u093f \u0926\u0947\u0902\u0964"
           }
         }
       }

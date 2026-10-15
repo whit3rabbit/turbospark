@@ -2,11 +2,37 @@ import SwiftUI
 
 /// The Record route's capture panel: sources, start/pause/stop, markers and
 /// the live transcription model. Split from AudioWorkspaceView to keep that
-/// file readable; behavior is unchanged.
+/// file readable.
 @MainActor
 struct AudioRecordingPanel: View {
     @ObservedObject var model: AppModel
     @ObservedObject var controller: AudioWorkspaceController
+    @ObservedObject private var permissions = RecordingPermissions.shared
+    @State private var accessRequest: RecordingAccessRequest?
+
+    private var neededPermissions: [RecordingPermission] {
+        RecordingPermission.needed(microphone: controller.captureMicrophone, systemAudio: controller.captureSystemAudio)
+    }
+
+    /// Start goes through the access sheet when a selected source lacks its
+    /// macOS grant, so the user decides before a draft take is created. A
+    /// source the user records without is switched off here, where they see it.
+    private func beginRecording() {
+        let needed = neededPermissions
+        permissions.refresh()
+        guard !permissions.missing(needed).isEmpty else { controller.startRecording(); return }
+        accessRequest = RecordingAccessRequest(purpose: .start, needed: needed) { [controller] declined in
+            if declined.contains(.microphone) { controller.captureMicrophone = false }
+            if declined.contains(.systemAudio) { controller.captureSystemAudio = false }
+            controller.startRecording()
+        }
+    }
+
+    private func reviewAccess() {
+        accessRequest = RecordingAccessRequest(purpose: .review, needed: neededPermissions) { [controller] _ in
+            controller.prepareRecording()
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -49,7 +75,7 @@ struct AudioRecordingPanel: View {
                     .appAction(.primary)
                 }
             } else {
-                Button { controller.startRecording() } label: {
+                Button { beginRecording() } label: {
                     Label { Text("Start recording", bundle: .module) } icon: { Image(systemName: "record.circle") }
                 }
                 .appAction(.primary)
@@ -65,6 +91,22 @@ struct AudioRecordingPanel: View {
         }
         .padding(20).background(.appSurface, in: RoundedRectangle(cornerRadius: 12))
         .overlay { RoundedRectangle(cornerRadius: 12).stroke(.appBorder, lineWidth: 1) }
+        .recordingAccessGate($accessRequest, permissions: permissions)
+    }
+
+    /// Warns before Start rather than after a failed setup. Glyph plus text,
+    /// so the state does not depend on color.
+    @ViewBuilder private var accessWarning: some View {
+        if !permissions.missing(neededPermissions).isEmpty {
+            Label {
+                Text("A selected source needs macOS access before you can record.", bundle: .module)
+                    .fixedSize(horizontal: false, vertical: true)
+            } icon: {
+                Image(systemName: "exclamationmark.triangle.fill").accessibilityHidden(true)
+            }
+            .themedFont(.small)
+            .foregroundStyle(.appSecondary)
+        }
     }
 
     private var captureSources: some View {
@@ -85,7 +127,8 @@ struct AudioRecordingPanel: View {
                 Text("TurboSpark playback is excluded. Only audio is saved.", bundle: .module)
                     .themedFont(.small).foregroundStyle(.appSecondary)
             }
-            Button { controller.prepareRecording() } label: {
+            accessWarning
+            Button { reviewAccess() } label: {
                 Label { Text("Check devices and permissions", bundle: .module) } icon: { Image(systemName: "checkmark.shield") }
             }
             .appAction(.secondary, size: .small)

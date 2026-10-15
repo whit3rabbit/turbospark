@@ -88,6 +88,21 @@ staging files changed.
   stored rather than dropping the key). Probe for an item with an
   attributes-only query, never by reading the secret. Show the system's reason
   on failure (`TypeSafeKeychain.describe`), not a bare "could not save".
+- macOS privacy prompts (microphone, screen and system audio recording) are
+  opt-in the same way. Only `RecordingPermissions` calls
+  `AVCaptureDevice.requestAccess` or `CGRequestScreenCaptureAccess`, from the
+  access sheet's Allow button. `AudioCapture` and the controller only check
+  status (`microphoneAccessAllowed`, `systemAudioAccessAllowed`) and throw,
+  and every `SCShareableContent` query sits behind that check, because a
+  query prompts when access is missing. A new capture entry point uses
+  `.recordingAccessGate` (DESIGN.md, Asking for macOS access). A declined
+  permission must leave import, transcription, and the other source usable.
+  `RecordingPermissionsTests` scans `Sources/` for the prompt APIs.
+- Test permission flows in the bundled app (`make app-bundle`), not
+  `swift run`. An unbundled build is attributed to the app that launched it
+  (Terminal, Xcode), so its prompts and System Settings rows name that app.
+  `tccutil reset Microphone com.whit3rabbit.turbospark` (and `ScreenCapture`)
+  returns the bundle to never asked. It resets the installed app too.
 - The API destination has three modes. Text and Image share the TurboSpark
   Rust listener, address, and key. TypeSafe manages a separate loopback
   `openkindd` process, URL, and API key through the OpenKind Swift package.

@@ -104,6 +104,9 @@ The root references are:
   `swift/AGENTS.md` before touching resources or `Package.swift` targets.
 - Credentials are not stored by default. Keychain use is opt-in per credential
   and never happens at launch for an unused feature. See `swift/AGENTS.md`.
+- macOS privacy prompts (microphone, screen recording) appear only after the
+  user chooses Allow, and a declined permission never blocks features that do
+  not need it. Only `RecordingPermissions` asks. See `swift/AGENTS.md`.
 - App UI, localization, and store durability: follow [DESIGN.md](DESIGN.md).
   Every UI string must use bundled `Text` or `AppStrings.localized` to pass the
   ten localization parity gates. `AppJSONStore` must quarantine corrupt files

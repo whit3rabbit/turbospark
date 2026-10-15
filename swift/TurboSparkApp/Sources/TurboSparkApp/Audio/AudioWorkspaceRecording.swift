@@ -3,7 +3,9 @@ import TurboSpark
 
 @MainActor
 struct AudioRecordingSetupDependencies {
-    var requestMicrophonePermission: () async -> Bool = { await AudioCapture.requestMicrophonePermission() }
+    /// Checks only and never shows the macOS prompt; callers gate on
+    /// `.recordingAccessGate` first. Name kept for the tests that inject it.
+    var requestMicrophonePermission: () async -> Bool = { AudioCapture.microphoneAccessAllowed() }
     var microphones: () throws -> [AudioCaptureMicrophone] = {
         try AudioCapture.microphones().map { AudioCaptureMicrophone(id: String($0.id), name: $0.name) }
     }
@@ -16,11 +18,12 @@ struct AudioRecordingSetupDependencies {
 }
 
 extension AudioWorkspaceController {
+    // Setup only checks access; no macOS prompt follows (RecordingAccessSheet asks).
     private var microphoneSetupMessage: String {
-        AppStrings.localized("Allow microphone access in the macOS prompt to continue.")
+        AppStrings.localized("Checking microphone access...")
     }
     private var systemSetupMessage: String {
-        AppStrings.localized("Allow screen and system audio recording in System Settings if prompted.")
+        AppStrings.localized("Preparing app and system audio...")
     }
     private var setupCancelledMessage: String {
         AppStrings.localized("Recording setup cancelled. Start again when you are ready.")

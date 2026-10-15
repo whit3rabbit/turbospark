@@ -105,6 +105,9 @@ public enum MacPrivacyPane: String, Sendable {
     case filesAndFolders = "Privacy_FilesAndFolders"
     case fullDiskAccess = "Privacy_AllFiles"
     case accessibility = "Privacy_Accessibility"
+    case microphone = "Privacy_Microphone"
+    /// macOS 15 shows this pane as Screen & System Audio Recording.
+    case screenRecording = "Privacy_ScreenCapture"
 
     public var url: URL? {
         URL(string: "x-apple.systempreferences:com.apple.preference.security?\(rawValue)")

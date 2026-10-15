@@ -42,6 +42,9 @@ Code lives in `swift/TurboSparkApp/Sources/TurboSparkApp` (below: `Sources/`).
   family, or point size.
 - **Layouts adapt instead of clipping.** Long translations, the Extra Large
   text size and a narrow window are normal conditions, not edge cases.
+- **Access is asked for, never taken.** The app shows a macOS privacy prompt
+  only after the user chooses to allow access, and declining one permission
+  never blocks a feature that does not need it.
 
 ## 2. The shared control vocabulary
 
@@ -80,6 +83,29 @@ the same change, documented here. A second local copy is how the drift starts.
   reaches VoiceOver and the dialog, the red label only reaches sighted users.
 - A disabled control says why, in its tooltip or in adjacent text. The chat
   Send button is the reference.
+
+### Asking for macOS access
+
+Microphone and screen recording (which ScreenCaptureKit needs even for audio
+only) are macOS privacy grants. A prompt the user did not ask for reads as
+the app taking access, and macOS shows each prompt only once.
+
+- Never request at launch, on appear, on a toggle, or as a side effect.
+  Reading status never prompts, so show it freely. Requesting does, and so
+  does any ScreenCaptureKit content query while access is missing.
+- Only `RecordingPermissions` calls the prompt APIs, from an Allow button the
+  user pressed after seeing what the access is for. The capture layer checks
+  and throws an error that points to the access sheet. It never asks.
+  `RecordingPermissionsTests` scans `Sources/` to hold this.
+- A control that starts a capture goes through
+  `.recordingAccessGate($request, permissions: RecordingPermissions.shared)`:
+  start directly when nothing is missing, otherwise set a
+  `RecordingAccessRequest`. The Record panel is the reference.
+- Each permission row shows status as glyph plus text and offers one next
+  step: Allow while macOS can still prompt, Open System Settings after.
+- Declining is a supported path. Offer to continue with the allowed sources
+  (Record microphone only), keep Not now one click away, and say what still
+  works without access. Import, transcription, and editing need none.
 
 ## 3. Layout
 

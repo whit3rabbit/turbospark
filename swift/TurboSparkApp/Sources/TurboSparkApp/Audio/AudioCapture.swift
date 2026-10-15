@@ -54,10 +54,14 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked
         case interruption(String)
     }
     enum CaptureError: LocalizedError {
-        case permission, unavailable, noSource, alreadyRecording, invalidFormat
+        case permission, systemAudioPermission, unavailable, noSource, alreadyRecording, invalidFormat
         var errorDescription: String? {
             switch self {
-            case .permission: return AppStrings.localized("Microphone access is off. Allow TurboSpark in System Settings > Privacy & Security > Microphone, then try again.")
+            // Both point at the access sheet, which covers never asked and
+            // turned off alike. System Settings alone cannot: macOS lists
+            // TurboSpark there only after it has asked once.
+            case .permission: return AppStrings.localized("Microphone access is not allowed. Open Check devices and permissions on the Record page to allow it.")
+            case .systemAudioPermission: return AppStrings.localized("App or system audio access is not allowed. Open Check devices and permissions on the Record page to allow it.")
             case .unavailable: return AppStrings.localized("The selected audio source is unavailable. Select an available microphone or application.")
             case .noSource: return AppStrings.localized("Select a microphone or system audio source before recording.")
             case .alreadyRecording: return AppStrings.localized("A recording is already active. Stop it before starting another.")
@@ -92,11 +96,21 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked
         self.onEvent = onEvent
     }
 
-    static func requestMicrophonePermission() async -> Bool {
-        await AVCaptureDevice.requestAccess(for: .audio)
+    /// Capture checks access and never asks for it. The macOS prompts are
+    /// shown only by `RecordingPermissions`, after the user chooses Allow in
+    /// the recording access sheet (DESIGN.md, Asking for macOS access).
+    static func microphoneAccessAllowed() -> Bool {
+        AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+    }
+
+    /// ScreenCaptureKit raises the screen recording prompt from any content
+    /// query when access is missing, so every query is behind this check.
+    static func systemAudioAccessAllowed() -> Bool {
+        CGPreflightScreenCaptureAccess()
     }
 
     static func applications() async throws -> [Application] {
+        guard systemAudioAccessAllowed() else { throw CaptureError.systemAudioPermission }
         let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: false)
         return content.applications.filter { $0.processID != ProcessInfo.processInfo.processIdentifier }.map { Application(id: $0.processID, name: $0.applicationName) }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
@@ -125,6 +139,7 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked
         do {
             guard configuration.capturesMicrophone || configuration.systemSource != .none else { throw CaptureError.noSource }
             if configuration.systemSource != .none {
+                guard Self.systemAudioAccessAllowed() else { throw CaptureError.systemAudioPermission }
                 let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: false)
                 guard let display = content.displays.first else { throw CaptureError.unavailable }
                 let filter: SCContentFilter
