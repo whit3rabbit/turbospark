@@ -94,6 +94,15 @@ when this file gets updated relative to the version bump and the tag.
   key an earlier version already stored is kept: the first launch finds the
   item without reading the secret and turns the option on, so nobody's server
   quietly starts without authentication. Turning it off deletes the item.
+- `swift/TurboSparkApp`: the icon rail is always on screen, and beside it
+  the selected section's panel: the chat list in Chat, every Audio page in
+  Audio. The labeled section rows that sat above the chat list are gone,
+  which returns their height to chat history. Other sections show the rail
+  alone. The profile menu moved to the foot of the rail and the temporary
+  chat button beside the Chat/Projects tabs. View > Toggle Sidebar (was
+  Toggle Chat Sidebar) hides the panel, never the rail, and is disabled
+  where there is no panel. The window minimum with a panel shown is 953pt
+  (was 901).
 
 ### Fixed
 - `crates/audio` nemo alignment: `merge_longest_contiguous` and

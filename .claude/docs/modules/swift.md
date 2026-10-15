@@ -50,7 +50,8 @@ swift/
     +-- Package.resolved             # pins swift-markdown-ui
     +-- Sources/TurboSparkApp/
     |   +-- App/                     # @main scene, RootView, AppSettingsView
-    |   +-- Chrome/                  # NavigationRailView, TopBarView,
+    |   +-- Chrome/                  # AppSidebarView, NavigationRailView,
+    |   |                            # ProfileMenuButton, TopBarView,
     |   |                            # StatusBarView, ModelLoaderControl
     |   +-- Files/                   # AttachmentImporter, FilePreviewView,
     |   |                            # FilesSectionView
@@ -401,7 +402,7 @@ keeps resolving.
     directly (not through the actor) and is why Stop is immediate.
 
 17. **THE WINDOW IS FOUR CHROME BANDS AND EACH ONE OWNS ONE QUESTION.**
-    `RootView` is a sidebar (sections, and the chat list when there is one),
+    `RootView` is a sidebar (the section rail, and a section's panel when it has one),
     a top bar (what the machine is doing),
     the working panes, and a status strip (context fill, fans, tok/s,
     tokens, thermal, memory pressure). "Which model, is it loaded" is NOT a
@@ -410,26 +411,30 @@ keeps resolving.
     rather than window-scoped -- so it is absent from the Files, Installed,
     Discover and Server sections by design.
 
-    **THE LEFT COLUMN IS ONE SURFACE IN TWO PRESENTATIONS, NOT TWO BANDS.**
-    A permanent 52pt icon rail used to sit beside a 260pt chat sidebar, which
-    read as two vertical bars stacked together. `AppSidebarView` is the single
-    column since 2026-09-09: expanded it is `SidebarSectionNavView`'s labeled
-    rows over `ChatSidebarView`, collapsed it is `NavigationRailView`
-    unchanged. **The toggle no longer HIDES anything**, and that is the whole
-    design rather than a detail -- the old split existed so sections stayed
-    reachable while the sidebar was hidden, and folding navigation into a
-    hideable sidebar would strand it twice, once on Cmd+B and once in the four
-    sections that never showed a chat list. Collapsing to the rail satisfies
-    the same constraint with one column. Three consequences. The window
-    minimum drops by `navigationRailWidth + dividerWidth` when expanded,
-    because the sidebar's width REPLACES the rail's instead of stacking on it
-    (`minimumWindowWidth` takes `isSidebarExpanded:` and adds one column).
-    `RootView.showsChatSidebar` is gone; `activeSection == .chat` is
-    `AppSidebarView`'s business and must NOT be re-conjoined into the width
-    call, or the window can shrink under its own sidebar in Files and Server.
-    And the profile/settings footer moved OUT of `ChatSidebarView` into
-    `AppSidebarView`, because it has to be present in the sections that have
-    no chat list to hang it off.
+    **THE LEFT BAND IS A RAIL PLUS A CONTEXTUAL PANEL, AND IT IS ONE SURFACE.**
+    History: a permanent 52pt rail beside a 260pt chat sidebar read as two
+    vertical bars, so from 2026-09-09 to 2026-10-15 the band was ONE column in
+    two presentations (labeled section rows over the chat list, or the rail).
+    Those labeled rows cost about 300pt of chat history, so since 2026-10-15
+    `AppSidebarView` is the rail (`NavigationRailView`, always on screen)
+    plus the selected section's panel (`ChatSidebarView` for Chat,
+    `AudioSidebarPanel` for Audio; `AppNavigationSection.hasSidebarPanel`).
+    Three rules keep it from regressing into the old two-bar look. **The
+    panel never repeats the section list**: the rail answers "where", the
+    panel only "what is in it". **One surface**: while a panel is shown the
+    rail takes `sidebarBackgroundColor` and draws a 0.5pt hairline as an
+    overlay. **Navigation never hides**: Cmd+B and Ctrl+Cmd+S hide the
+    PANEL, never the rail, and do nothing (menu item disabled, top-bar toggle
+    hidden) in rail-only sections. Consequences. The window floor is
+    `leftChromeWidth(isPanelVisible:)` = rail + panel when shown, and
+    `isPanelVisible` is `RootView`'s ONE predicate (preference AND
+    `hasSidebarPanel`): gating the floor on the raw preference reserves an
+    empty 260pt in Files, and `RootWindowLayoutTests` holds that. The
+    profile menu (`ProfileMenuButton`) and Settings gear live at the foot of
+    the rail, the only chrome present in every section; the temporary-chat
+    button (`GhostChatButton`) sits beside the chat panel's tabs. The rail's
+    Audio item is a button when the Audio panel will show and falls back to
+    `AudioDestinationMenu` when the preference hides it.
 
     **The top bar is THREE GROUPS, and the middle one is `.fixedSize()`.**
     It used to be one left-aligned run, on the reasoning that the phase
@@ -457,8 +462,8 @@ keeps resolving.
     `showsLeadingDivider:`, because with memory and CPU gone it can be first
     in the strip.
 
-    The rail carries six sections (Chat: 1, Images: 2, Files: 3, Installed: 4,
-    Discover: 5, Server: 6); `testEverySectionHasAUniqueTitleAndShortcut`
+    The rail carries eight sections (Chat: 1, Images: 2, Files: 3, Installed: 4,
+    Discover: 5, API: 6, Audio: 7, Humanize: 8); `testEverySectionHasAUniqueTitleAndShortcut`
     guards a missing or duplicated tooltip.
 
     **THE WINDOW DEFAULTS TO THE SCREEN'S FULL VISIBLE FRAME AND REMEMBERS

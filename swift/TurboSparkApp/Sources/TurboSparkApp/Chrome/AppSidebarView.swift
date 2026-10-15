@@ -2,120 +2,73 @@ import SwiftUI
 
 // Isolated explicitly: only `body` is isolated by the protocol on the
 // macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
-/// The window's single left column, in one of two presentations.
+/// The window's left chrome: the icon rail, always, and beside it the
+/// selected section's panel when it has one.
 ///
-/// **This replaced TWO separate bands**, an always-visible 52pt icon rail and
-/// a 260pt chat sidebar that appeared beside it, which read as two vertical
-/// bars stacked against each other. They are now one surface: expanded, the
-/// sections are labeled rows above the chat list; collapsed, they fall back to
-/// the icon rail. `NavigationRailView` is unchanged and IS the collapsed
-/// presentation.
+/// ## Why this is two columns again
 ///
-/// ## Why collapsing does not hide it
+/// From 2026-09-09 this was ONE column in two presentations: expanded, the
+/// sections were labeled rows stacked above the chat list; collapsed, it was
+/// the rail. That fixed an earlier rail-plus-chat-sidebar pair that read as
+/// two vertical bars, but the labeled rows cost roughly 300pt of chat history.
+/// The pair is back on three conditions, and they are what keeps it from
+/// regressing into the old look:
 ///
-/// `NavigationRailView`'s doc records the constraint the old split existed to
-/// satisfy: sections lived in the rail so the chat sidebar could be hidden
-/// without stranding navigation. Folding navigation INTO a hideable sidebar
-/// would strand it twice over -- once on Cmd+B, and once in the four sections
-/// that never showed a chat list at all.
+/// - **The panel never repeats the section list.** The rail answers "where
+///   am I"; the panel shows only what is in that section (the chat list, the
+///   Audio pages). The old pair duplicated navigation.
+/// - **One surface.** Rail and panel share `sidebarBackgroundColor`, split by
+///   a 0.5pt hairline the rail draws, so they read as one surface in two parts.
+/// - **Navigation never hides.** The sidebar toggle hides the PANEL; the rail
+///   stays in every section and state. Sections without a panel
+///   (`AppNavigationSection.hasSidebarPanel`) show the rail alone.
 ///
-/// So the toggle no longer hides anything. It switches between the two
-/// presentations of the same column, and the collapsed one is exactly the rail
-/// that used to be permanent. Navigation is reachable in every state, the
-/// transcript still gets its width back, and the constraint is met by the
-/// COLUMN rather than by having two of them.
-///
-/// ## What moved out of `ChatSidebarView`
-///
-/// The profile/settings footer. It is sidebar chrome rather than chat chrome:
-/// it has to be present in Files and Server too, where there is no chat list
-/// to hang it off. `ChatSidebarView` is now the chat list alone and this view
-/// owns the footer, which is also why the `AppLanguage` binding lives here.
+/// `isPanelVisible` comes from `RootView`, which feeds the same value to the
+/// window minimum. Do not recompute it here from the raw preference.
 @MainActor
 struct AppSidebarView: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
-    let isExpanded: Bool
-    @State private var navigationHeight: CGFloat = 300
-
-    @AppStorage(AppLanguage.storageKey)
-    private var languageRawValue = AppLanguage.system.rawValue
+    let isPanelVisible: Bool
+    /// The user's panel preference, which the rail's Audio item reads.
+    let isPanelPreferred: Bool
 
     var body: some View {
-        Group {
-            if isExpanded {
-                expanded
-            } else {
-                NavigationRailView(model: model)
+        HStack(spacing: 0) {
+            NavigationRailView(
+                model: model, isPanelVisible: isPanelVisible, isPanelPreferred: isPanelPreferred)
+            if isPanelVisible {
+                panel
+                    .frame(width: AppChromeLayout.sidebarPanelWidth)
+                    // Starts below the top bar's height so the first row
+                    // clears the traffic lights, which a `.hiddenTitleBar`
+                    // window draws over the rail and the panel's first 14pt.
+                    .padding(.top, AppChromeLayout.topBarHeight + 6)
+                    .frame(maxHeight: .infinity)
+                    // The rail paints its own background; painting this one
+                    // under both would stack two translucent layers there.
+                    .background(TurboSparkTheme.sidebarBackgroundColor(
+                        isDark: theme.isDark, reduceTransparency: theme.reduceTransparency))
             }
         }
-        .frame(width: AppChromeLayout.sidebarColumnWidth(isExpanded: isExpanded))
+        .frame(width: AppChromeLayout.leftChromeWidth(isPanelVisible: isPanelVisible))
         .frame(maxHeight: .infinity)
-        .background(
-            isExpanded
-                ? TurboSparkTheme.sidebarBackgroundColor(
-                    isDark: theme.isDark, reduceTransparency: theme.reduceTransparency)
-                : TurboSparkTheme.railBackgroundColor(
-                    isDark: theme.isDark, reduceTransparency: theme.reduceTransparency))
         .font(theme.ui(.small))
         .foregroundStyle(.appText)
         .clipped()
     }
 
-    private var expanded: some View {
-        GeometryReader { geometry in
-            VStack(spacing: 0) {
-                ScrollView {
-                    SidebarSectionNavView(model: model)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .background {
-                            GeometryReader { navigation in
-                                Color.clear.preference(
-                                    key: SidebarNavigationHeightKey.self,
-                                    value: navigation.size.height)
-                            }
-                        }
-                }
-                // Leave space for history at larger text sizes; Audio can use
-                // the remaining column because it has no chat list below it.
-                .frame(height: min(navigationHeight, max(120, model.activeSection == .chat
-                    ? geometry.size.height - 320 * theme.sidebarScale
-                    : geometry.size.height - 60 * theme.sidebarScale)))
-                .onPreferenceChange(SidebarNavigationHeightKey.self) { height in
-                    if height > 0 { navigationHeight = height }
-                }
-
-                SidebarDivider()
-                    .padding(.top, 8)
-
-                // The chat list is only meaningful beside a conversation. In every
-                // other section the nav rows and the footer are the whole sidebar,
-                // and the Spacer is what keeps the footer on the floor.
-                if model.activeSection == .chat {
-                    ChatSidebarView(model: model)
-                } else {
-                    Spacer(minLength: 0)
-                }
-
-                ChatSidebarFooterView(
-                    model: model,
-                    // "local chats stored" is a machine-wide figure, so it counts
-                    // every persisted chat regardless of the selected project or
-                    // the archive filter the list above applies.
-                    chatCount: model.chats.filter { !$0.isGhost }.count,
-                    languageRawValue: $languageRawValue)
-            }
+    @ViewBuilder
+    private var panel: some View {
+        switch model.activeSection {
+        case .chat:
+            ChatSidebarView(model: model)
+        case .audio:
+            AudioSidebarPanel(model: model, controller: model.audioWorkspace)
+        default:
+            // Unreachable while `hasSidebarPanel` lists only the two above. A
+            // section added there needs its own case here.
+            EmptyView()
         }
-        // Starts below the top bar's height so the first row clears the
-        // traffic lights, which a `.hiddenTitleBar` window draws over this
-        // column. Same reason and same figure as the rail's own inset.
-        .padding(.top, AppChromeLayout.topBarHeight + 6)
-    }
-}
-
-private struct SidebarNavigationHeightKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
     }
 }

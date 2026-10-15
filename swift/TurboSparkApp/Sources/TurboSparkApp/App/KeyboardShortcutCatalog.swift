@@ -56,7 +56,7 @@ public enum KeyboardShortcutCatalog {
                 altKeys: "\(control) \(section.shortcutKey)")
         }
         rows.append(KeyboardShortcutRow(
-            label: "Toggle Chat Sidebar",
+            label: "Toggle Sidebar",
             keys: "\(control) \(command) S",
             altKeys: "\(command) B"))
         rows.append(KeyboardShortcutRow(label: "Toggle Inspector", keys: "\(shift) \(command) I"))

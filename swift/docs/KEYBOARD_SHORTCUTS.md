@@ -21,7 +21,7 @@ cannot drift between the three.
 | `Cmd+6` | API | Opens the API workspace. |
 | `Cmd+7` | Audio | Opens Audio Studio. |
 | `Cmd+8` | Humanize | Opens the Humanize workspace. |
-| `Ctrl+Cmd+S` | Toggle Chat Sidebar | Expands or collapses the left-hand conversation sidebar. |
+| `Ctrl+Cmd+S` | Toggle Sidebar | Shows or hides the panel beside the icon rail (the chat list in Chat, the page list in Audio). The rail stays. Disabled in sections without a panel. |
 | `Cmd+Shift+I` | Toggle Inspector | Expands or collapses the right-hand model and runtime inspector. |
 | `Cmd++` | Make Text Bigger | Increases in-app text readability and Dynamic Type scale. |
 | `Cmd+-` | Make Text Smaller | Decreases in-app text size scale. |
@@ -123,7 +123,7 @@ shortcut scheme shares several actions with this app under different
 chords: its new chat is Cmd-Shift-O where the Chat menu says Cmd-N, its
 sidebar toggle is Cmd-B where View says Ctrl-Cmd-S, its chat cycling is
 Cmd-Shift-[ and Cmd-Shift-] where ours is Cmd-[ and Cmd-], and its
-workspace keys are Ctrl-1..9 where the rail is Cmd-1..5.
+workspace keys are Ctrl-1..9 where the rail is Cmd-1..8.
 
 **The menus show one chord per action, so an alternate chord is a hidden
 button, not a second menu item.** A SwiftUI menu item carries exactly one

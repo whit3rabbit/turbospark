@@ -5,11 +5,11 @@ import SwiftUI
 // macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
 /// The CHAT LIST: tabs (Chat vs Projects), filter, and the rows themselves.
 ///
-/// It is one child of `AppSidebarView` rather than the whole sidebar, and it
-/// renders only while `activeSection == .chat`. The profile/settings footer
-/// used to hang off the bottom of this view and moved up to `AppSidebarView`
-/// when the two left columns merged: the footer has to be present in Files
-/// and Server too, where there is no chat list to attach it to.
+/// It is the Chat section's panel beside the icon rail (`AppSidebarView`),
+/// so it renders only while `activeSection == .chat`. The profile menu and
+/// settings live in the rail, which is the only chrome present in every
+/// section; the temporary-chat button sits beside the tabs because it is a
+/// chat action and that row shows in both Chat and Projects modes.
 @MainActor
 struct ChatSidebarView: View {
     @Environment(\.appTheme) private var theme
@@ -25,10 +25,13 @@ struct ChatSidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            tabSelector
-                .padding(.horizontal, 10)
-                .padding(.top, 10)
-                .padding(.bottom, 6)
+            HStack(spacing: 6) {
+                tabSelector
+                GhostChatButton(model: model)
+            }
+            .padding(.horizontal, 10)
+            .padding(.top, 10)
+            .padding(.bottom, 6)
 
             filterBar
                 .padding(.horizontal, 10)

@@ -2,17 +2,12 @@ import SwiftUI
 
 // Isolated explicitly: only `body` is isolated by the protocol on the
 // macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
-/// The icon rail: the sidebar's COLLAPSED presentation.
+/// The icon rail: top-level navigation, on screen in every section and state.
 ///
-/// This used to be a permanent band of its own, sitting to the left of the
-/// chat sidebar, and the reason was that sections had to stay reachable while
-/// the sidebar was hidden. That constraint has not gone away -- it is met by
-/// the COLUMN now rather than by having two of them. `AppSidebarView` shows
-/// this view when collapsed and `SidebarSectionNavView` when expanded, so
-/// navigation is on screen in both states and in every section.
-///
-/// Nothing here changed in the merge, which is the point: the collapsed
-/// sidebar IS the rail that was already shipping.
+/// The section's panel (`AppSidebarView`) sits beside it and can be hidden;
+/// this cannot, so navigation is never stranded. While a panel is shown the
+/// rail takes the panel's background and draws the hairline between them, so
+/// the pair reads as one surface rather than two bands (Gotcha 17).
 ///
 /// Redesign notes: selection is now a single indicator bar that SLIDES
 /// between rows (`matchedGeometryEffect`) instead of a tinted rounded rect
@@ -24,6 +19,11 @@ import SwiftUI
 struct NavigationRailView: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
+    /// A panel is on screen beside the rail (drives the shared surface).
+    let isPanelVisible: Bool
+    /// The user's panel preference. Audio is a plain button when selecting it
+    /// will show the Audio panel, and a page menu when it will not.
+    let isPanelPreferred: Bool
 
     private var itemSize: CGFloat { min(42, 34 * theme.sidebarScale) }
     @State private var hoveredSection: AppModel.AppNavigationSection? = nil
@@ -39,7 +39,7 @@ struct NavigationRailView: View {
                             SidebarDivider().padding(.horizontal, 12).padding(.vertical, 4)
                         }
                         ForEach(group.sections) { section in
-                            if section == .audio {
+                            if section == .audio && !isPanelPreferred {
                                 Menu {
                                     AudioDestinationMenu(model: model)
                                 } label: {
@@ -50,7 +50,10 @@ struct NavigationRailView: View {
                                         .background(theme.accent.opacity(model.activeSection == .audio ? 0.14 : 0),
                                                     in: RoundedRectangle(cornerRadius: 8))
                                 }
-                                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                                // `.button` + `.plain`: `.borderlessButton`
+                                // flattens the label and drops the tint.
+                                .menuStyle(.button).buttonStyle(.plain)
+                                .menuIndicator(.hidden).fixedSize()
                                 .help(Text("Audio", bundle: .module))
                                 .accessibilityLabel(Text("Audio", bundle: .module))
                                 .accessibilityAddTraits(model.activeSection == .audio ? .isSelected : [])
@@ -63,6 +66,7 @@ struct NavigationRailView: View {
             }
             .scrollIndicators(.hidden)
             Spacer(minLength: 0)
+            ProfileMenuButton(model: model, itemSize: itemSize)
             settingsButton
         }
         // Starts below the top bar so the first icon clears the traffic
@@ -71,8 +75,22 @@ struct NavigationRailView: View {
         .padding(.bottom, 8)
         .frame(width: AppChromeLayout.navigationRailWidth)
         .frame(maxHeight: .infinity)
-        .background(TurboSparkTheme.railBackgroundColor(
-            isDark: theme.isDark, reduceTransparency: theme.reduceTransparency))
+        .background(
+            isPanelVisible
+                ? TurboSparkTheme.sidebarBackgroundColor(
+                    isDark: theme.isDark, reduceTransparency: theme.reduceTransparency)
+                : TurboSparkTheme.railBackgroundColor(
+                    isDark: theme.isDark, reduceTransparency: theme.reduceTransparency))
+        .overlay(alignment: .trailing) {
+            // Overlay, not layout width: `leftChromeWidth` counts the rail
+            // and the panel only.
+            if isPanelVisible {
+                Rectangle()
+                    .fill(.appBorder)
+                    .frame(width: 0.5)
+                    .accessibilityHidden(true)
+            }
+        }
         .tsAnimation(TSMotion.select, value: model.activeSection)
     }
 

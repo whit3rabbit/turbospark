@@ -161257,6 +161257,137 @@
         }
       }
     },
+    "Toggle Sidebar": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u062a\u0628\u062f\u064a\u0644 \u0627\u0644\u0634\u0631\u064a\u0637 \u0627\u0644\u062c\u0627\u0646\u0628\u064a"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Seitenleiste ein-/ausblenden"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Toggle Sidebar"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Alternar barra lateral"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Basculer la barre lat\u00e9rale"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05d4\u05e6\u05d2 \u05d0\u05d5 \u05d4\u05e1\u05ea\u05e8 \u05d0\u05ea \u05d4\u05e1\u05e8\u05d2\u05dc \u05d4\u05e6\u05d3\u05d3\u05d9"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0938\u093e\u0907\u0921\u092c\u093e\u0930 \u091f\u0949\u0917\u0932 \u0915\u0930\u0947\u0902"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beralih sidebar"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mostra/nascondi la barra laterale"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u30b5\u30a4\u30c9\u30d0\u30fc\u3092\u5207\u308a\u66ff\u3048"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uc0ac\uc774\ub4dc\ubc14 \uc804\ud658"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zijbalk in-/uitschakelen"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prze\u0142\u0105cz panel boczny"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Alternar barra lateral"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041f\u043e\u043a\u0430\u0437\u0430\u0442\u044c \u0438\u043b\u0438 \u0441\u043a\u0440\u044b\u0442\u044c \u0431\u043e\u043a\u043e\u0432\u0443\u044e \u043f\u0430\u043d\u0435\u043b\u044c"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "V\u00e4xla sidopanel"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kenar \u00e7ubu\u011funu a\u00e7/kapat"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041f\u043e\u043a\u0430\u0437\u0430\u0442\u0438 \u0430\u0431\u043e \u0441\u0445\u043e\u0432\u0430\u0442\u0438 \u0431\u0456\u0447\u043d\u0443 \u043f\u0430\u043d\u0435\u043b\u044c"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "B\u1eadt/t\u1eaft thanh b\u00ean"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5207\u6362\u8fb9\u680f"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5207\u63db\u5074\u908a\u6b04"
+          }
+        }
+      }
+    },
     "Token Usage (recorded)": {
       "extractionState": "manual",
       "localizations": {

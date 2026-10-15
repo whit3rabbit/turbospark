@@ -350,12 +350,16 @@ struct TurboSparkModelCommands: Commands {
 
                 Divider()
 
+                // Shows or hides the section's panel beside the rail. Named
+                // for no section because it acts on Chat and Audio alike, and
+                // disabled where there is no panel to toggle.
                 Button {
                     NotificationCenter.default.post(name: .toggleChatSidebar, object: nil)
                 } label: {
-                    Text("Toggle Chat Sidebar", bundle: .module)
+                    Text("Toggle Sidebar", bundle: .module)
                 }
                 .keyboardShortcut("s", modifiers: [.command, .control])
+                .disabled(!model.activeSection.hasSidebarPanel)
 
                 Button {
                     NotificationCenter.default.post(name: .toggleInspector, object: nil)
