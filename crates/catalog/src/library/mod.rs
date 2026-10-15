@@ -10,6 +10,7 @@ mod locate;
 mod marker;
 mod mount_table;
 mod registry;
+mod transfer;
 
 pub use locate::{
     discover_at, locate, volume_relative_path, volume_root_of, Located, STANDARD_LIBRARY_FOLDER,
@@ -21,6 +22,7 @@ pub use mount_table::{
     parse_mount_table, validate_location, LocationEnv, LocationRefusal, MountEntry, MountSource,
 };
 pub use registry::{AddedLibrary, LibraryRegistry, LoadReport, Refreshed, LIBRARIES_FILE};
+pub use transfer::{move_install, MoveError, MoveOutcome};
 // The store locates every library of one listing through one mount table.
 pub(crate) use locate::SharedMountTable;
 #[cfg(test)]

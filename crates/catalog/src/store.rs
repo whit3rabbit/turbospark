@@ -1619,7 +1619,7 @@ pub(crate) fn external_library(row: &InstalledModel) -> Option<&str> {
 
 /// [`InstalledModel::effective_modality`] for a marker row, so a marker is
 /// keyed by alias and modality exactly as the registry is.
-fn portable_modality(portable: &PortableRow) -> ModelModality {
+pub(crate) fn portable_modality(portable: &PortableRow) -> ModelModality {
     if portable.kind.as_deref() == Some("image") {
         ModelModality::Image
     } else {
@@ -1635,7 +1635,7 @@ fn portable_modality(portable: &PortableRow) -> ModelModality {
 /// counts as not there: a drive anyone could have written, or a hand edit
 /// of the registry, must not point a library row at a folder outside the
 /// library (2.2 SECURITY). Nothing outside the root is ever examined.
-fn install_in(root: &Path, relative: &Path) -> Option<(PathBuf, bool)> {
+pub(crate) fn install_in(root: &Path, relative: &Path) -> Option<(PathBuf, bool)> {
     let path = join_relative(root, relative).ok()?;
     let mut at = root.to_path_buf();
     for component in relative.components() {

@@ -142,7 +142,7 @@ pub struct AudioCatalog {
     entries: Vec<AudioProfile>,
 }
 const ASSETS: &str = include_str!("audio_assets.json");
-const RECEIPT_FILENAME: &str = "audio-receipt.json";
+pub(crate) const RECEIPT_FILENAME: &str = "audio-receipt.json";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AudioInstalledReport {
