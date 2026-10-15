@@ -14,7 +14,7 @@ use crate::real_model_params::{protocol_parameters, ProtocolParameters};
 /// usual checkpoint bundling convention), KV sized to the protocol's 4K.
 ///
 /// `slots` is the per-layer routed-expert cache size (allowed
-/// 8/16/24/32/48/64/96/128, same set the CLI's `--expert-cache-slots`
+/// 8/16/24/32/48/64/96/128/192/256, same set the CLI's `--expert-cache-slots`
 /// takes). Output is NOT
 /// md5-identical across slot counts: the hit/miss split permutes the
 /// phase-2 reduce order and FP addition is not associative. Compare

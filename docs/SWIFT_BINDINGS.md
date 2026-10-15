@@ -1376,8 +1376,9 @@ no floor.
 cannot fit the measured headroom; the mode the session actually opened with is
 `sessionInfo.expertResidency`. A misspelling is refused before the install is
 opened. `expertCacheSlots` as a number must be one of 8, 16, 24, 32, 48, 64,
-96, 128 (`foundation::runtime_config::ALLOWED_CACHE_SLOTS`); `"auto"` climbs
-through 8/16/24/32 only.
+96, 128, 192, 256 (`foundation::runtime_config::ALLOWED_CACHE_SLOTS`);
+`"auto"` takes the largest of those a quarter of free memory covers, never
+below 16.
 
 `prefixReuse` (default `true`, which is what every release did) continues each
 turn from the previous turn's KV wherever the new render shares a prefix. Open

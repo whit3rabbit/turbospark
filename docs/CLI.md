@@ -297,7 +297,7 @@ than one, is a parse error.
 | `--image-batch` | flag | off | run the prompt once per `--image` instead of once with all of them |
 | `--vision-sidecar` | path, or `auto` | none | attach a standalone vision-tower sidecar install to a text-only trunk. `auto` resolves one from the installed store by the trunk's own family and hidden size after the trunk opens: the trunk's own tower wins, zero installed towers runs text-only with the reason on stderr, and two candidate towers REFUSE the open because the revision pin is load-bearing; see [`docs/VISION.md`](VISION.md) |
 | `--rdadvise` | `off\|normal\|aggressive` | `off` | read-ahead hint mode for streamed expert reads (macOS) |
-| `--expert-cache-slots` | `8\|16\|24\|32`, or `auto` | `auto` | routed-expert slot cache size; `auto` never resolves below `16` |
+| `--expert-cache-slots` | `8\|16\|24\|32\|48\|64\|96\|128\|192\|256`, or `auto` | `auto` | routed-expert slot cache size; `auto` takes the largest value a quarter of free memory covers and never resolves below `16` |
 | `--expert-residency` | `auto\|streamed\|mapped` | `auto` | routed-expert storage; `auto` selects mapped only when the minimum streamed cache cannot fit the measured headroom |
 | `--prefill-chunk` | `32\|64\|128\|256\|512\|1024\|2048\|4096`, or `auto` | `128` | prompt-processing chunk size; drives chunked prefill for supported families (Gemma 4, dense Llama/Mistral) and falls back to sequential prefill for others; `TURBOSPARK_PREFILL_CHUNK` environment variable overrides when set |
 | `--power-profile` | `performance\|balanced\|efficiency` | `performance` (or `efficiency` under Low Power Mode) | decode rate governance |
@@ -493,7 +493,7 @@ unimplemented and uses `GET /health` for liveness.
 | `--memory-guard` | `safe\|balanced\|strict\|relaxed\|off` | unset | alias for `--load-guard`; `safe` maps to `balanced` (omlx compatibility) |
 | `--memory-guard-gb` | integer | unset | set custom memory guard ceiling in gigabytes (omlx compatibility) |
 | `--min-auto-context` | non-negative integer | `0` | same as `turbospark-check`'s |
-| `--expert-cache-slots` | `8\|16\|24\|32\|48\|64\|96\|128`, or `auto` | `auto` | same semantics as `turbospark-check`'s; the server (`crates/server/src/args.rs`) and the Swift ABI accept the full set `foundation::ALLOWED_CACHE_SLOTS`, and `auto` climbs through 8/16/24/32 only |
+| `--expert-cache-slots` | `8\|16\|24\|32\|48\|64\|96\|128\|192\|256`, or `auto` | `auto` | same semantics as `turbospark-check`'s; the server (`crates/server/src/args.rs`) and the Swift ABI accept the full set `foundation::ALLOWED_CACHE_SLOTS` |
 | `--pool-size` | positive integer | `1` | how many independent runners to open of `--model`'s ONE install; N > 1 serves N concurrent generations behind one public id, routed to the least-busy member. Each member pays the load guard on its own, so one that does not fit refuses at startup |
 | `--session-slots` | positive integer | `1` | concurrent conversation KV states maintained in pool |
 | `--max-concurrent-requests` | positive integer | `1` | alias for `--session-slots` (omlx compatibility) |
@@ -585,7 +585,7 @@ See [`docs/BENCHMARKING.md`](BENCHMARKING.md) for background and baseline number
 | --- | --- | --- | --- |
 | `--model` | path | required | path to `.gturbo` install directory |
 | `--case` | case ID | all 3 cases | restrict run to one protocol case (`short-explanation`, `medium-review`, `long-synthesis`) |
-| `--expert-cache-slots` | `8\|16\|24\|32` | `16` | routed-expert slot cache size per layer |
+| `--expert-cache-slots` | `8\|16\|24\|32\|48\|64\|96\|128\|192\|256` | `16` | routed-expert slot cache size per layer |
 | `--power-profile` | `performance\|balanced\|efficiency` | `performance` | power governance mode (explicitly defaults to `performance` rather than LPM state) |
 | `--max-tokens-per-sec` | float `> 0` | uncapped | decode rate cap |
 | `--speculative` | `off\|auto`, or block size `> 0` | `off` | speculative decoding (defaults off to preserve sampled protocol numbers) |

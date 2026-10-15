@@ -470,7 +470,7 @@ mod tests {
                                               // A machine with plenty of headroom over the install: 128 GiB
                                               // physical against 47 GiB resident. (128 - 47 - 4) * 0.25 = 19.25
                                               // GiB budget; 96 slots costs 11.9 GiB and 128 costs 15.9 GiB, both
-                                              // under budget, so `Auto` reaches the allowed ceiling.
+                                              // under budget, and 192 (23.7 GiB) is not, so `Auto` stops at 128.
         assert_eq!(
             auto_slots(128 * GIB, QWEN4_RESIDENT, QWEN4_BYTES_PER_SLOT),
             128
@@ -483,6 +483,33 @@ mod tests {
         assert_eq!(
             auto_slots(40 * GIB, QWEN4_RESIDENT, QWEN4_BYTES_PER_SLOT),
             DEFAULT_CACHE_SLOTS as usize
+        );
+    }
+
+    /// The 512-expert IQ2_XS `qwen4exp` install the 192 and 256 rungs were
+    /// added for: 48 layers x 1,523,712 B is 69.75 MiB per slot, and its
+    /// resident trunk is `model_weights.bin` (4,546,742,016 B; the n-gram
+    /// table is demand-paged and not resident). Three machines, one per
+    /// rung, so dropping either new rung from the set changes an answer.
+    #[test]
+    fn a_512_expert_install_reaches_the_new_rungs_only_where_memory_allows() {
+        const SWIFT_BYTES_PER_SLOT: u64 = 48 * 1_523_712;
+        const SWIFT_RESIDENT: u64 = 4_546_742_016;
+        // (36 - 4.23 - 4) * 0.25 = 6.94 GiB: 96 slots (6.54) fit, 128 (8.72)
+        // do not. This machine's own answer, unchanged by the new rungs.
+        assert_eq!(
+            auto_slots(36 * GIB, SWIFT_RESIDENT, SWIFT_BYTES_PER_SLOT),
+            96
+        );
+        // 13.94 GiB budget: 192 (13.08) fits, 256 (17.44) does not.
+        assert_eq!(
+            auto_slots(64 * GIB, SWIFT_RESIDENT, SWIFT_BYTES_PER_SLOT),
+            192
+        );
+        // 29.94 GiB budget: 256 fits.
+        assert_eq!(
+            auto_slots(128 * GIB, SWIFT_RESIDENT, SWIFT_BYTES_PER_SLOT),
+            256
         );
     }
 }
