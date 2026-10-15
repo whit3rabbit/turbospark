@@ -8,8 +8,8 @@ use serde::Deserialize;
 use crate::install::{install_destination, record_into, InstallKind};
 use crate::library::LocationEnv;
 use crate::{
-    CancelFlag, Catalog, Client, DownloadReceipt, HubClient, HubDownloadProgress, HubError,
-    InstalledModel, Machine, ModelModality, PinnedArtifactPlan, PinnedSourceFile,
+    AudioCatalog, CancelFlag, Catalog, Client, DownloadReceipt, HubClient, HubDownloadProgress,
+    HubError, InstalledModel, Machine, ModelModality, PinnedArtifactPlan, PinnedSourceFile,
     PinnedSourceGroup, RepoRef, Store, StoreError,
 };
 
@@ -262,7 +262,9 @@ pub fn install_music(
 /// library's drive (`Store::staging_parent_for`) and publishes with a
 /// same-volume rename (`Store::publish_staged`), while the pinned range
 /// cache stays in the home, where a retry into any library finds it. A
-/// drive that goes away mid-install ends with
+/// profile the audio catalog also lists is published into a library with
+/// the audio receipt adoption would write, and refused when its bytes are
+/// not that profile's pins. A drive that goes away mid-install ends with
 /// [`StoreError::LibraryDisconnected`] and no row. This Mac keeps exactly
 /// today's staging, paths, and errors.
 #[allow(clippy::too_many_arguments)]
@@ -275,6 +277,46 @@ pub fn install_music_into(
     env: &LocationEnv,
     progress: &mut dyn FnMut(HubDownloadProgress),
     cancel: &CancelFlag,
+) -> Result<InstalledModel, StoreError> {
+    install_music_with(
+        store,
+        alias,
+        library,
+        env,
+        AudioCatalog::embedded,
+        cancel,
+        |plan, staging_parent, cache_parent| {
+            HubClient::new(
+                client,
+                catalog.clone(),
+                Machine::default(),
+                4096,
+                model_io::ExpertCacheSlots::Auto,
+            )
+            .with_store(store.clone())
+            .download_pinned_artifacts_into(
+                plan,
+                staging_parent,
+                cache_parent,
+                progress,
+                cancel,
+            )
+        },
+    )
+}
+
+/// [`install_music_into`] with the audio catalog and the transfer,
+/// `download(plan, staging_parent, cache_parent)`, passed in, so tests can
+/// pin a profile to fixture bytes and stand in for the Hub. The audio
+/// catalog is read only for an install into a library.
+pub(crate) fn install_music_with(
+    store: &Store,
+    alias: &str,
+    library: Option<&str>,
+    env: &LocationEnv,
+    audio_catalog: impl FnOnce() -> Result<AudioCatalog, String>,
+    cancel: &CancelFlag,
+    download: impl FnOnce(&PinnedArtifactPlan, &Path, &Path) -> Result<DownloadReceipt, HubError>,
 ) -> Result<InstalledModel, StoreError> {
     let music = MusicCatalog::embedded().map_err(StoreError::Io)?;
     let entry = music
@@ -303,6 +345,15 @@ pub fn install_music_into(
         std::fs::create_dir_all(destination.parent().expect("audio install has parent"))
             .map_err(|error| StoreError::Io(format!("creating audio install parent: {error}")))?;
     }
+    // Only This Mac adopts a catalog profile's install that lacks its audio
+    // receipt, so into a library the receipt is published with the install.
+    // Read before the transfer, so a catalog that fails to parse wastes no
+    // download.
+    let audio = if into_library {
+        Some(audio_catalog().map_err(StoreError::Io)?)
+    } else {
+        None
+    };
     // Classified by the store's one rule, so a step that failed because the
     // drive went away reads as a disconnect. This Mac's are IO errors.
     let failed = |staging: &Path, error: String| {
@@ -312,30 +363,24 @@ pub fn install_music_into(
         .staging_parent_for(&target.root)
         .map_err(|error| failed(&target.root, error.to_string()))?;
 
-    let hub = HubClient::new(
-        client,
-        catalog.clone(),
-        Machine::default(),
-        4096,
-        model_io::ExpertCacheSlots::Auto,
-    )
-    .with_store(store.clone());
-    let receipt = hub
-        .download_pinned_artifacts_into(&plan, &staging_parent, store.root(), progress, cancel)
-        .map_err(|error| match error {
-            HubError::Staging(_) => failed(&staging_parent, error.to_string()),
-            other => StoreError::Io(other.to_string()),
-        })?;
+    let receipt = download(&plan, &staging_parent, store.root()).map_err(|error| match error {
+        HubError::Staging(_) => failed(&staging_parent, error.to_string()),
+        other => StoreError::Io(other.to_string()),
+    })?;
     if cancel.is_cancelled() {
         let _ = std::fs::remove_dir_all(&receipt.staging_root);
         return Err(StoreError::Io(crate::INSTALL_CANCELLED.to_string()));
     }
-    let published = if into_library {
-        verified_music_source(&receipt, entry)
+    let published = match &audio {
+        // Written into the staged tree, so one rename publishes it complete.
+        Some(audio) => verified_music_source(&receipt, entry)
+            .and_then(|staged| {
+                audio.write_transfer_receipt(alias, &receipt.sources[0].files, &staged)?;
+                Ok(staged)
+            })
             .map_err(|error| failed(&receipt.staging_root, error))
-            .and_then(|staged| store.publish_staged(&staged, destination, &target.library_name))
-    } else {
-        promote_music_source(&receipt, entry, destination).map_err(StoreError::Io)
+            .and_then(|staged| store.publish_staged(&staged, destination, &target.library_name)),
+        None => promote_music_source(&receipt, entry, destination).map_err(StoreError::Io),
     };
     if let Err(error) = published {
         let _ = std::fs::remove_dir_all(&receipt.staging_root);

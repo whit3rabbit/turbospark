@@ -5,14 +5,14 @@
 
 use super::*;
 use crate::library::{
-    parse_mount_table, system_mount_reads, LibraryMarker, LibraryRegistry, LocationEnv,
-    MountSource, LIBRARIES_FILE, MARKER_FILE,
+    move_install, parse_mount_table, system_mount_reads, LibraryMarker, LibraryRegistry,
+    LocationEnv, MountSource, MoveOutcome, INTERNAL_LIBRARY_ID, LIBRARIES_FILE, MARKER_FILE,
 };
-use crate::{ModelModality, RepoRef, StoreError, VerifiedSourceFile, VerifiedSourceGroup};
+use crate::{ModelModality, StoreError, VerifiedSourceFile, VerifiedSourceGroup};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::os::unix::fs::MetadataExt;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
@@ -27,15 +27,18 @@ struct Library {
     root: PathBuf,
 }
 
-/// A fixed mount table with one local volume, `volume`. `home_device`
+/// A fixed mount table with the local volumes `volumes`. `home_device`
 /// differs from the temp dir's device so the same-disk refusal does not
-/// fire for the fake volume.
-fn env_for(base: &Path, volume: &Path) -> LocationEnv {
-    let table = format!(
-        "/dev/disk3s1s1 on / (apfs, sealed, local, read-only)\n\
-         /dev/disk20s1 on {} (hfs, local, journaled)\n",
-        volume.display()
-    );
+/// fire for the fake volumes.
+fn env_for(base: &Path, volumes: &[&Path]) -> LocationEnv {
+    let mut table = "/dev/disk3s1s1 on / (apfs, sealed, local, read-only)\n".to_string();
+    for (index, volume) in volumes.iter().enumerate() {
+        table.push_str(&format!(
+            "/dev/disk{}s1 on {} (hfs, local, journaled)\n",
+            20 + index,
+            volume.display()
+        ));
+    }
     LocationEnv {
         mount_source: MountSource::Fixed(parse_mount_table(&table)),
         volumes_root: base.join("Volumes"),
@@ -59,7 +62,7 @@ impl Library {
         fs::create_dir_all(&home).unwrap();
         let volume = base.join("Volumes").join("T7");
         fs::create_dir_all(&volume).unwrap();
-        let env = env_for(&base, &volume);
+        let env = env_for(&base, &[&volume]);
         let added = LibraryRegistry::load(&home)
             .add(&volume, Some("T7"), &env)
             .unwrap();
@@ -85,7 +88,7 @@ impl Library {
     fn plug_in_as(&mut self, name: &str) {
         let volume = self.base.join("Volumes").join(name);
         fs::rename(self.base.join("unplugged"), &volume).unwrap();
-        self.env = env_for(&self.base, &volume);
+        self.env = env_for(&self.base, &[&volume]);
         self.root = volume.join("TurboSpark");
     }
 
@@ -146,12 +149,15 @@ impl Drop for Locked {
 /// The embedded catalog with its first text-to-speech profile (no terms to
 /// accept) pinned to small fixture files, and those files.
 fn pinned_fixture() -> (AudioCatalog, AudioProfileIdentity, Vec<(String, Vec<u8>)>) {
+    pinned_fixture_where(|p| p.identity.task == AudioTask::TextToSpeech)
+}
+
+/// [`pinned_fixture`] for the first profile `pick` accepts.
+fn pinned_fixture_where(
+    pick: impl Fn(&AudioProfile) -> bool,
+) -> (AudioCatalog, AudioProfileIdentity, Vec<(String, Vec<u8>)>) {
     let mut catalog = AudioCatalog::embedded().unwrap();
-    let profile = catalog
-        .entries
-        .iter_mut()
-        .find(|p| p.identity.task == AudioTask::TextToSpeech)
-        .unwrap();
+    let profile = catalog.entries.iter_mut().find(|p| pick(p)).unwrap();
     assert!(profile.acknowledgments.is_empty());
     let mut files = Vec::new();
     for asset in &mut profile.assets {
@@ -174,6 +180,15 @@ fn stage(
     files: &[(String, Vec<u8>)],
     parent: &Path,
 ) -> DownloadReceipt {
+    stage_plan(&catalog.pinned_plan(identity).unwrap(), files, parent)
+}
+
+/// [`stage`] for the transfer of `plan`, whose one source is the files.
+fn stage_plan(
+    plan: &PinnedArtifactPlan,
+    files: &[(String, Vec<u8>)],
+    parent: &Path,
+) -> DownloadReceipt {
     let staging_root = parent.join(format!(
         ".turbospark-pinned-transfer-test-{}",
         NEXT.fetch_add(1, Ordering::Relaxed)
@@ -191,14 +206,13 @@ fn stage(
             sha256: format!("{:x}", Sha256::digest(bytes)),
         });
     }
-    let plan = catalog.pinned_plan(identity).unwrap();
     DownloadReceipt {
-        owner_id: plan.owner_id,
+        owner_id: plan.owner_id.clone(),
         staging_root,
         download_cache: Vec::new(),
         sources: vec![VerifiedSourceGroup {
             role: plan.sources[0].role.clone(),
-            repo: RepoRef::new(&identity.repository, &identity.revision),
+            repo: plan.sources[0].repo.clone(),
             files: verified,
         }],
     }
@@ -779,4 +793,247 @@ fn a_library_row_naming_another_folder_is_refused() {
     assert!(deleted.contains(expected), "{deleted}");
     assert_eq!(snapshot(&installed.path), payload);
     assert_eq!(fx.store.audio_records(), vec![row]);
+}
+
+// MiniMax Music 3 through the music installer (2.8), whose 4-bit profile is
+// also an audio catalog profile.
+
+const MUSIC_ALIAS: &str = "minimax-music3-4bit";
+
+/// The embedded catalog with the MiniMax Music 3 4-bit profile pinned to
+/// small fixture files, and those files.
+fn music_fixture() -> (AudioCatalog, AudioProfileIdentity, Vec<(String, Vec<u8>)>) {
+    pinned_fixture_where(|p| p.identity.alias == MUSIC_ALIAS)
+}
+
+/// A music install with `catalog` as the audio catalog and a stand-in
+/// transfer that stages `files` for the music plan it is asked for, after
+/// `tamper` had its way with the staged tree.
+fn install_music(
+    fx: &Library,
+    catalog: &AudioCatalog,
+    files: &[(String, Vec<u8>)],
+    library: Option<&str>,
+    tamper: impl FnOnce(&Path),
+) -> Result<InstalledModel, StoreError> {
+    crate::music::install_music_with(
+        &fx.store,
+        MUSIC_ALIAS,
+        library,
+        &fx.env,
+        || Ok(catalog.clone()),
+        &CancelFlag::new(),
+        |plan, staging_parent, _| {
+            let staged = stage_plan(plan, files, staging_parent);
+            tamper(&staged.staging_root.join("source-0000"));
+            Ok(staged)
+        },
+    )
+}
+
+/// The receipt adoption writes for `identity`'s profile in `catalog`.
+fn adoption_receipt(catalog: &AudioCatalog, identity: &AudioProfileIdentity) -> Vec<u8> {
+    serde_json::to_vec_pretty(&new_audio_receipt(catalog.profile(identity).unwrap())).unwrap()
+}
+
+/// Only This Mac adopts an install without its receipt, so a catalog
+/// profile installed into a library by the music installer carries the
+/// receipt adoption would write, from the moment it is published. The
+/// library then lists, resolves, verifies and moves it like any audio
+/// catalog install, rather than listing it as incompatible for good.
+#[test]
+fn a_library_music_install_carries_its_audio_receipt_and_moves() {
+    let mut fx = Library::new();
+    let (catalog, identity, files) = music_fixture();
+    let installed = install_music(&fx, &catalog, &files, Some(&fx.id), |_| {}).unwrap();
+    let path = fx.install_path(MUSIC_ALIAS);
+    assert_eq!(installed.path, path);
+    assert_eq!(installed.library.as_deref(), Some(fx.id.as_str()));
+    assert_eq!(
+        fs::read(path.join(RECEIPT_FILENAME)).unwrap(),
+        adoption_receipt(&catalog, &identity)
+    );
+    assert!(names(&fx.root.join(".staging")).is_empty());
+
+    let report = catalog.installed_report_with(&fx.store, &fx.env);
+    assert!(report.incompatible.is_empty(), "{:?}", report.incompatible);
+    assert!(report.needs_adoption.is_empty());
+    let listed: Vec<_> = report.installed.iter().map(|row| &row.alias).collect();
+    assert_eq!(listed, [MUSIC_ALIAS]);
+    assert_eq!(
+        catalog.resolve_with(&fx.store, &identity, &fx.env).unwrap(),
+        path
+    );
+    assert_eq!(
+        catalog.verify_with(&fx.store, &identity, &fx.env).unwrap(),
+        path
+    );
+
+    // Into another library, to This Mac, and into a library again. A move
+    // into a library refuses catalog audio without its receipt (2.10).
+    let (t7, t8) = (fx.volume(), fx.base.join("Volumes").join("T8"));
+    fs::create_dir_all(&t8).unwrap();
+    fx.env = env_for(&fx.base, &[&t7, &t8]);
+    let other = LibraryRegistry::load(fx.store.root())
+        .add(&t8, Some("T8"), &fx.env)
+        .unwrap()
+        .view
+        .record
+        .id;
+    let mut install_id = installed.install_id();
+    for to in [other.as_str(), INTERNAL_LIBRARY_ID, fx.id.as_str()] {
+        let moved = move_install(
+            &fx.store,
+            &install_id,
+            to,
+            &fx.env,
+            u64::MAX,
+            &|_, _| {},
+            &AtomicBool::new(false),
+        );
+        assert_eq!(moved, Ok(MoveOutcome::Moved), "to {to}");
+        let rows = fx.store.audio_records();
+        assert_eq!(rows.len(), 1, "to {to}");
+        install_id = rows[0].install_id();
+        let report = catalog.installed_report_with(&fx.store, &fx.env);
+        assert_eq!(report.installed.len(), 1, "to {to}: {report:?}");
+    }
+    assert_eq!(
+        catalog.resolve_with(&fx.store, &identity, &fx.env).unwrap(),
+        path
+    );
+}
+
+/// This Mac's music install is today's: the audio catalog is not read, no
+/// receipt is written, and the install is offered for adoption, which
+/// writes the receipt a library install carries.
+#[test]
+fn a_this_mac_music_install_has_no_receipt_until_adopted() {
+    let fx = Library::new();
+    let (catalog, identity, files) = music_fixture();
+    let installed = crate::music::install_music_with(
+        &fx.store,
+        MUSIC_ALIAS,
+        None,
+        &fx.env,
+        || panic!("an install into This Mac read the audio catalog"),
+        &CancelFlag::new(),
+        |plan, staging_parent, _| Ok(stage_plan(plan, &files, staging_parent)),
+    )
+    .unwrap();
+    assert_eq!(installed.path, fx.store.audio_install_path(MUSIC_ALIAS));
+    assert!(!installed.path.join(RECEIPT_FILENAME).exists());
+
+    let report = catalog.installed_report_with(&fx.store, &fx.env);
+    assert!(report.installed.is_empty());
+    assert!(report.incompatible.is_empty(), "{:?}", report.incompatible);
+    assert_eq!(report.needs_adoption.len(), 1);
+    assert_eq!(report.needs_adoption[0].identity, identity);
+
+    catalog
+        .adopt_legacy(&fx.store, &identity, &CancelFlag::new())
+        .unwrap();
+    assert_eq!(
+        fs::read(installed.path.join(RECEIPT_FILENAME)).unwrap(),
+        adoption_receipt(&catalog, &identity)
+    );
+}
+
+/// The receipt vouches for the bytes the transfer hashed, and a resolve
+/// trusts it after checking sizes alone. So a staged tree that is not
+/// exactly the profile's pinned assets, a digest or a file off, is not
+/// published at all, rather than published under a receipt for other bytes.
+#[test]
+fn a_library_music_install_that_is_not_its_profile_is_refused() {
+    for case in ["another digest", "an extra file"] {
+        let fx = Library::new();
+        let (mut catalog, _, files) = music_fixture();
+        if case == "another digest" {
+            let profile = catalog
+                .entries
+                .iter_mut()
+                .find(|p| p.identity.alias == MUSIC_ALIAS)
+                .unwrap();
+            profile.assets[0].sha256 = "0".repeat(64);
+        }
+        let result = install_music(&fx, &catalog, &files, Some(&fx.id), |source| {
+            if case == "an extra file" {
+                fs::write(source.join("extra.json"), b"{}").unwrap();
+            }
+        });
+        match &result {
+            Err(StoreError::Io(message)) => {
+                assert!(message.contains("audio profile"), "{case}: {message}")
+            }
+            other => panic!("{case}: expected a refusal, got {other:?}"),
+        }
+        assert!(!fx.install_path(MUSIC_ALIAS).exists(), "{case}");
+        assert!(names(&fx.root.join(".staging")).is_empty(), "{case}");
+        assert!(fx.store.audio_records().is_empty(), "{case}");
+        assert!(fx.marker().models.is_empty(), "{case}");
+    }
+}
+
+/// The receipt helper on its own: a transfer that omits a pinned file, lists
+/// one twice (so another went unhashed), or staged a file elsewhere gets no
+/// receipt, and neither does a profile with terms to accept, which adoption
+/// refuses too. An alias with no audio profile gets none and no error.
+#[test]
+fn a_transfer_receipt_needs_each_pinned_file_once_where_it_was_staged() {
+    let base = std::env::temp_dir().join(format!(
+        "catalog-audio-transfer-receipt-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let _cleanup = TempDir(base.clone());
+    let (catalog, identity, files) = music_fixture();
+    let plan = crate::music::MusicCatalog::embedded()
+        .unwrap()
+        .pinned_plan(MUSIC_ALIAS)
+        .unwrap();
+    let staged = stage_plan(&plan, &files, &base);
+    let source = staged.staging_root.join("source-0000");
+    let verified = &staged.sources[0].files;
+    let receipt = source.join(RECEIPT_FILENAME);
+
+    assert_eq!(
+        catalog.write_transfer_receipt("minimax-music3-mxfp8", verified, &source),
+        Ok(false)
+    );
+    let mut twice = verified.clone();
+    twice[1] = twice[0].clone();
+    let mut elsewhere = verified.clone();
+    elsewhere[0].staged_path = base.join(&elsewhere[0].path);
+    let cases = [
+        ("omitted", verified[1..].to_vec()),
+        ("twice", twice),
+        ("elsewhere", elsewhere),
+    ];
+    for (case, listed) in cases {
+        let refused = catalog.write_transfer_receipt(MUSIC_ALIAS, &listed, &source);
+        assert!(refused.is_err(), "{case}");
+        assert!(!receipt.exists(), "{case}");
+    }
+    let mut with_terms = catalog.clone();
+    with_terms
+        .entries
+        .iter_mut()
+        .find(|p| p.identity.alias == MUSIC_ALIAS)
+        .unwrap()
+        .acknowledgments
+        .push(AudioAcknowledgment {
+            id: "fixture_terms".to_string(),
+            summary: "Fixture terms".to_string(),
+        });
+    let refused = with_terms.write_transfer_receipt(MUSIC_ALIAS, verified, &source);
+    assert!(refused.is_err_and(|error| error.contains("terms")));
+    assert!(!receipt.exists());
+    assert_eq!(
+        catalog.write_transfer_receipt(MUSIC_ALIAS, verified, &source),
+        Ok(true)
+    );
+    assert_eq!(
+        fs::read(&receipt).unwrap(),
+        adoption_receipt(&catalog, &identity)
+    );
 }

@@ -24,8 +24,8 @@ use turbospark_catalog::library::{
 };
 use turbospark_catalog::{
     embedded_music_entry, install_destination, install_music_into, install_with_byte_progress,
-    record_into, set_hf_endpoint_override, CancelFlag, Catalog, Client, InstallKind, InstallPlan,
-    InstalledModel, ModelModality, RepoRef, SourceKind, Store, StoreError,
+    record_into, set_hf_endpoint_override, AudioCatalog, CancelFlag, Catalog, Client, InstallKind,
+    InstallPlan, InstalledModel, ModelModality, RepoRef, SourceKind, Store, StoreError,
 };
 
 const REVISION: &str = "0123456789abcdef0123456789abcdef01234567";
@@ -674,7 +674,12 @@ fn an_image_folder_in_another_library_is_refused() {
 
 /// The pinned files of the MiniMax Music 3 MXFP8 profile, as small fixtures.
 fn music_repo() -> FixtureRepo {
-    let entry = embedded_music_entry(MUSIC_ALIAS).unwrap();
+    music_repo_of(MUSIC_ALIAS)
+}
+
+/// [`music_repo`] for the profile `alias`.
+fn music_repo_of(alias: &str) -> FixtureRepo {
+    let entry = embedded_music_entry(alias).unwrap();
     let files = entry
         .required_files
         .iter()
@@ -780,6 +785,54 @@ fn music_installs_into_the_library_and_keeps_its_cache_in_the_home() {
         .is_dir());
     assert!(!root.join(".staging").join(".download-cache").exists());
     assert!(!root.join(".download-cache").exists());
+
+    // MXFP8 is no audio catalog profile, so it carries no audio receipt and
+    // is listed as other audio, never as incompatible.
+    let audio = AudioCatalog::embedded().unwrap();
+    assert!(audio.get(MUSIC_ALIAS).is_none());
+    assert!(!destination.join("audio-receipt.json").exists());
+    let report = audio.installed_report_with(&fx.store, &fx.env);
+    assert!(report.incompatible.is_empty(), "{:?}", report.incompatible);
+    let listed: Vec<_> = report.other_audio.iter().map(|row| &row.alias).collect();
+    assert_eq!(listed, [MUSIC_ALIAS]);
+}
+
+/// The 4-bit profile is also an audio catalog profile, so into a library it
+/// is published with that profile's receipt, which vouches for the pinned
+/// sizes and digests. These fixture bytes are not the pinned ones (the real
+/// shards are gigabytes), so the install is refused with nothing published,
+/// instead of carrying a receipt for bytes it does not hold.
+#[test]
+fn a_library_music_install_that_is_not_its_audio_profile_is_refused() {
+    let _lock = ENDPOINT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let alias = "minimax-music3-4bit";
+    assert!(AudioCatalog::embedded().unwrap().get(alias).is_some());
+    let fx = LibraryFixture::new("music-profile");
+    let server = FixtureServer::start(vec![music_repo_of(alias)]);
+    let (_reset, client) = client_for(&server);
+
+    let result = install_music_into(
+        &client,
+        &Catalog::embedded().unwrap(),
+        &fx.store,
+        alias,
+        Some(&fx.id),
+        &fx.env,
+        &mut |_| {},
+        &CancelFlag::new(),
+    );
+    match &result {
+        Err(StoreError::Io(message)) => assert!(message.contains("audio profile"), "{message}"),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+    assert!(!server.requests().is_empty(), "the transfer never ran");
+    let root = fx.library_root();
+    assert!(!root.join("audio").join(format!("{alias}.gturbo")).exists());
+    assert!(transfer_stages(&root.join(".staging")).is_empty());
+    assert!(fx.rows_on_disk().is_empty());
+    assert!(fx.marker().models.is_empty());
 }
 
 /// `None` is This Mac and today's behavior: the same path, staging in the

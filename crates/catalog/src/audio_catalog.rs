@@ -5,7 +5,7 @@ use crate::store::{connected_library, external_library};
 use crate::{
     install_destination, record_into, CancelFlag, Catalog, Client, DownloadReceipt,
     HubDownloadProgress, InstallKind, InstallTarget, InstalledModel, PinnedArtifactPlan, Store,
-    StoreError,
+    StoreError, VerifiedSourceFile,
 };
 use serde::{Deserialize, Serialize};
 use std::cell::OnceCell;
@@ -874,18 +874,63 @@ impl AudioCatalog {
                 Some(identity.revision.clone()),
             )?;
         }
-        let native_receipt = new_audio_receipt(profile);
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(source_root.join(RECEIPT_FILENAME))
-            .map_err(|e| format!("creating audio receipt: {e}"))?;
-        use std::io::Write;
-        file.write_all(&serde_json::to_vec_pretty(&native_receipt).map_err(|e| e.to_string())?)
-            .and_then(|_| file.sync_all())
-            .map_err(|e| format!("writing audio receipt: {e}"))?;
+        write_receipt(profile, &source_root)?;
         cancel.checkpoint().map_err(|e| e.to_string())?;
         Ok(source_root)
+    }
+
+    /// Writes the receipt of `alias`'s catalog profile, the one adoption
+    /// writes, into `source_root`, the staged tree of another installer's
+    /// pinned transfer whose files are `files`. Only This Mac adopts, so an
+    /// install published into a library must carry it already (2.8, 2.9).
+    ///
+    /// The transfer hashed every staged byte, so nothing is read again, and
+    /// a resolve later checks sizes alone: the receipt is written only when
+    /// the staged tree and `files` are exactly the profile's pinned assets,
+    /// by path, size, and digest. `Ok(false)` when `alias` has no audio
+    /// profile; such an install is listed as other audio, with no receipt.
+    /// A profile with terms to accept is refused, as adoption refuses it:
+    /// only the audio catalog's installer asks for them.
+    pub(crate) fn write_transfer_receipt(
+        &self,
+        alias: &str,
+        files: &[VerifiedSourceFile],
+        source_root: &Path,
+    ) -> Result<bool, String> {
+        let Some(profile) = self.get(alias) else {
+            return Ok(false);
+        };
+        if !profile.acknowledgments.is_empty() {
+            return Err(format!(
+                "{alias} needs its terms accepted at install; install it from the audio catalog"
+            ));
+        }
+        let mismatch = |detail: String| {
+            format!("the {alias} transfer does not match its audio profile: {detail}")
+        };
+        let mut pinned: std::collections::BTreeSet<_> =
+            profile.assets.iter().map(|a| a.path.clone()).collect();
+        if regular_paths(source_root)? != pinned || files.len() != pinned.len() {
+            return Err(mismatch("the staged files are not the pinned ones".into()));
+        }
+        for file in files {
+            // Each pinned path once: equal counts then cover every asset.
+            let matches = pinned.remove(&file.path)
+                && file.staged_path == source_root.join(&file.path)
+                && profile.assets.iter().any(|asset| {
+                    asset.path == file.path
+                        && asset.size == file.size
+                        && asset.sha256 == file.sha256
+                });
+            if !matches {
+                return Err(mismatch(format!(
+                    "{} is not the pinned size and digest",
+                    file.path
+                )));
+            }
+        }
+        write_receipt(profile, source_root)?;
+        Ok(true)
     }
 
     /// Fast picker lookup: receipt identity, graph, and sizes. This does not detect same-size corruption.
@@ -1754,6 +1799,22 @@ fn new_audio_receipt(profile: &AudioProfile) -> AudioInstallReceipt {
             })
             .collect(),
     }
+}
+
+/// Creates `profile`'s receipt in the staged tree `source_root`, never over
+/// one already there.
+fn write_receipt(profile: &AudioProfile, source_root: &Path) -> Result<(), String> {
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(source_root.join(RECEIPT_FILENAME))
+        .map_err(|e| format!("creating audio receipt: {e}"))?;
+    file.write_all(
+        &serde_json::to_vec_pretty(&new_audio_receipt(profile)).map_err(|e| e.to_string())?,
+    )
+    .and_then(|_| file.sync_all())
+    .map_err(|e| format!("writing audio receipt: {e}"))
 }
 
 fn write_adoption_receipt(
