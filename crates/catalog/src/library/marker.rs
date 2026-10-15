@@ -193,20 +193,8 @@ impl LibraryMarker {
                 bytes: bytes.len() as u64,
             });
         }
-        // The pid keeps processes apart and the counter keeps threads apart,
-        // so no writer renames another's half-written file.
-        let temporary = root.join(format!(
-            "{MARKER_FILE}.tmp-{}-{}",
-            std::process::id(),
-            TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
-        ));
         let path = root.join(MARKER_FILE);
-        let written = write_new(&temporary, &bytes).and_then(|()| fs::rename(&temporary, &path));
-        if let Err(e) = written {
-            let _ = fs::remove_file(&temporary);
-            return Err(io_error("writing", &path, e));
-        }
-        Ok(())
+        replace_file(&path, &bytes).map_err(|e| io_error("writing", &path, e))
     }
 
     /// Applies to every format, since a newer marker's rows are restored
@@ -329,6 +317,26 @@ fn read_bounded(reader: impl Read) -> Result<Vec<u8>, MarkerError> {
     Ok(bytes)
 }
 
+/// Replaces `path` with `bytes` through a temp file beside it and a rename,
+/// so a reader sees the old file or the new one, never a partial write. The
+/// temp file is removed when the write or rename fails.
+pub(crate) fn replace_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    // The pid keeps processes apart and the counter keeps threads apart, so
+    // no writer renames another's half-written file.
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(
+        ".tmp-{}-{}",
+        std::process::id(),
+        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    let temporary = path.with_file_name(name);
+    let written = write_new(&temporary, bytes).and_then(|()| fs::rename(&temporary, path));
+    if written.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    written
+}
+
 /// Creates `path` fresh, so a planted symlink at the temp name is never
 /// written through.
 fn write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
@@ -350,7 +358,7 @@ fn io_error(action: &str, path: &Path, error: io::Error) -> MarkerError {
     MarkerError::Io(format!("{action} {}: {error}", path.display()))
 }
 
-fn validate_id(id: &str) -> Result<(), MarkerError> {
+pub(super) fn validate_id(id: &str) -> Result<(), MarkerError> {
     // The internal id would make a drive's library pose as This Mac.
     if id.is_empty() || id == INTERNAL_LIBRARY_ID || id.contains([':', '/']) {
         return Err(MarkerError::InvalidId(id.to_string()));
@@ -369,7 +377,7 @@ fn validate_alias(alias: &str) -> Result<(), MarkerError> {
 /// Only plain names, so the joined path cannot lexically leave the root. An
 /// empty path is refused too: it names the library root itself. This is a
 /// lexical check: a symlinked directory inside the root is not detected.
-fn validate_relative_path(relative: &Path) -> Result<(), MarkerError> {
+pub(super) fn validate_relative_path(relative: &Path) -> Result<(), MarkerError> {
     let plain = relative
         .components()
         .all(|component| matches!(component, Component::Normal(_)));

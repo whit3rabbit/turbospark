@@ -568,7 +568,7 @@ impl Store {
     /// the record is a convenience index over directories that are
     /// self-describing, so a corrupt one must not stop `pull` from writing a
     /// new install.
-    fn read_rows(&self) -> Vec<InstalledModel> {
+    pub(crate) fn read_rows(&self) -> Vec<InstalledModel> {
         let text = match std::fs::read_to_string(self.record_path()) {
             Ok(t) => t,
             Err(_) => return Vec::new(),
@@ -625,13 +625,18 @@ impl Store {
     /// next time anything else is recorded. Readers such as
     /// [`Self::installed`] hide missing rows instead.
     pub fn record(&self, model: &InstalledModel) -> Result<(), String> {
-        let modality = model.effective_modality();
-        let mut rows: Vec<InstalledModel> = self
-            .read_rows()
-            .into_iter()
-            .filter(|row| !(row.alias == model.alias && row.effective_modality() == modality))
-            .collect();
-        rows.push(model.clone());
+        self.record_all(std::slice::from_ref(model))
+    }
+
+    /// [`Self::record`] for several rows in one write, so either every row
+    /// lands or none does, as adopting a library's rows needs.
+    pub(crate) fn record_all(&self, models: &[InstalledModel]) -> Result<(), String> {
+        let mut rows = self.read_rows();
+        for model in models {
+            let modality = model.effective_modality();
+            rows.retain(|row| !(row.alias == model.alias && row.effective_modality() == modality));
+            rows.push(model.clone());
+        }
         self.write_rows(&rows)
     }
 
@@ -646,12 +651,33 @@ impl Store {
         self.write_rows(&rows)
     }
 
+    /// Drop every row of the library `library`, as removing that library
+    /// does. Its files and marker are left alone, so re-adding the library
+    /// restores the rows from the marker.
+    pub(crate) fn forget_library_rows(&self, library: &str) -> Result<(), String> {
+        let rows = self.read_rows();
+        let kept: Vec<InstalledModel> = rows
+            .iter()
+            .filter(|row| row.library.as_deref() != Some(library))
+            .cloned()
+            .collect();
+        // No rewrite when nothing changed, so removing an empty library never
+        // creates or touches the record.
+        if kept.len() == rows.len() {
+            return Ok(());
+        }
+        self.write_rows(&kept)
+    }
+
+    /// Replaces the record through a temp file and a rename. A corrupt record
+    /// reads as empty, so a write a crash cut short would make the next
+    /// `record` drop every other install (6.4).
     fn write_rows(&self, rows: &[InstalledModel]) -> Result<(), String> {
         std::fs::create_dir_all(&self.root)
             .map_err(|e| format!("creating {}: {e}", self.root.display()))?;
         let text = serde_json::to_string_pretty(rows)
             .map_err(|e| format!("serializing the install record: {e}"))?;
-        std::fs::write(self.record_path(), text)
+        crate::library::replace_file(&self.record_path(), text.as_bytes())
             .map_err(|e| format!("writing {}: {e}", self.record_path().display()))
     }
 

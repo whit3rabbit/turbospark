@@ -506,6 +506,96 @@ fn a_corrupt_record_reads_as_empty_rather_than_failing() {
     assert!(Store::new(&root).installed().is_empty());
 }
 
+/// Because a corrupt record reads as empty, a write truncated by a crash
+/// would cost every install at the next `record`. So a write replaces the
+/// record through a rename and never rewrites it in place: a reader that
+/// opened the record before the write still sees every byte of the old one
+/// (6.4).
+#[test]
+fn recording_replaces_the_record_rather_than_rewriting_it_in_place() {
+    use std::io::Read;
+    let root = temp_root("replace-record");
+    let store = Store::new(&root);
+    store
+        .record(&row("first", &root.join("models").join("first.gturbo")))
+        .unwrap();
+    let record = root.join("installed.json");
+    let before = std::fs::read_to_string(&record).unwrap();
+    let mut reader = std::fs::File::open(&record).unwrap();
+
+    store
+        .record(&row("second", &root.join("models").join("second.gturbo")))
+        .unwrap();
+
+    let mut seen = String::new();
+    reader.read_to_string(&mut seen).unwrap();
+    assert_eq!(seen, before, "the old record was rewritten in place");
+    let on_disk: Vec<InstalledModel> =
+        serde_json::from_slice(&std::fs::read(&record).unwrap()).unwrap();
+    let aliases: Vec<&str> = on_disk.iter().map(|r| r.alias.as_str()).collect();
+    assert_eq!(aliases, ["first", "second"]);
+}
+
+/// A writer that crashed between its temp file and the rename leaves the
+/// temp file behind. The record it was replacing stays whole and readable,
+/// and the next write still lands with every row.
+#[test]
+fn a_stale_temp_record_does_not_affect_the_existing_rows() {
+    let root = temp_root("stale-temp-record");
+    let store = Store::new(&root);
+    let here = store.install_path("here");
+    std::fs::create_dir_all(&here).unwrap();
+    store.record(&row("here", &here)).unwrap();
+    store
+        .record(&row("away", &root.join("unmounted").join("away.gturbo")))
+        .unwrap();
+    let record = root.join("installed.json");
+    let before = std::fs::read(&record).unwrap();
+    // Half-written temp files, one named as a temp file of this process
+    // could be.
+    for name in [
+        format!("installed.json.tmp-{}-0", std::process::id()),
+        "installed.json.tmp-1-0".to_string(),
+    ] {
+        std::fs::write(root.join(name), &before[..before.len() / 2]).unwrap();
+    }
+
+    assert_eq!(std::fs::read(&record).unwrap(), before);
+    assert_eq!(store.installed()["here"].path, here);
+
+    store
+        .record(&row("next", &root.join("models").join("next.gturbo")))
+        .unwrap();
+    let on_disk: Vec<InstalledModel> =
+        serde_json::from_slice(&std::fs::read(&record).unwrap()).unwrap();
+    let aliases: Vec<&str> = on_disk.iter().map(|r| r.alias.as_str()).collect();
+    assert_eq!(aliases, ["here", "away", "next"]);
+}
+
+#[test]
+fn writing_the_record_leaves_no_temp_file_behind() {
+    let root = temp_root("no-temp-record");
+    let store = Store::new(&root);
+    let mut audio = row("voice", &root.join("models").join("voice.gturbo"));
+    audio.modality = ModelModality::Audio;
+
+    store
+        .record(&row("a", &root.join("models").join("a.gturbo")))
+        .unwrap();
+    store
+        .record(&row("b", &root.join("models").join("b.gturbo")))
+        .unwrap();
+    store.record(&audio).unwrap();
+    store.forget("a").unwrap();
+    store.forget_audio("voice").unwrap();
+
+    let names: Vec<String> = std::fs::read_dir(&root)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["installed.json"]);
+}
+
 /// **The order that matters.** An existing directory beats a recorded alias
 /// of the same name, because a path that silently resolved to an alias would
 /// run a DIFFERENT model than the one named on the command line, fluently and

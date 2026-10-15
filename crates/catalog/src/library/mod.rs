@@ -9,6 +9,7 @@
 mod locate;
 mod marker;
 mod mount_table;
+mod registry;
 
 pub use locate::{
     discover_at, locate, volume_relative_path, volume_root_of, Located, STANDARD_LIBRARY_FOLDER,
@@ -19,6 +20,9 @@ pub use marker::{
 pub use mount_table::{
     parse_mount_table, validate_location, LocationEnv, LocationRefusal, MountEntry, MountSource,
 };
+pub use registry::{AddedLibrary, LibraryRegistry, LoadReport, LIBRARIES_FILE};
+// The store writes `installed.json` the same way the library files are written.
+pub(crate) use marker::replace_file;
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -94,6 +98,10 @@ pub enum LibraryError {
     UnknownLibrary(String),
     /// The operation is not allowed on "This Mac", such as removing it.
     Internal,
+    /// A library marker could not be read or written. A marker that exists
+    /// but cannot be read is never overwritten, because it may describe a
+    /// library and its models.
+    Marker(MarkerError),
     Io(String),
 }
 
