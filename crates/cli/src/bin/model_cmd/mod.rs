@@ -13,6 +13,7 @@ mod image_source;
 mod library;
 mod progress;
 mod render;
+mod transfer;
 
 use catalog::{Catalog, Client, InstallKind, InstallPlan, RepoRef, Store, Verdict};
 use destination::Destination;
@@ -23,11 +24,14 @@ use std::time::Duration;
 
 use crate::{Error, Options};
 
-static AUDIO_PULL_INTERRUPTED: AtomicBool = AtomicBool::new(false);
+/// Set by Ctrl-C once [`install_sigint_handler`] runs. An audio pull and a
+/// move each clear it before they start and stop when it is set.
+static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 
 pub use auth::auth;
 pub use library::library;
 pub use render::human_bytes;
+pub use transfer::move_model;
 
 /// Curated rows, marking which are installed.
 /// The bundled speech table. Speech entries ride their own embedded table
@@ -85,15 +89,15 @@ pub fn pull_audio(
 ) -> Result<(), Error> {
     let (target, env) =
         destination::library_target(store, InstallKind::Audio, alias, options.library.as_deref())?;
-    AUDIO_PULL_INTERRUPTED.store(false, Ordering::Release);
-    install_audio_sigint_handler();
+    INTERRUPTED.store(false, Ordering::Release);
+    install_sigint_handler();
     let cancel = catalog::CancelFlag::new();
     let done = Arc::new(AtomicBool::new(false));
     let watcher_done = Arc::clone(&done);
     let watcher_cancel = cancel.clone();
     let watcher = thread::spawn(move || {
         while !watcher_done.load(Ordering::Acquire) {
-            if AUDIO_PULL_INTERRUPTED.load(Ordering::Acquire) {
+            if INTERRUPTED.load(Ordering::Acquire) {
                 watcher_cancel.cancel();
                 break;
             }
@@ -140,18 +144,18 @@ pub fn pull_audio(
     Ok(())
 }
 
-fn install_audio_sigint_handler() {
+fn install_sigint_handler() {
     #[cfg(unix)]
     unsafe {
         libc::signal(
             libc::SIGINT,
-            handle_audio_sigint as *const () as libc::sighandler_t,
+            handle_sigint as *const () as libc::sighandler_t,
         );
     }
 }
 
-extern "C" fn handle_audio_sigint(_: libc::c_int) {
-    AUDIO_PULL_INTERRUPTED.store(true, Ordering::Release);
+extern "C" fn handle_sigint(_: libc::c_int) {
+    INTERRUPTED.store(true, Ordering::Release);
 }
 
 /// The curated rows, marking the ones installed, then every install with

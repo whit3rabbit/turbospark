@@ -24,7 +24,7 @@ use crate::{one_positional, Error, Options};
 pub(super) const NAME_LIMIT: usize = 64;
 /// The most characters printed of an error reason. Marker errors echo
 /// untrusted values up to the marker's size cap.
-const MESSAGE_LIMIT: usize = 300;
+pub(super) const MESSAGE_LIMIT: usize = 300;
 
 pub fn library(store: &Store, positionals: &[String], options: &Options) -> Result<(), Error> {
     let Some((command, arguments)) = positionals.split_first() else {
@@ -388,7 +388,7 @@ fn models(count: usize) -> String {
 
 /// A path printed in full, with only the escaping of [`clean`]: a cut path
 /// could not be found again.
-fn clean_path(path: &Path) -> String {
+pub(super) fn clean_path(path: &Path) -> String {
     clean(&path.display().to_string(), usize::MAX)
 }
 

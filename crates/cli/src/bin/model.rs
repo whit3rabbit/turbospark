@@ -63,6 +63,17 @@ COMMANDS:
                                 files on the drive stay untouched
     library default <NAME>      the library new downloads go to
                                 (<NAME> is a library name or its id)
+    move <ALIAS> --to <LIBRARY> [--kind KIND]
+                                move an install to another library (a name
+                                or id from `library list`, or This Mac):
+                                copy, verify the copy, then delete the
+                                original. Refused before copying when the
+                                destination lacks the free space. Ctrl-C
+                                cancels and leaves the original in place.
+                                Embedding and OCR models stay on This Mac.
+                                There is no cross-process guard: do not run
+                                an install, or load the model in another
+                                process, while it moves
 
 OPTIONS:
     --out <DIR>                 install here instead of the default store
@@ -78,6 +89,10 @@ OPTIONS:
     --model-revision <REV>      immutable 40-hex source revision for `pull-image`
     --alias <NAME>              name a --repo pull (required for one)
     --name <NAME>               name a library for `library add`
+    --to <LIBRARY>              the library `move` puts the install in
+    --kind <KIND>               for `move`: text, vision, audio, or image,
+                                when the alias names installs of more than
+                                one kind
     --file <NAME.gguf>          pick one file where a repo offers several,
                                 or (with `pull-vision`) an explicit filename
                                 for a repo whose shard index does not name
@@ -178,6 +193,10 @@ pub struct Options {
     /// The library a pull installs into, by name or id. Absent means the
     /// default library.
     pub library: Option<String>,
+    /// The library `move` puts the install in, by name or id.
+    pub to: Option<String>,
+    /// Which install `move` means when the alias names several kinds.
+    pub kind: Option<String>,
     pub file: Option<String>,
     pub sidecar_repo: Option<String>,
     /// An already-installed alias to reuse the trunk's resident bytes from,
@@ -306,6 +325,11 @@ fn run(args: &[String]) -> Result<(), Error> {
         }
         // Each library command checks its own flags.
         "library" => model_cmd::library(&store, &positionals, &options),
+        "move" => {
+            options.reject_unused(&["to", "kind"])?;
+            let alias = one_positional(&positionals, "move", "<ALIAS>")?;
+            model_cmd::move_model(&store, alias, &options)
+        }
         other => Err(Error::Usage(format!("unknown command {other:?}"))),
     }
 }
@@ -401,6 +425,14 @@ fn parse(args: &[String]) -> Result<(Vec<String>, Options), Error> {
             "--library" => {
                 options.library = Some(value_for(&mut index, "--library")?);
                 seen.push("library");
+            }
+            "--to" => {
+                options.to = Some(value_for(&mut index, "--to")?);
+                seen.push("to");
+            }
+            "--kind" => {
+                options.kind = Some(value_for(&mut index, "--kind")?);
+                seen.push("kind");
             }
             "--file" => {
                 options.file = Some(value_for(&mut index, "--file")?);

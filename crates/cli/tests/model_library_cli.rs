@@ -1268,3 +1268,331 @@ fn an_image_pull_installs_into_the_named_library() {
     );
     assert!(!fixture.home.join("models").exists());
 }
+
+/// A recorded text install of `alias` on This Mac, with a nested folder,
+/// and its registry row as the only one. Returns its folder.
+fn this_mac_text_install(fixture: &Fixture, alias: &str) -> PathBuf {
+    let dir = fixture
+        .home
+        .join("models")
+        .join("text")
+        .join(format!("{alias}.gturbo"));
+    fs::create_dir_all(dir.join("tokenizer")).unwrap();
+    fs::write(dir.join("manifest.json"), b"{\"format\": 1}").unwrap();
+    fs::write(dir.join("model_weights.bin"), vec![7u8; 5000]).unwrap();
+    fs::write(dir.join("tokenizer").join("tokenizer.json"), b"{}").unwrap();
+    fixture.write_rows(&[text_row(alias, &dir, None)]);
+    dir
+}
+
+/// Every entry under `root` by its path relative to `root`, with the bytes
+/// of each file, so a copy compares equal to its original.
+fn relative_snapshot(root: &Path) -> BTreeMap<PathBuf, Option<Vec<u8>>> {
+    snapshot(root)
+        .into_iter()
+        .map(|(path, bytes)| (path.strip_prefix(root).unwrap().to_path_buf(), bytes))
+        .collect()
+}
+
+/// The aliases the marker of the library on `volume` lists.
+fn marker_aliases(fixture: &Fixture, volume: &str) -> Vec<String> {
+    let path = fixture
+        .volume(volume)
+        .join("TurboSpark")
+        .join("library.json");
+    let marker: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    marker["models"]
+        .as_array()
+        .map(|rows| {
+            rows.iter()
+                .map(|row| row["alias"].as_str().unwrap().to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The `move-*` folders a move left in the staging folder of `root`.
+fn move_leftovers(root: &Path) -> Vec<PathBuf> {
+    match fs::read_dir(root.join(".staging")) {
+        Ok(entries) => entries
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("move-"))
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+#[test]
+fn the_usage_text_documents_move_and_its_missing_process_guard() {
+    let fixture = Fixture::new("move-usage");
+    let help = fixture.run(&["--help"]);
+    assert_eq!(help.code, 0);
+    assert!(
+        help.stdout.contains("move <ALIAS> --to <LIBRARY>"),
+        "{}",
+        help.stdout
+    );
+    assert!(
+        help.stdout.contains("no cross-process guard"),
+        "{}",
+        help.stdout
+    );
+
+    for args in [
+        &["move", "qq-move"][..],
+        &["move", "--to", "T7"],
+        &["move", "qq-move", "--to", "T7", "--yes"],
+        &["move", "qq-move", "--to", "T7", "--kind", "embedding"],
+    ] {
+        let outcome = fixture.run(args);
+        assert_eq!(outcome.code, 2, "{args:?}: {}", outcome.stderr);
+    }
+}
+
+/// A text install moves This Mac to T7, T7 to T9, and T9 back to This Mac
+/// (10.6, 7.1). Each time the files land whole at the destination, `list`
+/// shows the new library, the original is gone, and the markers follow.
+#[test]
+fn a_text_install_moves_between_libraries_and_back_to_this_mac() {
+    let fixture = Fixture::new("move-text");
+    fixture.add("T7", "T7");
+    fixture.add("T9", "T9");
+    let original = this_mac_text_install(&fixture, "qq-move");
+    let files = relative_snapshot(&original);
+    let t7 = fixture.volume("T7").join("TurboSpark");
+    let t9 = fixture.volume("T9").join("TurboSpark");
+
+    let mut from = original.clone();
+    for (target, to, shown) in [
+        ("T7", t7.join("text").join("qq-move.gturbo"), "T7"),
+        // Library names resolve ignoring case, as for `library default`.
+        ("t9", t9.join("text").join("qq-move.gturbo"), "T9"),
+        ("This Mac", original.clone(), "This Mac"),
+    ] {
+        let moved = fixture.run(&["move", "qq-move", "--to", target]);
+        assert_eq!(moved.code, 0, "{target}: {}", moved.stderr);
+        assert!(
+            moved.stdout.contains(&format!("moved qq-move to {shown}")),
+            "{target}: {}",
+            moved.stdout
+        );
+        // Plain progress lines, since stderr is not a terminal here.
+        assert!(moved.stderr.contains("[move] 100%"), "{}", moved.stderr);
+        assert_eq!(relative_snapshot(&to), files, "{target}");
+        assert!(!from.exists(), "{target}: the original is deleted");
+
+        let listed = fixture.run(&["list", "--filter", "qq-move"]);
+        assert_eq!(listed.code, 0, "{}", listed.stderr);
+        let line = line_with(&listed.stdout, "qq-move");
+        assert!(line.contains(shown), "{target}: {line}");
+        assert!(line.contains("available"), "{target}: {line}");
+
+        let listed_in = |library: &str| {
+            if shown == library {
+                vec!["qq-move".to_string()]
+            } else {
+                Vec::new()
+            }
+        };
+        assert_eq!(marker_aliases(&fixture, "T7"), listed_in("T7"), "{target}");
+        assert_eq!(marker_aliases(&fixture, "T9"), listed_in("T9"), "{target}");
+        for root in [&t7, &t9, &fixture.home] {
+            assert!(move_leftovers(root).is_empty(), "{}", root.display());
+        }
+        from = to;
+    }
+
+    let rows: serde_json::Value =
+        serde_json::from_slice(&fs::read(fixture.home.join("installed.json")).unwrap()).unwrap();
+    assert_eq!(rows.as_array().unwrap().len(), 1, "{rows}");
+    assert!(rows[0]["library"].is_null(), "{rows}");
+    assert_eq!(rows[0]["path"], original.display().to_string());
+}
+
+/// An image install has no registry row: its folder is found in the one
+/// library that holds it, and moves without touching any marker.
+#[test]
+fn an_image_folder_moves_from_a_library_to_this_mac() {
+    let fixture = Fixture::new("move-image");
+    fixture.add("T7", "T7");
+    let root = fixture.volume("T7").join("TurboSpark");
+    let source = root.join("image").join("pic.gturbo");
+    fs::create_dir_all(source.join("transformer")).unwrap();
+    fs::write(source.join("manifest.json"), b"{}").unwrap();
+    fs::write(
+        source.join("transformer").join("weights.bin"),
+        vec![3u8; 3000],
+    )
+    .unwrap();
+    let files = relative_snapshot(&source);
+    let marker = fs::read(root.join("library.json")).unwrap();
+
+    let moved = fixture.run(&["move", "pic", "--to", "this mac"]);
+    assert_eq!(moved.code, 0, "{}", moved.stderr);
+    assert!(
+        moved.stdout.contains("moved pic to This Mac"),
+        "{}",
+        moved.stdout
+    );
+    let destination = fixture.home.join("models").join("image").join("pic.gturbo");
+    assert_eq!(relative_snapshot(&destination), files);
+    assert!(!source.exists());
+    assert_eq!(fs::read(root.join("library.json")).unwrap(), marker);
+    assert!(move_leftovers(&root).is_empty());
+    assert!(move_leftovers(&fixture.home).is_empty());
+}
+
+/// A destination with less free space than the install is refused before
+/// anything is copied, naming both sizes (7.4), and nothing changes.
+#[test]
+fn a_move_is_refused_before_copying_when_the_destination_is_too_small() {
+    let fixture = Fixture::new("move-space");
+    fixture.add("T7", "T7");
+    let original = this_mac_text_install(&fixture, "qq-move");
+    let needed: u64 = snapshot(&original)
+        .values()
+        .flatten()
+        .map(|bytes| bytes.len() as u64)
+        .sum();
+    let home = snapshot(&fixture.home);
+    let drive = snapshot(&fixture.volume("T7"));
+
+    let out = fixture
+        .command_with_home_device(fixture.device.wrapping_add(1))
+        .env("TURBOSPARK_TEST_FREE_BYTES", "10")
+        .args(["move", "qq-move", "--to", "T7"])
+        .output()
+        .expect("the binary runs");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    let error = line_with(&stderr, "error:");
+    assert!(error.contains("10 B free"), "{error}");
+    assert!(
+        error.contains(&format!("needs {}", catalog::human_bytes(needed))),
+        "{error}"
+    );
+    assert!(error.contains("nothing was moved"), "{error}");
+    // Byte for byte as before, with no staging folder left on either side.
+    assert_eq!(snapshot(&fixture.home), home);
+    assert_eq!(snapshot(&fixture.volume("T7")), drive);
+}
+
+/// An alias held by installs of more than one kind is a usage error listing
+/// them, and `--kind` picks one.
+#[test]
+fn an_alias_of_several_kinds_needs_kind_to_move() {
+    let fixture = Fixture::new("move-kinds");
+    fixture.add("T7", "T7");
+    fixture.add("T9", "T9");
+    let text = this_mac_text_install(&fixture, "dup");
+    let image = fixture
+        .volume("T7")
+        .join("TurboSpark")
+        .join("image")
+        .join("dup.gturbo");
+    fs::create_dir_all(&image).unwrap();
+    fs::write(image.join("manifest.json"), b"{}").unwrap();
+
+    let ambiguous = fixture.run(&["move", "dup", "--to", "T9"]);
+    assert_eq!(ambiguous.code, 2, "{}", ambiguous.stderr);
+    let first = ambiguous.stderr.lines().next().unwrap_or_default();
+    for phrase in ["--kind", "text in This Mac", "image in T7"] {
+        assert!(first.contains(phrase), "{phrase:?} in {first}");
+    }
+    assert!(text.is_dir() && image.is_dir());
+
+    let moved = fixture.run(&["move", "dup", "--kind", "image", "--to", "T9"]);
+    assert_eq!(moved.code, 0, "{}", moved.stderr);
+    assert!(fixture
+        .volume("T9")
+        .join("TurboSpark")
+        .join("image")
+        .join("dup.gturbo")
+        .join("manifest.json")
+        .is_file());
+    assert!(!image.exists());
+    assert!(text.is_dir(), "the text install stays");
+}
+
+/// Embedding and OCR models stay on This Mac (2.5).
+#[test]
+fn an_embedding_model_is_refused_as_home_only() {
+    let fixture = Fixture::new("move-embedding");
+    fixture.add("T7", "T7");
+    let embedding = fixture
+        .home
+        .join("models")
+        .join("embeddings")
+        .join("gemma-embed");
+    fs::create_dir_all(&embedding).unwrap();
+    fs::write(embedding.join("model.safetensors"), b"weights").unwrap();
+
+    let refused = fixture.run(&["move", "gemma-embed", "--to", "T7"]);
+    assert_eq!(refused.code, 1, "{}", refused.stderr);
+    let error = line_with(&refused.stderr, "error:");
+    assert!(
+        error.contains("embedding and OCR models stay on This Mac"),
+        "{error}"
+    );
+    assert!(embedding.join("model.safetensors").is_file());
+    assert!(!fixture
+        .volume("T7")
+        .join("TurboSpark")
+        .join("embeddings")
+        .exists());
+}
+
+/// A destination or source library that is not connected names the drive
+/// to connect, and nothing moves.
+#[test]
+fn a_move_with_an_unplugged_library_names_the_drive_to_connect() {
+    let fixture = Fixture::new("move-unplugged");
+    fixture.add("T7", "T7");
+    fixture.add("T9", "T9");
+    let original = this_mac_text_install(&fixture, "qq-move");
+    let files = relative_snapshot(&original);
+    let t9 = fixture.volume("T9").join("TurboSpark");
+    let away = t9.join("text").join("qq-away.gturbo");
+    fixture.write_rows(&[
+        text_row("qq-move", &original, None),
+        text_row(
+            "qq-away",
+            &away,
+            Some((&fixture.id_of("T9"), "text/qq-away.gturbo")),
+        ),
+    ]);
+    let rows = fs::read(fixture.home.join("installed.json")).unwrap();
+    fs::remove_dir_all(fixture.volume("T7")).unwrap();
+    fs::remove_dir_all(fixture.volume("T9")).unwrap();
+
+    let to_offline = fixture.run(&["move", "qq-move", "--to", "T7"]);
+    assert_eq!(to_offline.code, 1, "{}", to_offline.stderr);
+    assert!(
+        line_with(&to_offline.stderr, "error:").contains(T7_NOT_CONNECTED),
+        "{}",
+        to_offline.stderr
+    );
+    assert_eq!(relative_snapshot(&original), files);
+
+    let from_offline = fixture.run(&["move", "qq-away", "--to", "This Mac"]);
+    assert_eq!(from_offline.code, 1, "{}", from_offline.stderr);
+    let error = line_with(&from_offline.stderr, "error:");
+    assert!(
+        error.contains("qq-away is in the library \"T9\", which is not connected"),
+        "{error}"
+    );
+    assert!(error.contains("connect its drive"), "{error}");
+    assert!(!fixture
+        .home
+        .join("models")
+        .join("text")
+        .join("qq-away.gturbo")
+        .exists());
+    assert_eq!(fs::read(fixture.home.join("installed.json")).unwrap(), rows);
+    // Nothing rebuilt either library's folder under its mount point.
+    assert!(!fixture.volume("T7").exists() && !fixture.volume("T9").exists());
+}
