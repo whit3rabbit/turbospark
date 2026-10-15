@@ -48,7 +48,8 @@ extension AppModel {
             refusedBecause: nil,
             verdict: row.verdict,
             installBytes: row.installBytes,
-            freeDiskBytes: ModelInstallGate.freeSpaceOnModelStore())
+            freeDiskBytes: ModelInstallGate.freeSpaceOnModelStore(),
+            unmountedStoreVolume: ModelInstallGate.unmountedStoreVolume())
         return decision.isBlocked ? decision.reason : nil
     }
 

@@ -31,7 +31,8 @@ enum ModelProbeGating {
         variants: RepoVariants?,
         ggufFile: String,
         selectedVariant: RepoVariant?,
-        freeDiskBytes: UInt64?
+        freeDiskBytes: UInt64?,
+        unmountedStoreVolume: String? = nil
     ) -> ModelInstallDecision {
         if let err = probeError {
             return .blocked(err)
@@ -67,7 +68,8 @@ enum ModelProbeGating {
             verdict: report.fit?.verdict,
             installBytes: report.downloadBytes ?? selectedVariant?.bytes,
             downloadBytes: report.downloadBytes ?? selectedVariant?.bytes,
-            freeDiskBytes: freeDiskBytes
+            freeDiskBytes: freeDiskBytes,
+            unmountedStoreVolume: unmountedStoreVolume
         )
     }
 }

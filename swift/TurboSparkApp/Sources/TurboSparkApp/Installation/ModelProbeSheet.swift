@@ -53,7 +53,8 @@ struct ModelProbeSheet: View {
             variants: variants,
             ggufFile: ggufFile,
             selectedVariant: selectedVariant,
-            freeDiskBytes: ModelInstallGate.freeSpaceOnModelStore()
+            freeDiskBytes: ModelInstallGate.freeSpaceOnModelStore(),
+            unmountedStoreVolume: ModelInstallGate.unmountedStoreVolume()
         )
     }
 

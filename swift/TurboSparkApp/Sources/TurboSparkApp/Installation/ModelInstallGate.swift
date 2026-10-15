@@ -52,7 +52,8 @@ enum ModelInstallGate {
         verdict: ModelRecommendation.FitVerdict?,
         installBytes: UInt64?,
         downloadBytes: UInt64? = nil,
-        freeDiskBytes: UInt64?
+        freeDiskBytes: UInt64?,
+        unmountedStoreVolume: String? = nil
     ) -> ModelInstallDecision {
         // **A REFUSAL UPSTREAM OF THE ARITHMETIC OUTRANKS THE ARITHMETIC.**
         // A model with no decode flow does not "fit" whatever its footprint
@@ -70,6 +71,16 @@ enum ModelInstallGate {
                 "What the engine allocates for this model does not fit in memory. "
                     + "The KV cache and the expert streamer both allocate up front, so it "
                     + "would fail to load rather than run slowly.")
+        }
+
+        // An install onto a volume that is not there cannot start: macOS
+        // keeps /Volumes root-owned, and the free space below would be the
+        // boot disk's. Connecting the drive is the fix, so say that.
+        if let volume = unmountedStoreVolume {
+            return .blocked(
+                AppStrings.localized(
+                    "The model store is on '\(volume)', which is not connected. Connect the drive or move the model store in Settings."
+                ))
         }
 
         // Disk before memory: it is the one that wastes the download.
@@ -103,13 +114,31 @@ enum ModelInstallGate {
     /// Free space on the volume that holds the model store, not on the
     /// Application Support volume. The store can be moved to another disk, and
     /// the store directory may not exist yet, so walk up to the nearest
-    /// existing ancestor before querying.
+    /// existing ancestor before querying. A store on an unmounted volume is
+    /// `nil`: its nearest existing ancestor is `/Volumes` on the boot disk.
     static func freeSpaceOnModelStore() -> UInt64? {
-        var url = URL(fileURLWithPath: ModelStorageManager.defaultTurboSparkStoreRoot)
+        let root = ModelStorageManager.defaultTurboSparkStoreRoot
+        if unmountedStoreVolume(root: root) != nil { return nil }
+        var url = URL(fileURLWithPath: root)
         while !FileManager.default.fileExists(atPath: url.path), url.path != "/" {
             url = url.deletingLastPathComponent()
         }
         return freeSpace(at: url)
+    }
+
+    /// The volume name when `root` is under `/Volumes/<name>` and that volume
+    /// is not mounted, else `nil`. A store moved to an external drive looks
+    /// exactly like a missing directory once the drive is ejected.
+    static func unmountedStoreVolume(
+        root: String = ModelStorageManager.defaultTurboSparkStoreRoot,
+        pathExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
+    ) -> String? {
+        let components = URL(fileURLWithPath: root).standardizedFileURL.pathComponents
+        guard components.count >= 3, components[0] == "/", components[1] == "Volumes" else {
+            return nil
+        }
+        let volume = components[2]
+        return pathExists("/Volumes/\(volume)") ? nil : volume
     }
 
     static func freeSpace(at url: URL) -> UInt64? {

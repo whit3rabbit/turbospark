@@ -26,7 +26,8 @@ struct ModelDetailPaneView: View {
             verdict: recommendation?.verdict,
             installBytes: recommendation?.installBytes ?? entry.installBytes,
             downloadBytes: entry.downloadBytes,
-            freeDiskBytes: ModelInstallGate.freeSpaceOnModelStore())
+            freeDiskBytes: ModelInstallGate.freeSpaceOnModelStore(),
+            unmountedStoreVolume: ModelInstallGate.unmountedStoreVolume())
     }
 
     private var visuals: ModelFamilyVisuals {
