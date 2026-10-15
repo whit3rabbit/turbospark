@@ -277,16 +277,19 @@ thread_local! {
     static SYSTEM_MOUNT_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+/// Reads of the system mount table on this thread so far. Shared with the
+/// registry tests, which count the reads of a whole refresh.
+#[cfg(test)]
+pub(super) fn system_mount_reads() -> usize {
+    SYSTEM_MOUNT_READS.with(|reads| reads.get())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::Store;
     use std::collections::HashMap;
     use std::os::unix::fs::MetadataExt;
-
-    fn system_mount_reads() -> usize {
-        SYSTEM_MOUNT_READS.with(|reads| reads.get())
-    }
 
     fn entry(mount_point: &str, fs_type: &str, local: bool, read_only: bool) -> MountEntry {
         MountEntry {

@@ -20,7 +20,7 @@ pub use marker::{
 pub use mount_table::{
     parse_mount_table, validate_location, LocationEnv, LocationRefusal, MountEntry, MountSource,
 };
-pub use registry::{AddedLibrary, LibraryRegistry, LoadReport, LIBRARIES_FILE};
+pub use registry::{AddedLibrary, LibraryRegistry, LoadReport, Refreshed, LIBRARIES_FILE};
 // The store writes `installed.json` the same way the library files are written.
 pub(crate) use marker::replace_file;
 

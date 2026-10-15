@@ -8,6 +8,7 @@
 
 use super::mount_table::mount_entry_at;
 use super::{LibraryMarker, LibraryRecord, LocationEnv, MountEntry};
+use std::cell::OnceCell;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 
@@ -39,6 +40,32 @@ pub enum Located {
 /// could have written must not turn a refresh into an error (3.4).
 pub fn locate(record: &LibraryRecord, env: &LocationEnv) -> Located {
     locate_with(record, &env.volumes_root, || env.mount_table())
+}
+
+/// The mount table of one operation over many libraries, read the first
+/// time a library needs it and reused after, so locating N libraries that
+/// are offline or have moved spawns `/sbin/mount` once rather than N times.
+/// A failed read is reused too, and every library then skips the scan, as
+/// [`locate`] does alone.
+pub(super) struct SharedMountTable<'a> {
+    env: &'a LocationEnv,
+    table: OnceCell<Result<Vec<MountEntry>, String>>,
+}
+
+impl<'a> SharedMountTable<'a> {
+    pub(super) fn new(env: &'a LocationEnv) -> Self {
+        Self {
+            env,
+            table: OnceCell::new(),
+        }
+    }
+
+    /// [`locate`], reading the table at most once across every call.
+    pub(super) fn locate(&self, record: &LibraryRecord) -> Located {
+        locate_with(record, &self.env.volumes_root, || {
+            self.table.get_or_init(|| self.env.mount_table()).clone()
+        })
+    }
 }
 
 /// [`locate`] with the mount table read through `read_table`, which runs at

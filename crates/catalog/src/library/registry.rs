@@ -9,7 +9,7 @@
 //! its rename and applies only its own change to that fresh copy. A write
 //! from another process is then lost only if it lands inside that window.
 
-use super::locate::{locate, Located};
+use super::locate::{locate, Located, SharedMountTable};
 use super::marker::{replace_file, validate_id, validate_relative_path};
 use super::{
     new_library_id, validate_location, LibraryError, LibraryMarker, LibraryRecord, LibraryView,
@@ -49,6 +49,19 @@ pub struct AddedLibrary {
     /// Aliases of marker rows not recorded, because the alias and modality
     /// already belong to another library or repeat within the marker.
     pub skipped: Vec<String>,
+}
+
+/// The outcome of [`LibraryRegistry::refresh`]. Listing never fails for
+/// bookkeeping: the views are current even when recording them was not
+/// possible.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Refreshed {
+    /// Every library, This Mac first.
+    pub views: Vec<LibraryView>,
+    /// Why the dates and mount paths this refresh saw went unrecorded, as
+    /// when the disk is full. A list that could not be read at all is
+    /// reported in [`LibraryRegistry::load_report`] instead, as by `load`.
+    pub persist_error: Option<LibraryError>,
 }
 
 /// The library list of one home, and the only writer of `libraries.json`.
@@ -238,14 +251,17 @@ impl LibraryRegistry {
             Some(marker) => marker,
             None => create_library(&root, &name)?,
         };
+        let today = crate::install::today();
         let record = LibraryRecord {
             id: marker.id.clone(),
             name,
             volume_relative_path: relative,
             last_mount_path: volume,
             default_for_downloads: false,
-            added_on: crate::install::today(),
-            last_seen: None,
+            added_on: today.clone(),
+            // Connected right now, so a drive unplugged before any refresh
+            // still shows when it was last seen (3.8).
+            last_seen: Some(today),
         };
 
         // Rows before the list: if the list write fails, the rows are
@@ -308,6 +324,94 @@ impl LibraryRegistry {
             }
             Ok(())
         })
+    }
+
+    /// Locates every library and returns its view, This Mac first. Every
+    /// listing surface calls this, so it never fails: a list it cannot read
+    /// or write still leaves current views, with the reason reported.
+    ///
+    /// A connected library is recorded as seen today (3.8), and as on its
+    /// new volume when it was found on another one, as after a rename (4.2).
+    /// One that is not connected keeps both, so settings can say when and
+    /// where it was last seen. This Mac is never recorded. The list is
+    /// written only when one of those values changed, and then only what
+    /// this refresh saw is merged into the list as it is on disk, for
+    /// libraries still in it: today for each library it found, and the new
+    /// mount path of each it found moved. A library another process added,
+    /// removed, renamed, or recorded elsewhere meanwhile stays as that
+    /// process left it. A newer TurboSpark's list is never written, and its
+    /// libraries are still listed.
+    ///
+    /// A list that cannot be read is reported in [`Self::load_report`], as
+    /// by [`Self::load`], and the list as last read is listed. A failed
+    /// write is [`Refreshed::persist_error`].
+    pub fn refresh(&mut self, env: &LocationEnv) -> Refreshed {
+        // Another process may have changed the list since it was loaded.
+        match read_list(&self.home) {
+            Ok((list, report)) => {
+                self.list = list;
+                self.report = report;
+            }
+            Err(reason) => {
+                self.report = LoadReport {
+                    unreadable: Some(reason),
+                    ..LoadReport::default()
+                };
+            }
+        }
+        let table = SharedMountTable::new(env);
+        let rows = Store::new(&self.home).read_rows();
+        let today = crate::install::today();
+        // Each library found that has something to record, with the volume
+        // it was found on when that is a new one.
+        let mut seen: Vec<(String, Option<PathBuf>)> = Vec::new();
+        let mut views = Vec::new();
+        for mut record in self.libraries() {
+            let located = table.locate(&record);
+            if let (false, Located::Available { root, .. }) = (record.is_internal(), &located) {
+                let moved_to = moved_volume(&record, root);
+                if record.last_seen.as_deref() != Some(today.as_str()) || moved_to.is_some() {
+                    record.last_seen = Some(today.clone());
+                    if let Some(volume) = &moved_to {
+                        record.last_mount_path.clone_from(volume);
+                    }
+                    seen.push((record.id.clone(), moved_to));
+                }
+            }
+            views.push(self.view_of(record, located, &rows));
+        }
+        // A newer TurboSpark's list is read-only to this build.
+        if seen.is_empty() || self.list.format > LIBRARIES_FORMAT {
+            return Refreshed {
+                views,
+                persist_error: None,
+            };
+        }
+        let committed = self.commit(|list| {
+            for record in &mut list.records {
+                let Some((_, moved_to)) = seen.iter().find(|(id, _)| *id == record.id) else {
+                    continue;
+                };
+                record.last_seen = Some(today.clone());
+                // Only a move this refresh saw: another refresh may have
+                // recorded a newer place meanwhile.
+                if let Some(volume) = moved_to {
+                    record.last_mount_path.clone_from(volume);
+                }
+            }
+            Ok(())
+        });
+        let persist_error = match committed {
+            Ok(()) => None,
+            // A newer TurboSpark wrote the list during this refresh, and it
+            // stays as that wrote it.
+            Err(_) if self.list.format > LIBRARIES_FORMAT => None,
+            Err(e) => Some(e),
+        };
+        Refreshed {
+            views,
+            persist_error,
+        }
     }
 
     fn record(&self, id: &str) -> Option<LibraryRecord> {
@@ -376,11 +480,12 @@ impl LibraryRegistry {
     /// library itself. A missing folder, no marker, or another id there means
     /// the place is free.
     fn covering_library(&self, root: &Path, env: &LocationEnv) -> Option<String> {
+        let table = SharedMountTable::new(env);
         self.list
             .records
             .iter()
             .find(|record| {
-                let other = match locate(record, env) {
+                let other = match table.locate(record) {
                     Located::Available { root, .. } => root,
                     Located::NotConnected => {
                         let recorded = record.last_mount_path.join(&record.volume_relative_path);
@@ -440,17 +545,27 @@ impl LibraryRegistry {
     }
 
     fn view(&self, record: &LibraryRecord, env: &LocationEnv) -> LibraryView {
-        let (root, available, duplicate) = match locate(record, env) {
+        let rows = Store::new(&self.home).read_rows();
+        self.view_of(record.clone(), locate(record, env), &rows)
+    }
+
+    /// The view of `record`, already located, with its count from `rows`.
+    fn view_of(
+        &self,
+        record: LibraryRecord,
+        located: Located,
+        rows: &[InstalledModel],
+    ) -> LibraryView {
+        let (root, available, duplicate) = match located {
             Located::Available { root, duplicate } => (Some(root), true, duplicate),
             Located::NotConnected => (None, false, false),
         };
-        let rows = Store::new(&self.home).read_rows();
         LibraryView {
-            record: record.clone(),
+            model_count: self.model_count(&record, rows),
+            record,
             root,
             available,
             duplicate,
-            model_count: self.model_count(record, &rows),
         }
     }
 
@@ -511,6 +626,20 @@ fn choose_root(
         _ if standard_is_folder => Ok((standard, None)),
         _ => Err(LibraryError::Refused(LocationRefusal::NotADirectory)),
     }
+}
+
+/// The volume a library found at `root` is on, when that is not the volume
+/// `record` names: `root` less the record's relative path, which is how
+/// `locate` built it. The relative path itself never changes.
+fn moved_volume(record: &LibraryRecord, root: &Path) -> Option<PathBuf> {
+    if root == record.last_mount_path.join(&record.volume_relative_path) {
+        return None;
+    }
+    let depth = record.volume_relative_path.components().count();
+    let volume = root.ancestors().nth(depth)?;
+    // Path equality compares components, so this holds for any spelling
+    // `locate` could return and refuses a root it did not build.
+    (volume.join(&record.volume_relative_path) == root).then(|| volume.to_path_buf())
 }
 
 /// The marker in `root`. One that exists but cannot be read refuses the add
@@ -672,6 +801,7 @@ fn before_next_commit(hook: impl FnOnce() + 'static) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::library::mount_table::system_mount_reads;
     use crate::library::{
         parse_mount_table, LibraryMarker, LocationRefusal, MarkerError, MountSource, PortableRow,
         INTERNAL_LIBRARY_ID, MARKER_FILE, STANDARD_LIBRARY_FOLDER,
@@ -898,7 +1028,9 @@ mod tests {
         assert_eq!(record.last_mount_path, fx.volume("T7"));
         assert!(!record.default_for_downloads);
         assert_eq!(record.added_on, crate::install::today());
-        assert_eq!(record.last_seen, None);
+        // Seen as it is added, so a drive unplugged before any refresh still
+        // shows when it was last seen (3.8).
+        assert_eq!(record.last_seen, Some(crate::install::today()));
         assert_eq!(added.view.root, Some(root));
         assert!(added.view.available);
         assert!(!added.view.duplicate);
@@ -1898,5 +2030,442 @@ mod tests {
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
         assert_eq!(entries, vec![LIBRARIES_FILE]);
+    }
+
+    /// Rewrites the list at `path` with `edit` applied, as a hand edit or
+    /// another process would.
+    fn edit_list(path: &Path, edit: impl FnOnce(&mut serde_json::Value)) {
+        let mut list: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        edit(&mut list);
+        fs::write(path, serde_json::to_vec(&list).unwrap()).unwrap();
+    }
+
+    /// Sets the stored `field` of the library `id` to `value`, as an earlier
+    /// refresh or another process would have.
+    fn set_field(path: &Path, id: &str, field: &str, value: serde_json::Value) {
+        edit_list(path, |list| {
+            for record in list["libraries"].as_array_mut().unwrap() {
+                if record["id"] == id {
+                    record[field] = value.clone();
+                }
+            }
+        });
+    }
+
+    /// Dates the library `id` as last seen on `date`, so a refresh today has
+    /// a change to record.
+    fn last_seen_on(fx: &Fixture, id: &str, date: &str) {
+        set_field(&fx.list_path(), id, "last_seen", date.into());
+    }
+
+    /// The record of `id` as the list on disk has it.
+    fn stored(fx: &Fixture, id: &str) -> Option<LibraryRecord> {
+        fx.registry()
+            .libraries()
+            .into_iter()
+            .find(|record| record.id == id)
+    }
+
+    /// Every list write replaces the file, so an unchanged inode means no
+    /// write.
+    fn list_inode(fx: &Fixture) -> u64 {
+        fs::metadata(fx.list_path()).unwrap().ino()
+    }
+
+    /// The views of a refresh that recorded what it saw.
+    fn refreshed(registry: &mut LibraryRegistry, env: &LocationEnv) -> Vec<LibraryView> {
+        let refreshed = registry.refresh(env);
+        assert_eq!(refreshed.persist_error, None);
+        refreshed.views
+    }
+
+    fn add_id(registry: &mut LibraryRegistry, fx: &Fixture, volume: &str) -> String {
+        registry
+            .add(&fx.volume(volume), None, &fx.env)
+            .unwrap()
+            .view
+            .record
+            .id
+    }
+
+    #[test]
+    fn refresh_records_today_for_connected_libraries_only() {
+        let fx = Fixture::new("refresh-seen", &[("T7", LOCAL), ("T8", LOCAL)]);
+        let mut registry = fx.registry();
+        let t7 = add_id(&mut registry, &fx, "T7");
+        let t8 = add_id(&mut registry, &fx, "T8");
+        let t7_root = fx.volume("T7").join(STANDARD_LIBRARY_FOLDER);
+        Store::new(&fx.home)
+            .record(&installed(
+                "qwen",
+                ModelModality::Text,
+                t7_root.join("text/qwen.gturbo"),
+                Some(&t7),
+            ))
+            .unwrap();
+        // Both were last seen in January, and T8 has been unplugged since.
+        last_seen_on(&fx, &t7, "2026-01-01");
+        last_seen_on(&fx, &t8, "2026-01-02");
+        fs::remove_dir_all(fx.volume("T8")).unwrap();
+        let t8_before = stored(&fx, &t8).unwrap();
+        assert_eq!(t8_before.last_seen.as_deref(), Some("2026-01-02"));
+
+        let views = refreshed(&mut registry, &fx.env);
+
+        let today = crate::install::today();
+        let listed: Vec<&str> = views.iter().map(|view| view.record.id.as_str()).collect();
+        assert_eq!(listed, vec![INTERNAL_LIBRARY_ID, t7.as_str(), t8.as_str()]);
+        // This Mac is always connected and never recorded as seen.
+        assert!(views[0].available);
+        assert_eq!(views[0].root, Some(fx.home.join("models")));
+        assert_eq!(views[0].record.last_seen, None);
+        assert!(views[1].available);
+        assert_eq!(views[1].root, Some(t7_root));
+        assert_eq!(views[1].model_count, 1);
+        assert_eq!(views[1].record.last_seen, Some(today.clone()));
+        assert!(!views[2].available);
+        assert_eq!(views[2].root, None);
+        assert_eq!(views[2].record, t8_before);
+
+        assert_eq!(stored(&fx, &t7).unwrap().last_seen, Some(today));
+        // The offline library keeps the day and the place it was last seen.
+        assert_eq!(stored(&fx, &t8).unwrap(), t8_before);
+        // This Mac stays out of the array.
+        let json: serde_json::Value =
+            serde_json::from_slice(&fs::read(fx.list_path()).unwrap()).unwrap();
+        let written: Vec<&str> = json["libraries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|record| record["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(written, vec![t7.as_str(), t8.as_str()]);
+    }
+
+    #[test]
+    fn refresh_records_the_new_mount_path_after_a_volume_rename() {
+        let fx = Fixture::new("refresh-renamed", &[("T7", LOCAL), ("T7 1", LOCAL)]);
+        // "T7 1" is in the mount table, and the drive is about to mount there.
+        fs::remove_dir(fx.volume("T7 1")).unwrap();
+        let stuff = fx.volume("T7").join("Stuff");
+        fs::create_dir_all(&stuff).unwrap();
+        let mut registry = fx.registry();
+        let top = registry
+            .add(&fx.volume("T7"), None, &fx.env)
+            .unwrap()
+            .view
+            .record;
+        // Two components below the volume, so the new mount path is the
+        // volume itself rather than the root's parent.
+        let nested = registry
+            .add(&stuff, Some("Nested"), &fx.env)
+            .unwrap()
+            .view
+            .record;
+        assert_eq!(
+            nested.volume_relative_path,
+            PathBuf::from("Stuff/TurboSpark")
+        );
+
+        // macOS mounts the drive as "T7 1" while another T7 is mounted.
+        fs::rename(fx.volume("T7"), fx.volume("T7 1")).unwrap();
+        let views = refreshed(&mut registry, &fx.env);
+
+        let renamed = fx.volume("T7 1");
+        assert_eq!(views.len(), 3);
+        for (view, record) in views[1..].iter().zip([&top, &nested]) {
+            assert!(view.available, "{}", record.name);
+            assert_eq!(view.root, Some(renamed.join(&record.volume_relative_path)));
+            assert_eq!(view.record.last_mount_path, renamed);
+            let now = stored(&fx, &record.id).unwrap();
+            // The volume moved, and the place on it did not.
+            assert_eq!(now.last_mount_path, renamed, "{}", record.name);
+            assert_eq!(now.volume_relative_path, record.volume_relative_path);
+            assert_eq!(now.last_seen, Some(crate::install::today()));
+        }
+
+        // Found where it now is, the next refresh writes nothing.
+        let bytes = fs::read(fx.list_path()).unwrap();
+        let inode = list_inode(&fx);
+        assert_eq!(refreshed(&mut registry, &fx.env), views);
+        assert_eq!(fs::read(fx.list_path()).unwrap(), bytes);
+        assert_eq!(list_inode(&fx), inode);
+    }
+
+    #[test]
+    fn refresh_writes_only_when_a_value_changes() {
+        let fx = Fixture::new("refresh-unchanged", &[("T7", LOCAL), ("T8", LOCAL)]);
+        // This Mac alone has nothing to record, so no list is created.
+        let views = refreshed(&mut fx.registry(), &fx.env);
+        assert_eq!(views.len(), 1);
+        assert!(!fx.list_path().exists());
+
+        let mut registry = fx.registry();
+        let t7 = add_id(&mut registry, &fx, "T7");
+        let t8 = add_id(&mut registry, &fx, "T8");
+        last_seen_on(&fx, &t7, "2026-01-01");
+        last_seen_on(&fx, &t8, "2026-01-02");
+        fs::remove_dir_all(fx.volume("T8")).unwrap();
+        let inode = list_inode(&fx);
+        // The positive control: a date to record is written.
+        refreshed(&mut registry, &fx.env);
+        assert_ne!(list_inode(&fx), inode);
+        let bytes = fs::read(fx.list_path()).unwrap();
+        let inode = list_inode(&fx);
+
+        // The same day and the same places, from this registry or a freshly
+        // loaded one: nothing to write.
+        refreshed(&mut registry, &fx.env);
+        refreshed(&mut fx.registry(), &fx.env);
+        assert_eq!(list_inode(&fx), inode);
+        assert_eq!(fs::read(fx.list_path()).unwrap(), bytes);
+
+        // Unplugging the last connected drive leaves nothing to record.
+        fs::remove_dir_all(fx.volume("T7")).unwrap();
+        let views = refreshed(&mut registry, &fx.env);
+        assert!(views[1..].iter().all(|view| !view.available));
+        assert_eq!(list_inode(&fx), inode);
+        assert_eq!(
+            stored(&fx, &t8).unwrap().last_seen.as_deref(),
+            Some("2026-01-02")
+        );
+    }
+
+    #[test]
+    fn a_library_added_during_a_refresh_survives_its_write() {
+        let fx = Fixture::new("refresh-added", &[("T7", LOCAL), ("T8", LOCAL)]);
+        let mut registry = fx.registry();
+        let t7 = add_id(&mut registry, &fx, "T7");
+        last_seen_on(&fx, &t7, "2026-01-01");
+
+        // Another process adds T8 after this refresh read the list and
+        // before it writes T7 as seen.
+        another_writer_adds(&fx, "T8");
+        let views = refreshed(&mut registry, &fx.env);
+
+        assert_eq!(views.len(), 2);
+        let reloaded = fx.registry();
+        assert_eq!(names(&reloaded), vec!["This Mac", "T7", "T8"]);
+        assert_eq!(
+            stored(&fx, &t7).unwrap().last_seen,
+            Some(crate::install::today())
+        );
+        assert_eq!(names(&registry), vec!["This Mac", "T7", "T8"]);
+    }
+
+    #[test]
+    fn a_refresh_merges_only_what_it_saw_into_the_list_on_disk() {
+        let fx = Fixture::new(
+            "refresh-merge",
+            &[("T7", LOCAL), ("T8", LOCAL), ("T9", LOCAL)],
+        );
+        let mut registry = fx.registry();
+        let (t7, t8, t9) = (
+            add_id(&mut registry, &fx, "T7"),
+            add_id(&mut registry, &fx, "T8"),
+            add_id(&mut registry, &fx, "T9"),
+        );
+        for id in [&t7, &t8, &t9] {
+            last_seen_on(&fx, id, "2026-01-01");
+        }
+
+        // After this refresh read the list and before it writes, another
+        // process removes T8, makes T7 the default, and renames T7. A
+        // concurrent refresh records T9 on another volume. This refresh found
+        // T9 where it was, so it has no mount path of its own to record.
+        let home = fx.home.clone();
+        let list_path = fx.list_path();
+        let elsewhere = fx.volume("T9 1");
+        let (removed, chosen, moved) = (t8.clone(), t7.clone(), t9.clone());
+        let moved_to = elsewhere.clone();
+        before_next_commit(move || {
+            let mut other = LibraryRegistry::load(&home);
+            other.remove(&removed).unwrap();
+            other.set_default(&chosen).unwrap();
+            set_field(&list_path, &chosen, "name", "Renamed".into());
+            set_field(
+                &list_path,
+                &moved,
+                "last_mount_path",
+                serde_json::json!(moved_to),
+            );
+        });
+        let views = refreshed(&mut registry, &fx.env);
+
+        // The refresh located all three and had all three to record.
+        assert_eq!(views.len(), 4);
+        assert!(views.iter().all(|view| view.available));
+        let reloaded = fx.registry();
+        assert_eq!(
+            ids(&reloaded),
+            vec![INTERNAL_LIBRARY_ID.to_string(), t7.clone(), t9.clone()]
+        );
+        assert_eq!(names(&reloaded), vec!["This Mac", "Renamed", "T9"]);
+        assert_eq!(defaults(&reloaded), vec![t7.clone()]);
+        let today = Some(crate::install::today());
+        assert_eq!(stored(&fx, &t7).unwrap().last_seen, today);
+        let t9_now = stored(&fx, &t9).unwrap();
+        assert_eq!(t9_now.last_seen, today);
+        assert_eq!(t9_now.last_mount_path, elsewhere);
+    }
+
+    #[test]
+    fn a_refresh_reads_the_mount_table_once_for_any_number_of_offline_libraries() {
+        const THIRD_ID: &str = "c3d9e2f1-6a4b-4e8c-9f7d-1b2a3c4d5e6f";
+        // A volume folder, so locating an offline library has a volume to
+        // scan and needs the table.
+        let fx = Fixture::new("refresh-one-table", &[("Other", LOCAL)]);
+        let record = |id: &str, volume: &str| {
+            serde_json::json!({
+                "id": id,
+                "name": volume,
+                "volume_relative_path": "TurboSpark",
+                "last_mount_path": fx.volume(volume),
+                "default_for_downloads": false,
+                "added_on": "2026-10-14"
+            })
+        };
+        let list = serde_json::json!({
+            "format": 1,
+            "internal_is_default": true,
+            "libraries": [
+                record(ID, "Gone1"),
+                record(OTHER_ID, "Gone2"),
+                record(THIRD_ID, "Gone3"),
+            ]
+        });
+        fs::write(fx.list_path(), serde_json::to_vec(&list).unwrap()).unwrap();
+        // The live table, counted per `/sbin/mount` spawn. It has no entry
+        // for the fake volume, so nothing is read from it.
+        let live = LocationEnv {
+            mount_source: MountSource::System,
+            ..fx.env.clone()
+        };
+        let mut registry = fx.registry();
+
+        let reads = system_mount_reads();
+        let views = refreshed(&mut registry, &live);
+        assert_eq!(system_mount_reads(), reads + 1);
+        assert_eq!(views.len(), 4);
+        assert!(views[1..].iter().all(|view| !view.available));
+
+        // Adding compares the new root with every listed library, and those
+        // share one read too.
+        let reads = system_mount_reads();
+        assert_eq!(
+            registry.covering_library(&fx.volume("Other").join(STANDARD_LIBRARY_FOLDER), &live),
+            None
+        );
+        assert_eq!(system_mount_reads(), reads + 1);
+    }
+
+    #[test]
+    fn a_refresh_lists_a_newer_list_without_writing_it() {
+        let fx = Fixture::new("refresh-newer", &[("T7", LOCAL)]);
+        let root = fx.volume("T7").join(STANDARD_LIBRARY_FOLDER);
+        marker_at(&root, ID, "T7", Vec::new());
+        let list = |format: u32| {
+            serde_json::to_string(&serde_json::json!({
+                "format": format,
+                "internal_is_default": true,
+                "libraries": [{
+                    "id": ID,
+                    "name": "T7",
+                    "volume_relative_path": "TurboSpark",
+                    "last_mount_path": fx.volume("T7"),
+                    "default_for_downloads": false,
+                    "added_on": "2026-10-14"
+                }]
+            }))
+            .unwrap()
+        };
+        let newer = list(2);
+        fs::write(fx.list_path(), &newer).unwrap();
+
+        let views = refreshed(&mut fx.registry(), &fx.env);
+
+        assert!(views[1].available);
+        assert_eq!(views[1].root, Some(root.clone()));
+        assert_eq!(fs::read_to_string(fx.list_path()).unwrap(), newer);
+
+        // A newer TurboSpark that writes the list during a refresh keeps it
+        // as it wrote it, and that is no failure to record.
+        fs::write(fx.list_path(), list(1)).unwrap();
+        let list_path = fx.list_path();
+        let written = newer.clone();
+        before_next_commit(move || fs::write(&list_path, &written).unwrap());
+        let views = refreshed(&mut fx.registry(), &fx.env);
+
+        assert_eq!(views[1].root, Some(root));
+        assert_eq!(fs::read_to_string(fx.list_path()).unwrap(), newer);
+    }
+
+    #[test]
+    fn a_refresh_that_cannot_record_still_lists_and_says_why() {
+        use std::os::unix::fs::PermissionsExt;
+        let fx = Fixture::new("refresh-unwritable", &[("T7", LOCAL)]);
+        let mut registry = fx.registry();
+        let t7 = add_id(&mut registry, &fx, "T7");
+        last_seen_on(&fx, &t7, "2026-01-01");
+        let before = fs::read(fx.list_path()).unwrap();
+
+        // The list can be read but not replaced, as on a full disk.
+        fs::set_permissions(&fx.home, fs::Permissions::from_mode(0o555)).unwrap();
+        let outcome = registry.refresh(&fx.env);
+        fs::set_permissions(&fx.home, fs::Permissions::from_mode(0o755)).unwrap();
+
+        assert!(
+            matches!(outcome.persist_error, Some(LibraryError::Io(_))),
+            "{:?}",
+            outcome.persist_error
+        );
+        let views = outcome.views;
+        assert_eq!(views.len(), 2);
+        assert!(views[0].available);
+        assert!(views[1].available);
+        assert_eq!(
+            views[1].root,
+            Some(fx.volume("T7").join(STANDARD_LIBRARY_FOLDER))
+        );
+        assert_eq!(views[1].record.last_seen, Some(crate::install::today()));
+        // Nothing recorded and nothing left behind.
+        assert_eq!(fs::read(fx.list_path()).unwrap(), before);
+        let entries: Vec<String> = fs::read_dir(&fx.home)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(entries, vec![LIBRARIES_FILE]);
+
+        // Once the list can be written again, the next refresh records it.
+        refreshed(&mut registry, &fx.env);
+        assert_eq!(
+            stored(&fx, &t7).unwrap().last_seen,
+            Some(crate::install::today())
+        );
+    }
+
+    #[test]
+    fn a_refresh_of_an_unreadable_list_lists_what_was_loaded_and_says_why() {
+        let fx = Fixture::new("refresh-unreadable", &[("T7", LOCAL)]);
+        let mut registry = fx.registry();
+        let t7 = add_id(&mut registry, &fx, "T7");
+        // A list that exists and cannot be read.
+        fs::remove_file(fx.list_path()).unwrap();
+        fs::create_dir(fx.list_path()).unwrap();
+
+        let views = refreshed(&mut registry, &fx.env);
+
+        // As `load` does: the list as last read, plus why it was not read.
+        assert!(registry.load_report().unreadable.is_some());
+        let listed: Vec<&str> = views.iter().map(|view| view.record.id.as_str()).collect();
+        assert_eq!(listed, vec![INTERNAL_LIBRARY_ID, t7.as_str()]);
+        assert!(views[1].available);
+        assert!(fx.list_path().is_dir());
+
+        // A registry that never read the list lists This Mac.
+        let mut fresh = fx.registry();
+        let views = refreshed(&mut fresh, &fx.env);
+        assert_eq!(views.len(), 1);
+        assert!(fresh.load_report().unreadable.is_some());
     }
 }
