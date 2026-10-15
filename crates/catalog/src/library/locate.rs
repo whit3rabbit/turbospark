@@ -47,13 +47,13 @@ pub fn locate(record: &LibraryRecord, env: &LocationEnv) -> Located {
 /// are offline or have moved spawns `/sbin/mount` once rather than N times.
 /// A failed read is reused too, and every library then skips the scan, as
 /// [`locate`] does alone.
-pub(super) struct SharedMountTable<'a> {
+pub(crate) struct SharedMountTable<'a> {
     env: &'a LocationEnv,
     table: OnceCell<Result<Vec<MountEntry>, String>>,
 }
 
 impl<'a> SharedMountTable<'a> {
-    pub(super) fn new(env: &'a LocationEnv) -> Self {
+    pub(crate) fn new(env: &'a LocationEnv) -> Self {
         Self {
             env,
             table: OnceCell::new(),
@@ -61,7 +61,7 @@ impl<'a> SharedMountTable<'a> {
     }
 
     /// [`locate`], reading the table at most once across every call.
-    pub(super) fn locate(&self, record: &LibraryRecord) -> Located {
+    pub(crate) fn locate(&self, record: &LibraryRecord) -> Located {
         locate_with(record, &self.env.volumes_root, || {
             self.table.get_or_init(|| self.env.mount_table()).clone()
         })

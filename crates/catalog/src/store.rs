@@ -18,13 +18,14 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::MetadataExt;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::RwLock;
 
 use serde::{Deserialize, Serialize};
 
 use crate::library::{
-    locate, LibraryMarker, LibraryRegistry, Located, LocationEnv, INTERNAL_LIBRARY_ID,
+    join_relative, Availability, LibraryMarker, LibraryRecord, LibraryRegistry, Located,
+    LocationEnv, PortableRow, SharedMountTable, INTERNAL_LIBRARY_ID,
 };
 
 /// The folder in an external library root that its installs stage in. It is
@@ -132,6 +133,30 @@ pub struct InstalledModel {
     /// path, kept for older readers) does not.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relative_path: Option<PathBuf>,
+}
+
+/// What [`Store::installed_with_availability`] calls a row with no library
+/// outside This Mac's models folder, such as a `pull --out` install. It has
+/// no library to connect, so it is never labeled This Mac.
+const CUSTOM_LOCATION: &str = "custom location";
+
+/// What [`Store::installed_with_availability`] calls the library of a row
+/// whose library is no longer listed.
+const UNKNOWN_LIBRARY: &str = "unknown library";
+
+/// One recorded install with where it is and whether it can be opened now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstalledEntry {
+    /// The registry row. In a connected library, `path` is where the
+    /// install is now. Otherwise it is the last path recorded.
+    pub row: InstalledModel,
+    /// [`InstalledModel::install_id`] of `row`.
+    pub install_id: String,
+    /// The library's name, "This Mac", "custom location" for a row with no
+    /// library outside This Mac's models folder, or "unknown library" for a
+    /// library that is no longer listed.
+    pub library_name: String,
+    pub availability: Availability,
 }
 
 /// The user-facing model namespace under the shared TurboSpark store.
@@ -626,48 +651,13 @@ impl Store {
             .into_iter()
             .find(|record| record.id == id)
             .ok_or_else(|| StoreError::Io(format!("no library with the id {id:?} is listed")))?;
-        let not_connected = || StoreError::NotConnected {
-            library: record.name.clone(),
-        };
-        let located = match locate(&record, env) {
-            Located::Available { root, .. } => root,
-            Located::NotConnected => return Err(not_connected()),
-        };
-        // `locate` builds the root as the volume joined with the relative
-        // path, so the volume is that many levels up.
-        let depth = record.volume_relative_path.components().count();
-        let volume = located
-            .ancestors()
-            .nth(depth)
-            .and_then(|volume| volume.canonicalize().ok())
-            .ok_or_else(not_connected)?;
-        let root = located.canonicalize().map_err(|_| not_connected())?;
-        // Adding a library refuses a linked folder, but a drive anyone could
-        // have written may have swapped one in since. Installs never follow
-        // a root off its drive.
-        let device = |path: &Path| fs::metadata(path).map(|found| found.dev()).ok();
-        if !root.starts_with(&volume) || device(&root) != device(&volume) {
-            return Err(StoreError::Io(format!(
-                "the library {:?} at {} leads off its drive",
-                record.name,
-                located.display()
-            )));
+        let (root, marker) = connected_library(&record, &SharedMountTable::new(env))?;
+        if marker.is_read_only() {
+            return Err(StoreError::LibraryReadOnly {
+                library: record.name,
+            });
         }
-        // The marker is read again at the canonical root, so the path an
-        // install joins onto is the one that carries this library's id.
-        match LibraryMarker::read(&root) {
-            Ok(Some(marker)) if marker.id == record.id => {
-                if marker.is_read_only() {
-                    return Err(StoreError::LibraryReadOnly {
-                        library: record.name.clone(),
-                    });
-                }
-                Ok(root)
-            }
-            // Gone or replaced since it was located, or unreadable, as a
-            // drive being unplugged can read.
-            _ => Err(not_connected()),
-        }
+        Ok(root)
     }
 
     /// Whether `root` is This Mac's `<home>/models`, by spelling or, when
@@ -997,13 +987,54 @@ impl Store {
     /// volume, and pruning it here would forget that install for good the
     /// next time anything else is recorded. Readers such as
     /// [`Self::installed`] hide missing rows instead.
+    ///
+    /// A row in an external library also goes into that library's marker,
+    /// and is refused, with nothing written, when that library is not
+    /// listed, not connected, or read-only, as [`Self::record_in_library`]
+    /// describes. The library is located with the live
+    /// [`LocationEnv::system`] environment. Building it spawns nothing, and
+    /// the mount table is read only if the library has to be searched for.
     pub fn record(&self, model: &InstalledModel) -> Result<(), String> {
         self.record_all(std::slice::from_ref(model))
     }
 
     /// [`Self::record`] for several rows in one write, so either every row
-    /// lands or none does, as adopting a library's rows needs.
+    /// lands or none does. One row refused, as [`Self::record_in_library`]
+    /// describes, refuses them all before anything is written.
     pub(crate) fn record_all(&self, models: &[InstalledModel]) -> Result<(), String> {
+        self.record_synced(models, None)
+            .map_err(|error| error.to_string())
+    }
+
+    /// [`Self::record`] for several rows in one write, with `env` locating
+    /// their libraries (a parameter, as for
+    /// [`Self::library_root_for_install`]).
+    ///
+    /// A row in an external library also goes into that library's marker,
+    /// replacing the marker row with the same alias and modality, and the
+    /// registry row gets the `relative_path` the marker row has. The marker
+    /// is written first and the registry second, so a marker never lacks a
+    /// row the registry holds for its library: a failure in between leaves
+    /// the marker with an extra row, which re-adding the library tolerates.
+    /// Every row and marker is checked before anything is written, so none
+    /// of these writes anything: a library that is not listed
+    /// ([`StoreError::Io`], as when the library list cannot be read), not
+    /// connected ([`StoreError::NotConnected`], as is a marker that cannot be
+    /// read), or read-only ([`StoreError::LibraryReadOnly`]), or a row with
+    /// no path inside its library. An unlisted library is refused rather
+    /// than recorded without a marker: re-adding the library would then drop
+    /// the row and leave its folder unlisted on the drive.
+    pub fn record_in_library(
+        &self,
+        models: &[InstalledModel],
+        env: &LocationEnv,
+    ) -> Result<(), StoreError> {
+        self.record_synced(models, Some(env))
+    }
+
+    /// The registry write alone, for rows that came from a marker (adopting
+    /// a library, restoring stripped rows), which must not be written back.
+    pub(crate) fn record_rows(&self, models: &[InstalledModel]) -> Result<(), String> {
         let mut rows = self.read_rows();
         for model in models {
             let modality = model.effective_modality();
@@ -1011,6 +1042,321 @@ impl Store {
             rows.push(model.clone());
         }
         self.write_rows(&rows)
+    }
+
+    /// [`Self::record_in_library`], building the live environment only when
+    /// `env` is `None` and a row needs a marker kept in step, so recording a
+    /// This Mac row costs nothing new.
+    fn record_synced(
+        &self,
+        models: &[InstalledModel],
+        env: Option<&LocationEnv>,
+    ) -> Result<(), StoreError> {
+        let mut models = models.to_vec();
+        let mut targets: Vec<LibraryRecord> = Vec::new();
+        if models.iter().any(|model| external_library(model).is_some()) {
+            let registry = LibraryRegistry::load(&self.root);
+            let listed = registry.libraries();
+            for id in models.iter().filter_map(external_library) {
+                if targets.iter().any(|record| record.id == id) {
+                    continue;
+                }
+                // Refused before anything is written. A row of a library
+                // that is not listed, as when an install finishes just
+                // after its library was removed, would have no marker to
+                // go into, and re-adding the library would drop it.
+                let Some(record) = listed.iter().find(|record| record.id == id) else {
+                    return Err(StoreError::Io(match &registry.load_report().unreadable {
+                        Some(reason) => format!(
+                            "the library list cannot be read, so the library {id:?} \
+                             cannot be found: {reason}"
+                        ),
+                        None => format!("no library with the id {id:?} is listed"),
+                    }));
+                };
+                targets.push(record.clone());
+            }
+        }
+        if targets.is_empty() {
+            return self.record_rows(&models).map_err(StoreError::Io);
+        }
+        let system;
+        let env = match env {
+            Some(env) => env,
+            None => {
+                system = LocationEnv::system(&self.root).map_err(StoreError::Io)?;
+                &system
+            }
+        };
+        let table = SharedMountTable::new(env);
+        let mut changed = Vec::new();
+        for record in &targets {
+            let (root, mut marker) = connected_library(record, &table)?;
+            if marker.is_read_only() {
+                return Err(StoreError::LibraryReadOnly {
+                    library: record.name.clone(),
+                });
+            }
+            let mut updated = false;
+            for model in models
+                .iter_mut()
+                .filter(|model| external_library(model) == Some(record.id.as_str()))
+            {
+                let portable = PortableRow::from_installed(model, &root).map_err(|e| {
+                    StoreError::Io(format!(
+                        "recording {:?} in the library {:?}: {e}",
+                        model.alias, record.name
+                    ))
+                })?;
+                model
+                    .relative_path
+                    .get_or_insert_with(|| portable.relative_path.clone());
+                if marker.models.contains(&portable) {
+                    continue;
+                }
+                let modality = portable_modality(&portable);
+                marker.models.retain(|kept| {
+                    !(kept.alias == portable.alias && portable_modality(kept) == modality)
+                });
+                marker.models.push(portable);
+                updated = true;
+            }
+            if updated {
+                changed.push((record, root, marker));
+            }
+        }
+        for (record, root, marker) in &changed {
+            marker.write(root).map_err(|e| {
+                StoreError::Io(format!(
+                    "writing the marker of the library {:?}: {e}",
+                    record.name
+                ))
+            })?;
+        }
+        self.record_rows(&models).map_err(StoreError::Io)
+    }
+
+    /// Every recorded install of every modality, in record order, with where
+    /// it is now and whether it can be opened (3.1, 3.7, 10.2). Unlike
+    /// [`Self::installed`], a row that cannot be opened stays listed.
+    ///
+    /// - A row in an external library is not connected, with the library's
+    ///   name, while the library is. In a connected library its `path` is
+    ///   the library root joined with its `relative_path`, and it is missing
+    ///   when that folder is gone, or when the relative path could lead out
+    ///   of the library through `..` or a link, which is never followed. A
+    ///   root that leads off its drive makes every row in it missing.
+    /// - A row with no library is This Mac's when it is under
+    ///   `<home>/models`, available when its folder exists. Elsewhere it is
+    ///   a custom location (`pull --out`), not connected when it is under a
+    ///   volume whose folder is gone.
+    /// - A row whose library is no longer listed is missing.
+    ///
+    /// A row an older writer stripped of `library` and `relative_path` gets
+    /// them back when its path is in a connected library whose marker lists
+    /// it. So a listing may write `installed.json`, once, to record the
+    /// restored rows, and only when there are any. Markers are never written
+    /// here. Listing never fails: a restore that cannot be recorded is still
+    /// listed, and recorded by the next listing.
+    ///
+    /// Every library is located through one mount table read, so N offline
+    /// libraries spawn `/sbin/mount` once, and only libraries a row may be
+    /// in are located.
+    pub fn installed_with_availability(&self, env: &LocationEnv) -> Vec<InstalledEntry> {
+        let mut rows = self.read_rows();
+        let models = self.models_root();
+        let table = SharedMountTable::new(env);
+        // A row with no library outside the models folder may be a stripped
+        // library row, which any library could hold.
+        let any_stripped = rows
+            .iter()
+            .any(|row| row.library.is_none() && !row.path.starts_with(&models));
+        let libraries: Vec<FoundLibrary> = LibraryRegistry::load(&self.root)
+            .libraries()
+            .into_iter()
+            .filter(|record| !record.is_internal())
+            .filter(|record| {
+                any_stripped
+                    || rows
+                        .iter()
+                        .any(|row| external_library(row) == Some(record.id.as_str()))
+            })
+            .map(|record| {
+                let found = connected_library(&record, &table);
+                (record, found)
+            })
+            .collect();
+
+        let restored = restore_stripped(&mut rows, &libraries, &models);
+        if !restored.is_empty() {
+            let _ = self.persist_restored(&restored);
+        }
+        let this_mac = LibraryRecord::internal(&self.root).name;
+        rows.into_iter()
+            .map(|mut row| {
+                let (library_name, availability) = match external_library(&row) {
+                    None if row.path.starts_with(&models) => {
+                        let availability = if row.path.is_dir() {
+                            Availability::Available
+                        } else {
+                            Availability::Missing
+                        };
+                        (this_mac.clone(), availability)
+                    }
+                    None => (
+                        CUSTOM_LOCATION.to_string(),
+                        custom_availability(&row.path, env),
+                    ),
+                    Some(id) => match libraries.iter().find(|(record, _)| record.id == id) {
+                        None => (UNKNOWN_LIBRARY.to_string(), Availability::Missing),
+                        Some((record, Err(StoreError::NotConnected { library }))) => (
+                            record.name.clone(),
+                            Availability::NotConnected {
+                                library: library.clone(),
+                            },
+                        ),
+                        Some((record, Err(_))) => (record.name.clone(), Availability::Missing),
+                        Some((record, Ok((root, _)))) => {
+                            // A row written without its relative path is
+                            // placed by its recorded path.
+                            let relative = row.relative_path.clone().or_else(|| {
+                                row.path.strip_prefix(root).ok().map(Path::to_path_buf)
+                            });
+                            let availability =
+                                match relative.and_then(|relative| install_in(root, &relative)) {
+                                    Some((path, present)) => {
+                                        row.path = path;
+                                        if present {
+                                            Availability::Available
+                                        } else {
+                                            Availability::Missing
+                                        }
+                                    }
+                                    None => Availability::Missing,
+                                };
+                            (record.name.clone(), availability)
+                        }
+                    },
+                };
+                InstalledEntry {
+                    install_id: row.install_id(),
+                    row,
+                    library_name,
+                    availability,
+                }
+            })
+            .collect()
+    }
+
+    /// Records the rows `restore_stripped` restored, in one write. Each
+    /// replaces the stripped row it came from only while that row is still
+    /// as it was read, so a row another writer changed or forgot meanwhile
+    /// stays as that writer left it. Markers are not touched.
+    fn persist_restored(&self, restored: &[InstalledModel]) -> Result<(), String> {
+        let rows: Vec<InstalledModel> = self
+            .read_rows()
+            .into_iter()
+            .map(|row| {
+                restored
+                    .iter()
+                    .find(|done| {
+                        row.library.is_none()
+                            && done.alias == row.alias
+                            && done.effective_modality() == row.effective_modality()
+                            && done.path == row.path
+                    })
+                    .cloned()
+                    .unwrap_or(row)
+            })
+            .collect();
+        self.write_rows(&rows)
+    }
+
+    /// The availability of the text install `alias`, or `None` when there
+    /// is no such row, so the CLI and server can name the drive to connect
+    /// before resolving fails (10.7). `env` is as for
+    /// [`Self::installed_with_availability`], which this runs, so it may
+    /// write `installed.json` once to record restored rows.
+    pub fn availability_of(&self, alias: &str, env: &LocationEnv) -> Option<Availability> {
+        self.installed_with_availability(env)
+            .into_iter()
+            .find(|entry| {
+                entry.row.alias == alias && entry.row.effective_modality() == ModelModality::Text
+            })
+            .map(|entry| entry.availability)
+    }
+
+    /// Drops the row whose [`InstalledModel::install_id`] is `install_id`,
+    /// and its row in its library's marker. Never touches a file. An id no
+    /// row has is not an error and writes nothing.
+    ///
+    /// The registry is written first and the marker second, so a marker
+    /// never lacks a row the registry holds for its library. Before
+    /// anything is written, a row in an external library needs its library
+    /// connected ([`StoreError::NotConnected`]) and writable
+    /// ([`StoreError::LibraryReadOnly`]), or its marker would keep listing
+    /// the row. A row whose library is no longer listed has no marker and is
+    /// simply forgotten. If the marker then cannot be written, the row is
+    /// forgotten all the same, the marker keeps it, and the error says so.
+    pub fn forget_install(&self, install_id: &str, env: &LocationEnv) -> Result<(), StoreError> {
+        let Some(target) = self
+            .read_rows()
+            .into_iter()
+            .find(|row| row.install_id() == install_id)
+        else {
+            return Ok(());
+        };
+        let library = external_library(&target).and_then(|id| {
+            LibraryRegistry::load(&self.root)
+                .libraries()
+                .into_iter()
+                .find(|record| record.id == id)
+        });
+        let marker_root = match &library {
+            Some(record) => {
+                let (root, marker) = connected_library(record, &SharedMountTable::new(env))?;
+                if marker.is_read_only() {
+                    return Err(StoreError::LibraryReadOnly {
+                        library: record.name.clone(),
+                    });
+                }
+                Some(root)
+            }
+            None => None,
+        };
+        // Read again: the checks above can take a while on a slow drive.
+        let kept: Vec<InstalledModel> = self
+            .read_rows()
+            .into_iter()
+            .filter(|row| row.install_id() != install_id)
+            .collect();
+        self.write_rows(&kept).map_err(StoreError::Io)?;
+
+        let (Some(record), Some(root)) = (library, marker_root) else {
+            return Ok(());
+        };
+        let modality = target.effective_modality();
+        // Read again rather than reusing the one checked above, so a row
+        // another writer added meanwhile is kept.
+        let unchanged = |reason: String| {
+            StoreError::Io(format!(
+                "{install_id} was forgotten, but the marker of the library {:?} still lists it: {reason}",
+                record.name
+            ))
+        };
+        let mut marker = match LibraryMarker::read(&root) {
+            Ok(Some(marker)) if marker.id == record.id => marker,
+            Ok(_) => return Err(unchanged("the marker is gone or replaced".to_string())),
+            Err(e) => return Err(unchanged(e.to_string())),
+        };
+        let before = marker.models.len();
+        marker.models.retain(|portable| {
+            !(portable.alias == target.alias && portable_modality(portable) == modality)
+        });
+        if marker.models.len() == before {
+            return Ok(());
+        }
+        marker.write(&root).map_err(|e| unchanged(e.to_string()))
     }
 
     /// Drop a row. Does not touch the install directory; deleting that is
@@ -1127,6 +1473,158 @@ impl Store {
     }
 }
 
+/// The canonical root of the listed library `record` and the marker there,
+/// located through `table`: the one check every path into an external
+/// library starts from.
+///
+/// A library that is not connected, or whose marker at its canonical root
+/// is gone, unreadable, or another library's, is
+/// [`StoreError::NotConnected`]. A root that leads off its drive is
+/// [`StoreError::Io`]. A read-only marker is returned, for the caller to
+/// refuse or not.
+fn connected_library(
+    record: &LibraryRecord,
+    table: &SharedMountTable,
+) -> Result<(PathBuf, LibraryMarker), StoreError> {
+    let not_connected = || StoreError::NotConnected {
+        library: record.name.clone(),
+    };
+    let located = match table.locate(record) {
+        Located::Available { root, .. } => root,
+        Located::NotConnected => return Err(not_connected()),
+    };
+    // `locate` builds the root as the volume joined with the relative
+    // path, so the volume is that many levels up.
+    let depth = record.volume_relative_path.components().count();
+    let volume = located
+        .ancestors()
+        .nth(depth)
+        .and_then(|volume| volume.canonicalize().ok())
+        .ok_or_else(not_connected)?;
+    let root = located.canonicalize().map_err(|_| not_connected())?;
+    // Adding a library refuses a linked folder, but a drive anyone could
+    // have written may have swapped one in since. Nothing follows a root
+    // off its drive.
+    let device = |path: &Path| fs::metadata(path).map(|found| found.dev()).ok();
+    if !root.starts_with(&volume) || device(&root) != device(&volume) {
+        return Err(StoreError::Io(format!(
+            "the library {:?} at {} leads off its drive",
+            record.name,
+            located.display()
+        )));
+    }
+    // The marker is read again at the canonical root, so the path joined
+    // onto is the one that carries this library's id.
+    match LibraryMarker::read(&root) {
+        Ok(Some(marker)) if marker.id == record.id => Ok((root, marker)),
+        // Gone or replaced since it was located, or unreadable, as a drive
+        // being unplugged can read.
+        _ => Err(not_connected()),
+    }
+}
+
+/// The library a row records, unless it is This Mac's.
+fn external_library(row: &InstalledModel) -> Option<&str> {
+    row.library
+        .as_deref()
+        .filter(|id| *id != INTERNAL_LIBRARY_ID)
+}
+
+/// [`InstalledModel::effective_modality`] for a marker row, so a marker is
+/// keyed by alias and modality exactly as the registry is.
+fn portable_modality(portable: &PortableRow) -> ModelModality {
+    if portable.kind.as_deref() == Some("image") {
+        ModelModality::Image
+    } else {
+        portable.modality
+    }
+}
+
+/// The install at `relative` in the library at the canonical `root`, and
+/// whether it is there as a plain folder.
+///
+/// `None` when `relative` could lexically leave the root. Every component
+/// is examined without following it, and a link anywhere along the way
+/// counts as not there: a drive anyone could have written, or a hand edit
+/// of the registry, must not point a library row at a folder outside the
+/// library (2.2 SECURITY). Nothing outside the root is ever examined.
+fn install_in(root: &Path, relative: &Path) -> Option<(PathBuf, bool)> {
+    let path = join_relative(root, relative).ok()?;
+    let mut at = root.to_path_buf();
+    for component in relative.components() {
+        at.push(component);
+        if !fs::symlink_metadata(&at).is_ok_and(|found| found.file_type().is_dir()) {
+            return Some((path, false));
+        }
+    }
+    Some((path, true))
+}
+
+/// Whether a row with no library outside This Mac's models folder can be
+/// opened. Under a volume whose folder is gone it is not connected, named
+/// by the volume, as a Move Store volume left unmounted is.
+fn custom_availability(path: &Path, env: &LocationEnv) -> Availability {
+    if let Some(Component::Normal(volume)) = path
+        .strip_prefix(&env.volumes_root)
+        .ok()
+        .and_then(|rest| rest.components().next())
+    {
+        if fs::symlink_metadata(env.volumes_root.join(volume)).is_err() {
+            return Availability::NotConnected {
+                library: volume.to_string_lossy().into_owned(),
+            };
+        }
+    }
+    if path.is_dir() {
+        Availability::Available
+    } else {
+        Availability::Missing
+    }
+}
+
+/// A listed library as one listing found it.
+type FoundLibrary = (LibraryRecord, Result<(PathBuf, LibraryMarker), StoreError>);
+
+/// Gives `library` and `relative_path` back to each row an older writer
+/// dropped them from, and returns the rows it changed.
+///
+/// A candidate has no library and a path outside This Mac's models folder.
+/// It is restored when its path is under a connected library's canonical
+/// root and the library's marker lists the same alias and modality at that
+/// relative path, so a folder the marker does not list stays a custom
+/// location.
+fn restore_stripped(
+    rows: &mut [InstalledModel],
+    libraries: &[FoundLibrary],
+    models: &Path,
+) -> Vec<InstalledModel> {
+    let mut restored = Vec::new();
+    for row in rows
+        .iter_mut()
+        .filter(|row| row.library.is_none() && !row.path.starts_with(models))
+    {
+        let found = libraries.iter().find_map(|(record, found)| {
+            let (root, marker) = found.as_ref().ok()?;
+            let relative = row.path.strip_prefix(root).ok()?;
+            marker
+                .models
+                .iter()
+                .any(|portable| {
+                    portable.alias == row.alias
+                        && portable_modality(portable) == row.effective_modality()
+                        && portable.relative_path == relative
+                })
+                .then(|| (record.id.clone(), relative.to_path_buf()))
+        });
+        if let Some((id, relative)) = found {
+            row.library = Some(id);
+            row.relative_path = Some(relative);
+            restored.push(row.clone());
+        }
+    }
+    restored
+}
+
 /// [`Store::resolve`] against the default store, falling back to the raw
 /// string when there is no store at all.
 ///
@@ -1181,4 +1679,150 @@ pub fn directory_bytes(dir: &Path) -> u64 {
         }
     }
     total
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::library::{system_mount_reads, MountSource, LIBRARIES_FILE};
+
+    /// A listing locates every library through one mount table, so N
+    /// offline libraries spawn `/sbin/mount` once rather than N times. Lives
+    /// here because only unit tests can count the spawns.
+    #[test]
+    fn listing_reads_the_mount_table_once_for_any_number_of_offline_libraries() {
+        let base =
+            std::env::temp_dir().join(format!("ts-store-listing-one-table-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let home = base.join("home");
+        let volumes_root = base.join("Volumes");
+        // A volume folder, so locating an offline library has a volume to
+        // scan and needs the table. The live table has no entry for it, so
+        // nothing on it is read.
+        fs::create_dir_all(volumes_root.join("Other")).unwrap();
+        fs::create_dir_all(&home).unwrap();
+        let ids = [
+            "0f6c2a3e-1b7d-4c55-9e0a-7d2f1c3b4a59",
+            "7a1e9c04-52b3-4f8d-a6e1-3c9b0d2f5e17",
+            "c3d9e2f1-6a4b-4e8c-9f7d-1b2a3c4d5e6f",
+        ];
+        let records: Vec<serde_json::Value> = ids
+            .iter()
+            .enumerate()
+            .map(|(index, id)| {
+                serde_json::json!({
+                    "id": id,
+                    "name": format!("Gone{index}"),
+                    "volume_relative_path": "TurboSpark",
+                    "last_mount_path": volumes_root.join(format!("Gone{index}")),
+                    "default_for_downloads": false,
+                    "added_on": "2026-10-14"
+                })
+            })
+            .collect();
+        let list = serde_json::json!({
+            "format": 1,
+            "internal_is_default": true,
+            "libraries": records,
+        });
+        fs::write(
+            home.join(LIBRARIES_FILE),
+            serde_json::to_vec(&list).unwrap(),
+        )
+        .unwrap();
+        let store = Store::new(&home);
+        let rows: Vec<InstalledModel> = ids
+            .iter()
+            .enumerate()
+            .map(|(index, id)| InstalledModel {
+                alias: format!("model{index}"),
+                repo: "owner/name".to_string(),
+                revision: "main".to_string(),
+                path: volumes_root.join(format!("Gone{index}/TurboSpark/text/model{index}.gturbo")),
+                family: "qwen3".to_string(),
+                install_bytes: 1,
+                installed_on: "2026-10-14".to_string(),
+                status: "runs".to_string(),
+                kind: None,
+                modality: ModelModality::Text,
+                variant: None,
+                library: Some(id.to_string()),
+                relative_path: Some(PathBuf::from(format!("text/model{index}.gturbo"))),
+            })
+            .collect();
+        store.write_rows(&rows).unwrap();
+        let live = LocationEnv {
+            mount_source: MountSource::System,
+            volumes_root,
+            home_device: 0,
+        };
+
+        let reads = system_mount_reads();
+        let entries = store.installed_with_availability(&live);
+        assert_eq!(system_mount_reads(), reads + 1);
+
+        assert_eq!(entries.len(), 3);
+        for (index, entry) in entries.iter().enumerate() {
+            assert_eq!(
+                entry.availability,
+                crate::library::Availability::NotConnected {
+                    library: format!("Gone{index}")
+                }
+            );
+        }
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// A restore is recorded only over the stripped row it came from. A row
+    /// another writer changed between the listing's read and this write,
+    /// here reinstalled into This Mac, stays as that writer left it. Called
+    /// directly, with the restore worked out from the earlier read, because
+    /// that is the race.
+    #[test]
+    fn recording_a_restore_leaves_a_row_another_writer_changed() {
+        let base =
+            std::env::temp_dir().join(format!("ts-store-persist-restored-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let home = base.join("home");
+        let store = Store::new(&home);
+        let row = |alias: &str, path: PathBuf| InstalledModel {
+            alias: alias.to_string(),
+            repo: "owner/name".to_string(),
+            revision: "main".to_string(),
+            path,
+            family: "qwen3".to_string(),
+            install_bytes: 1,
+            installed_on: "2026-10-14".to_string(),
+            status: "runs".to_string(),
+            kind: None,
+            modality: ModelModality::Text,
+            variant: None,
+            library: None,
+            relative_path: None,
+        };
+        let stripped = row("qwen", base.join("Volumes/T7/TurboSpark/text/qwen.gturbo"));
+        let restored = InstalledModel {
+            library: Some("0f6c2a3e-1b7d-4c55-9e0a-7d2f1c3b4a59".to_string()),
+            relative_path: Some(PathBuf::from("text/qwen.gturbo")),
+            ..stripped.clone()
+        };
+        let reinstalled = row("qwen", store.install_path("qwen"));
+        let other = row("other", store.install_path("other"));
+
+        store
+            .write_rows(&[reinstalled.clone(), other.clone()])
+            .unwrap();
+        store
+            .persist_restored(std::slice::from_ref(&restored))
+            .unwrap();
+        assert_eq!(store.read_rows(), vec![reinstalled, other.clone()]);
+
+        // The stripped row itself, still as read, is replaced in place.
+        store.write_rows(&[stripped, other.clone()]).unwrap();
+        store
+            .persist_restored(std::slice::from_ref(&restored))
+            .unwrap();
+        assert_eq!(store.read_rows(), vec![restored, other]);
+        let _ = fs::remove_dir_all(&base);
+    }
 }

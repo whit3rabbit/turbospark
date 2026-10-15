@@ -9,9 +9,12 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::PathBuf;
 
 use turbospark_catalog::library::{
-    parse_mount_table, LibraryRegistry, LocationEnv, MountSource, INTERNAL_LIBRARY_ID, MARKER_FILE,
+    parse_mount_table, Availability, LibraryMarker, LibraryRegistry, LocationEnv, MountSource,
+    PortableRow, INTERNAL_LIBRARY_ID, MARKER_FILE,
 };
-use turbospark_catalog::{set_default_root, InstalledModel, ModelModality, Store, StoreError};
+use turbospark_catalog::{
+    set_default_root, InstalledEntry, InstalledModel, ModelModality, Store, StoreError,
+};
 
 fn temp_root(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
@@ -182,22 +185,20 @@ fn install_id_is_library_modality_and_alias() {
 }
 
 /// The new fields go through the real writer: an external row keeps them,
-/// an internal row is written without either key.
+/// an internal row is written without either key. The external row is in a
+/// listed, connected library, since recording refuses any other.
 #[test]
 fn library_fields_round_trip_and_internal_rows_omit_them() {
-    let root = temp_root("library-fields");
-    let store = Store::new(&root);
+    let fx = LibraryFixture::new("library-fields");
+    let store = &fx.store;
     let internal = row("here", &store.install_path("here"));
-    let mut external = row(
-        "there",
-        std::path::Path::new("/Volumes/Ext/m/text/there.gturbo"),
-    );
-    external.library = Some("5f0c2a9e-7d41-4c3b-9a55-0e6f1b2c3d4e".to_string());
+    let mut external = row("there", &fx.root().join("text").join("there.gturbo"));
+    external.library = Some(fx.id.clone());
     external.relative_path = Some(PathBuf::from("text/there.gturbo"));
     store.record(&internal).unwrap();
     store.record(&external).unwrap();
 
-    let text = std::fs::read_to_string(root.join("installed.json")).unwrap();
+    let text = std::fs::read_to_string(store.root().join("installed.json")).unwrap();
     let raw: Vec<serde_json::Value> = serde_json::from_str(&text).unwrap();
     let internal_raw = raw.iter().find(|r| r["alias"] == "here").unwrap();
     assert!(internal_raw.get("library").is_none(), "{internal_raw}");
@@ -206,10 +207,7 @@ fn library_fields_round_trip_and_internal_rows_omit_them() {
         "{internal_raw}"
     );
     let external_raw = raw.iter().find(|r| r["alias"] == "there").unwrap();
-    assert_eq!(
-        external_raw["library"],
-        "5f0c2a9e-7d41-4c3b-9a55-0e6f1b2c3d4e"
-    );
+    assert_eq!(external_raw["library"], fx.id.as_str());
     assert_eq!(external_raw["relative_path"], "text/there.gturbo");
 
     let decoded: Vec<InstalledModel> = serde_json::from_str(&text).unwrap();
@@ -218,7 +216,9 @@ fn library_fields_round_trip_and_internal_rows_omit_them() {
 
 /// Library fields do not change the text listing: it still lists every text
 /// row whose directory exists, keeps its recorded path, and hides the rest.
-/// Availability-aware listing is a separate call.
+/// Availability-aware listing is a separate call. The rows are written as
+/// any writer could have left them, since the reader must cope with rows of
+/// libraries it does not know.
 #[test]
 fn library_fields_do_not_change_the_text_listing() {
     let root = temp_root("library-listing");
@@ -231,8 +231,11 @@ fn library_fields_do_not_change_the_text_listing() {
     let mut offline = row("away", &root.join("Gone").join("text").join("away.gturbo"));
     offline.library = Some("0a1b2c3d-0000-4000-8000-000000000000".to_string());
     offline.relative_path = Some(PathBuf::from("text/away.gturbo"));
-    store.record(&external).unwrap();
-    store.record(&offline).unwrap();
+    std::fs::write(
+        root.join("installed.json"),
+        serde_json::to_vec_pretty(&[external.clone(), offline]).unwrap(),
+    )
+    .unwrap();
 
     let installed = store.installed();
     assert_eq!(installed.keys().collect::<Vec<_>>(), ["there"]);
@@ -1206,4 +1209,703 @@ fn a_vanished_library_root_is_never_recreated_by_publishing() {
     );
     assert!(!root.exists(), "publishing recreated the library root");
     assert!(staged.is_dir());
+}
+
+// Availability-aware listing and markers kept in step (2.7).
+
+impl LibraryFixture {
+    /// The library root on the fake volume, canonical because `base` is.
+    fn library_root(&self) -> PathBuf {
+        self.volume.join("TurboSpark")
+    }
+
+    fn marker(&self) -> LibraryMarker {
+        LibraryMarker::read(&self.library_root()).unwrap().unwrap()
+    }
+
+    fn marker_bytes(&self) -> Vec<u8> {
+        std::fs::read(self.library_root().join(MARKER_FILE)).unwrap()
+    }
+
+    /// Rewrites the marker as a newer TurboSpark would, which makes the
+    /// library read-only to this build.
+    fn mark_newer(&self) {
+        let path = self.library_root().join(MARKER_FILE);
+        let mut json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        json["format"] = serde_json::json!(2);
+        std::fs::write(&path, serde_json::to_vec_pretty(&json).unwrap()).unwrap();
+    }
+
+    /// The marker's rows as alias and modality, in marker order.
+    fn marker_keys(&self) -> Vec<(String, ModelModality)> {
+        self.marker()
+            .models
+            .into_iter()
+            .map(|portable| (portable.alias, portable.modality))
+            .collect()
+    }
+
+    /// A row for `alias` installed in this library, its folder created, as
+    /// an installer records it: no `relative_path` of its own.
+    fn library_row(&self, alias: &str, modality: ModelModality) -> InstalledModel {
+        let root = self.root();
+        let path = match modality {
+            ModelModality::Text => Store::install_path_in(&root, alias),
+            ModelModality::Image => Store::image_install_path_in(&root, alias),
+            ModelModality::Audio => Store::audio_install_path_in(&root, alias),
+        }
+        .unwrap();
+        std::fs::create_dir_all(&path).unwrap();
+        let mut installed = row(alias, &path);
+        installed.modality = modality;
+        installed.library = Some(self.id.clone());
+        installed
+    }
+
+    fn rows_on_disk(&self) -> Vec<InstalledModel> {
+        serde_json::from_slice(&self.record_bytes().unwrap()).unwrap()
+    }
+
+    /// Replaces `installed.json` with `rows` as another writer would,
+    /// bypassing the store.
+    fn write_record(&self, rows: &[InstalledModel]) {
+        std::fs::write(
+            self.store.root().join("installed.json"),
+            serde_json::to_vec_pretty(rows).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn record_inode(&self) -> Option<u64> {
+        std::fs::metadata(self.store.root().join("installed.json"))
+            .ok()
+            .map(|metadata| metadata.ino())
+    }
+
+    fn entries(&self) -> Vec<InstalledEntry> {
+        self.store.installed_with_availability(&self.env)
+    }
+}
+
+fn entry<'a>(entries: &'a [InstalledEntry], alias: &str) -> &'a InstalledEntry {
+    entries
+        .iter()
+        .find(|entry| entry.row.alias == alias)
+        .unwrap_or_else(|| panic!("no entry for {alias}: {entries:?}"))
+}
+
+fn not_connected(library: &str) -> Availability {
+    Availability::NotConnected {
+        library: library.to_string(),
+    }
+}
+
+/// Recording an install into a library adds its portable row to the
+/// library's marker, keyed by alias and modality like the registry, and
+/// forgetting it by install id takes the row out of both. Files are never
+/// touched, and This Mac rows never touch a marker.
+#[test]
+fn recording_into_a_library_adds_its_marker_row_and_forgetting_removes_it() {
+    let fx = LibraryFixture::new("marker-sync");
+    assert!(fx.marker().models.is_empty());
+    let qwen = fx.library_row("qwen", ModelModality::Text);
+
+    // The String API every installer calls today keeps the marker in step.
+    fx.store.record(&qwen).unwrap();
+    let marker = fx.marker();
+    assert_eq!(marker.models.len(), 1);
+    assert_eq!(
+        marker.models[0],
+        PortableRow::from_installed(&qwen, &fx.root()).unwrap()
+    );
+    assert_eq!(
+        marker.models[0].relative_path,
+        PathBuf::from("text/qwen.gturbo")
+    );
+    // The registry row says where it is in the library, as the marker does.
+    let recorded = fx.rows_on_disk();
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(
+        recorded[0].relative_path,
+        Some(PathBuf::from("text/qwen.gturbo"))
+    );
+    assert_eq!(recorded[0].library.as_deref(), Some(fx.id.as_str()));
+
+    let voice = fx.library_row("voice", ModelModality::Audio);
+    fx.store
+        .record_in_library(std::slice::from_ref(&voice), &fx.env)
+        .unwrap();
+    assert_eq!(
+        fx.marker_keys(),
+        [
+            ("qwen".to_string(), ModelModality::Text),
+            ("voice".to_string(), ModelModality::Audio)
+        ]
+    );
+
+    // Recording the same alias and modality again replaces its marker row.
+    let mut newer = qwen.clone();
+    newer.revision = "0123456789abcdef0123456789abcdef01234567".to_string();
+    fx.store.record(&newer).unwrap();
+    let marker = fx.marker();
+    assert_eq!(marker.models.len(), 2);
+    let qwen_row = marker.models.iter().find(|p| p.alias == "qwen").unwrap();
+    assert_eq!(qwen_row.revision, newer.revision);
+
+    // A This Mac row never touches a marker.
+    let before = fx.marker_bytes();
+    let here = fx.store.install_path("here");
+    std::fs::create_dir_all(&here).unwrap();
+    fx.store.record(&row("here", &here)).unwrap();
+    assert_eq!(fx.marker_bytes(), before);
+
+    // Forgetting by install id drops the registry row and the marker row,
+    // and leaves the install folder where it is.
+    fx.store
+        .forget_install(&newer.install_id(), &fx.env)
+        .unwrap();
+    let aliases: Vec<String> = fx.rows_on_disk().into_iter().map(|r| r.alias).collect();
+    assert_eq!(aliases, ["voice", "here"]);
+    assert_eq!(
+        fx.marker_keys(),
+        [("voice".to_string(), ModelModality::Audio)]
+    );
+    assert!(qwen.path.is_dir());
+
+    // An id no row has changes nothing.
+    let record = fx.record_bytes();
+    let marker = fx.marker_bytes();
+    fx.store
+        .forget_install(&format!("{}:text/qwen", fx.id), &fx.env)
+        .unwrap();
+    assert_eq!(fx.record_bytes(), record);
+    assert_eq!(fx.marker_bytes(), marker);
+
+    // Forgetting a This Mac row leaves the marker alone.
+    fx.store
+        .forget_install("internal:text/here", &fx.env)
+        .unwrap();
+    assert_eq!(fx.marker_bytes(), marker);
+    let aliases: Vec<String> = fx.rows_on_disk().into_iter().map(|r| r.alias).collect();
+    assert_eq!(aliases, ["voice"]);
+    assert!(here.is_dir());
+}
+
+/// A library whose marker a newer TurboSpark wrote, or that is not
+/// connected, refuses the record before anything is written, so the registry
+/// never holds a row its marker lacks.
+#[test]
+fn recording_into_a_read_only_or_unplugged_library_records_nothing() {
+    let fx = LibraryFixture::new("marker-refusals");
+    let kept = fx.store.install_path("kept");
+    std::fs::create_dir_all(&kept).unwrap();
+    fx.store.record(&row("kept", &kept)).unwrap();
+    let record = fx.record_bytes();
+    let qwen = fx.library_row("qwen", ModelModality::Text);
+    let marker_path = fx.library_root().join(MARKER_FILE);
+
+    fx.mark_newer();
+    let newer = fx.marker_bytes();
+    assert_eq!(
+        fx.store
+            .record_in_library(std::slice::from_ref(&qwen), &fx.env),
+        Err(StoreError::LibraryReadOnly {
+            library: "T7".to_string()
+        })
+    );
+    let refused = fx.store.record(&qwen).unwrap_err();
+    assert!(refused.contains("read-only"), "{refused}");
+    assert_eq!(fx.record_bytes(), record);
+    assert_eq!(fx.marker_bytes(), newer);
+
+    // A marker that cannot be read is a drive being unplugged, as for an
+    // install root.
+    std::fs::write(&marker_path, b"not json").unwrap();
+    assert_eq!(
+        fx.store
+            .record_in_library(std::slice::from_ref(&qwen), &fx.env),
+        Err(StoreError::NotConnected {
+            library: "T7".to_string()
+        })
+    );
+    assert_eq!(fx.record_bytes(), record);
+
+    std::fs::remove_dir_all(&fx.volume).unwrap();
+    assert_eq!(
+        fx.store
+            .record_in_library(std::slice::from_ref(&qwen), &fx.env),
+        Err(StoreError::NotConnected {
+            library: "T7".to_string()
+        })
+    );
+    assert_eq!(fx.record_bytes(), record);
+}
+
+/// A row of a library that is not listed would have no marker to go into,
+/// so re-adding the library would drop the row and leave its folder
+/// unlisted on the drive (1.6). Recording refuses it before writing
+/// anything, as when an install finishes just after its library was
+/// removed, or when the library list cannot be read.
+#[test]
+fn recording_into_a_library_that_is_not_listed_writes_nothing() {
+    let fx = LibraryFixture::new("record-unlisted");
+    let kept = fx.store.install_path("kept");
+    std::fs::create_dir_all(&kept).unwrap();
+    fx.store.record(&row("kept", &kept)).unwrap();
+    let qwen = fx.library_row("qwen", ModelModality::Text);
+    let here = row("here", &fx.store.install_path("here"));
+
+    // The library is removed while the install finishes.
+    LibraryRegistry::load(fx.store.root())
+        .remove(&fx.id)
+        .unwrap();
+    let record = fx.record_bytes();
+    let marker = fx.marker_bytes();
+
+    let refused = fx.store.record(&qwen).unwrap_err();
+    assert!(refused.contains("is listed"), "{refused}");
+    // One refused row refuses the batch, This Mac rows included.
+    match fx
+        .store
+        .record_in_library(&[here.clone(), qwen.clone()], &fx.env)
+    {
+        Err(StoreError::Io(reason)) => assert!(reason.contains(&fx.id), "{reason}"),
+        other => panic!("expected an unlisted library refusal, got {other:?}"),
+    }
+    let mut unknown = qwen.clone();
+    unknown.library = Some(UNLISTED_ID.to_string());
+    assert!(matches!(
+        fx.store
+            .record_in_library(std::slice::from_ref(&unknown), &fx.env),
+        Err(StoreError::Io(_))
+    ));
+    assert_eq!(fx.record_bytes(), record);
+    assert_eq!(fx.marker_bytes(), marker);
+
+    // A list that cannot be read cannot vouch for any library, and the
+    // refusal says why.
+    let list = fx.store.root().join("libraries.json");
+    std::fs::remove_file(&list).unwrap();
+    std::fs::create_dir(&list).unwrap();
+    match fx
+        .store
+        .record_in_library(std::slice::from_ref(&qwen), &fx.env)
+    {
+        Err(StoreError::Io(reason)) => assert!(reason.contains("cannot be read"), "{reason}"),
+        other => panic!("expected an unreadable list refusal, got {other:?}"),
+    }
+    assert_eq!(fx.record_bytes(), record);
+    assert_eq!(fx.marker_bytes(), marker);
+}
+
+/// The marker is written before the registry, so a failure between them
+/// can only leave the marker with a row the registry lacks, which re-adding
+/// the library tolerates. A marker that cannot be written records nothing.
+#[test]
+fn a_marker_that_cannot_be_written_records_nothing() {
+    let fx = LibraryFixture::new("marker-unwritable");
+    let qwen = fx.library_row("qwen", ModelModality::Text);
+    let root = fx.library_root();
+    assert!(fx.record_bytes().is_none());
+
+    // The marker can be read but not replaced.
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let recorded = fx
+        .store
+        .record_in_library(std::slice::from_ref(&qwen), &fx.env);
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert!(matches!(recorded, Err(StoreError::Io(_))), "{recorded:?}");
+    assert!(fx.record_bytes().is_none(), "the registry was written");
+    assert!(fx.marker().models.is_empty());
+}
+
+/// Forgetting writes the registry before the marker, for the same reason:
+/// a registry that cannot be written leaves the marker still listing the
+/// row the registry still holds.
+#[test]
+fn forgetting_writes_the_registry_before_the_marker() {
+    let fx = LibraryFixture::new("forget-order");
+    let qwen = fx.library_row("qwen", ModelModality::Text);
+    fx.store.record(&qwen).unwrap();
+    let record = fx.record_bytes();
+    let home = fx.store.root().to_path_buf();
+
+    // The registry can be read but not replaced, as on a full disk.
+    std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let forgot = fx.store.forget_install(&qwen.install_id(), &fx.env);
+    std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert!(matches!(forgot, Err(StoreError::Io(_))), "{forgot:?}");
+    assert_eq!(fx.record_bytes(), record);
+    assert_eq!(
+        fx.marker_keys(),
+        [("qwen".to_string(), ModelModality::Text)],
+        "the marker lost a row the registry still holds"
+    );
+}
+
+/// Forgetting a row whose library is not connected would leave its marker
+/// listing it, so it is refused with the library to connect, and nothing
+/// changes.
+#[test]
+fn forgetting_an_install_whose_library_is_unplugged_is_refused() {
+    let fx = LibraryFixture::new("forget-unplugged");
+    let qwen = fx.library_row("qwen", ModelModality::Text);
+    fx.store.record(&qwen).unwrap();
+    let record = fx.record_bytes();
+    std::fs::remove_dir_all(&fx.volume).unwrap();
+
+    assert_eq!(
+        fx.store.forget_install(&qwen.install_id(), &fx.env),
+        Err(StoreError::NotConnected {
+            library: "T7".to_string()
+        })
+    );
+    assert_eq!(fx.record_bytes(), record);
+}
+
+/// Forgetting a row in a library a newer TurboSpark wrote would leave its
+/// marker listing the row, since this build cannot rewrite that marker, so
+/// it is refused before anything is written.
+#[test]
+fn forgetting_an_install_in_a_read_only_library_is_refused() {
+    let fx = LibraryFixture::new("forget-read-only");
+    let qwen = fx.library_row("qwen", ModelModality::Text);
+    fx.store.record(&qwen).unwrap();
+    fx.mark_newer();
+    let record = fx.record_bytes();
+    let marker = fx.marker_bytes();
+
+    assert_eq!(
+        fx.store.forget_install(&qwen.install_id(), &fx.env),
+        Err(StoreError::LibraryReadOnly {
+            library: "T7".to_string()
+        })
+    );
+    assert_eq!(fx.record_bytes(), record);
+    assert_eq!(fx.marker_bytes(), marker);
+}
+
+/// A library root that leads off its drive, as a drive anyone could have
+/// written can arrange, is connected but cannot be trusted. Its rows are
+/// missing, not waiting for a drive to be connected, and their recorded
+/// paths are not resolved through the link.
+#[test]
+fn rows_of_a_library_whose_root_leads_off_its_drive_are_missing() {
+    let fx = LibraryFixture::new("listing-linked-root");
+    let qwen = fx.library_row("qwen", ModelModality::Text);
+    fx.store.record(&qwen).unwrap();
+    let recorded = fx.rows_on_disk();
+    let root = fx.library_root();
+    let elsewhere = fx.base.join("elsewhere");
+    std::fs::rename(&root, &elsewhere).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &root).unwrap();
+    assert!(root.join("text").join("qwen.gturbo").is_dir());
+
+    let entries = fx.entries();
+    let listed = entry(&entries, "qwen");
+    assert_eq!(listed.availability, Availability::Missing);
+    assert_eq!(listed.library_name, "T7");
+    assert_eq!(listed.row, recorded[0]);
+}
+
+/// Every row stays listed (3.1, 10.2): an unplugged library's rows as not
+/// connected with its name, a deleted folder in a connected library as
+/// missing (3.7). The text listing is exactly what it was.
+#[test]
+fn listing_shows_offline_rows_as_not_connected_and_deleted_folders_as_missing() {
+    let fx = LibraryFixture::new("listing");
+    let qwen = fx.library_row("qwen", ModelModality::Text);
+    fx.store.record(&qwen).unwrap();
+    let gone = fx.library_row("gone", ModelModality::Image);
+    fx.store.record(&gone).unwrap();
+    std::fs::remove_dir_all(&gone.path).unwrap();
+    let here = fx.store.install_path("here");
+    std::fs::create_dir_all(&here).unwrap();
+    fx.store.record(&row("here", &here)).unwrap();
+    let lost = fx.store.install_path("lost");
+    fx.store.record(&row("lost", &lost)).unwrap();
+
+    let entries = fx.entries();
+    assert_eq!(entries.len(), 4);
+    let listed = entry(&entries, "qwen");
+    assert_eq!(listed.availability, Availability::Available);
+    assert_eq!(listed.library_name, "T7");
+    assert_eq!(listed.install_id, format!("{}:text/qwen", fx.id));
+    assert_eq!(listed.row.path, fx.root().join("text").join("qwen.gturbo"));
+    let listed = entry(&entries, "gone");
+    assert_eq!(listed.availability, Availability::Missing);
+    assert_eq!(listed.library_name, "T7");
+    assert_eq!(listed.install_id, format!("{}:image/gone", fx.id));
+    let listed = entry(&entries, "here");
+    assert_eq!(listed.availability, Availability::Available);
+    assert_eq!(listed.library_name, "This Mac");
+    assert_eq!(listed.install_id, "internal:text/here");
+    let listed = entry(&entries, "lost");
+    assert_eq!(listed.availability, Availability::Missing);
+    assert_eq!(listed.library_name, "This Mac");
+
+    // The text listing still lists available text rows at their recorded
+    // paths and hides the rest.
+    let recorded = fx.rows_on_disk();
+    let installed = fx.store.installed();
+    assert_eq!(installed.keys().collect::<Vec<_>>(), ["here", "qwen"]);
+    assert_eq!(
+        &installed["qwen"],
+        recorded.iter().find(|r| r.alias == "qwen").unwrap()
+    );
+
+    // Unplugged: the drive's folder leaves the volumes root.
+    std::fs::rename(&fx.volume, fx.base.join("unplugged")).unwrap();
+    let entries = fx.entries();
+    assert_eq!(entries.len(), 4);
+    for alias in ["qwen", "gone"] {
+        let listed = entry(&entries, alias);
+        assert_eq!(listed.availability, not_connected("T7"), "{alias}");
+        assert_eq!(listed.library_name, "T7");
+        // The last resolved path is kept, not rewritten.
+        assert_eq!(
+            &listed.row,
+            recorded.iter().find(|r| r.alias == alias).unwrap()
+        );
+    }
+    assert_eq!(
+        entry(&entries, "qwen").install_id,
+        format!("{}:text/qwen", fx.id)
+    );
+    assert_eq!(
+        entry(&entries, "here").availability,
+        Availability::Available
+    );
+
+    // The CLI asks before resolving, so it can name the drive (10.7).
+    assert_eq!(
+        fx.store.availability_of("qwen", &fx.env),
+        Some(not_connected("T7"))
+    );
+    assert_eq!(
+        fx.store.availability_of("here", &fx.env),
+        Some(Availability::Available)
+    );
+    assert_eq!(
+        fx.store.availability_of("lost", &fx.env),
+        Some(Availability::Missing)
+    );
+    // Only text rows answer to an alias.
+    assert_eq!(fx.store.availability_of("gone", &fx.env), None);
+    assert_eq!(fx.store.availability_of("nope", &fx.env), None);
+    assert_eq!(fx.store.installed().keys().collect::<Vec<_>>(), ["here"]);
+}
+
+/// A library row's `path` is where its library is now, joined from its
+/// relative path, rather than the last path recorded.
+#[test]
+fn a_library_rows_path_is_where_its_library_is_now() {
+    let fx = LibraryFixture::new("listing-path");
+    let mut qwen = fx.library_row("qwen", ModelModality::Text);
+    qwen.relative_path = Some(PathBuf::from("text/qwen.gturbo"));
+    qwen.path = PathBuf::from("/Volumes/Old Name/TurboSpark/text/qwen.gturbo");
+    fx.store
+        .record_in_library(std::slice::from_ref(&qwen), &fx.env)
+        .unwrap();
+
+    let entries = fx.entries();
+    let listed = entry(&entries, "qwen");
+    assert_eq!(listed.availability, Availability::Available);
+    assert_eq!(listed.row.path, fx.root().join("text").join("qwen.gturbo"));
+}
+
+/// An older writer keeps `path` but drops `library` and `relative_path`.
+/// Listing gives them back from the marker of the connected library the path
+/// is in, records that, and never writes the marker.
+#[test]
+fn a_row_an_older_writer_stripped_regains_its_library() {
+    let fx = LibraryFixture::new("listing-restore");
+    let qwen = fx.library_row("qwen", ModelModality::Text);
+    fx.store.record(&qwen).unwrap();
+    let mut stripped = fx.rows_on_disk();
+    for row in &mut stripped {
+        row.library = None;
+        row.relative_path = None;
+    }
+    // A folder under the library root that the marker does not list.
+    let stray = fx.root().join("text").join("stray.gturbo");
+    std::fs::create_dir_all(&stray).unwrap();
+    stripped.push(row("stray", &stray));
+    fx.write_record(&stripped);
+    let marker = fx.marker_bytes();
+
+    let entries = fx.entries();
+    let restored = entry(&entries, "qwen");
+    assert_eq!(restored.row.library.as_deref(), Some(fx.id.as_str()));
+    assert_eq!(
+        restored.row.relative_path,
+        Some(PathBuf::from("text/qwen.gturbo"))
+    );
+    assert_eq!(restored.install_id, format!("{}:text/qwen", fx.id));
+    assert_eq!(restored.library_name, "T7");
+    assert_eq!(restored.availability, Availability::Available);
+
+    // Recorded, so the next reader sees the library too.
+    let on_disk = fx.rows_on_disk();
+    let qwen_now = on_disk.iter().find(|r| r.alias == "qwen").unwrap();
+    assert_eq!(qwen_now.library.as_deref(), Some(fx.id.as_str()));
+    assert_eq!(
+        qwen_now.relative_path,
+        Some(PathBuf::from("text/qwen.gturbo"))
+    );
+    assert_eq!(fx.marker_bytes(), marker);
+
+    // A folder the marker does not list stays a custom location.
+    let listed = entry(&entries, "stray");
+    assert_eq!(listed.row.library, None);
+    assert_eq!(listed.library_name, "custom location");
+    assert_eq!(listed.install_id, "internal:text/stray");
+    assert_eq!(listed.availability, Availability::Available);
+    assert_eq!(
+        on_disk.iter().find(|r| r.alias == "stray").unwrap().library,
+        None
+    );
+}
+
+/// Listing writes the registry only to restore stripped rows. Otherwise it
+/// leaves `installed.json` as it is, and never creates one.
+#[test]
+fn listing_writes_the_registry_only_to_restore_stripped_rows() {
+    let fx = LibraryFixture::new("listing-writes");
+    assert!(fx.entries().is_empty());
+    assert!(fx.record_bytes().is_none());
+
+    let qwen = fx.library_row("qwen", ModelModality::Text);
+    fx.store.record(&qwen).unwrap();
+    let written = fx.record_inode();
+    fx.entries();
+    assert_eq!(fx.record_inode(), written, "a listing rewrote the registry");
+
+    let mut stripped = fx.rows_on_disk();
+    stripped[0].library = None;
+    stripped[0].relative_path = None;
+    fx.write_record(&stripped);
+    let stripped_inode = fx.record_inode();
+    fx.entries();
+    assert_ne!(fx.record_inode(), stripped_inode);
+
+    let restored = fx.record_inode();
+    fx.entries();
+    assert_eq!(fx.record_inode(), restored);
+}
+
+/// A row with no library outside the home is a custom location (`pull
+/// --out`), never This Mac. One under a volume that is not mounted is not
+/// connected, named by the volume.
+#[test]
+fn rows_outside_the_home_without_a_library_are_custom_locations() {
+    let fx = LibraryFixture::new("listing-custom");
+    let out = fx.base.join("elsewhere").join("out.gturbo");
+    std::fs::create_dir_all(&out).unwrap();
+    let away = fx.env.volumes_root.join("Gone").join("away.gturbo");
+    let loose = fx.volume.join("loose").join("loose.gturbo");
+    let absent = fx.base.join("elsewhere").join("absent.gturbo");
+    for (alias, path) in [
+        ("out", &out),
+        ("away", &away),
+        ("loose", &loose),
+        ("absent", &absent),
+    ] {
+        fx.store.record(&row(alias, path)).unwrap();
+    }
+
+    let entries = fx.entries();
+    for listed in &entries {
+        assert_eq!(listed.library_name, "custom location", "{listed:?}");
+        assert_eq!(listed.row.library, None);
+        assert_eq!(
+            listed.install_id,
+            format!("internal:text/{}", listed.row.alias)
+        );
+    }
+    assert_eq!(entry(&entries, "out").availability, Availability::Available);
+    assert_eq!(entry(&entries, "out").row.path, out);
+    assert_eq!(entry(&entries, "away").availability, not_connected("Gone"));
+    assert_eq!(entry(&entries, "loose").availability, Availability::Missing);
+    assert_eq!(
+        entry(&entries, "absent").availability,
+        Availability::Missing
+    );
+    assert_eq!(fx.store.installed().keys().collect::<Vec<_>>(), ["out"]);
+}
+
+/// Rows can outlive their library's place in the list, as after a hand edit
+/// of `libraries.json`. With no root to look in they are missing, under a
+/// name that says why, and can still be forgotten.
+#[test]
+fn rows_of_a_library_no_longer_listed_are_missing() {
+    let fx = LibraryFixture::new("listing-unknown");
+    let path = fx.root().join("text").join("orphan.gturbo");
+    std::fs::create_dir_all(&path).unwrap();
+    let mut orphan = row("orphan", &path);
+    orphan.library = Some(UNLISTED_ID.to_string());
+    // Written as another writer left it: recording refuses an unlisted id.
+    fx.write_record(std::slice::from_ref(&orphan));
+
+    let entries = fx.entries();
+    let listed = entry(&entries, "orphan");
+    assert_eq!(listed.availability, Availability::Missing);
+    assert_eq!(listed.library_name, "unknown library");
+    assert_eq!(listed.install_id, format!("{UNLISTED_ID}:text/orphan"));
+
+    fx.store
+        .forget_install(&orphan.install_id(), &fx.env)
+        .unwrap();
+    assert!(fx.rows_on_disk().is_empty());
+    assert!(path.is_dir());
+}
+
+/// `relative_path` in a registry row is unchecked input. A `..` component,
+/// or a linked folder anywhere along the path inside the library, could lead
+/// out of the library, so the row is missing and the link is not followed,
+/// even when what it leads to is a real install folder.
+#[test]
+fn a_library_row_that_could_lead_out_of_its_library_is_missing() {
+    let fx = LibraryFixture::new("listing-escape");
+    let root = fx.root();
+    let outside = fx.base.join("outside");
+    std::fs::create_dir_all(outside.join("evil.gturbo")).unwrap();
+    std::fs::create_dir_all(root.join("text")).unwrap();
+    // A linked install folder, and a linked modality folder.
+    std::os::unix::fs::symlink(
+        outside.join("evil.gturbo"),
+        root.join("text").join("linked.gturbo"),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(&outside, root.join("image")).unwrap();
+    let in_library = |alias: &str, modality: ModelModality, relative: &str| {
+        let mut installed = row(alias, &root.join(relative));
+        installed.modality = modality;
+        installed.library = Some(fx.id.clone());
+        installed.relative_path = Some(PathBuf::from(relative));
+        installed
+    };
+    let traversal = in_library(
+        "traversal",
+        ModelModality::Text,
+        "../../../outside/evil.gturbo",
+    );
+    let linked = in_library("linked", ModelModality::Text, "text/linked.gturbo");
+    let via = in_library("via", ModelModality::Image, "image/evil.gturbo");
+    fx.write_record(&[traversal.clone(), linked, via]);
+    assert!(root.join("../../../outside/evil.gturbo").is_dir());
+    assert!(root.join("text/linked.gturbo").is_dir());
+    assert!(root.join("image/evil.gturbo").is_dir());
+
+    let entries = fx.entries();
+    assert_eq!(entries.len(), 3);
+    for listed in &entries {
+        assert_eq!(listed.availability, Availability::Missing, "{listed:?}");
+        assert_eq!(listed.library_name, "T7");
+    }
+    // A path that does not join is left as recorded rather than resolved.
+    assert_eq!(entry(&entries, "traversal").row.path, traversal.path);
 }

@@ -104,7 +104,8 @@ pub use speech::{
 pub use model_io::speech_receipt;
 pub use store::{
     default_root, directory_bytes, relocate_default_store, resolve_image_arg, resolve_model_arg,
-    set_default_root, InstalledModel, ModelModality, Store, StoreError, StoreRelocation,
+    set_default_root, InstalledEntry, InstalledModel, ModelModality, Store, StoreError,
+    StoreRelocation,
 };
 pub use vision::{resolve_vision_sidecar, resolve_vision_sidecar_auto, AutoVisionSidecar};
 

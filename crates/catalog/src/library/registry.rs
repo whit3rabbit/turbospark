@@ -537,9 +537,11 @@ impl LibraryRegistry {
             }
         }
         // No write when nothing is new, so adding an empty library never
-        // creates or touches the record.
+        // creates or touches the record. The registry write alone: these
+        // rows came from the marker, which may be read-only, and the library
+        // is not listed yet.
         if !merged.is_empty() {
-            store.record_all(&merged).map_err(LibraryError::Io)?;
+            store.record_rows(&merged).map_err(LibraryError::Io)?;
         }
         Ok(skipped)
     }
@@ -1127,7 +1129,11 @@ mod tests {
             Some(OTHER_ID),
         );
         store.record(&this_mac_flux).unwrap();
-        store.record(&other_kokoro).unwrap();
+        // The registry write alone: `record` refuses a row of a library that
+        // is not listed, and this test never adds the other library.
+        store
+            .record_rows(std::slice::from_ref(&other_kokoro))
+            .unwrap();
         let mut registry = fx.registry();
 
         let added = registry.add(&fx.volume("T7"), None, &fx.env).unwrap();
@@ -1776,7 +1782,11 @@ mod tests {
             PathBuf::from("/Volumes/T9/TurboSpark/text/qwen.gturbo"),
             Some(ID),
         );
-        Store::new(&fx.home).record(&row).unwrap();
+        // The registry write alone: `record` refuses a row whose library is
+        // not connected, and T9 is not.
+        Store::new(&fx.home)
+            .record_rows(std::slice::from_ref(&row))
+            .unwrap();
         let before = fs::read(fx.list_path()).unwrap();
         let mut registry = fx.registry();
 
@@ -1826,7 +1836,9 @@ mod tests {
                 Some(ID),
             ),
         ] {
-            store.record(&row).unwrap();
+            // The registry write alone: `record` refuses the row of a
+            // library that is not listed, and only the count matters here.
+            store.record_rows(std::slice::from_ref(&row)).unwrap();
         }
         let registry = fx.registry();
         let this_mac = &registry.libraries()[0];

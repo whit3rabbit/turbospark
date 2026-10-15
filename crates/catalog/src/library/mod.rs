@@ -21,6 +21,10 @@ pub use mount_table::{
     parse_mount_table, validate_location, LocationEnv, LocationRefusal, MountEntry, MountSource,
 };
 pub use registry::{AddedLibrary, LibraryRegistry, LoadReport, Refreshed, LIBRARIES_FILE};
+// The store locates every library of one listing through one mount table.
+pub(crate) use locate::SharedMountTable;
+#[cfg(test)]
+pub(crate) use mount_table::system_mount_reads;
 // The store writes `installed.json` the same way the library files are written.
 pub(crate) use marker::replace_file;
 // Install paths in a library root are built from aliases, as marker rows are.

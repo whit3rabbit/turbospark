@@ -278,9 +278,10 @@ thread_local! {
 }
 
 /// Reads of the system mount table on this thread so far. Shared with the
-/// registry tests, which count the reads of a whole refresh.
+/// registry and store tests, which count the reads of a whole refresh or
+/// listing.
 #[cfg(test)]
-pub(super) fn system_mount_reads() -> usize {
+pub(crate) fn system_mount_reads() -> usize {
     SYSTEM_MOUNT_READS.with(|reads| reads.get())
 }
 
