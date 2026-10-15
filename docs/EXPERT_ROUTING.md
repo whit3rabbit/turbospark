@@ -491,3 +491,160 @@ to decay 32 is supported by the hit-rate evidence on Gemma 4 and owes:
    `qwen4exp` on an SSD-bound install, before assuming the interval carries
    over. The interval counts plans per layer, so it does not scale with
    layer count, but it may with experts per layer.
+
+## Disk-bound baseline: qwen4exp on an external SSD (2026-10-14)
+
+The measurement the prefetch and cache sections above said was OWED: an
+install whose expert table does not fit in RAM, read from a device rather
+than the page cache.
+
+### Setup
+
+- Install: `qwen4exp-swift-iq2-xs` (48 layers x 512 experts, top-10, expert
+  stride 1,523,712 B), 64 GiB on a Samsung T7 at `/Volumes/T7`: 33 GiB of
+  `packed_experts`, a 27 GiB `ngram_table`, 4.2 GiB `model_weights.bin`.
+- Host: Apple M4 Max, 36 GB, AC, Spotlight disabled on the volume. Binary
+  built from a clean export of `3c0ea885`. Greedy, 200 new tokens, one
+  34-token prompt, 2,048 context.
+- Link: the drive first negotiated USB 2.0 (480 Mb/s) on a charge-only
+  cable and capped random expert reads at 47-61 MB/s (0.24 tok/s decode).
+  With a 10 Gb/s cable, a raw `F_NOCACHE` random-read bench of whole
+  experts read 576 MB/s at one thread and 778-786 MB/s at 16-32 threads;
+  the engine's own pattern (8 threads, 840 KiB chunks) read 617 MB/s.
+- Contamination: other sessions ran `cargo` builds throughout. Each arm
+  records the 1-minute load and whether any `target/*/deps/` process was
+  live at its end; only arms with neither are quoted for time below. Swap
+  sat at 9-12 GB used for the whole capture, which is a property of this
+  host that day and depresses every arm.
+
+### Measurement
+
+Clean arms only (two per slot count, forward and reverse order):
+
+| slots | hit rate | requested MiB/tok | physical MiB/tok | expert io ms/tok | cb1 wait ms/tok | tok/s |
+|---:|---:|---:|---:|---:|---:|---:|
+| 16 | 47.3% | 349.8 | 88-92 | 149-154 | 119-125 | 3.56-3.70 |
+| 32 | 58.3% | 276.7 | 91-103 | 153-169 | 124-127 | 3.40-3.59 |
+| 128 | 83.1% | 111.9 | 92-93 | 150-152 | 138-150 | 3.42-3.47 |
+| 16, `F_NOCACHE` | 47.3% | 349.8 | 349.8 | 585 | 196 | 1.29 |
+
+Every 64-slot arm was contaminated; its hit rate (70.7%) is still valid,
+since the routing is deterministic.
+
+### Reading
+
+- **The slot cache and the page cache are the same RAM counted twice.**
+  From 16 to 128 slots the requested bytes fall 3.1x while the bytes read
+  from the device stay at ~90 MiB/token and throughput stays flat. The page
+  cache was already holding what the extra slots hold. This is the reason
+  Flash-Next bypasses the page cache and sizes one explicit cache instead.
+- **The read path runs at the device's rate.** The `F_NOCACHE` arm moved
+  349.8 MiB/token in 585 ms, ~627 MB/s, the raw bench's figure for the same
+  chunking. There is no software loss to recover inside the current
+  pattern; the bench says whole-expert reads at 16 threads would be ~26%
+  faster on this device.
+- **A second, cache-independent bucket is as large as expert io.** The
+  layer cb1 wait (attention plus router) is 120-150 ms/token at every slot
+  count, ~40% of the step. The catalog row for this same install records
+  12.2-12.8 tok/s from the internal SSD, ~80 ms for a WHOLE token, so this
+  one bucket alone exceeds an internal-SSD token here. The likely cause is page faults on the mapped trunk and the 27 GiB n-gram
+  table from the external device. This is INFERRED from the bucket's
+  independence of slot count and has not been isolated; Flash-Next's
+  128 MiB `--ple-shelf` targets the same table.
+
+### Replay: what a larger explicit cache would buy
+
+`scripts/pilot_ceiling.py --policies` over four routing traces from this
+install (924 passes as one session, first request excluded). The decay and
+LRU rows reproduce the engine's measured single-request hit rates within a
+point:
+
+| slots | pinned | cumulative LFU | LRU | decay 16 | decay 32 | MiB/tok at decay 16 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 16 | 1.1 GiB | 41.4% | 46.8% | 48.2% | 47.2% | 361.5 |
+| 32 | 2.2 GiB | 49.5% | 59.6% | 59.9% | 58.5% | 279.8 |
+| 64 | 4.5 GiB | 62.5% | 71.3% | 72.0% | 71.1% | 195.4 |
+| 128 | 8.9 GiB | 78.7% | 84.2% | 84.1% | 84.0% | 111.1 |
+| 192 | 13.4 GiB | 88.1% | 90.5% | 90.5% | 90.5% | 66.0 |
+| 256 | 17.9 GiB | 93.6% | 94.4% | 94.4% | 94.4% | 39.2 |
+
+- Cumulative LFU again loses across requests (6-10 points at 16-64 slots),
+  the same finding as the Gemma 4 section above, on a 512-expert model.
+- At 256 slots with `F_NOCACHE`, 39 MiB/token at the measured ~620 MB/s is
+  ~65 ms of expert io against today's ~150 ms. That is a PROJECTION from
+  hit rate and device rate, not a measurement, and it ignores that pinning
+  17.9 GiB takes RAM the page cache currently gives to the trunk and the
+  n-gram table, i.e. the cb1 bucket above may grow.
+
+### What this changes
+
+- `ALLOWED_CACHE_SLOTS` stopped at 128. The replay suggested the payoff
+  was at 192-256 slots AND page-cache bypass together. **That projection
+  was then measured and did not hold on this machine**; see the next
+  section. 192 and 256 were added to the allowed set so the arms could be
+  run at all.
+- The cb1 bucket needs its own instrument before anyone optimizes it:
+  split trunk faults from n-gram-table faults.
+- Decay should default on once a clean multi-request tok/s pair exists;
+  hit rates now support it on two families with different expert counts.
+
+## Larger explicit cache vs page-cache bypass, measured (2026-10-15)
+
+The Flash-Next shape (one explicit cache plus `F_NOCACHE`) on the same
+install, device and host as the section above.
+
+### Protocol
+
+`turbospark-check --chat` reading four prompts from stdin in ONE process,
+200 new tokens each, so the cache carries across requests. Turn 1 is the
+warmup; the rows below are turns 2-4 from the cumulative phase counters.
+Arms: 128 and 192 slots, each with and without `TURBOSPARK_EXPERT_NOCACHE=1`,
+one forward and one reverse pass, plus a discarded warmup session. Each arm
+waits for other sessions' `target/*/deps/` processes to finish, samples load
+and those processes every 5 s while it runs, and records `vm_stat` swap
+counts. 256 slots (17.4 GiB pinned) was not run: on this host's ~15 GiB of
+free plus inactive memory it can only swap. Binary: `3c0ea885` plus the
+192/256 rungs. Scripts and logs: `/Volumes/T7/turbospark/phase1/`.
+
+### Measurement
+
+| arm | hit rate | tok/s (fwd / rev) | expert io ms/pass | contamination |
+|---|---:|---:|---:|---|
+| 128, page cache | 78.9% | 4.46 / 4.96 | 85-105 | both runs overlapped other builds; fwd swapped 1.8 GiB |
+| 128, `F_NOCACHE` | 78.9% | **2.91** / 2.97 | 168-198 | fwd clean; rev overlapped a build |
+| 192, page cache | 88.4% | **4.28** / 5.30 | 73-78 | fwd clean (155 MiB swapped); rev swapped 3.1 GiB |
+| 192, `F_NOCACHE` | 88.4% | 3.53 / 3.57 | 119-128 | fwd swapped 1.0 GiB; rev overlapped a build |
+
+Output: byte-identical across the bypass arms at each slot count. 128 and
+192 slots produce different text from each other, as
+`crates/bench/src/real_model_open.rs` documents for any slot-count change.
+
+### Reading
+
+- **Page-cache bypass loses on a 36 GB machine, at both sizes**, by 25-35%,
+  in every pair including the clean ones. The OS page cache is a free
+  second tier holding experts the slots evicted; `F_NOCACHE` discards it.
+  Flash-Next's setting assumes a machine where the explicit cache can be
+  sized near the working set (28 GiB on 64 GB). It does not transfer here.
+- **192 slots does not clearly beat 128 with the page cache on.** Hits rise
+  9.5 points and expert io falls ~25%, but tok/s overlaps (4.3-5.3 against
+  4.5-5.0). The extra 4.4 GiB pinned comes out of the page cache that also
+  serves the trunk and the n-gram table, and two 192 runs swapped.
+- **Under bypass, size does pay**: 192 beats 128 by ~21% (3.55 against
+  2.94). That is the Flash-Next regime, and it still ends below the page
+  cache arms.
+- The replay's hit-rate projections were optimistic by 4-6 points on the
+  real 4-turn session (78.9 / 88.4% against 84.1 / 90.5%): a chat session's
+  turns share history, so this is the same workload shape but not the same
+  traces.
+
+### Standing decision
+
+- Keep the page cache in the loop. Do not ship a production `F_NOCACHE`
+  mode for this class of machine; it stays the measurement seam it was.
+- Keep 192 and 256 in `ALLOWED_CACHE_SLOTS`. `Auto` reaches them only on
+  machines with the memory, and a machine with 64 GB or more is exactly
+  where the bypass result could reverse. That reversal is unmeasured.
+- The bucket that did not move with any cache setting is cb1 (95-145
+  ms/pass). It is now the larger lever on this install, and it needs the
+  trunk-versus-n-gram split noted above before anyone optimizes it.
