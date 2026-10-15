@@ -593,15 +593,18 @@ impl Store {
     }
 
     /// Add or replace a row, then rewrite the record.
+    ///
+    /// Only the row with the same alias and modality is replaced. A row whose
+    /// directory is missing is kept: it may sit on an unmounted external
+    /// volume, and pruning it here would forget that install for good the
+    /// next time anything else is recorded. Readers such as
+    /// [`Self::installed`] hide missing rows instead.
     pub fn record(&self, model: &InstalledModel) -> Result<(), String> {
         let modality = model.effective_modality();
         let mut rows: Vec<InstalledModel> = self
             .read_rows()
             .into_iter()
-            .filter(|row| {
-                row.path.is_dir()
-                    && !(row.alias == model.alias && row.effective_modality() == modality)
-            })
+            .filter(|row| !(row.alias == model.alias && row.effective_modality() == modality))
             .collect();
         rows.push(model.clone());
         self.write_rows(&rows)

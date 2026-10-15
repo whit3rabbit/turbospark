@@ -257,6 +257,46 @@ fn the_record_round_trips_and_drops_rows_whose_directory_is_gone() {
     assert!(store.installed().is_empty());
 }
 
+/// A row on an unmounted external volume looks exactly like a row whose
+/// directory was deleted. Recording any other install must not prune it, or
+/// the install is forgotten for good before the volume comes back.
+#[test]
+fn recording_an_install_keeps_rows_whose_volume_is_offline() {
+    let root = temp_root("offline-volume");
+    let store = Store::new(&root);
+    let offline = root.join("unmounted-volume").join("away.gturbo");
+    let mut offline_audio = row(
+        "away-audio",
+        &root.join("unmounted-volume").join("a.gturbo"),
+    );
+    offline_audio.modality = ModelModality::Audio;
+    store.record(&row("away", &offline)).unwrap();
+    store.record(&offline_audio).unwrap();
+
+    let present = store.install_path("here");
+    std::fs::create_dir_all(&present).unwrap();
+    store.record(&row("here", &present)).unwrap();
+
+    let on_disk: Vec<InstalledModel> =
+        serde_json::from_slice(&std::fs::read(root.join("installed.json")).unwrap()).unwrap();
+    let aliases: Vec<&str> = on_disk.iter().map(|r| r.alias.as_str()).collect();
+    assert!(
+        aliases.contains(&"away") && aliases.contains(&"away-audio"),
+        "rows whose directory is missing must survive another install: {aliases:?}"
+    );
+    assert!(!store.installed().contains_key("away"));
+
+    // The volume comes back: the same row lists again with no re-install.
+    std::fs::create_dir_all(&offline).unwrap();
+    assert_eq!(store.installed()["away"].path, offline);
+
+    // Re-recording the same alias and modality still replaces, not appends.
+    store.record(&row("away", &offline)).unwrap();
+    let on_disk: Vec<InstalledModel> =
+        serde_json::from_slice(&std::fs::read(root.join("installed.json")).unwrap()).unwrap();
+    assert_eq!(on_disk.iter().filter(|r| r.alias == "away").count(), 1);
+}
+
 /// A corrupt record must not stop a pull. The record is a convenience index
 /// over directories that are self-describing; treating it as authoritative
 /// would make one bad write cost every install.
