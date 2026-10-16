@@ -114,10 +114,15 @@ impl Fixture {
     /// The binary with this home, the fake volumes, and `home_device` as the
     /// home folder's device.
     fn command_with_home_device(&self, home_device: u64) -> Command {
+        self.binary_with_home_device("turbospark-model", home_device)
+    }
+
+    /// [`Self::command_with_home_device`] for another binary of this crate.
+    fn binary_with_home_device(&self, binary: &str, home_device: u64) -> Command {
         let mut path = std::env::current_exe().expect("test binary path");
         path.pop(); // deps/
         path.pop();
-        path.push("turbospark-model");
+        path.push(binary);
         let mut command = Command::new(path);
         command
             .env("TURBOSPARK_HOME", &self.home)
@@ -1595,4 +1600,148 @@ fn a_move_with_an_unplugged_library_names_the_drive_to_connect() {
     assert_eq!(fs::read(fixture.home.join("installed.json")).unwrap(), rows);
     // Nothing rebuilt either library's folder under its mount point.
     assert!(!fixture.volume("T7").exists() && !fixture.volume("T9").exists());
+}
+
+// Running a model whose library is not connected (10.7).
+
+/// What the run and serve commands say about `alias` in the unplugged
+/// library T7.
+fn connect_t7(alias: &str) -> String {
+    format!("Model {alias} is on T7, which is not connected. Connect the drive and try again.")
+}
+
+impl Fixture {
+    /// `binary` of this crate with this home and the fake volumes.
+    fn run_binary(&self, binary: &str, args: &[&str]) -> Outcome {
+        let out = self
+            .binary_with_home_device(binary, self.device.wrapping_add(1))
+            .args(args)
+            .output()
+            .expect("the binary runs");
+        Outcome {
+            code: out.status.code().unwrap_or(-1),
+            stdout: String::from_utf8_lossy(&out.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&out.stderr).to_string(),
+        }
+    }
+
+    /// Mounts the volume `from` again as `to`, as macOS does when another
+    /// drive already has the name: the folder moves and the mount table
+    /// names the new mount point.
+    fn remount(&self, from: &str, to: &str) {
+        fs::rename(self.volume(from), self.volume(to)).unwrap();
+        let table = fs::read_to_string(&self.mounts).unwrap();
+        let old = format!("{} (", self.volume(from).display());
+        assert!(table.contains(&old), "{table}");
+        let new = format!("{} (", self.volume(to).display());
+        fs::write(&self.mounts, table.replace(&old, &new)).unwrap();
+    }
+}
+
+/// `turbospark-check --model` with an alias whose library is unplugged
+/// fails naming the drive to connect, rather than trying the bare alias as
+/// a path and reporting no model there.
+#[cfg(target_os = "macos")]
+#[test]
+fn checking_a_model_on_an_unplugged_library_names_the_drive_to_connect() {
+    let fixture = Fixture::new("check-unplugged");
+    fixture.add("T7", "T7");
+    let root = fixture.volume("T7").join("TurboSpark");
+    fixture.write_rows(&[text_row(
+        "qq-away",
+        &root.join("text").join("qq-away.gturbo"),
+        Some((&fixture.id_of("T7"), "text/qq-away.gturbo")),
+    )]);
+    fs::remove_dir_all(fixture.volume("T7")).unwrap();
+
+    let outcome = fixture.run_binary("turbospark-check", &["--model", "qq-away", "--prompt", "hi"]);
+    assert_eq!(outcome.code, 1, "{}", outcome.stderr);
+    assert!(
+        outcome.stderr.contains(&connect_t7("qq-away")),
+        "{}",
+        outcome.stderr
+    );
+    assert!(
+        !outcome.stderr.contains("manifest.json"),
+        "{}",
+        outcome.stderr
+    );
+}
+
+/// After the library's drive mounts under a new name, its alias opens where
+/// the library is now, not at the recorded path. The folder holds no model,
+/// so the run fails reading the manifest at the path it resolved, which is
+/// what this asserts.
+#[cfg(target_os = "macos")]
+#[test]
+fn checking_a_model_follows_its_library_to_a_renamed_drive() {
+    let fixture = Fixture::new("check-renamed");
+    fixture.add("T7", "T7");
+    let recorded = fixture
+        .volume("T7")
+        .join("TurboSpark")
+        .join("text")
+        .join("qq-moved.gturbo");
+    fs::create_dir_all(&recorded).unwrap();
+    fixture.write_rows(&[text_row(
+        "qq-moved",
+        &recorded,
+        Some((&fixture.id_of("T7"), "text/qq-moved.gturbo")),
+    )]);
+    fixture.remount("T7", "T7 1");
+    let now = fixture
+        .volume("T7 1")
+        .join("TurboSpark")
+        .join("text")
+        .join("qq-moved.gturbo");
+
+    let outcome = fixture.run_binary("turbospark-check", &["--model", "qq-moved", "--prompt", "hi"]);
+    assert_eq!(outcome.code, 1, "{}", outcome.stderr);
+    let expected = format!("no manifest.json at {}", now.join("manifest.json").display());
+    assert!(outcome.stderr.contains(&expected), "{}", outcome.stderr);
+}
+
+/// `turbospark-music` names the drive to connect for an audio alias in an
+/// unplugged library, rather than calling it not installed.
+#[test]
+fn generating_music_with_a_model_on_an_unplugged_library_names_the_drive() {
+    let fixture = Fixture::new("music-unplugged");
+    fixture.add("T7", "T7");
+    let root = fixture.volume("T7").join("TurboSpark");
+    let mut row = text_row(
+        "qq-song",
+        &root.join("audio").join("qq-song.gturbo"),
+        Some((&fixture.id_of("T7"), "audio/qq-song.gturbo")),
+    );
+    row["modality"] = serde_json::json!("audio");
+    row["family"] = serde_json::json!("minimax_music3");
+    fixture.write_rows(&[row]);
+    fs::remove_dir_all(fixture.volume("T7")).unwrap();
+    let output = fixture.base.join("song.wav");
+
+    let outcome = fixture.run_binary(
+        "turbospark-music",
+        &[
+            "generate",
+            "--model",
+            "qq-song",
+            "--caption",
+            "soft piano",
+            "--lyrics",
+            "[instrumental]",
+            "--duration",
+            "0.04",
+            "--steps",
+            "1",
+            "--output",
+            output.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(outcome.code, 1, "{}", outcome.stderr);
+    assert!(
+        outcome.stderr.contains(&connect_t7("qq-song")),
+        "{}",
+        outcome.stderr
+    );
+    assert!(!output.exists());
 }
