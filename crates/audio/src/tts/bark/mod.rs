@@ -479,10 +479,7 @@ impl FineGpt {
             layers.push(Block {
                 layernorm_1: LayerNorm::new(
                     weights.tensor_absolute(&format!("{layer}layernorm_1.weight"), &[n_embd])?,
-                    Some(
-                        weights
-                            .tensor_absolute(&format!("{layer}layernorm_1.bias"), &[n_embd])?,
-                    ),
+                    Some(weights.tensor_absolute(&format!("{layer}layernorm_1.bias"), &[n_embd])?),
                     1e-5,
                 ),
                 att_proj: weights.linear_absolute(
@@ -499,10 +496,7 @@ impl FineGpt {
                 )?,
                 layernorm_2: LayerNorm::new(
                     weights.tensor_absolute(&format!("{layer}layernorm_2.weight"), &[n_embd])?,
-                    Some(
-                        weights
-                            .tensor_absolute(&format!("{layer}layernorm_2.bias"), &[n_embd])?,
-                    ),
+                    Some(weights.tensor_absolute(&format!("{layer}layernorm_2.bias"), &[n_embd])?),
                     1e-5,
                 ),
                 mlp_in: weights.linear_absolute(
@@ -532,10 +526,7 @@ impl FineGpt {
             layers,
             layernorm_final: LayerNorm::new(
                 weights.tensor_absolute(&format!("{prefix}layernorm_final.weight"), &[n_embd])?,
-                Some(
-                    weights
-                        .tensor_absolute(&format!("{prefix}layernorm_final.bias"), &[n_embd])?,
-                ),
+                Some(weights.tensor_absolute(&format!("{prefix}layernorm_final.bias"), &[n_embd])?),
                 1e-5,
             ),
             lm_heads,
@@ -641,15 +632,15 @@ impl Default for GenerateParams {
 fn python_round(x: f64) -> usize {
     let floor = x.floor();
     let frac = x - floor;
-    let rounded = if frac > 0.5 {
-        floor + 1.0
+    let round_up = if frac > 0.5 {
+        true
     } else if frac < 0.5 {
-        floor
-    } else if (floor as i64) % 2 == 0 {
-        floor
+        false
     } else {
-        floor + 1.0
+        // An exact .5 rounds half to even, like Python's round().
+        (floor as i64) % 2 != 0
     };
+    let rounded = if round_up { floor + 1.0 } else { floor };
     rounded as usize
 }
 
@@ -1011,7 +1002,8 @@ impl Model {
             sliding_window_len: 60,
             coarse_use_kv_caching: false,
         };
-        let coarse_codes = self.generate_coarse(&semantic_tokens, None, None, &coarse_params, draw)?;
+        let coarse_codes =
+            self.generate_coarse(&semantic_tokens, None, None, &coarse_params, draw)?;
         let fine_codes = self.generate_fine(&coarse_codes, params.fine_temperature, draw)?;
         let samples = encodec.decode_codes(&fine_codes, None)?;
         Ok(Generated {

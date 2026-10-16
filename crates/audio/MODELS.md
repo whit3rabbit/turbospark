@@ -255,7 +255,7 @@ falcon_h1/ssm are still upstream-only (spec tasks 80 and 81).
 |---|---|---|---|---|
 | `arktts` | Source | 79 | Default task-qualified family | [Family port](src/tts/arktts/README.md) over the [lm falcon_h1 backbone](src/lm/README.md) for the 0.1b flavor; decode-only codec (encode refused with precomputed reference codes), caller-owned Mistral tokenization with the exact prompt strings exposed, replayed uniform streams for sampled draws; real-checkpoint gate open |
 | `bailingmm` | README | 42 | Ming Omni MoE | [Family port](src/tts/bailingmm/README.md) |
-| `bark` | Source | 65 | Default task-qualified family | [Partial family port](src/tts/bark/README.md); semantic prefill fixture-verified, end-to-end scenario parity blocked by a reference-side fixture reproducibility issue |
+| `bark` | Source | 65 | Default task-qualified family | [Family port](src/tts/bark/README.md); reference Pipeline replay parity end to end at tiny seeded dims (ids and codes exact, prefill logits 8.3e-7 against a 1e-4 gate, waveform 8.9e-7 against a 1e-5 gate); real-checkpoint gate open |
 | `breeze_tts` | Source | 66 | Aliases `breeze`, `breeze-tts` | [Family port](src/tts/breeze_tts/README.md); ends at codebook frames, waveform decode needs the unported Qwen3-TTS speech tokenizer |
 | `chatterbox` | README | 32 | Default task-qualified family | [Family port](src/tts/chatterbox/README.md) over the [S3 tokenizer codec port](src/codec/s3/README.md) and the [shared lm engine](src/lm/README.md); real-checkpoint gate open |
 | `chatterbox_turbo` | Source | 67 | Default task-qualified family | [Family port](src/tts/chatterbox_turbo/README.md) over the [S3 tokenizer codec port](src/codec/s3/README.md) and the [shared lm engine](src/lm/README.md); real-checkpoint gate open |
