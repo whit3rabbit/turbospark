@@ -571,6 +571,15 @@ final class LocalizationParityTests: XCTestCase {
         for size in AppTextSize.allCases {
             values.append(("AppTextSize.label", size.label))
         }
+        for tab in APIWorkspaceTab.allCases {
+            values.append(("APIWorkspaceTab.title", tab.title))
+        }
+        for mode in ImagesWorkspaceMode.allCases {
+            values.append(("ImagesWorkspaceMode.title", mode.title))
+        }
+        for kind in InstalledModelKind.allCases {
+            values.append(("InstalledModelKind.title", kind.title))
+        }
         for section in KeyboardShortcutCatalog.sections {
             values.append(("KeyboardShortcutSection.title", section.title))
             for row in section.rows {

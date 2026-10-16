@@ -17,18 +17,25 @@ swift/TurboSparkApp/
 +-- Localization/                     # Localizable.xcstrings and generated runtime .lproj
 +-- Sources/TurboSparkApp/
 |   +-- App/                          # App lifecycle: TurboSparkApp.swift, RootView.swift
+|   +-- Audio/                        # Audio Studio: record, transcribe, speech, voice cloning, music
+|   +-- Browser/                      # In-app browser pane, tabs, settings, dialog approval
+|   +-- BrowserAutomation/            # Agent browser control sessions and command port
 |   +-- Chrome/                       # Navigation rail, window toolbar, status bar
 |   +-- Components/                   # Settings panes (Appearance, MCP, Plugins, Models, Soul)
 |   +-- Diagnostics/                  # Performance inspector, telemetry, HUD, fan control
 |   +-- Files/                        # Attachment importer, document previews, drag-and-drop
 |   +-- Generation/                   # Chat sidebar, message timeline, prompt composer, context ring
+|   +-- Humanize/                     # Humanize workspace: draft and rewrite cards, diff
+|   +-- Images/                       # Image generation composer, gallery, settings
+|   +-- Import/                       # Chrome bookmark import
 |   +-- Installation/                 # Model catalog browser, download manager, probe sheets
 |   +-- Presentation/                 # Markdown rendering, syntax highlighting, document parsing
 |   +-- Resources/                    # Bundled prompts, logos, risk classifier weights
 |   +-- Server/                       # Text/Image API and TypeSafe playground UI
 |   +-- State/                        # AppModel state coordinator, goals, compaction, storage
-|   +-- Theme/                        # Typography, colors, accessibility, Reduce Transparency
-|   \-- Tools/                        # Agent tool execution, MCP client, Syntext search, sandbox
+|   +-- Theme/                        # Shared controls, surfaces, progress bar, motion, type, colors
+|   +-- Tools/                        # Agent tool execution, MCP client, Syntext search, sandbox
+|   \-- Workflows/                    # Workflow interpreter, run engine, journal
 \-- Tests/TurboSparkAppTests/         # 100+ unit, integration, and UI state test suites
 ```
 
@@ -95,6 +102,7 @@ The test suite contains over 100 test files covering:
 - **Goals & Background Work**: `GoalLoopTests.swift`, `PlanningAndInteractiveToolTests.swift`, `SubagentBatchRoutingTests.swift`.
 - **Model Management & Hub**: `ModelManagerTests.swift`, `ModelFitAndInstallGateTests.swift`, `ModelProbeSheetTests.swift`.
 - **Localization & Accessibility**: `LocalizationParityTests.swift`, `LocalizationAndAccessibilityTests.swift`.
+- **Audio Studio**: `AudioVoiceCloneTests.swift`, `AudioVoiceCloneWorkspaceTests.swift`, `AudioVoiceReferencePresentationTests.swift`, `AudioRecordingSetupTests.swift`, `AudioLibraryTests.swift`.
 - **Security & Sandboxing**: `TrustBoundaryAndDurabilityTests.swift`, `WorkspaceAndNetworkGateTests.swift`.
 
 ---
@@ -135,10 +143,38 @@ The `AppModel` coordinator acts as the single source of truth:
 - The workspace retains metrics, request queues, and endpoint monitoring.
   See [Swift API workspace](../docs/SWIFT_API_WORKSPACE.md).
 
+### 6. Audio Studio (`Audio/`)
+- `AudioWorkspaceController` and its extensions own recording, import,
+  playback, model selection, and generation jobs. Views read it and call its
+  seams; they hold no audio state of their own.
+- Voice Cloning (`VoiceCloneWorkspaceView`) is a two-column page: voice setup
+  (reference card, engine cards, model) beside a steps strip, the script
+  composer, a live progress card, and the takes list. It falls back to one
+  column for a narrow window or Extra Large text.
+- The reference card takes a dropped file, an import, an inline microphone
+  recording (stops at 30 seconds), or a pick from the library sheet, which
+  also lists references recently used by past takes. Consent covers one exact
+  reference region; reusing a reference or recording a new one never carries
+  it. See [Audio workspace](../../docs/AUDIO_WORKSPACE.md).
+- Recording asks for macOS access only when the user chooses to.
+  `RecordingPermissions` reads microphone and screen recording status without
+  prompting. Start recording and the reference card's Record button open the
+  access sheet (`RecordingAccessSheet`) when a source is missing, and macOS
+  prompts only after the user presses Allow there. The sheet can record with
+  just the allowed source, and Not now leaves import, transcription, and
+  editing usable. `AudioCapture` never prompts. Without access it throws an
+  error that points to the sheet.
+
 ---
 
 ## Design Guidelines & Accessibility
 
+Read [DESIGN.md](../../DESIGN.md) before any UI change. It holds the shared
+control vocabulary (`Theme/AppControls.swift`, `Theme/AppSurfaces.swift`,
+`Theme/AppProgressBar.swift`, `Theme/TurboSparkMotion.swift`) and the layout,
+theming, accessibility, and localization rules.
+
 - **ASCII Only**: All documentation, comments, and strings follow project ASCII rules.
+- **Motion**: Animations use the `TSMotion` curves and honor Reduce Motion (the app setting first, then the system's). Glows become solid rings under Increase Contrast.
 - **macOS Reduce Transparency**: Automatically detects and respects macOS accessibility settings, rendering opaque backgrounds when Reduce Transparency is enabled (`Theme/`).
 - **VoiceOver & Keyboard Navigation**: Every interactive element includes explicit accessibility labels and keyboard shortcuts (`KEYBOARD_SHORTCUTS.md`).

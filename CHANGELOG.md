@@ -14,6 +14,29 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- OmniVoice multilingual zero-shot TTS with voice cloning, end to end.
+  `crates/audio/src/tts/omnivoice/` completes its fixture-verified port with
+  the intake layers the released checkpoints need: the rowwise int8 scheme
+  (`w = q * scale` over signed int8 groups with f16 scales) parsed from
+  `mlx_manifest.json`, the released k2-fsa layout (`llm.` prefix, fused audio
+  embedding/head tables split per codebook), the Higgs tokenizer's
+  Transformers-format loader (PyTorch conv layouts, `codebook.embed`, snake
+  `[1, C, 1]`), the Wav2Vec2 semantic tower behind the encode path's
+  `output_hidden_states` mean, the torchaudio-compatible sinc resampler, and
+  the rule-based duration estimator with Unicode category tables generated
+  from the pinned CPython. Catalog rows `omnivoice-8bit` (default) and
+  `omnivoice-bf16` (`mlx-community/OmniVoice-8bit` at `b222e4d8`,
+  `OmniVoice-bfloat16` at `6119f707`) install through the app with the Boson
+  Higgs tokenizer's community-license terms. Runtime engine (family
+  `omnivoice`, portable f32 CPU only, consent-gated cloning, per-step
+  progress and cancellation), HTTP `/v1/audio/speech` with optional
+  `reference_audio`, and the app's Voice Cloning page (capability-driven,
+  Advanced-page portable opt-in) are wired. Gates: cross-engine encode parity
+  exact against the Python reference on bfloat16 (70 frames x 8 codebooks);
+  the 8-bit profile generates deterministic, whisper-oracle-verified speech
+  at about 23x realtime on the CPU path with a 3.2 GiB measured footprint;
+  catalog, FFI, server, and Swift suites green. No Metal offload; the
+  family stays behind the portable opt-in until one exists.
 - Chunked prefill for the qwen MoE flow (`qwenGdnMoe`: Qwen 3.6 35B-A3B,
   Ornith 35B, MiniCPM-V 4.7), `crates/runtime/src/families/qwen/moe_prefill.rs`.
   The attention and router half of up to 16 tokens runs before one wait per
@@ -64,8 +87,16 @@ when this file gets updated relative to the version bump and the tag.
     file by size and SHA-256, `ts_embedding_catalog_json` and
     `ts_embedding_install` download and verify it into
     `models/embeddings/<alias>`, and the alias resolves anywhere an
-    embedding model path is accepted. The app offers it (Download, then
-    Use) under the Memory and Server embedding fields.
+    embedding model path is accepted, but only to an install of the
+    current pin. `ts_embedding_install` takes the revision the host showed
+    and refuses any other; a download replaces an older pin's install. The
+    profile carries `status: verified` with the gates behind it.
+  - Pinned Unlimited OCR install (`unlimited-ocr-coreml`, the nine Core ML
+    files of `4568571e`, 4.09 GB): `ocr_models.json`, `ts_ocr_catalog_json`,
+    `ts_ocr_install`, Swift `OcrCatalog`, and `ts_ocr_open` by alias. No app
+    UI yet. Network gates: `pinned_coreml_ocr_install_network` (installs and
+    reads a page) and `pinned_dir_catalog_network` (checks every embedding
+    and OCR pin against the Hub).
   - Benchmark probes and drivers for the Core ML pipelines and for
     EmbeddingGemma 300m on MLX vs Core ML vs the CPU port
     (`crates/runtime/scripts/benchmark_coreml.py`,
@@ -77,11 +108,28 @@ when this file gets updated relative to the version bump and the tag.
   zero-star flow DiT, causal-conv AudioVAE) and VoxCPM2 (fusion-concat
   conditioning, two-token mu DiT, reference/continuation prompts, and
   SR-conditioned 48 kHz AudioVAE) TTS family ports with catalog assets.
+- `swift/TurboSparkApp`: an Embeddings tab in the API workspace. It picks
+  the server's embedding model (saved, and attached again after every start),
+  attaches and detaches it live without blocking the UI on a first Core ML
+  load, lists served embedding models apart from chat models
+  (`ServerInfo.embeddingModels`), and sends a test `POST /v1/embeddings`. The
+  same picker replaces the Memory embedding field: pinned profiles show
+  Verified only when their gates ran on that pin, other paths are checked
+  with the new `ts_embedding_probe_json` and shown as Not verified, or
+  refused with the reason when the family does not run here.
 - `swift/TurboSparkApp`: bundled open-source fonts for code and UI rendering
   with license notices and Settings catalog entries: Iosevka, Geist, Geist Mono,
   Cascadia Code, Hack, and Source Code Pro.
 
 ### Changed
+- Embedding models are checked by family before they load, in the standalone
+  C ABI, the server attach and `turbospark-server --embedding-model`:
+  `EncoderRunner` accepts only `model_type` `bert` or `xlm-roberta` with CLS
+  pooling (a `1_Pooling/config.json` asking for mean or other pooling is
+  refused), so a GTE, Nomic BERT, EmbeddingGemma 300m or mean-pooled BERT
+  directory no longer runs and returns wrong vectors. A missing `model_type`
+  is refused rather than taken as BERT. The server pane's Advanced settings
+  no longer has an embedding field; the API Embeddings tab replaces it.
 - OpenKind (the TypeSafe daemon and Swift package) moves from 0.1.0 to
   0.3.0 (`v0.3.0`, `2dba87572c028aeaf34b27220a3bbd3d8d8dbc76`) in
   `make-app-bundle.sh`, `ci.yml`, `release.yml` and `docs/RELEASE.md`.

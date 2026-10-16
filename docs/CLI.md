@@ -484,7 +484,7 @@ unimplemented and uses `GET /health` for liveness.
 | --- | --- | --- | --- |
 | `--model` | path or alias, repeatable | optional | attach one or more generation installs; exact ids and aliases route requests to the matching install. A single model keeps the legacy unknown-name fallback |
 | `--stt-model` | path or alias, repeatable | none | attach one or more Speech-to-Text installs (Whisper or Qwen3-ASR); enables `POST /v1/audio/transcriptions` and WebSocket realtime transcription. With no `--model`, runs an audio-only server |
-| `--tts-model` | path or alias, repeatable | none | attach Text-to-Speech install (Kokoro or MegaTTS3); enables `POST /v1/audio/speech` |
+| `--tts-model` | path or alias, repeatable | none | attach Text-to-Speech install (Kokoro, MegaTTS3, or OmniVoice); enables `POST /v1/audio/speech` |
 | `--music-model` | path or alias, repeatable | none | attach MiniMax Music 3 install; enables `POST /v1/audio/generate` (macOS and Metal only) |
 | `--model-dir` | path | none | directory containing `.gturbo` models; enables auto-discovery (omlx compatibility) |
 | `--port` | u16 | `8080` | listen port |

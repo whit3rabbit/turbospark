@@ -224,6 +224,8 @@ TypeSafe OpenKind service with a native playground. See
    Long-running `/goal` commands that iterate until completion with stall detection, check-in schedules, and stop evaluation (`SWIFT_GOALS.md`).
 7. **Accessibility & Theming**:
    Full VoiceOver integration, dynamic typography, dark/light themes, and strict macOS Reduce Transparency support.
+8. **Audio Studio**:
+   Recording, transcription, text to speech, music, and a two-column Voice Cloning page: drop, import, record, or pick a reference voice, confirm consent for that exact region, write the script, and follow the run's stages before the take appears in the takes list ([Audio workspace](../docs/AUDIO_WORKSPACE.md)).
 
 ---
 
@@ -257,6 +259,8 @@ Comprehensive documentation lives in `swift/docs/`:
 | [`swift/docs/SWIFT_PROFILES.md`](docs/SWIFT_PROFILES.md) | User profiles, settings isolation, and profile switching |
 | [`swift/docs/SWIFT_LOCALIZATION.md`](docs/SWIFT_LOCALIZATION.md) | String catalog compilation, lproj structure, and parity gates |
 | [`swift/docs/KEYBOARD_SHORTCUTS.md`](docs/KEYBOARD_SHORTCUTS.md) | Menu commands, keyboard shortcuts, and VoiceOver accessibility |
+| [`DESIGN.md`](../DESIGN.md) | UI design rules and the shared control, surface, progress, and motion vocabulary |
+| [`docs/AUDIO_WORKSPACE.md`](../docs/AUDIO_WORKSPACE.md) | Audio Studio: recording, transcription, speech, voice cloning, and music |
 | [`swift/docs/SWIFT_SETTINGS_AUDIT.md`](docs/SWIFT_SETTINGS_AUDIT.md) | Settings persistence, UI control wiring, and audit checklist |
 | [`swift/docs/SWIFT_STATE_LEDGER.md`](docs/SWIFT_STATE_LEDGER.md) | State defect ledger (`state#N`) documenting state mitigations |
 
