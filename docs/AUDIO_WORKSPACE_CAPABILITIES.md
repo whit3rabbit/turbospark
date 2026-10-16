@@ -1,6 +1,6 @@
 # Native Audio capability audit
 
-This inventory covers 53 source families, including local Mel-RoFormer,
+This inventory covers 58 families, including local Mel-RoFormer,
 MossFormer2, SAM-Audio, and DialogueSidon additions. A declared portable method
 is not a qualified Metal workflow. `audio_families.json` carries the same discovery
 records returned by `ts_audio_capabilities_json`; pinned installation profiles
@@ -9,16 +9,18 @@ remain in the Audio catalog and require complete immutable asset plans.
 The native worker owns every model and holds the shared text/image/audio permit
 until execution stops. Whisper has per-token cancellation. Music has per-native
 compute-operation cancellation. Kokoro stops between synthesized sentences.
-Qwen's explicit experimental Metal mode stops between prefill/decode rows;
-its audio encoder is still CPU and indivisible. Portable Qwen stops after the
+Parakeet on Core ML stops between 15 s windows. Qwen's explicit experimental
+Metal mode stops between prefill/decode rows; its audio encoder is still CPU
+and indivisible. Portable Qwen stops after the
 current request. No unsupported family is silently routed to Whisper.
 Model opening returns a retryable busy error when another heavy job owns the
 device, because the caller does not yet have a session handle to cancel.
 Loaded sessions queue execution with independently signalable cancellation.
 
 All transcript timing is labeled: Whisper windows and Qwen clips are extents,
-not measured alignment. Qwen language and generated-token log probabilities
-are retained. Absent words, speakers, tags and confidence remain absent.
+not measured alignment. Parakeet sentences and words carry decoder-frame
+times on the 80 ms grid (`timing: "token"`). Qwen language and generated-token
+log probabilities are retained. Absent words, speakers, tags and confidence remain absent.
 Existing STT calls and HTTP task spellings remain compatible; HTTP adapters
 use the same native service without changing their public result shape.
 
@@ -42,6 +44,8 @@ use the same native service without changing their public result shape.
 | [stt/nemo](../crates/audio/src/stt/nemo/mod.rs) | No runnable operation | Codec or numerical component requires a task-specific native adapter |
 | [stt/nemotron_asr](../crates/audio/src/stt/nemotron_asr/mod.rs) | `transcribe` | No native runtime, admission, cancellation and Swift adapter has been qualified for this family |
 | [stt/parakeet](../crates/audio/src/stt/parakeet/mod.rs) | `transcribe`, `decode` | No native runtime, admission, cancellation and Swift adapter has been qualified for this family |
+| [stt/parakeet_coreml](../crates/runtime/src/coreml/parakeet.rs) | `transcribe` | Core ML on macOS 15+, family `parakeet_tdt`: catalog rows `parakeet-ultra-coreml` (the app's default batch transcriber) and `parakeet-redux-coreml`; LibriSpeech test-clean subset WER 0.0226 (Ultra) and 0.0275 (Redux) in [Core ML models](COREML.md) |
+| [stt/parakeet_unified_coreml](../crates/runtime/src/coreml/parakeet_unified.rs) | `stream_transcribe` | Core ML on macOS 15+, family `parakeet_unified`, English only: catalog row `parakeet-unified-en-coreml`; live text through `ts_audio_stream_*` only (no heavy-work permit), and batch opens refuse it |
 | [stt/phonon](../crates/audio/src/stt/phonon/mod.rs) | `transcribe`, `transcribe_with_options` | No native runtime, admission, cancellation and Swift adapter has been qualified for this family |
 | [stt/qwen2_audio](../crates/audio/src/stt/qwen2_audio/mod.rs) | `transcribe`, `encode` | No native runtime, admission, cancellation and Swift adapter has been qualified for this family |
 | [stt/qwen3_asr](../crates/audio/src/stt/qwen3_asr/mod.rs) | `transcribe`, `transcribe_with_options`, `transcribe_with_details`, `forward` | Packed Metal text decoder is explicit opt-in; audio encoder remains CPU; portable execution is a separate opt-in |

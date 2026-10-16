@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <a href="#install">Install</a> | <a href="#quickstart">Quickstart</a> | <a href="#supported-models">Supported Models</a> | <a href="#memory-and-benchmark-results">Benchmarks</a> | <a href="#image-generation">Image Generation</a> | <a href="#humanize">Humanize</a> | <a href="#audio">Audio</a> | <a href="#decision-models">Decision Models</a> | <a href="#supported-features">Features</a> | <a href="#more-details">More Details</a> | <a href="#license">License</a>
+  <a href="https://turbospark.gitbook.io/turbospark/documentation">Documentation</a> | <a href="#install">Install</a> | <a href="#quickstart">Quickstart</a> | <a href="#supported-models">Supported Models</a> | <a href="#memory-and-benchmark-results">Benchmarks</a> | <a href="#image-generation">Image Generation</a> | <a href="#humanize">Humanize</a> | <a href="#audio">Audio</a> | <a href="#decision-models">Decision Models</a> | <a href="#supported-features">Features</a> | <a href="#more-details">More Details</a> | <a href="#license">License</a>
 </p>
 
 ** This is a early work in progress. Expect bugs and breaking changes **
@@ -26,7 +26,7 @@ TurboSpark is a native macOS app and Rust workspace for running local language m
 
 I built it as a hobby/side project as an alternative to LM Studio but there are other projects like Unsloth Desktop which are a lot more refined.
 
-The app provides desktop chat and agent tools. The Rust crates provide the Metal inference engine, model installer, command-line tools, HTTP server, and Swift/C bindings.
+The app provides desktop chat and agent tools. The Rust crates provide the Metal inference engine, model installer, command-line tools, HTTP server, and Swift/C bindings. Complete user guides and API documentation are available at [turbospark.gitbook.io/turbospark/documentation](https://turbospark.gitbook.io/turbospark/documentation).
 
 Beyond chat, everything below runs on your Mac with no cloud service:
 
@@ -353,6 +353,7 @@ The benchmark times are client wall-clock numbers that include local HTTP and Sw
 
 ## More details
 
+- [Official Documentation (GitBook)](https://turbospark.gitbook.io/turbospark/documentation)
 - [Model catalog and installation](docs/MODELS.md)
 - [CLI and server reference](docs/CLI.md)
 - [Audio and speech processing](docs/AUDIO.md) and [Voice cloning and TTS](docs/audio/tts.md)

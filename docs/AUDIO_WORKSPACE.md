@@ -55,8 +55,15 @@ text the index cannot segment (CJK). With EmbeddingGemma 2 installed it also
 matches by meaning (transcript chunks, 768-d) and by sound (10 s audio windows,
 256-d), fused by reciprocal rank. Each hit can play from its time. The index is
 derived from the library and rebuilt from it; a background pass embeds new and
-changed takes while nothing is recording. Sound matches are experimental: the
-score floors are untuned and no recall gate exists yet.
+changed takes while nothing is recording.
+
+Sound matches are experimental. On the recall gate's 25 real clips in 16
+classes
+(`crates/runtime/tests/coreml_sound_recall.rs`), the right clip ranks first
+for half of the text queries and in the top three for 75%. Every
+query-to-clip cosine falls between 0.59 and 0.77, related or not, so the 0.15
+floor drops nothing and no floor would separate them: any take with audio can
+show up as a sound match. The meaning floor is untuned.
 
 ## Create and compare
 

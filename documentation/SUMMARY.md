@@ -1,29 +1,63 @@
 # Table of contents
 
-* [TurboSpark](README.md)
+* [TurboSpark Overview](README.md)
 
-## Getting started
+## Getting Started
 
-* [Install TurboSpark](getting-started/install.md)
-* [Desktop guide](getting-started/desktop.md)
+* [Installation](getting-started/install.md)
+* [Quickstart](getting-started/quickstart.md)
+* [Desktop App Guide](getting-started/desktop.md)
 
-## Models
+## Models & Hardware Acceleration
 
-* [Supported models](models/models.md)
-* [Memory and capacity](models/memory-and-capacity.md)
-* [Model install troubleshooting](models/model-install-troubleshooting.md)
+* [Supported Models Catalog](models/models.md)
+* [Model Families and Architecture](models/model-families.md)
+* [Hardware Acceleration Matrix](models/hardware-acceleration.md)
+* [Memory and Capacity](models/memory-and-capacity.md)
+* [Core ML Models](models/coreml.md)
+* [.gturbo Format Specification](models/gturbo-format.md)
+* [Model Install Troubleshooting](models/troubleshooting.md)
 
-## Command line and local API
+## Multimodal & Images
 
-* [CLI and local API](command-line-and-local-api/cli-and-api.md)
-* [Call the local API](command-line-and-local-api/call-the-local-api.md)
+* [Vision and Multimodal Models](multimodal/vision-models.md)
+* [Image Generation](multimodal/image-generation.md)
 
-***
+## Audio Suite
 
-* [Install TurboSpark](install.md)
-* [First chat](quickstart.md)
-* [Supported models](models-1.md)
-* [CLI and local API](cli-and-api.md)
-* [Memory and capacity](memory-and-capacity.md)
-* [Model install troubleshooting](model-install-troubleshooting.md)
-* [Call the local API](call-the-local-api.md)
+* [Audio Suite Overview](audio/overview.md)
+* [Speech to Text](audio/speech-to-text.md)
+* [Text to Speech and Voice Cloning](audio/text-to-speech.md)
+* [Music Generation](audio/music-generation.md)
+
+## Decision Models
+
+* [TypeSafe Decision Models](decision-models/typesafe-decisions.md)
+
+## Features & Tools
+
+* [Humanize (Text Rewriter)](features/humanize.md)
+* [Agent Tools and Guardrails](features/agents-and-tools.md)
+
+## Command Line & Server
+
+* [Command-Line Tools Reference](command-line-and-local-api/cli.md)
+* [Server Configuration](command-line-and-local-api/server.md)
+* [Calling the Local API](command-line-and-local-api/call-the-local-api.md)
+
+## Advanced Capabilities
+
+* [Speculative Decoding and MTP](advanced/speculative-decoding.md)
+* [Extreme Quantization (1-bit / 2-bit)](advanced/extreme-quantization.md)
+* [Directional Residual Steering](advanced/directional-steering.md)
+* [Environment Variables Reference](advanced/environment-variables.md)
+
+## Performance & Benchmarks
+
+* [Benchmarks and Performance](benchmarks/performance.md)
+
+## Developer & Contributing
+
+* [Building from Source](developer/building-from-source.md)
+* [Wiring a New Model Family](developer/wiring-new-models.md)
+* [Testing and Verification](developer/testing-and-verification.md)

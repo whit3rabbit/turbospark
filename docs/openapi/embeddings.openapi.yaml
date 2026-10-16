@@ -1,0 +1,252 @@
+openapi: 3.1.0
+info:
+  title: TurboSpark Embeddings API
+  version: 0.3.2
+  description: |
+    Local dense vector embeddings served by `turbospark-server`
+    (`turbospark serve`) using Apple Silicon Metal, Core ML, or MLX models.
+servers:
+  - url: http://127.0.0.1:8080
+    description: Default local server
+security:
+  - bearer: []
+  - apiKey: []
+paths:
+  /health:
+    get:
+      summary: Server liveness and readiness probe
+      description: Lock-free health check. Returns 200 with status ok and state ready or empty.
+      security: []
+      responses:
+        '200':
+          description: Health check result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /v1/embeddings:
+    post:
+      summary: Create vector embeddings (OpenAI compatible)
+      description: |
+        Generates dense vector embeddings for input strings or batches.
+        Supports float array and base64 encoding formats.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmbeddingRequest'
+      responses:
+        '200':
+          description: Embedding vectors
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmbeddingResponse'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Busy' }
+        '500': { $ref: '#/components/responses/Error' }
+
+  /api/embeddings:
+    post:
+      summary: Ollama legacy single embedding
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OllamaEmbeddingRequest'
+      responses:
+        '200':
+          description: Single embedding vector
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OllamaEmbeddingResponse'
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+
+  /api/embed:
+    post:
+      summary: Ollama batch embeddings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OllamaEmbedBatchRequest'
+      responses:
+        '200':
+          description: Array of embedding vectors
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OllamaEmbedBatchResponse'
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+
+  /v1/models:
+    get:
+      summary: List available embedding models
+      responses:
+        '200':
+          description: List of models
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  object: { type: string, example: list }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Model'
+
+  /v1/models/{model}:
+    get:
+      summary: Retrieve model details
+      parameters:
+        - name: model
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Model details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Model'
+        '404': { $ref: '#/components/responses/Error' }
+
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+    apiKey:
+      type: apiKey
+      in: header
+      name: x-api-key
+
+  responses:
+    Error:
+      description: Request error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Busy:
+      description: Concurrency limit reached
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status: { type: string, example: ok }
+        state: { type: string, enum: [ready, empty], example: ready }
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            message: { type: string }
+            type: { type: string }
+            param: { type: string, nullable: true }
+            code: { type: string, nullable: true }
+
+    Model:
+      type: object
+      properties:
+        id: { type: string }
+        object: { type: string, example: model }
+        created: { type: integer }
+        owned_by: { type: string, example: turbospark }
+
+    EmbeddingRequest:
+      type: object
+      required: [model, input]
+      properties:
+        model:
+          type: string
+          description: Embedding model alias (e.g. bge-small-en-v1.5, embedding-gemma).
+        input:
+          description: The text string or list of text strings to embed.
+          oneOf:
+            - type: string
+            - type: array
+              items: { type: string }
+        encoding_format:
+          type: string
+          enum: [float, base64]
+          default: float
+        dimensions:
+          type: integer
+          description: Optional target dimensionality for supported models.
+
+    EmbeddingResponse:
+      type: object
+      properties:
+        object: { type: string, example: list }
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              object: { type: string, example: embedding }
+              index: { type: integer }
+              embedding:
+                oneOf:
+                  - type: array
+                    items: { type: number }
+                  - type: string
+        model: { type: string }
+        usage:
+          type: object
+          properties:
+            prompt_tokens: { type: integer }
+            total_tokens: { type: integer }
+
+    OllamaEmbeddingRequest:
+      type: object
+      required: [model, prompt]
+      properties:
+        model: { type: string }
+        prompt: { type: string }
+
+    OllamaEmbeddingResponse:
+      type: object
+      properties:
+        embedding:
+          type: array
+          items: { type: number }
+
+    OllamaEmbedBatchRequest:
+      type: object
+      required: [model, input]
+      properties:
+        model: { type: string }
+        input:
+          oneOf:
+            - type: string
+            - type: array
+              items: { type: string }
+
+    OllamaEmbedBatchResponse:
+      type: object
+      properties:
+        model: { type: string }
+        embeddings:
+          type: array
+          items:
+            type: array
+            items: { type: number }

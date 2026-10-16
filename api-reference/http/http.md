@@ -7,10 +7,12 @@ icon: network-wired
 
 `turbospark-server` (`turbospark serve`) exposes local Apple Silicon inference over HTTP and WebSockets. It implements standardized OpenAI, Anthropic, Ollama, and dedicated audio endpoints.
 
-For machine-readable OpenAPI 3.1.0 specifications, see:
-
-* [Unified Server OpenAPI Spec](../../docs/openapi/turbospark.openapi.yaml) (and alias `openapi.yaml`)
-* [Audio OpenAPI Spec](../../docs/openapi/audio.openapi.yaml)
+For detailed endpoint guides and curl examples:
+* [Text and Chat API](text.md): OpenAI chat, legacy completions, Anthropic messages, and Ollama routes.
+* [Audio API](audio.md): Speech-to-text, realtime WebSocket transcription, Kokoro TTS, MegaTTS3 voice cloning, and MiniMax music generation.
+* [Images API](images.md): Local prompt-to-image diffusion generation (`/v1/images/generations`).
+* [Embeddings API](embeddings.md): Dense vector embeddings (`/v1/embeddings`, `/api/embeddings`, `/api/embed`).
+* [OpenAPI Schemas](schemas.md): Downloadable OpenAPI 3.1.0 specifications (Unified, Text, Audio, Images, Embeddings).
 
 ## Server Configuration and Addressing
 

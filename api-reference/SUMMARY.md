@@ -4,7 +4,12 @@
 
 ## HTTP
 
-* [HTTP REST API](http/http.md)
+* [HTTP REST API Overview](http/http.md)
+* [Text and Chat API](http/text.md)
+* [Audio API](http/audio.md)
+* [Images API](http/images.md)
+* [Embeddings API](http/embeddings.md)
+* [OpenAPI Schemas](http/schemas.md)
 
 ## Rust
 

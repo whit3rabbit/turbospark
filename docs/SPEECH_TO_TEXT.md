@@ -1,8 +1,10 @@
 # Speech to text
 
-Whisper-class transcription runs natively in Rust: PCM in, ordered segments
-with second offsets out. No external runtime, no network after the model
-downloads.
+Transcription runs natively: PCM in, ordered segments with second offsets
+out. No external runtime, no network after the model downloads. Whisper and
+Qwen3-ASR run in Rust on Metal or the CPU. Parakeet runs as Core ML exports
+on macOS 15+; its pipelines, placement and measurements are in
+[Core ML models](COREML.md). The rest of this page is mostly the Whisper path.
 
 ## Status
 
@@ -18,6 +20,15 @@ downloads.
   vocab 51864). Multilingual models are supported through the same code
   paths; the prompt gains the language and task tokens and language
   auto-detection scores the first window.
+- Parakeet: `SpeechFamily::ParakeetTdt` (audio catalog family
+  `parakeet_tdt`) covers the `parakeet-ultra-coreml` and
+  `parakeet-redux-coreml` installs, recognized by their file layout before
+  any `config.json` read. A fresh app install prefers Ultra, then Redux,
+  then Whisper Base. On a LibriSpeech test-clean subset (200 utterances)
+  Ultra measured WER 0.0226 and Redux 0.0275. Parakeet takes no language
+  hint and reports none. `parakeet-unified-en-coreml` (family
+  `parakeet_unified`) is English live text only: it opens through
+  `ts_audio_stream_*`, and `ts_stt_open` and the server refuse it.
 
 ## Other STT model work
 
@@ -49,8 +60,8 @@ downloads.
   to end: `SpeechFamily::Qwen3Asr` (wire string `qwen3_asr`), the pinned
   `qwen3-asr-06b-8bit` catalog row, the install probe and receipt, the
   runtime `Qwen3AsrRunner` emitting one clip-level segment, and the
-  `ts_stt_*` dispatch; Swift selection waits on the app's speech
-  subsystem. See the
+  `ts_stt_*` dispatch; the app offers local checkpoints under Advanced
+  ([Audio workspace](AUDIO_WORKSPACE.md)). See the
   [Qwen3-ASR profile](../crates/audio/src/stt/qwen3_asr/README.md).
 - The shared FastConformer attention used by Parakeet and Sortformer now
   computes one score row at a time instead of retaining quadratic attention
@@ -62,9 +73,9 @@ downloads.
   the same full-vocabulary softmax and projection for each row. The GPU
   encoder and real-checkpoint gates remain open.
 
-Qwen3-ASR is connected end to end; Moonshine and the other portable
-families are not connected to `ts_stt_*`, install receipts, the speech
-catalog, or Swift selection yet. Moonshine Metal remains opt-in because its
+Qwen3-ASR and Parakeet (Core ML) are connected end to end; Moonshine and
+the other portable families are not connected to `ts_stt_*`, install
+receipts, the speech catalog, or Swift selection yet. Moonshine Metal remains opt-in because its
 observed peak footprint is above the CPU reference on the available clip;
 the broader quality and paired performance gates are also open. A model
 without alignment must emit one clip-level segment when it reaches the
@@ -112,17 +123,29 @@ These numbers come from real runs on this checkout, not projections:
   multilingual base), five whisper MLX conversions, and the
   `qwen3-asr-06b-8bit` row.
 - FFI: `ts_stt_open` opens a speech install directory, dispatching on the
-  family the install declares;
+  family the install declares (Parakeet by its Core ML layout, the others
+  by `config.json`);
   `ts_stt_stream_open` / `ts_stt_stream_append` / `ts_stt_stream_finish`
   carry bounded PCM chunks (at most two seconds of base64 f32 LE 16 kHz
   mono per append; the stream buffers prior audio, callers never resend);
   `ts_stt_stream_cancel` discards; `ts_stt_close` closes the resident
   model.
+- Live text: `ts_audio_stream_open` / `ts_audio_stream_append` /
+  `ts_audio_stream_finish` over a streaming install (Parakeet Unified EN
+  today) commit words as audio arrives, about a second behind speech; see
+  `crates/ffi/src/api/audio_stream.rs`.
 - Runtime API: `turbospark_runtime::WhisperRunner::open(dir)` then
   `transcribe(&pcm, language)`, where `language` is `None`/`"auto"` or a
   code such as `"en"`. Qwen3-ASR installs open through
   `turbospark_runtime::Qwen3AsrRunner::open(dir)` with the same
-  `transcribe` shape and return one clip-level segment.
+  `transcribe` shape and return one clip-level segment. Parakeet opens
+  through `turbospark_runtime::coreml::ParakeetCoreMl::open(dir, &opts)`;
+  its `decode` returns sentences with word timings.
+- Installs: `turbospark-model list-speech` reads
+  `crates/catalog/src/speech_models.json`, which has no Parakeet rows.
+  Parakeet installs come from the audio catalog
+  (`crates/catalog/src/audio_assets.json`) through the app or
+  `ts_audio_install`.
 
 The Slaney frontend review corrected area normalization from mel units to
 Hz, and now pins OpenAI Whisper v20250625's exported filterbank as the
@@ -277,10 +300,11 @@ name before anything is parsed.
 
 ## Not in this pass
 
-- Streaming partials with the revised tail window: `append` reports the
-  buffered extent; decode happens at `finish`. The stable-prefix
-  machinery is where the Metal path plugs in.
-- The Swift speech subsystem (capture, gallery, dictation) - the approved
-  spec's remaining tasks.
+- Streaming partials with the revised tail window on `ts_stt_*`: `append`
+  reports the buffered extent; decode happens at `finish`. Live text is a
+  separate API (`ts_audio_stream_*`, Parakeet Unified EN).
+- Composer dictation through an in-app model: the prompt mic still uses
+  macOS dictation. Capture, transcription and the transcript library live
+  in the [Audio workspace](AUDIO_WORKSPACE.md).
 - WER and speed benchmark rows - require the real-hardware model gates
   before any claim.
