@@ -1,5 +1,5 @@
 ---
-description: Unified audio processing suite: speech-to-text, text-to-speech, zero-shot voice cloning, and music generation.
+description: "Unified audio processing suite: speech-to-text, text-to-speech, zero-shot voice cloning, and music generation."
 icon: headphones
 ---
 

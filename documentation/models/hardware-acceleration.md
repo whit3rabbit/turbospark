@@ -1,5 +1,5 @@
 ---
-description: Hardware execution backends: Metal GPU, Apple MLX, Core ML, and Portable CPU support per model family and modality.
+description: "Hardware execution backends: Metal GPU, Apple MLX, Core ML, and Portable CPU support per model family and modality."
 icon: microchip
 ---
 
