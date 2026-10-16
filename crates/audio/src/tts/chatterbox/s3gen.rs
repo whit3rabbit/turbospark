@@ -130,6 +130,17 @@ impl SaConv1d {
     }
 
     pub fn forward(&self, x: &[f32]) -> Vec<f32> {
+        if std::env::var("TURBOSPARK_DEBUG_CONV").is_ok() {
+            eprintln!(
+                "[conv1d] {}ch->{}ch k{} s{} p{} in_len {}",
+                self.in_ch,
+                self.out_ch,
+                self.kernel,
+                self.stride,
+                self.padding,
+                x.len()
+            );
+        }
         crate::ops::conv1d(
             x,
             &self.weight,
