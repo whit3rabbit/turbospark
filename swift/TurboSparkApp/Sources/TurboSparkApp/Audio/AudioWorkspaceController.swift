@@ -114,6 +114,7 @@ final class AudioWorkspaceController: ObservableObject {
     var deletionCleanupTask: Task<Void, Never>?
     @Published var opening: AudioModelOpening?
     var qwenSpeechJob: Qwen3TTSSpeechJob?
+    var qwenLoadDependencies = AudioQwenLoadDependencies()
     var referencePreviewTask: Task<Void, Never>?
     var referencePlayer: AVAudioPlayer?
     @Published var referencePlaying = false
@@ -805,20 +806,27 @@ final class AudioWorkspaceController: ObservableObject {
             }
             self.opening = opening
 
-            if url == nil, let openToken = opening.token {
-                let verified = try await Task.detached {
-                    try AudioCatalog.verify(profile.identity, token: openToken) { progress in
+            // The verification runs in the opening's place, and so does its
+            // absence for a chosen folder: either way the barrier ends, so a
+            // shutdown drain never waits for an open that never comes.
+            let verifies = url == nil
+            let verify = qwenLoadDependencies.verify
+            let verified = try await Task.detached {
+                try opening.perform { () throws -> String in
+                    guard verifies, let openToken = opening.token else { return path }
+                    return try verify(profile.identity, openToken) { progress in
                         guard let total = progress.total, total > 0 else { return }
                         opening.onProgress?(min(1, Double(progress.completed) / Double(total)))
                     }
-                }.value
-                guard verified == path else { throw CancellationError() }
-            }
+                }
+            }.value
+            guard verified == path else { throw CancellationError() }
 
             self.status = AppStrings.localized("Loading model")
+            let load = qwenLoadDependencies.load
             let loaded = try await Task.detached {
                 try Task.checkCancellation()
-                return try await Qwen3TTSModel.fromModelDirectory(directory)
+                return try await load(directory)
             }.value
 
             self.opening = nil
@@ -970,6 +978,15 @@ final class AudioWorkspaceController: ObservableObject {
         speechRun = nil; voiceReferenceRecordingID = nil
         pendingTranscriptEdits.removeAll(); pendingSaves.removeAll(); ManagedAssetPins.clear(owner: pendingAssetOwner); recipe = AudioRecipe(); preferences = AudioWorkspacePreferences()
     }
+}
+
+/// The two slow steps of a resident Qwen3-TTS load. Tests replace them to hold
+/// a load in either step.
+struct AudioQwenLoadDependencies {
+    var verify: @Sendable (AudioProfileIdentity, AudioOpenToken, @escaping @Sendable (AudioProgress) -> Void) throws -> String = {
+        try AudioCatalog.verify($0, token: $1, progress: $2)
+    }
+    var load: @Sendable (URL) async throws -> Qwen3TTSModel = { try await Qwen3TTSModel.fromModelDirectory($0) }
 }
 
 enum AudioWorkspaceError: LocalizedError {
