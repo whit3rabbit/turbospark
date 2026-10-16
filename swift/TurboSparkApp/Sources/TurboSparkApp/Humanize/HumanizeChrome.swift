@@ -42,9 +42,11 @@ struct HumanizeCard<Header: View, Content: View, Footer: View>: View {
         VStack(spacing: 0) {
             HStack(spacing: 8) { header }
                 .padding(.horizontal, 16).frame(height: HumanizeMetrics.rowHeight(theme))
-            Divider().opacity(0.6)
+            // Softened seams, but never under Increase Contrast, which raises
+            // borders instead of letting a surface lower them.
+            Divider().opacity(theme.isHighContrast ? 1 : 0.6)
             content.frame(maxWidth: .infinity, maxHeight: .infinity)
-            Divider().opacity(0.6)
+            Divider().opacity(theme.isHighContrast ? 1 : 0.6)
             HStack(spacing: 8) { footer }
                 .padding(.horizontal, 12).frame(height: HumanizeMetrics.rowHeight(theme))
         }
@@ -116,7 +118,7 @@ struct HumanizeModelBar: View {
                     ModelLoadProgressBar(fraction: nil, tint: theme.accent).frame(width: 42)
                 } else {
                     Image(systemName: "chevron.up.chevron.down")
-                        .font(theme.ui(.micro, weight: .bold)).foregroundStyle(.tertiary)
+                        .font(theme.ui(.micro, weight: .bold)).foregroundStyle(.appSecondary)
                         .accessibilityHidden(true)
                 }
             }

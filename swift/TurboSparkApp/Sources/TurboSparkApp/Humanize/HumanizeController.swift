@@ -188,6 +188,31 @@ final class HumanizeController: ObservableObject {
         engine?.cancel()
     }
 
+    /// Empties the rewrite and everything derived from it (highlight source,
+    /// checks, stats, notices), keeping the draft. Refused while a rewrite
+    /// runs: its task writes into these fields until it finishes, so a clear
+    /// in the middle would be refilled with the partial text.
+    func clearRewrite() {
+        guard !isBusy else { return }
+        rewrite = ""
+        sourceDraft = ""
+        segments = []
+        checks = nil
+        ruleFindings = nil
+        stats = nil
+        stopReason = nil
+        errorMessage = nil
+        partProgress = nil
+        prefillProgress = nil
+    }
+
+    /// Empties both cards.
+    func clearAll() {
+        guard !isBusy else { return }
+        clearRewrite()
+        draft = ""
+    }
+
     /// Cancels any rewrite and releases the model's memory.
     func unload() {
         cancel()
