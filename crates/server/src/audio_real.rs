@@ -443,6 +443,29 @@ fn valid_alias(alias: &str) -> bool {
 /// What an installed alias does, from the bundled catalogs. Aliases the
 /// catalogs do not know are refused: a directory's contents are not trusted
 /// to say what runner to start.
+/// Refuses a catalog alias that only the TurboSpark app executes (FluidAudio
+/// on Core ML). No Rust engine opens one, so attaching it here would fail
+/// later with a less useful error.
+fn refuse_app_only(alias: &str) -> Result<(), String> {
+    match catalog::audio_catalog::AudioCatalog::embedded()
+        .ok()
+        .and_then(|c| c.get(alias).cloned())
+    {
+        Some(profile) => app_only_refusal(&profile),
+        None => Ok(()),
+    }
+}
+
+fn app_only_refusal(profile: &catalog::audio_catalog::AudioProfile) -> Result<(), String> {
+    if profile.capabilities.http_api {
+        return Ok(());
+    }
+    Err(format!(
+        "{:?} runs only in the TurboSpark app; the HTTP server cannot attach it",
+        profile.identity.alias
+    ))
+}
+
 fn task_of_alias(alias: &str) -> Option<AudioTask> {
     use catalog::audio_catalog::{AudioCatalog, AudioTask as CatalogTask};
     if let Some(profile) = AudioCatalog::embedded()
@@ -500,6 +523,7 @@ impl RealAudioProvider {
         } else {
             spec.to_string()
         };
+        refuse_app_only(&id)?;
         self.insert(&id, task, dir)
     }
 
@@ -636,6 +660,7 @@ impl AudioProvider for RealAudioProvider {
                     "{alias:?} is not an installed audio model alias"
                 )));
             }
+            refuse_app_only(&alias).map_err(AudioError::Invalid)?;
             let Some(store) = &self.store else {
                 return Err(AudioError::Failed(
                     "there is no model store on this machine".into(),
@@ -878,6 +903,64 @@ mod tests {
         );
         assert_eq!(task_of_alias("minimax-music3-4bit"), Some(AudioTask::Music));
         assert_eq!(task_of_alias("not-in-any-catalog"), None);
+    }
+
+    /// A profile only the app runs is refused before a worker spawns. Every
+    /// row the catalog ships today stays attachable.
+    #[test]
+    fn app_only_profiles_are_refused_and_current_rows_are_not() {
+        let catalog = catalog::audio_catalog::AudioCatalog::embedded().unwrap();
+        for profile in catalog.entries() {
+            assert!(
+                app_only_refusal(profile).is_ok(),
+                "{}",
+                profile.identity.alias
+            );
+            assert!(refuse_app_only(&profile.identity.alias).is_ok());
+        }
+        assert!(refuse_app_only("not-in-any-catalog").is_ok());
+        let mut app_only = catalog.get("whisper-base").unwrap().clone();
+        app_only.capabilities.http_api = false;
+        let err = app_only_refusal(&app_only).unwrap_err();
+        assert!(err.contains("runs only in the TurboSpark app"), "{err}");
+    }
+
+    /// The catalog labels Parakeet by where the runtime puts its encoder,
+    /// which carries the run. Changing the default placement must change
+    /// the label with it.
+    #[test]
+    fn parakeet_catalog_placement_matches_the_runtime_encoder_default() {
+        let catalog = catalog::audio_catalog::AudioCatalog::embedded().unwrap();
+        let defaults = [
+            (
+                "parakeet-redux-coreml",
+                format!(
+                    "{:?}",
+                    runtime::coreml::ParakeetCoreMlOptions::default().encoder_units
+                ),
+            ),
+            (
+                "parakeet-unified-en-coreml",
+                format!(
+                    "{:?}",
+                    runtime::coreml::UnifiedOptions::default().encoder_units
+                ),
+            ),
+        ];
+        for (alias, units) in defaults {
+            let profile = catalog.get(alias).unwrap();
+            let expected = match units.as_str() {
+                "CpuAndGpu" => "gpu",
+                "CpuAndNeuralEngine" => "ane",
+                "CpuOnly" => "cpu",
+                other => panic!("set the {alias} catalog compute for encoder units {other}"),
+            };
+            assert_eq!(
+                profile.capabilities.compute.as_deref(),
+                Some(expected),
+                "{alias}"
+            );
+        }
     }
 
     #[test]

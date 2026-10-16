@@ -431,6 +431,56 @@ checks the embedding and OCR pins against the Hub without downloading the
 weights (LFS digests from the API, small files hashed); it passed the same
 day.
 
+## Swift-hosted Core ML (FluidAudio)
+
+Some audio rows run in the app through the FluidAudio Swift package (exact
+0.15.5), not through `crates/coreml`. Rust still pins, downloads, verifies,
+lists and deletes them like any audio profile. The evidence behind every value
+below is [FLUIDAUDIO_PHASE0.md](FLUIDAUDIO_PHASE0.md). No such row ships yet:
+this is the catalog half, and the app provider comes next.
+
+- **Backend `swift_coreml`.** The families are `fluidaudio_silero_vad`,
+  `fluidaudio_diarizer`, `fluidaudio_kokoro_ane`, `fluidaudio_pocket_tts`,
+  `fluidaudio_sensevoice`, `fluidaudio_paraformer_zh` and
+  `fluidaudio_parakeet_ja` (`profile_capabilities`). `can_run` is false because
+  a Rust session never opens one. The reason text says so, and the generic row
+  path keeps it.
+- **`http_api: false`.** No HTTP server can attach these. The server refuses
+  the alias in `RealAudioProvider::load` and `attach`, before a worker starts.
+  Every other row keeps `http_api: true`, as it behaved before.
+- **`compute`** is where Core ML places the run's dominant compute at the
+  pinned revision, from `coreml_plan`: `ane`, `gpu`, `cpu`, or `mixed`. It is
+  not the units the loader requests. Silero VAD requests the Neural Engine and
+  every op is planned on the CPU. The diarizer and Kokoro split across all
+  three devices.
+- **Re-measure `compute` on a pin bump.** Parakeet's `gpu` matches the
+  runtime's CPU+GPU encoder default, and a server test holds the two together.
+- **`install_subdir`** lays the assets out under one to three plain folder
+  names inside the install, for loaders that read only a fixed layout
+  (Kokoro ANE: `kokoro-82m-coreml`, PocketTTS: `Models/pocket-tts`). Asset
+  paths stay the upstream paths, so the network guard is unchanged. The
+  receipt sits at the install root.
+- **A layout is part of the identity.** The subdirectory joins the asset
+  fingerprint only when set, so existing rows keep theirs. Every folder on the
+  way is checked as a real directory, so a symlink cannot redirect it. Layout
+  rows are never adopted as legacy installs.
+- **No speech receipt.** Swift-hosted speech rows skip
+  `install_speech_receipt`, whose Whisper and Parakeet probe refuses their
+  layouts.
+- **Memory:** three times the compiled `weight.bin` bytes, the row's longest
+  16 kHz PCM input, and 256 MiB. An estimate, not measured in the app.
+
+Rows are generated, never typed. The example resolves the revision to a
+commit, takes LFS digests from the Hub and hashes every other file itself:
+
+```sh
+cargo run -p turbospark-catalog --example audio_pin -- \
+    FluidInference/silero-vad-coreml main silero-vad-unified-256ms-v6.2.1.mlmodelc/
+```
+
+It reproduced the Phase 0 pins for Silero VAD exactly. Run the audio network
+guard after adding a row.
+
 ## Gotchas
 
 These cost time while building this. Each one is guarded in code or a test
