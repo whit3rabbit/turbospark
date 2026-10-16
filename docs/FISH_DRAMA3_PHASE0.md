@@ -630,12 +630,44 @@ per frame or more at 16 slots. If it shows less, delete it and close the lever
 here too. Free memory sets the SSD share, so run the A/B at the host's real
 free memory and again after a purge. This was one clip and one sentence.
 
+**Prefetch prototype, not kept.** `TURBOSPARK_QWEN_PREFETCH=<k>` was built
+to the recommendation. A worker takes layer L+1's streamer after layer L's
+probe, reads the first k guessed experts that are not resident into slots the
+next plan can still evict, and hands the streamer back before that layer
+plans. The WAV is byte-identical at k=2, 4 and 8. The cache does what the
+replay said. The hit rate goes from 34.3% to 44.7% (k=2) and 51.0% (k=4), and
+demand reads fall from 355 to 299 and 265 MiB per step. The worker keeps up
+with the window at k=2 and 4 (main thread waited 5.7 and 177 ms over a whole
+clip) and not at k=8 (2,035 ms).
+
+The 2 ms stop rule was not met. Five interleaved rounds of
+`fish_drama3_step_cost` at 16 slots (frames, 160 steps) ran at host load 6 to
+20, because other sessions were compiling. That is not the calm host the rule
+needs, and the off arm alone ranged 47.6 to 77.7 ms.
+
+| Faster than off, ms | Round 1 | 2 | 3 | 4 | 5 | Median |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| k=2 | 0.1 | -4.7 | 1.7 | 10.0 | 6.7 | 1.7 |
+| k=4 | 7.2 | -2.3 | 21.4 | -2.9 | 0.3 | 0.3 |
+
+- The demand expert I/O falls in all 10 matched cases. But cb1 GPU time rises
+  in 6 of the 10 (round 2: 16.9 ms off, 22.1 and 21.0 ms with k=2 and 4).
+  That looks like the bandwidth contention the ceiling left out, and it eats
+  the gain. The runs cannot prove it at this load.
+- The least loaded round (2, load 6 to 9) has prefetch slower by 4.7 and
+  2.3 ms.
+- So the ceiling of 3 to 5 ms did not show up in a loaded host. It is not
+  ruled out on a calm one. Nothing here beats the 2 ms bar, so the code is
+  not committed. The patch is kept in the shared notes folder
+  (`qwen-prefetch-prototype.patch` and the new `prefetch.rs`).
+
 **What is left.**
 
 - More slots do not help (table above). Mapped residency is refused past the
   wired budget.
-- The prefetcher above, if the recommendation is taken. Its stop rule is
-  written there.
+- A calm-host rerun of the prefetch A/B (host load under 2, one round per
+  arm interleaved, 5 rounds) from the saved patch. If k=2 to 4 gains 2 ms
+  there, land it. If not, close the lever.
 - The probe works on Qwen 3.6 text decode as well. Text hits 63% at 16 slots
   with 11 ms of expert I/O, so its recall and price have not been taken and
   are not covered by this clip.
