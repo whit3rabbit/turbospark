@@ -19,6 +19,8 @@ pub mod bailing_moe;
 pub mod cache;
 pub mod cohere2;
 pub mod engine;
+pub(crate) mod execution;
+pub(crate) use execution::Execution;
 pub mod falcon_h1;
 pub mod gpt2;
 pub mod llama;

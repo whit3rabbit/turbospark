@@ -135,9 +135,10 @@ fixture, the pipeline end-to-end) plus the env-gated runtime gates
 
 ## Open items
 
-- Metal offload of the bidirectional backbone: nothing exists; the
-  CPU-only path is why the catalog reports the family behind the
-  portable opt-in.
+- Metal acceleration of the bidirectional backbone, attention, MLP, and 8
+  prediction heads is implemented via `lm::Execution` in `turbospark-audio`
+  wired to Metal GPU `Music3Device` in `turbospark-runtime` with transparent
+  CPU fallback.
 - `class_temperature > 0` is ported but only the temperature-0 greedy
   path is fixture-verified; batch generation (`generate_batch`) is not
   ported.

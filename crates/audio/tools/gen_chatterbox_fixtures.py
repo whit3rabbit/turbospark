@@ -273,6 +273,19 @@ def seed_tree(module, seed: int, scale: float) -> dict:
     rng = np.random.default_rng(seed)
     out = {}
     for name, value in dict(tree_flatten(module.parameters())).items():
+        if name.endswith("pos_enc.pe"):
+            # The espnet positional table is derived at init (pure
+            # sin/cos math); keep the module's own table so the fixture
+            # matches a real checkpoint (which stores the derived
+            # values) and the Rust port's recomputation.
+            continue
+        if name.endswith("stft_window") or name.endswith("trim_fade"):
+            # Same derived-math rule: the iSTFT Hann window and the 20 ms
+            # trim fade are pure formulas built at init (a real
+            # converted checkpoint stores the derived values or the
+            # runtime recomputes them). Seeding them would desync the
+            # fixture from the Rust port's recomputation.
+            continue
         if "running_var" in name:
             out[name] = mx.array(
                 (0.3 + np.abs(rng.standard_normal(value.shape)) * 0.4).astype(np.float32)
@@ -489,6 +502,7 @@ class TinyS3Token2Mel(S3Token2Mel):
             attention_heads=FLOW_HEADS,
             linear_units=FLOW_UNITS,
             num_blocks=FLOW_BLOCKS,
+            num_up_blocks=FLOW_UP_BLOCKS,
             dropout_rate=0.1,
             positional_dropout_rate=0.1,
             attention_dropout_rate=0.1,
@@ -583,6 +597,14 @@ def flow_inputs(seed: int):
 def build_s3gen(seed: int, noise_seed: int, total_frames: int) -> TinyS3Token2Wav:
     s3gen = TinyS3Token2Wav()
     seed_tree(s3gen, seed, scale=0.2)
+    # The HiFT resblock chain is high-gain at the shared 0.2 scale: the
+    # stacked conv activations reach 1e10 before the exp/sin iSTFT head,
+    # the magnitudes pin at the 1e2 istft clip, and the waveform
+    # saturates at the 0.99 audio limit. A signal that far into the
+    # clips carries no parity information (bitwise-identical mlx is the
+    # only implementation that can track it), so the vocoder is seeded
+    # at 0.04 and the fixture waveform stays unsaturated (peak ~0.03).
+    seed_tree(s3gen.mel2wav, seed + 1, scale=0.04)
     s3gen.eval()
     # Replace the seed-0 15000-frame noise buffer with a short seeded
     # window (the Rust loader accepts any buffer at least as long as
@@ -823,18 +845,42 @@ def run_voice_encoder_case(seed: int) -> dict:
     return {"name": "voice_encoder"}
 
 
+def fsq_margin(tiny_s3tok, mel) -> float:
+    """The smallest distance of a scaled FSQ projection from a rounding
+    boundary (0.5 is the flip point; >= 0.08 is comfortable)."""
+    mel_in = mx.expand_dims(mel, 0)  # (1, n_mels, T)
+    hidden, code_len = tiny_s3tok.encoder(mel_in, mx.array([mel.shape[1]]))
+    z = tiny_s3tok.quantizer.fsq_codebook.project_down(hidden).astype(mx.float32)
+    h = mx.tanh(z) * 0.9990000128746033
+    dist = mx.abs(h - mx.round(h))
+    return float(0.5 - dist.max())
+
+
 def run_conditioning_case(s3gen: TinyS3Token2Wav, t3: T3, tiny_s3tok, seed: int) -> dict:
     """prepare_conditionals on the three wavebands: the S3Gen mel and
     token alignment, the T3 prompt tokens, the CAMPPlus embedding, and
     the voice-encoder speaker embed. Mirrors the reference body with
     pre-resampled bands (the polyphase resampler stays outside the
     port)."""
-    rng = np.random.default_rng(seed + 5)
-    wav_24k = (rng.standard_normal(COND_WAVE_24K) * 0.1).astype(np.float32)
-    wav_16k_from_24k = (rng.standard_normal(COND_WAVE_16K) * 0.1).astype(np.float32)
-    wav_16k_full = (rng.standard_normal(COND_WAVE_16K) * 0.1).astype(np.float32)
-
+    # Seed search: the Rust log-mel differs from mlx by f32 rounding, so
+    # both token bands must sit well clear of the FSQ rounding
+    # boundaries or a code flips.
     from mlx_audio.tts.models.chatterbox.s3gen.mel import mel_spectrogram
+
+    chosen = None
+    for offset in range(40):
+        rng = np.random.default_rng(seed + 5 + offset)
+        wav_24k = (rng.standard_normal(COND_WAVE_24K) * 0.1).astype(np.float32)
+        wav_16k_from_24k = (rng.standard_normal(COND_WAVE_16K) * 0.1).astype(np.float32)
+        wav_16k_full = (rng.standard_normal(COND_WAVE_16K) * 0.1).astype(np.float32)
+        m1 = fsq_margin(tiny_s3tok, log_mel_spectrogram(mx.array(wav_16k_from_24k)))
+        m2 = fsq_margin(tiny_s3tok, log_mel_spectrogram(mx.array(wav_16k_full)))
+        if min(m1, m2) > 0.08:
+            chosen = (offset, wav_24k, wav_16k_from_24k, wav_16k_full)
+            break
+    if chosen is None:
+        raise SystemExit("no conditioning seed gives a comfortable FSQ margin")
+    offset, wav_24k, wav_16k_from_24k, wav_16k_full = chosen
 
     # --- S3Gen band ---
     ref_mels_24 = np.asarray(mel_spectrogram(mx.array(wav_24k)[None]))  # (1, M, T)
@@ -874,6 +920,7 @@ def run_conditioning_case(s3gen: TinyS3Token2Wav, t3: T3, tiny_s3tok, seed: int)
 
     traces = {
         "reference_commit": REFERENCE_COMMIT,
+        "wave_seed_offset": offset,
         "wav_24k_len": COND_WAVE_24K,
         "wav_16k_len": COND_WAVE_16K,
         "mel_len": int(mel_len),

@@ -8,4 +8,7 @@ pub mod sortformer;
 
 pub use nemotron_diarization::NemotronDiarization;
 pub use silero_vad::{SileroVad, VadStreamState, VadTiming};
-pub use sortformer::{DiarizationOutput, DiarizationSegment, Sortformer};
+pub use sortformer::{
+    DiarizationOutput, DiarizationSegment, GenerateOptions, Sortformer, StreamingOptions,
+    StreamingProfile,
+};

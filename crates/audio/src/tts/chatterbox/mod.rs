@@ -419,7 +419,10 @@ impl Model {
         let wav_24k = &wav_24k[..wav_24k.len().min(self.config.dec_cond_len)];
         let mut mel = s3gen::prompt_mel(wav_24k, n_mels, self.config.s3gen_sr)?;
         let mel_len = mel.len();
-        let log_mel = s3::log_mel_spectrogram(wav_16k_from_24k, 128)?;
+        let mut log_mel = s3::log_mel_spectrogram(wav_16k_from_24k, 128)?;
+        // The reference tokenizer front end drops the final centered
+        // frame (`spec[:, :-1]`); the codec helper keeps it.
+        log_mel.truncate(log_mel.len().saturating_sub(1));
         // The codec tokenizer consumes channel-major `[n_mels, frames]`.
         let n_frames = log_mel.len();
         let mut mel_flat = vec![0.0f32; n_frames * 128];
@@ -468,7 +471,8 @@ impl Model {
 
         // --- T3 band: prompt tokens from the 16 kHz full band ---
         let wav_16k = &wav_16k_full[..wav_16k_full.len().min(self.config.enc_cond_len)];
-        let t3_log_mel = s3::log_mel_spectrogram(wav_16k, 128)?;
+        let mut t3_log_mel = s3::log_mel_spectrogram(wav_16k, 128)?;
+        t3_log_mel.truncate(t3_log_mel.len().saturating_sub(1));
         let t3_frames = t3_log_mel.len();
         let mut t3_flat = vec![0.0f32; t3_frames * 128];
         for (t, frame) in t3_log_mel.iter().enumerate() {

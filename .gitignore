@@ -66,3 +66,4 @@ docs/verification
 testdata/
 !crates/audio/testdata/
 crates/audio/testdata/stepaudio2/tiny_weights.safetensors
+crates/audio/testdata/tts_chatterbox/dbg_*

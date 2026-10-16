@@ -257,8 +257,8 @@ falcon_h1/ssm are still upstream-only (spec tasks 80 and 81).
 | `bailingmm` | README | 42 | Ming Omni MoE | [Family port](src/tts/bailingmm/README.md) |
 | `bark` | Source | 65 | Default task-qualified family | [Partial family port](src/tts/bark/README.md); semantic prefill fixture-verified, end-to-end scenario parity blocked by a reference-side fixture reproducibility issue |
 | `breeze_tts` | Source | 66 | Aliases `breeze`, `breeze-tts` | [Family port](src/tts/breeze_tts/README.md); ends at codebook frames, waveform decode needs the unported Qwen3-TTS speech tokenizer |
-| `chatterbox` | README | 32 | Default task-qualified family | None |
-| `chatterbox_turbo` | Source | 67 | Default task-qualified family | None |
+| `chatterbox` | README | 32 | Default task-qualified family | [Family port](src/tts/chatterbox/README.md) over the [S3 tokenizer codec port](src/codec/s3/README.md) and the [shared lm engine](src/lm/README.md); real-checkpoint gate open |
+| `chatterbox_turbo` | Source | 67 | Default task-qualified family | [Family port](src/tts/chatterbox_turbo/README.md) over the [S3 tokenizer codec port](src/codec/s3/README.md) and the [shared lm engine](src/lm/README.md); real-checkpoint gate open |
 | `confucius4` | Source | 68 | Default task-qualified family | [Family port](src/tts/confucius4/README.md) over the shared [BigVGAN codec port](src/codec/bigvgan/README.md) |
 | `dense` | README | 41 | Ming Omni Dense; rides the bailingmm module per the alias policy | [Family port](src/tts/bailingmm/README.md) |
 | `dia` | README | 31 | Default task-qualified family | [Family port](src/tts/dia/README.md) over the [Descript DAC codec port](src/codec/descript/README.md) |

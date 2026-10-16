@@ -269,13 +269,14 @@ impl CausalResnetBlock {
 
     fn forward(&self, x: &[f32], frames: usize, t_emb: &[f32]) -> Vec<f32> {
         let mut h = self.block1.forward(x, frames);
-        // h += mlp_linear(mish(time_emb)) broadcast over frames.
+        // h += mlp_linear(mish(time_emb)) broadcast over frames. `h` is
+        // channel-major, so the broadcast steps the frame index.
         let mut cond = t_emb.to_vec();
         mish(&mut cond);
         let projected = self.mlp_linear.forward(&cond, 1);
         for frame in 0..frames {
             for (c, v) in projected.iter().enumerate() {
-                h[frame * self.out_ch + c] += v;
+                h[c * frames + frame] += v;
             }
         }
         let h = self.block2.forward(&h, frames);
@@ -603,11 +604,12 @@ impl ConditionalDecoder {
         let mut h = down.resnet.forward(&x, frames, t_emb);
         h = down.run_transformers(h, frames, ch);
         let skip = h;
+        // The tail is a CausalConv1d: kernel-1 left pad before the conv.
         let mut x = down
             .tail_conv
             .as_ref()
             .expect("down stage carries a tail conv")
-            .forward(&skip);
+            .forward(&pad_left_cm(&skip, ch, frames, 2));
 
         // Mid stack: resnet + transformers, no tail.
         for mid in &self.mid_blocks {
@@ -632,7 +634,7 @@ impl ConditionalDecoder {
             .tail_conv
             .as_ref()
             .expect("up stage carries a tail conv")
-            .forward(&h);
+            .forward(&pad_left_cm(&h, ch, frames, 2));
 
         // Final block + projection.
         let h = self.final_block.forward(&x, frames);
@@ -718,6 +720,28 @@ impl CausalConditionalCfm {
     }
 }
 
+/// Down-stage decoder intermediates for the parity bisection (the mid
+/// and up stages have their own hooks below).
+#[cfg(test)]
+pub(crate) struct DecoderStages {
+    pub t_emb: Vec<f32>,
+    pub dec_in: Vec<f32>,
+    pub down_resnet: Vec<f32>,
+    pub down_transformers: Vec<f32>,
+    pub down_tail: Vec<f32>,
+}
+
+/// Up-stage internals for the parity bisection.
+#[cfg(test)]
+pub(crate) struct UpStages {
+    pub up_in: Vec<f32>,
+    pub resnet: Vec<f32>,
+    pub transformers: Vec<f32>,
+    pub tail: Vec<f32>,
+    pub final_block: Vec<f32>,
+    pub r#final: Vec<f32>,
+}
+
 /// The assembled flow model (`flow.py::CausalMaskedDiffWithXvec`).
 pub struct ChatterboxFlow {
     config: FlowConfig,
@@ -774,6 +798,195 @@ impl ChatterboxFlow {
     /// The configured Euler step count (the reference `n_timesteps`).
     pub fn n_timesteps(&self) -> usize {
         self.config.n_timesteps
+    }
+
+    // Stage hooks for the parity bisection (test-only).
+    #[cfg(test)]
+    pub(crate) fn debug_encode(
+        &mut self,
+        prompt_token: &[i32],
+        gen_tokens: &[i32],
+        embedding: &[f32],
+    ) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+        let mel = self.config.output_size;
+        let mut spk = embedding.to_vec();
+        let norm = spk.iter().map(|v| v * v).sum::<f32>().sqrt() + 1e-8;
+        for v in &mut spk {
+            *v /= norm;
+        }
+        let spk = self.spk_embed_affine.forward(&spk, 1);
+        let mut tokens = prompt_token.to_vec();
+        tokens.extend_from_slice(gen_tokens);
+        let mut token_rows = vec![0.0f32; tokens.len() * self.config.input_size];
+        for (i, &tok) in tokens.iter().enumerate() {
+            let idx = tok.clamp(0, self.config.vocab_size as i32 - 1) as usize;
+            token_rows[i * self.config.input_size..(i + 1) * self.config.input_size]
+                .copy_from_slice(
+                    &self.input_embedding
+                        [idx * self.config.input_size..(idx + 1) * self.config.input_size],
+                );
+        }
+        let h = self.encoder.forward(&token_rows, tokens.len()).unwrap();
+        let mu_rows = self
+            .encoder_proj
+            .forward(&h, tokens.len() * self.config.upsample_stride);
+        let mu = to_cm(&mu_rows, tokens.len() * self.config.upsample_stride, mel);
+        (h, mu, spk)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_time_mlp(&self, t: f32) -> Vec<f32> {
+        self.decoder.estimator.time_mlp.forward(t)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_decoder_stages(
+        &self,
+        noise: &[f32],
+        mu: &[f32],
+        spks: &[f32],
+        cond: &[f32],
+        t: f32,
+        frames: usize,
+    ) -> DecoderStages {
+        let t_emb = self.decoder.estimator.time_mlp.forward(t);
+        let dec_in = {
+            let out_ch = self.config.output_size;
+            let mut packed = vec![0.0f32; self.decoder.estimator.in_channels * frames];
+            packed[..out_ch * frames].copy_from_slice(noise);
+            packed[out_ch * frames..2 * out_ch * frames].copy_from_slice(mu);
+            let spk_start = 2 * out_ch * frames;
+            for (i, slot) in packed
+                [spk_start..spk_start + self.decoder.estimator.spk_width * frames]
+                .iter_mut()
+                .enumerate()
+            {
+                *slot = spks[i / frames];
+            }
+            packed[spk_start + self.decoder.estimator.spk_width * frames..].copy_from_slice(cond);
+            packed
+        };
+        let ch = self.decoder.estimator.channels;
+        let down = &self.decoder.estimator.down_block;
+        let down_resnet = down.resnet.forward(&dec_in, frames, &t_emb);
+        let down_transformers = down.run_transformers(down_resnet.clone(), frames, ch);
+        let down_tail = down.tail_conv.as_ref().unwrap().forward(&pad_left_cm(
+            &down_transformers,
+            ch,
+            frames,
+            2,
+        ));
+        DecoderStages {
+            t_emb,
+            dec_in,
+            down_resnet,
+            down_transformers,
+            down_tail,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_noise_window(&self, frames: usize) -> Vec<f32> {
+        self.decoder.noise_window(frames)
+    }
+
+    /// One mid block's internals for the parity bisection.
+    #[cfg(test)]
+    pub(crate) fn debug_mid_block(
+        &self,
+        index: usize,
+        x: &[f32],
+        t_emb: &[f32],
+        frames: usize,
+    ) -> (Vec<f32>, Vec<f32>) {
+        let ch = self.decoder.estimator.channels;
+        let mid = &self.decoder.estimator.mid_blocks[index];
+        let resnet = mid.resnet.forward(x, frames, t_emb);
+        let final_ = mid.run_transformers(resnet.clone(), frames, ch);
+        (resnet, final_)
+    }
+
+    /// The up stage internals for the parity bisection: concat input,
+    /// resnet, transformers, tail conv, final block, projection.
+    #[cfg(test)]
+    pub(crate) fn debug_up_stages(
+        &self,
+        x_mid: &[f32],
+        down_skip: &[f32],
+        t_emb: &[f32],
+        frames: usize,
+    ) -> UpStages {
+        let ch = self.decoder.estimator.channels;
+        let up = &self.decoder.estimator.up_block;
+        let half = up.resnet.in_ch / 2;
+        let mut up_in = vec![0.0f32; up.resnet.in_ch * frames];
+        for c in 0..half {
+            up_in[c * frames..(c + 1) * frames]
+                .copy_from_slice(&x_mid[c * frames..(c + 1) * frames]);
+        }
+        up_in[half * frames..].copy_from_slice(down_skip);
+        let resnet = up.resnet.forward(&up_in, frames, t_emb);
+        let transformers = up.run_transformers(resnet.clone(), frames, ch);
+        let tail =
+            up.tail_conv
+                .as_ref()
+                .unwrap()
+                .forward(&pad_left_cm(&transformers, ch, frames, 2));
+        let final_block = self.decoder.estimator.final_block.forward(&tail, frames);
+        let r#final = self.decoder.estimator.final_proj.forward(&final_block);
+        UpStages {
+            up_in,
+            resnet,
+            transformers,
+            tail,
+            final_block,
+            r#final,
+        }
+    }
+
+    /// The Euler solve with per-step captures for the parity bisection:
+    /// `(dphi cond, dphi uncond, x after the step)` per step.
+    #[cfg(test)]
+    pub(crate) fn debug_solve_steps(
+        &self,
+        mu: &[f32],
+        spks: &[f32],
+        cond: &[f32],
+        n_timesteps: usize,
+    ) -> Vec<(Vec<f32>, Vec<f32>, Vec<f32>)> {
+        let mel = self.config.output_size;
+        let frames = mu.len() / mel;
+        let zeros = vec![0.0f32; mu.len()];
+        let zeros_spk = vec![0.0f32; spks.len()];
+        let t_span: Vec<f32> = (0..=n_timesteps)
+            .map(|i| 1.0 - ((i as f32 / n_timesteps as f32) * 0.5 * std::f32::consts::PI).cos())
+            .collect();
+        let mut x = self.decoder.noise_window(frames);
+        let mut t = t_span[0];
+        let mut dt = t_span[1] - t_span[0];
+        let mut captures = Vec::new();
+        for step in 1..t_span.len() {
+            let t_emb = self.decoder.estimator.time_mlp.forward(t);
+            let dphi = self
+                .decoder
+                .estimator
+                .forward(&x, mu, spks, cond, &t_emb, frames);
+            let dphi_uncond = self
+                .decoder
+                .estimator
+                .forward(&x, &zeros, &zeros_spk, &zeros, &t_emb, frames);
+            for i in 0..x.len() {
+                x[i] += dt
+                    * ((1.0 + self.decoder.cfg_rate) * dphi[i]
+                        - self.decoder.cfg_rate * dphi_uncond[i]);
+            }
+            captures.push((dphi, dphi_uncond, x.clone()));
+            t += dt;
+            if step < t_span.len() - 1 {
+                dt = t_span[step + 1] - t;
+            }
+        }
+        captures
     }
 
     /// Batch-of-one inference (`flow.inference`, `finalize = true`):

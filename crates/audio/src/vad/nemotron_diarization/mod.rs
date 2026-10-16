@@ -47,8 +47,9 @@ use turbospark_audio::fft::real_fft_forward;
 use turbospark_audio::mel::{mel_filterbank, MelFilterbank, MelScale};
 use turbospark_model_io::safetensors::SafetensorsFile;
 
+pub use crate::models::vad::sortformer::StreamingProfile;
 use crate::models::vad::sortformer::{
-    compress_spkcache_aosc, preds_to_segments, DiarizationOutput, DiarizationSegment,
+    compress_spkcache_aosc, preds_to_segments_with_options, DiarizationOutput, DiarizationSegment,
     GenerateOptions, ModulesConfig as AoscModulesConfig,
 };
 use crate::ops;
@@ -102,6 +103,17 @@ pub struct SpeakerConfig {
     pub use_aosc: bool,
     pub use_learnable_sil_emb: bool,
     pub use_activity_head: bool,
+}
+
+impl SpeakerConfig {
+    /// Applies a standard NeMo streaming latency profile.
+    pub fn apply_streaming_profile(&mut self, profile: StreamingProfile) {
+        self.chunk_len = profile.chunk_len;
+        self.chunk_right_context = profile.right_context;
+        self.fifo_len = profile.fifo_len;
+        self.spkcache_update_period = profile.spkcache_update_period;
+        self.spkcache_len = profile.spkcache_len;
+    }
 }
 
 /// Mel preprocessor configuration (`processor_config`).
@@ -1139,14 +1151,8 @@ impl NemotronDiarization {
             probs = down;
         }
         let stride = proc.hop_length as f64 / proc.sampling_rate as f64;
-        let mut segments = preds_to_segments(
-            &probs,
-            n_spk,
-            stride * factor as f64,
-            opts.threshold,
-            opts.min_duration,
-            opts.merge_gap,
-        );
+        let mut segments =
+            preds_to_segments_with_options(&probs, n_spk, stride * factor as f64, opts);
         for seg in &mut segments {
             seg.start += offset;
             seg.end += offset;
@@ -1201,14 +1207,8 @@ impl NemotronDiarization {
         let stride = self.config.processor.hop_length as f64
             * self.config.output_subsampling_factor as f64
             / self.config.processor.sampling_rate as f64;
-        let mut segments = preds_to_segments(
-            &probs,
-            self.config.num_speakers,
-            stride,
-            opts.threshold,
-            opts.min_duration,
-            opts.merge_gap,
-        );
+        let mut segments =
+            preds_to_segments_with_options(&probs, self.config.num_speakers, stride, opts);
         let end = state.frames_processed as f64 * self.config.processor.hop_length as f64
             / self.config.processor.sampling_rate as f64;
         for seg in &mut segments {
@@ -1224,6 +1224,26 @@ impl NemotronDiarization {
             speaker_probs: probs,
             num_speakers,
         })
+    }
+
+    /// Returns the frame duration in seconds on the diarization output grid (typically 0.01 s / 10 ms).
+    pub fn frame_duration(&self) -> f64 {
+        let proc = &self.config.processor;
+        (proc.hop_length * self.config.output_subsampling_factor) as f64 / proc.sampling_rate as f64
+    }
+
+    /// Estimated streaming latency buffer in seconds: `(chunk_len + right_context) * 80 ms`.
+    pub fn streaming_latency(&self) -> f64 {
+        let proc = &self.config.processor;
+        let factor = self.config.encoder.subsampling_factor;
+        (self.config.modules.chunk_len + self.config.modules.chunk_right_context) as f64
+            * (proc.hop_length * factor) as f64
+            / proc.sampling_rate as f64
+    }
+
+    /// Sets the streaming latency profile (offline, low_latency, ultra_low_latency).
+    pub fn set_streaming_profile(&mut self, profile: StreamingProfile) {
+        self.config.modules.apply_streaming_profile(profile);
     }
 }
 

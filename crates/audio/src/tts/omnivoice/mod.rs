@@ -24,15 +24,17 @@
 //! [`crate::codec::higgs_audio`] decode.
 
 use std::path::Path;
+use std::rc::Rc;
 
 use serde_json::Value;
 use turbospark_model_io::safetensors::SafetensorsFile;
 
+use crate::backend::ComputeBackend;
 use crate::lm::{self, Input, Weights};
 use crate::music::minimax_music3::rng;
-use crate::nn::load_tensor;
+use crate::nn::{load_tensor, Linear};
 use crate::tts::sampling::{argmax, log_softmax};
-use crate::{ops, Result, SpeechError};
+use crate::{Result, SpeechError};
 
 mod duration;
 pub mod pipeline;
@@ -172,9 +174,9 @@ pub struct Model {
     backbone: lm::Backbone,
     /// `[codebook][vocab, hidden]` tables.
     audio_embeddings: Vec<Vec<f32>>,
-    /// `[codebook][vocab, hidden]` head weights (bias-free).
-    audio_heads: Vec<Vec<f32>>,
+    head_linears: Vec<Linear>,
     hidden: usize,
+    exec: Option<Rc<lm::Execution>>,
 }
 
 impl Model {
@@ -245,13 +247,40 @@ impl Model {
         let mut backbone = lm::Backbone::load(&weights, dense_config)?;
         // The reference disables the causal mask on the whole stack.
         backbone.set_bidirectional(true);
+        let head_linears = audio_heads
+            .iter()
+            .map(|w| Linear {
+                weight: w.clone(),
+                bias: None,
+                input: hidden,
+                output: vocab,
+            })
+            .collect();
         Ok(Model {
             config,
             backbone,
             audio_embeddings,
-            audio_heads,
+            head_linears,
             hidden,
+            exec: None,
         })
+    }
+
+    /// Attaches an optional device compute backend. Projections and non-causal
+    /// attention are dispatched to the backend when available, falling back to
+    /// host execution.
+    pub fn with_backend(mut self, backend: Option<Rc<dyn ComputeBackend>>) -> Self {
+        self.set_backend(backend);
+        self
+    }
+
+    /// Updates the device compute backend in place.
+    pub fn set_backend(&mut self, backend: Option<Rc<dyn ComputeBackend>>) {
+        let exec = backend
+            .as_ref()
+            .map(|b| Rc::new(lm::Execution::new(Some(b.clone()))));
+        self.exec = exec;
+        self.backbone.set_backend(backend);
     }
 
     pub fn sample_rate(&self) -> u32 {
@@ -368,8 +397,11 @@ impl Model {
             .forward_hidden(Input::Embeddings(&embeds), None)?;
         // Stack the 8 head projections: [L, C, V] with V innermost.
         let mut logits = vec![0.0f32; len * codebooks * vocab];
-        for (c, head) in self.audio_heads.iter().enumerate() {
-            let per_head = ops::linear(&states, head, None, len, hidden, vocab);
+        for (c, head_linear) in self.head_linears.iter().enumerate() {
+            let per_head = match &self.exec {
+                Some(exec) => exec.linear(head_linear, &states, len),
+                None => head_linear.forward(&states, len),
+            };
             for row in 0..len {
                 let src = row * vocab;
                 let dst = (row * codebooks + c) * vocab;

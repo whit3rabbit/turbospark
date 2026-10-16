@@ -745,6 +745,7 @@ impl FalconH1Model {
                 rope: Some(rope.clone()),
                 window: None,
                 bidirectional: false,
+                exec: None,
             };
             let mlp = Mlp {
                 gate_proj: scaled_linear(
@@ -769,6 +770,7 @@ impl FalconH1Model {
                     mlp_bias,
                     RowScale::Scalar(fold("down_proj.weight")),
                 )?,
+                exec: None,
             };
             let in_proj = scaled_linear(
                 weights,

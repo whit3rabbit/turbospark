@@ -214,6 +214,46 @@ impl ResBlock {
             }
         }
     }
+
+    /// Per-dilation outputs for the parity bisection (test-only):
+    /// `x` after each dilation iteration.
+    #[cfg(test)]
+    fn debug_forward(&self, x: &[f32], frames: usize) -> Vec<Vec<f32>> {
+        let mut x = x.to_vec();
+        let mut iters = Vec::new();
+        for d in 0..self.convs1.len() {
+            let mut xt = x.clone();
+            snake(&mut xt, &self.alphas1[d], self.channels, frames);
+            xt = self.convs1[d].forward(&xt);
+            snake(&mut xt, &self.alphas2[d], self.channels, frames);
+            xt = self.convs2[d].forward(&xt);
+            for (v, r) in x.iter_mut().zip(&xt) {
+                *v += r;
+            }
+            iters.push(x.clone());
+        }
+        iters
+    }
+}
+
+/// Stage captures for the parity bisection (test-only).
+#[cfg(test)]
+pub(crate) struct HiftStages {
+    pub f0: Vec<f32>,
+    pub sine: Vec<f32>,
+    pub uv: Vec<f32>,
+    pub merged: Vec<f32>,
+    pub s_stft: Vec<f32>,
+    pub conv_pre: Vec<f32>,
+    pub up_pre: [Vec<f32>; 3],
+    pub up_si_down: [Option<Vec<f32>>; 3],
+    pub up_si_iters: [Vec<Vec<f32>>; 3],
+    pub up_si: [Vec<f32>; 3],
+    pub up_post: [Vec<f32>; 3],
+    pub x_post: Vec<f32>,
+    pub mel_phase: Vec<f32>,
+    pub wav_preclip: Vec<f32>,
+    pub wav: Vec<f32>,
 }
 
 /// Loaded HiFT generator, batch-of-one (`S3Token2Wav.mel2wav`).
@@ -469,9 +509,9 @@ impl Hift {
             x = acc;
         }
 
-        // The reference decode's final leaky ReLU uses the nn default
-        // slope (0.01), not the lrelu_slope of the upsample stages.
-        leaky_relu(&mut x, 0.01);
+        // The final leaky ReLU uses the same lrelu_slope as the
+        // upsample stages (`decode` passes negative_slope explicitly).
+        leaky_relu(&mut x, LRELU_SLOPE);
         let out_frames = x.len() / (base >> self.ups.len());
         let x = self.conv_post.forward(&x);
         let bins = ISTFT_N_FFT / 2 + 1;
@@ -544,6 +584,132 @@ impl Hift {
             }
         }
         Ok(sine)
+    }
+
+    // Stage splits for the parity bisection (test-only).
+    /// `infer` with every stage captured for the parity bisection.
+    #[cfg(test)]
+    pub(crate) fn debug_infer_stages(
+        &self,
+        speech_feat: &[f32],
+        draws: Option<&SineDraws>,
+    ) -> Result<HiftStages> {
+        let mel = self.config.in_channels;
+        let mel_frames = speech_feat.len() / mel;
+        let f0 = self.predict_f0(speech_feat)?;
+        let wav_frames = mel_frames * UPSCALE;
+        let mut source = vec![0.0f32; wav_frames];
+        for (i, s) in source.iter_mut().enumerate() {
+            *s = f0[i / UPSCALE];
+        }
+        let sine = self.sine_gen(&source, draws)?;
+        let mut uv = vec![0.0f32; wav_frames];
+        for (t, u) in uv.iter_mut().enumerate() {
+            *u = (source[t] > VOICED_THRESHOLD) as i32 as f32;
+        }
+        // Merge harmonics: tanh(Linear(9 -> 1)) per sample.
+        let mut merged = vec![0.0f32; wav_frames];
+        for (t, m) in merged.iter_mut().enumerate() {
+            let mut acc = 0.0f32;
+            for h in 0..NB_HARMONICS + 1 {
+                acc += self.source_linear.weight[h] * sine[h * wav_frames + t];
+            }
+            acc += self.source_linear.bias.as_deref().unwrap_or(&[0.0])[0];
+            *m = acc.tanh();
+        }
+        let (s_real, s_imag) = self.stft(&merged)?;
+        let stft_frames = s_real.len() / (ISTFT_N_FFT / 2 + 1);
+        let mut s_stft = vec![0.0f32; SOURCE_IN * stft_frames];
+        s_stft[..(ISTFT_N_FFT / 2 + 1) * stft_frames].copy_from_slice(&s_real);
+        s_stft[(ISTFT_N_FFT / 2 + 1) * stft_frames..].copy_from_slice(&s_imag);
+
+        let mut x = to_cm(speech_feat, mel_frames, mel);
+        x = self.conv_pre.forward(&x);
+        let conv_pre = x.clone();
+        let base = self.config.base_channels;
+        let mut up_pre: [Vec<f32>; 3] = Default::default();
+        let mut up_si_down: [Option<Vec<f32>>; 3] = Default::default();
+        let mut up_si_iters: [Vec<Vec<f32>>; 3] = Default::default();
+        let mut up_si: [Vec<f32>; 3] = Default::default();
+        let mut up_post: [Vec<f32>; 3] = Default::default();
+        for i in 0..self.ups.len() {
+            leaky_relu(&mut x, LRELU_SLOPE);
+            x = self.ups[i].forward(&x);
+            let ch = self.ups[i].out_ch;
+            let frames_i = x.len() / ch;
+            if i == self.ups.len() - 1 {
+                let mut padded = vec![0.0f32; ch * (frames_i + 1)];
+                for c in 0..ch {
+                    padded[c * (frames_i + 1)] = x[c * frames_i + 1];
+                    padded[c * (frames_i + 1) + 1..(c + 1) * (frames_i + 1)]
+                        .copy_from_slice(&x[c * frames_i..(c + 1) * frames_i]);
+                }
+                x = padded;
+            }
+            let frames_i = x.len() / ch;
+            up_pre[i] = x.clone();
+            let mut si = self.source_downs[i].forward(&s_stft);
+            let si_frames = si.len() / self.source_downs[i].out_ch;
+            up_si_down[i] = Some(si.clone());
+            up_si_iters[i] = self.source_resblocks[i].debug_forward(&si, si_frames);
+            self.source_resblocks[i].forward(&mut si, si_frames);
+            up_si[i] = si.clone();
+            for (v, s) in x.iter_mut().zip(&si) {
+                *v += s;
+            }
+            let mut acc = vec![0.0f32; ch * frames_i];
+            for j in 0..RESBLOCK_KERNELS.len() {
+                let mut block_out = x.clone();
+                self.resblocks[i * RESBLOCK_KERNELS.len() + j].forward(&mut block_out, frames_i);
+                for (a, b) in acc.iter_mut().zip(&block_out) {
+                    *a += b;
+                }
+            }
+            for v in &mut acc {
+                *v /= RESBLOCK_KERNELS.len() as f32;
+            }
+            x = acc;
+            up_post[i] = x.clone();
+        }
+        leaky_relu(&mut x, LRELU_SLOPE);
+        let x_post = x.clone();
+        let out_frames = x.len() / (base >> self.ups.len());
+        let x = self.conv_post.forward(&x);
+        let mel_phase = x.clone();
+        let bins = ISTFT_N_FFT / 2 + 1;
+        let mut magnitude = vec![0.0f32; bins * out_frames];
+        let mut phase = vec![0.0f32; bins * out_frames];
+        for (i, v) in x.iter().enumerate() {
+            let bin = i / out_frames;
+            let frame = i % out_frames;
+            if bin < bins {
+                magnitude[bin * out_frames + frame] = v.exp();
+            } else {
+                phase[(bin - bins) * out_frames + frame] = v.sin();
+            }
+        }
+        let wav = self.istft(&magnitude, &phase, out_frames)?;
+        let wav: Vec<f32> = wav
+            .iter()
+            .map(|v| v.clamp(-AUDIO_LIMIT, AUDIO_LIMIT))
+            .collect();
+        Ok(HiftStages {
+            f0,
+            sine,
+            uv,
+            merged,
+            s_stft,
+            conv_pre,
+            up_pre,
+            up_si_down,
+            up_si_iters,
+            up_si,
+            up_post,
+            x_post,
+            mel_phase,
+            wav_preclip: wav.clone(),
+            wav,
+        })
     }
 
     /// The reference `stft`: reflect-pad by n_fft/2, uncentered frames,

@@ -7,6 +7,7 @@ pub mod bailingmm;
 pub mod bark;
 pub mod breeze_tts;
 pub mod chatterbox;
+pub mod chatterbox_turbo;
 pub mod confucius4;
 pub mod dia;
 pub mod dramabox;

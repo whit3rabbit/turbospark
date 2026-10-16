@@ -195,11 +195,12 @@ impl Block {
             let v_head = &values[head * total * self.head_dim..(head + 1) * total * self.head_dim];
             for row in 0..time {
                 let bound = offset + row;
-                let high = if self.mask.is_some() {
-                    total - 1
-                } else {
-                    bound
-                };
+                // Both stacks attend every position. The causal stacks
+                // pass the learned additive 0/1 tensor as a float mask
+                // (upstream quirk: it biases, it does not mask), and the
+                // fine stack's NonCausalSelfAttention passes no mask at
+                // all; neither path restricts the key range.
+                let high = total - 1;
                 let q_row = &q_head[row * self.head_dim..(row + 1) * self.head_dim];
                 let mut max = f32::NEG_INFINITY;
                 for j in 0..=high {
@@ -472,10 +473,16 @@ impl FineGpt {
         let mut layers = Vec::with_capacity(config.n_layer);
         for index in 0..config.n_layer {
             let layer = format!("{prefix}layers.{index}.");
+            // FineBlock normalizes with mlx nn.LayerNorm defaults, which
+            // include the shift: weight and bias, unlike the causal
+            // stacks' weight-only LayerNorm.
             layers.push(Block {
                 layernorm_1: LayerNorm::new(
                     weights.tensor_absolute(&format!("{layer}layernorm_1.weight"), &[n_embd])?,
-                    None,
+                    Some(
+                        weights
+                            .tensor_absolute(&format!("{layer}layernorm_1.bias"), &[n_embd])?,
+                    ),
                     1e-5,
                 ),
                 att_proj: weights.linear_absolute(
@@ -492,7 +499,10 @@ impl FineGpt {
                 )?,
                 layernorm_2: LayerNorm::new(
                     weights.tensor_absolute(&format!("{layer}layernorm_2.weight"), &[n_embd])?,
-                    None,
+                    Some(
+                        weights
+                            .tensor_absolute(&format!("{layer}layernorm_2.bias"), &[n_embd])?,
+                    ),
                     1e-5,
                 ),
                 mlp_in: weights.linear_absolute(
@@ -522,7 +532,10 @@ impl FineGpt {
             layers,
             layernorm_final: LayerNorm::new(
                 weights.tensor_absolute(&format!("{prefix}layernorm_final.weight"), &[n_embd])?,
-                None,
+                Some(
+                    weights
+                        .tensor_absolute(&format!("{prefix}layernorm_final.bias"), &[n_embd])?,
+                ),
                 1e-5,
             ),
             lm_heads,
@@ -601,6 +614,11 @@ pub struct GenerateParams {
     pub fine_temperature: Option<f32>,
     pub max_coarse_history: usize,
     pub sliding_window_len: usize,
+    /// The reference `generate_coarse` `use_kv_caching` parameter. The
+    /// reference function default is `False`, and the pipeline path
+    /// never turns it on (see [`Model::generate`]): every coarse step
+    /// re-forwards the full growing window.
+    pub coarse_use_kv_caching: bool,
 }
 
 impl Default for GenerateParams {
@@ -611,8 +629,28 @@ impl Default for GenerateParams {
             fine_temperature: None,
             max_coarse_history: 60,
             sliding_window_len: 60,
+            coarse_use_kv_caching: false,
         }
     }
+}
+
+/// Python `round()`: half-to-even in f64. The reference uses it for the
+/// window count and the per-window semantic index; an exact `.5` can
+/// occur for the window count (`n_steps` is even) and must not round
+/// away from zero.
+fn python_round(x: f64) -> usize {
+    let floor = x.floor();
+    let frac = x - floor;
+    let rounded = if frac > 0.5 {
+        floor + 1.0
+    } else if frac < 0.5 {
+        floor
+    } else if (floor as i64) % 2 == 0 {
+        floor
+    } else {
+        floor + 1.0
+    };
+    rounded as usize
 }
 
 /// One generated run: the semantic tokens, the two coarse codebooks
@@ -740,8 +778,14 @@ impl Model {
         Ok((generated, encoded_text))
     }
 
-    /// The reference `generate_coarse`: sliding windows of
-    /// `sliding_window_len` cached steps over the offset coarse logits.
+    /// The reference `generate_coarse`: sliding windows over the offset
+    /// coarse logits. The index math (window count, per-window semantic
+    /// index, step count) runs in f64 with Python's round because the
+    /// reference computes it in float64. With
+    /// `coarse_use_kv_caching` (the reference's `use_kv_caching`)
+    /// the first step of a window prefills and the rest decode one
+    /// cached token; the reference function default, and the pipeline
+    /// path, is `false`: every step re-forwards the full growing window.
     pub fn generate_coarse(
         &mut self,
         semantic_tokens: &[i32],
@@ -750,16 +794,17 @@ impl Model {
         params: &GenerateParams,
         draw: &mut dyn FnMut(&[f32]) -> usize,
     ) -> Result<Vec<Vec<i32>>> {
+        // The reference constants are Python floats; mirror them at f64.
         let semantic_to_coarse_ratio =
-            COARSE_RATE_HZ / SEMANTIC_RATE_HZ * N_COARSE_CODEBOOKS as f32;
+            COARSE_RATE_HZ as f64 / SEMANTIC_RATE_HZ as f64 * N_COARSE_CODEBOOKS as f64;
         let max_semantic_history =
-            ((params.max_coarse_history as f32) / semantic_to_coarse_ratio).floor() as usize;
+            ((params.max_coarse_history as f64) / semantic_to_coarse_ratio).floor() as usize;
         // Voice histories are caller-owned slices; this port runs the
         // no-history path (the reference's empty arrays).
         let _ = (semantic_history, coarse_history);
         let x_semantic: Vec<i32> = semantic_tokens.to_vec();
-        let n_steps = ((x_semantic.len() as f32 * semantic_to_coarse_ratio
-            / N_COARSE_CODEBOOKS as f32)
+        let n_steps = ((x_semantic.len() as f64 * semantic_to_coarse_ratio
+            / N_COARSE_CODEBOOKS as f64)
             .floor() as usize)
             * N_COARSE_CODEBOOKS;
         let mut x_coarse_in: Vec<i32> = Vec::new();
@@ -770,11 +815,15 @@ impl Model {
                 why: "sliding_window_len must be > 0".to_string(),
             });
         }
-        let n_window_steps = ((n_steps as f32 / params.sliding_window_len as f32).round()) as usize;
+        let n_window_steps = python_round(n_steps as f64 / params.sliding_window_len as f64);
         let mut n_step = 0usize;
         let mut caches = vec![KvCache::new(); self.config.coarse_acoustics_config.n_layer];
+        // The reference coarse slice scales by the reciprocal
+        // (`relevant_logits * (1 / temperature)`), unlike the semantic
+        // and fine stages, which divide.
+        let coarse_scale = 1.0f32 / params.coarse_temperature.max(1e-5);
         for _window in 0..n_window_steps {
-            let semantic_idx = ((n_step as f32) / semantic_to_coarse_ratio).round() as usize;
+            let semantic_idx = python_round(n_step as f64 / semantic_to_coarse_ratio);
             let start = semantic_idx.saturating_sub(max_semantic_history);
             let mut x_in: Vec<i32> = x_semantic[start..].to_vec();
             x_in.truncate(256);
@@ -784,25 +833,29 @@ impl Model {
             x_in.push(COARSE_INFER_TOKEN);
             let history_start = x_coarse_in.len().saturating_sub(params.max_coarse_history);
             x_in.extend_from_slice(&x_coarse_in[history_start..]);
-            // Fresh cache per window.
-            for cache in &mut caches {
-                cache.reset();
-            }
-            let logits = self.coarse.forward(&x_in, false, &mut caches)?;
-            let mut first = true;
+            let mut prefilled = false;
             for _ in 0..params.sliding_window_len {
                 if n_step >= n_steps {
+                    // The reference `continue`s; staying in the window
+                    // draws nothing more, so a break is observable-only
+                    // identical.
                     break;
                 }
                 let is_major_step = n_step % N_COARSE_CODEBOOKS == 0;
-                let row = if first {
-                    &logits
-                } else {
-                    &self
-                        .coarse
+                let row = if params.coarse_use_kv_caching && prefilled {
+                    self.coarse
                         .forward(&x_in[x_in.len() - 1..], false, &mut caches)?
+                } else {
+                    // Cached: reset per window before the prefill.
+                    // Uncached: reset every step, mirroring the
+                    // reference's past_kv=None with use_cache=False.
+                    for cache in &mut caches {
+                        cache.reset();
+                    }
+                    let logits = self.coarse.forward(&x_in, false, &mut caches)?;
+                    prefilled = true;
+                    logits
                 };
-                first = false;
                 let logit_start_idx =
                     SEMANTIC_VOCAB_SIZE + (1 - is_major_step as usize) * CODEBOOK_SIZE;
                 let logit_end_idx = (SEMANTIC_VOCAB_SIZE
@@ -818,7 +871,7 @@ impl Model {
                 }
                 let mut relevant: Vec<f32> = row[logit_start_idx..logit_end_idx].to_vec();
                 for value in &mut relevant {
-                    *value /= params.coarse_temperature.max(1e-5);
+                    *value *= coarse_scale;
                 }
                 let item_next = draw(&relevant) + logit_start_idx;
                 let item_next = item_next as i32;
@@ -929,7 +982,18 @@ impl Model {
     /// The full reference `Pipeline.__call__`: semantic, coarse, fine,
     /// then the EnCodec decode through all eight codebooks. `draw`
     /// receives each temperature-scaled logit slice; the fixture tests
-    /// replay an argmax stand-in, live runs draw categorically.
+    /// replay an inverse-CDF stand-in, live runs draw categorically.
+    ///
+    /// The reference `__call__` forwards `use_kv_caching` positionally
+    /// into `generate_coarse`, where it binds to the
+    /// `max_coarse_history` parameter (pipeline.py at the pinned
+    /// commit: `self.generate_coarse(semantic_tokens, voice,
+    /// temperature, use_kv_caching, **kwargs)`). The pipeline therefore
+    /// runs the coarse stage with `max_coarse_history = True` (1), the
+    /// default sliding window of 60, and no kv cache; this method
+    /// reproduces that wiring instead of the caller's
+    /// `max_coarse_history` / `sliding_window_len`, which stay
+    /// meaningful for direct `generate_coarse` callers.
     pub fn generate(
         &mut self,
         encodec: &Encodec,
@@ -939,7 +1003,15 @@ impl Model {
     ) -> Result<Generated> {
         let (semantic_tokens, encoded_text) =
             self.generate_text_semantic(text_ids, None, params.semantic_temperature, draw)?;
-        let coarse_codes = self.generate_coarse(&semantic_tokens, None, None, params, draw)?;
+        let coarse_params = GenerateParams {
+            semantic_temperature: params.semantic_temperature,
+            coarse_temperature: params.coarse_temperature,
+            fine_temperature: params.fine_temperature,
+            max_coarse_history: 1,
+            sliding_window_len: 60,
+            coarse_use_kv_caching: false,
+        };
+        let coarse_codes = self.generate_coarse(&semantic_tokens, None, None, &coarse_params, draw)?;
         let fine_codes = self.generate_fine(&coarse_codes, params.fine_temperature, draw)?;
         let samples = encodec.decode_codes(&fine_codes, None)?;
         Ok(Generated {

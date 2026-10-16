@@ -72,6 +72,80 @@ pub struct TfEncoderConfig {
     pub k_proj_bias: bool,
 }
 
+/// Standard NeMo streaming latency presets for Sortformer and Nemotron Diarization.
+///
+/// Buffer latency is determined by `(chunk_len + right_context) * 80 ms`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StreamingProfile {
+    /// Frames emitted per step.
+    pub chunk_len: usize,
+    /// Lookahead frames seen by the model but not emitted.
+    pub right_context: usize,
+    /// FIFO buffer length between the chunk and the speaker cache.
+    pub fifo_len: usize,
+    /// Frames moved from FIFO into the speaker cache per update.
+    pub spkcache_update_period: usize,
+    /// Speaker cache capacity.
+    pub spkcache_len: usize,
+}
+
+impl StreamingProfile {
+    /// Offline (high latency, fastest, highest accuracy): 30.4 s buffer.
+    pub const fn offline() -> Self {
+        Self {
+            chunk_len: 340,
+            right_context: 40,
+            fifo_len: 40,
+            spkcache_update_period: 300,
+            spkcache_len: 264,
+        }
+    }
+
+    /// Low latency for real-time interactive audio: 1.04 s buffer.
+    pub const fn low_latency() -> Self {
+        Self {
+            chunk_len: 9,
+            right_context: 4,
+            fifo_len: 264,
+            spkcache_update_period: 222,
+            spkcache_len: 264,
+        }
+    }
+
+    /// Very low latency: 0.64 s buffer.
+    pub const fn very_low_latency() -> Self {
+        Self {
+            chunk_len: 6,
+            right_context: 2,
+            fifo_len: 264,
+            spkcache_update_period: 222,
+            spkcache_len: 264,
+        }
+    }
+
+    /// Ultra low latency: 0.32 s buffer.
+    pub const fn ultra_low_latency() -> Self {
+        Self {
+            chunk_len: 3,
+            right_context: 1,
+            fifo_len: 264,
+            spkcache_update_period: 222,
+            spkcache_len: 264,
+        }
+    }
+
+    /// Calculates the buffer latency in seconds for the given frame duration (typically 0.08 s).
+    pub fn latency_seconds(&self, frame_duration: f64) -> f64 {
+        (self.chunk_len + self.right_context) as f64 * frame_duration
+    }
+}
+
+impl Default for StreamingProfile {
+    fn default() -> Self {
+        Self::offline()
+    }
+}
+
 /// Sortformer head and streaming configuration (`modules_config`).
 ///
 /// The AOSC fields are only consulted when `use_aosc` is set (v2.1);
@@ -97,6 +171,17 @@ pub struct ModulesConfig {
     pub weak_boost_rate: f32,
     pub min_pos_scores_rate: f32,
     pub use_aosc: bool,
+}
+
+impl ModulesConfig {
+    /// Applies a standard NeMo streaming latency profile.
+    pub fn apply_streaming_profile(&mut self, profile: StreamingProfile) {
+        self.chunk_len = profile.chunk_len;
+        self.chunk_right_context = profile.right_context;
+        self.fifo_len = profile.fifo_len;
+        self.spkcache_update_period = profile.spkcache_update_period;
+        self.spkcache_len = profile.spkcache_len;
+    }
 }
 
 /// Feature extractor configuration (`processor_config`).
@@ -1760,6 +1845,15 @@ pub struct GenerateOptions {
     pub min_duration: f64,
     /// Maximum gap in seconds between segments that get merged.
     pub merge_gap: f64,
+    /// Offset threshold for hysteresis (speech ends when prob < offset).
+    /// If None, threshold is used for both onset and offset.
+    pub offset: Option<f32>,
+    /// Padding added before speech onset in seconds.
+    pub pad_onset: f64,
+    /// Padding added after speech offset in seconds.
+    pub pad_offset: f64,
+    /// Median filter window length in frames (must be odd, <= 1 disables).
+    pub median_window: usize,
 }
 
 impl Default for GenerateOptions {
@@ -1768,7 +1862,46 @@ impl Default for GenerateOptions {
             threshold: 0.5,
             min_duration: 0.0,
             merge_gap: 0.0,
+            offset: None,
+            pad_onset: 0.0,
+            pad_offset: 0.0,
+            median_window: 1,
         }
+    }
+}
+
+impl GenerateOptions {
+    /// Creates a new GenerateOptions with the basic threshold and filtering parameters.
+    pub fn new(threshold: f32, min_duration: f64, merge_gap: f64) -> Self {
+        Self {
+            threshold,
+            min_duration,
+            merge_gap,
+            offset: None,
+            pad_onset: 0.0,
+            pad_offset: 0.0,
+            median_window: 1,
+        }
+    }
+
+    /// Sets dual-threshold hysteresis: segment starts when prob > onset, and ends when prob < offset.
+    pub fn with_hysteresis(mut self, onset: f32, offset: f32) -> Self {
+        self.threshold = onset;
+        self.offset = Some(offset);
+        self
+    }
+
+    /// Sets onset and offset time padding in seconds.
+    pub fn with_padding(mut self, pad_onset: f64, pad_offset: f64) -> Self {
+        self.pad_onset = pad_onset;
+        self.pad_offset = pad_offset;
+        self
+    }
+
+    /// Sets median filter window length in frames for smoothing probabilities before binarization.
+    pub fn with_median_filter(mut self, median_window: usize) -> Self {
+        self.median_window = median_window;
+        self
     }
 }
 
@@ -1815,6 +1948,134 @@ pub fn trim_silence(samples: &[f32], sample_rate: u32) -> (Vec<f32>, usize) {
     (samples[start_sample..end_sample].to_vec(), start_sample)
 }
 
+/// Applies temporal median filtering across probabilities for each speaker independently.
+/// Window length must be an odd positive integer; window <= 1 returns a clone.
+pub fn median_filter_probs(
+    preds: &[f32],
+    frames: usize,
+    num_speakers: usize,
+    window: usize,
+) -> Vec<f32> {
+    if window <= 1 || frames == 0 {
+        return preds.to_vec();
+    }
+    let half = (window / 2) as isize;
+    let max_frame = (frames - 1) as isize;
+    let mut filtered = preds.to_vec();
+    let mut buf = Vec::with_capacity(window);
+
+    for spk in 0..num_speakers {
+        for t in 0..frames {
+            buf.clear();
+            for offset in -half..=half {
+                let frame_idx = (t as isize + offset).clamp(0, max_frame) as usize;
+                buf.push(preds[frame_idx * num_speakers + spk]);
+            }
+            buf.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            filtered[t * num_speakers + spk] = buf[buf.len() / 2];
+        }
+    }
+    filtered
+}
+
+/// Converts frame-level probabilities to time segments with full NeMo-compatible
+/// post-processing: optional temporal median filtering, dual-threshold hysteresis,
+/// onset/offset padding, minimum segment duration, and segment gap merging.
+pub fn preds_to_segments_with_options(
+    preds: &[f32],
+    num_speakers: usize,
+    frame_duration: f64,
+    opts: &GenerateOptions,
+) -> Vec<DiarizationSegment> {
+    if preds.is_empty() || num_speakers == 0 {
+        return Vec::new();
+    }
+    let frames = preds.len() / num_speakers;
+    let filtered_storage;
+    let probs = if opts.median_window > 1 {
+        filtered_storage = median_filter_probs(preds, frames, num_speakers, opts.median_window);
+        &filtered_storage[..]
+    } else {
+        preds
+    };
+
+    let onset = opts.threshold;
+    let offset = opts.offset.unwrap_or(opts.threshold);
+    let mut segments = Vec::new();
+
+    for spk in 0..num_speakers {
+        let mut runs = Vec::new();
+        let mut in_seg = false;
+        let mut seg_start = 0;
+
+        for t in 0..frames {
+            let p = probs[t * num_speakers + spk];
+            let active = if onset == offset {
+                p > onset
+            } else if p > onset {
+                true
+            } else if p < offset {
+                false
+            } else {
+                in_seg
+            };
+
+            if active && !in_seg {
+                seg_start = t;
+            } else if !active && in_seg {
+                runs.push((seg_start, t));
+            }
+            in_seg = active;
+        }
+        if in_seg {
+            runs.push((seg_start, frames));
+        }
+
+        let mut spk_segments: Vec<DiarizationSegment> = runs
+            .into_iter()
+            .map(|(s, e)| {
+                let start_sec = (s as f64 * frame_duration - opts.pad_onset).max(0.0);
+                let end_sec = e as f64 * frame_duration + opts.pad_offset;
+                DiarizationSegment {
+                    start: start_sec,
+                    end: end_sec,
+                    speaker: spk,
+                }
+            })
+            .filter(|seg| seg.end > seg.start && seg.end - seg.start >= opts.min_duration)
+            .collect();
+
+        let effective_merge_gap = if opts.pad_onset + opts.pad_offset > 0.0 {
+            opts.merge_gap.max(opts.pad_onset + opts.pad_offset)
+        } else {
+            opts.merge_gap
+        };
+
+        if effective_merge_gap > 0.0 && spk_segments.len() > 1 {
+            let mut merged = vec![spk_segments[0].clone()];
+            for seg in spk_segments.into_iter().skip(1) {
+                let last = merged.last_mut().unwrap();
+                if seg.start <= last.end + effective_merge_gap {
+                    last.end = last.end.max(seg.end);
+                } else {
+                    merged.push(seg);
+                }
+            }
+            spk_segments = merged;
+        }
+
+        segments.extend(spk_segments);
+    }
+
+    segments.sort_by(|a, b| {
+        a.start
+            .partial_cmp(&b.start)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.speaker.cmp(&b.speaker))
+    });
+    segments
+}
+
 /// Converts frame-level probabilities to time segments (the reference
 /// `_preds_to_segments`): threshold, minimum duration, optional gap merge,
 /// segments sorted by start time.
@@ -1826,57 +2087,20 @@ pub fn preds_to_segments(
     min_duration: f64,
     merge_gap: f64,
 ) -> Vec<DiarizationSegment> {
-    let frames = preds.len() / num_speakers;
-    let mut segments = Vec::new();
-    for spk in 0..num_speakers {
-        let activity: Vec<bool> = (0..frames)
-            .map(|t| preds[t * num_speakers + spk] > threshold)
-            .collect();
-        if !activity.iter().any(|a| *a) {
-            continue;
-        }
-        // Padded first-difference to find run boundaries.
-        let mut starts = Vec::new();
-        let mut ends = Vec::new();
-        let mut prev = false;
-        for (t, cur) in activity.iter().enumerate() {
-            if *cur && !prev {
-                starts.push(t);
-            }
-            if !*cur && prev {
-                ends.push(t);
-            }
-            prev = *cur;
-        }
-        if prev {
-            ends.push(frames);
-        }
-        let mut spk_segments: Vec<DiarizationSegment> = starts
-            .iter()
-            .zip(&ends)
-            .map(|(&s, &e)| DiarizationSegment {
-                start: s as f64 * frame_duration,
-                end: e as f64 * frame_duration,
-                speaker: spk,
-            })
-            .filter(|seg| seg.end - seg.start >= min_duration)
-            .collect();
-        if merge_gap > 0.0 && spk_segments.len() > 1 {
-            let mut merged = vec![spk_segments[0].clone()];
-            for seg in &spk_segments[1..] {
-                let last = merged.last_mut().unwrap();
-                if seg.start - last.end <= merge_gap {
-                    last.end = seg.end;
-                } else {
-                    merged.push(seg.clone());
-                }
-            }
-            spk_segments = merged;
-        }
-        segments.extend(spk_segments);
-    }
-    segments.sort_by(|a, b| a.start.partial_cmp(&b.start).unwrap());
-    segments
+    preds_to_segments_with_options(
+        preds,
+        num_speakers,
+        frame_duration,
+        &GenerateOptions {
+            threshold,
+            min_duration,
+            merge_gap,
+            offset: None,
+            pad_onset: 0.0,
+            pad_offset: 0.0,
+            median_window: 1,
+        },
+    )
 }
 
 impl Sortformer {
@@ -1912,13 +2136,11 @@ impl Sortformer {
         let subsampling_factor = self.config.modules.subsampling_factor;
         let frame_duration =
             (proc.hop_length * subsampling_factor) as f64 / proc.sampling_rate as f64;
-        let mut segments = preds_to_segments(
+        let mut segments = preds_to_segments_with_options(
             &preds,
             self.config.modules.num_speakers,
             frame_duration,
-            opts.threshold,
-            opts.min_duration,
-            opts.merge_gap,
+            opts,
         );
         if trim_offset > 0 {
             for seg in &mut segments {
@@ -1986,6 +2208,15 @@ pub struct StreamingOptions {
     pub spkcache_max: usize,
     /// Maximum FIFO size in diarization frames.
     pub fifo_max: usize,
+    /// Offset threshold for hysteresis (speech ends when prob < offset).
+    /// If None, threshold is used for both onset and offset.
+    pub offset: Option<f32>,
+    /// Padding added before speech onset in seconds.
+    pub pad_onset: f64,
+    /// Padding added after speech offset in seconds.
+    pub pad_offset: f64,
+    /// Median filter window length in frames (must be odd, <= 1 disables).
+    pub median_window: usize,
 }
 
 impl Default for StreamingOptions {
@@ -1996,7 +2227,46 @@ impl Default for StreamingOptions {
             merge_gap: 0.0,
             spkcache_max: 188,
             fifo_max: 188,
+            offset: None,
+            pad_onset: 0.0,
+            pad_offset: 0.0,
+            median_window: 1,
         }
+    }
+}
+
+impl StreamingOptions {
+    /// Converts these streaming options into `GenerateOptions` for segment post-processing.
+    pub fn to_generate_options(&self) -> GenerateOptions {
+        GenerateOptions {
+            threshold: self.threshold,
+            min_duration: self.min_duration,
+            merge_gap: self.merge_gap,
+            offset: self.offset,
+            pad_onset: self.pad_onset,
+            pad_offset: self.pad_offset,
+            median_window: self.median_window,
+        }
+    }
+
+    /// Sets dual-threshold hysteresis: segment starts when prob > onset, and ends when prob < offset.
+    pub fn with_hysteresis(mut self, onset: f32, offset: f32) -> Self {
+        self.threshold = onset;
+        self.offset = Some(offset);
+        self
+    }
+
+    /// Sets onset and offset time padding in seconds.
+    pub fn with_padding(mut self, pad_onset: f64, pad_offset: f64) -> Self {
+        self.pad_onset = pad_onset;
+        self.pad_offset = pad_offset;
+        self
+    }
+
+    /// Sets median filter window length in frames for smoothing probabilities before binarization.
+    pub fn with_median_filter(mut self, median_window: usize) -> Self {
+        self.median_window = median_window;
+        self
     }
 }
 
@@ -2191,13 +2461,11 @@ impl Sortformer {
         let (chunk_preds, advanced) = self.streaming_step(&features, frames, frames, state, None);
         let state = self.maybe_compress_state(advanced, opts.spkcache_max, opts.fifo_max);
 
-        let segments = preds_to_segments(
+        let segments = preds_to_segments_with_options(
             &chunk_preds,
             self.config.modules.num_speakers,
             frame_duration,
-            opts.threshold,
-            opts.min_duration,
-            opts.merge_gap,
+            &opts.to_generate_options(),
         );
         let segments: Vec<DiarizationSegment> = segments
             .into_iter()
@@ -2349,13 +2617,11 @@ impl Sortformer {
             let chunk_time_offset = offset_mel as f64 * proc.hop_length as f64
                 / proc.sampling_rate as f64
                 + trim_offset_sec;
-            let segments = preds_to_segments(
+            let segments = preds_to_segments_with_options(
                 &chunk_preds,
                 mc.num_speakers,
                 frame_duration,
-                opts.threshold,
-                opts.min_duration,
-                opts.merge_gap,
+                &opts.to_generate_options(),
             );
             let segments: Vec<DiarizationSegment> = segments
                 .into_iter()
@@ -2382,10 +2648,22 @@ impl Sortformer {
         Ok(results)
     }
 
-    fn frame_duration(&self) -> f64 {
+    /// Returns the frame duration in seconds on the diarization output grid.
+    pub fn frame_duration(&self) -> f64 {
         let proc = &self.config.processor;
         (proc.hop_length * self.config.modules.subsampling_factor) as f64
             / proc.sampling_rate as f64
+    }
+
+    /// Estimated streaming latency buffer in seconds: `(chunk_len + right_context) * frame_duration`.
+    pub fn streaming_latency(&self) -> f64 {
+        (self.config.modules.chunk_len + self.config.modules.chunk_right_context) as f64
+            * self.frame_duration()
+    }
+
+    /// Sets the streaming latency profile (offline, low_latency, ultra_low_latency).
+    pub fn set_streaming_profile(&mut self, profile: StreamingProfile) {
+        self.config.modules.apply_streaming_profile(profile);
     }
 
     /// Moves FIFO overflow into the speaker cache, compressing when the
@@ -2948,5 +3226,102 @@ mod tests {
         assert_eq!(seg.speaker, 1);
         assert!(close(seg.start as f32, 0.56, 1e-6));
         assert!(close(seg.end as f32, 0.64, 1e-6));
+    }
+
+    #[test]
+    fn test_median_filter_probs() {
+        // 5 frames, 1 speaker
+        // Spike at frame 2: 0.1, 0.1, 0.9, 0.1, 0.1
+        let preds = vec![0.1f32, 0.1, 0.9, 0.1, 0.1];
+        let smoothed = median_filter_probs(&preds, 5, 1, 3);
+        // Spike at frame 2 should be filtered out to 0.1
+        assert_eq!(smoothed, vec![0.1, 0.1, 0.1, 0.1, 0.1]);
+
+        // Sustained run of 3 frames: 0.1, 0.9, 0.9, 0.9, 0.1
+        let preds2 = vec![0.1f32, 0.9, 0.9, 0.9, 0.1];
+        let smoothed2 = median_filter_probs(&preds2, 5, 1, 3);
+        assert_eq!(smoothed2, vec![0.1, 0.9, 0.9, 0.9, 0.1]);
+    }
+
+    #[test]
+    fn test_preds_to_segments_hysteresis() {
+        // 6 frames, 1 speaker: 0.1, 0.7, 0.5, 0.45, 0.35, 0.1
+        let preds = vec![0.1f32, 0.7, 0.5, 0.45, 0.35, 0.1];
+        let opts = GenerateOptions::default().with_hysteresis(0.6, 0.4);
+        let segs = preds_to_segments_with_options(&preds, 1, 0.08, &opts);
+        // Starts at frame 1 (> 0.6), continues through frames 2 and 3 (> 0.4), ends at frame 4 (< 0.4)
+        assert_eq!(segs.len(), 1);
+        assert!((segs[0].start - 0.08).abs() < 1e-6);
+        assert!((segs[0].end - 0.32).abs() < 1e-6);
+
+        // Standard single threshold at 0.6 would drop frames 2 and 3
+        let opts_single = GenerateOptions::default().with_hysteresis(0.6, 0.6);
+        let segs_single = preds_to_segments_with_options(&preds, 1, 0.08, &opts_single);
+        assert_eq!(segs_single.len(), 1);
+        assert!((segs_single[0].start - 0.08).abs() < 1e-6);
+        assert!((segs_single[0].end - 0.16).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_preds_to_segments_padding_and_merging() {
+        // Speaker active at frame 1..3 (0.08 to 0.24)
+        let mut preds = vec![0.0f32; 10];
+        preds[1] = 0.9;
+        preds[2] = 0.9;
+        let opts = GenerateOptions::default().with_padding(0.04, 0.04);
+        let segs = preds_to_segments_with_options(&preds, 1, 0.08, &opts);
+        assert_eq!(segs.len(), 1);
+        assert!((segs[0].start - 0.04).abs() < 1e-6);
+        assert!((segs[0].end - 0.28).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_streaming_profiles() {
+        let offline = StreamingProfile::offline();
+        assert_eq!(offline.chunk_len, 340);
+        assert_eq!(offline.right_context, 40);
+        assert!((offline.latency_seconds(0.08) - 30.4).abs() < 1e-6);
+
+        let low = StreamingProfile::low_latency();
+        assert_eq!(low.chunk_len, 9);
+        assert_eq!(low.right_context, 4);
+        assert!((low.latency_seconds(0.08) - 1.04).abs() < 1e-6);
+
+        let very_low = StreamingProfile::very_low_latency();
+        assert_eq!(very_low.chunk_len, 6);
+        assert_eq!(very_low.right_context, 2);
+        assert!((very_low.latency_seconds(0.08) - 0.64).abs() < 1e-6);
+
+        let ultra = StreamingProfile::ultra_low_latency();
+        assert_eq!(ultra.chunk_len, 3);
+        assert_eq!(ultra.right_context, 1);
+        assert!((ultra.latency_seconds(0.08) - 0.32).abs() < 1e-6);
+
+        let mut mc = ModulesConfig {
+            num_speakers: 4,
+            fc_d_model: 512,
+            tf_d_model: 512,
+            subsampling_factor: 8,
+            chunk_len: 340,
+            fifo_len: 40,
+            spkcache_len: 264,
+            spkcache_update_period: 300,
+            chunk_left_context: 0,
+            chunk_right_context: 40,
+            spkcache_sil_frames_per_spk: 1,
+            pred_score_threshold: 0.25,
+            max_index: 99999,
+            scores_boost_latest: 0.05,
+            sil_threshold: 0.0,
+            strong_boost_rate: 0.75,
+            weak_boost_rate: 1.5,
+            min_pos_scores_rate: 0.5,
+            use_aosc: true,
+        };
+        mc.apply_streaming_profile(ultra);
+        assert_eq!(mc.chunk_len, 3);
+        assert_eq!(mc.chunk_right_context, 1);
+        assert_eq!(mc.fifo_len, 264);
+        assert_eq!(mc.spkcache_update_period, 222);
     }
 }

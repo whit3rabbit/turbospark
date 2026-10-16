@@ -147,8 +147,7 @@ fn run_scenario(traces: &Value, name: &str) {
         semantic_temperature: 0.7,
         coarse_temperature: 0.7,
         fine_temperature: Some(0.7),
-        max_coarse_history: 60,
-        sliding_window_len: 60,
+        ..GenerateParams::default()
     };
     let mut replay = InverseCdfReplay::new(&scenario["uniforms"]);
     let got = model
@@ -197,25 +196,17 @@ fn run_scenario(traces: &Value, name: &str) {
     );
 }
 
-/// The end-to-end scenario fixtures exist but their reference-side
-/// recording is not yet self-consistent (the recording process's own
-/// prefill logits and categorical inputs disagree by up to 0.037; see
-/// the README open item). Run with TURBOSPARK_BARK_E2E=1 once that is
-/// resolved.
+/// End-to-end parity against the recorded reference pipeline runs: the
+/// semantic tokens, the coarse codes, the fine codes, and the decoded
+/// waveform must all replay from the recorded uniform stream.
 #[test]
 fn scenario_a_matches_the_reference_end_to_end() {
-    if std::env::var("TURBOSPARK_BARK_E2E").is_err() {
-        return;
-    }
     let traces = read_json(&testdata("generate/traces.json"));
     run_scenario(&traces, "a");
 }
 
 #[test]
 fn scenario_b_matches_the_reference_end_to_end() {
-    if std::env::var("TURBOSPARK_BARK_E2E").is_err() {
-        return;
-    }
     let traces = read_json(&testdata("generate/traces.json"));
     run_scenario(&traces, "b");
 }

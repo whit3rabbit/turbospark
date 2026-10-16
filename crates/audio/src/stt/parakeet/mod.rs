@@ -542,6 +542,7 @@ impl ParakeetTdt {
             frame_count,
         );
         let mut proposal: Option<Proposal> = None;
+        let mut accumulated_text = String::new();
         if cfg.redux_mode {
             for _ in 0..cfg.max_symbols.saturating_mul(frame_count) {
                 if time >= frame_count {
@@ -564,9 +565,12 @@ impl ParakeetTdt {
                     (_, hidden, cell) = proposal.take().expect("proposal computed above");
                     let piece = &cfg.vocabulary[token];
                     if !is_special_piece(piece) {
+                        let mut text = piece.replace('▁', " ");
+                        adjust_sentencepiece_digit_spacing(&mut text, &accumulated_text);
+                        accumulated_text.push_str(&text);
                         aligned.push(AlignedToken::new(
                             token as i32,
-                            piece.replace('▁', " "),
+                            text,
                             time as f32 * frame_seconds,
                             duration as f32 * frame_seconds,
                         ));
@@ -592,9 +596,12 @@ impl ParakeetTdt {
                 (_, hidden, cell) = proposal.take().expect("proposal computed above");
                 let piece = &cfg.vocabulary[token];
                 if !is_special_piece(piece) {
+                    let mut text = piece.replace('▁', " ");
+                    adjust_sentencepiece_digit_spacing(&mut text, &accumulated_text);
+                    accumulated_text.push_str(&text);
                     aligned.push(AlignedToken::new(
                         token as i32,
-                        piece.replace('▁', " "),
+                        text,
                         time as f32 * frame_seconds,
                         duration as f32 * frame_seconds,
                     ));
@@ -627,6 +634,31 @@ fn argmax(values: &[f32]) -> usize {
 /// shows. Public so the Core ML Parakeet host filters the same set.
 pub fn is_special_piece(piece: &str) -> bool {
     (piece.starts_with("<|") && piece.ends_with("|>")) || piece == "<unk>" || piece == "<pad>"
+}
+
+/// Adjusts SentencePiece digit token spacing when preceded by alphabetic words.
+///
+/// SentencePiece tokenizers in NeMo checkpoints often emit digit pieces without the
+/// word-boundary underscore (U+2581), resulting in joined text like "at60" or "page2".
+/// This heuristic prepends a space before pure digit pieces if preceded by a multi-letter
+/// word or the article 'a', while preserving acronyms and models like "A4" or "B12".
+pub fn adjust_sentencepiece_digit_spacing(piece_text: &mut String, prev_text: &str) {
+    if !prev_text.is_empty()
+        && !piece_text.starts_with(' ')
+        && !piece_text.is_empty()
+        && piece_text.chars().all(|c| c.is_ascii_digit())
+    {
+        let trailing_letters = prev_text
+            .chars()
+            .rev()
+            .take_while(|c| c.is_alphabetic())
+            .count();
+        let last_char = prev_text.chars().last();
+        let is_article_a = trailing_letters == 1 && last_char == Some('a');
+        if trailing_letters > 1 || is_article_a {
+            piece_text.insert(0, ' ');
+        }
+    }
 }
 
 #[cfg(test)]
@@ -710,6 +742,50 @@ mod tests {
         assert!(is_special_piece("<unk>"));
         assert!(is_special_piece("<pad>"));
         assert!(!is_special_piece("▁word"));
+    }
+
+    #[test]
+    fn digit_spacing_heuristic_matches_expected() {
+        let mut text = "60".to_string();
+        adjust_sentencepiece_digit_spacing(&mut text, "at");
+        assert_eq!(text, " 60");
+
+        let mut text = "2".to_string();
+        adjust_sentencepiece_digit_spacing(&mut text, "page");
+        assert_eq!(text, " 2");
+
+        let mut text = "100".to_string();
+        adjust_sentencepiece_digit_spacing(&mut text, "a");
+        assert_eq!(text, " 100");
+
+        // Single uppercase letters (acronyms / models) preserved without space
+        let mut text = "4".to_string();
+        adjust_sentencepiece_digit_spacing(&mut text, "A");
+        assert_eq!(text, "4");
+
+        let mut text = "12".to_string();
+        adjust_sentencepiece_digit_spacing(&mut text, "B");
+        assert_eq!(text, "12");
+
+        // Already has leading space
+        let mut text = " 60".to_string();
+        adjust_sentencepiece_digit_spacing(&mut text, "at");
+        assert_eq!(text, " 60");
+
+        // Empty previous text
+        let mut text = "10".to_string();
+        adjust_sentencepiece_digit_spacing(&mut text, "");
+        assert_eq!(text, "10");
+
+        // Subword digits (preceded by digits)
+        let mut text = "00".to_string();
+        adjust_sentencepiece_digit_spacing(&mut text, " 10");
+        assert_eq!(text, "00");
+
+        // Preceded by punctuation
+        let mut text = "5".to_string();
+        adjust_sentencepiece_digit_spacing(&mut text, "test.");
+        assert_eq!(text, "5");
     }
 
     #[test]
@@ -1132,6 +1208,7 @@ mod decode_parity {
         let mut time = 0usize;
         let mut zero_duration_symbols = 0usize;
         let mut pieces = Vec::new();
+        let mut accumulated_text = String::new();
         if cfg.redux_mode {
             for _ in 0..cfg.max_symbols.saturating_mul(frame_count) {
                 if time >= frame_count {
@@ -1153,7 +1230,10 @@ mod decode_parity {
                     cell = proposed_cell;
                     let piece = &cfg.vocabulary[token];
                     if !is_special_piece(piece) {
-                        pieces.push(piece.replace('▁', " "));
+                        let mut text = piece.replace('▁', " ");
+                        adjust_sentencepiece_digit_spacing(&mut text, &accumulated_text);
+                        accumulated_text.push_str(&text);
+                        pieces.push(text);
                     }
                 }
                 time = time.saturating_add(duration);
@@ -1174,7 +1254,10 @@ mod decode_parity {
                 cell = proposed_cell;
                 let piece = &cfg.vocabulary[token];
                 if !is_special_piece(piece) {
-                    pieces.push(piece.replace('▁', " "));
+                    let mut text = piece.replace('▁', " ");
+                    adjust_sentencepiece_digit_spacing(&mut text, &accumulated_text);
+                    accumulated_text.push_str(&text);
+                    pieces.push(text);
                 }
             }
             time = time.saturating_add(duration);

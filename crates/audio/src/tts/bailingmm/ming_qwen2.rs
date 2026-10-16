@@ -323,6 +323,7 @@ impl MingQwen2 {
                         hidden,
                         Bias::None,
                     )?,
+                    exec: None,
                 },
                 input_layernorm: RmsNorm::new(
                     weights

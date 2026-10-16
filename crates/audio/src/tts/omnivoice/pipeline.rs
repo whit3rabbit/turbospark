@@ -7,10 +7,12 @@
 //! defaults.
 
 use std::path::Path;
+use std::rc::Rc;
 
 use tokenizers::Tokenizer;
 
 use super::{build_style_text, build_wrapped_text, duration, Model};
+use crate::backend::ComputeBackend;
 use crate::codec::higgs_audio::HiggsAudioTokenizer;
 use crate::{Result, SpeechError};
 
@@ -95,6 +97,17 @@ impl OmniVoicePipeline {
             text_tokenizer,
             audio_tokenizer,
         })
+    }
+
+    /// Attaches an optional device compute backend.
+    pub fn with_backend(mut self, backend: Option<Rc<dyn ComputeBackend>>) -> Self {
+        self.set_backend(backend);
+        self
+    }
+
+    /// Updates the device compute backend in place.
+    pub fn set_backend(&mut self, backend: Option<Rc<dyn ComputeBackend>>) {
+        self.model.set_backend(backend);
     }
 
     pub fn sample_rate(&self) -> u32 {
