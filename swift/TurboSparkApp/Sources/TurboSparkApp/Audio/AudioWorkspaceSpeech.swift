@@ -35,6 +35,9 @@ extension AudioWorkspaceController {
     }
     var selectedProfileClonesNatively: Bool { Self.clonesNatively(selectedProfile) }
     func speechProfileMatchesPage(_ profile: AudioProfile) -> Bool {
+        // A streaming-only model (Parakeet Unified) serves live text, not a
+        // batch transcription job, which would refuse to open it.
+        if profile.identity.task == .speechToText && !profile.capabilities.operations.contains("transcribe") { return false }
         switch page {
         case .voiceClone:
             if profile.family == "omnivoice" {

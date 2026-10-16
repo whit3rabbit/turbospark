@@ -2,6 +2,9 @@ import AppKit
 import AVFoundation
 import Combine
 import Foundation
+import Metal
+import MLX
+import Qwen3TTS
 import TurboSpark
 import UniformTypeIdentifiers
 
@@ -66,6 +69,10 @@ final class AudioWorkspaceController: ObservableObject {
         set { recipe.experimentalBackend = newValue ? "experimental_metal" : nil }
     }
     @Published var liveTranscription = true
+    /// Streaming live text for the take being recorded (AudioWorkspaceLive.swift).
+    let live = AudioLiveText()
+    /// Words, meaning and sound search over the library (AudioLibrarySearch.swift).
+    let librarySearch = AudioLibrarySearch()
     @Published var pendingSaves: [UUID: AudioLibraryItem] = [:]
     @Published var pendingTranscriptEdits: [UUID: [AudioLibrarySegment]] = [:]
     @Published var preferences = AudioWorkspacePreferences()
@@ -97,6 +104,8 @@ final class AudioWorkspaceController: ObservableObject {
     var referencePlayer: AVAudioPlayer?
     @Published var referencePlaying = false
     @Published var session: AudioSession?
+    @Published var qwenModel: Qwen3TTSModel?
+    @Published var loadedModelAlias: String?
     var sessionKey: String?
     var modelAccessURL: URL?
     var capture: AudioCapture?
@@ -126,13 +135,18 @@ final class AudioWorkspaceController: ObservableObject {
         do {
             preferences = try library.preferences()
             recipe = preferences.recipe; page = preferences.page
+            restoreRecordingPreset()
             // A saved page or task from a build that offered controls the
             // runtime cannot open would restore into a dead end.
             if !AudioWorkspacePage.tools.contains(page), page == .cleanup { page = .library }
             if AudioTask(rawValue: recipe.task)?.isRunnable == false {
                 recipe.task = AudioTask.speechToText.rawValue
             }
-            items = try library.load()
+            let loaded = try library.loadReporting()
+            items = loaded.items
+            if loaded.unreadable > 0 {
+                status = AppStrings.localized("Recordings set aside because they could not be read: \(loaded.unreadable)")
+            }
             try library.collectUnusedAssets()
             for index in items.indices where items[index].recoverInterrupted() { try library.save(items[index]) }
         } catch { self.error = error.localizedDescription }
@@ -267,6 +281,13 @@ final class AudioWorkspaceController: ObservableObject {
         if let remembered = preferences.selectedModels[modelSelectionKey],
            availableProfiles.contains(where: { $0.identity.alias == remembered }) {
             recipe.modelID = remembered
+        } else if task == .speechToText {
+            // Catalog order lists Whisper first; the preference order puts the
+            // most accurate runnable transcriber first. An installed runnable
+            // model still wins over a better one that needs a download.
+            let preferred = Self.preferredSpeechProfiles(availableProfiles)
+            recipe.modelID = preferred.first(where: { $0.capabilities.canRun && installedPaths[$0.identity.alias] != nil })?.identity.alias
+                ?? preferred.first?.identity.alias
         } else {
             // A new speech workspace should start with an executable provider.
             let preferred = task == .textToSpeech
@@ -275,6 +296,16 @@ final class AudioWorkspaceController: ObservableObject {
             recipe.modelID = preferred.first(where: { installedPaths[$0.identity.alias] != nil })?.identity.alias
                 ?? preferred.first?.identity.alias ?? availableProfiles.first?.identity.alias
         }
+    }
+    static let speechPreference = ["parakeet-ultra-coreml", "parakeet-redux-coreml", "whisper-base"]
+    /// Runnable before not runnable, then `speechPreference` order, then catalog order.
+    static func preferredSpeechProfiles(_ profiles: [AudioProfile]) -> [AudioProfile] {
+        let rank = { (profile: AudioProfile) in speechPreference.firstIndex(of: profile.identity.alias) ?? speechPreference.count }
+        return profiles.enumerated().sorted { a, b in
+            if a.element.capabilities.canRun != b.element.capabilities.canRun { return a.element.capabilities.canRun }
+            let (left, right) = (rank(a.element), rank(b.element))
+            return left != right ? left < right : a.offset < b.offset
+        }.map(\.element)
     }
     func selectModel(_ alias: String?) {
         recipe.modelID = alias
@@ -558,6 +589,11 @@ final class AudioWorkspaceController: ObservableObject {
         if let previous = session { await Task.detached { previous.close() }.value }
         modelAccessURL?.stopAccessingSecurityScopedResource(); modelAccessURL = nil
         session = nil; sessionKey = nil
+        if qwenModel != nil {
+            qwenModel = nil
+            MLX.Memory.clearCache()
+        }
+        loadedModelAlias = nil
         let token = epoch
         do {
             let opening = AudioModelOpening()
@@ -576,19 +612,113 @@ final class AudioWorkspaceController: ObservableObject {
                 await Task.detached { opened.close() }.value
                 throw CancellationError()
             }
-            session = opened; sessionKey = key; modelAccessURL = url
+            session = opened; sessionKey = key; loadedModelAlias = profile.identity.alias; modelAccessURL = url
             return opened
         } catch { opening = nil; progress = nil; url?.stopAccessingSecurityScopedResource(); throw error }
     }
-    var isModelLoaded: Bool { session != nil }
+
+    func residentQwenSession(for profile: AudioProfile, source: AudioLibraryItem? = nil) async throws -> Qwen3TTSModel {
+        idleTask?.cancel()
+        var url: URL?
+        let directory: URL
+        let path: String
+        if let bookmark = try modelBookmark(for: profile, source: source) {
+            var stale = false
+            let resolved = try URL(resolvingBookmarkData: bookmark, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &stale)
+            guard !stale else { throw AudioWorkspaceError.message(AppStrings.localized("The model folder moved. Choose it again.")) }
+            _ = resolved.startAccessingSecurityScopedResource(); url = resolved; directory = resolved; path = resolved.path
+        } else if let installed = installedPaths[profile.identity.alias] {
+            path = installed
+            directory = URL(fileURLWithPath: installed, isDirectory: true)
+        } else {
+            throw AudioWorkspaceError.message(AppStrings.localized("Download this model or choose its checkpoint folder."))
+        }
+        let key = "qwen3_tts:\(path)"
+        if sessionKey == key, let qwenModel {
+            url?.stopAccessingSecurityScopedResource()
+            return qwenModel
+        }
+        if let previous = session { await Task.detached { previous.close() }.value }
+        session = nil
+        modelAccessURL?.stopAccessingSecurityScopedResource(); modelAccessURL = nil
+        qwenModel = nil; sessionKey = nil; loadedModelAlias = nil
+        MLX.Memory.clearCache()
+
+        let token = epoch
+        do {
+            let weightBytes = try [directory, directory.appendingPathComponent("speech_tokenizer")].reduce(UInt64(0)) { sum, folder in
+                guard FileManager.default.fileExists(atPath: folder.path) else { return sum }
+                return try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.fileSizeKey])
+                    .filter { $0.pathExtension == "safetensors" }.reduce(sum) { try $0 + UInt64($1.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) }
+            }
+            let budget = min(ProcessInfo.processInfo.physicalMemory * 3 / 4, MTLCreateSystemDefaultDevice()?.recommendedMaxWorkingSetSize ?? 0)
+            guard weightBytes > 0, weightBytes <= budget / 2 else {
+                throw AudioWorkspaceError.message(AppStrings.localized("This checkpoint exceeds the available audio model memory budget."))
+            }
+
+            let opening = AudioModelOpening()
+            opening.onProgress = { [weak self, weak opening] fraction in
+                Task { @MainActor in
+                    guard let self, let opening, self.valid(token), self.opening === opening else { return }
+                    self.status = AppStrings.localized("Verifying")
+                    self.progress = fraction
+                }
+            }
+            self.opening = opening
+
+            if url == nil, let openToken = opening.token {
+                let verified = try await Task.detached {
+                    try AudioCatalog.verify(profile.identity, token: openToken) { progress in
+                        guard let total = progress.total, total > 0 else { return }
+                        opening.onProgress?(min(1, Double(progress.completed) / Double(total)))
+                    }
+                }.value
+                guard verified == path else { throw CancellationError() }
+            }
+
+            self.status = AppStrings.localized("Loading model")
+            let loaded = try await Task.detached {
+                try Task.checkCancellation()
+                return try await Qwen3TTSModel.fromModelDirectory(directory)
+            }.value
+
+            self.opening = nil
+            self.progress = nil
+            guard valid(token), !Task.isCancelled else {
+                throw CancellationError()
+            }
+            qwenModel = loaded
+            sessionKey = key
+            loadedModelAlias = profile.identity.alias
+            modelAccessURL = url
+            return loaded
+        } catch {
+            opening = nil
+            progress = nil
+            url?.stopAccessingSecurityScopedResource()
+            throw error
+        }
+    }
+
+    func isProfileLoaded(_ profile: AudioProfile) -> Bool {
+        if let alias = loadedModelAlias {
+            return alias == profile.identity.alias
+        }
+        return session != nil && selectedProfile?.identity.alias == profile.identity.alias
+    }
+
+    var isModelLoaded: Bool {
+        guard let profile = selectedProfile else { return false }
+        return isProfileLoaded(profile)
+    }
     var isModelLoading: Bool { opening != nil }
 
     var canLoadModel: Bool {
-        modelInstalled && selectedProfileIsRunnable && session == nil && opening == nil && !isBusy && !isInstalling
+        modelInstalled && selectedProfileIsRunnable && !isModelLoaded && opening == nil && !isBusy && !isInstalling
     }
 
     var canUnloadModel: Bool {
-        session != nil && !isBusy && !isRecording
+        (session != nil || qwenModel != nil || loadedModelAlias != nil) && !isBusy && !isRecording
     }
 
     func loadModel() {
@@ -597,7 +727,11 @@ final class AudioWorkspaceController: ObservableObject {
         Task { [weak self] in
             guard let self, self.valid(token) else { return }
             do {
-                _ = try await self.residentSession(for: profile, portable: self.allowPortableExperiment, experimentalMetal: self.allowExperimentalMetal)
+                if profile.family == "qwen3_tts" {
+                    _ = try await self.residentQwenSession(for: profile)
+                } else {
+                    _ = try await self.residentSession(for: profile, portable: self.allowPortableExperiment, experimentalMetal: self.allowExperimentalMetal)
+                }
                 self.status = AppStrings.localized("Loaded \(profile.displayName)")
             } catch {
                 if !Task.isCancelled {
@@ -615,9 +749,15 @@ final class AudioWorkspaceController: ObservableObject {
         session = nil
         sessionKey = nil
         modelAccessURL = nil
+        let oldQwen = qwenModel
+        qwenModel = nil
+        loadedModelAlias = nil
         Task {
             if let old { await Task.detached { old.close() }.value }
             oldAccess?.stopAccessingSecurityScopedResource()
+            if oldQwen != nil {
+                MLX.Memory.clearCache()
+            }
         }
         status = AppStrings.localized("Model unloaded")
     }
@@ -628,9 +768,15 @@ final class AudioWorkspaceController: ObservableObject {
             try? await Task.sleep(for: .seconds(300))
             guard !Task.isCancelled, let self, !self.isBusy, !self.isRecording else { return }
             let old = self.session; let oldAccess = self.modelAccessURL
+            let oldQwen = self.qwenModel
             self.session = nil; self.sessionKey = nil; self.modelAccessURL = nil
+            self.qwenModel = nil
+            self.loadedModelAlias = nil
             if let old { await Task.detached { old.close() }.value }
             oldAccess?.stopAccessingSecurityScopedResource()
+            if oldQwen != nil {
+                MLX.Memory.clearCache()
+            }
         }
     }
     func cancel() { jobTask?.cancel(); qwenSpeechJob?.cancel(); session?.cancel(); opening?.cancelOpen() }
@@ -643,6 +789,7 @@ final class AudioWorkspaceController: ObservableObject {
         recordingSetupAttempt = nil; recordingSetupStatus = nil
         // Drain durable capture before the vault gate invalidates its keys.
         if let capture { _ = capture.stopAcceptingAndDrain(); Task { _ = await capture.stop() } }
+        live.transcriber?.stopAndDrain(); live.clear(); librarySearch.stopIndexing()
         if let id = recordingID { update(id) { $0.status = .interrupted; $0.updatedAt = Date() } }
         lifetime.end()
         isShutDown = true; epoch = UUID()
@@ -654,6 +801,8 @@ final class AudioWorkspaceController: ObservableObject {
         opening = nil
         if let old = session { DispatchQueue.global(qos: .userInitiated).sync { old.close() } }
         session = nil; sessionKey = nil; modelAccessURL?.stopAccessingSecurityScopedResource(); modelAccessURL = nil
+        qwenModel = nil; loadedModelAlias = nil
+        MLX.Memory.clearCache()
         for url in scratchURLs { try? FileManager.default.removeItem(at: url) }
         scratchURLs.removeAll(); items.removeAll(); activeGeneration = nil; activeRunID = nil; generationProgress = nil
         speechRun = nil; voiceReferenceRecordingID = nil
@@ -675,7 +824,7 @@ final class AudioModelOpening: @unchecked Sendable {
     private var opened: AudioSession?
     /// Stops the byte verification an open of a managed model starts with. A
     /// multi-gigabyte model used to make Stop and shutdown wait it out.
-    private let token = try? AudioOpenToken()
+    let token = try? AudioOpenToken()
     /// Fraction (0...1) of the verification done, called on the opening thread.
     var onProgress: (@Sendable (Double) -> Void)?
     init() { finished.enter() }

@@ -127,7 +127,7 @@ struct AudioModelPickerView: View {
                         icon: { Image(systemName: "internaldrive") }
                 }
                 Spacer(minLength: 0)
-                if controller.isModelLoaded {
+                if controller.isProfileLoaded(profile) {
                     Label { Text("Loaded", bundle: .module) } icon: { Image(systemName: "bolt.circle.fill") }
                         .foregroundStyle(.appAccent)
                 } else if controller.modelInstalled {
@@ -153,20 +153,22 @@ struct AudioModelPickerView: View {
                     .appAction(.quiet, size: .small)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-            } else if controller.canUnloadModel {
+            } else if controller.isProfileLoaded(profile) {
                 Button { controller.unloadModel() } label: {
                     Label { Text("Unload", bundle: .module) } icon: { Image(systemName: "eject.fill") }
                         .frame(maxWidth: .infinity)
                 }
                 .appAction(.secondary, size: .large)
+                .disabled(!controller.canUnloadModel)
                 .help(Text("Eject model and release unified memory", bundle: .module))
                 .accessibilityLabel(Text("Unload Model", bundle: .module))
-            } else if controller.canLoadModel {
+            } else {
                 Button { controller.loadModel() } label: {
                     Label { Text("Load Model", bundle: .module) } icon: { Image(systemName: "bolt.fill") }
                         .frame(maxWidth: .infinity)
                 }
                 .appAction(.secondary, size: .large)
+                .disabled(!controller.canLoadModel)
                 .help(Text("Load model into memory slot cache for inference", bundle: .module))
                 .accessibilityLabel(Text("Load Model", bundle: .module))
             }

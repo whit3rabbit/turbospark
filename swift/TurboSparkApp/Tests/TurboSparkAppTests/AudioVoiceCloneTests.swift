@@ -91,6 +91,15 @@ final class AudioVoiceCloneTests: XCTestCase {
         XCTAssertFalse(AudioWorkspaceController.runsOnDeclaredCPU(mega))
     }
 
+    /// The pinned OmniVoice profile declares Metal, so the app opens it without the
+    /// portable opt-in and offers it on the Voice Cloning page.
+    func testCatalogOmniVoiceRunsOnMetalWithoutThePortableOptIn() throws {
+        let omni = try XCTUnwrap(try AudioCatalog.profiles().first { $0.family == "omnivoice" })
+        XCTAssertEqual(omni.capabilities.backend, "metal")
+        XCTAssertTrue(omni.capabilities.canRun)
+        XCTAssertFalse(AudioWorkspaceController.runsOnDeclaredCPU(omni))
+    }
+
     /// The presets mirror the audio crate's `megatts3::Quality`, and a count
     /// between them is custom, which the picker shows as its own segment.
     func testQualityPresetsMapToStepCountsAndCustomCountsToNone() {

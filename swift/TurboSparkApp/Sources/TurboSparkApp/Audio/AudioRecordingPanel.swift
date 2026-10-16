@@ -36,6 +36,7 @@ struct AudioRecordingPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
+            AudioRecordingPresetPicker(controller: controller)
             captureSources
             if let setupStatus = controller.recordingSetupStatus {
                 HStack(alignment: .top, spacing: 12) {
@@ -82,8 +83,10 @@ struct AudioRecordingPanel: View {
                 .disabled(controller.isBusy || (!controller.captureMicrophone && !controller.captureSystemAudio))
                 .keyboardShortcut("r", modifiers: [.command, .shift])
             }
+            AudioLiveTextView(live: controller.live)
             DisclosureGroup {
                 Toggle(isOn: $controller.liveTranscription) { Text("Show a live draft transcript", bundle: .module) }
+                if controller.liveTranscription { AudioLiveTextModelRow(model: model, controller: controller).padding(.top, 4) }
                 AudioModelPickerView(model: model, controller: controller).padding(.top, 8)
                 Text("Live text is a draft. Saved audio remains available when transcription falls behind.", bundle: .module)
                     .themedFont(.small).foregroundStyle(.appSecondary)

@@ -86,4 +86,51 @@ final class AudioInstallManagementTests: XCTestCase {
         // (controller.session is non-nil).
         XCTAssertFalse(controller.canUnloadModel)
     }
+
+    func testQwenOrResidentModelLoadAndUnloadGating() throws {
+        let (controller, root) = try controller()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let qwenProfile = AudioProfile(
+            identity: AudioProfileIdentity(
+                task: .textToSpeech, alias: "qwen3-base", repository: "Qwen/Qwen3-TTS-12Hz-1.7B-Base", revision: "main", assetFingerprint: "f"),
+            family: "qwen3_tts", displayName: "Qwen3-TTS Base",
+            capabilities: AudioCapabilities(
+                operations: ["synthesize"], backend: "metal", cancellation: "token", canRun: true),
+            pcmFormat: AudioPCMFormat(sampleRate: 24_000, channels: 1), readiness: "qualified")
+        controller.profiles = [qwenProfile]
+        controller.recipe.task = AudioTask.textToSpeech.rawValue
+        controller.recipe.modelID = "qwen3-base"
+
+        XCTAssertFalse(controller.canLoadModel)
+        XCTAssertFalse(controller.canUnloadModel)
+        XCTAssertFalse(controller.isModelLoaded)
+        XCTAssertFalse(controller.isProfileLoaded(qwenProfile))
+
+        controller.installedPaths["qwen3-base"] = "/models/qwen3-base"
+        XCTAssertTrue(controller.canLoadModel)
+        XCTAssertFalse(controller.canUnloadModel)
+
+        // Simulate model loaded
+        controller.loadedModelAlias = "qwen3-base"
+        XCTAssertTrue(controller.isModelLoaded)
+        XCTAssertTrue(controller.isProfileLoaded(qwenProfile))
+        XCTAssertFalse(controller.canLoadModel)
+        XCTAssertTrue(controller.canUnloadModel)
+
+        // Switching selection to a different model means isModelLoaded is false for the new selection
+        controller.recipe.modelID = "another-model"
+        XCTAssertFalse(controller.isModelLoaded)
+
+        // Switching back allows unloading the selected model
+        controller.recipe.modelID = "qwen3-base"
+        XCTAssertTrue(controller.isModelLoaded)
+        XCTAssertTrue(controller.canUnloadModel)
+
+        // Unloading clears the state
+        controller.unloadModel()
+        XCTAssertFalse(controller.isModelLoaded)
+        XCTAssertFalse(controller.isProfileLoaded(qwenProfile))
+        XCTAssertTrue(controller.canLoadModel)
+        XCTAssertFalse(controller.canUnloadModel)
+    }
 }

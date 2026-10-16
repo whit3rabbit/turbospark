@@ -175,6 +175,12 @@ struct AudioLibraryItem: Codable, Equatable, Identifiable, Sendable {
     var markers: [AudioRecordingMarker] = []
     var failure: String? = nil
     var summary: AudioMeetingSummary? = nil
+    /// Free-form labels. Optional so records saved before tags still decode
+    /// (synthesized Codable requires every non-optional key).
+    var tags: [String]? = nil
+    /// The `AudioRecordingPreset` a take was recorded with, by raw value.
+    var recordingPreset: String? = nil
+    var tagList: [String] { tags ?? [] }
     var preferredTranscript: AudioTranscriptRevision? {
         transcripts.last(where: { $0.source == .user }) ?? transcripts.last
     }
@@ -197,7 +203,9 @@ struct AudioLibraryItem: Codable, Equatable, Identifiable, Sendable {
               }),
               transcripts.allSatisfy({ revision in revision.segments.allSatisfy {
                   $0.start.isFinite && $0.end.isFinite && $0.start >= 0 && $0.end >= $0.start
-              } }) else { throw CocoaError(.coderReadCorrupt) }
+              } }),
+              // Only sizes no editor can produce: ordinary tags never fail a load.
+              tagList.count <= 256, tagList.allSatisfy({ $0.utf8.count <= 1_024 }) else { throw CocoaError(.coderReadCorrupt) }
     }
     mutating func addTranscript(_ segments: [AudioLibrarySegment], source: AudioTranscriptRevision.Source, language: String? = nil, nativeResult: Data? = nil) {
         transcripts.append(AudioTranscriptRevision(source: source, segments: segments, language: language, nativeResult: nativeResult))
@@ -225,28 +233,66 @@ struct AudioWorkspacePreferences: Codable, Sendable {
     /// Security-scoped bookmarks retain user-selected local models without absolute paths.
     var localModels: [String: Data] = [:]
     var selectedModels: [String: String] = [:]
+    /// The Record page's preset (`AudioRecordingPreset` raw value).
+    var recordingPreset: String? = nil
+    /// Each preset's collection name, localized once at first use and kept,
+    /// so changing the app language does not split a collection.
+    var presetCollections: [String: String]? = nil
 }
 
 final class AudioLibraryStore: @unchecked Sendable {
     private let repository: ProfileRepository
     private let lock = NSRecursiveLock()
     init(repository: ProfileRepository = .shared) { self.repository = repository }
-    func load() throws -> [AudioLibraryItem] {
+    func load() throws -> [AudioLibraryItem] { try loadReporting().items }
+    /// Every readable item, and how many records could not be read. A record
+    /// that does not decode or validate is copied aside and skipped, so one
+    /// bad record cannot hide the whole library.
+    func loadReporting() throws -> (items: [AudioLibraryItem], unreadable: Int) {
         lock.lock(); defer { lock.unlock() }
-        return try repository.rawRecords(prefix: "audio:item:").map { _, data in
-            let item = try JSONDecoder().decode(AudioLibraryItem.self, from: data)
-            try item.validate()
-            return item
-        }.sorted { $0.createdAt > $1.createdAt }
+        var items: [AudioLibraryItem] = []
+        var unreadable = 0
+        for (key, data) in try repository.rawRecords(prefix: "audio:item:") {
+            do {
+                let item = try JSONDecoder().decode(AudioLibraryItem.self, from: data)
+                try item.validate()
+                items.append(item)
+            } catch {
+                unreadable += 1
+                try? repository.quarantineRawRecord(key: key, payload: data)
+            }
+        }
+        return (items.sorted { $0.createdAt > $1.createdAt }, unreadable)
     }
     func save(_ item: AudioLibraryItem) throws {
         lock.lock(); defer { lock.unlock() }
         try item.validate()
         try repository.saveAudioRecord(key: "audio:item:\(item.id.uuidString)", payload: JSONEncoder().encode(item), references: item.assetReferences)
+        // The record is the truth. A failed index write is repaired by the
+        // next save or the launch backfill, so it never fails the save.
+        try? indexForSearch(item)
+    }
+    /// Brings the search index up to date for one item. Skips the write when
+    /// nothing searchable changed (capture saves every 5 s).
+    func indexForSearch(_ item: AudioLibraryItem) throws {
+        lock.lock(); defer { lock.unlock() }
+        guard let index = try repository.audioIndex(), let projection = item.searchProjection,
+              try index.audioIndexHash(itemID: item.id) != projection.hash else { return }
+        try index.replaceAudioSearchProjection(projection)
     }
     func delete(_ id: UUID) throws {
         lock.lock(); defer { lock.unlock() }
         try repository.deleteAudioRecord(key: "audio:item:\(id.uuidString)")
+        try? repository.audioIndex()?.deleteAudioSearchRows(itemID: id)
+    }
+    /// Exact-word matches across transcripts, titles, collections and tags.
+    func lexicalSearch(_ query: String) -> [AudioLexicalHit] {
+        lock.lock(); defer { lock.unlock() }
+        return (try? repository.audioIndex()?.audioLexicalSearch(query: query)) ?? []
+    }
+    func searchIndex() -> ProfileDatabase? {
+        lock.lock(); defer { lock.unlock() }
+        return try? repository.audioIndex()
     }
     func item(_ id: UUID) throws -> AudioLibraryItem? {
         lock.lock(); defer { lock.unlock() }

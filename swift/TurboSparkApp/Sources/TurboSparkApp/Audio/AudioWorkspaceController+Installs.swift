@@ -1,4 +1,5 @@
 import Foundation
+import MLX
 import TurboSpark
 
 /// Adopting and deleting installed audio models. Text and image models already
@@ -48,9 +49,15 @@ extension AudioWorkspaceController {
         let legacy = selectedAdoptable != nil
         let old = session; let oldAccess = modelAccessURL
         session = nil; sessionKey = nil; modelAccessURL = nil
+        let oldQwen = qwenModel
+        qwenModel = nil
+        loadedModelAlias = nil
         Task { [weak self] in
             let result = await Task.detached { () -> Result<Void, Error> in
                 old?.close()
+                if oldQwen != nil {
+                    MLX.Memory.clearCache()
+                }
                 return Result {
                     if legacy { try AudioCatalog.deleteLegacy(profile.identity) }
                     else { try AudioCatalog.delete(profile.identity) }

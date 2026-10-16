@@ -97,8 +97,11 @@ extension AudioWorkspaceController {
         }
         stopPlayback(); stopReferencePreview(); error = nil
         let stamp = Date().formatted(date: .abbreviated, time: .shortened)
-        let title = asVoiceReference ? AppStrings.localized("Voice reference \(stamp)") : AppStrings.localized("Meeting") + " " + stamp
+        let preset = asVoiceReference ? nil : effectiveRecordingPreset
+        let title = asVoiceReference ? AppStrings.localized("Voice reference \(stamp)") : (preset?.takeTitle ?? AppStrings.localized("Meeting")) + " " + stamp
         var item = AudioLibraryItem(title: title, kind: .recording)
+        // A preset files its takes into its collection; a custom take is unfiled.
+        if let preset { item.recordingPreset = preset.rawValue; item.collection = collectionName(for: preset) }
         item.status = .draft; item.recipe = recipe; item.recipe.task = AudioTask.speechToText.rawValue
         // A copied reference would pin the previous voice's audio to this clip.
         if asVoiceReference { item.recipe.speech = nil }
@@ -138,6 +141,8 @@ extension AudioWorkspaceController {
             }
         })
         self.capture = capture
+        // A voice reference is audio for cloning, not a take to read.
+        if asVoiceReference { live.clear() } else { startLiveText(itemID: id, capture: capture) }
         let config = AudioCapture.Configuration(microphoneID: microphoneID.flatMap(UInt32.init), capturesMicrophone: capturesMicrophone, systemSource: capturesSystemAudio ? selectedApplicationID.map(AudioCapture.SystemSource.application) ?? .all : .none)
         let attempt = UUID(); let dependencies = recordingSetupDependencies
         recordingSetupAttempt = attempt
@@ -164,6 +169,7 @@ extension AudioWorkspaceController {
                 guard self.isCurrentRecordingSetup(attempt, token: token), self.capture === capture, self.recordingID == id else { _ = await capture.stop(); return }
                 _ = capture.stopAcceptingAndDrain()
                 Task { _ = await capture.stop() }
+                self.live.transcriber?.stopAndDrain(); self.live.clear()
                 self.isRecording = false; self.capture = nil; self.recordingID = nil; self.voiceReferenceRecordingID = nil
                 self.update(id) { $0.status = .interrupted; $0.failure = error.localizedDescription }
                 self.error = error.localizedDescription; self.status = error.localizedDescription
@@ -205,7 +211,7 @@ extension AudioWorkspaceController {
                 }
                 $0.status = interrupted ? .interrupted : .completed; $0.failure = failure; $0.updatedAt = Date()
             }
-            if liveTranscription && !interrupted && id != voiceReferenceRecordingID { pendingRefinementIDs.append(id) }
+            queueRefinement(id, refine: liveTranscription && !interrupted && id != voiceReferenceRecordingID)
         }
         // Decided after the update above, which can still mark the take
         // interrupted when no audio arrived.
@@ -225,7 +231,8 @@ extension AudioWorkspaceController {
             refineRecording(id)
             return
         }
-        guard isRecording, liveTranscription, draftRequestedThrough - draftThrough >= 15,
+        // Streaming live text replaces drafts while it runs.
+        guard isRecording, liveTranscription, !live.isStreaming, draftRequestedThrough - draftThrough >= 15,
               let id = recordingID, let item = items.first(where: { $0.id == id }),
               let profile = profiles.first(where: { $0.identity.alias == item.recipe.modelID && $0.identity.task == .speechToText }),
               profile.capabilities.canRun,
@@ -294,6 +301,8 @@ extension AudioWorkspaceController {
                 guard self.valid(token) else { return }
                 self.publish(try self.library.update(id) { $0.status = .completed; $0.updatedAt = Date() })
                 self.transcriptBacklog = 0
+                // The final transcript is in: embed it for meaning search.
+                self.librarySearch.scheduleIndexing(self)
             } catch {
                 guard self.valid(token) else { return }
                 if !Task.isCancelled && Self.isDeviceBusy(error) {

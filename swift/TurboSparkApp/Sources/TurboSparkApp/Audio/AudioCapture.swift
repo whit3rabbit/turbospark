@@ -90,6 +90,9 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked
     // Accessed only on the persistence queue.
     private var accumulators: [String: Chunker] = [:]
     private var writeFailed = false
+    /// Live transcription's copy of each packet. Read under `lock` in
+    /// `enqueue`, so nothing reaches it after `stopAcceptingAndDrain`.
+    private var liveFeed: AudioLiveFeed?
 
     init(onChunk: @escaping @Sendable (AudioCaptureChunk) throws -> Void, onEvent: @escaping @Sendable (Event) -> Void) {
         self.onChunk = onChunk
@@ -298,6 +301,12 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked
     }
     private func takeStream() -> SCStream? { lock.lock(); defer { lock.unlock() }; let result = stream; stream = nil; return result }
 
+    /// Also hands each captured packet to `feed` for live transcription.
+    /// Set it before `start`.
+    func attachLiveFeed(_ feed: AudioLiveFeed?) {
+        lock.lock(); liveFeed = feed; lock.unlock()
+    }
+
     private func makeMicrophoneEngine(device: UInt32?) throws -> AVAudioEngine {
         guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { throw CaptureError.permission }
         let engine = AVAudioEngine()
@@ -332,6 +341,8 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked
             let samples = try AudioMediaIO.interleavedSamples(buffer)
             let rate = buffer.format.sampleRate
             let channels = Int(buffer.format.channelCount)
+            // Never blocks: the feed drops a packet when live text falls behind.
+            liveFeed?.offer(samples, sampleRate: rate, channels: channels, offset: offset, source: source)
             persistence.async { [self] in
                 defer { budget.release(bytes) }
                 guard !writeFailed else { return }

@@ -16,11 +16,10 @@ final class AudioVoiceTests: XCTestCase {
         defer { controller.shutdown() }
         controller.profiles = try AudioCatalog.profiles()
         controller.selectPage(.voiceClone)
-        // Two Qwen3-TTS Base profiles clone in Swift MLX; MegaTTS3 clones natively.
-        // OmniVoice is not offered unless Metal or MLX is available.
-        XCTAssertEqual(controller.availableProfiles.count, 3)
+        // Two Qwen3-TTS Base profiles clone in Swift MLX; MegaTTS3 and OmniVoice clone natively on Metal.
+        XCTAssertEqual(controller.availableProfiles.count, 4)
         XCTAssertEqual(controller.availableProfiles.filter { $0.family == "megatts3" }.count, 1)
-        XCTAssertEqual(controller.availableProfiles.filter { $0.family == "omnivoice" }.count, 0)
+        XCTAssertEqual(controller.availableProfiles.filter { $0.family == "omnivoice" }.count, 1)
         XCTAssertTrue(controller.availableProfiles.allSatisfy { AudioWorkspaceController.speechMode(for: $0) == .clone })
         let base = try XCTUnwrap(controller.availableProfiles.last { $0.family == "qwen3_tts" })
         controller.selectModel(base.identity.alias)
