@@ -97,7 +97,10 @@ pub struct AudioModelInfo {
 
 /// Families whose speech request carries `reference_audio`.
 pub(crate) fn clones_voices(family: &str) -> bool {
-    matches!(family, "megatts3" | "omnivoice" | "qwen3_tts")
+    matches!(
+        family,
+        "megatts3" | "omnivoice" | "qwen3_tts" | "fish_drama3"
+    )
 }
 
 /// Mono 16 kHz f32 PCM, already decoded and resampled by the route.
@@ -141,6 +144,12 @@ pub struct SpeechRequest {
     pub p_w: Option<f32>,
     /// Similarity guidance weight (MegaTTS3).
     pub t_w: Option<f32>,
+    /// Drama 3 sampler settings. Unset keeps the model's reference recipe.
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    pub top_k: Option<usize>,
+    /// Drama 3: an upper bound on one chunk's frames.
+    pub max_frames: Option<usize>,
 }
 
 /// Synthesized audio arriving one segment at a time. Dropping the receiver

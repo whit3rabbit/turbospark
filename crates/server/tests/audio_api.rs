@@ -64,6 +64,10 @@ impl Fake {
                     family: Some("kokoro".into()),
                     ..m("kokoro-test", AudioTask::TextToSpeech)
                 },
+                AudioModelInfo {
+                    family: Some("fish_drama3".into()),
+                    ..m("drama-test", AudioTask::TextToSpeech)
+                },
             ]),
             transcribed: Mutex::default(),
             generated: Mutex::default(),
@@ -115,7 +119,14 @@ impl AudioProvider for Fake {
 
     fn speak(&self, request: SpeechRequest) -> Fut<'_, Result<SpeechStream, AudioError>> {
         Box::pin(async move {
-            let cloning = request.model == "clone-test";
+            let cloning = matches!(request.model.as_str(), "clone-test" | "drama-test");
+            // The fake Drama 3 model answers at its codec rate, as the real
+            // provider reports it.
+            let rate = if request.model == "drama-test" {
+                44_100
+            } else {
+                24_000
+            };
             self.spoken.lock().unwrap().push(request.clone());
             // A cloning model takes its voice from the reference, not `voice`.
             if !cloning && request.voice != "af_heart" {
@@ -133,7 +144,7 @@ impl AudioProvider for Fake {
                 }
             });
             Ok(SpeechStream {
-                sample_rate: 24_000,
+                sample_rate: rate,
                 chunks: rx,
             })
         })
@@ -1002,6 +1013,203 @@ async fn speech_voice_cloning_rules() {
 }
 
 #[tokio::test]
+async fn speech_drama3_reports_44100_and_forwards_the_sampler() {
+    let fake = Fake::new();
+    let base = spawn(&fake).await;
+
+    // No reference: plain speech at the codec rate, nothing forwarded that
+    // the caller did not set.
+    let r = post_json(
+        &base,
+        "/v1/audio/speech",
+        serde_json::json!({"model": "drama-test", "input": "Hello there."}),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.headers()["x-audio-sample-rate"], "44100");
+    let wave = turbospark_audio::wav::read_wav_f32_bytes(&r.bytes().await.unwrap()).unwrap();
+    assert_eq!((wave.sample_rate, wave.channels), (44_100, 1));
+    let spoken = fake.spoken.lock().unwrap().pop().unwrap();
+    assert_eq!(spoken.reference_audio, None);
+    assert_eq!(
+        (
+            spoken.temperature,
+            spoken.top_p,
+            spoken.top_k,
+            spoken.max_frames
+        ),
+        (None, None, None, None)
+    );
+
+    // The chunked PCM response carries the same header.
+    let r = post_json(
+        &base,
+        "/v1/audio/speech",
+        serde_json::json!({"model": "drama-test", "input": "Hi.", "response_format": "pcm", "stream": true}),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.headers()["x-audio-sample-rate"], "44100");
+
+    // Sampler fields, the seed, a reference with its transcript and consent.
+    let reference = "UklGRg==";
+    let r = post_json(
+        &base,
+        "/v1/audio/speech",
+        serde_json::json!({"model": "drama-test", "input": "Hello.", "seed": 7,
+                           "temperature": 0.7, "top_p": 0.8, "top_k": 30, "max_frames": 200,
+                           "reference_audio": reference, "reference_text": "The reference.",
+                           "consent": true, "speed": 1.0}),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    let spoken = fake.spoken.lock().unwrap().pop().unwrap();
+    assert_eq!(
+        (
+            spoken.temperature,
+            spoken.top_p,
+            spoken.top_k,
+            spoken.max_frames
+        ),
+        (Some(0.7), Some(0.8), Some(30), Some(200))
+    );
+    assert_eq!(spoken.seed, Some(7));
+    assert!(spoken.consent);
+    assert_eq!(spoken.reference_text.as_deref(), Some("The reference."));
+    assert_eq!(spoken.reference_audio.as_deref(), Some(reference));
+}
+
+#[tokio::test]
+async fn speech_drama3_refuses_what_it_does_not_take() {
+    let fake = Fake::new();
+    let base = spawn(&fake).await;
+    let reference = "UklGRg==";
+    let refused = [
+        (
+            "reference without consent",
+            serde_json::json!({"model": "drama-test", "input": "a", "reference_audio": reference,
+                               "reference_text": "t"}),
+            "consent",
+        ),
+        (
+            "reference with consent false",
+            serde_json::json!({"model": "drama-test", "input": "a", "reference_audio": reference,
+                               "reference_text": "t", "consent": false}),
+            "consent",
+        ),
+        (
+            "reference without reference_text",
+            serde_json::json!({"model": "drama-test", "input": "a", "reference_audio": reference,
+                               "consent": true}),
+            "reference_text",
+        ),
+        (
+            "reference with blank reference_text",
+            serde_json::json!({"model": "drama-test", "input": "a", "reference_audio": reference,
+                               "reference_text": "  ", "consent": true}),
+            "reference_text",
+        ),
+        (
+            "oversized reference",
+            serde_json::json!({"model": "drama-test", "input": "a", "consent": true,
+                               "reference_text": "t",
+                               "reference_audio": "A".repeat((24 << 20) + 1)}),
+            "reference_audio",
+        ),
+        (
+            "steps",
+            serde_json::json!({"model": "drama-test", "input": "a", "steps": 8}),
+            "steps",
+        ),
+        (
+            "speed",
+            serde_json::json!({"model": "drama-test", "input": "a", "speed": 1.5}),
+            "speed",
+        ),
+        (
+            "instruction",
+            serde_json::json!({"model": "drama-test", "input": "a", "instruction": "whisper"}),
+            "instruction",
+        ),
+        (
+            "p_w",
+            serde_json::json!({"model": "drama-test", "input": "a", "p_w": 1.0}),
+            "p_w",
+        ),
+        (
+            "t_w",
+            serde_json::json!({"model": "drama-test", "input": "a", "t_w": 1.0}),
+            "t_w",
+        ),
+    ];
+    for (name, body, param) in refused {
+        let (status, body) = error_of(post_json(&base, "/v1/audio/speech", body).await).await;
+        assert_eq!(status, 400, "{name}: {body}");
+        assert_eq!(body["error"]["param"], param, "{name}: {body}");
+    }
+
+    // A blank instruction is no instruction; the engine tolerates it too.
+    let r = post_json(
+        &base,
+        "/v1/audio/speech",
+        serde_json::json!({"model": "drama-test", "input": "a", "instruction": " "}),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    fake.spoken.lock().unwrap().clear();
+
+    // Unknown fields stay refused, and a sampler field is not one.
+    let (status, body) = error_of(
+        post_json(
+            &base,
+            "/v1/audio/speech",
+            serde_json::json!({"model": "drama-test", "input": "a", "temp": 0.5}),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(status, 400, "{body}");
+    assert!(
+        fake.spoken.lock().unwrap().is_empty(),
+        "refusals must not reach the provider"
+    );
+}
+
+/// Every other family would ignore the sampler fields, so the route refuses
+/// them by name. A provider that reports no family keeps the pass-through.
+#[tokio::test]
+async fn speech_sampler_fields_are_refused_for_other_families() {
+    let fake = Fake::new();
+    let base = spawn(&fake).await;
+    for (field, value) in [
+        ("temperature", serde_json::json!(0.7)),
+        ("top_p", serde_json::json!(0.8)),
+        ("top_k", serde_json::json!(30)),
+        ("max_frames", serde_json::json!(200)),
+    ] {
+        for model in ["kokoro-test", "clone-test"] {
+            let mut body = serde_json::json!({"model": model, "input": "a", "consent": true,
+                                              "reference_audio": "UklGRg=="});
+            if model == "kokoro-test" {
+                body.as_object_mut().unwrap().remove("reference_audio");
+            }
+            body[field] = value.clone();
+            let (status, body) = error_of(post_json(&base, "/v1/audio/speech", body).await).await;
+            assert_eq!(status, 400, "{model} {field}: {body}");
+            assert_eq!(body["error"]["param"], field, "{model} {field}: {body}");
+        }
+    }
+    assert!(fake.spoken.lock().unwrap().is_empty());
+    let r = post_json(
+        &base,
+        "/v1/audio/speech",
+        serde_json::json!({"model": "tts-test", "input": "a", "temperature": 0.7}),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+}
+
+#[tokio::test]
 async fn generate_sync_and_async() {
     let fake = Fake::new();
     let base = spawn(&fake).await;
@@ -1210,7 +1418,7 @@ async fn metrics_count_requests_by_endpoint_and_status() {
         "turbospark_audio_requests_total{endpoint=\"transcriptions\",status=\"429\"} 1",
         "turbospark_audio_requests_total{endpoint=\"transcriptions\",status=\"404\"} 1",
         "turbospark_audio_busy_total 1",
-        "turbospark_audio_models_loaded 7",
+        "turbospark_audio_models_loaded 8",
         "turbospark_audio_jobs{status=\"running\"} 0",
     ] {
         assert!(text.contains(want), "missing {want:?} in\n{text}");

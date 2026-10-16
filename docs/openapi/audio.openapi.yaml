@@ -108,7 +108,7 @@ paths:
         '429': { $ref: '#/components/responses/Busy' }
   /v1/audio/speech:
     post:
-      summary: Synthesize speech (Kokoro or bridged voice cloning models)
+      summary: Synthesize speech (Kokoro, bridged voice cloning models, or Fish Audio Drama 3)
       requestBody:
         required: true
         content:
@@ -117,7 +117,9 @@ paths:
       responses:
         '200':
           description: |
-            24 kHz mono audio. The rate is also in `x-audio-sample-rate`.
+            Mono audio at the model's rate: 24 kHz for Kokoro, MegaTTS3 and
+            OmniVoice, 44.1 kHz for Fish Audio Drama 3. The rate is also in
+            `x-audio-sample-rate`.
             With `stream=true` (pcm only) the body is chunked, one chunk per
             synthesized segment; a mid-stream failure ends the body early.
           headers:
@@ -337,18 +339,22 @@ components:
         model: { type: string }
         input: { type: string, maxLength: 4096, description: '`text` is accepted as an alias.' }
         voice: { type: string, default: af_heart }
-        speed: { type: number, minimum: 0.5, maximum: 2.0, default: 1.0 }
+        speed: { type: number, minimum: 0.5, maximum: 2.0, default: 1.0, description: Drama 3 has no speed control and refuses any value other than 1.0. }
         response_format: { type: string, enum: [wav, pcm], default: wav, description: pcm is 16-bit little-endian mono. }
         stream: { type: boolean, default: false, description: Requires pcm. }
         language: { type: string, description: Language tag for synthesis. }
-        reference_audio: { type: string, description: 'Base64-encoded WAV of the voice to clone (a data: URL prefix is accepted). Required by MegaTTS3 (1 to 30 seconds, at most 28 used) and optional for OmniVoice (1 to 30 seconds, 24 kHz mono, its presence makes the request a clone); refused by a model that cannot clone.' }
-        reference_text: { type: string, description: 'Transcript of the reference clip (Qwen3-TTS and OmniVoice; MegaTTS3 aligns the reference itself and refuses it).' }
-        instruction: { type: string, description: 'Emotion, style, or delivery guidance (Qwen3-TTS and OmniVoice, at most 512 bytes; MegaTTS3 refuses it).' }
-        consent: { type: boolean, description: 'Required true for cloning: MegaTTS3 always, OmniVoice whenever reference_audio is present. The caller states it has the right to use the reference voice.' }
-        steps: { type: integer, minimum: 1, maximum: 100, description: 'Diffusion steps: MegaTTS3 default 16 (8, 16 and 32 are Fast, Balanced and Best), OmniVoice default 32. Fewer is faster.' }
-        seed: { type: integer, minimum: 0, description: Makes a MegaTTS3 or OmniVoice run repeatable (default 0). }
-        p_w: { type: number, minimum: 0.1, maximum: 5, description: MegaTTS3 intelligibility weight (default 1.4); OmniVoice refuses it. }
-        t_w: { type: number, minimum: 0.1, maximum: 10, description: MegaTTS3 similarity weight (default 3.0); OmniVoice refuses it. }
+        reference_audio: { type: string, description: 'Base64-encoded WAV of the voice to clone (a data: URL prefix is accepted). Required by MegaTTS3 (1 to 30 seconds, at most 28 used) and optional for OmniVoice (1 to 30 seconds, 24 kHz mono) and Drama 3 (1 to 30 seconds, any WAV rate); with either, its presence makes the request a clone; refused by a model that cannot clone.' }
+        reference_text: { type: string, description: 'Transcript of the reference clip (Qwen3-TTS and OmniVoice; required by Drama 3 whenever reference_audio is present; MegaTTS3 aligns the reference itself and refuses it).' }
+        instruction: { type: string, description: 'Emotion, style, or delivery guidance (Qwen3-TTS and OmniVoice, at most 512 bytes; MegaTTS3 and Drama 3 refuse it, Drama 3 takes inline cues such as [whispers] in the text instead).' }
+        consent: { type: boolean, description: 'Required true for cloning: MegaTTS3 always, OmniVoice and Drama 3 whenever reference_audio is present. The caller states it has the right to use the reference voice.' }
+        steps: { type: integer, minimum: 1, maximum: 100, description: 'Diffusion steps: MegaTTS3 default 16 (8, 16 and 32 are Fast, Balanced and Best), OmniVoice default 32. Fewer is faster. Drama 3 has no steps and refuses it.' }
+        seed: { type: integer, minimum: 0, description: Makes a MegaTTS3, OmniVoice or Drama 3 run repeatable (default 0). }
+        p_w: { type: number, minimum: 0.1, maximum: 5, description: MegaTTS3 intelligibility weight (default 1.4); OmniVoice and Drama 3 refuse it. }
+        t_w: { type: number, minimum: 0.1, maximum: 10, description: MegaTTS3 similarity weight (default 3.0); OmniVoice and Drama 3 refuse it. }
+        temperature: { type: number, minimum: 0, description: 'Drama 3 sampling temperature (default 0.7). Other models refuse it.' }
+        top_p: { type: number, exclusiveMinimum: 0, maximum: 1, description: 'Drama 3 nucleus sampling cutoff (default 0.7). Other models refuse it.' }
+        top_k: { type: integer, minimum: 1, description: 'Drama 3 top-k sampling (default 30). Other models refuse it.' }
+        max_frames: { type: integer, minimum: 1, maximum: 1024, description: 'Drama 3 upper bound on the frames generated for one text chunk (default 1024). Other models refuse it.' }
     GenerateRequest:
       type: object
       required: [model, prompt]
