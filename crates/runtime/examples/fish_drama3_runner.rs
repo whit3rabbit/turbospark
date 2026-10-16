@@ -54,6 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             text: &text,
             reference: None,
             seed,
+            sampling: Default::default(),
         };
         let emitted = runner.synthesize(&request, &|| false, |pcm| {
             first.get_or_insert_with(|| started.elapsed());

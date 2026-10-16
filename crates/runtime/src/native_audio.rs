@@ -38,6 +38,12 @@ pub struct AudioRequest {
     pub p_w: Option<f32>,
     /// Voice cloning (MegaTTS3): similarity guidance weight.
     pub t_w: Option<f32>,
+    /// Drama 3 sampler settings. Unset keeps the reference recipe.
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    pub top_k: Option<usize>,
+    /// Drama 3: an upper bound on one chunk's frames, 1 through 1024.
+    pub max_frames: Option<usize>,
     /// Rate of the reference audio carried as the job's PCM when cloning.
     pub reference_sample_rate: Option<u32>,
     /// The caller states it has the right to use the reference voice.
@@ -61,9 +67,29 @@ impl Default for AudioRequest {
             reference_text: None,
             p_w: None,
             t_w: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            max_frames: None,
             reference_sample_rate: None,
             consent: false,
         }
+    }
+}
+impl AudioRequest {
+    /// The request's Drama 3 sampler overrides.
+    fn drama3_sampling(&self) -> crate::fish_drama3::Drama3Sampling {
+        crate::fish_drama3::Drama3Sampling {
+            temperature: self.temperature,
+            top_p: self.top_p,
+            top_k: self.top_k,
+            max_frames: self.max_frames,
+        }
+    }
+
+    /// Whether the caller set any Drama 3 sampler field.
+    fn sampling_set(&self) -> bool {
+        self.drama3_sampling() != crate::fish_drama3::Drama3Sampling::default()
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -353,6 +379,14 @@ pub fn validate_request(
     request: &AudioRequest,
     samples: &[f32],
 ) -> Result<(), String> {
+    // One guard for every other engine: a setting a model ignores would look
+    // like it worked.
+    if family != FISH_DRAMA3_FAMILY && request.sampling_set() {
+        return Err(
+            "temperature, top_p, top_k and max_frames are Drama 3 sampler settings; this model does not take them"
+                .into(),
+        );
+    }
     if request.task == AudioTask::TextToSpeech && family == MEGATTS3_FAMILY {
         return megatts3_request(request, samples).map(|_| ());
     }
@@ -506,6 +540,9 @@ fn fish_drama3_request<'a>(
     if r.p_w.is_some() || r.t_w.is_some() {
         return Err("p_w and t_w are MegaTTS3 guidance weights; Drama 3 does not take them".into());
     }
+    let sampling = r.drama3_sampling();
+    // Refused here as the caller's mistake, before a job queues.
+    sampling.options(0)?;
     let transcript = r.reference_text.as_deref().map(str::trim).unwrap_or("");
     let reference = if samples.is_empty() {
         if !transcript.is_empty() {
@@ -543,6 +580,7 @@ fn fish_drama3_request<'a>(
         text: &r.text,
         reference,
         seed: r.seed.unwrap_or(0),
+        sampling,
     })
 }
 
@@ -1341,7 +1379,7 @@ fn megatts3_devices(allow_portable: bool) -> &'static [crate::megatts3::Device] 
 }
 
 /// `model_type` of a model directory's root `config.json`, if it declares one.
-fn tts_model_type(path: &Path) -> Option<String> {
+pub fn tts_model_type(path: &Path) -> Option<String> {
     let bytes = std::fs::read(path.join("config.json")).ok()?;
     let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
     value.get("model_type")?.as_str().map(str::to_owned)
@@ -1778,6 +1816,78 @@ mod tests {
             "speaker",
         );
         refused(&|r| r.text = " ".into(), &two_seconds, "text bytes");
+    }
+
+    /// The four sampler fields reach Drama 3's request, out-of-range values
+    /// are refused as the caller's mistake, and no other engine accepts them.
+    #[test]
+    fn fish_drama3_sampler_fields_validate_and_reach_the_request() {
+        let speech = || AudioRequest {
+            task: AudioTask::TextToSpeech,
+            text: "[sighs] Fine. If we miss it, it's on you.".into(),
+            ..Default::default()
+        };
+        // Unset: the recipe, so a seed keeps its codes.
+        let plain = speech();
+        let unset = fish_drama3_request(&plain, &[]).unwrap();
+        assert_eq!(
+            unset.sampling,
+            crate::fish_drama3::Drama3Sampling::default()
+        );
+
+        let set = AudioRequest {
+            temperature: Some(0.9),
+            top_p: Some(0.8),
+            top_k: Some(12),
+            max_frames: Some(300),
+            ..speech()
+        };
+        assert!(validate_request(FISH_DRAMA3_FAMILY, &set, &[]).is_ok());
+        let mapped = fish_drama3_request(&set, &[]).unwrap();
+        assert_eq!(
+            mapped.sampling,
+            crate::fish_drama3::Drama3Sampling {
+                temperature: Some(0.9),
+                top_p: Some(0.8),
+                top_k: Some(12),
+                max_frames: Some(300),
+            }
+        );
+
+        let refused = |mutate: &dyn Fn(&mut AudioRequest), needle: &str| {
+            let mut r = speech();
+            mutate(&mut r);
+            let err = validate_request(FISH_DRAMA3_FAMILY, &r, &[]).unwrap_err();
+            assert!(err.contains(needle), "{err:?} lacks {needle:?}");
+        };
+        refused(&|r| r.temperature = Some(-1.0), "temperature");
+        refused(&|r| r.top_p = Some(0.0), "top_p");
+        refused(&|r| r.top_k = Some(0), "top_k");
+        refused(&|r| r.max_frames = Some(0), "max_frames");
+        refused(&|r| r.max_frames = Some(1025), "max_frames");
+
+        // Every other engine refuses them, even a clone request that is valid
+        // without them.
+        for field in [
+            |r: &mut AudioRequest| r.temperature = Some(0.7),
+            |r: &mut AudioRequest| r.top_p = Some(0.7),
+            |r: &mut AudioRequest| r.top_k = Some(30),
+            |r: &mut AudioRequest| r.max_frames = Some(100),
+        ] {
+            let mut r = clone_request();
+            assert!(validate_request(MEGATTS3_FAMILY, &r, &vec![0.1f32; 32_000]).is_ok());
+            field(&mut r);
+            let err = validate_request(MEGATTS3_FAMILY, &r, &vec![0.1f32; 32_000]).unwrap_err();
+            assert!(err.contains("Drama 3"), "{err:?}");
+            let mut kokoro = AudioRequest {
+                task: AudioTask::TextToSpeech,
+                text: "Hello, world!".into(),
+                ..Default::default()
+            };
+            assert!(validate_request("kokoro", &kokoro, &[]).is_ok());
+            field(&mut kokoro);
+            assert!(validate_request("kokoro", &kokoro, &[]).is_err());
+        }
     }
 
     #[test]

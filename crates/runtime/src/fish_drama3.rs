@@ -168,12 +168,55 @@ pub fn open_drama(
 const FIRST_PIECE_FRAMES: usize = 4;
 const PIECE_FRAMES: usize = 7;
 
+/// Caller overrides of the sampler. `None` keeps the reference recipe
+/// (`SamplingParams::REFERENCE`, 1024 frames).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Drama3Sampling {
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    pub top_k: Option<usize>,
+    /// An upper bound on one chunk's frames. The text-scaled cap still applies
+    /// beneath it, so this can shorten a chunk and never lengthen it.
+    pub max_frames: Option<usize>,
+}
+
+impl Drama3Sampling {
+    /// The generation options these overrides give, or why they are refused.
+    pub fn options(
+        &self,
+        seed: u64,
+    ) -> std::result::Result<audio::tts::fish_drama3::generate::GenerateOptions, String> {
+        use audio::tts::fish_drama3::generate::GenerateOptions;
+        use audio::tts::fish_drama3::sampling::{SamplingParams, DEFAULT_MAX_FRAMES};
+        let reference = SamplingParams::REFERENCE;
+        let sampling = SamplingParams {
+            temperature: self.temperature.unwrap_or(reference.temperature),
+            top_k: self.top_k.unwrap_or(reference.top_k),
+            top_p: self.top_p.unwrap_or(reference.top_p),
+        };
+        sampling.validate().map_err(|e| e.to_string())?;
+        let max_frames = self.max_frames.unwrap_or(DEFAULT_MAX_FRAMES);
+        if !(1..=DEFAULT_MAX_FRAMES).contains(&max_frames) {
+            return Err(format!(
+                "max_frames {max_frames} is outside 1 through {DEFAULT_MAX_FRAMES}"
+            ));
+        }
+        Ok(GenerateOptions {
+            sampling,
+            max_frames,
+            seed,
+            ..GenerateOptions::default()
+        })
+    }
+}
+
 /// One synthesis request.
 pub struct Drama3Request<'a> {
     pub text: &'a str,
     /// Mono reference audio, its sample rate and its transcript, for cloning.
     pub reference: Option<(&'a [f32], u32, &'a str)>,
     pub seed: u64,
+    pub sampling: Drama3Sampling,
 }
 
 /// Drama 3 on the headless Metal trunk: the portable model, the trunk and the
@@ -276,14 +319,12 @@ impl FishDrama3Runner {
         stop: &(dyn Fn() -> bool + Sync),
         mut emit: impl FnMut(Vec<f32>) -> bool + Send,
     ) -> std::result::Result<usize, String> {
-        use audio::tts::fish_drama3::generate::{ChunkStop, Flow, FrameEvent, GenerateOptions};
+        use audio::tts::fish_drama3::generate::{ChunkStop, Flow, FrameEvent};
+        // Refused before the reference is encoded, which costs seconds.
+        let options = request.sampling.options(request.seed)?;
         let references = match request.reference {
             Some((samples, rate, transcript)) => vec![self.reference(samples, rate, transcript)?],
             None => Vec::new(),
-        };
-        let options = GenerateOptions {
-            seed: request.seed,
-            ..GenerateOptions::default()
         };
         // The codec decodes on its own thread while generation runs here, and
         // its samples are handed to `emit` between frames and after the last.
@@ -368,5 +409,103 @@ impl Delivery {
                 self.stopped = true;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use audio::tts::fish_drama3::generate::{GenerateOptions, TextCap};
+    use audio::tts::fish_drama3::sampling::{SamplingParams, DEFAULT_MAX_FRAMES};
+
+    /// No overrides is the options every earlier run used, so unset request
+    /// fields cannot change a seed's codes.
+    #[test]
+    fn no_overrides_keep_the_reference_options() {
+        let got = Drama3Sampling::default().options(7).unwrap();
+        let want = GenerateOptions::default();
+        assert_eq!(got.sampling, SamplingParams::REFERENCE);
+        assert_eq!(got.max_frames, DEFAULT_MAX_FRAMES);
+        assert_eq!(got.max_frames, want.max_frames);
+        assert_eq!(got.seed, 7);
+        assert_eq!(got.text_cap, Some(TextCap::MEASURED));
+        assert_eq!(got.overlap_tower_tail, want.overlap_tower_tail);
+    }
+
+    #[test]
+    fn each_override_lands_in_its_own_field() {
+        let got = Drama3Sampling {
+            temperature: Some(0.9),
+            top_p: Some(0.8),
+            top_k: Some(12),
+            max_frames: Some(300),
+        }
+        .options(0)
+        .unwrap();
+        assert_eq!(got.sampling.temperature, 0.9);
+        assert_eq!(got.sampling.top_p, 0.8);
+        assert_eq!(got.sampling.top_k, 12);
+        assert_eq!(got.max_frames, 300);
+        // One override leaves the others on the recipe.
+        let only_k = Drama3Sampling {
+            top_k: Some(5),
+            ..Default::default()
+        }
+        .options(0)
+        .unwrap();
+        assert_eq!(only_k.sampling.top_k, 5);
+        assert_eq!(
+            only_k.sampling.temperature,
+            SamplingParams::REFERENCE.temperature
+        );
+        assert_eq!(only_k.sampling.top_p, SamplingParams::REFERENCE.top_p);
+        assert_eq!(only_k.max_frames, DEFAULT_MAX_FRAMES);
+    }
+
+    #[test]
+    fn settings_the_sampler_cannot_use_are_refused() {
+        let refused = |s: Drama3Sampling| s.options(0).is_err();
+        let none = Drama3Sampling::default();
+        assert!(refused(Drama3Sampling {
+            temperature: Some(f32::NAN),
+            ..none
+        }));
+        assert!(refused(Drama3Sampling {
+            temperature: Some(-0.1),
+            ..none
+        }));
+        assert!(refused(Drama3Sampling {
+            top_p: Some(0.0),
+            ..none
+        }));
+        assert!(refused(Drama3Sampling {
+            top_p: Some(1.5),
+            ..none
+        }));
+        assert!(refused(Drama3Sampling {
+            top_k: Some(0),
+            ..none
+        }));
+        assert!(refused(Drama3Sampling {
+            max_frames: Some(0),
+            ..none
+        }));
+        assert!(refused(Drama3Sampling {
+            max_frames: Some(DEFAULT_MAX_FRAMES + 1),
+            ..none
+        }));
+        // The edges of the allowed ranges stay allowed.
+        let edges = Drama3Sampling {
+            temperature: Some(0.0),
+            top_p: Some(1.0),
+            top_k: Some(1),
+            max_frames: Some(1),
+        };
+        assert!(edges.options(0).is_ok());
+        let top = Drama3Sampling {
+            max_frames: Some(DEFAULT_MAX_FRAMES),
+            ..none
+        };
+        assert!(top.options(0).is_ok());
     }
 }
