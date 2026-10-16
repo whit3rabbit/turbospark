@@ -22,6 +22,15 @@ use crate::real_forward_utils::entry;
 /// BF16 bit pattern for 1.0.
 const BF16_ONE: u16 = 0x3F80;
 
+/// What the pilot probe writes: the next layer's post-attention norm of THIS
+/// layer's residual, and the router logits it produces.
+pub(crate) struct PilotBuffers {
+    /// BF16 `[hidden]`.
+    pub(crate) x: gpu::MetalBuffer,
+    /// F32 `[num_experts]`.
+    pub(crate) logits: gpu::MetalBuffer,
+}
+
 /// Per-open Qwen decode state: the recurrent GDN buffers plus every piece
 /// of scratch the per-token flow writes.
 pub(crate) struct RealQwenState {
@@ -56,6 +65,10 @@ pub(crate) struct RealQwenState {
     /// and the selection reduces to softmax-over-the-selected.
     pub(crate) per_expert_ones: Vec<f32>,
     pub(crate) router_logits_f32: gpu::MetalBuffer,
+    /// Scratch for the one-layer-ahead router probe (`TURBOSPARK_PILOT_PROBE`).
+    /// `None` unless the env var was set at open, so a normal run allocates
+    /// and dispatches nothing for it.
+    pub(crate) pilot: Option<PilotBuffers>,
 
     /// `[2 * num_heads * full_head_dim]`: q_proj's packed query/gate rows.
     pub(crate) q_packed: gpu::MetalBuffer,
@@ -325,6 +338,13 @@ impl RealQwenState {
             )?),
             None => None,
         };
+        let pilot =
+            (num_experts > 0 && std::env::var_os("TURBOSPARK_PILOT_PROBE").is_some()).then(|| {
+                PilotBuffers {
+                    x: context.new_output_buffer((hidden.max(1) * 2) as u64),
+                    logits: context.new_output_buffer((num_experts * 4) as u64),
+                }
+            });
         let halfs = |n: usize| context.new_output_buffer((n.max(1) * 2) as u64);
         Ok(Self {
             gdn: gpu::GdnStateManager::new(context.device(), arch),
@@ -344,6 +364,7 @@ impl RealQwenState {
             // token the last token's routing. Decode uses row 0.
             router_logits_f32: context
                 .new_output_buffer((num_experts.max(1) * MAX_PREFILL_BATCH * 4) as u64),
+            pilot,
             q_packed: halfs(2 * q_dim),
             attn_gate: halfs(q_dim),
             gdn_qkv_raw: halfs(qkv_dim),

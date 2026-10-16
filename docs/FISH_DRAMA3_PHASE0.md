@@ -550,18 +550,95 @@ The replay is deterministic, so host load does not touch it. Hit rate:
 - Frame routing is diffuse. Half the table per layer (128 slots) still hits
   only 81%.
 
+**Router lookahead, measured.** `TURBOSPARK_PILOT_PROBE` now runs in the
+`QwenGdnMoe` sequential decode path. Layer L's post-attention residual goes
+through layer L+1's own `post_attention_layernorm` and router, and the guess is
+filed beside the real selection. Qwen's router norm has a weight, so unlike
+Gemma the probe owes its own norm encode. It is off by default and allocates
+and dispatches nothing when off. The prompt rows run chunked prefill, which has
+no probe, so they carry no guess and `--skip 52` drops them. One seed-0 clip
+(52 prompt rows, 224 frames), `scripts/pilot_ceiling.py --skip 52`. The recall
+is deterministic, so host load does not touch it.
+
+- `TURBOSPARK_PILOT_PROBE=self` aims the probe at its own layer. Recall reads
+  100.0% on all 40 layers, as it must. Two mutations of the layer bookkeeping
+  fail it. Filing the guess one row off reads 3.2% (random is 3.1%). Forcing
+  the next-layer target reads 54.3% (it is the real probe). The same two
+  mutations fail the `router_hist` unit tests.
+- The WAV is byte-identical with the probe off, on, and `self`, and equal to
+  the pre-change build's.
+
+Recall of the guess, as the share of the real top-8 named by the first k picks:
+
+| k | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Recall | 11.5% | 21.6% | 30.0% | 37.0% | 42.7% | 47.2% | 51.0% | 54.3% |
+| Pick in the real top-8 | 92% | 86% | 80% | 74% | 68% | 63% | 58% | 54% |
+
+- The head of the ranking is good and the tail is not. The first pick is right
+  92% of the time. All eight are right 54%. Gemma's full-width recall was 70.6%
+  at a hit rate of 85%.
+- Depth helps a little. Layers 1 to 9 read 55%, 10 to 19 read 46%, 20 to 29
+  read 53%, 30 to 39 read 63%. The deep layers are the ones with the most SSD
+  reads, so the SSD part is not predicted worse than the rest. First-touch
+  misses are named 45% of the time at full width against 50% for evictions.
+
+Priced at 16 slots, replaying the trace through the LFU cache with the guess
+installed ahead of each pass. A prefetch takes a slot, so a wrong guess evicts
+something. The plain sweep in the script ignores that. The last two columns do
+not.
+
+| k | Misses named | Reads per hit | Demand misses left | Bytes vs baseline | Hidden, ceiling |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 9.6% | 1.13 | 91.3% | 1.02x | 1.6 ms |
+| 2 | 18.5% | 1.24 | 83.6% | 1.07x | 3.0 ms |
+| 4 | 32.3% | 1.52 | 72.4% | 1.21x | 5.0 ms |
+| 8 | 49.6% | 2.24 | 60.9% | 1.70x | 7.0 ms |
+
+- Hidden is 18 ms times the demand misses removed. At 32 slots it is the same
+  within 1 point (k=4 leaves 73.2% at 1.21x, k=8 leaves 60.4% at 1.69x).
+- The SSD part, about 8 of the 18 ms, hides at the same fraction. That is
+  0.7 ms at k=1, 2.2 ms at k=4 and 3.1 ms at k=8. This assumes the SSD misses
+  are as predictable as the rest. The cold and deep-layer numbers above say
+  they are, but the trace cannot say which reads hit the SSD.
+- Full width does lose, as it did on Gemma. Eight wide reads 1.70x the bytes to
+  remove 39% of the demand misses. It names half the misses and the wrong
+  guesses push out experts the pass needed. The model also checks itself: a
+  perfect guess at full width leaves 0.0% demand at 1.00x.
+- Narrow does not lose. Nothing here is below 1.00x bytes, but k=2 to 4 adds
+  7 to 21% bytes for 3 to 5 ms. On Gemma the best case was 0.66 ms of 24 ms,
+  or 2.7%. Here k=4 is 5.0 of 42 ms, or 12%.
+
+Those hidden figures are ceilings. They assume the prefetch overlaps fully and
+costs no bandwidth. That is the weak point. The expert read is mostly a page
+cache memcpy at 16 to 19 GiB/s, and the GPU competes for the same memory. The
+window is also short. A layer takes about 1.1 ms of the 43 ms step, and a k=4
+prefetch is about 7 MiB. Not measured: the contention, a prefetch thread and
+its sync, and the cost of a wrong eviction in the real cache (the model assumes
+the LFU victim). The probe's own dispatch cost is a small part of this. Its
+cb1 GPU time reads 13.4 to 18.5 ms with the probe off and 14.1 to 14.9 ms with
+it on, and best wall is 39.9 ms off against 40.0 ms on. The host ran at load 4 to 6, so
+that bounds it under about 1 ms and no tighter.
+
+**Recommendation: build, narrow, and gate it on an A/B.** The Gemma verdict
+does not carry over. A 5 ms ceiling at 21% extra bytes is worth one prototype
+and full width is not. Build a prefetch at k=2 to 4 behind
+an env gate. Reads for layer L+1 run on a worker while layer L computes. Each
+layer owns its streamer and slot buffers, so the worker and the main thread do
+not share a cache. Keep it only if an interleaved A/B on a calm host shows 2 ms
+per frame or more at 16 slots. If it shows less, delete it and close the lever
+here too. Free memory sets the SSD share, so run the A/B at the host's real
+free memory and again after a purge. This was one clip and one sentence.
+
 **What is left.**
 
 - More slots do not help (table above). Mapped residency is refused past the
   wired budget.
-- Router lookahead prefetch is the one open lever. `docs/EXPERT_ROUTING.md`
-  closed it on Gemma at an 85% hit rate, and named what would reopen it: a
-  high miss rate and a disk-bound read. Frames have the first (64% misses at
-  16 slots) and a small part of the second (12% of the bytes). The read is
-  still mostly a memcpy that competes with the GPU for bandwidth.
-- Nobody has measured a lookahead predictor's recall on this trunk. The probe
-  (`TURBOSPARK_PILOT_PROBE`) is wired only into Gemma. The next step is that
-  probe for `QwenGdnMoe`, before any prefetcher.
+- The prefetcher above, if the recommendation is taken. Its stop rule is
+  written there.
+- The probe works on Qwen 3.6 text decode as well. Text hits 63% at 16 slots
+  with 11 ms of expert I/O, so its recall and price have not been taken and
+  are not covered by this clip.
 - Free memory sets the SSD share. That is read from the residency probe and
   was not varied here, so these timings should move with the host.
 

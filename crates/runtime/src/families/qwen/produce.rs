@@ -396,9 +396,31 @@ impl RealForwardRunner {
                 0,
             )?;
 
+            // Env-gated and absent from a normal run: `pilot_target` is `None`
+            // unless `TURBOSPARK_PILOT_PROBE` built a histogram with storage.
+            let pilot_target = router_hist.as_ref().and_then(|h| h.pilot_target(layer));
+            if let Some(target) = pilot_target {
+                moe::encode_qwen_pilot_probe(
+                    context,
+                    &pass,
+                    weights,
+                    index,
+                    qwen,
+                    (&scratch.x, 0),
+                    target,
+                    hidden,
+                    num_experts,
+                )?;
+            }
+
             let t_wait = Instant::now();
             phases.cb1_gpu_nanos += (pass.commit().wait_with_gpu_time() * 1e9) as u64;
             phases.gpu_wait_nanos += t_wait.elapsed().as_nanos() as u64;
+            if pilot_target.is_some() {
+                if let Some(hist) = router_hist.as_mut() {
+                    moe::record_qwen_pilot(qwen, hist, layer, num_experts, top_k);
+                }
+            }
 
             pass = context.begin_pass_labeled("routed cb");
             // Token 0, bank 0, nothing protected: the sequential decode path,

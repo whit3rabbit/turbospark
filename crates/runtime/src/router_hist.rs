@@ -22,6 +22,10 @@
 //! routed-forward count for that layer, so it lines up with token position in
 //! a one-token-at-a-time prefill probe.
 
+/// Filler for a pass whose guess was never made. Not an expert id, so the
+/// analysis (`scripts/pilot_ceiling.py`) drops any group that carries it.
+pub(crate) const PILOT_NONE: u32 = u32::MAX;
+
 pub(crate) struct RouterHistogram {
     path: std::path::PathBuf,
     /// `counts[layer][expert]`; non-MoE layers never record and stay
@@ -130,6 +134,41 @@ impl RouterHistogram {
     pub(crate) fn record_prediction(&mut self, layer: usize, predicted: &[usize]) {
         if let Some(pred) = self.pred.as_mut() {
             pred[layer].extend(predicted.iter().map(|&e| e as u32));
+        }
+    }
+
+    /// The layer a probe running in `layer` predicts for: `layer` itself in
+    /// self-test, `layer + 1` otherwise, and `None` when that is past the last
+    /// layer or the probe is off.
+    ///
+    /// The encoder (which router to run) and the recorder (which row to file
+    /// the guess under) BOTH ask this, so the two cannot disagree. Their
+    /// disagreement is the off-by-one that read 7.7% against a 6.25% random
+    /// baseline on Gemma (see [`Self::pilot_self_test`]).
+    pub(crate) fn pilot_target(&self, layer: usize) -> Option<usize> {
+        let target = layer + self.pilot_offset();
+        (self.pilot_enabled() && target < self.counts.len()).then_some(target)
+    }
+
+    /// Files the guess a probe made in `layer` under the layer it is about
+    /// ([`Self::pilot_target`]). The sequential-decode form: unlike
+    /// [`Self::record_prediction`], the caller names the layer it is IN and
+    /// cannot pick the wrong row.
+    ///
+    /// Pads the target's row with [`PILOT_NONE`] up to the passes it has
+    /// already routed, so entry `p` of `pred` stays pass `p` of `trace` when
+    /// some passes ran a path with no probe (chunked prefill). Without it the
+    /// first decode guess lands in row 0 and every later pairing is shifted.
+    pub(crate) fn record_pilot(&mut self, layer: usize, predicted: &[usize]) {
+        let Some(target) = self.pilot_target(layer) else {
+            return;
+        };
+        let routed = self.passes[target] as usize * self.top_k;
+        if let Some(pred) = self.pred.as_mut() {
+            if pred[target].len() < routed {
+                pred[target].resize(routed, PILOT_NONE);
+            }
+            pred[target].extend(predicted.iter().map(|&e| e as u32));
         }
     }
 
@@ -306,6 +345,68 @@ mod tests {
             "{\"num_layers\":2,\"num_experts\":3,\"top_k\":2,\
              \"counts\":[[1,0,1],[1,1,0]],\"trace\":[[2,0],[1,0]],\
              \"pred\":[[],[1,2]]}"
+        );
+        std::mem::forget(hist);
+    }
+
+    fn probe_fixture(layers: usize, self_test: bool) -> RouterHistogram {
+        let mut hist = fixture_with(true, true);
+        hist.counts = vec![vec![0; 8]; layers];
+        hist.passes = vec![0; layers];
+        hist.trace = Some(vec![Vec::new(); layers]);
+        hist.pred = Some(vec![Vec::new(); layers]);
+        hist.pilot_self_test = self_test;
+        hist.top_k = 2;
+        hist
+    }
+
+    #[test]
+    fn the_probe_targets_the_next_layer_and_self_test_targets_its_own() {
+        let real = probe_fixture(3, false);
+        assert_eq!(real.pilot_target(0), Some(1));
+        assert_eq!(real.pilot_target(1), Some(2));
+        // The last layer predicts nothing.
+        assert_eq!(real.pilot_target(2), None);
+        let own = probe_fixture(3, true);
+        assert_eq!(own.pilot_target(0), Some(0));
+        assert_eq!(own.pilot_target(2), Some(2));
+        let off = fixture_with(true, false);
+        assert_eq!(off.pilot_target(0), None);
+        std::mem::forget((real, own, off));
+    }
+
+    #[test]
+    fn a_guess_is_filed_under_the_layer_it_is_about() {
+        let mut real = probe_fixture(3, false);
+        real.record_pilot(0, &[5, 6]);
+        real.record(1, &[5, 7]);
+        let pred = real.pred.as_ref().unwrap();
+        assert_eq!(pred[0], Vec::<u32>::new());
+        assert_eq!(pred[1], vec![5, 6]);
+        assert!(pred[2].is_empty());
+        // Self-test files the guess under the layer it ran in.
+        let mut own = probe_fixture(3, true);
+        own.record_pilot(1, &[5, 6]);
+        assert_eq!(own.pred.as_ref().unwrap()[1], vec![5, 6]);
+        assert!(own.pred.as_ref().unwrap()[2].is_empty());
+        std::mem::forget((real, own));
+    }
+
+    #[test]
+    fn passes_with_no_probe_keep_later_guesses_on_their_own_pass() {
+        // Two prefill passes route layer 1 with no probe, then decode guesses.
+        let mut hist = probe_fixture(2, false);
+        hist.record(0, &[1, 2]);
+        hist.record(1, &[1, 2]);
+        hist.record(0, &[3, 4]);
+        hist.record(1, &[3, 4]);
+        hist.record(0, &[5, 6]);
+        hist.record_pilot(0, &[5, 7]);
+        hist.record(1, &[5, 6]);
+        // Pass 2's guess must sit at pass 2, behind two PILOT_NONE groups.
+        assert_eq!(
+            hist.pred.as_ref().unwrap()[1],
+            vec![PILOT_NONE, PILOT_NONE, PILOT_NONE, PILOT_NONE, 5, 7]
         );
         std::mem::forget(hist);
     }

@@ -74,6 +74,36 @@ class ExpertCache:
             return (0, 0, self.slot_last_use[slot])
         return (1, self.use_count[expert], self.slot_last_use[slot])
 
+    def prefetch(self, experts):
+        """Install `experts` ahead of a plan. Returns how many were read.
+
+        A prefetched expert takes a slot, so it evicts something: the victim
+        is the one `plan` would pick (lowest LFU key), skipping slots that
+        already hold a member of this prefetch. Use counts do NOT move, so a
+        speculative read never counts as use. This is the pollution the plain
+        sweep ignores: a wrong guess can push out an expert the pass needed.
+        """
+        want = set(experts)
+        resident = {e for e in self.slot_expert if e is not None}
+        reads = 0
+        for expert in experts:
+            if expert in resident:
+                continue
+            victims = sorted(
+                (s for s in range(self.slot_count) if self.slot_expert[s] not in want),
+                key=self._eviction_key,
+            )
+            if not victims:
+                break
+            slot = victims[0]
+            if self.slot_expert[slot] is not None:
+                resident.discard(self.slot_expert[slot])
+            self.slot_expert[slot] = expert
+            self.slot_last_use[slot] = self.use_clock
+            resident.add(expert)
+            reads += 1
+        return reads
+
     def plan(self, experts):
         """Returns (hits, misses) as lists of expert ids, and commits."""
         clock = self.use_clock + 1
@@ -133,6 +163,16 @@ def passes(trace_row, top_k):
     ]
 
 
+# `router_hist.rs` PILOT_NONE: filler for a pass that ran no probe (chunked
+# prefill). Not an expert id, so a group carrying it is "no guess".
+PILOT_NONE = 0xFFFFFFFF
+
+
+def guess_rows(flat, top_k):
+    """`passes`, with a no-guess group replaced by None so indices stay aligned."""
+    return [None if PILOT_NONE in g else g for g in passes(flat, top_k)]
+
+
 def analyse(capture, slot_counts, skip):
     top_k = capture["top_k"]
     num_experts = capture["num_experts"]
@@ -185,18 +225,32 @@ def analyse(capture, slot_counts, skip):
     predicted = {}
     if pred:
         for layer, _ in routed:
-            row = passes(pred[layer], top_k) if pred[layer] else []
-            if row:
+            row = guess_rows(pred[layer], top_k) if pred[layer] else []
+            if any(g is not None for g in row):
                 predicted[layer] = row
         if predicted:
             hits = total = 0
             for layer, rows in predicted.items():
                 actual = dict(routed)[layer]
                 for p in range(max(skip, 0), min(npass, len(rows))):
+                    if rows[p] is None:
+                        continue
                     hits += len(set(rows[p]).intersection(actual[p]))
                     total += top_k
             print(f"PILOT top-k recall     {100.0 * hits / total:.1f}%"
                   f"   (stale-state router, {len(predicted)} layers)")
+            print("PILOT recall by width (share of the ACTUAL top-k named by the "
+                  "first k of the guess):")
+            for k in range(1, top_k + 1):
+                khits = ktotal = 0
+                for layer, rows in predicted.items():
+                    actual = dict(routed)[layer]
+                    for p in range(max(skip, 0), min(npass, len(rows))):
+                        if rows[p] is None:
+                            continue
+                        khits += len(set(rows[p][:k]).intersection(actual[p]))
+                        ktotal += top_k
+                print(f"  k={k}  {100.0 * khits / ktotal:5.1f}%")
             print()
 
     for slots in slot_counts:
@@ -227,7 +281,8 @@ def analyse(capture, slot_counts, skip):
                     miss_total += len(misses)
                     previous = set(layer_passes[p - 1]) if p > 0 else set()
                     guess = None
-                    if layer in predicted and p < len(predicted[layer]):
+                    if (layer in predicted and p < len(predicted[layer])
+                            and predicted[layer][p] is not None):
                         guess = set(predicted[layer][p])
                         pilot_miss_total += len(misses)
                         # What the prefetcher would actually have READ: its
@@ -280,17 +335,28 @@ def pilot_k_sweep(routed, predicted, num_experts, slots, npass, skip, top_k):
     latency; above it, it is buying overlap with bandwidth.
     """
     print(f"            PILOT_K sweep (prefetch only the top k of the guess):")
-    print(f"              k   coverage   read/hit   net bytes vs baseline")
+    print(f"              k   coverage   read/hit   net bytes vs baseline"
+          f"   | with eviction: demand left   bytes vs baseline")
     for k in range(1, top_k + 1):
         caches = {layer: ExpertCache(slots, num_experts) for layer, _ in routed}
+        # The same trace through a cache that DOES install the guess.
+        live = {layer: ExpertCache(slots, num_experts) for layer, _ in routed}
         covered = fetched = misses_seen = 0
+        live_reads = live_demand = 0
         for p in range(npass):
             for layer, layer_passes in routed:
                 group = layer_passes[p]
                 resident_before = {e for e in caches[layer].slot_expert if e is not None}
                 _, misses = caches[layer].plan(group)
-                if p < skip or layer not in predicted or p >= len(predicted[layer]):
+                usable = not (p < skip or layer not in predicted
+                              or p >= len(predicted[layer])
+                              or predicted[layer][p] is None)
+                if usable:
+                    live_reads += live[layer].prefetch(predicted[layer][p][:k])
+                _, live_misses = live[layer].plan(group)
+                if not usable:
                     continue
+                live_demand += len(live_misses)
                 guess = set(predicted[layer][p][:k])
                 misses_seen += len(misses)
                 fetched += len(guess - resident_before)
@@ -301,7 +367,9 @@ def pilot_k_sweep(routed, predicted, num_experts, slots, npass, skip, top_k):
         # guess did not name and which therefore still fault in on demand.
         total = fetched + (misses_seen - covered)
         print(f"              {k}   {100.0 * covered / misses_seen:6.1f}%   "
-              f"{fetched / max(covered, 1):7.2f}    {total / misses_seen:.2f}x")
+              f"{fetched / max(covered, 1):7.2f}    {total / misses_seen:.2f}x"
+              f"                 {100.0 * live_demand / misses_seen:6.1f}%"
+              f"                      {(live_reads + live_demand) / misses_seen:.2f}x")
 
 
 def parse_policy(spec):

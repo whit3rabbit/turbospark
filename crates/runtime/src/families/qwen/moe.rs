@@ -5,7 +5,7 @@ use std::time::Instant;
 use half::f16;
 use model_io::ResidentIndex;
 
-use crate::families::qwen::{layer_tensor, BatchedScratch, RealQwenState};
+use crate::families::qwen::{layer_tensor, BatchedScratch, RealQwenState, RMS_EPS};
 pub(crate) use crate::moe_prefill_pipeline::RoutedSlot;
 use crate::real_forward_dispatch::{
     encode_gemm_rows, encode_gemv_any, encode_moe_phase1_any, encode_moe_phase2_any,
@@ -14,7 +14,7 @@ use crate::real_forward_dispatch::{
 use crate::real_forward_init::MappedResidency;
 use crate::real_forward_layout::RoutedLayerLayout;
 use crate::real_forward_types::{DecodeScratch, PhaseCounters, RealForwardError};
-use crate::real_forward_utils::{entry, f16_slice_to_le_bytes};
+use crate::real_forward_utils::{entry, f16_slice_to_le_bytes, norm_view};
 
 /// Where one token's routed half reads its inputs. Every row offset is
 /// `RoutedSlot::token`'s.
@@ -330,6 +330,27 @@ pub(crate) fn encode_qwen_layer_moe(
     ))
 }
 
+/// The router weight's three resident offsets, after the shape check both the
+/// production router and the pilot probe make of it. Shared so the probe
+/// cannot accept a tensor the production encoder refuses.
+fn qwen_router_offsets(
+    index: &ResidentIndex,
+    layer: usize,
+    hidden: usize,
+    num_experts: usize,
+) -> Result<(u64, u64, u64), RealForwardError> {
+    let router_name = layer_tensor(layer, "mlp.gate.weight");
+    let router = entry(index, &router_name)?;
+    if router.dtype != 5 || router.size_bytes as usize != num_experts * hidden {
+        return Err(RealForwardError::Unsupported(format!(
+            "{router_name}: expected INT8 (dtype 5) {num_experts}x{hidden}, got dtype {} \
+             with {} packed bytes",
+            router.dtype, router.size_bytes
+        )));
+    }
+    Ok((router.file_offset, router.scale_offset, router.bias_offset))
+}
+
 /// The INT8 router GEMV for one token: `moe_x`'s row `x_row` in, f32
 /// logits out at `router_logits_f32`'s row `logits_row`. Shared by the
 /// sequential flow (row 0, row 0) and the MoE chunked driver (row t, row t),
@@ -348,30 +369,13 @@ pub(crate) fn encode_qwen_router(
     logits_row: u64,
 ) -> Result<(), RealForwardError> {
     let base = index.header.index_size;
-    let router_name = layer_tensor(layer, "mlp.gate.weight");
-    let router = entry(index, &router_name)?;
-    if router.dtype != 5 || router.size_bytes as usize != num_experts * hidden {
-        return Err(RealForwardError::Unsupported(format!(
-            "{router_name}: expected INT8 (dtype 5) {num_experts}x{hidden}, got dtype {} \
-             with {} packed bytes",
-            router.dtype, router.size_bytes
-        )));
-    }
+    let (w, scale, bias) = qwen_router_offsets(index, layer, hidden, num_experts)?;
     gpu::encode_router_gemv_gemma4(
         context,
         pass,
-        (
-            weights.buffer(),
-            weights.gpu_offset(router.file_offset - base),
-        ),
-        (
-            weights.buffer(),
-            weights.gpu_offset(router.scale_offset - base),
-        ),
-        (
-            weights.buffer(),
-            weights.gpu_offset(router.bias_offset - base),
-        ),
+        (weights.buffer(), weights.gpu_offset(w - base)),
+        (weights.buffer(), weights.gpu_offset(scale - base)),
+        (weights.buffer(), weights.gpu_offset(bias - base)),
         (&qwen.moe_x, x_row),
         (&qwen.router_ones, 0),
         (&qwen.router_logits_f32, logits_row),
@@ -379,6 +383,88 @@ pub(crate) fn encode_qwen_router(
         hidden as u32,
     )
     .map_err(RealForwardError::Gpu)
+}
+
+/// One-layer-ahead router probe (`TURBOSPARK_PILOT_PROBE`), the Qwen twin of
+/// `gemma4/attn.rs`'s `encode_gemma4_pilot_probe`.
+///
+/// Runs layer L+1's router on layer L's post-attention residual `x`, which is
+/// colibri's PILOT predictor. Unlike Gemma, Qwen's router input is a norm WITH
+/// a weight (`post_attention_layernorm`, one per layer), so layer L's
+/// `moe_x` is not what layer L+1's router would see. This encodes the target
+/// layer's own norm of `x` into `pilot.x` first, then its router GEMV.
+///
+/// `target` is `RouterHistogram::pilot_target(layer)`, the same value the
+/// recorder files the guess under. In self-test it equals `layer`, so the
+/// norm and router are the production ones and the guess MUST reproduce the
+/// production selection.
+///
+/// Encoded into the SAME pass as the production router: the caller reads both
+/// results after that pass commits and waits.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_qwen_pilot_probe(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    weights: &gpu::ResidentGpuWeights,
+    index: &ResidentIndex,
+    qwen: &RealQwenState,
+    x: (&gpu::MetalBuffer, u64),
+    target: usize,
+    hidden: usize,
+    num_experts: usize,
+) -> Result<(), RealForwardError> {
+    let Some(pilot) = qwen.pilot.as_ref() else {
+        return Ok(());
+    };
+    let base = index.header.index_size;
+    let (w, scale, bias) = qwen_router_offsets(index, target, hidden, num_experts)?;
+    let norm = norm_view(
+        weights,
+        index,
+        &layer_tensor(target, "post_attention_layernorm.weight"),
+        hidden,
+    )?;
+    gpu::encode_rms_norm_bf16w(
+        context,
+        pass,
+        x,
+        norm,
+        (&pilot.x, 0),
+        hidden as u32,
+        RMS_EPS,
+    )
+    .map_err(RealForwardError::Gpu)?;
+    gpu::encode_router_gemv_gemma4(
+        context,
+        pass,
+        (weights.buffer(), weights.gpu_offset(w - base)),
+        (weights.buffer(), weights.gpu_offset(scale - base)),
+        (weights.buffer(), weights.gpu_offset(bias - base)),
+        (&pilot.x, 0),
+        (&qwen.router_ones, 0),
+        (&pilot.logits, 0),
+        num_experts as u32,
+        hidden as u32,
+    )
+    .map_err(RealForwardError::Gpu)
+}
+
+/// Reads the guess [`encode_qwen_pilot_probe`] wrote and files it. Must run
+/// after the pass that encoded it has retired and BEFORE the next layer's
+/// probe overwrites the single `pilot.logits` buffer.
+pub(crate) fn record_qwen_pilot(
+    qwen: &RealQwenState,
+    hist: &mut crate::router_hist::RouterHistogram,
+    layer: usize,
+    num_experts: usize,
+    top_k: usize,
+) {
+    let Some(pilot) = qwen.pilot.as_ref() else {
+        return;
+    };
+    let logits = gpu::read_f32_buffer_at(&pilot.logits, 0, num_experts);
+    let (guess, _) = router_topk_gemma4(&logits, top_k, &qwen.per_expert_ones);
+    hist.record_pilot(layer, &guess);
 }
 
 /// Keep identical shared arithmetic in the inline and overlapping arms.
