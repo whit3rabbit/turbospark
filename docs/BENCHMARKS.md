@@ -230,6 +230,48 @@ run-to-run variation.
 | Bonsai-27B, MLX 1-bit | 3.9 GB | -- | not measured | -- | ~18.3 | no, dense |
 | Qwen3.8-Flash-Next REAP-288, MLX INT4 (`qwen4_exp`) | 68 GB | **2,048** | 2,503 - 2,509 MiB | 3,000 | 6.870 - 7.530 | yes, 288 experts (top-10) |
 | Swift-1.5 Qwen3.8-Flash-Next, GGUF IQ2_XS (`qwen4exp-swift-iq2-xs`) | 64.3 GiB (69 GB install budget) | **2,048** | 1,633.7 - 1,633.8 MiB (frozen pass: 1,472) | 2,000 | 12.23 - 12.77 | yes, 512 experts (top-10) |
+| Fish Audio Drama 3 (`fish_drama3`), 4-bit routed experts, headless 35B-A3B trunk + Metal tower and codec | 22 GB | 8,192 trunk rows | 6,106 / 6,296 MiB (plain request only: 5,391 / 5,554) | 6,411 | -- (audio; see below) | yes, 256 experts (top-8) |
+
+**The Drama 3 row is a different workload from every other row**
+(`fish_drama3_memory_oracle`, `crates/bench/tests/`). It runs requests, not
+the text protocol, so it has no decode tok/s column: timings live in
+[`FISH_DRAMA3_PHASE0.md`](FISH_DRAMA3_PHASE0.md). Two fresh-process readings,
+2026-10-16, Apple M4 Max 36 GB, AC, release, 16 streamed expert slots,
+`~/models/fish-drama3-4bit`, seed 0. Each reading is the session peak over a
+discarded warm-up and a measured run of a 618-byte text (three chunks, 44.3 s
+of audio, so the system-block snapshot is restored twice), then a
+cloned-voice request, then warm replays. The host was NOT quiet (load average
+20 to 50 during the first reading, 20 to 23 during the second); footprint does
+not depend on that, and no timing is quoted. The ceiling is the first
+reading plus 5 percent, and the second reading landed 115 MiB under it, so
+a third reading is owed before this row is trusted as tight.
+
+| Phase | Reading 1 | Reading 2 |
+| --- | ---: | ---: |
+| Open (16 slots, 8,192 rows) | 4,271 MiB | 4,391 MiB |
+| After warm-up and measured run (44.3 s) | 5,391 MiB | 5,554 MiB |
+| After the cloned request (74.5 s of audio) | 6,106 MiB | 6,296 MiB |
+| Warm replay growth (limit 8 MiB, up to 4 rounds) | +14.7, +3.4 MiB | +21.9, +0.7 MiB |
+
+- **The cloned request sets the peak.** Its reference is the model's own
+  first 6 seconds, so it measures memory and says nothing about voice
+  quality. In both readings its first chunk ran to the 1,024-frame cap
+  without EOS (74.5 s of audio), which grows the next chunk's history; that is
+  the cap's worst case, not the typical request. The plain request peaks
+  about 700 MiB lower.
+- **Replay growth passes on its second round** in both readings (the first
+  round still warms expert slots), the same rule `oracle_common` uses.
+- **`fish_drama3::open_bytes` over-estimates by 2.1 to 2.3 GiB** against the
+  session peak (8,435 MiB estimated, 6,106 / 6,296 measured), and by about
+  3 GiB against the plain-request peak. The two 64 MiB recurrent-state
+  snapshots it budgets are not the gap; `phys_footprint` does not count the
+  mapped resident file or the codec weights it budgets whole. Admission is
+  therefore conservative by that much. This is a footprint reading on a
+  36 GB machine, not a minimum-RAM claim.
+- The leak gate (`fish_drama3_leak_gate`) holds the trunk context at 34
+  Metal buffers across 5,000 trunk steps and three warm multi-chunk
+  requests. The tower allocates only at load, and the codec allocates per
+  call by design, so neither has a flat count to assert.
 
 **Read the `Streams?` column before comparing any two rows**, because the
 two groups are measuring different things and only one of them is a result

@@ -10,6 +10,13 @@ use std::thread::JoinHandle;
 
 pub const MAX_PCM_CHUNK: usize = 32_000;
 pub const MAX_INPUT_SAMPLES: usize = 16_000 * 1800;
+mod stream;
+pub use stream::AudioStreamSession;
+
+/// Parakeet Unified's encoder is a streaming-only export: a batch job would
+/// have nothing to window it, so it is refused rather than run wrong.
+pub const UNIFIED_IS_STREAMING_ONLY: &str =
+    "Parakeet Unified is a streaming speech model; open it with ts_audio_stream_open";
 pub const MAX_OUTPUT_SAMPLES: usize = 44_100 * 2 * 360;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -721,10 +728,12 @@ impl Engine {
             AudioTask::SpeechToText => {
                 // Core ML exports ship no `model_type`, so recognize them by
                 // layout before reading config.json.
-                if crate::coreml::detect_layout(path)
-                    == Some(crate::coreml::CoreMlLayout::ParakeetTdt)
-                {
-                    let opts = crate::coreml::ParakeetCoreMlOptions::from_env()?;
+                let layout = crate::coreml::detect_layout(path);
+                if layout == Some(crate::coreml::CoreMlLayout::ParakeetUnified) {
+                    return Err(UNIFIED_IS_STREAMING_ONLY.into());
+                }
+                if layout == Some(crate::coreml::CoreMlLayout::ParakeetTdt) {
+                    let opts = crate::coreml::ParakeetCoreMlOptions::for_model(path)?;
                     return crate::coreml::ParakeetCoreMl::open(path, &opts)
                         .map(|m| Self::ParakeetCoreMl(Box::new(m)));
                 }
@@ -776,19 +785,24 @@ impl Engine {
                 )
                 .map(|m| Self::FishDrama3(std::cell::RefCell::new(Box::new(m))))
             }
-            // Portable f32 only: the bidirectional backbone has no Metal
-            // offload, so CPU execution requires the explicit portable
-            // opt-in (the catalog reports the family as not runnable for
-            // the same reason).
+            // Declared family first: OmniVoice tries Metal, falling back to
+            // CPU only when allow_portable is true.
             AudioTask::TextToSpeech
-                if allow_portable && tts_model_type(path).as_deref() == Some(OMNIVOICE_FAMILY) =>
+                if tts_model_type(path).as_deref() == Some(OMNIVOICE_FAMILY) =>
             {
-                crate::omnivoice::OmniVoiceRunner::open(path)
-                    .map(|m| Self::OmniVoice(std::cell::RefCell::new(Box::new(m))))
-                    .map_err(|e| e)
-            }
-            AudioTask::TextToSpeech if tts_model_type(path).as_deref() == Some(OMNIVOICE_FAMILY) => {
-                Err("OmniVoice has no Metal runtime; portable CPU execution requires explicit opt-in".into())
+                let mut failure = String::new();
+                for &device in omnivoice_devices(allow_portable) {
+                    match crate::omnivoice::OmniVoiceRunner::open(path, device) {
+                        Ok(m) => {
+                            if !failure.is_empty() {
+                                eprintln!("OmniVoice runs on the CPU because Metal failed to open: {failure}");
+                            }
+                            return Ok(Self::OmniVoice(std::cell::RefCell::new(Box::new(m))));
+                        }
+                        Err(e) => failure = e,
+                    }
+                }
+                Err(failure)
             }
             AudioTask::TextToSpeech if allow_portable => {
                 audio::tts::kokoro::KokoroSynthesizer::open(path)
@@ -1378,6 +1392,18 @@ fn megatts3_devices(allow_portable: bool) -> &'static [crate::megatts3::Device] 
     }
 }
 
+/// Devices OmniVoice tries, in order. Metal is the default for accelerated
+/// voice cloning. The CPU path runs only as the portable opt-in's fallback
+/// when the Metal device cannot open, so it is never chosen silently.
+fn omnivoice_devices(allow_portable: bool) -> &'static [crate::omnivoice::Device] {
+    use crate::omnivoice::Device;
+    if allow_portable {
+        &[Device::Metal, Device::Cpu]
+    } else {
+        &[Device::Metal]
+    }
+}
+
 /// `model_type` of a model directory's root `config.json`, if it declares one.
 pub fn tts_model_type(path: &Path) -> Option<String> {
     let bytes = std::fs::read(path.join("config.json")).ok()?;
@@ -1398,6 +1424,9 @@ fn estimate_open_bytes(path: &Path, task: AudioTask) -> Result<u64, String> {
     {
         return crate::omnivoice::open_bytes(path);
     }
+    if crate::coreml::detect_layout(path).is_some() {
+        return coreml_open_bytes(path, task);
+    }
     fn weights(path: &Path) -> Result<u64, String> {
         let mut total = 0u64;
         for entry in std::fs::read_dir(path).map_err(|e| e.to_string())? {
@@ -1414,6 +1443,33 @@ fn estimate_open_bytes(path: &Path, task: AudioTask) -> Result<u64, String> {
     Ok(weights(path)?
         .saturating_mul(multiplier)
         .saturating_add(512 << 20))
+}
+/// Core ML exports keep their weights in `<program>.mlmodelc/weights/weight.bin`,
+/// which the safetensors scan above never sees, so every export was admitted
+/// at the 512 MiB floor. Same estimate as the catalog's `parakeet_tdt` row:
+/// three times compiled weights, 30-minute PCM for speech, 256 MiB reserve.
+fn coreml_open_bytes(path: &Path, task: AudioTask) -> Result<u64, String> {
+    let pcm = if task == AudioTask::SpeechToText {
+        (MAX_INPUT_SAMPLES as u64).saturating_mul(4)
+    } else {
+        0
+    };
+    Ok(coreml_weight_bytes(path)?
+        .saturating_mul(3)
+        .saturating_add(pcm)
+        .saturating_add(256 << 20))
+}
+fn coreml_weight_bytes(path: &Path) -> Result<u64, String> {
+    let mut total = 0u64;
+    for entry in std::fs::read_dir(path).map_err(|e| e.to_string())? {
+        let program = entry.map_err(|e| e.to_string())?.path();
+        if program.extension().is_some_and(|ext| ext == "mlmodelc") {
+            if let Ok(meta) = std::fs::metadata(program.join("weights").join("weight.bin")) {
+                total = total.saturating_add(meta.len());
+            }
+        }
+    }
+    Ok(total)
 }
 /// MegaTTS3 keeps each component in its own subdirectory, loaded as f32. The
 /// G2P checkpoint is bf16 on disk and doubles when widened. Measured resident
@@ -1592,8 +1648,9 @@ mod tests {
             eprintln!("skipping: TURBOSPARK_TEST_OMNIVOICE_REF is unset");
             return;
         };
-        let mut runner = crate::omnivoice::OmniVoiceRunner::open(Path::new(&dir))
-            .expect("real checkpoint opens");
+        let mut runner =
+            crate::omnivoice::OmniVoiceRunner::open(Path::new(&dir), crate::omnivoice::Device::Cpu)
+                .expect("real checkpoint opens");
         let (shape, samples) = read_npy_f32(&Path::new(&reference_dir).join("reference_24k.npy"));
         assert_eq!(shape.len(), 1);
         let codes = runner.encode_reference(&samples, 24_000).expect("encode");
@@ -1619,8 +1676,11 @@ mod tests {
             return;
         };
         let started = std::time::Instant::now();
-        let mut runner = crate::omnivoice::OmniVoiceRunner::open(Path::new(&dir))
-            .expect("real checkpoint opens");
+        let mut runner = crate::omnivoice::OmniVoiceRunner::open(
+            Path::new(&dir),
+            crate::omnivoice::Device::Metal,
+        )
+        .expect("real checkpoint opens");
         let open_seconds = started.elapsed().as_secs_f64();
         eprintln!(
             "footprint after open: {:?}",
@@ -1964,6 +2024,39 @@ mod tests {
         assert_eq!((c.seed, c.reference_rate), (9, 16_000));
     }
     #[test]
+    fn coreml_admission_counts_compiled_weights() {
+        let dir = std::env::temp_dir().join(format!(
+            "ts-native-coreml-estimate-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        for program in crate::coreml::parakeet::REQUIRED_DIRS {
+            std::fs::create_dir_all(dir.join(program).join("weights")).unwrap();
+        }
+        std::fs::write(dir.join(crate::coreml::parakeet::VOCAB_FILE), b"{}").unwrap();
+        std::fs::write(
+            dir.join("Encoder.mlmodelc/weights/weight.bin"),
+            vec![0u8; 1000],
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("Decoder.mlmodelc/weights/weight.bin"),
+            vec![0u8; 100],
+        )
+        .unwrap();
+        // A stray safetensors file is not what a Core ML export loads.
+        std::fs::write(dir.join("extra.safetensors"), vec![0u8; 7]).unwrap();
+        let pcm = (MAX_INPUT_SAMPLES as u64) * 4;
+        assert_eq!(
+            estimate_open_bytes(&dir, AudioTask::SpeechToText).unwrap(),
+            3 * 1100 + pcm + (256 << 20)
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+    #[test]
     fn tts_family_sniff_and_megatts3_admission_estimate() {
         let dir = std::env::temp_dir().join(format!("ts-megatts3-sniff-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -2012,6 +2105,12 @@ mod tests {
         use crate::megatts3::Device;
         assert_eq!(megatts3_devices(false), [Device::Metal]);
         assert_eq!(megatts3_devices(true), [Device::Metal, Device::Cpu]);
+    }
+    #[test]
+    fn omnivoice_opens_on_metal_and_falls_back_to_the_cpu_only_when_allowed() {
+        use crate::omnivoice::Device;
+        assert_eq!(omnivoice_devices(false), [Device::Metal]);
+        assert_eq!(omnivoice_devices(true), [Device::Metal, Device::Cpu]);
     }
     #[test]
     fn output_buffers_are_bounded_and_backpressure_keeps_producer_alive() {

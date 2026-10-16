@@ -152,6 +152,13 @@ impl HiddenTrunk {
         self.runner.phase_counters()
     }
 
+    /// Metal buffers this trunk's context has allocated so far. A step or a
+    /// prefill allocates none once the pipelines are built and the expert
+    /// slots exist, so a leak gate asserts this stays flat across steps.
+    pub fn gpu_buffer_allocations(&self) -> u64 {
+        self.runner.gpu_buffer_allocations()
+    }
+
     /// The trunk's own embedding row for `token`, widened to f32.
     ///
     /// Read from the mapped resident table rather than a second copy. Only a

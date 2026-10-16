@@ -103,15 +103,13 @@ characters, `speed` 0.5 to 2.0. Voice cloning fields:
   transcript prepended to the script) and `instruction` (a delivery cue in
   the style prefix, at most 512 bytes).
 
-OmniVoice runs on the CPU only and about 23 times slower than realtime: one
-short sentence takes around a minute, and it reports progress one diffusion
-step at a time. OmniVoice is a portable-CPU family: the server's standalone
-contract opens it, while the app keeps it behind the Advanced portable
-opt-in. MegaTTS3 also runs on the CPU for now: a short sentence takes tens of
-seconds and a long reference makes every step slower. With `stream=true`
-audio arrives one text chunk at a time. A client that disconnects cancels the
-job at the next diffusion step. With `--tts-model ~/models/megatts3` the
-model id is `megatts3`:
+OmniVoice runs on Metal by default on macOS (with an opt-in portable CPU
+fallback), reporting progress one diffusion step at a time. The app makes
+OmniVoice available directly on the Voice Cloning page. MegaTTS3 also runs on
+Metal by default with portable CPU fallback. With `stream=true` audio arrives
+one text chunk at a time. A client that disconnects cancels the job at the next
+diffusion step. With `--tts-model ~/models/megatts3` the model id is
+`megatts3`:
 
 
 ```sh

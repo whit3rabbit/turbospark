@@ -1,4 +1,5 @@
-//! Parakeet TDT on Core ML (FluidInference `parakeet-redux-coreml`).
+//! Parakeet TDT on Core ML (FluidInference `parakeet-redux-coreml` and
+//! `parakeet-ultra-coreml`, which share the v3 component contract).
 //!
 //! The export splits the model into four compiled programs:
 //!
@@ -21,7 +22,7 @@ use audio::stt::nemo::{
     merge_longest_common_subsequence, merge_longest_contiguous, sentences_to_result,
     tokens_to_sentences, AlignedResult, AlignedToken,
 };
-use audio::stt::parakeet::is_special_piece;
+use audio::stt::parakeet::{adjust_sentencepiece_digit_spacing, is_special_piece};
 use turbospark_coreml::{ComputeUnits, CoreMlModel, FeatureKind, LoadOptions, Tensor};
 
 pub const SAMPLE_RATE: u32 = 16_000;
@@ -48,12 +49,27 @@ const MAX_SYMBOLS: usize = 10;
 const OVERLAP_SAMPLES: usize = 2 * SAMPLE_RATE as usize;
 
 const ENCODER_UNITS_ENV: &str = "TURBOSPARK_PARAKEET_COREML_ENCODER_UNITS";
+/// Lets a subprocess probe place an unverified encoder on the GPU. Nothing
+/// else should set it: a bad placement aborts the process, it does not fail.
+const ALLOW_UNVERIFIED_GPU_ENV: &str = "TURBOSPARK_COREML_ALLOW_QUANTIZED_GPU";
+
+/// Encoder weight formats measured on the GPU here. Core ML hands int8
+/// encoders to MPSGraph under GPU placement, whose MLIR pass fails and
+/// aborts the process (FluidAudio `StreamingUnifiedAsrManager`, which
+/// coerces int8 to CPU and Neural Engine for the same reason). Anything not
+/// listed runs on the Neural Engine, which compiles slowly but never aborts.
+const GPU_VERIFIED_WEIGHT_FORMATS: [&str; 1] = [
+    // parakeet-redux-coreml: docs/COREML.md bench, GPU encoder 150x.
+    "ternary_lut2_int8_blockwise_fp16_scale_g128",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ParakeetCoreMlOptions {
-    /// The encoder is the only large program. GPU is the default: the
-    /// Neural Engine is what the export was tuned for, but its first load
-    /// compiles for several minutes and cannot be cancelled.
+    /// The encoder is the only large program. [`Self::for_model`] picks it
+    /// from the declared weight format: the GPU where measured (Redux's
+    /// Neural Engine first load compiles for several minutes and cannot be
+    /// cancelled), the Neural Engine otherwise, because an int8 encoder on
+    /// the GPU can abort the process.
     pub encoder_units: ComputeUnits,
     /// Decoder and joint run once per decode step on tiny inputs, where the
     /// CPU avoids per-call accelerator dispatch.
@@ -70,11 +86,17 @@ impl Default for ParakeetCoreMlOptions {
 }
 
 impl ParakeetCoreMlOptions {
-    /// Defaults, with the encoder placement overridable through
+    /// Options for the export in `dir`: the encoder placement follows its
+    /// declared weight format ([`default_encoder_units`]), then
     /// `TURBOSPARK_PARAKEET_COREML_ENCODER_UNITS` (`cpu`, `cpu_gpu`,
-    /// `cpu_ane`, `all`). An unknown value is an error, not a silent default.
-    pub fn from_env() -> Result<Self, String> {
-        let mut o = Self::default();
+    /// `cpu_ane`, `all`) overrides it. An unknown value is an error, not a
+    /// silent default; an unsafe GPU choice is refused at open.
+    pub fn for_model(dir: &Path) -> Result<Self, String> {
+        let format = encoder_weight_format(dir)?;
+        let mut o = Self {
+            encoder_units: default_encoder_units(format.as_deref()),
+            ..Self::default()
+        };
         if let Ok(v) = std::env::var(ENCODER_UNITS_ENV) {
             o.encoder_units = ComputeUnits::parse(v.trim()).ok_or_else(|| {
                 format!("{ENCODER_UNITS_ENV}={v} is not one of cpu, cpu_gpu, cpu_ane, all")
@@ -82,6 +104,51 @@ impl ParakeetCoreMlOptions {
         }
         Ok(o)
     }
+}
+
+/// `encoders["Encoder.mlmodelc"].weight_format` from the export's
+/// `config.json`, or `None` when the export does not declare one.
+pub fn encoder_weight_format(dir: &Path) -> Result<Option<String>, String> {
+    let Some(config) = read_config(dir)? else {
+        return Ok(None);
+    };
+    Ok(config
+        .get("encoders")
+        .and_then(|e| e.get(REQUIRED_DIRS[1]))
+        .and_then(|e| e.get("weight_format"))
+        .and_then(|f| f.as_str())
+        .map(str::to_owned))
+}
+
+/// Encoder placement for a declared weight format. The GPU is the default
+/// only where it was measured: it loads in about a second, while the Neural
+/// Engine's first compile takes minutes. An export with no declared format
+/// keeps the GPU default it had before formats were read.
+pub fn default_encoder_units(format: Option<&str>) -> ComputeUnits {
+    match format {
+        None => ComputeUnits::CpuAndGpu,
+        Some(f) if GPU_VERIFIED_WEIGHT_FORMATS.contains(&f) => ComputeUnits::CpuAndGpu,
+        Some(_) => ComputeUnits::CpuAndNeuralEngine,
+    }
+}
+
+/// Refuses a GPU-capable placement for a declared format that was never
+/// measured there, unless `allow_unverified` (the subprocess probe flag).
+fn check_encoder_units(
+    format: Option<&str>,
+    units: ComputeUnits,
+    allow_unverified: bool,
+) -> Result<(), String> {
+    let gpu = matches!(units, ComputeUnits::CpuAndGpu | ComputeUnits::All);
+    let verified = format.is_none_or(|f| GPU_VERIFIED_WEIGHT_FORMATS.contains(&f));
+    if !gpu || verified || allow_unverified {
+        return Ok(());
+    }
+    Err(format!(
+        "the Core ML Parakeet encoder ({}) is not verified on the GPU, where Core ML can abort the \
+         process; use cpu_ane or cpu",
+        format.unwrap_or_default()
+    ))
 }
 
 /// Shapes read from the loaded programs and checked against each other.
@@ -229,13 +296,31 @@ fn read_vocabulary(path: &Path) -> Result<Vec<String>, String> {
         .ok_or_else(|| format!("{}: ids are not contiguous", path.display()))
 }
 
-fn check_contract(dir: &Path) -> Result<(), String> {
+/// The export's `config.json`, or `None` when it has none. FluidInference's
+/// is a few hundred bytes; the cap keeps a foreign file from being read
+/// whole.
+fn read_config(dir: &Path) -> Result<Option<serde_json::Value>, String> {
+    use std::io::Read;
     let path = dir.join("config.json");
-    let Ok(bytes) = std::fs::read(&path) else {
+    let Ok(file) = std::fs::File::open(&path) else {
+        return Ok(None);
+    };
+    let mut bytes = Vec::new();
+    file.take((1 << 20) + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    if bytes.len() > 1 << 20 {
+        return Err(format!("{}: exceeds the 1 MiB limit", path.display()));
+    }
+    serde_json::from_slice(&bytes)
+        .map(Some)
+        .map_err(|e| format!("{}: {e}", path.display()))
+}
+
+fn check_contract(dir: &Path) -> Result<(), String> {
+    let Some(v) = read_config(dir)? else {
         return Ok(());
     };
-    let v: serde_json::Value =
-        serde_json::from_slice(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
     match v.get("contract").and_then(|c| c.as_str()) {
         None => Ok(()),
         Some(KNOWN_CONTRACT) => Ok(()),
@@ -248,13 +333,16 @@ fn check_contract(dir: &Path) -> Result<(), String> {
 impl ParakeetCoreMl {
     pub fn open(dir: &Path, opts: &ParakeetCoreMlOptions) -> Result<Self, String> {
         let (major, _, _) = turbospark_coreml::os_version();
+        // Ultra declares macOS 14, but only macOS 15 has run any export here.
         if major < 15 {
-            return Err(
-                "Parakeet Redux on Core ML requires macOS 15 or newer (its encoder targets iOS 18)"
-                    .into(),
-            );
+            return Err("Parakeet on Core ML requires macOS 15 or newer".into());
         }
         check_contract(dir)?;
+        check_encoder_units(
+            encoder_weight_format(dir)?.as_deref(),
+            opts.encoder_units,
+            std::env::var(ALLOW_UNVERIFIED_GPU_ENV).as_deref() == Ok("1"),
+        )?;
         let vocabulary = read_vocabulary(&dir.join(VOCAB_FILE))?;
         let cache = super::cache_root(dir);
         let load = |name: &str, units: ComputeUnits| {
@@ -364,14 +452,18 @@ impl ParakeetCoreMl {
         let emitted = tdt_greedy_redux(&stepper, frames, blank, &DURATIONS, MAX_SYMBOLS)?;
         let frame_seconds = FRAME_SAMPLES as f32 / SAMPLE_RATE as f32;
         let offset = start_sample as f32 / SAMPLE_RATE as f32;
+        let mut accumulated_text = String::new();
         Ok(emitted
             .into_iter()
             .filter_map(|e| {
                 let piece = &self.vocabulary[e.token];
                 (!is_special_piece(piece)).then(|| {
+                    let mut text = piece.replace('\u{2581}', " ");
+                    adjust_sentencepiece_digit_spacing(&mut text, &accumulated_text);
+                    accumulated_text.push_str(&text);
                     AlignedToken::new(
                         e.token as i32,
-                        piece.replace('\u{2581}', " "),
+                        text,
                         offset + e.frame as f32 * frame_seconds,
                         e.duration as f32 * frame_seconds,
                     )
@@ -721,6 +813,67 @@ mod tests {
                 ("world.".to_string(), 0.16, 0.32)
             ]
         );
+    }
+
+    #[test]
+    fn encoder_units_follow_weight_format() {
+        use ComputeUnits::{All, CpuAndGpu, CpuAndNeuralEngine, CpuOnly};
+        let redux = GPU_VERIFIED_WEIGHT_FORMATS[0];
+        let ultra = "int8_linear_per_channel";
+        assert_eq!(default_encoder_units(None), CpuAndGpu);
+        assert_eq!(default_encoder_units(Some(redux)), CpuAndGpu);
+        assert_eq!(default_encoder_units(Some(ultra)), CpuAndNeuralEngine);
+        assert_eq!(
+            default_encoder_units(Some("palettized_lut6")),
+            CpuAndNeuralEngine
+        );
+        // GPU placement of an unmeasured format is refused, not attempted:
+        // the failure mode is a process abort.
+        for units in [CpuAndGpu, All] {
+            assert!(check_encoder_units(Some(ultra), units, false).is_err());
+            assert!(check_encoder_units(Some(ultra), units, true).is_ok());
+            assert!(check_encoder_units(Some(redux), units, false).is_ok());
+            assert!(check_encoder_units(None, units, false).is_ok());
+        }
+        for units in [CpuAndNeuralEngine, CpuOnly] {
+            assert!(check_encoder_units(Some(ultra), units, false).is_ok());
+        }
+    }
+
+    #[test]
+    fn weight_format_is_read_from_config() {
+        let d = std::env::temp_dir().join(format!(
+            "ts-parakeet-format-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&d).unwrap();
+        assert_eq!(encoder_weight_format(&d).unwrap(), None);
+        std::fs::write(
+            d.join("config.json"),
+            r#"{"contract":"parakeet-tdt-0.6b-v3-coreml","encoders":{"Encoder.mlmodelc":{"weight_format":"int8_linear_per_channel"}}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            encoder_weight_format(&d).unwrap().as_deref(),
+            Some("int8_linear_per_channel")
+        );
+        let opts = ParakeetCoreMlOptions::for_model(&d).unwrap();
+        if std::env::var_os(ENCODER_UNITS_ENV).is_none() {
+            assert_eq!(opts.encoder_units, ComputeUnits::CpuAndNeuralEngine);
+        }
+        std::fs::write(
+            d.join("config.json"),
+            r#"{"contract":"parakeet-tdt-0.6b-v3-coreml"}"#,
+        )
+        .unwrap();
+        assert_eq!(encoder_weight_format(&d).unwrap(), None);
+        std::fs::write(d.join("config.json"), "{").unwrap();
+        assert!(encoder_weight_format(&d).is_err());
+        std::fs::remove_dir_all(&d).unwrap();
     }
 
     #[test]

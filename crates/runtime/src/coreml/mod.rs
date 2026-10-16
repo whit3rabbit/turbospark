@@ -7,11 +7,15 @@ use std::path::Path;
 pub mod embedding_gemma2;
 pub mod embedding_gemma2_media;
 pub mod parakeet;
+pub mod parakeet_unified;
+pub mod parakeet_unified_stream;
 pub mod unlimited_ocr;
 
 pub use embedding_gemma2::{EmbeddingGemma2CoreMl, EmbeddingGemma2Options};
 pub use embedding_gemma2_media::AudioWindowEmbedding;
 pub use parakeet::{ParakeetCoreMl, ParakeetCoreMlOptions};
+pub use parakeet_unified::{ParakeetUnifiedCoreMl, UnifiedOptions};
+pub use parakeet_unified_stream::{StreamUpdate, StreamWord, UnifiedStream};
 pub use unlimited_ocr::{OcrEvent, OcrOptions, OcrPage, OcrResult, OcrStats, UnlimitedOcrCoreMl};
 
 /// Which Core ML pipeline a model directory holds.
@@ -20,6 +24,10 @@ pub enum CoreMlLayout {
     /// FluidInference Parakeet TDT export: Preprocessor, Encoder, Decoder,
     /// JointDecisionv3 plus `parakeet_vocab.json`.
     ParakeetTdt,
+    /// FluidInference Parakeet Unified EN streaming export: decoder, joint
+    /// decision, `vocab.json`, `config.json` and one streaming encoder.
+    /// Streaming only, through `ts_audio_stream_*`; batch opens refuse it.
+    ParakeetUnified,
     /// FluidInference EmbeddingGemma 2 export: the multifunction text
     /// package, the bf16 token table, `tokenizer.json` and `config.json`
     /// (audio and vision packages optional).
@@ -30,6 +38,7 @@ impl CoreMlLayout {
     pub fn family(self) -> &'static str {
         match self {
             Self::ParakeetTdt => "parakeet_tdt",
+            Self::ParakeetUnified => "parakeet_unified",
             Self::EmbeddingGemma2 => "embeddinggemma2",
         }
     }
@@ -44,6 +53,16 @@ pub fn detect_layout(dir: &Path) -> Option<CoreMlLayout> {
         && dir.join(parakeet::VOCAB_FILE).is_file()
     {
         return Some(CoreMlLayout::ParakeetTdt);
+    }
+    if [parakeet_unified::DECODER, parakeet_unified::JOINT]
+        .iter()
+        .all(|d| dir.join(d).is_dir())
+        && [parakeet_unified::CONFIG, parakeet_unified::VOCAB]
+            .iter()
+            .all(|f| dir.join(f).is_file())
+        && !parakeet_unified::encoder_bundles(dir).is_empty()
+    {
+        return Some(CoreMlLayout::ParakeetUnified);
     }
     if dir.join(embedding_gemma2::TEXT_PACKAGE).is_dir()
         && [
@@ -87,6 +106,31 @@ mod tests {
         assert_eq!(detect_layout(&d), Some(CoreMlLayout::ParakeetTdt));
         std::fs::remove_dir_all(d.join("Decoder.mlmodelc")).unwrap();
         assert_eq!(detect_layout(&d), None, "decoder missing");
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn detects_parakeet_unified_only_with_every_part() {
+        let d = std::env::temp_dir().join(format!(
+            "ts-coreml-layout-unified-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        for sub in [parakeet_unified::DECODER, parakeet_unified::JOINT] {
+            std::fs::create_dir_all(d.join(sub)).unwrap();
+        }
+        for f in [parakeet_unified::CONFIG, parakeet_unified::VOCAB] {
+            std::fs::write(d.join(f), b"{}").unwrap();
+        }
+        assert_eq!(detect_layout(&d), None, "encoder missing");
+        std::fs::create_dir_all(d.join("parakeet_unified_encoder_streaming_70_7_7_int8.mlmodelc"))
+            .unwrap();
+        assert_eq!(detect_layout(&d), Some(CoreMlLayout::ParakeetUnified));
+        std::fs::remove_file(d.join(parakeet_unified::VOCAB)).unwrap();
+        assert_eq!(detect_layout(&d), None, "vocabulary missing");
         std::fs::remove_dir_all(&d).unwrap();
     }
 

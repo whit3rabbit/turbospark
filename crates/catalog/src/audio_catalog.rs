@@ -446,7 +446,16 @@ impl AudioCatalog {
                         .filter(|a| a.path.ends_with("/weights/weight.bin"))
                         .try_fold(0u64, |n, a| n.checked_add(a.size))
                         .ok_or("audio weight size overflow")?;
-                    (compiled.saturating_mul(3).saturating_add(16_000*1800*4).saturating_add(256<<20),"measured 488 MB peak footprint on one 2.8 s clip (GPU encoder, M4 Max); estimate: three times compiled weights, 30-minute PCM, and 256 MiB working reserve")
+                    (compiled.saturating_mul(3).saturating_add(16_000*1800*4).saturating_add(256<<20),"estimate: three times compiled weights, 30-minute PCM, and 256 MiB working reserve; Redux measured 488 MB peak footprint on one 2.8 s clip (GPU encoder, M4 Max)")
+                }
+                AudioTask::SpeechToText if family == "parakeet_unified" => {
+                    let compiled = row
+                        .assets
+                        .iter()
+                        .filter(|a| a.path.ends_with("/weights/weight.bin"))
+                        .try_fold(0u64, |n, a| n.checked_add(a.size))
+                        .ok_or("audio weight size overflow")?;
+                    (compiled.saturating_mul(3).saturating_add(256<<20),"estimate: three times compiled weights and 256 MiB working reserve; a live stream keeps about one 7 s window of audio")
                 }
                 AudioTask::SpeechToText => (weight_bytes.saturating_mul(2).saturating_add(16_000*1800*4).saturating_add(256<<20),"estimate: twice checkpoint weights, 30-minute PCM, and 256 MiB working reserve"),
                 AudioTask::TextToSpeech => (weight_bytes.saturating_mul(2).saturating_add(256<<20),"estimate: twice checkpoint weights and 256 MiB voice/working reserve"),
@@ -984,7 +993,7 @@ fn delete_managed_audio_path(
 
 /// Families whose generic catalog rows may run: a runtime adapter for them
 /// exists and was reviewed. Every other new row stays closed.
-const REVIEWED_ADAPTERS: &[&str] = &["megatts3", "omnivoice", "parakeet_tdt"];
+const REVIEWED_ADAPTERS: &[&str] = &["megatts3", "omnivoice", "parakeet_tdt", "parakeet_unified"];
 
 fn check_acknowledged(profile: &AudioProfile, acknowledged: &[String]) -> Result<(), String> {
     let missing: Vec<&str> = profile
@@ -1012,8 +1021,8 @@ fn profile_capabilities(family: &str) -> AudioCapabilities {
         // requires consent at the runtime boundary.
         return AudioCapabilities {
             languages: vec![
-                "en", "zh", "ja", "ko", "de", "fr", "es", "it", "pt", "ru", "ar", "hi", "nl",
-                "pl", "tr", "vi", "th", "id", "uk", "sv", "fa", "cs", "el", "he",
+                "en", "zh", "ja", "ko", "de", "fr", "es", "it", "pt", "ru", "ar", "hi", "nl", "pl",
+                "tr", "vi", "th", "id", "uk", "sv", "fa", "cs", "el", "he",
             ]
             .into_iter()
             .map(str::to_string)
@@ -1023,13 +1032,10 @@ fn profile_capabilities(family: &str) -> AudioCapabilities {
             supports_lyrics: false,
             operations: vec!["synthesize".into(), "voice_clone".into()],
             timing: None,
-            backend: "portable_cpu".into(),
+            backend: "metal".into(),
             cancellation: "diffusion_step".into(),
-            can_run: false,
-            unavailable_reason: Some(
-                "OmniVoice has no Metal runtime; portable CPU execution requires the experimental opt-in"
-                    .into(),
-            ),
+            can_run: true,
+            unavailable_reason: None,
         };
     }
     if family == "megatts3" {
@@ -1061,6 +1067,24 @@ fn profile_capabilities(family: &str) -> AudioCapabilities {
             timing: Some("token".into()),
             backend: "coreml".into(),
             cancellation: "window".into(),
+            can_run: os_ok,
+            unavailable_reason: (!os_ok)
+                .then(|| "Parakeet on Core ML requires macOS 15 or newer".into()),
+        };
+    }
+    if family == "parakeet_unified" {
+        // Live transcription only (ts_audio_stream_*): batch opens refuse
+        // it, so "transcribe" is deliberately absent. English only.
+        let os_ok = turbospark_coreml::os_version().0 >= 15;
+        return AudioCapabilities {
+            languages: vec![],
+            voices: vec![],
+            max_input_seconds: None,
+            supports_lyrics: false,
+            operations: vec!["stream_transcribe".into()],
+            timing: Some("token".into()),
+            backend: "coreml".into(),
+            cancellation: "chunk".into(),
             can_run: os_ok,
             unavailable_reason: (!os_ok)
                 .then(|| "Parakeet on Core ML requires macOS 15 or newer".into()),
@@ -1100,7 +1124,9 @@ fn unqualified_status(status: &str) -> String {
 }
 
 fn validate_managed_audio_record(store: &Store, row: &InstalledModel) -> Result<(), String> {
-    if row.effective_modality() != crate::ModelModality::Audio {
+    if row.modality != crate::ModelModality::Audio
+        || row.effective_modality() != crate::ModelModality::Audio
+    {
         return Err("legacy record is not an Audio model".into());
     }
     if row.alias.is_empty()
@@ -1968,7 +1994,7 @@ mod tests {
     #[test]
     fn initial_audio_profiles_have_exact_complete_pins_and_wire_metadata() {
         let catalog = AudioCatalog::embedded().unwrap();
-        assert_eq!(catalog.entries().count(), 12);
+        assert_eq!(catalog.entries().count(), 14);
         for (task, alias, repo, revision, rate, channels) in [
             (
                 AudioTask::TextToSpeech,
@@ -2026,6 +2052,22 @@ mod tests {
                 16000,
                 1,
             ),
+            (
+                AudioTask::SpeechToText,
+                "parakeet-ultra-coreml",
+                "FluidInference/parakeet-ultra-coreml",
+                "95eaa59a39d4394f047a4dc5cce480388a60d1b6",
+                16000,
+                1,
+            ),
+            (
+                AudioTask::SpeechToText,
+                "parakeet-unified-en-coreml",
+                "FluidInference/parakeet-unified-en-0.6b-coreml",
+                "d32e972dd4315f1dc3f6be28fb2aab0ab3e80358",
+                16000,
+                1,
+            ),
         ] {
             let profile = catalog.get(alias).unwrap();
             assert_eq!(profile.identity.task, task);
@@ -2064,13 +2106,44 @@ mod tests {
         }
         // The Core ML profile runs through the reviewed native adapter, and
         // its memory estimate counts compiled weights, not safetensors.
-        let parakeet = catalog.get("parakeet-redux-coreml").unwrap();
-        assert_eq!(parakeet.family, "parakeet_tdt");
-        assert_eq!(parakeet.capabilities.backend, "coreml");
-        assert_eq!(parakeet.readiness, AudioReadiness::ImplementedUnqualified);
-        assert!(parakeet.resident_memory_bytes > 3 * 200_000_000);
+        // Ultra shares Redux's component contract, so it is the same family
+        // and decode flow; only its int8 encoder is larger.
+        for (alias, encoder_bytes) in [
+            ("parakeet-redux-coreml", 182_389_312u64),
+            ("parakeet-ultra-coreml", 594_211_328),
+        ] {
+            let parakeet = catalog.get(alias).unwrap();
+            assert_eq!(parakeet.family, "parakeet_tdt");
+            assert_eq!(parakeet.capabilities.backend, "coreml");
+            assert_eq!(parakeet.readiness, AudioReadiness::ImplementedUnqualified);
+            assert!(parakeet.resident_memory_bytes > 3 * encoder_bytes);
+            assert_eq!(
+                parakeet.capabilities.can_run,
+                turbospark_coreml::os_version().0 >= 15
+            );
+            assert!(parakeet
+                .capabilities
+                .operations
+                .contains(&"transcribe".to_string()));
+        }
+        // The live model pins one streaming encoder, not the 11 GB repo, and
+        // is never offered as a batch transcriber.
+        let unified = catalog.get("parakeet-unified-en-coreml").unwrap();
+        assert_eq!(unified.family, "parakeet_unified");
+        assert_eq!(unified.capabilities.operations, ["stream_transcribe"]);
+        assert_eq!(unified.capabilities.languages, ["en"]);
+        assert!(unified.download_bytes < 700_000_000);
         assert_eq!(
-            parakeet.capabilities.can_run,
+            unified
+                .assets
+                .iter()
+                .filter(|a| a.path.ends_with(".mlmodelc/model.mil"))
+                .count(),
+            3
+        );
+        assert!(unified.resident_memory_bytes > 3 * 589_979_840);
+        assert_eq!(
+            unified.capabilities.can_run,
             turbospark_coreml::os_version().0 >= 15
         );
         let music = catalog.get("minimax-music3-4bit").unwrap();

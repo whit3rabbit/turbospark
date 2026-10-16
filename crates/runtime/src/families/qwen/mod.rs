@@ -18,6 +18,7 @@ mod moe_prefill_batched;
 mod mtp;
 mod mtp_dump;
 mod mtp_state;
+mod prefetch;
 mod prefill;
 mod prefill_layers;
 mod produce;

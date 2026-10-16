@@ -69,6 +69,9 @@ pub(crate) struct RealQwenState {
     /// `None` unless the env var was set at open, so a normal run allocates
     /// and dispatches nothing for it.
     pub(crate) pilot: Option<PilotBuffers>,
+    /// `TURBOSPARK_QWEN_PREFETCH=<k>`: read the next layer's guessed experts
+    /// early on a worker. An experiment (see `prefetch.rs`).
+    pub(crate) prefetch: Option<super::prefetch::Prefetcher>,
 
     /// `[2 * num_heads * full_head_dim]`: q_proj's packed query/gate rows.
     pub(crate) q_packed: gpu::MetalBuffer,
@@ -338,13 +341,21 @@ impl RealQwenState {
             )?),
             None => None,
         };
-        let pilot =
-            (num_experts > 0 && std::env::var_os("TURBOSPARK_PILOT_PROBE").is_some()).then(|| {
-                PilotBuffers {
-                    x: context.new_output_buffer((hidden.max(1) * 2) as u64),
-                    logits: context.new_output_buffer((num_experts * 4) as u64),
-                }
-            });
+        // The prefetch experiment reads the same one-layer-ahead guess the
+        // probe makes, so it needs the probe's buffers even with no
+        // histogram.
+        let prefetch = if num_experts > 0 {
+            super::prefetch::width_from_env(arch.top_k_experts.max(0) as usize)
+                .map(|k| super::prefetch::Prefetcher::spawn(k, arch.top_k_experts as usize))
+        } else {
+            None
+        };
+        let pilot = (num_experts > 0
+            && (prefetch.is_some() || std::env::var_os("TURBOSPARK_PILOT_PROBE").is_some()))
+        .then(|| PilotBuffers {
+            x: context.new_output_buffer((hidden.max(1) * 2) as u64),
+            logits: context.new_output_buffer((num_experts * 4) as u64),
+        });
         let halfs = |n: usize| context.new_output_buffer((n.max(1) * 2) as u64);
         Ok(Self {
             gdn: gpu::GdnStateManager::new(context.device(), arch),
@@ -365,6 +376,7 @@ impl RealQwenState {
             router_logits_f32: context
                 .new_output_buffer((num_experts.max(1) * MAX_PREFILL_BATCH * 4) as u64),
             pilot,
+            prefetch,
             q_packed: halfs(2 * q_dim),
             attn_gate: halfs(q_dim),
             gdn_qkv_raw: halfs(qkv_dim),

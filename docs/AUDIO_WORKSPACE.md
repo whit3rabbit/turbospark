@@ -60,8 +60,11 @@ Large text. Voice setup sits in the leading column:
 - **Engine cards.** MegaTTS3 shows Consent and Quality (Fast, Balanced, Best,
   or a custom step count). Qwen3-TTS shows the reference transcript and its
   sampling settings.
-- **Audio model.** The picker and install controls. It moves to the top until
-  a model is chosen, because the model decides which engine cards follow.
+- **Audio model.** The picker, status indicators, and install controls. When a
+  model is installed, the card offers explicit Load Model and Unload actions, a
+  Loaded indicator when resident in memory, and suppresses redundant download
+  controls. It moves to the top until a model is chosen, because the model
+  decides which engine cards follow.
 
 The main column holds the work:
 
@@ -100,11 +103,11 @@ modules and internal codecs are not presented as runnable jobs.
   establish task quality or sustained memory and performance bounds.
 - Kokoro's Metal runtime is absent. Its portable synthesis is available only as
   an explicit Advanced experiment.
-- OmniVoice runs the portable f32 session only through the same Advanced
-  experiment: plain synthesis and consent-gated voice cloning, 24 kHz, about 23
-  times slower than realtime on the CPU path. Its installs ship the Boson
-  community-licensed Higgs tokenizer, whose install terms the app shows before
-  download.
+- OmniVoice provides native Metal acceleration for synthesis and consent-gated
+  voice cloning at 24 kHz, with transparent portable CPU fallback. It is
+  available on the Voice Cloning page (`clonesNatively`) and callable through
+  the server audio API. Its installs ship the Boson community-licensed Higgs
+  tokenizer, whose install terms the app shows before download.
 - Qwen3-ASR supports local checkpoints in Advanced. Packed Metal is an explicit
   experimental option; its audio encoder still runs on the CPU.
 - Qwen3-TTS runs Base, CustomVoice, and VoiceDesign MLX checkpoints in Swift.
@@ -116,7 +119,8 @@ modules and internal codecs are not presented as runnable jobs.
 Downloads use the existing shared queue. Native text/audio and Swift MLX image
 execution share one heavyweight permit. An active operation retains the permit
 until cancellation has actually drained. The workspace keeps one audio model
-resident and unloads it after five idle minutes.
+resident and unloads it after five idle minutes, or immediately via the explicit
+Unload button or the window toolbar's eject menu.
 Qwen3-TTS releases its model at the end of each speech job.
 
 ## Storage and qualification

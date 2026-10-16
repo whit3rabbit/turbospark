@@ -449,6 +449,12 @@ pub(crate) fn encode_qwen_pilot_probe(
     .map_err(RealForwardError::Gpu)
 }
 
+/// The raw logits [`encode_qwen_pilot_probe`] wrote, for the prefetch worker.
+pub(crate) fn read_qwen_pilot_logits(qwen: &RealQwenState, num_experts: usize) -> Option<Vec<f32>> {
+    let pilot = qwen.pilot.as_ref()?;
+    Some(gpu::read_f32_buffer_at(&pilot.logits, 0, num_experts))
+}
+
 /// Reads the guess [`encode_qwen_pilot_probe`] wrote and files it. Must run
 /// after the pass that encoded it has retired and BEFORE the next layer's
 /// probe overwrites the single `pilot.logits` buffer.

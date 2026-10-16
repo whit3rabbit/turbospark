@@ -1,12 +1,129 @@
-//! OmniVoice on the native session: the portable pipeline opened from an
-//! installed directory, with the last reference voice's codes cached.
-//! The Rust engine is portable f32 CPU only (the backbone is a
-//! bidirectional 0.6B qwen3 run per diffusion step, twice under CFG);
-//! there is no Metal offload yet.
+//! OmniVoice voice cloning on the native audio session.
+//!
+//! With [`Device::Metal`], the bidirectional Qwen3 backbone's projections and
+//! non-causal GQA attention plus the 8 audio prediction heads run on
+//! `gpu::Music3Device` (tiled float GEMM, batched non-causal attention);
+//! remaining operations execute on the CPU. With [`Device::Cpu`], execution
+//! stays portable f32.
 
 use std::path::Path;
+use std::rc::Rc;
 
+use audio::backend::{
+    AttentionShape, ComputeBackend, ConvShape, DType, DeviceWeight, WeightData, WeightEncoding,
+};
 use audio::tts::omnivoice::pipeline::{GenerateParams, OmniVoicePipeline};
+use audio::{Result as AudioResult, SpeechError};
+use gpu::{Music3Device, Music3Encoding, Music3Weight};
+
+/// Where the backbone and audio heads run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Device {
+    Cpu,
+    Metal,
+}
+
+fn metal_error(e: gpu::GpuError) -> SpeechError {
+    SpeechError::Unsupported {
+        why: format!("OmniVoice Metal: {e}"),
+    }
+}
+
+/// The device: F32 weights only, tiled float GEMM, and batched non-causal
+/// attention.
+struct MetalBackend {
+    device: Music3Device,
+}
+
+struct MetalWeight {
+    inner: Music3Weight,
+}
+
+impl ComputeBackend for MetalBackend {
+    fn load_weight(&self, data: WeightData<'_>) -> AudioResult<Rc<dyn DeviceWeight>> {
+        if data.encoding != WeightEncoding::F32 || data.dtype != DType::F32 {
+            return Err(SpeechError::Unsupported {
+                why: "OmniVoice Metal loads its F32 checkpoint only".into(),
+            });
+        }
+        let inner = self
+            .device
+            .load_weight(data.shape, data.bytes, Music3Encoding::F32, &[], &[], &[])
+            .map_err(metal_error)?;
+        Ok(Rc::new(MetalWeight { inner }))
+    }
+
+    fn attention(
+        &self,
+        q: &[f32],
+        k: &[f32],
+        v: &[f32],
+        s: AttentionShape,
+        d: DType,
+    ) -> AudioResult<Vec<f32>> {
+        if d != DType::F32 || s.causal || s.kv_time_major || s.offset != 0 || s.queries != s.keys {
+            return Err(SpeechError::Unsupported {
+                why: "OmniVoice attention is non-causal F32 self-attention".into(),
+            });
+        }
+        self.device
+            .attention_typed(
+                q,
+                k,
+                v,
+                s.batch,
+                s.queries,
+                s.keys,
+                s.heads,
+                s.kv_heads,
+                s.dim,
+                false,
+                false,
+                0,
+                gpu::Music3DType::F32,
+            )
+            .map_err(metal_error)
+    }
+}
+
+impl DeviceWeight for MetalWeight {
+    fn linear(
+        &self,
+        x: &[f32],
+        bias: Option<&[f32]>,
+        rows: usize,
+        input: usize,
+        output: usize,
+        d: DType,
+    ) -> AudioResult<Vec<f32>> {
+        if d != DType::F32 {
+            return Err(SpeechError::Unsupported {
+                why: "OmniVoice linear must remain F32".into(),
+            });
+        }
+        self.inner
+            .linear_f32(x, bias, rows, input, output)
+            .map_err(metal_error)
+    }
+
+    fn embedding(&self, _ids: &[i32], _width: usize) -> AudioResult<Vec<f32>> {
+        Err(SpeechError::Unsupported {
+            why: "OmniVoice Metal has no embeddings".into(),
+        })
+    }
+
+    fn convolution(
+        &self,
+        _x: &[f32],
+        _bias: Option<&[f32]>,
+        _s: ConvShape,
+        _d: DType,
+    ) -> AudioResult<Vec<f32>> {
+        Err(SpeechError::Unsupported {
+            why: "OmniVoice Metal has no convolutions".into(),
+        })
+    }
+}
 
 /// Persisted family string of the OmniVoice engine (the checkpoint
 /// config's `model_type`).
@@ -36,10 +153,10 @@ pub struct OmniVoiceRequest<'a> {
     pub seed: u64,
 }
 
-/// OmniVoice on the CPU path, with the last reference voice's codes
-/// cached the way the MegaTTS3 runner caches its prompt.
+/// OmniVoice runner with reference voice caching and optional Metal acceleration.
 pub struct OmniVoiceRunner {
     pipeline: OmniVoicePipeline,
+    device: Device,
     /// Content hash of the last reference and its encoded token rows.
     voice: Option<(u64, Vec<Vec<i32>>)>,
 }
@@ -47,12 +164,23 @@ pub struct OmniVoiceRunner {
 impl OmniVoiceRunner {
     /// Opens an OmniVoice install (`config.json`, `mlx_manifest.json`,
     /// `model.safetensors`, `tokenizer.json`, `audio_tokenizer/`).
-    pub fn open(install: &Path) -> Result<Self, String> {
-        let pipeline = OmniVoicePipeline::open(install).map_err(|e| e.to_string())?;
+    pub fn open(install: &Path, device: Device) -> Result<Self, String> {
+        let mut pipeline = OmniVoicePipeline::open(install).map_err(|e| e.to_string())?;
+        if device == Device::Metal {
+            let dev = Music3Device::new().map_err(|e| e.to_string())?;
+            let backend = Rc::new(MetalBackend { device: dev });
+            pipeline.set_backend(Some(backend));
+        }
         Ok(OmniVoiceRunner {
             pipeline,
+            device,
             voice: None,
         })
+    }
+
+    /// The execution device selected at open.
+    pub fn device(&self) -> Device {
+        self.device
     }
 
     /// The checkpoint's output rate (24 kHz).

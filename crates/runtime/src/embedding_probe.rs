@@ -65,7 +65,7 @@ pub fn probe_embedding_dir(dir: &Path) -> EmbeddingDirProbe {
                 )
             };
         }
-        Some(layout @ CoreMlLayout::ParakeetTdt) => {
+        Some(layout @ (CoreMlLayout::ParakeetTdt | CoreMlLayout::ParakeetUnified)) => {
             return EmbeddingDirProbe::refuse(
                 Some(layout.family().into()),
                 Some("coreml"),

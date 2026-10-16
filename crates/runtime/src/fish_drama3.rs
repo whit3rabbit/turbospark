@@ -253,6 +253,14 @@ impl FishDrama3Runner {
         })
     }
 
+    /// Metal buffers the trunk's context has allocated so far (see
+    /// [`HiddenTrunk::gpu_buffer_allocations`]). The tower allocates only at
+    /// load. The codec allocates per call by design, so it has no flat count
+    /// to assert and the footprint oracle covers it.
+    pub fn gpu_buffer_allocations(&self) -> u64 {
+        self.backbone.trunk().gpu_buffer_allocations()
+    }
+
     /// The codec's output rate (44.1 kHz).
     pub fn sample_rate(&self) -> u32 {
         self.codec.sample_rate()

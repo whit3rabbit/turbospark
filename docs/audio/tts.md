@@ -31,9 +31,9 @@ inference module in `crates/audio/src/tts`.
   - Model Hub: [k2-fsa/OmniVoice](https://huggingface.co/k2-fsa/OmniVoice) and the pinned MLX conversions [mlx-community/OmniVoice-8bit](https://huggingface.co/mlx-community/OmniVoice-8bit) / [OmniVoice-bfloat16](https://huggingface.co/mlx-community/OmniVoice-bfloat16)
   - Code Reference: [`mlx_audio/tts/models/omnivoice/`](https://github.com/Blaizzy/mlx-audio/tree/e1b19b9054bf163f5d812221a54fcc346f1890e9/mlx_audio/tts/models/omnivoice)
 - **Architecture Overview**: a bidirectional Qwen3-0.6B backbone (causal mask disabled) performing iterative masked-diffusion decoding of 8 HiggsAudioV2 codebooks (1025 vocab with the mask token, 24 kHz at 25 frames per second), decoded through the shared Higgs codec port; voice cloning prepends the reference's code rows and flips the style prefix to `<|denoise|>`.
-- **Status**: the port is fixture-verified and the released checkpoints are gated: cross-engine encode parity is exact against the Python reference on bfloat16 (70 frames x 8 codebooks), the 8-bit rowwise checkpoint generates deterministic, oracle-transcribed speech (about 23x realtime on the portable CPU path, 3.2 GiB footprint). The engine runs behind the portable opt-in; there is no Metal offload.
-- **Entry points**: the native audio session (family `omnivoice`, reference audio as the job's PCM, cloning requires `consent: true`) and `POST /v1/audio/speech` with optional `reference_audio`. The catalog rows `omnivoice-8bit` (default) and `omnivoice-bf16` install from the app once the Boson tokenizer install terms are accepted.
-- **Limits**: 24 kHz output; steps default to 32 (1 through 100 accepted) and `speed` maps onto the estimated duration (a documented deviation); the file-path reference preprocessing (RMS normalization, silence removal) is not ported, so in-memory PCM encodes directly; long text runs as one utterance (the request validator caps the length); no Metal offload; the bundled Higgs audio tokenizer carries Boson AI's community license (attribution and a commercial cap), acknowledged at install.
+- **Status**: the port is fixture-verified and the released checkpoints are gated: cross-engine encode parity is exact against the Python reference on bfloat16 (70 frames x 8 codebooks), the 8-bit rowwise checkpoint generates deterministic, oracle-transcribed speech (3.2 GiB footprint). The engine runs with native Metal acceleration on macOS and transparent CPU fallback.
+- **Entry points**: the native audio session (family `omnivoice`, reference audio as the job's PCM, cloning requires `consent: true`) and `POST /v1/audio/speech` with optional `reference_audio`. The catalog rows `omnivoice-8bit` (default) and `omnivoice-bf16` install from the app once the Boson tokenizer install terms are accepted. The Voice Cloning page in the app natively includes OmniVoice via Metal acceleration (`clonesNatively`).
+- **Limits**: 24 kHz output; steps default to 32 (1 through 100 accepted) and `speed` maps onto the estimated duration (a documented deviation); the file-path reference preprocessing (RMS normalization, silence removal) is not ported, so in-memory PCM encodes directly; long text runs as one utterance (the request validator caps the length); the bundled Higgs audio tokenizer carries Boson AI's community license (attribution and a commercial cap), acknowledged at install.
 
 ### Kokoro (82M)
 
@@ -53,12 +53,25 @@ inference module in `crates/audio/src/tts`.
   - Speed: RTF < 0.20 on Apple Silicon M-series CPUs.
   - Memory: ~180 MiB resident footprint.
 
+### ArkTTS (Audio8 TTS preview)
+
+- **In-Crate Directory**: [`crates/audio/src/tts/arktts/`](../../crates/audio/src/tts/arktts/)
+- **Documentation**: [`crates/audio/src/tts/arktts/README.md`](../../crates/audio/src/tts/arktts/README.md)
+- **Upstream URLs**:
+  - Model Hub: Audio8 TTS Preview 0.1b and 0.6b checkpoints
+  - Code Reference: [`mlx_audio/tts/models/arktts/`](https://github.com/Blaizzy/mlx-audio/tree/e1b19b9054bf163f5d812221a54fcc346f1890e9/mlx_audio/tts/models/arktts) at mlx-audio 0.5.8 (`e1b19b9054bf163f5d812221a54fcc346f1890e9`)
+- **Architecture Overview**: DualAR transformer plus a bundled 44.1 kHz decode-only codec. A slow AR stack predicts one semantic token per audio frame, and a fast AR stack predicts that frame's residual codec codebooks. Two configurations: pure-attention slow stack (0.6b) and hybrid Mamba-2 + attention slow stack via [`crates/audio/src/lm/falcon_h1.rs`](../../crates/audio/src/lm/falcon_h1.rs) (0.1b).
+- **Status**: Fixture-verified against the pinned mlx-audio Python reference on CPU: op-level traces for pure-attention and Falcon slow stacks, fast AR loop, sampling math, and the 44.1 kHz decode-only codec.
+- **Entry points**: Native audio session (family `arktts`), caller-managed prompt construction and Mistral tokenization.
+- **Limits**: 44.1 kHz output; decode-only codec (encoding is refused; callers pass precomputed reference codes); no Metal acceleration.
+
 ## Additional Implemented TTS Family Ports
 
 The full inventory of ported and scaffolded families is maintained in [`crates/audio/MODELS.md`](../../crates/audio/MODELS.md). Family ports in `crates/audio/src/tts/` include:
 
 | Family | Backend / Codec | Status & Documentation |
 |---|---|---|
+| `arktts` | DualAR / Audio8 Codec | [Family port](../../crates/audio/src/tts/arktts/README.md) |
 | `bailingmm` | Audio VAE | [Family port](../../crates/audio/src/tts/bailingmm/README.md) |
 | `bark` | EnCodec 24kHz | [Family port](../../crates/audio/src/tts/bark/README.md) (semantic + coarse + fine transformers) |
 | `breeze_tts` | Qwen3-TTS speech tokenizer | [Family port](../../crates/audio/src/tts/breeze_tts/README.md) |

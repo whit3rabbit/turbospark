@@ -217,6 +217,10 @@ impl RealForwardRunner {
             &mut self.phases,
         );
 
+        // An error return mid-token can leave a streamer with the worker.
+        if let Some(prefetch) = qwen.prefetch.as_ref() {
+            prefetch.join(streamers);
+        }
         for layer in 0..arch.num_layers as usize {
             let input_norm = norm_view(
                 weights,
@@ -399,7 +403,16 @@ impl RealForwardRunner {
             // Env-gated and absent from a normal run: `pilot_target` is `None`
             // unless `TURBOSPARK_PILOT_PROBE` built a histogram with storage.
             let pilot_target = router_hist.as_ref().and_then(|h| h.pilot_target(layer));
-            if let Some(target) = pilot_target {
+            // The prefetch experiment wants layer+1's guess, and only when a
+            // streamer holds that layer's slots (mapped residency has none).
+            let next = layer + 1;
+            let prefetch_target = (qwen.prefetch.is_some()
+                && next < arch.num_layers as usize
+                && streamers.get(next).is_some_and(Option::is_some)
+                && !mapped.buffers.get(next).is_some_and(Option::is_some))
+            .then_some(next);
+            let probe_target = pilot_target.or(prefetch_target);
+            if let Some(target) = probe_target {
                 moe::encode_qwen_pilot_probe(
                     context,
                     &pass,
@@ -419,6 +432,21 @@ impl RealForwardRunner {
             if pilot_target.is_some() {
                 if let Some(hist) = router_hist.as_mut() {
                     moe::record_qwen_pilot(qwen, hist, layer, num_experts, top_k);
+                }
+            }
+            // The worker may still hold THIS layer's streamer from the
+            // previous layer's lookahead. It must be back before this layer
+            // plans, and before the next job goes out (one in flight).
+            if let Some(prefetch) = qwen.prefetch.as_ref() {
+                prefetch.join(streamers);
+            }
+            // Self-test aims the probe at this layer, so its buffer is not
+            // layer+1's guess and must not feed the prefetch.
+            if let (Some(prefetch), Some(target)) = (qwen.prefetch.as_ref(), prefetch_target) {
+                if probe_target == Some(target) {
+                    if let Some(logits) = moe::read_qwen_pilot_logits(qwen, num_experts) {
+                        prefetch.submit(target, streamers, logits);
+                    }
                 }
             }
 
