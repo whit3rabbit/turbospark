@@ -34,10 +34,16 @@ extension AudioWorkspaceController {
         return profile.family != "qwen3_tts" && profile.capabilities.supportsVoiceClone
     }
     var selectedProfileClonesNatively: Bool { Self.clonesNatively(selectedProfile) }
+    /// The native families whose request shape `nativeCloneRequest` builds.
+    nonisolated static let nativeCloneRequestFamilies: Set<String> = ["megatts3", "omnivoice"]
     func speechProfileMatchesPage(_ profile: AudioProfile) -> Bool {
         // A streaming-only model (Parakeet Unified) serves live text, not a
         // batch transcription job, which would refuse to open it.
         if profile.identity.task == .speechToText && !profile.capabilities.operations.contains("transcribe") { return false }
+        // Any other native cloner would get MegaTTS3's request, which the
+        // runtime refuses: Drama 3 needs reference_text and refuses p_w and
+        // t_w. It stays unlisted until it has its own request path.
+        if Self.clonesNatively(profile) && !Self.nativeCloneRequestFamilies.contains(profile.family) { return false }
         switch page {
         case .voiceClone:
             if profile.family == "omnivoice" {
