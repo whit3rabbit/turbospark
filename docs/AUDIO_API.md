@@ -81,24 +81,38 @@ curl http://127.0.0.1:8080/v1/audio/speech \
 ```
 
 Kokoro (US English, voice `af_heart` only), MegaTTS3 (English voice cloning),
-or attached bridged speech models such as Qwen3-TTS. `input` (alias `text`) is
-at most 4096 characters, `speed` 0.5 to 2.0. Voice cloning fields:
+OmniVoice (multilingual voice cloning and plain speech), or attached bridged
+speech models such as Qwen3-TTS. `input` (alias `text`) is at most 4096
+characters, `speed` 0.5 to 2.0. Voice cloning fields:
 - `reference_audio`: base64-encoded WAV of the voice to clone (a `data:` URL
   prefix is accepted). MegaTTS3 requires 1 to 30 seconds and uses at most 28.
+  OmniVoice accepts 1 to 30 seconds of 24 kHz mono and encodes the whole clip.
   A model that cannot clone (Kokoro) refuses it.
-- `consent`: MegaTTS3 requires `true`, the caller's statement that it has the
-  right to use the reference voice.
-- `steps` (1 to 100, default 16, where the app's Fast, Balanced and Best are 8,
-  16 and 32), `seed` (default 0), `p_w` (intelligibility, 0.1 to 5, default 1.4)
-  and `t_w` (similarity, 0.1 to 10, default 3.0): MegaTTS3 options. `speed`
-  scales its durations.
+- `consent`: MegaTTS3 always requires `true`; OmniVoice requires it whenever
+  `reference_audio` is present (without a reference it speaks with the model's
+  auto voice). It is the caller's statement that they have the right to use
+  the reference voice.
+- `steps` (1 to 100): MegaTTS3 defaults to 16 (the app's Fast, Balanced and
+  Best are 8, 16 and 32); OmniVoice defaults to 32 diffusion steps. `seed`
+  defaults to 0. `p_w` (intelligibility, 0.1 to 5, default 1.4) and `t_w`
+  (similarity, 0.1 to 10, default 3.0) are MegaTTS3 options; OmniVoice
+  refuses both. `speed` scales MegaTTS3's durations and divides OmniVoice's
+  estimated length.
 - `reference_text` and `instruction`: Qwen3-TTS only; MegaTTS3 aligns the
-  reference itself and refuses both.
+  reference itself and refuses both. OmniVoice reads `reference_text` (the
+  transcript prepended to the script) and `instruction` (a delivery cue in
+  the style prefix, at most 512 bytes).
 
-MegaTTS3 runs on the CPU for now: a short sentence takes tens of seconds and a
-long reference makes every step slower. With `stream=true` audio arrives one
-text chunk at a time. A client that disconnects cancels the job at the next
-diffusion step. With `--tts-model ~/models/megatts3` the model id is `megatts3`:
+OmniVoice runs on the CPU only and about 23 times slower than realtime: one
+short sentence takes around a minute, and it reports progress one diffusion
+step at a time. OmniVoice is a portable-CPU family: the server's standalone
+contract opens it, while the app keeps it behind the Advanced portable
+opt-in. MegaTTS3 also runs on the CPU for now: a short sentence takes tens of
+seconds and a long reference makes every step slower. With `stream=true`
+audio arrives one text chunk at a time. A client that disconnects cancels the
+job at the next diffusion step. With `--tts-model ~/models/megatts3` the
+model id is `megatts3`:
+
 
 ```sh
 curl http://127.0.0.1:8080/v1/audio/speech \

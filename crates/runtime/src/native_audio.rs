@@ -337,6 +337,9 @@ fn run_worker(engine: Engine, rx: Receiver<Message>) {
 pub const MEGATTS3_FAMILY: &str = "megatts3";
 /// Persisted family string of the Fish Audio Drama 3 engine.
 pub const FISH_DRAMA3_FAMILY: &str = "fish_drama3";
+/// Persisted family string of the OmniVoice engine (the checkpoint
+/// config's `model_type`).
+pub const OMNIVOICE_FAMILY: &str = "omnivoice";
 /// Reference audio bounds for cloning: shorter clips align poorly, and the
 /// pipeline uses at most 28 s.
 const CLONE_REFERENCE_SECONDS: std::ops::RangeInclusive<f64> = 1.0..=30.0;
@@ -355,6 +358,9 @@ pub fn validate_request(
     }
     if request.task == AudioTask::TextToSpeech && family == FISH_DRAMA3_FAMILY {
         return fish_drama3_request(request, samples).map(|_| ());
+    }
+    if request.task == AudioTask::TextToSpeech && family == OMNIVOICE_FAMILY {
+        return omnivoice_request(request, samples).map(|_| ());
     }
     match request.task {
         AudioTask::SpeechToText => {
@@ -540,6 +546,90 @@ fn fish_drama3_request<'a>(
     })
 }
 
+/// Validates an OmniVoice request. Speech without PCM speaks with the
+/// model's auto voice; PCM makes it a clone, which needs consent.
+/// `voice` is ignored (the model has no named voices); `p_w`/`t_w` are
+/// MegaTTS3 guidance weights and refuse.
+fn omnivoice_request<'a>(
+    r: &'a AudioRequest,
+    samples: &'a [f32],
+) -> Result<crate::omnivoice::OmniVoiceRequest<'a>, String> {
+    if r.text.trim().is_empty() || r.text.len() > 32_768 {
+        return Err("speech needs 1 through 32768 text bytes".into());
+    }
+    if !r.speed.is_finite() || !(0.5..=2.0).contains(&r.speed) {
+        return Err("speed must be 0.5 through 2.0".into());
+    }
+    if r.p_w.is_some() || r.t_w.is_some() {
+        return Err(
+            "p_w and t_w are MegaTTS3 guidance weights; OmniVoice does not take them".into(),
+        );
+    }
+    let instruction = r
+        .instruction
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if let Some(instruction) = instruction {
+        crate::omnivoice::validate_instruction(instruction)?;
+    }
+    let language = r
+        .language
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && *s != "auto");
+    let steps = r
+        .steps
+        .unwrap_or(audio::tts::omnivoice::pipeline::GenerateParams::default().steps);
+    if !(1..=100).contains(&steps) {
+        return Err(format!("steps {steps} is outside 1 through 100"));
+    }
+    let reference = if samples.is_empty() {
+        if r.reference_text
+            .as_deref()
+            .is_some_and(|s| !s.trim().is_empty())
+        {
+            return Err("reference_text needs reference audio".into());
+        }
+        None
+    } else {
+        if !r.consent {
+            return Err("voice cloning needs consent: set consent to true to confirm you have the right to use the reference voice".into());
+        }
+        let rate = r
+            .reference_sample_rate
+            .ok_or("voice cloning needs reference_sample_rate for the reference audio")?;
+        if !CLONE_REFERENCE_RATES.contains(&rate) {
+            return Err(format!(
+                "reference_sample_rate {rate} is outside 8000 through 192000 Hz"
+            ));
+        }
+        let seconds = samples.len() as f64 / f64::from(rate);
+        if !CLONE_REFERENCE_SECONDS.contains(&seconds) || samples.iter().any(|v| !v.is_finite()) {
+            return Err(format!(
+                "voice cloning needs 1 through 30 seconds of finite reference audio, got {seconds:.2} s"
+            ));
+        }
+        Some(samples)
+    };
+    let reference_text = r
+        .reference_text
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    Ok(crate::omnivoice::OmniVoiceRequest {
+        text: &r.text,
+        language,
+        instruction,
+        reference,
+        reference_rate: r.reference_sample_rate.unwrap_or(0),
+        reference_text,
+        steps,
+        speed: r.speed,
+        seed: r.seed.unwrap_or(0),
+    })
+}
+
 fn music_request(r: &AudioRequest) -> audio::music::minimax_music3::TextGenerateRequest {
     audio::music::minimax_music3::TextGenerateRequest {
         caption: r.caption.clone(),
@@ -558,6 +648,7 @@ enum Engine {
     KokoroPortable(Box<audio::tts::kokoro::KokoroSynthesizer>),
     MegaTts3(std::cell::RefCell<Box<crate::megatts3::MegaTts3Runner>>),
     FishDrama3(std::cell::RefCell<Box<crate::fish_drama3::FishDrama3Runner>>),
+    OmniVoice(std::cell::RefCell<Box<crate::omnivoice::OmniVoiceRunner>>),
     Music(Box<crate::Music3Runner>),
 }
 // The observer owns an event sender, so it must be removed even if a backend panics.
@@ -578,6 +669,7 @@ impl Engine {
             Self::Kokoro(_) | Self::KokoroPortable(_) => "kokoro",
             Self::MegaTts3(_) => MEGATTS3_FAMILY,
             Self::FishDrama3(_) => FISH_DRAMA3_FAMILY,
+            Self::OmniVoice(_) => OMNIVOICE_FAMILY,
             Self::Music(_) => "minimax_music3",
         }
     }
@@ -645,6 +737,20 @@ impl Engine {
                     crate::fish_drama3::MAX_CONTEXT,
                 )
                 .map(|m| Self::FishDrama3(std::cell::RefCell::new(Box::new(m))))
+            }
+            // Portable f32 only: the bidirectional backbone has no Metal
+            // offload, so CPU execution requires the explicit portable
+            // opt-in (the catalog reports the family as not runnable for
+            // the same reason).
+            AudioTask::TextToSpeech
+                if allow_portable && tts_model_type(path).as_deref() == Some(OMNIVOICE_FAMILY) =>
+            {
+                crate::omnivoice::OmniVoiceRunner::open(path)
+                    .map(|m| Self::OmniVoice(std::cell::RefCell::new(Box::new(m))))
+                    .map_err(|e| e)
+            }
+            AudioTask::TextToSpeech if tts_model_type(path).as_deref() == Some(OMNIVOICE_FAMILY) => {
+                Err("OmniVoice has no Metal runtime; portable CPU execution requires explicit opt-in".into())
             }
             AudioTask::TextToSpeech if allow_portable => {
                 audio::tts::kokoro::KokoroSynthesizer::open(path)
@@ -887,6 +993,16 @@ impl Engine {
                     &mut model.borrow_mut(),
                 )?;
             }
+            Self::OmniVoice(model) => {
+                synthesize_omnivoice(
+                    r,
+                    samples,
+                    cancel,
+                    events,
+                    &mut result,
+                    &mut model.borrow_mut(),
+                )?;
+            }
             Self::MegaTts3(model) => {
                 synthesize_megatts3(
                     r,
@@ -1099,6 +1215,55 @@ fn synthesize_fish_drama3(
     result.seed = Some(request.seed);
     Ok(())
 }
+/// OmniVoice generates the whole utterance before any audio exists; the
+/// diffusion steps report progress and cancellation, then the waveform
+/// streams out in chunks like every other engine.
+fn synthesize_omnivoice(
+    r: &AudioRequest,
+    samples: &[f32],
+    cancel: &AudioCancel,
+    events: &SyncSender<AudioEvent>,
+    result: &mut AudioResult,
+    runner: &mut crate::omnivoice::OmniVoiceRunner,
+) -> Result<(), String> {
+    let request = omnivoice_request(r, samples)?;
+    let mut count = 0usize;
+    let stop = || cancel.is_cancelled();
+    let (_, audio) = runner
+        .synthesize(&request, &mut |step, total| {
+            if events
+                .send(AudioEvent::Progress(AudioProgress {
+                    stage: "diffusion_step".into(),
+                    completed: step,
+                    total: Some(total),
+                }))
+                .is_ok()
+                && !stop()
+            {
+                true
+            } else {
+                false
+            }
+        })
+        .map_err(|e| {
+            if stop() || e.contains("cancelled") {
+                "audio job cancelled".to_string()
+            } else {
+                e
+            }
+        })?;
+    emit_pcm(&audio, cancel, events, &mut count)?;
+    cancel.checkpoint()?;
+    result.sample_count = count;
+    result.pcm_format = Some(AudioPcmFormat {
+        sample_rate: runner.sample_rate(),
+        channels: 1,
+        interleaved: true,
+    });
+    result.seed = Some(request.seed);
+    Ok(())
+}
+
 fn emit_pcm(
     pcm: &[f32],
     cancel: &AudioCancel,
@@ -1174,6 +1339,7 @@ fn megatts3_devices(allow_portable: bool) -> &'static [crate::megatts3::Device] 
         &[Device::Metal]
     }
 }
+
 /// `model_type` of a model directory's root `config.json`, if it declares one.
 fn tts_model_type(path: &Path) -> Option<String> {
     let bytes = std::fs::read(path.join("config.json")).ok()?;
@@ -1189,6 +1355,10 @@ fn estimate_open_bytes(path: &Path, task: AudioTask) -> Result<u64, String> {
         && tts_model_type(path).as_deref() == Some(FISH_DRAMA3_FAMILY)
     {
         return crate::fish_drama3::open_bytes(path);
+    }
+    if task == AudioTask::TextToSpeech && tts_model_type(path).as_deref() == Some(OMNIVOICE_FAMILY)
+    {
+        return crate::omnivoice::open_bytes(path);
     }
     fn weights(path: &Path) -> Result<u64, String> {
         let mut total = 0u64;
@@ -1265,6 +1435,245 @@ fn admit_memory(additional: u64) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn omnivoice_base() -> AudioRequest {
+        AudioRequest {
+            task: AudioTask::TextToSpeech,
+            text: "Hello from OmniVoice.".into(),
+            speed: 1.0,
+            ..AudioRequest::default()
+        }
+    }
+
+    #[test]
+    fn omnivoice_request_validates_consent_bounds_and_params() {
+        // Plain synthesis needs no consent and no reference rate.
+        let request = omnivoice_base();
+        assert!(omnivoice_request(&request, &[]).is_ok());
+
+        // PCM present without consent refuses.
+        let mut clone = omnivoice_base();
+        clone.consent = false;
+        assert!(omnivoice_request(&clone, &[0.1f32; 24_000]).is_err());
+        // Consent alone is not enough: the rate and length bounds bind.
+        clone.consent = true;
+        assert!(omnivoice_request(&clone, &[0.1f32; 24_000]).is_err());
+        clone.reference_sample_rate = Some(24_000);
+        let short = omnivoice_request(&clone, &[0.1f32; 12_000]).is_err();
+        let ok = omnivoice_request(&clone, &[0.1f32; 24_000]).is_ok();
+        assert!(short && ok);
+        // A clone refuses MegaTTS3's guidance weights.
+        let mut guided = omnivoice_base();
+        guided.reference_sample_rate = Some(24_000);
+        guided.consent = true;
+        guided.p_w = Some(1.4);
+        assert!(omnivoice_request(&guided, &[0.1f32; 24_000]).is_err());
+        // Steps outside 1..=100 refuse.
+        let mut fast = omnivoice_base();
+        fast.steps = Some(0);
+        assert!(omnivoice_request(&fast, &[]).is_err());
+        let mut slow = omnivoice_base();
+        slow.steps = Some(101);
+        assert!(omnivoice_request(&slow, &[]).is_err());
+        // reference_text without audio refuses.
+        let mut transcript_only = omnivoice_base();
+        transcript_only.reference_text = Some("a transcript".into());
+        assert!(omnivoice_request(&transcript_only, &[]).is_err());
+        // Speed bounds.
+        let mut fast_spoken = omnivoice_base();
+        fast_spoken.speed = 2.5;
+        assert!(omnivoice_request(&fast_spoken, &[]).is_err());
+        // The "auto" language maps to the reference's unset marker.
+        let mut auto = omnivoice_base();
+        auto.language = Some("auto".into());
+        let mapped = omnivoice_request(&auto, &[]).unwrap();
+        assert!(mapped.language.is_none());
+    }
+
+    /// Reads a little-endian f32 `.npy` (the fixture layout the reference
+    /// tools record).
+    fn read_npy_f32(path: &Path) -> (Vec<usize>, Vec<f32>) {
+        let bytes = std::fs::read(path).expect("npy reads");
+        assert_eq!(&bytes[..6], b"\x93NUMPY", "{} is not npy", path.display());
+        let header_len = u16::from_le_bytes([bytes[8], bytes[9]]) as usize;
+        let header = std::str::from_utf8(&bytes[10..10 + header_len]).expect("npy header");
+        assert!(header.contains("<f4"), "{} must be f32", path.display());
+        let start = header.find('(').expect("shape") + 1;
+        let end = header[start..].find(')').expect("shape") + start;
+        let shape: Vec<usize> = header[start..end]
+            .split(',')
+            .filter_map(|piece| piece.trim().parse::<usize>().ok())
+            .collect();
+        let data = bytes[10 + header_len..]
+            .chunks_exact(4)
+            .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+            .collect();
+        (shape, data)
+    }
+
+    /// Reads a little-endian int32 `.npy` as frames-major rows `[T, books]`.
+    fn read_npy_i32_rows(path: &Path) -> Vec<Vec<i32>> {
+        let bytes = std::fs::read(path).expect("npy reads");
+        assert_eq!(&bytes[..6], b"\x93NUMPY", "{} is not npy", path.display());
+        let header_len = u16::from_le_bytes([bytes[8], bytes[9]]) as usize;
+        let header = std::str::from_utf8(&bytes[10..10 + header_len]).expect("npy header");
+        assert!(header.contains("<i4"), "{} must be int32", path.display());
+        let start = header.find('(').expect("shape") + 1;
+        let end = header[start..].find(')').expect("shape") + start;
+        let shape: Vec<usize> = header[start..end]
+            .split(',')
+            .filter_map(|piece| piece.trim().parse::<usize>().ok())
+            .collect();
+        assert_eq!(shape.len(), 2, "{} must be [T, books]", path.display());
+        let (frames, books) = (shape[0], shape[1]);
+        bytes[10 + header_len..]
+            .chunks_exact(4)
+            .map(|chunk| i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+            .collect::<Vec<_>>()
+            .chunks(books)
+            .map(|row| row.to_vec())
+            .take(frames)
+            .collect()
+    }
+
+    /// Cross-engine encode parity: the Rust Higgs encode of the recorded
+    /// 24 kHz samples must reproduce the Python reference tokenizer's
+    /// codes exactly (the encode path is deterministic, no sampling).
+    /// Opt-in via TURBOSPARK_TEST_OMNIVOICE (install dir) and
+    /// TURBOSPARK_TEST_OMNIVOICE_REF (directory with reference_24k.npy
+    /// and reference_codes.npy from tools run against the Python
+    /// reference). Skips when unset.
+    #[test]
+    #[ignore = "requires TURBOSPARK_TEST_OMNIVOICE and TURBOSPARK_TEST_OMNIVOICE_REF"]
+    fn real_checkpoint_encode_matches_the_python_reference() {
+        let Ok(dir) = std::env::var("TURBOSPARK_TEST_OMNIVOICE") else {
+            eprintln!("skipping: TURBOSPARK_TEST_OMNIVOICE is unset");
+            return;
+        };
+        let Ok(reference_dir) = std::env::var("TURBOSPARK_TEST_OMNIVOICE_REF") else {
+            eprintln!("skipping: TURBOSPARK_TEST_OMNIVOICE_REF is unset");
+            return;
+        };
+        let mut runner = crate::omnivoice::OmniVoiceRunner::open(Path::new(&dir))
+            .expect("real checkpoint opens");
+        let (shape, samples) = read_npy_f32(&Path::new(&reference_dir).join("reference_24k.npy"));
+        assert_eq!(shape.len(), 1);
+        let codes = runner.encode_reference(&samples, 24_000).expect("encode");
+        let golden = read_npy_i32_rows(&Path::new(&reference_dir).join("reference_codes.npy"));
+        assert_eq!(codes.len(), golden.len(), "frame count");
+        for (frame, (mine, golden)) in codes.iter().zip(&golden).enumerate() {
+            assert_eq!(mine, golden, "frame {frame}");
+        }
+        eprintln!(
+            "encode parity: {} frames x {} codebooks exact",
+            codes.len(),
+            codes.first().map_or(0, Vec::len)
+        );
+    }
+
+    /// Real-checkpoint gate; opt-in via TURBOSPARK_TEST_OMNIVOICE pointing
+    /// at an installed OmniVoice directory. Skips when unset.
+    #[test]
+    #[ignore = "requires TURBOSPARK_TEST_OMNIVOICE and a real checkpoint"]
+    fn real_checkpoint_gate() {
+        let Ok(dir) = std::env::var("TURBOSPARK_TEST_OMNIVOICE") else {
+            eprintln!("skipping: TURBOSPARK_TEST_OMNIVOICE is unset");
+            return;
+        };
+        let started = std::time::Instant::now();
+        let mut runner = crate::omnivoice::OmniVoiceRunner::open(Path::new(&dir))
+            .expect("real checkpoint opens");
+        let open_seconds = started.elapsed().as_secs_f64();
+        eprintln!(
+            "footprint after open: {:?}",
+            gpu::process_footprint().map(|bytes| (bytes as f64 / (1u64 << 30) as f64, "GiB"))
+        );
+        let request = crate::omnivoice::OmniVoiceRequest {
+            text: "The quick brown fox jumps over the lazy dog.",
+            language: Some("en"),
+            instruction: None,
+            reference: None,
+            reference_rate: 0,
+            reference_text: None,
+            steps: 32,
+            speed: 1.0,
+            seed: 7,
+        };
+        let generated = std::time::Instant::now();
+        let (token_cells, audio) = runner
+            .synthesize(&request, &mut |step, total| {
+                eprintln!("step {step}/{total}");
+                true
+            })
+            .expect("real generation");
+        let seconds = generated.elapsed().as_secs_f64();
+        let frames = token_cells / 8;
+        let audio_seconds = frames as f64 * 960.0 / f64::from(runner.sample_rate());
+        eprintln!(
+            "open {open_seconds:.1} s, generate {seconds:.1} s, {frames} frames = {audio_seconds:.2} s audio, rtf {:.2}",
+            seconds / audio_seconds
+        );
+        eprintln!(
+            "footprint after generate: {:?}",
+            gpu::process_footprint().map(|bytes| (bytes as f64 / (1u64 << 30) as f64, "GiB"))
+        );
+        assert!(!audio.is_empty());
+        assert!(audio.iter().all(|v| v.is_finite()));
+        // Determinism: a second seeded run must be bit-identical.
+        let (tokens_again, audio_again) = runner
+            .synthesize(&request, &mut |_, _| true)
+            .expect("second generation");
+        assert_eq!(token_cells, tokens_again);
+        assert_eq!(
+            audio.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+            audio_again.iter().map(|v| v.to_bits()).collect::<Vec<_>>()
+        );
+        // A real clone when the reference fixture is available: the same
+        // samples the Python reference encoded, with a transcript.
+        if let Ok(reference_dir) = std::env::var("TURBOSPARK_TEST_OMNIVOICE_REF") {
+            let (_, reference_samples) =
+                read_npy_f32(&Path::new(&reference_dir).join("reference_24k.npy"));
+            let mut clone = crate::omnivoice::OmniVoiceRequest {
+                text: "Cross-engine cloning check.",
+                language: Some("en"),
+                instruction: None,
+                reference: Some(&reference_samples),
+                reference_rate: 24_000,
+                reference_text: Some("The reference transcript."),
+                steps: 32,
+                speed: 1.0,
+                seed: 7,
+            };
+            let (clone_cells, clone_audio) = runner
+                .synthesize(&mut clone, &mut |_, _| true)
+                .expect("real clone");
+            assert!(!clone_audio.is_empty());
+            assert!(clone_audio.iter().all(|v| v.is_finite()));
+            let (clone_cells_again, clone_audio_again) = runner
+                .synthesize(&mut clone, &mut |_, _| true)
+                .expect("second clone");
+            assert_eq!(clone_cells, clone_cells_again);
+            assert_eq!(
+                clone_audio.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                clone_audio_again
+                    .iter()
+                    .map(|v| v.to_bits())
+                    .collect::<Vec<_>>()
+            );
+            eprintln!("clone: {clone_cells} token cells, deterministic");
+        }
+        // Optional oracle dump for transcription checks.
+        if let Ok(out) = std::env::var("TURBOSPARK_TEST_OMNIVOICE_OUT") {
+            let wave = audio::Waveform {
+                sample_rate: runner.sample_rate(),
+                channels: 1,
+                samples: audio,
+            };
+            let bytes = audio::wav::write_wav_f32(&wave);
+            std::fs::write(std::path::Path::new(&out), bytes).expect("gate wav writes");
+            eprintln!("wrote {}", out);
+        }
+    }
     #[test]
     fn pcm_boundaries_refuse_nan_overflow_and_oversized_chunks() {
         assert!(validate_pcm(&[0.0], 0).is_ok());

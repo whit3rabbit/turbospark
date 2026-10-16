@@ -97,7 +97,7 @@ pub struct AudioModelInfo {
 
 /// Families whose speech request carries `reference_audio`.
 pub(crate) fn clones_voices(family: &str) -> bool {
-    matches!(family, "megatts3" | "qwen3_tts")
+    matches!(family, "megatts3" | "omnivoice" | "qwen3_tts")
 }
 
 /// Mono 16 kHz f32 PCM, already decoded and resampled by the route.

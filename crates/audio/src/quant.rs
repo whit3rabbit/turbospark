@@ -204,6 +204,74 @@ pub fn dequantize_rows(
     }
 }
 
+/// Loads one rowwise-symmetric int8 tensor (the OmniVoice 8-bit conversion
+/// format): `weight_name` is I8 `[rows, groups, group_size]` and
+/// `{weight_name}.scales` is F16 `[rows, groups]`. Each group stores the
+/// sign-magnitude int8 round of `value / scale` with
+/// `scale = max(|group|) / 127` (floored at 1e-8), so every value
+/// dequantizes as `w = q * scale` with no bias. Returns the flat
+/// `[rows, groups * group_size]` f32 tensor.
+pub fn load_rowwise_i8(file: &SafetensorsFile, weight_name: &str) -> Result<Vec<f32>> {
+    let desc = file
+        .descriptor(weight_name)
+        .ok_or_else(|| SpeechError::Tensor {
+            name: weight_name.to_string(),
+            why: "descriptor missing".to_string(),
+        })?;
+    if desc.dtype != "I8" || desc.shape.len() != 3 {
+        return Err(SpeechError::Tensor {
+            name: weight_name.to_string(),
+            why: format!(
+                "expected a 3-D I8 rowwise weight, got {} {:?}",
+                desc.dtype, desc.shape
+            ),
+        });
+    }
+    let rows = desc.shape[0];
+    let groups = desc.shape[1];
+    let group_size = desc.shape[2];
+    let row_len = groups
+        .checked_mul(group_size)
+        .ok_or_else(|| SpeechError::Tensor {
+            name: weight_name.to_string(),
+            why: "row width overflows".to_string(),
+        })?;
+    if rows == 0 || row_len == 0 {
+        return Err(SpeechError::Tensor {
+            name: weight_name.to_string(),
+            why: format!("empty rowwise shape {:?}", desc.shape),
+        });
+    }
+    let scales = file.load_as_f32(&format!("{weight_name}.scales"))?;
+    if scales.len() != rows * groups {
+        return Err(SpeechError::Tensor {
+            name: format!("{weight_name}.scales"),
+            why: format!(
+                "scales length {} does not tile {rows} rows x {groups} groups",
+                scales.len()
+            ),
+        });
+    }
+    let raw = file.raw_bytes(weight_name)?;
+    if raw.len() != rows * row_len {
+        return Err(SpeechError::Tensor {
+            name: weight_name.to_string(),
+            why: format!("byte length {} != {rows} rows x {row_len}", raw.len()),
+        });
+    }
+    let mut out = vec![0.0f32; rows * row_len];
+    for (row, out_row) in out.chunks_exact_mut(row_len).enumerate() {
+        for (group, out_group) in out_row.chunks_exact_mut(group_size).enumerate() {
+            let scale = scales[row * groups + group];
+            let base = (row * groups + group) * group_size;
+            for (value, slot) in out_group.iter_mut().enumerate() {
+                *slot = (raw[base + value] as i8) as f32 * scale;
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// Reads a `config.json` style JSON object from `path`.
 pub fn read_json(path: &Path) -> Result<serde_json::Value> {
     let text = std::fs::read_to_string(path).map_err(|e| SpeechError::BadConfig {
@@ -443,6 +511,86 @@ mod tests {
             },
         );
         assert!(err.is_err(), "4-bit read of an 8-bit tensor must refuse");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    fn i8_bytes(v: &[i8]) -> Vec<u8> {
+        v.iter().map(|&b| b as u8).collect()
+    }
+
+    fn f16_bytes(values: &[u16]) -> Vec<u8> {
+        values.iter().flat_map(|v| v.to_le_bytes()).collect()
+    }
+
+    #[test]
+    fn rowwise_i8_dequantizes_signed_symmetric() {
+        // 2 rows x 2 groups of 4: q * scale with signed int8 values and
+        // F16 scales (0.5 = 0x3800, 1.0 = 0x3C00 in IEEE half precision).
+        let dir = std::env::temp_dir().join(format!("speech-rowwise-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("rowwise.safetensors");
+        write_safetensors(
+            &path,
+            &[
+                (
+                    "proj.weight",
+                    "I8",
+                    vec![2, 2, 4],
+                    i8_bytes(&[-127, -1, 0, 1, 127, 2, -3, 4, 2, -4, 6, -8, 1, 1, 1, 1]),
+                ),
+                (
+                    "proj.weight.scales",
+                    "F16",
+                    vec![2, 2],
+                    f16_bytes(&[0x3800, 0x3C00, 0x3800, 0x3800]),
+                ),
+            ],
+        );
+        let file = SafetensorsFile::open(&path).unwrap();
+        let w = load_rowwise_i8(&file, "proj.weight").unwrap();
+        let want = [
+            -63.5, -0.5, 0.0, 0.5, 127.0, 2.0, -3.0, 4.0, 1.0, -2.0, 3.0, -4.0, 0.5, 0.5, 0.5, 0.5,
+        ];
+        for (index, expected) in want.iter().enumerate() {
+            assert!(
+                (w[index] - expected).abs() < 1e-6,
+                "[{index}] got {}",
+                w[index]
+            );
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn rowwise_i8_refuses_wrong_shape_or_scales() {
+        let dir = std::env::temp_dir().join(format!("speech-rowwise-bad-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("rowwise-bad.safetensors");
+        write_safetensors(
+            &path,
+            &[
+                // 2-D weight: not the rowwise layout.
+                ("flat.weight", "I8", vec![2, 8], i8_bytes(&[0i8; 16])),
+                (
+                    "flat.weight.scales",
+                    "F32",
+                    vec![2, 1],
+                    f32_bytes(&[0.5, 0.5]),
+                ),
+                // 3-D weight whose scales do not tile the rows.
+                ("bad.weight", "I8", vec![2, 2, 4], i8_bytes(&[0i8; 16])),
+                (
+                    "bad.weight.scales",
+                    "F32",
+                    vec![3, 1],
+                    f32_bytes(&[0.5, 0.5, 0.5]),
+                ),
+            ],
+        );
+        let file = SafetensorsFile::open(&path).unwrap();
+        assert!(load_rowwise_i8(&file, "flat.weight").is_err());
+        assert!(load_rowwise_i8(&file, "bad.weight").is_err());
+        assert!(load_rowwise_i8(&file, "missing.weight").is_err());
         let _ = std::fs::remove_file(&path);
     }
 }

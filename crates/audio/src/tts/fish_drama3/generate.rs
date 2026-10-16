@@ -11,8 +11,12 @@
 //! Long text is generated chunk by chunk (`chunking::split_text`); each chunk
 //! sees the first and the previous chunk as history. The system block (the
 //! references) is prefilled once per call and restored for every chunk.
+//!
+//! A chunk ends at EOS, at a cap scaled to its text ([`TextCap`], not in the
+//! reference), or at `max_frames`. The reference stops only at the last, and
+//! under its recipe about one clip in twenty runs away to it.
 
-use super::chunking::{split_text, validate_text};
+use super::chunking::{split_text, spoken_text, validate_text};
 use super::config::Drama3Config;
 use super::prompt::{build_frames, Prompt, Utterance};
 use super::sampling::{self, SamplingParams, DEFAULT_MAX_FRAMES, RAS_WINDOW};
@@ -52,12 +56,53 @@ pub trait Backbone {
     fn reset(&mut self);
 }
 
+/// A per-chunk frame cap scaled to the chunk's text, so a sampling runaway
+/// stops near the longest the text plausibly takes instead of at
+/// `max_frames`. Tokens are the backbone tokenizer's, counted over the
+/// chunk's words (`chunking::spoken_text`): unlike bytes or words, they count
+/// digits one by one and stay close across scripts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TextCap {
+    /// Frames any chunk may take, so a one-word chunk still fits.
+    pub base_frames: usize,
+    /// Frames per token of the chunk's words.
+    pub frames_per_token: usize,
+    /// Frames per `<|speaker:N|>` tag, a turn's opening pause.
+    pub frames_per_speaker_tag: usize,
+    /// Frames per cue or paired tag (`[sighs]`, `<whisper>...</whisper>`).
+    pub frames_per_cue: usize,
+}
+
+impl TextCap {
+    /// Set from frame counts on the pinned 4-bit checkpoint under the
+    /// reference recipe; `docs/FISH_DRAMA3_PHASE0.md` (sampling recipe) has
+    /// the measurement.
+    pub const MEASURED: TextCap = TextCap {
+        base_frames: 43,
+        frames_per_token: 20,
+        frames_per_speaker_tag: 22,
+        frames_per_cue: 108,
+    };
+
+    /// The cap for a chunk of `tokens` word tokens, `speaker_tags` speaker
+    /// tags and `cues` cues.
+    pub fn frames(&self, tokens: usize, speaker_tags: usize, cues: usize) -> usize {
+        self.base_frames
+            .saturating_add(self.frames_per_token.saturating_mul(tokens))
+            .saturating_add(self.frames_per_speaker_tag.saturating_mul(speaker_tags))
+            .saturating_add(self.frames_per_cue.saturating_mul(cues))
+    }
+}
+
 /// What one call generates with.
 #[derive(Clone, Copy, Debug)]
 pub struct GenerateOptions {
     pub sampling: SamplingParams,
-    /// Frames one chunk may generate before it is cut off.
+    /// Frames one chunk may generate before it is cut off, whatever its text.
     pub max_frames: usize,
+    /// A tighter cap per chunk, scaled to its text. `None` leaves only
+    /// `max_frames`, as the reference does.
+    pub text_cap: Option<TextCap>,
     /// Seeds every draw; a fixed seed fixes the codes.
     pub seed: u64,
 }
@@ -67,9 +112,22 @@ impl Default for GenerateOptions {
         GenerateOptions {
             sampling: SamplingParams::REFERENCE,
             max_frames: DEFAULT_MAX_FRAMES,
+            text_cap: Some(TextCap::MEASURED),
             seed: 0,
         }
     }
+}
+
+/// Why a chunk ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChunkStop {
+    /// The model ended it.
+    Eos,
+    /// It reached the cap scaled to its text before EOS, most likely a
+    /// sampling runaway.
+    TextCap,
+    /// It reached `max_frames` before EOS.
+    MaxFrames,
 }
 
 /// What the loop reports as it goes.
@@ -77,11 +135,11 @@ impl Default for GenerateOptions {
 pub enum FrameEvent {
     /// A generated frame's codes, `num_codebooks` of them.
     Frame { chunk: usize, codes: Vec<i32> },
-    /// A text chunk finished (EOS or the frame cap); `frames` is its count.
+    /// A text chunk finished; `frames` is its count.
     ChunkEnd {
         chunk: usize,
         frames: usize,
-        eos: bool,
+        stop: ChunkStop,
     },
 }
 
@@ -212,6 +270,28 @@ impl Drama3 {
         Ok(hidden[(stop - start - 1) * dim..].to_vec())
     }
 
+    /// Frames `chunk` may generate, and why it ends if it uses them all.
+    fn frame_limit(&self, chunk: &str, options: &GenerateOptions) -> Result<(usize, ChunkStop)> {
+        let Some(cap) = options.text_cap else {
+            return Ok((options.max_frames, ChunkStop::MaxFrames));
+        };
+        let spoken = spoken_text(chunk);
+        let tokens = self
+            .tokenizer
+            .encode(spoken.words.as_str(), false)
+            .map_err(|e| SpeechError::Input {
+                why: format!("tokenizing {:?}: {e}", spoken.words),
+            })?
+            .get_ids()
+            .len();
+        let frames = cap.frames(tokens, spoken.speaker_tags, spoken.cues);
+        Ok(if frames < options.max_frames {
+            (frames, ChunkStop::TextCap)
+        } else {
+            (options.max_frames, ChunkStop::MaxFrames)
+        })
+    }
+
     /// Speech for `text` in the voice of `references` (empty: the model picks
     /// one), reported frame by frame through `on_event`.
     pub fn generate<B: Backbone>(
@@ -227,6 +307,11 @@ impl Drama3 {
         if options.max_frames == 0 {
             return Err(SpeechError::Input {
                 why: "max_frames must be at least 1".into(),
+            });
+        }
+        if options.text_cap.is_some_and(|cap| cap.base_frames == 0) {
+            return Err(SpeechError::Input {
+                why: "text_cap.base_frames must be at least 1".into(),
             });
         }
         if backbone.hidden_size() != self.config.hidden_size {
@@ -272,6 +357,7 @@ impl Drama3 {
                 }
             }
             let mut hidden = self.prefill(backbone, &rows, system_rows, rows.len())?;
+            let (limit, cut) = self.frame_limit(chunk, &options)?;
 
             let mut history_tokens: Vec<i32> = rows[rows.len().saturating_sub(RAS_WINDOW)..]
                 .iter()
@@ -280,7 +366,7 @@ impl Drama3 {
             let mut frame = rows[rows.len() - 1].clone();
             let mut codes_by_frame: Vec<Vec<i32>> = Vec::new();
             let mut eos_seen = false;
-            for _ in 0..options.max_frames {
+            for _ in 0..limit {
                 let logits = self.tower.semantic_logits(&hidden)?;
                 let main = sampling::main_token(
                     &logits,
@@ -329,7 +415,7 @@ impl Drama3 {
             if on_event(FrameEvent::ChunkEnd {
                 chunk: chunk_index,
                 frames,
-                eos: eos_seen,
+                stop: if eos_seen { ChunkStop::Eos } else { cut },
             }) == Flow::Stop
             {
                 stats.stopped = true;
@@ -482,6 +568,122 @@ mod tests {
         (events, backbone)
     }
 
+    fn run_with(d: &mut Drama3, text: &str, options: GenerateOptions) -> Vec<FrameEvent> {
+        let mut backbone = FakeBackbone::new(d.config.hidden_size);
+        let mut events = Vec::new();
+        d.generate(&mut backbone, &[], text, options, |e| {
+            events.push(e);
+            Flow::Continue
+        })
+        .unwrap();
+        events
+    }
+
+    /// The last chunk's frame count and stop.
+    fn ending(events: &[FrameEvent]) -> (usize, ChunkStop) {
+        match events.last() {
+            Some(FrameEvent::ChunkEnd { frames, stop, .. }) => (*frames, *stop),
+            other => panic!("the call must end with a chunk end, got {other:?}"),
+        }
+    }
+
+    fn tokens(d: &Drama3, words: &str) -> usize {
+        d.tokenizer.encode(words, false).unwrap().get_ids().len()
+    }
+
+    #[test]
+    fn the_text_cap_adds_base_tokens_tags_and_cues() {
+        let cap = TextCap::MEASURED;
+        assert_eq!(cap.frames(0, 0, 0), cap.base_frames);
+        assert_eq!(
+            cap.frames(10, 1, 2),
+            cap.base_frames
+                + 10 * cap.frames_per_token
+                + cap.frames_per_speaker_tag
+                + 2 * cap.frames_per_cue
+        );
+        let huge = TextCap {
+            frames_per_token: usize::MAX,
+            ..cap
+        };
+        assert_eq!(huge.frames(2, 0, 0), usize::MAX);
+    }
+
+    #[test]
+    fn a_chunk_limit_counts_its_words_and_cues_and_never_passes_max_frames() {
+        let d = drama();
+        let cap = TextCap::MEASURED;
+        let chunk = "[sighs] Hallo du.";
+        let expected = cap.frames(tokens(&d, " Hallo du."), 0, 1);
+        let options = GenerateOptions::default();
+        assert_eq!(
+            d.frame_limit(chunk, &options).unwrap(),
+            (expected, ChunkStop::TextCap)
+        );
+        let tight = GenerateOptions {
+            max_frames: expected,
+            ..options
+        };
+        assert_eq!(
+            d.frame_limit(chunk, &tight).unwrap(),
+            (expected, ChunkStop::MaxFrames)
+        );
+        let off = GenerateOptions {
+            text_cap: None,
+            ..options
+        };
+        assert_eq!(
+            d.frame_limit(chunk, &off).unwrap(),
+            (DEFAULT_MAX_FRAMES, ChunkStop::MaxFrames)
+        );
+    }
+
+    #[test]
+    fn the_text_cap_cuts_a_runaway_chunk_short_and_says_so() {
+        let mut d = drama();
+        let text = "Hallo du.";
+        // One frame per token on top of one: tight enough for this tower.
+        let cap = TextCap {
+            base_frames: 1,
+            frames_per_token: 1,
+            frames_per_speaker_tag: 0,
+            frames_per_cue: 0,
+        };
+        let limit = cap.frames(tokens(&d, text), 0, 0);
+        let uncapped = |seed| GenerateOptions {
+            max_frames: 64,
+            text_cap: None,
+            seed,
+            ..GenerateOptions::default()
+        };
+        let (seed, free) = (0..64)
+            .map(|seed| (seed, run_with(&mut d, text, uncapped(seed))))
+            .find(|(_, events)| ending(events).0 > limit)
+            .expect("a seed whose chunk runs past the cap");
+        let capped = run_with(
+            &mut d,
+            text,
+            GenerateOptions {
+                text_cap: Some(cap),
+                ..uncapped(seed)
+            },
+        );
+        assert_eq!(ending(&capped), (limit, ChunkStop::TextCap));
+        // The cap cuts the same frames short; it does not change them.
+        assert_eq!(capped[..limit], free[..limit]);
+        // A cap at max_frames leaves max_frames in charge.
+        let at_max = run_with(
+            &mut d,
+            text,
+            GenerateOptions {
+                max_frames: limit,
+                text_cap: Some(cap),
+                ..uncapped(seed)
+            },
+        );
+        assert_eq!(ending(&at_max), (limit, ChunkStop::MaxFrames));
+    }
+
     #[test]
     fn a_seed_fixes_the_codes_and_codes_stay_in_range() {
         let mut d = drama();
@@ -560,6 +762,16 @@ mod tests {
         };
         assert!(d
             .generate(&mut backbone, &[], "Hallo.", zero, |_| Flow::Continue)
+            .is_err());
+        let no_base = GenerateOptions {
+            text_cap: Some(TextCap {
+                base_frames: 0,
+                ..TextCap::MEASURED
+            }),
+            ..Default::default()
+        };
+        assert!(d
+            .generate(&mut backbone, &[], "Hallo.", no_base, |_| Flow::Continue)
             .is_err());
         let mut narrow = FakeBackbone::new(d.config.hidden_size - 1);
         assert!(d

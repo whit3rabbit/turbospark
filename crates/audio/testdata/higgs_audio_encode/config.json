@@ -1,0 +1,68 @@
+{
+  "model_type": "higgs_audio_v2_tokenizer",
+  "acoustic_model_config": {
+    "model_type": "dac",
+    "codebook_size": 16,
+    "codebook_dim": 4,
+    "downsampling_ratios": [
+      8,
+      5,
+      4,
+      2,
+      3
+    ],
+    "encoder_hidden_size": 4,
+    "decoder_hidden_size": 32,
+    "hidden_size": 256,
+    "hop_length": 960,
+    "sampling_rate": 16000
+  },
+  "quantizer_latent_dim": 272,
+  "codebook_size": 16,
+  "codebook_dim": 4,
+  "downsample_factor": 4,
+  "sample_rate": 24000,
+  "semantic_sample_rate": 16000,
+  "strides": [
+    1,
+    1
+  ],
+  "block_dilations": [
+    1,
+    1
+  ],
+  "channel_ratios": [
+    1,
+    1
+  ],
+  "kernel_size": 3,
+  "unit_kernel_size": 3,
+  "semantic_model_config": {
+    "model_type": "hubert",
+    "hidden_size": 16,
+    "num_hidden_layers": 2,
+    "num_attention_heads": 2,
+    "intermediate_size": 8,
+    "layer_norm_eps": 1e-05,
+    "conv_dim": [
+      4,
+      4
+    ],
+    "conv_stride": [
+      2,
+      2
+    ],
+    "conv_kernel": [
+      3,
+      3
+    ],
+    "num_feat_extract_layers": 2,
+    "conv_bias": false,
+    "feat_extract_norm": "group",
+    "do_stable_layer_norm": false,
+    "hidden_act": "gelu",
+    "num_conv_pos_embeddings": 5,
+    "num_conv_pos_embedding_groups": 2,
+    "vocab_size": 32
+  }
+}

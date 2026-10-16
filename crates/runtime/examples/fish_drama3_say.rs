@@ -5,8 +5,11 @@
 //! ```sh
 //! cargo run --release -p turbospark-runtime --example fish_drama3_say -- \
 //!     <install-dir> "<text>" <out.wav> [expert-slots=16] [seed=0] [max-frames=1024] \
-//!     [residency=streamed|mapped] [tower=metal|cpu] [codec=metal|cpu]
+//!     [residency=streamed|mapped] [tower=metal|cpu] [codec=metal|cpu] [text-cap=on|off]
 //! ```
+//!
+//! `text-cap=off` leaves only `max-frames` as the chunk cap, as the reference
+//! does, to measure how long chunks run on their own.
 //!
 //! `<install-dir>` holds `config.json`, `tokenizer.json`, `codec.safetensors`,
 //! `tts_side.safetensors` and `trunk/` (`crates/repack/examples/fish_drama3_intake.rs`).
@@ -18,7 +21,8 @@ use std::time::{Duration, Instant};
 
 use audio::codec::fish_s1_dac::FishS1Dac;
 use audio::tts::fish_drama3::generate::{
-    Backbone, BackboneRow, Drama3, Flow, FrameEvent, GenerateOptions, CODEC_FILE, TRUNK_DIR,
+    Backbone, BackboneRow, Drama3, Flow, FrameEvent, GenerateOptions, TextCap, CODEC_FILE,
+    TRUNK_DIR,
 };
 use turbospark_runtime::fish_drama3::TrunkBackbone;
 use turbospark_runtime::{ExpertCacheSlots, ExpertResidency, HiddenTrunk};
@@ -95,6 +99,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("cpu") => false,
         Some(other) => return Err(format!("codec {other:?}: metal or cpu").into()),
     };
+    let text_cap = match args.next().as_deref() {
+        None | Some("on") => Some(TextCap::MEASURED),
+        Some("off") => None,
+        Some(other) => return Err(format!("text-cap {other:?}: on or off").into()),
+    };
 
     let open = Instant::now();
     let context = 4096;
@@ -132,6 +141,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let options = GenerateOptions {
         seed,
         max_frames,
+        text_cap,
         ..GenerateOptions::default()
     };
     let stats = drama.generate(&mut backbone, &[], &text, options, |event| {
@@ -142,8 +152,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     book.push(code);
                 }
             }
-            FrameEvent::ChunkEnd { chunk, frames, eos } => {
-                eprintln!("chunk {chunk}: {frames} frames, eos {eos}");
+            FrameEvent::ChunkEnd {
+                chunk,
+                frames,
+                stop,
+            } => {
+                eprintln!("chunk {chunk}: {frames} frames, stop {stop:?}");
             }
         }
         Flow::Continue

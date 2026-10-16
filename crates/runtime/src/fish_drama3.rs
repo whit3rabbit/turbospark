@@ -276,7 +276,7 @@ impl FishDrama3Runner {
         stop: &(dyn Fn() -> bool + Sync),
         mut emit: impl FnMut(Vec<f32>) -> bool + Send,
     ) -> std::result::Result<usize, String> {
-        use audio::tts::fish_drama3::generate::{Flow, FrameEvent, GenerateOptions};
+        use audio::tts::fish_drama3::generate::{ChunkStop, Flow, FrameEvent, GenerateOptions};
         let references = match request.reference {
             Some((samples, rate, transcript)) => vec![self.reference(samples, rate, transcript)?],
             None => Vec::new(),
@@ -301,10 +301,23 @@ impl FishDrama3Runner {
                 if delivery.stopped || stop() {
                     return Flow::Stop;
                 }
-                if let FrameEvent::Frame { codes, .. } = event {
-                    if frames_tx.send(Some(codes)).is_err() {
-                        return Flow::Stop;
+                match event {
+                    FrameEvent::Frame { codes, .. } => {
+                        if frames_tx.send(Some(codes)).is_err() {
+                            return Flow::Stop;
+                        }
                     }
+                    // A chunk cut short still plays, so it never ends silently.
+                    FrameEvent::ChunkEnd {
+                        chunk,
+                        frames,
+                        stop,
+                    } if stop != ChunkStop::Eos => {
+                        eprintln!(
+                            "fish_drama3: chunk {chunk} stopped without EOS at {frames} frames ({stop:?})"
+                        );
+                    }
+                    FrameEvent::ChunkEnd { .. } => {}
                 }
                 Flow::Continue
             },

@@ -144,6 +144,16 @@ pub(crate) async fn speech(
                 );
             }
         }
+        // OmniVoice speaks without a reference too; a reference makes the
+        // request a clone, which needs consent.
+        if family == Some("omnivoice") && input.reference_audio.is_some() && input.consent != Some(true)
+        {
+            return error(
+                StatusCode::BAD_REQUEST,
+                "voice cloning needs consent: true, stating you have the right to use the reference voice",
+                Some("consent"),
+            );
+        }
         let request = SpeechRequest {
             model: input.model,
             text: input.input,

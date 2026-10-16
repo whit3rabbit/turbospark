@@ -44,6 +44,39 @@ Cloning settings. Voice Design accepts a
 voice description. Generated speech can become a reusable cloning reference.
 Reference playback and trim controls are separate from generated-take playback.
 
+### The Voice Cloning page
+
+The page has two columns, and falls back to one for a narrow window or Extra
+Large text. Voice setup sits in the leading column:
+
+- **Reference voice.** Drop an audio file on the card, import one, record your
+  voice in place, or choose saved audio from the library sheet. The sheet also
+  lists references that past takes used, and keeps them after their source is
+  deleted. A recording made here uses the microphone only, stops at 30
+  seconds, and becomes the reference; it does not change the Record page's
+  sources. Without microphone access it opens the same access sheet as the
+  Record page instead of a macOS prompt. The chosen clip shows a waveform of the trimmed region, where that
+  region sits in the source, a Start slider, and a Duration field.
+- **Engine cards.** MegaTTS3 shows Consent and Quality (Fast, Balanced, Best,
+  or a custom step count). Qwen3-TTS shows the reference transcript and its
+  sampling settings.
+- **Audio model.** The picker and install controls. It moves to the top until
+  a model is chosen, because the model decides which engine cards follow.
+
+The main column holds the work:
+
+- **Steps.** A strip shows Voice, Consent or Transcript, Script, and Generate,
+  each with a glyph and a state word. Choosing a step scrolls to its section.
+- **Script.** A composer with a character count against the 6,000 character
+  limit. The reason Generate speech is disabled appears next to the button.
+- **Progress.** While a run is active, a card lists its stages (loading the
+  model, preparing the reference, generating, saving), with a progress bar,
+  the elapsed time, and Cancel.
+- **Takes.** Every take in clone mode, newest first. Each row plays in place
+  and shows the reference and quality that made it. Reuse reference restores
+  that reference region and its transcript. Consent is never carried over:
+  confirm it again for the restored region.
+
 Voiceover accepts a script split into sections. Generate section creates a new
 take; it does not replace an earlier section. Music retains description, lyrics,
 seed, and supported settings. Presets and Duplicate with changes make experiments
@@ -67,6 +100,11 @@ modules and internal codecs are not presented as runnable jobs.
   establish task quality or sustained memory and performance bounds.
 - Kokoro's Metal runtime is absent. Its portable synthesis is available only as
   an explicit Advanced experiment.
+- OmniVoice runs the portable f32 session only through the same Advanced
+  experiment: plain synthesis and consent-gated voice cloning, 24 kHz, about 23
+  times slower than realtime on the CPU path. Its installs ship the Boson
+  community-licensed Higgs tokenizer, whose install terms the app shows before
+  download.
 - Qwen3-ASR supports local checkpoints in Advanced. Packed Metal is an explicit
   experimental option; its audio encoder still runs on the CPU.
 - Qwen3-TTS runs Base, CustomVoice, and VoiceDesign MLX checkpoints in Swift.

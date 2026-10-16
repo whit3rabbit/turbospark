@@ -422,6 +422,20 @@
     "evidence": "crates/audio/src/tts/megatts3/README.md; historical evidence only, not rerun by capability discovery"
   },
   {
+    "family": "tts/omnivoice",
+    "task": "text_to_speech",
+    "operations": [
+      "synthesize",
+      "voice_clone"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "Portable f32 runtime exists behind the experimental opt-in; no Metal offload has been qualified",
+    "source": "crates/audio/src/tts/omnivoice/mod.rs",
+    "evidence": "crates/audio/src/tts/omnivoice/README.md; fixture parity checked in, real-checkpoint gate recorded in the family README"
+  },
+  {
     "family": "music/minimax_music3",
     "task": "music",
     "operations": [

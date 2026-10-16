@@ -98,7 +98,39 @@ fn failed(e: impl std::fmt::Display) -> AudioError {
     AudioError::Failed(e.to_string())
 }
 
-use runtime::native_audio::MEGATTS3_FAMILY;
+use runtime::native_audio::{MEGATTS3_FAMILY, OMNIVOICE_FAMILY};
+
+/// An OmniVoice request: reference audio is optional (its presence makes
+/// the request a clone); the engine validates consent and bounds.
+async fn omnivoice_request(
+    request: SpeechRequest,
+) -> Result<(runtime::native_audio::AudioRequest, Vec<f32>, u32), AudioError> {
+    let (samples, rate) = match request.reference_audio.clone() {
+        Some(encoded) => {
+            let (samples, rate) = tokio::task::spawn_blocking(move || decode_reference(&encoded))
+                .await
+                .map_err(|_| failed("decoding the reference audio stopped"))??;
+            (samples, Some(rate))
+        }
+        None => (Vec::new(), None),
+    };
+    let native = runtime::native_audio::AudioRequest {
+        task: native_task(AudioTask::TextToSpeech),
+        text: request.text,
+        speed: request.speed,
+        language: request.language,
+        steps: Some(request.steps.unwrap_or(
+            turbospark_audio::tts::omnivoice::pipeline::GenerateParams::default().steps,
+        )),
+        seed: Some(request.seed.unwrap_or(0)),
+        reference_sample_rate: rate,
+        consent: request.consent,
+        instruction: request.instruction,
+        reference_text: request.reference_text,
+        ..runtime::native_audio::AudioRequest::default()
+    };
+    Ok((native, samples, 24_000))
+}
 
 /// A MegaTTS3 request: the reference voice decoded at its own rate (the
 /// runtime resamples it), the model's step default, and the clone options.
@@ -476,6 +508,8 @@ impl AudioProvider for RealAudioProvider {
             let family = worker.info.family.clone().unwrap_or_default();
             let (native, samples, sample_rate) = if family == MEGATTS3_FAMILY {
                 clone_request(request).await?
+            } else if family == OMNIVOICE_FAMILY {
+                omnivoice_request(request).await?
             } else {
                 if request.reference_audio.is_some() {
                     return Err(AudioError::Invalid(format!(

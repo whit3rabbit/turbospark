@@ -359,6 +359,52 @@ pub fn split_text_with(text: &str, limit: usize, max_speakers: usize) -> Vec<Str
     chunks.iter().map(|c| c.join("\n")).collect()
 }
 
+/// What a chunk asks the model to voice: its words, and the tags that add
+/// frames without words. The generation loop scales its frame cap from it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SpokenText {
+    /// The chunk without its tags: special tokens and `[bracketed]` cues
+    /// removed, a paired tag's markup removed and its inner text kept.
+    pub words: String,
+    /// `<|speaker:N|>` tags. A turn can open with a pause.
+    pub speaker_tags: usize,
+    /// `[bracketed]` cues, paired tags and any other special token: a sigh,
+    /// a laugh, a pause, or a change of delivery.
+    pub cues: usize,
+}
+
+/// Splits `chunk` into its words and tags, by the uncuttable spans the
+/// chunker never cuts.
+pub fn spoken_text(chunk: &str) -> SpokenText {
+    let mut out = SpokenText::default();
+    let mut last = 0;
+    for (start, end) in uncuttable_spans(chunk) {
+        out.words.push_str(&chunk[last..start]);
+        let span = &chunk[start..end];
+        if span.starts_with("<|") {
+            if speaker_tag_at(span).is_some() {
+                out.speaker_tags += 1;
+            } else {
+                out.cues += 1;
+            }
+        } else if span.starts_with('[') {
+            out.cues += 1;
+        } else {
+            // A paired tag, `<name ...>inner</name>`: the inner text is spoken.
+            out.cues += 1;
+            let open_end = span.find('>').map_or(span.len(), |k| k + 1);
+            let close = span.rfind("</").map_or(span.len(), |k| k.max(open_end));
+            let inner = spoken_text(&span[open_end..close]);
+            out.words.push_str(&inner.words);
+            out.speaker_tags += inner.speaker_tags;
+            out.cues += inner.cues;
+        }
+        last = end;
+    }
+    out.words.push_str(&chunk[last..]);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -465,6 +511,27 @@ mod tests {
                 case["output"].as_str().unwrap()
             );
         }
+    }
+
+    #[test]
+    fn spoken_text_separates_words_from_tags_and_cues() {
+        let spoken = spoken_text(
+            "<|speaker:1|> [sighs] Fine. <whisper>[laughs] not now</whisper>\n<|speaker:0|> Ok.",
+        );
+        assert_eq!(spoken.words, "  Fine.  not now\n Ok.");
+        assert_eq!(spoken.speaker_tags, 2);
+        // [sighs], the whisper pair, and the [laughs] inside it.
+        assert_eq!(spoken.cues, 3);
+        let plain = spoken_text("No tags here.");
+        assert_eq!(
+            plain,
+            SpokenText {
+                words: "No tags here.".into(),
+                speaker_tags: 0,
+                cues: 0,
+            }
+        );
+        assert_eq!(spoken_text("[pause]").words, "");
     }
 
     #[test]

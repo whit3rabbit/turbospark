@@ -1,0 +1,24 @@
+{
+  "generator": "tools/gen_higgs_encode_fixture.py",
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "files": {
+    "config.json": "c2e109126472395ee2654b9717a0a4962ecab3a9f841416dfc2243ee778ef445",
+    "model.safetensors": "24f1d6f60be62cc28f703608daba32b121da66e25b79a6b172946b430194bdba",
+    "traces.json": "bab6f19c8f1425460d317e62d3c3b0a4f27493be8cd7b260377a5804b7498f05",
+    "a_wave.npy": "e37fa20d2a1a4a6762be5537c762f5e1309a7b33edc818d413d4b834abdc4fcc",
+    "a_resampled.npy": "73fc0df11e931b36e747d0b7509acacd0ee789355688f242a803fe777feba9ec",
+    "a_semantic_mean.npy": "c699bed41c43b86a6fc9a12ceb3985105a24ce75c791a8b06736e655b2e010e1",
+    "a_semantic_encoded.npy": "b61a2a55514b177985242ae892f9561a3f59b3ac729c11b725fd7c72f1bd4743",
+    "a_acoustic_rows.npy": "b83806fd4a2d5e348b2f2a0d2698b374180f88be6aae505f0b6376095d43bc08",
+    "a_fused.npy": "c5df498fed147639d32e269a2d34310856c30835cf0bc7692ec22e4ecac5aaea",
+    "a_codes.npy": "a5340f3a71e1aa4f9f0b3c3fd1926ac2110c9e221ecc90c12142905f47d90349",
+    "b_wave.npy": "3a2de57b29734e62336637c2775a20bba2f239365ee2243c74b9121542b00683",
+    "b_resampled.npy": "218d467c47213a0397e9cabef558c35974d15d161a01eeb75f84771fd76f903e",
+    "b_semantic_mean.npy": "12730ecdbf5e8813fb5209c8ddf2c69e8986ddac0fc67c37d49826a13bcc59df",
+    "b_semantic_encoded.npy": "d889bbd6e82fbc43fa4166226c1025d3a59e23e95831785b8779a0eba15f9a67",
+    "b_acoustic_rows.npy": "2a46e798d2ecb9854fcbf799d5eae321339ac925f29ef0f1dbc1bf777a7f218e",
+    "b_fused.npy": "7f064f46dbba44fd6c44a52a7a009fc43cec8b20e46c4ae64c02ec0f2d080602",
+    "b_codes.npy": "c65b6566b7191834823570f3ac9f397ecb5abba0e580b52ad738fee87e198227"
+  }
+}

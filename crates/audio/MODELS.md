@@ -253,7 +253,7 @@ falcon_h1/ssm are still upstream-only (spec tasks 80 and 81).
 
 | Source directory | Class | Local task(s) | Identity / profile notes | Current Rust path |
 |---|---|---|---|---|
-| `arktts` | Source | 79 | Default task-qualified family | None |
+| `arktts` | Source | 79 | Default task-qualified family | [Family port](src/tts/arktts/README.md) over the [lm falcon_h1 backbone](src/lm/README.md) for the 0.1b flavor; decode-only codec (encode refused with precomputed reference codes), caller-owned Mistral tokenization with the exact prompt strings exposed, replayed uniform streams for sampled draws; real-checkpoint gate open |
 | `bailingmm` | README | 42 | Ming Omni MoE | [Family port](src/tts/bailingmm/README.md) |
 | `bark` | Source | 65 | Default task-qualified family | [Partial family port](src/tts/bark/README.md); semantic prefill fixture-verified, end-to-end scenario parity blocked by a reference-side fixture reproducibility issue |
 | `breeze_tts` | Source | 66 | Aliases `breeze`, `breeze-tts` | [Family port](src/tts/breeze_tts/README.md); ends at codebook frames, waveform decode needs the unported Qwen3-TTS speech tokenizer |
@@ -280,7 +280,7 @@ falcon_h1/ssm are still upstream-only (spec tasks 80 and 81).
 | `moss_tts_delay` | Alias | 44 | Alias of `tts/moss_tts` | [Family port](src/tts/moss_tts/README.md) (delay-pattern variant) |
 | `moss_tts_local` | Alias | 44 | Alias of `tts/moss_tts` | [Family port](src/tts/moss_tts/README.md) (v1.5 local-transformer variant) |
 | `moss_tts_nano` | README | 33 | Default task-qualified family | [Family port](src/tts/moss_tts_nano/README.md) |
-| `omnivoice` | README | 38 | Default task-qualified family | [Family port](src/tts/omnivoice/README.md) over the shared [lm qwen3 backbone](src/lm/README.md) and the [HiggsAudio codec port](src/codec/higgs_audio/README.md) |
+| `omnivoice` | README | 15 | Real checkpoints gated: exact encode parity vs Python (bf16), deterministic oracle-verified 8-bit generation, RTF about 23 CPU (README) | [Family port](src/tts/omnivoice/README.md) over the shared [lm qwen3 backbone](src/lm/README.md) and the [HiggsAudio codec port](src/codec/higgs_audio/README.md); runtime, catalog, FFI and server adapters landed, Metal offload open |
 | `outetts` | README | 29 | Default task-qualified family | [Family port](src/tts/outetts/README.md) |
 | `pocket_tts` | Source | 74 | Default task-qualified family | [Family port](src/tts/pocket_tts/README.md); ends at the scaled Mimi latents, the pocket Mimi streaming decoder has no Rust port |
 | `qwen3` | Source | 64 | SNAC TTS wrapper over generic Qwen3 backbone | [Family port](src/tts/qwen3/README.md) |

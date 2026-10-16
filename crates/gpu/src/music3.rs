@@ -760,6 +760,7 @@ impl Music3Device {
             32,
         )
     }
+    #[allow(clippy::too_many_arguments)]
     fn kokoro_tensor(
         &self,
         name: &'static str,

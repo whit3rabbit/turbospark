@@ -58,7 +58,7 @@ use crate::{Result, SpeechError};
 /// saves).
 pub struct Weights {
     files: Vec<SafetensorsFile>,
-    scheme: Option<QuantScheme>,
+    scheme: Option<CheckpointScheme>,
     prefix: String,
     config: Value,
     /// Opt-in tensor-name remap applied after the prefix on the prefixed
@@ -72,6 +72,20 @@ pub struct Weights {
 }
 
 type NameMap = std::sync::Arc<dyn Fn(&str) -> String + Send + Sync>;
+
+/// The quantization scheme a checkpoint was saved with. [`Weights::open`]
+/// reads the MLX groupwise affine block from `config.json`;
+/// [`Weights::open_single_with_scheme`] carries a caller-parsed scheme such
+/// as the OmniVoice rowwise int8 format recorded in `mlx_manifest.json`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckpointScheme {
+    /// MLX groupwise affine: U32-packed values with per-group scales and
+    /// biases, `w = q * scale + bias`.
+    Affine(QuantScheme),
+    /// OmniVoice rowwise symmetric int8: I8 `[rows, groups, group_size]`
+    /// weights with F16 `[rows, groups]` scales, `w = q * scale`, no biases.
+    OmnivoiceRowwise,
+}
 
 /// Bias policy for a linear load.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,10 +105,10 @@ impl Weights {
         let files = nn::open_shards(dir)?;
         let config = quant::read_json(&dir.join("config.json"))?;
         let scheme = config.get("quantization").and_then(|q| {
-            Some(QuantScheme {
+            Some(CheckpointScheme::Affine(QuantScheme {
                 bits: q.get("bits")?.as_u64()? as u32,
                 group_size: q.get("group_size")?.as_u64()? as usize,
-            })
+            }))
         });
         // Full-model saves nest the backbone under `model.`; backbone-only
         // saves do not. The embed table exists in both, so it disambiguates.
@@ -124,6 +138,21 @@ impl Weights {
         Ok(Self {
             files: vec![file],
             scheme: None,
+            prefix: String::new(),
+            config: Value::Null,
+            name_map: None,
+        })
+    }
+
+    /// [`Self::open_single`] with a caller-parsed quantization scheme
+    /// (the OmniVoice rowwise int8 format lives in `mlx_manifest.json`,
+    /// not `config.json`). Quantized tensors without a matching scheme
+    /// are refused, never guessed.
+    pub fn open_single_with_scheme(path: &Path, scheme: Option<CheckpointScheme>) -> Result<Self> {
+        let file = SafetensorsFile::open(path)?;
+        Ok(Self {
+            files: vec![file],
+            scheme,
             prefix: String::new(),
             config: Value::Null,
             name_map: None,
@@ -264,23 +293,64 @@ impl Weights {
                 name: format!("{base}.weight"),
                 why: "tensor is missing".into(),
             })?;
-        let quantized = self.files[index].contains_tensor(&format!("{base}.scales"));
+        let affine_quantized = self.files[index].contains_tensor(&format!("{base}.scales"));
+        let rowwise_quantized = self.files[index].contains_tensor(&format!("{base}.weight.scales"));
         // load_quantized ignores the scheme for plain tensors; a quantized
-        // tensor without a config.json scheme is a refusal, not a guess.
-        let scheme = match self.scheme {
-            Some(scheme) => scheme,
-            None if quantized => {
+        // tensor without a matching scheme is a refusal, not a guess.
+        let (weight, bias) = match self.scheme {
+            Some(CheckpointScheme::Affine(scheme)) => {
+                if rowwise_quantized {
+                    return Err(SpeechError::Tensor {
+                        name: format!("{base}.weight.scales"),
+                        why: "rowwise-quantized tensor but the checkpoint scheme is affine".into(),
+                    });
+                }
+                quant::load_quantized(&self.files[index], &base, scheme)?
+            }
+            Some(CheckpointScheme::OmnivoiceRowwise) => {
+                if affine_quantized {
+                    return Err(SpeechError::Tensor {
+                        name: format!("{base}.scales"),
+                        why: "affine-quantized tensor but the checkpoint scheme is rowwise".into(),
+                    });
+                }
+                if rowwise_quantized {
+                    (
+                        quant::load_rowwise_i8(&self.files[index], &format!("{base}.weight"))?,
+                        None,
+                    )
+                } else {
+                    // A plain layer inside the rowwise checkpoint (norms,
+                    // biases): load it directly.
+                    (
+                        self.files[index].load_as_f32(&format!("{base}.weight"))?,
+                        self.files[index]
+                            .contains_tensor(&format!("{base}.bias"))
+                            .then(|| self.files[index].load_as_f32(&format!("{base}.bias")))
+                            .transpose()?,
+                    )
+                }
+            }
+            None if affine_quantized => {
                 return Err(SpeechError::Tensor {
                     name: format!("{base}.scales"),
                     why: "quantized tensor but config.json has no quantization block".into(),
                 });
             }
-            None => QuantScheme {
-                bits: 8,
-                group_size: 64,
-            },
+            None if rowwise_quantized => {
+                return Err(SpeechError::Tensor {
+                    name: format!("{base}.weight.scales"),
+                    why: "rowwise-quantized tensor but no checkpoint scheme was parsed".into(),
+                });
+            }
+            None => (
+                self.files[index].load_as_f32(&format!("{base}.weight"))?,
+                self.files[index]
+                    .contains_tensor(&format!("{base}.bias"))
+                    .then(|| self.files[index].load_as_f32(&format!("{base}.bias")))
+                    .transpose()?,
+            ),
         };
-        let (weight, bias) = quant::load_quantized(&self.files[index], &base, scheme)?;
         if weight.len()
             != rows.checked_mul(cols).ok_or_else(|| SpeechError::Tensor {
                 name: format!("{base}.weight"),

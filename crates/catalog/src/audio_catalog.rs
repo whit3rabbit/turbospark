@@ -438,6 +438,7 @@ impl AudioCatalog {
                 // f32 weights, the bf16 G2P widened, and a reserve covering the
                 // measured peak footprint of a 28 s reference.
                 AudioTask::TextToSpeech if family == "megatts3" => (weight_bytes.saturating_add(g2p_bytes).saturating_add(19<<29),"measured peak footprint on Metal 8.8 GiB (3 s reference) to 14.3 GiB (27.5 s reference, 13 s of speech), 1.4 to 2.9 GiB above the CPU path; estimate: weights, widened G2P and 9.5 GiB working reserve"),
+                AudioTask::TextToSpeech if family == "omnivoice" => (weight_bytes.saturating_mul(3).saturating_add(2<<30),"measured 3.2 GiB process footprint on one 3 s utterance (file-backed checkpoint pages excluded, 8-bit profile); estimate: three times checkpoint bytes for the f32-widened backbone plus a 2 GiB working reserve"),
                 AudioTask::SpeechToText if family == "parakeet_tdt" => {
                     let compiled = row
                         .assets
@@ -812,6 +813,7 @@ impl AudioCatalog {
             *counts.entry(row.alias.as_str()).or_insert(0usize) += 1;
         }
         for mut row in rows.iter().cloned() {
+            row.modality = crate::ModelModality::Audio;
             row.status = unqualified_status(&row.status);
             let profile = self.get(&row.alias);
             let identity = profile.map(|profile| profile.identity.clone());
@@ -855,6 +857,54 @@ impl AudioCatalog {
                     identity,
                     error,
                 }),
+            }
+        }
+        let mut known_aliases: std::collections::BTreeSet<String> =
+            rows.iter().map(|r| r.alias.clone()).collect();
+        for inst in &report.installed {
+            known_aliases.insert(inst.alias.clone());
+        }
+        if let Ok(entries) = std::fs::read_dir(store.audio_models_dir()) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() && path.extension().and_then(|e| e.to_str()) == Some("gturbo") {
+                    if let Some(alias) = path.file_stem().and_then(|s| s.to_str()) {
+                        if !known_aliases.contains(alias)
+                            && !audio_receipt_missing(&path).unwrap_or(true)
+                        {
+                            if let Some(profile) = self.get(alias) {
+                                if read_receipt(profile, &path).is_ok()
+                                    && verify_asset_bytes(profile, &path, false, None).is_ok()
+                                {
+                                    let installed = InstalledModel {
+                                        alias: profile.identity.alias.clone(),
+                                        repo: profile.identity.repository.clone(),
+                                        revision: profile.identity.revision.clone(),
+                                        path: path.clone(),
+                                        family: profile.family.clone(),
+                                        install_bytes: crate::directory_bytes(&path),
+                                        installed_on: crate::install::today(),
+                                        status: "unverified".into(),
+                                        kind: if profile.identity.task == AudioTask::SpeechToText {
+                                            Some("speech".into())
+                                        } else {
+                                            None
+                                        },
+                                        modality: crate::ModelModality::Audio,
+                                        variant: if profile.identity.task == AudioTask::Music {
+                                            Some("affine-4bit".into())
+                                        } else {
+                                            None
+                                        },
+                                    };
+                                    let _ = store.record(&installed);
+                                    report.installed.push(installed);
+                                    known_aliases.insert(alias.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
         report
@@ -934,7 +984,7 @@ fn delete_managed_audio_path(
 
 /// Families whose generic catalog rows may run: a runtime adapter for them
 /// exists and was reviewed. Every other new row stays closed.
-const REVIEWED_ADAPTERS: &[&str] = &["megatts3", "parakeet_tdt"];
+const REVIEWED_ADAPTERS: &[&str] = &["megatts3", "omnivoice", "parakeet_tdt"];
 
 fn check_acknowledged(profile: &AudioProfile, acknowledged: &[String]) -> Result<(), String> {
     let missing: Vec<&str> = profile
@@ -955,6 +1005,33 @@ fn check_acknowledged(profile: &AudioProfile, acknowledged: &[String]) -> Result
 }
 
 fn profile_capabilities(family: &str) -> AudioCapabilities {
+    if family == "omnivoice" {
+        // The runtime engine is portable f32 CPU only; like Kokoro, the
+        // CPU path needs the explicit portable opt-in until a Metal
+        // offload exists. Cloning is capability-driven (voice_clone) and
+        // requires consent at the runtime boundary.
+        return AudioCapabilities {
+            languages: vec![
+                "en", "zh", "ja", "ko", "de", "fr", "es", "it", "pt", "ru", "ar", "hi", "nl",
+                "pl", "tr", "vi", "th", "id", "uk", "sv", "fa", "cs", "el", "he",
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+            voices: vec![],
+            max_input_seconds: None,
+            supports_lyrics: false,
+            operations: vec!["synthesize".into(), "voice_clone".into()],
+            timing: None,
+            backend: "portable_cpu".into(),
+            cancellation: "diffusion_step".into(),
+            can_run: false,
+            unavailable_reason: Some(
+                "OmniVoice has no Metal runtime; portable CPU execution requires the experimental opt-in"
+                    .into(),
+            ),
+        };
+    }
     if family == "megatts3" {
         return AudioCapabilities {
             languages: vec![],
@@ -1023,9 +1100,7 @@ fn unqualified_status(status: &str) -> String {
 }
 
 fn validate_managed_audio_record(store: &Store, row: &InstalledModel) -> Result<(), String> {
-    if row.modality != crate::ModelModality::Audio
-        || row.effective_modality() != crate::ModelModality::Audio
-    {
+    if row.effective_modality() != crate::ModelModality::Audio {
         return Err("legacy record is not an Audio model".into());
     }
     if row.alias.is_empty()
@@ -1893,8 +1968,24 @@ mod tests {
     #[test]
     fn initial_audio_profiles_have_exact_complete_pins_and_wire_metadata() {
         let catalog = AudioCatalog::embedded().unwrap();
-        assert_eq!(catalog.entries().count(), 10);
+        assert_eq!(catalog.entries().count(), 12);
         for (task, alias, repo, revision, rate, channels) in [
+            (
+                AudioTask::TextToSpeech,
+                "omnivoice-8bit",
+                "mlx-community/OmniVoice-8bit",
+                "b222e4d82e7bc20323be736ef05fcfc50defb71b",
+                24000,
+                1,
+            ),
+            (
+                AudioTask::TextToSpeech,
+                "omnivoice-bf16",
+                "mlx-community/OmniVoice-bfloat16",
+                "6119f7072580cc30c3cbdf496269216b03ad9742",
+                24000,
+                1,
+            ),
             (
                 AudioTask::SpeechToText,
                 "whisper-base",

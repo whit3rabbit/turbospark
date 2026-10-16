@@ -34,6 +34,9 @@ use crate::nn::load_tensor;
 use crate::tts::sampling::{argmax, log_softmax};
 use crate::{ops, Result, SpeechError};
 
+mod duration;
+pub mod pipeline;
+
 /// Combine the reference transcript and the text to synthesize
 /// (`_combine_text`): strip both, join with one space, drop `\r`/`\n`,
 /// collapse space/tab runs, and remove whitespace that touches a CJK
@@ -143,7 +146,20 @@ impl OmniVoiceConfig {
             config.sample_rate = v as u32;
         }
         if let Some(v) = value.get("llm_config") {
-            config.llm_config = v.clone();
+            let mut llm_config = v.clone();
+            // Newer transformers exports nest the rope settings under
+            // `rope_parameters`; the shared qwen3 parser reads a
+            // top-level `rope_theta`, so lift it when it is missing.
+            if llm_config.get("rope_theta").is_none() {
+                if let Some(theta) = llm_config
+                    .get("rope_parameters")
+                    .and_then(|rope| rope.get("rope_theta"))
+                    .and_then(Value::as_f64)
+                {
+                    llm_config["rope_theta"] = serde_json::json!(theta);
+                }
+            }
+            config.llm_config = llm_config;
         }
         config
     }
@@ -163,8 +179,11 @@ pub struct Model {
 
 impl Model {
     /// Opens the checkpoint directory (`config.json` plus
-    /// `model.safetensors` in the converted `backbone.*` /
-    /// `audio_embeddings.{i}` / `audio_heads.{i}` naming).
+    /// `model.safetensors`). Both the released layout (the fused
+    /// `audio_embeddings.weight` table, the `llm.` backbone prefix, and
+    /// the `omnivoice-rowwise` 8-bit scheme recorded in
+    /// `mlx_manifest.json`) and the converted fixture layout
+    /// (`backbone.` prefix, per-codebook tables) load through here.
     pub fn open(dir: &Path) -> Result<Self> {
         let config_value = crate::quant::read_json(&dir.join("config.json"))?;
         Self::open_with_config(dir, config_value)
@@ -186,21 +205,42 @@ impl Model {
             })? as usize;
         let codebooks = config.num_audio_codebook;
         let vocab = config.audio_vocab_size;
-        let mut audio_embeddings = Vec::with_capacity(codebooks);
-        let mut audio_heads = Vec::with_capacity(codebooks);
-        for i in 0..codebooks {
-            audio_embeddings.push(load_tensor(
-                file,
-                &format!("audio_embeddings.{i}.weight"),
-                &[vocab, hidden],
-            )?);
-            audio_heads.push(load_tensor(
-                file,
-                &format!("audio_heads.{i}.weight"),
-                &[vocab, hidden],
-            )?);
-        }
-        let weights = Weights::open_single(&model_path)?.with_prefix("backbone.");
+        // Released checkpoints keep the raw k2-fsa layout: the fused audio
+        // tables and the `llm.` backbone prefix. Converted fixtures store
+        // per-codebook tables under `backbone.`.
+        let fused = file.contains_tensor("audio_embeddings.weight");
+        let scheme = checkpoint_scheme(dir, file, &config_value)?;
+        let (audio_embeddings, audio_heads) = if fused {
+            (
+                split_fused_table(
+                    file,
+                    "audio_embeddings.weight",
+                    codebooks,
+                    vocab,
+                    hidden,
+                    scheme,
+                )?,
+                split_fused_table(file, "audio_heads.weight", codebooks, vocab, hidden, scheme)?,
+            )
+        } else {
+            let mut audio_embeddings = Vec::with_capacity(codebooks);
+            let mut audio_heads = Vec::with_capacity(codebooks);
+            for i in 0..codebooks {
+                audio_embeddings.push(load_tensor(
+                    file,
+                    &format!("audio_embeddings.{i}.weight"),
+                    &[vocab, hidden],
+                )?);
+                audio_heads.push(load_tensor(
+                    file,
+                    &format!("audio_heads.{i}.weight"),
+                    &[vocab, hidden],
+                )?);
+            }
+            (audio_embeddings, audio_heads)
+        };
+        let prefix = if fused { "llm." } else { "backbone." };
+        let weights = Weights::open_single_with_scheme(&model_path, scheme)?.with_prefix(prefix);
         let dense_config = lm::qwen3::from_json(&config.llm_config)?;
         let mut backbone = lm::Backbone::load(&weights, dense_config)?;
         // The reference disables the causal mask on the whole stack.
@@ -360,6 +400,9 @@ impl Model {
     /// is `None` (documented deviation: not bit-reproducible against
     /// `mx.random`). Returns the target tokens `[T, C]` row-major with
     /// any surviving mask replaced by 0.
+    /// `on_step`, when present, is called after every diffusion step with
+    /// `(step, num_steps)`; returning false stops the run with a cancel
+    /// error (the engine's cancellation and progress hooks).
     #[allow(clippy::too_many_arguments)]
     pub fn iterative_unmask(
         &mut self,
@@ -374,6 +417,7 @@ impl Model {
         t_shift: f32,
         draws: Option<&[Vec<f32>]>,
         seed: u64,
+        mut on_step: Option<&mut dyn FnMut(usize, usize) -> bool>,
     ) -> Result<Vec<i32>> {
         // Zero steps would skip the loop and return the all-mask target
         // as zeros, a silent non-result.
@@ -513,6 +557,13 @@ impl Model {
                 }
             }
             uncond_ids.copy_from_slice(&cond_ids[target_base..]);
+            if let Some(callback) = on_step.as_deref_mut() {
+                if !callback(step + 1, num_steps) {
+                    return Err(SpeechError::Input {
+                        why: "generation cancelled".into(),
+                    });
+                }
+            }
         }
 
         let mut tokens = cond_ids[target_base..].to_vec();
@@ -545,6 +596,7 @@ impl Model {
         draws: Option<&[Vec<f32>]>,
         seed: u64,
         codec: &crate::codec::higgs_audio::HiggsAudioTokenizer,
+        on_step: Option<&mut dyn FnMut(usize, usize) -> bool>,
     ) -> Result<(Vec<i32>, Vec<f32>)> {
         let (input_ids, audio_mask) =
             self.prepare_inference_inputs(style_ids, text_ids, target_len, ref_tokens)?;
@@ -560,6 +612,7 @@ impl Model {
             t_shift,
             draws,
             seed,
+            on_step,
         )?;
         // Tokens [T, C] row-major -> per-book code rows for the codec.
         let codebooks = self.config.num_audio_codebook;
@@ -573,6 +626,147 @@ impl Model {
         let audio = codec.decode_tokens(&codes)?;
         Ok((tokens, audio))
     }
+}
+
+/// Parses the checkpoint quantization scheme. The released 8-bit
+/// conversion records `omnivoice-rowwise` in `mlx_manifest.json` (the
+/// per-tensor entries must agree with the top-level bits and group size,
+/// and every entry must exist in the checkpoint); a `config.json`
+/// quantization block maps to the shared MLX affine scheme. Unverified
+/// formats are refused, never guessed.
+fn checkpoint_scheme(
+    dir: &Path,
+    file: &SafetensorsFile,
+    config_value: &Value,
+) -> Result<Option<lm::CheckpointScheme>> {
+    let manifest_path = dir.join("mlx_manifest.json");
+    if manifest_path.exists() {
+        let manifest = crate::quant::read_json(&manifest_path)?;
+        let quantization = manifest.get("quantization").filter(|q| !q.is_null());
+        // The unquantized conversions record a null quantization block.
+        let Some(quantization) = quantization else {
+            return Ok(config_value.get("quantization").and_then(|q| {
+                Some(lm::CheckpointScheme::Affine(crate::quant::QuantScheme {
+                    bits: q.get("bits")?.as_u64()? as u32,
+                    group_size: q.get("group_size")?.as_u64()? as usize,
+                }))
+            }));
+        };
+        let format = quantization.get("format").and_then(Value::as_str);
+        if format != Some("omnivoice-rowwise") {
+            return Err(SpeechError::Unsupported {
+                why: format!(
+                    "unsupported OmniVoice quantization format {format:?}; only omnivoice-rowwise is verified"
+                ),
+            });
+        }
+        let bad = |field: &str| -> SpeechError {
+            SpeechError::BadConfig {
+                field: format!("mlx_manifest.json.quantization.{field}"),
+                why: "missing or not an integer".into(),
+            }
+        };
+        let bits = quantization
+            .get("bits")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| bad("bits"))? as u32;
+        let group_size = quantization
+            .get("group_size")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| bad("group_size"))? as usize;
+        if bits != 8 {
+            return Err(SpeechError::Unsupported {
+                why: format!(
+                    "only the 8-bit rowwise OmniVoice conversion is verified; the manifest declares {bits} bits"
+                ),
+            });
+        }
+        if group_size == 0 {
+            return Err(bad("group_size"));
+        }
+        let tensors = quantization
+            .get("tensors")
+            .and_then(Value::as_object)
+            .ok_or_else(|| bad("tensors"))?;
+        if tensors.is_empty() {
+            return Err(bad("tensors"));
+        }
+        for (name, entry) in tensors {
+            let entry_bits = entry.get("bits").and_then(Value::as_u64).ok_or_else(|| {
+                SpeechError::BadConfig {
+                    field: format!("mlx_manifest.json.quantization.tensors.{name}.bits"),
+                    why: "missing or not an integer".into(),
+                }
+            })?;
+            let entry_group_size =
+                entry
+                    .get("group_size")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| SpeechError::BadConfig {
+                        field: format!("mlx_manifest.json.quantization.tensors.{name}.group_size"),
+                        why: "missing or not an integer".into(),
+                    })?;
+            if entry_bits != bits as u64 || entry_group_size as usize != group_size {
+                return Err(SpeechError::BadConfig {
+                    field: format!("mlx_manifest.json.quantization.tensors.{name}"),
+                    why: "per-tensor scheme disagrees with the manifest top level".into(),
+                });
+            }
+            if !file.contains_tensor(&format!("{name}.scales")) {
+                return Err(SpeechError::Tensor {
+                    name: format!("{name}.scales"),
+                    why: "manifest entry is missing from the checkpoint".into(),
+                });
+            }
+        }
+        return Ok(Some(lm::CheckpointScheme::OmnivoiceRowwise));
+    }
+    Ok(config_value.get("quantization").and_then(|q| {
+        Some(lm::CheckpointScheme::Affine(crate::quant::QuantScheme {
+            bits: q.get("bits")?.as_u64()? as u32,
+            group_size: q.get("group_size")?.as_u64()? as usize,
+        }))
+    }))
+}
+
+/// Loads the fused `[C * V, hidden]` audio table and splits it into the
+/// per-codebook tables (codebook `i` owns rows `[i * V, (i + 1) * V)`),
+/// dequantizing the rowwise int8 release format when the scales are
+/// present.
+fn split_fused_table(
+    file: &SafetensorsFile,
+    name: &str,
+    codebooks: usize,
+    vocab: usize,
+    hidden: usize,
+    scheme: Option<lm::CheckpointScheme>,
+) -> Result<Vec<Vec<f32>>> {
+    let flat = if file.contains_tensor(&format!("{name}.scales")) {
+        match scheme {
+            Some(lm::CheckpointScheme::OmnivoiceRowwise) => {
+                crate::quant::load_rowwise_i8(file, name)?
+            }
+            _ => {
+                return Err(SpeechError::Tensor {
+                    name: format!("{name}.scales"),
+                    why: "quantized fused table but no rowwise scheme was parsed".into(),
+                })
+            }
+        }
+    } else {
+        file.load_as_f32(name)?
+    };
+    let rows = codebooks * vocab;
+    if flat.len() != rows * hidden {
+        return Err(SpeechError::Tensor {
+            name: name.to_owned(),
+            why: format!("expected {rows}x{hidden}, got {} values", flat.len()),
+        });
+    }
+    let table_len = vocab * hidden;
+    Ok((0..codebooks)
+        .map(|codebook| flat[codebook * table_len..(codebook + 1) * table_len].to_vec())
+        .collect())
 }
 
 /// `_gumbel_noise`'s noise term in f32: `-log(-log(u + 1e-10) + 1e-10)`.
