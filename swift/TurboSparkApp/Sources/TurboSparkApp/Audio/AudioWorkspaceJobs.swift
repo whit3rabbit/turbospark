@@ -109,7 +109,13 @@ extension AudioWorkspaceController {
                 try Task.checkCancellation()
                 self.status = AppStrings.localized("Loading model")
                 self.speechRun?.enter(.loadingModel)
-                let session = profile.family == "qwen3_tts" ? nil : try await self.residentSession(for: profile, portable: portable, experimentalMetal: experimentalMetal, source: result)
+                let provider = AudioRuntimeProvider(profile)
+                // Only Rust rows open a native session. No FluidAudio family
+                // has an adapter yet, so routing keeps them out of the picker.
+                if provider != .rust && provider != .qwenMLX {
+                    throw AudioWorkspaceError.message(AppStrings.localized("Runtime unavailable"))
+                }
+                let session = provider == .qwenMLX ? nil : try await self.residentSession(for: profile, portable: portable, experimentalMetal: experimentalMetal, source: result)
                 var request = Self.request(from: inputs, task: currentTask)
                 if clonesNatively { request = Self.nativeCloneRequest(request, family: profile.family, speech: inputs.speech) }
                 var labelFailure: String?
@@ -149,7 +155,7 @@ extension AudioWorkspaceController {
                         Task { @MainActor in self?.receiveProgress(update, runID: result.id, token: token) }
                     }
                     let output: AudioResult
-                    if profile.family == "qwen3_tts" {
+                    if provider == .qwenMLX {
                         output = try await self.synthesizeQwenSpeech(inputs, profile: profile, source: result, report: report)
                     } else {
                         guard let session else { throw CancellationError() }

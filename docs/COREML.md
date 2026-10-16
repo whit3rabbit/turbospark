@@ -437,7 +437,7 @@ Some audio rows run in the app through the FluidAudio Swift package (exact
 0.15.5), not through `crates/coreml`. Rust still pins, downloads, verifies,
 lists and deletes them like any audio profile. The evidence behind every value
 below is [FLUIDAUDIO_PHASE0.md](FLUIDAUDIO_PHASE0.md). No such row ships yet:
-this is the catalog half, and the app provider comes next.
+this is the catalog half. The app side is [FLUIDAUDIO.md](FLUIDAUDIO.md).
 
 - **Backend `swift_coreml`.** The families are `fluidaudio_silero_vad`,
   `fluidaudio_diarizer`, `fluidaudio_kokoro_ane`, `fluidaudio_pocket_tts`,

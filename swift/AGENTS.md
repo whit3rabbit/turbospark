@@ -167,6 +167,17 @@ staging files changed.
   Sparkle.framework (XPCServices, Autoupdate, Updater.app, then the
   framework) before the app itself. The brew cask's `auto_updates true` and
   the in-app updater are one contract: either may change, not just one.
+- FluidAudio is pinned `exact: "0.15.5"` ([FLUIDAUDIO.md](../docs/FLUIDAUDIO.md)).
+  From v0.15.6 it links a Rust staticlib whose unwind personality the app
+  link cannot take. Only `Audio/FluidAudio/` imports it, and
+  `FluidAudioEngine` sets `ModelHub.offlineMode` and a blocked
+  `ModelRegistry.baseURL` before any use. Left alone, FluidAudio downloads
+  Hugging Face `main` and deletes a model folder after a failed load.
+- Never call a FluidAudio download, cache or purge API
+  (`FluidAudioIsolationTests` scans for them). Installs come from the pinned
+  Rust audio catalog. A family runs only once `FluidAudioFamily.hasAdapter`
+  is true for it. Check a model's inputs before handing it to FluidAudio:
+  a mismatch is a `preconditionFailure` that ends the app, not an error.
 
 ## Checks
 

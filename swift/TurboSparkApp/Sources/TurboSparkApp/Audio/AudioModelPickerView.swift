@@ -27,7 +27,9 @@ struct AudioModelPickerView: View {
             Picker(selection: Binding(get: { controller.recipe.modelID }, set: { controller.selectModel($0) })) {
                 Text("Choose a model", bundle: .module).tag(Optional<String>.none)
                 ForEach(controller.availableProfiles) { profile in
-                    Text(profile.displayName).tag(Optional(profile.identity.alias))
+                    (Text(profile.displayName) + Text(verbatim: " - ")
+                        + Text(LocalizedStringKey(AudioEngineLabel(profile).title), bundle: .module))
+                        .tag(Optional(profile.identity.alias))
                 }
             } label: { Text("Audio model", bundle: .module) }
             .labelsHidden().frame(maxWidth: .infinity, alignment: .leading)
@@ -121,6 +123,7 @@ struct AudioModelPickerView: View {
                 Text(profile.identity.repository).foregroundStyle(.appSecondary)
                     .textSelection(.enabled).lineLimit(2).truncationMode(.middle)
             }
+            AudioEngineSummary(profile: profile)
             HStack(spacing: 8) {
                 if controller.selectedLocalModelURL == nil, profile.downloadBytes > 0 {
                     Label { Text(MetricFormat.storage(profile.downloadBytes)) }
@@ -281,7 +284,15 @@ struct AudioModelPickerView: View {
                     }
                 }
                 Text(profile.family).foregroundStyle(.appSecondary)
-                Text(profile.capabilities.backend).foregroundStyle(.appSecondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Engine", bundle: .module).themedFont(.small, weight: .medium)
+                    Text(LocalizedStringKey(AudioEngineLabel(profile).title), bundle: .module)
+                        .foregroundStyle(.appSecondary)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Provider", bundle: .module).themedFont(.small, weight: .medium)
+                    Text(verbatim: AudioEngineLabel.provider(for: profile)).foregroundStyle(.appSecondary)
+                }
                 if let limit = profile.capabilities.maxInputSeconds {
                     HStack {
                         Text("Input limit (seconds)", bundle: .module)

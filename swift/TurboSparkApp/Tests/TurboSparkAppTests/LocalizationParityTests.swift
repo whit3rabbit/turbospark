@@ -580,6 +580,11 @@ final class LocalizationParityTests: XCTestCase {
         for kind in InstalledModelKind.allCases {
             values.append(("InstalledModelKind.title", kind.title))
         }
+        // Audio model pickers render the engine name and its tooltip as keys.
+        for label in AudioEngineLabel.allCases {
+            values.append(("AudioEngineLabel.title", label.title))
+            values.append(("AudioEngineLabel.tooltip", label.tooltip))
+        }
         for section in KeyboardShortcutCatalog.sections {
             values.append(("KeyboardShortcutSection.title", section.title))
             for row in section.rows {
