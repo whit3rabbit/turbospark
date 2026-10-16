@@ -9,7 +9,7 @@ TurboSpark provides fast local speech synthesis and zero-shot voice cloning.
 
 ## Supported Models
 
-1. **Kokoro-82M** (`kokoro-82m`):
+1. **Kokoro-82M** (`kokoro-82m-bf16`):
    * Ultra-fast text-to-speech model producing 24 kHz mono audio.
    * Default voice: `af_heart`.
    * Runs natively on Metal GPU or CPU.
@@ -77,7 +77,7 @@ curl http://127.0.0.1:8080/v1/audio/speech \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $KEY" \
   -d '{
-    "model": "kokoro-82m",
+    "model": "kokoro-82m-bf16",
     "input": "TurboSpark delivers high performance local AI on Apple Silicon.",
     "voice": "af_heart",
     "response_format": "wav"

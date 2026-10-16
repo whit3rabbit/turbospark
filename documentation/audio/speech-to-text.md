@@ -10,7 +10,7 @@ TurboSpark provides fast local speech transcription with segment timestamps, pun
 ## Supported Models
 
 * **Whisper** (`whisper-tiny-en`, `whisper-base-en`, `whisper-small-en`): Pinned OpenAI Whisper architecture running on native Metal GPU kernels. Also available in 4-bit and 8-bit MLX quantizations.
-* **Qwen3-ASR 0.6B** (`qwen3-asr-0.6b`): Compact streaming speech recognition model with low latency.
+* **Qwen3-ASR 0.6B** (`qwen3-asr-06b-8bit`): Compact streaming speech recognition model with low latency.
 
 ---
 

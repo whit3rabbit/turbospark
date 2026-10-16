@@ -21,7 +21,7 @@ For detailed endpoint guides and curl examples:
 turbospark serve \
   --model ~/models/gemma4.gturbo \
   --stt-model whisper-base-en \
-  --tts-model ~/models/kokoro-82m \
+  --tts-model kokoro-82m-bf16 \
   --music-model minimax-music3-4bit \
   --port 8080 \
   --api-key "$KEY"
@@ -204,7 +204,7 @@ curl http://127.0.0.1:8080/v1/audio/speech \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $KEY" \
   -d '{
-    "model": "kokoro-82m",
+    "model": "kokoro-82m-bf16",
     "input": "TurboSpark delivers high performance local inference.",
     "response_format": "wav"
   }' \

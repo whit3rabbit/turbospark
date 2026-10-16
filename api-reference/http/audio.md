@@ -34,7 +34,7 @@ curl http://127.0.0.1:8080/v1/audio/transcriptions \
 #### Parameters
 
 * `file`: Multipart WAV file or binary body with `Content-Type: audio/wav`.
-* `model`: Model alias (`whisper-tiny-en`, `whisper-base-en`, `whisper-small-en`, `qwen3-asr-0.6b`).
+* `model`: Model alias (`whisper-tiny-en`, `whisper-base-en`, `whisper-small-en`, `qwen3-asr-06b-8bit`).
 * `response_format`: `json` (default), `verbose_json`, `text`, `srt`, `vtt`.
 * `stream`: When `true`, returns NDJSON stream of transcribed segments.
 * `async`: When `true`, accepts as an asynchronous background job (`202 Accepted`).
@@ -72,7 +72,7 @@ curl http://127.0.0.1:8080/v1/audio/speech \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $KEY" \
   -d '{
-    "model": "kokoro-82m",
+    "model": "kokoro-82m-bf16",
     "input": "TurboSpark delivers high-performance local AI on macOS.",
     "voice": "af_heart",
     "speed": 1.0,

@@ -80,7 +80,7 @@ turbospark-server --model gemma4
 turbospark-server \
   --model gemma4 \
   --stt-model whisper-base-en \
-  --tts-model kokoro-82m \
+  --tts-model kokoro-82m-bf16 \
   --music-model minimax-music3-4bit \
   --port 8080 \
   --api-key "$TURBOSPARK_API_KEY"
