@@ -553,10 +553,10 @@ since the routing is deterministic.
   layer cb1 wait (attention plus router) is 120-150 ms/token at every slot
   count, ~40% of the step. The catalog row for this same install records
   12.2-12.8 tok/s from the internal SSD, ~80 ms for a WHOLE token, so this
-  one bucket alone exceeds an internal-SSD token here. The likely cause is page faults on the mapped trunk and the 27 GiB n-gram
-  table from the external device. This is INFERRED from the bucket's
-  independence of slot count and has not been isolated; Flash-Next's
-  128 MiB `--ple-shelf` targets the same table.
+  one bucket alone exceeds an internal-SSD token here. This was first
+  INFERRED to be page faults on the mapped trunk and the 27 GiB n-gram
+  table. It was then measured and that inference is wrong: see "The cb1
+  bucket follows the GPU clock" further down this page.
 
 ### Replay: what a larger explicit cache would buy
 
@@ -654,8 +654,100 @@ Output: byte-identical across the bypass arms at each slot count. 128 and
   machines with the memory, and a machine with 64 GB or more is exactly
   where the bypass result could reverse. That reversal is unmeasured.
 - The bucket that did not move with any cache setting is cb1 (95-145
-  ms/pass). It is now the larger lever on this install, and it needs the
-  trunk-versus-n-gram split noted above before anyone optimizes it.
+  ms/pass). It is now the larger lever on this install. Its cause is
+  measured in the next section: not page faults, the GPU clock.
+
+## The cb1 bucket follows the GPU clock (2026-10-15)
+
+### Protocol
+
+`TURBOSPARK_CB1_TRACE=<path>` (`families/qwen4/cb1_trace.rs`) writes one row per layer buffer:
+`commit()` time, wait time, GPU-reported busy, idle since the previous wait,
+expert io since the previous row, and the PLE host encode on its layer. Same
+install, host and 4-turn chat protocol as above, 128 slots, page cache on
+unless noted, the first 40 passes dropped. E2 adds a local, uncommitted
+`TURBOSPARK_DEBUG_IDLE_US` sleep before each cb1 commit. A `powermetrics`
+capture (`gpu_power,tasks`) covers the later E2 arms. Data and scripts:
+`/Volumes/T7/turbospark/phase2/`.
+
+A cb1 is not only attention and router. This family encodes layer L's routed
+experts into the pass that becomes layer L+1's cb1, so each buffer carries the
+previous layer's routed compute as well.
+
+Contamination: every arm timed out the cargo gate, because other sessions ran
+builds and GPU tests throughout. E1 arms swapped nothing. Several E2 arms ran
+at load 17 to 28 and one swapped 9.9M pages. Every arm is therefore
+contaminated, and the evidence below is the direction that replicates in
+pairs, not any one number.
+
+### E1: where the time goes (705 passes per arm)
+
+| arm | cb1 busy ms/tok | cb1 wait ms/tok | `commit()` ms/tok | PLE host encode ms/tok | tok/s, turns 2-4 |
+|---|---:|---:|---:|---:|---:|
+| page cache, a | 109.0 | 135.7 | 0.23 | 5.07 | 3.6-4.3 |
+| page cache, b | 109.2 | 135.8 | 0.22 | 5.07 | 3.6-4.5 |
+| `F_NOCACHE`, a | 121.6 | 148.5 | 0.20 | 5.03 | 2.5-2.8 |
+| `F_NOCACHE`, b | 124.6 | 152.0 | 0.23 | 5.01 | 2.3-2.7 |
+
+- **Not trunk wiring or page-in.** `commit()` is about 5 us per layer, the
+  same in the first three passes of a fresh process. A stall wiring the
+  4.2 GiB mapping would sit there, not in GPU-reported busy.
+- **Not the n-gram table.** The host lookup and upload is about 5 ms per token.
+- **Not a per-layer compute floor.** The same layer's busy time varies
+  2.7-2.8x across tokens (p95 over p5), while layer means differ about 2x.
+  The residual after removing each layer's mean has lag-1 autocorrelation
+  0.86-0.89 across consecutive buffers and 0.12 for the same layer on the
+  next token. Slow stretches run up to 47 buffers. Slowness belongs to the
+  moment, not to the layer.
+- The fastest buffers (p1-p5) take 1.1-1.3 ms. Forty-eight of those is
+  55-60 ms per token against 109 measured, which is the scale of the
+  internal-SSD row.
+- Busy rises about 22-24% from the lowest to the highest quartile of idle
+  before the buffer, and the lowest-idle quartile is already slow, so idle
+  explains part of it.
+- `F_NOCACHE` arms read higher (122-125 against 109) because longer io waits
+  leave the GPU idle longer. This corrects the earlier statement that no
+  cache setting moved cb1.
+
+### E2: injected idle, and the GPU clock
+
+| idle added per layer | cb1 busy ms/tok (a / b) | GPU HW active frequency, mean MHz |
+|---:|---:|---:|
+| 0 | 108.5 / 105.5 | 1021 (b) |
+| 250 us | 135.5 / 130.5 | 582 (b) |
+| 1000 us | 144.8 / 135.8 | 663 (b) |
+| 4000 us | 171.2 / 156.1 | 504 (a), 438 (b) |
+
+The GPU's P-states run from 338 to 1578 MHz. Frequency comes from the arms
+inside the capture window (the `a` arms of 0, 250 and 1000 us ran before it
+started).
+
+- **Busy time grows with injected idle and replicates in both pairs**, and the
+  GPU clock falls with it. At no injection the clock still averages 1021 MHz,
+  below the maximum, with p10 at 600.
+- Busy times frequency is not constant (68k to 108k MHz*ms), so part of cb1
+  is not clock-bound. Do not extrapolate linearly.
+- 250 us gives 582 MHz and 1000 us gives 663, against a busy time that
+  keeps rising. The arms differ in load (3.6 against 21.5) and GPU idle
+  residency (43% against 17%), so treat the order between them as noise.
+- **Contention is not excluded.** `powermetrics` reports 0 GPU ms/s for every
+  process on this machine, turbospark-check included, so it cannot attribute
+  GPU time. The share due to other GPU clients is unmeasured.
+
+### What this changes
+
+- The cb1 cost is mostly a self-inflicted duty-cycle effect: the engine
+  commits and waits per layer, idles the GPU through expert io and encoding
+  for about 40% of the step, and the governor holds the clock low.
+- The trunk-placement experiment is not needed. Moving `model_weights.bin`
+  would not touch the cause.
+- PROJECTION, not a measurement: if a keep-alive held the clock and cb1 busy
+  fell to ~60 ms per token, cb1 wait would drop from ~136 to ~87 ms and
+  turns 2-4 would go from ~4.0 to ~5.0 tok/s. This is the ceiling to test
+  before any engine change, at a cost in power. Not run: the dispatch profile
+  (E3) and a keep-alive arm (E6).
+- The run gate must record GPU utilization and clock, not only cargo
+  processes. `phase2/run.sh` samples utilization from `ioreg`.
 
 ## Decay as the default: the multi-request pair, measured (2026-10-17)
 
