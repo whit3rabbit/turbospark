@@ -74,12 +74,15 @@ pub struct TextCap {
 }
 
 impl TextCap {
-    /// Set from frame counts on the pinned 4-bit checkpoint under the
-    /// reference recipe; `docs/FISH_DRAMA3_PHASE0.md` (sampling recipe) has
-    /// the measurement.
+    /// From 125 normal clips under the reference recipe (this port and
+    /// mlx-audio, 4-bit): the slowest ran 13.6 frames per token, the median
+    /// 6.8, and every clip stays under half its cap. A sigh added at most
+    /// about 50 frames. Speaker tags have no normal measurement (both dialogue
+    /// clips ran away), so their 1 s is a turn gap with margin.
+    /// `docs/FISH_DRAMA3_PHASE0.md` (sampling recipe) has the numbers.
     pub const MEASURED: TextCap = TextCap {
-        base_frames: 43,
-        frames_per_token: 20,
+        base_frames: 64,
+        frames_per_token: 24,
         frames_per_speaker_tag: 22,
         frames_per_cue: 108,
     };
@@ -634,6 +637,9 @@ mod tests {
                 + cap.frames_per_speaker_tag
                 + 2 * cap.frames_per_cue
         );
+        // Eval sentence s07, 21 tokens: 26 s of audio, against 47.6 s at
+        // max_frames.
+        assert_eq!(cap.frames(21, 0, 0), 568);
         let huge = TextCap {
             frames_per_token: usize::MAX,
             ..cap

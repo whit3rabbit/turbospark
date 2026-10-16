@@ -104,6 +104,96 @@ Repetition-aware sampling: when a semantic main token repeats one of the last
 16 main tokens, it is replaced by a second draw at temperature 1.0, top-k 30,
 top-p 0.95.
 
+**Text-scaled frame cap (not in the reference).** A chunk also stops at
+`64 + 24 * tokens + 22 * speaker_tags + 108 * cues` frames when that is under
+1024 (`TextCap::MEASURED` in `generate.rs`). Tokens are the backbone
+tokenizer's, counted over the chunk's words with special tokens, `[cues]` and
+paired-tag markup removed (`chunking::spoken_text`). A paired tag counts as a
+cue. Below about 40 tokens the scaled cap is the tighter one, and longer
+chunks keep the 1024 bound.
+
+`ChunkEnd` reports `TextCap` apart from `Eos` and `MaxFrames`, and
+`FishDrama3Runner` logs every chunk that ends without EOS. `text_cap: None`
+(`text-cap=off` in `fish_drama3_say`) restores the reference's behavior.
+
+Measured 2026-10-15 with the cap off: `fish_drama3_say` on the pinned 4-bit
+install (Metal trunk, tower and codec, 16 streamed slots) ran the
+quant-evaluation sentences (20 English, seeds 0 and 1) plus 8 extras at
+seeds 0 and 1: two Chinese, one Japanese, one German, a three-turn dialogue,
+`[laughs] ... [pause]`, numbers, and a 290-byte chunk. That gave 56 clips,
+pooled with the 80 mlx-audio clips of the 3-bit comparison (same recipe and
+seeds, 4-bit and 3-bit).
+
+The host was on AC power but not quiet (1-minute load 9 to 14 from other
+sessions' builds). A frame count is fixed by the seed, so the load affects
+timing only, and no timing is quoted here. A failed clip is one whose
+Parakeet transcript misses most of the text. In this port, every failed clip
+also ends in 458 or more silent frames (RMS under -45 dBFS), and every other
+clip in at most 8.
+
+| Clips | Count | Frames per token |
+| --- | ---: | --- |
+| Normal, no cue or tag | 121 | median 6.75, 90th percentile 8.74, slowest 13.6 (German, 163 frames on 12 tokens) |
+| Normal, `[sighs] Fine. If we miss it, it's on you.` | 4 | 101 to 124 frames on 12 tokens, so the sigh adds at most about 50 |
+| Failed, this port | 6 of 56 | s18 seed 1 and both dialogue and both cue clips ran to 1024. s08 seed 0 ended by EOS at 495 after 37 voiced frames |
+| Failed, mlx-audio | 5 of 80 | 1024, 1024, 854, 566 (`[sighs]`), 244 (`[sighs]`, no words) |
+
+Every failure in this port speaks part of the text ("Nobody expected the old
+radio to work.", or the first dialogue turn) and then emits silence. The
+dialogue and cue texts failed at both seeds. The mlx-audio checkpoints are no
+longer on the evaluation drive, so the reference was not run on those two
+texts. The cause is narrowed below (dialogue and cue failures).
+
+The constants keep every normal clip under half its cap. The closest are the
+290-byte chunk (498 frames against the 1024 bound) and the German clip (163
+against 352). The cap would stop 10 of the 11 failed clips 47 to 672 frames
+(2 to 31 s) sooner. The eleventh (244 frames of sighing) is shorter than any
+cap that leaves room for a sigh.
+
+Speaker tags had no normal measurement when the constants were set, because
+both dialogue clips failed. Their 22 frames (1 s) is a turn gap with margin.
+Three later dialogue seeds completed (below). Their gaps ran 15 to 78 frames,
+longer than 22, but the per-token margin covers that: the slowest used 240 of
+its 658 frames. The cap only shortens the
+silence after a failure. It does not bring back the words that were never
+spoken.
+
+With the cap on, the same install and seeds:
+
+| Clip | Cap off | Cap on |
+| --- | --- | --- |
+| s07 seed 0 (21 tokens, cap 568) | 201 frames, EOS | 201 frames, EOS, byte-identical WAV |
+| s16 seed 0 (`[sighs]`, cap 460) | 118 frames, EOS | 118 frames, EOS, byte-identical WAV |
+| s18 seed 1 (22 tokens, cap 592) | 1024, max frames | 592, `TextCap`, the same 55 voiced frames |
+| Dialogue seed 0 (cap 658) | 1024, max frames | 658, `TextCap` |
+
+**Dialogue and cue failures (2026-10-16).** The prompt is ruled out. For
+both texts the port builds the same rows as mlx-audio: `prompt_real.json`
+cases 4 and 5 are the reference's `split_text` then `build_frames` on the
+real tokenizer, and `real_tokenizer_frames_match_the_reference` passes on
+them. They also pin a reference quirk the port shares. A short turn body is
+never stripped, so every tag is followed by two spaces (token 220, then
+` Are`) and turns are joined by ` \n` (token 695).
+
+Ten seeds per text, same install and recipe, cap off:
+
+| Text | Complete | Failed |
+| --- | --- | --- |
+| Three-turn dialogue (cap 658) | 3 of 10, EOS at 108, 117 and 240 | 7: six run to 1024 after the first turn, one ends by EOS at 587 after two turns and 465 silent frames |
+| `[laughs] ... [pause] Seriously.` (cap 664) | 2 of 10, EOS at 171 and 201 | 8: the first sentence, then silence where `[pause] Seriously.` belongs (one EOS at 843, seven at 1024) |
+
+Every failure stops at a gap the text asks for: the turn change or the
+`[pause]`. Completed dialogue clips leave 15 to 78 silent frames between
+turns and then speak again. Failed ones never come back from the first gap.
+
+The reference runs on these texts are still owed. The re-downloaded mlx-audio
+checkpoint (cc639e27, all 16 files verified) holds 24 GB of GPU buffers.
+Beside the host's other work it swapped and ran under one frame per minute,
+so the runs were stopped. Until they run, only the prompt is cleared. The
+rest of the loop (trunk numerics, tower, sampling) has no teacher-forced
+parity against mlx-audio yet (see Gates), so the 70 to 80% failure rate is
+not yet attributed to the port or to the model.
+
 ## Tensor inventory (from the headers)
 
 1,841 tensors in six shards. Names: `backbone.model.{embed_tokens,layers.N,norm}`,

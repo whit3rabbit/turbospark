@@ -48,6 +48,7 @@ SPLIT_INPUTS = [
     "x, " * 140 + "[" + "long cue " * 40 + "] tail.",
     "<|speaker:0|> " + "one. " * 70 + "<|speaker:1|> two. <|speaker:0|> three.",
     "Zahlen: 1.5, 2.25 und 3.75. Ende! Wirklich? Ja; gut… fertig\nneue Zeile。中文，句子：结束。",
+    "<|speaker:0|> Are you coming tonight? <|speaker:1|> I don't know yet. <|speaker:0|> Let me know by six.",
 ]
 
 UNCUTTABLE_INPUTS = [
@@ -318,6 +319,7 @@ def prompt_real(install_dir: str) -> None:
     import mlx.core as mx
     from tokenizers import Tokenizer
 
+    from mlx_audio.tts.models.fish_drama3.chunking import split_text
     from mlx_audio.tts.models.fish_drama3.drama3 import Model
 
     root = json.loads((Path(install_dir) / "config.json").read_text())
@@ -354,6 +356,17 @@ def prompt_real(install_dir: str) -> None:
             "target": "<|speaker:2|> Hallo.",
         },
     ]
+    # The two texts that run away at every seed tried (FISH_DRAMA3_PHASE0.md,
+    # multi-speaker and cue texts), as `generate` builds them: through
+    # `split_text`, whose rejoined turns carry a double space after each tag
+    # and " \n" between turns.
+    for text in (
+        "<|speaker:0|> Are you coming tonight? <|speaker:1|> I don't know yet. "
+        "<|speaker:0|> Let me know by six.",
+        "[laughs] Oh, that is the best thing I have heard all week. [pause] Seriously.",
+    ):
+        (chunk,) = split_text(text)
+        cases.append({"references": [], "history": [], "target": chunk})
     for case in cases:
         frames, system_rows = Model.build_frames(
             fake,

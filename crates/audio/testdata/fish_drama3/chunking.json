@@ -96,6 +96,12 @@
    "output": [
     "Zahlen: 1.5, 2.25 und 3.75. Ende! Wirklich? Ja; gut\u2026 fertig\nneue Zeile\u3002\u4e2d\u6587\uff0c\u53e5\u5b50\uff1a\u7ed3\u675f\u3002"
    ]
+  },
+  {
+   "input": "<|speaker:0|> Are you coming tonight? <|speaker:1|> I don't know yet. <|speaker:0|> Let me know by six.",
+   "output": [
+    "<|speaker:0|>  Are you coming tonight? \n<|speaker:1|>  I don't know yet. \n<|speaker:0|>  Let me know by six."
+   ]
   }
  ],
  "uncuttable": [
