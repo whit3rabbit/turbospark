@@ -197,7 +197,7 @@ Send raw binary 16 kHz mono PCM frames (`s16le`), then send text frame `{"type":
 
 ### POST /v1/audio/speech
 
-Synthesizes speech using Kokoro-82M (English, voice `af_heart`) or bridged voice cloning models (e.g. Qwen3-TTS).
+Synthesizes speech using Kokoro-82M (English, voice `af_heart`), MegaTTS3, OmniVoice, or Fish Audio Drama 3.
 
 ```sh
 curl http://127.0.0.1:8080/v1/audio/speech \
@@ -211,9 +211,9 @@ curl http://127.0.0.1:8080/v1/audio/speech \
   -o speech.wav
 ```
 
-For voice cloning, `reference_audio` is a base64-encoded WAV of the voice to clone. MegaTTS3 requires it (1 to 30 seconds) together with `consent: true`, the caller's statement that it has the right to use the voice, and accepts `steps` (1 to 100, default 16; 8, 16 and 32 are Fast, Balanced and Best), `seed`, `p_w` (intelligibility, default 1.4) and `t_w` (similarity, default 3.0). `reference_text` and `instruction` apply to Qwen3-TTS only; MegaTTS3 refuses them. A model that cannot clone refuses `reference_audio`.
+For voice cloning, `reference_audio` is a base64-encoded WAV of the voice to clone. MegaTTS3 requires it (1 to 28 seconds) together with `consent: true`. OmniVoice and Drama 3 clone whenever `reference_audio` is present (consent required). Drama 3 also requires `reference_text` (transcript of the reference) and supports sampler parameters (`temperature`, `top_p`, `top_k`, `max_frames`). OmniVoice accepts `instruction` (delivery style).
 
-Output: 24 kHz mono audio (`wav` or raw `pcm`).
+Output: 24 kHz (Kokoro, MegaTTS3, OmniVoice) or 44.1 kHz (Drama 3) mono audio (`wav` or raw `pcm`).
 
 ### POST /v1/audio/generate
 

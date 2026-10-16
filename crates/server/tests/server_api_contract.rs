@@ -26,3 +26,37 @@ fn turbospark_openapi_yaml_alias_matches() {
         "openapi.yaml must be identical to turbospark.openapi.yaml"
     );
 }
+
+#[test]
+fn gitbook_openapi_specs_match_docs_openapi_specs() {
+    assert_eq!(
+        include_str!("../../../docs/openapi/turbospark.openapi.yaml"),
+        include_str!("../../../api-reference/openapi/turbospark.openapi.yaml"),
+        "gitbook turbospark.openapi.yaml must match docs/"
+    );
+    assert_eq!(
+        include_str!("../../../docs/openapi/openapi.yaml"),
+        include_str!("../../../api-reference/openapi/openapi.yaml"),
+        "gitbook openapi.yaml must match docs/"
+    );
+    assert_eq!(
+        include_str!("../../../docs/openapi/text.openapi.yaml"),
+        include_str!("../../../api-reference/openapi/text.openapi.yaml"),
+        "gitbook text.openapi.yaml must match docs/"
+    );
+    assert_eq!(
+        include_str!("../../../docs/openapi/audio.openapi.yaml"),
+        include_str!("../../../api-reference/openapi/audio.openapi.yaml"),
+        "gitbook audio.openapi.yaml must match docs/"
+    );
+    assert_eq!(
+        include_str!("../../../docs/openapi/images.openapi.yaml"),
+        include_str!("../../../api-reference/openapi/images.openapi.yaml"),
+        "gitbook images.openapi.yaml must match docs/"
+    );
+    assert_eq!(
+        include_str!("../../../docs/openapi/embeddings.openapi.yaml"),
+        include_str!("../../../api-reference/openapi/embeddings.openapi.yaml"),
+        "gitbook embeddings.openapi.yaml must match docs/"
+    );
+}

@@ -7,7 +7,7 @@ icon: cubes
 
 `turbospark-server` provides OpenAI-compatible and Ollama-compatible vector embedding endpoints. Embeddings are computed locally using Metal GPU, Apple Core ML (`EmbeddingGemma 2`), or MLX.
 
-Dedicated OpenAPI specification: [`embeddings.openapi.yaml`](../../docs/openapi/embeddings.openapi.yaml)
+Dedicated OpenAPI specification: [`embeddings.openapi.yaml`](../openapi/embeddings.openapi.yaml)
 
 ## OpenAI Embeddings
 

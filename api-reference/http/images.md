@@ -7,7 +7,7 @@ icon: image
 
 `turbospark-server` provides OpenAI-compatible image generation endpoints for local diffusion models running on Apple Silicon (e.g. Z-Image Turbo and Qwen-Image 2.1 Turbo).
 
-Dedicated OpenAPI specification: [`images.openapi.yaml`](../../docs/openapi/images.openapi.yaml)
+Dedicated OpenAPI specification: [`images.openapi.yaml`](../openapi/images.openapi.yaml)
 
 ## Generate Image
 

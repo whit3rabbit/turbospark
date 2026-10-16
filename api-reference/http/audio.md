@@ -7,12 +7,12 @@ icon: waveform
 
 `turbospark-server` provides dedicated audio endpoints when started with `--stt-model`, `--tts-model`, or `--music-model`.
 
-Dedicated OpenAPI specification: [`audio.openapi.yaml`](../../docs/openapi/audio.openapi.yaml)
+Dedicated OpenAPI specification: [`audio.openapi.yaml`](../openapi/audio.openapi.yaml)
 
 ## Audio Constraints and Formats
 
 * **Input audio**: WAV only (PCM 8/16/24/32-bit or float32). Compressed formats (MP3, OGG, FLAC) return `415 Unsupported Media Type`.
-* **Output audio**: 24 kHz or 44.1 kHz mono/stereo WAV or raw PCM.
+* **Output audio**: 24 kHz (Kokoro, MegaTTS3, OmniVoice) or 44.1 kHz (Fish Audio Drama 3, MiniMax Music 3) mono/stereo WAV or raw PCM.
 * **Concurrency**: One audio request runs at a time per loaded model. Use `async: true` for long jobs.
 
 ---
@@ -21,7 +21,7 @@ Dedicated OpenAPI specification: [`audio.openapi.yaml`](../../docs/openapi/audio
 
 ### POST /v1/audio/transcriptions
 
-Transcribes audio from a WAV file using Whisper or Qwen3-ASR models.
+Transcribes audio from a WAV file using Whisper, Qwen3-ASR, or Core ML Parakeet models.
 
 ```sh
 curl http://127.0.0.1:8080/v1/audio/transcriptions \
@@ -34,7 +34,7 @@ curl http://127.0.0.1:8080/v1/audio/transcriptions \
 #### Parameters
 
 * `file`: Multipart WAV file or binary body with `Content-Type: audio/wav`.
-* `model`: Model alias (`whisper-tiny-en`, `whisper-base-en`, `whisper-small-en`, `qwen3-asr-06b-8bit`).
+* `model`: Model alias (`whisper-tiny-en`, `whisper-base-en`, `whisper-small-en`, `qwen3-asr-06b-8bit`, `parakeet-rnnt-1.1b`, `parakeet-tdt-0.6b-v2`).
 * `response_format`: `json` (default), `verbose_json`, `text`, `srt`, `vtt`.
 * `stream`: When `true`, returns NDJSON stream of transcribed segments.
 * `async`: When `true`, accepts as an asynchronous background job (`202 Accepted`).
@@ -63,7 +63,7 @@ websocat -H="Authorization: Bearer $KEY" \
 
 ### POST /v1/audio/speech
 
-Synthesizes speech from input text. Supports Kokoro-82M, Qwen3-TTS, and MegaTTS3 zero-shot voice cloning.
+Synthesizes speech from input text. Supports Kokoro-82M, MegaTTS3 zero-shot voice cloning, OmniVoice, and Fish Audio Drama 3.
 
 #### Standard Speech Synthesis (Kokoro-82M)
 
@@ -81,9 +81,9 @@ curl http://127.0.0.1:8080/v1/audio/speech \
   -o speech.wav
 ```
 
-#### Zero-Shot Voice Cloning (MegaTTS3)
+#### Zero-Shot Voice Cloning (MegaTTS3, OmniVoice, Drama 3)
 
-Clones a target voice from a short reference recording (1 to 28 seconds):
+Clones a target voice from a short reference recording (1 to 30 seconds):
 
 ```sh
 # Convert reference audio to base64
@@ -105,10 +105,13 @@ curl http://127.0.0.1:8080/v1/audio/speech \
   -o cloned.wav
 ```
 
-* **`consent: true`**: Required for voice cloning requests. The caller confirms authorization to use the reference voice.
-* **`steps`**: Diffusion steps: Fast (8), Balanced (16, default), Best (32).
-* **`p_w`**: Intelligibility weight (default 1.4).
-* **`t_w`**: Similarity weight (default 3.0).
+* **`consent: true`**: Required for voice cloning requests (MegaTTS3 always; OmniVoice and Drama 3 whenever `reference_audio` is present). The caller confirms authorization to use the reference voice.
+* **`reference_audio`**: Base64-encoded WAV clip. Required by MegaTTS3 (1-28s); optional for OmniVoice (1-30s, 24 kHz) and Drama 3 (1-30s, any rate).
+* **`reference_text`**: Transcript of the reference clip. Required by Drama 3 whenever `reference_audio` is present; accepted by OmniVoice; refused by MegaTTS3.
+* **`instruction`**: Delivery guidance (emotion, style) for OmniVoice (max 512 bytes). Drama 3 takes inline cues like `[whispers]` in `input`.
+* **`steps`**: Diffusion steps: Fast (8), Balanced (16, default), Best (32). MegaTTS3 and OmniVoice.
+* **`seed`**: Deterministic seed (default 0).
+* **`temperature`, `top_p`, `top_k`, `max_frames`**: Sampler options for Drama 3 (defaults: 0.7, 0.7, 30, 1024).
 
 ---
 
@@ -154,6 +157,6 @@ For long-running transcriptions or music generations:
 
 ## Audio Model Management
 
-* `GET /v1/audio/models`: Lists attached audio models and supported tasks (`stt`, `tts`, `music`).
-* `POST /v1/audio/models`: Dynamically attaches an audio model (`{"model": "whisper-small-en"}`).
+* `GET /v1/audio/models`: Lists attached audio models and supported tasks (`speech_to_text`, `text_to_speech`, `music_generation`).
+* `POST /v1/audio/models`: Dynamically attaches an installed model (`{"model_id": "whisper-small-en"}`).
 * `DELETE /v1/audio/models/{id}`: Unloads an attached audio model from memory.

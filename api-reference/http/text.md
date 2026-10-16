@@ -7,7 +7,7 @@ icon: message-lines
 
 `turbospark-server` provides standardized text and chat completions. It supports streaming (Server-Sent Events), reasoning tokens, tool calling, and legacy raw prompt completions.
 
-Dedicated OpenAPI specification: [`text.openapi.yaml`](../../docs/openapi/text.openapi.yaml)
+Dedicated OpenAPI specification: [`text.openapi.yaml`](../openapi/text.openapi.yaml)
 
 ## OpenAI Chat Completions
 
