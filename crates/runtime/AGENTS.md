@@ -35,6 +35,11 @@ policy.
   admission must size for Metal device allocations.
 - Real-model validation needs greedy, sampled, and memory-oracle coverage. A
   compile or synthetic fixture is not a runtime parity claim.
+- Qwen MoE batched prefill (`qwenGdnMoe`) batches resident weight reads by
+  default on INT4 installs, while routed experts keep the per-token loop.
+  Reduction-order drift flips routing near-ties, held to a 1e-2 nats mean KL
+  probe bound (`crates/bench/tests/qwen36_prefill_arm_probe.rs`).
+  `TURBOSPARK_BATCHED_GEMV=0` opts out to the byte-identical per-token path.
 
 ## Checks
 

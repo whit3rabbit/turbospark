@@ -1473,3 +1473,13 @@ These are durable implementation guardrails moved out of the always-loaded root 
     succeeded. Treat this as a baseline Swift packaging failure, not as a
     regression in an unrelated Swift source change, and record it before
     merging such a PR.
+
+70. **MOE PREFILL BATCHING DRIFT IS ROUTING, NOT ARITHMETIC.** The dense prefill
+    batched arm matches sequential within 2e-5 nats. On MoE architectures, M-row
+    GEMM reduction-order differences produce tiny logit changes that can swap
+    experts at near-ties (first observed at 4.6e-4 logit margin on Qwen 3.6).
+    Once an expert swaps, downstream attention and GDN states diverge. MoE probe
+    tolerances must test against a routing-sensitive bound (1e-2 nats mean KL,
+    top-1 majority agreement) rather than dense arithmetic bounds (1e-3), while
+    checking that token 0 through initial layers remain bit-identical to exclude
+    wiring bugs.

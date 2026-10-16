@@ -90,6 +90,13 @@ The root references are:
   before kernel performance work. Steel is the dense qwen prefill default.
   Another family still needs its own real-model quality, memory, and paired
   performance gates before it takes Steel or the GQA decode attention.
+- Qwen MoE chunked prefill (`qwenGdnMoe`: Qwen 3.6, Ornith 35B) batches its
+  resident weight reads by default on INT4 installs, with routed experts
+  staying on the per-token loop. Batched reduction-order drift flips routing
+  near-ties (mean KL probe bound 1e-2 nats, top-1 agreement >= 50%; not the
+  dense 1e-3). `TURBOSPARK_BATCHED_GEMV=0` restores the byte-identical
+  per-token path. MiniCPM-V 4.7 (BF16 resident matrices) keeps the per-token
+  path. Ornith 35B real-install checks are owed. See `docs/BATCHED_PREFILL.md`.
 - Voice cloning with MegaTTS3 requires explicit caller consent up front
   (`consent: true`) because community WavVAE encoder provenance is unverified.
   On macOS it defaults to Metal; the portable CPU reference path is an opt-in
