@@ -105,6 +105,9 @@ final class AudioWorkspaceController: ObservableObject {
     @Published var referencePlaying = false
     @Published var session: AudioSession?
     @Published var qwenModel: Qwen3TTSModel?
+    /// A resident FluidAudio recognizer (AudioWorkspaceFluid.swift). Released
+    /// wherever the Rust session and Qwen model are.
+    var fluidTranscriber: (any FluidAudioTranscriber)?
     @Published var loadedModelAlias: String?
     var sessionKey: String?
     var modelAccessURL: URL?
@@ -288,7 +291,7 @@ final class AudioWorkspaceController: ObservableObject {
             // most accurate runnable transcriber first. An installed runnable
             // model still wins over a better one that needs a download.
             let preferred = Self.preferredSpeechProfiles(availableProfiles)
-            recipe.modelID = preferred.first(where: { $0.capabilities.canRun && installedPaths[$0.identity.alias] != nil })?.identity.alias
+            recipe.modelID = preferred.first(where: { AudioRuntimeProvider($0).canRun($0) && installedPaths[$0.identity.alias] != nil })?.identity.alias
                 ?? preferred.first?.identity.alias
         } else {
             // A new speech workspace should start with an executable provider.
@@ -301,10 +304,13 @@ final class AudioWorkspaceController: ObservableObject {
     }
     static let speechPreference = ["parakeet-ultra-coreml", "parakeet-redux-coreml", "whisper-base"]
     /// Runnable before not runnable, then `speechPreference` order, then catalog order.
+    /// Runnable is the provider's verdict: a FluidAudio row's Rust `canRun` is
+    /// false by design.
     static func preferredSpeechProfiles(_ profiles: [AudioProfile]) -> [AudioProfile] {
         let rank = { (profile: AudioProfile) in speechPreference.firstIndex(of: profile.identity.alias) ?? speechPreference.count }
+        let runs = { (profile: AudioProfile) in AudioRuntimeProvider(profile).canRun(profile) }
         return profiles.enumerated().sorted { a, b in
-            if a.element.capabilities.canRun != b.element.capabilities.canRun { return a.element.capabilities.canRun }
+            if runs(a.element) != runs(b.element) { return runs(a.element) }
             let (left, right) = (rank(a.element), rank(b.element))
             return left != right ? left < right : a.offset < b.offset
         }.map(\.element)
@@ -547,7 +553,8 @@ final class AudioWorkspaceController: ObservableObject {
         }
     }
     func chooseModelFolder() {
-        guard let profile = selectedProfile, !isBusy, !hasRecordingActivity else { return }
+        guard let profile = selectedProfile, AudioRuntimeProvider(profile).acceptsLocalFolder,
+              !isBusy, !hasRecordingActivity else { return }
         let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false
         panel.message = AppStrings.localized("Choose a checkpoint folder for the selected audio model.")
         guard panel.runModal() == .OK, let url = panel.url else { return }
@@ -595,6 +602,7 @@ final class AudioWorkspaceController: ObservableObject {
             qwenModel = nil
             MLX.Memory.clearCache()
         }
+        fluidTranscriber = nil
         loadedModelAlias = nil
         let token = epoch
         do {
@@ -643,7 +651,7 @@ final class AudioWorkspaceController: ObservableObject {
         if let previous = session { await Task.detached { previous.close() }.value }
         session = nil
         modelAccessURL?.stopAccessingSecurityScopedResource(); modelAccessURL = nil
-        qwenModel = nil; sessionKey = nil; loadedModelAlias = nil
+        qwenModel = nil; fluidTranscriber = nil; sessionKey = nil; loadedModelAlias = nil
         MLX.Memory.clearCache()
 
         let token = epoch
@@ -729,9 +737,12 @@ final class AudioWorkspaceController: ObservableObject {
         Task { [weak self] in
             guard let self, self.valid(token) else { return }
             do {
-                if profile.family == "qwen3_tts" {
+                switch AudioRuntimeProvider(profile) {
+                case .qwenMLX:
                     _ = try await self.residentQwenSession(for: profile)
-                } else {
+                case .fluidAudio(let family):
+                    _ = try await self.residentFluidTranscriber(for: profile, family: family)
+                case .rust, .unsupported:
                     _ = try await self.residentSession(for: profile, portable: self.allowPortableExperiment, experimentalMetal: self.allowExperimentalMetal)
                 }
                 self.status = AppStrings.localized("Loaded \(profile.displayName)")
@@ -753,6 +764,7 @@ final class AudioWorkspaceController: ObservableObject {
         modelAccessURL = nil
         let oldQwen = qwenModel
         qwenModel = nil
+        fluidTranscriber = nil
         loadedModelAlias = nil
         Task {
             if let old { await Task.detached { old.close() }.value }
@@ -773,6 +785,7 @@ final class AudioWorkspaceController: ObservableObject {
             let oldQwen = self.qwenModel
             self.session = nil; self.sessionKey = nil; self.modelAccessURL = nil
             self.qwenModel = nil
+            self.fluidTranscriber = nil
             self.loadedModelAlias = nil
             if let old { await Task.detached { old.close() }.value }
             oldAccess?.stopAccessingSecurityScopedResource()
@@ -803,7 +816,7 @@ final class AudioWorkspaceController: ObservableObject {
         opening = nil
         if let old = session { DispatchQueue.global(qos: .userInitiated).sync { old.close() } }
         session = nil; sessionKey = nil; modelAccessURL?.stopAccessingSecurityScopedResource(); modelAccessURL = nil
-        qwenModel = nil; loadedModelAlias = nil
+        qwenModel = nil; fluidTranscriber = nil; loadedModelAlias = nil
         MLX.Memory.clearCache()
         for url in scratchURLs { try? FileManager.default.removeItem(at: url) }
         scratchURLs.removeAll(); items.removeAll(); activeGeneration = nil; activeRunID = nil; generationProgress = nil
@@ -857,6 +870,16 @@ final class AudioModelOpening: @unchecked Sendable {
         lock.unlock()
         if close { session.close(); throw CancellationError() }
         return session
+    }
+    /// Runs work that is not a Rust session open, such as a Swift-hosted
+    /// model's verification, in this opening's place: Stop cancels it through
+    /// `token`, and a drain waits for it. Without this a drain would wait for
+    /// an open that never comes. Call it once, as `open` is.
+    func perform<T>(_ work: () throws -> T) throws -> T {
+        defer { finished.leave() }
+        lock.lock(); let cancelled = stopped; lock.unlock()
+        guard !cancelled else { throw CancellationError() }
+        return try work()
     }
     func stopAndDrain() {
         lock.lock(); stopped = true; lock.unlock()

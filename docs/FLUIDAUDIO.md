@@ -120,6 +120,30 @@ Window length is per adapter (`maxWindowSamples`):
 Each adapter gave the same text for the same window twice, offline, on this
 M4 Max (`FluidAudioASRRealModelTests`).
 
+### In the workspace
+
+Both families run on the Transcribe page and refine finished recordings on
+the Record page. Live drafts during a recording stay on Rust sessions.
+
+- **Residency** (`AudioWorkspaceFluid.swift`): one resident model at a time,
+  shared with the Rust session and Qwen3-TTS. Loading verifies every byte of
+  the install (Stop cancels it), admits the row's `resident_memory_bytes`
+  within the audio memory budget, then builds the adapter off the main actor.
+  The first load compiles for the Neural Engine and takes minutes. Unload,
+  idle unload, model delete and shutdown release it.
+- **Verified installs only.** A FluidAudio row offers no local folder, and
+  residency refuses one: the signature check stops a trap, not wrong weights.
+- **Windows** (`AudioTranscriptionPlan`): Parakeet ja reads 30 s windows that
+  overlap by 2 s. Each word is kept by the window that owns its start time,
+  with the cut mid-overlap. The workspace's word reconcile splits on spaces,
+  so it never matches Japanese or Chinese. Paraformer reads windows of 15 s
+  less 10 ms with no overlap, because without token times an overlap cannot
+  be cut: a word on a boundary can split. Its segments are window extents,
+  shown as approximate timing. A window under 0.3 s is padded with silence,
+  the shortest input Parakeet accepts.
+- The Rust session path keeps its windows exactly as before (30 s every 29 s,
+  word reconcile), now planned by the same function.
+
 ## Adding a family
 
 1. Generate the row with `cargo run -p turbospark-catalog --example audio_pin`
@@ -146,11 +170,9 @@ M4 Max (`FluidAudioASRRealModelTests`).
 
 ## Not done
 
-- The speech rows and adapters ship, but no job calls them, so `hasAdapter`
-  is still false everywhere. The transcribe loop, residency (load, unload,
-  memory admission) and the picker's text for `funasr_model_license` come in
-  one change once another branch's edits to `AudioWorkspaceController` and
-  `AudioModelPickerView` land. VAD and speaker labels, then TTS, follow.
+- VAD and speaker labels, then TTS. `hasAdapter` is true only for
+  `fluidaudio_parakeet_ja` and `fluidaudio_paraformer_zh`.
+- Live drafts while recording do not use FluidAudio models.
 - SenseVoice is not shipped. On this M4 Max both its int8 and fp16 encoders
   gave different text for the same window on repeated runs in one process,
   and fp16 once returned nothing. Recheck on the next pin.

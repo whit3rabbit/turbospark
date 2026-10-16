@@ -64,7 +64,7 @@ struct FluidAudioModelSignature: Sendable, Equatable {
     }
 }
 
-enum FluidAudioModelError: Error, Equatable {
+enum FluidAudioModelError: LocalizedError, Equatable {
     /// A model in the install is not the one its family expects.
     case mismatch([String])
     /// The vocabulary file is neither a JSON array nor an id-keyed object.
@@ -73,6 +73,20 @@ enum FluidAudioModelError: Error, Equatable {
     case notSpeech(FluidAudioFamily)
     /// The window is longer than the recognizer decodes without dropping text.
     case windowTooLong(samples: Int, limit: Int)
+
+    /// What the workspace shows. A model that fails its signature or
+    /// vocabulary check is a damaged or replaced install, which a fresh
+    /// download fixes. The other two are routing faults, not user errors.
+    var errorDescription: String? {
+        switch self {
+        case .mismatch, .vocabulary:
+            return AppStrings.localized("The installed model does not match this app. Delete it and download it again.")
+        case .notSpeech:
+            return AppStrings.localized("Runtime unavailable")
+        case .windowTooLong:
+            return nil
+        }
+    }
 }
 
 enum FluidAudioModelLoader {

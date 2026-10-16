@@ -1,6 +1,399 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Paraformer is released under Alibaba's FunASR Model Open Source License. You may use, change, and share it if you credit the source and keep the model name. Alibaba can revise the license, and it ends for anyone who disparages the model." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paraformer is released under Alibaba's FunASR Model Open Source License. You may use, change, and share it if you credit the source and keep the model name. Alibaba can revise the license, and it ends for anyone who disparages the model."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paraformer se publica bajo la Licencia de Código Abierto de Modelos FunASR de Alibaba. Puedes usarlo, modificarlo y compartirlo si citas la fuente y conservas el nombre del modelo. Alibaba puede revisar la licencia, y esta termina para quien desprestigie el modelo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paraformer est publié sous la licence open source des modèles FunASR d'Alibaba. Vous pouvez l'utiliser, le modifier et le partager si vous citez la source et conservez le nom du modèle. Alibaba peut réviser la licence, et elle prend fin pour quiconque dénigre le modèle."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paraformer wird unter der FunASR-Modell-Open-Source-Lizenz von Alibaba veröffentlicht. Du darfst es verwenden, ändern und weitergeben, wenn du die Quelle nennst und den Modellnamen beibehältst. Alibaba kann die Lizenz überarbeiten, und sie erlischt für alle, die das Modell herabsetzen."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paraformer è distribuito con la licenza open source dei modelli FunASR di Alibaba. Puoi usarlo, modificarlo e condividerlo se citi la fonte e mantieni il nome del modello. Alibaba può rivedere la licenza, che decade per chi denigra il modello."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O Paraformer é distribuído sob a Licença de Código Aberto de Modelos FunASR da Alibaba. Você pode usá-lo, modificá-lo e compartilhá-lo se citar a fonte e mantiver o nome do modelo. A Alibaba pode revisar a licença, e ela termina para quem depreciar o modelo."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paraformer is uitgebracht onder de opensourcelicentie voor FunASR-modellen van Alibaba. Je mag het gebruiken, wijzigen en delen als je de bron vermeldt en de modelnaam behoudt. Alibaba kan de licentie herzien, en die vervalt voor iedereen die het model kleineert."
+          }
+        },
+        "sv" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paraformer släpps under Alibabas licens för öppen källkod för FunASR-modeller. Du får använda, ändra och dela den om du anger källan och behåller modellens namn. Alibaba kan ändra licensen, och den upphör för den som nedvärderar modellen."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paraformer jest udostępniany na licencji open source modeli FunASR firmy Alibaba. Możesz go używać, zmieniać i udostępniać, jeśli podasz źródło i zachowasz nazwę modelu. Alibaba może zmienić licencję, a wygasa ona dla każdego, kto dyskredytuje model."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paraformer, Alibaba'nın FunASR Model Açık Kaynak Lisansı ile yayımlanır. Kaynağı belirtir ve model adını korursanız kullanabilir, değiştirebilir ve paylaşabilirsiniz. Alibaba lisansı değiştirebilir ve lisans, modeli kötüleyen herkes için sona erer."
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paraformer dirilis di bawah Lisensi Sumber Terbuka Model FunASR dari Alibaba. Anda boleh menggunakan, mengubah, dan membagikannya jika mencantumkan sumber dan mempertahankan nama model. Alibaba dapat merevisi lisensi, dan lisensi berakhir bagi siapa pun yang merendahkan model ini."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paraformer распространяется по лицензии с открытым исходным кодом для моделей FunASR от Alibaba. Вы можете использовать, изменять и распространять его, если указываете источник и сохраняете название модели. Alibaba может пересмотреть лицензию, и она прекращает действие для тех, кто порочит модель."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paraformer поширюється за ліцензією з відкритим кодом для моделей FunASR від Alibaba. Ви можете використовувати, змінювати й поширювати його, якщо зазначаєте джерело та зберігаєте назву моделі. Alibaba може переглянути ліцензію, і вона припиняє дію для тих, хто зневажає модель."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paraformer được phát hành theo Giấy phép nguồn mở cho mô hình FunASR của Alibaba. Bạn có thể dùng, sửa đổi và chia sẻ nếu ghi nguồn và giữ nguyên tên mô hình. Alibaba có thể sửa đổi giấy phép, và giấy phép chấm dứt với bất kỳ ai bôi nhọ mô hình."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paraformer は Alibaba の FunASR モデルオープンソースライセンスで公開されています。出典を明記し、モデル名を変えなければ、使用、改変、共有できます。Alibaba はライセンスを改訂でき、モデルを誹謗した人に対してライセンスは終了します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paraformer는 Alibaba의 FunASR 모델 오픈 소스 라이선스로 배포됩니다. 출처를 밝히고 모델 이름을 유지하면 사용, 수정, 공유할 수 있습니다. Alibaba는 라이선스를 개정할 수 있으며, 모델을 비방하는 사람에게는 라이선스가 종료됩니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paraformer 依据阿里巴巴的 FunASR 模型开源许可证发布。只要注明来源并保留模型名称，即可使用、修改和分享。阿里巴巴可以修订该许可证，任何诋毁该模型的人都将失去许可。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paraformer 依據阿里巴巴的 FunASR 模型開源授權發布。只要註明來源並保留模型名稱，即可使用、修改和分享。阿里巴巴可以修訂該授權，任何詆毀該模型的人都將失去授權。"
+          }
+        },
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "يُصدَر Paraformer بموجب ترخيص المصدر المفتوح لنماذج FunASR من Alibaba. يمكنك استخدامه وتعديله ومشاركته إذا ذكرت المصدر واحتفظت باسم النموذج. يمكن لـ Alibaba مراجعة الترخيص، وينتهي الترخيص لأي شخص يسيء إلى النموذج."
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paraformer מופץ ברישיון הקוד הפתוח של מודלי FunASR מבית Alibaba. מותר להשתמש בו, לשנות אותו ולשתף אותו אם מציינים את המקור ושומרים על שם המודל. Alibaba רשאית לעדכן את הרישיון, והוא מסתיים לכל מי שמשמיץ את המודל."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paraformer को Alibaba के FunASR मॉडल ओपन सोर्स लाइसेंस के तहत जारी किया गया है। यदि आप स्रोत का उल्लेख करते हैं और मॉडल का नाम बनाए रखते हैं, तो आप इसका उपयोग, बदलाव और साझा कर सकते हैं। Alibaba लाइसेंस में संशोधन कर सकता है, और मॉडल की निंदा करने वाले किसी भी व्यक्ति के लिए लाइसेंस समाप्त हो जाता है।"
+          }
+        }
+      }
+    },
+    "The installed model does not match this app. Delete it and download it again." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The installed model does not match this app. Delete it and download it again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El modelo instalado no coincide con esta app. Elimínalo y descárgalo de nuevo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le modèle installé ne correspond pas à cette app. Supprimez-le et téléchargez-le à nouveau."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das installierte Modell passt nicht zu dieser App. Lösche es und lade es erneut herunter."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Il modello installato non corrisponde a questa app. Eliminalo e scaricalo di nuovo."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O modelo instalado não corresponde a este app. Apague-o e baixe-o novamente."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Het geïnstalleerde model past niet bij deze app. Verwijder het en download het opnieuw."
+          }
+        },
+        "sv" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Den installerade modellen stämmer inte med den här appen. Radera den och hämta den igen."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zainstalowany model nie pasuje do tej aplikacji. Usuń go i pobierz ponownie."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Yüklü model bu uygulamayla eşleşmiyor. Silin ve yeniden indirin."
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Model yang terpasang tidak cocok dengan aplikasi ini. Hapus lalu unduh lagi."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Установленная модель не соответствует этому приложению. Удалите её и загрузите снова."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Встановлена модель не відповідає цій програмі. Видаліть її та завантажте знову."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mô hình đã cài không khớp với ứng dụng này. Hãy xóa và tải xuống lại."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "インストールされたモデルがこのアプリと一致しません。削除してから再ダウンロードしてください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "설치된 모델이 이 앱과 맞지 않습니다. 삭제한 후 다시 다운로드하세요."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已安装的模型与此应用不匹配。请删除后重新下载。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已安裝的模型與此 App 不相符。請刪除後重新下載。"
+          }
+        },
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "النموذج المثبّت لا يطابق هذا التطبيق. احذفه ثم نزّله مرة أخرى."
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "המודל המותקן אינו תואם לאפליקציה הזו. מחק אותו והורד אותו שוב."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "इंस्टॉल किया गया मॉडल इस ऐप से मेल नहीं खाता। इसे हटाएँ और फिर से डाउनलोड करें।"
+          }
+        }
+      }
+    },
+    "Download this model first." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Download this model first."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Descarga primero este modelo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Téléchargez d'abord ce modèle."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lade dieses Modell zuerst herunter."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scarica prima questo modello."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Baixe este modelo primeiro."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Download dit model eerst."
+          }
+        },
+        "sv" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hämta den här modellen först."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Najpierw pobierz ten model."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Önce bu modeli indirin."
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unduh model ini terlebih dahulu."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сначала загрузите эту модель."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Спочатку завантажте цю модель."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hãy tải mô hình này xuống trước."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "先にこのモデルをダウンロードしてください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "먼저 이 모델을 다운로드하세요."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请先下载此模型。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "請先下載此模型。"
+          }
+        },
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "نزّل هذا النموذج أولاً."
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "הורד את המודל הזה קודם."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "पहले यह मॉडल डाउनलोड करें।"
+          }
+        }
+      }
+    },
     "Core ML (Neural Engine)" : {
       "extractionState" : "manual",
       "localizations" : {

@@ -92,6 +92,26 @@ final class FluidAudioASRRealModelTests: XCTestCase {
         try await check(.parakeetJa, install: "parakeet-ja", samples: samples, expect: ["公園", "電車"])
     }
 
+    /// A recording longer than one workspace window, planned and joined as
+    /// the workspace does: overlapping 30 s windows cut by token start time.
+    /// Every word survives once; none repeats across the boundary.
+    func testParakeetWindowsJoinWithoutRepeats() async throws {
+        let nouns = ["公園", "図書館", "喫茶店", "電車", "博物館", "病院", "映画館", "美術館", "動物園", "郵便局"]
+        let samples = try speech(voice: "Kyoko", nouns.map { "午前中は友達と一緒に\($0)へ行って、ゆっくり過ごしました。" }.joined())
+        XCTAssertGreaterThan(samples.count, 30 * 16_000, "the clip must span two windows")
+        let transcriber = try await FluidAudioEngine.shared.transcriber(for: .parakeetJa, installRoot: try install("parakeet-ja"))
+        let windows = AudioTranscriptionPlan.windows(duration: Double(samples.count) / 16_000, length: 30, overlap: 2, skipsCoveredTail: true)
+        XCTAssertGreaterThan(windows.count, 1)
+        var joined = ""
+        for window in windows {
+            let from = Int(window.start * 16_000), to = min(samples.count, Int((window.end * 16_000).rounded(.up)))
+            joined += try await transcriber.transcribe(Array(samples[from..<to])).transcript(in: window, language: "ja").text
+        }
+        let counts = nouns.map { joined.components(separatedBy: $0).count - 1 }
+        XCTAssertTrue(counts.allSatisfy { $0 <= 1 }, "a word repeated across a window boundary: \(joined)")
+        XCTAssertGreaterThanOrEqual(counts.filter { $0 == 1 }.count, 8, joined)
+    }
+
     /// Paraformer would drop the end of a long window without an error, so
     /// the adapter refuses it instead.
     func testParaformerRefusesAWindowItWouldCut() async throws {

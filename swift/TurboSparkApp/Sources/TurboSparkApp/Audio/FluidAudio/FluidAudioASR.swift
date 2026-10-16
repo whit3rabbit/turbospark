@@ -21,7 +21,21 @@ protocol FluidAudioTranscriber: Sendable {
     /// The longest window `transcribe` accepts, in samples. Nil when the
     /// recognizer splits longer input itself.
     var maxWindowSamples: Int? { get }
+    /// Whether results carry token times, which is what lets overlapping
+    /// windows be cut without repeating words.
+    var reportsTokenTimes: Bool { get }
     func transcribe(_ samples: [Float]) async throws -> FluidAudioTranscript
+}
+
+extension FluidAudioTranscriber {
+    /// FluidAudio refuses Parakeet input under 0.3 s. A recording's last
+    /// window can be that short, so it is padded with silence, which adds no
+    /// words, rather than dropped.
+    static var minimumSamples: Int { 4_800 }
+
+    func padded(_ samples: [Float]) -> [Float] {
+        samples.count >= Self.minimumSamples ? samples : samples + [Float](repeating: 0, count: Self.minimumSamples - samples.count)
+    }
 }
 
 extension FluidAudioEngine {
@@ -61,12 +75,13 @@ struct ParakeetJaTranscriber: FluidAudioTranscriber {
     /// FluidAudio splits input over its 15 s model window into overlapping
     /// chunks and merges them.
     var maxWindowSamples: Int? { nil }
+    var reportsTokenTimes: Bool { true }
 
     func transcribe(_ samples: [Float]) async throws -> FluidAudioTranscript {
         // A fresh decoder state per call: each window stands alone, and the
         // workspace reconciles window boundaries itself.
         var state = TdtDecoderState.make(decoderLayers: AsrModelVersion.tdtJa.decoderLayers)
-        let result = try await manager.transcribe(samples, decoderState: &state)
+        let result = try await manager.transcribe(padded(samples), decoderState: &state)
         let tokens = (result.tokenTimings ?? []).map {
             FluidAudioTranscript.Token(text: $0.token, start: $0.startTime, end: $0.endTime)
         }
@@ -97,11 +112,12 @@ struct ParaformerTranscriber: FluidAudioTranscriber {
     /// windows are refused, never shortened.
     static let windowSamples = 15 * 16_000
     var maxWindowSamples: Int? { Self.windowSamples }
+    var reportsTokenTimes: Bool { false }
 
     func transcribe(_ samples: [Float]) async throws -> FluidAudioTranscript {
         guard samples.count <= Self.windowSamples else {
             throw FluidAudioModelError.windowTooLong(samples: samples.count, limit: Self.windowSamples)
         }
-        return FluidAudioTranscript(text: try await manager.transcribe(audio: samples), tokens: [])
+        return FluidAudioTranscript(text: try await manager.transcribe(audio: padded(samples)), tokens: [])
     }
 }

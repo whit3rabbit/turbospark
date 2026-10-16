@@ -282,9 +282,11 @@ extension AudioWorkspaceController {
         }
     }
     func refineRecording(_ id: UUID) {
+        // The provider's verdict, not the Rust one: a FluidAudio row's Rust
+        // `canRun` is false by design.
         guard let item = items.first(where: { $0.id == id }), !item.clips.isEmpty,
               let profile = profiles.first(where: { $0.identity.alias == item.recipe.modelID && $0.identity.task == .speechToText }),
-              profile.capabilities.canRun,
+              AudioRuntimeProvider(profile).canRun(profile),
               installedPaths[profile.identity.alias] != nil || preferences.localModels[profile.identity.alias] != nil else { return }
         let token = epoch
         isBusy = true
@@ -296,8 +298,13 @@ extension AudioWorkspaceController {
             defer { if self.valid(token) { self.isBusy = false; self.progress = nil; self.scheduleUnload() } }
             do {
                 guard admitted else { throw CancellationError() }
-                let session = try await self.residentSession(for: profile, source: item)
-                let transcription = try await self.transcribe(item: item, into: id, session: session, request: Self.request(from: item.recipe, task: .speechToText), source: .final, token: token)
+                let transcription: Transcription
+                if case .fluidAudio(let family) = AudioRuntimeProvider(profile) {
+                    transcription = try await self.transcribeWithFluidAudio(item: item, into: id, profile: profile, family: family, source: .final, token: token)
+                } else {
+                    let session = try await self.residentSession(for: profile, source: item)
+                    transcription = try await self.transcribe(item: item, into: id, session: session, request: Self.request(from: item.recipe, task: .speechToText), source: .final, token: token)
+                }
                 guard self.valid(token) else { return }
                 // Speaker labels are extra: the transcript is already saved,
                 // so a failure here leaves it unlabeled instead of failing it.

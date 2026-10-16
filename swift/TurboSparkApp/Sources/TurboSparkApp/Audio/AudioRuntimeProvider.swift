@@ -40,4 +40,12 @@ enum AudioRuntimeProvider: Equatable, Sendable {
         case .unsupported: return false
         }
     }
+
+    /// FluidAudio loads only the catalog's verified installs. A folder the
+    /// user picks never passed the per-file check, and the signature check
+    /// alone stops a trap, not wrong weights.
+    var acceptsLocalFolder: Bool {
+        if case .fluidAudio = self { return false }
+        return true
+    }
 }
