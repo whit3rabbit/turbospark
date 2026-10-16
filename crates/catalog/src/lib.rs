@@ -23,6 +23,7 @@
 pub mod audio_catalog;
 mod auth;
 mod catalog;
+pub mod embedding;
 mod entry;
 mod gguf_source;
 mod hf;
@@ -31,8 +32,9 @@ mod hub_transfer;
 mod hub_validation;
 mod image;
 mod install;
-pub mod embedding;
 pub mod music;
+pub mod ocr;
+mod pinned_dir;
 mod probe;
 mod quant;
 mod recommend;
@@ -51,6 +53,7 @@ pub use auth::{
     HfTokenValidationStatus,
 };
 pub use catalog::{Catalog, SCHEMA_VERSION};
+pub use embedding::{EmbeddingCatalog, EmbeddingProfile};
 pub use entry::{
     CatalogEntry, EntryKind, Measured, MtpSource, Sidecars, Source, SourceKind, Status,
 };
@@ -75,11 +78,12 @@ pub use install::{
     ByteProgressCallback, CancelFlag, InstallPlan, Installed, VariantInstallPlan,
     INSTALL_CANCELLED, VISION_SIDECAR_FILES,
 };
-pub use embedding::{EmbeddingCatalog, EmbeddingProfile};
 pub use music::{
     embedded_music_entries, embedded_music_entry, install_music, MusicCatalogEntry,
     MusicQuantization,
 };
+pub use ocr::{OcrCatalog, OcrProfile};
+pub use pinned_dir::{PinnedAsset, PinnedDirReceipt};
 pub use probe::{
     evaluate_config, evaluate_gguf, probe, ProbeReport, TypeShare, Verdict, KNOWN_SIDECARS,
 };
@@ -103,7 +107,7 @@ pub use speech::{
 pub use model_io::speech_receipt;
 pub use store::{
     default_root, directory_bytes, relocate_default_store, resolve_image_arg, resolve_model_arg,
-    set_default_root, InstalledModel, ModelModality, Store, StoreRelocation,
+    resolve_ocr_arg, set_default_root, InstalledModel, ModelModality, Store, StoreRelocation,
 };
 pub use vision::{resolve_vision_sidecar, resolve_vision_sidecar_auto, AutoVisionSidecar};
 

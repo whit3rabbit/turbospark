@@ -270,17 +270,18 @@ tokens:
 |---|---|---|---|
 | Runtime | `ParakeetCoreMl` | `EmbeddingGemma2CoreMl` | `UnlimitedOcrCoreMl` |
 | Server | `--stt-model`, `/v1/audio/transcriptions` | `--embedding-model`, `/v1/embeddings` (text) | none |
-| C ABI | `ts_stt_*`, `ts_audio_*` sessions | `ts_embedding_encode_json`, `ts_embedding_encode_request_json`, `ts_embedding_catalog_json`, `ts_embedding_install` | `ts_ocr_*` |
+| C ABI | `ts_stt_*`, `ts_audio_*` sessions | `ts_embedding_encode_json`, `ts_embedding_encode_request_json`, `ts_embedding_catalog_json`, `ts_embedding_probe_json`, `ts_embedding_install` | `ts_ocr_*`, `ts_ocr_catalog_json`, `ts_ocr_install` |
 | CLI | none | none | `turbospark ocr` |
-| Swift | `TurboSparkSTTModel`, `AudioSession` | `TurboSparkEmbedding.encode(request:)`, `EmbeddingCatalog` | `TurboSparkOcr` |
-| Catalog pin | `parakeet-redux-coreml` in `audio_assets.json` | `embeddinggemma-2-coreml` in `embedding_models.json` | none (explicit path) |
-| App | Audio workspace, Transcribe and Record pages (listed, downloaded and run like any audio profile) | Settings, Memory and Server > Advanced: a Recommended row under the embedding field offers Download, then Use | none |
+| Swift | `TurboSparkSTTModel`, `AudioSession` | `TurboSparkEmbedding.encode(request:)`, `EmbeddingCatalog` | `TurboSparkOcr`, `OcrCatalog` |
+| Catalog pin | `parakeet-redux-coreml` in `audio_assets.json` | `embeddinggemma-2-coreml` in `embedding_models.json`, status `verified` | `unlimited-ocr-coreml` in `ocr_models.json` |
+| App | Audio workspace, Transcribe and Record pages (listed, downloaded and run like any audio profile) | API > Embeddings tab and Settings > Memory: the shared embedding picker lists it as Verified and offers Download, then Use | none (the pin is installable through the C ABI and Swift only) |
 
 ### Pinned installs
 
-Both pins list every file by path, size and SHA-256 at an immutable
+All three pins list every file by path, size and SHA-256 at an immutable
 revision, and the transfer checks each one before the install is published
-with one rename.
+with one rename. The install calls take the revision the host showed and
+refuse any other, so a retried download never adopts a different pin.
 
 - **Parakeet** installs as an audio profile to
   `models/audio/parakeet-redux-coreml.gturbo`. Opening it from the app
@@ -290,17 +291,37 @@ with one rename.
   with an `embedding-receipt.json`. It has no registry row, so it never
   shows up in the chat model pickers. `resolve_model_arg` falls back to this
   namespace, so the bare alias works in every embedding field, in
-  `--embedding-model` and in the C ABI.
+  `--embedding-model` and in the C ABI. The alias resolves only to an
+  install that verifies against the CURRENT pin; an older pin's install is
+  reported as stale, and Download replaces it (the old folder moves to a
+  tombstone and comes back if publishing fails). A folder without our
+  receipt is never replaced. The profile's `status` is `verified` because
+  its named gates (`coreml_embeddinggemma2`, `pinned_coreml_installs_network`)
+  ran on this pin; the loader refuses `verified` without gates.
+- **Unlimited OCR** installs to `models/ocr/unlimited-ocr-coreml` with an
+  `ocr-receipt.json`, by the same rules (`crates/catalog/src/pinned_dir.rs`
+  is shared with embeddings). It pins the nine Core ML files, 4.09 GB, and
+  none of `mlx/`. `ts_ocr_open` resolves the alias through
+  `resolve_ocr_arg` only, so an OCR alias never answers for a text or
+  embedding model.
 
-The network gate installs both into a scratch store (`TURBOSPARK_HOME`) and
-runs them:
+The network gates install into a scratch store (`TURBOSPARK_HOME`) and run
+the installs:
 
 ```sh
 cargo test --release -p turbospark-ffi --test pinned_coreml_installs_network -- --ignored --nocapture
+cargo test --release -p turbospark-ffi --test pinned_coreml_ocr_install_network -- --ignored --nocapture
+cargo test --release -p turbospark-catalog --test pinned_dir_catalog_network -- --ignored --nocapture
 ```
 
-It passed on 2026-10-14 after downloading about 1.7 GB. The embedding alias
-encoded at 128 dimensions, and Parakeet transcribed the clip exactly.
+The first passed on 2026-10-14 after downloading about 1.7 GB. The embedding
+alias encoded at 128 dimensions and probed as verified, and Parakeet
+transcribed the clip exactly. The second passed on 2026-10-14 after
+downloading about 4.1 GB: a second install was refused, the alias opened, and
+every line of `testdata/coreml_ocr/page1.png` was in the output. The third
+checks the embedding and OCR pins against the Hub without downloading the
+weights (LFS digests from the API, small files hashed); it passed the same
+day.
 
 ## Gotchas
 
@@ -382,9 +403,9 @@ now; the note is here so the guard is not removed.
 - **App:** there is no OCR in the app. `DocumentTextExtractor` is
   synchronous with a 30 s limit, and the model loads for several seconds and
   peaks near 8 GB, so wiring it in is a UX and memory decision.
-- **Removing an embedding install:** the app has no delete button for one.
-  Remove `models/embeddings/<alias>` by hand.
-- **Catalog:** OCR has no catalog pin.
+- **Removing an embedding or OCR install:** the app has no delete button
+  for one. Remove `models/embeddings/<alias>` or `models/ocr/<alias>` by
+  hand. A pin bump does not need this: Download replaces the older pin.
 - **Server:** there is no OCR endpoint and no image or audio embeddings.
 - **Memory admission:** the OCR footprint is not admitted through the load
   guard.

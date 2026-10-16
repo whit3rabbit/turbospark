@@ -89,9 +89,18 @@ impl ModelModality {
 }
 
 impl InstalledModel {
-    /// Interprets rows written before `modality` existed.
+    /// Interprets rows written before `modality` existed or where modality defaulted/mismatched.
     pub fn effective_modality(&self) -> ModelModality {
-        if self.kind.as_deref() == Some("image") {
+        if self.modality == ModelModality::Audio
+            || self.kind.as_deref() == Some("speech")
+            || self.path.components().any(|c| c.as_os_str() == "audio")
+            || self.path.join("audio-receipt.json").is_file()
+        {
+            ModelModality::Audio
+        } else if self.kind.as_deref() == Some("image")
+            || self.modality == ModelModality::Image
+            || self.path.components().any(|c| c.as_os_str() == "image")
+        {
             ModelModality::Image
         } else {
             self.modality
@@ -444,6 +453,17 @@ impl Store {
         self.embedding_models_dir().join(alias)
     }
 
+    /// The namespace for pinned OCR installs (`crate::ocr`), shaped like
+    /// [`Self::embedding_models_dir`].
+    pub fn ocr_models_dir(&self) -> PathBuf {
+        self.models_root().join("ocr")
+    }
+
+    /// Where an OCR install of `alias` lands.
+    pub fn ocr_install_path(&self, alias: &str) -> PathBuf {
+        self.ocr_models_dir().join(alias)
+    }
+
     /// Where a vision-tower sidecar pull of `alias` lands by default. Towers
     /// are text-model accessories, so they stay in the text namespace.
     pub fn vision_install_path(&self, alias: &str) -> PathBuf {
@@ -681,15 +701,34 @@ impl Store {
     }
 
     /// Resolve a pinned embedding alias to its install directory. Only a
-    /// plain alias is considered, so a path never lands here.
+    /// plain alias is considered, so a path never lands here, and only an
+    /// install that verifies against the CURRENT pin resolves: an older
+    /// pin's files are not what the catalog says this alias is.
     pub fn resolve_embedding(&self, name: &str) -> Option<PathBuf> {
+        let catalog = crate::EmbeddingCatalog::embedded().ok()?;
+        self.resolve_embedding_in(&catalog, name)
+    }
+
+    pub(crate) fn resolve_embedding_in(
+        &self,
+        catalog: &crate::EmbeddingCatalog,
+        name: &str,
+    ) -> Option<PathBuf> {
         if name.is_empty() || name.contains('/') || name.starts_with('.') {
             return None;
         }
-        let dir = self.embedding_install_path(name);
-        dir.join(crate::embedding::RECEIPT_FILENAME)
-            .is_file()
-            .then_some(dir)
+        catalog.installed_path(self, name)
+    }
+
+    /// Resolve a pinned OCR alias to its verified install directory, as
+    /// [`Self::resolve_embedding`] does for embeddings.
+    pub fn resolve_ocr(&self, name: &str) -> Option<PathBuf> {
+        if name.is_empty() || name.contains('/') || name.starts_with('.') {
+            return None;
+        }
+        crate::OcrCatalog::embedded()
+            .ok()?
+            .installed_path(self, name)
     }
 
     /// Resolve an audio alias or explicit path.
@@ -718,6 +757,22 @@ pub fn resolve_model_arg(name: &str) -> PathBuf {
             .or_else(|| store.resolve_embedding(name))
             .unwrap_or_else(|| PathBuf::from(name)),
         Err(_) => PathBuf::from(name),
+    }
+}
+
+/// Resolve an OCR model argument: an existing directory is used as given,
+/// then a verified pinned install of that alias, then the raw string (so the
+/// open reports the usual "no such directory"). Kept apart from
+/// [`resolve_model_arg`] so OCR aliases never answer for text or embedding
+/// models.
+pub fn resolve_ocr_arg(name: &str) -> PathBuf {
+    let as_path = PathBuf::from(name);
+    if as_path.is_dir() {
+        return as_path;
+    }
+    match Store::default_store() {
+        Ok(store) => store.resolve_ocr(name).unwrap_or(as_path),
+        Err(_) => as_path,
     }
 }
 
