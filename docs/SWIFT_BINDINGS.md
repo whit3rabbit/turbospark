@@ -1476,7 +1476,7 @@ exactly three tasks:
 | Task (`AudioTask`) | Family reached today | Notes |
 |---|---|---|
 | `.speechToText` | Whisper | Catalog install (`whisper-base`) or a chosen folder. Qwen3-ASR also opens, from the app's Advanced page, behind an explicit portable or experimental-Metal opt-in and a local folder. |
-| `.textToSpeech` | Kokoro, MegaTTS3, OmniVoice | Kokoro: portable CPU path behind an explicit opt-in at the time of writing; the current backend list is in `crates/audio/MODELS.md`. MegaTTS3 and OmniVoice clone a voice: see [Voice cloning](#voice-cloning). OmniVoice is multilingual (auto voice without a reference) and runs on the portable CPU path behind the same opt-in. |
+| `.textToSpeech` | Kokoro, MegaTTS3, OmniVoice | Kokoro: portable CPU path behind an explicit opt-in at the time of writing; the current backend list is in `crates/audio/MODELS.md`. MegaTTS3 and OmniVoice clone a voice: see [Voice cloning](#voice-cloning). OmniVoice is multilingual (auto voice without a reference) and runs on Metal by default with portable CPU fallback. |
 | `.music` | MiniMax Music 3 | Catalog install covers `minimax-music3-4bit`. |
 
 `AudioTask` has ten cases because the catalog and capability rows describe
@@ -1543,12 +1543,10 @@ let result = try await session.execute(request, pcm: reference24k) { progress in
 
 Progress stages are `reference` (preparing the voice; skipped when the session
 already prepared this exact reference and seed) and `diffusion` (completed of
-total steps across text chunks). MegaTTS3's declared backend is `metal`, and a
-session opens it on Metal with no opt-in. `allowPortable` lets it fall back to
-the CPU reference path only when Metal cannot open. OmniVoice is portable CPU
-only (about 23 times slower than realtime measured): its session opens with
-the same explicit portable opt-in Kokoro uses, and without it the open is
-refused by name.
+total steps across text chunks). Both MegaTTS3 and OmniVoice declare backend
+`metal`, and a session opens them on Metal with no opt-in required.
+`allowPortable` lets them fall back to the CPU reference path only when Metal
+cannot open.
 
 Some catalog profiles list install terms in `requiredAcknowledgments` (MegaTTS3:
 its encoder's unverified provenance; OmniVoice: the bundled Higgs tokenizer is

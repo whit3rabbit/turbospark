@@ -381,6 +381,44 @@ mod native {
                 return Err(invalid("out must not be null"));
             }
             *out = std::ptr::null_mut();
+            let options: OpenOptions =
+                serde_json::from_str(strings::required(options, "options").map_err(invalid)?)
+                    .map_err(invalid)?;
+            let path = strings::required(path, "path").map_err(invalid)?;
+            verify_open(path, token, callback, userdata)?;
+            let session = AudioSession::open_with_options(
+                path.into(),
+                options.task,
+                options.allow_portable,
+                options.allow_experimental_metal,
+            )
+            .map_err(|e| abi::audio_error(e, false, abi::TS_ERR_OPEN))?;
+            if let Some(expected) = options.expected_family.as_deref() {
+                if session.family() != expected {
+                    return Err(invalid(format!(
+                        "selected audio family {expected} does not match loaded family {}",
+                        session.family()
+                    )));
+                }
+            }
+            *out = Box::into_raw(Box::new(TsAudioSession {
+                session: Arc::new(session),
+            }));
+            Ok(())
+        }
+    }
+
+    /// Verifies a managed install against the pinned catalog before it is
+    /// opened, reporting kind 1 progress through `callback`. Shared by audio
+    /// sessions and streams so neither can load an unverified managed model.
+    /// A path outside the managed store (a local model) is not hashed.
+    pub(crate) unsafe fn verify_open(
+        path: &str,
+        token: Option<&TsAudioOpenToken>,
+        callback: TsAudioCallback,
+        userdata: *mut c_void,
+    ) -> AbiResult<()> {
+        {
             let flag = token.map(|t| t.flag());
             let cancelled = || {
                 flag.as_ref()
@@ -388,10 +426,6 @@ mod native {
                     .unwrap_or(false)
             };
             let cancelled_error = || (abi::TS_ERR_CANCELLED, catalog::VERIFY_CANCELLED.to_string());
-            let options: OpenOptions =
-                serde_json::from_str(strings::required(options, "options").map_err(invalid)?)
-                    .map_err(invalid)?;
-            let path = strings::required(path, "path").map_err(invalid)?;
             let store = catalog::Store::default_store().map_err(invalid)?;
             let model_path = std::path::Path::new(path);
             if cancelled() {
@@ -434,24 +468,6 @@ mod native {
             if cancelled() {
                 return Err(cancelled_error());
             }
-            let session = AudioSession::open_with_options(
-                path.into(),
-                options.task,
-                options.allow_portable,
-                options.allow_experimental_metal,
-            )
-            .map_err(|e| abi::audio_error(e, false, abi::TS_ERR_OPEN))?;
-            if let Some(expected) = options.expected_family.as_deref() {
-                if session.family() != expected {
-                    return Err(invalid(format!(
-                        "selected audio family {expected} does not match loaded family {}",
-                        session.family()
-                    )));
-                }
-            }
-            *out = Box::into_raw(Box::new(TsAudioSession {
-                session: Arc::new(session),
-            }));
             Ok(())
         }
     }

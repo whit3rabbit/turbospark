@@ -336,11 +336,11 @@ public struct AudioProgress: Codable, Sendable, Equatable {
         self.stage = stage; self.completed = completed; self.total = total
     }
 }
-private func audioEncode<T: Encodable>(_ value: T) throws -> String {
+func audioEncode<T: Encodable>(_ value: T) throws -> String {
     let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
     return String(decoding: try encoder.encode(value), as: UTF8.self)
 }
-private func audioDecode<T: Decodable>(_ type: T.Type, _ json: String) throws -> T {
+func audioDecode<T: Decodable>(_ type: T.Type, _ json: String) throws -> T {
     let decoder = JSONDecoder(); decoder.keyDecodingStrategy = .convertFromSnakeCase
     return try decoder.decode(type, from: Data(json.utf8))
 }
@@ -350,7 +350,7 @@ private struct AudioWireResult: Decodable {
     let sampleCount: Int
     let seed: UInt64?
 }
-private final class AudioCallbackBox {
+final class AudioCallbackBox {
     var samples: [Float] = []
     let progress: @Sendable (AudioProgress) -> Void
     let onPCM: (@Sendable ([Float]) -> Void)?
@@ -424,7 +424,7 @@ public final class AudioOpenToken: @unchecked Sendable {
     /// Runs `body` with the native token, holding the lock so `deinit` cannot
     /// free it underneath. Cancellation does not take this lock for the
     /// duration of the call (see `cancel`), so it works while an open runs.
-    fileprivate func withRaw<T>(_ body: (OpaquePointer?) throws -> T) rethrows -> T {
+    func withRaw<T>(_ body: (OpaquePointer?) throws -> T) rethrows -> T {
         lock.lock(); let handle = raw; lock.unlock()
         return try withExtendedLifetime(self) { try body(handle) }
     }
@@ -552,7 +552,7 @@ public final class AudioSession: @unchecked Sendable {
 }
 /// The one C callback for audio jobs and cancellable opens: kind 1 is
 /// progress JSON, kind 2 is borrowed PCM (copied before this returns).
-private let audioProgressTrampoline: @convention(c) (
+let audioProgressTrampoline: @convention(c) (
     UnsafeMutableRawPointer?, Int32, UnsafePointer<CChar>?, Int, UnsafePointer<Float>?, Int
 ) -> Void = { userdata, kind, json, length, samples, count in
     guard let userdata else { return }

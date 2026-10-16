@@ -1718,6 +1718,41 @@ int ts_audio_job_cancel(const TsAudioJob *job);
 int ts_audio_job_status_json(const TsAudioJob *job, char **out);
 int ts_audio_job_close(TsAudioJob *job);
 
+/* LIVE TRANSCRIPTION STREAMS over a streaming speech install (Parakeet
+ * Unified EN on Core ML, family "parakeet_unified"). Unlike an audio
+ * session, a stream never uses Metal and takes no heavy-work permit, so chat
+ * and image work keep running while it transcribes. Batch opens of the same
+ * install are refused.
+ *
+ * ts_audio_stream_open verifies a managed install exactly as
+ * ts_audio_session_open_cancellable does (`token` and `cb` may be NULL;
+ * options_json may be NULL or {"expected_family":"parakeet_unified"}). The
+ * first load compiles the encoder for the Neural Engine, which can take
+ * minutes and is not interruptible; later loads come from the cache.
+ *
+ * append (1..32000 samples of 16 kHz mono f32) and finish run synchronously
+ * on the calling thread and return JSON in *out (free with ts_string_free):
+ * {"appended_text","closed_words":[{"text","start_seconds","end_seconds"}],
+ *  "open_word","received_seconds","committed_through_seconds","is_final"}.
+ * Joining appended_text across calls gives the transcript; committed text is
+ * never revised. Text trails the audio by the encoder's chunk plus
+ * look-ahead (about 1.1 s) plus compute. A call made while another runs on
+ * the same stream fails with TS_ERR_BUSY. finish commits the tail and
+ * restarts the stream at time zero for a new segment.
+ *
+ * cancel works from any thread and is terminal: the stream refuses further
+ * calls (TS_ERR_CANCELLED for the interrupted one). close is refused while a
+ * call is running; do not start a call concurrently with close. */
+typedef struct TsAudioStream TsAudioStream;
+int ts_audio_stream_open(const char *path, const char *options_json,
+                         const TsAudioOpenToken *token, TsAudioCallback cb,
+                         void *userdata, TsAudioStream **out);
+int ts_audio_stream_append(const TsAudioStream *stream, const float *pcm, size_t count,
+                           char **out);
+int ts_audio_stream_finish(const TsAudioStream *stream, char **out);
+int ts_audio_stream_cancel(const TsAudioStream *stream);
+int ts_audio_stream_close(TsAudioStream *stream);
+
 #ifdef __cplusplus
 }
 #endif
