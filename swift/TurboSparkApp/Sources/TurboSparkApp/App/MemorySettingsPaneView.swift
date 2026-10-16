@@ -285,13 +285,9 @@ struct MemorySettingsPaneView: View {
             Text("Claims and evidence are stored in the encrypted profile. Profile export includes the ledger and readable Markdown projections.", bundle: .module)
                 .font(theme.ui(.small))
                 .foregroundStyle(.appSecondary)
-            TextField(text: $model.memoryEmbeddingModel) {
-                Text("Arctic embedding model path or alias", bundle: .module)
-            }
-            .onSubmit { model.persistSettingsDebounced() }
-            RecommendedEmbeddingModelRow(
+            EmbeddingModelPicker(
                 model: model, selection: $model.memoryEmbeddingModel,
-                onSelect: { model.persistSettingsDebounced() })
+                onCommit: { model.persistSettingsDebounced() })
             Text("Embeddings are optional. Approved claims remain searchable without a model.", bundle: .module)
                 .font(theme.ui(.small))
                 .foregroundStyle(.appSecondary)

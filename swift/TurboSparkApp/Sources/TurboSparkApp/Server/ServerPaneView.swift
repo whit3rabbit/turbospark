@@ -1,19 +1,22 @@
 import SwiftUI
 
+// Isolated explicitly: only `body` is isolated by the protocol on the
+// macOS 14 SDK (swift/CLAUDE.md Gotcha 45), and `apiTab` reads the model.
 /// Keep operations and evidence visible before, during and after a server run.
+@MainActor
 struct ServerPaneView: View {
     @ObservedObject var model: AppModel
     @State private var tab = 0
-    @State private var apiTab: APIWorkspaceTab = .text
     @AppStorage("TurboSpark.server.consoleHeight") private var consoleHeight = 300.0
     @State private var dragHeight: Double?
+
+    /// Chosen in the panel beside the rail (`APISidebarPanel`), or the rail's
+    /// API menu while that panel is hidden. The pane has no selector of its own.
+    private var apiTab: APIWorkspaceTab { model.apiWorkspaceTab }
 
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
-                APIWorkspaceSelector(selection: $apiTab)
-                    .padding(.top, 12)
-                    .padding(.bottom, 4)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
                         switch apiTab {
@@ -32,6 +35,8 @@ struct ServerPaneView: View {
                             ImageAPIPaneView(model: model)
                         case .audio:
                             AudioAPIPaneView(model: model)
+                        case .embeddings:
+                            EmbeddingsAPIPaneView(model: model)
                         case .typeSafe:
                             TypeSafeAPIPaneView(model: model)
                         }
