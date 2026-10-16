@@ -58,7 +58,9 @@ final class AudioEngineLabelTests: XCTestCase {
         XCTAssertFalse(AudioEngineLabel.isAppOnly(rust))
         // A payload from before the flag is never shown as app-only.
         XCTAssertFalse(AudioEngineLabel.isAppOnly(profile(backend: "metal")))
-        // Every row the catalog ships today stays reachable from the API.
-        XCTAssertTrue(try AudioCatalog.profiles().allSatisfy { !AudioEngineLabel.isAppOnly($0) })
+        // Shipped rows are app-only exactly when the app is their only runtime.
+        for p in try AudioCatalog.profiles() {
+            XCTAssertEqual(AudioEngineLabel.isAppOnly(p), p.capabilities.backend == "swift_coreml", p.identity.alias)
+        }
     }
 }

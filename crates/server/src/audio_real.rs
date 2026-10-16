@@ -905,19 +905,23 @@ mod tests {
         assert_eq!(task_of_alias("not-in-any-catalog"), None);
     }
 
-    /// A profile only the app runs is refused before a worker spawns. Every
-    /// row the catalog ships today stays attachable.
+    /// A profile only the app runs is refused, by alias, before a worker
+    /// spawns. Every row a Rust engine runs stays attachable.
     #[test]
     fn app_only_profiles_are_refused_and_current_rows_are_not() {
         let catalog = catalog::audio_catalog::AudioCatalog::embedded().unwrap();
+        let mut refused = 0;
         for profile in catalog.entries() {
-            assert!(
-                app_only_refusal(profile).is_ok(),
-                "{}",
-                profile.identity.alias
-            );
-            assert!(refuse_app_only(&profile.identity.alias).is_ok());
+            let app_only = profile.capabilities.backend == "swift_coreml";
+            let alias = &profile.identity.alias;
+            assert_eq!(app_only_refusal(profile).is_err(), app_only, "{alias}");
+            assert_eq!(refuse_app_only(alias).is_err(), app_only, "{alias}");
+            refused += usize::from(app_only);
         }
+        assert!(
+            refused > 0,
+            "needs a shipped app-only row to test the alias path"
+        );
         assert!(refuse_app_only("not-in-any-catalog").is_ok());
         let mut app_only = catalog.get("whisper-base").unwrap().clone();
         app_only.capabilities.http_api = false;

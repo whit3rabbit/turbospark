@@ -15,6 +15,9 @@ final class FluidAudioIsolationTests: XCTestCase {
         "clearAllCaches", "clearAllModelCaches", "clearCache(", "prepareModels(",
         "loadWithAutoRecovery", "loadFromHuggingFace", "initializeFromHuggingFace",
         "AsrModels.load(", "AsrModels.download",
+        // FluidAudio's own loaders skip the signature check that keeps a
+        // wrong model from reaching its preconditionFailure.
+        "SenseVoiceModels.load(", "ParaformerModels.load(",
     ]
     private static let offlineSwitches = ["ModelHub.offlineMode =", "ModelRegistry.baseURL ="]
 
