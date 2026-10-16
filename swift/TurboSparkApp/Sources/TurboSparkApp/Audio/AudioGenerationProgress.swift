@@ -80,6 +80,42 @@ struct AudioGenerationProgress {
     }
 }
 
+/// The stages of a speech run, for the Voice Cloning progress card. The
+/// engines visit them in different orders (Qwen3 loads its speech model
+/// after preparing the reference), so a stage is done once it was visited
+/// and another is active, not because it sorts earlier.
+struct AudioSpeechRunProgress: Equatable, Sendable {
+    enum Stage: Int, CaseIterable, Sendable { case waiting, loadingModel, preparingReference, generating, saving }
+    enum StageState: Equatable, Sendable { case pending, active, done }
+    private(set) var stage: Stage = .waiting
+    private(set) var reached: Set<Stage> = [.waiting]
+    let startedAt: Date
+
+    init(now: Date = Date()) { startedAt = now }
+
+    /// Late engine events after saving began cannot move the card back.
+    mutating func enter(_ next: Stage) {
+        guard stage != .saving else { return }
+        stage = next; reached.insert(next)
+    }
+
+    func state(of candidate: Stage) -> StageState {
+        if candidate == stage { return .active }
+        return reached.contains(candidate) ? .done : .pending
+    }
+
+    /// The stage an engine progress event names, from the Swift and Rust
+    /// speech providers' stage strings.
+    static func stage(forProgress name: String) -> Stage? {
+        switch name {
+        case "Preparing reference audio", "reference": return .preparingReference
+        case "Loading speech model", "verifying": return .loadingModel
+        case "Generating speech", "diffusion": return .generating
+        default: return nil
+        }
+    }
+}
+
 extension AudioWorkspaceController {
     func receiveProgress(_ update: AudioProgress, runID: UUID, token: UUID) {
         guard valid(token), isBusy, activeRunID == runID else { return }
@@ -89,11 +125,13 @@ extension AudioWorkspaceController {
             status = generation.title
             progress = generation.fraction
         } else {
+            if let stage = AudioSpeechRunProgress.stage(forProgress: update.stage) { speechRun?.enter(stage) }
             switch update.stage {
             case "Preparing reference audio": status = AppStrings.localized("Preparing reference audio")
             case "Loading speech model": status = AppStrings.localized("Loading speech model")
             case "Generating speech", "diffusion": status = AppStrings.localized("Generating speech")
             case "reference": status = AppStrings.localized("Preparing reference audio")
+            case "verifying": status = AppStrings.localized("Verifying")
             default: status = update.stage
             }
             progress = update.total.flatMap { $0 > 0 ? Double(max(0, min($0, update.completed))) / Double($0) : nil }

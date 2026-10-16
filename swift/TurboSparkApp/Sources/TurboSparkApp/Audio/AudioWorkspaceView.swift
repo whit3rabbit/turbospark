@@ -19,6 +19,11 @@ struct AudioWorkspaceView: View {
             Divider()
             if controller.page == .library {
                 AudioLibraryView(controller: controller)
+            } else if controller.page == .voiceClone {
+                VoiceCloneWorkspaceView(
+                    model: model, controller: controller,
+                    description: Text(LocalizedStringKey(pageDescription), bundle: .module),
+                    showPromptLibrary: { showingPrompts = true }, savePrompt: beginSavingPrompt)
             } else {
                 GeometryReader { geometry in
                     ScrollView {
@@ -319,40 +324,10 @@ struct AudioWorkspaceView: View {
             } else if controller.selectedProfileClonesNatively {
                 VoiceCloneInputsView(controller: controller)
             }
-            if let profile = controller.selectedProfile {
-                if !profile.capabilities.voices.isEmpty {
-                    Picker(selection: $controller.recipe.voice) {
-                        ForEach(profile.capabilities.voices, id: \.self) { voice in Text(voice).tag(voice) }
-                    } label: { Text("Voice", bundle: .module) }
-                }
-                languagePicker
-                if controller.selectedProfile?.family != "qwen3_tts" {
-                    HStack {
-                        Text("Speed", bundle: .module)
-                        Slider(value: $controller.recipe.speed, in: 0.5...2, step: 0.05)
-                            .accessibilityLabel(Text("Speech speed", bundle: .module))
-                        Text(controller.recipe.speed, format: .number.precision(.fractionLength(2)))
-                            .monospacedDigit()
-                    }
-                }
-            }
-            let sections = controller.recipe.text.components(separatedBy: "\n\n")
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
-            if !sections.isEmpty {
-                DisclosureGroup {
-                    ForEach(Array(sections.enumerated()), id: \.offset) { index, text in
-                        HStack(alignment: .top, spacing: 12) {
-                            Text(verbatim: String(index + 1)).monospacedDigit().foregroundStyle(.appSecondary)
-                            Text(text).lineLimit(4).frame(maxWidth: .infinity, alignment: .leading)
-                            Button { controller.runSection(text) } label: {
-                                Text("Generate section", bundle: .module)
-                            }
-                            .disabled(!controller.canRun)
-                        }
-                        .padding(.vertical, 8)
-                    }
-                } label: { Text("Script sections", bundle: .module) }
-            }
+            AudioVoicePicker(controller: controller)
+            languagePicker
+            AudioSpeedControl(controller: controller)
+            AudioScriptSections(controller: controller)
         }
     }
 
@@ -367,18 +342,7 @@ struct AudioWorkspaceView: View {
         }
     }
 
-    @ViewBuilder private var languagePicker: some View {
-        if let profile = controller.selectedProfile, !profile.capabilities.languages.isEmpty {
-            Picker(selection: $controller.recipe.language) {
-                if controller.task == .speechToText || profile.capabilities.languages.contains("auto") {
-                    Text("Detect automatically", bundle: .module).tag("auto")
-                }
-                ForEach(profile.capabilities.languages.filter { $0 != "auto" }, id: \.self) { language in
-                    Text(Locale.current.localizedString(forLanguageCode: language) ?? language).tag(language)
-                }
-            } label: { Text("Language", bundle: .module) }
-        }
-    }
+    private var languagePicker: some View { AudioLanguagePicker(controller: controller) }
 
     private var musicInputs: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -472,17 +436,19 @@ struct AudioWorkspaceView: View {
                     Label { Text("Prompt library", bundle: .module) } icon: { Image(systemName: "text.book.closed") }
                 }
                 .appAction(.secondary, size: .small)
-                Button {
-                    savingPrompt = true
-                    presetName = String((controller.task == .music ? controller.recipe.caption : controller.recipe.text).prefix(60))
-                    showingPreset = true
-                } label: { Text("Save Prompt", bundle: .module) }
+                Button(action: beginSavingPrompt) { Text("Save Prompt", bundle: .module) }
                     .appAction(.secondary, size: .small)
                     .disabled(!controller.canSavePrompt)
             }.fixedSize()
         } else {
             HStack(spacing: 12) { presetMenu; saveDraftButton }
         }
+    }
+
+    private func beginSavingPrompt() {
+        savingPrompt = true
+        presetName = String((controller.task == .music ? controller.recipe.caption : controller.recipe.text).prefix(60))
+        showingPreset = true
     }
 
     private var familyDetails: some View {

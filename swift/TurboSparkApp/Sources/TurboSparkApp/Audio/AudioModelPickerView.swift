@@ -127,7 +127,10 @@ struct AudioModelPickerView: View {
                         icon: { Image(systemName: "internaldrive") }
                 }
                 Spacer(minLength: 0)
-                if controller.modelInstalled {
+                if controller.isModelLoaded {
+                    Label { Text("Loaded", bundle: .module) } icon: { Image(systemName: "bolt.circle.fill") }
+                        .foregroundStyle(.appAccent)
+                } else if controller.modelInstalled {
                     Label { Text("Installed", bundle: .module) } icon: { Image(systemName: "checkmark.circle") }
                         .foregroundStyle(.appAccent)
                 }
@@ -137,9 +140,39 @@ struct AudioModelPickerView: View {
 
     @ViewBuilder
     private func installControls(_ profile: AudioProfile) -> some View {
-        if let download, !download.status.isTerminal {
+        if controller.modelInstalled {
+            if controller.isModelLoading {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Loading model", bundle: .module)
+                        .themedFont(.small, weight: .medium)
+                    Spacer()
+                    Button { controller.cancel() } label: {
+                        Text("Cancel", bundle: .module)
+                    }
+                    .appAction(.quiet, size: .small)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else if controller.canUnloadModel {
+                Button { controller.unloadModel() } label: {
+                    Label { Text("Unload", bundle: .module) } icon: { Image(systemName: "eject.fill") }
+                        .frame(maxWidth: .infinity)
+                }
+                .appAction(.secondary, size: .large)
+                .help(Text("Eject model and release unified memory", bundle: .module))
+                .accessibilityLabel(Text("Unload Model", bundle: .module))
+            } else if controller.canLoadModel {
+                Button { controller.loadModel() } label: {
+                    Label { Text("Load Model", bundle: .module) } icon: { Image(systemName: "bolt.fill") }
+                        .frame(maxWidth: .infinity)
+                }
+                .appAction(.secondary, size: .large)
+                .help(Text("Load model into memory slot cache for inference", bundle: .module))
+                .accessibilityLabel(Text("Load Model", bundle: .module))
+            }
+        } else if let download, !download.status.isTerminal {
             downloadProgress(download)
-        } else if !controller.modelInstalled && !profile.identity.repository.isEmpty {
+        } else if !profile.identity.repository.isEmpty {
             if let download, download.status.canRetry {
                 if let failure = download.failure {
                     Text(failure).foregroundStyle(.appSecondary).textSelection(.enabled)
@@ -202,11 +235,14 @@ struct AudioModelPickerView: View {
                 }
             }
             if let total = download.totalBytes, total > 0 {
-                ProgressView(value: min(1, Double(download.downloadedBytes) / Double(total)))
+                AppProgressBar(value: min(1, Double(download.downloadedBytes) / Double(total)),
+                               label: Text("Download progress", bundle: .module),
+                               animated: download.status != .paused)
                 Text("\(MetricFormat.storage(download.downloadedBytes)) of \(MetricFormat.storage(total))", bundle: .module)
                     .themedFont(.tiny).foregroundStyle(.appSecondary)
             } else {
-                ProgressView().progressViewStyle(.linear)
+                AppProgressBar(value: nil, label: Text("Download progress", bundle: .module),
+                               animated: download.status != .paused)
             }
             HStack {
                 // The same treatment as the install toast's controls:
@@ -266,6 +302,8 @@ extension AudioModelPickerView {
             switch term.id {
             case "megatts3_community_encoder":
                 return AppStrings.localized("The voice-cloning encoder in this model is a community re-upload. Its origin and license have not been verified.")
+            case "omnivoice_higgs_tokenizer":
+                return AppStrings.localized("The bundled audio tokenizer is community-licensed, not Apache-licensed: it requires attribution and caps commercial use above 100,000 annual active users.")
             default:
                 return term.summary
             }

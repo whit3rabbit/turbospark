@@ -174,7 +174,9 @@ struct AudioRecordingBadge: View {
 
     var body: some View {
         if controller.hasRecordingActivity {
-            Button { openWorkspace(); controller.selectPage(.record) } label: {
+            // A voice reference records from the Voice Cloning page, where its
+            // inline recorder is; a meeting records from Record.
+            Button { openWorkspace(); controller.selectPage(controller.isRecordingVoiceReference ? .voiceClone : .record) } label: {
                 HStack(spacing: 6) {
                     if controller.recordingSetupStatus != nil {
                         Image(systemName: "hourglass")
@@ -213,9 +215,10 @@ struct AudioWorkspaceStatusView: View {
                 HStack(spacing: 12) {
                     if controller.isBusy || controller.isInstalling || controller.recordingSetupStatus != nil {
                         if let progress = controller.progress {
-                            ProgressView(value: max(0, min(1, progress))).frame(width: 180)
-                                .accessibilityLabel(Text(verbatim: controller.status))
-                                .accessibilityValue(Text(verbatim: controller.generationProgress?.counter ?? "\(Int(progress * 100))%"))
+                            AppProgressBar(value: progress, label: Text(verbatim: controller.status),
+                                           valueText: controller.generationProgress?.counter.map { Text(verbatim: $0) },
+                                           size: .compact)
+                                .frame(minWidth: 120, idealWidth: 180, maxWidth: 240)
                         } else {
                             ProgressView().controlSize(.small)
                         }

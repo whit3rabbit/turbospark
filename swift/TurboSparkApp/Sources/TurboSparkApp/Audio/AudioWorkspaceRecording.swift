@@ -83,22 +83,34 @@ extension AudioWorkspaceController {
         status = setupCancelledMessage
     }
 
-    func startRecording() {
+    func startRecording() { startRecording(asVoiceReference: false) }
+    /// A voice reference recording captures the microphone only, through
+    /// local flags so the Record page's source settings stay as the user set
+    /// them, and keeps the current take selected on the Voice Cloning page.
+    func startRecording(asVoiceReference: Bool) {
         guard !hasRecordingActivity, !isShutDown, capture == nil else { return }
-        guard captureMicrophone || captureSystemAudio else {
+        let capturesMicrophone = asVoiceReference || captureMicrophone
+        let capturesSystemAudio = !asVoiceReference && captureSystemAudio
+        guard capturesMicrophone || capturesSystemAudio else {
             error = AudioCapture.CaptureError.noSource.localizedDescription
             return
         }
         stopPlayback(); stopReferencePreview(); error = nil
-        var item = AudioLibraryItem(title: AppStrings.localized("Meeting") + " " + Date().formatted(date: .abbreviated, time: .shortened), kind: .recording)
+        let stamp = Date().formatted(date: .abbreviated, time: .shortened)
+        let title = asVoiceReference ? AppStrings.localized("Voice reference \(stamp)") : AppStrings.localized("Meeting") + " " + stamp
+        var item = AudioLibraryItem(title: title, kind: .recording)
         item.status = .draft; item.recipe = recipe; item.recipe.task = AudioTask.speechToText.rawValue
+        // A copied reference would pin the previous voice's audio to this clip.
+        if asVoiceReference { item.recipe.speech = nil }
         if let profile = selectedProfile, profile.identity.task == .speechToText {
             item.modelFamily = profile.family
             item.localModelBookmark = preferences.localModels[profile.identity.alias]
             if item.localModelBookmark == nil { item.modelIdentity = try? JSONEncoder().encode(profile.identity) }
         }
         do { try save(item) } catch { fail(error); return }
-        recordingID = item.id; selectedID = item.id; draftThrough = 0; draftRequestedThrough = 0
+        recordingID = item.id; draftThrough = 0; draftRequestedThrough = 0
+        voiceReferenceRecordingID = asVoiceReference ? item.id : nil
+        if !asVoiceReference { selectedID = item.id }
         nextDraftAttemptAt = .distantPast
         let id = item.id; let token = epoch; let library = self.library; let assets = self.assets; let profileID = self.profileID
         let capture = AudioCapture(onChunk: { [weak self] chunk in
@@ -126,7 +138,7 @@ extension AudioWorkspaceController {
             }
         })
         self.capture = capture
-        let config = AudioCapture.Configuration(microphoneID: microphoneID.flatMap(UInt32.init), capturesMicrophone: captureMicrophone, systemSource: captureSystemAudio ? selectedApplicationID.map(AudioCapture.SystemSource.application) ?? .all : .none)
+        let config = AudioCapture.Configuration(microphoneID: microphoneID.flatMap(UInt32.init), capturesMicrophone: capturesMicrophone, systemSource: capturesSystemAudio ? selectedApplicationID.map(AudioCapture.SystemSource.application) ?? .all : .none)
         let attempt = UUID(); let dependencies = recordingSetupDependencies
         recordingSetupAttempt = attempt
         recordingSeconds = 0; isPaused = false; inputLevel = 0
@@ -152,7 +164,7 @@ extension AudioWorkspaceController {
                 guard self.isCurrentRecordingSetup(attempt, token: token), self.capture === capture, self.recordingID == id else { _ = await capture.stop(); return }
                 _ = capture.stopAcceptingAndDrain()
                 Task { _ = await capture.stop() }
-                self.isRecording = false; self.capture = nil; self.recordingID = nil
+                self.isRecording = false; self.capture = nil; self.recordingID = nil; self.voiceReferenceRecordingID = nil
                 self.update(id) { $0.status = .interrupted; $0.failure = error.localizedDescription }
                 self.error = error.localizedDescription; self.status = error.localizedDescription
             }
@@ -193,11 +205,17 @@ extension AudioWorkspaceController {
                 }
                 $0.status = interrupted ? .interrupted : .completed; $0.failure = failure; $0.updatedAt = Date()
             }
-            if liveTranscription && !interrupted { pendingRefinementIDs.append(id) }
+            if liveTranscription && !interrupted && id != voiceReferenceRecordingID { pendingRefinementIDs.append(id) }
         }
+        // Decided after the update above, which can still mark the take
+        // interrupted when no audio arrived.
+        let attachID = (id != nil && id == voiceReferenceRecordingID && !interrupted) ? id : nil
+        voiceReferenceRecordingID = nil
         if let failure { status = failure }
         Task { _ = await capture.stop() }
         guard valid(token) else { return }
+        // Before the next draft job can mark the workspace busy.
+        if let attachID { attachRecordedVoiceReference(attachID) }
         if isBusy { if isDraftJob { cancel() } } else { startNextDraft() }
     }
     func startNextDraft() {

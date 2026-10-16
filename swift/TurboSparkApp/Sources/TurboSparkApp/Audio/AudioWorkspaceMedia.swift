@@ -20,9 +20,20 @@ extension AudioWorkspaceController {
         let panel = NSOpenPanel(); panel.allowedContentTypes = [.audio]; panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let source = panel.url, valid(token), !hasRecordingActivity else { return }
+        importAudio(from: source, asVoiceReference: asVoiceReference)
+    }
+    /// Imports `source` into the library, as the open panel does. Also the
+    /// drop target of the voice reference card. False when nothing started.
+    @discardableResult
+    func importAudio(from source: URL, asVoiceReference: Bool = false) -> Bool {
+        guard importTask == nil, !isShutDown, !hasRecordingActivity, source.isFileURL else { return false }
+        let token = epoch
+        // The import outlives the panel. A reference must land in the recipe
+        // of the page that asked for it, not whichever page is open later.
+        let startPage = page
         var item = AudioLibraryItem(title: source.deletingPathExtension().lastPathComponent, kind: .imported)
         item.recipe = recipe; item.status = .processing
-        do { try save(item) } catch { fail(error); return }
+        do { try save(item) } catch { fail(error); return false }
         if !asVoiceReference { selectedID = item.id }
         let id = item.id; let assets = self.assets; let library = self.library; let lifetime = self.lifetime
         status = AppStrings.localized("Importing audio")
@@ -44,12 +55,13 @@ extension AudioWorkspaceController {
             switch outcome {
             case .success(let saved):
                 self.publish(saved)
-                if asVoiceReference { self.setVoiceReference(saved) }
+                if asVoiceReference && self.page == startPage { self.setVoiceReference(saved) }
             case .failure(let error):
                 self.update(id) { $0.status = .interrupted; $0.failure = error.localizedDescription }
                 self.error = error.localizedDescription
             }
         }
+        return true
     }
     func stopPlayback() {
         playbackLifetime?.end(); playbackLifetime = nil

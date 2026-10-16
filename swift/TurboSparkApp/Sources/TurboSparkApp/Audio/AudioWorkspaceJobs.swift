@@ -22,14 +22,21 @@ extension AudioWorkspaceController {
     }
     /// A natively cloning run (MegaTTS3): its reference arrives as the
     /// session PCM at 24 kHz, and consent holds only for that exact region.
-    nonisolated static func nativeCloneRequest(_ base: AudioRequest, speech: AudioSpeechSettings?) -> AudioRequest {
+    nonisolated static func nativeCloneRequest(_ base: AudioRequest, family: String, speech: AudioSpeechSettings?) -> AudioRequest {
         var request = base
         let options = speech?.cloneOptions ?? AudioCloneOptions()
         request.steps = options.steps
-        request.pW = options.intelligibility
-        request.tW = options.similarity
         request.referenceSampleRate = 24_000
         request.consent = speech?.reference != nil && options.consentedReference == speech?.reference
+        if family == "omnivoice" {
+            // OmniVoice refuses MegaTTS3's guidance weights and reads the
+            // reference transcript and delivery instruction directly.
+            request.pW = nil
+            request.tW = nil
+            return request
+        }
+        request.pW = options.intelligibility
+        request.tW = options.similarity
         // The engine aligns the reference itself and takes no style prompt.
         request.instruction = nil
         request.referenceText = nil
@@ -81,6 +88,7 @@ extension AudioWorkspaceController {
         isBusy = true; progress = nil; error = nil
         activeRunID = result.id
         generationProgress = task == .music ? AudioGenerationProgress() : nil
+        speechRun = task == .textToSpeech ? AudioSpeechRunProgress() : nil
         status = AppStrings.localized("Waiting for background work")
         let token = epoch; let currentTask = task
         let portable = (page == .advanced && allowPortableExperiment) || Self.runsOnDeclaredCPU(profile)
@@ -92,7 +100,7 @@ extension AudioWorkspaceController {
             defer { if admitted { Task { await ImageJobCoordinator.shared.release() } } }
             defer {
                 if self.valid(token) {
-                    self.isBusy = false; self.progress = nil; self.generationProgress = nil; self.activeRunID = nil
+                    self.isBusy = false; self.progress = nil; self.generationProgress = nil; self.speechRun = nil; self.activeRunID = nil
                     self.scheduleUnload(); self.startNextDraft()
                 }
             }
@@ -100,9 +108,10 @@ extension AudioWorkspaceController {
                 guard admitted else { throw CancellationError() }
                 try Task.checkCancellation()
                 self.status = AppStrings.localized("Loading model")
+                self.speechRun?.enter(.loadingModel)
                 let session = profile.family == "qwen3_tts" ? nil : try await self.residentSession(for: profile, portable: portable, experimentalMetal: experimentalMetal, source: result)
                 var request = Self.request(from: inputs, task: currentTask)
-                if clonesNatively { request = Self.nativeCloneRequest(request, speech: inputs.speech) }
+                if clonesNatively { request = Self.nativeCloneRequest(request, family: profile.family, speech: inputs.speech) }
                 if currentTask == .speechToText {
                     guard let selected else { throw AudioWorkspaceError.message(AppStrings.localized("Import or select a recording first.")) }
                     guard let session else { throw CancellationError() }
@@ -124,6 +133,7 @@ extension AudioWorkspaceController {
                             throw AudioWorkspaceError.message(AppStrings.localized("Confirm you have the right to use this voice."))
                         }
                         self.status = AppStrings.localized("Preparing reference audio")
+                        self.speechRun?.enter(.preparingReference)
                         let assets = self.assets; let lifetime = self.lifetime
                         pcm = try await Task.detached { try AudioMediaIO.readMono24k(reference.clips, store: assets, start: reference.start, duration: reference.duration, cancel: lifetime.check) }.value
                     } else { pcm = [] }
@@ -145,6 +155,7 @@ extension AudioWorkspaceController {
                     guard self.valid(token) else { return }
                     if synthesis { _ = try Self.validateGeneratedAudio(output.pcm) }
                     self.generationProgress?.saving()
+                    self.speechRun?.enter(.saving)
                     self.status = AppStrings.localized("Saving audio")
                     self.progress = nil
                     var generatedClip: AudioLibraryClip?

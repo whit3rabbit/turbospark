@@ -44,6 +44,8 @@ final class AudioWorkspaceController: ObservableObject {
     @Published var progress: Double?
     @Published var generationProgress: AudioGenerationProgress?
     @Published var activeGeneration: AudioLibraryItem?
+    /// Stages of the active speech run, for the Voice Cloning progress card.
+    @Published var speechRun: AudioSpeechRunProgress?
     var activeRunID: UUID?
     @Published var transcriptBacklog = 0
     @Published var isPlaying = false
@@ -89,12 +91,12 @@ final class AudioWorkspaceController: ObservableObject {
     var transcriptSaveTasks: [UUID: Task<Void, Never>] = [:]
     var idleTask: Task<Void, Never>?
     var deletionCleanupTask: Task<Void, Never>?
-    var opening: AudioModelOpening?
+    @Published var opening: AudioModelOpening?
     var qwenSpeechJob: Qwen3TTSSpeechJob?
     var referencePreviewTask: Task<Void, Never>?
     var referencePlayer: AVAudioPlayer?
     @Published var referencePlaying = false
-    var session: AudioSession?
+    @Published var session: AudioSession?
     var sessionKey: String?
     var modelAccessURL: URL?
     var capture: AudioCapture?
@@ -103,6 +105,8 @@ final class AudioWorkspaceController: ObservableObject {
     var recordingSetupDependencies = AudioRecordingSetupDependencies()
     var isDraftJob = false
     var recordingID: UUID?
+    /// The recording that becomes the cloning reference when it stops.
+    @Published var voiceReferenceRecordingID: UUID?
     var pendingRefinementIDs: [UUID] = []
     var nextDraftAttemptAt = Date.distantPast
     var draftThrough: Double = 0
@@ -174,7 +178,7 @@ final class AudioWorkspaceController: ObservableObject {
     }
     var selectedProfileIsRunnable: Bool {
         selectedProfile?.family == "qwen3_tts" || selectedProfile?.capabilities.canRun == true
-            || (page == .advanced && allowPortableExperiment && ["kokoro", "qwen3_asr"].contains(selectedProfile?.family ?? ""))
+            || (page == .advanced && allowPortableExperiment && ["kokoro", "omnivoice", "qwen3_asr"].contains(selectedProfile?.family ?? ""))
             || (page == .advanced && allowExperimentalMetal && selectedProfile?.family == "qwen3_asr")
     }
     var canRun: Bool {
@@ -206,7 +210,11 @@ final class AudioWorkspaceController: ObservableObject {
     }
     func tick() {
         if let capture, isRecording { recordingSeconds = capture.currentElapsed() }
-        referencePlaying = referencePlayer?.isPlaying == true
+        enforceVoiceReferenceRecordingLimit()
+        // Assigning an unchanged value still publishes, which redrew every
+        // view observing the controller four times a second.
+        let playing = referencePlayer?.isPlaying == true
+        if referencePlaying != playing { referencePlaying = playing }
         if let player { playbackTime = player.currentTime; isPlaying = player.isPlaying }
         if !isBusy { startNextDraft() }
     }
@@ -572,6 +580,48 @@ final class AudioWorkspaceController: ObservableObject {
             return opened
         } catch { opening = nil; progress = nil; url?.stopAccessingSecurityScopedResource(); throw error }
     }
+    var isModelLoaded: Bool { session != nil }
+    var isModelLoading: Bool { opening != nil }
+
+    var canLoadModel: Bool {
+        modelInstalled && selectedProfileIsRunnable && session == nil && opening == nil && !isBusy && !isInstalling
+    }
+
+    var canUnloadModel: Bool {
+        session != nil && !isBusy && !isRecording
+    }
+
+    func loadModel() {
+        guard let profile = selectedProfile, canLoadModel else { return }
+        let token = epoch
+        Task { [weak self] in
+            guard let self, self.valid(token) else { return }
+            do {
+                _ = try await self.residentSession(for: profile, portable: self.allowPortableExperiment, experimentalMetal: self.allowExperimentalMetal)
+                self.status = AppStrings.localized("Loaded \(profile.displayName)")
+            } catch {
+                if !Task.isCancelled {
+                    self.error = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    func unloadModel() {
+        guard canUnloadModel else { return }
+        idleTask?.cancel()
+        let old = session
+        let oldAccess = modelAccessURL
+        session = nil
+        sessionKey = nil
+        modelAccessURL = nil
+        Task {
+            if let old { await Task.detached { old.close() }.value }
+            oldAccess?.stopAccessingSecurityScopedResource()
+        }
+        status = AppStrings.localized("Model unloaded")
+    }
+
     func scheduleUnload() {
         idleTask?.cancel()
         idleTask = Task { [weak self] in
@@ -606,6 +656,7 @@ final class AudioWorkspaceController: ObservableObject {
         session = nil; sessionKey = nil; modelAccessURL?.stopAccessingSecurityScopedResource(); modelAccessURL = nil
         for url in scratchURLs { try? FileManager.default.removeItem(at: url) }
         scratchURLs.removeAll(); items.removeAll(); activeGeneration = nil; activeRunID = nil; generationProgress = nil
+        speechRun = nil; voiceReferenceRecordingID = nil
         pendingTranscriptEdits.removeAll(); pendingSaves.removeAll(); ManagedAssetPins.clear(owner: pendingAssetOwner); recipe = AudioRecipe(); preferences = AudioWorkspacePreferences()
     }
 }

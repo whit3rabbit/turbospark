@@ -53,7 +53,7 @@ final class AudioVoiceCloneTests: XCTestCase {
         speech.cloneOptions = options
         var base = AudioRequest(task: .textToSpeech)
         base.steps = 30
-        let unconsented = AudioWorkspaceController.nativeCloneRequest(base, speech: speech)
+        let unconsented = AudioWorkspaceController.nativeCloneRequest(base, family: "megatts3", speech: speech)
         XCTAssertFalse(unconsented.consent, "no consent was given")
         XCTAssertEqual(unconsented.steps, 12)
         XCTAssertEqual(unconsented.pW, 2)
@@ -62,13 +62,24 @@ final class AudioVoiceCloneTests: XCTestCase {
         XCTAssertNil(unconsented.instruction)
         XCTAssertNil(unconsented.referenceText)
         speech.cloneOptions?.consentedReference = voice
-        XCTAssertTrue(AudioWorkspaceController.nativeCloneRequest(base, speech: speech).consent)
+        XCTAssertTrue(AudioWorkspaceController.nativeCloneRequest(base, family: "megatts3", speech: speech).consent)
         // A different trim is a different region: consent lapses.
         speech.reference?.start = 1
-        XCTAssertFalse(AudioWorkspaceController.nativeCloneRequest(base, speech: speech).consent)
+        XCTAssertFalse(AudioWorkspaceController.nativeCloneRequest(base, family: "megatts3", speech: speech).consent)
         // Without saved options the model defaults apply.
         speech.cloneOptions = nil
-        XCTAssertEqual(AudioWorkspaceController.nativeCloneRequest(base, speech: speech).steps, CloneQuality.balanced.steps)
+        XCTAssertEqual(AudioWorkspaceController.nativeCloneRequest(base, family: "megatts3", speech: speech).steps, CloneQuality.balanced.steps)
+        // OmniVoice refuses MegaTTS3's guidance weights, so they never
+        // cross the wire; the transcript and instruction pass through.
+        speech.cloneOptions = options
+        speech.reference?.start = 0
+        speech.cloneOptions?.consentedReference = voice
+        let omni = AudioWorkspaceController.nativeCloneRequest(base, family: "omnivoice", speech: speech)
+        XCTAssertNil(omni.pW)
+        XCTAssertNil(omni.tW)
+        XCTAssertEqual(omni.steps, 12)
+        XCTAssertEqual(omni.referenceSampleRate, 24_000)
+        XCTAssertTrue(omni.consent)
     }
 
     /// The pinned profile declares Metal, so the app opens it without the
@@ -99,11 +110,13 @@ final class AudioVoiceCloneTests: XCTestCase {
     @MainActor func testInstallTermsLocalizeKnownIdsAndFallBackToTheSummary() {
         let terms = profile(family: "megatts3", operations: ["voice_clone"], acknowledgments: [
             AudioAcknowledgment(id: "megatts3_community_encoder", summary: "catalog wording"),
+            AudioAcknowledgment(id: "omnivoice_higgs_tokenizer", summary: "catalog wording"),
             AudioAcknowledgment(id: "other_terms", summary: "Other terms apply."),
         ])
         let text = AudioModelPickerView.acknowledgmentText(terms)
         XCTAssertFalse(text.contains("catalog wording"))
         XCTAssertTrue(text.contains("community re-upload"))
+        XCTAssertTrue(text.contains("community-licensed"))
         XCTAssertTrue(text.contains("Other terms apply."))
     }
 

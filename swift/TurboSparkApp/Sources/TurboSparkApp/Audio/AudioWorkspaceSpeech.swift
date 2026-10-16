@@ -26,12 +26,22 @@ extension AudioWorkspaceController {
     /// Qwen3-TTS clones in the Swift MLX provider instead.
     nonisolated static func clonesNatively(_ profile: AudioProfile?) -> Bool {
         guard let profile else { return false }
+        if profile.family == "omnivoice" {
+            let backend = profile.capabilities.backend.lowercased()
+            let hasMetalOrMLX = backend.contains("metal") || backend.contains("mlx")
+            return hasMetalOrMLX && profile.capabilities.supportsVoiceClone
+        }
         return profile.family != "qwen3_tts" && profile.capabilities.supportsVoiceClone
     }
     var selectedProfileClonesNatively: Bool { Self.clonesNatively(selectedProfile) }
     func speechProfileMatchesPage(_ profile: AudioProfile) -> Bool {
         switch page {
         case .voiceClone:
+            if profile.family == "omnivoice" {
+                let backend = profile.capabilities.backend.lowercased()
+                let hasMetalOrMLX = backend.contains("metal") || backend.contains("mlx")
+                if !hasMetalOrMLX { return false }
+            }
             return (profile.family == "qwen3_tts" || Self.clonesNatively(profile)) && Self.speechMode(for: profile) == .clone
         case .voiceDesign: return profile.family == "qwen3_tts" && Self.speechMode(for: profile) == .design
         case .voiceover: return Self.speechMode(for: profile) == .customVoice
@@ -58,10 +68,12 @@ extension AudioWorkspaceController {
         cloneOptions.consentedReference = granted ? speechSettings.reference : nil
         persistPreferences()
     }
+    /// The longest script either engine accepts in one run.
+    nonisolated static let speechTextCharacterLimit = 6_000
     var speechValidationMessage: String? {
         if selectedProfileClonesNatively { return nativeCloneValidationMessage }
         guard selectedProfile?.family == "qwen3_tts" else { return nil }
-        if recipe.text.count > 6000 { return AppStrings.localized("Split speech text longer than 6,000 characters into sections.") }
+        if recipe.text.count > Self.speechTextCharacterLimit { return AppStrings.localized("Split speech text longer than 6,000 characters into sections.") }
         if speechSettings.mode == .clone {
             guard let reference = speechSettings.reference, reference.isValid else {
                 return AppStrings.localized("Choose 1 to 30 seconds of reference speech.")
@@ -76,7 +88,7 @@ extension AudioWorkspaceController {
         return nil
     }
     private var nativeCloneValidationMessage: String? {
-        if recipe.text.count > 6000 { return AppStrings.localized("Split speech text longer than 6,000 characters into sections.") }
+        if recipe.text.count > Self.speechTextCharacterLimit { return AppStrings.localized("Split speech text longer than 6,000 characters into sections.") }
         guard let reference = speechSettings.reference, reference.isValid else {
             return AppStrings.localized("Choose 1 to 30 seconds of reference speech.")
         }
@@ -87,6 +99,12 @@ extension AudioWorkspaceController {
     }
     func setVoiceReference(_ item: AudioLibraryItem) {
         guard item.hasPlayableAudio, !isBusy, !hasRecordingActivity else { return }
+        assignVoiceReference(item)
+    }
+    /// The body of `setVoiceReference` without its idle guard, for a
+    /// recording that just stopped while an unrelated job holds `isBusy`.
+    func assignVoiceReference(_ item: AudioLibraryItem) {
+        guard item.hasPlayableAudio else { return }
         stopReferencePreview()
         var settings = speechSettings
         settings.reference = AudioVoiceReference(sourceID: item.id, title: item.title, clips: item.clips, duration: min(30, item.duration))

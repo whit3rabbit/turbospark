@@ -63,4 +63,27 @@ final class AudioInstallManagementTests: XCTestCase {
         controller.isManagingInstall = true
         XCTAssertFalse(controller.canDeleteSelectedModel, "one install operation at a time")
     }
+
+    func testLoadAndUnloadModelGating() throws {
+        let (controller, root) = try controller()
+        defer { try? FileManager.default.removeItem(at: root) }
+        controller.profiles = [profile(alias: "music-a")]
+        controller.recipe.task = AudioTask.music.rawValue
+        controller.recipe.modelID = "music-a"
+        XCTAssertFalse(controller.canLoadModel, "model is not installed yet")
+        XCTAssertFalse(controller.canUnloadModel, "session is not loaded")
+        XCTAssertFalse(controller.isModelLoaded)
+
+        controller.installedPaths["music-a"] = "/models/music-a"
+        XCTAssertTrue(controller.canLoadModel, "installed model can be loaded")
+        XCTAssertFalse(controller.canUnloadModel)
+
+        controller.isBusy = true
+        XCTAssertFalse(controller.canLoadModel, "cannot load while busy")
+        controller.isBusy = false
+
+        // Unloading becomes available when a session exists
+        // (controller.session is non-nil).
+        XCTAssertFalse(controller.canUnloadModel)
+    }
 }
