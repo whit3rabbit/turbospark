@@ -35,14 +35,17 @@ extension AudioWorkspaceController {
     }
     var selectedProfileClonesNatively: Bool { Self.clonesNatively(selectedProfile) }
     /// The native families whose request shape `nativeCloneRequest` builds.
-    nonisolated static let nativeCloneRequestFamilies: Set<String> = ["megatts3", "omnivoice"]
+    nonisolated static let nativeCloneRequestFamilies: Set<String> = ["megatts3", "omnivoice", "fish_drama3"]
+    /// Drama 3 clones only from the reference's exact words, and has no
+    /// speed, steps or guidance weights.
+    var selectedProfileNeedsReferenceTranscript: Bool { selectedProfile?.family == "fish_drama3" }
     func speechProfileMatchesPage(_ profile: AudioProfile) -> Bool {
         // A streaming-only model (Parakeet Unified) serves live text, not a
         // batch transcription job, which would refuse to open it.
         if profile.identity.task == .speechToText && !profile.capabilities.operations.contains("transcribe") { return false }
         // Any other native cloner would get MegaTTS3's request, which the
-        // runtime refuses: Drama 3 needs reference_text and refuses p_w and
-        // t_w. It stays unlisted until it has its own request path.
+        // runtime refuses for another family. A new cloner stays unlisted
+        // until `nativeCloneRequest` builds its shape.
         if Self.clonesNatively(profile) && !Self.nativeCloneRequestFamilies.contains(profile.family) { return false }
         switch page {
         case .voiceClone:
@@ -103,6 +106,9 @@ extension AudioWorkspaceController {
         }
         if cloneOptions.consentedReference != reference {
             return AppStrings.localized("Confirm you have the right to use this voice.")
+        }
+        if selectedProfileNeedsReferenceTranscript && speechSettings.referenceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return AppStrings.localized("Enter the exact transcript of the selected reference region.")
         }
         return nil
     }

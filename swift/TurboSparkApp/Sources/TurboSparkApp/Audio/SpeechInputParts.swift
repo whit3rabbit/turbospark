@@ -153,7 +153,8 @@ struct Qwen3EmbeddingOnlyToggle: View {
     }
 }
 
-/// The transcript editor of the Advanced page's Qwen3 clone inputs.
+/// The transcript editor of the Advanced page's Qwen3 and Drama 3 clone
+/// inputs.
 @MainActor
 struct Qwen3ReferenceTranscriptEditor: View {
     @ObservedObject var controller: AudioWorkspaceController

@@ -14,6 +14,11 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- `swift/TurboSparkApp`: Fish Audio Drama 3 (`fish-drama3-4bit`) on the
+  Voice Cloning page and in Advanced. The app sends Drama 3's own request
+  (the reference transcript, speed 1.0, no steps, instruction or guidance
+  weights) and asks for the reference's transcript beside consent. The model
+  summary shows "Built with Fish Audio", as its license requires.
 - ArkTTS multilingual zero-shot TTS preview family port (`crates/audio/src/tts/arktts/`).
   DualAR transformer architecture plus bundled 44.1 kHz decode-only speech codec:
   pure-attention slow stack on 0.6b and hybrid Mamba-2 + attention Falcon H1
