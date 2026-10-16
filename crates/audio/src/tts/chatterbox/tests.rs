@@ -247,12 +247,13 @@ fn t3_greedy_generation_matches_reference() {
     let mut generated: Vec<i32> = vec![expected[0]];
     for step in 0..steps {
         let cond_row = &head_calls[step * 2 * vocab..(step * 2 + 1) * vocab];
-        let uncond_row = &head_calls[(step * 2 + 1) * vocab..(step + 2) * vocab];
+        let uncond_row = &head_calls[(step * 2 + 1) * vocab..(step * 2 + 2) * vocab];
         let mut logits: Vec<f32> = cond_row
             .iter()
             .zip(uncond_row)
             .map(|(&c, &u)| c + 0.5 * (c - u))
             .collect();
+        assert_eq!(logits.len(), vocab, "step {step} logits width");
         sampling::apply_repetition_penalty(&mut logits, &generated, 1.2, 10).unwrap();
         let mut sorted = logits.clone();
         sorted.sort_by(|a, b| b.partial_cmp(a).unwrap());
