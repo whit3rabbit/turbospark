@@ -69,6 +69,26 @@ jobs:
             -p turbospark-window-fit -p turbospark-gpu -p turbospark-vision-io \
             -p turbospark-audio -p turbospark-embeddings
 
+  # GitBook Git Sync imports a whole space or none of it: one page with bad
+  # YAML front matter failed the Documentation import after the push, and the
+  # only symptom was a status in GitBook. This runs the same check locally
+  # (`python3 scripts/check-gitbook-docs.py`) before a bad page can land.
+  # A venv, not `pip install --user`: the runner's system Python is
+  # externally managed and refuses the latter.
+  gitbook-docs:
+    name: GitBook docs lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install PyYAML in a venv
+        run: |
+          python3 -m venv "$RUNNER_TEMP/docs-venv"
+          "$RUNNER_TEMP/docs-venv/bin/pip" install pyyaml==6.0.2
+
+      - name: Check synced docs
+        run: '"$RUNNER_TEMP/docs-venv/bin/python" scripts/check-gitbook-docs.py'
+
   # The release's packaging path, exercised OUTSIDE a release. Everything from
   # here to the DMG (Info.plist, the resource-bundle copy, the ad-hoc
   # signature, the CLI binaries inside the app) is reachable from no other
