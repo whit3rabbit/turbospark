@@ -1,5 +1,5 @@
 ---
-description: "Resolve common model catalog, probe, access, and disk-space issues."
+description: Resolve common model catalog, probe, access, and disk-space issues.
 ---
 
 # Model install troubleshooting
@@ -13,7 +13,7 @@ turbospark-model list
 turbospark-model info <alias>
 ```
 
-A checkpoint is not supported just because its architecture name appears in the catalog. Check the exact repository and format on the [supported models](models.md) page.
+A checkpoint is not supported just because its architecture name appears in the catalog. Check the exact repository and format on the [supported models](models-1.md) page.
 
 ## A checkpoint is not in the catalog
 

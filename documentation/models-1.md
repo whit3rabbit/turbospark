@@ -34,4 +34,4 @@ turbospark-model probe owner/repository@revision --file model.Q4_K_M.gguf
 
 A `RUNNABLE` result means the checkpoint passes the probe's current format and runtime checks. It does not establish output quality, performance, or a fit for every machine. The exact repository, revision, format, and tokenizer sidecars matter.
 
-Read [memory and capacity](<memory-and-capacity (1).md>) before choosing a large checkpoint, and [model install troubleshooting](<model-install-troubleshooting (1).md>) if a pull or probe fails.
+Read [memory and capacity](memory-and-capacity.md) before choosing a large checkpoint, and [model install troubleshooting](model-install-troubleshooting.md) if a pull or probe fails.

@@ -1,5 +1,5 @@
 ---
-description: "Plan model storage and runtime memory for your Mac."
+description: Plan model storage and runtime memory for your Mac.
 ---
 
 # Memory and capacity
@@ -26,4 +26,4 @@ Dense models do not use routed-expert streaming. Plan for the mapped model weigh
 
 Published footprint and speed measurements apply to their recorded chip, checkpoint, context, and cache-slot settings. Use the recommendation for the machine and context you plan to run; do not treat one measured row as a universal minimum-memory guarantee.
 
-See [supported models](models.md) for evidence status and [CLI and local API](cli-and-api.md) for recommendation commands.
+See [supported models](models-1.md) for evidence status and [CLI and local API](cli-and-api.md) for recommendation commands.
