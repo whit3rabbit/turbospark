@@ -41,6 +41,9 @@ COMMANDS:
     pull-image --alias z-image-turbo
                                 install the pinned image-catalog source
     pull-audio <ALIAS>           install one pinned MiniMax Music 3 profile
+    pull-drama3 --out <DIR> --accept-fish-license
+                                install Fish Audio Drama 3 (44.1 kHz speech)
+                                from its pinned MLX conversion, about 22 GiB
     pull-vision <ALIAS>         install a curated vision-tower sidecar
     pull-vision --repo <REPO>[@REV] --alias <NAME>
                                 install any repo's vision tower directly,
@@ -86,6 +89,8 @@ OPTIONS:
     --clear                     clear saved Hugging Face token (for `auth`)
     --status                    verify and show authentication status (for `auth`)
     --set                       read and save a Hugging Face token (for `auth`)
+    --accept-fish-license       accept the Fish Audio Community License
+                                (for `pull-drama3`; the terms print first)
     --force                     install past a probe refusal
     --yes                       do not prompt before deleting
     --help                      print this text
@@ -161,6 +166,7 @@ pub struct Options {
     pub reuse_trunk_from: Option<String>,
     pub filter: Option<String>,
     pub force: bool,
+    pub accept_fish_license: bool,
     pub yes: bool,
     pub set: bool,
     pub clear: bool,
@@ -252,6 +258,15 @@ fn run(args: &[String]) -> Result<(), Error> {
             options.reject_unused(&[])?;
             let alias = one_positional(&positionals, "pull-audio", "<ALIAS>")?;
             model_cmd::pull_audio(&catalog, &store, &client, alias)
+        }
+        "pull-drama3" => {
+            options.reject_unused(&["out", "accept-fish-license"])?;
+            if !positionals.is_empty() {
+                return Err(Error::Usage(
+                    "pull-drama3 takes no arguments; it installs one pinned model".to_string(),
+                ));
+            }
+            model_cmd::pull_drama3(&client, &options)
         }
         "pull-vision" => {
             options.reject_unused(&["out", "alias", "file", "force"])?;
@@ -440,6 +455,10 @@ fn parse(args: &[String]) -> Result<(Vec<String>, Options), Error> {
             "--force" => {
                 options.force = true;
                 seen.push("force");
+            }
+            "--accept-fish-license" => {
+                options.accept_fish_license = true;
+                seen.push("accept-fish-license");
             }
             "--yes" | "-y" => {
                 options.yes = true;

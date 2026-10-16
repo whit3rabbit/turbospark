@@ -36,6 +36,11 @@ path = "src/bin/music.rs"
 name = "turbospark-clone"
 path = "src/bin/clone.rs"
 
+# Speech with Fish Audio Drama 3 (44.1 kHz), optionally in a cloned voice.
+[[bin]]
+name = "turbospark-speak"
+path = "src/bin/speak.rs"
+
 [[bin]]
 name = "turbospark-ocr"
 path = "src/bin/ocr.rs"

@@ -8,6 +8,7 @@
 //! tested without a terminal.
 
 mod auth;
+mod drama3;
 mod image_source;
 mod progress;
 mod render;
@@ -23,6 +24,7 @@ use crate::{Error, Options};
 static AUDIO_PULL_INTERRUPTED: AtomicBool = AtomicBool::new(false);
 
 pub use auth::auth;
+pub use drama3::pull_drama3;
 pub use render::human_bytes;
 
 /// Curated rows, marking which are installed.
