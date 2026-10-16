@@ -70,6 +70,37 @@ final class AudioTests: XCTestCase {
         let old = try decoder.decode(AudioProfile.self, from: JSONSerialization.data(withJSONObject: object))
         XCTAssertEqual(old.requiredAcknowledgments, [])
     }
+    /// The catalog sends placement, the app-only flag and a fixed layout under
+    /// these snake_case keys. Payloads from before them decode to nil.
+    func testPlacementAppOnlyAndLayoutFieldsDecodeFromTheCatalogKeys() throws {
+        let capabilities = AudioCapabilities(operations: ["synthesize"], backend: "swift_coreml",
+                                             cancellation: "chunk", canRun: false,
+                                             compute: "gpu", httpApi: false)
+        let profile = AudioProfile(
+            identity: AudioProfileIdentity(task: .textToSpeech, alias: "x", repository: "", revision: "", assetFingerprint: ""),
+            family: "fluidaudio_pocket_tts", displayName: "X", capabilities: capabilities,
+            pcmFormat: AudioPCMFormat(sampleRate: 24_000, channels: 1), readiness: "runtime_pending",
+            installSubdir: "Models/pocket-tts")
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoder.encode(profile)) as? [String: Any])
+        var wireCapabilities = try XCTUnwrap(object["capabilities"] as? [String: Any])
+        XCTAssertEqual(wireCapabilities["compute"] as? String, "gpu")
+        XCTAssertEqual(wireCapabilities["http_api"] as? Bool, false)
+        XCTAssertEqual(object["install_subdir"] as? String, "Models/pocket-tts")
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let round = try decoder.decode(AudioProfile.self, from: JSONSerialization.data(withJSONObject: object))
+        XCTAssertEqual(round, profile)
+        wireCapabilities.removeValue(forKey: "compute")
+        wireCapabilities.removeValue(forKey: "http_api")
+        object["capabilities"] = wireCapabilities
+        object.removeValue(forKey: "install_subdir")
+        let old = try decoder.decode(AudioProfile.self, from: JSONSerialization.data(withJSONObject: object))
+        XCTAssertNil(old.capabilities.compute)
+        XCTAssertNil(old.capabilities.httpApi)
+        XCTAssertNil(old.installSubdir)
+    }
     func testInstallWithOptionsRefusesAStaleIdentityBeforeDownloading() {
         let stale = AudioProfileIdentity(task: .textToSpeech, alias: "no-such-profile", repository: "x/y",
                                          revision: String(repeating: "0", count: 40), assetFingerprint: "none")

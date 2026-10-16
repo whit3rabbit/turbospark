@@ -50,13 +50,20 @@ public struct AudioCapabilities: Codable, Sendable, Equatable {
     public let cancellation: String
     public let canRun: Bool
     public let unavailableReason: String?
+    /// Measured Core ML placement at the pinned revision: `ane`, `gpu`,
+    /// `cpu`, or `mixed`. Nil off Core ML and in older payloads.
+    public let compute: String?
+    /// False when only this app can run the profile, so the HTTP server
+    /// refuses it. Nil in older payloads, which predate app-only profiles.
+    public let httpApi: Bool?
     public init(languages: [String] = [], voices: [String] = [], maxInputSeconds: Int? = nil,
                 supportsLyrics: Bool = false, operations: [String], timing: String? = nil,
-                backend: String, cancellation: String, canRun: Bool, unavailableReason: String? = nil) {
+                backend: String, cancellation: String, canRun: Bool, unavailableReason: String? = nil,
+                compute: String? = nil, httpApi: Bool? = nil) {
         self.languages = languages; self.voices = voices; self.maxInputSeconds = maxInputSeconds
         self.supportsLyrics = supportsLyrics; self.operations = operations; self.timing = timing
         self.backend = backend; self.cancellation = cancellation; self.canRun = canRun
-        self.unavailableReason = unavailableReason
+        self.unavailableReason = unavailableReason; self.compute = compute; self.httpApi = httpApi
     }
     /// The engine clones a voice from reference audio carried as the job's PCM.
     public var supportsVoiceClone: Bool { operations.contains("voice_clone") }
@@ -92,17 +99,21 @@ public struct AudioProfile: Codable, Sendable, Identifiable, Equatable {
     /// Absent from older payloads; `requiredAcknowledgments` reads it.
     public let acknowledgments: [AudioAcknowledgment]?
     public var requiredAcknowledgments: [AudioAcknowledgment] { acknowledgments ?? [] }
+    /// Folder under the install root that holds the assets, for loaders that
+    /// read a fixed layout. Nil when the assets sit at the install root.
+    public let installSubdir: String?
     /// Local-only descriptions need no invented repository revision or install plan.
     /// Use empty identity source fields and do not pass them to catalog mutation APIs.
     public init(identity: AudioProfileIdentity, family: String, displayName: String,
                 capabilities: AudioCapabilities, pcmFormat: AudioPCMFormat,
                 downloadBytes: UInt64 = 0, residentMemoryBytes: UInt64 = 0,
                 residentMemoryEvidence: String = "unknown", readiness: String, evidence: [String] = [],
-                acknowledgments: [AudioAcknowledgment] = []) {
+                acknowledgments: [AudioAcknowledgment] = [], installSubdir: String? = nil) {
         self.identity = identity; self.family = family; self.displayName = displayName
         self.capabilities = capabilities; self.pcmFormat = pcmFormat; self.downloadBytes = downloadBytes
         self.residentMemoryBytes = residentMemoryBytes; self.residentMemoryEvidence = residentMemoryEvidence
         self.readiness = readiness; self.evidence = evidence; self.acknowledgments = acknowledgments
+        self.installSubdir = installSubdir
     }
 }
 public struct AudioInstalledRecord: Codable, Sendable, Equatable, Identifiable {
