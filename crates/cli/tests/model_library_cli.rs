@@ -1654,7 +1654,10 @@ fn checking_a_model_on_an_unplugged_library_names_the_drive_to_connect() {
     )]);
     fs::remove_dir_all(fixture.volume("T7")).unwrap();
 
-    let outcome = fixture.run_binary("turbospark-check", &["--model", "qq-away", "--prompt", "hi"]);
+    let outcome = fixture.run_binary(
+        "turbospark-check",
+        &["--model", "qq-away", "--prompt", "hi"],
+    );
     assert_eq!(outcome.code, 1, "{}", outcome.stderr);
     assert!(
         outcome.stderr.contains(&connect_t7("qq-away")),
@@ -1695,9 +1698,15 @@ fn checking_a_model_follows_its_library_to_a_renamed_drive() {
         .join("text")
         .join("qq-moved.gturbo");
 
-    let outcome = fixture.run_binary("turbospark-check", &["--model", "qq-moved", "--prompt", "hi"]);
+    let outcome = fixture.run_binary(
+        "turbospark-check",
+        &["--model", "qq-moved", "--prompt", "hi"],
+    );
     assert_eq!(outcome.code, 1, "{}", outcome.stderr);
-    let expected = format!("no manifest.json at {}", now.join("manifest.json").display());
+    let expected = format!(
+        "no manifest.json at {}",
+        now.join("manifest.json").display()
+    );
     assert!(outcome.stderr.contains(&expected), "{}", outcome.stderr);
 }
 

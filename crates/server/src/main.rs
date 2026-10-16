@@ -351,6 +351,27 @@ fn open_scripted(tokenizer_dir: &str) -> Result<Arc<dyn turbospark_server::ChatM
     )))
 }
 
+/// Refuses to start while a model named on the command line is on a library
+/// that is not connected, naming the drive to connect (10.7). Run before
+/// anything is opened or bound, so the start fails the same way for a text
+/// model and an audio model, and not as a path that does not exist.
+#[cfg(target_os = "macos")]
+fn refuse_unplugged_models(parsed: &ModelArgs) -> Result<(), String> {
+    use catalog::ModelModality::{Audio, Text};
+    let audio = [&parsed.stt_models, &parsed.tts_models, &parsed.music_models];
+    let named = parsed
+        .models
+        .iter()
+        .map(|name| (name, Text))
+        .chain(audio.into_iter().flatten().map(|name| (name, Audio)));
+    for (name, modality) in named {
+        if let Some(message) = catalog::not_connected_message(name, modality) {
+            return Err(message);
+        }
+    }
+    Ok(())
+}
+
 /// Attaches every `--stt-model` / `--tts-model` / `--music-model`. A model
 /// that fails to open refuses the whole start, like `--model` does: a server
 /// that quietly lacks a requested endpoint is harder to diagnose than one
@@ -447,6 +468,10 @@ async fn main() -> std::process::ExitCode {
             }
             #[cfg(target_os = "macos")]
             {
+                if let Err(e) = refuse_unplugged_models(&parsed) {
+                    eprintln!("{e}");
+                    return std::process::ExitCode::from(2);
+                }
                 let reg = match open_models_registry(&parsed) {
                     Ok(reg) => reg,
                     Err(e) => {

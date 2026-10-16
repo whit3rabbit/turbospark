@@ -110,10 +110,7 @@ impl UnpluggedLibrary {
         use std::os::unix::fs::MetadataExt;
         // A home device unlike the temp folder's, as on a Mac whose external
         // drives are other disks.
-        let device = std::fs::metadata(&self.base)
-            .unwrap()
-            .dev()
-            .wrapping_add(1);
+        let device = std::fs::metadata(&self.base).unwrap().dev().wrapping_add(1);
         Command::new(env!("CARGO_BIN_EXE_turbospark-server"))
             .args(args)
             .env("TURBOSPARK_HOME", self.base.join("home"))

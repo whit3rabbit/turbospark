@@ -1498,13 +1498,48 @@ impl Store {
 
     /// Resolve a text alias or explicit path. Image and audio aliases are
     /// intentionally not considered.
+    ///
+    /// An install in a library resolves to where its library is now, not to
+    /// the path recorded when it was installed, which names the mount point
+    /// of the time: a drive that mounted under another name still opens. A
+    /// library that is not connected resolves to nothing, rather than to a
+    /// path another drive of the same name could answer. This Mac's
+    /// installs never locate a library.
     pub fn resolve_text(&self, name: &str) -> Option<PathBuf> {
+        let env = LocationEnv::system(&self.root).ok();
+        self.resolve_text_located(name, env.as_ref())
+    }
+
+    /// [`Self::resolve_text`] with `env` locating a library (10.7).
+    pub fn resolve_text_with(&self, name: &str, env: &LocationEnv) -> Option<PathBuf> {
+        self.resolve_text_located(name, Some(env))
+    }
+
+    fn resolve_text_located(&self, name: &str, env: Option<&LocationEnv>) -> Option<PathBuf> {
         let as_path = PathBuf::from(name);
         if as_path.is_dir() {
             return Some(as_path);
         }
-        if let Some(row) = self.installed().get(name) {
-            return Some(row.path.clone());
+        let recorded = match env {
+            Some(env) => self
+                .installed_with_availability(env)
+                .into_iter()
+                .find(|entry| {
+                    entry.row.alias == name
+                        && entry.row.effective_modality() == ModelModality::Text
+                        && entry.availability == Availability::Available
+                })
+                .map(|entry| entry.row.path),
+            // Without an environment a library cannot be placed, so only
+            // the rows that never needed one resolve.
+            None => self
+                .installed()
+                .get(name)
+                .filter(|row| external_library(row).is_none())
+                .map(|row| row.path.clone()),
+        };
+        if recorded.is_some() {
+            return recorded;
         }
         let default = self.install_path(name);
         if default.is_dir() {
@@ -1549,15 +1584,91 @@ impl Store {
             .then_some(dir)
     }
 
-    /// Resolve an audio alias or explicit path.
+    /// Resolve an audio alias or explicit path. An install in a library
+    /// resolves to where its library is now, and to nothing when the
+    /// library is not connected, as [`Self::resolve_text`] does.
     pub fn resolve_audio(&self, name: &str) -> Option<PathBuf> {
+        let env = LocationEnv::system(&self.root).ok();
+        self.resolve_audio_located(name, env.as_ref())
+    }
+
+    /// [`Self::resolve_audio`] with `env` locating a library (10.7).
+    pub fn resolve_audio_with(&self, name: &str, env: &LocationEnv) -> Option<PathBuf> {
+        self.resolve_audio_located(name, Some(env))
+    }
+
+    fn resolve_audio_located(&self, name: &str, env: Option<&LocationEnv>) -> Option<PathBuf> {
         let as_path = PathBuf::from(name);
         if as_path.is_dir() {
             return Some(as_path);
         }
+        if let Some(env) = env {
+            let in_library = self
+                .installed_with_availability(env)
+                .into_iter()
+                .find(|entry| {
+                    entry.row.alias == name
+                        && entry.row.effective_modality() == ModelModality::Audio
+                        && external_library(&entry.row).is_some()
+                });
+            if let Some(entry) = in_library {
+                return (entry.availability == Availability::Available).then_some(entry.row.path);
+            }
+        }
         let canonical = self.audio_install_path(name);
         canonical.is_dir().then_some(canonical)
     }
+
+    /// What to tell someone whose `name` is an install of `modality` that
+    /// is not connected, or `None` when it is something else: an existing
+    /// directory, which always wins as in [`Self::resolve_text`], an alias
+    /// no row has, or an install that is connected (10.7). Run before
+    /// resolving, so the run names the drive to connect instead of
+    /// failing on a path under a mount point that is not there.
+    pub fn not_connected_message(
+        &self,
+        name: &str,
+        modality: ModelModality,
+        env: &LocationEnv,
+    ) -> Option<String> {
+        if Path::new(name).is_dir() {
+            return None;
+        }
+        let entry = self
+            .installed_with_availability(env)
+            .into_iter()
+            .find(|entry| entry.row.alias == name && entry.row.effective_modality() == modality)?;
+        match entry.availability {
+            Availability::NotConnected { library } => Some(format!(
+                "Model {name} is on {}, which is not connected. Connect the drive and try again.",
+                printable(&library)
+            )),
+            _ => None,
+        }
+    }
+}
+
+/// `text` for a terminal: control and bidirectional formatting characters
+/// escaped and the length capped. A library's name can come from a drive.
+fn printable(text: &str) -> String {
+    const LIMIT: usize = 64;
+    let mut out = String::new();
+    for (index, c) in text.chars().enumerate() {
+        if index == LIMIT {
+            out.push_str("...");
+            break;
+        }
+        let bidi = matches!(
+            c,
+            '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
+        );
+        if c.is_control() || bidi {
+            out.extend(c.escape_default());
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 /// The canonical root of the listed library `record` and the marker there,
@@ -1728,6 +1839,20 @@ pub fn resolve_model_arg(name: &str) -> PathBuf {
             .unwrap_or_else(|| PathBuf::from(name)),
         Err(_) => PathBuf::from(name),
     }
+}
+
+/// What `turbospark-check`, `turbospark-server` and the audio commands say
+/// when `name` is an install of `modality` in a library that is not
+/// connected, or `None` when it is anything else (10.7).
+///
+/// This is only advice about a name that would otherwise fail as "no such
+/// install": it never fails, and a machine with no store has nothing to
+/// say. Callers run it before resolving, and print the sentence as the
+/// failure.
+pub fn not_connected_message(name: &str, modality: ModelModality) -> Option<String> {
+    let store = Store::default_store().ok()?;
+    let env = LocationEnv::system(&store.root).ok()?;
+    store.not_connected_message(name, modality, &env)
 }
 
 /// Resolve an image alias against the default store, preserving explicit

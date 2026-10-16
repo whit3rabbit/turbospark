@@ -1059,3 +1059,108 @@ fn music_already_in_another_library_fails_before_any_transfer() {
     assert_eq!(fx.rows_on_disk(), rows);
     assert!(!fx.library_root().join("audio").exists());
 }
+
+// Resolving installs in a library (10.7).
+
+/// Records a text and an audio install in the library, with their folders,
+/// and returns their folder paths under the library root.
+fn record_resolvable_installs(fx: &LibraryFixture) -> (PathBuf, PathBuf) {
+    let text = fx.library_root().join("text").join("qq-text.gturbo");
+    let audio = fx.library_root().join("audio").join("qq-song.gturbo");
+    for (path, alias, relative, modality) in [
+        (&text, "qq-text", "text/qq-text.gturbo", ModelModality::Text),
+        (
+            &audio,
+            "qq-song",
+            "audio/qq-song.gturbo",
+            ModelModality::Audio,
+        ),
+    ] {
+        std::fs::create_dir_all(path).unwrap();
+        let mut row = audio_row(alias, path, Some(&fx.id));
+        row.modality = modality;
+        row.relative_path = Some(PathBuf::from(relative));
+        fx.store.record(&row).unwrap();
+    }
+    (text, audio)
+}
+
+/// An install in a connected library resolves to where the library is now,
+/// whatever path was recorded: a drive that mounted under another name
+/// leaves the recorded path pointing nowhere.
+#[test]
+fn a_library_install_resolves_to_where_its_library_is_now() {
+    let fx = LibraryFixture::new("resolve-current");
+    let (text, audio) = record_resolvable_installs(&fx);
+    // The recorded paths name a mount point that is gone.
+    let mut rows: Vec<serde_json::Value> =
+        serde_json::from_slice(&std::fs::read(fx.store.root().join("installed.json")).unwrap())
+            .unwrap();
+    for row in &mut rows {
+        let stale = format!(
+            "/Volumes/T7 stale/TurboSpark/{}",
+            row["relative_path"].as_str().unwrap()
+        );
+        row["path"] = serde_json::json!(stale);
+    }
+    std::fs::write(
+        fx.store.root().join("installed.json"),
+        serde_json::to_vec(&rows).unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(fx.store.resolve_text_with("qq-text", &fx.env), Some(text));
+    assert_eq!(fx.store.resolve_audio_with("qq-song", &fx.env), Some(audio));
+    // Neither modality answers to the other's alias.
+    assert_eq!(fx.store.resolve_text_with("qq-song", &fx.env), None);
+    assert_eq!(fx.store.resolve_audio_with("qq-text", &fx.env), None);
+}
+
+/// A library that is not connected resolves to nothing, and the message
+/// names the drive, for a text and an audio install alike; an alias nobody
+/// has and an install that is connected get no message.
+#[test]
+fn an_install_on_an_unplugged_library_is_not_resolved_and_names_its_drive() {
+    let fx = LibraryFixture::new("resolve-unplugged");
+    record_resolvable_installs(&fx);
+    let sentence = |alias: &str| {
+        format!("Model {alias} is on T7, which is not connected. Connect the drive and try again.")
+    };
+    for (alias, modality) in [
+        ("qq-text", ModelModality::Text),
+        ("qq-song", ModelModality::Audio),
+    ] {
+        assert_eq!(
+            fx.store.not_connected_message(alias, modality, &fx.env),
+            None,
+            "{alias} is connected"
+        );
+    }
+
+    fx.unplug();
+
+    assert_eq!(fx.store.resolve_text_with("qq-text", &fx.env), None);
+    assert_eq!(fx.store.resolve_audio_with("qq-song", &fx.env), None);
+    for (alias, modality) in [
+        ("qq-text", ModelModality::Text),
+        ("qq-song", ModelModality::Audio),
+    ] {
+        assert_eq!(
+            fx.store
+                .not_connected_message(alias, modality, &fx.env)
+                .as_deref(),
+            Some(sentence(alias).as_str())
+        );
+    }
+    // The wrong modality, and an alias no row has, are not this library's.
+    assert_eq!(
+        fx.store
+            .not_connected_message("qq-song", ModelModality::Text, &fx.env),
+        None
+    );
+    assert_eq!(
+        fx.store
+            .not_connected_message("nobody", ModelModality::Text, &fx.env),
+        None
+    );
+}
