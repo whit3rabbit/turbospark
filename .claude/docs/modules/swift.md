@@ -81,7 +81,12 @@ swift/
     |   |                            # ToastOverlayView, ErrorBanner
     |   +-- Theme/                   # AppearanceSettings, AppearanceTypes, AppDockIconRenderer,
     |   |                            # TurboSparkTheme, AppChromePresentation,
-    |   |                            # PointerCursorModifier, ThemeCodePreviewView
+    |   |                            # PointerCursorModifier, ThemeCodePreviewView;
+    |   |                            # the DESIGN.md vocabulary: AppControls,
+    |   |                            # AppSurfaces, AppProgressBar, TurboSparkMotion
+    |   +-- Audio/                   # Audio Studio: AudioWorkspaceView, the controller
+    |   |                            # and its extensions; VoiceClone* and
+    |   |                            # VoiceReference* views (Voice Cloning page)
     |   +-- Tools/                   # everything a tool call passes through;
     |   |   |                        # swift/docs/SWIFT_TOOLS.md is the map
     |   |   +-- Registry/            # AppToolRegistry (+Handlers, +Vocabulary),
@@ -418,7 +423,10 @@ keeps resolving.
     Those labeled rows cost about 300pt of chat history, so since 2026-10-15
     `AppSidebarView` is the rail (`NavigationRailView`, always on screen)
     plus the selected section's panel (`ChatSidebarView` for Chat,
-    `AudioSidebarPanel` for Audio; `AppNavigationSection.hasSidebarPanel`).
+    `AudioSidebarPanel` for Audio, and the Images, Installed and API modes
+    that used to be in-pane switchers; `AppNavigationSection.hasSidebarPanel`).
+    A mode moved into a panel lives on `AppModel` and the pane drops its own
+    switcher, so there is one control per choice.
     Three rules keep it from regressing into the old two-bar look. **The
     panel never repeats the section list**: the rail answers "where", the
     panel only "what is in it". **One surface**: while a panel is shown the
@@ -432,9 +440,11 @@ keeps resolving.
     empty 260pt in Files, and `RootWindowLayoutTests` holds that. The
     profile menu (`ProfileMenuButton`) and Settings gear live at the foot of
     the rail, the only chrome present in every section; the temporary-chat
-    button (`GhostChatButton`) sits beside the chat panel's tabs. The rail's
-    Audio item is a button when the Audio panel will show and falls back to
-    `AudioDestinationMenu` when the preference hides it.
+    button (`GhostChatButton`) sits beside the chat panel's tabs. Every
+    panel but Chat's lists destinations, so its rail item is a button when
+    the panel will show and falls back to a menu of the same destinations
+    (`AudioDestinationMenu`, `SidebarModeMenu`) when the preference hides
+    it. Without the menu, hiding the panel strands those modes.
 
     **The top bar is THREE GROUPS, and the middle one is `.fixedSize()`.**
     It used to be one left-aligned run, on the reasoning that the phase

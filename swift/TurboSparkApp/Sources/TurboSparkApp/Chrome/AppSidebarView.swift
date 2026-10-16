@@ -16,7 +16,7 @@ import SwiftUI
 ///
 /// - **The panel never repeats the section list.** The rail answers "where
 ///   am I"; the panel shows only what is in that section (the chat list, the
-///   Audio pages). The old pair duplicated navigation.
+///   Audio pages, a section's modes). The old pair duplicated navigation.
 /// - **One surface.** Rail and panel share `sidebarBackgroundColor`, split by
 ///   a 0.5pt hairline the rail draws, so they read as one surface in two parts.
 /// - **Navigation never hides.** The sidebar toggle hides the PANEL; the rail
@@ -65,9 +65,15 @@ struct AppSidebarView: View {
             ChatSidebarView(model: model)
         case .audio:
             AudioSidebarPanel(model: model, controller: model.audioWorkspace)
+        case .images:
+            ImagesSidebarPanel(model: model)
+        case .modelManager:
+            InstalledSidebarPanel(model: model)
+        case .server:
+            APISidebarPanel(model: model)
         default:
-            // Unreachable while `hasSidebarPanel` lists only the two above. A
-            // section added there needs its own case here.
+            // Unreachable while `hasSidebarPanel` lists only the cases above.
+            // A section added there needs its own case here.
             EmptyView()
         }
     }

@@ -49,25 +49,34 @@ Code lives in `swift/TurboSparkApp/Sources/TurboSparkApp` (below: `Sources/`).
 ## 2. The shared control vocabulary
 
 Build from these instead of local variants. They live in
-`Sources/Theme/AppControls.swift`, `Sources/Theme/AppPreferenceOptions.swift`,
+`Sources/Theme/AppControls.swift`, `Sources/Theme/AppSurfaces.swift`,
+`Sources/Theme/AppProgressBar.swift`, `Sources/Theme/AppPreferenceOptions.swift`,
 `Sources/Theme/AppStrings.swift` and `Sources/Theme/TurboSparkMotion.swift`.
 
 | Need | Use |
 | :--- | :--- |
 | An action | `.appAction(.primary / .secondary / .quiet / .destructive, size:)` |
+| The glow under a surface's one primary action | `.appPrimaryGlow(_:)` |
 | Overflow of a crowded header | `Menu { ... } label: { ... }.appMenuAction()` |
 | A pane or workspace header | `AppAdaptiveHeader(leading:actions:compactActions:)` |
 | Search | `AppSearchField(text:prompt:)`, with `focus:` for a field that takes focus |
 | An icon-only action | `AppIconButton(symbol, label: Text(...)) { ... }` |
 | A composer-style toggle chip | `AppChip(Text(...), systemImage:isOn:) { ... }` |
 | A multi-line editor | `TextEditor(...).appEditorSurface(minHeight:)` |
+| A focus glow on an editor with no native ring | `.appFocusGlow(_:radius:halo:)` |
+| A card | `.appCardSurface(padding:)` |
+| A composer-style surface (prompt box, Humanize cards, script editor) | `.appComposerSurface(focused:halo:)` |
 | A heading in a scrolling pane | `AppSectionHeader(title:subtitle:)` |
 | An empty list or workspace | `AppEmptyState(systemImage:title:message:) { actions }` |
+| Progress, determinate or not | `AppProgressBar(value:label:valueText:size:animated:)`, `animated: false` while paused |
 | Mode, Text Size, Language pickers | `AppearanceModeOptions()`, `TextSizeOptions()`, `LanguageOptions()` |
 | A localized `String` value | `AppStrings.localized("Key")` |
+| A section's panel beside the icon rail | `SidebarModePanel(title:groupLabel:selection:)`, or `SidebarPanelList` with `SidebarPanelRow` (`Sources/Chrome/SidebarPanelList.swift`) |
 | An animation from an action | `TSMotion.animate(TSMotion.pane) { ... }` |
 | An animation on a value | `.tsAnimation(TSMotion.hover, value:)` |
-| Radii | `AppMetrics.controlRadius` (fields, chips), `AppMetrics.cardRadius` (cards) |
+| A live indicator (recording, active stage) | `.tsPulse(active:)` |
+| A text-holding frame or a width breakpoint | multiply by `AppMetrics.textScale(theme)` |
+| Radii | `AppMetrics.controlRadius` (fields, chips), `AppMetrics.cardRadius` (cards), `AppMetrics.composerRadius` (composer surfaces) |
 
 If the vocabulary lacks something you need twice, add it to the vocabulary in
 the same change, documented here. A second local copy is how the drift starts.
@@ -100,7 +109,8 @@ the app taking access, and macOS shows each prompt only once.
 - A control that starts a capture goes through
   `.recordingAccessGate($request, permissions: RecordingPermissions.shared)`:
   start directly when nothing is missing, otherwise set a
-  `RecordingAccessRequest`. The Record panel is the reference.
+  `RecordingAccessRequest`. The Record panel and the voice reference card
+  are the references.
 - Each permission row shows status as glyph plus text and offers one next
   step: Allow while macOS can still prompt, Open System Settings after.
 - Declining is a supported path. Offer to continue with the allowed sources
@@ -137,6 +147,10 @@ the app taking access, and macOS shows each prompt only once.
   menu, and primary action.
 - List and detail splits are adjustable: `HSplitView`, or a list column with
   min, ideal, and max widths. Never a fixed list width.
+- A workspace that switches between one and two columns sets its breakpoint
+  in points times `AppMetrics.textScale(theme)`, and scales its column widths
+  the same way, so Extra Large text falls back to one column instead of
+  squeezing both. Voice Cloning (`VoiceCloneWorkspaceView`) is the reference.
 
 ### Text in layouts
 
@@ -147,7 +161,7 @@ the app taking access, and macOS shows each prompt only once.
   `.help`.
 - `TextEditor` has no intrinsic height, and both obvious ways to give it one
   pick the maximum. Measure with a hidden `Text` instead
-  (`PromptComposerView.editor`, Gotcha 18).
+  (`PromptComposerEditor`, `AudioMeasuredTextEditor`, Gotcha 18).
 
 ### Forms and files
 
@@ -216,6 +230,14 @@ the app taking access, and macOS shows each prompt only once.
   gives.
 - Blur and glass only on floating or navigation chrome where they help
   hierarchy, availability-gated, and opaque under Reduce Transparency.
+- Glows are accent shadows from the vocabulary only: `.appFocusGlow` on an
+  editor with no native focus ring (a `TextField` keeps its system ring) and
+  `.appPrimaryGlow` under the one primary action while it can run. The
+  focus halo is cast by an edge drawn behind the surface, never by a shadow on
+  the view, so text over a see-through surface does not glow. The chat and
+  Humanize composers pass `halo: false` and keep their edge-only focus look.
+  Under Increase Contrast glows become solid rings or nothing, so never rely
+  on a glow alone to show focus or readiness.
 - Corners are continuous (`style: .continuous`) and use `AppMetrics` radii.
 
 ## 5. Accessibility
@@ -251,8 +273,11 @@ the app taking access, and macOS shows each prompt only once.
 
 ### Motion and display settings
 
-- Use the `TSMotion` curves (hover, select, press, pane). No inline
-  durations.
+- Use the `TSMotion` curves (hover, select, press, pane, and sweep, breathe
+  and snap for looping indicators). No inline durations.
+- A looping animation is a `phaseAnimator` inside a modifier that is applied
+  only while the state is live (`tsPulse`, `AppProgressBar`), so it stops with
+  that state. Never a `repeatForever` started from `withAnimation`.
 - Animations honor Reduce Motion through `TSMotion.animate`,
   `.tsAnimation(_:value:)` or `TSMotionContext`. A bare `withAnimation` or
   `.animation(_:value:)` animates even when the user turned motion off

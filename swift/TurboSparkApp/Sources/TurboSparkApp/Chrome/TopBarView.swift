@@ -247,24 +247,43 @@ struct TopBarView: View {
 
     @ViewBuilder
     private var unloadButton: some View {
-        if model.canUnloadModel && model.canUnloadImageModel {
+        let canUnloadText = model.canUnloadModel
+        let canUnloadImage = model.canUnloadImageModel
+        let canUnloadAudio = model.audioWorkspace.canUnloadModel
+        let count = (canUnloadText ? 1 : 0) + (canUnloadImage ? 1 : 0) + (canUnloadAudio ? 1 : 0)
+        if count > 1 {
             Menu {
-                Button {
-                    model.unloadModel()
-                } label: {
-                    Label {
-                        Text("Unload Model", bundle: .module)
-                    } icon: {
-                        Image(systemName: "text.bubble")
+                if canUnloadText {
+                    Button {
+                        model.unloadModel()
+                    } label: {
+                        Label {
+                            Text("Unload Model", bundle: .module)
+                        } icon: {
+                            Image(systemName: "text.bubble")
+                        }
                     }
                 }
-                Button {
-                    model.unloadImageModel()
-                } label: {
-                    Label {
-                        Text("Unload", bundle: .module)
-                    } icon: {
-                        Image(systemName: "photo")
+                if canUnloadImage {
+                    Button {
+                        model.unloadImageModel()
+                    } label: {
+                        Label {
+                            Text("Unload", bundle: .module)
+                        } icon: {
+                            Image(systemName: "photo")
+                        }
+                    }
+                }
+                if canUnloadAudio {
+                    Button {
+                        model.audioWorkspace.unloadModel()
+                    } label: {
+                        Label {
+                            Text("Unload", bundle: .module)
+                        } icon: {
+                            Image(systemName: "waveform")
+                        }
                     }
                 }
             } label: {

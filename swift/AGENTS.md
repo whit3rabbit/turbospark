@@ -124,9 +124,16 @@ staging files changed.
   VoiceOver contracts.
 - Every UI or design change follows [DESIGN.md](../DESIGN.md): build from
   its shared control vocabulary (`Theme/AppControls.swift`,
+  `Theme/AppSurfaces.swift`, `Theme/AppProgressBar.swift`,
   `Theme/AppPreferenceOptions.swift`, `Theme/AppStrings.swift`,
   `Theme/TurboSparkMotion.swift`), not local variants, and run its
   verification list.
+- Voice cloning consent covers one exact reference region
+  (`AudioCloneOptions.consentedReference`) and lapses on any retrim. A UI
+  seam that sets the reference (drop, import, inline recording, reuse from a
+  take) never sets or copies consent. A voice reference recording captures
+  the microphone through local flags and never writes the Record page's
+  capture settings. `AudioVoiceCloneWorkspaceTests` pins all three.
 - The Sparkle updater starts only inside a real .app bundle (see
   `SparkleUpdateController`); never bypass that guard for `swift run` builds.
   Update trust is the EdDSA signature, not Apple code signing -- the bundle

@@ -23,6 +23,16 @@ public enum TSMotion {
 
     /// Panes sliding, greeting entrance, anything that moves a whole block.
     public static let pane: Animation = .spring(response: 0.44, dampingFraction: 0.86)
+
+    /// One pass of a progress sheen or an indeterminate sweep.
+    public static let sweep: Animation = .easeInOut(duration: 1.4)
+
+    /// One breath of a live indicator (a recording dot, an active stage).
+    public static let breathe: Animation = .easeInOut(duration: 0.85)
+
+    /// The invisible reset at the end of a looping sweep, so the next pass
+    /// starts from the leading edge instead of sliding back across the bar.
+    public static let snap: Animation = .linear(duration: 0.01)
 }
 
 /// Resolves the app's reduce-motion preference over the system one and hands
@@ -102,6 +112,33 @@ public extension View {
     /// One-shot entrance. `delay` staggers siblings.
     func tsEntrance(delay: Double = 0) -> some View {
         modifier(TSEntrance(delay: delay))
+    }
+
+    /// Breathes the view's opacity while `active`, for a live indicator.
+    /// Static under Reduce Motion.
+    func tsPulse(active: Bool) -> some View {
+        modifier(TSPulse(active: active))
+    }
+}
+
+/// Applied as a modifier rather than branching at the call site, so the
+/// `phaseAnimator` is torn down with the state that started it instead of
+/// running behind a static view (the `ModelStatusDot` pattern).
+private struct TSPulse: ViewModifier {
+    let active: Bool
+    @ObservedObject private var appearanceManager = AppearanceManager.shared
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+
+    func body(content: Content) -> some View {
+        if active && !appearanceManager.shouldReduceMotion(systemReduceMotion: systemReduceMotion) {
+            content.phaseAnimator([0.45, 1.0]) { view, opacity in
+                view.opacity(opacity)
+            } animation: { _ in
+                TSMotion.breathe
+            }
+        } else {
+            content
+        }
     }
 }
 

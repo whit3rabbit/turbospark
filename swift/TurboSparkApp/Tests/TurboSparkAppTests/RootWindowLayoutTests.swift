@@ -109,6 +109,15 @@ final class RootWindowLayoutTests: XCTestCase {
             try await settle(host)
             XCTAssertEqual(window.contentMinSize, CGSize(width: 953, height: 640))
 
+            // The sections whose modes moved out of their panes into a panel
+            // reserve it too, or the panel squeezes the pane below its floor.
+            for section in [AppModel.AppNavigationSection.modelManager, .server] {
+                model.activeSection = section
+                try await settle(host)
+                XCTAssertEqual(
+                    window.contentMinSize, CGSize(width: 953, height: 640), "\(section)")
+            }
+
             // Same preference, rail-only section: the panel's 260pt is not
             // reserved. Gating the floor on the raw preference fails here.
             model.activeSection = .files

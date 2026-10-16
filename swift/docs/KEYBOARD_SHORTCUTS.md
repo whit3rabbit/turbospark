@@ -51,6 +51,11 @@ section, because it sends the chat draft. Images, Audio and Humanize bind
 are disabled there (`AppNavigationSection.runsChatGenerationCommand` and
 `ownsGenerationShortcuts`). Stop All stays global.
 
+On the Voice Cloning page, `Cmd+Return` is the script composer's Generate
+speech button and `Cmd+.` is the Audio status strip's Cancel. The progress
+card's Cancel, the inline recorder's buttons, and the take rows carry no
+chord, so each chord has exactly one owner on the page.
+
 ### Model Management (Model Menu)
 
 | Shortcut | Action | Description |
@@ -93,6 +98,7 @@ are disabled there (`AppNavigationSection.runsChatGenerationCommand` and
 
 2. **Transcript Rotor & Heading Navigation**:
    - The conversation transcript provides an accessibility rotor titled "Messages". Switch to the Messages rotor (`VO + U` or gesture) to skip between user prompts and assistant answers.
+   - Audio Studio adds "Markers" and "Speakers" rotors on a recording, and a "Takes" rotor on the Voice Cloning page. The Voice Cloning steps strip is a row of buttons whose value is each step's state, with the first unfinished step marked selected.
    - User prompts and assistant responses carry `.accessibilityHeading(.h2)`, allowing rapid jump navigation via `VO + Cmd + H`.
 
 3. **Custom Accessibility Actions (No Mouse Hover Required)**:
@@ -103,6 +109,7 @@ are disabled there (`AppNavigationSection.runsChatGenerationCommand` and
      - Regenerate response (for assistant messages)
      - Branch conversation into a new chat
    - Chat sidebar rows provide custom actions: Pin chat, Rename chat, Duplicate chat, Delete chat.
+   - Voice Cloning take rows provide a Reuse reference action.
 
 4. **Custom Labels and Hints**:
    - Icon-only buttons supply explicit `.accessibilityLabel` and `.accessibilityHint` properties across all settings panes, model actions, and file pickers.

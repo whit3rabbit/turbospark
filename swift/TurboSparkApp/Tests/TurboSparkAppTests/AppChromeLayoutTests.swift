@@ -147,11 +147,21 @@ final class AppChromeLayoutTests: XCTestCase {
             AppChromeLayout.navigationRailWidth + AppChromeLayout.sidebarPanelWidth)
     }
 
-    func testOnlyChatAndAudioHaveASidebarPanel() {
+    func testExactlyTheSectionsWithPanelContentHaveASidebarPanel() {
         // The window floor and the sidebar both follow this, so a section
-        // listed here wrongly reserves (or drops) 260pt of width.
+        // listed here wrongly reserves (or drops) 260pt of width. Files,
+        // Discover and Humanize have nothing to list beside the rail.
         let withPanel = AppModel.AppNavigationSection.allCases.filter(\.hasSidebarPanel)
-        XCTAssertEqual(Set(withPanel), [.chat, .audio])
+        XCTAssertEqual(Set(withPanel), [.chat, .audio, .images, .modelManager, .server])
+    }
+
+    func testEveryPanelButChatsHasARailMenuForWhenItIsHidden() {
+        // Hiding the panel must not strand a section's modes (Gotcha 17,
+        // "navigation never hides"): each mode-listing panel has a rail menu.
+        // Chat's panel is its conversation list, which the pane does not need.
+        let withMenu = AppModel.AppNavigationSection.allCases
+            .filter(NavigationRailView.hasDestinationMenu)
+        XCTAssertEqual(Set(withMenu), [.audio, .images, .modelManager, .server])
     }
 
     func testTheArtifactPanelIsWiderThanTheInspector() {

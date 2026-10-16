@@ -21,8 +21,10 @@ struct NavigationRailView: View {
     @ObservedObject var model: AppModel
     /// A panel is on screen beside the rail (drives the shared surface).
     let isPanelVisible: Bool
-    /// The user's panel preference. Audio is a plain button when selecting it
-    /// will show the Audio panel, and a page menu when it will not.
+    /// The user's panel preference. A section whose panel lists destinations
+    /// (Audio, Images, Installed, API) is a plain button when selecting it
+    /// will show that panel, and a menu of the same destinations when it will
+    /// not.
     let isPanelPreferred: Bool
 
     private var itemSize: CGFloat { min(42, 34 * theme.sidebarScale) }
@@ -39,24 +41,8 @@ struct NavigationRailView: View {
                             SidebarDivider().padding(.horizontal, 12).padding(.vertical, 4)
                         }
                         ForEach(group.sections) { section in
-                            if section == .audio && !isPanelPreferred {
-                                Menu {
-                                    AudioDestinationMenu(model: model)
-                                } label: {
-                                    Image(systemName: section.systemImage)
-                                        .font(theme.ui(.callout, weight: .medium))
-                                        .foregroundStyle(model.activeSection == .audio ? theme.accent : theme.secondaryText)
-                                        .frame(width: itemSize, height: itemSize)
-                                        .background(theme.accent.opacity(model.activeSection == .audio ? 0.14 : 0),
-                                                    in: RoundedRectangle(cornerRadius: 8))
-                                }
-                                // `.button` + `.plain`: `.borderlessButton`
-                                // flattens the label and drops the tint.
-                                .menuStyle(.button).buttonStyle(.plain)
-                                .menuIndicator(.hidden).fixedSize()
-                                .help(Text("Audio", bundle: .module))
-                                .accessibilityLabel(Text("Audio", bundle: .module))
-                                .accessibilityAddTraits(model.activeSection == .audio ? .isSelected : [])
+                            if Self.hasDestinationMenu(section) && !isPanelPreferred {
+                                railMenu(section)
                             } else {
                                 railButton(section)
                             }
@@ -92,6 +78,55 @@ struct NavigationRailView: View {
             }
         }
         .tsAnimation(TSMotion.select, value: model.activeSection)
+    }
+
+    /// Every panel except Chat's lists the section's destinations, so with
+    /// the panel hidden those would be unreachable without this menu. Chat's
+    /// panel is its conversation list, which the chat pane does not need.
+    nonisolated static func hasDestinationMenu(_ section: AppModel.AppNavigationSection) -> Bool {
+        section.hasSidebarPanel && section != .chat
+    }
+
+    private func railMenu(_ section: AppModel.AppNavigationSection) -> some View {
+        let isSelected = model.activeSection == section
+        return Menu {
+            switch section {
+            case .audio:
+                AudioDestinationMenu(model: model)
+            case .images:
+                SidebarModeMenu<ImagesWorkspaceMode> { mode in
+                    model.imagesMode = mode
+                    model.activeSection = .images
+                }
+            case .modelManager:
+                SidebarModeMenu<InstalledModelKind> { kind in
+                    model.installedModelKind = kind
+                    model.activeSection = .modelManager
+                }
+            case .server:
+                SidebarModeMenu<APIWorkspaceTab> { tab in
+                    model.apiWorkspaceTab = tab
+                    model.activeSection = .server
+                }
+            default:
+                // Unreachable: `hasDestinationMenu` admits only the cases above.
+                EmptyView()
+            }
+        } label: {
+            Image(systemName: isSelected ? section.selectedSystemImage : section.systemImage)
+                .font(theme.ui(.callout, weight: .medium))
+                .foregroundStyle(isSelected ? theme.accent : theme.secondaryText)
+                .frame(width: itemSize, height: itemSize)
+                .background(theme.accent.opacity(isSelected ? 0.14 : 0),
+                            in: RoundedRectangle(cornerRadius: 8))
+        }
+        // `.button` + `.plain`: `.borderlessButton` flattens the label and
+        // drops the tint.
+        .menuStyle(.button).buttonStyle(.plain)
+        .menuIndicator(.hidden).fixedSize()
+        .help(Text(LocalizedStringKey(section.title), bundle: .module))
+        .accessibilityLabel(Text(LocalizedStringKey(section.title), bundle: .module))
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private func railButton(_ section: AppModel.AppNavigationSection) -> some View {
