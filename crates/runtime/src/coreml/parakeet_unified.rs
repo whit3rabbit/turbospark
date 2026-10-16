@@ -11,9 +11,11 @@
 //! the flexible-shape Core ML preprocessor that would pin the CPU. Windowing
 //! and the RNNT loop are in [`super::parakeet_unified_stream`].
 //!
-//! Placement: an int8 encoder runs on CPU and Neural Engine only. Core ML
-//! hands int8 ops to MPSGraph under GPU placement, which fails its MLIR pass
-//! and aborts the process (FluidAudio `StreamingUnifiedAsrManager`). The
+//! Placement: an int8 encoder runs on CPU and Neural Engine only. FluidAudio
+//! (`StreamingUnifiedAsrManager`) reports that Core ML hands int8 ops to
+//! MPSGraph under GPU placement, which fails its MLIR pass and aborts the
+//! process; the same-format Parakeet Ultra encoder did not abort on an M4
+//! Max but ran about 7x slower on the GPU than on the Neural Engine. The
 //! decoder and joint run once per token on tiny inputs, on the CPU.
 
 use std::path::Path;

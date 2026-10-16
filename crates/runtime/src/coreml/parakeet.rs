@@ -53,11 +53,13 @@ const ENCODER_UNITS_ENV: &str = "TURBOSPARK_PARAKEET_COREML_ENCODER_UNITS";
 /// else should set it: a bad placement aborts the process, it does not fail.
 const ALLOW_UNVERIFIED_GPU_ENV: &str = "TURBOSPARK_COREML_ALLOW_QUANTIZED_GPU";
 
-/// Encoder weight formats measured on the GPU here. Core ML hands int8
-/// encoders to MPSGraph under GPU placement, whose MLIR pass fails and
-/// aborts the process (FluidAudio `StreamingUnifiedAsrManager`, which
-/// coerces int8 to CPU and Neural Engine for the same reason). Anything not
-/// listed runs on the Neural Engine, which compiles slowly but never aborts.
+/// Encoder weight formats measured on the GPU here. FluidAudio reports that
+/// Core ML hands int8 encoders to MPSGraph under GPU placement, whose MLIR
+/// pass fails and aborts the process (`StreamingUnifiedAsrManager` coerces
+/// int8 to CPU and Neural Engine for that reason). On an M4 Max with macOS
+/// 26.6 (2026-10-16) Ultra's int8 encoder did not abort on the GPU, but ran
+/// at 18x real time against 122x on the Neural Engine, so it is no GPU
+/// candidate either way. Anything not listed runs on the Neural Engine.
 const GPU_VERIFIED_WEIGHT_FORMATS: [&str; 1] = [
     // parakeet-redux-coreml: docs/COREML.md bench, GPU encoder 150x.
     "ternary_lut2_int8_blockwise_fp16_scale_g128",

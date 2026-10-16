@@ -19,8 +19,16 @@ model increases the visible draft backlog instead of stopping recording. A
 storage failure stops capture and preserves committed chunks. Reopening an
 interrupted project retains those chunks for playback, export, and transcription.
 
-Live text is a draft assembled from bounded windows. Final refinement reads the
-saved recording. User transcript edits remain preferred when a newer model
+Live text streams when the Parakeet Unified EN model is installed and the take
+is English (the transcription language, or the first system language when it is
+Automatic): words appear about a second behind speech
+(`ts_audio_stream_*`, no heavy-work permit, so chat and image work keep running).
+The stream hears the same mix of microphone and app audio as the saved take, and
+its text is saved into one draft revision that each save replaces. Otherwise, or
+if the stream stops, live text is a draft assembled from bounded windows every
+15 seconds. A voice reference recording has no live text. Final refinement reads
+the saved recording with the selected batch model; a fresh install prefers
+Parakeet Ultra, then Redux, then Whisper Base, and a saved choice always wins. User transcript edits remain preferred when a newer model
 revision arrives. Whisper window timing and Qwen whole-clip timing are approximate
 extents, not forced alignment. Subtitles exclude segments with no usable timing.
 Speaker and word metadata appear only when a model supplies them.
@@ -29,6 +37,26 @@ With a local chat model loaded, Summarize meeting produces excerpt summaries and
 action items linked to source transcript positions. Summaries remain tied to the
 transcript revision used, so editing a transcript does not silently change an
 existing summary.
+
+## Organize and search
+
+The Record page's type (Voice note, Meeting or call, Sound) sets the sources and
+live text and files new takes into its collection. The collection is named in
+the current language the first time and kept after that. Changing a source by
+hand makes the take a custom one, left unfiled. The library filters by All,
+Favorites, Recordings, Imported and Needs transcript, by collection and by tag,
+and groups by Today, This week and Earlier. Tags are free-form, up to 20 per
+take, matched ignoring case. A record that cannot be read is copied aside under
+`quarantine:` and skipped, and the original stays so its audio is kept.
+
+Search matches exact words in transcripts, titles, collections and tags through
+an FTS5 index in the encrypted profile database, with a substring fallback for
+text the index cannot segment (CJK). With EmbeddingGemma 2 installed it also
+matches by meaning (transcript chunks, 768-d) and by sound (10 s audio windows,
+256-d), fused by reciprocal rank. Each hit can play from its time. The index is
+derived from the library and rebuilt from it; a background pass embeds new and
+changed takes while nothing is recording. Sound matches are experimental: the
+score floors are untuned and no recall gate exists yet.
 
 ## Create and compare
 

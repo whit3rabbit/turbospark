@@ -1,12 +1,12 @@
 # Core ML models
 
-TurboSpark runs three FluidInference Core ML exports. None of them is a
+TurboSpark runs five FluidInference Core ML exports. None of them is a
 generic format: each is a set of fixed-shape Core ML programs plus host files,
 and each has its own pipeline in `crates/runtime/src/coreml/`. The generic
 runner (load, compile, marshal, state) is `crates/coreml`; read its
 [AGENTS.md](../crates/coreml/AGENTS.md) before changing it.
 
-All three need **macOS 15 or newer** (iOS 18 programs, multifunction packages,
+All of them need **macOS 15 or newer** (iOS 18 programs, multifunction packages,
 or `MLState`). On macOS 14 every entry point refuses with a reason, and the
 audio catalog reports `can_run: false`.
 
@@ -15,12 +15,18 @@ audio catalog reports `can_run: false`.
 | Export | Pinned revision | Pipeline | License |
 |---|---|---|---|
 | [FluidInference/parakeet-redux-coreml](https://huggingface.co/FluidInference/parakeet-redux-coreml/tree/8c5ef97a29cd120dc76b354b3f22b7fec3b486f9) | `8c5ef97a29cd120dc76b354b3f22b7fec3b486f9` | `coreml::parakeet` | CC-BY-4.0 |
+| [FluidInference/parakeet-ultra-coreml](https://huggingface.co/FluidInference/parakeet-ultra-coreml/tree/95eaa59a39d4394f047a4dc5cce480388a60d1b6) | `95eaa59a39d4394f047a4dc5cce480388a60d1b6` | `coreml::parakeet` (same component contract as Redux) | CC-BY-4.0 |
+| [FluidInference/parakeet-unified-en-0.6b-coreml](https://huggingface.co/FluidInference/parakeet-unified-en-0.6b-coreml/tree/d32e972dd4315f1dc3f6be28fb2aab0ab3e80358) (streaming subset only) | `d32e972dd4315f1dc3f6be28fb2aab0ab3e80358` | `coreml::parakeet_unified`, `parakeet_unified_stream` | CC-BY-4.0 |
 | [FluidInference/embeddinggemma-2-coreml](https://huggingface.co/FluidInference/embeddinggemma-2-coreml/tree/3f978ddf92cac9aa07eb2dcf6eb36cf450f3dba4) | `3f978ddf92cac9aa07eb2dcf6eb36cf450f3dba4` | `coreml::embedding_gemma2`, `embedding_gemma2_media` | Apache-2.0 |
 | [FluidInference/unlimited-ocr-mlx-coreml](https://huggingface.co/FluidInference/unlimited-ocr-mlx-coreml/tree/4568571eacd864e0a253c609b3c9d0e00450cebc) (Core ML parts only) | `4568571eacd864e0a253c609b3c9d0e00450cebc` | `coreml::unlimited_ocr` | MIT |
 
-Attribution: the Parakeet export is a Core ML conversion by Fluid Inference of
-`moondream/parakeet-redux`, itself derived from NVIDIA
-`parakeet-tdt-0.6b-v3`, under CC-BY-4.0. EmbeddingGemma 2 is a Google model;
+Attribution: the Parakeet exports are Core ML conversions by Fluid Inference of
+`moondream/parakeet-redux` and `moondream/parakeet-ultra`, both derived from
+NVIDIA `parakeet-tdt-0.6b-v3`, and of NVIDIA `parakeet-unified-en-0.6b`, all
+under CC-BY-4.0. The Unified pin is the decoder, the single-step joint, the
+vocabulary, the configs and one streaming encoder
+(`parakeet_unified_encoder_streaming_70_7_7_int8`), about 609 MB of an 11 GB
+repository. EmbeddingGemma 2 is a Google model;
 the export's card says Apache-2.0, and whether the Gemma terms also apply has
 not been checked. Unlimited OCR is baidu/Unlimited-OCR under MIT.
 
@@ -40,6 +46,16 @@ merged with the nemo contiguous-run merge, with the subsequence merge as the
 fallback. Segments are sentences with word timings (`timing: "token"`).
 Detection is by layout (the four `.mlmodelc` directories plus
 `parakeet_vocab.json`), before any `config.json` read.
+
+**Parakeet Unified (live text).** A stateless chunked-attention encoder: each
+step re-encodes a `[left 70 | chunk 7 | right 7]` window of 80 ms frames
+(6.72 s), the right context is held back until a later step or the final
+flush, and only the RNNT prediction state and last token carry over. The
+log-mel is computed on the host with `audio::nemo_mel` (`per_feature` over the
+window's valid frames). It is streaming only: batch opens refuse it, and the
+app and FFI reach it through `ts_audio_stream_*`. Windowing and the RNNT loop
+follow FluidAudio `StreamingUnifiedAsrManager` at
+`d31145a9476256afbcc7ec4ead33d883795bef78` (Apache-2.0).
 
 **EmbeddingGemma 2.** Text is a task prefix from `config.json`, then `<bos>`,
 the tokens and `<eos>`, gathered from the bf16 table times sqrt(512). It runs
@@ -64,15 +80,22 @@ is `<bos>`, 273 page embeddings per page, then the prompt ids. Prefill runs in
 
 | Model | Default compute units | Override |
 |---|---|---|
-| Parakeet | preprocessor CPU, encoder GPU, decoder and joint CPU | `TURBOSPARK_PARAKEET_COREML_ENCODER_UNITS` |
+| Parakeet | preprocessor CPU, encoder by weight format (Redux GPU, Ultra Neural Engine), decoder and joint CPU | `TURBOSPARK_PARAKEET_COREML_ENCODER_UNITS` |
+| Parakeet Unified | mel on the host, int8 encoder Neural Engine, decoder and joint CPU | `TURBOSPARK_PARAKEET_UNIFIED_ENCODER_UNITS` |
 | EmbeddingGemma 2 | text Neural Engine, audio and vision GPU | `TURBOSPARK_EMBEDDINGGEMMA2_COREML_UNITS` (text) |
 | Unlimited OCR | page encoder GPU (fixed), decoder GPU | none; Neural Engine refused |
 
 Override values are `cpu`, `cpu_gpu`, `cpu_ane` and `all`.
 
-- **Parakeet:** the Parakeet encoder defaults to the GPU because its first
-  Neural Engine compile takes minutes (the card says about 7) and cannot be
-  cancelled.
+- **Parakeet:** the encoder placement follows `config.json`'s declared
+  `weight_format`. Redux's 2-bit ternary encoder is the one format measured on
+  the GPU, and stays there because its first Neural Engine compile takes
+  minutes (417 s measured) and cannot be cancelled. Every other format, int8
+  included (Ultra, Unified), runs on the Neural Engine, and a GPU override for
+  it is refused unless `TURBOSPARK_COREML_ALLOW_QUANTIZED_GPU=1` (meant only
+  for the subprocess probe). FluidAudio reports int8 encoders aborting the
+  process on the GPU; on this Mac Ultra did not abort but ran at 18x real time
+  against 122x on the Neural Engine.
 - **EmbeddingGemma 2:** text compiles each function for the Neural Engine on
   first use. Measured here: 15 s for `embed_32` at open, 37 s for `embed_128` on
   its first request.
@@ -107,6 +130,9 @@ Real-model tests are `#[ignore]`d and skip when the model is absent.
 
 ```sh
 cargo test --release -p turbospark-runtime --test coreml_parakeet -- --ignored --nocapture
+TURBOSPARK_PARAKEET_COREML_MODEL=~/models/coreml/parakeet-ultra-coreml \
+  cargo test --release -p turbospark-runtime --test coreml_parakeet -- --ignored --nocapture
+cargo test --release -p turbospark-runtime --test coreml_parakeet_unified -- --ignored --nocapture
 cargo test --release -p turbospark-runtime --test coreml_embeddinggemma2 -- --ignored --nocapture
 cargo test --release -p turbospark-runtime --test coreml_ocr -- --ignored --nocapture
 cargo test --release -p turbospark-ffi --test embedding_request --test ocr_surface -- --include-ignored
@@ -124,6 +150,30 @@ Measured on an M4 Max, macOS 26.6 (2026-10-13):
   against the CPU single pass.
 - Before the merge fix, the same clip measured WER 0.232 (tokens past the
   overlap were dropped).
+
+Measured on an M4 Max, macOS 26.6 (2026-10-16), on battery with other
+sessions loading the host (load average 10 to 17). Quality results stand;
+timings are informal and are not benchmark rows.
+
+**Parakeet Ultra (default) against Redux**
+- LibriSpeech test-clean, the first 5 utterances per speaker (200, 4656
+  words), one process per file, normalizer of `tests/common/wer.rs`: corpus
+  WER 0.0226 for Ultra on the Neural Engine, 0.0275 for Redux on the GPU. The
+  card's full-set figures are 0.0213 and 0.0271.
+- `coreml_parakeet` with Ultra: the 37 s clip in three windows at WER 0.020,
+  timestamps monotonic. With Redux the CPU parity still holds (identical ids
+  and frames) after the placement change.
+- Ultra first Neural Engine compile 12.2 s (cache cleared), cached open 123 ms.
+  Core ML's cache is per executable, so each new binary compiles once.
+- `coreml_backend_probe`, 11 s clip: Ultra Neural Engine 122x real time, Ultra
+  CPU 61x, Redux GPU 72x, Ultra int8 on the GPU (probe flag) 18x with no abort.
+
+**Parakeet Unified streaming**
+- `coreml_parakeet_unified`, 20 s `say` clip in 100 ms appends: WER 0.000 with
+  punctuation, identical text for 1 s and 2 s appends, and 0.000 against Ultra
+  batch on the same audio. First Neural Engine compile 14.5 s.
+- Word commit lag (audio received minus word end) median 1.04 s, p95 1.50 s,
+  against the 1.12 s chunk plus look-ahead. Append compute p95 18.8 ms.
 
 **EmbeddingGemma 2**
 - Against a coremltools CPU reference
@@ -340,6 +390,15 @@ now; the note is here so the guard is not removed.
   selectors up when called, so `setFunctionName:` or `newState` on macOS 14
   raises instead of failing to build. Everything newer than the macOS 13
   package floor goes through `supports(Capability::...)`.
+- **Placement follows the weight format, not the model name.** Parakeet
+  Redux and Ultra share one component contract, so one runner opens both,
+  but Redux's 2-bit encoder belongs on the GPU and Ultra's int8 encoder on
+  the Neural Engine (18x against 122x real time here). `parakeet.rs` reads
+  `encoders["Encoder.mlmodelc"].weight_format` from `config.json` and refuses
+  a GPU placement for any format not measured there, because FluidAudio
+  reports int8 encoders aborting the process on the GPU. A new export with an
+  unknown format therefore starts on the Neural Engine: measure before adding
+  it to `GPU_VERIFIED_WEIGHT_FORMATS`.
 - **A fixed shape is often not "unspecified".** ML programs describe a fixed
   input as a one-entry enumeration or as ranges with equal bounds. Shape
   checks that only read the unspecified form treat every input as flexible
