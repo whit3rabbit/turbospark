@@ -170,7 +170,9 @@ final class AudioWorkspaceController: ObservableObject {
         }
     }
     var availableProfiles: [AudioProfile] {
-        var choices = profiles.filter { $0.identity.task == task && speechProfileMatchesPage($0) }
+        var choices = profiles.filter {
+            $0.identity.task == task && speechProfileMatchesPage($0) && AudioRuntimeProvider($0) != .unsupported
+        }
         if page == .advanced && task == .speechToText { choices.append(Self.localQwenProfile) }
         return choices
     }
@@ -191,7 +193,7 @@ final class AudioWorkspaceController: ObservableObject {
         return try? URL(resolvingBookmarkData: bookmark, options: [.withSecurityScope, .withoutUI, .withoutMounting], relativeTo: nil, bookmarkDataIsStale: &stale)
     }
     var selectedProfileIsRunnable: Bool {
-        selectedProfile?.family == "qwen3_tts" || selectedProfile?.capabilities.canRun == true
+        selectedProfile.map { AudioRuntimeProvider($0).canRun($0) } == true
             || (page == .advanced && allowPortableExperiment && ["kokoro", "omnivoice", "qwen3_asr"].contains(selectedProfile?.family ?? ""))
             || (page == .advanced && allowExperimentalMetal && selectedProfile?.family == "qwen3_asr")
     }
@@ -291,7 +293,7 @@ final class AudioWorkspaceController: ObservableObject {
         } else {
             // A new speech workspace should start with an executable provider.
             let preferred = task == .textToSpeech
-                ? availableProfiles.filter { $0.capabilities.canRun || $0.family == "qwen3_tts" }
+                ? availableProfiles.filter { AudioRuntimeProvider($0).canRun($0) }
                 : availableProfiles
             recipe.modelID = preferred.first(where: { installedPaths[$0.identity.alias] != nil })?.identity.alias
                 ?? preferred.first?.identity.alias ?? availableProfiles.first?.identity.alias

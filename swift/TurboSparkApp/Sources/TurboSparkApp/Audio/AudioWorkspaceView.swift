@@ -460,7 +460,7 @@ struct AudioWorkspaceView: View {
                             Text(family.family).themedFont(.small, weight: .semibold)
                         } icon: { Image(systemName: family.component ? "puzzlepiece" : "waveform") }
                         Text(family.operations.joined(separator: ", ")).themedCode(.small)
-                        Text(family.backend).themedCode(.small)
+                        Text(LocalizedStringKey(AudioEngineLabel(backend: family.backend, compute: nil).title), bundle: .module)
                         if let reason = family.unavailableReason { Text(reason) }
                         Text(family.evidence).foregroundStyle(.appSecondary)
                     }
