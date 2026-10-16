@@ -45,12 +45,13 @@ struct ModelStoreMigrationSheet: View {
 
             if isMoving {
                 if totalBytes > 0 {
-                    ProgressView(value: Double(completedBytes) / Double(totalBytes))
+                    AppProgressBar(value: Double(completedBytes) / Double(totalBytes),
+                                   label: Text("\(MetricFormat.storage(completedBytes)) of \(MetricFormat.storage(totalBytes))", bundle: .module))
                     Text("\(MetricFormat.storage(completedBytes)) of \(MetricFormat.storage(totalBytes))", bundle: .module)
                         .themedFont(.tiny)
                         .foregroundStyle(.appSecondary)
                 } else {
-                    ProgressView()
+                    AppProgressBar(value: nil, label: Text("Preparing move...", bundle: .module))
                     Text("Preparing move...", bundle: .module)
                         .themedFont(.tiny)
                         .foregroundStyle(.appSecondary)

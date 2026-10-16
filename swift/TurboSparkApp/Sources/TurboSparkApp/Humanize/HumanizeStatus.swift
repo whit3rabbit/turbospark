@@ -9,6 +9,8 @@ struct HumanizeRewriteRail: View {
 
     @Environment(\.appTheme) private var theme
 
+    private var scale: CGFloat { HumanizeMetrics.textScale(theme) }
+
     var body: some View {
         let busy = controller.isBusy
         let ready = busy || controller.canRun
@@ -43,19 +45,20 @@ struct HumanizeRewriteRail: View {
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: 96)
+                .frame(maxWidth: (96 * scale).rounded())
                 if let part = controller.partProgress {
                     ModelLoadProgressBar(
                         fraction: Double(part.current - 1) / Double(part.total), tint: theme.accent)
-                        .frame(width: 40)
+                        .frame(width: (40 * scale).rounded())
                     Text(verbatim: "\(part.current)/\(part.total)").font(theme.ui(.micro)).monospacedDigit()
+                        .lineLimit(1)
                 } else {
                     Text(verbatim: busy ? "\u{2318}." : "\u{2318}\u{21A9}").font(theme.ui(.micro))
+                        .lineLimit(1)
                 }
             }
             .foregroundStyle(.appSecondary)
-            .lineLimit(1)
-            .fixedSize()
+            .frame(maxWidth: (96 * scale).rounded())
             .accessibilityHidden(true)
         }
         .tsAnimation(TSMotion.select, value: busy)

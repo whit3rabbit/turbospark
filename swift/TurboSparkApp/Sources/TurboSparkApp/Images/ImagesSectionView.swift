@@ -7,7 +7,6 @@ import TurboSpark
 struct ImagesSectionView: View {
     @ObservedObject var model: AppModel
     @Environment(\.appTheme) private var theme
-    @State private var organizing = false
     @State private var importing = false
     @State private var search = ""
     @State private var selecting = false
@@ -16,6 +15,10 @@ struct ImagesSectionView: View {
     @AppStorage("TurboSpark.imageModelRecommendationSeen")
     private var imageModelRecommendationSeen = false
     @State private var showingImageModelRecommendation = false
+
+    /// The mode lives on the model because the panel beside the rail switches
+    /// it (`ImagesSidebarPanel`); this pane has no switcher of its own.
+    private var organizing: Bool { model.imagesMode == .organize }
 
     private var artifacts: [AppArtifact] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -58,11 +61,11 @@ struct ImagesSectionView: View {
             imageModelRecommendationSeen = true
             showingImageModelRecommendation = true
         }
-        .onChange(of: organizing) { selection.removeAll(); selecting = false }
+        .onChange(of: model.imagesMode) { selection.removeAll(); selecting = false }
         .onChange(of: search) { selection.removeAll() }
         .onChange(of: model.generating) {
             if model.generating && model.imageGenerationTask != nil {
-                organizing = false
+                model.imagesMode = .create
                 preview = nil
             }
         }
@@ -71,29 +74,19 @@ struct ImagesSectionView: View {
         }
     }
 
-    /// Title and count on the leading side, the mode switch as the header's
-    /// action. `AppAdaptiveHeader` drops the switch under the title when a
-    /// translation or the largest text size no longer fits one row; the old
-    /// fixed 210pt segmented control truncated its labels instead.
+    /// Title and count. The Create and Organize switch moved to the panel
+    /// beside the rail (`ImagesSidebarPanel`), and the rail's Images menu
+    /// offers both while that panel is hidden.
     private var header: some View {
-        AppAdaptiveHeader {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Image Generation", bundle: .module)
-                    .themedFont(.title2, weight: .semibold)
-                    .accessibilityAddTraits(.isHeader)
-                Text("\(model.savedImageArtifacts.count) image(s)", bundle: .module)
-                    .themedFont(.small)
-                    .foregroundStyle(.appSecondary)
-            }
-        } actions: {
-            Picker(selection: $organizing) {
-                Text("Create", bundle: .module).tag(false)
-                Text("Organize", bundle: .module).tag(true)
-            } label: { Text("Image mode", bundle: .module) }
-            .labelsHidden()
-            .pickerStyle(.segmented)
-            .fixedSize()
+        VStack(alignment: .leading, spacing: 2) {
+            Text("Image Generation", bundle: .module)
+                .themedFont(.title2, weight: .semibold)
+                .accessibilityAddTraits(.isHeader)
+            Text("\(model.savedImageArtifacts.count) image(s)", bundle: .module)
+                .themedFont(.small)
+                .foregroundStyle(.appSecondary)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 24).padding(.vertical, 18)
     }
 
@@ -214,9 +207,8 @@ struct ImagesSectionView: View {
                 .themedFont(.small, weight: .medium)
                 .lineLimit(1)
             HStack(spacing: 10) {
-                ProgressView(value: model.imageProgressFraction)
-                    .progressViewStyle(.linear)
-                    .frame(width: 280)
+                AppProgressBar(value: model.imageProgressFraction, label: progressStageLabel)
+                    .frame(minWidth: 160, idealWidth: 280, maxWidth: 320)
                 if let job = model.imageJob, job.total > 0 {
                     Text(verbatim: "\(job.completed)/\(job.total)")
                         .themedFont(.tiny)
@@ -234,8 +226,8 @@ struct ImagesSectionView: View {
         .accessibilityElement(children: .combine)
     }
 
-    @ViewBuilder
-    private var progressStageLabel: some View {
+    /// A `Text`, not a view builder, so it also labels the progress bar.
+    private var progressStageLabel: Text {
         switch model.imageJob?.stage {
         case "downloading_model": Text("Downloading model files", bundle: .module)
         case "loading_model": Text("Loading model", bundle: .module)
@@ -273,6 +265,6 @@ struct ImagesSectionView: View {
 
     private func reusePrompt(_ artifact: AppArtifact) {
         model.writePromptTextDirectly(artifact.imageRequest?.prompt ?? artifact.title)
-        organizing = false
+        model.imagesMode = .create
     }
 }

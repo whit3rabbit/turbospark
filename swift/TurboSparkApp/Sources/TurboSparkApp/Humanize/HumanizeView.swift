@@ -51,6 +51,7 @@ struct HumanizeView: View {
             }
             .padding(20)
         }
+        .background { backdrop }
         .background(.appPage)
         .font(theme.ui(.base))
         .task(id: ContextKey(draft: controller.draft, path: installedModel?.path)) {
@@ -87,17 +88,22 @@ struct HumanizeView: View {
 
     private var workspace: some View {
         GeometryReader { geometry in
-            let wide = geometry.size.width >= 600
-            let rail: CGFloat = wide ? 76 : 68
+            let scale = HumanizeMetrics.textScale(theme)
+            let breakpoint = (640 * scale).rounded()
+            let wide = geometry.size.width >= breakpoint
+            let rail: CGFloat = wide ? (96 * scale).rounded() : (72 * scale).rounded()
             let panel = wide
                 ? CGSize(width: max(0, (geometry.size.width - rail) / 2), height: geometry.size.height)
                 : CGSize(width: geometry.size.width, height: max(0, (geometry.size.height - rail) / 2))
             let layout = wide ? AnyLayout(HStackLayout(spacing: 0)) : AnyLayout(VStackLayout(spacing: 0))
             layout {
                 draftPanel.frame(width: panel.width, height: panel.height)
+                    .tsEntrance()
                 HumanizeRewriteRail(controller: controller, wide: wide)
                     .frame(width: wide ? rail : geometry.size.width, height: wide ? geometry.size.height : rail)
+                    .tsEntrance(delay: 0.02)
                 resultPanel.frame(width: panel.width, height: panel.height)
+                    .tsEntrance(delay: 0.04)
             }
         }
         // Both cards receive exactly the same size, header and footer included.
@@ -368,6 +374,16 @@ struct HumanizeView: View {
         let output: String
         let segments: [HumanizeSegment]
         let busy: Bool
+    }
+
+    /// The welcome hero's wash: a faint accent glow behind the page, matching Voice Cloning.
+    private var backdrop: some View {
+        RadialGradient(
+            colors: [theme.accent.opacity(theme.isDark ? 0.10 : 0.07), .clear],
+            center: UnitPoint(x: 0.5, y: 0.0), startRadius: 0, endRadius: 620)
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 }
 

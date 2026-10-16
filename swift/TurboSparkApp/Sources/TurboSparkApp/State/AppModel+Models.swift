@@ -383,12 +383,24 @@ extension AppModel {
                 unloadImageModel()
             } else if canUnloadModel {
                 unloadModel()
+            } else if audioWorkspace.canUnloadModel {
+                audioWorkspace.unloadModel()
+            }
+        } else if activeSection == .audio {
+            if audioWorkspace.canUnloadModel {
+                audioWorkspace.unloadModel()
+            } else if canUnloadModel {
+                unloadModel()
+            } else if canUnloadImageModel {
+                unloadImageModel()
             }
         } else {
             if canUnloadModel {
                 unloadModel()
             } else if canUnloadImageModel {
                 unloadImageModel()
+            } else if audioWorkspace.canUnloadModel {
+                audioWorkspace.unloadModel()
             }
         }
     }

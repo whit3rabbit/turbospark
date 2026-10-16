@@ -10,14 +10,6 @@ struct ModelManagerView: View {
     @ObservedObject var model: AppModel
     @ObservedObject private var orgStore = ModelOrganizationStore.shared
 
-    private enum ManagerSection: String, CaseIterable, Identifiable {
-        case text
-        case images
-
-        var id: String { rawValue }
-    }
-
-    @State private var managerSection: ManagerSection = .text
     @State private var searchText = ""
     @State private var architectureFilter: ArchitectureFilter = .all
     @State private var drafterFilter: DrafterFilter = .all
@@ -31,9 +23,10 @@ struct ModelManagerView: View {
     var body: some View {
         VStack(spacing: 0) {
             ModelManagerHeaderView(model: model)
-            managerSectionPicker
             Divider()
-            if managerSection == .text {
+            // The kind is chosen in the panel beside the rail
+            // (`InstalledSidebarPanel`), which also says where audio models live.
+            if model.installedModelKind == .text {
                 textModelContent
             } else {
                 ImageModelManagerView(model: model)
@@ -44,38 +37,6 @@ struct ModelManagerView: View {
                 selectedModelPath = model.selected?.path ?? model.installed.first?.path
             }
         }
-    }
-
-    /// The model-type switch plus the scope line. The picker's label is
-    /// hidden (it is the VoiceOver name only) and the control sizes itself:
-    /// the old 240pt frame squeezed a visible label until it wrapped.
-    /// Audio installs live in the Audio workspace, so the scope line says so
-    /// and offers the way there instead of leaving a third category missing.
-    private var managerSectionPicker: some View {
-        AppAdaptiveHeader {
-            Picker(selection: $managerSection) {
-                Text("Text Models", bundle: .module).tag(ManagerSection.text)
-                Text("Image Models", bundle: .module).tag(ManagerSection.images)
-            } label: {
-                Text("Installed model type", bundle: .module)
-            }
-            .labelsHidden()
-            .pickerStyle(.segmented)
-            .fixedSize()
-        } actions: {
-            Text("Audio models are managed in Audio.", bundle: .module)
-                .themedFont(.small)
-                .foregroundStyle(.appSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Button {
-                model.activeSection = .audio
-            } label: {
-                Label { Text("Open Audio", bundle: .module) } icon: { Image(systemName: "waveform") }
-            }
-            .appAction(.quiet, size: .small)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
     }
 
     private var textModelContent: some View {

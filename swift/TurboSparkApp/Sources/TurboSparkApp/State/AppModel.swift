@@ -51,6 +51,13 @@ public final class AppModel: ObservableObject {
         return controller
     }()
     @Published public var activeSection: AppNavigationSection = .chat
+    /// Sub-modes listed in a section's panel beside the rail (Gotcha 17).
+    /// Held here rather than in the pane's `@State` because the panel and the
+    /// rail's fallback menu set them while the pane reads them; the pane no
+    /// longer draws its own switcher, so there is one control per choice.
+    @Published var imagesMode: ImagesWorkspaceMode = .create
+    @Published var installedModelKind: InstalledModelKind = .text
+    @Published var apiWorkspaceTab: APIWorkspaceTab = .text
 
     /// Attachment currently shown in the right-hand preview pane, if any.
     ///
@@ -226,8 +233,19 @@ public final class AppModel: ObservableObject {
     @Published public var serverFavorites: [ServerFavorite] = []
     @Published public var serverLive = ServerLiveHistory()
     @Published public var serverPinnedPort: UInt16 = 0
-    /// Optional embedding model (.safetensors directory or alias) attached to the server.
+    /// The embedding model (a pinned alias or a model directory) chosen in
+    /// the API Embeddings tab. Persisted, and attached again after every
+    /// server start.
     @Published public var serverEmbeddingModelInput: String = ""
+    /// An embedding attach is crossing the C ABI. A first Core ML load takes
+    /// tens of seconds and `TurboSparkServer` holds its lock throughout, so
+    /// the poll skips its ticks until it returns rather than block the main
+    /// thread on that lock.
+    @Published public var serverEmbeddingAttachInFlight = false
+    /// A Stop pressed during an embedding attach, applied when it returns.
+    /// Kept apart from `serverStopRequested`, which belongs to the start
+    /// path (state#53).
+    var serverStopAfterEmbeddingAttach = false
     /// Hugging Face mirror endpoint override ($HF_ENDPOINT), e.g. https://hf-mirror.com.
     @Published public var hfEndpointInput: String = ""
     /// What the running server last reported: bound host and port, attached
@@ -336,6 +354,9 @@ public final class AppModel: ObservableObject {
     /// Pinned embedding models the app can download (`EmbeddingCatalog`).
     /// Refreshed when an embedding field appears and after an install.
     @Published public var embeddingProfiles: [EmbeddingProfile] = []
+    /// Family verdicts for typed embedding model inputs, keyed by the
+    /// trimmed input (`refreshEmbeddingProbe`).
+    @Published public var embeddingProbes: [String: EmbeddingProbe] = [:]
     @Published public var memoryAutoCaptureEnabled = false
     var memorySchedulerTimer: Timer?
     var memoryCaptureTask: Task<Void, Never>?

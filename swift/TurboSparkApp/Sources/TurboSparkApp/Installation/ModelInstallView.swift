@@ -285,16 +285,14 @@ struct ModelRecommendationLoadingView: View {
     var body: some View {
         VStack(spacing: 8) {
             if let progress, progress.total > 0 {
-                ProgressView(value: progress.fraction)
-                    .progressViewStyle(.linear)
-                    .accessibilityValue(MetricFormat.percent(progress.fraction * 100))
+                AppProgressBar(value: progress.fraction,
+                               label: Text("Calculating hardware fit recommendations...", bundle: .module))
                 Text(MetricFormat.percent(progress.fraction * 100))
                     .themedFont(.tiny)
                     .monospacedDigit()
                     .foregroundStyle(.appSecondary)
             } else {
-                ProgressView()
-                    .progressViewStyle(.linear)
+                AppProgressBar(value: nil, label: Text("Calculating hardware fit recommendations...", bundle: .module))
             }
             Text("Calculating hardware fit recommendations...", bundle: .module)
                 .themedFont(.small)

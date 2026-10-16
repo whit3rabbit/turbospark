@@ -82,26 +82,9 @@ struct PromptComposerView: View {
         .padding(.horizontal, 14)
         .padding(.top, 12)
         .padding(.bottom, 10)
-        .background {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(theme.composerBackground)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .stroke(
-                            promptFocused
-                                ? theme.accent.opacity(0.55)
-                                : Color.primary.opacity(theme.isDark ? 0.18 : 0.14),
-                            lineWidth: promptFocused ? 1.5 : 1.0
-                        )
-                }
-                .shadow(
-                    color: Color.black.opacity(theme.isDark ? 0.28 : 0.08),
-                    radius: promptFocused ? 10 : 6,
-                    x: 0,
-                    y: 2
-                )
-        }
-        .tsAnimation(.easeInOut(duration: 0.15), value: promptFocused)
+        // The shared composer surface, edge only: the welcome screen's
+        // composer keeps its look without the accent halo.
+        .appComposerSurface(focused: promptFocused, halo: false)
         .fileImporter(
             isPresented: $isImportingDocuments,
             allowedContentTypes: model.attachmentContentTypes,

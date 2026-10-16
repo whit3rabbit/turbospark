@@ -79,13 +79,14 @@ extension AppModel {
             }
         }
         /// Sections that show a contextual panel beside the icon rail (the chat
-        /// list, the Audio page list). Every other section is rail-only, and
-        /// the window minimum must follow this rather than the raw sidebar
-        /// preference, or it reserves an empty panel's width there.
+        /// list, the Audio pages, the Images, Installed and API modes). Every
+        /// other section is rail-only, and the window minimum must follow this
+        /// rather than the raw sidebar preference, or it reserves an empty
+        /// panel's width there.
         public var hasSidebarPanel: Bool {
             switch self {
-            case .chat, .audio: return true
-            case .images, .files, .modelManager, .modelHub, .server, .humanize: return false
+            case .chat, .audio, .images, .modelManager, .server: return true
+            case .files, .modelHub, .humanize: return false
             }
         }
         /// Whether the Generation menu's Generate/Queue item may run the chat
