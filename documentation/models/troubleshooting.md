@@ -79,3 +79,23 @@ This guide addresses common issues encountered when probing, pulling, or running
 xattr -dr com.apple.quarantine /Applications/TurboSpark.app
 xattr -dr com.apple.quarantine ~/.turbospark
 ```
+
+---
+
+### 7. Hugging Face reports an access error
+
+**Solution**: For a gated repository, authenticate with `turbospark-model auth --set` or set `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` in the environment. Do not put the token in a command-line argument.
+
+---
+
+### 8. A pull runs out of disk space
+
+**Cause**: By default, completed download ranges stay in a cache until the install verifies. The cache and final install can occupy disk at the same time.
+
+**Solution**: On a disk-constrained machine, `TURBOSPARK_DISABLE_DOWNLOAD_CACHE=1` streams without retaining that extra copy. If the install is interrupted with caching disabled, the missing ranges must be downloaded again.
+
+---
+
+### 9. A recommendation says the model will not fit
+
+**Solution**: Run `turbospark-model recommend --context <tokens>` with the context you intend to use. Check [memory and capacity](memory-and-capacity.md) to understand the runtime allocation and disk-size estimates.

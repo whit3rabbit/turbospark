@@ -140,4 +140,4 @@ curl http://127.0.0.1:8080/v1/audio/transcriptions \
   -F model=whisper-base-en
 ```
 
-For the complete API route and schema index, see the [HTTP API Reference](../../api-reference/http/http.md) and [OpenAPI Specifications](../../api-reference/http/schemas.md).
+For the complete API route and schema index, see the [HTTP API Reference](../../api-reference/http.md) and [OpenAPI Specifications](../../api-reference/http/schemas.md).

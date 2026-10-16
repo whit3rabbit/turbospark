@@ -39,6 +39,7 @@ turbospark-server \
 | `--music-model <alias>`| None | Enables music generation endpoints (`/v1/audio/generate`). |
 | `--coreml-embedding-model <path>` | None | Offloads embeddings to Apple Core ML on the Neural Engine. |
 | `--expert-slots <N>` | `16` | Bounded slot-cache capacity per layer for MoE models. |
+| `--pool-size <N>` | `1` | Number of independent runners opened for the `--model` install. Each runner handles one generation at a time, so raise this to serve concurrent generations. Every runner pays its own memory, and a runner that does not fit refuses at startup. |
 
 ---
 

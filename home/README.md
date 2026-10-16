@@ -10,8 +10,8 @@ TurboSpark is a native macOS application and Rust inference workspace for runnin
 ## Choose a Path
 
 * [Install and Use the Desktop App](../documentation/getting-started/desktop.md): Multi-chat, Humanize text rewriting, Image generation, Audio Studio, and decision models.
-* [Integrate with the Rust Library](../api-reference/rust/rust/README.md): Low-level inference runtime, catalog exploration, tokenizer, and compute kernels.
-* [Use the Swift Bindings](../api-reference/swift/swift.md): Native Swift sessions, model management, embeddings, and in-process server runners.
+* [Integrate with the Rust Library](../api-reference/rust.md): Low-level inference runtime, catalog exploration, tokenizer, and compute kernels.
+* [Use the Swift Bindings](../api-reference/swift.md): Native Swift sessions, model management, embeddings, and in-process server runners.
 * [Connect to the Local HTTP API](../documentation/command-line-and-local-api/call-the-local-api.md): Standardized OpenAI- and Anthropic-compatible local endpoints.
 
 ---

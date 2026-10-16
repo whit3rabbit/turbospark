@@ -53,6 +53,6 @@ Welcome to the official TurboSpark documentation. TurboSpark is a native macOS a
 * [Server Configuration](command-line-and-local-api/server.md): Flags, ports, Tailnet binding, and authentication.
 * [Calling the Local API](command-line-and-local-api/call-the-local-api.md): Client integration examples in Python, TypeScript, and curl.
 
-### [API Reference](../../api-reference/http/http.md)
-* [HTTP REST API](../../api-reference/http/http.md): Complete wire endpoints reference.
+### [API Reference](../../api-reference/http.md)
+* [HTTP REST API](../../api-reference/http.md): Complete wire endpoints reference.
 * [OpenAPI Schemas](../../api-reference/http/schemas.md): Downloadable OpenAPI 3.1.0 specifications for unified and dedicated services.
