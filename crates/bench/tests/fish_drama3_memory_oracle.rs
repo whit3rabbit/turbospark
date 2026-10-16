@@ -46,9 +46,11 @@ use runtime::{ExpertCacheSlots, ExpertResidency};
 use turbospark_bench::memory::{chip_brand_string, AppMemorySampler};
 
 /// The whole-session `phys_footprint` ceiling, MiB: the measured peak plus 5
-/// percent, the rule the other rows use. `u64::MAX` means no row has been
-/// measured yet, and the test then reports the peak without asserting it.
-const CEILING_MIB: u64 = u64::MAX;
+/// percent, the rule the other rows use. The first reading (2026-10-16, M4
+/// Max, AC, release) was 6,106 MiB, 6,411 with the margin. `u64::MAX` means no
+/// row has been measured yet, and the test then reports the peak without
+/// asserting it.
+const CEILING_MIB: u64 = 6_411;
 
 /// Bytes of one generation chunk (`chunking::CHUNK_BYTES`). A text longer
 /// than twice this has at least three chunks, so the snapshot is restored at
