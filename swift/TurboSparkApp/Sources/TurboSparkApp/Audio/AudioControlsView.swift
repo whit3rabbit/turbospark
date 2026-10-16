@@ -121,7 +121,9 @@ struct AudioActionLabelStyle: LabelStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         if compact {
-            configuration.icon
+            // One width for every icon-only row action, so Play, Save As and
+            // Delete line up instead of each taking its glyph's width.
+            configuration.icon.frame(width: 18)
         } else {
             Label(title: { configuration.title }, icon: { configuration.icon })
         }

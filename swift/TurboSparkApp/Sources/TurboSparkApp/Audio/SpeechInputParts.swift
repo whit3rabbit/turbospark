@@ -31,16 +31,38 @@ extension CloneQuality {
 @MainActor
 struct VoiceCloneConsentControls: View {
     @ObservedObject var controller: AudioWorkspaceController
+    /// Keyboard focus for the checkbox, so the page can move it here.
+    var focus: FocusState<Bool>.Binding?
+    /// Called when the box is ticked with no valid reference. The Voice
+    /// Cloning page uses it to point at the reference card, so the box stays
+    /// pressable instead of sitting disabled with no explanation. Without it
+    /// the box is disabled until there is a reference, as in Advanced.
+    var onNeedsReference: (() -> Void)?
+
+    private var hasReference: Bool { controller.speechSettings.reference?.isValid == true }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Toggle(isOn: Binding(get: { controller.cloneConsentGiven }, set: { controller.setCloneConsent($0) })) {
-                Text("I have the right to use this voice", bundle: .module)
-            }
-            .disabled(controller.speechSettings.reference?.isValid != true)
+            toggle
             Text("Only clone your own voice or the voice of someone who agreed. Changing the reference clears this confirmation.", bundle: .module)
                 .themedFont(.small).foregroundStyle(.appSecondary)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    @ViewBuilder private var toggle: some View {
+        let base = Toggle(isOn: Binding(get: { controller.cloneConsentGiven }, set: { granted in
+            // Consent is for one exact clip, so there is nothing to grant yet.
+            if granted && !hasReference, let onNeedsReference { onNeedsReference(); return }
+            controller.setCloneConsent(granted)
+        })) {
+            Text("I have the right to use this voice", bundle: .module)
+        }
+        .disabled(!hasReference && onNeedsReference == nil)
+        if let focus {
+            base.focused(focus)
+        } else {
+            base
         }
     }
 }

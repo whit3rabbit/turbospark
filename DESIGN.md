@@ -50,7 +50,8 @@ Code lives in `swift/TurboSparkApp/Sources/TurboSparkApp` (below: `Sources/`).
 
 Build from these instead of local variants. They live in
 `Sources/Theme/AppControls.swift`, `Sources/Theme/AppSurfaces.swift`,
-`Sources/Theme/AppProgressBar.swift`, `Sources/Theme/AppPreferenceOptions.swift`,
+`Sources/Theme/AppProgressBar.swift`, `Sources/Theme/AppAttention.swift`,
+`Sources/Theme/AppWaveform.swift`, `Sources/Theme/AppPreferenceOptions.swift`,
 `Sources/Theme/AppStrings.swift` and `Sources/Theme/TurboSparkMotion.swift`.
 
 | Need | Use |
@@ -69,6 +70,8 @@ Build from these instead of local variants. They live in
 | A heading in a scrolling pane | `AppSectionHeader(title:subtitle:)` |
 | An empty list or workspace | `AppEmptyState(systemImage:title:message:) { actions }` |
 | Progress, determinate or not | `AppProgressBar(value:label:valueText:size:animated:)`, `animated: false` while paused |
+| A surface that still needs the user (missing input after they tried to go on) | `.appAttention(_:ping:radius:)` with an `AppAttentionNote` inside; bump `ping` only on the user's attempt |
+| A live input level, or a waveform that fills as work completes | `AppLevelWaveform(levels:)`, `AppFillWaveform(fill:rippling:)` |
 | Mode, Text Size, Language pickers | `AppearanceModeOptions()`, `TextSizeOptions()`, `LanguageOptions()` |
 | A localized `String` value | `AppStrings.localized("Key")` |
 | A section's panel beside the icon rail | `SidebarModePanel(title:groupLabel:selection:)`, or `SidebarPanelList` with `SidebarPanelRow` (`Sources/Chrome/SidebarPanelList.swift`) |
@@ -92,6 +95,13 @@ the same change, documented here. A second local copy is how the drift starts.
   reaches VoiceOver and the dialog, the red label only reaches sighted users.
 - A disabled control says why, in its tooltip or in adjacent text. The chat
   Send button is the reference.
+- When all that is missing is input the user can still give (a checkbox, a
+  script, a reference), do not leave the primary action dead. Keep it
+  pressable and let the press show what is missing: `.appAttention` on each
+  unfinished card, focus on the first, a VoiceOver announcement. Nothing is
+  flagged before the first attempt. Voice Cloning's Generate speech is the
+  reference. A blocker that is the app's own state (installing, no model, a
+  recording) still disables the button, since a press could not help.
 
 ### Asking for macOS access
 

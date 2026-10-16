@@ -5,7 +5,13 @@ import SwiftUI
 @MainActor
 struct VoiceCloneEngineCards: View {
     @ObservedObject var controller: AudioWorkspaceController
+    @ObservedObject var attention: VoiceCloneAttention
+    let missing: [VoiceCloneStep]
     var transcriptFocused: FocusState<Bool>.Binding
+    var consentFocused: FocusState<Bool>.Binding
+    /// Called when consent is asked for before there is a reference to
+    /// consent to, so the page can point at the reference card.
+    let needsReference: () -> Void
 
     private var locked: Bool { controller.isBusy || controller.hasRecordingActivity }
 
@@ -30,9 +36,17 @@ struct VoiceCloneEngineCards: View {
                     .accessibilityHidden(true)
                 AppSectionHeader(title: Text("Consent", bundle: .module))
             }
-            VoiceCloneConsentControls(controller: controller)
+            VoiceCloneConsentControls(controller: controller, focus: consentFocused, onNeedsReference: needsReference)
+            if attention.isOn(.consent, missing: missing), controller.speechSettings.reference?.isValid == true {
+                AppAttentionNote(message: Text("Confirm you have the right to use this voice.", bundle: .module))
+            } else if controller.speechSettings.reference?.isValid != true {
+                Label { Text("Add a reference voice first. Consent applies to that exact clip.", bundle: .module).fixedSize(horizontal: false, vertical: true) }
+                    icon: { Image(systemName: "info.circle") }
+                    .themedFont(.small).foregroundStyle(.appSecondary)
+            }
         }
         .tsAnimation(TSMotion.select, value: given)
+        .tsAnimation(TSMotion.select, value: attention.isOn(.consent, missing: missing))
         .disabled(locked)
         .appCardSurface()
         .overlay {
@@ -42,6 +56,7 @@ struct VoiceCloneEngineCards: View {
                     .allowsHitTesting(false)
             }
         }
+        .appAttention(attention.isOn(.consent, missing: missing), ping: attention.ping(.consent))
     }
 
     private var qualityCard: some View {
@@ -67,11 +82,15 @@ struct VoiceCloneEngineCards: View {
                     .background(.appPage.opacity(0.6), in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
                     .appFocusGlow(transcriptFocused.wrappedValue)
                     .transition(.opacity)
+                if attention.isOn(.transcript, missing: missing) {
+                    AppAttentionNote(message: Text("Enter the exact transcript of the selected reference region.", bundle: .module))
+                }
             }
         }
         .tsAnimation(TSMotion.pane, value: controller.speechSettings.embeddingOnly)
         .disabled(locked)
         .appCardSurface()
+        .appAttention(attention.isOn(.transcript, missing: missing), ping: attention.ping(.transcript))
     }
 
     private var qwenSettingsCard: some View {

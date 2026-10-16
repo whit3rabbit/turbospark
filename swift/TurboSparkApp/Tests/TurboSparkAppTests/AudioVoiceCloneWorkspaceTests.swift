@@ -236,4 +236,76 @@ final class AudioVoiceCloneWorkspaceTests: XCTestCase {
         XCTAssertEqual(peaks[5], 0.5, accuracy: 0.05, "the quieter first second draws at half height")
         XCTAssertEqual(peaks[35], 1, accuracy: 0.05)
     }
+
+    // MARK: Needs attention
+
+    @MainActor func testMissingStepsShrinkAsTheUserFillThemIn() async throws {
+        let controller = try await makeController()
+        defer { controller.shutdown() }
+        XCTAssertEqual(controller.voiceCloneMissingSteps, [.voice, .consent, .script])
+        controller.recipe.text = "Hello there."
+        XCTAssertEqual(controller.voiceCloneMissingSteps, [.voice, .consent])
+        let clip = try storedClip(controller, samples: Array(repeating: 0.1, count: 120_000))
+        controller.speechSettings.reference = AudioVoiceReference(sourceID: UUID(), title: "Voice", clips: [clip], duration: 3)
+        XCTAssertEqual(controller.voiceCloneMissingSteps, [.consent])
+        controller.setCloneConsent(true)
+        XCTAssertEqual(controller.voiceCloneMissingSteps, [], "generate is the result of the others, never one of them")
+    }
+
+    @MainActor func testRetrimmingTheReferenceFlagsConsentAgain() async throws {
+        let controller = try await makeController()
+        defer { controller.shutdown() }
+        controller.recipe.text = "Hello there."
+        let clip = try storedClip(controller, samples: Array(repeating: 0.1, count: 240_000))
+        controller.speechSettings.reference = AudioVoiceReference(sourceID: UUID(), title: "Voice", clips: [clip], duration: 4)
+        controller.setCloneConsent(true)
+        XCTAssertEqual(controller.voiceCloneMissingSteps, [])
+        controller.speechSettings.reference?.start = 1
+        XCTAssertEqual(controller.voiceCloneMissingSteps, [.consent], "consent lapses when the region changes")
+    }
+
+    func testGenerateStaysPressableOnlyForInputTheUserCanGive() {
+        let missing: [VoiceCloneStep] = [.consent]
+        XCTAssertTrue(AudioWorkspaceController.runNeedsInput(blocker: .invalid("Confirm"), missing: missing))
+        XCTAssertTrue(AudioWorkspaceController.runNeedsInput(blocker: .emptyScript, missing: [.script]))
+        for blocker in [VoiceCloneRunBlocker.recording, .importing, .installing, .noModel, .notInstalled, .runtimeUnavailable] {
+            XCTAssertFalse(AudioWorkspaceController.runNeedsInput(blocker: blocker, missing: missing),
+                           "\(blocker) is the app's own state, a press could not help")
+        }
+        XCTAssertFalse(AudioWorkspaceController.runNeedsInput(blocker: .invalid("Other"), missing: []),
+                       "an invalid setting with no missing step keeps its explanation and a disabled button")
+        XCTAssertFalse(AudioWorkspaceController.runNeedsInput(blocker: nil, missing: missing))
+    }
+
+    @MainActor func testAttentionShowsOnlyAfterAnAttemptAndOnlyForMissingSteps() {
+        let attention = VoiceCloneAttention()
+        let missing: [VoiceCloneStep] = [.voice, .consent]
+        XCTAssertFalse(attention.isOn(.consent, missing: missing), "an untouched page is calm")
+        attention.show([.voice, .consent])
+        XCTAssertTrue(attention.isOn(.consent, missing: missing))
+        XCTAssertFalse(attention.isOn(.script, missing: missing), "a finished or unflagged step stays calm")
+        XCTAssertFalse(attention.isOn(.consent, missing: [.voice]), "the edge follows the controller and clears when fixed")
+        XCTAssertEqual(attention.ping(.voice), 1)
+        attention.show([.voice])
+        XCTAssertEqual(attention.ping(.voice), 2, "every attempt pings again, even for a step already flagged")
+        XCTAssertEqual(attention.ping(.consent), 1)
+        attention.reset()
+        XCTAssertFalse(attention.isOn(.voice, missing: missing))
+    }
+
+    @MainActor func testStepsStripShowsFlaggedStepsAsNeedingAttention() {
+        let attention = VoiceCloneAttention()
+        let statuses = [VoiceCloneStepStatus(step: .voice, state: .done), VoiceCloneStepStatus(step: .consent, state: .todo),
+                        VoiceCloneStepStatus(step: .generate, state: .todo)]
+        XCTAssertEqual(attention.flagged(statuses, missing: [.consent]), statuses, "calm before an attempt")
+        attention.show([.consent])
+        let flagged = attention.flagged(statuses, missing: [.consent])
+        XCTAssertEqual(flagged.map(\.state), [.done, .attention, .todo])
+    }
+
+    func testLevelHistoryKeepsTheNewestLevelsAndClampsBadOnes() {
+        var history = [Float](repeating: 0, count: 4)
+        for level: Float in [0.2, 0.4, 3, -1, .nan, 0.9] { history = AppLevelWaveform.pushed(level, onto: history, count: 4) }
+        XCTAssertEqual(history, [1, 0, 0, 0.9])
+    }
 }

@@ -84,6 +84,30 @@ extension AudioWorkspaceController {
         return recipe.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .todo : .done
     }
 
+    /// The steps that still wait on the user's own input, in page order.
+    /// Generate is never one of them, it is the result of the others.
+    var voiceCloneMissingSteps: [VoiceCloneStep] {
+        voiceCloneSteps.filter { $0.step != .generate && $0.state != .done }.map(\.step)
+    }
+
+    /// True when Generate stays pressable although it cannot run, because the
+    /// only thing in the way is input the user can still give. Pressing it
+    /// then shows what is missing instead of sitting disabled. A blocker that
+    /// is the app's own state (installing, no model, a recording) keeps the
+    /// button disabled, since pressing it could not help.
+    var voiceCloneRunNeedsInput: Bool {
+        guard !canRun else { return false }
+        return Self.runNeedsInput(blocker: voiceCloneRunBlocker, missing: voiceCloneMissingSteps)
+    }
+
+    nonisolated static func runNeedsInput(blocker: VoiceCloneRunBlocker?, missing: [VoiceCloneStep]) -> Bool {
+        guard !missing.isEmpty, let blocker else { return false }
+        switch blocker {
+        case .emptyScript, .invalid: return true
+        case .recording, .importing, .installing, .noModel, .notInstalled, .runtimeUnavailable: return false
+        }
+    }
+
     var voiceCloneRunBlocker: VoiceCloneRunBlocker? {
         guard !isBusy, !isShutDown, !canRun else { return nil }
         if hasRecordingActivity { return .recording }

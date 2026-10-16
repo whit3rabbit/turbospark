@@ -31,6 +31,7 @@ struct VoiceCloneProgressCard: View {
                 Button { controller.cancel() } label: { Text("Cancel", bundle: .module) }
                     .appAction(.secondary, size: .small)
             }
+            waveform
             AppProgressBar(value: controller.progress, label: Text(verbatim: controller.status))
                 // A new stage starts its own bar instead of sliding back
                 // from the last stage's full fraction.
@@ -50,6 +51,23 @@ struct VoiceCloneProgressCard: View {
         }
         .shadow(color: theme.isHighContrast ? .clear : theme.accent.opacity(0.18), radius: 14, x: 0, y: 4)
         .accessibilityElement(children: .contain)
+    }
+
+    /// The speech taking shape. Nothing exists while the model loads and the
+    /// reference is prepared, so the bars only ripple; they fill with the
+    /// generation fraction, and are complete once the take is being saved.
+    private var waveform: some View {
+        let filled: Double
+        switch run.stage {
+        case .waiting, .loadingModel, .preparingReference: filled = 0
+        case .generating: filled = max(0, min(1, controller.progress ?? 0))
+        case .saving: filled = 1
+        }
+        return AppFillWaveform(fill: filled, rippling: run.stage != .generating && run.stage != .saving)
+            .padding(.horizontal, 10).padding(.vertical, 8)
+            .background(.appPage.opacity(0.6), in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous).stroke(.appBorder, lineWidth: 1))
+            .tsAnimation(TSMotion.hover, value: filled)
     }
 
     private var stageList: some View {

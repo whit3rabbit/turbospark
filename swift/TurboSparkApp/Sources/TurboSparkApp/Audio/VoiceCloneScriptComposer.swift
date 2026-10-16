@@ -6,9 +6,14 @@ import SwiftUI
 @MainActor
 struct VoiceCloneScriptComposer: View {
     @ObservedObject var controller: AudioWorkspaceController
+    @ObservedObject var attention: VoiceCloneAttention
+    let missing: [VoiceCloneStep]
     var scriptFocused: FocusState<Bool>.Binding
     let showPromptLibrary: () -> Void
     let savePrompt: () -> Void
+    /// Runs the job, or shows what is missing when only input is.
+    let generate: () -> Void
+    let showMissing: () -> Void
 
     @Environment(\.appTheme) private var theme
     @Environment(\.locale) private var locale
@@ -28,6 +33,10 @@ struct VoiceCloneScriptComposer: View {
             Text("Separate sections with a blank line.", bundle: .module)
                 .themedFont(.tiny).foregroundStyle(.appSecondary)
                 .padding(.horizontal, 16).padding(.bottom, 10)
+            if scriptNeedsAttention {
+                AppAttentionNote(message: scriptMessage)
+                    .padding(.horizontal, 16).padding(.bottom, 12)
+            }
             if controller.selectedProfile != nil {
                 Divider().opacity(0.6)
                 settingsRow.padding(.horizontal, 16).padding(.vertical, 10)
@@ -37,6 +46,16 @@ struct VoiceCloneScriptComposer: View {
                 .id(VoiceCloneStep.generate)
         }
         .appComposerSurface(focused: scriptFocused.wrappedValue)
+        .appAttention(scriptNeedsAttention, ping: attention.ping(.script), radius: AppMetrics.composerRadius)
+        .tsAnimation(TSMotion.select, value: scriptNeedsAttention)
+    }
+
+    private var scriptNeedsAttention: Bool { attention.isOn(.script, missing: missing) }
+
+    private var scriptMessage: Text {
+        controller.recipe.text.count > AudioWorkspaceController.speechTextCharacterLimit
+            ? Text("Split speech text longer than 6,000 characters into sections.", bundle: .module)
+            : Text("Write a script to generate speech.", bundle: .module)
     }
 
     private var header: some View {
@@ -87,10 +106,10 @@ struct VoiceCloneScriptComposer: View {
 
     private var actionRow: some View {
         ViewThatFits(in: .horizontal) {
-            HStack(spacing: 12) { libraryActions; Spacer(minLength: 12); blockerLabel; runButton }
+            HStack(spacing: 12) { libraryActions; Spacer(minLength: 12); statusLabel; runButton }
             VStack(alignment: .leading, spacing: 12) {
                 libraryActions
-                blockerLabel
+                statusLabel
                 runButton
             }
         }
@@ -109,8 +128,24 @@ struct VoiceCloneScriptComposer: View {
         .fixedSize()
     }
 
-    @ViewBuilder private var blockerLabel: some View {
-        if let reason = blockerText {
+    /// What stands between the user and a run, beside the button: "Ready" when
+    /// nothing, a "steps left" button when only their input does (it shows
+    /// them where), and otherwise the app's own reason.
+    @ViewBuilder private var statusLabel: some View {
+        if controller.canRun {
+            Label { Text("Ready to generate", bundle: .module) } icon: { Image(systemName: "checkmark.circle.fill") }
+                .themedFont(.small).foregroundStyle(.appSecondary)
+                .transition(.opacity)
+        } else if controller.voiceCloneRunNeedsInput {
+            Button(action: showMissing) {
+                Label { Text("Steps left: \(missing.count)", bundle: .module) } icon: { Image(systemName: "exclamationmark.triangle.fill") }
+            }
+            .appAction(.quiet, size: .small)
+            .foregroundStyle(AppAttention.color)
+            .help(Text("Show what is missing", bundle: .module))
+            .fixedSize()
+            .transition(.opacity)
+        } else if let reason = blockerText {
             Label { reason.fixedSize(horizontal: false, vertical: true) } icon: { Image(systemName: "info.circle") }
                 .themedFont(.small).foregroundStyle(.appSecondary)
                 .lineLimit(3)
@@ -119,13 +154,15 @@ struct VoiceCloneScriptComposer: View {
     }
 
     private var runButton: some View {
-        Button { controller.run() } label: {
+        Button(action: generate) {
             Label { Text("Generate speech", bundle: .module) } icon: { Image(systemName: "person.wave.2") }
         }
         .appAction(.primary, size: .large)
         .appPrimaryGlow(controller.canRun)
         .keyboardShortcut(.return, modifiers: .command)
-        .disabled(!controller.canRun)
+        // Stays pressable while only the user's input is missing, so a press
+        // can show what that is instead of leaving a dead button.
+        .disabled(!controller.canRun && !controller.voiceCloneRunNeedsInput)
         .help(blockerText ?? Text("Generate (Cmd+Return)", bundle: .module))
         .fixedSize()
     }

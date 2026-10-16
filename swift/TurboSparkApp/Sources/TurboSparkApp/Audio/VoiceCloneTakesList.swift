@@ -38,7 +38,13 @@ private struct VoiceCloneTakeRow: View {
     let take: AudioLibraryItem
 
     @Environment(\.appTheme) private var theme
+    @ObservedObject private var appearanceManager = AppearanceManager.shared
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @State private var hovered = false
+
+    private var reduceMotion: Bool {
+        appearanceManager.shouldReduceMotion(systemReduceMotion: systemReduceMotion)
+    }
 
     private var isSelected: Bool { controller.selectedID == take.id }
     private var isPlaying: Bool { isSelected && controller.isPlaying }
@@ -93,8 +99,18 @@ private struct VoiceCloneTakeRow: View {
     private var info: some View {
         Button { controller.select(take) } label: {
             VStack(alignment: .leading, spacing: 4) {
-                Text(verbatim: take.title).themedFont(.base, weight: isSelected ? .semibold : .regular)
-                    .lineLimit(1).truncationMode(.tail)
+                HStack(spacing: 6) {
+                    Text(verbatim: take.title).themedFont(.base, weight: isSelected ? .semibold : .regular)
+                        .lineLimit(1).truncationMode(.tail)
+                    if isPlaying {
+                        // A live cue next to the title: the bars run only while
+                        // this take plays, and hold still under Reduce Motion.
+                        Image(systemName: "waveform")
+                            .themedFont(.small).foregroundStyle(.appAccent)
+                            .symbolEffect(.variableColor.iterative, isActive: !reduceMotion)
+                            .accessibilityHidden(true)
+                    }
+                }
                 HStack(spacing: 10) {
                     Text(take.createdAt, format: .dateTime.month(.abbreviated).day().hour().minute())
                     Text(verbatim: audioTime(take.duration)).monospacedDigit()

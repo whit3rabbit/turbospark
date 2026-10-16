@@ -7,6 +7,8 @@ import UniformTypeIdentifiers
 @MainActor
 struct VoiceReferenceCard: View {
     @ObservedObject var controller: AudioWorkspaceController
+    @ObservedObject var attention: VoiceCloneAttention
+    let missing: [VoiceCloneStep]
     @ObservedObject private var permissions = RecordingPermissions.shared
     @State private var showingPicker = false
     @State private var dropTargeted = false
@@ -27,17 +29,23 @@ struct VoiceReferenceCard: View {
             } else {
                 dropZone.transition(.opacity)
             }
-            if let reason = unavailableReason {
+            if needsAttention {
+                AppAttentionNote(message: Text("Choose 1 to 30 seconds of reference speech.", bundle: .module))
+            } else if let reason = unavailableReason {
                 Label { reason.fixedSize(horizontal: false, vertical: true) } icon: { Image(systemName: "info.circle") }
                     .themedFont(.small).foregroundStyle(.appSecondary)
             }
         }
         .tsAnimation(TSMotion.pane, value: controller.speechSettings.reference == nil)
         .tsAnimation(TSMotion.pane, value: controller.isRecordingVoiceReference)
+        .tsAnimation(TSMotion.select, value: needsAttention)
         .appCardSurface()
+        .appAttention(needsAttention, ping: attention.ping(.voice))
         .sheet(isPresented: $showingPicker) { VoiceReferencePickerSheet(controller: controller) }
         .recordingAccessGate($accessRequest, permissions: permissions)
     }
+
+    private var needsAttention: Bool { attention.isOn(.voice, missing: missing) }
 
     /// Recording starts only once macOS allows the microphone: the capture
     /// layer checks access and never prompts, so a missing grant goes through
@@ -144,6 +152,7 @@ struct VoiceReferenceCard: View {
                     ? controller.recordingSeconds / AudioWorkspaceController.voiceReferenceRecordingLimit : nil,
                 label: Text("Recording", bundle: .module),
                 valueText: Text(verbatim: audioTime(controller.recordingSeconds)))
+            VoiceReferenceLiveLevels(controller: controller)
             HStack(spacing: 8) {
                 Image(systemName: "mic.fill").themedFont(.tiny).foregroundStyle(.appSecondary).accessibilityHidden(true)
                 AppProgressBar(value: Double(max(0, min(1, controller.inputLevel))), label: Text("Input level", bundle: .module),
@@ -295,5 +304,37 @@ private struct VoiceReferenceDetails: View {
             .appAction(.quiet, size: .small)
             .disabled(!editable)
         }
+    }
+}
+
+/// The live picture of what the microphone hears while a reference records:
+/// the last couple of seconds of input level, scrolling toward the trailing
+/// edge. The meter below it carries the value for VoiceOver.
+@MainActor
+private struct VoiceReferenceLiveLevels: View {
+    @ObservedObject var controller: AudioWorkspaceController
+
+    @ObservedObject private var appearanceManager = AppearanceManager.shared
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @State private var levels = [Float](repeating: 0, count: Self.barCount)
+
+    private static let barCount = 56
+
+    private var reduceMotion: Bool {
+        appearanceManager.shouldReduceMotion(systemReduceMotion: systemReduceMotion)
+    }
+
+    var body: some View {
+        AppLevelWaveform(levels: levels)
+            .padding(.horizontal, 10).padding(.vertical, 8)
+            .background(.appPage.opacity(0.6), in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous).stroke(.appBorder, lineWidth: 1))
+            // Sampling runs only while this view exists, which is only while
+            // a reference records. Reduce Motion samples slowly so the bars
+            // step instead of streaming.
+            .onReceive(Timer.publish(every: reduceMotion ? 0.25 : 0.06, on: .main, in: .common).autoconnect()) { _ in
+                guard controller.isRecording else { return }
+                levels = AppLevelWaveform.pushed(controller.inputLevel, onto: levels, count: Self.barCount)
+            }
     }
 }

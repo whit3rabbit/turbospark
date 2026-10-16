@@ -19,9 +19,12 @@ struct VoiceCloneWorkspaceView: View {
     @Environment(\.appTheme) private var theme
     @FocusState private var scriptFocused: Bool
     @FocusState private var transcriptFocused: Bool
+    @FocusState private var consentFocused: Bool
     @AccessibilityFocusState private var focusedStep: VoiceCloneStep?
+    @StateObject private var attention = VoiceCloneAttention()
 
     private var scale: CGFloat { AppMetrics.textScale(theme) }
+    private var missing: [VoiceCloneStep] { controller.voiceCloneMissingSteps }
 
     var body: some View {
         GeometryReader { geometry in
@@ -45,7 +48,7 @@ struct VoiceCloneWorkspaceView: View {
     private func twoColumns(_ proxy: ScrollViewProxy) -> some View {
         HStack(alignment: .top, spacing: 24) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) { setupCards }
+                VStack(alignment: .leading, spacing: 16) { setupCards(proxy) }
                     .padding(.vertical, 24)
             }
             .frame(minWidth: (300 * scale).rounded(), idealWidth: (360 * scale).rounded(), maxWidth: (440 * scale).rounded())
@@ -65,8 +68,8 @@ struct VoiceCloneWorkspaceView: View {
             VStack(alignment: .leading, spacing: 20) {
                 description.foregroundStyle(.appSecondary).fixedSize(horizontal: false, vertical: true)
                 stepsStrip(proxy)
-                setupCards
-                workContent
+                setupCards(proxy)
+                workContent(proxy)
             }
             .padding(24)
         }
@@ -74,13 +77,15 @@ struct VoiceCloneWorkspaceView: View {
 
     /// Reference, engine cards and model. The model comes first until one
     /// is chosen, because the engine decides which cards follow.
-    @ViewBuilder private var setupCards: some View {
+    @ViewBuilder private func setupCards(_ proxy: ScrollViewProxy) -> some View {
         if controller.selectedProfile == nil { modelCard.tsEntrance() }
-        VoiceReferenceCard(controller: controller)
+        VoiceReferenceCard(controller: controller, attention: attention, missing: missing)
             .id(VoiceCloneStep.voice)
             .accessibilityFocused($focusedStep, equals: .voice)
             .tsEntrance(delay: 0.04)
-        VoiceCloneEngineCards(controller: controller, transcriptFocused: $transcriptFocused)
+        VoiceCloneEngineCards(controller: controller, attention: attention, missing: missing,
+                              transcriptFocused: $transcriptFocused, consentFocused: $consentFocused,
+                              needsReference: { show([.voice], proxy: proxy) })
             .tsEntrance(delay: 0.08)
         if controller.selectedProfile != nil { modelCard.tsEntrance(delay: 0.12) }
     }
@@ -89,13 +94,16 @@ struct VoiceCloneWorkspaceView: View {
         Group {
             description.foregroundStyle(.appSecondary).fixedSize(horizontal: false, vertical: true)
             stepsStrip(proxy).tsEntrance()
-            workContent
+            workContent(proxy)
         }
     }
 
-    @ViewBuilder private var workContent: some View {
-        VoiceCloneScriptComposer(controller: controller, scriptFocused: $scriptFocused,
-                                 showPromptLibrary: showPromptLibrary, savePrompt: savePrompt)
+    @ViewBuilder private func workContent(_ proxy: ScrollViewProxy) -> some View {
+        VoiceCloneScriptComposer(controller: controller, attention: attention, missing: missing,
+                                 scriptFocused: $scriptFocused,
+                                 showPromptLibrary: showPromptLibrary, savePrompt: savePrompt,
+                                 generate: { attemptRun(proxy) },
+                                 showMissing: { show(missing, proxy: proxy) })
             .id(VoiceCloneStep.script)
             .tsEntrance(delay: 0.04)
         AudioScriptSections(controller: controller)
@@ -116,18 +124,46 @@ struct VoiceCloneWorkspaceView: View {
     }
 
     private func stepsStrip(_ proxy: ScrollViewProxy) -> some View {
-        VoiceCloneStepsStrip(steps: controller.voiceCloneSteps) { step in
+        VoiceCloneStepsStrip(steps: attention.flagged(controller.voiceCloneSteps, missing: missing)) { step in
+            // A step that still needs the user also gets the ping, so the
+            // strip doubles as "show me where".
+            if missing.contains(step) { attention.show([step]) }
             go(to: step, proxy: proxy)
         }
+    }
+
+    /// Generate is pressable while only the user's own input is missing.
+    /// With everything in place it runs; otherwise it shows what is missing.
+    private func attemptRun(_ proxy: ScrollViewProxy) {
+        guard !controller.canRun else {
+            attention.reset()
+            controller.run()
+            return
+        }
+        guard controller.voiceCloneRunNeedsInput, !missing.isEmpty else { return }
+        show(missing, proxy: proxy)
+    }
+
+    /// Flags `steps`, moves to the first, and says so for VoiceOver, which
+    /// would otherwise hear nothing from a press that starts no run.
+    private func show(_ steps: [VoiceCloneStep], proxy: ScrollViewProxy) {
+        guard let first = steps.first else { return }
+        attention.show(steps)
+        go(to: first, proxy: proxy)
+        let names = steps.map(VoiceCloneAttention.name(of:)).joined(separator: ", ")
+        _ = AccessibilityNotification.Announcement.post(.init(AppStrings.localized("Cannot generate yet. Needs attention: \(names)")))
     }
 
     /// Scrolls to a step's section and moves focus into it: keyboard focus
     /// for the editors, VoiceOver focus for the cards.
     private func go(to step: VoiceCloneStep, proxy: ScrollViewProxy) {
-        TSMotion.animate(TSMotion.pane) { proxy.scrollTo(step, anchor: .top) }
+        TSMotion.animate(TSMotion.pane) { proxy.scrollTo(step, anchor: .center) }
         switch step {
         case .script: scriptFocused = true
         case .transcript: transcriptFocused = true
+        case .consent:
+            consentFocused = true
+            focusedStep = step
         default: focusedStep = step
         }
     }
