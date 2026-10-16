@@ -527,7 +527,21 @@ impl Server {
     pub(crate) fn attach_embedding_model(&self, model_arg: &str) -> Result<String, String> {
         #[cfg(target_os = "macos")]
         {
-            let dir = catalog::resolve_model_arg(model_arg);
+            // The same verdict the host saw from `ts_embedding_probe_json`:
+            // refused families never reach a loader, and an alias resolves
+            // only to an install of its current pin.
+            let probe = crate::embedding_probe::probe(model_arg);
+            let dir = match (probe.runnable, probe.resolved_path) {
+                (true, Some(dir)) => dir,
+                _ => {
+                    return Err(format!(
+                        "cannot serve {model_arg} as an embedding model: {}",
+                        probe
+                            .refused_because
+                            .unwrap_or_else(|| "not a supported embedding model".into())
+                    ))
+                }
+            };
             let model = turbospark_server::open_embedding_model(&dir, model_arg.to_string())
                 .map_err(|e| {
                     format!("failed to open embedding model from {}: {e}", dir.display())
@@ -672,6 +686,7 @@ impl Server {
             // has nothing attached, which is a state a host can start one in.
             model_id: ids.first().cloned().unwrap_or_default(),
             models: ids,
+            embedding_models: self.registry.embedding_ids(),
             image_models: self.image_bridge.model().into_iter().collect(),
             audio_models,
             auth_enabled: self.auth_enabled,

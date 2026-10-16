@@ -124,6 +124,9 @@ public struct ServerInfo: Decodable, Sendable, Equatable {
     /// Aliases stay out of this field so a host can use an attach result to
     /// identify and detach exactly one session.
     public let models: [String]
+    /// The ids in `models` that serve `/v1/embeddings`. They stay in
+    /// `models` too, since a host detaches by those ids.
+    public let embeddingModels: [String]
     public let imageModels: [String]
     public let audioModels: [String]
     public let authEnabled: Bool
@@ -133,7 +136,8 @@ public struct ServerInfo: Decodable, Sendable, Equatable {
     /// Spelled out because a hand-written `init(from:)` suppresses the
     /// synthesized one.
     private enum CodingKeys: String, CodingKey {
-        case port, host, modelId, models, imageModels, audioModels, authEnabled, uptimeSeconds, traffic
+        case port, host, modelId, models, embeddingModels, imageModels, audioModels, authEnabled
+        case uptimeSeconds, traffic
     }
 
     /// Decoded tolerantly for the two fields added after this struct
@@ -149,6 +153,7 @@ public struct ServerInfo: Decodable, Sendable, Equatable {
         modelId = try c.decode(String.self, forKey: .modelId)
         models = try c.decodeIfPresent([String].self, forKey: .models)
             ?? (modelId.isEmpty ? [] : [modelId])
+        embeddingModels = try c.decodeIfPresent([String].self, forKey: .embeddingModels) ?? []
         imageModels = try c.decodeIfPresent([String].self, forKey: .imageModels) ?? []
         audioModels = try c.decodeIfPresent([String].self, forKey: .audioModels) ?? []
         authEnabled = try c.decode(Bool.self, forKey: .authEnabled)

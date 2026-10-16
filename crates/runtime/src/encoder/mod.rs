@@ -18,6 +18,77 @@ use model_io::safetensors::SafetensorsFile;
 use tokenizer::Tokenizer;
 use weights::EncoderWeights;
 
+/// `config.json` `model_type` values this runner implements: post-LN BERT
+/// and XLM-RoBERTa with CLS pooling. Other encoders (GTE, Nomic BERT, the
+/// Gemma3 behind EmbeddingGemma) differ in attention, positions or pooling
+/// and would load and return fluent, wrong vectors, so the family is checked
+/// from `config.json` before any weights are read, never inferred from
+/// tensor names.
+pub const SUPPORTED_MODEL_TYPES: &[&str] = &["bert", "xlm-roberta"];
+
+/// The supported `model_type` named by `config`, or why it is refused. A
+/// missing `model_type` is refused rather than assumed to be BERT.
+pub fn check_model_type(config: &serde_json::Value) -> Result<&'static str, String> {
+    match config.get("model_type").and_then(|v| v.as_str()) {
+        None => Err(
+            "config.json names no model_type; the encoder runner needs bert or xlm-roberta"
+                .into(),
+        ),
+        Some(t) => SUPPORTED_MODEL_TYPES
+            .iter()
+            .find(|s| **s == t)
+            .copied()
+            .ok_or_else(|| {
+                format!("model_type {t:?} is not supported by the encoder runner (bert or xlm-roberta only)")
+            }),
+    }
+}
+
+/// sentence-transformers pooling modes other than CLS. Any of them set in
+/// `1_Pooling/config.json` means the checkpoint was trained for a pooling
+/// this runner does not compute.
+const NON_CLS_POOLING: &[&str] = &[
+    "pooling_mode_mean_tokens",
+    "pooling_mode_max_tokens",
+    "pooling_mode_mean_sqrt_len_tokens",
+    "pooling_mode_weightedmean_tokens",
+    "pooling_mode_lasttoken",
+];
+
+/// Refuses a sentence-transformers pooling config that is not CLS-only
+/// (e5, all-MiniLM and other mean-pooled BERTs report `model_type: bert`).
+/// A directory without `1_Pooling/` passes: the arctic-embed MLX
+/// conversions ship none.
+pub fn check_pooling(model_dir: &Path) -> Result<(), String> {
+    let path = model_dir.join("1_Pooling").join("config.json");
+    let text = match fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("failed to read {}: {e}", path.display())),
+    };
+    let v: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| format!("failed to parse {}: {e}", path.display()))?;
+    let set = |k: &str| v.get(k).and_then(|x| x.as_bool()) == Some(true);
+    if set("pooling_mode_cls_token") && !NON_CLS_POOLING.iter().any(|k| set(k)) {
+        Ok(())
+    } else {
+        Err("the model's sentence-transformers pooling is not CLS; the encoder runner pools the CLS token only".into())
+    }
+}
+
+/// Family and pooling checks for an encoder directory, before any weights
+/// are opened. Returns the `model_type`.
+pub fn check_encoder_dir(model_dir: &Path) -> Result<&'static str, String> {
+    let config_path = model_dir.join("config.json");
+    let text = fs::read_to_string(&config_path)
+        .map_err(|e| format!("failed to read {}: {e}", config_path.display()))?;
+    let v: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| format!("failed to parse {}: {e}", config_path.display()))?;
+    let model_type = check_model_type(&v)?;
+    check_pooling(model_dir)?;
+    Ok(model_type)
+}
+
 /// Runtime runner for BERT / XLM-RoBERTa encoder embedding models.
 pub struct EncoderRunner {
     pub config: EncoderConfig,
@@ -29,6 +100,7 @@ impl EncoderRunner {
     /// Open an encoder model from a directory containing `config.json`,
     /// `model.safetensors`, and optionally `tokenizer.json`.
     pub fn open(model_dir: &Path) -> Result<Self, String> {
+        check_encoder_dir(model_dir)?;
         let config_path = model_dir.join("config.json");
         let config_str = fs::read_to_string(&config_path)
             .map_err(|e| format!("failed to read {}: {e}", config_path.display()))?;

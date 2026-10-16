@@ -6,6 +6,8 @@
 
 mod config;
 #[cfg(target_os = "macos")]
+pub mod embedding_probe;
+#[cfg(target_os = "macos")]
 pub mod encoder;
 mod error;
 mod expert_layout_validation;
@@ -13,6 +15,8 @@ mod expert_layout_validation;
 mod families;
 #[cfg(target_os = "macos")]
 mod ffn_hist;
+#[cfg(target_os = "macos")]
+mod hidden_trunk;
 #[cfg(target_os = "macos")]
 mod kernel_warmup;
 #[cfg(target_os = "macos")]
@@ -26,8 +30,6 @@ mod power;
 mod producer;
 mod raw_completion;
 mod raw_completion_chunked;
-#[cfg(target_os = "macos")]
-mod hidden_trunk;
 #[cfg(target_os = "macos")]
 mod real_forward;
 #[cfg(target_os = "macos")]
@@ -119,6 +121,8 @@ pub use families::qwen::{
 };
 #[cfg(target_os = "macos")]
 pub use gpu::MetalCompilationStats;
+#[cfg(target_os = "macos")]
+pub use hidden_trunk::{HiddenTrunk, PrefixSnapshot, TrunkRow};
 pub use power::{
     low_power_mode_enabled, memory_cap, memory_pressure, physical_memory, rate_control_for,
     recommended_max_working_set, resolve_profile, stepped_cap, thermal_cap, thermal_level,
@@ -137,8 +141,6 @@ pub use raw_completion::{
 pub use real_forward::{
     dispatch_profile_report, PhaseCounters, RealForwardError, RealForwardRunner, RollbackPoint,
 };
-#[cfg(target_os = "macos")]
-pub use hidden_trunk::{HiddenTrunk, PrefixSnapshot, TrunkRow};
 #[cfg(target_os = "macos")]
 pub use real_forward_init::{resolve_expert_residency, resolve_expert_residency_for_install};
 #[cfg(target_os = "macos")]
@@ -176,6 +178,8 @@ pub mod kokoro;
 pub mod megatts3;
 #[cfg(target_os = "macos")]
 pub mod music3;
+#[cfg(target_os = "macos")]
+pub mod omnivoice;
 #[cfg(target_os = "macos")]
 pub use kokoro::KokoroRunner;
 pub use music3::{DispatchStat, Music3Runner};

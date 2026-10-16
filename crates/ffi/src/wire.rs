@@ -812,6 +812,9 @@ pub struct ServerInfo {
     /// intentionally absent here, so a host can keep using the id returned
     /// by attach to identify and detach its session.
     pub models: Vec<String>,
+    /// The ids in `models` that serve `/v1/embeddings`. They stay in
+    /// `models` too, since hosts detach by those ids.
+    pub embedding_models: Vec<String>,
     pub image_models: Vec<String>,
     pub audio_models: Vec<String>,
     pub auth_enabled: bool,

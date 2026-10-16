@@ -1000,6 +1000,9 @@ void ts_server_stop(TsServer *server);
  * ("" when none), kept for a reader written when a server could serve only
  * one; on a two-model server it is half the truth, so show "models".
  *
+ * "embeddingModels" is the subset of "models" that serves /v1/embeddings
+ * (they stay in "models", since hosts detach by those ids).
+ *
  * "imageModels" and "audioModels" are the attached image and audio model ids,
  * in the same canonical form as "models". "authEnabled" is whether an apiKey
  * is required. "traffic" carries the transport counters (and, when the server
@@ -1447,21 +1450,42 @@ int32_t ts_embedding_encode_request_json(const char *model_path,
  * Pinned embedding profiles (crates/catalog/src/embedding_models.json).
  * Writes a JSON array to *out (free with ts_string_free); each row has
  * alias, display_name, family, backend, repository, revision, license,
- * modalities, dimensions, matryoshka_dims, download_bytes, installed_path
- * (null until a verified install exists), can_run and unavailable_reason.
- * An installed alias works anywhere an embedding model path is accepted.
+ * modalities, dimensions, matryoshka_dims, status ("verified", "runs" or
+ * "caveat"), gates (the test targets behind "verified"), download_bytes,
+ * installed_path (null until an install verifies against the CURRENT pin),
+ * install_state ("current", "stale" = older pin or damaged and replaced by a
+ * download, "foreign" = refused by a download, or "absent"),
+ * install_problem (why not, in words), can_run and unavailable_reason. An installed alias works anywhere an embedding model
+ * path is accepted.
  */
 int32_t ts_embedding_catalog_json(char **out);
 
 /*
+ * The verdict for one embedding model argument (a pinned alias or a
+ * directory), without loading it. Writes to *out:
+ *   {"input", "resolved_path", "runnable", "family", "backend",
+ *    "verified", "profile_alias", "refused_because"}
+ * Runnable families: the Core ML EmbeddingGemma 2 export, and BERT or
+ * XLM-RoBERTa encoders (config.json model_type) with CLS pooling. Others are
+ * refused with a reason. "verified" is true only for the verified install of
+ * a catalog profile whose status is "verified". Every embedding open and
+ * server attach applies the same check.
+ */
+int32_t ts_embedding_probe_json(const char *model_path, char **out);
+
+/*
  * Downloads, verifies (size and SHA-256 per file) and installs one pinned
  * embedding profile into models/embeddings/<alias> of the default store.
- * Progress arrives as TS_INSTALL_BYTES; ts_install_cancel stops it with
- * TS_ERR_CANCELLED. Refuses an existing install. Writes
+ * `revision` must be the catalog's current pin for `alias` (the one the host
+ * showed), else TS_ERR_INVALID_ARGUMENT before any work. Refuses an install
+ * that already verifies and a folder TurboSpark did not write; replaces an
+ * older pin of the same alias. Progress arrives as TS_INSTALL_BYTES;
+ * ts_install_cancel stops it with TS_ERR_CANCELLED. Writes
  * {"alias", "path"} to *out.
  */
-int32_t ts_embedding_install(const char *alias, TsInstallCallback callback,
-                             void *userdata, char **out);
+int32_t ts_embedding_install(const char *alias, const char *revision,
+                             TsInstallCallback callback, void *userdata,
+                             char **out);
 
 /*
  * Document OCR on Core ML (Unlimited OCR, macOS 15+).
@@ -1473,9 +1497,27 @@ int32_t ts_embedding_install(const char *alias, TsInstallCallback callback,
  */
 typedef struct TsOcrSession TsOcrSession;
 
+/*
+ * Pinned OCR profiles (crates/catalog/src/ocr_models.json). Writes a JSON
+ * array to *out: alias, display_name, family, backend, repository,
+ * revision, license, download_bytes, installed_path (null until an install
+ * verifies against the current pin), can_run and unavailable_reason.
+ */
+int32_t ts_ocr_catalog_json(char **out);
+
+/*
+ * Downloads, verifies and installs one pinned OCR profile into
+ * models/ocr/<alias> of the default store, under the same revision,
+ * refusal and replacement rules as ts_embedding_install. Writes
+ * {"alias", "path"} to *out.
+ */
+int32_t ts_ocr_install(const char *alias, const char *revision,
+                       TsInstallCallback callback, void *userdata, char **out);
+
 /* Opens a directory holding UnlimitedOcrPageEncoder.mlpackage,
  * UnlimitedOcrDecoder.mlpackage, embeddings.f16, tokenizer.json and
- * config.json. The first open compiles the decoder for this machine. */
+ * config.json, or a pinned OCR alias (resolved only to an install of its
+ * current pin). The first open compiles the decoder for this machine. */
 int32_t ts_ocr_open(const char *model_path, TsOcrSession **out);
 
 /* Closes a session. Not while a read is in flight. NULL is a no-op. */

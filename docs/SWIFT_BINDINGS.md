@@ -1475,7 +1475,7 @@ exactly three tasks:
 | Task (`AudioTask`) | Family reached today | Notes |
 |---|---|---|
 | `.speechToText` | Whisper | Catalog install (`whisper-base`) or a chosen folder. Qwen3-ASR also opens, from the app's Advanced page, behind an explicit portable or experimental-Metal opt-in and a local folder. |
-| `.textToSpeech` | Kokoro, MegaTTS3 | Kokoro: portable CPU path behind an explicit opt-in at the time of writing; the current backend list is in `crates/audio/MODELS.md`. MegaTTS3 clones a voice: see [Voice cloning](#voice-cloning). |
+| `.textToSpeech` | Kokoro, MegaTTS3, OmniVoice | Kokoro: portable CPU path behind an explicit opt-in at the time of writing; the current backend list is in `crates/audio/MODELS.md`. MegaTTS3 and OmniVoice clone a voice: see [Voice cloning](#voice-cloning). OmniVoice is multilingual (auto voice without a reference) and runs on the portable CPU path behind the same opt-in. |
 | `.music` | MiniMax Music 3 | Catalog install covers `minimax-music3-4bit`. |
 
 `AudioTask` has ten cases because the catalog and capability rows describe
@@ -1518,10 +1518,13 @@ result.
 ### Voice cloning
 
 A profile whose `capabilities.supportsVoiceClone` is true (operation
-`voice_clone`; MegaTTS3) clones from reference audio passed as the job's PCM.
-The request names its rate and carries the user's consent; the runtime refuses
-a cloning request without `consent`, a reference outside 1 to 30 seconds, or a
-`referenceText` or `instruction` (the model aligns the reference itself).
+`voice_clone`; MegaTTS3 and OmniVoice) clones from reference audio passed as
+the job's PCM. The request names its rate and carries the user's consent; the
+runtime refuses a cloning request without `consent` or a reference outside 1
+to 30 seconds. MegaTTS3 additionally refuses a `referenceText` or
+`instruction` (it aligns the reference itself); OmniVoice reads `referenceText`
+(the transcript prepended to the script) and `instruction` (a delivery cue in
+the style prefix, at most 512 bytes), and refuses MegaTTS3's `pW`/`tW`.
 
 ```swift
 var request = AudioRequest(task: .textToSpeech, language: "en")
@@ -1531,7 +1534,9 @@ request.consent = true                 // the user has the right to use this voi
 request.steps = 16                     // Balanced (Fast is 8, Best is 32). Send it,
                                        // because an omitted steps is the request type's 30
 request.pW = 1.4; request.tW = 3.0     // intelligibility and similarity weights
-request.speed = 1.0                    // scales durations
+                                       // (MegaTTS3 only; OmniVoice refuses both)
+request.speed = 1.0                    // scales MegaTTS3 durations; divides OmniVoice's
+                                       // estimated length
 let result = try await session.execute(request, pcm: reference24k) { progress in ... }
 ```
 
@@ -1539,11 +1544,15 @@ Progress stages are `reference` (preparing the voice; skipped when the session
 already prepared this exact reference and seed) and `diffusion` (completed of
 total steps across text chunks). MegaTTS3's declared backend is `metal`, and a
 session opens it on Metal with no opt-in. `allowPortable` lets it fall back to
-the CPU reference path only when Metal cannot open.
+the CPU reference path only when Metal cannot open. OmniVoice is portable CPU
+only (about 23 times slower than realtime measured): its session opens with
+the same explicit portable opt-in Kokoro uses, and without it the open is
+refused by name.
 
 Some catalog profiles list install terms in `requiredAcknowledgments` (MegaTTS3:
-its encoder's unverified provenance). Show them and pass the accepted ids:
-`AudioCatalog.install(identity, acknowledged: ids)`. The native installer
+its encoder's unverified provenance; OmniVoice: the bundled Higgs tokenizer is
+Boson AI's community-licensed model, not Apache-licensed). Show them and pass
+the accepted ids: `AudioCatalog.install(identity, acknowledged: ids)`. The native installer
 refuses before any download when an id is missing, and `install(identity)`
 passes none.
 
