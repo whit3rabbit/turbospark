@@ -51,6 +51,7 @@ extension AudioWorkspaceController {
         session = nil; sessionKey = nil; modelAccessURL = nil
         let oldQwen = qwenModel
         qwenModel = nil
+        fluidTranscriber = nil
         loadedModelAlias = nil
         Task { [weak self] in
             let result = await Task.detached { () -> Result<Void, Error> in

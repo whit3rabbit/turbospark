@@ -3222,8 +3222,12 @@ mod tests {
             asset.size = pin.bytes;
             asset.sha256 = pin.sha256.clone();
         }
-        profile.identity.asset_fingerprint =
-            asset_fingerprint(&profile.assets, &profile.frontend, profile.install_subdir.as_deref()).unwrap();
+        profile.identity.asset_fingerprint = asset_fingerprint(
+            &profile.assets,
+            &profile.frontend,
+            profile.install_subdir.as_deref(),
+        )
+        .unwrap();
         let identity = profile.identity.clone();
         (
             catalog,

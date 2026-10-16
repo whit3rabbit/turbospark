@@ -110,8 +110,16 @@ extension AudioWorkspaceController {
                 self.status = AppStrings.localized("Loading model")
                 self.speechRun?.enter(.loadingModel)
                 let provider = AudioRuntimeProvider(profile)
-                // Only Rust rows open a native session. No FluidAudio family
-                // has an adapter yet, so routing keeps them out of the picker.
+                // FluidAudio runs speech recognition only. Its other families
+                // have no adapter, so routing keeps them out of the picker.
+                if case .fluidAudio(let family) = provider, currentTask == .speechToText {
+                    guard let selected else { throw AudioWorkspaceError.message(AppStrings.localized("Import or select a recording first.")) }
+                    try await self.transcribeWithFluidAudio(item: selected, into: result.id, profile: profile, family: family, source: .final, token: token)
+                    guard self.valid(token) else { return }
+                    try self.persistMutation(result.id) { $0.status = .completed; $0.updatedAt = Date() }
+                    self.status = AppStrings.localized("Saved in this profile")
+                    return
+                }
                 if provider != .rust && provider != .qwenMLX {
                     throw AudioWorkspaceError.message(AppStrings.localized("Runtime unavailable"))
                 }
@@ -233,6 +241,16 @@ extension AudioWorkspaceController {
         var words: [ClosedRange<Double>]
     }
     @discardableResult func transcribe(item: AudioLibraryItem, into id: UUID, session: AudioSession, request: AudioRequest, source: AudioTranscriptRevision.Source, token: UUID) async throws -> Transcription {
+        let windows = AudioTranscriptionPlan.windows(duration: item.duration, length: 30, overlap: 1)
+        return try await transcribe(item: item, into: id, windows: windows, source: source, token: token) { pcm, _ in
+            try await session.execute(request, pcm: pcm).transcript
+        }
+    }
+    /// The window loop every recognizer shares: read each planned window,
+    /// let `run` transcribe it, place its segments at the window's offset, and
+    /// save once at the end.
+    @discardableResult func transcribe(item: AudioLibraryItem, into id: UUID, windows: [AudioTranscriptionWindow], source: AudioTranscriptRevision.Source, token: UUID,
+                    run: (_ pcm: [Float], _ window: AudioTranscriptionWindow) async throws -> AudioTranscript?) async throws -> Transcription {
         var segments: [AudioLibrarySegment] = []
         var native: [AudioTranscript] = []
         var words: [ClosedRange<Double>] = []
@@ -240,14 +258,14 @@ extension AudioWorkspaceController {
         let assets = self.assets; let lifetime = self.lifetime
         // Each window has a known recording offset. Model window extents remain
         // extents in the editor; they are never presented as word alignment.
-        for offset in stride(from: 0.0, to: duration, by: 29.0) {
+        for window in windows {
             try Task.checkCancellation()
-            let seconds = min(30, duration - offset)
+            let offset = window.start, seconds = window.duration
             let pcm = try await Task.detached { try AudioMediaIO.readMono16k(item.clips, store: assets, start: offset, duration: seconds, cancel: lifetime.check) }.value
-            let result = try await session.execute(request, pcm: pcm)
+            let transcript = try await run(pcm, window)
             try Task.checkCancellation()
             guard valid(token) else { throw CancellationError() }
-            if let transcript = result.transcript {
+            if let transcript {
                 native.append(transcript)
                 for word in transcript.segments.flatMap({ $0.words ?? [] }) where word.endSeconds >= word.startSeconds {
                     words.append((word.startSeconds + offset)...(word.endSeconds + offset))

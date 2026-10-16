@@ -221,11 +221,14 @@ struct AudioModelPickerView: View {
                     .disabled(controller.isBusy || controller.hasRecordingActivity)
             }
         }
-        Button { controller.chooseModelFolder() } label: {
-            Label { Text("Choose local model folder", bundle: .module) } icon: { Image(systemName: "folder") }
+        // FluidAudio models load only from a verified download.
+        if AudioRuntimeProvider(profile).acceptsLocalFolder {
+            Button { controller.chooseModelFolder() } label: {
+                Label { Text("Choose local model folder", bundle: .module) } icon: { Image(systemName: "folder") }
+            }
+            .appAction(.secondary, size: .small)
+            .disabled(controller.isBusy || controller.hasRecordingActivity)
         }
-        .appAction(.secondary, size: .small)
-        .disabled(controller.isBusy || controller.hasRecordingActivity)
     }
 
     private func downloadProgress(_ download: ModelDownload) -> some View {
@@ -317,6 +320,8 @@ extension AudioModelPickerView {
                 return AppStrings.localized("The voice-cloning encoder in this model is a community re-upload. Its origin and license have not been verified.")
             case "omnivoice_higgs_tokenizer":
                 return AppStrings.localized("The bundled audio tokenizer is community-licensed, not Apache-licensed: it requires attribution and caps commercial use above 100,000 annual active users.")
+            case "funasr_model_license":
+                return AppStrings.localized("Paraformer is released under Alibaba's FunASR Model Open Source License. You may use, change, and share it if you credit the source and keep the model name. Alibaba can revise the license, and it ends for anyone who disparages the model.")
             default:
                 return term.summary
             }

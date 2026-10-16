@@ -28,12 +28,14 @@ enum FluidAudioFamily: String, CaseIterable, Sendable {
     /// targets iOS 15 to 17 programs, so the app's floor holds.
     var minimumMacOSMajor: Int { 14 }
 
-    /// Whether this build carries the adapter that runs the family. The
-    /// change that adds an adapter flips its families, so a catalog row never
-    /// routes to FluidAudio before the code that runs it ships.
+    /// Whether the workspace can run the family end to end: an adapter, its
+    /// jobs, and residency. A family flips only when all three ship, so a
+    /// catalog row never routes to FluidAudio before the code that runs it.
     var hasAdapter: Bool {
         switch self {
-        case .sileroVAD, .diarizer, .kokoroANE, .pocketTTS, .senseVoice, .paraformerZh, .parakeetJa:
+        case .paraformerZh, .parakeetJa:
+            return true
+        case .sileroVAD, .diarizer, .kokoroANE, .pocketTTS, .senseVoice:
             return false
         }
     }
