@@ -13,6 +13,10 @@ Short seams. Verify each one before release.
 - [Design rules](../DESIGN.md): ALWAYS read before any UI or design change
   (views, controls, copy, color, type, layout, menus, shortcuts, motion).
   It covers accessibility, theming, localization, and layout.
+- [Design system](../docs/design-system/README.md): tokens, component
+  guides, and contrast figures for every theme. Use it with DESIGN.md for
+  exact values. Never paste its hex values into Swift: use the theme
+  accessors it maps them to.
 - [Detailed archived Swift guide](../.claude/docs/modules/swift.md)
 - [Swift tool implementation](docs/SWIFT_TOOLS.md)
 - [Swift skills](docs/SWIFT_SKILLS.md)

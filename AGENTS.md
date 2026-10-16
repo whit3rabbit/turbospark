@@ -11,7 +11,13 @@ evidence in the linked project docs. Do not turn this file into a changelog.
 - ALWAYS read [DESIGN.md](DESIGN.md) before any UI or design change in the
   macOS app: views, controls, copy, color, type, layout, menus, shortcuts,
   or motion. It holds the accessibility, theming, localization, and layout
-  rules that earlier UI defects came from.
+  rules that earlier UI defects came from. Then read
+  [docs/design-system/](docs/design-system/README.md) for exact values and
+  per-control guides: tokens for every theme with computed contrast, the
+  type scale, spacing, radii, and each control's SwiftUI call. DESIGN.md
+  decides rules and the Swift theme code decides values. The claude.ai
+  Design System artifact is a rendered copy of that folder, so read the
+  folder.
 - Read [API workspace](docs/API_WORKSPACE.md) when changing Text, Image, or
   TypeSafe serving. Text and Image share the TurboSpark listener; TypeSafe
   owns a separate loopback OpenKind daemon and Keychain key.

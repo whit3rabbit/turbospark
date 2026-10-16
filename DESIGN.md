@@ -406,6 +406,11 @@ result from compilation alone.
 
 ## Related docs
 
+- `docs/design-system/`: tokens for every theme with computed contrast,
+  a guide per vocabulary control, the brand book, and a local preview
+  gallery. Derived from this file and the Swift theme.
+  `python3 docs/design-system/tools/derive_tokens.py --check` fails when it
+  drifts from the shipped presets.
 - `swift/AGENTS.md`: Swift package, build order, and app rules.
 - `swift/docs/SWIFT_LOCALIZATION.md`: the catalog pipeline and its gates.
 - `swift/docs/KEYBOARD_SHORTCUTS.md`: shortcuts, menus, and VoiceOver
