@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import Metal
 import TurboSpark
@@ -8,7 +9,8 @@ import XCTest
 /// A shutdown (profile lock, quit) drains the in-flight load's
 /// `AudioModelOpening` on the main thread. A Qwen3-TTS load never calls
 /// `open`, so these hold it in each slow step and require the drain to return
-/// rather than wait for an open that never comes.
+/// rather than wait for an open that never comes. The last two run a load
+/// whose verification token could not be created.
 @MainActor
 final class AudioQwenLoadShutdownTests: XCTestCase {
     private let alias = "qwen3-base"
@@ -132,5 +134,65 @@ final class AudioQwenLoadShutdownTests: XCTestCase {
         XCTAssertFalse(try shutdownHangs(controller), "shutdown waited for an open that never comes")
         if case .success = await load.result { XCTFail("a load stopped by shutdown must not succeed") }
         XCTAssertNil(controller.qwenModel)
+    }
+
+    /// Reports whether draining `opening` hangs. A hung drain is let go from
+    /// here, so a regression fails the test instead of hanging the suite.
+    private func drainHangs(_ opening: AudioModelOpening) -> Bool {
+        let drained = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async { opening.stopAndDrain(); drained.signal() }
+        guard drained.wait(timeout: .now() + 5) == .timedOut else { return false }
+        _ = try? opening.perform {}
+        return true
+    }
+
+    /// A managed install loads only after its bytes verify. A failed token
+    /// creation leaves nothing to verify with, which once loaded the install
+    /// unverified. The refusal must still end the opening's barrier.
+    func testManagedInstallWithoutATokenRefusesToLoad() async throws {
+        let (controller, model, root) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        controller.qwenLoadDependencies.openToken = { nil }
+        controller.qwenLoadDependencies.verify = { _, _, _ in
+            XCTFail("there is no token to verify with")
+            throw CancellationError()
+        }
+        controller.qwenLoadDependencies.load = { _ in
+            XCTFail("a managed install must not load unverified")
+            throw CancellationError()
+        }
+        var openings: [AudioModelOpening] = []
+        let watch = controller.$opening.compactMap { $0 }.sink { openings.append($0) }
+        defer { watch.cancel() }
+        controller.installedPaths[alias] = model.path
+        do {
+            _ = try await controller.residentQwenSession(for: profile)
+            XCTFail("a managed install without a token must not load")
+        } catch {}
+        XCTAssertNil(controller.qwenModel)
+        XCTAssertNil(controller.opening)
+        let opening = try XCTUnwrap(openings.first, "the load must create an opening")
+        XCTAssertFalse(drainHangs(opening), "the refusal left the opening's barrier entered")
+    }
+
+    /// A chosen folder has no catalog install to verify, so it still loads
+    /// without a token.
+    func testChosenFolderWithoutATokenStillLoads() async throws {
+        let (controller, model, root) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let loading = expectation(description: "load started")
+        controller.qwenLoadDependencies.openToken = { nil }
+        controller.qwenLoadDependencies.verify = { _, _, _ in
+            XCTFail("a chosen folder has no catalog install to verify")
+            throw CancellationError()
+        }
+        controller.qwenLoadDependencies.load = { _ in
+            loading.fulfill()
+            throw CancellationError()
+        }
+        controller.preferences.localModels[alias] = try model.bookmarkData(
+            options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
+        _ = try? await controller.residentQwenSession(for: profile)
+        await fulfillment(of: [loading], timeout: 5)
     }
 }
