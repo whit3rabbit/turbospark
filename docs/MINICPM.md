@@ -265,8 +265,9 @@ In priority order.
    matrices are BF16. It needs a `bf16_gemm_rows` kernel for them, and a
    qwen copy of gpt-oss's batched MXFP4 routed pair if the routed half is
    ever batched. On `qwen36` the chunked driver itself was checked on the
-   real install (sequential and per-token stdout md5-identical). `ornith35b`
-   is not installed here, so its checks of both arms are still owed.
+   real install (sequential and per-token stdout md5-identical), and the same
+   holds on `ornith35b`, whose batched arm passes the probe at 6.7e-3 to
+   8.2e-3 nats (`docs/BATCHED_PREFILL.md`).
 2. **Explain the `turbospark-check` gap.** It reads 17-20 tok/s against
    `turbospark-bench`'s 24.3 at the same slot count. Phase timing is ruled
    out: the runtime never reads `TURBOSPARK_PHASES` (its counters always

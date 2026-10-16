@@ -162,8 +162,9 @@ when this file gets updated relative to the version bump and the tag.
   order (mean final-position KL 3.9e-3 nats against the per-token arm). The
   text stays coherent. `TURBOSPARK_BATCHED_GEMV=0` restores the per-token arm,
   which still matches sequential prefill exactly. MiniCPM-V 4.7 (BF16
-  resident matrices) keeps the per-token arm. Ornith 35B has not been checked
-  on a real install.
+  resident matrices) keeps the per-token arm. Ornith 35B, checked on a real
+  install, passes the same probe at 6.7e-3 to 8.2e-3 nats with its frozen
+  quality and memory gates reproduced.
 
 ### Fixed
 - `crates/audio` nemo alignment: `merge_longest_contiguous` and

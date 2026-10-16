@@ -1949,8 +1949,39 @@ after a discarded warmup round, CPU polled every 10 s. Round 3 is refused:
 - Not a frozen row: two pairs on a shared host. Re-measure on a quiet host
   before quoting it in `docs/BENCHMARKS.md`.
 
-**Owed.** Ornith 35B gets this default through the family and has not been
-checked: the probe, its quality gate (frozen perplexity 6.2298), its memory
-oracle (1,750 MiB ceiling) and paired timing. `TURBOSPARK_BATCHED_GEMV=0`
-restores the per-token arm if it regresses. MiniCPM's batched arm still needs
-a BF16 M-row GEMM.
+**Ornith 35B, checked 2026-10-15/16** on an install pulled to an external
+USB SSD (`TURBOSPARK_HOME=/Volumes/T7/turbospark turbospark-model pull
+ornith35b`). Its frozen `ornith35b_quality_gate` row reproduced (perplexity
+6.2298, frozen digests), and a 300-token chat prompt was stdout
+md5-identical between the sequential and per-token chunked arms, greedy and
+sampled. The probe, run by pointing `TURBOSPARK_QWEN36_INSTALL_DIR` at the
+Ornith install (same family, same encoders), passes but with less room:
+
+| tokens | KL scalar | KL Steel |
+| ---: | ---: | ---: |
+| 64 | 1.86e-2 | 7.08e-3 |
+| 200 | 9.18e-5 | 4.59e-4 |
+| 500 | 1.82e-2 | 2.16e-2 |
+| 1000 | 5.46e-4 | 2.85e-4 |
+| 2000 | 1.12e-4 | 1.87e-4 |
+| 3000 | 1.17e-2 | 1.05e-2 |
+| mean | 8.22e-3 | 6.69e-3 |
+
+Top-1 agreed at all six lengths on both arms. The means sit at 67-82% of the
+1e-2 bound, about twice Qwen 3.6's, so a sibling checkpoint can approach the
+sentinel without a wiring fault. Read a future failure here with a router
+trace before treating it as a bug.
+
+The memory oracle's first run failed its 23.5 tok/s decode floor (16.1, 14.6
+and 3.4 tok/s) while host swap climbed from 12 to 40 GB and another job read
+the same USB disk. Its peak held (1,609 MiB). The rerun, at about 18 GB of
+swap, passed: 1,578 MiB peak against the 1,750 MiB ceiling (the frozen row is
+1,579) and 36.7-40.8 tok/s.
+
+Timing on that disk under that load is not citable. Same binary, same case,
+the per-token arm read 59.9 s in one round and 715 s in another, which is the
+model's pages being evicted and re-read over USB. In the warm rounds a
+2,940-token prompt read 35.2-35.4 s batched, 59.9 s per-token and 66.7-94.3 s
+sequential, and the 62-token case 0.77-0.88 s, 1.34-1.69 s and 1.28-1.30 s.
+`TURBOSPARK_BATCHED_GEMV=0` restores the per-token arm if it regresses.
+MiniCPM's batched arm still needs a BF16 M-row GEMM.

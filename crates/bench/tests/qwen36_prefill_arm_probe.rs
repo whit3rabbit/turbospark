@@ -48,6 +48,10 @@ const LENGTHS: [usize; 6] = [64, 200, 500, 1000, 2000, 3000];
 /// bound does not transfer. Making this the default anyway was a recorded
 /// decision; this bound catches what a wrong row, offset or seed produces
 /// (KL of order 1, top-1 lost), with headroom over the measured spread.
+/// Headroom is thinner on Ornith 35B (same family, run through this probe by
+/// pointing the install variable at it): 8.22e-3 scalar and 6.69e-3 Steel on
+/// 2026-10-16, top-1 6/6. A failure near the bound needs a router trace
+/// before it is called a bug.
 const MEAN_KL_BOUND: f64 = 1e-2;
 /// Top-1 must agree on at least this many of the six lengths. Measured 6/6
 /// (scalar) and 5/6 (Steel); a near-tie flip at the final position is the
