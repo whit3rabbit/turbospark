@@ -138,12 +138,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut codes: Vec<Vec<i32>> = vec![Vec::new(); books];
     let generate = Instant::now();
     let mut first_frame: Option<Duration> = None;
+    // `TURBOSPARK_DRAMA3_SERIAL=1` runs the backbone step after the whole
+    // tower frame instead of beside its tail, for A/B timing.
+    let serial = std::env::var("TURBOSPARK_DRAMA3_SERIAL").as_deref() == Ok("1");
     let options = GenerateOptions {
         seed,
         max_frames,
         text_cap,
+        overlap_tower_tail: !serial,
         ..GenerateOptions::default()
     };
+    eprintln!(
+        "tower tail {}",
+        if serial { "serial" } else { "overlapped" }
+    );
     let stats = drama.generate(&mut backbone, &[], &text, options, |event| {
         match event {
             FrameEvent::Frame { codes: frame, .. } => {

@@ -194,6 +194,21 @@ fn rope_order(head_dim: usize, rotary: usize) -> Vec<usize> {
         .collect()
 }
 
+/// A frame whose first pass has run: the codes drawn so far, whether the
+/// row is semantic, and the next layer to encode. Its hidden state stays in
+/// the `h` ping-pong buffers.
+struct OpenFrame {
+    codes: Vec<i32>,
+    semantic: bool,
+    layer: usize,
+}
+
+fn frame_open() -> SpeechError {
+    SpeechError::Input {
+        why: "a tower frame is open: finish it before anything else runs".into(),
+    }
+}
+
 /// The tower on Metal (see the module doc).
 pub struct MetalTower {
     cfg: TowerConfig,
@@ -207,6 +222,8 @@ pub struct MetalTower {
     v_cache: Vec<gpu::MetalBuffer>,
     capacity: usize,
     position: usize,
+    /// A frame between `begin_residual_codes` and `finish_residual_codes`.
+    open: Option<OpenFrame>,
     attn_scratch: gpu::AttentionScratch,
     // f16 scratch.
     h: [gpu::MetalBuffer; 2],
@@ -397,6 +414,7 @@ impl MetalTower {
             semantic_head,
             capacity,
             position: 0,
+            open: None,
             context,
             embeddings,
             cfg,
@@ -682,6 +700,9 @@ impl TowerModel for MetalTower {
     /// Rows past `position` stay in the cache and are rewritten by the next
     /// rows; attention never reads past the current position.
     fn truncate(&mut self, position: usize) -> Result<()> {
+        if self.open.is_some() {
+            return Err(frame_open());
+        }
         if position > self.position {
             return Err(SpeechError::Input {
                 why: format!("cannot truncate {} tower rows to {position}", self.position),
@@ -692,6 +713,9 @@ impl TowerModel for MetalTower {
     }
 
     fn semantic_logits(&mut self, hidden: &[f32]) -> Result<Vec<f32>> {
+        if self.open.is_some() {
+            return Err(frame_open());
+        }
         if hidden.len() != self.cfg.dim {
             return Err(SpeechError::Input {
                 why: format!(
@@ -721,6 +745,9 @@ impl TowerModel for MetalTower {
     }
 
     fn prefill(&mut self, hidden: &[f32], frames: &[&[i32]], labels: &[&[i32]]) -> Result<()> {
+        if self.open.is_some() {
+            return Err(frame_open());
+        }
         let dim = self.cfg.dim;
         if hidden.len() != frames.len() * dim || frames.len() != labels.len() {
             return Err(SpeechError::Input {
@@ -774,73 +801,103 @@ impl TowerModel for MetalTower {
         Ok(())
     }
 
-    fn residual_codes(
+    /// Pass 0: the enrichment layers and residual layer 0, then head 0.
+    fn begin_residual_codes(
         &mut self,
         hidden: &[f32],
         main: i32,
         frame: &[i32],
         sample: &mut dyn FnMut(usize, &[f32]) -> i32,
-    ) -> Result<Vec<i32>> {
+    ) -> Result<[i32; 2]> {
+        if self.open.is_some() {
+            return Err(frame_open());
+        }
         self.check(hidden, frame)?;
         self.check_room(1)?;
         let dim = self.cfg.dim;
-        let shared = self.cfg.shared_enrichment_layers;
-        let vocab = self.cfg.vocab_size;
         let c0 = self.embeddings.c0(main);
         let semantic = self.embeddings.is_semantic(main);
-        let position = self.position;
         let inputs = self.embeddings.row_inputs(frame, c0, semantic, None);
         for (layer, e) in inputs.iter().enumerate() {
             Self::write_f16(&self.e_rows, layer, dim, e)?;
         }
         Self::write_f16(&self.hidden_rows, 0, dim, hidden)?;
+        let mut layer = 0usize;
+        let logits = self.run_pass(0, &mut layer)?;
+        let c1 = sample(0, &logits);
+        self.open = Some(OpenFrame {
+            codes: vec![c0, c1],
+            semantic,
+            layer,
+        });
+        Ok([c0, c1])
+    }
 
-        let mut codes = vec![c0];
-        let residual = self.cfg.num_codebooks - 1;
+    /// Passes 1 and up: one residual layer and its head each.
+    fn finish_residual_codes(
+        &mut self,
+        sample: &mut dyn FnMut(usize, &[f32]) -> i32,
+    ) -> Result<Vec<i32>> {
+        let OpenFrame {
+            mut codes,
+            semantic,
+            mut layer,
+        } = self.open.take().ok_or_else(|| SpeechError::Input {
+            why: "no tower frame is open".into(),
+        })?;
+        let dim = self.cfg.dim;
+        let shared = self.cfg.shared_enrichment_layers;
+        for head in 1..self.cfg.num_codebooks - 1 {
+            let e = self
+                .embeddings
+                .layer_input(shared + head, codes[head], semantic, None);
+            Self::write_f16(&self.e_rows, shared + head, dim, &e)?;
+            let logits = self.run_pass(head, &mut layer)?;
+            codes.push(sample(head, &logits));
+        }
+        self.position += 1;
+        Ok(codes)
+    }
+}
+
+impl MetalTower {
+    /// One command buffer ending in head `head`: every layer from `layer`
+    /// through residual layer `head` (pass 0 runs the enrichment layers and
+    /// residual layer 0, every later pass one residual layer), at this
+    /// frame's position. Returns the head's logits.
+    fn run_pass(&mut self, head: usize, layer: &mut usize) -> Result<Vec<f32>> {
+        let dim = self.cfg.dim;
+        let last = self.cfg.shared_enrichment_layers + head;
+        let position = self.position;
         let hidden_rows = self.hidden_rows.clone();
         let e_rows = self.e_rows.clone();
         let h = self.h.clone();
         let logits = self.logits.clone();
-        let mut layer = 0usize;
-        for head in 0..residual {
-            if head > 0 {
-                let e = self
-                    .embeddings
-                    .layer_input(shared + head, codes[head], semantic, None);
-                Self::write_f16(&e_rows, shared + head, dim, &e)?;
+        gpu::autorelease_pool(|| -> Result<()> {
+            let pass = self.context.begin_pass_labeled("drama3 tower step");
+            while *layer <= last {
+                let e = (&e_rows, (*layer * dim * 2) as u64);
+                let h_in = if *layer == 0 {
+                    (&hidden_rows, 0)
+                } else {
+                    (&h[(*layer + 1) % 2], 0)
+                };
+                self.encode_layer(&pass, *layer, e, h_in, (&h[*layer % 2], 0), position)
+                    .map_err(gpu_err)?;
+                *layer += 1;
             }
-            // Pass 0 runs the enrichment layers and residual layer 0; every
-            // later pass one residual layer. Each ends in its head.
-            let last = shared + head;
-            gpu::autorelease_pool(|| -> Result<()> {
-                let pass = self.context.begin_pass_labeled("drama3 tower step");
-                while layer <= last {
-                    let e = (&e_rows, (layer * dim * 2) as u64);
-                    let h_in = if layer == 0 {
-                        (&hidden_rows, 0)
-                    } else {
-                        (&h[(layer + 1) % 2], 0)
-                    };
-                    self.encode_layer(&pass, layer, e, h_in, (&h[layer % 2], 0), position)
-                        .map_err(gpu_err)?;
-                    layer += 1;
-                }
-                let matrix = Self::resident(&self.weights, self.heads[head]);
-                gpu::encode_dequant_int8_gemv_resident(
-                    &mut self.context,
-                    &pass,
-                    &matrix,
-                    (&h[last % 2], 0),
-                    (&logits, 0),
-                )
-                .map_err(gpu_err)?;
-                pass.commit_and_wait();
-                Ok(())
-            })?;
-            let head_logits = self.read_logits(vocab);
-            codes.push(sample(head, &head_logits));
-        }
-        self.position += 1;
-        Ok(codes)
+            let matrix = Self::resident(&self.weights, self.heads[head]);
+            gpu::encode_dequant_int8_gemv_resident(
+                &mut self.context,
+                &pass,
+                &matrix,
+                (&h[last % 2], 0),
+                (&logits, 0),
+            )
+            .map_err(gpu_err)?;
+            pass.commit_and_wait();
+            Ok(())
+        })?;
+        Ok(self.read_logits(self.cfg.vocab_size))
     }
 }

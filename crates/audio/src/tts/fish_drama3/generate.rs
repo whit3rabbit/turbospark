@@ -105,6 +105,12 @@ pub struct GenerateOptions {
     pub text_cap: Option<TextCap>,
     /// Seeds every draw; a fixed seed fixes the codes.
     pub seed: u64,
+    /// Run the next backbone step beside the tower's last residual layers.
+    /// The next backbone row needs only `main` and `c1`, which the tower's
+    /// first pass yields, so the step and the tail of the frame (heads 1 and
+    /// up) overlap on two threads. The draws are made in the same order, so
+    /// the codes are the serial loop's (`overlap_and_serial_frames_agree`).
+    pub overlap_tower_tail: bool,
 }
 
 impl Default for GenerateOptions {
@@ -114,6 +120,7 @@ impl Default for GenerateOptions {
             max_frames: DEFAULT_MAX_FRAMES,
             text_cap: Some(TextCap::MEASURED),
             seed: 0,
+            overlap_tower_tail: true,
         }
     }
 }
@@ -172,7 +179,7 @@ pub const TRUNK_DIR: &str = "trunk";
 pub struct Drama3 {
     pub config: Drama3Config,
     pub tokenizer: tokenizers::Tokenizer,
-    pub tower: Box<dyn TowerModel>,
+    pub tower: Box<dyn TowerModel + Send>,
 }
 
 /// The state after the system block, restored for every chunk. The tower
@@ -197,7 +204,7 @@ impl Drama3 {
     /// device tower never loads the reference one first.
     pub fn open_with(
         install: &std::path::Path,
-        build: impl FnOnce(&SafetensorsFile, &Drama3Config) -> Result<Box<dyn TowerModel>>,
+        build: impl FnOnce(&SafetensorsFile, &Drama3Config) -> Result<Box<dyn TowerModel + Send>>,
     ) -> Result<Self> {
         let text = std::fs::read_to_string(install.join("config.json")).map_err(|e| {
             SpeechError::BadConfig {
@@ -384,14 +391,39 @@ impl Drama3 {
                 let mut sample = |_: usize, head: &[f32]| {
                     sampling::sample(head, options.sampling, keys.next()) as i32
                 };
-                let codes = self
-                    .tower
-                    .residual_codes(&hidden, main, &frame, &mut sample)?;
+                let codes = if options.overlap_tower_tail {
+                    let [c0, c1] =
+                        self.tower
+                            .begin_residual_codes(&hidden, main, &frame, &mut sample)?;
+                    // The backbone input reads `main` and `c1` only
+                    // (`TowerEmbeddings::embed_backbone`).
+                    let row = self.row_for(backbone, &[main, c0, c1])?;
+                    let tower = &mut self.tower;
+                    hidden = vec![0.0f32; dim];
+                    let next = &mut hidden;
+                    let (tail, stepped) = std::thread::scope(|scope| {
+                        let tail = scope.spawn(move || tower.finish_residual_codes(&mut sample));
+                        let stepped = backbone.step(&row, next);
+                        (tail.join(), stepped)
+                    });
+                    let codes = tail.map_err(|_| SpeechError::Unsupported {
+                        why: "the tower thread panicked".into(),
+                    })??;
+                    stepped?;
+                    codes
+                } else {
+                    let codes = self
+                        .tower
+                        .residual_codes(&hidden, main, &frame, &mut sample)?;
+                    let mut new_frame = vec![main];
+                    new_frame.extend(&codes);
+                    let row = self.row_for(backbone, &new_frame)?;
+                    hidden = vec![0.0f32; dim];
+                    backbone.step(&row, &mut hidden)?;
+                    codes
+                };
                 let mut new_frame = vec![main];
                 new_frame.extend(&codes);
-                let row = self.row_for(backbone, &new_frame)?;
-                hidden = vec![0.0f32; dim];
-                backbone.step(&row, &mut hidden)?;
                 // `history[1:] + [main]`: a window shorter than RAS_WINDOW
                 // keeps its length, as the reference's does.
                 if !history_tokens.is_empty() {
@@ -682,6 +714,42 @@ mod tests {
             },
         );
         assert_eq!(ending(&at_max), (limit, ChunkStop::MaxFrames));
+    }
+
+    /// The overlapped loop draws in the serial loop's order and feeds the
+    /// backbone the same rows, so every frame's codes agree, across chunks.
+    #[test]
+    fn overlap_and_serial_frames_agree() {
+        let text = "Hallo du. Wie geht es dir heute? Mir geht es gut, danke.";
+        let mut by_mode = Vec::new();
+        for overlap in [false, true] {
+            let mut d = drama();
+            let mut backbone = FakeBackbone::new(d.config.hidden_size);
+            let mut events = Vec::new();
+            let options = GenerateOptions {
+                max_frames: 12,
+                seed: 5,
+                overlap_tower_tail: overlap,
+                ..GenerateOptions::default()
+            };
+            d.generate(&mut backbone, &[], text, options, |e| {
+                events.push(e);
+                Flow::Continue
+            })
+            .unwrap();
+            // The fake's state folds in every row it was fed, in order.
+            let fed: Vec<u32> = backbone.state.iter().map(|v| v.to_bits()).collect();
+            by_mode.push((events, (fed, backbone.rows_fed)));
+        }
+        let frames = |events: &[FrameEvent]| {
+            events
+                .iter()
+                .filter(|e| matches!(e, FrameEvent::Frame { .. }))
+                .count()
+        };
+        assert!(frames(&by_mode[0].0) > 8, "too few frames to compare");
+        assert_eq!(by_mode[0].0, by_mode[1].0, "frame codes");
+        assert_eq!(by_mode[0].1, by_mode[1].1, "backbone rows");
     }
 
     #[test]

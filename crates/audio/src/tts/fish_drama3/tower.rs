@@ -641,26 +641,74 @@ pub trait TowerModel {
     fn semantic_logits(&mut self, hidden: &[f32]) -> Result<Vec<f32>>;
     /// Teacher-forces prompt rows (see [`Tower::prefill`]).
     fn prefill(&mut self, hidden: &[f32], frames: &[&[i32]], labels: &[&[i32]]) -> Result<()>;
-    /// One frame's codes (see [`Tower::residual_codes`]).
+    /// The first part of one frame (see [`Tower::begin_residual`]): the
+    /// enrichment layers and residual layer 0, through head 0's sample.
+    /// Returns `[c0, c1]`, which is all the next backbone row needs. The
+    /// frame stays open until [`TowerModel::finish_residual_codes`], and
+    /// nothing else may run on the tower meanwhile.
+    fn begin_residual_codes(
+        &mut self,
+        hidden: &[f32],
+        main: i32,
+        frame: &[i32],
+        sample: &mut dyn FnMut(usize, &[f32]) -> i32,
+    ) -> Result<[i32; 2]>;
+    /// The rest of the open frame: residual layers 1 and up and their heads.
+    /// Returns every code `c0..c{N-1}`.
+    fn finish_residual_codes(
+        &mut self,
+        sample: &mut dyn FnMut(usize, &[f32]) -> i32,
+    ) -> Result<Vec<i32>>;
+    /// One whole frame: begin, then finish, on the same path a split frame
+    /// takes.
     fn residual_codes(
         &mut self,
         hidden: &[f32],
         main: i32,
         frame: &[i32],
         sample: &mut dyn FnMut(usize, &[f32]) -> i32,
-    ) -> Result<Vec<i32>>;
+    ) -> Result<Vec<i32>> {
+        self.begin_residual_codes(hidden, main, frame, &mut *sample)?;
+        self.finish_residual_codes(sample)
+    }
+}
+
+/// A frame between [`Tower::begin_residual`] and [`Tower::finish_residual`]:
+/// the hidden state after residual layer 0 and the codes drawn so far.
+pub struct OpenRow {
+    h: Vec<f32>,
+    codes: Vec<i32>,
+    semantic: bool,
+}
+
+fn frame_open_error() -> SpeechError {
+    SpeechError::Input {
+        why: "a tower frame is open: finish it before anything else runs".into(),
+    }
 }
 
 /// The f32 reference tower with its own cache.
 pub struct CpuTower {
     tower: Tower,
     cache: TowerCache,
+    open: Option<OpenRow>,
 }
 
 impl CpuTower {
     pub fn new(tower: Tower) -> Self {
         let cache = tower.new_cache();
-        CpuTower { tower, cache }
+        CpuTower {
+            tower,
+            cache,
+            open: None,
+        }
+    }
+
+    fn closed(&self) -> Result<()> {
+        match self.open {
+            Some(_) => Err(frame_open_error()),
+            None => Ok(()),
+        }
     }
 }
 
@@ -678,35 +726,45 @@ impl TowerModel for CpuTower {
     }
 
     fn truncate(&mut self, position: usize) -> Result<()> {
+        self.closed()?;
         self.cache.truncate(position)
     }
 
     fn semantic_logits(&mut self, hidden: &[f32]) -> Result<Vec<f32>> {
+        self.closed()?;
         Ok(self.tower.semantic_logits(hidden))
     }
 
     fn prefill(&mut self, hidden: &[f32], frames: &[&[i32]], labels: &[&[i32]]) -> Result<()> {
+        self.closed()?;
         self.tower.prefill(hidden, frames, labels, &mut self.cache)
     }
 
-    fn residual_codes(
+    fn begin_residual_codes(
         &mut self,
         hidden: &[f32],
         main: i32,
         frame: &[i32],
         sample: &mut dyn FnMut(usize, &[f32]) -> i32,
-    ) -> Result<Vec<i32>> {
-        self.tower
-            .residual_codes(hidden, main, frame, &mut self.cache, sample)
+    ) -> Result<[i32; 2]> {
+        self.closed()?;
+        let row = self
+            .tower
+            .begin_residual(hidden, main, frame, &mut self.cache, sample)?;
+        let first = [row.codes[0], row.codes[1]];
+        self.open = Some(row);
+        Ok(first)
     }
-}
 
-/// Where a row's codes come from.
-enum Codes<'a, F> {
-    /// Prefill: the following row's codes label this one.
-    Labelled(&'a [i32]),
-    /// Decode: `c0` is given, `c1..` are drawn from each head's logits.
-    Sampled(i32, F),
+    fn finish_residual_codes(
+        &mut self,
+        sample: &mut dyn FnMut(usize, &[f32]) -> i32,
+    ) -> Result<Vec<i32>> {
+        let row = self.open.take().ok_or_else(|| SpeechError::Input {
+            why: "no tower frame is open".into(),
+        })?;
+        Ok(self.tower.finish_residual(row, &mut self.cache, sample))
+    }
 }
 
 /// The tower plus the semantic head that picks each frame's main token.
@@ -804,49 +862,28 @@ impl Tower {
         Ok(())
     }
 
-    fn run_row<F: FnMut(usize, &[f32]) -> i32>(
+    /// Teacher-forces one prompt row, labelled by the following row `next`.
+    fn run_labelled_row(
         &self,
         hidden: &[f32],
         frame: &[i32],
         semantic: bool,
-        mut codes: Codes<'_, F>,
+        next: &[i32],
         cache: &mut TowerCache,
-    ) -> Vec<i32> {
+    ) {
         let cfg = &self.cfg;
         let position = cache.position;
-        let c0 = match &codes {
-            Codes::Labelled(next) => next[1],
-            Codes::Sampled(c0, _) => *c0,
-        };
-        let labels = match &codes {
-            Codes::Labelled(next) => Some(*next),
-            Codes::Sampled(..) => None,
-        };
         // The enrichment layers' inputs (the first also sees this row's
-        // codebooks the backbone input left out), then residual layer 0's,
-        // or every residual layer's when labels are given.
-        let inputs = self.embeddings.row_inputs(frame, c0, semantic, labels);
+        // codebooks the backbone input left out), then every residual
+        // layer's, from the labels.
+        let inputs = self
+            .embeddings
+            .row_inputs(frame, next[1], semantic, Some(next));
         let mut h = hidden.to_vec();
-        for (i, layer) in self.shared.iter().enumerate() {
+        for (i, layer) in self.shared.iter().chain(&self.residual).enumerate() {
             h = layer.forward(&h, &inputs[i], cfg, position, &mut cache.blocks[i]);
         }
-        let offset = self.shared.len();
-        let mut out = vec![c0];
-        for (i, layer) in self.residual.iter().enumerate() {
-            let e = match inputs.get(offset + i) {
-                Some(e) => e.clone(),
-                // Decode: this layer's code was sampled by the previous head.
-                None => self
-                    .embeddings
-                    .layer_input(offset + i, out[i], semantic, None),
-            };
-            h = layer.forward(&h, &e, cfg, position, &mut cache.blocks[offset + i]);
-            if let Codes::Sampled(_, sample) = &mut codes {
-                out.push(sample(i, &self.heads[i].forward(&h)));
-            }
-        }
         cache.position += 1;
-        out
     }
 
     /// Teacher-forces the caches over prompt rows: row `t` (backbone hidden
@@ -873,13 +910,7 @@ impl Tower {
             self.check(h, frame)?;
             self.check(h, next)?;
             let semantic = self.is_semantic(next[0]);
-            self.run_row(
-                h,
-                frame,
-                semantic,
-                Codes::<fn(usize, &[f32]) -> i32>::Labelled(next),
-                cache,
-            );
+            self.run_labelled_row(h, frame, semantic, next, cache);
         }
         Ok(())
     }
@@ -893,12 +924,76 @@ impl Tower {
         main: i32,
         frame: &[i32],
         cache: &mut TowerCache,
-        sample: impl FnMut(usize, &[f32]) -> i32,
+        mut sample: impl FnMut(usize, &[f32]) -> i32,
     ) -> Result<Vec<i32>> {
+        let row = self.begin_residual(hidden, main, frame, cache, &mut sample)?;
+        Ok(self.finish_residual(row, cache, sample))
+    }
+
+    /// The first part of [`Self::residual_codes`]: the enrichment layers and
+    /// residual layer 0, then head 0's sample. The row's position is not
+    /// advanced until [`Self::finish_residual`].
+    pub fn begin_residual(
+        &self,
+        hidden: &[f32],
+        main: i32,
+        frame: &[i32],
+        cache: &mut TowerCache,
+        mut sample: impl FnMut(usize, &[f32]) -> i32,
+    ) -> Result<OpenRow> {
         self.check(hidden, frame)?;
+        let cfg = &self.cfg;
         let c0 = self.embeddings.c0(main);
         let semantic = self.is_semantic(main);
-        Ok(self.run_row(hidden, frame, semantic, Codes::Sampled(c0, sample), cache))
+        let position = cache.position;
+        // The enrichment layers' inputs (the first also sees this row's
+        // codebooks the backbone input left out), then residual layer 0's.
+        let inputs = self.embeddings.row_inputs(frame, c0, semantic, None);
+        let mut h = hidden.to_vec();
+        for (i, layer) in self.shared.iter().enumerate() {
+            h = layer.forward(&h, &inputs[i], cfg, position, &mut cache.blocks[i]);
+        }
+        let offset = self.shared.len();
+        h = self.residual[0].forward(
+            &h,
+            &inputs[offset],
+            cfg,
+            position,
+            &mut cache.blocks[offset],
+        );
+        let c1 = sample(0, &self.heads[0].forward(&h));
+        Ok(OpenRow {
+            h,
+            codes: vec![c0, c1],
+            semantic,
+        })
+    }
+
+    /// The rest of a frame begun by [`Self::begin_residual`]: each residual
+    /// layer takes the code the previous head drew. Returns `c0..c{N-1}`.
+    pub fn finish_residual(
+        &self,
+        row: OpenRow,
+        cache: &mut TowerCache,
+        mut sample: impl FnMut(usize, &[f32]) -> i32,
+    ) -> Vec<i32> {
+        let OpenRow {
+            mut h,
+            mut codes,
+            semantic,
+        } = row;
+        let cfg = &self.cfg;
+        let position = cache.position;
+        let offset = self.shared.len();
+        for i in 1..self.residual.len() {
+            let e = self
+                .embeddings
+                .layer_input(offset + i, codes[i], semantic, None);
+            h = self.residual[i].forward(&h, &e, cfg, position, &mut cache.blocks[offset + i]);
+            codes.push(sample(i, &self.heads[i].forward(&h)));
+        }
+        cache.position += 1;
+        codes
     }
 }
 

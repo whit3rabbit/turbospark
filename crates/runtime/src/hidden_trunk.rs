@@ -146,6 +146,12 @@ impl HiddenTrunk {
         self.max_context
     }
 
+    /// The runner's cumulative phase accounting (`TURBOSPARK_PHASES`'s
+    /// counters), prefill included. Subtract two readings to cost a span.
+    pub fn phase_counters(&self) -> crate::real_forward_types::PhaseCounters {
+        self.runner.phase_counters()
+    }
+
     /// The trunk's own embedding row for `token`, widened to f32.
     ///
     /// Read from the mapped resident table rather than a second copy. Only a

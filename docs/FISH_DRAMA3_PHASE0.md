@@ -367,6 +367,55 @@ device output for non-finite values (`gpu::music3::finite_output`) is
 another 20%, and the post transformer on the CPU 15%. These are the codec's
 remaining levers.
 
+## Speed work, 2026-10-16
+
+All Drama tests pass on `main` at d89053b8, rebuilt in an export with its own
+target directory. That includes the qwen MoE batched prefill another session
+landed, which the hidden-row prefill shares.
+
+**Why a frame costs more than a text token.**
+`crates/runtime/examples/fish_drama3_step_cost.rs` steps one trunk two ways
+and diffs its phase counters per step. Text means a paragraph's own tokens, and
+frames means a real generation's decode rows. Same trunk, slots and code path,
+on AC power at load 5, with expert reads counted on the SSD.
+
+| Slots | Text: hit, ms per step | Frames: hit, ms per step | Frames: expert I/O, share from SSD |
+| ---: | ---: | ---: | ---: |
+| 16 | 63%, 32.8 | 34%, 39.9 | 20.3 ms, 17% |
+| 32 | 77%, 31.2 | 39%, 40.5 | 20.4 ms, 18% |
+| 64 | 89%, 32.8 | 53%, 40.7 | 19.9 ms, 24% |
+
+- Audio frames reuse experts about half as often as text, so the gap is
+  expert I/O. GPU work per step is about the same in both.
+- More slots raise the hit rate but not the speed. The bigger slot cache pins
+  memory, and more of the remaining reads come off the SSD.
+- Host state outweighs all of this. The same binary read 89 to 91 ms per
+  frame step an hour earlier, during another session's work. The 48 ms
+  backbone row from 2026-10-14 was taken under load too.
+
+**Overlapping the tower tail** (`GenerateOptions::overlap_tower_tail`, on by
+default). The next backbone row needs only `main` and `c1`, so `TowerModel`
+splits a frame into `begin_residual_codes` (through head 0) and
+`finish_residual_codes`. The backbone step runs while the tower finishes on a
+second thread. The draws keep their order, so the codes match the serial loop.
+
+| Per frame, 16 slots, `fish_drama3_say`, interleaved | Serial | Overlapped |
+| --- | ---: | ---: |
+| Backbone | 32.3 to 35.1 ms | 32.3 to 33.4 ms |
+| Tower and sampling not hidden | 8.8 to 8.9 ms | 3.9 to 4.0 ms |
+| Prefill per row (44 rows, warm) | 34.9 ms | 34.1 to 34.7 ms |
+
+Serial and overlapped runs write byte-identical WAVs.
+`overlap_and_serial_frames_agree` holds that, and three mutations fail it or
+the tower parity tests: a wrong code in the overlapped row, and a wrong code
+index in either tower's finish.
+
+**End to end.** `FishDrama3Runner` (codec decoding at the same time) on the
+same sentence, warm. Real-time factor 1.14 to 1.16, first samples after 1.9
+to 2.1 s. After the first samples it produced 9.33 s of audio in 8.8 s, so
+streamed playback keeps up once it starts. The codec costs about 7 ms per
+frame of GPU contention. Parakeet transcribes the output word for word.
+
 ## Refusals and descope for v1
 
 - Mapped expert residency where the fit guard rejects it, which includes
