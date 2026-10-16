@@ -506,6 +506,65 @@ to 2.1 s. After the first samples it produced 9.33 s of audio in 8.8 s, so
 streamed playback keeps up once it starts. The codec costs about 7 ms per
 frame of GPU contention. Parakeet transcribes the output word for word.
 
+**Where a frame's expert I/O goes.** `fish_drama3_step_cost` at 16 slots with
+`TURBOSPARK_EXPERT_DISK_IO=1`, two rounds, expert files read first. AC power,
+1-minute load 3 to 5, so the host was not calm.
+
+| Per step | Text | Frames |
+| --- | ---: | ---: |
+| Wall | 33.2 to 35.1 ms | 41.7 to 42.2 ms |
+| Expert I/O | 10.7 to 12.2 ms | 18.0 to 18.1 ms |
+| Expert bytes read | 200 to 204 MiB | 348 to 355 MiB |
+| Of those, from the SSD | 9.5 to 13.4% | 12.1 to 13.2% |
+
+- A frame reads 1.7 times the expert bytes of a text token and spends about
+  1.6 times as long reading them. The whole-step rate is the same for both,
+  16 to 19 GiB/s.
+- The SSD share costs more than its size. Comparing runs gives 0.16 to 0.20 ms
+  per MiB off the SSD (5 to 6 GiB/s) against 0.03 to 0.04 ms per MiB from the
+  page cache. At 12% that is about 8 of the 18 ms. This is an estimate from
+  two run pairs, not a gate.
+- The page cache cannot hold the table. A one-off `mincore` probe right after
+  a run found 9.4 of 16.9 GiB of expert files resident, from 77% of layer 0
+  down to 28% of layer 36. Reads skew toward the resident experts, so only 12%
+  of the bytes come from the SSD.
+- The trunk weights give nothing back. `model_weights.bin` is the Metal buffer
+  itself (one no-copy mapping), not a second copy in the page cache.
+
+**Cache policy cannot fix the miss rate.** A `TURBOSPARK_ROUTER_TRACE=1`
+capture of one seed-0 generation (52 prompt rows, 224 frames), replayed with
+`scripts/expert_policy_replay.py --skip 52` and `scripts/pilot_ceiling.py`.
+The replay is deterministic, so host load does not touch it. Hit rate:
+
+| Slots per layer | Engine LFU | LRU | Decayed LFU (h=64) | Belady optimum |
+| ---: | ---: | ---: | ---: | ---: |
+| 16 | 36.2% | 37.3% | 37.4% | 51.9% |
+| 32 | 45.9% | 48.2% | 48.1% | 67.2% |
+| 64 | 60.7% | 63.7% | 63.3% | 80.9% |
+| 128 | 80.9% | 82.3% | 82.2% | 91.1% |
+
+- Online policies gain 1 to 3 points. The optimum gains 10 to 21, but it needs
+  to know the future routes.
+- At 16 slots 90% of the misses are evictions, not first touches. The previous
+  token's routing names 29% of a layer's experts and none of the misses.
+- Frame routing is diffuse. Half the table per layer (128 slots) still hits
+  only 81%.
+
+**What is left.**
+
+- More slots do not help (table above). Mapped residency is refused past the
+  wired budget.
+- Router lookahead prefetch is the one open lever. `docs/EXPERT_ROUTING.md`
+  closed it on Gemma at an 85% hit rate, and named what would reopen it: a
+  high miss rate and a disk-bound read. Frames have the first (64% misses at
+  16 slots) and a small part of the second (12% of the bytes). The read is
+  still mostly a memcpy that competes with the GPU for bandwidth.
+- Nobody has measured a lookahead predictor's recall on this trunk. The probe
+  (`TURBOSPARK_PILOT_PROBE`) is wired only into Gemma. The next step is that
+  probe for `QwenGdnMoe`, before any prefetcher.
+- Free memory sets the SSD share. That is read from the residency probe and
+  was not varied here, so these timings should move with the host.
+
 ## Refusals and descope for v1
 
 - Mapped expert residency where the fit guard rejects it, which includes
