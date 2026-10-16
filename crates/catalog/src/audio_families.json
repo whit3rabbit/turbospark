@@ -435,6 +435,20 @@
     "evidence": "crates/audio/src/tts/megatts3/README.md; historical evidence only, not rerun by capability discovery"
   },
   {
+    "family": "tts/fish_drama3",
+    "task": "text_to_speech",
+    "operations": [
+      "synthesize",
+      "voice_clone"
+    ],
+    "backend": "metal",
+    "can_run": true,
+    "component": false,
+    "unavailable_reason": null,
+    "source": "crates/runtime/src/fish_drama3.rs",
+    "evidence": "docs/FISH_DRAMA3_PHASE0.md; crates/bench/tests/fish_drama3_memory_oracle.rs and fish_drama3_leak_gate.rs (Metal, real install); historical evidence only, not rerun by capability discovery"
+  },
+  {
     "family": "tts/omnivoice",
     "task": "text_to_speech",
     "operations": [

@@ -487,3 +487,79 @@ fn real_megatts3_install_needs_its_terms_then_opens_verified() {
         eprintln!("installed and opened {}", record["path"]);
     }
 }
+
+/// The Drama 3 row is the one derived profile: its install converts upstream
+/// files, so the wire says how much space that needs and the terms to accept.
+#[test]
+fn the_drama3_profile_crosses_the_abi_as_a_derived_clone_profile() {
+    unsafe {
+        let mut out = ptr::null_mut();
+        assert_eq!(ts_audio_catalog_json(&mut out), 0);
+        let rows: serde_json::Value =
+            serde_json::from_str(CStr::from_ptr(out).to_str().unwrap()).unwrap();
+        ts_string_free(out);
+        let rows = rows.as_array().unwrap();
+        let drama: Vec<_> = rows
+            .iter()
+            .filter(|r| r["family"] == "fish_drama3")
+            .collect();
+        assert_eq!(drama.len(), 1, "one Drama 3 profile");
+        let row = drama[0];
+        assert_eq!(row["identity"]["alias"], "fish-drama3-4bit");
+        assert_eq!(row["pcm_format"]["sample_rate"], 44100);
+        assert_eq!(row["derived"]["tool"], "fish_drama3_intake");
+        assert!(row["derived"]["working_bytes"].as_u64().unwrap() > 24 << 30);
+        assert_eq!(row["capabilities"]["backend"], "metal");
+        assert_eq!(
+            row["capabilities"]["operations"],
+            serde_json::json!(["synthesize", "voice_clone"])
+        );
+        assert_eq!(
+            row["acknowledgments"][0]["id"],
+            "fish_audio_community_license"
+        );
+        // No other profile carries a derived object.
+        for other in rows.iter().filter(|r| r["family"] != "fish_drama3") {
+            assert!(
+                other.get("derived").is_none(),
+                "{}",
+                other["identity"]["alias"]
+            );
+        }
+
+        // ts_audio_install passes no acknowledgments, so the terms are
+        // refused before any disk or network work.
+        let identity = CString::new(row["identity"].to_string()).unwrap();
+        let mut out = ptr::dangling_mut();
+        assert_ne!(
+            ts_audio_install(identity.as_ptr(), None, ptr::null_mut(), &mut out),
+            0
+        );
+        assert!(out.is_null());
+        assert!(
+            last_error_text().contains("fish_audio_community_license"),
+            "{}",
+            last_error_text()
+        );
+    }
+}
+
+/// The catalog's resident-memory figure is a constant, so it is compared with
+/// the runtime's own estimate on the real install. Run with
+/// `TURBOSPARK_FISH_DRAMA3_INSTALL_DIR=<install> cargo test -p turbospark-ffi
+/// --test audio_surface --release -- --ignored`.
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "needs a real Drama 3 install"]
+fn the_catalog_memory_estimate_matches_the_runtimes_open_bytes() {
+    let dir = std::env::var("TURBOSPARK_FISH_DRAMA3_INSTALL_DIR").expect("install dir");
+    let open = runtime::fish_drama3::open_bytes(std::path::Path::new(&dir)).unwrap();
+    let catalog = catalog::AudioCatalog::embedded().unwrap();
+    let profile = catalog.get("fish-drama3-4bit").unwrap();
+    // The catalog covers what the runtime will ask for, and by under 1 MiB.
+    assert!(
+        profile.resident_memory_bytes >= open && profile.resident_memory_bytes - open < 1 << 20,
+        "catalog {} against runtime {open}: update the figure in audio_catalog.rs",
+        profile.resident_memory_bytes
+    );
+}

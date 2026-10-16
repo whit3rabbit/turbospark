@@ -23,6 +23,7 @@
 pub mod audio_catalog;
 mod auth;
 mod catalog;
+pub mod drama3_install;
 pub mod embedding;
 mod entry;
 mod gguf_source;
@@ -44,9 +45,10 @@ mod stream;
 mod vision;
 
 pub use audio_catalog::{
-    AudioAsset, AudioCapabilities, AudioCatalog, AudioFrontendProvenance, AudioFrontendResource,
-    AudioInstalledRecordError, AudioInstalledReport, AudioLegacyInstall, AudioPcmFormat,
-    AudioProfile, AudioProfileIdentity, AudioReadiness, AudioTask, VERIFY_CANCELLED,
+    AudioAsset, AudioCapabilities, AudioCatalog, AudioDerived, AudioFrontendProvenance,
+    AudioFrontendResource, AudioInstalledRecordError, AudioInstalledReport, AudioLegacyInstall,
+    AudioPcmFormat, AudioProfile, AudioProfileIdentity, AudioReadiness, AudioTask,
+    VERIFY_CANCELLED,
 };
 pub use auth::{
     resolve_hf_token, resolve_hf_token_with_source, validate_hf_token, HfTokenSource,

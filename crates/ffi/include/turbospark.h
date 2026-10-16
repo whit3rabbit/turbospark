@@ -1616,8 +1616,10 @@ typedef struct TsAudioJob TsAudioJob;
  * more ts_audio_job_append() of input PCM, then exactly one ts_audio_job_run()
  * (a second run is refused), then ts_audio_job_close(). Transcription input
  * is 16 kHz mono f32. For a voice-cloning text_to_speech model (family
- * "megatts3") the appended PCM is the mono reference voice at the request's
- * reference_sample_rate, 1 to 30 seconds. One append carries at most 32,000
+ * "megatts3" or "fish_drama3") the appended PCM is the mono reference voice
+ * at the request's reference_sample_rate, 1 to 30 seconds. Drama 3 also
+ * speaks without a reference, so appending nothing is valid there. One append
+ * carries at most 32,000
  * samples and the whole job at most 30 minutes. Appends after run has started
  * are refused.
  *
@@ -1626,12 +1628,36 @@ typedef struct TsAudioJob TsAudioJob;
  * runtime has session entry points for) is refused at open as an unknown
  * variant. Request keys: task, language, text, voice, speed, caption, lyrics,
  * duration_seconds, steps, seed, instruction, reference_text, p_w, t_w,
- * reference_sample_rate, consent; an unrecognised key is refused. Voice
+ * temperature, top_p, top_k, max_frames, reference_sample_rate, consent; an
+ * unrecognised key is refused. Voice
  * cloning requires consent: true (the caller has the right to use the
  * reference voice), reference_sample_rate, and English text; p_w (0.1 to 5)
  * and t_w (0.1 to 10) weigh intelligibility and similarity. Send steps (1 to
  * 100) explicitly: an omitted steps means the request type's 30, not the
  * model's default of 16 (8, 16 and 32 are the app's Fast, Balanced and Best).
+ *
+ * FISH AUDIO DRAMA 3 (family "fish_drama3", Metal only, mono 44.1 kHz). Text
+ * is at most 32,768 bytes and may carry inline cues such as [whispers] and
+ * speaker tags <|speaker:0|> to <|speaker:15|>. A reference makes the request
+ * a clone: it then requires consent: true, reference_sample_rate and
+ * reference_text, the exact words spoken in the reference. Without a
+ * reference the model picks its own voice, and reference_text is refused.
+ * speed must be 1.0, and instruction, p_w and t_w are refused.
+ * steps is ignored. The sampler fields default to the reference recipe
+ * (temperature 0.7, top_p 0.7, top_k 30): temperature is finite and not
+ * negative, top_p is above 0 through 1, top_k is at least 1, and max_frames
+ * (1 through 1024, a frame is 46.4 ms) bounds one chunk and can only shorten
+ * it. Every other family refuses these four keys. A fixed seed repeats a run.
+ *
+ * DERIVED INSTALLS. A catalog profile with a "derived" object (Drama 3)
+ * does not copy its files: the install downloads five small pinned files and
+ * converts the upstream shards on this Mac. It needs derived.working_bytes
+ * free (about 25 GiB), takes tens of minutes, and refuses before any
+ * network work when the space is short. Progress arrives as one bar over
+ * upstream bytes and then over the hash of the converted files, with the
+ * stage in the callback's path. Cancelling stops it at the next chunk and
+ * leaves nothing behind. The receipt records each converted file's size and
+ * sha256, and ts_audio_session_open verifies them like any pinned file.
  *
  * CALLBACK. TsAudioCallback is invoked synchronously on the thread calling
  * ts_audio_job_run, and `kind` says what the other arguments hold:
@@ -1656,7 +1682,7 @@ typedef struct TsAudioJob TsAudioJob;
  *
  * OPEN COST. ts_audio_session_open of a managed model hashes its files to
  * verify them before loading, with no progress and no cancel. Call it off the
- * main thread.
+ * main thread. A Drama 3 install is about 24 GB, so this takes longest there.
  */
 typedef void (*TsAudioCallback)(void *userdata, int kind, const char *json,
                                size_t json_len, const float *pcm, size_t count);
@@ -1680,7 +1706,7 @@ int ts_audio_install_with_options(const char *identity_json, const char *options
 /* options: task, allow_portable (false), allow_experimental_metal (false),
    optional expected_family. A mismatch refuses the loaded model. MegaTTS3
    opens on Metal; allow_portable lets it fall back to the CPU reference path
-   only when Metal cannot open. */
+   only when Metal cannot open. Drama 3 opens on Metal only. */
 int ts_audio_session_open(const char *path, const char *options_json, TsAudioSession **out);
 /* A cancel request for one ts_audio_session_open_cancellable call. Create it
  * before the open, press Stop from any thread with _cancel (never blocks, a

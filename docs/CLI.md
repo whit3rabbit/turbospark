@@ -12,6 +12,7 @@ The binaries are:
 - `turbospark-image` -- pack a local Diffusers image export or generate one PNG. See [`docs/IMAGE_GENERATION.md`](IMAGE_GENERATION.md).
 - `turbospark-music` -- generate MiniMax Music 3 WAV files from an installed profile or local model directory. Full-size converted profiles use the Metal runner on macOS; tiny fixtures also support the portable CPU reference path.
 - `turbospark-clone` -- clone a voice from a short reference recording and speak new English text with MegaTTS3 (Metal on macOS), from the installed `megatts3-f32` profile (install it in the app) or a local converted model directory. See [`crates/audio/src/tts/megatts3/README.md`](../crates/audio/src/tts/megatts3/README.md).
+- `turbospark-speak` -- speak text with Fish Audio Drama 3 (Metal on macOS, 44.1 kHz), optionally in a cloned voice, from a Drama 3 install directory. See [`docs/FISH_DRAMA3.md`](FISH_DRAMA3.md).
 - `turbospark-server` -- an OpenAI- and Anthropic-compatible HTTP server. See [`crates/server/AGENTS.md`](../crates/server/AGENTS.md).
 - `turbospark-bench` -- throughput and memory benchmark harness. See [`docs/BENCHMARKING.md`](BENCHMARKING.md).
 
@@ -445,6 +446,7 @@ turbospark-model <command> [flags...]
 | `pull` | `<alias>`, or `--repo REPO[@rev] --alias NAME` | `--out DIR`, `--file NAME.gguf`, `--sidecar-repo REPO[@rev]`, `--force` | installs a curated model, or any repository the probe accepts; `--out` overrides install destination; `--force` installs past a probe refusal |
 | `pull-audio` | `<alias>` | `--out DIR` | installs one pinned MiniMax Music 3 audio profile |
 | `pull-image` | `--alias NAME`, or `--repo REPO[@rev]` | `--source DIR`, `--model-id ID`, `--model-revision REV` | downloads and installs a pinned image model export |
+| `pull-drama3` | none | `--out DIR`, `--accept-fish-license` | converts Fish Audio Drama 3 into `DIR` from its pinned MLX checkpoint. Needs about 25 GiB free and tens of minutes. See [`docs/FISH_DRAMA3.md`](FISH_DRAMA3.md) |
 | `pull-vision` | `<alias>`, or `--repo REPO[@rev] --alias NAME` | `--file NAME.gguf` | installs a curated or custom vision-tower sidecar |
 | `path` | `<alias>` | none | prints the install directory (fails loudly if not installed) |
 | `rm` | `<alias>` | `--yes` / `-y` | deletes an install; without `--yes`, prompts for the alias name to confirm |
@@ -484,7 +486,7 @@ unimplemented and uses `GET /health` for liveness.
 | --- | --- | --- | --- |
 | `--model` | path or alias, repeatable | optional | attach one or more generation installs; exact ids and aliases route requests to the matching install. A single model keeps the legacy unknown-name fallback |
 | `--stt-model` | path or alias, repeatable | none | attach one or more Speech-to-Text installs (Whisper or Qwen3-ASR); enables `POST /v1/audio/transcriptions` and WebSocket realtime transcription. With no `--model`, runs an audio-only server |
-| `--tts-model` | path or alias, repeatable | none | attach Text-to-Speech install (Kokoro, MegaTTS3, or OmniVoice); enables `POST /v1/audio/speech` |
+| `--tts-model` | path or alias, repeatable | none | attach Text-to-Speech install (Kokoro, MegaTTS3, OmniVoice, or Fish Audio Drama 3); enables `POST /v1/audio/speech` |
 | `--music-model` | path or alias, repeatable | none | attach MiniMax Music 3 install; enables `POST /v1/audio/generate` (macOS and Metal only) |
 | `--model-dir` | path | none | directory containing `.gturbo` models; enables auto-discovery (omlx compatibility) |
 | `--port` | u16 | `8080` | listen port |

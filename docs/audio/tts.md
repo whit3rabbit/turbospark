@@ -23,6 +23,17 @@ inference module in `crates/audio/src/tts`.
 - **Entry points**: the Voice Cloning page in the app, `POST /v1/audio/speech` with `reference_audio` and `consent: true` ([HTTP API](../AUDIO_API.md)), the native audio session (family `megatts3`, reference audio as the job's PCM), and `turbospark-clone speak` ([CLI](../CLI.md)). Every cloning request needs consent. The catalog row `megatts3-f32` installs from the app once its install terms are accepted; every entry point also takes a local converted directory.
 - **Limits**: English only (the English text normalizer is a documented subset), 24 kHz output. On macOS the diffusion transformer and the WavVAE decoder run on Metal by default, about five times faster than the portable CPU path. Steps default to 16 (Balanced), with 8 (Fast) and 32 (Best) as the other presets, and the [step study](../../crates/audio/src/tts/megatts3/README.md#steps-and-quality) found no intelligibility or speaker-similarity loss from 8 steps up.
 
+### Fish Audio Drama 3 (multi-speaker TTS and voice cloning)
+
+- **In-Crate Directory**: [`crates/audio/src/tts/fish_drama3/`](../../crates/audio/src/tts/fish_drama3/) for the prompt, sampler, tower and generation loop, [`crates/runtime/src/fish_drama3.rs`](../../crates/runtime/src/fish_drama3.rs) for the Metal runner
+- **Documentation**: [`docs/FISH_DRAMA3.md`](../FISH_DRAMA3.md) (user guide) and [`docs/FISH_DRAMA3_PHASE0.md`](../FISH_DRAMA3_PHASE0.md) (facts, measurements, refusals)
+- **Upstream URLs**:
+  - Model Hub: [mlx-community/fish-audio-drama-3-4bit](https://huggingface.co/mlx-community/fish-audio-drama-3-4bit), pinned at `cc639e27aba7edb73429d3e3806f471dcd79d316`
+  - Code Reference: [Blaizzy/mlx-audio](https://github.com/Blaizzy/mlx-audio) `fish_drama3`
+- **Status**: runs end to end on Metal. A Qwen 3.6 35B-A3B trunk streams its routed experts from disk, the audio tower and the Fish S1 DAC codec run on the GPU, and the codec decodes on its own thread while generation continues. The memory oracle and leak gate pass on an M4 Max. Teacher-forced parity with mlx-audio is measured separately in the Phase 0 doc.
+- **Entry points**: `turbospark-speak` ([CLI](../CLI.md)), `POST /v1/audio/speech` ([HTTP API](../AUDIO_API.md)), and the native audio session (family `fish_drama3`, reference audio as the job's PCM). The catalog profile `fish-drama3-4bit` installs by converting the upstream checkpoint on the Mac, and `turbospark-model pull-drama3` does the same into a directory you pick. A reference makes the request a clone and needs consent and the reference's transcript.
+- **Limits**: Metal only, 44.1 kHz mono output, no speed control, no instruction text (cues go inline, such as `[whispers]`). Only the 4-bit conversion is supported. It is under the Fish Audio Community License, so a product that uses it shows "Built with Fish Audio".
+
 ### OmniVoice (multilingual zero-shot TTS)
 
 - **In-Crate Directory**: [`crates/audio/src/tts/omnivoice/`](../../crates/audio/src/tts/omnivoice/)

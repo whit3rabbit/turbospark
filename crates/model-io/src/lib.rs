@@ -4,15 +4,17 @@
 //! buffer wrapping, which belongs to the `gpu` crate in a later phase).
 //!
 //! Unlike the earlier phases, this crate is allowed a narrow amount of
-//! `unsafe` (confined to the `mmap` call in `resident_buffer`) and platform
-//! assumptions (4 KiB pages), per the workspace's cross-cutting rule that
-//! model I/O and streaming are where that trade-off is made.
+//! `unsafe` (the `mmap` call in `resident_buffer` and the `statvfs` call in
+//! `disk_space`) and platform assumptions (4 KiB pages), per the workspace's
+//! cross-cutting rule that model I/O and streaming are where that trade-off
+//! is made.
 
 mod arch_baselines;
 mod arch_config;
 mod arch_validation;
 mod cgroup;
 mod context_policy;
+mod disk_space;
 pub mod encoder_config;
 mod error;
 mod expert_cache_policy;
@@ -55,6 +57,7 @@ pub use context_policy::{
     ContextPlan, ContextRefused, ContextTooLarge, MaxContext, CONTEXT_BUDGET_FRACTION,
     CONTEXT_GRANULARITY, CONTEXT_RESERVE_BYTES, MAX_SUPPORTED_CONTEXT,
 };
+pub use disk_space::available_bytes;
 pub use encoder_config::{EncoderConfig, EncoderQuantization};
 pub use error::ModelError;
 pub use expert_cache_policy::{

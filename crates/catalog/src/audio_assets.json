@@ -1274,6 +1274,63 @@
           }
         ]
       }
+    },
+    {
+      "alias": "fish-drama3-4bit",
+      "assets": [
+        {
+          "path": "config.json",
+          "size": 53444,
+          "sha256": "e980dfd9128edeb5f5d066fd7c322a2dfc08fedcbea58019d8d2e8e5cf7b50d5"
+        },
+        {
+          "path": "LICENSE",
+          "size": 19685,
+          "sha256": "733a32442087acbda12ecafe8e71eb8ee5890c89b50ce7ac4ea3777faa3c823e"
+        },
+        {
+          "path": "NOTICE",
+          "size": 910,
+          "sha256": "d2dc9c9fd71c2faf01b825f69797b20e1eca961505aa9ba2a3c5004b99262d73"
+        },
+        {
+          "path": "tokenizer.json",
+          "size": 20791070,
+          "sha256": "0e9b9db76b2f0389b04b6ef057a2ac3b89100b7e96f2dd7034d19580a09654d6"
+        },
+        {
+          "path": "codec.safetensors",
+          "size": 1572080341,
+          "sha256": "6ff9d6f07920b2155e3a48ada21956004b96df9114d255ed9f0788484ba73040"
+        }
+      ],
+      "source": {
+        "repository": "mlx-community/fish-audio-drama-3-4bit",
+        "revision": "cc639e27aba7edb73429d3e3806f471dcd79d316"
+      },
+      "metadata": {
+        "task": "text_to_speech",
+        "family": "fish_drama3",
+        "display_name": "Fish Audio Drama 3 (4-bit)",
+        "required_files": [
+          "config.json",
+          "LICENSE",
+          "NOTICE",
+          "tokenizer.json",
+          "codec.safetensors"
+        ],
+        "sample_rate": 44100,
+        "channels": 1,
+        "languages": [],
+        "voices": [],
+        "max_input_seconds": null,
+        "acknowledgments": [
+          {
+            "id": "fish_audio_community_license",
+            "summary": "Fish Audio Drama 3 is licensed under the Fish Audio Community License 1.0. It is free for research and non-commercial use. Commercial use is allowed only while your annual revenue is under USD 500,000. A hosted service (an API or app whose main purpose is text to speech for third parties) needs a separate license from Fish Audio. Every copy you distribute carries LICENSE and NOTICE, and a product that uses the model shows \"Built with Fish Audio\". Installing converts the 22 GB checkpoint on this Mac, needs about 25 GiB free and takes tens of minutes. Only clone voices you have the right to use."
+          }
+        ]
+      }
     }
   ]
 }
