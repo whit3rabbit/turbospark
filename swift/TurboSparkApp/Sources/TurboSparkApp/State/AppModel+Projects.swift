@@ -305,14 +305,16 @@ extension AppModel {
     func refreshSyntextActivation(for project: AppProject?) {
         let rootURL = project?.rootDirectoryURL
         let shouldIndex = syntextIndexingEnabled && project?.syntextIndexEnabled == true
+        // Numbered here, in call order, because the detached tasks below can
+        // reach the manager in any order; it drops a stale one.
+        Self.syntextActivationToken &+= 1
+        let token = Self.syntextActivationToken
         Task.detached(priority: .utility) {
-            if shouldIndex, let rootURL {
-                await SyntextIndexManager.shared.ensureActiveProjectIndexed(for: rootURL)
-            } else {
-                await SyntextIndexManager.shared.deactivateAll()
-            }
+            await SyntextIndexManager.shared.activate(shouldIndex ? rootURL : nil, token: token)
         }
     }
+
+    @MainActor private static var syntextActivationToken: UInt64 = 0
 
     /// Scans a local codebase directory for project instruction and context files.
     public func detectProjectRules(

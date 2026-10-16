@@ -370,6 +370,12 @@ public final class AppModel: ObservableObject {
     @Published public var syntextIndexingEnabled: Bool = true {
         didSet { AppToolRegistry.syntextIndexingEnabled = syntextIndexingEnabled }
     }
+    /// Whether long chats recall earlier turns from the conversation store.
+    /// Mirrored into `ChatRecallStore`, which deletes its folder when this
+    /// turns off (the store is a derived, plaintext copy of transcripts).
+    @Published public var conversationRecallEnabled: Bool = true {
+        didSet { ChatRecallStore.shared.setEnabled(conversationRecallEnabled) }
+    }
     /// Trailing message rows that stay verbatim after a compaction.
     @Published public var compactionKeepRecentTurns: Int = 2
     /// Whether a compaction summarizer is running right now, auto or manual.

@@ -356,6 +356,9 @@ extension AppModel {
         // rewound turn describes work the conversation no longer contains.
         chats[index].todos = []
         chats[index].updatedAt = Date()
+        // The rewound turns leave the recall store too (this writes the row
+        // directly, not through `mutateTurnMessages`).
+        scheduleConversationRecallReconcile(chatID: selectedChatID)
         pendingUserMessages[selectedChatID] = nil
         pendingResponseVariants[selectedChatID] = nil
         collapsedTurnAnchors.removeAll()

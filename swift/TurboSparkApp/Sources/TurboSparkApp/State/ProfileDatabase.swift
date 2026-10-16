@@ -54,6 +54,10 @@ final class ProfileDatabase: @unchecked Sendable {
     private var undecodableChatIDs: Set<String> = []
     private var undecodableProjectIDs: Set<String> = []
     private var workflowSchemaStatusStorage: WorkflowSchemaStatus = .uninitialized
+    /// The audio search index (ProfileDatabase+AudioIndex.swift). Optional
+    /// like the workflow tables: it is rebuildable, so a failure here never
+    /// blocks opening the profile.
+    private(set) var audioIndexAvailable = false
 
     var workflowSchemaStatus: WorkflowSchemaStatus {
         lock.lock()
@@ -104,6 +108,7 @@ final class ProfileDatabase: @unchecked Sendable {
                 // Workflow persistence is optional to core profile operation.
                 workflowSchemaStatusStorage = .unavailable(error.localizedDescription)
             }
+            audioIndexAvailable = (try? migrateAudioIndexSchema()) == true
             try Self.applyFilePermissions(at: url)
         } catch {
             close()
@@ -1287,7 +1292,7 @@ final class ProfileDatabase: @unchecked Sendable {
         }
     }
 
-    private func transaction(_ body: () throws -> Void) throws {
+    func transaction(_ body: () throws -> Void) throws {
         lock.lock()
         defer { lock.unlock() }
         try execute("BEGIN IMMEDIATE;")
@@ -1531,7 +1536,7 @@ final class ProfileDatabase: @unchecked Sendable {
         }
     }
 
-    private func withStatement<T>(_ sql: String, _ body: (OpaquePointer) throws -> T) throws -> T {
+    func withStatement<T>(_ sql: String, _ body: (OpaquePointer) throws -> T) throws -> T {
         lock.lock()
         defer { lock.unlock() }
         guard let handle else { throw DatabaseError.closed }
@@ -1543,7 +1548,7 @@ final class ProfileDatabase: @unchecked Sendable {
         return try body(statement)
     }
 
-    private func stepDone(_ statement: OpaquePointer) throws {
+    func stepDone(_ statement: OpaquePointer) throws {
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw DatabaseError.step(errorMessage)
         }
@@ -1554,7 +1559,7 @@ final class ProfileDatabase: @unchecked Sendable {
         return String(cString: sqlite3_errmsg(handle))
     }
 
-    private func bind(_ value: String?, at index: Int32, to statement: OpaquePointer) throws {
+    func bind(_ value: String?, at index: Int32, to statement: OpaquePointer) throws {
         let result: Int32
         if let value {
             result = sqlite3_bind_text(statement, index, value, -1, Self.transient)
@@ -1564,7 +1569,7 @@ final class ProfileDatabase: @unchecked Sendable {
         guard result == SQLITE_OK else { throw DatabaseError.bind(errorMessage) }
     }
 
-    private func bind(_ value: Data, at index: Int32, to statement: OpaquePointer) throws {
+    func bind(_ value: Data, at index: Int32, to statement: OpaquePointer) throws {
         let result = value.withUnsafeBytes { bytes in
             sqlite3_bind_blob(statement, index, bytes.baseAddress, Int32(value.count), Self.transient)
         }
@@ -1581,13 +1586,13 @@ final class ProfileDatabase: @unchecked Sendable {
         try bind(value, at: index, to: statement)
     }
 
-    private func bind(_ value: Double, at index: Int32, to statement: OpaquePointer) throws {
+    func bind(_ value: Double, at index: Int32, to statement: OpaquePointer) throws {
         guard sqlite3_bind_double(statement, index, value) == SQLITE_OK else {
             throw DatabaseError.bind(errorMessage)
         }
     }
 
-    private func bind(_ value: Int64, at index: Int32, to statement: OpaquePointer) throws {
+    func bind(_ value: Int64, at index: Int32, to statement: OpaquePointer) throws {
         guard sqlite3_bind_int64(statement, index, value) == SQLITE_OK else {
             throw DatabaseError.bind(errorMessage)
         }
@@ -1603,12 +1608,12 @@ final class ProfileDatabase: @unchecked Sendable {
         try bind(value, at: index, to: statement)
     }
 
-    private func columnText(_ statement: OpaquePointer, index: Int32) -> String? {
+    func columnText(_ statement: OpaquePointer, index: Int32) -> String? {
         guard let text = sqlite3_column_text(statement, index) else { return nil }
         return String(cString: text)
     }
 
-    private func columnData(_ statement: OpaquePointer, index: Int32) -> Data? {
+    func columnData(_ statement: OpaquePointer, index: Int32) -> Data? {
         let count = Int(sqlite3_column_bytes(statement, index))
         guard count > 0, let bytes = sqlite3_column_blob(statement, index) else { return Data() }
         return Data(bytes: bytes, count: count)

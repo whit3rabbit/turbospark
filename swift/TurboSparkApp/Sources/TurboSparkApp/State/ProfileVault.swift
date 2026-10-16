@@ -840,6 +840,13 @@ public final class ProfileRepository: @unchecked Sendable {
         return value
     }
 
+    /// Keeps a copy of a record its owner could not read, as `load` does,
+    /// for stores that read raw records themselves. The original is left in
+    /// place: its asset references may still protect files it owns.
+    func quarantineRawRecord(key: String, payload: Data) throws {
+        try quarantineRecord(key: key, payload: payload, in: database())
+    }
+
     /// Copies an undecodable record to `quarantine:<key>:<unix time>`. Skips
     /// the copy when an identical payload is already quarantined so a record
     /// that stays broken across launches does not grow the table.
@@ -1133,5 +1140,12 @@ extension ProfileRepository {
     func deleteAudioRecord(key: String) throws {
         let unreachable = try database().deleteAudioRecord(key: key)
         ManagedAssetStore(vault: store).garbageCollect(ids: unreachable)
+    }
+
+    /// The audio search index, or nil when its optional schema did not open
+    /// on this profile (search then falls back to matching titles in memory).
+    func audioIndex() throws -> ProfileDatabase? {
+        let database = try database()
+        return database.audioIndexAvailable ? database : nil
     }
 }

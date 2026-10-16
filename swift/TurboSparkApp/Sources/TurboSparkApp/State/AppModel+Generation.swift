@@ -83,6 +83,9 @@ extension AppModel {
         let turnProject = self.turnProject(chatID: chatID)
         let memoryTurnQuery = turnMessages(for: chatID).last(where: { $0.role == .user })?.content ?? ""
         let usesSkillState = turnProject?.skillStateEnabled ?? false
+        // Decided once, like the policy reads above: a Ghost chat, a
+        // protected profile, or recall switched off never journals or recalls.
+        let recallEligible = conversationRecallEligible(chatID: chatID)
         let turnMediaCapability = AppToolMediaCapability(
             supportsImageBearingToolResults: session.info.vision.active,
             maximumPixelCount: session.info.vision.maxPixels)
@@ -153,6 +156,9 @@ extension AppModel {
                 }
                 await self.interruptTitleGenerationForForeground()
                 await self.interruptMemoryCaptureForForeground()
+                // Queued ahead of this turn's evidence request on the store's
+                // serial queue, so recall sees the transcript as it is now.
+                if recallEligible { self.reconcileConversationRecall(chatID: turnChatID) }
                 await self.prepareSemanticMemoryRecall(
                     chatID: turnChatID, project: turnProject, query: memoryTurnQuery)
                 try Task.checkCancellation()
@@ -229,7 +235,10 @@ extension AppModel {
                 let promptBudget = session.info.maxContext > requestedNewTokens
                     ? session.info.maxContext - requestedNewTokens
                     : session.info.maxContext
-                let fitted = try await self.fitRequestHistoryAfterMicrocompact(
+                // The messages the fit ran on (after microcompaction), kept for
+                // conversation recall's tighter refit.
+                var fittedRequestMessages: [ChatMessage] = []
+                var fitted = try await self.fitRequestHistoryAfterMicrocompact(
                     chatID: turnChatID,
                     history: turnHistoryProjection,
                     countTokens: { messages in
@@ -237,7 +246,8 @@ extension AppModel {
                             messages, reasoning: turnReasoning, tools: nativeToolSpecs)
                     },
                     fitWindow: { messages in
-                        await self.fitRequestHistoryPreservingInstructionPins(
+                        fittedRequestMessages = messages
+                        return await self.fitRequestHistoryPreservingInstructionPins(
                             messages,
                             injectedBlockIndex: turnHistoryProjection.instructionPinBlockIndex,
                             chatID: turnChatID,
@@ -246,6 +256,16 @@ extension AppModel {
                             reasoning: turnReasoning,
                             tools: nativeToolSpecs)
                     })
+                // **RECALL FILLS HEADROOM, NEVER MORE.** Turns of this chat that
+                // left the prompt (compacted or dropped by the fit) come back
+                // as cited evidence on the person's newest message. With none
+                // outside, the request is exactly the one fitted above.
+                if recallEligible, !usesSkillState, fitted.hasRoomForGeneration {
+                    fitted = await self.applyConversationRecall(
+                        to: fitted, chatID: turnChatID, projection: turnHistoryProjection,
+                        requestMessages: fittedRequestMessages, promptBudget: Int(promptBudget),
+                        session: session, reasoning: turnReasoning, tools: nativeToolSpecs)
+                }
                 let fittedInstructionPinBlockIndex: Int?
                 if let projectionIndex = turnHistoryProjection.instructionPinBlockIndex,
                     turnHistoryProjection.messages.indices.contains(projectionIndex)
