@@ -243,8 +243,10 @@ of audio, so the system-block snapshot is restored twice), then a
 cloned-voice request, then warm replays. The host was NOT quiet (load average
 20 to 50 during the first reading, 20 to 23 during the second); footprint does
 not depend on that, and no timing is quoted. The ceiling is the first
-reading plus 5 percent, and the second reading landed 115 MiB under it, so
-a third reading is owed before this row is trusted as tight.
+reading plus 5 percent. The second reading landed 115 MiB under it, and a
+third (6,282 MiB, taken while a second oracle process ran on the same host)
+landed 129 MiB under, so run-to-run spread is about 3 percent against a 5
+percent margin: the ceiling is not generous.
 
 | Phase | Reading 1 | Reading 2 |
 | --- | ---: | ---: |
