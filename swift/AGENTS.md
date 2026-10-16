@@ -178,6 +178,10 @@ staging files changed.
   (`isModelLoaded`, `canLoadModel`, `canUnloadModel`). Unloading is wired into
   `AppModel.canUnloadAnyModel` and the top bar eject button, ensuring audio
   models can be loaded and unloaded consistently with text and image sessions.
+  The top bar observes only AppModel, so AppModel republishes when
+  `canUnloadModel` flips (`forwardAudioUnloadChanges`). An AppModel predicate
+  that reads another nested controller needs the same forwarding, or its
+  views stay stale until something else republishes.
 - Audio meeting notes and summary isolation: Post-meeting summary and action
   item generation (`AudioMeetingNotesAdvisor`, `AudioMeetingNotesView`) strictly
   mutates `item.summary` and never modifies or overwrites `item.transcripts` or

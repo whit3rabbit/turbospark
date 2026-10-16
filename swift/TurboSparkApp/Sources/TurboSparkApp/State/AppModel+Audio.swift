@@ -1,7 +1,24 @@
+import Combine
 import Foundation
 import TurboSpark
 
 extension AppModel {
+    /// The top bar's eject reads `audioWorkspace.canUnloadModel` through
+    /// `canUnloadAnyModel` but observes only AppModel, so it stayed dimmed
+    /// after an audio model loaded until something else republished.
+    /// Forward JUST that flag, not every meter or playback tick, which would
+    /// redraw every AppModel view. `objectWillChange` fires before the
+    /// property changes, so the flag is read after a main-queue hop.
+    func forwardAudioUnloadChanges(from workspace: AudioWorkspaceController) {
+        audioUnloadObserver = workspace.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .compactMap { [weak workspace] in workspace?.canUnloadModel }
+            .prepend(workspace.canUnloadModel)
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+    }
+
     func openAudio(_ page: AudioWorkspacePage) {
         audioWorkspace.selectPage(page)
         activeSection = .audio
