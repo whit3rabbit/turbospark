@@ -17,13 +17,21 @@ final class AudioRuntimeProviderTests: XCTestCase {
 
     /// For every row the catalog ships, the provider gives the answer the
     /// family checks it replaced gave: Qwen3-TTS runs in Swift MLX, every
-    /// other row in the Rust session with the Rust verdict, and none hides.
+    /// Rust row in the Rust session with the Rust verdict. A FluidAudio row
+    /// stays hidden until this build carries its adapter.
     func testCatalogRowsKeepTheirRuntimeAndVerdict() throws {
         let profiles = try AudioCatalog.profiles()
         XCTAssertFalse(profiles.isEmpty)
         XCTAssertTrue(profiles.contains { $0.family == "qwen3_tts" }, "the check must see a Swift MLX row")
+        XCTAssertTrue(profiles.contains { $0.capabilities.backend == "swift_coreml" },
+                      "the check must see a FluidAudio row")
         for p in profiles {
             let provider = AudioRuntimeProvider(p)
+            if p.capabilities.backend == "swift_coreml" {
+                let family = try XCTUnwrap(FluidAudioFamily(rawValue: p.family), p.identity.alias)
+                XCTAssertEqual(provider, family.hasAdapter ? .fluidAudio(family) : .unsupported, p.identity.alias)
+                continue
+            }
             XCTAssertEqual(provider == .qwenMLX, p.family == "qwen3_tts", p.identity.alias)
             XCTAssertNotEqual(provider, .unsupported, p.identity.alias)
             XCTAssertEqual(provider.canRun(p), p.family == "qwen3_tts" || p.capabilities.canRun, p.identity.alias)

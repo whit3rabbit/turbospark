@@ -1490,6 +1490,286 @@
           }
         ]
       }
+    },
+    {
+      "alias": "parakeet-ja-coreml",
+      "assets": [
+        {
+          "path": "Decoderv2.mlmodelc/analytics/coremldata.bin",
+          "sha256": "86795f3f612cf5bceb5d3ccb62353e7b249ec0d947de2d92f3a493b41c61cfc3",
+          "size": 243
+        },
+        {
+          "path": "Decoderv2.mlmodelc/coremldata.bin",
+          "sha256": "aba05a4a882fb8149c0229b0eb36e24269fb9f008e65f302eef37b1f6c982ed3",
+          "size": 493
+        },
+        {
+          "path": "Decoderv2.mlmodelc/metadata.json",
+          "sha256": "345b75575b055563b6adc5a6adb39d3bdd8b5bf06b171fcc8a07229113dfc8c5",
+          "size": 3316
+        },
+        {
+          "path": "Decoderv2.mlmodelc/model.mil",
+          "sha256": "dd9367a6dac8128d6cbb22a2bf8c7da48fa15494f04b6a4ef7be091f55bedf73",
+          "size": 13106
+        },
+        {
+          "path": "Decoderv2.mlmodelc/weights/weight.bin",
+          "sha256": "a56d792edf3b88e30466c0b992bb7e316fa743c90f8809c2be9d2ecb8ffbd48e",
+          "size": 17051392
+        },
+        {
+          "path": "Encoder.mlmodelc/analytics/coremldata.bin",
+          "sha256": "64d086974fa873a29bac8face69e71df44f678e8591dc848650fdfbd4110730d",
+          "size": 243
+        },
+        {
+          "path": "Encoder.mlmodelc/coremldata.bin",
+          "sha256": "6e24d36005b89f97ab672596f94215883b19008f556ac1874500385994bd885f",
+          "size": 507
+        },
+        {
+          "path": "Encoder.mlmodelc/metadata.json",
+          "sha256": "d06e8b6e3e305b9d15fad119e9b31d05229c00b532655d120c317e990d633511",
+          "size": 2930
+        },
+        {
+          "path": "Encoder.mlmodelc/model.mil",
+          "sha256": "151eca4da087e17fa187834f2e15ae84e91a866299f2eecd5f184ff3ee738a3a",
+          "size": 1086104
+        },
+        {
+          "path": "Encoder.mlmodelc/weights/weight.bin",
+          "sha256": "257685d3fdb578c5d6d7f0a5460c778f6104bcf2f264e4ae704b885c69ad6dda",
+          "size": 593943616
+        },
+        {
+          "path": "Jointerv2.mlmodelc/analytics/coremldata.bin",
+          "sha256": "7dcee73505a75e1264f5d2c40f3767fe528768c00ed73b3937b354d10b41e779",
+          "size": 243
+        },
+        {
+          "path": "Jointerv2.mlmodelc/coremldata.bin",
+          "sha256": "98c853843c56998e061a2749365c0b1e0bfd5b03f2f54465e843f3de83e8c148",
+          "size": 521
+        },
+        {
+          "path": "Jointerv2.mlmodelc/metadata.json",
+          "sha256": "192a4656ca8744e9e27317a9008ebde4b664dbaf46011aec85ae27b9715b9697",
+          "size": 3464
+        },
+        {
+          "path": "Jointerv2.mlmodelc/model.mil",
+          "sha256": "0e4fb7f1307d2e8fc15542118856cd34ed589134cbb84f0bcd60387aba6ef17d",
+          "size": 11774
+        },
+        {
+          "path": "Jointerv2.mlmodelc/weights/weight.bin",
+          "sha256": "d6f24519c7c6959e8ec6fb078e8c05d912d292fcb57720c63fdc9291b1db122d",
+          "size": 6078924
+        },
+        {
+          "path": "Preprocessor.mlmodelc/analytics/coremldata.bin",
+          "sha256": "315309121ac09c8fb7ed9f8dab20a30e440530b527401af5abcf6d0cf959e495",
+          "size": 243
+        },
+        {
+          "path": "Preprocessor.mlmodelc/coremldata.bin",
+          "sha256": "de3624dd8335b3b0391be95da73b59577916f3ac7d1c6d30a66fd16369af7cb8",
+          "size": 512
+        },
+        {
+          "path": "Preprocessor.mlmodelc/metadata.json",
+          "sha256": "6c12ff477a63450f41ca2b52451d767a9bfc91d70311788c04265786bab43d3e",
+          "size": 2837
+        },
+        {
+          "path": "Preprocessor.mlmodelc/model.mil",
+          "sha256": "cd35cb142ca4db597e99b0cb8d3d68f087e7a9d3e330ce46c8c20d55ab0b1c59",
+          "size": 27152
+        },
+        {
+          "path": "Preprocessor.mlmodelc/weights/weight.bin",
+          "sha256": "6512ba5d1acc3ffe6f322089c0ece5466f93c7ac77c267dd851a1fb517c637f9",
+          "size": 807968
+        },
+        {
+          "path": "vocab.json",
+          "sha256": "9db0aa7ab1f5d2714c20a7880cb452d753da91cb10de88cb289cda4fd473d50a",
+          "size": 29658
+        }
+      ],
+      "source": {
+        "repository": "FluidInference/parakeet-0.6b-ja-coreml",
+        "revision": "2952296ff1da4a6d6a7aec545e226367db80c612"
+      },
+      "metadata": {
+        "task": "speech_to_text",
+        "family": "fluidaudio_parakeet_ja",
+        "display_name": "Parakeet Japanese",
+        "required_files": [
+          "Decoderv2.mlmodelc/analytics/coremldata.bin",
+          "Decoderv2.mlmodelc/coremldata.bin",
+          "Decoderv2.mlmodelc/metadata.json",
+          "Decoderv2.mlmodelc/model.mil",
+          "Decoderv2.mlmodelc/weights/weight.bin",
+          "Encoder.mlmodelc/analytics/coremldata.bin",
+          "Encoder.mlmodelc/coremldata.bin",
+          "Encoder.mlmodelc/metadata.json",
+          "Encoder.mlmodelc/model.mil",
+          "Encoder.mlmodelc/weights/weight.bin",
+          "Jointerv2.mlmodelc/analytics/coremldata.bin",
+          "Jointerv2.mlmodelc/coremldata.bin",
+          "Jointerv2.mlmodelc/metadata.json",
+          "Jointerv2.mlmodelc/model.mil",
+          "Jointerv2.mlmodelc/weights/weight.bin",
+          "Preprocessor.mlmodelc/analytics/coremldata.bin",
+          "Preprocessor.mlmodelc/coremldata.bin",
+          "Preprocessor.mlmodelc/metadata.json",
+          "Preprocessor.mlmodelc/model.mil",
+          "Preprocessor.mlmodelc/weights/weight.bin",
+          "vocab.json"
+        ],
+        "sample_rate": 16000,
+        "channels": 1,
+        "languages": [
+          "ja"
+        ],
+        "voices": [],
+        "max_input_seconds": 1800
+      }
+    },
+    {
+      "alias": "paraformer-zh-coreml",
+      "assets": [
+        {
+          "path": "ParaformerCifAlphas.mlmodelc/analytics/coremldata.bin",
+          "sha256": "eab07ffe1555c52bf453304c7440181d05cb813c507f7d2b9dc690f893daee7f",
+          "size": 243
+        },
+        {
+          "path": "ParaformerCifAlphas.mlmodelc/coremldata.bin",
+          "sha256": "1fdc3a31784fdd4ce76d8f6662cc1d5266a4bcb9f8ebff1f7364e4af9b9bfb1b",
+          "size": 358
+        },
+        {
+          "path": "ParaformerCifAlphas.mlmodelc/model.mil",
+          "sha256": "7d1b26300097a8e9d227528395ecceb789478f89fee98be5679c7c5f8714c673",
+          "size": 5291
+        },
+        {
+          "path": "ParaformerCifAlphas.mlmodelc/weights/weight.bin",
+          "sha256": "ca67890e3fd418ca1f3a227001ba4f1300d5523b8a49470bf3791eaba836bbee",
+          "size": 1575168
+        },
+        {
+          "path": "ParaformerDecoder_int8.mlmodelc/analytics/coremldata.bin",
+          "sha256": "544bf35b7e52b54f0a84b9ece9ad6b0416a07a4cc707f5dd67e1f6027b3e1697",
+          "size": 243
+        },
+        {
+          "path": "ParaformerDecoder_int8.mlmodelc/coremldata.bin",
+          "sha256": "744496100b6309842b94410d0ddd1dce65b3da773e308f86da010f86967161d8",
+          "size": 370
+        },
+        {
+          "path": "ParaformerDecoder_int8.mlmodelc/model.mil",
+          "sha256": "2c2dea30cc84c5669d4baf547eafa2f40274a22fdc1e6732a3cdb2b192389bab",
+          "size": 309868
+        },
+        {
+          "path": "ParaformerDecoder_int8.mlmodelc/weights/weight.bin",
+          "sha256": "1794d31522563f29357c6fdb5eb61bdb0cfe1cb9c1734265ae0cc5b154f702f6",
+          "size": 57440104
+        },
+        {
+          "path": "ParaformerEncoder_int8.mlmodelc/analytics/coremldata.bin",
+          "sha256": "2ccb1ebd14f683926c047f44c52097b17ab7264f0d3be7f624a8e321e3770f5d",
+          "size": 243
+        },
+        {
+          "path": "ParaformerEncoder_int8.mlmodelc/coremldata.bin",
+          "sha256": "09cc778f64866a7c25d454816c7da566d96fb7d0a9ea13d070276c9828150e0b",
+          "size": 387
+        },
+        {
+          "path": "ParaformerEncoder_int8.mlmodelc/model.mil",
+          "sha256": "219bc0334ca64d84b232f7320c900794149b612152b1594739a2e9e9cbccd9a3",
+          "size": 806287
+        },
+        {
+          "path": "ParaformerEncoder_int8.mlmodelc/weights/weight.bin",
+          "sha256": "e5a808ac41b0beade91c443ad13ee7aa8be85f94318bddc0d515f2334e147bef",
+          "size": 158884352
+        },
+        {
+          "path": "ParaformerPreprocessor.mlmodelc/analytics/coremldata.bin",
+          "sha256": "5ab78c2dbf08223650a6ebbd3d501e34700b86ddf6e099a4c7a9fe947c1d3412",
+          "size": 243
+        },
+        {
+          "path": "ParaformerPreprocessor.mlmodelc/coremldata.bin",
+          "sha256": "998336618c499cb44a66c39dcee7b37eff07a67e351de07beaf5563c11c7122d",
+          "size": 330
+        },
+        {
+          "path": "ParaformerPreprocessor.mlmodelc/model.mil",
+          "sha256": "1b9b18be0a35b11165269b1ca071a30af736deb314d8bd82d9540c769137a70e",
+          "size": 15008
+        },
+        {
+          "path": "ParaformerPreprocessor.mlmodelc/weights/weight.bin",
+          "sha256": "69c630a115da5e4db36ec41662f0b776c0ef33ec6776d86f8cdaaba022518396",
+          "size": 3037504
+        },
+        {
+          "path": "vocab.json",
+          "sha256": "14fcd6164b074459896831d6845b1c45d8832dc50c754c8cf4375481125f8ea2",
+          "size": 60058
+        }
+      ],
+      "source": {
+        "repository": "FluidInference/paraformer-large-zh-coreml",
+        "revision": "9b4faaa06e476f38ab4a6e011a4467629df09059"
+      },
+      "metadata": {
+        "task": "speech_to_text",
+        "family": "fluidaudio_paraformer_zh",
+        "display_name": "Paraformer Large Chinese",
+        "required_files": [
+          "ParaformerCifAlphas.mlmodelc/analytics/coremldata.bin",
+          "ParaformerCifAlphas.mlmodelc/coremldata.bin",
+          "ParaformerCifAlphas.mlmodelc/model.mil",
+          "ParaformerCifAlphas.mlmodelc/weights/weight.bin",
+          "ParaformerDecoder_int8.mlmodelc/analytics/coremldata.bin",
+          "ParaformerDecoder_int8.mlmodelc/coremldata.bin",
+          "ParaformerDecoder_int8.mlmodelc/model.mil",
+          "ParaformerDecoder_int8.mlmodelc/weights/weight.bin",
+          "ParaformerEncoder_int8.mlmodelc/analytics/coremldata.bin",
+          "ParaformerEncoder_int8.mlmodelc/coremldata.bin",
+          "ParaformerEncoder_int8.mlmodelc/model.mil",
+          "ParaformerEncoder_int8.mlmodelc/weights/weight.bin",
+          "ParaformerPreprocessor.mlmodelc/analytics/coremldata.bin",
+          "ParaformerPreprocessor.mlmodelc/coremldata.bin",
+          "ParaformerPreprocessor.mlmodelc/model.mil",
+          "ParaformerPreprocessor.mlmodelc/weights/weight.bin",
+          "vocab.json"
+        ],
+        "sample_rate": 16000,
+        "channels": 1,
+        "languages": [
+          "zh"
+        ],
+        "voices": [],
+        "max_input_seconds": 1800,
+        "acknowledgments": [
+          {
+            "id": "funasr_model_license",
+            "summary": "Paraformer is released under Alibaba's FunASR Model Open Source License 1.1. You may use, modify and share it if you credit the source and keep the model name. Alibaba can revise the license, and it ends for anyone who disparages the model."
+          }
+        ]
+      }
     }
   ]
 }

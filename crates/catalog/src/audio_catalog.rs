@@ -2590,7 +2590,7 @@ mod tests {
     #[test]
     fn initial_audio_profiles_have_exact_complete_pins_and_wire_metadata() {
         let catalog = AudioCatalog::embedded().unwrap();
-        assert_eq!(catalog.entries().count(), 16);
+        assert_eq!(catalog.entries().count(), 18);
         for (task, alias, repo, revision, rate, channels) in [
             (
                 AudioTask::TextToSpeech,
@@ -2867,6 +2867,70 @@ mod tests {
             g2p.sha256,
             "0f9d70d454ee35d023a9a54552716a8ccf2411c967abc6a857160527046f62a2"
         );
+    }
+
+    /// The FluidAudio speech rows: pinned like any row, app-only, with the
+    /// measured placement, and the FunASR terms where they apply.
+    #[test]
+    fn fluidaudio_speech_rows_are_pinned_app_only_and_carry_their_terms() {
+        let catalog = AudioCatalog::embedded().unwrap();
+        for (alias, family, repo, revision, files, ack) in [
+            (
+                "parakeet-ja-coreml",
+                "fluidaudio_parakeet_ja",
+                "FluidInference/parakeet-0.6b-ja-coreml",
+                "2952296ff1da4a6d6a7aec545e226367db80c612",
+                21,
+                None,
+            ),
+            (
+                "paraformer-zh-coreml",
+                "fluidaudio_paraformer_zh",
+                "FluidInference/paraformer-large-zh-coreml",
+                "9b4faaa06e476f38ab4a6e011a4467629df09059",
+                17,
+                Some("funasr_model_license"),
+            ),
+        ] {
+            let p = catalog.get(alias).unwrap();
+            assert_eq!(p.identity.task, AudioTask::SpeechToText, "{alias}");
+            assert_eq!(p.family, family);
+            assert_eq!(p.identity.repository, repo);
+            assert_eq!(p.identity.revision, revision);
+            assert_eq!(p.assets.len(), files, "{alias}");
+            assert_eq!(p.capabilities.backend, "swift_coreml");
+            assert_eq!(p.capabilities.compute.as_deref(), Some("ane"));
+            assert!(
+                !p.capabilities.can_run && !p.capabilities.http_api,
+                "{alias}"
+            );
+            assert!(p
+                .capabilities
+                .unavailable_reason
+                .as_deref()
+                .unwrap()
+                .contains("FluidAudio"));
+            assert_eq!(p.readiness, AudioReadiness::RuntimePending);
+            assert_eq!(p.install_subdir, None);
+            assert!(p.assets.iter().any(|a| a.path == "vocab.json"), "{alias}");
+            // Compiled programs only: Core ML loads the .mlmodelc beside a
+            // package source, so a source would be dead weight in the install.
+            assert!(p.assets.iter().all(|a| !a.path.contains(".mlpackage/")));
+            let ids: Vec<_> = p.acknowledgments.iter().map(|a| a.id.as_str()).collect();
+            assert_eq!(ids, ack.into_iter().collect::<Vec<_>>(), "{alias}");
+            let weights: u64 = p
+                .assets
+                .iter()
+                .filter(|a| a.path.ends_with("/weights/weight.bin"))
+                .map(|a| a.size)
+                .sum();
+            assert!(weights > 0, "{alias}");
+            assert_eq!(
+                p.resident_memory_bytes,
+                weights * 3 + 16_000 * 4 * 1800 + (256 << 20),
+                "{alias}"
+            );
+        }
     }
 
     #[test]
@@ -3776,11 +3840,21 @@ mod tests {
         // Families without an adapter stay attachable, as they were.
         assert!(profile_capabilities("spark_tts").http_api);
         let catalog = AudioCatalog::embedded().unwrap();
+        assert!(catalog
+            .entries()
+            .any(|p| p.capabilities.backend == "swift_coreml"));
         for p in catalog.entries() {
-            assert!(p.capabilities.http_api, "{}", p.identity.alias);
+            // App-only exactly when the app is the only runtime.
+            assert_eq!(
+                p.capabilities.http_api,
+                p.capabilities.backend != "swift_coreml",
+                "{}",
+                p.identity.alias
+            );
+            // Every Core ML row, Rust or Swift hosted, names its placement.
             assert_eq!(
                 p.capabilities.compute.is_some(),
-                p.capabilities.backend == "coreml",
+                p.capabilities.backend.ends_with("coreml"),
                 "{}",
                 p.identity.alias
             );
