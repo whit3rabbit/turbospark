@@ -14,7 +14,27 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
-- OmniVoice multilingual zero-shot TTS with voice cloning, end to end.
+- ArkTTS multilingual zero-shot TTS preview family port (`crates/audio/src/tts/arktts/`).
+  DualAR transformer architecture plus bundled 44.1 kHz decode-only speech codec:
+  pure-attention slow stack on 0.6b and hybrid Mamba-2 + attention Falcon H1
+  backbone (`crates/audio/src/lm/falcon_h1.rs`) on 0.1b, fast AR residual codec
+  loop, reference-exact legacy top-k/top-p and RAS repetition rescue sampling,
+  and offline fixture parity against mlx-audio 0.5.8 (`e1b19b90`).
+- Routed-expert cache slot tiers 192 and 256 added to `ALLOWED_CACHE_SLOTS`
+  in `turbospark-core` (`runtime_config.rs`) and `turbospark-model-io`
+  (`expert_cache_policy.rs`). The `auto` slot tiering policy resolves to 192
+  when free memory is at least 64 GiB and 256 when free memory is at least
+  128 GiB (one quarter of free memory covering slot memory). Validated on the
+  512-expert `qwen4exp` install streamed from external SSD storage.
+- `docs/EXPERT_ROUTING.md`: Phase 0 and Phase 1 measurements for external SSD
+  streaming of the 512-expert `qwen4exp` model over 10 Gb/s USB, documenting
+  page-cache double-counting vs slot cache hits, `F_NOCACHE` baseline device
+  rates (~627 MB/s), and GPU command buffer completion wait bounds.
+- `swift/TurboSparkApp`: In-memory Qwen3-TTS session residency in
+  `AudioWorkspaceController` (`residentQwenSession(for:)`), caching the loaded
+  MLX model graph across repeated speech jobs to eliminate re-initialization
+  overhead while honoring explicit Load and Unload actions.
+- OmniVoice multilingual zero-shot TTS with voice cloning, end to end with Native Metal acceleration.
   `crates/audio/src/tts/omnivoice/` completes its fixture-verified port with
   the intake layers the released checkpoints need: the rowwise int8 scheme
   (`w = q * scale` over signed int8 groups with f16 scales) parsed from
@@ -24,19 +44,22 @@ when this file gets updated relative to the version bump and the tag.
   `[1, C, 1]`), the Wav2Vec2 semantic tower behind the encode path's
   `output_hidden_states` mean, the torchaudio-compatible sinc resampler, and
   the rule-based duration estimator with Unicode category tables generated
-  from the pinned CPython. Catalog rows `omnivoice-8bit` (default) and
+  from the pinned CPython. Metal acceleration in Rust (`crates/audio/src/lm/execution.rs`
+  and `crates/runtime/src/omnivoice.rs`) accelerates the bidirectional Qwen3
+  backbone projections, bidirectional multi-head attention, MLP blocks, and
+  8 prediction heads via Metal GPU device execution (`Music3Device`) with
+  transparent CPU fallback. Catalog rows `omnivoice-8bit` (default) and
   `omnivoice-bf16` (`mlx-community/OmniVoice-8bit` at `b222e4d8`,
   `OmniVoice-bfloat16` at `6119f707`) install through the app with the Boson
-  Higgs tokenizer's community-license terms. Runtime engine (family
-  `omnivoice`, portable f32 CPU only, consent-gated cloning, per-step
-  progress and cancellation), HTTP `/v1/audio/speech` with optional
-  `reference_audio`, and the app's Voice Cloning page (capability-driven,
-  Advanced-page portable opt-in) are wired. Gates: cross-engine encode parity
-  exact against the Python reference on bfloat16 (70 frames x 8 codebooks);
-  the 8-bit profile generates deterministic, whisper-oracle-verified speech
-  at about 23x realtime on the CPU path with a 3.2 GiB measured footprint;
-  catalog, FFI, server, and Swift suites green. No Metal offload; the
-  family stays behind the portable opt-in until one exists.
+  Higgs tokenizer's community-license terms and are promoted to `backend: "metal"`,
+  `can_run: true`. Runtime engine (family `omnivoice`, Metal by default with
+  portable CPU fallback, consent-gated cloning, per-step progress and cancellation),
+  HTTP `/v1/audio/speech` with optional `reference_audio`, HTTP model management
+  (`GET /v1/audio/models`, `POST /v1/audio/models`, `GET /v1/models`), and the
+  macOS app's Voice Cloning page (`clonesNatively`) are fully wired and verified.
+  Gates: cross-engine encode parity exact against the Python reference on
+  bfloat16 (70 frames x 8 codebooks); 8-bit profile deterministic and verified;
+  catalog, runtime, FFI, server, and Swift suites green.
 - Chunked prefill for the qwen MoE flow (`qwenGdnMoe`: Qwen 3.6 35B-A3B,
   Ornith 35B, MiniCPM-V 4.7), `crates/runtime/src/families/qwen/moe_prefill.rs`.
   The attention and router half of up to 16 tokens runs before one wait per
@@ -120,8 +143,29 @@ when this file gets updated relative to the version bump and the tag.
 - `swift/TurboSparkApp`: bundled open-source fonts for code and UI rendering
   with license notices and Settings catalog entries: Iosevka, Geist, Geist Mono,
   Cascadia Code, Hack, and Source Code Pro.
+- `swift/TurboSparkApp`: conversation recall on syntext's context engine
+  (`SyntextContext`). Each chat's user messages and prose answers are
+  journaled to a per-profile store (`context-recall/`, mode 0700, excluded
+  from backups). Once turns leave the prompt through compaction or the window
+  fit, the ones relevant to the newest message come back as cited
+  `<evidence>` blocks on that message, within at most 1,024 tokens. On by
+  default (Settings > General > Context Compaction). Off for Ghost chats and
+  passphrase-protected profiles, because the store is plaintext. Deleting or
+  clearing a chat forgets its turns. See `swift/docs/SYNTEXT_CONTEXT.md`,
+  which also sets it against memory.
 
 ### Changed
+- `swift/TurboSparkApp`: syntext is pinned by revision to `swift-v2.7.0`
+  (`1a26441d`) and adds the `SyntextContext` product. The previous
+  `exact: "2.5.0"` pin linked the 2.4.0 xcframework, because syntext's
+  `vX.Y.Z` tags through 2.7.0 pin the previous release's binary, so
+  `grep_search`'s `literal_search` and context lines silently did nothing.
+- `swift/TurboSparkApp`: the project code index moved to
+  `~/Library/Caches/TurboSpark/syntext/<digest>.syntext`. The old base64 name
+  failed for project paths over about 185 bytes. Existing indexes rebuild
+  once, and the old folder is removed. A first search no longer waits for a
+  build (it uses the unindexed scan meanwhile), builds run one at a time
+  across projects, and the selected project's index opens at launch.
 - Embedding models are checked by family before they load, in the standalone
   C ABI, the server attach and `turbospark-server --embedding-model`:
   `EncoderRunner` accepts only `model_type` `bert` or `xlm-roberta` with CLS
@@ -165,12 +209,51 @@ when this file gets updated relative to the version bump and the tag.
   resident matrices) keeps the per-token arm. Ornith 35B, checked on a real
   install, passes the same probe at 6.7e-3 to 8.2e-3 nats with its frozen
   quality and memory gates reproduced.
+- `swift/TurboSparkApp`: Voice Cloning filters candidate voice cloning models to
+  those with native Metal or MLX acceleration (`clonesNatively`). Portable CPU-only
+  models such as OmniVoice are not presented as voice clone engines until a
+  Metal or MLX offload is implemented.
+- `swift/TurboSparkApp`: `AudioModelPickerView` now offers explicit Load and
+  Unload actions and a Loaded badge matching the model action bars across other
+  workspaces, with loading spinners during model verification. Resident audio
+  models are wired into `AppModel`'s `canUnloadAnyModel` and top-bar unload menu.
 
 ### Fixed
+- `crates/catalog`: `InstalledModel::effective_modality` now derives the `Audio`
+  modality from install path, `audio-receipt.json`, or speech metadata if a model
+  was recorded with default `text` modality in `installed.json`. `installed_report`
+  also discovers verified `.gturbo` audio models in `models/audio/` that were
+  missing from the manifest. This fixes an issue where already-installed audio
+  models offered a spurious download button that failed with "audio install already exists".
+- `swift/TurboSparkApp`: `AudioModelPickerView` suppresses download and retry
+  buttons when an audio model is already installed.
+- `swift/TurboSparkApp`: `ToolRiskClassifier.isSensitivePath` now also flags
+  `.pem` and `.key` file extensions and `.npmrc` / `.netrc` credential files,
+  preventing sensitive file exposure across the agent permission engine, attachment
+  picker, `@` mention completion, and project tree view.
+- `swift/TurboSparkApp`: polished prompt composer editor layout, model download
+  state progress, and model management cards.
 - `crates/audio` nemo alignment: `merge_longest_contiguous` and
   `merge_longest_common_subsequence` dropped every token of the second chunk
   past the overlap window. They now keep the rest of the chunk, as upstream
   mlx-audio does.
+- `swift/TurboSparkApp` `grep_search`: once syntext refused a commit as
+  overlay-full, the error was swallowed and every file created afterwards
+  stayed unsearchable until a manual Reindex. It now rebuilds in the
+  background. `multiedit`, `notebook_edit`, and patch deletes now update the
+  index, and a search sees a write notified just before it.
+- `swift/TurboSparkApp` `grep_search`: a `path_filter` no longer drops the
+  `path` scope, an escaping or absolute `path` is an error instead of a
+  whole-repository search, and results are capped at 500 matches and 10
+  context lines.
+
+### Security
+- `swift/TurboSparkApp` `grep_search`, indexed and unindexed, no longer
+  returns hidden files, `.git/` contents (`.git/config` can hold credentials
+  in remote URLs), `node_modules`, `target`, `.build`, or credential files
+  (`.env*`, `*.pem`, `*.key`, `credentials`, `.npmrc`, `.netrc`). Search is
+  auto-allowed, so on an opted-in project these were readable without a
+  prompt. A sensitive `path` argument is now classified high risk.
 
 ## [0.3.2] - 2026-10-13
 

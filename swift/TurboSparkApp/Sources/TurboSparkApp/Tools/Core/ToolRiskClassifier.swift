@@ -246,7 +246,7 @@ public enum ToolRiskClassifier {
         // 1. Always Safe Builtin Tools
         switch lowerName {
         case "list_directory", "list_dir", "ls", "glob", "read_file", "view_file", "cat", "fileread", "read",
-             "search_code", "grep", "search", "skill", "todowrite", "todo_write", "snip", "extract_snippet",
+             "search_code", "grep", "search", "grep_search", "skill", "todowrite", "todo_write", "snip", "extract_snippet",
              "codesearch", "code_search",
              "ctxinspect", "ctx_inspect", "listmcpresources", "list_mcp_resources", "list_resources",
              "readmcpresource", "read_mcp_resource", "read_resource", "tasklist", "task_list", "taskget",

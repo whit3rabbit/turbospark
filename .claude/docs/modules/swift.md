@@ -965,7 +965,7 @@ Each page carries its own "read this before" list at the top.
 | `swift/docs/SWIFT_SKILLS.md` | skills: architecture, scopes, file layout, marketplace |
 | `swift/docs/SWIFT_CONTEXT_REFERENCES.md` | typed `@` context references (`@diff`, `@staged`, `@git:N`, `@url:`, `@file:`, `@folder:`), resolution, sensitive-path and SSRF gates |
 | `swift/docs/SWIFT_PROFILES.md` | user profiles: registry, Default-user contract, shared vs per-profile storage, save-and-relaunch switching |
-| `swift/docs/SWIFT_MEMORY.md` | auto-memory: the per-project directory, the index, the `memory` tool, the `#` quick-save |
+| `swift/docs/SWIFT_MEMORY.md` | memory claims: the ledger, capture and review, recall, forget, and memory vs conversation recall |
 | `swift/docs/SWIFT_COMPACTION.md` | context compaction: trigger, boundary, summarizer, the ghost rule |
 | `swift/docs/SWIFT_TURN_PIPELINE.md` | the message queue, steer delivery at step boundaries, system reminders |
 | `swift/docs/SWIFT_GOALS.md` | the `/goal` loop: the stop-seam evaluator, deferral + idle check-ins, stall pause, restore rules |
@@ -975,7 +975,8 @@ Each page carries its own "read this before" list at the top.
 | `swift/docs/storage.md` | app JSON stores, the configurable modality-separated engine model store, move wizard, provider discovery, `ModelStorageManager`, `AppStorageRoot` test isolation, and which directories tests may write to |
 | `swift/docs/SWIFT_CONTEXT_RING.md` | the composer's context-usage indicator; the system prompt as one builder, three consumers |
 | `swift/docs/SYSTEM_PROMPT.md` | system prompt architecture: section ordering, dynamic capabilities, system reminders, token budgets |
-| `swift/docs/SYNTEXT.md` | Syntext indexed code search, project indexing, grep_search, live file buffer, and dual-staticlib symbol localization |
+| `swift/docs/SYNTEXT.md` | Syntext indexed code search, project indexing, grep_search, the revision pin, and dual-staticlib symbol localization |
+| `swift/docs/SYNTEXT_CONTEXT.md` | conversation recall on syntext's context engine: memory vs recall, the turn wiring, plaintext store gates, limitations |
 | `swift/docs/SWIFT_SINGLETON_AUDIT.md` | singleton audit: lifecycle, concurrency safety, shared vs profile instances |
 | `swift/docs/SWIFT_CHAT_SEARCH.md` | the Cmd+K search dialog: what is searched, ghost exclusion, matching semantics |
 | `swift/docs/SWIFT_MODEL_HUB.md` | install, the model hub's badges and filters, `activeLoadGuard`, selecting/opening/unloading, server multi-model attach |

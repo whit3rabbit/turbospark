@@ -215,7 +215,7 @@ TypeSafe OpenKind service with a native playground. See
 2. **Model Context Protocol (MCP) Client & Marketplace**:
    Supports both standard stdio and SSE MCP servers with interactive approval policies, schema validation, and tool search progressive disclosure.
 3. **Syntext Indexed Code Search**:
-   High-performance workspace indexing (`SYNTEXT.md`) enabling fast regex, exact, and AST code search with live unsaved file buffer updates.
+   Opt-in per-project indexing (`SYNTEXT.md`) for fast regex and literal code search, kept fresh by agent file writes and bounded git detection. The same library's context engine recalls a long chat's earlier turns (`SYNTEXT_CONTEXT.md`).
 4. **Context Ring & Compaction**:
    Visual context usage indicator displaying exact token consumption with breakdown popovers (system instructions, memory, turns, tools, attachments) and automatic conversation compaction (`SWIFT_COMPACTION.md`).
 5. **Soul Prompts & Project Customization**:
@@ -245,11 +245,12 @@ Comprehensive documentation lives in `swift/docs/`:
 |---|---|
 | [`swift/docs/SWIFT_TOOLS.md`](docs/SWIFT_TOOLS.md) | Native tool execution, containment, sandboxing, hooks, and MCP client |
 | [`swift/docs/SWIFT_TOOL_CATALOG.md`](docs/SWIFT_TOOL_CATALOG.md) | Reference catalog for all built-in agent tools and parameters |
-| [`swift/docs/SYNTEXT.md`](docs/SYNTEXT.md) | Syntext indexed code search, project indexing, and live buffer sync |
+| [`swift/docs/SYNTEXT.md`](docs/SYNTEXT.md) | Syntext indexed code search, project indexing, the package pin, and freshness |
+| [`swift/docs/SYNTEXT_CONTEXT.md`](docs/SYNTEXT_CONTEXT.md) | Conversation recall on syntext's context engine: memory vs recall, wiring, gates, limitations |
 | [`swift/docs/SWIFT_AGENT_MODE.md`](docs/SWIFT_AGENT_MODE.md) | The `.agentAuto` classifier permission mode and safety gates |
 | [`swift/docs/SWIFT_PLUGINS.md`](docs/SWIFT_PLUGINS.md) | Plugin system manifest, contributions, lifecycle, and marketplace |
 | [`swift/docs/SWIFT_SKILLS.md`](docs/SWIFT_SKILLS.md) | Agent skills architecture, scopes, file layout, and marketplace |
-| [`swift/docs/SWIFT_MEMORY.md`](docs/SWIFT_MEMORY.md) | Auto-memory per-project directory, indexing, and memory tools |
+| [`swift/docs/SWIFT_MEMORY.md`](docs/SWIFT_MEMORY.md) | Approved memory claims: ledger, capture, recall, forget, and how memory differs from conversation recall |
 | [`swift/docs/SWIFT_COMPACTION.md`](docs/SWIFT_COMPACTION.md) | Context compaction thresholds, summarization, and boundary rules |
 | [`swift/docs/SWIFT_GOALS.md`](docs/SWIFT_GOALS.md) | Autonomous `/goal` loop, stall checks, and stop evaluators |
 | [`swift/docs/SWIFT_CONTEXT_RING.md`](docs/SWIFT_CONTEXT_RING.md) | Composer context ring, tint tiers, and breakdown popovers |

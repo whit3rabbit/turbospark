@@ -102,7 +102,11 @@ The root references are:
   On macOS it defaults to Metal; the portable CPU reference path is an opt-in
   fallback only. Steps default to 16 (presets: Fast=8, Balanced=16, Best=32).
   In the app, consent covers one exact reference region and is never carried
-  over by reusing or recording a reference (`swift/AGENTS.md`).
+  over by reusing or recording a reference (`swift/AGENTS.md`). Voice cloning
+  in the app requires native Metal or MLX acceleration (both MegaTTS3 and
+  OmniVoice provide native Metal acceleration). Portable CPU-only engines
+  remain withheld from the Voice Cloning page until an accelerated offload is
+  implemented.
 - Split-KV decode attention in Metal: the GQA partial kernel bakes group,
   simdgroups, head_dim, and unroll into function constants that MUST be
   included in its pipeline cache key to prevent silent wrong-pipeline reuse.

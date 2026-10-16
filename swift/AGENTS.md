@@ -18,6 +18,8 @@ Short seams. Verify each one before release.
 - [Swift skills](docs/SWIFT_SKILLS.md)
 - [Swift storage](docs/storage.md)
 - [Swift memory architecture](docs/SWIFT_MEMORY.md)
+- [Syntext code search](docs/SYNTEXT.md) and
+  [conversation recall (Syntext context engine)](docs/SYNTEXT_CONTEXT.md)
 - [Swift localization](docs/SWIFT_LOCALIZATION.md)
 - [Swift keyboard and accessibility](docs/KEYBOARD_SHORTCUTS.md)
 - [Swift API workspace](docs/SWIFT_API_WORKSPACE.md)
@@ -79,6 +81,12 @@ staging files changed.
   `scripts/verify-app-bundle.sh` (it launches the built app and checks every
   Mach-O's deployment target) after any change to bundle layout, resources,
   `Package.swift`, or the Xcode pin. CI runs it before the DMG is built.
+- Pin syntext by `revision:` (a `swift-vX.Y.Z` commit), never `exact:` on a
+  tag up to 2.7.0. Those tags pin the previous release's xcframework, and
+  `exact: "2.5.0"` linked 2.4.0 with no error. After a bump,
+  `.build/workspace-state.json` must name the matching zip
+  (`docs/SYNTEXT.md` section 6). An archive member built above the 14.0 floor
+  is only an ld warning, which `verify-app-bundle.sh` cannot see.
 - Never write or read the Keychain at launch for a feature the user has not
   turned on. The app is ad-hoc signed, so every new build is a different
   identity from the one that created an item, and macOS asks again on each
@@ -134,6 +142,15 @@ staging files changed.
   take) never sets or copies consent. A voice reference recording captures
   the microphone through local flags and never writes the Record page's
   capture settings. `AudioVoiceCloneWorkspaceTests` pins all three.
+- The Voice Cloning page only presents models with native Metal or MLX
+  acceleration (`clonesNatively`). Portable CPU-only models remain gated to
+  the Advanced portable experiment and must not be presented as voice clone
+  options until an accelerated backend is implemented. OmniVoice and MegaTTS3
+  are Metal-accelerated and present on the Voice Cloning page.
+- Audio model residency lifecycle is managed by `AudioWorkspaceController`
+  (`isModelLoaded`, `canLoadModel`, `canUnloadModel`). Unloading is wired into
+  `AppModel.canUnloadAnyModel` and the top bar eject button, ensuring audio
+  models can be loaded and unloaded consistently with text and image sessions.
 - The Sparkle updater starts only inside a real .app bundle (see
   `SparkleUpdateController`); never bypass that guard for `swift run` builds.
   Update trust is the EdDSA signature, not Apple code signing -- the bundle

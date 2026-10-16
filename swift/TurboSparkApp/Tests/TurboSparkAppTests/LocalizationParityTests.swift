@@ -586,6 +586,19 @@ final class LocalizationParityTests: XCTestCase {
                 values.append(("KeyboardShortcutRow.label", row.label))
             }
         }
+        // The Audio library and Record page render these titles as keys.
+        for preset in AudioRecordingPreset.allCases {
+            values.append(("AudioRecordingPreset.titleKey", preset.titleKey))
+        }
+        for filter in AudioLibraryFilter.allCases {
+            values.append(("AudioLibraryFilter.titleKey", filter.titleKey))
+        }
+        for group in AudioDateGroup.allCases {
+            values.append(("AudioDateGroup.titleKey", group.titleKey))
+        }
+        for lane in AudioSearchLane.allCases {
+            values.append(("AudioSearchLane.titleKey", lane.titleKey))
+        }
         // The composer's Add menu renders each command summary as a key.
         for command in BuiltInSlashCommand.all {
             values.append(("BuiltInSlashCommand.summary", command.summary))

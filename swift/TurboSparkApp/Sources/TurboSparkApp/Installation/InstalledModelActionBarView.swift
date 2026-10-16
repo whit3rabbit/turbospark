@@ -10,6 +10,7 @@ import TurboSpark
 struct InstalledModelActionBarView: View {
     let installedModel: InstalledModel
     let isCurrentlyLoaded: Bool
+    var canLoadModel: Bool = true
     let canUnloadModel: Bool
     let canDeleteModel: Bool
     let onLoad: () -> Void
@@ -32,6 +33,7 @@ struct InstalledModelActionBarView: View {
                         Label { Text("Load Model", bundle: .module) } icon: { Image(systemName: "bolt.fill") }
                     }
                     .appAction(.secondary)
+                    .disabled(!canLoadModel)
                     .help(Text("Load model into memory slot cache for inference", bundle: .module))
                 }
 

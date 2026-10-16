@@ -84,6 +84,7 @@ struct InstalledModelDetailPaneView: View {
                 InstalledModelActionBarView(
                     installedModel: installedModel,
                     isCurrentlyLoaded: isCurrentlyLoaded,
+                    canLoadModel: model.canLoadModel,
                     canUnloadModel: model.canUnloadModel,
                     canDeleteModel: model.canDeleteModel,
                     onLoad: { model.selectModel(installedModel) },

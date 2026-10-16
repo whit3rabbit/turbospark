@@ -327,5 +327,66 @@ final class LifecycleGuardTests: XCTestCase {
         XCTAssertNil(appModel.imageSession)
         XCTAssertNil(appModel.session)
     }
+
+    func testAudioModelUnloadLifecycle() throws {
+        let appModel = AppModel()
+        XCTAssertFalse(appModel.audioWorkspace.canUnloadModel)
+        XCTAssertFalse(appModel.canUnloadAnyModel)
+
+        // Simulate an audio model loaded
+        appModel.audioWorkspace.loadedModelAlias = "qwen3-base"
+        XCTAssertTrue(appModel.audioWorkspace.canUnloadModel)
+        XCTAssertTrue(appModel.canUnloadAnyModel)
+
+        // While busy in audio workspace, canUnloadModel is false
+        appModel.audioWorkspace.isBusy = true
+        XCTAssertFalse(appModel.audioWorkspace.canUnloadModel)
+        XCTAssertFalse(appModel.canUnloadAnyModel)
+        appModel.audioWorkspace.isBusy = false
+
+        // While recording, canUnloadModel is false
+        appModel.audioWorkspace.isRecording = true
+        XCTAssertFalse(appModel.audioWorkspace.canUnloadModel)
+        XCTAssertFalse(appModel.canUnloadAnyModel)
+        appModel.audioWorkspace.isRecording = false
+
+        // Unloading via unloadActiveOrAnyModel() from audio section
+        appModel.activeSection = .audio
+        appModel.unloadActiveOrAnyModel()
+        XCTAssertFalse(appModel.audioWorkspace.canUnloadModel)
+        XCTAssertFalse(appModel.canUnloadAnyModel)
+
+        // Cross-workspace unload: audio model is loaded while viewing Chat section
+        appModel.audioWorkspace.loadedModelAlias = "qwen3-base"
+        appModel.activeSection = .chat
+        XCTAssertTrue(appModel.canUnloadAnyModel)
+        appModel.unloadActiveOrAnyModel()
+        XCTAssertFalse(appModel.audioWorkspace.canUnloadModel)
+        XCTAssertFalse(appModel.canUnloadAnyModel)
+    }
+
+    func testCanLoadModelGating() throws {
+        let appModel = AppModel()
+        appModel.selected = nil
+        XCTAssertFalse(appModel.canLoadModel, "selected is nil")
+
+        let model = InstalledModel(alias: "test-model", repo: "test/repo", path: "/test/path", family: "llama")
+        appModel.selected = model
+        XCTAssertTrue(appModel.canLoadModel)
+
+        appModel.generating = true
+        XCTAssertFalse(appModel.canLoadModel, "cannot load while generating")
+        appModel.generating = false
+
+        appModel.submitting = true
+        XCTAssertFalse(appModel.canLoadModel, "cannot load while submitting")
+        appModel.submitting = false
+
+        appModel.opening = true
+        XCTAssertFalse(appModel.canLoadModel, "cannot load while opening")
+        appModel.opening = false
+
+        XCTAssertTrue(appModel.canLoadModel)
+    }
 }
 

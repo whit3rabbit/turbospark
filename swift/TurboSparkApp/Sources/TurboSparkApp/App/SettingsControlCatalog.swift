@@ -76,6 +76,7 @@ enum SettingsControlCatalog {
         .init(title: "Language & Localization", pane: .general, timing: .immediate),
         .init(title: "Maximum pinned instruction tokens (0-2,048 tokens)", pane: .general, timing: .nextTurn),
         .init(title: "Minimum token savings (64-4,096 tokens)", pane: .general, timing: .nextTurn),
+        .init(title: "Recall earlier messages in long chats", pane: .general, timing: .nextTurn),
         .init(title: "Show TurboSpark in menu bar", pane: .general, timing: .immediate),
         .init(title: "Summarize older turns automatically", pane: .general, timing: .nextTurn),
         .init(title: "Text Size", pane: .general, timing: .immediate),

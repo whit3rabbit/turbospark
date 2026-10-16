@@ -113,7 +113,7 @@ The test suite contains over 100 test files covering:
 Provides native autonomous tools for the model:
 - `ProcessExecutor.swift`: Bounded shell execution with environment isolation.
 - `TerminalRiskGate.swift` & `CommandGate.swift`: Real-time command risk assessment and approval sheet gating.
-- `SyntextCodeSearchTool.swift`: Indexed workspace code search with live buffer awareness (`SYNTEXT.md`).
+- `SyntextCodeSearchTool.swift`: Opt-in indexed workspace code search (`SYNTEXT.md`).
 - `FileTools.swift` & `MultiEdit.swift`: Precise file inspection, patch application, and non-contiguous replacements.
 - `GitWorktreeTool.swift`: Git branch, status, diff, and commit operations.
 

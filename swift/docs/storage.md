@@ -107,6 +107,13 @@ enum raw value or one bad array element and took the whole archive with
 them past the hand-written tolerance of the outer ones. A wrong-TYPED array
 key still throws, or an intact file gets read as empty and overwritten.
 
+Two derived stores sit outside SQLCipher on purpose. Conversation recall
+writes a plaintext syntext store to `<AppStorageRoot>/context-recall/` (mode
+0700, excluded from backups, never for Ghost chats or protected profiles; see
+[SYNTEXT_CONTEXT.md](SYNTEXT_CONTEXT.md)). The code search index lives in
+`~/Library/Caches/TurboSpark/syntext/`, or `<machineRoot>/Caches/syntext/`
+under tests ([SYNTEXT.md](SYNTEXT.md)).
+
 Draft persistence is debounced by 300 ms. SQLCipher compares versioned chat
 payloads and updates only changed rows and their FTS content.
 

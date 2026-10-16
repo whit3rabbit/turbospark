@@ -320,6 +320,7 @@ struct ModelLoaderControl: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(TSPressScaleStyle(scale: 0.94))
+        .disabled(!model.canLoadModel)
         .help(model.selected.map { Text("Load \($0.alias) into memory", bundle: .module) }
             ?? Text("Load the selected model into memory", bundle: .module))
         .accessibilityLabel(Text("Load model", bundle: .module))

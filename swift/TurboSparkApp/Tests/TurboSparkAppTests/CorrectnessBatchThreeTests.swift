@@ -284,8 +284,8 @@ final class CorrectnessBatchThreeTests: XCTestCase {
         let root = try makeRoot()
         try FileManager.default.createDirectory(
             at: root.appendingPathComponent("crates/ffi"), withIntermediateDirectories: true)
-        XCTAssertEqual(AppToolRegistry.syntextPathScope(relPath: "crates/ffi", rootURL: root), "crates/ffi/")
-        XCTAssertNil(AppToolRegistry.syntextPathScope(relPath: ".", rootURL: root))
+        XCTAssertEqual(try AppToolRegistry.syntextPathScope(relPath: "crates/ffi", rootURL: root), "crates/ffi/")
+        XCTAssertNil(try AppToolRegistry.syntextPathScope(relPath: ".", rootURL: root))
     }
 
     // MARK: - Batch

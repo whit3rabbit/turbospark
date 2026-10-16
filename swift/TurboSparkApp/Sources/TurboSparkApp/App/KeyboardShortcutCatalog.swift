@@ -99,7 +99,15 @@ public enum KeyboardShortcutCatalog {
             KeyboardShortcutRow(label: "Stop All", keys: "\(shift) \(command) ."),
         ])
 
+    /// Bound on the Record page's Start button (`AudioRecordingPanel`), not
+    /// in a menu, so the pane is the one place it is listed.
+    public static let audio = KeyboardShortcutSection(
+        title: "Audio",
+        rows: [
+            KeyboardShortcutRow(label: "Start Recording", keys: "\(shift) \(command) R"),
+        ])
+
     public static var sections: [KeyboardShortcutSection] {
-        [navigation, textSize, chat]
+        [navigation, textSize, chat, audio]
     }
 }

@@ -56,6 +56,12 @@ speech button and `Cmd+.` is the Audio status strip's Cancel. The progress
 card's Cancel, the inline recorder's buttons, and the take rows carry no
 chord, so each chord has exactly one owner on the page.
 
+### Audio
+
+| Shortcut | Action | Description |
+| :--- | :--- | :--- |
+| `Cmd+Shift+R` | Start Recording | Starts a take on the Record page with the chosen recording type and sources. Bound on the page's Start button, not in a menu. |
+
 ### Model Management (Model Menu)
 
 | Shortcut | Action | Description |
