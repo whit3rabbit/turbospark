@@ -35,12 +35,20 @@ pub(crate) fn cancel_active_installs() -> usize {
 /// writing there, so a relocation that deletes the old tree under it would
 /// fail the walk or publish into a directory that was just removed.
 pub(crate) fn refuse_while_installing() -> Result<(), String> {
+    refuse_while_installing_for("move the model store")
+}
+
+/// [`refuse_while_installing`] for another change that must not race a walk,
+/// worded for it: `action` completes "cannot ... while N install(s) are
+/// running". Library changes use it (4.1), so one registry of running walks
+/// answers for both.
+pub(crate) fn refuse_while_installing_for(action: &str) -> Result<(), String> {
     let active = ACTIVE_INSTALLS.lock().unwrap_or_else(|p| p.into_inner());
     if active.is_empty() {
         Ok(())
     } else {
         Err(format!(
-            "cannot move the model store while {} install(s) are running; \
+            "cannot {action} while {} install(s) are running; \
              wait for them to finish or cancel them first",
             active.len()
         ))

@@ -147,8 +147,9 @@ int32_t ts_stt_stream_close(TsSttStream *stream);
  * returns TS_OK with stopReason "cancelled" and the partial text. */
 #define TS_ERR_CANCELLED 7
 /* The resource needed is in use by another operation (the native audio device
- * or session is running a job). Retrying once that job finishes can succeed,
- * unlike TS_ERR_OPEN. */
+ * or session is running a job, or an install is running and a library change
+ * is refused). Retrying once that job finishes can succeed, unlike
+ * TS_ERR_OPEN. */
 #define TS_ERR_BUSY 8
 
 /* ---- streaming event kinds ---- */
@@ -1141,6 +1142,100 @@ int32_t ts_image_install(const char *alias, TsInstallCallback cb, void *userdata
  * Returns TS_OK on success or TS_ERR_INVALID_ARGUMENT if not installed.
  */
 int32_t ts_model_delete(const char *alias);
+
+/* ---- model libraries (available on every platform) ----
+ *
+ * A library is a folder on a directly connected drive that holds model files.
+ * "This Mac" is the implicit library at <store root>/models, id "internal",
+ * and cannot be removed. The registry of libraries stays in the store root,
+ * so unplugging a drive never takes it along.
+ *
+ * ERRORS. A refusal puts a stable lowercase code first in ts_last_error(),
+ * "<code>: <human sentence>". Match the text before the first ':' and
+ * localize it; the sentence is for logs, escaped and capped at 300
+ * characters. Every refusal returns TS_ERR_INVALID_ARGUMENT, except busy.
+ *   Location rules (add, import):  same_disk_as_home, network,
+ *     small_file_limit, read_only, not_a_directory, nested, inside_home,
+ *     unknown_volume (the drive cannot be identified).
+ *   Libraries:  unknown_library, internal_library, not_connected, marker (a
+ *     library marker that cannot be read or written), io.
+ *   Installs (ts_model_forget):  not_connected, library_disconnected,
+ *     library_read_only, home_only, io.
+ *   Any change while an install runs:  busy, with TS_ERR_BUSY. Nothing was
+ *     changed. The check is made once, before the work, so it is not atomic
+ *     against an install that begins afterwards: the host also stops queueing
+ *     installs while it changes libraries. Listing and discovery are never
+ *     refused.
+ * A call that fails writes nothing to its out-parameter. A null out-parameter
+ * is refused before anything changes.
+ *
+ * A library's name comes from its marker, which sits on a drive anyone could
+ * have written, so truncate and escape it for display. Aliases and install
+ * ids are the same.
+ */
+
+/* Every library, This Mac first, after locating each one: a JSON array of
+ *   {"id", "name", "root": string|null, "available", "duplicate",
+ *    "modelCount", "isDefault", "lastSeen": "YYYY-MM-DD"|null, "isInternal"}
+ * "root" is null while the library is not connected. "name" of This Mac is the
+ * English literal, so show a localized label when "isInternal". "duplicate"
+ * is true for one listing only: another connected folder carries the same
+ * library marker, and the first is used. Exactly one library has "isDefault".
+ * Bookkeeping trouble (the dates could not be recorded, a library list was set
+ * aside) never fails the call: it is written to stderr as a warning. */
+int32_t ts_libraries_json(char **out);
+
+/* Adds the folder at `path` as a library (or the TurboSpark folder it holds),
+ * adopting the library already there with its models. A new library gets a
+ * "TurboSpark" folder and a marker written by this call. NULL or an empty
+ * `name` derives one: the marker's, else the drive's. Adding a library that
+ * is already listed returns it unchanged. Writes
+ *   {"library": <the object ts_libraries_json lists>, "skipped": [alias, ...]}
+ * where "skipped" lists marker rows not recorded because the alias and kind
+ * already belong to another library. Refusals: the location rules above, plus
+ * marker, io and busy. */
+int32_t ts_library_add(const char *path, const char *name, char **out);
+
+/* Stops listing the library `id` and its models. Never touches a file: the
+ * folder and its marker stay, and adding the drive again lists its models
+ * again. Refusals: unknown_library, internal_library, io, busy. */
+int32_t ts_library_remove(const char *id);
+
+/* Makes `id`, or "internal" for This Mac, the only library new downloads go
+ * to. Refusals: unknown_library, io, busy. */
+int32_t ts_library_set_default(const char *id);
+
+/* The library marker in the standard TurboSpark folder at the top of the volume
+ * at `volume_root`, as
+ *   {"id", "name", "createdOn": "YYYY-MM-DD", "modelCount", "readOnly"}
+ * or the JSON text null when there is none, the marker cannot be read, or the
+ * path does not exist. Reads one file and never walks the drive. "readOnly"
+ * marks a library a newer TurboSpark wrote, which this build can list but not
+ * change. */
+int32_t ts_library_discover_json(const char *volume_root, char **out);
+
+/* Stops listing the install `install_id` (the "installId" of an installed
+ * row, "<library>:<modality>/<alias>") and drops it from its library's
+ * marker. Deletes no file. An id that is not listed is not an error.
+ * Refusals: not_connected, library_read_only, library_disconnected,
+ * home_only, io, busy. */
+int32_t ts_model_forget(const char *install_id);
+
+/* Registers the "models" folder of a store Move Store moved to `root` as a
+ * library, keeping every model where it is, and copies its embedding and OCR
+ * models and its models.json into the home. Safe to call again: it returns the
+ * same library and tries failed copies again. Writes
+ *   {"library": <as ts_libraries_json>, "skipped": [alias],
+ *    "custom": [alias], "needsAdoption": [alias], "copiedToHome": [name],
+ *    "copyFailures": [{"key", "reason"}], "restoredCatalogOverride": bool}
+ * "skipped": rows not recorded because their alias already belongs to another
+ * place. "custom": rows outside the models folder, kept as custom locations.
+ * "needsAdoption": music installs with no receipt, which the app asks the user
+ * to move to This Mac and adopt there. "copyFailures": home copies that
+ * failed, with a capped reason; the import is NOT complete while it is
+ * non-empty, so keep the conversion pending and call again. Refusals: not_connected
+ * (the root or its models folder is not there), nested, marker, io, busy. */
+int32_t ts_store_import_moved_root(const char *root, char **out);
 
 /*
  * Ranks curated models by hardware fit on this machine for `context_window`
