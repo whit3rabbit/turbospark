@@ -78,4 +78,4 @@ TurboSpark actively protects your Mac from system freezing or out-of-memory (OOM
 
 1. **AutoFit Floor**: When starting generation, TurboSpark checks current system free memory. If free memory is below safety thresholds, the runtime refuses allocation with a descriptive error rather than crashing.
 2. **Pressure Watcher**: An asynchronous monitor tracks macOS dispatch memory pressure events (`DISPATCH_MEMORYPRESSURE_WARN` and `CRITICAL`). If pressure reaches critical levels, caches are purged and active generations stop cleanly.
-3. **Load Guard Settings**: You can configure cache slot counts using `--expert-slots <N>` or environment variable `TURBOSPARK_EXPERT_SLOTS` to adapt memory consumption to available RAM.
+3. **Load Guard Settings**: You can configure cache slot counts using `--expert-cache-slots <N>` to adapt memory consumption to available RAM.

@@ -29,7 +29,6 @@ TurboSpark recognizes environment variables for runtime tuning, storage configur
 
 | Variable | Affected Tools | Description | Default |
 | --- | --- | --- | --- |
-| `TURBOSPARK_EXPERT_SLOTS` | CLI, server, app | Number of slot-cache buffers allocated per layer for MoE streaming. | `16` |
 | `TURBOSPARK_PREFILL_CHUNK` | CLI, server | Token chunk size for prompt evaluation (e.g. `128`, `256`, `512`). | unset (auto) |
 | `TURBOSPARK_BATCHED_GEMV` | Qwen MoE runtime | Enables batched resident weight reads (Steel GEMM). Set `0` for per-token loop. | auto (enabled on INT4) |
 | `TURBOSPARK_KV_QUANT` | Runtime, server | KV-cache quantization format: `fp16`, `int8`, or `int4`. | `fp16` |

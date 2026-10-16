@@ -17,9 +17,9 @@ turbospark-server --model gemma4
 turbospark-server \
   --model gemma4 \
   --stt-model whisper-base-en \
-  --tts-model kokoro-82m \
+  --tts-model kokoro-82m-bf16 \
   --music-model minimax-music3-4bit \
-  --coreml-embedding-model ~/models/embedding-gemma-2.mlmodelc \
+  --embedding-model embeddinggemma-2-coreml \
   --port 8080 \
   --api-key "$TURBOSPARK_API_KEY"
 ```
@@ -37,8 +37,8 @@ turbospark-server \
 | `--stt-model <alias>` | None | Enables speech-to-text endpoints (`/v1/audio/transcriptions`). |
 | `--tts-model <alias>` | None | Enables text-to-speech and voice cloning endpoints (`/v1/audio/speech`). |
 | `--music-model <alias>`| None | Enables music generation endpoints (`/v1/audio/generate`). |
-| `--coreml-embedding-model <path>` | None | Offloads embeddings to Apple Core ML on the Neural Engine. |
-| `--expert-slots <N>` | `16` | Bounded slot-cache capacity per layer for MoE models. |
+| `--embedding-model <path or alias>` | None | Serves `/v1/embeddings` alongside generation. Takes a `.safetensors` directory or a catalog alias. A Core ML EmbeddingGemma 2 install such as `embeddinggemma-2-coreml` is detected from its directory layout and runs through Core ML. Its first load compiles for the Neural Engine and can take minutes. |
+| `--expert-cache-slots <auto or N>` | `auto` | Routed-expert cache slots per layer for MoE models. `N` is one of 8, 16, 24, 32, 48, 64, 96, 128, 192, or 256. |
 | `--pool-size <N>` | `1` | Number of independent runners opened for the `--model` install. Each runner handles one generation at a time, so raise this to serve concurrent generations. Every runner pays its own memory, and a runner that does not fit refuses at startup. |
 
 ---

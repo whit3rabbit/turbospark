@@ -31,7 +31,7 @@ To launch the server with Core ML embeddings:
 ```sh
 turbospark-server \
   --model gemma4 \
-  --coreml-embedding-model ~/models/embedding-gemma-2.mlmodelc
+  --embedding-model embeddinggemma-2-coreml
 ```
 
 ---
