@@ -33,13 +33,14 @@ struct AudioVoicePicker: View {
     }
 }
 
-/// Speech speed. Qwen3-TTS has no speed control.
+/// Speech speed. Qwen3-TTS and Drama 3 have no speed control, and Drama 3's
+/// request always sends 1.0.
 @MainActor
 struct AudioSpeedControl: View {
     @ObservedObject var controller: AudioWorkspaceController
 
     var body: some View {
-        if controller.selectedProfile != nil, controller.selectedProfile?.family != "qwen3_tts" {
+        if let family = controller.selectedProfile?.family, family != "qwen3_tts", family != "fish_drama3" {
             HStack {
                 Text("Speed", bundle: .module)
                 Slider(value: $controller.recipe.speed, in: 0.5...2, step: 0.05)

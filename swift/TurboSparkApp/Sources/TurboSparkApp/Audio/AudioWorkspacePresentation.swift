@@ -63,6 +63,10 @@ extension AudioWorkspaceController {
         var steps = [VoiceCloneStepStatus(step: .voice, state: voiceStepState)]
         if selectedProfileClonesNatively {
             steps.append(VoiceCloneStepStatus(step: .consent, state: cloneConsentGiven ? .done : .todo))
+            if selectedProfileNeedsReferenceTranscript {
+                let transcribed = !speechSettings.referenceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                steps.append(VoiceCloneStepStatus(step: .transcript, state: transcribed ? .done : .todo))
+            }
         } else if selectedProfile?.family == "qwen3_tts" {
             let transcribed = speechSettings.embeddingOnly
                 || !speechSettings.referenceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

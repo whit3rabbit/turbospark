@@ -41,7 +41,22 @@ place. Ctrl-C stops the walk and removes the partial directory.
 The catalog profile `fish-drama3-4bit` installs through the same walk with a
 receipt in the managed store (`ts_audio_install_with_options`, with the
 `fish_audio_community_license` acknowledgment). The receipt records the size
-and sha256 of every converted file. The macOS app does not list it yet.
+and sha256 of every converted file.
+
+## In the app
+
+The macOS app lists Drama 3 on the Voice Cloning page (and in Advanced).
+Download asks you to accept the license terms first, then runs the same
+conversion. "Choose local model folder" takes an install from
+`pull-drama3` instead.
+
+A clone there needs a reference recording, your confirmation that you have
+the right to use the voice, and the exact words spoken in the reference. A
+reference taken from a transcribed recording fills the transcript in. There
+is no speed control and no quality preset. Cues go inline in the script.
+
+The app always clones. Speaking in the model's own voice, with no reference,
+is only on the CLI, HTTP, and native-session paths for now.
 
 ## Speak
 

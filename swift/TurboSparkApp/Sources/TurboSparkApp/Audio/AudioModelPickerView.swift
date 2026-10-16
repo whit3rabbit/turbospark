@@ -121,6 +121,11 @@ struct AudioModelPickerView: View {
                 Text(profile.identity.repository).foregroundStyle(.appSecondary)
                     .textSelection(.enabled).lineLimit(2).truncationMode(.middle)
             }
+            if profile.family == "fish_drama3" {
+                // The Fish Audio Community License asks a product that uses
+                // the model to show this attribution, in these words.
+                Text(verbatim: "Built with Fish Audio").foregroundStyle(.appSecondary)
+            }
             HStack(spacing: 8) {
                 if controller.selectedLocalModelURL == nil, profile.downloadBytes > 0 {
                     Label { Text(MetricFormat.storage(profile.downloadBytes)) }

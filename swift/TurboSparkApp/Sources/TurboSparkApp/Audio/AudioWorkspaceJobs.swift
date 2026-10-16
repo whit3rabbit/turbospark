@@ -20,8 +20,9 @@ extension AudioWorkspaceController {
         request.durationSeconds = recipe.durationSeconds; request.steps = recipe.steps; request.seed = recipe.seed
         return request
     }
-    /// A natively cloning run (MegaTTS3): its reference arrives as the
-    /// session PCM at 24 kHz, and consent holds only for that exact region.
+    /// A natively cloning run (MegaTTS3, OmniVoice, Drama 3): its reference
+    /// arrives as the session PCM at 24 kHz, and consent holds only for that
+    /// exact region.
     nonisolated static func nativeCloneRequest(_ base: AudioRequest, family: String, speech: AudioSpeechSettings?) -> AudioRequest {
         var request = base
         let options = speech?.cloneOptions ?? AudioCloneOptions()
@@ -33,6 +34,19 @@ extension AudioWorkspaceController {
             // reference transcript and delivery instruction directly.
             request.pW = nil
             request.tW = nil
+            return request
+        }
+        if family == "fish_drama3" {
+            // Drama 3 refuses speed other than 1.0, an instruction (cues go
+            // inline in the script) and the guidance weights, and ignores
+            // steps. A clone needs the reference's exact words.
+            request.steps = nil
+            request.speed = 1
+            request.instruction = nil
+            request.pW = nil
+            request.tW = nil
+            let transcript = speech?.referenceText.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            request.referenceText = transcript.isEmpty ? nil : transcript
             return request
         }
         request.pW = options.intelligibility
