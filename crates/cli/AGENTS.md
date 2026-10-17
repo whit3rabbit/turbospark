@@ -6,6 +6,8 @@ User-facing model, generation, image, music, voice cloning, and server command e
 - `turbospark-image`: Diffusion image generation.
 - `turbospark-music`: Music generation via MiniMax Music 3.
 - `turbospark-clone`: Zero-shot voice cloning and speech synthesis via MegaTTS3.
+- `turbospark-speak`: Speech with Fish Audio Drama 3, optionally in a cloned voice.
+- `turbospark-ocr`: Document OCR via Core ML (macOS 15+).
 - `turbospark`: Unified front end dispatcher.
 
 ## Read first
