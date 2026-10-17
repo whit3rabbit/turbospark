@@ -347,6 +347,25 @@ hoisted weight changes 92 and 96 of those lines, so the oracle does run the new
 path. The `music3_sequence`, `music3_parity`, `music3_precision` and
 `music3_metal` gates pass.
 
+A second exact change in the same kernel: the activation tile is staged with
+four-wide loads (`packed_float4`, so no alignment beyond a float is assumed)
+when the row length and K chunk start are multiples of four and the chunk is
+full, and falls back to the scalar loop otherwise. It moves the same values.
+Kernel level (`sequence_timing`, quiet GPU, three repeats): 691 x 2048 x 2048
+1.84 to 1.48 ms, 691 x 2048 x 16384 12.9 to 10.3 ms, 691 x 8192 x 2048 7.25 to
+5.1 ms. End to end, interleaved against the build with only the decode hoist
+(medians of three, byte-identical WAVs `16c5db73...` and `361ad4d6...`, host
+busier than the run above so absolute times are higher): 1 step 35.3 s to
+34.2 s, 30 steps 113.6 s to 99.4 s, DiT stage 81.5 s to 68.2 s. The oracles
+(`hashes`, `dit_hashes`) are unchanged, and a mutation that swaps two lanes of
+the vector store changes 321 of 1,021 and all 192 lines.
+
+After both changes, a second ablation of the 691 x 2048 x 16384 projection
+(10.7 ms) puts the four-bit decode at about 2.7 ms and the MMAs at about 3.4 ms
+(roughly 14 TFLOPS on their own, near the f32 ALU rate), with about 4.5 ms of
+staging, barriers and epilogue. Further exact gains would need those stages to
+overlap the MMAs; not attempted.
+
 Tried and not kept, with the same oracle and timing:
 
 - Taller or wider tiles (64x32, 32x64, 64x64 with the same 128 threads and MMA
@@ -356,6 +375,8 @@ Tried and not kept, with the same oracle and timing:
 - Making the K word the fastest lane index so neighbouring lanes read
   contiguous words: no gain over the hoist alone.
 - A bf16 operand MMA would only speed up the part that is not the limit.
+- Aliasing the result tile onto the activation and weight tiles (12 KB to 8 KB
+  of threadgroup memory per group): about 1.5 percent, inside the noise.
 
 ### LM head window and AR command buffers
 

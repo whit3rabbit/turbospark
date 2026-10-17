@@ -676,9 +676,20 @@ kernel void music3_linear_tiled(device const uchar *w [[buffer(0)]],
         }
 #endif
         for(uint k0=begin;k0<end;k0+=BK) {
-            for(uint idx=tid;idx<TR*BK;idx+=128) {
-                uint r=idx/BK,kc=idx%BK;
-                xs[idx]=r0+r<rows && k0+kc<end ? x[ulong(r0+r)*cols+k0+kc] : 0;
+            if((cols&3)==0 && (begin&3)==0 && k0+BK<=end) {
+                // Full K chunk with 4-aligned rows: four-wide loads (packed, so
+                // no alignment is assumed beyond a float). Same values as below.
+                for(uint idx=tid;idx<TR*(BK/4);idx+=128) {
+                    uint r=idx/(BK/4),kc=(idx%(BK/4))*4;
+                    float4 v=0;
+                    if(r0+r<rows) v=float4(*((device const packed_float4*)(x+ulong(r0+r)*cols+k0+kc)));
+                    xs[r*BK+kc]=v.x;xs[r*BK+kc+1]=v.y;xs[r*BK+kc+2]=v.z;xs[r*BK+kc+3]=v.w;
+                }
+            } else {
+                for(uint idx=tid;idx<TR*BK;idx+=128) {
+                    uint r=idx/BK,kc=idx%BK;
+                    xs[idx]=r0+r<rows && k0+kc<end ? x[ulong(r0+r)*cols+k0+kc] : 0;
+                }
             }
             if(fast4) {
                 // Eight consecutive four-bit codes share one 32-bit word and
