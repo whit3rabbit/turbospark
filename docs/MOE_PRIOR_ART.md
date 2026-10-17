@@ -34,8 +34,8 @@ budget, a cold-read tuning pass, or Neural Engine offload.
 
 | Idea | Source | State here | Next step |
 |---|---|---|---|
-| Aging the cache's use counts | jitllm ROADMAP 12 (from ds4) | **open**: `ExpertCache` counts never decay | replay two captures back to back |
-| One slot budget shared by all layers | jitllm `format/jlm/read.go` `evictOne` | **open**: every layer gets the same `--expert-cache-slots` | the replay's `pool` rows |
+| Aging the cache's use counts | jitllm ROADMAP 12 (from ds4) | **measured, default unchanged**: the `TURBOSPARK_EXPERT_CACHE_DECAY` seam (2026-10-13) won at 16 slots and cost 17-50% of decode at the `auto` 96 on two families | a physical-bytes-aware arm, see `docs/EXPERT_ROUTING.md` |
+| One slot budget shared by all layers | jitllm `format/jlm/read.go` `evictOne` | **closed** on the qwen4exp replay: `pool lru` buys no hit rate over per-layer LRU | only if a pooled decayed policy replays ahead first |
 | An offline-optimal bound before policy work | jitllm `engine/model/route_test.go` `replayBelady` | **built here**: `scripts/expert_policy_replay.py` | run it on real captures |
 | Queue depth for cold reads | jitllm `format/jlm/read.go`, PL 15r | **open**: `POOL_THREADS` and the chunk size were swept warm | re-sweep under the disk-bound seams |
 | Per-expert contiguous pages, pread over cold mmap, concurrent misses, shared expert overlap | jitllm | already here | none |
@@ -67,10 +67,19 @@ online policy at that slot count can miss less. If it sits within a point or
 two of `lfu (engine)`, policy work is closed at that slot count and slots
 remain the lever (`docs/DECODE_BUDGET.md`).
 
-### 1. The LFU counts never age, and a server carries them across requests
+### 1. The LFU counts never age by default, and a server carries them across requests
+
+**Measured since.** This section was written on a branch that did not yet
+have the decay seam (`8f1ef1ab`, 2026-10-13). Replays on Gemma 4 and qwen4exp
+then favored decay at every slot count. The real multi-request A/B on
+2026-10-17 agreed at 16 slots (+3.0%) and cost 17-50% of decode at the
+`auto` 96 slots on Ornith 35B and qwen4exp, because decay's misses were cold
+device reads that no replay counts
+(`docs/EXPERT_ROUTING.md`, last section). The default stays cumulative LFU.
+The reasoning below is kept as the question that measurement answered.
 
 `ExpertCache` (`crates/streaming/src/expert_cache.rs`) increments
-`expert_use_count` on every request and never decays it.
+`expert_use_count` on every request and, by default, never decays it.
 `PreadExpertStreamer::open` builds one cache per layer per runner open, and
 nothing resets it. So a long-lived runner, the server's normal shape, ranks
 experts by their count over its whole lifetime. That behaves like a static
@@ -135,6 +144,19 @@ count. Read them against the per-layer rows with two caveats:
   that moves. Price it with the replay before costing it in code.
 
 Mapped residency is unaffected: it has no slots.
+
+**Replayed 2026-10-17, and closed.** The replay ran four qwen4exp captures
+(512 experts, top-10, uniform stride) as one session. `pool lru` came in
+below per-layer decay at 16, 32 and 64 slots (44.0, 60.2 and 74.9% against
+50.4, 62.5 and 75.1%). Against per-layer LRU it trails by 4.4 points at 16
+slots and is within 1.8 points from 32 up.
+
+`pool oracle` sits 1.2 to 6.6 points above the per-layer oracle, so pooling
+does raise the ceiling. No online pooled policy priced here gets near it,
+and the change is larger than a policy. These are slot hit rates, which the
+same day's decay A/B showed can mislead. The table is in
+`docs/EXPERT_ROUTING.md`, "The oracle and pool rows for qwen4exp". One
+family only, and a pooled decayed LFU was not replayed.
 
 ### 3. Cold reads want queue depth, and the tuning here is warm
 

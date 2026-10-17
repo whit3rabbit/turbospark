@@ -63,8 +63,10 @@ sound only because `run_batch` blocks until every claim is dropped).
   bit position (each wrong bit is another valid flag) and the CQ cursor was
   unmasked. Run `cargo test -p turbospark-streaming` on Linux after touching
   it, and check the output does not say `SKIPPED`.
-- Don't change `ExpertCache`'s eviction policy on reasoning alone. Its
-  counts never age and the cache lives as long as the runner, which is
-  unmeasured on a long-lived server; price a change with
-  `scripts/expert_policy_replay.py` (oracle row first) over several
-  back-to-back captures before building it. See `docs/MOE_PRIOR_ART.md`.
+- Don't change `ExpertCache`'s eviction policy on hit rate alone. Decay
+  won every replay and still cost 17-50% of decode at the `auto` slot count
+  on two families in a real multi-request A/B, because its misses were cold
+  device reads
+  (`docs/EXPERT_ROUTING.md`, last section). Measure physical bytes on the
+  target storage, then use `scripts/expert_policy_replay.py` (oracle row
+  first). See `docs/MOE_PRIOR_ART.md`.

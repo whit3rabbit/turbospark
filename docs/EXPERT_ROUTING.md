@@ -482,6 +482,10 @@ a one-request +1 point is below run-to-run spread anyway.
 
 ### Standing decision
 
+**Superseded 2026-10-17:** item 1 below ran, and decay cost 17-50% of decode
+at the `auto` slot count on two families. See "Decay as the default: the multi-request pair,
+measured" at the end of this page.
+
 `TURBOSPARK_EXPERT_CACHE_DECAY` is a seam, default off. Flipping the default
 to decay 32 is supported by the hit-rate evidence on Gemma 4 and owes:
 
@@ -587,6 +591,8 @@ point:
   split trunk faults from n-gram-table faults.
 - Decay should default on once a clean multi-request tok/s pair exists;
   hit rates now support it on two families with different expert counts.
+  (That pair ran on 2026-10-17 and lost at the `auto` slot count; see the
+  last section.)
 
 ## Larger explicit cache vs page-cache bypass, measured (2026-10-15)
 
@@ -648,3 +654,105 @@ Output: byte-identical across the bypass arms at each slot count. 128 and
 - The bucket that did not move with any cache setting is cb1 (95-145
   ms/pass). It is now the larger lever on this install, and it needs the
   trunk-versus-n-gram split noted above before anyone optimizes it.
+
+## Decay as the default: the multi-request pair, measured (2026-10-17)
+
+The pair the cache-policy standing decision above owed:
+`TURBOSPARK_EXPERT_CACHE_DECAY=16` against the seam unset (cumulative LFU),
+on a real runner, across requests.
+
+### Protocol
+
+`turbospark-check --chat` reads the four 2026-10-15 prompts (coding,
+general, coding, general) from stdin in ONE process, 200 new tokens each,
+greedy, 2,048 context, with `TURBOSPARK_PHASES=1 TURBOSPARK_EXPERT_DISK_IO=1`.
+Turn 1 is warmup, and the rows are turns 2-4. Each block runs one discarded
+warmup session, then four arms per policy in ABBA then BAAB order. Each arm
+waits for other sessions' `target/*/deps/` processes to finish and samples
+load and `rustc` count every 5 s. It also checks that its startup line names
+the policy its label asks for.
+
+- Installs, both on the external T7 SSD where this machine keeps its MoE
+  installs: `ornith35b` (`qwenGdnMoe`, 40 layers, 256 experts, top-8,
+  18 GB) and the disk-bound `qwen4exp-swift-iq2-xs` (48 layers, 512 experts,
+  top-10, 64 GiB). `auto` resolves to 96 slots on both.
+- Binary: a clean worktree build of `7e8d6675`.
+- Host: Apple M4 Max (32-core GPU), 36 GB, on AC at the end of the run, no
+  thermal warning recorded. Scripts and logs:
+  `/Volumes/T7/turbospark/phase3-decay/`.
+
+### Measurement
+
+Ornith 35B:
+
+| slots | policy | tok/s, 4 runs (mean) | slot hits | requested MiB/token | physical MiB/token | expert io ms/pass |
+|---|---|---|---:|---:|---:|---:|
+| 16 | cumulative LFU | 40.40-43.07 (41.75) | 48.9% | 278.7 | 0.0-0.3 | 5.97 |
+| 16 | decay 16 | 42.28-44.25 (42.98) | 53.4% | 257.6 | 0.0-0.1 | 5.55 |
+| 96 (`auto`) | cumulative LFU | 23.64-25.87 (24.53) | 82.8% | 94.9 | 7.8-11.4 | 13.5 |
+| 96 (`auto`) | decay 16 | 12.30-15.89 (13.28) | 87.5% | 73.8 | 15.4-19.7 | 30.0 |
+
+qwen4exp, 96 slots (`auto`), clean arms only:
+
+| policy | tok/s, 3 runs (mean) | slot hits | requested MiB/token | physical MiB/token | expert io ms/pass |
+|---|---|---:|---:|---:|---:|
+| cumulative LFU | 4.31-4.37 (4.35) | 72.2% | 169.5 | 51.5-51.7 | 85.6 |
+| decay 16 | 3.58-3.67 (3.62) | 80.7% | 124.7 | 70.2-70.4 | 123.6 |
+
+One Ornith decay arm (15.89 tok/s) and one arm of each qwen4exp policy
+overlapped another session's build. The Ornith table includes its one, and
+the three clean Ornith decay arms read 12.30-12.57 (mean 12.40). The
+qwen4exp table leaves both out. Output was byte-identical across all arms at
+each slot count on each install.
+
+### Reading
+
+- **At 16 slots it holds.** Decay is +3.0% on the mean, and every adjacent
+  pair favors it. The page cache held every expert (about 0 MiB/token from
+  the device), so the 7.6% fewer requested bytes were a pure saving.
+- **At 96 slots, decay halves Ornith's decode and costs qwen4exp 17%.**
+  That is the `auto` count on both, and the one a default flip would
+  change. On Ornith, slot hits rise 4.7 points and requested bytes fall
+  22%. But bytes read from the device roughly double, and over USB that
+  costs more than the hits save. On Ornith the layer cb1
+  wait rises with it, from 17 to 32 ms/pass. qwen4exp shows the same shape:
+  hits +8.5 points, requested bytes -26%, device bytes +36%.
+- **The likely mechanism is page-cache aging.** This is inferred, not
+  isolated. An expert served from a slot is never `pread`, so its file pages
+  age out of the page cache while it sits there. Cumulative LFU rarely
+  evicts a long-lived resident. Decay does, and the next miss on that expert
+  is a cold device read. The larger pinned cache also leaves less page cache
+  for an 18 GB install.
+- **Every replay on this page is blind to it.** A replay counts slot hits.
+  A slot miss can be a page-cache copy or a device read. Price the next
+  policy change with physical bytes on the target storage, not hit rate.
+
+### The oracle and pool rows for qwen4exp
+
+`scripts/expert_policy_replay.py` over the four qwen4exp traces from the
+disk-bound section (`/Volumes/T7/turbospark/phase0/traces/`, c1, g1, c3,
+g4 as one session, each prompt skipped). Slot hit rates, all four requests:
+
+| slots | cumulative LFU | LRU | decay 16 | oracle | pool LRU | pool oracle |
+|---:|---:|---:|---:|---:|---:|---:|
+| 16 | 44.5% | 48.4% | 50.4% | 59.0% | 44.0% | 65.6% |
+| 32 | 53.5% | 61.5% | 62.5% | 74.5% | 60.2% | 77.1% |
+| 64 | 66.3% | 74.1% | 75.1% | 85.8% | 74.9% | 87.5% |
+| 128 | 81.7% | 86.8% | 87.0% | 93.4% | 88.6% | 94.6% |
+
+Decay 16 is the best online per-layer arm at every count, and still sits
+6.4 to 12 points under the oracle. One shared pool with LRU (jitllm's pager)
+trails per-layer LRU by 4.4 points at 16 slots and is within 1.8 points from
+32 up, so it buys no hit rate for a larger change. These are hit rates, and
+the A/B above is the reason not to act on a hit rate alone.
+
+### Standing decision
+
+- The default stays cumulative LFU, and `TURBOSPARK_EXPERT_CACHE_DECAY`
+  stays a seam. Slot-hit evidence alone is no longer enough to flip it.
+- A flip owes an arm the 96-slot case cannot lose. One option is the same
+  pair at `auto` on an internal-SSD install, where a cold read costs far
+  less. Another is a policy that does not evict a long resident whose pages
+  have aged out. Neither is measured.
+- The 16-slot gain is real but belongs to a configuration `auto` does not
+  pick on this machine.
