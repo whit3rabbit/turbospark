@@ -19,10 +19,10 @@
 //! 7. Sentences update from every decoded speaker's full hypothesis.
 
 use crate::models::vad::nemotron_diarization::CoupledDiarizer;
-use crate::{Result, SpeechError};
+use crate::{ops, Result, SpeechError};
 
 use super::seglst::{HypothesisView, SeglstEntry, SentenceBuilder};
-use super::{Features, MultitalkerAsr, SpeakerStream, Token};
+use super::{Features, MultitalkerAsr, SpeakerStream, StepOutput, Token};
 
 /// Scheduler settings; [`CoupledConfig::frozen_e`] is the qualified one.
 #[derive(Debug, Clone, PartialEq)]
@@ -59,7 +59,8 @@ impl CoupledConfig {
 }
 
 /// A source of per-chunk 80 ms speaker probabilities.
-pub trait DiarizationSource {
+/// `Send` because [`CoupledSession::run`] executes on a pool worker.
+pub trait DiarizationSource: Send {
     /// Output speakers per row.
     fn num_speakers(&self) -> usize;
     /// `mel` is channel-major `[n_mels, frames]` with `valid` real frames;
@@ -212,6 +213,13 @@ pub struct CoupledSession<'m, D: DiarizationSource> {
     asr: &'m MultitalkerAsr,
     diar: D,
     cfg: CoupledConfig,
+    track: Transcripts,
+}
+
+/// The ASR side of a session: everything a step reads or writes after
+/// diarization, kept apart from the diarizer so the two can step
+/// concurrently.
+struct Transcripts {
     preds: Vec<f32>,
     speakers: Vec<SpeakerStream>,
     decoded: Vec<bool>,
@@ -220,68 +228,126 @@ pub struct CoupledSession<'m, D: DiarizationSource> {
     step: usize,
 }
 
+/// Step 1: diarization on the chunk without the ASR pre-encode cache, with
+/// speakers past `max_speakers` zeroed.
+fn diarize<D: DiarizationSource>(
+    diar: &mut D,
+    cfg: &CoupledConfig,
+    features: &Features,
+    idx: usize,
+    new: usize,
+) -> Result<Vec<f32>> {
+    let n_spk = diar.num_speakers();
+    let diar_mel = features.channel_major(idx, new);
+    let mut chunk = diar.step(&diar_mel, new, new)?;
+    zero_extra_speakers(&mut chunk, n_spk, cfg.max_speakers);
+    Ok(chunk)
+}
+
 impl<'m, D: DiarizationSource> CoupledSession<'m, D> {
     pub fn new(asr: &'m MultitalkerAsr, diar: D, cfg: CoupledConfig) -> Self {
         Self {
-            sentences: SentenceBuilder::new(cfg.frame_seconds, cfg.sentence_break),
-            // NeMo's per-session ASR state starts with speaker 0's caches.
-            speakers: vec![asr.new_stream()],
-            decoded: vec![false],
-            preds: Vec::new(),
-            offset: 0.0,
-            step: 0,
+            track: Transcripts {
+                sentences: SentenceBuilder::new(cfg.frame_seconds, cfg.sentence_break),
+                // NeMo's per-session ASR state starts with speaker 0's caches.
+                speakers: vec![asr.new_stream()],
+                decoded: vec![false],
+                preds: Vec::new(),
+                offset: 0.0,
+                step: 0,
+            },
             asr,
             diar,
             cfg,
         }
     }
 
-    /// Streams the whole recording through `step`, chunked as NeMo's
+    /// Streams the whole recording, chunked as NeMo's
     /// `CacheAwareStreamingAudioBuffer` does with `pad_and_drop_preencoded`:
     /// every chunk is `[pre-encode cache ; shift frames]` (zeros before the
     /// start), the shift is `chunk_rows * subsampling_factor`, and a tail
     /// shorter than one subsampling group ends the stream.
+    ///
+    /// The diarizer is causal and never reads ASR state, so step `n + 1`'s
+    /// diarization runs while step `n` transcribes; each side performs
+    /// exactly the operations of a sequential loop, in the same order. The
+    /// loop runs on a worker of the kernels' pool ([`ops::in_pool`]), so
+    /// its many small kernel calls take the cheap in-pool dispatch.
     pub fn run(&mut self, features: &Features) -> Result<Vec<StepReport>> {
         let shift = self.asr.shift_frames();
         let cache = self.asr.pre_encode_cache_frames();
         let factor = self.asr.config().subsampling_factor;
-        let mut reports = Vec::new();
+        let mut plan = Vec::new();
         let mut idx = 0usize;
         while idx < features.frames {
             let new = shift.min(features.frames - idx);
             if idx > 0 && new < factor {
                 break;
             }
-            let last = idx + shift >= features.frames;
-            reports.push(self.step(features, idx, new, cache, last)?);
+            plan.push((idx, new, idx + shift >= features.frames));
             idx += shift;
         }
-        Ok(reports)
+        let Self {
+            asr,
+            diar,
+            cfg,
+            track,
+        } = self;
+        let (asr, cfg) = (*asr, &*cfg);
+        let n_spk = diar.num_speakers();
+        ops::in_pool(|| {
+            let mut reports = Vec::with_capacity(plan.len());
+            let mut ahead = plan
+                .first()
+                .map(|&(idx, new, _)| diarize(diar, cfg, features, idx, new));
+            for (n, &(idx, new, last)) in plan.iter().enumerate() {
+                let chunk = ahead.take().expect("every step is diarized ahead")?;
+                let next = plan.get(n + 1).copied();
+                let (report, next_chunk) = rayon::join(
+                    || track.transcribe(asr, cfg, n_spk, &chunk, features, idx, new, cache, last),
+                    || next.map(|(idx, new, _)| diarize(diar, cfg, features, idx, new)),
+                );
+                reports.push(report?);
+                ahead = next_chunk;
+            }
+            Ok(reports)
+        })
     }
 
-    fn step(
+    /// The session's SegLST so far.
+    pub fn seglst(&self) -> Vec<SeglstEntry> {
+        self.track.sentences.entries()
+    }
+
+    /// Cumulative 80 ms predictions after speaker zeroing, `[frames, num_speakers]`.
+    pub fn diarization(&self) -> &[f32] {
+        &self.track.preds
+    }
+}
+
+impl Transcripts {
+    /// Steps 2 to 7 for one chunk, given its diarization `chunk`.
+    #[allow(clippy::too_many_arguments)]
+    fn transcribe(
         &mut self,
+        asr: &MultitalkerAsr,
+        cfg: &CoupledConfig,
+        n_spk: usize,
+        chunk: &[f32],
         features: &Features,
         idx: usize,
         new: usize,
         cache: usize,
         last: bool,
     ) -> Result<StepReport> {
-        let asr = self.asr;
-        let n_spk = self.diar.num_speakers();
         let rows_per_chunk = asr.chunk_rows();
-
-        // 1. Diarization on the chunk without the ASR pre-encode cache.
-        let diar_mel = features.channel_major(idx, new);
-        let mut chunk = self.diar.step(&diar_mel, new, new)?;
-        zero_extra_speakers(&mut chunk, n_spk, self.cfg.max_speakers);
-        self.preds.extend_from_slice(&chunk);
+        self.preds.extend_from_slice(chunk);
         let total_rows = self.preds.len() / n_spk;
 
         // 2-3. Chunk predictions and gating.
         let take = rows_per_chunk.min(total_rows);
         let chunk_preds = self.preds[(total_rows - take) * n_spk..].to_vec();
-        let window_rows = (rows_per_chunk * self.cfg.gate_chunks).min(total_rows);
+        let window_rows = (rows_per_chunk * cfg.gate_chunks).min(total_rows);
         let window = &self.preds[(total_rows - window_rows) * n_spk..];
         let mut gate_max = vec![f32::NEG_INFINITY; n_spk];
         for row in window.chunks_exact(n_spk) {
@@ -289,14 +355,14 @@ impl<'m, D: DiarizationSource> CoupledSession<'m, D> {
                 *m = m.max(p);
             }
         }
-        let active = if self.cfg.cache_gating {
-            gate(window, n_spk, self.cfg.max_speakers, self.cfg.threshold)
+        let active = if cfg.cache_gating {
+            gate(window, n_spk, cfg.max_speakers, cfg.threshold)
         } else {
-            (0..self.cfg.max_speakers).collect()
+            (0..cfg.max_speakers).collect()
         };
 
         let offset = self.offset;
-        self.offset += rows_per_chunk as f64 * self.cfg.frame_seconds;
+        self.offset += rows_per_chunk as f64 * cfg.frame_seconds;
 
         // 6. One pre-encode shared by every active speaker.
         let frames = cache + new;
@@ -335,17 +401,45 @@ impl<'m, D: DiarizationSource> CoupledSession<'m, D> {
             self.decoded.push(false);
         }
 
-        // 4 and 6. Conditioned per-speaker steps.
-        for &s in &active {
-            let (target, background) = targets(
-                &chunk_preds,
-                n_spk,
-                &active,
-                s,
-                self.cfg.threshold,
-                self.cfg.binary_targets,
-            );
-            let out = asr.step(&pre, &target, &background, &mut self.speakers[s], last)?;
+        // 4 and 6. Conditioned per-speaker steps. Each speaker reads only the
+        // shared pre-encode and writes only its own stream, so they run
+        // concurrently on the pool and their serial parts (RNN-T decode,
+        // norms, small loops) overlap; every value is what a sequential
+        // loop computes. On an error, later speakers may already have
+        // stepped, but the session's result is that error either way.
+        let conditions: Vec<(Vec<f32>, Vec<f32>)> = active
+            .iter()
+            .map(|&s| {
+                targets(
+                    &chunk_preds,
+                    n_spk,
+                    &active,
+                    s,
+                    cfg.threshold,
+                    cfg.binary_targets,
+                )
+            })
+            .collect();
+        let mut streams: Vec<&mut SpeakerStream> = self
+            .speakers
+            .iter_mut()
+            .enumerate()
+            .filter(|(s, _)| active.binary_search(s).is_ok())
+            .map(|(_, stream)| stream)
+            .collect();
+        let outs: Vec<Result<StepOutput>> = {
+            use rayon::prelude::*;
+            streams
+                .par_iter_mut()
+                .zip(conditions.par_iter())
+                .map(|(stream, (target, background))| {
+                    asr.step(&pre, target, background, stream, last)
+                })
+                .collect()
+        };
+        drop(streams);
+        for ((&s, out), (target, background)) in active.iter().zip(outs).zip(conditions) {
+            let out = out?;
             self.decoded[s] = true;
             let ids: Vec<usize> = self.speakers[s].tokens().iter().map(|t| t.id).collect();
             report.texts.push(asr.detokenize(&ids));
@@ -387,16 +481,6 @@ impl<'m, D: DiarizationSource> CoupledSession<'m, D> {
             .collect();
         self.sentences.update(offset, &views);
         Ok(report)
-    }
-
-    /// The session's SegLST so far.
-    pub fn seglst(&self) -> Vec<SeglstEntry> {
-        self.sentences.entries()
-    }
-
-    /// Cumulative 80 ms predictions after speaker zeroing, `[frames, num_speakers]`.
-    pub fn diarization(&self) -> &[f32] {
-        &self.preds
     }
 }
 

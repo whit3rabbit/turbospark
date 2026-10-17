@@ -81,8 +81,14 @@ The diarizer steps on the ASR chunk minus its pre-encode cache, speakers 4
 and up are zeroed, the gate keeps speakers whose max over the last 28
 frames exceeds 0.5, and each active speaker gets its own target plus a
 background built from the other active speakers. The step runs with one
-shared pre-encode, and inactive speakers keep stale state. [seglst.rs](seglst.rs)
-ports NeMo's sentence assembly, including its word-continuation split.
+shared pre-encode, and inactive speakers keep stale state.
+[seglst.rs](seglst.rs) ports NeMo's sentence assembly, including its
+word-continuation split.
+
+For speed, the diarizer runs one step ahead of transcription and the
+active speakers step concurrently on the kernels' worker pool. Each
+component performs the same arithmetic in the same order as a sequential
+loop, so the output is bit-identical.
 
 ## Evidence
 
@@ -104,10 +110,19 @@ environment (CPU, FP32).
 Tolerances on large-magnitude tensors are RMS-scaled (`max |a - b| / rms(b)
 <= 1e-4`) because f32 accumulation order differs from torch's blocked GEMM.
 
-CPU throughput on an Apple M4 Max (release build, shared host, not a formal
-benchmark): RTF about 0.5 with replayed diarization and 1.2 to 2.0 per
-120 s clip with the live diarizer, which dominates. The high end is from
-clips that ran while test builds shared the CPU.
+CPU throughput on an Apple M4 Max (release build, shared host with load
+around 9 to 12, not a formal benchmark), live diarizer, the 12-clip panel
+interleaved per clip: before the tiled `ops` kernels, 1929 s in total
+(mean RTF 1.34). After, 699 s (mean RTF 0.49, worst clip 0.63), with the
+SegLST unchanged on every clip. The diarizer is about 60% of the time,
+mostly `linear` over its 542-row spkcache + FIFO + chunk window.
+
+Adding the worker pool, the diarizer running one step ahead and
+concurrent speakers (medians of three interleaved runs on a quiet host,
+2026-10-17): IS1000a_00510 (4 speakers) 40.0 s (RTF 0.33) against 54.5 s
+with the tiled kernels alone and 153.9 s before them. IS1004a_00140 (2
+speakers) 35.0 s (RTF 0.29) against 47.5 s and 142.7 s. The SegLST is
+identical across all three builds.
 
 ## Tests
 
