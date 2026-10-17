@@ -328,9 +328,16 @@ group index and reloading them for each code. Each weight is still
 `float(code) * scale + offset` rounded the same way, and the MMA chain is
 untouched. Interleaved on the same quiet host, before to after: 2048x2048
 2.45 to 1.85 ms, 2048x16384 18.3 to 13.3 ms, 8192x2048 9.5 to 7.5 ms, so the
-six projections of a block go from about 36.6 to about 28 ms. That is a
-kernel-level figure; the end-to-end gain needs the real checkpoint, which was
-not installed when this was measured.
+six projections of a block go from about 36.6 to about 28 ms.
+
+End to end on the real 4-bit checkpoint (8 s, medians of three interleaved runs
+per arm, release builds of the commit before and after, AC power, CPU about 87
+percent idle but a 1-minute load average of 8, so not a benchmark row): 1 step
+32.9 s to 30.1 s (RTF 4.11 to 3.76); 30 steps 130.0 s to 109.4 s (RTF 16.25 to
+13.68), with the DiT stage 100.3 s to 78.7 s. The depth stage also fell (15.8
+to 13.9 s at 1 step) because its row-14 and row-16 steps use the same tiled
+kernel. Both arms wrote byte-identical WAVs (`16c5db73...` for 8 s, 1 step and
+`361ad4d6...` for 8 s, 30 steps, the hashes recorded above).
 
 Exactness: `music3_linear_bench hashes` (1,021 lines) and the new `dit_hashes`
 mode (192 lines: 4- and 8-bit, groups 32 and 64, F16 and BF16, the real
@@ -535,34 +542,68 @@ different metric. Treat it as a speed option, and listen before relying on it.
 It is a flow-stage saving only: the AR stage and vocoder are unchanged, and a
 60 s request is still far from real time.
 
-### Flow solver: Adams-Bashforth 2 (opt-in, not yet evaluated)
+### Flow solver: Adams-Bashforth 2 (opt-in)
 
 `FlowSolver::AdamsBashforth2` integrates the flow with `x += dt * (1.5 v - 0.5
 v_prev)` instead of Euler's `x += dt * v`. It is second order on the uniform
 sigma schedule and costs no extra DiT forward, so it is meant to be paired with
-fewer steps (for example 15 or 21 instead of 30). `v` is the final guided
-velocity, so it composes with `FlowGuidance` reuse. The first step of every
-chunk has no history and is Euler, and history never crosses a chunk, so a
-one-step request is identical to Euler.
+fewer steps. `v` is the final guided velocity, so it composes with
+`FlowGuidance` reuse. The first step of every chunk has no history and is
+Euler, and history never crosses a chunk, so a one-step request is identical to
+Euler.
 
 Enable it with `Model::set_flow_solver` / `Music3Runner::set_flow_solver`, or
 `turbospark-music generate --flow-solver ab2` (`music3_bench` takes the same
-flag). The default is `FlowSolver::Euler`, the reference trajectory, so the
-WAV hashes above are unchanged. AB2 changes the output and is never implied by
+flag). The default is `FlowSolver::Euler`, the reference trajectory, so the WAV
+hashes above are unchanged. AB2 changes the output and is never implied by
 another option.
 
-What is verified: the combiner is second order on `dx/dt = -x` (halving the
-step quarters the error, where Euler's halves), a one-step request is
-bit-equal to Euler across a multi-chunk fixture, and the default Euler path
-still passes every pinned flow test. What is **not** measured: any speed or
-quality number. Compare at equal DiT forwards, not equal steps, against the
-reuse rows above (42 forwards: exact 21 steps correlation 0.9548, reuse 0.9947):
-AB2 at 21 steps (42 forwards), AB2 at 15 steps (30 forwards), and AB2 at 15
-steps with reuse, using `crates/audio/scripts/ab_music3_flow.py` and
-`spectral_distance.py` on a quiet AC-powered host, then listen to a full lyric
-song, including chunk seams. An external CUDA port reports 15 AB2 steps near its
-30-step Euler result (correlation about 0.96); that is a different stack and
-metric, and it is below the reuse figure above.
+Verified in tests: the combiner is second order on `dx/dt = -x` (halving the
+step quarters the error where Euler's halves), a one-step request is bit-equal
+to Euler across a multi-chunk fixture, and the default path passes every pinned
+flow test.
+
+Measured 2026-10-17 on Apple M4 Max, AC power, release build, the pinned 4-bit
+snapshot (`c7ea32923b24`), caption "upbeat acoustic folk with warm guitar",
+lyrics `[instrumental]`, seed 7, 8 s (one chunk), one run per variant through
+`ab_music3_flow.py`, scored against the exact 30-step WAV with
+`spectral_distance.py`. The 1-minute load average was 8 but the CPU was about
+87 percent idle and the GPU idle, so DiT times are single runs and indicative,
+not benchmark rows. The `e21` and `reuse30` rows reproduce the figures above
+to the digit.
+
+| Variant (steps, solver, reuse) | DiT forwards | DiT | Correlation | Log-band L1 |
+|---|---|---|---|---|
+| exact: 30, Euler (reference) | 60 | 77.3 s | 1.0000 | 0 |
+| 30, AB2 | 60 | 76.1 s | 0.9911 | 1.60 dB |
+| 30, Euler, reuse 3/2 | 42 | 53.8 s | 0.9947 | 1.13 dB |
+| 21, Euler | 42 | 54.2 s | 0.9548 | 1.48 dB |
+| 21, AB2 | 42 | 55.2 s | 0.9730 | 1.33 dB |
+| 21, Euler, reuse 3/2 | 30 | 37.6 s | 0.9605 | 1.50 dB |
+| 21, AB2, reuse 3/2 | 30 | 36.5 s | 0.9742 | 1.30 dB |
+| 15, Euler | 30 | 39.0 s | 0.7249 | 2.93 dB |
+| 15, AB2 | 30 | 38.1 s | 0.7831 | 2.01 dB |
+| 15, AB2, reuse 3/2 | 22 | 28.9 s | 0.7988 | 1.90 dB |
+
+What it shows:
+
+- At equal steps AB2 is closer to the 30-step reference than Euler (21 steps:
+  0.973 vs 0.955; 15 steps: 0.783 vs 0.725). The gain is modest.
+- Fifteen steps is not enough for either solver here (about 0.78), so the
+  "15 AB2 steps matches 30 Euler steps" result reported for an external CUDA
+  port does not reproduce on this stack.
+- At equal cost, 42 forwards: Euler 30 with reuse (0.9947) beats AB2 21
+  (0.9730). At 30 forwards: AB2 21 with reuse (0.9742, 1.30 dB) beats Euler 21
+  with reuse (0.9605, 1.50 dB), both far above 15 steps. So the useful
+  combination is AB2 with reuse and about 21 steps, at roughly half the DiT time
+  of the exact path.
+- Euler 30 and AB2 30 agree at 0.9911 against each other, so the Euler
+  reference is not penalizing the more accurate solver much.
+
+Limits: one prompt, one seed, one run each, a drift metric and not a quality
+score, and no listening test (intelligibility, transients, chunk seams over a
+full song). Treat AB2 and reuse as speed options to listen to before relying on
+them.
 
 ### Evaluated against audio.cpp, not adopted
 
