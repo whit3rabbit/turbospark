@@ -29,6 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut warmup = false;
     let mut flow_only = false;
     let mut guidance = audio::music::minimax_music3::FlowGuidance::EXACT;
+    let mut solver = audio::music::minimax_music3::FlowSolver::Euler;
     while let Some(flag) = args.next() {
         if flag == "--warmup" {
             warmup = true;
@@ -50,6 +51,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--seed" => seed = Some(value.parse::<u64>()?),
             "--flow-uncond-interval" => guidance.uncond_interval = value.parse()?,
             "--flow-uncond-warmup" => guidance.uncond_warmup = value.parse()?,
+            "--flow-solver" => {
+                solver = match value.as_str() {
+                    "euler" => audio::music::minimax_music3::FlowSolver::Euler,
+                    "ab2" => audio::music::minimax_music3::FlowSolver::AdamsBashforth2,
+                    other => return Err(format!("unknown flow solver {other}").into()),
+                }
+            }
             "--precision" => {
                 precision = match value.as_str() {
                     "checkpoint" => Music3Precision::Checkpoint,
@@ -72,6 +80,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let runner = turbospark_runtime::Music3Runner::open_with_precision(&model, precision)?;
     let open = opened.elapsed();
     runner.set_flow_guidance(guidance)?;
+    runner.set_flow_solver(solver);
 
     let mut warmup_ms = None;
     if warmup {

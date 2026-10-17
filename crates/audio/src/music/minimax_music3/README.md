@@ -496,6 +496,35 @@ different metric. Treat it as a speed option, and listen before relying on it.
 It is a flow-stage saving only: the AR stage and vocoder are unchanged, and a
 60 s request is still far from real time.
 
+### Flow solver: Adams-Bashforth 2 (opt-in, not yet evaluated)
+
+`FlowSolver::AdamsBashforth2` integrates the flow with `x += dt * (1.5 v - 0.5
+v_prev)` instead of Euler's `x += dt * v`. It is second order on the uniform
+sigma schedule and costs no extra DiT forward, so it is meant to be paired with
+fewer steps (for example 15 or 21 instead of 30). `v` is the final guided
+velocity, so it composes with `FlowGuidance` reuse. The first step of every
+chunk has no history and is Euler, and history never crosses a chunk, so a
+one-step request is identical to Euler.
+
+Enable it with `Model::set_flow_solver` / `Music3Runner::set_flow_solver`, or
+`turbospark-music generate --flow-solver ab2` (`music3_bench` takes the same
+flag). The default is `FlowSolver::Euler`, the reference trajectory, so the
+WAV hashes above are unchanged. AB2 changes the output and is never implied by
+another option.
+
+What is verified: the combiner is second order on `dx/dt = -x` (halving the
+step quarters the error, where Euler's halves), a one-step request is
+bit-equal to Euler across a multi-chunk fixture, and the default Euler path
+still passes every pinned flow test. What is **not** measured: any speed or
+quality number. Compare at equal DiT forwards, not equal steps, against the
+reuse rows above (42 forwards: exact 21 steps correlation 0.9548, reuse 0.9947):
+AB2 at 21 steps (42 forwards), AB2 at 15 steps (30 forwards), and AB2 at 15
+steps with reuse, using `crates/audio/scripts/ab_music3_flow.py` and
+`spectral_distance.py` on a quiet AC-powered host, then listen to a full lyric
+song, including chunk seams. An external CUDA port reports 15 AB2 steps near its
+30-step Euler result (correlation about 0.96); that is a different stack and
+metric, and it is below the reuse figure above.
+
 ### Evaluated against audio.cpp, not adopted
 
 - Flow chunk hop 150 (audio.cpp `flow_chunk_hop_frames`): not implemented.

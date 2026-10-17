@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use audio::music::minimax_music3::{
-    is_tiny_fixture_dims, FlowGuidance, Generation, Model, Music3Precision, StageTimings,
-    TextGenerateRequest,
+    is_tiny_fixture_dims, FlowGuidance, FlowSolver, Generation, Model, Music3Precision,
+    StageTimings, TextGenerateRequest,
 };
 use audio::Waveform;
 use catalog::Store;
@@ -18,7 +18,7 @@ USAGE:
         (--lyrics TEXT | --lyrics-file PATH) --output WAV \\
         [--duration SECONDS] [--steps N] [--seed N] [--precision checkpoint|float32] \\
         [--wav-format pcm16|float32] [--timings] \\
-        [--flow-uncond-interval N] [--flow-uncond-warmup N]
+        [--flow-uncond-interval N] [--flow-uncond-warmup N] [--flow-solver euler|ab2]
 
 The model must be a pinned MiniMax Music 3 profile installed by
 `turbospark-model pull-audio`, or a local converted model directory.
@@ -31,6 +31,9 @@ flow unconditional guidance branch only every Nth step after
 --flow-uncond-warmup steps (default 2) and reuses the last guidance
 correction in between. N=3 cuts DiT time by about 30 percent and changes the
 output; the default output is unchanged.
+--flow-solver ab2 integrates the flow with second-order Adams-Bashforth instead
+of Euler. It needs no extra DiT forward, changes the output, and is meant to be
+paired with a lower --steps. The default is euler, the reference trajectory.
 ";
 
 #[derive(Debug, Clone, PartialEq)]
@@ -46,6 +49,7 @@ struct GenerateOptions {
     wav_format: WavFormat,
     timings: bool,
     flow_guidance: FlowGuidance,
+    flow_solver: FlowSolver,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,6 +105,7 @@ fn parse_args(args: &[String]) -> Result<GenerateOptions, Error> {
     let mut wav_format = None;
     let mut timings = false;
     let mut flow_guidance = FlowGuidance::EXACT;
+    let mut flow_solver = None;
     let mut index = 1usize;
     while index < args.len() {
         let flag = args[index].as_str();
@@ -180,6 +185,18 @@ fn parse_args(args: &[String]) -> Result<GenerateOptions, Error> {
                     flow_guidance.uncond_warmup = parsed;
                 }
             }
+            "--flow-solver" => {
+                let selected = match value()? {
+                    "euler" => FlowSolver::Euler,
+                    "ab2" => FlowSolver::AdamsBashforth2,
+                    other => {
+                        return Err(Error::Usage(format!(
+                            "unknown flow solver {other:?}; expected euler or ab2"
+                        )))
+                    }
+                };
+                set_once(&mut flow_solver, selected, flag)?;
+            }
             "--output" => set_once(&mut output, PathBuf::from(value()?), flag)?,
             "--help" | "-h" => return Err(Error::Usage(USAGE.to_string())),
             other if other.starts_with('-') => {
@@ -214,6 +231,7 @@ fn parse_args(args: &[String]) -> Result<GenerateOptions, Error> {
         wav_format: wav_format.unwrap_or(WavFormat::Pcm16),
         timings,
         flow_guidance,
+        flow_solver: flow_solver.unwrap_or_default(),
     };
     if options.flow_guidance.uncond_interval == 0 {
         return Err(Error::Usage(
@@ -284,6 +302,7 @@ fn generate_to_file(store: &Store, options: &GenerateOptions) -> Result<(), Erro
         Model::load_converted_with_precision(&model_path, options.precision)
             .and_then(|model| {
                 model.set_flow_guidance(options.flow_guidance)?;
+                model.set_flow_solver(options.flow_solver);
                 model.generate_text_timed(&request)
             })
             .map_err(|error| Error::Failed(error.to_string()))?
@@ -293,6 +312,7 @@ fn generate_to_file(store: &Store, options: &GenerateOptions) -> Result<(), Erro
             &request,
             options.precision,
             options.flow_guidance,
+            options.flow_solver,
         )?
     };
     let waveform = Waveform::new(generated.sample_rate, 2, generated.waveform)
@@ -351,12 +371,14 @@ fn generate_metal(
     request: &TextGenerateRequest,
     precision: Music3Precision,
     flow_guidance: FlowGuidance,
+    flow_solver: FlowSolver,
 ) -> Result<(Generation, StageTimings), Error> {
     let runner = runtime::Music3Runner::open_with_precision(path, precision)
         .map_err(|error| Error::Failed(error.to_string()))?;
     runner
         .set_flow_guidance(flow_guidance)
         .map_err(|error| Error::Failed(error.to_string()))?;
+    runner.set_flow_solver(flow_solver);
     eprintln!(
         "Music 3 Metal: {:.2} GiB resident weights",
         runner.resident_weight_bytes() as f64 / 1073741824.0
@@ -372,6 +394,7 @@ fn generate_metal(
     _request: &TextGenerateRequest,
     _precision: Music3Precision,
     _flow_guidance: FlowGuidance,
+    _flow_solver: FlowSolver,
 ) -> Result<(Generation, StageTimings), Error> {
     Err(Error::Failed(
         "full-size Music 3 generation requires macOS and a Metal device".into(),
@@ -423,6 +446,29 @@ mod tests {
             invalid.extend(bad.map(String::from));
             assert!(parse_args(&invalid).is_err(), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn parser_defaults_to_euler_and_accepts_ab2() {
+        let args = base_args("tiny-model".to_string());
+        assert_eq!(parse_args(&args).unwrap().flow_solver, FlowSolver::Euler);
+        let mut ab2 = args.clone();
+        ab2.extend(["--flow-solver", "ab2"].map(String::from));
+        assert_eq!(
+            parse_args(&ab2).unwrap().flow_solver,
+            FlowSolver::AdamsBashforth2
+        );
+        let mut euler = args.clone();
+        euler.extend(["--flow-solver", "euler"].map(String::from));
+        assert_eq!(parse_args(&euler).unwrap().flow_solver, FlowSolver::Euler);
+        for bad in [["--flow-solver", "rk4"], ["--flow-solver", ""]] {
+            let mut invalid = args.clone();
+            invalid.extend(bad.map(String::from));
+            assert!(parse_args(&invalid).is_err(), "{bad:?}");
+        }
+        let mut twice = ab2.clone();
+        twice.extend(["--flow-solver", "euler"].map(String::from));
+        assert!(parse_args(&twice).is_err());
     }
 
     #[test]

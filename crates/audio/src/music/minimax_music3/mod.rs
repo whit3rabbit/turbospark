@@ -24,7 +24,7 @@
 
 pub mod backend;
 pub mod precision;
-pub use euler::FlowGuidance;
+pub use euler::{FlowGuidance, FlowSolver};
 pub use output_stats::{output_stats, OutputStats};
 pub use precision::Music3Precision;
 pub use progress::{Control, Progress};
@@ -519,6 +519,8 @@ pub struct Model {
     stage: RefCell<StageTimings>,
     // Opt-in flow CFG reuse; `FlowGuidance::EXACT` is the reference path.
     flow_guidance: Cell<FlowGuidance>,
+    // Opt-in flow integrator; `FlowSolver::Euler` is the reference path.
+    flow_solver: Cell<FlowSolver>,
 }
 
 /// Chunk windows over `num_frames` AR frames: 200-frame windows hopping
@@ -733,6 +735,7 @@ impl Model {
             precision: store.precision(),
             stage: RefCell::new(StageTimings::default()),
             flow_guidance: Cell::new(FlowGuidance::EXACT),
+            flow_solver: Cell::new(FlowSolver::Euler),
         })
     }
 
@@ -743,6 +746,13 @@ impl Model {
         guidance.validate()?;
         self.flow_guidance.set(guidance);
         Ok(())
+    }
+
+    /// Select the flow integrator for later requests. The default is
+    /// [`FlowSolver::Euler`]; [`FlowSolver::AdamsBashforth2`] changes the
+    /// trajectory (second order, no extra DiT forward) and is opt-in.
+    pub fn set_flow_solver(&self, solver: FlowSolver) {
+        self.flow_solver.set(solver);
     }
 
     /// Generate from the public caption-and-lyrics contract using the
@@ -1381,6 +1391,7 @@ impl Model {
                 steps,
                 DIT_CFG_SCALE,
                 self.flow_guidance.get(),
+                self.flow_solver.get(),
                 previous_latent.as_deref(),
                 previous_condition.as_deref(),
                 condition_dtype,

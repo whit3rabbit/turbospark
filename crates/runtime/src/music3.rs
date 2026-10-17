@@ -650,6 +650,11 @@ impl Music3Runner {
     ) -> Result<()> {
         self.model.set_flow_guidance(guidance)
     }
+    /// Opt in to the second-order Adams-Bashforth flow integrator. The
+    /// default (`FlowSolver::Euler`) is the reference trajectory.
+    pub fn set_flow_solver(&self, solver: audio::music::minimax_music3::FlowSolver) {
+        self.model.set_flow_solver(solver);
+    }
     /// Per-operation call counts and wall time since the last reset,
     /// slowest total first. Weight upload during `open` is not included.
     pub fn dispatch_profile(&self) -> Vec<DispatchStat> {

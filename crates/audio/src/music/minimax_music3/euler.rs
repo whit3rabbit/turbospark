@@ -90,6 +90,27 @@ impl Default for FlowGuidance {
     }
 }
 
+/// Time integrator for the flow trajectory.
+///
+/// `Euler` is the reference. `AdamsBashforth2` is a two-step method that
+/// extrapolates the velocity from the previous step (`1.5 v - 0.5 v_prev`),
+/// which is second order on the uniform sigma schedule at no extra DiT
+/// forward. It changes the trajectory, so it is opt-in and never implied by
+/// another option. The first step of every chunk has no history and is Euler.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FlowSolver {
+    #[default]
+    Euler,
+    AdamsBashforth2,
+}
+
+/// Second-order Adams-Bashforth velocity for equally spaced steps. Each
+/// operation rounds to `dtype` like the rest of the update, so the effective
+/// velocity enters `update` exactly the way a model velocity does.
+pub(crate) fn ab2_velocity(velocity: f32, previous: f32, dtype: DType) -> f32 {
+    dtype.round(dtype.round(1.5f32 * velocity) - dtype.round(0.5f32 * previous))
+}
+
 pub(crate) fn guided_velocity(
     unconditional: f32,
     conditional: f32,
@@ -181,6 +202,7 @@ pub(crate) fn denoise_chunk_typed(
         steps,
         guidance_scale,
         FlowGuidance::EXACT,
+        FlowSolver::Euler,
         previous_latent,
         previous_condition,
         condition_dtype,
@@ -200,6 +222,7 @@ pub(crate) fn denoise_chunk_controlled(
     steps: usize,
     guidance_scale: f32,
     guidance: FlowGuidance,
+    solver: FlowSolver,
     previous_latent: Option<&[f32]>,
     previous_condition: Option<&[f32]>,
     condition_dtype: DType,
@@ -236,6 +259,11 @@ pub(crate) fn denoise_chunk_controlled(
     // `guided - conditional` from the last step that ran both branches; only
     // read when `guidance.uncond_interval > 1`.
     let mut cached_delta: Vec<f32> = Vec::new();
+    // The previous step's guided velocity, kept only for Adams-Bashforth 2.
+    // It lives for one chunk, so history never crosses a chunk boundary. The
+    // overlap prefix is overwritten after the loop, so its stale history
+    // cannot reach the output.
+    let mut previous_velocity: Option<Vec<f32>> = None;
     for index in 0..steps {
         if progress(index) == super::Control::Cancel {
             return Ok(None);
@@ -296,6 +324,22 @@ pub(crate) fn denoise_chunk_controlled(
                     .collect();
             }
             guided
+        };
+        let velocity = if solver == FlowSolver::AdamsBashforth2 {
+            // Extrapolate from the guided velocity, so this composes with
+            // guidance reuse. Step 0 has no history and stays Euler.
+            let effective = match &previous_velocity {
+                Some(previous) => velocity
+                    .iter()
+                    .zip(previous)
+                    .map(|(v, p)| ab2_velocity(*v, *p, velocity_dtype))
+                    .collect(),
+                None => velocity.clone(),
+            };
+            previous_velocity = Some(velocity);
+            effective
+        } else {
+            velocity
         };
         // (sigma_next - sigma) is computed in Python floats (f64) and
         // multiplies the f32 velocity field.

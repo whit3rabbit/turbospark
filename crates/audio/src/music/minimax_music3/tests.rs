@@ -1624,6 +1624,86 @@ fn flow_guidance_reuse_is_opt_in_and_gated_by_warmup() {
     );
 }
 
+/// Integrate `dx/dt = -x` from 0 to 1 with `n` equal steps through the same
+/// `ab2_velocity` and `update` the flow loop uses, and return |x(1) - e^-1|.
+fn ode_error(n: usize, ab2: bool) -> f64 {
+    use precision::DType;
+    let delta = 1.0f32 / n as f32;
+    let mut x = 1.0f32;
+    let mut previous: Option<f32> = None;
+    for _ in 0..n {
+        let velocity = -x;
+        let effective = match (ab2, previous) {
+            (true, Some(p)) => euler::ab2_velocity(velocity, p, DType::F32),
+            _ => velocity,
+        };
+        previous = Some(velocity);
+        x = euler::update(x, effective, delta, DType::F32, DType::F32);
+    }
+    (f64::from(x) - (-1.0f64).exp()).abs()
+}
+
+#[test]
+fn ab2_is_second_order_where_euler_is_first_order() {
+    let (e10, e20, e40) = (
+        ode_error(10, false),
+        ode_error(20, false),
+        ode_error(40, false),
+    );
+    let (a10, a20, a40) = (
+        ode_error(10, true),
+        ode_error(20, true),
+        ode_error(40, true),
+    );
+    // Halving the step halves Euler's error and quarters AB2's.
+    assert!(e10 / e20 > 1.8 && e10 / e20 < 2.3, "euler {e10} {e20}");
+    assert!(e20 / e40 > 1.8 && e20 / e40 < 2.3, "euler {e20} {e40}");
+    assert!(a10 / a20 > 3.3, "ab2 {a10} {a20}");
+    assert!(a20 / a40 > 3.3, "ab2 {a20} {a40}");
+    assert!(a20 < e20 / 5.0, "ab2 {a20} should beat euler {e20}");
+}
+
+#[test]
+fn ab2_velocity_extrapolates_and_rounds_like_the_update() {
+    use precision::DType;
+    assert_eq!(euler::ab2_velocity(2.0, 1.0, DType::F32), 2.5);
+    // A constant velocity field is reproduced exactly.
+    assert_eq!(euler::ab2_velocity(0.75, 0.75, DType::F32), 0.75);
+    // Every operation rounds to the working dtype.
+    let bf = euler::ab2_velocity(1.0078125, 0.0, DType::Bf16);
+    assert_eq!(bf, DType::Bf16.round(DType::Bf16.round(1.5 * 1.0078125)));
+}
+
+#[test]
+fn flow_solver_ab2_is_opt_in_and_restarts_every_chunk() {
+    use super::FlowSolver;
+    let model = load_plain_model();
+    let (shape, hiddens) = read_npy("long_flow_hiddens.npy");
+    let frames = shape[1];
+    assert!(
+        chunk_starts(frames).len() > 1,
+        "the fixture must span several chunks to exercise the restart"
+    );
+    let reference = model.run_flow(&hiddens, frames, 4, 7).unwrap();
+
+    // A single step has no history in any chunk, so AB2 is Euler. If history
+    // leaked across a chunk boundary, the later chunks would differ here.
+    let one_step = model.run_flow(&hiddens, frames, 1, 7).unwrap();
+    model.set_flow_solver(FlowSolver::AdamsBashforth2);
+    assert_eq!(model.run_flow(&hiddens, frames, 1, 7).unwrap(), one_step);
+
+    // More steps use the extrapolation: a different, finite, repeatable result.
+    let ab2 = model.run_flow(&hiddens, frames, 4, 7).unwrap();
+    assert_eq!(ab2.len(), reference.len());
+    assert!(ab2.iter().all(|v| v.is_finite()));
+    assert_ne!(ab2, reference, "ab2 must change the trajectory");
+    assert_eq!(model.run_flow(&hiddens, frames, 4, 7).unwrap(), ab2);
+
+    // The setting is per model and switching back restores the reference.
+    model.set_flow_solver(FlowSolver::Euler);
+    assert_eq!(model.run_flow(&hiddens, frames, 4, 7).unwrap(), reference);
+}
+
 // ---------------------------------------------------------------------------
 // Depth step sequence fallback
 // ---------------------------------------------------------------------------
