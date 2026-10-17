@@ -91,32 +91,34 @@ The four-step flow `turbospark-model pull` runs, adapted from
 `crates/cli/src/bin/model_cmd/mod.rs` (progress reporting simplified):
 
 ```rust
-use turbospark_catalog::{gate, install_with_byte_progress, record, Catalog, Client, InstallPlan, Store};
+use turbospark_catalog::{
+    gate, install_with_byte_progress, record, Catalog, Client, InstallPlan, Store,
+};
 
-let store = Store::default_store()?;
-let catalog = Catalog::load(store.root())?;
-let client = Client::new();
-let entry = catalog.get("tinyllama").ok_or("no such alias")?;
+fn pull(alias: &str) -> Result<(), String> {
+    let store = Store::default_store()?;
+    let catalog = Catalog::load(store.root())?;
+    let client = Client::new();
+    let entry = catalog.get(alias).expect("no such alias")?;
 
-let plan = InstallPlan::from_entry(entry);
-let dir = store.install_path(&plan.alias);
-let mut progress = |stage: &str| println!("[pull] {stage}");
+    let plan = InstallPlan::from_entry(entry);
+    let dir = store.install_path(&plan.alias);
+    let mut progress = |stage: &str| println!("[pull] {stage}");
 
-// Sidecars are fetched and verified inside the gate and the walk.
-let report = gate(&client, &plan, false, &mut progress)?;
-match &report.verdict {
-    verdict => println!("{verdict:?}"),
+    // The gate probes headers and sidecars before the walk streams weights.
+    let report = gate(&client, &plan, false, &mut progress)?;
+    println!("probe verdict: {:?}", report.verdict);
+
+    let installed = install_with_byte_progress(
+        &plan,
+        &dir,
+        &client,
+        &mut progress,
+        None, // byte-progress callback; pass Some for a progress bar
+        None, // cancel flag; the CLI passes None too
+    )?;
+    record(&store, &installed)
 }
-
-let installed = install_with_byte_progress(
-    &plan,
-    &dir,
-    &client,
-    &mut progress,
-    None, // byte-progress callback; pass Some for a progress bar
-    None, // cancel flag; the CLI passes None too
-)?;
-record(&store, &installed)?;
 ```
 
 For an arbitrary repository rather than a curated row, build the plan with

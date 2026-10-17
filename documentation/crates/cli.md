@@ -126,7 +126,7 @@ distinguishable:
 ```sh
 turbospark-model list --filter gemma
 turbospark-model probe owner/name
-turbospark-model --out /tmp/installs pull tinyllama
+turbospark-model pull tinyllama --out /tmp/installs
 ```
 
 The store root is `$TURBOSPARK_HOME` (default `~/.turbospark`); `HF_TOKEN`
