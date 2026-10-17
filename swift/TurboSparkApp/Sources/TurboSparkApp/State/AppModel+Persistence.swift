@@ -574,6 +574,8 @@ extension AppModel {
         // moves to the next model; the process-wide monitor keeps running.
         ejectCoordination?.stop()
         ejectCoordination = nil
+        libraryOfferAnnouncer?.stop()
+        libraryOfferAnnouncer = nil
         // First, so the engine stops answering requests for a model that is
         // about to be released (`swift/CLAUDE.md` Gotcha 26).
         stopServer()

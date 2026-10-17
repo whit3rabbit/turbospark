@@ -132,6 +132,11 @@ public final class AppModel: ObservableObject {
     /// sessions of a drive pulled without ejecting (tasks 5.11 and 5.12).
     /// Created with library monitoring, dropped by `shutdown()`.
     var ejectCoordination: LibraryEjectCoordination?
+    /// Posts the one info toast that announces an add-library offer when it
+    /// becomes the offer on screen (task 6.6). `LibraryState` has no toast
+    /// reference by design, so the trigger lives here. Created with library
+    /// monitoring, dropped by `shutdown()`.
+    var libraryOfferAnnouncer: LibraryOfferAnnouncer?
     /// How many releases for an eject are in progress. While it is above zero
     /// nothing may start a model turn on the chat session (`isEjecting`).
     var ejectHoldCount = 0

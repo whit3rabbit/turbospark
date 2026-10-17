@@ -656,15 +656,38 @@ extension AppModel {
         approvalHost: () -> UnmountApprovalHosting = { LibraryVolumeMonitor.shared },
         ejector: DiskEjecting = DiskArbitrationEjector(),
         volumeLocator: ModelVolumeLocating = LiveModelVolumeLocator(),
-        loadedModels: (any LoadedModelSource)? = nil
+        loadedModels: (any LoadedModelSource)? = nil,
+        offerLedger: LibraryOfferAnnouncementLedger = .process
     ) {
         guard !libraryState.isRunning else { return }
+        // Before the first event, so an offer found at launch is announced.
+        startLibraryOfferAnnouncements(ledger: offerLedger)
         libraryState.start(events: events())
         startMoveStoreMigration(events: events())
         startEjectCoordination(
             events: events(), host: approvalHost(), ejector: ejector, locator: volumeLocator,
             source: loadedModels)
     }
+
+    /// Posts ONE info toast for each add-library offer, when it becomes the offer
+    /// on screen (task 6.6, requirement 4.3). The ledger keeps an id to one
+    /// toast per process; calling this again does nothing.
+    ///
+    /// The toast is the only place an offer speaks outside its banner, and it is
+    /// never the app error: an offer is not a failure.
+    func startLibraryOfferAnnouncements(ledger: LibraryOfferAnnouncementLedger = .process) {
+        guard libraryOfferAnnouncer == nil else { return }
+        let announcer = LibraryOfferAnnouncer(libraryState: libraryState, ledger: ledger) { [weak self] sentence in
+            // Two lines of text: long enough to read, and VoiceOver hears the
+            // whole sentence either way (`showToast` announces it).
+            self?.showToast(sentence, style: .info, duration: Self.libraryOfferToastSeconds)
+        }
+        announcer.start()
+        libraryOfferAnnouncer = announcer
+    }
+
+    /// How long the offer's toast stays up.
+    static let libraryOfferToastSeconds: TimeInterval = 8
 
     /// Converts a store a past Move Store recorded into a library: once now,
     /// and again on each mount while it is pending. It takes its own stream of

@@ -58,6 +58,12 @@ final class FakeModelLibraryService: ModelLibraryService, @unchecked Sendable {
         /// gigabytes". `deleteEntered` is signalled when the call arrives.
         var deleteGate: DispatchSemaphore?
         var deleteEntered: DispatchSemaphore?
+        /// Parks an `add` INSIDE the engine call until a test signals it, so a
+        /// test can look at the app while the drive is "being added". The call
+        /// is recorded in `addCalls` before it waits.
+        var addGate: DispatchSemaphore?
+        /// Whether the thread that ran each `add` was the main thread, in order.
+        var addOnMainThread: [Bool] = []
     }
 
     /// One delete-family call as the engine would have seen it.
@@ -86,6 +92,7 @@ final class FakeModelLibraryService: ModelLibraryService, @unchecked Sendable {
     var installedCalls: Int { with { $0.installedCalls } }
     var discoverRoots: [String] { with { $0.discoverRoots } }
     var addCalls: [String] { with { $0.addCalls } }
+    var addOnMainThread: [Bool] { with { $0.addOnMainThread } }
     var importRoots: [String] { with { $0.importRoots } }
     /// Names of the calls that ran on the main thread. The engine reads the
     /// mount table and probes drives, so every one of these is a defect.
@@ -128,8 +135,16 @@ final class FakeModelLibraryService: ModelLibraryService, @unchecked Sendable {
 
     func add(path: String, name: String?) throws -> AddedLibrary {
         note("add")
-        return try with { state -> AddedLibrary in
+        let onMain = Thread.isMainThread
+        // Recorded first, then parked OUTSIDE the lock so a test can read the
+        // fake while the call is in flight.
+        let gate = with { state -> DispatchSemaphore? in
             state.addCalls.append(path)
+            state.addOnMainThread.append(onMain)
+            return state.addGate
+        }
+        gate?.wait()
+        return try with { state -> AddedLibrary in
             if let error = state.addError { throw error }
             guard let marker = state.markers[path] else { throw FakeServiceError.unscripted("add \(path)") }
             let library = ModelLibrary(

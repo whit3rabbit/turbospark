@@ -65,6 +65,12 @@ struct ModelLibrariesSectionView: View {
         VStack(alignment: .leading, spacing: 12) {
             header
             VStack(alignment: .leading, spacing: 10) {
+                // A library found on a drive that just connected (task 6.6): the
+                // same banner as the Installed Models manager, from the same
+                // state, so answering in one removes it from the other.
+                if libraryState.pendingOffer != nil {
+                    LibraryOfferBanner(model: model, libraryState: libraryState)
+                }
                 Text("Keep models on drives connected to this Mac. Your settings and model list stay on this Mac when a drive is unplugged.", bundle: .module)
                     .themedFont(.tiny)
                     .foregroundStyle(.appSecondary)

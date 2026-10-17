@@ -55,6 +55,13 @@ struct ModelManagerView: View {
     var body: some View {
         VStack(spacing: 0) {
             ModelManagerHeaderView(model: model)
+            // A library found on a drive that just connected (task 6.6). Above
+            // both the Text and the Image tab: it concerns the whole store.
+            if libraryState.pendingOffer != nil {
+                LibraryOfferBanner(model: model, libraryState: libraryState)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+            }
             managerSectionPicker
             Divider()
             if managerSection == .text {
