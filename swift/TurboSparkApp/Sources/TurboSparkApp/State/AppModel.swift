@@ -203,6 +203,12 @@ public final class AppModel: ObservableObject {
     @Published public var typeSafeError: String?
     /// Whether `startServer()`/`stopServer()` is in flight.
     @Published public var serverBusy: Bool = false
+    /// Why the last start failed, until the next start begins.
+    ///
+    /// The failure toast fades, and the menu bar panel opened afterwards
+    /// would otherwise show a plain "Stopped" for a server that refused to
+    /// bind, with nothing saying why or what to try.
+    @Published public var serverStartFailure: String?
     /// A stop pressed while a start was still binding (state#28).
     ///
     /// `server` is published only after the awaited bind, so `stopServer()`
