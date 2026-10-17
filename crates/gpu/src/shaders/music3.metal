@@ -683,16 +683,21 @@ kernel void music3_linear_tiled(device const uchar *w [[buffer(0)]],
             if(fast4) {
                 // Eight consecutive four-bit codes share one 32-bit word and
                 // one scale/offset (group % 8 == 0); same per-element value as
-                // music_value. Consecutive lanes take consecutive outputs.
+                // music_value. Consecutive lanes take consecutive outputs. The
+                // word, scale and offset are read once per lane and reused for
+                // all eight codes; each weight is still float(code)*scale+offset.
+                uint gpr=cols/p[3];
                 for(uint idx=tid;idx<TO*(BK/8);idx+=128) {
                     uint oo=idx%TO,q=idx/TO,o=o0+oo,kk=k0+q*8;
+                    bool ok=o<out && kk<end;
+                    uint word=0;float sv=0,ov=0;
+                    if(ok) {
+                        word=((device const uint*)w)[ulong(o)*words+kk/8];
+                        ulong g=ulong(o)*gpr+kk/p[3];
+                        sv=music_sc(sc,g);ov=music_sc(off,g);
+                    }
                     for(uint i=0;i<8;i++) {
-                        float weight=0;
-                        if(o<out && kk<end) {
-                            uint code=((device const uint*)w)[ulong(o)*words+kk/8]>>(4*i)&15u;
-                            ulong g=ulong(o)*(cols/p[3])+kk/p[3];
-                            weight=float(code)*music_sc(sc,g)+music_sc(off,g);
-                        }
+                        float weight=ok ? float((word>>(4*i))&15u)*sv+ov : 0.0f;
                         ws[(q*8+i)*TO+oo]=music_round(weight,p[6]);
                     }
                 }

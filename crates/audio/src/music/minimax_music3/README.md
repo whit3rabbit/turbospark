@@ -311,6 +311,45 @@ Tried and not kept (no demonstrated gain on a busy host, so no code):
   depth stage only from about 47.6 s to 45.0 s. MXFP8 GEMVs read twice the
   bytes of 4-bit and are not decode-bound.
 
+### DiT projection kernel: hoisted 4-bit decode
+
+`music3_linear_tiled` decodes each four-bit weight tile in the threadgroup
+before the 8x8 MMAs. Ablating it on the three real 691-row DiT shapes (quiet
+host, `music3_linear_bench sequence_timing`, 691 x 2048 x 16384 shown, 18.3 ms)
+located the time: removing the decode left 10.2 ms, removing the activation
+staging left 15.3 ms, removing the MMAs left 15.6 ms, and removing all three
+left 4.2 ms of barriers and epilogue. The matrix unit was about 15 percent of
+the kernel, so this projection was decode-bound, not MMA-bound (about 2.5
+TFLOPS).
+
+The fast four-bit path now reads the 32-bit word, the scale and the offset once
+per lane and reuses them for all eight codes, instead of recomputing the 64-bit
+group index and reloading them for each code. Each weight is still
+`float(code) * scale + offset` rounded the same way, and the MMA chain is
+untouched. Interleaved on the same quiet host, before to after: 2048x2048
+2.45 to 1.85 ms, 2048x16384 18.3 to 13.3 ms, 8192x2048 9.5 to 7.5 ms, so the
+six projections of a block go from about 36.6 to about 28 ms. That is a
+kernel-level figure; the end-to-end gain needs the real checkpoint, which was
+not installed when this was measured.
+
+Exactness: `music3_linear_bench hashes` (1,021 lines) and the new `dit_hashes`
+mode (192 lines: 4- and 8-bit, groups 32 and 64, F16 and BF16, the real
+691-row DiT shapes plus 690 and 129 rows and a ragged 2200-wide output, with and
+without bias) are identical before and after. A mutation that perturbs the
+hoisted weight changes 92 and 96 of those lines, so the oracle does run the new
+path. The `music3_sequence`, `music3_parity`, `music3_precision` and
+`music3_metal` gates pass.
+
+Tried and not kept, with the same oracle and timing:
+
+- Taller or wider tiles (64x32, 32x64, 64x64 with the same 128 threads and MMA
+  chain). The decode is then shared by more rows, but 64x32 gained 8 percent on
+  ff_in and lost 18 percent on ff_out, and 64x64 was 2.3x slower, so none was
+  kept.
+- Making the K word the fastest lane index so neighbouring lanes read
+  contiguous words: no gain over the hoist alone.
+- A bf16 operand MMA would only speed up the part that is not the limit.
+
 ### LM head window and AR command buffers
 
 These changes keep the default output byte-identical by construction, and the

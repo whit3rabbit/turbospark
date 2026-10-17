@@ -110,6 +110,52 @@ fn main() {
     let mode = std::env::args().nth(1).unwrap_or_else(|| "hashes".into());
     let device = Music3Device::new().unwrap();
     match mode.as_str() {
+        // Production DiT projection shapes at the real 691-row chunk, 4-bit and
+        // 8-bit, both group sizes, with ragged output widths. A separate mode
+        // so the documented `hashes` output (and its line count) stays fixed.
+        "dit_hashes" => {
+            for bits in [4u32, 8] {
+                for group in [32usize, 64] {
+                    for (input_dim, output_dim) in [
+                        (2048usize, 2048usize),
+                        (2048, 2200),
+                        (2048, 16384),
+                        (8192, 2048),
+                    ] {
+                        let case = build(
+                            &device,
+                            bits,
+                            group,
+                            input_dim,
+                            output_dim,
+                            101 + u64::from(bits),
+                        );
+                        for dtype in [Music3DType::F16, Music3DType::Bf16] {
+                            for rows in [691usize, 690, 129] {
+                                for with_bias in [false, true] {
+                                    let x = input(&case, rows);
+                                    let out = case
+                                        .weight
+                                        .linear_typed(
+                                            &x,
+                                            with_bias.then_some(case.bias.as_slice()),
+                                            rows,
+                                            input_dim,
+                                            output_dim,
+                                            dtype,
+                                        )
+                                        .unwrap();
+                                    println!(
+                                        "dit bits={bits} group={group} {input_dim}x{output_dim} {dtype:?} rows={rows} bias={with_bias} {:016x}",
+                                        fnv(&out)
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         "hashes" => {
             for bits in [2u32, 3, 4, 5, 6, 8] {
                 for group in [32usize, 64] {
