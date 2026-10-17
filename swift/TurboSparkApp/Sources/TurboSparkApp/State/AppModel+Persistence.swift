@@ -569,6 +569,10 @@ extension AppModel {
         typeSafeServer?.terminate()
         typeSafeServer = nil
         stopServerPolling()
+        // Ends this model's volume-event loop. The process-wide monitor keeps
+        // running: a vault lock gets here too, and stopping the monitor
+        // outside app termination stalls the next unmount (LibraryVolumeMonitor).
+        libraryState.stop()
 
         // A reply that is still streaming exists only in `outputText`; the
         // runTask tail that would normally preserve it never runs before the

@@ -107,6 +107,12 @@ public final class AppModel: ObservableObject {
     // Model management
     /// Models currently installed locally on disk.
     @Published public var installed: [InstalledModel] = []
+    /// Model libraries: which are connected, link speed, free space, every
+    /// installed row including offline ones, and add-library offers. `installed`
+    /// above stays the available-only list the pickers read. Not `@Published`
+    /// here on purpose: views that show library state observe this object
+    /// directly, so a mount does not redraw every screen.
+    var libraryState = LibraryState()
     /// Catalog entries available for download.
     @Published public var catalog: [CatalogEntry] = []
     /// Valid image-generation installs, separate from text model rows.

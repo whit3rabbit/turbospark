@@ -130,6 +130,16 @@ field where it has a value (`ModelCustomMetadata.filling(gapsFrom:)`). A move
 calls `ModelOrganizationStore.rekey(from:to:legacyPath:)` with the old and new
 ids. A corrupt file is quarantined by `AppJSONStore` like every other store.
 
+**Model library state is memory, except offer dismissals.** `LibraryState`
+(`AppModel+ModelLibraries.swift`) holds libraries, link speeds, free space,
+measured speeds and the full installed list in memory. It rebuilds them from
+the engine on launch and on volume events, and nothing about availability is
+written. The one file it owns is `library_offer_dismissals.json`, a `[String]`
+of library marker ids the user dismissed. It goes through `AppJSONStore` under
+`AppStorageRoot`, so a corrupt file is quarantined like the others, and it is
+read on first use rather than at launch. The `AppJSONStore` label "Library
+offer dismissals" is shown only if that file cannot be read or saved.
+
 ## `AppStorageRoot` and why the test suite needed one
 
 Found 2026-08-31 from a bug report: a chat titled "T10 chat" reappeared on
