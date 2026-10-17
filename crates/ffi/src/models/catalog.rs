@@ -3,7 +3,7 @@
 use catalog::library::{
     Availability, LibraryRecord, LibraryRegistry, LocationEnv, INTERNAL_LIBRARY_ID,
 };
-use catalog::{Catalog, InstalledEntry, ModelModality, Store};
+use catalog::{Catalog, InstalledEntry, ModelModality, Store, StoreError};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -405,23 +405,55 @@ pub(crate) fn install_bytes(alias: &str) -> Result<(u64, u64), String> {
     Ok((entry.download_bytes, entry.install_bytes))
 }
 
-/// Deletes an installed model from the store and drops its directory.
-pub(crate) fn delete(alias: &str) -> Result<(), String> {
-    let store = Store::default_store()?;
-    delete_from_store(&store, alias)
+/// Why [`delete`] did not delete.
+#[derive(Debug)]
+pub(crate) enum DeleteError {
+    /// The store refused, with its own error.
+    Store(StoreError),
+    /// The alias is held by an install in a library. The old entry point
+    /// takes an alias, which says nothing of where the install is, so it
+    /// deletes only what is on This Mac; a library's install is deleted by
+    /// its install id, which `Store::delete_install` places where the
+    /// library is now.
+    InLibrary { alias: String, library: String },
 }
 
-fn delete_from_store(store: &Store, alias: &str) -> Result<(), String> {
-    let path = store
-        .installed()
-        .get(alias)
-        .map(|model| model.path.clone())
-        .ok_or_else(|| format!("model {alias:?} is not installed"))?;
-    if path.exists() {
-        std::fs::remove_dir_all(&path)
-            .map_err(|e| format!("failed to remove {}: {e}", path.display()))?;
+/// Deletes an installed model of This Mac, by alias, and drops its row. A
+/// library's install is refused ([`DeleteError::InLibrary`]), because what
+/// its row records is not where the library is now.
+pub(crate) fn delete(alias: &str) -> Result<(), DeleteError> {
+    let store = Store::default_store().map_err(|e| DeleteError::Store(StoreError::Io(e)))?;
+    let env =
+        LocationEnv::system(store.root()).map_err(|e| DeleteError::Store(StoreError::Io(e)))?;
+    delete_from_store(&store, &env, alias)
+}
+
+fn delete_from_store(store: &Store, env: &LocationEnv, alias: &str) -> Result<(), DeleteError> {
+    let entry = store
+        .installed_with_availability(env)
+        .into_iter()
+        .find(|entry| {
+            entry.row.alias == alias && entry.row.effective_modality() == ModelModality::Text
+        })
+        .ok_or_else(|| {
+            DeleteError::Store(StoreError::UnknownInstall {
+                install_id: alias.to_string(),
+            })
+        })?;
+    if entry
+        .row
+        .library
+        .as_deref()
+        .is_some_and(|id| id != INTERNAL_LIBRARY_ID)
+    {
+        return Err(DeleteError::InLibrary {
+            alias: alias.to_string(),
+            library: entry.library_name,
+        });
     }
-    store.forget(alias)
+    store
+        .delete_install(&entry.install_id, env)
+        .map_err(DeleteError::Store)
 }
 
 #[cfg(test)]
@@ -691,8 +723,9 @@ pub(super) mod tests {
         let install = root.join("models/model.gturbo");
         std::fs::create_dir_all(&install).unwrap();
         record(&store, "model", &install);
+        let env = LocationEnv::system(store.root()).unwrap();
 
-        delete_from_store(&store, "model").unwrap();
+        delete_from_store(&store, &env, "model").unwrap();
 
         assert!(!install.exists());
         assert!(store.installed().is_empty());
@@ -707,9 +740,17 @@ pub(super) mod tests {
         let sentinel = victim.join("valuable.txt");
         std::fs::write(&sentinel, "keep").unwrap();
 
-        let error = delete_from_store(&store, victim.to_str().unwrap()).unwrap_err();
+        let env = LocationEnv::system(store.root()).unwrap();
 
-        assert!(error.contains("not installed"), "got {error:?}");
+        let error = delete_from_store(&store, &env, victim.to_str().unwrap()).unwrap_err();
+
+        assert!(
+            matches!(
+                &error,
+                DeleteError::Store(StoreError::UnknownInstall { .. })
+            ),
+            "got {error:?}"
+        );
         assert!(sentinel.is_file(), "unrecorded directory was modified");
     }
 }

@@ -59,6 +59,10 @@ pub enum StoreError {
         alias: String,
         place: String,
     },
+    /// No recorded install, and no image folder, has this install id.
+    UnknownInstall {
+        install_id: String,
+    },
     Io(String),
 }
 
@@ -85,6 +89,7 @@ impl std::fmt::Display for StoreError {
                 "{alias:?} is already installed in {place}; move it from there, \
                  or remove it there first"
             ),
+            Self::UnknownInstall { install_id } => write!(f, "{install_id:?} is not installed"),
             Self::Io(reason) => write!(f, "{reason}"),
         }
     }

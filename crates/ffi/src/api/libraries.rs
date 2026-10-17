@@ -257,6 +257,47 @@ pub unsafe extern "C" fn ts_model_forget(install_id: *const c_char) -> c_int {
     })
 }
 
+/// Deletes the text install `install_id` (`<library>:text/<alias>`): its
+/// folder, its row, and its entry in its library's marker. The install is
+/// placed where its library is now, never at the path its row recorded, and
+/// nothing is deleted through a link (`Store::delete_install`). A library
+/// that is not connected, or is read-only, is refused with nothing touched;
+/// a folder already gone is only forgotten. Refused as `busy` while an
+/// install or a move runs.
+#[no_mangle]
+pub unsafe extern "C" fn ts_model_delete_install(install_id: *const c_char) -> c_int {
+    guard_result(|| {
+        let install_id = strings::required(install_id, "installId").map_err(invalid)?;
+        refuse_while_deleting()?;
+        let (store, env) = context()?;
+        require_listed_library_of(&store, install_id)?;
+        store
+            .delete_install(install_id, &env)
+            .map_err(|error| store_fault(&error))
+    })
+}
+
+/// Deletes the image install `install_id` (`<library>:image/<alias>`), with
+/// the MLX source folder kept beside it. An id of a library is placed and
+/// removed as [`ts_model_delete_install`] does. An id of This Mac
+/// (`internal:image/<alias>`) is `ts_image_delete` of the alias. Image
+/// installs are not recorded, so there is no row to forget.
+#[no_mangle]
+pub unsafe extern "C" fn ts_image_delete_install(install_id: *const c_char) -> c_int {
+    guard_result(|| {
+        let install_id = strings::required(install_id, "installId").map_err(invalid)?;
+        refuse_while_deleting()?;
+        let (store, env) = context()?;
+        if let Some(alias) = install_id.strip_prefix("internal:image/") {
+            return models::delete_image(alias).map_err(invalid);
+        }
+        require_listed_library_of(&store, install_id)?;
+        store
+            .delete_image_install(install_id, &env)
+            .map_err(|error| store_fault(&error))
+    })
+}
+
 /// Moves the install `install_id` (`<library>:<modality>/<alias>`) into the
 /// library `library_id` ("internal" is This Mac): copies it, checks the copy,
 /// lists it in its new library, and only then deletes the original.
@@ -393,6 +434,46 @@ pub(super) fn refuse_while_moving() -> Result<(), Fault> {
     models::refuse_while_moving("install a model").map_err(busy)
 }
 
+/// A delete is refused while an install walk or a model move runs (4.6): it
+/// rewrites the registry and a library marker, which keep no guard against a
+/// lost update, and a walk resolves its destination once and keeps writing
+/// there. Checked before any work, and not atomic against an install that
+/// begins afterwards, like [`refuse_while_installing`].
+fn refuse_while_deleting() -> Result<(), Fault> {
+    refuse_while_busy("delete a model")
+}
+
+/// [`refuse_while_installing`] for another action that writes the registry
+/// (`action` completes "cannot ... while N install(s) are running"): the
+/// deletes and the audio entry points that write This Mac's rows.
+pub(super) fn refuse_while_busy(action: &str) -> Result<(), Fault> {
+    models::refuse_while_installing_for(action).map_err(busy)
+}
+
+/// Refuses an install id whose library the list does not have, as
+/// `unknown_library`, before a delete reads anything, as an install does for
+/// its destination ([`require_listed`]). This Mac is always listed. An id
+/// that names no library at all is left to the delete, which does not know it
+/// either. The code comes from the registry, never from the wording of a
+/// later error.
+fn require_listed_library_of(store: &Store, install_id: &str) -> Result<(), Fault> {
+    let Some((library, _)) = install_id.split_once(':') else {
+        return Ok(());
+    };
+    if library == INTERNAL_LIBRARY_ID
+        || LibraryRegistry::load(store.root())
+            .libraries()
+            .iter()
+            .any(|record| record.id == library)
+    {
+        return Ok(());
+    }
+    Err(library_fault(
+        &LibraryError::UnknownLibrary(library.to_string()),
+        "the location",
+    ))
+}
+
 /// The `busy` refusal: `TS_ERR_BUSY`, for work that waiting can clear.
 fn busy(why: String) -> Fault {
     (abi::TS_ERR_BUSY, format!("busy: {why}"))
@@ -498,6 +579,7 @@ pub(super) fn store_fault(error: &StoreError) -> Fault {
         StoreError::LibraryReadOnly { .. } => "library_read_only",
         StoreError::HomeOnly => "home_only",
         StoreError::AliasElsewhere { .. } => "alias_elsewhere",
+        StoreError::UnknownInstall { .. } => "unknown_install",
         StoreError::Io(_) => "io",
     };
     coded(code, &error.to_string())
@@ -801,6 +883,12 @@ mod tests {
                     place: "This Mac".to_string(),
                 },
                 "alias_elsewhere",
+            ),
+            (
+                StoreError::UnknownInstall {
+                    install_id: "T7:text/qwen".to_string(),
+                },
+                "unknown_install",
             ),
             (StoreError::Io("x".to_string()), "io"),
         ];

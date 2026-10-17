@@ -529,8 +529,10 @@ fn library_installs_are_refused_before_any_transfer() {
                     "the library \"T7\""
                 };
                 match &run.result {
-                    Err(StoreError::Io(message)) if message.contains(held_by) => {
-                        StoreError::Io(message.clone())
+                    Err(held @ StoreError::AliasElsewhere { place, .. })
+                        if place.contains(held_by) =>
+                    {
+                        held.clone()
                     }
                     other => panic!("{case}: expected a refusal naming {held_by}, got {other:?}"),
                 }

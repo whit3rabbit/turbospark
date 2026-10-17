@@ -1155,7 +1155,10 @@ int32_t ts_image_installed_json(char **out);
  * directly. Read-only. Fails if `root` is not a directory. */
 int32_t ts_image_installed_in_json(const char *root, char **out);
 
-/* Deletes one valid image-generation install by path or unambiguous alias. */
+/* Deletes one valid image-generation install of This Mac by path or
+ * unambiguous alias. It looks at This Mac only: an image in a model library
+ * is "not installed" here, and is deleted by ts_image_delete_install. Refused
+ * as busy while an install or a model move runs. */
 int32_t ts_image_delete(const char *identifier);
 
 /* The curated pinned image-generation sources, including Z-Image MLX rows. */
@@ -1186,8 +1189,13 @@ int32_t ts_image_install_with_options(const char *alias, const char *options_jso
                                       char **result_json);
 
 /*
- * Deletes an installed model directory and forgets it from ~/.turbospark.
- * Returns TS_OK on success or TS_ERR_INVALID_ARGUMENT if not installed.
+ * Deletes an installed model of This Mac by alias: its directory, and its row
+ * in ~/.turbospark. Returns TS_OK on success or TS_ERR_INVALID_ARGUMENT if not
+ * installed ("unknown_install"). An alias says nothing of where an install is,
+ * so an alias held by an install in a model library is refused with
+ * "use_install_id" and nothing is deleted: delete it with
+ * ts_model_delete_install. Refused as busy while an install or a model move
+ * runs. A This Mac install is deleted only at its own folder (see below).
  */
 int32_t ts_model_delete(const char *alias);
 
@@ -1209,6 +1217,11 @@ int32_t ts_model_delete(const char *alias);
  *     library marker that cannot be read or written), io.
  *   Installs (ts_model_forget):  not_connected, library_disconnected,
  *     library_read_only, home_only, io.
+ *   Deletes (ts_model_delete_install, ts_image_delete_install, and the
+ *     alias calls):  not_connected, library_read_only, unknown_install (the id
+ *     names no recorded install, or no image folder), unknown_library (the
+ *     id's library is not listed), io, busy, and for ts_model_delete alone
+ *     use_install_id (the alias is held by an install in a library).
  *   Installs into a library (the _with_options calls below):  not_connected,
  *     library_read_only, library_disconnected, unknown_library, and
  *     alias_elsewhere (the alias and modality are already installed in This
@@ -1308,6 +1321,43 @@ int32_t ts_library_discover_json(const char *volume_root, char **out);
  * Refusals: not_connected, library_read_only, library_disconnected,
  * home_only, io, busy. */
 int32_t ts_model_forget(const char *install_id);
+
+/* Deletes the text install `install_id` (the "installId" of an installed row,
+ * "<library>:text/<alias>"): its folder, its row in the registry, and its
+ * entry in its library's marker. A vision tower is a text install under its
+ * own suffix and deletes only its own folder. The install is looked for where
+ * its library is NOW, never at the "path" its row recorded, which names the
+ * mount point of the time and can answer for a different drive mounted there:
+ *   - a library that is not connected is refused (not_connected), and so is
+ *     one a newer TurboSpark wrote (library_read_only) and a library root
+ *     that leads off its drive (io). Nothing is touched, the row stays;
+ *   - every folder from the library root to the install is examined without
+ *     following links, and the folder is renamed into the library's own
+ *     ".staging" folder before the row is dropped, so a row that cannot be
+ *     dropped puts the folder back (io). Only then is it removed;
+ *   - a folder that is gone from a connected library, or is reached through a
+ *     link, is not followed or deleted: the row is only forgotten, and the
+ *     call succeeds. "availability" of the row says "missing" for both;
+ *   - a row may name only its alias's own install folder (io otherwise).
+ * A This Mac row ("internal:text/<alias>", or a custom folder) is deleted at
+ * its recorded path as before, but only when that is the alias's own folder in
+ * the models folder, or a custom folder holding nothing TurboSpark manages
+ * (not the home, the models folder, another install or a library), else io.
+ * A custom folder on a volume that is not mounted is not_connected. Audio
+ * installs have their own ts_audio_delete. The install must not be loaded:
+ * this library cannot see sessions, the app unloads it first.
+ * Refused as busy (TS_ERR_BUSY, "busy: ...") while an install or a model move
+ * runs. Codes are listed under "model libraries" above. */
+int32_t ts_model_delete_install(const char *install_id);
+
+/* Deletes the image install `install_id` ("<library>:image/<alias>", the
+ * "installId" of an image row): its folder in the library's "image" folder and
+ * the MLX source folder kept beside it (".<alias>.<revision>.image-source").
+ * Image installs are not recorded, so there is no row to drop. Placed and
+ * removed as ts_model_delete_install does; a folder that is not there, or is
+ * reached through a link, is unknown_install. An id of This Mac
+ * ("internal:image/<alias>") is ts_image_delete of the alias. */
+int32_t ts_image_delete_install(const char *install_id);
 
 /* Moves the install `install_id` (the "installId" of an installed row,
  * "<library>:<modality>/<alias>"; an image install is
@@ -1897,6 +1947,9 @@ int ts_audio_installed_json(char **out);
  * and "not_connected: <sentence naming the library>"; any other failure is an
  * escaped sentence of at most 300 characters. */
 int ts_audio_resolve(const char *identity_json, char **out);
+/* Like ts_audio_delete_legacy and ts_audio_adopt below, this writes the
+ * registry, so it is refused with TS_ERR_BUSY and "busy: ..." while an install
+ * or a model move runs. */
 int ts_audio_delete(const char *identity_json);
 /* Removes an owned install with NO receipt (listed under needsAdoption by
  * ts_audio_installed_json), including one whose payload is damaged. A

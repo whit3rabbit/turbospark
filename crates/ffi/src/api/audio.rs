@@ -1,6 +1,7 @@
 //! Additive audio catalog and worker/job ABI. Callback buffers are borrowed.
 use super::libraries::{
-    clean, coded, parse_options, refuse_while_moving, require_listed, store_fault, MESSAGE_LIMIT,
+    clean, coded, parse_options, refuse_while_busy, refuse_while_moving, require_listed,
+    store_fault, MESSAGE_LIMIT,
 };
 use crate::abi::{self, guard_result};
 use crate::strings;
@@ -233,14 +234,18 @@ pub unsafe extern "C" fn ts_audio_verify(
         strings::emit(&path.to_string_lossy(), out).map_err(invalid)
     })
 }
+/// Deletes an audio install. Refused as `busy` while an install or a model
+/// move runs, like every call that writes the registry (4.6).
 #[no_mangle]
 pub unsafe extern "C" fn ts_audio_delete(identity_json: *const c_char) -> c_int {
     guard_result(|| {
+        let identity = identity(identity_json)?;
+        refuse_while_busy("delete an audio model")?;
         AudioCatalog::embedded()
             .map_err(invalid)?
             .delete(
                 &catalog::Store::default_store().map_err(invalid)?,
-                &identity(identity_json)?,
+                &identity,
             )
             .map_err(invalid)
     })
@@ -248,19 +253,24 @@ pub unsafe extern "C" fn ts_audio_delete(identity_json: *const c_char) -> c_int 
 /// Removes an owned install that has no receipt (one `ts_audio_installed_json`
 /// reports under `needsAdoption`), even when its payload could not pass
 /// adoption. A receipt-backed install is refused here and goes through
-/// `ts_audio_delete`; neither path ever promotes damaged bytes.
+/// `ts_audio_delete`; neither path ever promotes damaged bytes. Refused as
+/// `busy` while an install or a model move runs.
 #[no_mangle]
 pub unsafe extern "C" fn ts_audio_delete_legacy(identity_json: *const c_char) -> c_int {
     guard_result(|| {
+        let identity = identity(identity_json)?;
+        refuse_while_busy("delete an audio model")?;
         AudioCatalog::embedded()
             .map_err(invalid)?
             .delete_legacy(
                 &catalog::Store::default_store().map_err(invalid)?,
-                &identity(identity_json)?,
+                &identity,
             )
             .map_err(invalid)
     })
 }
+/// Adopts a legacy install into This Mac's registry. Refused as `busy` while
+/// an install or a model move runs, because it writes the registry.
 #[no_mangle]
 pub unsafe extern "C" fn ts_audio_adopt(
     identity_json: *const c_char,
@@ -268,11 +278,13 @@ pub unsafe extern "C" fn ts_audio_adopt(
 ) -> c_int {
     guard_result(|| {
         clear_output(out)?;
+        let identity = identity(identity_json)?;
+        refuse_while_busy("adopt an audio model")?;
         let row = AudioCatalog::embedded()
             .map_err(invalid)?
             .adopt_legacy(
                 &catalog::Store::default_store().map_err(invalid)?,
-                &identity(identity_json)?,
+                &identity,
                 &catalog::CancelFlag::new(),
             )
             .map_err(invalid)?;

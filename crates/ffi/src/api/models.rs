@@ -5,7 +5,10 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use super::libraries::{install_fault, parse_options, refuse_while_moving, require_listed};
+use super::libraries::{
+    coded, install_fault, parse_options, refuse_while_busy, refuse_while_moving, require_listed,
+    store_fault,
+};
 use crate::abi::{self, guard_result};
 use crate::models::{self, TS_INSTALL_BYTES, TS_INSTALL_STAGE};
 use crate::strings;
@@ -117,12 +120,16 @@ pub unsafe extern "C" fn ts_image_installed_in_json(
     })
 }
 
-/// Deletes one valid image-generation install by path or unambiguous alias.
+/// Deletes one valid image-generation install of This Mac by path or
+/// unambiguous alias. A library's image is deleted by its install id
+/// ([`ts_image_delete_install`]). Refused as `busy` while an install or a
+/// move runs.
 #[no_mangle]
 pub unsafe extern "C" fn ts_image_delete(identifier: *const c_char) -> c_int {
     guard_result(|| {
         let identifier = strings::required(identifier, "identifier")
             .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        refuse_while_busy("delete a model")?;
         models::delete_image(identifier).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
     })
 }
@@ -247,13 +254,27 @@ unsafe fn destination(options_json: *const c_char) -> Result<Option<String>, (c_
     Ok(options.library)
 }
 
-/// Deletes an installed model from `~/.turbospark` and drops its directory.
+/// Deletes an installed model of This Mac by alias and drops its directory.
+/// An alias held by an install in a library is refused as `use_install_id`:
+/// an alias says nothing of where the install is, and a library's install is
+/// deleted by [`ts_model_delete_install`], which places it where its library
+/// is now. Refused as `busy` while an install or a move runs.
 #[no_mangle]
 pub unsafe extern "C" fn ts_model_delete(alias: *const c_char) -> c_int {
     guard_result(|| {
         let alias =
             strings::required(alias, "alias").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
-        models::delete(alias).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+        refuse_while_busy("delete a model")?;
+        models::delete(alias).map_err(|error| match error {
+            models::DeleteError::Store(error) => store_fault(&error),
+            models::DeleteError::InLibrary { alias, library } => coded(
+                "use_install_id",
+                &format!(
+                    "{alias:?} is installed in the library {library:?}; delete it by its \
+                     install id"
+                ),
+            ),
+        })
     })
 }
 

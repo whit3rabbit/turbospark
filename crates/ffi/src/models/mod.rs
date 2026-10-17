@@ -24,7 +24,7 @@ mod probe;
 pub(crate) use capabilities::{family_capabilities_json, kv_quant_supported};
 pub(crate) use catalog::{
     catalog_json, delete, delete_image, image_installed_in_json, image_installed_json,
-    install_bytes, installed_json,
+    install_bytes, installed_json, DeleteError,
 };
 pub use control_vector::control_vector_info_json;
 pub(crate) use fit::{context_ladder_json, recommend_json_with_progress};

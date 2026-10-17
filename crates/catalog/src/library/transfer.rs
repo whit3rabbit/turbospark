@@ -126,6 +126,7 @@ impl From<StoreError> for MoveError {
             StoreError::LibraryReadOnly { library } => Self::LibraryReadOnly(library),
             StoreError::HomeOnly => Self::HomeOnly,
             elsewhere @ StoreError::AliasElsewhere { .. } => Self::Io(elsewhere.to_string()),
+            StoreError::UnknownInstall { install_id } => Self::UnknownInstall(install_id),
             StoreError::Io(reason) => Self::Io(reason),
         }
     }
@@ -459,8 +460,8 @@ fn recorded_relative(row: &InstalledModel, source: &Side) -> Result<PathBuf, Mov
 
 /// Where an install of `alias` goes in the library at `root`: the layout
 /// every library shares, with a vision tower in the text folder under its
-/// own suffix.
-fn install_path(
+/// own suffix. A delete asks it for the one folder a row may name (4.6).
+pub(super) fn install_path(
     root: &Path,
     modality: ModelModality,
     kind: Option<&str>,
@@ -835,7 +836,7 @@ fn check_cancel(cancel: &AtomicBool) -> Result<(), MoveError> {
 
 /// Creates `path` at mode 0700 from the start, like install staging, so a
 /// staged copy is never readable by other local users.
-fn create_private_dir(path: &Path) -> io::Result<()> {
+pub(super) fn create_private_dir(path: &Path) -> io::Result<()> {
     use std::os::unix::fs::DirBuilderExt;
     fs::DirBuilder::new().mode(0o700).create(path)
 }

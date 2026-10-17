@@ -6,6 +6,7 @@
 //! `<home>/libraries.json` and described on its drive by a marker, so it can
 //! be recognized after the volume is renamed or remounted elsewhere.
 
+mod delete;
 mod locate;
 mod marker;
 mod mount_table;

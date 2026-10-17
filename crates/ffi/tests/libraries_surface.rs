@@ -1238,11 +1238,13 @@ fn the_header_declares_exactly_the_library_exports() {
     assert_eq!(
         names,
         [
+            "ts_image_delete_install",
             "ts_libraries_json",
             "ts_library_add",
             "ts_library_discover_json",
             "ts_library_remove",
             "ts_library_set_default",
+            "ts_model_delete_install",
             "ts_model_forget",
             "ts_model_move",
             "ts_model_move_cancel",
