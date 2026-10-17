@@ -112,8 +112,17 @@ characters, `speed` 0.5 to 2.0. Voice cloning fields:
   `instruction`, `p_w` and `t_w` are refused by name.
 - `reference_text` and `instruction`: Qwen3-TTS only; MegaTTS3 aligns the
   reference itself and refuses both. OmniVoice reads `reference_text` (the
-  transcript prepended to the script) and `instruction` (a delivery cue in
-  the style prefix, at most 512 bytes).
+  transcript prepended to the script) and `instruction`, which is voice
+  design, not a delivery cue. Upstream k2-fsa/OmniVoice defines `instruct` as
+  comma-separated speaker attributes, one per category: gender, age, pitch,
+  the `whisper` style, an English accent or a Chinese dialect (for example
+  `female, young adult, high pitch, british accent`), and uses it without
+  reference audio. Voice design is trained on Chinese and English only. The
+  engine trims the text, puts it in the style prefix as given, and refuses
+  more than 512 bytes. It does not check the attributes against upstream's
+  list. Upstream documents `instruct` only for speech without a reference, so
+  a request that sends both `reference_audio` and `instruction` is outside
+  what it describes. The app's Voice Cloning page sends no instruction.
 
 OmniVoice runs on Metal by default on macOS (with an opt-in portable CPU
 fallback), reporting progress one diffusion step at a time. The app makes

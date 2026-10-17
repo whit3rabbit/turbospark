@@ -108,7 +108,7 @@ curl http://127.0.0.1:8080/v1/audio/speech \
 * **`consent: true`**: Required for voice cloning requests (MegaTTS3 always; OmniVoice and Drama 3 whenever `reference_audio` is present). The caller confirms authorization to use the reference voice.
 * **`reference_audio`**: Base64-encoded WAV clip. Required by MegaTTS3 (1-28s); optional for OmniVoice (1-30s, 24 kHz) and Drama 3 (1-30s, any rate).
 * **`reference_text`**: Transcript of the reference clip. Required by Drama 3 whenever `reference_audio` is present; accepted by OmniVoice; refused by MegaTTS3.
-* **`instruction`**: Delivery guidance (emotion, style) for OmniVoice (max 512 bytes). Drama 3 takes inline cues like `[whispers]` in `input`.
+* **`instruction`**: Voice design for OmniVoice (max 512 bytes): comma-separated speaker attributes (gender, age, pitch, `whisper`, English accent, Chinese dialect) such as `female, young adult, high pitch, british accent`. Upstream defines it for speech without reference audio and trains it on Chinese and English only. Drama 3 takes inline cues like `[whispers]` in `input`.
 * **`steps`**: Diffusion steps: Fast (8), Balanced (16, default), Best (32). MegaTTS3 and OmniVoice.
 * **`seed`**: Deterministic seed (default 0).
 * **`temperature`, `top_p`, `top_k`, `max_frames`**: Sampler options for Drama 3 (defaults: 0.7, 0.7, 30, 1024).
