@@ -941,6 +941,49 @@ fn a_library_written_by_a_newer_turbospark_refuses_installs() {
     );
 }
 
+/// A listing only reads a library, so a library a newer TurboSpark wrote is
+/// listed with its root although installs into it are refused, and This Mac,
+/// which is every store's own, is not one of the libraries listed.
+#[test]
+fn connected_libraries_are_listed_at_their_canonical_roots_without_this_mac() {
+    let fx = LibraryFixture::new("connected-libraries");
+
+    let listed = fx.store.connected_libraries(&fx.env);
+
+    assert_eq!(listed.len(), 1, "{listed:?}");
+    assert_eq!(listed[0].0.id, fx.id);
+    assert_eq!(listed[0].1, fx.volume.join("TurboSpark"));
+    assert_eq!(listed[0].1, listed[0].1.canonicalize().unwrap());
+
+    let marker = fx.volume.join("TurboSpark").join(MARKER_FILE);
+    let mut json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&marker).unwrap()).unwrap();
+    json["format"] = serde_json::json!(2);
+    std::fs::write(&marker, serde_json::to_vec_pretty(&json).unwrap()).unwrap();
+    assert!(fx
+        .store
+        .library_root_for_install(Some(&fx.id), &fx.env)
+        .is_err());
+    let listed = fx.store.connected_libraries(&fx.env);
+    assert_eq!(listed.len(), 1, "a read-only library can still be read");
+    assert_eq!(listed[0].1, fx.volume.join("TurboSpark"));
+}
+
+/// Not connected, or leading off its drive, is left out with no error: a
+/// listing never raises for a drive that is away.
+#[test]
+fn a_library_that_is_away_or_linked_off_its_drive_is_not_listed_as_connected() {
+    let fx = LibraryFixture::new("connected-libraries-away");
+    let root = fx.volume.join("TurboSpark");
+    let elsewhere = fx.base.join("elsewhere");
+    std::fs::rename(&root, &elsewhere).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &root).unwrap();
+    assert!(fx.store.connected_libraries(&fx.env).is_empty());
+
+    std::fs::remove_dir_all(&fx.volume).unwrap();
+    assert!(fx.store.connected_libraries(&fx.env).is_empty());
+}
+
 #[test]
 fn embedding_and_ocr_installs_stay_in_this_mac() {
     let fx = LibraryFixture::new("home-only");

@@ -645,6 +645,29 @@ impl Store {
         self.library_for_install(library, env).map(|(root, _)| root)
     }
 
+    /// Every listed library other than This Mac that is connected now, each
+    /// with its canonical root, for listings of what a library holds where
+    /// the installs are not recorded (image installs).
+    ///
+    /// A library that is not connected, whose marker is gone, unreadable or
+    /// another library's, or whose root leads off its drive is left out and
+    /// not reported: an unplugged drive is a state, not a fault (3.4). Unlike
+    /// [`Self::library_root_for_install`], a library a newer TurboSpark wrote
+    /// is included, because a listing only reads it. All libraries are
+    /// located through one mount table read.
+    pub fn connected_libraries(&self, env: &LocationEnv) -> Vec<(LibraryRecord, PathBuf)> {
+        let table = SharedMountTable::new(env);
+        LibraryRegistry::load(&self.root)
+            .libraries()
+            .into_iter()
+            .filter(|record| !record.is_internal())
+            .filter_map(|record| {
+                let (root, _) = connected_library(&record, &table).ok()?;
+                Some((record, root))
+            })
+            .collect()
+    }
+
     /// [`Self::library_root_for_install`] with the library's record, whose
     /// name the installers put in their errors. This Mac's is
     /// [`LibraryRecord::internal`].

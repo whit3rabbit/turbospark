@@ -29,7 +29,7 @@ use crate::strings;
 
 /// The most characters of an error sentence. Marker errors and copy-failure
 /// reasons echo untrusted values and paths.
-const MESSAGE_LIMIT: usize = 300;
+pub(super) const MESSAGE_LIMIT: usize = 300;
 
 /// A status code and the message the thread's error slot keeps.
 type Fault = (c_int, String);
@@ -325,7 +325,7 @@ fn summary(marker: &LibraryMarker) -> MarkerJson<'_> {
 }
 
 /// A refusal: the stable `code`, then the sentence.
-fn coded(code: &str, sentence: &str) -> Fault {
+pub(super) fn coded(code: &str, sentence: &str) -> Fault {
     (
         abi::TS_ERR_INVALID_ARGUMENT,
         format!("{code}: {}", clean(sentence, MESSAGE_LIMIT)),
@@ -445,7 +445,7 @@ fn log_notes(notes: &[String]) {
 /// `text` with control and bidirectional formatting characters escaped, cut
 /// to `limit` characters. Shown raw, a name from a drive could move the
 /// cursor, recolor a terminal, or reorder what the user reads.
-fn clean(text: &str, limit: usize) -> String {
+pub(super) fn clean(text: &str, limit: usize) -> String {
     let escaped: String = text
         .chars()
         .map(|c| {

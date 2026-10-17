@@ -1,12 +1,48 @@
 //! Additive audio catalog and worker/job ABI. Callback buffers are borrowed.
+use super::libraries::{clean, coded, MESSAGE_LIMIT};
 use crate::abi::{self, guard_result};
 use crate::strings;
 use catalog::audio_catalog::{AudioCatalog, AudioProfileIdentity};
+use catalog::library::{Availability, LocationEnv, INTERNAL_LIBRARY_ID};
+use catalog::{ModelModality, Store, StoreError};
 use std::os::raw::{c_char, c_int, c_void};
 
 type AbiResult<T> = Result<T, (c_int, String)>;
 fn invalid(e: impl ToString) -> (c_int, String) {
     (abi::TS_ERR_INVALID_ARGUMENT, e.to_string())
+}
+/// The default store and the live location environment, which locates the
+/// libraries audio rows are in. Building it spawns nothing: the mount table
+/// is read only when a library has to be searched for.
+fn located() -> AbiResult<(Store, LocationEnv)> {
+    let store = Store::default_store().map_err(invalid)?;
+    let env = LocationEnv::system(store.root()).map_err(invalid)?;
+    Ok((store, env))
+}
+/// The name of the library to connect when the audio install `alias` is in a
+/// library that is not connected. Asked of the registry rather than read out
+/// of an error sentence, which a drive's own text could imitate.
+fn offline_library(store: &Store, env: &LocationEnv, alias: &str) -> Option<String> {
+    store
+        .installed_with_availability(env)
+        .into_iter()
+        .find_map(|entry| {
+            let in_library = entry
+                .row
+                .library
+                .as_deref()
+                .is_some_and(|id| id != INTERNAL_LIBRARY_ID);
+            match entry.availability {
+                Availability::NotConnected { library }
+                    if in_library
+                        && entry.row.alias == alias
+                        && entry.row.effective_modality() == ModelModality::Audio =>
+                {
+                    Some(library)
+                }
+                _ => None,
+            }
+        })
 }
 /// Classifies a failed audio install. The install's own cancel flag decides,
 /// not the message: the audio downloader words its cancellation several ways
@@ -95,18 +131,34 @@ pub unsafe extern "C" fn ts_audio_catalog_json(out: *mut *mut c_char) -> c_int {
         )
     })
 }
+/// The installed audio models, in the buckets of `AudioInstalledReport`. A
+/// model in a library is reported at the folder it has now, under wherever
+/// the library is connected, and one whose library is not connected is in
+/// `not_connected` with the library's name, never in `incompatible` (3.1,
+/// 3.4). A library's name is raw here, as in every JSON this crate writes:
+/// the app truncates it for display.
 #[no_mangle]
 pub unsafe extern "C" fn ts_audio_installed_json(out: *mut *mut c_char) -> c_int {
     guard_result(|| {
         clear_output(out)?;
+        let (store, env) = located()?;
+        // An older writer drops `library` and `relative_path` from the rows it
+        // rewrites. The audio report does not restore them, so such a row
+        // would be called an install at a foreign path. The installed listing
+        // does restore them (and records that), so it runs first.
+        let _ = store.installed_with_availability(&env);
         output(
             &AudioCatalog::embedded()
                 .map_err(invalid)?
-                .installed_report(&catalog::Store::default_store().map_err(invalid)?),
+                .installed_report_with(&store, &env),
             out,
         )
     })
 }
+/// The folder of an audio install, after the quick check of its receipt and
+/// file sizes (`ts_audio_verify` hashes the bytes). An install in a library
+/// that is not connected is refused as `not_connected: <sentence naming the
+/// library>`.
 #[no_mangle]
 pub unsafe extern "C" fn ts_audio_resolve(
     identity_json: *const c_char,
@@ -115,13 +167,21 @@ pub unsafe extern "C" fn ts_audio_resolve(
     guard_result(|| {
         clear_output(out)?;
         let identity = identity(identity_json)?;
+        let (store, env) = located()?;
         let path = AudioCatalog::embedded()
             .map_err(invalid)?
-            .resolve(
-                &catalog::Store::default_store().map_err(invalid)?,
-                &identity,
-            )
-            .map_err(invalid)?;
+            .resolve_with(&store, &identity, &env)
+            .map_err(
+                |message| match offline_library(&store, &env, &identity.alias) {
+                    Some(library) => coded(
+                        "not_connected",
+                        &StoreError::NotConnected { library }.to_string(),
+                    ),
+                    // These sentences can carry a library's name or a path on a
+                    // drive anyone could have written.
+                    None => invalid(clean(&message, MESSAGE_LIMIT)),
+                },
+            )?;
         strings::emit(&path.to_string_lossy(), out).map_err(invalid)
     })
 }

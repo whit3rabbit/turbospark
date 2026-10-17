@@ -1112,10 +1112,42 @@ int32_t ts_store_relocate(const char *destination, TsInstallCallback cb,
 /* The curated catalog as a JSON array, each row carrying "installed". */
 int32_t ts_catalog_json(char **out);
 
-/* What is installed in ~/.turbospark, as a JSON array. */
+/* What text models are installed, as a JSON array sorted by alias, from This
+ * Mac and from every model library (see "model libraries" below). A model whose
+ * library is not connected, or whose folder is gone, stays listed and says so:
+ * filter it out where only a model that can be opened now makes sense. Each row
+ * keeps every key it had before libraries, and gains, in snake_case:
+ *   "library": the library's id, "internal" for This Mac, null for a model
+ *     installed to a folder of the user's choosing ("custom");
+ *   "library_name": its name (This Mac's is the English literal: localize it
+ *     from "location_kind"; "unknown library" and "custom location" likewise);
+ *   "install_id": "<library>:text/<alias>", the identity a move or a forget
+ *     takes;
+ *   "availability": "available", "not_connected" (its library's drive is not
+ *     connected) or "missing" (connected, but the folder is gone, or its
+ *     library is no longer listed);
+ *   "location_kind": "internal", "library", "custom" or "unknown" (a library
+ *     that is no longer listed). Never tell these from "library_name", which a
+ *     drive can set to any text;
+ *   "connect_name": the library, or for a custom folder the volume, to connect
+ *     when "availability" is "not_connected", else null.
+ * "path" is where the install is now for a model in a connected library, and
+ * the last path recorded otherwise. Names come from a drive anyone could have
+ * written, so truncate and escape them for display. Listing never fails for a
+ * drive that is away. */
 int32_t ts_installed_json(char **out);
 
-/* What valid image-generation installs are present in ~/.turbospark. */
+/* What valid image-generation installs are present, from This Mac and from
+ * every model library that is connected, as a JSON array sorted by alias.
+ * Image installs are not recorded, so a library that is not connected simply
+ * has none to list, without a warning or an error. Each row keeps every key it
+ * had before libraries (the shape ts_image_installed_in_json also writes), and
+ * gains, in camelCase:
+ *   "library": the library's id, "internal" for This Mac;
+ *   "libraryName": its name (raw, as for ts_installed_json);
+ *   "installId": "<library>:image/<alias>".
+ * A link on a drive is never followed: an install, its manifest or its image
+ * folder that is a link is not listed. */
 int32_t ts_image_installed_json(char **out);
 
 /* Valid image-generation installs under a folder outside ~/.turbospark: the
@@ -1715,7 +1747,17 @@ typedef void (*TsAudioCallback)(void *userdata, int kind, const char *json,
                                size_t json_len, const float *pcm, size_t count);
 int ts_audio_catalog_json(char **out);
 int ts_audio_capabilities_json(char **out);
+/* The installed audio models, in buckets: installed, needs_adoption,
+ * incompatible, other_audio, and not_connected. A model in a model library is
+ * reported at the folder it has now ("path" under wherever the library is
+ * connected; rows keep "library"). One whose library's drive is not connected
+ * is in not_connected as {"record", "identity", "library_name"} and is never an
+ * error. ts_installed_json's rule for names applies to "library_name". */
 int ts_audio_installed_json(char **out);
+/* The folder of an installed model, after the quick receipt and size check. A
+ * model in a library that is not connected fails with TS_ERR_INVALID_ARGUMENT
+ * and "not_connected: <sentence naming the library>"; any other failure is an
+ * escaped sentence of at most 300 characters. */
 int ts_audio_resolve(const char *identity_json, char **out);
 int ts_audio_delete(const char *identity_json);
 /* Removes an owned install with NO receipt (listed under needsAdoption by
