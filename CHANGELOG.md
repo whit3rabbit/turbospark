@@ -517,6 +517,13 @@ when this file gets updated relative to the version bump and the tag.
   DAC's acoustic books hold 1024, and a draw past them failed the whole
   request in the codec (`code 3403 outside the codebook of 1024`). The limit
   comes from the codec geometry, not a literal.
+- `swift/TurboSparkApp`: an OmniVoice clone on the Voice Cloning page or in
+  Advanced now sends the reference transcript (`referenceText`, trimmed)
+  when there is one. The app never sent it, although the runtime prepends it
+  to the script and upstream OmniVoice transcribes the reference itself when
+  none is given. The transcript shows as an optional card, so what is sent
+  is visible and editable. No instruction is sent: OmniVoice's instruction is
+  voice design, and the saved one belongs to Qwen3-TTS.
 - `crates/catalog`: `InstalledModel::effective_modality` now derives the `Audio`
   modality from install path, `audio-receipt.json`, or speech metadata if a model
   was recorded with default `text` modality in `installed.json`. `installed_report`

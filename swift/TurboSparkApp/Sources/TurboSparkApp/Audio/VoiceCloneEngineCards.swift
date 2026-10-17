@@ -23,6 +23,7 @@ struct VoiceCloneEngineCards: View {
             if controller.selectedProfileNeedsReferenceTranscript {
                 transcriptCard(offersEmbeddingOnly: false).id(VoiceCloneStep.transcript)
             } else {
+                if controller.selectedProfile?.family == "omnivoice" { optionalTranscriptCard }
                 qualityCard
             }
         } else if controller.selectedProfile?.family == "qwen3_tts" {
@@ -100,6 +101,25 @@ struct VoiceCloneEngineCards: View {
         .disabled(locked)
         .appCardSurface()
         .appAttention(attention.isOn(.transcript, missing: missing), ping: attention.ping(.transcript))
+    }
+
+    /// OmniVoice sends the transcript when there is one and clones without
+    /// it otherwise, so the page shows what it will send and never asks for
+    /// it. Choosing a transcribed take fills it in. Retrimming clears it.
+    private var optionalTranscriptCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            AppSectionHeader(title: Text("Reference transcript (optional)", bundle: .module))
+            AudioMeasuredTextEditor(
+                text: controller.speechBinding(\.referenceText),
+                label: Text("Reference transcript (optional)", bundle: .module),
+                placeholder: Text("Transcript", bundle: .module),
+                minHeight: 72, maxHeight: 200, focus: transcriptFocused)
+                .padding(.horizontal, 6)
+                .background(.appPage.opacity(0.6), in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
+                .appFocusGlow(transcriptFocused.wrappedValue)
+        }
+        .disabled(locked)
+        .appCardSurface()
     }
 
     private var qwenSettingsCard: some View {

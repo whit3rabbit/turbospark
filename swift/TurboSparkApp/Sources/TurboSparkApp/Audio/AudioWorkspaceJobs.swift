@@ -50,10 +50,16 @@ extension AudioWorkspaceController {
         request.referenceSampleRate = 24_000
         request.consent = speech?.reference != nil && options.consentedReference == speech?.reference
         if family == "omnivoice" {
-            // OmniVoice refuses MegaTTS3's guidance weights and reads the
-            // reference transcript and delivery instruction directly.
+            // OmniVoice refuses MegaTTS3's guidance weights. It prepends the
+            // reference transcript to the script, and upstream transcribes
+            // the reference itself when given none, so the user's transcript
+            // is sent. Its instruction is voice design, which a clone does
+            // not use, and the saved instruction is Qwen3's.
             request.pW = nil
             request.tW = nil
+            request.instruction = nil
+            let transcript = speech?.referenceText.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            request.referenceText = transcript.isEmpty ? nil : transcript
             return request
         }
         if family == "fish_drama3" {

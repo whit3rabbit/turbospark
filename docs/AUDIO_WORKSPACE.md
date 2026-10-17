@@ -223,7 +223,8 @@ modules and internal codecs are not presented as runnable jobs.
 - OmniVoice provides native Metal acceleration for synthesis and consent-gated
   voice cloning at 24 kHz, with transparent portable CPU fallback. It is
   available on the Voice Cloning page (`clonesNatively`) and callable through
-  the server audio API. Its installs ship the Boson community-licensed Higgs
+  the server audio API. The page sends the reference transcript when there is
+  one and never requires it. Its installs ship the Boson community-licensed Higgs
   tokenizer, whose install terms the app shows before download.
 - Qwen3-ASR supports local checkpoints in Advanced. Packed Metal is an explicit
   experimental option; its audio encoder still runs on the CPU.

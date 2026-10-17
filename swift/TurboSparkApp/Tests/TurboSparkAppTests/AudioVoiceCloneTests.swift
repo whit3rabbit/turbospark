@@ -70,7 +70,8 @@ final class AudioVoiceCloneTests: XCTestCase {
         speech.cloneOptions = nil
         XCTAssertEqual(AudioWorkspaceController.nativeCloneRequest(base, family: "megatts3", speech: speech).steps, CloneQuality.balanced.steps)
         // OmniVoice refuses MegaTTS3's guidance weights, so they never
-        // cross the wire; the transcript and instruction pass through.
+        // cross the wire. It takes the transcript, but not the instruction,
+        // which is Qwen3's voice design.
         speech.cloneOptions = options
         speech.reference?.start = 0
         speech.cloneOptions?.consentedReference = voice
@@ -80,6 +81,58 @@ final class AudioVoiceCloneTests: XCTestCase {
         XCTAssertEqual(omni.steps, 12)
         XCTAssertEqual(omni.referenceSampleRate, 24_000)
         XCTAssertTrue(omni.consent)
+        XCTAssertEqual(omni.referenceText, "hello")
+        XCTAssertNil(omni.instruction)
+    }
+
+    /// OmniVoice prepends the reference's words to the script, so the
+    /// transcript crosses the wire trimmed and a blank one does not. An
+    /// instruction never does, even one already on the base request.
+    func testOmniVoiceCloneSendsTheTrimmedTranscriptAndNoInstruction() {
+        var speech = AudioSpeechSettings()
+        speech.mode = .clone
+        speech.reference = reference()
+        speech.referenceText = "  Hello there.\n"
+        speech.instruction = "a calm narrator"
+        var base = AudioRequest(task: .textToSpeech)
+        base.instruction = "a calm narrator"
+        let omni = AudioWorkspaceController.nativeCloneRequest(base, family: "omnivoice", speech: speech)
+        XCTAssertEqual(omni.referenceText, "Hello there.")
+        XCTAssertNil(omni.instruction)
+        speech.referenceText = " \n "
+        XCTAssertNil(AudioWorkspaceController.nativeCloneRequest(base, family: "omnivoice", speech: speech).referenceText,
+                     "a blank transcript is no transcript")
+        XCTAssertNil(AudioWorkspaceController.nativeCloneRequest(base, family: "omnivoice", speech: nil).referenceText)
+    }
+
+    /// The transcript is optional for OmniVoice: an empty one never blocks
+    /// a run, and the one in the page's settings is what the run sends.
+    @MainActor func testOmniVoiceClonesWithoutATranscriptAndSendsOneWhenGiven() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let vault = ProfileVaultStore(rootProvider: { root }, profileIDProvider: { "omnivoice-transcript" }, migrateLegacyData: false)
+        _ = try vault.prepareForLaunch()
+        let controller = AudioWorkspaceController(library: AudioLibraryStore(repository: ProfileRepository(store: vault)),
+                                                  assets: ManagedAssetStore(vault: vault))
+        defer { controller.shutdown() }
+        // The app clones natively with OmniVoice only on Metal or MLX.
+        let omni = profile(family: "omnivoice", operations: ["synthesize", "voice_clone"], backend: "metal")
+        controller.profiles = [omni]
+        controller.selectPage(.voiceClone)
+        controller.selectModel(omni.identity.alias)
+        XCTAssertTrue(controller.selectedProfileClonesNatively)
+        controller.recipe.text = "Hello."
+        controller.speechSettings.reference = reference()
+        controller.setCloneConsent(true)
+        XCTAssertTrue(controller.speechSettings.referenceText.isEmpty)
+        XCTAssertNil(controller.speechValidationMessage, "OmniVoice clones without a transcript")
+        controller.speechSettings.referenceText = "Hello there."
+        // The same composition `beginRun` uses.
+        let request = AudioWorkspaceController.nativeCloneRequest(
+            AudioWorkspaceController.request(from: controller.recipe, task: .textToSpeech),
+            family: omni.family, speech: controller.recipe.speech)
+        XCTAssertEqual(request.referenceText, "Hello there.")
+        XCTAssertTrue(request.consent)
     }
 
     /// Drama 3 refuses speed other than 1.0, an instruction and the guidance
