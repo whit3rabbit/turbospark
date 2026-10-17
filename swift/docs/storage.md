@@ -130,6 +130,17 @@ field where it has a value (`ModelCustomMetadata.filling(gapsFrom:)`). A move
 calls `ModelOrganizationStore.rekey(from:to:legacyPath:)` with the old and new
 ids. A corrupt file is quarantined by `AppJSONStore` like every other store.
 
+**Server favorites follow the same identity** (`settings.json`, `serverFavorites`,
+requirement 8.1). A favorite keeps `modelInstallIds` beside the legacy
+`modelPaths`, aligned by index: slot `i` of each names the same model, and a
+model the app built a placeholder row for (another app's folder) has the empty
+string in its id slot, never its default id. An older settings file has no
+`modelInstallIds` and decodes with none. The first load resolves each path
+against the library rows, writes the ids back and saves settings, and leaves the
+paths for an older app. A load looks an id up first, then the same
+`<modality>/<alias>` under another library (sole candidate only), then the path,
+and reports a model on a drive that is not connected as such (requirement 8.2).
+
 **Model library state is memory, except offer dismissals.** `LibraryState`
 (`AppModel+ModelLibraries.swift`) holds libraries, link speeds, free space,
 measured speeds and the full installed list in memory. It rebuilds them from
