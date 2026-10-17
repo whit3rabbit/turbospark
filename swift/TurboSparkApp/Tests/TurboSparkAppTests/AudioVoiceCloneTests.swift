@@ -206,6 +206,29 @@ final class AudioVoiceCloneTests: XCTestCase {
         }
     }
 
+    /// Seed 0 on Voiceover is a new take each run. The runtime takes 0
+    /// literally, and Drama 3 went silent after "Welcome back." at seed 0
+    /// on every Generate. A seed the user chose is kept.
+    @MainActor func testVoiceoverGivesSeedZeroAFreshSeedEachRun() {
+        var base = AudioRequest(task: .textToSpeech)
+        for family in ["fish_drama3", "omnivoice"] {
+            base.seed = 0
+            XCTAssertEqual(AudioWorkspaceController.referenceFreeSpeechRequest(base, family: family, freshSeed: { 42 }).seed, 42, family)
+            base.seed = nil
+            XCTAssertEqual(AudioWorkspaceController.referenceFreeSpeechRequest(base, family: family, freshSeed: { 42 }).seed, 42, family)
+            base.seed = 7
+            XCTAssertEqual(AudioWorkspaceController.referenceFreeSpeechRequest(base, family: family, freshSeed: { 42 }).seed, 7, family)
+        }
+
+        var recipe = AudioRecipe()
+        recipe.text = "Welcome back. This is a short voiceover test."
+        recipe.seed = 0
+        let drama = profile(family: "fish_drama3", operations: ["synthesize", "voice_clone"], backend: "metal")
+        let seeds = (0..<8).map { _ in AudioWorkspaceController.runRequest(recipe, task: .textToSpeech, profile: drama).seed }
+        XCTAssertFalse(seeds.contains { ($0 ?? 0) == 0 }, "every run sends a real seed")
+        XCTAssertGreaterThan(Set(seeds).count, 1, "Generate again is a different take")
+    }
+
     /// Voiceover lists Drama 3 and OmniVoice and runs them without a
     /// reference or consent, in a voice the model picks. MegaTTS3 needs a
     /// reference and stays off. Voice Cloning still asks both for one.

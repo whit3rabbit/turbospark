@@ -69,8 +69,16 @@ extension AudioWorkspaceController {
     /// A native cloner speaking on Voiceover with no reference (Drama 3,
     /// OmniVoice): no PCM, consent, transcript or guidance weights, and the
     /// model picks the voice.
-    nonisolated static func referenceFreeSpeechRequest(_ base: AudioRequest, family: String) -> AudioRequest {
+    nonisolated static func referenceFreeSpeechRequest(
+        _ base: AudioRequest, family: String,
+        freshSeed: () -> UInt64 = { UInt64.random(in: 1...UInt64.max) }
+    ) -> AudioRequest {
         var request = base
+        // Seed 0 is a new take each run, as Qwen3 does on this page. The
+        // runtime takes 0 literally, so every run of a script repeated one
+        // take, and Drama 3 goes silent after the first sentence at some
+        // seeds (0 among them). The take saves the seed it used.
+        if (request.seed ?? 0) == 0 { request.seed = freshSeed() }
         request.consent = false
         request.referenceSampleRate = nil
         request.referenceText = nil
