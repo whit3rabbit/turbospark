@@ -670,6 +670,35 @@ them.
   flow (needs a `Send` backend), and a full on-device depth frame (needs a
   bit-exact on-device MLX threefry top-k).
 
+Re-read 2026-10-17 against `fspecii/audio.cpp-lowend-gpu` (`cc8d599`) and the
+upstream `0xShug0/audio.cpp` Music 3 docs:
+
+- AR guidance truncation (`MM3_AR_CFG_FRAMES=50`, `MM3_DEPTH_B1=1`): full CFG
+  for the first 50 frames (2 s), conditional only afterwards, which halves the
+  rows of the LM decode and depth steps (LM 36.5 to 28 ms per frame on their
+  CUDA stack). Our depth GEMVs cost roughly in proportion to rows, so this is
+  the largest remaining AR lever here; by arithmetic on the profile it could save
+  up to half of the depth stage on an 8 s clip. Not implemented: it changes the
+  AR trajectory, and the fork's own rule is that anything touching the AR
+  trajectory, chunking or context has to be judged by ear on a full song. Open.
+- Their negative results line up with ours and are not worth repeating: a fused
+  depth graph (zero gain), AR/flow pipelining on one GPU (net negative), a q4_0
+  depth decoder (vocal-band energy 87 to 61 percent), an F16 vocoder (15x
+  slower), and a third-order solver (worse than AB2). Their AB2 claim, 15 steps
+  matching 30 Euler steps, did not reproduce on this stack (see the AB2 table).
+- Flow chunk hop 150: the fork found it audibly broke songs although every
+  spectral metric passed, while the upstream doc advertises it as a 35 percent
+  flow saving. The two disagree; keep it unadopted.
+- Upstream `MM3_DEPTH_GPU_SAMPLE` and `MM3_DEPTH_GPU_FRAME` (device top-k sampler
+  and full device depth frame) are documented as byte-exact and perf-neutral,
+  which supports leaving the on-device depth frame deferred.
+- An F16 KV cache halves the decode allocation (about 50 percent longer songs on
+  a 12 GB card). Ours is f32 at 576 KB per position (about 0.9 GB for 60 s,
+  about 8 GB at the 360 s ceiling); F16 would change attention arithmetic.
+- `ensemble_takes` (K takes through one batched AR pass) and
+  `pipeline_overlap` (a second CUDA stream) are throughput features; neither
+  fits our row-proportional GEMVs or single-queue backend without new work.
+
 ## Rust API
 
 `Model::generate_text` stays the simple entry point. Callers that need more use:
