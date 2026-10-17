@@ -680,16 +680,51 @@ mod unsupported {
     macro_rules! refused {($name:ident($($arg:ident:$ty:ty),*) $(,$out:ident)?)=>{
  #[no_mangle] pub unsafe extern "C" fn $name($($arg:$ty),*)->c_int {guard_result(||{let _=($($arg),*);$(if !$out.is_null(){*$out=std::ptr::null_mut();})?Err((abi::TS_ERR_UNSUPPORTED,"native audio inference requires macOS".into()))})}
  };}
-    refused!(ts_audio_session_open(path:*const c_char,options:*const c_char,out:*mut *mut TsAudioSession),out);
-    refused!(ts_audio_session_open_cancellable(path:*const c_char,options:*const c_char,token:*const super::TsAudioOpenToken,callback:TsAudioCallback,userdata:*mut c_void,out:*mut *mut TsAudioSession),out);
-    refused!(ts_audio_session_close(handle:*mut TsAudioSession));
-    refused!(ts_audio_session_cancel(handle:*const TsAudioSession));
-    refused!(ts_audio_job_open(handle:*const TsAudioSession,request:*const c_char,out:*mut *mut TsAudioJob),out);
-    refused!(ts_audio_job_append(handle:*const TsAudioJob,pcm:*const f32,count:usize));
-    refused!(ts_audio_job_run(handle:*const TsAudioJob,callback:TsAudioCallback,userdata:*mut c_void,out:*mut *mut c_char),out);
-    refused!(ts_audio_job_status_json(handle:*const TsAudioJob,out:*mut *mut c_char),out);
-    refused!(ts_audio_job_cancel(handle:*const TsAudioJob));
-    refused!(ts_audio_job_close(handle:*mut TsAudioJob));
+    refused!(
+        ts_audio_session_open(
+            path: *const c_char,
+            options: *const c_char,
+            out: *mut *mut TsAudioSession,
+        ),
+        out
+    );
+    refused!(
+        ts_audio_session_open_cancellable(
+            path: *const c_char,
+            options: *const c_char,
+            token: *const super::TsAudioOpenToken,
+            callback: TsAudioCallback,
+            userdata: *mut c_void,
+            out: *mut *mut TsAudioSession,
+        ),
+        out
+    );
+    refused!(ts_audio_session_close(handle: *mut TsAudioSession));
+    refused!(ts_audio_session_cancel(handle: *const TsAudioSession));
+    refused!(
+        ts_audio_job_open(
+            handle: *const TsAudioSession,
+            request: *const c_char,
+            out: *mut *mut TsAudioJob,
+        ),
+        out
+    );
+    refused!(ts_audio_job_append(handle: *const TsAudioJob, pcm: *const f32, count: usize));
+    refused!(
+        ts_audio_job_run(
+            handle: *const TsAudioJob,
+            callback: TsAudioCallback,
+            userdata: *mut c_void,
+            out: *mut *mut c_char,
+        ),
+        out
+    );
+    refused!(
+        ts_audio_job_status_json(handle: *const TsAudioJob, out: *mut *mut c_char),
+        out
+    );
+    refused!(ts_audio_job_cancel(handle: *const TsAudioJob));
+    refused!(ts_audio_job_close(handle: *mut TsAudioJob));
 }
 #[cfg(not(target_os = "macos"))]
 pub use unsupported::*;

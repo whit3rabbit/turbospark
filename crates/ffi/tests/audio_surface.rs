@@ -255,7 +255,7 @@ fn open_accepts_exactly_the_runnable_task_names() {
             last_error_text()
         }
     };
-    for task in ["speech_to_text", "text_to_speech", "music"] {
+    for task in ["speech_to_text", "text_to_speech", "music", "diarization"] {
         let why = reason(task);
         assert!(
             !why.contains("unknown variant"),
@@ -266,7 +266,6 @@ fn open_accepts_exactly_the_runnable_task_names() {
         "enhancement",
         "separation",
         "alignment",
-        "diarization",
         "speech_detection",
         "codec",
         "language_identification",

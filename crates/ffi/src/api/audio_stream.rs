@@ -205,11 +205,32 @@ mod unsupported {
     macro_rules! refused {($name:ident($($arg:ident:$ty:ty),*) $(,$out:ident)?)=>{
  #[no_mangle] pub unsafe extern "C" fn $name($($arg:$ty),*)->c_int {guard_result(||{let _=($($arg),*);$(if !$out.is_null(){*$out=std::ptr::null_mut();})?Err((abi::TS_ERR_UNSUPPORTED,"native audio inference requires macOS".into()))})}
  };}
-    refused!(ts_audio_stream_open(path:*const c_char,options:*const c_char,token:*const TsAudioOpenToken,callback:TsAudioCallback,userdata:*mut c_void,out:*mut *mut TsAudioStream),out);
-    refused!(ts_audio_stream_append(handle:*const TsAudioStream,pcm:*const f32,count:usize,out:*mut *mut c_char),out);
-    refused!(ts_audio_stream_finish(handle:*const TsAudioStream,out:*mut *mut c_char),out);
-    refused!(ts_audio_stream_cancel(handle:*const TsAudioStream));
-    refused!(ts_audio_stream_close(handle:*mut TsAudioStream));
+    refused!(
+        ts_audio_stream_open(
+            path: *const c_char,
+            options: *const c_char,
+            token: *const TsAudioOpenToken,
+            callback: TsAudioCallback,
+            userdata: *mut c_void,
+            out: *mut *mut TsAudioStream,
+        ),
+        out
+    );
+    refused!(
+        ts_audio_stream_append(
+            handle: *const TsAudioStream,
+            pcm: *const f32,
+            count: usize,
+            out: *mut *mut c_char,
+        ),
+        out
+    );
+    refused!(
+        ts_audio_stream_finish(handle: *const TsAudioStream, out: *mut *mut c_char),
+        out
+    );
+    refused!(ts_audio_stream_cancel(handle: *const TsAudioStream));
+    refused!(ts_audio_stream_close(handle: *mut TsAudioStream));
 }
 #[cfg(not(target_os = "macos"))]
 pub use unsupported::*;

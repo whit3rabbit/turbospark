@@ -72,6 +72,13 @@ pub fn probe_embedding_dir(dir: &Path) -> EmbeddingDirProbe {
                 "this is a speech-to-text model, not an embedding model".into(),
             );
         }
+        Some(layout @ CoreMlLayout::SpeakerDiarization) => {
+            return EmbeddingDirProbe::refuse(
+                Some(layout.family().into()),
+                Some("coreml"),
+                "this is a speaker diarization model, not an embedding model".into(),
+            );
+        }
         None => {}
     }
 

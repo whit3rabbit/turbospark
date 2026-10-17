@@ -25,6 +25,8 @@ pub enum AudioTask {
     SpeechToText,
     TextToSpeech,
     Music,
+    /// Who spoke when: speaker turns as transcript segments with empty text.
+    Diarization,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -366,6 +368,29 @@ fn run_worker(engine: Engine, rx: Receiver<Message>) {
         let _ = reply.send(outcome);
     }
 }
+/// Speaker turns as a transcript: one segment per turn, no text, speakers
+/// `S1`, `S2`, ... in order of first appearance. Hosts localize the label.
+fn diarization_transcript(d: &crate::coreml::Diarization) -> AudioTranscript {
+    AudioTranscript {
+        text: String::new(),
+        language: None,
+        segments: d
+            .turns
+            .iter()
+            .map(|t| AudioSegment {
+                start_seconds: Some(t.start),
+                end_seconds: Some(t.end),
+                text: String::new(),
+                // Frame-grid turn boundaries (16.875 ms), not word alignment.
+                timing: "segment".into(),
+                speaker: Some(format!("S{}", t.speaker + 1)),
+                words: None,
+            })
+            .collect(),
+        tags: None,
+        token_logprobs: None,
+    }
+}
 /// Persisted family string of the MegaTTS3 voice-cloning engine.
 pub const MEGATTS3_FAMILY: &str = "megatts3";
 /// Persisted family string of the Fish Audio Drama 3 engine.
@@ -428,6 +453,16 @@ pub fn validate_request(
             kokoro_request(request)?
                 .validate()
                 .map_err(|e| e.to_string())?;
+        }
+        AudioTask::Diarization => {
+            if samples.is_empty()
+                || samples.len() > MAX_INPUT_SAMPLES
+                || samples.iter().any(|v| !v.is_finite())
+            {
+                return Err(
+                    "speaker diarization needs finite 16 kHz mono PCM, at most 30 minutes".into(),
+                );
+            }
         }
         AudioTask::Music => {
             if !samples.is_empty() {
@@ -689,6 +724,7 @@ enum Engine {
     Qwen(Box<crate::Qwen3AsrRunner>),
     QwenMetal(std::cell::RefCell<Box<crate::qwen3_asr_metal::Qwen3AsrMetalEngine>>),
     ParakeetCoreMl(Box<crate::coreml::ParakeetCoreMl>),
+    DiarizationCoreMl(Box<crate::coreml::DiarizationCoreMl>),
     Kokoro(Box<crate::KokoroRunner>),
     KokoroPortable(Box<audio::tts::kokoro::KokoroSynthesizer>),
     MegaTts3(std::cell::RefCell<Box<crate::megatts3::MegaTts3Runner>>),
@@ -711,6 +747,7 @@ impl Engine {
             Self::Whisper(_) => "whisper",
             Self::Qwen(_) | Self::QwenMetal(_) => "qwen3_asr",
             Self::ParakeetCoreMl(_) => crate::coreml::CoreMlLayout::ParakeetTdt.family(),
+            Self::DiarizationCoreMl(_) => crate::coreml::CoreMlLayout::SpeakerDiarization.family(),
             Self::Kokoro(_) | Self::KokoroPortable(_) => "kokoro",
             Self::MegaTts3(_) => MEGATTS3_FAMILY,
             Self::FishDrama3(_) => FISH_DRAMA3_FAMILY,
@@ -815,6 +852,16 @@ impl Engine {
             AudioTask::Music => crate::Music3Runner::open(path)
                 .map(|m| Self::Music(Box::new(m)))
                 .map_err(|e| e.to_string()),
+            AudioTask::Diarization => {
+                if crate::coreml::detect_layout(path)
+                    != Some(crate::coreml::CoreMlLayout::SpeakerDiarization)
+                {
+                    return Err("unsupported speaker diarization model: expected the Core ML pyannote community-1 export".into());
+                }
+                let opts = crate::coreml::DiarizationOptions::from_env()?;
+                crate::coreml::DiarizationCoreMl::open(path, &opts)
+                    .map(|m| Self::DiarizationCoreMl(Box::new(m)))
+            }
         }
     }
     fn estimate_run_bytes(&self, r: &AudioRequest, samples: &[f32]) -> Result<u64, String> {
@@ -1012,6 +1059,24 @@ impl Engine {
                     tags: None,
                     token_logprobs: None,
                 });
+            }
+            Self::DiarizationCoreMl(model) => {
+                let d = model.diarize(
+                    samples,
+                    model.sample_rate(),
+                    &|| cancel.is_cancelled(),
+                    |done, total| {
+                        events
+                            .send(AudioEvent::Progress(AudioProgress {
+                                stage: "window".into(),
+                                completed: done,
+                                total: Some(total),
+                            }))
+                            .is_ok()
+                            && !cancel.is_cancelled()
+                    },
+                )?;
+                result.transcript = Some(diarization_transcript(&d));
             }
             Self::Kokoro(model) => {
                 synthesize_kokoro(
@@ -1508,6 +1573,7 @@ fn estimate_run_bytes(request: &AudioRequest) -> u64 {
         AudioTask::SpeechToText => (MAX_INPUT_SAMPLES as u64 * 4).saturating_add(512 << 20),
         AudioTask::TextToSpeech => 512 << 20,
         // Conservative duration-scaled reserve until full checkpoint peaks are qualified.
+        AudioTask::Diarization => (MAX_INPUT_SAMPLES as u64 * 4).saturating_add(512 << 20),
         AudioTask::Music => (2u64 << 30).saturating_add(
             (request.duration_seconds.unwrap_or(60.0).ceil() as u64).saturating_mul(64 << 20),
         ),
@@ -2423,5 +2489,51 @@ mod tests {
         drop(permit);
         worker.join().unwrap();
         assert!(reply.unwrap().contains("busy"));
+    }
+    #[test]
+    fn diarization_requests_need_bounded_finite_pcm() {
+        let family = crate::coreml::diarization::FAMILY;
+        let r = AudioRequest {
+            task: AudioTask::Diarization,
+            ..AudioRequest::default()
+        };
+        assert!(validate_request(family, &r, &[]).is_err());
+        assert!(validate_request(family, &r, &[0.0, f32::NAN]).is_err());
+        assert!(validate_request(family, &r, &[0.0; 16_000]).is_ok());
+        let sampled = AudioRequest {
+            temperature: Some(0.7),
+            ..r.clone()
+        };
+        assert!(validate_request(family, &sampled, &[0.0; 16_000]).is_err());
+        let task: AudioTask = serde_json::from_str("\"diarization\"").unwrap();
+        assert_eq!(task, AudioTask::Diarization);
+    }
+    #[test]
+    fn diarization_transcript_labels_turns_without_text() {
+        use crate::coreml::{Diarization, SpeakerTurn};
+        let d = Diarization {
+            turns: vec![
+                SpeakerTurn {
+                    speaker: 0,
+                    start: 0.03,
+                    end: 2.5,
+                },
+                SpeakerTurn {
+                    speaker: 1,
+                    start: 2.5,
+                    end: 4.0,
+                },
+            ],
+            speakers: 2,
+        };
+        let t = diarization_transcript(&d);
+        assert!(t.text.is_empty());
+        let labels: Vec<_> = t.segments.iter().map(|s| s.speaker.as_deref()).collect();
+        assert_eq!(labels, [Some("S1"), Some("S2")]);
+        assert_eq!(t.segments[1].start_seconds, Some(2.5));
+        assert!(t
+            .segments
+            .iter()
+            .all(|s| s.text.is_empty() && s.words.is_none()));
     }
 }

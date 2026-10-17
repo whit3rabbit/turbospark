@@ -61,10 +61,13 @@ extern "C" {
 #endif
 
 /* ------------------------------------------------------------------ */
-/* Speech-to-text (whisper).                                           */
+/* Speech-to-text (Whisper, Qwen3-ASR, Parakeet TDT on Core ML).       */
 /*                                                                     */
-/* A resident STT model is opened from a speech install directory      */
-/* (config.json, model.safetensors, tokenizer.json). Streams accept    */
+/* A resident STT model is opened from a speech install directory:     */
+/* Whisper or Qwen3-ASR (config.json, weights, tokenizer), or a        */
+/* Parakeet Core ML export (macOS 15+), recognized by its layout.      */
+/* Parakeet Unified is refused here; live text uses                    */
+/* ts_audio_stream_*. Parakeet reports no language. Streams accept     */
 /* bounded PCM chunks: at most two seconds of base64 f32               */
 /* little-endian 16 kHz mono per append. The stream buffers prior      */
 /* audio internally; callers never resend. On the CPU reference path   */

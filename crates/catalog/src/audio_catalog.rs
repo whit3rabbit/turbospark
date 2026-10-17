@@ -506,6 +506,15 @@ impl AudioCatalog {
                         .ok_or("audio weight size overflow")?;
                     (compiled.saturating_mul(3).saturating_add(256<<20),"estimate: three times compiled weights and 256 MiB working reserve; a live stream keeps about one 7 s window of audio")
                 }
+                AudioTask::Diarization if family == "pyannote_community1" => {
+                    let compiled = row
+                        .assets
+                        .iter()
+                        .filter(|a| a.path.ends_with("/weights/weight.bin"))
+                        .try_fold(0u64, |n, a| n.checked_add(a.size))
+                        .ok_or("audio weight size overflow")?;
+                    (compiled.saturating_mul(3).saturating_add(16_000*1800*4).saturating_add(768<<20),"measured 858 MB peak footprint on a 30-minute input (M4 Max, Neural Engine embedding, compile cached); estimate: three times compiled weights, 30-minute PCM, and 768 MiB working reserve")
+                }
                 AudioTask::SpeechToText => (weight_bytes.saturating_mul(2).saturating_add(16_000*1800*4).saturating_add(256<<20),"estimate: twice checkpoint weights, 30-minute PCM, and 256 MiB working reserve"),
                 AudioTask::TextToSpeech => (weight_bytes.saturating_mul(2).saturating_add(256<<20),"estimate: twice checkpoint weights and 256 MiB voice/working reserve"),
                 AudioTask::Music => (weight_bytes.saturating_add(2<<30),"estimate: packed checkpoint weights and 2 GiB working reserve; full duration peak unqualified"),
@@ -1169,6 +1178,7 @@ const REVIEWED_ADAPTERS: &[&str] = &[
     "omnivoice",
     "parakeet_tdt",
     "parakeet_unified",
+    "pyannote_community1",
 ];
 
 fn check_acknowledged(profile: &AudioProfile, acknowledged: &[String]) -> Result<(), String> {
@@ -1282,6 +1292,26 @@ fn profile_capabilities(family: &str) -> AudioCapabilities {
             can_run: os_ok,
             unavailable_reason: (!os_ok)
                 .then(|| "Parakeet on Core ML requires macOS 15 or newer".into()),
+        };
+    }
+    if family == "pyannote_community1" {
+        // Offline speaker diarization (who spoke when). The programs declare
+        // macOS 14, but the runtime refuses it: FluidAudio reports Core ML's
+        // CPU path crashing in BNNS during this pipeline there.
+        let os_ok = turbospark_coreml::os_version().0 >= 15;
+        return AudioCapabilities {
+            languages: vec![],
+            voices: vec![],
+            max_input_seconds: None,
+            supports_lyrics: false,
+            operations: vec!["diarize".into()],
+            // Turn boundaries on the segmentation frame grid (16.875 ms).
+            timing: Some("segment".into()),
+            backend: "coreml".into(),
+            cancellation: "window".into(),
+            can_run: os_ok,
+            unavailable_reason: (!os_ok)
+                .then(|| "Speaker diarization on Core ML requires macOS 15 or newer".into()),
         };
     }
     let (operation,backend,cancellation,can_run,reason,timing) = match family {
@@ -2327,7 +2357,7 @@ mod tests {
     #[test]
     fn initial_audio_profiles_have_exact_complete_pins_and_wire_metadata() {
         let catalog = AudioCatalog::embedded().unwrap();
-        assert_eq!(catalog.entries().count(), 15);
+        assert_eq!(catalog.entries().count(), 16);
         for (task, alias, repo, revision, rate, channels) in [
             (
                 AudioTask::TextToSpeech,
@@ -2398,6 +2428,14 @@ mod tests {
                 "parakeet-unified-en-coreml",
                 "FluidInference/parakeet-unified-en-0.6b-coreml",
                 "d32e972dd4315f1dc3f6be28fb2aab0ab3e80358",
+                16000,
+                1,
+            ),
+            (
+                AudioTask::Diarization,
+                "speaker-diarization-coreml",
+                "FluidInference/speaker-diarization-coreml",
+                "7eab74f3463c736418d0eb10296261ae581146c9",
                 16000,
                 1,
             ),
@@ -2477,6 +2515,39 @@ mod tests {
         assert!(unified.resident_memory_bytes > 3 * 589_979_840);
         assert_eq!(
             unified.capabilities.can_run,
+            turbospark_coreml::os_version().0 >= 15
+        );
+        // Only the CC-BY-4.0 community-1 programs, the PLDA psi and the
+        // attribution files; the legacy wespeaker and pyannote_segmentation
+        // programs in the same repository are outside that license scope.
+        let diarization = catalog.get("speaker-diarization-coreml").unwrap();
+        assert_eq!(diarization.family, "pyannote_community1");
+        assert_eq!(diarization.capabilities.operations, ["diarize"]);
+        assert_eq!(diarization.capabilities.backend, "coreml");
+        assert_eq!(diarization.capabilities.max_input_seconds, Some(1800));
+        assert_eq!(
+            diarization.readiness,
+            AudioReadiness::ImplementedUnqualified
+        );
+        assert_eq!(diarization.assets.len(), 23);
+        assert_eq!(diarization.download_bytes, 21_623_423);
+        // Covers the measured 30-minute peak footprint.
+        assert!(diarization.resident_memory_bytes > 858_195_576);
+        for program in ["Segmentation", "FBank", "Embedding", "PldaRho"] {
+            assert!(diarization
+                .assets
+                .iter()
+                .any(|a| a.path == format!("{program}.mlmodelc/weights/weight.bin")));
+        }
+        for file in ["plda-parameters.json", "NOTICE.md", "LICENSE"] {
+            assert!(diarization.assets.iter().any(|a| a.path == file));
+        }
+        assert!(diarization
+            .assets
+            .iter()
+            .all(|a| !a.path.contains("wespeaker") && !a.path.starts_with("pyannote_")));
+        assert_eq!(
+            diarization.capabilities.can_run,
             turbospark_coreml::os_version().0 >= 15
         );
         let music = catalog.get("minimax-music3-4bit").unwrap();
