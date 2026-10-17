@@ -45,6 +45,8 @@ final class AppearanceSettingsTests: XCTestCase {
 
         XCTAssertEqual(archive.lightConfig, ThemeModeConfig.defaultLight)
         XCTAssertEqual(archive.darkConfig, ThemeModeConfig.defaultDark)
+        XCTAssertEqual(ThemeModeConfig(), ThemeModeConfig.defaultLight)
+        XCTAssertEqual(ThemeModeConfig().preset, "Spark Blue")
     }
 
     /// A preset names a set of colours; it never points at `default*`.
