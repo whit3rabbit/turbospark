@@ -1,10 +1,12 @@
 # MoE prior art: jitllm, phhusson's NPU forks, and llama.cpp #30340
 
 Reviewed 2026-10-14 for anything the routed-expert streamer
-(`crates/streaming`) or the MoE layer paths could borrow. Every source was
-read, none was built or run, and nothing here is a measurement on this
-engine. A row below is a claim from the source until the experiment it names
-has run on a Mac.
+(`crates/streaming`) or the MoE layer paths could borrow. The `main-npu`
+part was re-read on 2026-10-17, after the fork's author pointed to it in the
+review of PR #151: the first pass took one number from that branch and
+missed its quantized-weight path. Every source was read, none was built or
+run, and nothing here is a measurement on this engine. A row below is a
+claim from the source until the experiment it names has run on a Mac.
 
 Sources and the revisions read:
 
@@ -17,6 +19,10 @@ Sources and the revisions read:
   `phhusson/llama.cpp` branches `apple/bonsai-pq20` (tip `c6af028`) and
   `main-npu` (tip `d0e54af`), MIT; `phhusson/h3.c-ane` branch
   `dev/phh/mixed` (tip `fe44f7a`), MIT plus BSD-3-Clause notices.
+  `main-npu` has since been rebased onto newer upstream (tip `689fd77`).
+  Its `ggml/src/ggml-ane/ggml-ane.m`, `docs/backend/ANE.md`,
+  `ggml/include/ggml-ane.h` and `scripts/ane-sweep.py` are byte-identical
+  at both tips.
 - [ggml-org/llama.cpp#30340](https://github.com/ggml-org/llama.cpp/pull/30340),
   dma-buf buffer sharing between ROCm and Vulkan, closed unmerged on
   2026-10-12 after a maintainer veto.
@@ -35,7 +41,8 @@ budget, a cold-read tuning pass, or Neural Engine offload.
 | Per-expert contiguous pages, pread over cold mmap, concurrent misses, shared expert overlap | jitllm | already here | none |
 | Cross-layer router prefetch | jitllm `Config.StreamPrefetch` | closed here (warm); jitllm's disk-bound result lowers the prior on the owed cold sweep | none new |
 | Moving blocks between devices, routed experts on the CPU | jitllm `moveblocks.go`, `streamBank.runHost` | does not apply to unified memory | none |
-| Neural Engine row-split prefill | phhusson `apple/bonsai-pq20`, `h3.c-ane` | not started; dense matmuls only, private API | a separate decision, not MoE work |
+| Neural Engine prefill matmuls, Metal converting weights and activations | phhusson `main-npu` | not started; dense matmuls only, any quant with an F16 conversion, private API | a separate decision, not MoE work; benchmark the fork on M4 Max first |
+| Neural Engine row-split prefill on repacked 2-bit weights | phhusson `apple/bonsai-pq20`, `h3.c-ane` | not started; one encoding, private API | only if the `main-npu` route is taken and Bonsai needs more |
 | Cross-device zero-copy buffers | llama.cpp #30340 | unified memory already has it | only a fence lesson, for ANE work |
 
 ## What could transfer, and how to price it first
@@ -233,30 +240,86 @@ as imports:
 ## The Neural Engine work (phhusson)
 
 This is the only part of the three sources with Apple-specific compute.
-None of it is MoE.
+None of it is MoE. There are two routes. `main-npu` is the general one and
+takes ordinary quantized checkpoints, while `apple/bonsai-pq20` serves one
+repacked 2-bit encoding.
 
-**What it does.** `apple/bonsai-pq20` runs `GGML_OP_MUL_MAT` for prefill on
-the ANE through the private `AppleNeuralEngine.framework`. It uses
-`_ANEInMemoryModel` with MIL text generated at build time by coremltools,
-one program per fixed shape, and weights passed as IOSurface request inputs
-so one program serves every layer of that shape. The ANE takes the leading
-65% of a matmul's output rows and Metal the rest, concurrently.
-`MTLSharedEvent` is bridged to `_ANESharedWaitEvent` and
+### `main-npu`: whole matmuls on the ANE, conversions on Metal
+
+**What it does.** A ggml backend (`ggml/src/ggml-ane/ggml-ane.m`) takes
+contiguous two-dimensional `GGML_OP_MUL_MAT` and nothing else. K and M must
+be multiples of 32 from 32 to 16384. N, the token count, must be a multiple
+of 32 from 32 to 4096, so single-token decode never offloads. Each shape
+gets one MIL program, compiled on first use through the private
+`_ANEInMemoryModel` and cached for the backend's lifetime. Weights and
+activations are IOSurface request inputs, so one program serves every layer
+of that shape.
+
+The program cuts K into 2048-element slices and adds the partial products in
+F16. The ANE runs each offloaded matmul whole, and Metal does three
+conversions around it:
+
+- **Weights.** F16 weights go to the ANE as stored. A quantized weight is
+  dequantized into one F16 scratch buffer just before the ANE reads it. Any
+  type Metal can copy to F16 qualifies, and the branch added the Q4_K and
+  Q6_K copies for this (`GGML_ANE_MTLQUANTS` narrows the set).
+- **Activations.** Each token is scaled by a power of two chosen from its
+  largest magnitude, then cast to F16. The ANE flushes FP16 subnormals, and
+  without the scale the mean KL against Metal was about 0.406.
+- **Output.** The ANE's F16 `W * A^T` is transposed, unscaled, and widened to
+  ggml's F32 layout.
+
+Ordering uses `MTLSharedEvent`s bridged to `_ANESharedWaitEvent` and
 `_ANESharedSignalEvent` through the private
-`-[MTLSharedEvent IOSurfaceSharedEvent]`. Weights are rewritten once at
-load into a planar layout both devices read, because the ANE has no bit
-operations and decodes 2-bit codes with arithmetic. Decode stays on Metal.
+`-[MTLSharedEvent IOSurfaceSharedEvent]`, so no handoff waits on the CPU.
+There is one weight scratch, so the next matmul's dequantization waits until
+the ANE has finished reading the previous one.
+
+**Which matmuls go.** A per-matmul gate decides. A matmul offloads only at
+`GGML_ANE_MIN_MACS` or more (default 6e9) and `GGML_ANE_MIN_INTENSITY` or
+more (default 45 MACs per estimated byte moved, scratch traffic included).
+The defaults are calibrated on an M4, and the README's advice for another
+machine is to rerun `scripts/ane-sweep.py` and reset them. The sweep times
+each shape on the ANE and on Metal alone, and reads modeled energy from
+IOReport. At the defaults a 4096 x 4096 projection needs a chunk of at least
+384 tokens.
+
+**What it reports** (not reproduced here):
+
+- README, M4 Mac mini 16 GB, a Qwen 3.5 9B distill at Q4_K_M. Adding the
+  ANE takes pp4096 from 202 to 258 tok/s (+28%). Modeled energy goes from
+  2612 to 1043 J. The README says to compare those joules only with each
+  other, because they include warmup and repeat loops. The fork's meter,
+  `joules.py`, reads IOReport's Energy Model across all processes rather
+  than powermetrics, so do not set them beside `docs/POWER_BASELINE.md`.
+- `docs/backend/ANE.md`, M4, LFM2.5-2.6B F16, pp4096 at microbatch 2048:
+  788.52 +/- 64.11 tok/s against 653.84 +/- 0.39 for Metal alone (+21% on
+  the mean). The default microbatch 512 showed no gain. One 4096-token
+  passage gave mean KL 0.000053 and 100% top-token agreement against Metal,
+  which that doc calls a limited check.
+- The README calls the datapath bf16. The MIL is `fp16` and the device
+  describes itself as "Apple Neural Engine (F16)", so read it as F16.
+
+### `apple/bonsai-pq20`: a row split for one encoding
+
+**What it does.** The branch runs prefill `GGML_OP_MUL_MAT` through the same
+private framework. Its MIL comes from coremltools at build time, with the
+same per-shape programs and IOSurface weight inputs. The ANE takes the
+leading 65% of a matmul's output rows and Metal the rest, concurrently.
+Weights are rewritten once at load into a planar layout both devices read,
+because the ANE has no bit operations and decodes 2-bit codes with
+arithmetic. Decode stays on Metal.
 
 **What it reports** (committed result JSON, M4 16 GB, macOS 26.6.2, not
 reproduced here): Ternary-Bonsai-2-27B PQ2_0 pp4096 goes from 58.73 to
 115.68 tok/s at the 0.65 split. The ANE alone reaches 85.41, and tg32 drops
-3.6%. Over 736 checked matmuls the KL is at most 1.01e-6. `main-npu`
-reports +21% prefill on an F16 2.6B, and notes that per-token power-of-two
-activation scaling was required (KL 0.000053 with it, about 0.406 without)
-because the ANE flushes FP16 subnormals.
+3.6%. Over 736 checked matmuls the KL is at most 1.01e-6.
 
-**Why it is not MoE work.** No fork routes `MUL_MAT_ID` to the ANE. The
-README calls expert layers "(much) harder". The one real attempt, on AMD
+### Both routes
+
+**Why it is not MoE work.** No branch routes `MUL_MAT_ID` to the ANE, and
+`main-npu`'s backend refuses anything but a 2-D `MUL_MAT`. The README calls
+expert layers "(much) harder". The one real attempt, on AMD
 XDNA (`amd-npu-gguf`), offloaded padded 512-row expert jobs and measured
 no gain (289.02 to 290.26 tok/s), while slowing the GPU's own matmuls 1.35
 to 1.50 ms per layer. Fixed-shape programs and variable per-expert token
@@ -264,22 +327,68 @@ counts do not fit. On an MoE install here, the realistic ANE targets would
 be the dense parts of prefill: attention projections, GDN in-proj, and the
 shared expert.
 
-**Where it would touch this engine.** This engine already runs the
-Ternary-Bonsai-2-27B line (`docs/BONSAI2.md`). The fork's numbers are for
-its PQ2_0 GGUF, so they say nothing about this engine's encoding of the same
-weights. Prefill is compute-bound, so the ANE adds compute rather than
+**Where it would touch this engine.** `main-npu` widens this. Metal
+dequantizes to F16 before the ANE sees a weight, so the ANE program does not
+depend on the weight encoding. The route could therefore serve every
+family's dense prefill here, not only Bonsai.
+
+This engine has no such conversion. Its GEMV and GEMM kernels, Steel
+included (`crates/gpu/src/dequant_int4_steel.rs`), dequantize inside the
+matmul and never write an F16 weight matrix. A port needs a materializing
+kernel per resident format, an F16 scratch, the scale and unscale-transpose
+kernels, and the private-API program. The scratch adds about 4 bytes of
+traffic per weight (2 written, 2 read) that Steel's fused read does not pay.
+That is why the gate asks for high intensity.
+
+Precision changes too. Steel already takes F16 activations and accumulates
+in FP32. The ANE path sums K slices in F16 and flushes the subnormals the
+per-token scale does not lift. So it needs the real-model quality gates any
+new prefill path here needs before it takes a family's default.
+
+`apple/bonsai-pq20` is narrower. This engine already runs the
+Ternary-Bonsai-2-27B line (`docs/BONSAI2.md`). The branch's numbers are for
+its PQ2_0 GGUF, so they say nothing about this engine's encoding of the
+same weights. Prefill is compute-bound, so the ANE adds compute rather than
 competing for bandwidth, which is why the row split beats either device
 alone.
 
-**What it costs.** Private classes and selectors validated on one machine
-and one OS build ("any macOS update can break it"); per-shape compile caches
-outside the app's control (aned's grew to 58 GB in a day in `h3.c-ane`);
-serialized ANE calls; an input-binding order that misbinds past 8 inputs;
-and an FP16-only datapath that needs scaling guards. The LICENSE here reads
-"Clean-room implementation", so the forks' code should be re-derived from
-the documented mechanism rather than copied, even though MIT would allow
-copying. Treat it as a separate go/no-go decision about private API, with a
-dense-prefill scope. It is not a streaming change.
+**The hardware is the open question.** Every Apple number above is from a
+plain M4, whose GPU has at most 10 cores. The ANE is the same 16-core unit
+on M4 Pro and M4 Max, while the GPU grows to as many as 40 cores. So a plain
+M4 is the case most favorable to the ANE. On an M4 Max, expect the gate to offload
+fewer shapes and each to gain less. That is an inference from core counts,
+not a measurement.
+
+The cheapest test needs no code here. Build the fork, run its
+`llama-bench -dev MTL0,ANE/MTL0` comparison on a Q4_K_M checkpoint, and run
+`scripts/ane-sweep.py`, both on an M4 Max on AC power. A Metal-only arm that
+matches or beats the mixed arm there closes the question for that class of
+machine.
+
+**What it costs.**
+
+- Private classes and selectors, validated on one machine and one OS build
+  ("any macOS update can break it"). `main-npu` was tested on one M4 under
+  macOS 26.6.2.
+- Per-shape compile caches outside the app's control. aned's grew to 58 GB
+  in a day in `h3.c-ane`, and `main-npu` writes its compiled models under the
+  system temporary directory. A shape's first use includes its compile.
+- In `main-npu`, a compiler failure fails the graph rather than falling back
+  to Metal.
+- Serialized ANE calls, and an input-binding order that misbinds past 8
+  inputs.
+- An FP16-only datapath that needs scaling guards. `main-npu` also sums its
+  K slices in F16, which can round or overflow where an F32 path would not.
+- On the ANE, child IOSurface offsets above 4 GiB wrap modulo 4 GiB and an
+  exactly 4 GiB parent is rejected. `main-npu` therefore wraps each tensor in
+  its own page-bounded surface over the parent's memory.
+
+The LICENSE here reads "Clean-room implementation", so the forks' code
+should be re-derived from the documented mechanism rather than copied, even
+though MIT would allow copying. Treat it as a separate go/no-go decision
+about private API, with a dense-prefill scope. If it is taken, start from
+`main-npu`'s route rather than the row split, because it does not tie the
+ANE to one encoding. It is not a streaming change.
 
 ## llama.cpp #30340
 
