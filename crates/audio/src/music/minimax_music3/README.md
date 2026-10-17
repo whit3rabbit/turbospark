@@ -731,24 +731,55 @@ integration require separate qualification.
 Native 4-bit comparison against MLX 0.32.3, measured 2026-10-17 on an Apple M4
 Max (`applegpu_g16s`) with the pinned `mlx-audio` `feb25a37` and the installed
 4-bit snapshot (`c7ea32923b24`), 3 AR frames, 2 flow steps, seed 7, the exact
-flow profile. Frame 0 warmup, ours against MLX, per sampled codebook:
+flow profile. Frame 0 warmup, ours against MLX, per sampled codebook, on the
+reference's own draws:
 
 | Codebook | Hidden max abs error | Guided logits max abs error |
 |---|---|---|
 | 0 (semantic) | 0 (8,192 values) | 0 (200,000 values) |
-| 1 to 3 | 0.063 to 0.125 | 0.094 to 0.125 |
+| 1 to 3 | 0.063 to 0.094 | 0.094 to 0.125 |
 | 4 to 7 | 0.89 to 1.09 | 2.70 to 5.22 |
 
-The semantic step is bit-exact and the first depth steps are within one bf16
-step, but from codebook 4 (a 10-row depth step and up) the logits drift by
-several units, which is enough to change sampled codes. The ignored test
-`real_music3_pinned_4bit_native_matches_mlx_and_resets` therefore fails here: its
-4-bit logits tolerance is 3.0 and the worst error is 3.82. The same test fails
-with the identical 3.8203125 on the commit before the kernel work in this
-section, so this is not a regression from it, and the MLX qmv batch limits for
-this chip (13, 15, 13) match `linear_plan`. The probe does not write the
-`encoding` field the test's tolerance table reads; set `"encoding": "affine4"` in
-`request.json` to reach the 4-bit tolerances. Root cause is open.
+The codebook 4 to 7 rows are not a kernel gap. The two runs draw different
+codes at codebook 3 (ours 585, MLX 594, same key): the guided logits differ by
+up to one bf16 step (0.094 to 0.125), which is enough to flip a top-k
+categorical draw, and every later depth step then embeds a different code. The
+10-row step (sequence 5) is where the inputs first differ, not where the
+arithmetic does. Forcing MLX to our frame 0 draws
+(`probe_minimax_music3_reference.py --force-warmup-codes
+'[152575,147,505,585,967,508,981,573]'`, the semantic token first) gives:
+
+| Codebook | Hidden max abs error | Guided logits max abs error |
+|---|---|---|
+| 0 | 0 | 0 |
+| 1 to 7 | 0.063 to 0.094 | 0.094 to 0.125 |
+
+Per operation (`--trace --trace-max-calls 7`, layer 0, the seven warmup depth
+calls, 4 to 16 rows) the same forced run shows q/k/v at most 0.0078, attention
+at most 0.0078, the post-attention residual at most 0.016, gate/up at most
+0.031, down at most 0.0625 (0.25 once at call 5), the layer output at most
+0.125 and the final norm at most 0.125, with a mean absolute error under 5e-4
+in layer 0 (0.0035 after the final norm). Rows 10 to 16 behave like rows 4 to 8, so the qmv/qmm row
+threshold, the packed GEMV, the depth attention kernel choice, and split-K are
+not the cause. The residual one-step noise starts at the first depth
+projection (one element of `depth.position` differs by 2e-5 at call 0) and is
+rounding order, not a systematic error.
+
+`native_gate` in `crates/runtime/tests/music3_metal.rs` used to compare
+codebooks 4 to 7 after the draws had diverged, which is why the ignored test
+`real_music3_pinned_4bit_native_matches_mlx_and_resets` failed with 3.8203125
+against 3.0 (identically before the kernel work in this section). It now
+compares a codebook's hiddens and logits only while every earlier draw matches
+the reference, with the tolerance unchanged, and bounds the sampled codes by
+the semantic and residual vocabularies (the old `0..256` bound was wrong for
+both). With `--force-warmup-codes` all eight codebooks are compared; without it
+only the codebooks up to the first flipped draw are. Both pass here. Mutating
+the match tracking brings back the 3.8203125 failure. The probe does not write
+the `encoding` field the test's tolerance table reads; set `"encoding":
+"affine4"` in `request.json` to reach the 4-bit tolerances. No exact kernel
+change is needed or possible: a one-ulp difference in the guided logits flips
+draws at some rate against any MLX build, so sampled codes stay an
+inexact-parity quantity for 4-bit.
 
 The AR stage now runs about nine command buffers per frame (seven depth steps,
 one LM decode step, the head) plus the depth projections between steps, and a

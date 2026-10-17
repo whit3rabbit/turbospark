@@ -234,6 +234,13 @@ fn native_gate(model: &std::path::Path, reference: &std::path::Path, repeat: boo
     let mut first_wave = None;
     for _ in 0..if repeat { 2 } else { 1 } {
         let mut warmup = vec![];
+        // A sampled code that differs from MLX's feeds a different embedding to
+        // every later depth step, so those hiddens and logits are not
+        // comparable. One bf16 step of noise in the guided logits can flip a
+        // top-k categorical draw, which is how a 4-bit run reached errors of
+        // several units at codebooks 4 to 7 while each step stayed within one
+        // bf16 step on identical inputs (see the README, "Open gates").
+        let mut inputs_match = true;
         let (hidden, codes) = runner
             .generate_frame_hiddens_traced(
                 &ids,
@@ -241,16 +248,24 @@ fn native_gate(model: &std::path::Path, reference: &std::path::Path, repeat: boo
                 request["seed"].as_u64().unwrap(),
                 |t| {
                     if t.frame == 0 {
-                        close(
-                            t.hiddens,
-                            &read_f32(&reference.join(format!("warmup_{}_hidden.f32", t.codebook))),
-                            warmup_tol,
-                        );
-                        close(
-                            t.guided_logits,
-                            &read_f32(&reference.join(format!("warmup_{}_logits.f32", t.codebook))),
-                            warmup_tol,
-                        );
+                        if inputs_match {
+                            close(
+                                t.hiddens,
+                                &read_f32(
+                                    &reference.join(format!("warmup_{}_hidden.f32", t.codebook)),
+                                ),
+                                warmup_tol,
+                            );
+                            close(
+                                t.guided_logits,
+                                &read_f32(
+                                    &reference.join(format!("warmup_{}_logits.f32", t.codebook)),
+                                ),
+                                warmup_tol,
+                            );
+                        }
+                        inputs_match &=
+                            serde_json::json!(t.sampled) == expected_warmup[t.codebook]["sampled"];
                         warmup.push(serde_json::json!({
                             "codebook": t.codebook,
                             "key": [t.key.0, t.key.1],
@@ -309,7 +324,16 @@ fn native_gate(model: &std::path::Path, reference: &std::path::Path, repeat: boo
                 assert_eq!(w["codebook"], ew["codebook"]);
                 assert_eq!(w["key"], ew["key"]);
                 let s = w["sampled"].as_i64().unwrap();
-                assert!((0..256).contains(&s), "sampled code out of range: {s}");
+                // Codebook 0 is a token id in the semantic block; the rest
+                // are residual codes.
+                let config = runner.config();
+                let range = if w["codebook"] == 0 {
+                    config.audio_code_offset as i64
+                        ..(config.audio_code_offset + config.semantic_vocab_size) as i64
+                } else {
+                    0..config.audio_vocab_size as i64
+                };
+                assert!(range.contains(&s), "sampled code out of range: {s}");
             }
             assert_eq!(codes.len(), expected_codes.len());
             for c_row in &codes {
