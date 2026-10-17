@@ -161,7 +161,11 @@ staging files changed.
   seam that sets the reference (drop, import, inline recording, reuse from a
   take) never sets or copies consent. A voice reference recording captures
   the microphone through local flags and never writes the Record page's
-  capture settings. `AudioVoiceCloneWorkspaceTests` pins all three.
+  capture settings. `AudioVoiceCloneWorkspaceTests` pins all three. The
+  reference transcript follows the region: choosing a take replaces it with
+  that take's own (or none), and any retrim clears it, because OmniVoice
+  speaks a mismatched transcript in place of the script
+  (`crates/audio/src/tts/omnivoice/README.md`). The same tests pin both.
 - The Voice Cloning page only presents models with native Metal or MLX
   acceleration (`clonesNatively`). Portable CPU-only models remain gated to
   the Advanced portable experiment and must not be presented as voice clone

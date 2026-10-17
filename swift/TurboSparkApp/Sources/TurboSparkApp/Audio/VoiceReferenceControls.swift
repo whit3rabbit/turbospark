@@ -7,12 +7,8 @@ struct VoiceReferenceControls: View {
     @ObservedObject var controller: AudioWorkspaceController
 
     private func trim(_ path: WritableKeyPath<AudioVoiceReference, Double>) -> Binding<Double> {
-        Binding(get: { controller.speechSettings.reference?[keyPath: path] ?? 0 }, set: {
-            controller.stopReferencePreview()
-            controller.speechSettings.reference?[keyPath: path] = $0
-            // A transcript of a different region is invalid conditioning.
-            controller.speechSettings.referenceText = ""
-        })
+        Binding(get: { controller.speechSettings.reference?[keyPath: path] ?? 0 },
+                set: { controller.setVoiceReferenceTrim(path, to: $0) })
     }
 
     var body: some View {
