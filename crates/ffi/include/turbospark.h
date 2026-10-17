@@ -1219,11 +1219,17 @@ int32_t ts_model_delete(const char *alias);
  *     Every other failure of an install keeps its message with no code, as it
  *     had before libraries: TS_ERR_CANCELLED after ts_install_cancel, and for
  *     the rest TS_ERR_GENERATE (TS_ERR_INVALID_ARGUMENT for audio).
- *   Any change while an install runs:  busy, with TS_ERR_BUSY. Nothing was
- *     changed. The check is made once, before the work, so it is not atomic
- *     against an install that begins afterwards: the host also stops queueing
- *     installs while it changes libraries. Listing and discovery are never
- *     refused.
+ *   Moves (ts_model_move):  not_connected (also a drive lost during the move),
+ *     library_read_only, home_only, same_library, unknown_install,
+ *     unknown_library, destination_taken, insufficient_space, verify_failed,
+ *     free_space_unknown, io, and two with their own status: cancelled, with
+ *     TS_ERR_CANCELLED, and busy. A refused, failed or cancelled move leaves
+ *     the original where it was, listed and loadable, and no partial copy.
+ *   Any change while an install or a move runs:  busy, with TS_ERR_BUSY.
+ *     Nothing was changed. The check is made once, before the work, so it is
+ *     not atomic against an install that begins afterwards: the host also stops
+ *     queueing installs while it changes libraries. Listing and discovery are
+ *     never refused.
  * A call that fails writes nothing to its out-parameter. A null out-parameter
  * is refused before anything changes.
  *
@@ -1247,7 +1253,9 @@ int32_t ts_model_delete(const char *alias);
  * plain files and folders (a link above all), so a link is unlinked and never
  * written through. An install with a
  * destination is registered like any other: ts_install_cancel stops it, a text
- * install can be paused, and it makes a library change busy.
+ * install can be paused, and it makes a library change busy. While a model
+ * move runs, every install entry point (including the embedding and audio
+ * ones) is refused as busy, before any request.
  *
  * A library's name comes from its marker, which sits on a drive anyone could
  * have written, so truncate and escape it for display. Aliases and install
@@ -1300,6 +1308,59 @@ int32_t ts_library_discover_json(const char *volume_root, char **out);
  * Refusals: not_connected, library_read_only, library_disconnected,
  * home_only, io, busy. */
 int32_t ts_model_forget(const char *install_id);
+
+/* Moves the install `install_id` (the "installId" of an installed row,
+ * "<library>:<modality>/<alias>"; an image install is
+ * "<library>:image/<alias>") to the library `library_id`, the "id" that
+ * ts_libraries_json lists, or "internal" for This Mac. It copies the install,
+ * checks the copy, lists it under the destination (registry and both library
+ * markers), and only then deletes the original. Embedding and OCR models stay
+ * on This Mac (home_only). A text, vision, audio, or image model that is
+ * loaded must be unloaded by the app first: this library cannot see sessions.
+ *
+ * `free_bytes` is the destination's free space as the app measured it. Below
+ * the model's size the move is refused before anything is copied
+ * (insufficient_space; the sentence has both figures). A NEGATIVE value means
+ * the app could not measure it, and the move is refused as free_space_unknown,
+ * as the command line refuses when df cannot be read.
+ *
+ * `cb` may be NULL. It receives TS_INSTALL_BYTES (`done` of `total` bytes, the
+ * first call 0 of `total`) ON THE CALLING THREAD, between files and chunks; no
+ * TS_INSTALL_STAGE lines are sent. The call blocks until the move ends.
+ *
+ * On success writes
+ *   {"outcome": "moved" | "source_marker_stale" | "source_cleanup_failed",
+ *    "installId": the install's id in its new library,
+ *    "staleMarker": library name       (source_marker_stale; also
+ *                                       source_cleanup_failed, or null),
+ *    "path": folder left over          (source_cleanup_failed only)}
+ * Every outcome means the install is in the destination and listed there.
+ * source_marker_stale: the original library's marker still lists it, which is
+ * harmless. source_cleanup_failed: the original folder at "path" could not be
+ * deleted and is left over; tell the user to delete it by hand.
+ *
+ * A move is registered with the running installs. It is refused as busy
+ * (TS_ERR_BUSY, "busy: ...") while an install or another move runs, and while
+ * it runs every library change and install is refused as busy. The check is
+ * made once, so it is not atomic against an install that begins afterwards.
+ * ts_model_move_cancel stops it: the call then fails with TS_ERR_CANCELLED and
+ * "cancelled: ...", the original untouched and the partial copy removed.
+ *
+ * Codes are listed under "model libraries" above. The unknown_install,
+ * unknown_library and busy refusals come from the registry, not from the
+ * wording of a sentence. Names, aliases and ids in the sentences are escaped
+ * and capped; the JSON above is raw. A failed call writes nothing to
+ * `result_json`. */
+int32_t ts_model_move(const char *install_id, const char *library_id,
+                      int64_t free_bytes, TsInstallCallback cb, void *userdata,
+                      char **result_json);
+
+/* Asks the model move in flight to stop at its next file or chunk boundary.
+ * Returns 1 when a move was running and has been signalled, 0 when none was,
+ * which is not an error and does nothing. A cancel that comes after the copy
+ * was published cannot undo the move, and the move ends "moved". It does not
+ * touch install walks: ts_install_cancel stops those. */
+int32_t ts_model_move_cancel(void);
 
 /* Registers the "models" folder of a store Move Store moved to `root` as a
  * library, keeping every model where it is, and copies its embedding and OCR

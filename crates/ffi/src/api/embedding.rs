@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
 use std::sync::{Mutex, OnceLock};
 
+use super::libraries::refuse_while_moving;
 use crate::abi::{self, guard_result};
 use crate::strings;
 
@@ -358,6 +359,7 @@ pub unsafe extern "C" fn ts_embedding_install(
         *out = std::ptr::null_mut();
         let alias =
             strings::required(alias, "alias").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        refuse_while_moving()?;
         let active = crate::models::ActiveInstall::register();
         let cat = catalog::EmbeddingCatalog::embedded().map_err(|e| (abi::TS_ERR_JSON, e))?;
         let store =

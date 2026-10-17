@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use super::libraries::{install_fault, parse_options, require_listed};
+use super::libraries::{install_fault, parse_options, refuse_while_moving, require_listed};
 use crate::abi::{self, guard_result};
 use crate::models::{self, TS_INSTALL_BYTES, TS_INSTALL_STAGE};
 use crate::strings;
@@ -175,6 +175,7 @@ unsafe fn run_image_install(
         ));
     }
     let alias = strings::required(alias, "alias").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+    refuse_while_moving()?;
     let library = destination(options_json)?;
     struct Sink(TsInstallCallback, *mut c_void);
     unsafe impl Send for Sink {}
@@ -529,6 +530,7 @@ unsafe fn run_install(
         ));
     }
     let alias = strings::required(alias, "alias").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+    refuse_while_moving()?;
     let library = destination(options_json)?;
 
     // The raw pointer has to cross into worker threads for the byte
@@ -663,6 +665,7 @@ unsafe fn run_install_repo(
     let file = strings::optional(file, "file").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
     let sidecars = strings::optional(sidecar_repo, "sidecarRepo")
         .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+    refuse_while_moving()?;
     let library = destination(options_json)?;
 
     struct Sink(TsInstallCallback, *mut c_void);

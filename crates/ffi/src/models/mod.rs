@@ -18,7 +18,7 @@ mod control_vector;
 mod fit;
 mod image_install;
 mod install;
-pub(crate) use install::ActiveInstall;
+pub(crate) use install::{ActiveInstall, ActiveMove};
 mod probe;
 
 pub(crate) use capabilities::{family_capabilities_json, kv_quant_supported};
@@ -30,9 +30,9 @@ pub use control_vector::control_vector_info_json;
 pub(crate) use fit::{context_ladder_json, recommend_json_with_progress};
 pub(crate) use image_install::{catalog_json as image_catalog_json, install as image_install};
 pub(crate) use install::{
-    cancel_active_installs, install, install_repo, installed_value, installs_finished,
-    library_name_of, pause_active_installs, refuse_while_installing, refuse_while_installing_for,
-    resume_active_installs,
+    cancel_active_installs, cancel_active_move, install, install_repo, installed_value,
+    installs_finished, library_name_of, pause_active_installs, refuse_while_installing,
+    refuse_while_installing_for, refuse_while_moving, resume_active_installs,
 };
 pub use install::{TS_INSTALL_BYTES, TS_INSTALL_STAGE};
 pub(crate) use probe::{probe_json, repo_variants_json};

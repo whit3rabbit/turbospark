@@ -1,5 +1,6 @@
 //! Model library C ABI entry points: list, add, remove, set the default,
-//! discover a library on a volume, forget an install, and import a moved store.
+//! discover a library on a volume, forget an install, move an install between
+//! libraries, and import a moved store.
 //!
 //! `catalog::library` decides every rule. This file resolves the home and the
 //! live location environment, serializes each outcome, and spells each
@@ -13,19 +14,21 @@
 //! they are identities, and the app truncates them for display.
 
 use std::io::Write;
-use std::os::raw::{c_char, c_int};
+use std::os::raw::{c_char, c_int, c_void};
 use std::path::Path;
 
 use catalog::library::{
-    discover_at, AddedLibrary, ImportedStore, LibraryError, LibraryMarker, LibraryRegistry,
-    LibraryView, LoadReport, LocationEnv, LocationRefusal, Refreshed, INTERNAL_LIBRARY_ID,
+    discover_at, move_install, AddedLibrary, ImportedStore, LibraryError, LibraryMarker,
+    LibraryRegistry, LibraryView, LoadReport, LocationEnv, LocationRefusal, MoveError, MoveOutcome,
+    Refreshed, INTERNAL_LIBRARY_ID,
 };
 use catalog::{Store, StoreError};
 use serde::Serialize;
 
 use crate::abi::{self, guard_result};
-use crate::models;
+use crate::models::{self, TS_INSTALL_BYTES};
 use crate::strings;
+use crate::TsInstallCallback;
 
 /// The most characters of an error sentence. Marker errors and copy-failure
 /// reasons echo untrusted values and paths.
@@ -254,6 +257,82 @@ pub unsafe extern "C" fn ts_model_forget(install_id: *const c_char) -> c_int {
     })
 }
 
+/// Moves the install `install_id` (`<library>:<modality>/<alias>`) into the
+/// library `library_id` ("internal" is This Mac): copies it, checks the copy,
+/// lists it in its new library, and only then deletes the original.
+/// `catalog::library::move_install` applies every rule and guarantees that a
+/// refusal, a failure or a cancel leaves the original where it was.
+///
+/// `free_bytes` is the destination's free space as the app measured it. A
+/// negative value means it could not be measured, and the move is refused as
+/// `free_space_unknown`, as the command line refuses when `df` cannot be read:
+/// the free-space check is the only one, so a guess would defeat it.
+///
+/// Progress reaches `cb` as `TS_INSTALL_BYTES` (`done` of `total`, first
+/// `0` of `total`) on the calling thread. No stage lines are sent. The move is
+/// registered with the running installs: it is refused as `busy` while an
+/// install or another move runs, and while it runs library changes and
+/// installs are refused.
+#[no_mangle]
+pub unsafe extern "C" fn ts_model_move(
+    install_id: *const c_char,
+    library_id: *const c_char,
+    free_bytes: i64,
+    cb: TsInstallCallback,
+    userdata: *mut c_void,
+    result_json: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        // Before the move: a result that cannot reach the caller would leave
+        // a move nobody was told about.
+        require_output(result_json)?;
+        let install_id = strings::required(install_id, "installId").map_err(invalid)?;
+        let library_id = strings::required(library_id, "libraryId").map_err(invalid)?;
+        let free = u64::try_from(free_bytes).map_err(|_| {
+            coded(
+                "free_space_unknown",
+                "the free space of the destination could not be measured, so nothing was moved",
+            )
+        })?;
+        // Registered before anything is read, so a library change that comes
+        // after this point is refused until the move is over.
+        let active = models::ActiveMove::register("move a model").map_err(busy)?;
+        let (store, env) = context()?;
+        require_known_libraries(&store, install_id, library_id)?;
+        let progress = |done: u64, total: u64| {
+            if let Some(report) = cb {
+                // SAFETY: the caller's own callback and userdata, called on
+                // this thread while the call is open.
+                unsafe { report(userdata, TS_INSTALL_BYTES, std::ptr::null(), 0, done, total) };
+            }
+        };
+        let outcome = move_install(
+            &store,
+            install_id,
+            library_id,
+            &env,
+            free,
+            &progress,
+            active.cancel_flag(),
+        )
+        .map_err(|error| move_fault(&error))?;
+        emit_json(
+            &outcome_json(&outcome, &install_id_in(install_id, library_id)),
+            result_json,
+        )
+    })
+}
+
+/// Stops the model move in flight at its next file or chunk boundary, which
+/// then answers `cancelled` with the original untouched and no partial copy.
+/// Returns 1 when a move was running and has been signalled, 0 when none was,
+/// which is not an error. A cancel that comes after the copy was published
+/// cannot undo the move, and it ends `moved`.
+#[no_mangle]
+pub unsafe extern "C" fn ts_model_move_cancel() -> c_int {
+    abi::guard_value(0, || c_int::from(models::cancel_active_move()))
+}
+
 /// Registers the `models` folder of a store Move Store moved to `root` as a
 /// library, keeping every model where it is, and copies its embedding and OCR
 /// models into the home.
@@ -296,15 +375,87 @@ fn context() -> Result<(Store, LocationEnv), Fault> {
     Ok((store, env))
 }
 
-/// A change to the libraries is refused while any install walk runs: a walk
-/// resolves its destination once and keeps writing there, so a library
-/// removed or imported under it would strand what it writes. Checked before
-/// any work; not atomic against an install that begins afterwards, so the app
-/// must also stop queueing installs while it changes libraries. It is
+/// A change to the libraries is refused while any install walk or model move
+/// runs: a walk resolves its destination once and keeps writing there, so a
+/// library removed or imported under it would strand what it writes. Checked
+/// before any work; not atomic against an install that begins afterwards, so
+/// the app must also stop queueing installs while it changes libraries. It is
 /// `TS_ERR_BUSY`, because waiting for the walk and retrying can succeed.
 fn refuse_while_installing() -> Result<(), Fault> {
-    models::refuse_while_installing_for("change model libraries")
-        .map_err(|why| (abi::TS_ERR_BUSY, format!("busy: {why}")))
+    models::refuse_while_installing_for("change model libraries").map_err(busy)
+}
+
+/// An install is refused while a model move runs (4.4), for the move's sake:
+/// both rewrite the registry and library markers, which keep no guard against
+/// a lost update. Checked before the install's work, and not atomic against a
+/// move that begins afterwards, as for [`refuse_while_installing`].
+pub(super) fn refuse_while_moving() -> Result<(), Fault> {
+    models::refuse_while_moving("install a model").map_err(busy)
+}
+
+/// The `busy` refusal: `TS_ERR_BUSY`, for work that waiting can clear.
+fn busy(why: String) -> Fault {
+    (abi::TS_ERR_BUSY, format!("busy: {why}"))
+}
+
+/// Refuses a move naming a library the list does not have, before the move
+/// reads anything: the destination as `unknown_library`, as for an install,
+/// and the library of the install id as `unknown_install`, since no install
+/// can be in a library that is gone. Both come from the registry, never from
+/// the wording of a later error. This Mac is always listed.
+fn require_known_libraries(store: &Store, install_id: &str, library_id: &str) -> Result<(), Fault> {
+    let listed = LibraryRegistry::load(store.root()).libraries();
+    let known = |id: &str| id == INTERNAL_LIBRARY_ID || listed.iter().any(|record| record.id == id);
+    if !known(library_id) {
+        return Err(library_fault(
+            &LibraryError::UnknownLibrary(library_id.to_string()),
+            "the location",
+        ));
+    }
+    if install_id
+        .split_once(':')
+        .is_some_and(|(source, _)| !known(source))
+    {
+        return Err(move_fault(&MoveError::UnknownInstall(
+            install_id.to_string(),
+        )));
+    }
+    Ok(())
+}
+
+/// The id of the install `install_id` once it is in `library_id`: the same
+/// `<modality>/<alias>` behind the destination's id. The move has already
+/// checked the id's form.
+fn install_id_in(install_id: &str, library_id: &str) -> String {
+    let rest = install_id
+        .split_once(':')
+        .map_or(install_id, |(_, rest)| rest);
+    format!("{library_id}:{rest}")
+}
+
+/// How a move that put the install in its destination ended, with the
+/// install's new id and the fields of the outcome. `staleMarker` names the
+/// source library whose marker could not be rewritten and still lists the
+/// install, which is harmless; `path` is the original's folder when it could
+/// not be deleted.
+fn outcome_json(outcome: &MoveOutcome, install_id: &str) -> serde_json::Value {
+    match outcome {
+        MoveOutcome::Moved => serde_json::json!({
+            "outcome": "moved",
+            "installId": install_id,
+        }),
+        MoveOutcome::SourceMarkerStale(library) => serde_json::json!({
+            "outcome": "source_marker_stale",
+            "installId": install_id,
+            "staleMarker": library,
+        }),
+        MoveOutcome::SourceCleanupFailed { path, stale_marker } => serde_json::json!({
+            "outcome": "source_cleanup_failed",
+            "installId": install_id,
+            "path": path.to_string_lossy(),
+            "staleMarker": stale_marker,
+        }),
+    }
 }
 
 fn emit_json<T: Serialize>(value: &T, out: *mut *mut c_char) -> Result<(), Fault> {
@@ -350,6 +501,32 @@ pub(super) fn store_fault(error: &StoreError) -> Fault {
         StoreError::Io(_) => "io",
     };
     coded(code, &error.to_string())
+}
+
+/// The fault for a refused or stopped move (4.4). Every `MoveError` has its
+/// own stable code, and the match names them all with no wildcard, so a
+/// variant added to the catalog is a compile error here until it has a code.
+/// `cancelled` is `TS_ERR_CANCELLED` and `busy` is `TS_ERR_BUSY`; the rest are
+/// `TS_ERR_INVALID_ARGUMENT`. A drive lost during the move is `not_connected`,
+/// as the catalog reports it: there is no `library_disconnected` for a move.
+fn move_fault(error: &MoveError) -> Fault {
+    let invalid = abi::TS_ERR_INVALID_ARGUMENT;
+    let (status, code) = match error {
+        MoveError::Busy(_) => (abi::TS_ERR_BUSY, "busy"),
+        MoveError::InsufficientSpace { .. } => (invalid, "insufficient_space"),
+        MoveError::NotConnected(_) => (invalid, "not_connected"),
+        MoveError::LibraryReadOnly(_) => (invalid, "library_read_only"),
+        MoveError::HomeOnly => (invalid, "home_only"),
+        MoveError::SameLibrary => (invalid, "same_library"),
+        MoveError::UnknownInstall(_) => (invalid, "unknown_install"),
+        MoveError::DestinationTaken(_) => (invalid, "destination_taken"),
+        MoveError::Cancelled => (abi::TS_ERR_CANCELLED, "cancelled"),
+        MoveError::VerifyFailed { .. } => (invalid, "verify_failed"),
+        MoveError::Io(_) => (invalid, "io"),
+    };
+    // The sentence can carry a library's name or a path from a drive.
+    let (_, message) = coded(code, &error.to_string());
+    (status, message)
 }
 
 /// The fault for a failed install into a library (4.3). The four errors the
@@ -632,6 +809,140 @@ mod tests {
             assert_eq!(status, abi::TS_ERR_INVALID_ARGUMENT);
             assert!(message.starts_with(&format!("{code}: ")), "{message}");
         }
+    }
+
+    /// Every way a move ends without moving has its own stable code, and the
+    /// status the app acts on: `cancelled` is a cancel and `busy` is a retry,
+    /// the rest are refusals. Swift maps these strings, so a rename here is an
+    /// ABI break. The table has one row per `MoveError` variant (the mapping
+    /// itself has no wildcard, so a new variant fails the build first).
+    #[test]
+    fn each_move_error_has_its_own_stable_code_and_status() {
+        let invalid = abi::TS_ERR_INVALID_ARGUMENT;
+        let table = [
+            (
+                MoveError::Busy("loaded".to_string()),
+                abi::TS_ERR_BUSY,
+                "busy",
+            ),
+            (
+                MoveError::InsufficientSpace {
+                    needed: 5_000,
+                    available: 10,
+                },
+                invalid,
+                "insufficient_space",
+            ),
+            (
+                MoveError::NotConnected("T7".to_string()),
+                invalid,
+                "not_connected",
+            ),
+            (
+                MoveError::LibraryReadOnly("T7".to_string()),
+                invalid,
+                "library_read_only",
+            ),
+            (MoveError::HomeOnly, invalid, "home_only"),
+            (MoveError::SameLibrary, invalid, "same_library"),
+            (
+                MoveError::UnknownInstall("internal:text/qwen".to_string()),
+                invalid,
+                "unknown_install",
+            ),
+            (
+                MoveError::DestinationTaken("T9".to_string()),
+                invalid,
+                "destination_taken",
+            ),
+            (MoveError::Cancelled, abi::TS_ERR_CANCELLED, "cancelled"),
+            (
+                MoveError::VerifyFailed {
+                    expected: 10,
+                    found: 9,
+                    expected_files: 2,
+                    found_files: 2,
+                },
+                invalid,
+                "verify_failed",
+            ),
+            (MoveError::Io("disk on fire".to_string()), invalid, "io"),
+        ];
+        for (error, status, code) in &table {
+            let (got, message) = move_fault(error);
+            assert_eq!(got, *status, "{code}");
+            assert!(message.starts_with(&format!("{code}: ")), "{message}");
+            assert!(
+                message.len() > code.len() + 2,
+                "a sentence follows: {message}"
+            );
+        }
+        let mut codes: Vec<&str> = table.iter().map(|(_, _, code)| *code).collect();
+        codes.sort_unstable();
+        codes.dedup();
+        assert_eq!(codes.len(), table.len(), "two variants share a code");
+        // The space refusal carries both figures, for the app to show.
+        let (_, space) = move_fault(&table[1].0);
+        assert!(
+            space.contains("10 bytes") && space.contains("5000"),
+            "{space}"
+        );
+    }
+
+    /// A move's sentence echoes library names and paths from a drive: the
+    /// code survives, and the sentence is escaped and capped.
+    #[test]
+    fn a_move_sentence_is_escaped_and_capped_behind_an_intact_code() {
+        let hostile = format!("T7\u{1b}[31m\u{202e}{}", "x".repeat(1_000));
+        for error in [
+            MoveError::NotConnected(hostile.clone()),
+            MoveError::Io(hostile),
+        ] {
+            let (_, message) = move_fault(&error);
+            assert!(!message.contains('\u{1b}') && !message.contains('\u{202e}'));
+            let (code, sentence) = message.split_once(": ").unwrap();
+            assert!(code == "not_connected" || code == "io", "{message}");
+            assert!(sentence.chars().count() <= MESSAGE_LIMIT, "{message}");
+        }
+    }
+
+    /// Each outcome keeps the fields of its Rust variant, in camelCase, and
+    /// every one names the install's new id.
+    #[test]
+    fn each_move_outcome_serializes_with_its_variant_fields() {
+        let id = "T7:text/qwen";
+        assert_eq!(
+            outcome_json(&MoveOutcome::Moved, id),
+            serde_json::json!({"outcome": "moved", "installId": id})
+        );
+        assert_eq!(
+            outcome_json(&MoveOutcome::SourceMarkerStale("T9".to_string()), id),
+            serde_json::json!({
+                "outcome": "source_marker_stale", "installId": id, "staleMarker": "T9"
+            })
+        );
+        let cleanup = |stale: Option<&str>| MoveOutcome::SourceCleanupFailed {
+            path: PathBuf::from("/Volumes/T9/TurboSpark/text/qwen.gturbo"),
+            stale_marker: stale.map(str::to_string),
+        };
+        assert_eq!(
+            outcome_json(&cleanup(None), id),
+            serde_json::json!({
+                "outcome": "source_cleanup_failed", "installId": id,
+                "path": "/Volumes/T9/TurboSpark/text/qwen.gturbo", "staleMarker": null
+            })
+        );
+        assert_eq!(outcome_json(&cleanup(Some("T9")), id)["staleMarker"], "T9");
+    }
+
+    /// The new id is the same `<modality>/<alias>` behind the destination's id.
+    #[test]
+    fn a_moved_install_is_named_by_its_destination() {
+        assert_eq!(
+            install_id_in("0f6c:text/qwen", "internal"),
+            "internal:text/qwen"
+        );
+        assert_eq!(install_id_in("internal:image/z", "5a1d"), "5a1d:image/z");
     }
 
     /// An install fails with one of the four library codes ahead of its

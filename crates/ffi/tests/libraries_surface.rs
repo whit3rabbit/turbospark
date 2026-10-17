@@ -1187,6 +1187,9 @@ fn exports(source: &str) -> Vec<(String, Vec<String>)> {
                     let c_type = match rust {
                         "*const c_char" => "const char *",
                         "*mut *mut c_char" => "char **",
+                        "*mut c_void" => "void *",
+                        "i64" => "int64_t",
+                        "TsInstallCallback" => "TsInstallCallback",
                         other => panic!("{name}: no C spelling known for {other}"),
                     };
                     squash(c_type)
@@ -1215,6 +1218,9 @@ fn declared(header: &str, name: &str) -> Option<Vec<String>> {
                     .map_or(0, |at| at + 1);
                 squash(&param[..name_at])
             })
+            // `(void)` declares no parameter: it has no name to drop, and
+            // leaves nothing of its type.
+            .filter(|c_type| !c_type.is_empty())
             .collect(),
     )
 }
@@ -1238,6 +1244,8 @@ fn the_header_declares_exactly_the_library_exports() {
             "ts_library_remove",
             "ts_library_set_default",
             "ts_model_forget",
+            "ts_model_move",
+            "ts_model_move_cancel",
             "ts_store_import_moved_root",
         ],
         "an export added or dropped here needs its header line and this list"

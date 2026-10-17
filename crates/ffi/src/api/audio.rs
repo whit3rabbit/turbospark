@@ -1,5 +1,7 @@
 //! Additive audio catalog and worker/job ABI. Callback buffers are borrowed.
-use super::libraries::{clean, coded, parse_options, require_listed, store_fault, MESSAGE_LIMIT};
+use super::libraries::{
+    clean, coded, parse_options, refuse_while_moving, require_listed, store_fault, MESSAGE_LIMIT,
+};
 use crate::abi::{self, guard_result};
 use crate::strings;
 use catalog::audio_catalog::{AudioCatalog, AudioProfileIdentity};
@@ -349,6 +351,7 @@ unsafe fn install(
         return Err(invalid("out must not be null"));
     }
     *out = std::ptr::null_mut();
+    refuse_while_moving()?;
     let active = crate::models::ActiveInstall::register();
     let identity = identity(identity_json)?;
     require_listed(library)?;

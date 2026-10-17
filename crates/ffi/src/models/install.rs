@@ -1,6 +1,6 @@
 //! Model installation pipeline: catalog downloads and Hugging Face repo streaming.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use catalog::library::{LibraryRecord, LibraryRegistry, LocationEnv, INTERNAL_LIBRARY_ID};
@@ -45,17 +45,105 @@ pub(crate) fn refuse_while_installing() -> Result<(), String> {
 /// [`refuse_while_installing`] for another change that must not race a walk,
 /// worded for it: `action` completes "cannot ... while N install(s) are
 /// running". Library changes use it (4.1), so one registry of running walks
-/// answers for both.
+/// answers for both. A running model move (4.4) refuses the same changes,
+/// worded for the move.
 pub(crate) fn refuse_while_installing_for(action: &str) -> Result<(), String> {
-    let active = ACTIVE_INSTALLS.lock().unwrap_or_else(|p| p.into_inner());
-    if active.is_empty() {
-        Ok(())
-    } else {
-        Err(format!(
-            "cannot {action} while {} install(s) are running; \
-             wait for them to finish or cancel them first",
-            active.len()
+    // Installs first, then the move: the one lock order every caller uses.
+    let installs = ACTIVE_INSTALLS.lock().unwrap_or_else(|p| p.into_inner());
+    let moving = ACTIVE_MOVE.lock().unwrap_or_else(|p| p.into_inner());
+    match busy_reason(installs.len(), moving.is_some(), action) {
+        None => Ok(()),
+        Some(why) => Err(why),
+    }
+}
+
+/// Why `action` cannot start while `installs` walks run or a model move
+/// does, in the one wording every busy refusal shares. `None` when nothing
+/// runs.
+fn busy_reason(installs: usize, moving: bool, action: &str) -> Option<String> {
+    if installs > 0 {
+        Some(format!(
+            "cannot {action} while {installs} install(s) are running; \
+             wait for them to finish or cancel them first"
         ))
+    } else if moving {
+        Some(format!(
+            "cannot {action} while a model move is running; \
+             wait for it to finish or cancel it first"
+        ))
+    } else {
+        None
+    }
+}
+
+/// The cancel flag of the model move in flight, if any (4.4).
+///
+/// One move at a time, and apart from [`ACTIVE_INSTALLS`] on purpose:
+/// `ts_install_cancel`, `ts_install_pause` and `ts_installs_finished` speak of
+/// install walks, and cancelling an install must not end a move. The two
+/// registries still answer for each other's busy checks. When both are locked,
+/// installs come first.
+static ACTIVE_MOVE: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
+
+/// Refuses an install while a model move runs. A move rewrites the
+/// registry and the markers of two libraries, and a marker has no guard
+/// against a lost update (2.2), so an install recording a row meanwhile could
+/// lose it. Checked before the install's work and not atomic against a move
+/// that begins afterwards, like [`refuse_while_installing_for`]; the move's own
+/// registration is atomic against installs that are already registered.
+pub(crate) fn refuse_while_moving(action: &str) -> Result<(), String> {
+    let moving = ACTIVE_MOVE.lock().unwrap_or_else(|p| p.into_inner());
+    match busy_reason(0, moving.is_some(), action) {
+        None => Ok(()),
+        Some(why) => Err(why),
+    }
+}
+
+/// Signals the model move in flight to stop. Returns whether one was running.
+/// The move notices at its next chunk or file boundary.
+pub(crate) fn cancel_active_move() -> bool {
+    let moving = ACTIVE_MOVE.lock().unwrap_or_else(|p| p.into_inner());
+    match moving.as_ref() {
+        Some(flag) => {
+            flag.store(true, Ordering::Release);
+            true
+        }
+        None => false,
+    }
+}
+
+/// Registers one model move: hands out its FRESH cancel flag, so a stale
+/// cancel can never poison the next move, and guarantees deregistration on
+/// every exit path, panic included.
+pub(crate) struct ActiveMove {
+    cancel: Arc<AtomicBool>,
+}
+
+impl ActiveMove {
+    /// Registers a move, or says why `action` cannot run: an install walk or
+    /// another move is running. Checked and registered under both locks, so
+    /// an install that registered before this call is seen, and two moves
+    /// cannot both register.
+    pub(crate) fn register(action: &str) -> Result<Self, String> {
+        let installs = ACTIVE_INSTALLS.lock().unwrap_or_else(|p| p.into_inner());
+        let mut moving = ACTIVE_MOVE.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(why) = busy_reason(installs.len(), moving.is_some(), action) {
+            return Err(why);
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        *moving = Some(Arc::clone(&cancel));
+        Ok(Self { cancel })
+    }
+
+    /// The flag `catalog::library::move_install` polls.
+    pub(crate) fn cancel_flag(&self) -> &AtomicBool {
+        &self.cancel
+    }
+}
+
+impl Drop for ActiveMove {
+    fn drop(&mut self) {
+        *ACTIVE_MOVE.lock().unwrap_or_else(|p| p.into_inner()) = None;
     }
 }
 
