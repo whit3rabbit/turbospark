@@ -67,6 +67,37 @@ final class LibraryState: ObservableObject {
     @Published private(set) var allInstalled: [InstalledModel] = []
     /// The offer on screen and the ones in line behind it.
     @Published private(set) var offers = LibraryOfferQueue()
+    /// A store a past Move Store moved to a drive that is not connected, whose
+    /// conversion into a library is waiting for it (requirement 9.3). Set and
+    /// cleared by `MoveStoreMigration` only.
+    @Published private(set) var pendingMovedStore: PendingMovedStore?
+
+    /// The id of the placeholder row `displayLibraries` appends for
+    /// `pendingMovedStore`. A real library id is a v4 UUID, which this can
+    /// never equal, and the placeholder has no registry entry.
+    static let pendingMovedStoreId = "pending-moved-store"
+
+    /// The libraries to LIST, with a not-connected placeholder named after the
+    /// folder at the end while a moved store waits for its drive.
+    ///
+    /// **THE PLACEHOLDER IS A ROW, NOT A LIBRARY.** It is never in `libraries`,
+    /// so `destinationDefault`, `library(for:)`, `library(containing:)`, the
+    /// offers and every install picker (which read `libraries`) cannot see it.
+    /// It has no root, is not internal, never the default, and `remove` must
+    /// not be offered for it (`isPendingMovedStore`): the engine has no entry
+    /// to remove.
+    var displayLibraries: [ModelLibrary] {
+        guard let pending = pendingMovedStore else { return libraries }
+        return libraries + [
+            ModelLibrary(
+                id: Self.pendingMovedStoreId, name: pending.name, root: nil, available: false)
+        ]
+    }
+
+    /// Whether `library` is the placeholder row rather than a listed library.
+    static func isPendingMovedStore(_ library: ModelLibrary) -> Bool {
+        library.id == pendingMovedStoreId
+    }
 
     /// The offer to add a library found on a drive that just connected.
     var pendingOffer: LibraryOffer? { offers.pending }
@@ -442,6 +473,12 @@ final class LibraryState: ObservableObject {
             fallbackBecauseNotConnected: true, notConnectedLibraryName: preferred.name)
     }
 
+    /// Lists, or stops listing, the not-connected placeholder for a moved store.
+    /// Only `MoveStoreMigration` calls this.
+    func setPendingMovedStore(_ pending: PendingMovedStore?) {
+        if pendingMovedStore != pending { pendingMovedStore = pending }
+    }
+
     // MARK: - Changing libraries
 
     /// Adds the library at `path` through the engine (off the main actor) and
@@ -576,8 +613,38 @@ extension AppModel {
     /// event. Called when the window appears; calling it again does nothing.
     /// Tests do not call it, so no `AppModel` built under XCTest registers
     /// with the workspace.
-    func startLibraryMonitoring() {
+    ///
+    /// `events` gives a fresh stream per call (each consumer drains its own);
+    /// a test passes a stream it controls.
+    func startLibraryMonitoring(
+        events: () -> AsyncStream<VolumeEvent> = { LibraryVolumeMonitor.events() }
+    ) {
         guard !libraryState.isRunning else { return }
-        libraryState.start(events: LibraryVolumeMonitor.events())
+        libraryState.start(events: events())
+        startMoveStoreMigration(events: events())
+    }
+
+    /// Converts a store a past Move Store recorded into a library: once now,
+    /// and again on each mount while it is pending. It takes its own stream of
+    /// the process-wide monitor, drains it with one `for await`, and never stops
+    /// the monitor.
+    ///
+    /// The seams are parameters so a test can run it against a fake record and
+    /// engine without registering with the workspace.
+    func startMoveStoreMigration(
+        events: AsyncStream<VolumeEvent>,
+        record: MovedStoreRecord = LiveMovedStoreRecord(),
+        pendingURL: URL = MoveStoreMigration.defaultPendingURL,
+        homeRoot: @escaping @Sendable () -> String = { ModelStorageManager.defaultTurboSparkStoreRoot }
+    ) {
+        guard moveStoreMigration == nil else { return }
+        let migration = MoveStoreMigration(
+            service: libraryState.service, libraryState: libraryState, record: record,
+            pendingURL: pendingURL, homeRoot: homeRoot,
+            // The picker list was read at launch, before the import listed the
+            // moved store's models.
+            onImported: { [weak self] in self?.refreshModels() })
+        moveStoreMigration = migration
+        migration.start(events: events)
     }
 }

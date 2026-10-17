@@ -32,6 +32,11 @@ final class FakeModelLibraryService: ModelLibraryService, @unchecked Sendable {
         var installedCalls = 0
         var discoverRoots: [String] = []
         var addCalls: [String] = []
+        /// Roots `importMovedRoot` was asked for, in order.
+        var importRoots: [String] = []
+        /// Answers an import. It runs OUTSIDE the lock, on the calling thread,
+        /// so a test can park an import in flight. Nil: an unscripted call.
+        var importHandler: (@Sendable (String) throws -> ImportedStore)?
         var mainThreadCalls: [String] = []
     }
 
@@ -53,6 +58,7 @@ final class FakeModelLibraryService: ModelLibraryService, @unchecked Sendable {
     var installedCalls: Int { with { $0.installedCalls } }
     var discoverRoots: [String] { with { $0.discoverRoots } }
     var addCalls: [String] { with { $0.addCalls } }
+    var importRoots: [String] { with { $0.importRoots } }
     /// Names of the calls that ran on the main thread. The engine reads the
     /// mount table and probes drives, so every one of these is a defect.
     var mainThreadCalls: [String] { with { $0.mainThreadCalls } }
@@ -109,7 +115,15 @@ final class FakeModelLibraryService: ModelLibraryService, @unchecked Sendable {
     func remove(id: String) throws { throw FakeServiceError.unscripted("remove") }
     func setDefault(id: String) throws { throw FakeServiceError.unscripted("setDefault") }
     func forget(installId: String) throws { throw FakeServiceError.unscripted("forget") }
-    func importMovedRoot(_ root: String) throws -> ImportedStore { throw FakeServiceError.unscripted("import") }
+    func importMovedRoot(_ root: String) throws -> ImportedStore {
+        note("importMovedRoot")
+        let handler = with { state -> (@Sendable (String) throws -> ImportedStore)? in
+            state.importRoots.append(root)
+            return state.importHandler
+        }
+        guard let handler else { throw FakeServiceError.unscripted("import") }
+        return try handler(root)
+    }
 
     func move(
         installId: String, to libraryId: String, freeBytes: Int64?,
@@ -282,6 +296,29 @@ enum LibraryFixtures {
              "skipped":[]}
             """
         return try JSONDecoder().decode(AddedLibrary.self, from: Data(json.utf8))
+    }
+
+    /// What `ts_store_import_moved_root` answers for `library`, through the
+    /// package's own decoder (`ImportedStore` has no public initializer).
+    static func imported(
+        _ library: ModelLibrary, copyFailures: [(key: String, reason: String)] = [],
+        needsAdoption: [String] = [], skipped: [String] = []
+    ) throws -> ImportedStore {
+        let root = library.root.map { "\"\($0)\"" } ?? "null"
+        func array(_ values: [String]) -> String {
+            "[" + values.map { "\"\($0)\"" }.joined(separator: ",") + "]"
+        }
+        let failures = copyFailures
+            .map { "{\"key\":\"\($0.key)\",\"reason\":\"\($0.reason)\"}" }
+            .joined(separator: ",")
+        let json = """
+            {"library":{"id":"\(library.id)","name":"\(library.name)","root":\(root),
+             "available":\(library.available),"duplicate":false,"modelCount":\(library.modelCount),
+             "isDefault":\(library.isDefault),"lastSeen":null,"isInternal":\(library.isInternal)},
+             "skipped":\(array(skipped)),"custom":[],"needsAdoption":\(array(needsAdoption)),
+             "copiedToHome":[],"copyFailures":[\(failures)],"restoredCatalogOverride":false}
+            """
+        return try JSONDecoder().decode(ImportedStore.self, from: Data(json.utf8))
     }
 
     static func volume(

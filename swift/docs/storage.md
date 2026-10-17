@@ -43,10 +43,23 @@ destination; an existing token file remains at the old root. The destination
 must be empty, and the move is disabled while a model is loaded, generating,
 or installing. Provider-owned folders are never moved by this operation.
 
-The app persists a configured root in `MacAppSettings.turboSparkStoreRoot`
-and applies it to the Rust binding at launch. The binding uses a process-local
-override, so changing the app setting does not mutate `TURBOSPARK_HOME` for
-child processes. Clearing the setting restores the environment/default root.
+**The app no longer applies a store root to the engine** (requirement 1.1). The
+engine's root is always the home (`TURBOSPARK_HOME`, else `~/.turbospark`), so
+the CLI, the daemon and the app agree. A root a past Move Store recorded
+(`model_store_root.txt` at machine level, and the legacy
+`MacAppSettings.turboSparkStoreRoot`, which `ModelStoreRootRecord.resolve`
+promotes to the machine record) is only the INPUT of `MoveStoreMigration`
+(`State/MoveStoreMigration.swift`). At launch and on each mount while a
+conversion is pending it calls `importMovedRoot` off the main actor, which
+registers `<root>/models` as a library where it is and moves no model file.
+Only a complete import (`ImportedStore.isComplete`) clears the record, by
+emptying `model_store_root.txt` rather than deleting it (a deleted record would
+be promoted again from a profile's `settings.json` at the next launch). An
+unfinished conversion keeps the record and writes `moved_store_pending.json`
+(machine level, `AppJSONStore`): `{"root": ..., "name": <folder name>,
+"notConnected": <bool>}`. Only `notConnected: true` (the engine found the root
+absent) lists a not-connected placeholder named after the folder in
+`LibraryState.displayLibraries`.
 
 The Models Settings pane also detects conventional Hugging Face, LM Studio,
 and Ollama locations. Detection is read-only until the user adds a result:
@@ -149,7 +162,9 @@ written. The one file it owns is `library_offer_dismissals.json`, a `[String]`
 of library marker ids the user dismissed. It goes through `AppJSONStore` under
 `AppStorageRoot`, so a corrupt file is quarantined like the others, and it is
 read on first use rather than at launch. The `AppJSONStore` label "Library
-offer dismissals" is shown only if that file cannot be read or saved.
+offer dismissals" is shown only if that file cannot be read or saved. The
+moved-store conversion owns `moved_store_pending.json` (see above), labelled
+"Moved store conversion"; neither label has a catalog key yet.
 
 ## `AppStorageRoot` and why the test suite needed one
 

@@ -2,13 +2,19 @@ import AppKit
 import Foundation
 import TurboSpark
 
-/// The relocated model store root, kept at MACHINE level.
+/// The root a previous Move Store moved the model store to, kept at MACHINE
+/// level.
 ///
-/// The store itself is shared by every profile, so its location cannot live in
-/// one profile's settings.json: after moving it from profile Work, profile
-/// Default would see an empty store and send new installs back to the old
-/// root. The per-profile value is still written and still honored when no
-/// machine record exists yet (the migration for existing installs).
+/// **IT IS THE INPUT OF THE MOVED-STORE CONVERSION, NOT A STORE ROOT.** The
+/// engine's root is always the home now (requirement 1.1): nothing applies this
+/// value to the engine, and `MoveStoreMigration` turns the folder it names into
+/// a model library, then clears the record.
+///
+/// The store was shared by every profile, so the root could not live in one
+/// profile's settings.json: after moving it from profile Work, profile Default
+/// would have seen an empty store. The per-profile value is still written and
+/// still honored when no machine record exists yet (the migration for installs
+/// older than the machine record).
 enum ModelStoreRootRecord {
     static var url: URL {
         AppStorageRoot.machineRoot.appendingPathComponent("model_store_root.txt")
@@ -32,10 +38,34 @@ enum ModelStoreRootRecord {
         }
     }
 
-    /// The root to apply at launch. The machine record wins; otherwise the
-    /// profile's own value is used and promoted to the machine record.
+    /// Ends the record after the conversion completed. Returns true when no
+    /// root is recorded afterwards.
+    ///
+    /// **THE FILE IS EMPTIED, NOT DELETED.** `resolve` promotes a profile's own
+    /// value when no record exists, and `settings.json` keeps that value after
+    /// the conversion. A deleted record would be brought back by the next
+    /// launch (of this profile, or of any other that still names the root), the
+    /// import would run again at every launch, and a library the user removed
+    /// later would return. An empty file says "decided: nothing recorded";
+    /// `save` writes a new root over it.
+    @discardableResult
+    static func clear() -> Bool {
+        do {
+            try Data().write(to: url, options: .atomic)
+        } catch {
+            // Last resort: a record that is gone is better than one that stays.
+            try? FileManager.default.removeItem(at: url)
+        }
+        return load() == nil
+    }
+
+    /// The recorded root, or the profile's own value promoted to a record.
+    /// Nothing applies the result to the engine: it only feeds the conversion.
     static func resolve(profileValue: String) -> String {
         if let machine = load() { return machine }
+        // A cleared record (empty file) means the conversion is done. Profile
+        // values that still name the old root are stale, not input.
+        if FileManager.default.fileExists(atPath: url.path) { return "" }
         let trimmed = profileValue.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty { save(trimmed) }
         return trimmed

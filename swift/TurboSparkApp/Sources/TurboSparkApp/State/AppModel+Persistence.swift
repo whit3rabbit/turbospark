@@ -26,10 +26,15 @@ extension AppModel {
     /// paths from disk.
     func loadSettings() {
         let settings = MacAppSettingsFileStore.load()
-        let configuredStoreRoot = ModelStoreRootRecord.resolve(
+        // **THE ENGINE'S STORE ROOT IS THE HOME, ALWAYS** (requirement 1.1).
+        // This used to call `TurboSparkCatalog.setStoreRoot(record)`, a
+        // process-local override that the CLI and the server the app starts
+        // never saw. A root a past Move Store recorded is now only the input
+        // of `MoveStoreMigration`, which turns it into a library. Resolving
+        // still promotes a profile's own legacy value to the machine record so
+        // the conversion sees it.
+        self.turboSparkStoreRoot = ModelStoreRootRecord.resolve(
             profileValue: settings.turboSparkStoreRoot)
-        try? TurboSparkCatalog.setStoreRoot(configuredStoreRoot.isEmpty ? nil : configuredStoreRoot)
-        self.turboSparkStoreRoot = configuredStoreRoot
         self.maxContextTokens = Self.clampedSetting(
             settings.contextTokens, upperBound: Int(UInt32.max))
         // Not merely clamped: an out-of-set slot count is refused by
@@ -573,6 +578,7 @@ extension AppModel {
         // running: a vault lock gets here too, and stopping the monitor
         // outside app termination stalls the next unmount (LibraryVolumeMonitor).
         libraryState.stop()
+        moveStoreMigration?.stop()
 
         // A reply that is still streaming exists only in `outputText`; the
         // runTask tail that would normally preserve it never runs before the

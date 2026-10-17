@@ -113,6 +113,9 @@ public final class AppModel: ObservableObject {
     /// here on purpose: views that show library state observe this object
     /// directly, so a mount does not redraw every screen.
     var libraryState = LibraryState()
+    /// The one-time conversion of a store a past Move Store moved. Created when
+    /// library monitoring starts, never at `init`.
+    var moveStoreMigration: MoveStoreMigration?
     /// Catalog entries available for download.
     @Published public var catalog: [CatalogEntry] = []
     /// Valid image-generation installs, separate from text model rows.
