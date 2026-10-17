@@ -901,7 +901,11 @@ public final class AppModel: ObservableObject {
     @Published public var lmStudioDirectory: String = ""
     /// Additional custom directories to scan for models without copying.
     @Published public var customModelDirectories: [String] = []
-    /// Explicit TurboSpark store root. Empty uses TURBOSPARK_HOME or ~/.turbospark.
+    /// The root a past Move Store recorded, kept only so `settings.json` still
+    /// round-trips it and `loadSettings` can promote it to the machine record
+    /// (`ModelStoreRootRecord`), the input of `MoveStoreMigration`. NOT a store
+    /// root: nothing applies it to the engine and no UI sets it any more, since
+    /// the engine root is always the home (requirements 1.1 and 9.1).
     @Published public var turboSparkStoreRoot: String = ""
 
     // Installation State

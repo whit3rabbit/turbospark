@@ -1225,6 +1225,17 @@ is called again, so keep it pending, retrying on mount and at launch, or show
 the failures. `needsAdoption` lists music installs with no receipt, which the
 user moves to This Mac and adopts there.
 
+**Move Store is retired, and nothing in the app calls the engine's relocation.**
+`TurboSparkCatalog.relocateStore(to:)` (the wrapper over the C export
+`ts_store_relocate`, which runs the Rust `relocate_default_store`) stays as a
+retired engine export with no app caller. It copies `models`, `installed.json`
+and `models.json` out of the engine root and then DELETES them from it, and the
+engine root is the home, whose `installed.json` holds the registry rows of every
+library. Do not call it. Moving a model between libraries is
+`TurboSparkLibraries.move(...)` (see Moving), and a store a past Move Store
+moved is brought in with `importMovedRoot(_:)`.
+The app's `MoveStoreRetirementTests` fail if an app source references it again.
+
 ### Error codes
 
 A refusal puts a stable lowercase code first in the engine's last-error string,

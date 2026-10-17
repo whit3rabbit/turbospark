@@ -34,14 +34,18 @@ in the text namespace because they are accessories to text models.
 
 Existing flat installs remain readable for compatibility: legacy text and
 vision paths under `models/`, plus legacy `<alias>.image.gturbo` image paths.
-New installs always use the modality directories. The Swift app exposes a
-Settings move wizard for the managed root. It copies and verifies the whole
-managed `models/` tree, registry, and catalog override, then removes the old
-managed entries only after the destination is verified. The Hugging Face token
-is a credential rather than a model-store artifact and is never copied to the
-destination; an existing token file remains at the old root. The destination
-must be empty, and the move is disabled while a model is loaded, generating,
-or installing. Provider-owned folders are never moved by this operation.
+New installs always use the modality directories. **The app no longer offers to
+move the managed root** (Move Store, retired by requirement 9.1; model
+libraries replace it). Its engine call, `relocate_default_store`, copied the
+engine root's `models/` tree, `installed.json` and catalog override and then
+DELETED them from the root. The engine root is the home now, and the home's
+`installed.json` holds the registry rows of every library, so a caller would
+strip them. `relocate_default_store` (FFI `ts_store_relocate`, Swift
+`TurboSparkCatalog.relocateStore`) therefore stays only as a retired engine
+export with no app caller, and `MoveStoreRetirementTests` fails if any app
+source references the sheet or the call again. A token file stays where it is:
+the Hugging Face token is a credential, not a model-store artifact, and was
+never copied by that operation.
 
 **The app no longer applies a store root to the engine** (requirement 1.1). The
 engine's root is always the home (`TURBOSPARK_HOME`, else `~/.turbospark`), so
