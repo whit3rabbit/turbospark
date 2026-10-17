@@ -24,11 +24,28 @@ The tower fixtures need mlx-audio itself at that commit (tested with mlx
         prompt-real <drama-install-dir> > crates/audio/testdata/fish_drama3/prompt_real.json
 
 Tests read the outputs; they never run Python or download.
+
+The `teacher-forced` mode is not a fixture. It dumps the reference's own
+numbers on the real 4-bit checkpoint for a Rust comparer to read
+(`crates/runtime/examples/fish_drama3_parity.rs`). It holds about 24 GB of GPU
+buffers, so run it alone on a 36 GB host and write under `target/`, never a
+scratch directory that other sessions wipe:
+
+    /path/outside/repo/venv/bin/python -I crates/audio/tools/gen_fish_drama3_fixtures.py \
+        teacher-forced <mlx-4bit-dir> target/s5-parity/mlx <gen_q4-dir> \
+        crates/audio/testdata/fish_drama3/prompt_real.json [variant,...] [case,...]
+
+`<gen_q4-dir>` holds `<clip>.prompt.npy` and `<clip>.codes.npy` from an
+earlier mlx-audio generation of the same checkpoint (the T7 evaluation's
+`out/gen_q4`).
 """
 
+import gc
 import importlib.util
 import json
 import sys
+import time
+from pathlib import Path
 
 COMMIT = "dad2087f790dfe96b07d5aac1405db4b578b411f"
 
@@ -380,9 +397,379 @@ def prompt_real(install_dir: str) -> None:
     sys.stdout.write("\n")
 
 
+# -- teacher-forced ---------------------------------------------------------
+
+# Replayed recordings: mlx-audio's own 4-bit generations (the T7 evaluation's
+# `out/gen_q4`), so every code sequence is one the reference produced. A spread
+# of lengths plus the `[sighs]` cue clip. The prompt-real cases add speaker
+# tags, history turns and reference rows, with no generated frames.
+TF_CLIPS = ["s02_s0", "s03_s0", "s05_s0", "s07_s0", "s09_s1", "s13_s0", "s16_s1", "s19_s0"]
+# ref: the checkpoint as mlx-audio runs it. router_int8: the router goes
+# through the intake's INT8 quantizer. norm_bf16: the trunk's norm gammas are
+# narrowed to BF16. convert: both of those plus the shared-expert gate in INT8,
+# which is everything the intake does to the trunk's dense weights.
+TF_VARIANTS = ("ref", "router_int8", "norm_bf16", "convert")
+TF_TOP_K = 8
+GATE_GROUP = 64
+
+
+def _bf16_round(x):
+    """Round-to-nearest-even through bfloat16, as `compute::f32_to_bf16`."""
+    import numpy as np
+
+    u = np.ascontiguousarray(x, dtype=np.float32).view(np.uint32)
+    return ((u + 0x7FFF + ((u >> 16) & 1)) & 0xFFFF0000).astype(np.uint32).view(np.float32)
+
+
+def quantize_int8_rows(w):
+    """`compute::quantize_int8_affine` per row, which is what the intake runs on
+    the router. Returns (q uint8, scale, bias, dequantized f32), the scale and
+    bias already rounded to bfloat16 as stored."""
+    import numpy as np
+
+    rows, cols = w.shape
+    g = np.ascontiguousarray(w, dtype=np.float32).reshape(rows, cols // GATE_GROUP, GATE_GROUP)
+    lo, hi = g.min(-1), g.max(-1)
+    flat = hi == lo
+    scale = np.where(flat, np.float32(1.0), (hi - lo) / np.float32(255.0)).astype(np.float32)
+    s, b = _bf16_round(scale), _bf16_round(lo)
+    inv = np.where(s == 0, np.float32(0.0), np.float32(1.0) / s).astype(np.float32)
+    t = (g - b[..., None]) * inv[..., None]
+    # Rust's f32::round is half away from zero, numpy's is half to even.
+    q = np.clip(np.sign(t) * np.floor(np.abs(t) + np.float32(0.5)), 0, 255).astype(np.uint8)
+    deq = (q.astype(np.float32) * s[..., None] + b[..., None]).reshape(rows, cols)
+    return q.reshape(rows, cols), s, b, deq.astype(np.float32)
+
+
+class _TfState:
+    """Hook state shared by the patched sparse-MoE blocks."""
+
+    def __init__(self, layers):
+        self.layer_of = {id(layer.mlp): i for i, layer in enumerate(layers)}
+        self.layers = len(layers)
+        self.int8_router = None  # [layers] of mx f32 [experts, hidden]
+        self.int8_shared = None  # [layers] of mx f32 [1, hidden]
+        self.use_router_int8 = False
+        self.use_shared_int8 = False
+        self.isolate = False
+        self.use_original = False
+        self.pending = []
+        self.chunks = {}
+
+    def start_case(self):
+        self.pending = []
+        self.chunks = {}
+
+    def push(self, layer, **arrays):
+        self.pending.append((layer, arrays))
+
+    def flush(self, *extra):
+        import mlx.core as mx
+        import numpy as np
+
+        mx.eval(extra, [list(a.values()) for _, a in self.pending])
+        for layer, arrays in self.pending:
+            for key, value in arrays.items():
+                rows = self.chunks.setdefault(key, [[] for _ in range(self.layers)])
+                rows[layer].append(np.array(value)[0])
+        self.pending = []
+
+    def collect(self, rows):
+        import numpy as np
+
+        out = {}
+        for key, per_layer in self.chunks.items():
+            stacked = np.stack([np.concatenate(chunks, axis=0) for chunks in per_layer], axis=1)
+            assert stacked.shape[0] == rows, (key, stacked.shape, rows)
+            out[key] = stacked
+        return out
+
+
+def _tf_patch_moe(cls, state):
+    """Replaces the sparse-MoE block's call with a copy of it that can swap in
+    the INT8 router and record what routed. With every switch off it computes
+    exactly what the original does (checked by `_tf_probe`)."""
+    import mlx.core as mx
+
+    original = cls.__call__
+
+    def call(self, x):
+        if state.use_original:
+            return original(self, x)
+        assert self.sharding_group is None
+        layer = state.layer_of[id(self)]
+        k = self.top_k
+        if state.use_router_int8:
+            logits = x.astype(mx.float32) @ state.int8_router[layer].T
+        else:
+            logits = self.gate(x)
+        gates = mx.softmax(logits, axis=-1, precise=True)
+        inds = mx.argpartition(gates, kth=-k, axis=-1)[..., -k:]
+        scores = mx.take_along_axis(gates, inds, axis=-1)
+        if self.norm_topk_prob:
+            scores = scores / scores.sum(axis=-1, keepdims=True)
+        scores = scores.astype(x.dtype)
+
+        # The gap between the k-th and (k+1)-th probability: zero is a tie the
+        # selection broke arbitrarily.
+        top = mx.sort(gates.astype(mx.float32), axis=-1)[..., -(k + 1) :]
+        record = {"used": inds, "margin": top[..., 1] - top[..., 0]}
+        if state.isolate:
+            # Three routers on the one input this layer saw: the BF16 gate as
+            # run, the same BF16 weights computed in f32, and the INT8 weights
+            # in f32. Their disagreement splits rounding from quantization.
+            xf = x.astype(mx.float32)
+            lf = xf @ self.gate.weight.astype(mx.float32).T
+            li = xf @ state.int8_router[layer].T
+            top_f = mx.sort(lf, axis=-1)[..., -(k + 1) :]
+            record["ids_f32"] = mx.argpartition(lf, kth=-k, axis=-1)[..., -k:]
+            record["ids_int8"] = mx.argpartition(li, kth=-k, axis=-1)[..., -k:]
+            record["margin_f32"] = top_f[..., 1] - top_f[..., 0]
+        state.push(layer, **record)
+
+        y = self.switch_mlp(x, inds)
+        y = (y * scores[..., None]).sum(axis=-2)
+        shared_y = self.shared_expert(x)
+        if state.use_shared_int8:
+            gate = mx.sigmoid(x.astype(mx.float32) @ state.int8_shared[layer].T).astype(x.dtype)
+        else:
+            gate = mx.sigmoid(self.shared_expert_gate(x))
+        return y + gate * shared_y
+
+    cls.__call__ = call
+    return original
+
+
+def _tf_cases(gen_dir, prompt_real_path, semantic_begin):
+    import numpy as np
+
+    gen = Path(gen_dir)
+    system = {r["name"]: r["system_rows"] for r in json.loads((gen / "summary.json").read_text())["runs"]}
+    cases = []
+    for name in TF_CLIPS:
+        prompt = np.load(gen / f"{name}.prompt.npy").astype(np.int32)
+        codes = np.load(gen / f"{name}.codes.npy")
+        # [main token, c0..c9] per generated frame, as `build_frames` lays out
+        # an audio row.
+        generated = np.concatenate([codes[:1] + semantic_begin, codes]).T.astype(np.int32)
+        cases.append(
+            {
+                "name": name,
+                "rows": np.concatenate([prompt, generated]),
+                "prompt_rows": len(prompt),
+                "system_rows": system[name],
+            }
+        )
+    for i, case in enumerate(json.loads(Path(prompt_real_path).read_text())["cases"]):
+        rows = np.array(case["frames"], dtype=np.int32)
+        cases.append(
+            {"name": f"pr{i}", "rows": rows, "prompt_rows": len(rows), "system_rows": case["system_rows"]}
+        )
+    return cases
+
+
+def _tf_run(model, state, case):
+    """One case, the way `Model._frames` runs it: the prompt in 256-row chunks
+    (the system block first), then one row per step. The tower is teacher-forced
+    with the recorded next row and its head logits are kept."""
+    import mlx.core as mx
+    import numpy as np
+
+    from mlx_audio.tts.models.fish_drama3.drama3 import PREFILL_CHUNK
+
+    rows, prompt_rows, system_rows = case["rows"], case["prompt_rows"], case["system_rows"]
+    total = len(rows)
+    frames = mx.array(rows)[None]
+    bcache, tcache = model.backbone.make_cache(), model.tower.make_cache()
+    state.start_case()
+    hidden = []
+
+    def caches():
+        return [[c.state for c in bcache], [c.state for c in tcache]]
+
+    def feed(begin, end):
+        return model.backbone.model(
+            None, cache=bcache, input_embeddings=model._embed(frames[:, begin:end])
+        )
+
+    for lo, hi in ((0, system_rows), (system_rows, prompt_rows)):
+        for begin in range(lo, hi, PREFILL_CHUNK):
+            end = min(begin + PREFILL_CHUNK, hi)
+            h = feed(begin, end)
+            labelled = min(end, prompt_rows - 1)
+            if labelled > begin:
+                model.tower.prefill(
+                    h[:, : labelled - begin],
+                    frames[:, begin:labelled],
+                    frames[:, begin + 1 : labelled + 1],
+                    tcache,
+                )
+            state.flush(h, caches())
+            hidden.append(h[0])
+
+    semantic, heads = [], []
+    for t in range(prompt_rows - 1, total):
+        h_t = hidden[-1][-1:][None]
+        logits = model.semantic_head(h_t[:, 0]).astype(mx.float32)
+        semantic.append(logits)
+        if t + 1 == total:
+            state.flush(logits)
+            break
+        nxt = frames[:, t + 1]
+        main = nxt[:, 0]
+        c0 = mx.clip(main - model.semantic_begin, 0, model.tower.vocab_size - 1)
+        is_semantic = model.tower.is_semantic(main)[:, None]
+        logs = []
+
+        def sample(head_logits):
+            logs.append(head_logits[:, 0].astype(mx.float32))
+            return nxt[:, len(logs) + 1 : len(logs) + 2]
+
+        model.tower.residual_codes(h_t, c0[:, None], is_semantic, frames[:, t : t + 1], tcache, sample)
+        heads.append(mx.concatenate(logs, axis=0))
+        h = feed(t + 1, t + 2)
+        state.flush(h, logs, logits, caches())
+        hidden.append(h[0])
+
+    f32 = lambda a: np.array(a.astype(mx.float32))
+    out = {
+        "hidden": f32(mx.concatenate(hidden, axis=0)),
+        "semantic": f32(mx.concatenate(semantic, axis=0)),
+        "heads": f32(mx.stack(heads)) if heads else np.zeros((0, 9, model.tower.vocab_size), np.float32),
+    }
+    assert out["hidden"].shape[0] == total
+    out.update(state.collect(total))
+    return out
+
+
+def _tf_probe(model, state, rows):
+    """Hidden states of the first rows with the original block call and with the
+    patched one: they must be equal, or the patch changed the model."""
+    import mlx.core as mx
+
+    frames = mx.array(rows[:24])[None]
+    seen = []
+    for original in (True, False):
+        state.use_original = original
+        state.start_case()
+        cache = model.backbone.make_cache()
+        h = model.backbone.model(None, cache=cache, input_embeddings=model._embed(frames))
+        state.flush(h)
+        seen.append(h)
+    state.use_original = False
+    return bool(mx.array_equal(seen[0], seen[1]).item())
+
+
+def teacher_forced(model_dir, out_dir, gen_dir, prompt_real_path, variants=None, only=None):
+    import mlx.core as mx
+    import numpy as np
+
+    from mlx_audio.lm.models.qwen3_next import Qwen3NextSparseMoeBlock
+    from mlx_audio.tts.models.fish_drama3.backbone import Fp32RMSNorm
+    from mlx_audio.tts.utils import load_model
+
+    out = Path(out_dir)
+    chosen = variants.split(",") if variants else list(TF_VARIANTS)
+    for v in chosen:
+        assert v in TF_VARIANTS, v
+    # The codec is not needed and the f32 copy is big; a small buffer cache
+    # keeps the 4-bit model inside a 36 GB host.
+    mx.set_cache_limit(1 << 30)
+    model = load_model(Path(model_dir))
+    model.codec = None
+    gc.collect()
+    mx.clear_cache()
+    layers = model.backbone.model.layers
+    state = _TfState(layers)
+    _tf_patch_moe(Qwen3NextSparseMoeBlock, state)
+    print(f"loaded: active {mx.get_active_memory() / 1e9:.1f} GB", flush=True)
+
+    gate0 = layers[0].mlp.gate.weight
+    assert gate0.dtype == mx.bfloat16, f"the router is {gate0.dtype}, expected the unquantized bfloat16"
+    sim_dir = out / "gate_sim"
+    sim_dir.mkdir(parents=True, exist_ok=True)
+    state.int8_router, state.int8_shared = [], []
+    for i, layer in enumerate(layers):
+        w = np.array(layer.mlp.gate.weight.astype(mx.float32))
+        q, s, b, deq = quantize_int8_rows(w)
+        state.int8_router.append(mx.array(deq))
+        ws = np.array(layer.mlp.shared_expert_gate.weight.astype(mx.float32))
+        state.int8_shared.append(mx.array(quantize_int8_rows(ws)[3]))
+        if i == 0:
+            w.astype("<f4").tofile(sim_dir / "gate0.f32")
+            q.tofile(sim_dir / "gate0_q.u8")
+            s.astype("<f4").tofile(sim_dir / "gate0_scale.f32")
+            b.astype("<f4").tofile(sim_dir / "gate0_bias.f32")
+
+    norms = [m for _, m in model.backbone.named_modules() if isinstance(m, Fp32RMSNorm)]
+    norm_originals = [m.weight for m in norms]
+    assert all(w.dtype == mx.float32 for w in norm_originals)
+    narrowed = [w.astype(mx.bfloat16).astype(mx.float32) for w in norm_originals]
+    changed = sum(int((a != b).sum().item()) for a, b in zip(norm_originals, narrowed))
+    total = sum(w.size for w in norm_originals)
+    print(f"{len(norms)} trunk norms, {changed} of {total} gammas change in bfloat16", flush=True)
+
+    cases = _tf_cases(gen_dir, prompt_real_path, model.semantic_begin)
+    if only:
+        # A short window: the named cases only. A finished case is skipped on a rerun.
+        keep = only.split(",")
+        cases = [c for c in cases if c["name"] in keep]
+        assert cases, f"no case named {keep}"
+    ok = _tf_probe(model, state, cases[0]["rows"])
+    print(f"patched block equals the original: {ok}", flush=True)
+    assert ok
+
+    for variant in chosen:
+        state.use_router_int8 = variant in ("router_int8", "convert")
+        state.use_shared_int8 = variant == "convert"
+        state.isolate = variant == "ref"
+        for m, w in zip(norms, narrowed if variant in ("norm_bf16", "convert") else norm_originals):
+            m.weight = w
+        for case in cases:
+            target = out / variant / case["name"]
+            if (target / "meta.json").exists():
+                continue
+            started = time.perf_counter()
+            result = _tf_run(model, state, case)
+            target.mkdir(parents=True, exist_ok=True)
+            for key, value in result.items():
+                dtype = "<f4" if value.dtype.kind == "f" else "<i2"
+                value.astype(dtype).tofile(target / f"{key}.bin")
+            meta = {
+                "commit": COMMIT,
+                "variant": variant,
+                "case": case["name"],
+                "rows": case["rows"].tolist(),
+                "prompt_rows": case["prompt_rows"],
+                "system_rows": case["system_rows"],
+                "dim": int(result["hidden"].shape[1]),
+                "semantic_width": int(result["semantic"].shape[1]),
+                "heads": int(result["heads"].shape[1]),
+                "head_vocab": int(result["heads"].shape[2]),
+                "layers": len(layers),
+                "top_k": TF_TOP_K,
+                "arrays": sorted(result),
+            }
+            (target / "meta.json").write_text(json.dumps(meta))
+            print(
+                f"{variant} {case['name']}: {len(case['rows'])} rows in "
+                f"{time.perf_counter() - started:.1f}s, peak {mx.get_peak_memory() / 1e9:.1f} GB",
+                flush=True,
+            )
+    for m, w in zip(norms, norm_originals):
+        m.weight = w
+
+
 def main() -> None:
-    mode, arg = sys.argv[1], sys.argv[2]
-    {"chunking": chunking, "tower": tower, "prompt": prompt, "prompt-real": prompt_real}[mode](arg)
+    mode, *args = sys.argv[1:]
+    modes = {
+        "chunking": chunking,
+        "tower": tower,
+        "prompt": prompt,
+        "prompt-real": prompt_real,
+        "teacher-forced": teacher_forced,
+    }
+    modes[mode](*args)
 
 
 if __name__ == "__main__":
