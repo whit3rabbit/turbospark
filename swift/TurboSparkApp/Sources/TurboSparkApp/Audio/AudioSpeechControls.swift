@@ -20,6 +20,8 @@ struct AudioLanguagePicker: View {
     }
 }
 
+/// The named voices, or for a native cloner on Voiceover (Drama 3,
+/// OmniVoice), which has none, where to go to choose one.
 @MainActor
 struct AudioVoicePicker: View {
     @ObservedObject var controller: AudioWorkspaceController
@@ -29,6 +31,10 @@ struct AudioVoicePicker: View {
             Picker(selection: $controller.recipe.voice) {
                 ForEach(profile.capabilities.voices, id: \.self) { voice in Text(voice).tag(voice) }
             } label: { Text("Voice", bundle: .module) }
+        } else if controller.selectedProfileSpeaksWithoutReference {
+            Text("This model picks the voice. To speak in a voice you choose, use Voice Cloning.", bundle: .module)
+                .themedFont(.small).foregroundStyle(.appSecondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }

@@ -154,6 +154,10 @@ staging files changed.
   A new native cloner stays unlisted until `nativeCloneRequest` builds its
   request shape and its family joins `nativeCloneRequestFamilies`. Without
   that it gets MegaTTS3's request, which the runtime refuses.
+  Drama 3 and OmniVoice also speak on Voiceover with no reference
+  (`referenceFreeSpeechFamilies`). Whether a run clones follows the
+  recipe's speech mode (`runClonesNatively`), which `normalizeModelOptions`
+  sets by page, never the profile alone. MegaTTS3 always clones.
 - Audio model residency lifecycle is managed by `AudioWorkspaceController`
   (`isModelLoaded`, `canLoadModel`, `canUnloadModel`). Unloading is wired into
   `AppModel.canUnloadAnyModel` and the top bar eject button, ensuring audio

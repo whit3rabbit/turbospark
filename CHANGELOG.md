@@ -19,6 +19,11 @@ when this file gets updated relative to the version bump and the tag.
   (the reference transcript, speed 1.0, no steps, instruction or guidance
   weights) and asks for the reference's transcript beside consent. The model
   summary shows "Built with Fish Audio", as its license requires.
+- `swift/TurboSparkApp`: the Voiceover page speaks with Drama 3 and
+  OmniVoice without a reference, in a voice the model picks. The run sends
+  no PCM, consent or transcript. Drama 3 gets speed 1.0, and OmniVoice keeps
+  its speed slider without guidance weights. Voice Cloning and Advanced still
+  clone.
 - ArkTTS multilingual zero-shot TTS preview family port (`crates/audio/src/tts/arktts/`).
   DualAR transformer architecture plus bundled 44.1 kHz decode-only speech codec:
   pure-attention slow stack on 0.6b and hybrid Mamba-2 + attention Falcon H1

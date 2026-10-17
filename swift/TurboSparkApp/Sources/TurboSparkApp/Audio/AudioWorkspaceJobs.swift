@@ -20,6 +20,16 @@ extension AudioWorkspaceController {
         request.durationSeconds = recipe.durationSeconds; request.steps = recipe.steps; request.seed = recipe.seed
         return request
     }
+    /// The request a run sends. A native cloner's run either clones, and
+    /// passes its reference as PCM (`runClonesNatively`), or speaks with no
+    /// reference.
+    static func runRequest(_ recipe: AudioRecipe, task: AudioTask, profile: AudioProfile) -> AudioRequest {
+        let base = request(from: recipe, task: task)
+        guard task == .textToSpeech, clonesNatively(profile) else { return base }
+        return runClonesNatively(profile, speech: recipe.speech)
+            ? nativeCloneRequest(base, family: profile.family, speech: recipe.speech)
+            : referenceFreeSpeechRequest(base, family: profile.family)
+    }
     /// A natively cloning run (MegaTTS3, OmniVoice, Drama 3): its reference
     /// arrives as the session PCM at 24 kHz, and consent holds only for that
     /// exact region.
@@ -54,6 +64,25 @@ extension AudioWorkspaceController {
         // The engine aligns the reference itself and takes no style prompt.
         request.instruction = nil
         request.referenceText = nil
+        return request
+    }
+    /// A native cloner speaking on Voiceover with no reference (Drama 3,
+    /// OmniVoice): no PCM, consent, transcript or guidance weights, and the
+    /// model picks the voice.
+    nonisolated static func referenceFreeSpeechRequest(_ base: AudioRequest, family: String) -> AudioRequest {
+        var request = base
+        request.consent = false
+        request.referenceSampleRate = nil
+        request.referenceText = nil
+        request.instruction = nil
+        request.pW = nil
+        request.tW = nil
+        // The page has no steps control, and the recipe's count belongs to
+        // the music page, so the engine's own default applies. Drama 3 has
+        // no steps at all.
+        request.steps = nil
+        // Drama 3 refuses any speed but 1.0, and the page hides its slider.
+        if family == "fish_drama3" { request.speed = 1 }
         return request
     }
     /// The catalog declares the CPU as this profile's runtime, so running on
@@ -106,7 +135,9 @@ extension AudioWorkspaceController {
         status = AppStrings.localized("Waiting for background work")
         let token = epoch; let currentTask = task
         let portable = (page == .advanced && allowPortableExperiment) || Self.runsOnDeclaredCPU(profile)
-        let clonesNatively = currentTask == .textToSpeech && Self.clonesNatively(profile)
+        // Only a cloning run reads its reference as PCM. On Voiceover a
+        // native cloner's request carries none (`runRequest`).
+        let clonesNatively = currentTask == .textToSpeech && Self.runClonesNatively(profile, speech: inputs.speech)
         let experimentalMetal = page == .advanced && allowExperimentalMetal
         jobTask = Task { [weak self] in
             guard let self else { return }
@@ -124,8 +155,7 @@ extension AudioWorkspaceController {
                 self.status = AppStrings.localized("Loading model")
                 self.speechRun?.enter(.loadingModel)
                 let session = profile.family == "qwen3_tts" ? nil : try await self.residentSession(for: profile, portable: portable, experimentalMetal: experimentalMetal, source: result)
-                var request = Self.request(from: inputs, task: currentTask)
-                if clonesNatively { request = Self.nativeCloneRequest(request, family: profile.family, speech: inputs.speech) }
+                let request = Self.runRequest(inputs, task: currentTask, profile: profile)
                 if currentTask == .speechToText {
                     guard let selected else { throw AudioWorkspaceError.message(AppStrings.localized("Import or select a recording first.")) }
                     guard let session else { throw CancellationError() }

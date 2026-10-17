@@ -45,18 +45,24 @@ and sha256 of every converted file.
 
 ## In the app
 
-The macOS app lists Drama 3 on the Voice Cloning page (and in Advanced).
-Download asks you to accept the license terms first, then runs the same
-conversion. "Choose local model folder" takes an install from
+The macOS app lists Drama 3 on the Voiceover and Voice Cloning pages (and
+in Advanced). Download asks you to accept the license terms first, then runs
+the same conversion. "Choose local model folder" takes an install from
 `pull-drama3` instead.
 
-A clone there needs a reference recording, your confirmation that you have
-the right to use the voice, and the exact words spoken in the reference. A
-reference taken from a transcribed recording fills the transcript in. There
-is no speed control and no quality preset. Cues go inline in the script.
+On Voiceover, Drama 3 speaks the script in a voice the model picks. It needs
+no reference, no consent, and no transcript. The page shows no voice list
+and no speed slider, since Drama 3 has neither.
 
-The app always clones. Speaking in the model's own voice, with no reference,
-is only on the CLI, HTTP, and native-session paths for now.
+A clone on Voice Cloning needs a reference recording, your confirmation that
+you have the right to use the voice, and the exact words spoken in the
+reference. A reference taken from a transcribed recording fills the
+transcript in. There is no speed control and no quality preset. Cues go
+inline in the script.
+
+Advanced always clones. OmniVoice follows the same split: Voiceover speaks
+without a reference (it keeps its speed slider and language list), and Voice
+Cloning clones.
 
 ## Speak
 

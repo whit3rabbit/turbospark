@@ -33,7 +33,18 @@ final class AudioVoiceTests: XCTestCase {
         controller.speechSettings.instruction = "Warm and calm"
         XCTAssertNil(controller.speechValidationMessage)
         controller.selectPage(.voiceover)
-        XCTAssertTrue(controller.availableProfiles.allSatisfy { AudioWorkspaceController.speechMode(for: $0) == .customVoice })
+        // Named-voice models, plus both OmniVoice rows and Drama 3, which
+        // speak without a reference here. MegaTTS3 cannot, and the Qwen3
+        // Base and VoiceDesign rows belong to the other pages.
+        XCTAssertEqual(Set(controller.availableProfiles.map(\.identity.alias)), [
+            "kokoro-82m-bf16", "qwen3-tts-12hz-06b-customvoice-8bit", "qwen3-tts-12hz-17b-customvoice-8bit",
+            "omnivoice-8bit", "omnivoice-bf16", "fish-drama3-4bit",
+        ])
+        XCTAssertTrue(controller.availableProfiles.allSatisfy {
+            AudioWorkspaceController.speechMode(for: $0) == .customVoice
+                || AudioWorkspaceController.referenceFreeSpeechFamilies.contains($0.family)
+        })
+        // Catalog order keeps Qwen3-TTS the default ahead of the native cloners.
         XCTAssertEqual(controller.selectedProfile?.family, "qwen3_tts")
         XCTAssertTrue(controller.selectedProfileIsRunnable)
         controller.selectPage(.voiceClone)
