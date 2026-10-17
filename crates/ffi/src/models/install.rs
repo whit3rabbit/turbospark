@@ -3,7 +3,11 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use catalog::{CancelFlag, Catalog, Client, InstallPlan, Store, Verdict};
+use catalog::library::{LibraryRecord, LibraryRegistry, LocationEnv, INTERNAL_LIBRARY_ID};
+use catalog::{
+    CancelFlag, Catalog, Client, InstallKind, InstallPlan, InstallTarget, InstalledModel, Store,
+    StoreError, Verdict,
+};
 
 use super::probe::parse_repo;
 
@@ -125,17 +129,54 @@ pub(crate) fn installs_finished() -> usize {
     INSTALLS_FINISHED.load(Ordering::Relaxed)
 }
 
-/// The text install folder in This Mac for `alias`, through the resolver a
-/// library install uses, so an alias another library holds is refused
-/// before anything is downloaded.
-fn this_mac_destination(store: &Store, alias: &str) -> Result<std::path::PathBuf, String> {
-    let env = catalog::library::LocationEnv::system(store.root())?;
-    catalog::install_destination(store, None, catalog::InstallKind::Text, alias, &env)
-        .map(|target| target.dir)
-        .map_err(|error| error.to_string())
+/// `model`, as the install entry points answer: every key the row has, and the
+/// library keys the installed listing adds to its rows (4.2), in snake_case
+/// like the row: `library` (the library's id, "internal" for This Mac, whose
+/// own row names none), `library_name` and `install_id`. The name is raw, as
+/// in every listing, because it can come from a drive anyone could have
+/// written.
+pub(crate) fn installed_value(
+    model: &InstalledModel,
+    library_name: &str,
+) -> Result<serde_json::Value, String> {
+    let mut value = serde_json::to_value(model).map_err(|e| e.to_string())?;
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| "an installed row is not an object".to_string())?;
+    object.insert(
+        "library".to_string(),
+        serde_json::json!(model.library.as_deref().unwrap_or(INTERNAL_LIBRARY_ID)),
+    );
+    object.insert("library_name".to_string(), serde_json::json!(library_name));
+    object.insert(
+        "install_id".to_string(),
+        serde_json::json!(model.install_id()),
+    );
+    Ok(value)
 }
 
-/// Installs the catalog row named `alias` into the store.
+/// The name of the library `model` was installed into, for [`installed_value`],
+/// when the installer did not hand it back: This Mac's, or the list's, or the
+/// id when the library was removed since.
+pub(crate) fn library_name_of(store: &Store, model: &InstalledModel) -> String {
+    match model
+        .library
+        .as_deref()
+        .filter(|id| *id != INTERNAL_LIBRARY_ID)
+    {
+        None => LibraryRecord::internal(store.root()).name,
+        Some(id) => LibraryRegistry::load(store.root())
+            .libraries()
+            .into_iter()
+            .find(|record| record.id == id)
+            .map_or_else(|| id.to_string(), |record| record.name),
+    }
+}
+
+/// Installs the catalog row named `alias` into `library`, This Mac for
+/// `None`. Where it lands is settled before the first request: a library that
+/// is not connected, one a newer TurboSpark wrote, or an alias another library
+/// holds fails here, before anything is downloaded.
 ///
 /// **IMMUTABLE-REVISION NETWORK RANGES RESUME.** Completed, SHA-256 checked
 /// ranges survive a failed or cancelled walk. Conversion and repacking still
@@ -156,81 +197,204 @@ fn this_mac_destination(store: &Store, alias: &str) -> Result<std::path::PathBuf
 /// another arm of the same `FnMut`.
 pub(crate) fn install(
     alias: &str,
+    library: Option<&str>,
     mut on_stage: impl FnMut(&str),
     on_bytes: Arc<dyn Fn(u64) + Send + Sync>,
-) -> Result<String, String> {
+) -> Result<String, StoreError> {
     let active = ActiveInstall::register();
     let cancel = active.flag.clone();
-    let catalog = Catalog::embedded()?;
+    let catalog = Catalog::embedded().map_err(StoreError::Io)?;
     let entry = catalog
         .get(alias)
-        .ok_or_else(|| format!("no catalog row named {alias:?}"))?;
+        .ok_or_else(|| StoreError::Io(format!("no catalog row named {alias:?}")))?;
     let plan = InstallPlan::from_entry(entry);
-    let store = Store::default_store()?;
-    let dir = this_mac_destination(&store, alias)?;
+    let store = Store::default_store().map_err(StoreError::Io)?;
+    let env = LocationEnv::system(store.root()).map_err(StoreError::Io)?;
+    let target = catalog::install_destination(&store, library, InstallKind::Text, alias, &env)?;
 
     on_stage(
         "failed or cancelled immutable-revision downloads reuse completed ranges; \
          conversion restarts, and pause keeps in-memory progress",
     );
 
-    let installed = catalog::install_with_byte_progress(
+    let installed = catalog::install_text_into(
         &plan,
-        &dir,
+        &target,
         &Client::new(),
         |line| on_stage(line),
         Some(on_bytes),
         Some(&cancel),
+        &store,
+        &env,
     )?;
-    catalog::record(&store, &installed)?;
-    serde_json::to_string(&installed.model).map_err(|e| e.to_string())
+    result_json(&installed.model, &target)
 }
 
-/// Probes and installs an arbitrary Hugging Face model repository.
+/// Probes and installs an arbitrary Hugging Face model repository into
+/// `library`, This Mac for `None`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn install_repo(
     repo: &str,
     alias: &str,
     file: Option<&str>,
     sidecar_repo: Option<&str>,
+    library: Option<&str>,
     mut on_stage: impl FnMut(&str),
     on_bytes: Arc<dyn Fn(u64) + Send + Sync>,
-) -> Result<String, String> {
+) -> Result<String, StoreError> {
     let active = ActiveInstall::register();
     let cancel = active.flag.clone();
-    let weights = parse_repo(repo)?;
+    let weights = parse_repo(repo).map_err(StoreError::Io)?;
     let sidecars = match sidecar_repo {
-        Some(text) => parse_repo(text)?,
+        Some(text) => parse_repo(text).map_err(StoreError::Io)?,
         None => weights.clone(),
     };
     // Before the probe, so a refused destination costs no network request.
-    let store = Store::default_store()?;
-    let dir = this_mac_destination(&store, alias)?;
+    let store = Store::default_store().map_err(StoreError::Io)?;
+    let env = LocationEnv::system(store.root()).map_err(StoreError::Io)?;
+    let target = catalog::install_destination(&store, library, InstallKind::Text, alias, &env)?;
     let client = Client::new();
-    let report = catalog::probe(&client, &weights, file, Some(&sidecars))?;
+    let report =
+        catalog::probe(&client, &weights, file, Some(&sidecars)).map_err(StoreError::Io)?;
     if !report.verdict.is_runnable() {
-        return Err(match report.verdict {
+        return Err(StoreError::Io(match report.verdict {
             Verdict::Refused(why) => format!("model would not run here: {why}"),
             Verdict::Runnable => unreachable!(),
-        });
+        }));
     }
     let plan = InstallPlan::from_probe(alias, &report, sidecars);
-    if dir.join("manifest.json").is_file() {
-        return Err(format!("{} already holds an install", dir.display()));
+    if target.dir.join("manifest.json").is_file() {
+        return Err(StoreError::Io(format!(
+            "{} already holds an install",
+            target.dir.display()
+        )));
     }
     on_stage(
         "failed or cancelled immutable-revision downloads reuse completed ranges; \
          conversion restarts, and pause keeps in-memory progress",
     );
-    let installed = catalog::install_with_byte_progress(
+    let installed = catalog::install_text_into(
         &plan,
-        &dir,
+        &target,
         &client,
         |line| on_stage(line),
         Some(on_bytes),
         Some(&cancel),
+        &store,
+        &env,
     )?;
-    catalog::record(&store, &installed)?;
-    serde_json::to_string(&installed.model).map_err(|e| e.to_string())
+    result_json(&installed.model, &target)
+}
+
+/// The answer of a text install: the row recorded, with the library keys.
+fn result_json(model: &InstalledModel, target: &InstallTarget) -> Result<String, StoreError> {
+    installed_value(model, &target.library_name)
+        .and_then(|value| serde_json::to_string(&value).map_err(|e| e.to_string()))
+        .map_err(StoreError::Io)
+}
+
+#[cfg(test)]
+mod result_tests {
+    use super::*;
+    use catalog::ModelModality;
+
+    fn row(library: Option<&str>) -> InstalledModel {
+        InstalledModel {
+            alias: "qwen".to_string(),
+            repo: "owner/qwen".to_string(),
+            revision: "main".to_string(),
+            path: std::path::PathBuf::from("/Volumes/T7/TurboSpark/text/qwen.gturbo"),
+            family: "qwen3".to_string(),
+            install_bytes: 4,
+            installed_on: "2026-10-16".to_string(),
+            status: "runs".to_string(),
+            kind: None,
+            modality: ModelModality::Text,
+            variant: None,
+            library: library.map(str::to_string),
+            relative_path: library.map(|_| std::path::PathBuf::from("text/qwen.gturbo")),
+        }
+    }
+
+    /// The answer of an install keeps every key the row has and adds the
+    /// library keys of the installed listing. A row of This Mac names no
+    /// library of its own, and is told as "internal".
+    #[test]
+    fn an_install_answer_names_its_library_beside_the_row() {
+        let this_mac = installed_value(&row(None), "This Mac").unwrap();
+        assert_eq!(this_mac["library"], "internal");
+        assert_eq!(this_mac["library_name"], "This Mac");
+        assert_eq!(this_mac["install_id"], "internal:text/qwen");
+        assert_eq!(this_mac["alias"], "qwen");
+        assert!(this_mac.get("relative_path").is_none(), "{this_mac}");
+
+        let id = "0f6c2a3e-1b7d-4c55-9e0a-7d2f1c3b4a59";
+        let in_library = installed_value(&row(Some(id)), "T7").unwrap();
+        assert_eq!(in_library["library"], id);
+        assert_eq!(in_library["library_name"], "T7");
+        assert_eq!(in_library["install_id"], format!("{id}:text/qwen"));
+        assert_eq!(in_library["relative_path"], "text/qwen.gturbo");
+        // The name stays raw: display escapes it, as for every listing.
+        let hostile = installed_value(&row(Some(id)), "A\u{1b}[31m").unwrap();
+        assert_eq!(hostile["library_name"], "A\u{1b}[31m");
+    }
+
+    /// The name an audio install answers with comes from the list: This Mac's
+    /// for a row with no library, the library's, and for a library the list no
+    /// longer has, its id rather than nothing.
+    #[test]
+    fn the_library_name_of_a_row_comes_from_the_list() {
+        use std::os::unix::fs::MetadataExt;
+
+        /// Removes its folder when the test ends, passing or not.
+        struct Cleanup(std::path::PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let base = std::env::temp_dir().join(format!(
+            "turbospark-ffi-install-name-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("Volumes").join("T7")).unwrap();
+        std::fs::create_dir_all(base.join("home")).unwrap();
+        let _cleanup = Cleanup(base.clone());
+        // Canonical, because the temp dir is behind the /var symlink and the
+        // location rules compare canonical paths.
+        let base = base.canonicalize().unwrap();
+        let volume = base.join("Volumes").join("T7");
+        let table = format!(
+            "/dev/disk3s1s1 on / (apfs, sealed, local, read-only)\n\
+             /dev/disk20s1 on {} (hfs, local, journaled)\n",
+            volume.display()
+        );
+        let env = LocationEnv {
+            mount_source: catalog::library::MountSource::Fixed(
+                catalog::library::parse_mount_table(&table),
+            ),
+            volumes_root: base.join("Volumes"),
+            home_device: std::fs::metadata(&base).unwrap().dev().wrapping_add(1),
+        };
+        let home = base.join("home");
+        let id = LibraryRegistry::load(&home)
+            .add(&volume, Some("T7"), &env)
+            .unwrap()
+            .view
+            .record
+            .id;
+        let store = Store::new(&home);
+
+        assert_eq!(library_name_of(&store, &row(None)), "This Mac");
+        assert_eq!(
+            library_name_of(&store, &row(Some(INTERNAL_LIBRARY_ID))),
+            "This Mac"
+        );
+        assert_eq!(library_name_of(&store, &row(Some(&id))), "T7");
+        let gone = "5a1d9c70-3e2b-4f68-8a14-6b0c2d9e7f31";
+        assert_eq!(library_name_of(&store, &row(Some(gone))), gone);
+    }
 }
 
 #[cfg(test)]

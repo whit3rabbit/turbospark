@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use catalog::library::LocationEnv;
+use catalog::library::{LocationEnv, INTERNAL_LIBRARY_ID};
 use catalog::StoreError;
 use serde::Serialize;
 
@@ -34,6 +34,14 @@ struct ImageInstalledRow {
     #[serde(rename = "sourcePath")]
     source_path: Option<PathBuf>,
     family: String,
+    /// The library's id, "internal" for This Mac, as `ts_image_installed_json`
+    /// rows say it (4.2).
+    library: String,
+    #[serde(rename = "libraryName")]
+    library_name: String,
+    /// `<library>:image/<alias>`, the identity a move or a forget takes.
+    #[serde(rename = "installId")]
+    install_id: String,
 }
 
 pub(crate) fn catalog_json() -> Result<String, String> {
@@ -59,10 +67,10 @@ pub(crate) fn install(
     library: Option<&str>,
     on_stage: impl FnMut(&str),
     on_bytes: Arc<dyn Fn(u64, u64) + Send + Sync>,
-) -> Result<String, String> {
+) -> Result<String, StoreError> {
     let active = ActiveInstall::register_image();
-    let store = catalog::Store::default_store()?;
-    let env = LocationEnv::system(store.root())?;
+    let store = catalog::Store::default_store().map_err(StoreError::Io)?;
+    let env = LocationEnv::system(store.root()).map_err(StoreError::Io)?;
     let client = catalog::Client::new();
     install_with(
         &store,
@@ -82,7 +90,6 @@ pub(crate) fn install(
             )
         },
     )
-    .map_err(|error| error.to_string())
 }
 
 /// [`install`] with its store and library environment given, and with
@@ -225,7 +232,11 @@ fn install_with(
     };
     let manifest = image::ImageManifest::load(&path).map_err(StoreError::Io)?;
     manifest.validate().map_err(StoreError::Io)?;
+    let library_id = target.library_id.as_deref().unwrap_or(INTERNAL_LIBRARY_ID);
     serde_json::to_string(&ImageInstalledRow {
+        install_id: format!("{library_id}:image/{}", entry.alias),
+        library: library_id.to_string(),
+        library_name: target.library_name.clone(),
         alias: entry.alias,
         family: catalog::image_family_for_model_id(&entry.model_id).to_string(),
         model_id: entry.model_id,
@@ -617,6 +628,11 @@ mod library_tests {
     /// The message of a refused run, which must name `place`.
     fn refusal_naming(run: &Run, place: &str) -> StoreError {
         match &run.result {
+            Err(held @ StoreError::AliasElsewhere { place: held_in, .. })
+                if held_in.contains(place) =>
+            {
+                held.clone()
+            }
             Err(StoreError::Io(message)) if message.contains(place) => {
                 StoreError::Io(message.clone())
             }

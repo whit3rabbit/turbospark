@@ -52,6 +52,13 @@ pub enum StoreError {
     },
     /// Embedding and OCR models install only into This Mac (2.5).
     HomeOnly,
+    /// Another library, or This Mac, already holds this alias and modality.
+    /// Alias plus modality is unique across libraries, so the install must
+    /// be moved instead. `place` names where it is.
+    AliasElsewhere {
+        alias: String,
+        place: String,
+    },
     Io(String),
 }
 
@@ -73,6 +80,11 @@ impl std::fmt::Display for StoreError {
                 "the library {library:?} was written by a newer TurboSpark and is read-only here"
             ),
             Self::HomeOnly => write!(f, "embedding and OCR models install only into This Mac"),
+            Self::AliasElsewhere { alias, place } => write!(
+                f,
+                "{alias:?} is already installed in {place}; move it from there, \
+                 or remove it there first"
+            ),
             Self::Io(reason) => write!(f, "{reason}"),
         }
     }

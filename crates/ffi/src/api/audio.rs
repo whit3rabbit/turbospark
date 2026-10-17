@@ -1,5 +1,5 @@
 //! Additive audio catalog and worker/job ABI. Callback buffers are borrowed.
-use super::libraries::{clean, coded, MESSAGE_LIMIT};
+use super::libraries::{clean, coded, parse_options, require_listed, store_fault, MESSAGE_LIMIT};
 use crate::abi::{self, guard_result};
 use crate::strings;
 use catalog::audio_catalog::{AudioCatalog, AudioProfileIdentity};
@@ -54,6 +54,15 @@ fn install_failure(message: String, cancelled: bool) -> (c_int, String) {
         (abi::TS_ERR_CANCELLED, message)
     } else {
         invalid(message)
+    }
+}
+/// [`install_failure`] for an install into a library (4.3). The four errors
+/// about a library carry their stable code ahead of the sentence, however the
+/// cancel flag stands: they say what went wrong, and a cancel does not.
+fn store_install_failure(error: StoreError, cancelled: bool) -> (c_int, String) {
+    match error {
+        StoreError::Io(message) => install_failure(message, cancelled),
+        coded => store_fault(&coded),
     }
 }
 unsafe fn identity(json: *const c_char) -> AbiResult<AudioProfileIdentity> {
@@ -278,20 +287,24 @@ pub unsafe extern "C" fn ts_audio_install(
     userdata: *mut c_void,
     out: *mut *mut c_char,
 ) -> c_int {
-    guard_result(|| install(identity_json, &[], callback, userdata, out))
+    guard_result(|| install(identity_json, &[], None, callback, userdata, out))
 }
 
 /// Install options. `acknowledged` lists the ids of the profile's
-/// acknowledgments the user accepted; every one must be present.
+/// acknowledgments the user accepted; every one must be present. `library`
+/// is the id of the library to install into, as `ts_libraries_json` lists it
+/// ("internal", an absent key and `null` are This Mac).
 #[derive(serde::Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 struct InstallOptions {
     #[serde(default)]
     acknowledged: Vec<String>,
+    #[serde(default)]
+    library: Option<String>,
 }
 
-/// [`ts_audio_install`] with `options_json` (`{"acknowledged": [id, ...]}`;
-/// NULL or empty means none).
+/// [`ts_audio_install`] with `options_json` (`{"acknowledged": [id, ...],
+/// "library": id}`; NULL or empty means none).
 #[no_mangle]
 pub unsafe extern "C" fn ts_audio_install_with_options(
     identity_json: *const c_char,
@@ -304,12 +317,13 @@ pub unsafe extern "C" fn ts_audio_install_with_options(
         clear_output(out)?;
         let options: InstallOptions =
             match strings::optional(options_json, "options").map_err(invalid)? {
-                Some(json) => serde_json::from_str(json).map_err(invalid)?,
+                Some(json) => parse_options(json)?,
                 None => InstallOptions::default(),
             };
         install(
             identity_json,
             &options.acknowledged,
+            options.library.as_deref(),
             callback,
             userdata,
             out,
@@ -317,9 +331,16 @@ pub unsafe extern "C" fn ts_audio_install_with_options(
     })
 }
 
+/// Installs into `library`, This Mac for `None`. Where it lands is settled
+/// before the first request, so a library that is not connected, one a newer
+/// TurboSpark wrote, or an alias another library holds fails before any
+/// transfer starts. The answer is the row recorded, with the library keys the
+/// installed listing adds to its rows (4.2): `library`, `library_name` and
+/// `install_id`.
 unsafe fn install(
     identity_json: *const c_char,
     acknowledged: &[String],
+    library: Option<&str>,
     callback: crate::TsInstallCallback,
     userdata: *mut c_void,
     out: *mut *mut c_char,
@@ -330,14 +351,18 @@ unsafe fn install(
     *out = std::ptr::null_mut();
     let active = crate::models::ActiveInstall::register();
     let identity = identity(identity_json)?;
+    require_listed(library)?;
+    let (store, env) = located()?;
     let row = AudioCatalog::embedded()
         .map_err(invalid)?
-        .install_acknowledged(
+        .install_acknowledged_into(
             &catalog::Client::new(),
             &catalog::Catalog::embedded().map_err(invalid)?,
-            &catalog::Store::default_store().map_err(invalid)?,
+            &store,
             &identity,
             acknowledged,
+            library,
+            &env,
             &mut |progress| {
                 if let Some(cb) = callback {
                     let stage = progress
@@ -357,8 +382,12 @@ unsafe fn install(
             },
             active.cancel_flag(),
         )
-        .map_err(|e| install_failure(e, active.cancel_flag().is_cancelled()))?;
-    output(&row, out)
+        .map_err(|e| store_install_failure(e, active.cancel_flag().is_cancelled()))?;
+    let name = crate::models::library_name_of(&store, &row);
+    output(
+        &crate::models::installed_value(&row, &name).map_err(invalid)?,
+        out,
+    )
 }
 
 #[cfg(target_os = "macos")]
@@ -813,6 +842,48 @@ mod install_cancel_tests {
         assert_eq!(
             install_failure("disk full".into(), false).0,
             abi::TS_ERR_INVALID_ARGUMENT
+        );
+    }
+
+    /// Into a library, the four errors about the library keep their code
+    /// ahead of the sentence, whether or not the install was cancelled, and a
+    /// plain failure is classified as before.
+    #[test]
+    fn a_library_install_failure_keeps_its_code_and_the_rest_is_unchanged() {
+        for cancelled in [false, true] {
+            for (error, code) in [
+                (
+                    StoreError::NotConnected {
+                        library: "T7".into(),
+                    },
+                    "not_connected",
+                ),
+                (
+                    StoreError::LibraryDisconnected {
+                        library: "T7".into(),
+                    },
+                    "library_disconnected",
+                ),
+                (
+                    StoreError::LibraryReadOnly {
+                        library: "T7".into(),
+                    },
+                    "library_read_only",
+                ),
+                (StoreError::HomeOnly, "home_only"),
+            ] {
+                let (status, message) = store_install_failure(error, cancelled);
+                assert_eq!(status, abi::TS_ERR_INVALID_ARGUMENT, "{code}");
+                assert!(message.starts_with(&format!("{code}: ")), "{message}");
+            }
+        }
+        assert_eq!(
+            store_install_failure(StoreError::Io("cancelled by the caller".into()), true).0,
+            abi::TS_ERR_CANCELLED
+        );
+        assert_eq!(
+            store_install_failure(StoreError::Io("disk full".into()), false),
+            (abi::TS_ERR_INVALID_ARGUMENT, "disk full".to_string())
         );
     }
 

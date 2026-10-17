@@ -125,6 +125,7 @@ impl From<StoreError> for MoveError {
             }
             StoreError::LibraryReadOnly { library } => Self::LibraryReadOnly(library),
             StoreError::HomeOnly => Self::HomeOnly,
+            elsewhere @ StoreError::AliasElsewhere { .. } => Self::Io(elsewhere.to_string()),
             StoreError::Io(reason) => Self::Io(reason),
         }
     }

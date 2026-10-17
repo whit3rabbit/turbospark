@@ -816,10 +816,10 @@ pub fn install_destination(
     let dir = kind.path_in(&root, alias)?;
     let library_id = (!record.is_internal()).then_some(record.id);
     if let Some(place) = store.alias_elsewhere(alias, kind.modality(), library_id.as_deref(), env) {
-        return Err(StoreError::Io(format!(
-            "{alias:?} is already installed in {place}; move it from there, \
-             or remove it there first"
-        )));
+        return Err(StoreError::AliasElsewhere {
+            alias: alias.to_string(),
+            place,
+        });
     }
     // Not followed: a text walk writes straight into `dir`, so a link a
     // drive's owner put in its place would land the install outside the
@@ -923,6 +923,18 @@ pub fn install_text_into(
                 _ => {}
             }
         }
+        // The walk writes through whatever is already in the install folder,
+        // and a folder left by an earlier install, or put there by anyone who
+        // can write the drive, may hold a link to a file or folder elsewhere.
+        // So a folder holding anything but plain files and folders is
+        // cleared first. `remove_dir_all` unlinks a link rather than
+        // following it. A folder of plain leftovers is kept, so a retry
+        // still resumes.
+        if !holds_only_plain_entries(&target.dir) {
+            fs::remove_dir_all(&target.dir)
+                .and_then(|()| fs::create_dir(&target.dir))
+                .map_err(|e| failed(format!("clearing {}: {e}", target.dir.display())))?;
+        }
     }
     let installed =
         install_with_byte_progress(plan, &target.dir, client, progress, byte_progress, cancel)
@@ -932,6 +944,46 @@ pub fn install_text_into(
         model,
         arch: installed.arch,
     })
+}
+
+/// Whether `dir`, an install folder on a drive anyone could have written,
+/// holds only plain files and folders: nothing that is a link, a device, a
+/// socket, a pipe, or a file with another name in the same drive (a hard
+/// link would be written through just as a symbolic one is). Nothing is
+/// followed. A folder too large or too deep for an install counts as not
+/// plain, so a hostile drive cannot make the sweep walk for long.
+fn holds_only_plain_entries(dir: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    const MAX_ENTRIES: usize = 100_000;
+    const MAX_DEPTH: usize = 32;
+    let mut seen = 0usize;
+    let mut stack = vec![(dir.to_path_buf(), 0usize)];
+    while let Some((at, depth)) = stack.pop() {
+        if depth > MAX_DEPTH {
+            return false;
+        }
+        let Ok(entries) = fs::read_dir(&at) else {
+            return false;
+        };
+        for entry in entries {
+            seen += 1;
+            if seen > MAX_ENTRIES {
+                return false;
+            }
+            // `DirEntry::metadata` does not traverse a link.
+            let Ok(found) = entry.and_then(|entry| Ok((entry.path(), entry.metadata()?))) else {
+                return false;
+            };
+            let (path, meta) = found;
+            let kind = meta.file_type();
+            if kind.is_dir() {
+                stack.push((path, depth + 1));
+            } else if !(kind.is_file() && meta.nlink() == 1) {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// `YYYY-MM-DD` in UTC, from the system clock.

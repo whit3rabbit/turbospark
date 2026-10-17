@@ -1170,6 +1170,22 @@ int32_t ts_image_install(const char *alias, TsInstallCallback cb, void *userdata
                          char **result_json);
 
 /*
+ * ts_image_install into the library options_json names, {"library": "<id>"}
+ * (see "model libraries" below; NULL means This Mac). The library's staging
+ * folder holds the download and the build, and the install is published into
+ * its "image" folder only when complete. Refusals: not_connected,
+ * library_read_only, unknown_library and library_disconnected, as a code first
+ * in ts_last_error(). The result keeps every key it had, and gains, in
+ * camelCase like ts_image_installed_json rows:
+ *   "library": the library's id, "internal" for This Mac;
+ *   "libraryName": its name (raw);
+ *   "installId": "<library>:image/<alias>".
+ */
+int32_t ts_image_install_with_options(const char *alias, const char *options_json,
+                                      TsInstallCallback cb, void *userdata,
+                                      char **result_json);
+
+/*
  * Deletes an installed model directory and forgets it from ~/.turbospark.
  * Returns TS_OK on success or TS_ERR_INVALID_ARGUMENT if not installed.
  */
@@ -1193,6 +1209,16 @@ int32_t ts_model_delete(const char *alias);
  *     library marker that cannot be read or written), io.
  *   Installs (ts_model_forget):  not_connected, library_disconnected,
  *     library_read_only, home_only, io.
+ *   Installs into a library (the _with_options calls below):  not_connected,
+ *     library_read_only, library_disconnected, unknown_library, and
+ *     alias_elsewhere (the alias and modality are already installed in This
+ *     Mac or another library, so the install is moved instead; the
+ *     sentence names where). home_only is reserved: no install entry point
+ *     returns it today, because embedding and OCR installs take no
+ *     destination.
+ *     Every other failure of an install keeps its message with no code, as it
+ *     had before libraries: TS_ERR_CANCELLED after ts_install_cancel, and for
+ *     the rest TS_ERR_GENERATE (TS_ERR_INVALID_ARGUMENT for audio).
  *   Any change while an install runs:  busy, with TS_ERR_BUSY. Nothing was
  *     changed. The check is made once, before the work, so it is not atomic
  *     against an install that begins afterwards: the host also stops queueing
@@ -1200,6 +1226,28 @@ int32_t ts_model_delete(const char *alias);
  *     refused.
  * A call that fails writes nothing to its out-parameter. A null out-parameter
  * is refused before anything changes.
+ *
+ * INSTALL DESTINATIONS. ts_install, ts_install_repo and ts_image_install
+ * install into This Mac. Their _with_options variants (and
+ * ts_audio_install_with_options) take an options_json of
+ *   {"library": "<id>"}
+ * where the id is the "id" that ts_libraries_json lists for the library, not
+ * its name. An absent key, null, "internal", and a NULL or empty options_json
+ * all mean This Mac. An unknown key, or a value that is not a string, is
+ * refused with TS_ERR_INVALID_ARGUMENT before any work, so a misspelt key
+ * cannot install into This Mac by accident. The destination is settled before
+ * the first request, and a refusal makes none: a library that is not
+ * connected (not_connected), one a newer TurboSpark wrote (library_read_only),
+ * an id the list does not have (unknown_library), or an alias another library
+ * already holds (alias_elsewhere). A drive lost while the install runs stops
+ * it with library_disconnected, and nothing partial is listed. Embedding and
+ * OCR models install into This Mac only and take no destination. An install
+ * into a library clears its install folder first when the folder, left by an
+ * earlier install or by anyone who can write the drive, holds anything but
+ * plain files and folders (a link above all), so a link is unlinked and never
+ * written through. An install with a
+ * destination is registered like any other: ts_install_cancel stops it, a text
+ * install can be paused, and it makes a library change busy.
  *
  * A library's name comes from its marker, which sits on a drive anyone could
  * have written, so truncate and escape it for display. Aliases and install
@@ -1453,6 +1501,25 @@ int32_t ts_install(const char *alias, TsInstallCallback cb, void *userdata,
                    char **result_json);
 
 /*
+ * ts_install into the library options_json names, {"library": "<id>"} (see
+ * "model libraries" above; NULL means This Mac). The destination is settled
+ * before the first request, so a refused one costs none: not_connected,
+ * library_read_only and unknown_library come as a code first in
+ * ts_last_error() (TS_ERR_INVALID_ARGUMENT), and a drive lost while the walk
+ * runs as library_disconnected, with nothing recorded.
+ *
+ * The result is the recorded row, as ts_installed_json lists it, and it
+ * gains, in snake_case like the row beside them:
+ *   "library": the library's id, "internal" for This Mac;
+ *   "library_name": its name (raw);
+ *   "install_id": "<library>:text/<alias>".
+ * ts_install answers with these keys too.
+ */
+int32_t ts_install_with_options(const char *alias, const char *options_json,
+                                TsInstallCallback cb, void *userdata,
+                                char **result_json);
+
+/*
  * Probes and installs an arbitrary Hugging Face repository `repo` under
  * local `alias`. `file` and `sidecar_repo` may be NULL.
  *
@@ -1461,6 +1528,16 @@ int32_t ts_install(const char *alias, TsInstallCallback cb, void *userdata,
 int32_t ts_install_repo(const char *repo, const char *alias, const char *file,
                         const char *sidecar_repo, TsInstallCallback cb,
                         void *userdata, char **result_json);
+
+/*
+ * ts_install_repo into the library options_json names, as
+ * ts_install_with_options. The destination is settled before the probe, the
+ * walk's first request. The result has the same library keys.
+ */
+int32_t ts_install_repo_with_options(const char *repo, const char *alias,
+                                     const char *file, const char *sidecar_repo,
+                                     const char *options_json, TsInstallCallback cb,
+                                     void *userdata, char **result_json);
 
 /*
  * Signals every in-flight install walk to stop. Returns 1 when at least one
@@ -1766,10 +1843,16 @@ int ts_audio_delete(const char *identity_json);
 int ts_audio_delete_legacy(const char *identity_json);
 int ts_audio_adopt(const char *identity_json, char **out);
 int ts_audio_install(const char *identity_json, TsInstallCallback cb, void *userdata, char **out);
-/* ts_audio_install for a profile with "acknowledgments" in the catalog:
- * options_json is {"acknowledged": [id, ...]} with every id the user accepted
- * (NULL or "" means none). A missing id is refused before any download.
- * ts_audio_install passes none, so it refuses such a profile. */
+/* ts_audio_install for a profile with "acknowledgments" in the catalog, and
+ * into a model library: options_json is {"acknowledged": [id, ...],
+ * "library": "<id>"}, both optional (NULL or "" means neither). Every
+ * acknowledgment of the profile needs its id in "acknowledged", and a missing
+ * one is refused before any download. ts_audio_install passes none, so it
+ * refuses such a profile. "library" is the "id" ts_libraries_json lists
+ * ("internal", null or absent is This Mac); see "model libraries" above for
+ * the refusals, which come before the first request. The result is the
+ * recorded row, and it gains "library", "library_name" and "install_id", as
+ * ts_installed_json rows have them. */
 int ts_audio_install_with_options(const char *identity_json, const char *options_json,
                                   TsInstallCallback cb, void *userdata, char **out);
 /* options: task, allow_portable (false), allow_experimental_metal (false),

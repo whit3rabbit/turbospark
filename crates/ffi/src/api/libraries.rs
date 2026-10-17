@@ -18,7 +18,7 @@ use std::path::Path;
 
 use catalog::library::{
     discover_at, AddedLibrary, ImportedStore, LibraryError, LibraryMarker, LibraryRegistry,
-    LibraryView, LoadReport, LocationEnv, LocationRefusal, Refreshed,
+    LibraryView, LoadReport, LocationEnv, LocationRefusal, Refreshed, INTERNAL_LIBRARY_ID,
 };
 use catalog::{Store, StoreError};
 use serde::Serialize;
@@ -340,15 +340,72 @@ fn library_fault(error: &LibraryError, place: &str) -> Fault {
 }
 
 /// The fault for a failed change to an install.
-fn store_fault(error: &StoreError) -> Fault {
+pub(super) fn store_fault(error: &StoreError) -> Fault {
     let code = match error {
         StoreError::NotConnected { .. } => "not_connected",
         StoreError::LibraryDisconnected { .. } => "library_disconnected",
         StoreError::LibraryReadOnly { .. } => "library_read_only",
         StoreError::HomeOnly => "home_only",
+        StoreError::AliasElsewhere { .. } => "alias_elsewhere",
         StoreError::Io(_) => "io",
     };
     coded(code, &error.to_string())
+}
+
+/// The fault for a failed install into a library (4.3). The four errors the
+/// app localizes (`not_connected`, `library_disconnected`,
+/// `library_read_only`, `home_only`) carry their stable code, as for a
+/// forgotten install. Any other failure is what it was before libraries: its
+/// own message, cancelled or a generic failure ([`abi::install_error`]), with
+/// no code, so a refusal such as an alias another library holds still reads
+/// as it did.
+pub(super) fn install_fault(error: StoreError) -> Fault {
+    match error {
+        StoreError::Io(message) => abi::install_error(message),
+        coded => store_fault(&coded),
+    }
+}
+
+/// Reads the options of an install entry point: a JSON object whose keys are
+/// all known to `T` (which denies unknown fields). Serde would also read an
+/// array as the fields in order, so `["<id>"]` would be a destination and a
+/// misspelt object would not be the only way to get one by accident.
+pub(super) fn parse_options<T: serde::de::DeserializeOwned>(json: &str) -> Result<T, Fault> {
+    let invalid = |why: String| {
+        (
+            abi::TS_ERR_INVALID_ARGUMENT,
+            format!("options is not valid install options: {why}"),
+        )
+    };
+    let value: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| invalid(e.to_string()))?;
+    if !value.is_object() {
+        return Err(invalid("expected a JSON object".to_string()));
+    }
+    serde_json::from_value(value).map_err(|e| invalid(e.to_string()))
+}
+
+/// Refuses a library `id` that the list does not have, as `unknown_library`,
+/// before any install work. An install entry point takes an id the app read
+/// from `ts_libraries_json`, which another window can remove meanwhile.
+/// `None` and "internal" are This Mac, which is always listed. The code comes
+/// from the registry, never from the wording of a later error.
+pub(super) fn require_listed(library: Option<&str>) -> Result<(), Fault> {
+    let Some(id) = library.filter(|id| *id != INTERNAL_LIBRARY_ID) else {
+        return Ok(());
+    };
+    let store = Store::default_store().map_err(|e| coded("io", &e))?;
+    if LibraryRegistry::load(store.root())
+        .libraries()
+        .iter()
+        .any(|record| record.id == id)
+    {
+        return Ok(());
+    }
+    Err(library_fault(
+        &LibraryError::UnknownLibrary(id.to_string()),
+        "the location",
+    ))
 }
 
 /// The stable code of a library error and a sentence for it. The codes are
@@ -561,6 +618,13 @@ mod tests {
                 "library_read_only",
             ),
             (StoreError::HomeOnly, "home_only"),
+            (
+                StoreError::AliasElsewhere {
+                    alias: "qwen".to_string(),
+                    place: "This Mac".to_string(),
+                },
+                "alias_elsewhere",
+            ),
             (StoreError::Io("x".to_string()), "io"),
         ];
         for (error, code) in &store {
@@ -568,6 +632,57 @@ mod tests {
             assert_eq!(status, abi::TS_ERR_INVALID_ARGUMENT);
             assert!(message.starts_with(&format!("{code}: ")), "{message}");
         }
+    }
+
+    /// An install fails with one of the four library codes ahead of its
+    /// sentence, and `home_only` is among them: no install entry point can
+    /// return it yet, so this is where its mapping is pinned. Any other
+    /// failure is what it was before libraries, with no code.
+    #[test]
+    fn an_install_fault_codes_the_library_errors_and_leaves_the_rest() {
+        for (error, code) in [
+            (
+                StoreError::NotConnected {
+                    library: "T7".to_string(),
+                },
+                "not_connected",
+            ),
+            (
+                StoreError::LibraryDisconnected {
+                    library: "T7".to_string(),
+                },
+                "library_disconnected",
+            ),
+            (
+                StoreError::LibraryReadOnly {
+                    library: "T7".to_string(),
+                },
+                "library_read_only",
+            ),
+            (StoreError::HomeOnly, "home_only"),
+            (
+                StoreError::AliasElsewhere {
+                    alias: "qwen".to_string(),
+                    place: "This Mac".to_string(),
+                },
+                "alias_elsewhere",
+            ),
+        ] {
+            let (status, message) = install_fault(error);
+            assert_eq!(status, abi::TS_ERR_INVALID_ARGUMENT, "{code}");
+            assert!(message.starts_with(&format!("{code}: ")), "{message}");
+        }
+        assert_eq!(
+            install_fault(StoreError::Io("disk full".to_string())),
+            (abi::TS_ERR_GENERATE, "disk full".to_string())
+        );
+        assert_eq!(
+            install_fault(StoreError::Io(catalog::INSTALL_CANCELLED.to_string())),
+            (
+                abi::TS_ERR_CANCELLED,
+                catalog::INSTALL_CANCELLED.to_string()
+            )
+        );
     }
 
     /// The code is data and the sentence is shown, so only the sentence is

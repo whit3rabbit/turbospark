@@ -715,7 +715,7 @@ fn an_alias_recorded_in_another_library_is_refused() {
     fx.store.record(&row).unwrap();
 
     let refused = install_destination(&fx.store, Some(&fx.id), InstallKind::Text, "qwen", &fx.env);
-    let Err(StoreError::Io(message)) = refused else {
+    let Err(StoreError::AliasElsewhere { place: message, .. }) = refused else {
         panic!("expected a refusal, got {refused:?}");
     };
     assert!(message.contains("This Mac"), "{message}");
@@ -741,7 +741,7 @@ fn an_alias_recorded_in_another_library_is_refused() {
     )
     .unwrap();
     let refused = install_destination(&fx.store, None, InstallKind::Audio, "voice", &fx.env);
-    let Err(StoreError::Io(message)) = refused else {
+    let Err(StoreError::AliasElsewhere { place: message, .. }) = refused else {
         panic!("expected a refusal, got {refused:?}");
     };
     assert!(message.contains("T7"), "{message}");
@@ -757,7 +757,7 @@ fn an_alias_recorded_in_another_library_is_refused() {
     fx.unplug();
     assert!(matches!(
         install_destination(&fx.store, None, InstallKind::Audio, "voice", &fx.env),
-        Err(StoreError::Io(_))
+        Err(StoreError::AliasElsewhere { .. })
     ));
 }
 
@@ -774,11 +774,15 @@ fn an_image_folder_in_another_library_is_refused() {
         "z-image",
         &fx.env,
     );
-    assert!(matches!(refused, Err(StoreError::Io(ref message)) if message.contains("This Mac")));
+    assert!(
+        matches!(refused, Err(StoreError::AliasElsewhere { ref place, .. }) if place.contains("This Mac"))
+    );
 
     std::fs::create_dir_all(fx.library_root().join("image").join("flux.gturbo")).unwrap();
     let refused = install_destination(&fx.store, None, InstallKind::Image, "flux", &fx.env);
-    assert!(matches!(refused, Err(StoreError::Io(ref message)) if message.contains("T7")));
+    assert!(
+        matches!(refused, Err(StoreError::AliasElsewhere { ref place, .. }) if place.contains("T7"))
+    );
     // The library's own folder is the installer's "already installed" case.
     install_destination(&fx.store, Some(&fx.id), InstallKind::Image, "flux", &fx.env).unwrap();
 }
@@ -1050,12 +1054,13 @@ fn music_already_in_another_library_fails_before_any_transfer() {
     let rows = fx.rows_on_disk();
 
     let run = install_music(&fx, &client, Some(&fx.id));
-    let message = match &run.result {
-        Err(StoreError::Io(message)) => message.clone(),
+    let refusal = match &run.result {
+        Err(held @ StoreError::AliasElsewhere { place, .. }) if place.contains("This Mac") => {
+            held.clone()
+        }
         other => panic!("expected a refusal, got {other:?}"),
     };
-    assert!(message.contains("This Mac"), "{message}");
-    assert_refused_before_any_transfer(&fx, &server, run, StoreError::Io(message));
+    assert_refused_before_any_transfer(&fx, &server, run, refusal);
     assert_eq!(fx.rows_on_disk(), rows);
     assert!(!fx.library_root().join("audio").exists());
 }
@@ -1163,4 +1168,140 @@ fn an_install_on_an_unplugged_library_is_not_resolved_and_names_its_drive() {
             .not_connected_message("nobody", ModelModality::Text, &fx.env),
         None
     );
+}
+
+/// An install folder in a library that already holds links, left by an
+/// earlier install or planted by anyone who can write the drive, must not
+/// make the walk write outside the library: the folder is cleared first,
+/// links unlinked rather than followed, and the install lands in a plain
+/// folder. A plain leftover file is kept.
+#[test]
+fn install_text_into_clears_links_planted_in_the_install_folder() {
+    let _lock = ENDPOINT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let fx = LibraryFixture::new("text-planted-links");
+    let (repo, plan) = text_repo();
+    let server = FixtureServer::start(vec![repo]);
+    let (_reset, client) = client_for(&server);
+    let target =
+        install_destination(&fx.store, Some(&fx.id), InstallKind::Text, "qwen", &fx.env).unwrap();
+
+    // Things outside the library that a link could be pointed at.
+    let outside = fx.base.join("outside");
+    let victim_dir = outside.join("victim-dir");
+    std::fs::create_dir_all(&victim_dir).unwrap();
+    let victim = outside.join("victim.txt");
+    std::fs::write(&victim, b"keep").unwrap();
+    // The folder as a cancelled install, or a hostile drive, left it.
+    let nested = target.dir.join("nested");
+    std::fs::create_dir_all(&nested).unwrap();
+    for (name, to) in [
+        ("tokenizer.json", &victim),
+        ("model_weights.bin", &victim),
+        ("manifest.json", &victim),
+        ("packed_experts", &victim_dir),
+        (".download-cache", &victim_dir),
+    ] {
+        std::os::unix::fs::symlink(to, target.dir.join(name)).unwrap();
+    }
+    std::os::unix::fs::symlink(&victim, nested.join("deep.bin")).unwrap();
+
+    install_text_into(
+        &plan,
+        &target,
+        &client,
+        |_| {},
+        None,
+        None,
+        &fx.store,
+        &fx.env,
+    )
+    .expect("the install lands in a cleared folder");
+
+    assert_eq!(std::fs::read(&victim).unwrap(), b"keep");
+    assert_eq!(
+        LibraryFixture::listing(&victim_dir),
+        Some(Vec::new()),
+        "nothing was created through a link"
+    );
+    let weights = std::fs::symlink_metadata(target.dir.join("model_weights.bin")).unwrap();
+    assert!(
+        weights.file_type().is_file(),
+        "the weights are a plain file"
+    );
+    assert!(
+        !target.dir.join("nested").exists(),
+        "the folder was cleared"
+    );
+    assert_eq!(fx.rows_on_disk().len(), 1);
+}
+
+/// A leftover folder of plain files is not cleared, so a retried install
+/// still finds what it had.
+#[test]
+fn install_text_into_keeps_plain_leftovers() {
+    let _lock = ENDPOINT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let fx = LibraryFixture::new("text-plain-leftovers");
+    let (repo, plan) = text_repo();
+    let server = FixtureServer::start(vec![repo]);
+    let (_reset, client) = client_for(&server);
+    let target =
+        install_destination(&fx.store, Some(&fx.id), InstallKind::Text, "qwen", &fx.env).unwrap();
+    std::fs::create_dir_all(target.dir.join("kept-folder")).unwrap();
+    std::fs::write(target.dir.join("kept-folder").join("part.bin"), b"part").unwrap();
+
+    install_text_into(
+        &plan,
+        &target,
+        &client,
+        |_| {},
+        None,
+        None,
+        &fx.store,
+        &fx.env,
+    )
+    .expect("offline text install");
+
+    assert_eq!(
+        std::fs::read(target.dir.join("kept-folder").join("part.bin")).unwrap(),
+        b"part"
+    );
+    assert!(target.dir.join("model_weights.bin").is_file());
+}
+
+/// A second name for a file elsewhere on the drive is written through just
+/// as a link is, so a folder holding one is cleared too.
+#[test]
+fn install_text_into_clears_a_hard_link_in_the_install_folder() {
+    let _lock = ENDPOINT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let fx = LibraryFixture::new("text-hard-link");
+    let (repo, plan) = text_repo();
+    let server = FixtureServer::start(vec![repo]);
+    let (_reset, client) = client_for(&server);
+    let target =
+        install_destination(&fx.store, Some(&fx.id), InstallKind::Text, "qwen", &fx.env).unwrap();
+    let shared = fx.library_root().join("shared.bin");
+    std::fs::write(&shared, b"shared").unwrap();
+    std::fs::create_dir_all(&target.dir).unwrap();
+    std::fs::hard_link(&shared, target.dir.join("tokenizer_config.json")).unwrap();
+
+    install_text_into(
+        &plan,
+        &target,
+        &client,
+        |_| {},
+        None,
+        None,
+        &fx.store,
+        &fx.env,
+    )
+    .expect("the install lands in a cleared folder");
+
+    assert_eq!(std::fs::read(&shared).unwrap(), b"shared");
+    assert!(target.dir.join("model_weights.bin").is_file());
 }
