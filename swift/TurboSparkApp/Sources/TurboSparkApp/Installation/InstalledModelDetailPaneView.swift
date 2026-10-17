@@ -63,7 +63,7 @@ struct InstalledModelDetailPaneView: View {
     }
 
     private var isFavorite: Bool {
-        orgStore.isFavorite(alias: installedModel.alias, path: installedModel.path)
+        orgStore.isFavorite(installedModel)
     }
 
     var body: some View {
@@ -77,7 +77,7 @@ struct InstalledModelDetailPaneView: View {
                     isCurrentlySelected: isCurrentlySelected,
                     isFavorite: isFavorite,
                     onToggleFavorite: {
-                        orgStore.toggleFavorite(alias: installedModel.alias, path: installedModel.path)
+                        orgStore.toggleFavorite(installedModel)
                     }
                 )
 

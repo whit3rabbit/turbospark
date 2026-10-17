@@ -68,8 +68,8 @@ extension ModelManagerView {
         let trimmedQuery = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if !trimmedQuery.isEmpty {
             list = list.filter { m in
-                let notes = orgStore.notes(alias: m.alias, path: m.path).lowercased()
-                let tags = orgStore.tags(alias: m.alias, path: m.path).joined(separator: " ").lowercased()
+                let notes = orgStore.notes(m).lowercased()
+                let tags = orgStore.tags(m).joined(separator: " ").lowercased()
                 let matchAlias = m.alias.lowercased().contains(trimmedQuery)
                 let matchFamily = m.family.lowercased().contains(trimmedQuery)
                 let matchPath = m.path.lowercased().contains(trimmedQuery)
@@ -81,7 +81,7 @@ extension ModelManagerView {
 
         // 2. Favorites only
         if showFavoritesOnly {
-            list = list.filter { orgStore.isFavorite(alias: $0.alias, path: $0.path) }
+            list = list.filter { orgStore.isFavorite($0) }
         }
 
         // 3. Architecture filter
@@ -115,7 +115,7 @@ extension ModelManagerView {
 
         // 6. Tag filter
         if let selectedTag {
-            list = list.filter { orgStore.tags(alias: $0.alias, path: $0.path).contains(selectedTag) }
+            list = list.filter { orgStore.tags($0).contains(selectedTag) }
         }
 
         // 7. Sort

@@ -14,24 +14,42 @@ final class StateCleanupTests: XCTestCase {
 
     // MARK: - state#96
 
-    func testAReasoningDefaultIsRememberedAgainstThePathNotTheAlias() {
+    /// state#96 keyed the level on the path because an alias was not unique
+    /// once a scanned row existed. Task 5.5 moved the key to the install id:
+    /// `mergeScannedModels` now uniquifies a scanned row's alias, so the id is
+    /// unique within the list, and unlike the path it survives a move or a
+    /// drive that reconnects under another name (requirement 8.1).
+    func testAReasoningDefaultIsRememberedAgainstTheInstallIdNotThePath() {
         let appModel = AppModel()
-        let shared = "shared-alias"
-        appModel.selected = model(alias: shared, path: "/models/a.gturbo")
+        let first = "first-\(UUID().uuidString.prefix(8))"
+        let second = "second-\(UUID().uuidString.prefix(8))"
+        let a = model(alias: first, path: "/models/a.gturbo")
+        let b = model(alias: second, path: "/models/b.gturbo")
+        defer {
+            ModelOrganizationStore.shared.removeMetadata(for: a)
+            ModelOrganizationStore.shared.removeMetadata(for: b)
+        }
+        appModel.selected = a
         appModel.setReasoning(.low)
-        appModel.selected = model(alias: shared, path: "/models/b.gturbo")
+        appModel.selected = b
         appModel.setReasoning(.medium)
 
         XCTAssertEqual(
-            appModel.modelReasoningDefaults["/models/a.gturbo"], GenerateOptions.Reasoning.low.rawValue,
-            "An alias is not unique once a scanned row exists, so two installs sharing a name "
-                + "shared one remembered level.")
+            ModelOrganizationStore.shared.reasoningDefault(for: a),
+            GenerateOptions.Reasoning.low.rawValue)
         XCTAssertEqual(
-            appModel.modelReasoningDefaults["/models/b.gturbo"],
+            ModelOrganizationStore.shared.reasoningDefault(for: b),
             GenerateOptions.Reasoning.medium.rawValue)
+
+        // The same install, now at another path: the level is still found.
+        let moved = model(alias: first, path: "/Volumes/Other/a.gturbo")
+        appModel.reasoning = .off
+        appModel.restoreReasoningPreference(for: moved)
+        XCTAssertEqual(appModel.reasoning, .low)
         XCTAssertNil(
-            appModel.modelReasoningDefaults[shared],
-            "The alias arm of the old `??` was reached first, so the path arm was dead code.")
+            appModel.modelReasoningDefaults["/models/a.gturbo"],
+            "Nothing is written to the legacy path-or-alias table any more.")
+        XCTAssertNil(appModel.modelReasoningDefaults[first])
     }
 
     // MARK: - state#97

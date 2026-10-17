@@ -258,16 +258,22 @@ extension AppModel {
         return options
     }
 
-    /// **PATH FIRST, ALIAS AS THE LEGACY FALLBACK** (state#96). `setReasoning`
-    /// writes the path now, and reading the alias first would let an entry
-    /// written before that change shadow the fresh one for as long as the
-    /// alias entry exists -- which is forever, since nothing rewrites it.
+    /// **INSTALL ID FIRST, THEN THE LEGACY PATH, THEN THE ALIAS** (task 5.5,
+    /// requirement 8.1; state#96 had made it path then alias). The level lives
+    /// in `ModelOrganizationStore` under the model's `install_id`, so it is
+    /// still found after the model moves or its drive reconnects under another
+    /// name. `modelReasoningDefaults` is the legacy table: the first path or
+    /// alias entry found there is copied to the install id (unless the id
+    /// already has a level, which wins) and removed from the table here. The
+    /// alias stays last because an alias entry shadows a fresher path entry for
+    /// as long as it exists, and nothing rewrites it.
     public func restoreReasoningPreference(for model: InstalledModel) {
-        if let saved = modelReasoningDefaults[model.path],
-            let level = GenerateOptions.Reasoning(rawValue: saved) {
-            self.reasoning = level
-        } else if let saved = modelReasoningDefaults[model.alias],
-            let level = GenerateOptions.Reasoning(rawValue: saved) {
+        let legacyBefore = modelReasoningDefaults
+        let saved = ModelOrganizationStore.shared.reasoningDefault(
+            for: model, migratingLegacyFrom: &modelReasoningDefaults)
+        // The retired legacy key reaches disk with the next settings save.
+        if modelReasoningDefaults != legacyBefore { persistSettingsDebounced() }
+        if let saved, let level = GenerateOptions.Reasoning(rawValue: saved) {
             self.reasoning = level
         }
     }
@@ -546,11 +552,13 @@ extension AppModel {
             }
         }
 
-        ModelOrganizationStore.shared.removeMetadata(for: model.alias, path: model.path)
-        // The remembered reasoning level goes with it (state#96). Nothing
-        // pruned this, so `settings.json` accumulated an entry per model ever
-        // deleted -- and once the key is the PATH, a later install at the
-        // same path silently inherits a level its own user never chose.
+        // The remembered reasoning level is part of the same record (task
+        // 5.5), so it goes with the notes and tags. A legacy path entry that
+        // was never read is pruned too: nothing used to prune it, so
+        // `settings.json` accumulated an entry per model ever deleted, and a
+        // later install at the same path silently inherited a level its own
+        // user never chose (state#96).
+        ModelOrganizationStore.shared.removeMetadata(for: model)
         modelReasoningDefaults.removeValue(forKey: model.path)
         persistSettings()
         refreshModels()

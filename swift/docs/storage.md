@@ -110,6 +110,26 @@ key still throws, or an intact file gets read as empty and overwritten.
 Draft persistence is debounced by 300 ms. SQLCipher compares versioned chat
 payloads and updates only changed rows and their FTS content.
 
+**Per-model metadata is keyed by `install_id`** (`model_organization.json`,
+requirement 8.1). A model's favorite flag, tags, notes, nickname and
+reasoning default live in one `ModelCustomMetadata` record under
+`<library-id>:<modality>/<alias>` (`ModelIdentityKey`). That id survives a
+move to another library and a drive that reconnects under another name. The
+path does not.
+
+The file is still a flat dictionary with no version field. Keys from earlier
+builds (`alias::standardized-path`, the bare alias) load unchanged and are
+found as a fallback. The first read copies the entry to the id key in memory,
+without notifying observers, and the next save removes the old key. Reasoning
+defaults used to sit in `settings.json` (`modelReasoningDefaults`, raw path or
+alias keys). Each one is copied into the record and dropped from that table
+when its model is opened.
+
+When an id entry and a legacy entry both exist, the id entry wins field by
+field where it has a value (`ModelCustomMetadata.filling(gapsFrom:)`). A move
+calls `ModelOrganizationStore.rekey(from:to:legacyPath:)` with the old and new
+ids. A corrupt file is quarantined by `AppJSONStore` like every other store.
+
 ## `AppStorageRoot` and why the test suite needed one
 
 Found 2026-08-31 from a bug report: a chat titled "T10 chat" reappeared on

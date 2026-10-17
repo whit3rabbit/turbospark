@@ -156,8 +156,8 @@ struct ModelManagerView: View {
             modelItem: m,
             isSelected: selectedModelPath == m.path,
             isLoaded: model.selected?.path == m.path && model.session != nil,
-            isFavorite: orgStore.isFavorite(alias: m.alias, path: m.path),
-            tags: orgStore.tags(alias: m.alias, path: m.path),
+            isFavorite: orgStore.isFavorite(m),
+            tags: orgStore.tags(m),
             onSelect: {
                 selectedModelPath = m.path
             }
