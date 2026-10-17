@@ -254,14 +254,14 @@ impl ConformerLayer {
 /// `LinearNoSubsampling`: linear -> LayerNorm(1e-5) -> espnet rel-pos
 /// scaling. Owns its positional encoding.
 #[derive(Debug, Clone)]
-pub(crate) struct LinearNoSub {
-    pub(crate) linear: SaLinear,
-    pub(crate) norm: SaLayerNorm,
-    pub(crate) pos_enc: EspnetPosEnc,
+struct LinearNoSub {
+    linear: SaLinear,
+    norm: SaLayerNorm,
+    pos_enc: EspnetPosEnc,
 }
 
 impl LinearNoSub {
-    pub(crate) fn load(
+    fn load(
         file: &SafetensorsFile,
         prefix: &str,
         in_dim: usize,
@@ -305,11 +305,11 @@ pub(crate) fn pad_left_cm(x: &[f32], ch: usize, seq: usize, pad: usize) -> Vec<f
 /// (kernel len+1), leaky ReLU (the `nn.leaky_relu` default slope 0.01),
 /// left-pad 2, conv (kernel 3), residual.
 #[derive(Debug, Clone)]
-pub(crate) struct PreLookaheadLayer {
+struct PreLookaheadLayer {
     channels: usize,
     pre_lookahead_len: usize,
-    pub(crate) conv1: SaConv1d,
-    pub(crate) conv2: SaConv1d,
+    conv1: SaConv1d,
+    conv2: SaConv1d,
 }
 
 impl PreLookaheadLayer {
@@ -413,13 +413,13 @@ impl Upsample1D {
 /// upsample + second embed + conformer stack + final norm.
 #[derive(Debug, Clone)]
 pub(crate) struct UpsampleConformerEncoder {
-    pub(crate) embed: LinearNoSub,
-    pub(crate) pre_lookahead_layer: PreLookaheadLayer,
-    pub(crate) encoders: Vec<ConformerLayer>,
-    pub(crate) up_layer: Upsample1D,
-    pub(crate) up_embed: LinearNoSub,
-    pub(crate) up_encoders: Vec<ConformerLayer>,
-    pub(crate) after_norm: SaLayerNorm,
+    embed: LinearNoSub,
+    pre_lookahead_layer: PreLookaheadLayer,
+    encoders: Vec<ConformerLayer>,
+    up_layer: Upsample1D,
+    up_embed: LinearNoSub,
+    up_encoders: Vec<ConformerLayer>,
+    after_norm: SaLayerNorm,
 }
 
 impl UpsampleConformerEncoder {

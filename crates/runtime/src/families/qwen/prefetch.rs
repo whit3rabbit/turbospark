@@ -55,6 +55,7 @@ struct Stats {
 /// Worker thread and the one job it can have in flight.
 pub(crate) struct Prefetcher {
     k: usize,
+    #[allow(dead_code)]
     top_k: usize,
     tx: Mutex<Option<Sender<Job>>>,
     rx: Mutex<Receiver<Done>>,
@@ -185,14 +186,17 @@ impl Prefetcher {
     }
 
     /// Is a job in flight for `layer`?
+    #[cfg(test)]
     pub(crate) fn pending_for(&self, layer: usize) -> bool {
         *self.pending.lock().unwrap() == Some(layer)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn width(&self) -> usize {
         self.k
     }
 
+    #[allow(dead_code)]
     pub(crate) fn top_k(&self) -> usize {
         self.top_k
     }
@@ -240,8 +244,10 @@ mod tests {
     }
 
     fn streamer(experts: usize, slots: usize) -> (PreadExpertStreamer, std::path::PathBuf) {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let path = std::env::temp_dir().join(format!(
-            "turbospark-qwen-prefetch-{}-{experts}-{slots}",
+            "turbospark-qwen-prefetch-{}-{n}-{experts}-{slots}",
             std::process::id()
         ));
         let stride = 4096usize;
