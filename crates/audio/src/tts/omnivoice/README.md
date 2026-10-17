@@ -110,7 +110,9 @@ column).
 Rust gates: `cargo test -p turbospark-audio --lib omnivoice` (15 tests:
 fixture parity, the raw-release intake equivalence, the duration
 fixture, the pipeline end-to-end) plus the env-gated runtime gates
-(`TURBOSPARK_TEST_OMNIVOICE`, `TURBOSPARK_TEST_OMNIVOICE_REF`).
+(`TURBOSPARK_TEST_OMNIVOICE`, `TURBOSPARK_TEST_OMNIVOICE_REF`) and the
+reference-transcript A/B
+(`cargo test --release -p turbospark-runtime --test omnivoice_reference_transcript -- --ignored --nocapture`).
 
 ## Checkpoint gates (measured, 2026-10-15, M-series, release build)
 
@@ -132,6 +134,46 @@ fixture, the pipeline end-to-end) plus the env-gated runtime gates
   the ailuntx rowwise format, not the mlx-audio layout), so the 8-bit
   gate is Rust-only (determinism + oracle) and the cross-engine parity
   runs on bfloat16.
+- **Reference transcript A/B (2026-10-16, M4 Max, Metal, release).**
+  `reference_transcript_ab` (`crates/runtime/tests/omnivoice_reference_transcript.rs`)
+  clones a 12-word and a 13-word target from four LibriSpeech test-clean
+  references: 1284-1180-0000, 2830-3979-0000, 4992-23283-0000, and
+  7176-88083-0000 (two female, two male, 5.7 to 8.1 s). The references
+  go in at 16 kHz and the runner resamples them. Seeds 7, 11, and 23, 32
+  steps, the 8-bit checkpoint at `b222e4d8`. Each variant gets 24 clips
+  and 300 target words. Every variant generates the same frame count,
+  because the target length comes from the target text alone. The
+  oracle is CPU Parakeet Redux (`2bf12860`), not the whisper oracle
+  above, so these numbers do not compare with that line. Scoring folds
+  Parakeet's "neighbours" to "neighbors".
+
+  | Transcript sent | WER | Clean clips | Leading words lost | Transcript words spoken |
+  | --- | ---: | ---: | ---: | ---: |
+  | none | 0.67% (2/300) | 23/24 | 0 clips | 0 clips |
+  | exact, sentence case | 0.00% (0/300) | 24/24 | 0 clips | 0 clips |
+  | Parakeet's transcript of the reference | 0.00% (0/300) | 24/24 | 0 clips | 0 clips |
+  | stale (the next reference's words) | 75.67% (227/300) | 2/24 | 16 clips, 160 words | 20 clips, 93 words |
+
+  - The expected failure without a transcript, dropped leading words, did
+    not occur in 24 clips. The two errors with none are one clip ("the old
+    stole" for "the old stone wall", reference 1284-1180-0000, seed 11).
+    None and exact are one clip apart, so this sample shows no
+    intelligibility gain from sending a transcript, and no cost either.
+  - A transcript that does not match the reference audio is catastrophic.
+    The model speaks part of the wrong transcript into the target span,
+    most often its last words ("scattered in broad splashes, our
+    neighbours planted a small garden"), and the fixed target length cuts
+    the script short. The ASR transcript
+    (one "colour" for "color" across four references) behaves like the
+    exact one.
+  - The clone in `real_checkpoint_gate` passes the placeholder transcript
+    "The reference transcript.", which is a mismatched transcript of this
+    kind. That gate checks determinism only.
+  - Not measured: speaker similarity, prosody, and real takes whose ASR
+    transcript is partly wrong (between exact and stale).
+  - A first run of the none, exact, and stale variants in a separate
+    process gave the same transcripts for all 72 clips. The wall time (3128 s for 96 clips, host load average up to
+    14) is not a speed figure.
 
 ## Open items
 
