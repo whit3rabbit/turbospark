@@ -121,8 +121,12 @@ enum AudioSearchFusion {
 final class AudioSemanticSearch: @unchecked Sendable {
     static let textDimensions = 768
     static let audioDimensions = 256
-    /// Untuned floors: they only drop clearly unrelated spans. Neither lane
-    /// has a recall gate yet, so the sound lane is labelled experimental.
+    /// The sound floor is checked by `crates/runtime/tests/coreml_sound_recall.rs`
+    /// (25 real clips, 16 classes): every query-to-clip cosine fell between
+    /// 0.59 and 0.77, related or not, so no floor separates them. 0.15 keeps
+    /// every relevant clip and drops nothing; only the order carries signal
+    /// (right clip in the top three for 75% of queries), so the sound lane
+    /// stays labelled experimental. The meaning floor has no gate yet.
     static let minMeaningScore: Float = 0.25
     static let minSoundScore: Float = 0.15
 

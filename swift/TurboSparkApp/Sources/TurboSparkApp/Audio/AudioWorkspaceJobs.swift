@@ -112,10 +112,13 @@ extension AudioWorkspaceController {
                 let session = profile.family == "qwen3_tts" ? nil : try await self.residentSession(for: profile, portable: portable, experimentalMetal: experimentalMetal, source: result)
                 var request = Self.request(from: inputs, task: currentTask)
                 if clonesNatively { request = Self.nativeCloneRequest(request, family: profile.family, speech: inputs.speech) }
+                var labelFailure: String?
                 if currentTask == .speechToText {
                     guard let selected else { throw AudioWorkspaceError.message(AppStrings.localized("Import or select a recording first.")) }
                     guard let session else { throw CancellationError() }
-                    try await self.transcribe(item: selected, into: result.id, session: session, request: request, source: .final, token: token)
+                    let transcription = try await self.transcribe(item: selected, into: result.id, session: session, request: request, source: .final, token: token)
+                    // Speaker labels are extra, as in the Record page's final pass.
+                    labelFailure = try await self.labelSpeakersBestEffort(item: selected, into: result.id, revision: transcription.revision, words: transcription.words, token: token)
                 } else {
                     let pcm: [Float]
                     if [.enhancement, .separation, .alignment, .diarization, .speechDetection, .codec, .languageIdentification].contains(currentTask) {
@@ -124,7 +127,12 @@ extension AudioWorkspaceController {
                             throw AudioWorkspaceError.message(AppStrings.localized("This operation cannot process the full recording. Choose a shorter source."))
                         }
                         let assets = self.assets; let lifetime = self.lifetime
-                        pcm = try await Task.detached { try AudioMediaIO.readMono16k(selected.clips, store: assets, start: 0, duration: selected.duration, cancel: lifetime.check) }.value
+                        if currentTask == .diarization {
+                            let limit = Double(profile.capabilities.maxInputSeconds ?? 30)
+                            pcm = try await Task.detached { try AudioMediaIO.readMono16kTake(selected.clips, store: assets, duration: selected.duration, limit: limit, cancel: lifetime.check) }.value
+                        } else {
+                            pcm = try await Task.detached { try AudioMediaIO.readMono16k(selected.clips, store: assets, start: 0, duration: selected.duration, cancel: lifetime.check) }.value
+                        }
                     } else if clonesNatively {
                         guard let reference = inputs.speech?.reference, reference.isValid else {
                             throw AudioWorkspaceError.message(AppStrings.localized("Choose 1 to 30 seconds of reference speech."))
@@ -175,14 +183,19 @@ extension AudioWorkspaceController {
                         if let generatedClip { $0.clips = [generatedClip] }
                         $0.resolvedSeed = output.seed
                         if let transcript = output.transcript {
-                            $0.addTranscript(Self.librarySegments(transcript, offset: 0), source: .final, language: transcript.language, nativeResult: try? JSONEncoder().encode(transcript))
+                            var segments = Self.librarySegments(transcript, offset: 0)
+                            if currentTask == .diarization {
+                                for index in segments.indices { segments[index].speaker = segments[index].speaker.map(AudioSpeakerLabels.displayName) }
+                            }
+                            $0.addTranscript(segments, source: .final, language: transcript.language, nativeResult: try? JSONEncoder().encode(transcript))
                         }
                         $0.status = .completed; $0.updatedAt = Date()
                     }
                 }
                 guard self.valid(token) else { return }
                 if currentTask == .speechToText { try self.persistMutation(result.id) { $0.status = .completed; $0.updatedAt = Date() } }
-                self.status = AppStrings.localized("Saved in this profile")
+                if let labelFailure { self.status = AppStrings.localized("Transcript saved. Speakers could not be labeled: \(labelFailure)") }
+                else { self.status = AppStrings.localized("Saved in this profile") }
             } catch {
                 guard self.valid(token) else { return }
                 let cancelled = Task.isCancelled
@@ -207,9 +220,16 @@ extension AudioWorkspaceController {
             AudioLibrarySegment(start: ($0.startSeconds ?? 0) + offset, end: ($0.endSeconds ?? $0.startSeconds ?? 0) + offset, text: $0.text, speaker: $0.speaker, timing: $0.timing)
         }
     }
-    func transcribe(item: AudioLibraryItem, into id: UUID, session: AudioSession, request: AudioRequest, source: AudioTranscriptRevision.Source, token: UUID) async throws {
+    /// The revision a transcription added, and its word timings on the
+    /// recording's timeline (empty for models without word alignment).
+    struct Transcription {
+        var revision: UUID
+        var words: [ClosedRange<Double>]
+    }
+    @discardableResult func transcribe(item: AudioLibraryItem, into id: UUID, session: AudioSession, request: AudioRequest, source: AudioTranscriptRevision.Source, token: UUID) async throws -> Transcription {
         var segments: [AudioLibrarySegment] = []
         var native: [AudioTranscript] = []
+        var words: [ClosedRange<Double>] = []
         let duration = item.duration
         let assets = self.assets; let lifetime = self.lifetime
         // Each window has a known recording offset. Model window extents remain
@@ -223,6 +243,9 @@ extension AudioWorkspaceController {
             guard valid(token) else { throw CancellationError() }
             if let transcript = result.transcript {
                 native.append(transcript)
+                for word in transcript.segments.flatMap({ $0.words ?? [] }) where word.endSeconds >= word.startSeconds {
+                    words.append((word.startSeconds + offset)...(word.endSeconds + offset))
+                }
                 var next = Self.librarySegments(transcript, offset: offset)
                 Self.reconcileBoundary(previous: &segments, next: &next)
                 segments.append(contentsOf: next)
@@ -232,20 +255,33 @@ extension AudioWorkspaceController {
         }
         guard valid(token) else { throw CancellationError() }
         let metadata = try JSONEncoder().encode(native)
+        var revision = UUID()
         // Reload inside the locked mutation so edits made during inference survive.
         try persistMutation(id) {
-            $0.addTranscript(segments, source: source, language: native.compactMap(\.language).first, nativeResult: metadata)
+            revision = $0.addTranscript(segments, source: source, language: native.compactMap(\.language).first, nativeResult: metadata)
         }
+        return Transcription(revision: revision, words: words)
     }
     static func reconcileBoundary(previous: inout [AudioLibrarySegment], next: inout [AudioLibrarySegment]) {
         guard let last = previous.last, !next.isEmpty, next[0].start < last.end else { return }
         let left = last.text.split(whereSeparator: \.isWhitespace)
         let right = next[0].text.split(whereSeparator: \.isWhitespace)
+        // A window that cuts a sentence ends its copy with a period the next
+        // window's copy lacks, so words compare without case or punctuation.
+        let word = { (token: Substring) in token.lowercased().filter { $0.isLetter || $0.isNumber } }
         // Only remove exact overlap. Uncertain boundaries remain available to edit.
         for count in stride(from: min(20, min(left.count, right.count)), through: 2, by: -1) {
-            if left.suffix(count).map({ $0.lowercased() }) == right.prefix(count).map({ $0.lowercased() }) {
-                next[0].text = right.dropFirst(count).joined(separator: " ")
-                if next[0].text.isEmpty { next.removeFirst() }
+            if left.suffix(count).map(word) == right.prefix(count).map(word) {
+                if count == left.count {
+                    // The earlier window heard only the start of this segment
+                    // before its cut. Keep the later, whole copy from the
+                    // earlier start.
+                    next[0].start = min(last.start, next[0].start)
+                    previous.removeLast()
+                } else {
+                    next[0].text = right.dropFirst(count).joined(separator: " ")
+                    if next[0].text.isEmpty { next.removeFirst() }
+                }
                 break
             }
         }

@@ -147,9 +147,15 @@ modules and internal codecs are not presented as runnable jobs.
   experimental option; its audio encoder still runs on the CPU.
 - Qwen3-TTS runs Base, CustomVoice, and VoiceDesign MLX checkpoints in Swift.
   The Rust session and HTTP Audio API do not execute this family.
-- Enhancement, separation, alignment, diarization, speech detection, codecs, and
-  other transcription families stay unavailable until their native adapters and
-  model gates exist. Their source implementations alone do not enable controls.
+- Speaker diarization runs the pinned Core ML pyannote community-1 export
+  (`speaker-diarization-coreml`, macOS 15+) from the Advanced page. Once it is
+  installed, the Record page's final pass labels each segment of a take with a
+  speaker ("Speaker 1", "Speaker 2", ...). Takes over 30 minutes stay
+  unlabeled. See [Core ML models](COREML.md).
+- Enhancement, separation, alignment, speech detection, codecs, the CPU
+  diarization families (Sortformer, Nemotron), and other transcription families
+  stay unavailable until their native adapters and model gates exist. Their
+  source implementations alone do not enable controls.
 
 Downloads use the existing shared queue. Native text/audio and Swift MLX image
 execution share one heavyweight permit. An active operation retains the permit

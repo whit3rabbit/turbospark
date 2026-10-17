@@ -297,9 +297,14 @@ extension AudioWorkspaceController {
             do {
                 guard admitted else { throw CancellationError() }
                 let session = try await self.residentSession(for: profile, source: item)
-                try await self.transcribe(item: item, into: id, session: session, request: Self.request(from: item.recipe, task: .speechToText), source: .final, token: token)
+                let transcription = try await self.transcribe(item: item, into: id, session: session, request: Self.request(from: item.recipe, task: .speechToText), source: .final, token: token)
+                guard self.valid(token) else { return }
+                // Speaker labels are extra: the transcript is already saved,
+                // so a failure here leaves it unlabeled instead of failing it.
+                let labelFailure = try await self.labelSpeakersBestEffort(item: item, into: id, revision: transcription.revision, words: transcription.words, token: token)
                 guard self.valid(token) else { return }
                 self.publish(try self.library.update(id) { $0.status = .completed; $0.updatedAt = Date() })
+                if let labelFailure { self.status = AppStrings.localized("Transcript saved. Speakers could not be labeled: \(labelFailure)") }
                 self.transcriptBacklog = 0
                 // The final transcript is in: embed it for meaning search.
                 self.librarySearch.scheduleIndexing(self)

@@ -1,6 +1,6 @@
 # Core ML models
 
-TurboSpark runs five FluidInference Core ML exports. None of them is a
+TurboSpark runs six FluidInference Core ML exports. None of them is a
 generic format: each is a set of fixed-shape Core ML programs plus host files,
 and each has its own pipeline in `crates/runtime/src/coreml/`. The generic
 runner (load, compile, marshal, state) is `crates/coreml`; read its
@@ -18,6 +18,7 @@ audio catalog reports `can_run: false`.
 | [FluidInference/parakeet-ultra-coreml](https://huggingface.co/FluidInference/parakeet-ultra-coreml/tree/95eaa59a39d4394f047a4dc5cce480388a60d1b6) | `95eaa59a39d4394f047a4dc5cce480388a60d1b6` | `coreml::parakeet` (same component contract as Redux) | CC-BY-4.0 |
 | [FluidInference/parakeet-unified-en-0.6b-coreml](https://huggingface.co/FluidInference/parakeet-unified-en-0.6b-coreml/tree/d32e972dd4315f1dc3f6be28fb2aab0ab3e80358) (streaming subset only) | `d32e972dd4315f1dc3f6be28fb2aab0ab3e80358` | `coreml::parakeet_unified`, `parakeet_unified_stream` | CC-BY-4.0 |
 | [FluidInference/embeddinggemma-2-coreml](https://huggingface.co/FluidInference/embeddinggemma-2-coreml/tree/3f978ddf92cac9aa07eb2dcf6eb36cf450f3dba4) | `3f978ddf92cac9aa07eb2dcf6eb36cf450f3dba4` | `coreml::embedding_gemma2`, `embedding_gemma2_media` | Apache-2.0 |
+| [FluidInference/speaker-diarization-coreml](https://huggingface.co/FluidInference/speaker-diarization-coreml/tree/7eab74f3463c736418d0eb10296261ae581146c9) (community-1 subset only) | `7eab74f3463c736418d0eb10296261ae581146c9` | `coreml::diarization` | CC-BY-4.0 (that subset) |
 | [FluidInference/unlimited-ocr-mlx-coreml](https://huggingface.co/FluidInference/unlimited-ocr-mlx-coreml/tree/4568571eacd864e0a253c609b3c9d0e00450cebc) (Core ML parts only) | `4568571eacd864e0a253c609b3c9d0e00450cebc` | `coreml::unlimited_ocr` | MIT |
 
 Attribution: the Parakeet exports are Core ML conversions by Fluid Inference of
@@ -29,6 +30,19 @@ vocabulary, the configs and one streaming encoder
 repository. EmbeddingGemma 2 is a Google model;
 the export's card says Apache-2.0, and whether the Gemma terms also apply has
 not been checked. Unlimited OCR is baidu/Unlimited-OCR under MIT.
+
+Speaker diarization pins only the pyannote community-1 set: the
+`Segmentation`, `FBank`, `Embedding` and `PldaRho` programs,
+`plda-parameters.json`, and the repository's `NOTICE.md` and `LICENSE`
+(23 files, 21.6 MB). These are modified Core ML conversions by Fluid
+Inference of `pyannote/speaker-diarization-community-1` (pyannote, CC-BY-4.0),
+whose embedding is WeSpeaker ResNet34 and whose PLDA parameters come from BUT
+Speech@FIT (CC-BY-4.0). The legacy `pyannote_segmentation` and `wespeaker*`
+programs in the same repository fall outside that license scope and are not
+pinned. The repository's `PROVENANCE.md` calls the binaries historically
+reconstructed, not build-attested: the 2025 converter commit was not recorded.
+Every pinned file matched the SHA-256 in its `provenance.json` and the Hub
+LFS digest.
 
 Host-side logic follows FluidInference/FluidUse at
 `d278e17df85e39e8c21bb64a467da81c39576fcd` (Apache-2.0) where the model cards
@@ -67,6 +81,21 @@ multiple of 48 px), 16 px patches and 3 x 3 pooling. Both produce soft tokens
 that go through the text model between their boundary tokens. `pack_256` is not
 used: it needs its own parity gate first.
 
+**Speaker diarization (offline).** The host follows pyannote.audio 4.0.0
+`SpeakerDiarization` with `VBxClustering` (commit
+`a1ed3bb0440d33d18622e1cb6b138431cfaf4f7a`): 10 s windows every 1 s, the
+powerset argmax as three local speakers per frame, an embedding for every
+active local speaker (overlap excluded when more than 1 s of clean speech
+remains), centroid AHC on the normalized embeddings cut at 0.6 like scipy
+`fcluster`, VBx (Fa 0.07, Fb 0.8, 20 iterations) on the PLDA features, and
+constrained assignment per window. The output is the exclusive
+reconstruction, one speaker per frame, as turns between frame centers on the
+16.875 ms grid. Speakers are `S1`, `S2`, ... in order of first appearance.
+The FBank output is re-centered on non-silent frames, as FluidAudio
+`SilenceAwareFbank` does at `2d6c42ca5f3accc0faf9fee9e0fff5b9b2cf6042`.
+It runs as audio task `diarization` and returns a transcript whose segments
+are turns with empty text.
+
 **Unlimited OCR.** Pages are aspect-fit into 1024 x 1024 with a gray-127
 border (PIL `ImageOps.pad`, PIL bicubic) and normalized to [-1, 1]. The prefix
 is `<bos>`, 273 page embeddings per page, then the prompt ids. Prefill runs in
@@ -84,6 +113,7 @@ is `<bos>`, 273 page embeddings per page, then the prompt ids. Prefill runs in
 | Parakeet Unified | mel on the host, int8 encoder Neural Engine, decoder and joint CPU | `TURBOSPARK_PARAKEET_UNIFIED_ENCODER_UNITS` |
 | EmbeddingGemma 2 | text Neural Engine, audio and vision GPU | `TURBOSPARK_EMBEDDINGGEMMA2_COREML_UNITS` (text) |
 | Unlimited OCR | page encoder GPU (fixed), decoder GPU | none; Neural Engine refused |
+| Speaker diarization | segmentation, FBank and PldaRho CPU, embedding Neural Engine | `TURBOSPARK_DIARIZATION_COREML_EMBEDDING_UNITS` (GPU refused) |
 
 Override values are `cpu`, `cpu_gpu`, `cpu_ane` and `all`.
 
@@ -100,6 +130,11 @@ Override values are `cpu`, `cpu_gpu`, `cpu_ane` and `all`.
   first use. Measured here: 15 s for `embed_32` at open, 37 s for `embed_128` on
   its first request.
 - **OCR:** the card reports wrong page embeddings on the Neural Engine.
+- **Speaker diarization:** `MLComputePlan` puts the segmentation model's
+  LSTMs, FBank and PldaRho on the CPU whatever is requested, so they load
+  CPU-only. The embedding plans 99.96% of its cost on the Neural Engine. It
+  was never run on the GPU here, so a GPU override is refused unless
+  `TURBOSPARK_COREML_ALLOW_QUANTIZED_GPU=1`.
 
 To see where Core ML will actually run a model, read its compute plan
 (`MLComputePlan`, macOS 14.4+) instead of timing placements:
@@ -135,6 +170,7 @@ TURBOSPARK_PARAKEET_COREML_MODEL=~/models/coreml/parakeet-ultra-coreml \
 cargo test --release -p turbospark-runtime --test coreml_parakeet_unified -- --ignored --nocapture
 cargo test --release -p turbospark-runtime --test coreml_embeddinggemma2 -- --ignored --nocapture
 cargo test --release -p turbospark-runtime --test coreml_ocr -- --ignored --nocapture
+cargo test --release -p turbospark-runtime --test coreml_diarization -- --ignored --nocapture
 cargo test --release -p turbospark-ffi --test embedding_request --test ocr_surface -- --include-ignored
 ```
 
@@ -174,6 +210,20 @@ timings are informal and are not benchmark rows.
   batch on the same audio. First Neural Engine compile 14.5 s.
 - Word commit lag (audio received minus word end) median 1.04 s, p95 1.50 s,
   against the 1.12 s chunk plus look-ahead. Append compute p95 18.8 ms.
+
+**Speaker diarization** (2026-10-16, load average 30 to 47 from other
+sessions, so timings are informal)
+- `coreml_diarization`: a 65.8 s `say` conversation, 10 turns alternating
+  Samantha and Daniel with 0.5 s gaps. Two speakers found, every turn
+  attributed to its voice, DER 0.0126 with no collar (miss 0.0023, false
+  alarm 0.0103, confusion 0) and 0.0004 with a 0.25 s collar. A 40 s one-voice
+  monologue stays one speaker (DER 0). With AHC forced to merge everything the
+  gate fails (one speaker, DER 0.45).
+- 37x to 39x real time on the 65.8 s clip. A probe tiling a 22.6 s two-voice
+  clip: 10 min in 19.1 s, 30 min in 49.6 s. First Neural Engine compile of the
+  embedding 10 s per executable, cached opens about 50 ms.
+- Peak `phys_footprint`: 673 MB (66 s, with the compile), 776 MB (10 min),
+  858 MB (30 min).
 
 **EmbeddingGemma 2**
 - Against a coremltools CPU reference
@@ -326,6 +376,14 @@ tokens:
 | Catalog pin | `parakeet-redux-coreml` in `audio_assets.json` | `embeddinggemma-2-coreml` in `embedding_models.json`, status `verified` | `unlimited-ocr-coreml` in `ocr_models.json` |
 | App | Audio workspace, Transcribe and Record pages (listed, downloaded and run like any audio profile) | API > Embeddings tab and Settings > Memory: the shared embedding picker lists it as Verified and offers Download, then Use | none (the pin is installable through the C ABI and Swift only) |
 
+Speaker diarization has no column above: runtime `DiarizationCoreMl`; C ABI
+`ts_audio_*` sessions with task `diarization`; Swift `AudioSession` with
+`AudioTask.diarization`; catalog pin `speaker-diarization-coreml` in
+`audio_assets.json`; no server or CLI surface. In the app, the Advanced page's
+Speaker diarization operation downloads and runs it, and once it is installed
+the Record page's final pass labels each segment of a take with the speaker
+whose turns cover most of its words (`AudioSpeakerLabels`).
+
 ### Pinned installs
 
 All three pins list every file by path, size and SHA-256 at an immutable
@@ -453,6 +511,15 @@ now; the note is here so the guard is not removed.
   counts only `*.safetensors`, so a Core ML model gets the 512 MiB floor.
   Parakeet's measured 488 MB peak fits under it. A larger Core ML audio model
   would not, and needs this fixed first.
+- **PldaRho already multiplies by `sqrt(psi)`.** Its output is the PLDA
+  features times `sqrt(psi)` (the graph's last op). FluidAudio passes it to VBx
+  as the features, which scales by `sqrt(psi)` again and builds the
+  per-embedding constant from the scaled vector. pyannote's VBx takes the
+  unscaled features, so the runner divides by `sqrt(psi)` first. The JSON
+  `psi` equals the graph's `sqrt_phi` squared (checked on the pinned files).
+- **Concurrent `say -o` runs fail** with error -54. The diarization gate
+  serializes its `say` calls; before that, one test silently skipped and
+  passed.
 - **`hf download --include` with several patterns** in this shell was read
   as a list of filenames and silently skipped a package. List files
   explicitly, or check sizes after the download.
@@ -470,6 +537,14 @@ now; the note is here so the guard is not removed.
   guard.
 - **`pack_256`:** batching for EmbeddingGemma 2 is unused until it has its own
   parity gate.
+- **Speaker diarization:** no speaker-count hints (pyannote's
+  `num_speakers`, `min_speakers`, `max_speakers`), no overlapped-speech
+  output (turns are exclusive), and no server endpoint. Imported files
+  transcribed on the Transcribe page are not labeled; only a recorded take's
+  final pass is. A segment that spans a speaker change gets one label (the
+  majority of its words); it is not split. A take longer than 30 minutes is
+  left unlabeled. pyannote parity was not measured: no pyannote run was
+  compared, only the synthetic gate.
 - **EmbeddingGemma 300m on Core ML** is benchmarked only. There is no
   runtime pipeline, catalog pin or install for it. The candidate is the
   mlboydaisuke export (see Benchmarks), which needs macOS 26 and holds 128

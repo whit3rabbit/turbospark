@@ -207,9 +207,11 @@ struct AudioLibraryItem: Codable, Equatable, Identifiable, Sendable {
               // Only sizes no editor can produce: ordinary tags never fail a load.
               tagList.count <= 256, tagList.allSatisfy({ $0.utf8.count <= 1_024 }) else { throw CocoaError(.coderReadCorrupt) }
     }
-    mutating func addTranscript(_ segments: [AudioLibrarySegment], source: AudioTranscriptRevision.Source, language: String? = nil, nativeResult: Data? = nil) {
-        transcripts.append(AudioTranscriptRevision(source: source, segments: segments, language: language, nativeResult: nativeResult))
+    @discardableResult mutating func addTranscript(_ segments: [AudioLibrarySegment], source: AudioTranscriptRevision.Source, language: String? = nil, nativeResult: Data? = nil) -> UUID {
+        let revision = AudioTranscriptRevision(source: source, segments: segments, language: language, nativeResult: nativeResult)
+        transcripts.append(revision)
         updatedAt = Date()
+        return revision.id
     }
     @discardableResult mutating func recoverInterrupted() -> Bool {
         guard status == .recording || status == .processing else { return false }

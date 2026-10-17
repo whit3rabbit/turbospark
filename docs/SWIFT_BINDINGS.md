@@ -1478,10 +1478,11 @@ exactly three tasks:
 | `.speechToText` | Whisper | Catalog install (`whisper-base`) or a chosen folder. Qwen3-ASR also opens, from the app's Advanced page, behind an explicit portable or experimental-Metal opt-in and a local folder. |
 | `.textToSpeech` | Kokoro, MegaTTS3, OmniVoice | Kokoro: portable CPU path behind an explicit opt-in at the time of writing; the current backend list is in `crates/audio/MODELS.md`. MegaTTS3 and OmniVoice clone a voice: see [Voice cloning](#voice-cloning). OmniVoice is multilingual (auto voice without a reference) and runs on Metal by default with portable CPU fallback. |
 | `.music` | MiniMax Music 3 | Catalog install covers `minimax-music3-4bit`. |
+| `.diarization` | pyannote community-1 on Core ML | Catalog install `speaker-diarization-coreml`, macOS 15+. Takes 16 kHz mono PCM; the result is a transcript whose segments are speaker turns with empty text and speakers `S1`, `S2`, ... |
 
 `AudioTask` has ten cases because the catalog and capability rows describe
 families the engine has code for but no session entry point yet (VAD,
-diarization, alignment, enhancement, separation, codec, language ID). Opening
+alignment, enhancement, separation, codec, language ID). Opening
 one is refused at `ts_audio_session_open` as an unknown task. **Use
 `AudioTask.isRunnable` (and `AudioTask.runnable`) before offering a control**:
 the app's Clean Up page and the unrunnable Advanced operations are hidden for
@@ -1777,9 +1778,11 @@ purpose. Each would need new evidence or an explicit decision to change.
 - **A cached audio open verification.** Cancelling and observing it is
   supported (see "Known limits"), but caching a successful result would weaken
   an integrity check and is not offered.
-- **VAD, diarization, Moonshine, enhancement and separation** have Rust model
-  code but no `Engine` variant in `runtime::native_audio`, so there is no
-  session to open (`AudioTask.isRunnable` reports it). They also need catalog
+- **VAD, the CPU diarization families (Sortformer, Nemotron), Moonshine,
+  enhancement and separation** have Rust model code but no `Engine` variant in
+  `runtime::native_audio`, so there is no session to open
+  (`AudioTask.isRunnable` reports it). Diarization itself runs through the
+  Core ML pyannote community-1 export. They also need catalog
   pins (revisions and hashes) that cannot be invented.
 - **Determinate music progress.** `Music3Runner::generate_text_with_progress`
   has the counters, but it does not take the cancellation handle that

@@ -10,15 +10,16 @@ extension AudioTask {
     /// Whether the native runtime can open a session for this task.
     ///
     /// `ts_audio_session_open` deserializes the runtime's own task enum
-    /// (`crates/runtime/src/native_audio.rs`), which has exactly these three
-    /// variants. The other cases exist in Swift for catalog and capability
+    /// (`crates/runtime/src/native_audio.rs`), which has exactly these four
+    /// variants. Diarization returns speaker turns as transcript segments
+    /// with empty text and speakers `S1`, `S2`, ... The other cases exist in Swift for catalog and capability
     /// rows that describe model families the engine has code for but no
     /// session entry point yet; opening one is refused by name. A host should
     /// not offer a control for a task that is not runnable.
     public var isRunnable: Bool {
         switch self {
-        case .speechToText, .textToSpeech, .music: return true
-        case .enhancement, .separation, .alignment, .diarization, .speechDetection,
+        case .speechToText, .textToSpeech, .music, .diarization: return true
+        case .enhancement, .separation, .alignment, .speechDetection,
             .codec, .languageIdentification:
             return false
         }
