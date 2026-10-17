@@ -165,4 +165,34 @@ final class FontPropagationTests: XCTestCase {
         // from, so one notch moves every surface together.
         XCTAssertEqual(AppFontStep.base.factor, 1.0)
     }
+
+    /// What the app actually draws out of the box. The doc table above is the
+    /// 16pt design reference; a fresh install starts at the 14pt factory base,
+    /// so every role renders at 0.875x. `docs/design-system/README.md` and
+    /// `DESIGN.md` quote these numbers, so a change here must move them too.
+    func testFactoryBaseRendersDocumentedSizes() {
+        let atFactoryBase: [AppFontStep: CGFloat] = [
+            .micro: 8,
+            .tiny: 10,
+            .small: 11,
+            .callout: 12,
+            .base: 14,
+            .large: 15,
+            .title3: 16,
+            .title2: 18,
+            .title: 24,
+            .hero: 26,
+            .display: 32,
+        ]
+        XCTAssertEqual(Set(atFactoryBase.keys), Set(AppFontStep.allCases))
+        let base = CGFloat(AppFontCatalog.factoryUISize)
+        for (step, points) in atFactoryBase {
+            XCTAssertEqual(
+                (base * step.factor).rounded(), points,
+                "\(step) must draw \(points)pt at the factory base; update the design system docs if this move is deliberate")
+        }
+        // Layout scale clamps at 1 below the reference, so the smaller factory
+        // base shrinks text without shrinking the frames that hold it.
+        XCTAssertLessThan(base, AppFontCatalog.defaultUISize)
+    }
 }

@@ -282,6 +282,10 @@ final class AppearanceSettingsTests: XCTestCase {
         // Picker order is smallest to largest, so Small sits beside Default.
         XCTAssertEqual(AppTextSize.allCases, [.small, .standard, .large, .extraLarge])
         XCTAssertEqual(AppTextSize.small.label, "Small")
+        // The persisted raw value is what appearance.json stores.
+        XCTAssertEqual(AppTextSize.resolve("small"), .small)
+        XCTAssertEqual(AppTextSize.resolve("standard"), .standard)
+        XCTAssertEqual(AppTextSize.resolve("nonsense"), .standard)
 
         manager.makeTextSmaller()
         XCTAssertEqual(manager.textSize, .small)

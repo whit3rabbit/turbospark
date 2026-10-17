@@ -228,6 +228,15 @@ the app taking access, and macOS shows each prompt only once.
 - A size the scale lacks is a new `AppFontStep` case, documented in its doc
   table, with the pinned expectation in `FontPropagationTests` updated
   (Gotcha 63).
+- The factory base is 14pt UI and 12pt code (`AppFontCatalog.factoryUISize`
+  and `factoryCodeSize`), with Hack as the code family. The doc table and the
+  design system list roles at the 16pt design reference
+  (`AppFontCatalog.defaultUISize`), which `textScale` and `ui(fitting:)`
+  divide by. Never change the reference to move the default: it reflows
+  every frame. Change the `factory*` constants instead.
+- Text Size is Small (0.875), Default, Large, Extra Large. Small is below
+  the reference, so `textScale` clamps at 1 and frames keep their designed
+  size while the text shrinks.
 - Font families come from Appearance settings. A site that must look serif
   or monospaced at the default passes `systemDesign:`.
 
@@ -401,7 +410,7 @@ Then look at the change in the running app. A green build proves none of the
 following, and a UI change is not verified until the touched screens have
 been checked against them:
 
-- Default and Extra Large text size.
+- Small, Default, and Extra Large text size.
 - The narrowest window the view allows.
 - Light, dark, and one custom theme.
 - Keyboard only, including sheets and menus.
