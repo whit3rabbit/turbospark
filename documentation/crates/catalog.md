@@ -99,7 +99,7 @@ fn pull(alias: &str) -> Result<(), String> {
     let store = Store::default_store()?;
     let catalog = Catalog::load(store.root())?;
     let client = Client::new();
-    let entry = catalog.get(alias).expect("no such alias")?;
+    let entry = catalog.get(alias).expect("no such alias");
 
     let plan = InstallPlan::from_entry(entry);
     let dir = store.install_path(&plan.alias);
