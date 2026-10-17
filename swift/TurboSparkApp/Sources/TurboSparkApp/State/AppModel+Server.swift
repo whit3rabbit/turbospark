@@ -323,6 +323,7 @@ extension AppModel {
         self.server = nil
         self.serverInfo = nil
         self.serverAttachedSessions = [:]
+        self.serverAudioModelPaths = [:]
         self.serverStartedGuardrails = nil
         showToast(AppStrings.localized("Server Stopped"), style: .info)
     }

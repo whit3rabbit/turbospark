@@ -616,12 +616,26 @@ extension AppModel {
     ///
     /// `events` gives a fresh stream per call (each consumer drains its own);
     /// a test passes a stream it controls.
+    ///
+    /// It also starts the eject coordinator (tasks 5.11 and 5.12): its own
+    /// event stream, and its registration as the monitor's approval delegate.
+    /// `approvalHost` is the monitor in the app and a fake in a test, so a test
+    /// never registers with DiskArbitration. A vault lock builds a new model,
+    /// which registers its own coordinator; `shutdown()` of the old one removes
+    /// only its own registration and never stops the monitor.
     func startLibraryMonitoring(
-        events: () -> AsyncStream<VolumeEvent> = { LibraryVolumeMonitor.events() }
+        events: () -> AsyncStream<VolumeEvent> = { LibraryVolumeMonitor.events() },
+        approvalHost: () -> UnmountApprovalHosting = { LibraryVolumeMonitor.shared },
+        ejector: DiskEjecting = DiskArbitrationEjector(),
+        volumeLocator: ModelVolumeLocating = LiveModelVolumeLocator(),
+        loadedModels: (any LoadedModelSource)? = nil
     ) {
         guard !libraryState.isRunning else { return }
         libraryState.start(events: events())
         startMoveStoreMigration(events: events())
+        startEjectCoordination(
+            events: events(), host: approvalHost(), ejector: ejector, locator: volumeLocator,
+            source: loadedModels)
     }
 
     /// Converts a store a past Move Store recorded into a library: once now,

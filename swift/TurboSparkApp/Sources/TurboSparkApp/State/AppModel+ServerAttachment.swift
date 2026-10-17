@@ -1,6 +1,14 @@
 import Foundation
 import TurboSpark
 
+/// The three calls one detach attempt makes on the running server, so a test
+/// can stand in for the engine's refusals, which no empty server produces.
+struct ServerDetachEngine {
+    var detach: (String) throws -> Void
+    var detachAudio: (String) throws -> Void
+    var info: () throws -> ServerInfo
+}
+
 /// Which models the running server is holding.
 ///
 /// **TWO REFERENCES HOLD AN ATTACHED MODEL AND BOTH HAVE TO GO.** The server
@@ -31,10 +39,24 @@ extension AppModel {
         attachments.removeValue(forKey: id)
     }
 
+    /// Whether the engine still lists `id` as attached, per a fresh reading.
+    ///
+    /// **NIL (NO READING) COUNTS AS HELD.** A read that failed is not proof
+    /// the engine let go: a refused detach followed by a throwing read on a
+    /// server that is still running used to drop the app's record of a model
+    /// the engine still held. The cases where nothing is attached are decided
+    /// before this is asked: no server at all (stopping it released every
+    /// model), and a server that answers without listing the id.
+    nonisolated static func engineStillHolds(_ id: String, info: ServerInfo?) -> Bool {
+        guard let info else { return true }
+        return info.models.contains(id) || info.audioModels.contains(id)
+    }
+
     /// Drops the app-owned session reference after the server reports a
     /// detach, then refreshes every surface derived from server state.
     func releaseServerAttachment(id: String, refresh: Bool = true) {
         Self.removeServerAttachment(id: id, from: &serverAttachedSessions)
+        Self.removeServerAttachment(id: id, from: &serverAudioModelPaths)
         if refresh {
             refreshServerInfo()
         }
@@ -169,31 +191,85 @@ extension AppModel {
     /// references rather than needing a branch, which is why there is not
     /// one.
     public func detachModelFromServer(id: String) {
-        guard let server else { return }
-        // **THE SWIFT REFERENCE GOES WHATEVER THE ENGINE SAYS** (state#53).
-        // This sat INSIDE the `do`, so a throwing detach kept the session in
-        // `serverAttachedSessions` -- which is the reference that holds the
-        // weights, the KV cache and the compiled pipelines alive -- while
-        // `refreshServerInfo` never ran and the row vanished from the pane
-        // anyway. The user sees nothing serving it and the memory is still
-        // committed. Dropping it here is the recoverable direction: the
-        // engine's own half either succeeded or is reported below.
-        defer {
-            releaseServerAttachment(id: id)
-        }
-        do {
-            if serverInfo?.audioModels.contains(id) == true {
-                try server.detachAudioModel(id: id)
-            } else {
-                try server.detach(modelId: id)
-            }
-            refreshServerInfo()
+        guard server != nil else { return }
+        switch attemptServerDetach(id: id) {
+        case .detached:
             showToast(AppStrings.localized("Stopped serving \(id)"), style: .info)
-        } catch {
-            let msg = AppStrings.localized("Could not stop serving \(id): \(error.localizedDescription)")
+        case .alreadyGone(let reason), .stillServed(let reason):
+            let msg = AppStrings.localized("Could not stop serving \(id): \(reason)")
             self.error = msg
             showToast(msg, style: .error)
         }
+    }
+
+    /// How one attempt to take a model off the running server ended.
+    enum ServerDetachOutcome: Equatable {
+        case detached
+        /// The call threw, but the engine no longer lists the model (nothing
+        /// was attached under that id, or the server stopped). The app's
+        /// reference is released, as state#53 requires.
+        case alreadyGone(String)
+        /// The engine REFUSED and still holds the model (a request is using
+        /// it). The app's reference is KEPT: it is the only record that the
+        /// model is still resident, and dropping it made the model vanish
+        /// from the pane and from the eject coordinator while its weights, KV
+        /// cache and pipelines stayed mapped. The row stays so it can be
+        /// retried.
+        case stillServed(String)
+
+        /// True when the engine no longer holds the model.
+        var releasedTheModel: Bool {
+            switch self {
+            case .detached, .alreadyGone: return true
+            case .stillServed: return false
+            }
+        }
+    }
+
+    /// One attempt, without a toast: the Server pane toasts the outcome, and
+    /// the eject coordinator retries it until the model drains.
+    ///
+    /// **THE SWIFT REFERENCE GOES WHEN THE ENGINE LETS GO** (state#53). A
+    /// throwing detach used to keep the session in `serverAttachedSessions`
+    /// while the row vanished from the pane anyway, so the user saw nothing
+    /// serving it with the memory still committed; the fix dropped the
+    /// reference whatever the engine said. That was wrong in the other
+    /// direction for a REFUSED detach (`crates/ffi` refuses while a request is
+    /// in flight or the queue is loaded): the engine still held the model and
+    /// the app forgot it. So after a failure the engine is asked, and the
+    /// reference is dropped only when the engine no longer lists the model.
+    func attemptServerDetach(id: String, engine: ServerDetachEngine? = nil) -> ServerDetachOutcome {
+        guard let engine = engine ?? liveServerDetachEngine() else {
+            // No server: stopping it released every model already.
+            releaseServerAttachment(id: id, refresh: false)
+            return .detached
+        }
+        do {
+            if serverInfo?.audioModels.contains(id) == true {
+                try engine.detachAudio(id)
+            } else {
+                try engine.detach(id)
+            }
+            releaseServerAttachment(id: id)
+            return .detached
+        } catch {
+            let reading = try? engine.info()
+            if let reading { serverInfo = reading }
+            if Self.engineStillHolds(id, info: reading) {
+                return .stillServed(error.localizedDescription)
+            }
+            releaseServerAttachment(id: id)
+            return .alreadyGone(error.localizedDescription)
+        }
+    }
+
+    /// The calls to the running server, or nil when none is running.
+    func liveServerDetachEngine() -> ServerDetachEngine? {
+        guard let server else { return nil }
+        return ServerDetachEngine(
+            detach: { try server.detach(modelId: $0) },
+            detachAudio: { try server.detachAudioModel(id: $0) },
+            info: { try server.info() })
     }
 
     /// Attaches an audio model (speech-to-text, text-to-speech, or music) to the running server.
@@ -204,6 +280,9 @@ extension AppModel {
             defer { serverBusy = false }
             do {
                 let id = try server.attachAudioModel(path, task: task)
+                // The server reports ids only; the path is what tells the
+                // eject coordinator which drive holds this model.
+                serverAudioModelPaths[id] = path
                 refreshServerInfo()
                 showToast(AppStrings.localized("Serving \(id)"), style: .success)
             } catch {

@@ -38,6 +38,9 @@ final class FakeModelLibraryService: ModelLibraryService, @unchecked Sendable {
         /// so a test can park an import in flight. Nil: an unscripted call.
         var importHandler: (@Sendable (String) throws -> ImportedStore)?
         var mainThreadCalls: [String] = []
+        /// Changes to the registry that a test did not script: a remove, a
+        /// default change or a forget. A surprise removal must make none.
+        var writeCalls: [String] = []
     }
 
     private let lock = NSLock()
@@ -112,9 +115,20 @@ final class FakeModelLibraryService: ModelLibraryService, @unchecked Sendable {
         }
     }
 
-    func remove(id: String) throws { throw FakeServiceError.unscripted("remove") }
-    func setDefault(id: String) throws { throw FakeServiceError.unscripted("setDefault") }
-    func forget(installId: String) throws { throw FakeServiceError.unscripted("forget") }
+    var writeCalls: [String] { with { $0.writeCalls } }
+
+    func remove(id: String) throws {
+        with { $0.writeCalls.append("remove \(id)") }
+        throw FakeServiceError.unscripted("remove")
+    }
+    func setDefault(id: String) throws {
+        with { $0.writeCalls.append("setDefault \(id)") }
+        throw FakeServiceError.unscripted("setDefault")
+    }
+    func forget(installId: String) throws {
+        with { $0.writeCalls.append("forget \(installId)") }
+        throw FakeServiceError.unscripted("forget")
+    }
     func importMovedRoot(_ root: String) throws -> ImportedStore {
         note("importMovedRoot")
         let handler = with { state -> (@Sendable (String) throws -> ImportedStore)? in

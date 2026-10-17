@@ -94,8 +94,16 @@ final class AudioWorkspaceController: ObservableObject {
     var referencePreviewTask: Task<Void, Never>?
     var referencePlayer: AVAudioPlayer?
     @Published var referencePlaying = false
-    var session: AudioSession?
+    /// Told whenever the resident session is set or cleared, from any of the
+    /// sites that do so, so the eject coordinator's snapshot of loaded models
+    /// stays current without polling.
+    var onResidentModelChanged: (() -> Void)?
+    var session: AudioSession? { didSet { onResidentModelChanged?() } }
     var sessionKey: String?
+    /// The folder `session` was opened from. Only meaningful while `session`
+    /// is set; read it through `residentModelPath`.
+    var sessionPath: String?
+    var residentModelPath: String? { session == nil ? nil : sessionPath }
     var modelAccessURL: URL?
     var capture: AudioCapture?
     var recordingSetupTask: Task<Void, Never>?
@@ -568,6 +576,7 @@ final class AudioWorkspaceController: ObservableObject {
                 await Task.detached { opened.close() }.value
                 throw CancellationError()
             }
+            sessionPath = path
             session = opened; sessionKey = key; modelAccessURL = url
             return opened
         } catch { opening = nil; progress = nil; url?.stopAccessingSecurityScopedResource(); throw error }
@@ -584,6 +593,31 @@ final class AudioWorkspaceController: ObservableObject {
         }
     }
     func cancel() { jobTask?.cancel(); qwenSpeechJob?.cancel(); session?.cancel(); opening?.cancelOpen() }
+    /// Takes the resident session out of this controller NOW, whatever is
+    /// running on it: the eject of its drive is under way (requirement 6.1).
+    /// The caller has already called `cancel()`. The same release
+    /// `deleteSelectedModel` and the idle timer do, minus their guards. The
+    /// returned closer closes it off the main actor (`close()` cancels and
+    /// drains) and then ends the security-scoped access.
+    ///
+    /// **THE CLOSE IS SEPARATE BECAUSE IT CAN BLOCK WITHOUT LIMIT.**
+    /// `AudioSession.close()` waits on the session's operation lock until the
+    /// native job returns, so the caller bounds its wait and treats a close
+    /// that is still running as the model still being held. Reads nothing from
+    /// the drive.
+    func detachResidentSession() -> DetachedSession? {
+        idleTask?.cancel()
+        let old = session; let oldAccess = modelAccessURL
+        session = nil; sessionKey = nil; modelAccessURL = nil
+        guard let old else {
+            oldAccess?.stopAccessingSecurityScopedResource()
+            return nil
+        }
+        return DetachedSession {
+            await Task.detached { old.close() }.value
+            oldAccess?.stopAccessingSecurityScopedResource()
+        }
+    }
     func shutdown() {
         guard !isShutDown else { return }
         preferencesTask?.cancel()

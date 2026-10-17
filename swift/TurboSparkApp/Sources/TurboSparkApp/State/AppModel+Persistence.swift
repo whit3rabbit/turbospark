@@ -568,6 +568,12 @@ public final class AppShutdownCoordinator {
 extension AppModel {
     /// Everything that must happen before the process exits, in order.
     public func shutdown() {
+        // Before anything is released: a model replaced by a vault lock or a
+        // quit must never be dissented from, and a cycle in flight must not
+        // reach for sessions this method is about to drop. The registration
+        // moves to the next model; the process-wide monitor keeps running.
+        ejectCoordination?.stop()
+        ejectCoordination = nil
         // First, so the engine stops answering requests for a model that is
         // about to be released (`swift/CLAUDE.md` Gotcha 26).
         stopServer()

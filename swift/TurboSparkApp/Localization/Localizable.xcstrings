@@ -317762,6 +317762,530 @@
         }
       }
     },
+    "Unloaded %@ and ejected the drive.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u062a\u0645 \u0625\u0644\u063a\u0627\u0621 \u062a\u062d\u0645\u064a\u0644 %@ \u0648\u0625\u062e\u0631\u0627\u062c \u0645\u062d\u0631\u0643 \u0627\u0644\u0623\u0642\u0631\u0627\u0635."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ wurde entladen und das Laufwerk wurde ausgeworfen."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unloaded %@ and ejected the drive."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Se descarg\u00f3 %@ y se expuls\u00f3 la unidad."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ a \u00e9t\u00e9 d\u00e9charg\u00e9 et le disque a \u00e9t\u00e9 \u00e9ject\u00e9."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ \u05e0\u05e4\u05e8\u05e7 \u05d5\u05d4\u05db\u05d5\u05e0\u05df \u05d4\u05d5\u05e6\u05d0."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ \u0905\u0928\u0932\u094b\u0921 \u0915\u093f\u092f\u093e \u0917\u092f\u093e \u0914\u0930 \u0921\u094d\u0930\u093e\u0907\u0935 \u0907\u091c\u0947\u0915\u094d\u091f \u0915\u0930 \u0926\u0940 \u0917\u0908\u0964"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ dibongkar dan drive dikeluarkan."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ \u00e8 stato scaricato e l'unit\u00e0 \u00e8 stata espulsa."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ \u3092\u30a2\u30f3\u30ed\u30fc\u30c9\u3057\u3001\u30c9\u30e9\u30a4\u30d6\u3092\u53d6\u308a\u51fa\u3057\u307e\u3057\u305f\u3002"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@\uc744(\ub97c) \uc5b8\ub85c\ub4dc\ud558\uace0 \ub4dc\ub77c\uc774\ube0c\ub97c \ucd94\ucd9c\ud588\uc2b5\ub2c8\ub2e4."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ is ontladen en de schijf is uitgeworpen."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wy\u0142adowano %@ i wysuni\u0119to dysk."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ foi descarregado e a unidade foi ejetada."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ \u0432\u044b\u0433\u0440\u0443\u0436\u0435\u043d\u043e, \u0434\u0438\u0441\u043a \u0438\u0437\u0432\u043b\u0435\u0447\u0451\u043d."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ har laddats ur och enheten har matats ut."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ bo\u015falt\u0131ld\u0131 ve s\u00fcr\u00fcc\u00fc \u00e7\u0131kar\u0131ld\u0131."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ \u0432\u0438\u0432\u0430\u043d\u0442\u0430\u0436\u0435\u043d\u043e, \u0434\u0438\u0441\u043a \u0432\u0438\u0442\u044f\u0433\u043d\u0443\u0442\u043e."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0110\u00e3 d\u1ee1 b\u1ecf %@ v\u00e0 \u0111\u00e3 \u0111\u1ea9y \u1ed5 \u0111\u0129a ra."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5df2\u5378\u8f7d %@ \u5e76\u63a8\u51fa\u9a71\u52a8\u5668\u3002"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5df2\u5378\u8f09 %@ \u4e26\u9000\u51fa\u78c1\u789f\u6a5f\u3002"
+          }
+        }
+      }
+    },
+    "Unloaded %@, but the drive could not be ejected: %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u062a\u0645 \u0625\u0644\u063a\u0627\u0621 \u062a\u062d\u0645\u064a\u0644 %@\u060c \u0644\u0643\u0646 \u062a\u0639\u0630\u0651\u0631 \u0625\u062e\u0631\u0627\u062c \u0645\u062d\u0631\u0643 \u0627\u0644\u0623\u0642\u0631\u0627\u0635: %@"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ wurde entladen, aber das Laufwerk konnte nicht ausgeworfen werden: %@"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unloaded %@, but the drive could not be ejected: %@"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Se descarg\u00f3 %@, pero no se pudo expulsar la unidad: %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ a \u00e9t\u00e9 d\u00e9charg\u00e9, mais le disque n'a pas pu \u00eatre \u00e9ject\u00e9 : %@"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ \u05e0\u05e4\u05e8\u05e7, \u05d0\u05da \u05dc\u05d0 \u05e0\u05d9\u05ea\u05df \u05d4\u05d9\u05d4 \u05dc\u05d4\u05d5\u05e6\u05d9\u05d0 \u05d0\u05ea \u05d4\u05db\u05d5\u05e0\u05df: %@"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ \u0905\u0928\u0932\u094b\u0921 \u0915\u093f\u092f\u093e \u0917\u092f\u093e, \u0932\u0947\u0915\u093f\u0928 \u0921\u094d\u0930\u093e\u0907\u0935 \u0907\u091c\u0947\u0915\u094d\u091f \u0928\u0939\u0940\u0902 \u0915\u0940 \u091c\u093e \u0938\u0915\u0940: %@"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ dibongkar, tetapi drive tidak dapat dikeluarkan: %@"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ \u00e8 stato scaricato, ma non \u00e8 stato possibile espellere l'unit\u00e0: %@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ \u3092\u30a2\u30f3\u30ed\u30fc\u30c9\u3057\u307e\u3057\u305f\u304c\u3001\u30c9\u30e9\u30a4\u30d6\u3092\u53d6\u308a\u51fa\u305b\u307e\u305b\u3093\u3067\u3057\u305f: %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@\uc744(\ub97c) \uc5b8\ub85c\ub4dc\ud588\uc9c0\ub9cc \ub4dc\ub77c\uc774\ube0c\ub97c \ucd94\ucd9c\ud560 \uc218 \uc5c6\uc2b5\ub2c8\ub2e4: %@"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ is ontladen, maar de schijf kon niet worden uitgeworpen: %@"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wy\u0142adowano %@, ale nie uda\u0142o si\u0119 wysun\u0105\u0107 dysku: %@"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ foi descarregado, mas a unidade n\u00e3o p\u00f4de ser ejetada: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ \u0432\u044b\u0433\u0440\u0443\u0436\u0435\u043d\u043e, \u043d\u043e \u0434\u0438\u0441\u043a \u043d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0438\u0437\u0432\u043b\u0435\u0447\u044c: %@"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ har laddats ur, men enheten kunde inte matas ut: %@"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ bo\u015falt\u0131ld\u0131, ancak s\u00fcr\u00fcc\u00fc \u00e7\u0131kar\u0131lamad\u0131: %@"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ \u0432\u0438\u0432\u0430\u043d\u0442\u0430\u0436\u0435\u043d\u043e, \u0430\u043b\u0435 \u0434\u0438\u0441\u043a \u043d\u0435 \u0432\u0434\u0430\u043b\u043e\u0441\u044f \u0432\u0438\u0442\u044f\u0433\u043d\u0443\u0442\u0438: %@"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0110\u00e3 d\u1ee1 b\u1ecf %@ nh\u01b0ng kh\u00f4ng th\u1ec3 \u0111\u1ea9y \u1ed5 \u0111\u0129a ra: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5df2\u5378\u8f7d %@\uff0c\u4f46\u65e0\u6cd5\u63a8\u51fa\u9a71\u52a8\u5668\uff1a%@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5df2\u5378\u8f09 %@\uff0c\u4f46\u7121\u6cd5\u9000\u51fa\u78c1\u789f\u6a5f\uff1a%@"
+          }
+        }
+      }
+    },
+    "Unloaded %@ because its drive was disconnected. Eject a drive before disconnecting it.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u062a\u0645 \u0625\u0644\u063a\u0627\u0621 \u062a\u062d\u0645\u064a\u0644 %@ \u0644\u0623\u0646 \u0645\u062d\u0631\u0643 \u0627\u0644\u0623\u0642\u0631\u0627\u0635 \u0627\u0644\u062e\u0627\u0635 \u0628\u0647 \u0641\u064f\u0635\u0644. \u0623\u062e\u0631\u062c \u0645\u062d\u0631\u0643 \u0627\u0644\u0623\u0642\u0631\u0627\u0635 \u0642\u0628\u0644 \u0641\u0635\u0644\u0647."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ wurde entladen, weil das zugeh\u00f6rige Laufwerk getrennt wurde. Werfen Sie ein Laufwerk aus, bevor Sie es trennen."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unloaded %@ because its drive was disconnected. Eject a drive before disconnecting it."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Se descarg\u00f3 %@ porque se desconect\u00f3 su unidad. Expulsa la unidad antes de desconectarla."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ a \u00e9t\u00e9 d\u00e9charg\u00e9 car son disque a \u00e9t\u00e9 d\u00e9connect\u00e9. \u00c9jectez un disque avant de le d\u00e9connecter."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ \u05e0\u05e4\u05e8\u05e7 \u05de\u05db\u05d9\u05d5\u05d5\u05df \u05e9\u05d4\u05db\u05d5\u05e0\u05df \u05e9\u05dc\u05d5 \u05e0\u05d5\u05ea\u05e7. \u05d4\u05d5\u05e6\u05d0 \u05db\u05d5\u05e0\u05df \u05dc\u05e4\u05e0\u05d9 \u05e9\u05de\u05e0\u05ea\u05e7\u05d9\u05dd \u05d0\u05d5\u05ea\u05d5."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ \u0905\u0928\u0932\u094b\u0921 \u0915\u093f\u092f\u093e \u0917\u092f\u093e \u0915\u094d\u092f\u094b\u0902\u0915\u093f \u0909\u0938\u0915\u0940 \u0921\u094d\u0930\u093e\u0907\u0935 \u0921\u093f\u0938\u094d\u0915\u0928\u0947\u0915\u094d\u091f \u0915\u0930 \u0926\u0940 \u0917\u0908 \u0925\u0940\u0964 \u0921\u094d\u0930\u093e\u0907\u0935 \u0915\u094b \u0921\u093f\u0938\u094d\u0915\u0928\u0947\u0915\u094d\u091f \u0915\u0930\u0928\u0947 \u0938\u0947 \u092a\u0939\u0932\u0947 \u0907\u091c\u0947\u0915\u094d\u091f \u0915\u0930\u0947\u0902\u0964"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ dibongkar karena drive-nya terputus. Keluarkan drive sebelum melepasnya."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ \u00e8 stato scaricato perch\u00e9 la sua unit\u00e0 \u00e8 stata scollegata. Espelli un'unit\u00e0 prima di scollegarla."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u30c9\u30e9\u30a4\u30d6\u304c\u53d6\u308a\u5916\u3055\u308c\u305f\u305f\u3081\u3001%@ \u3092\u30a2\u30f3\u30ed\u30fc\u30c9\u3057\u307e\u3057\u305f\u3002\u30c9\u30e9\u30a4\u30d6\u3092\u53d6\u308a\u5916\u3059\u524d\u306b\u3001\u53d6\u308a\u51fa\u3057\u3066\u304f\u3060\u3055\u3044\u3002"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\ub4dc\ub77c\uc774\ube0c \uc5f0\uacb0\uc774 \ub04a\uaca8 %@\uc744(\ub97c) \uc5b8\ub85c\ub4dc\ud588\uc2b5\ub2c8\ub2e4. \ub4dc\ub77c\uc774\ube0c\ub97c \ubd84\ub9ac\ud558\uae30 \uc804\uc5d0 \uba3c\uc800 \ucd94\ucd9c\ud558\uc138\uc694."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ is ontladen omdat de bijbehorende schijf is losgekoppeld. Werp een schijf uit voordat u deze loskoppelt."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wy\u0142adowano %@, poniewa\u017c jego dysk zosta\u0142 od\u0142\u0105czony. Przed od\u0142\u0105czeniem dysku nale\u017cy go wysun\u0105\u0107."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ foi descarregado porque a unidade foi desconectada. Ejete a unidade antes de desconect\u00e1-la."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ \u0432\u044b\u0433\u0440\u0443\u0436\u0435\u043d\u043e, \u043f\u043e\u0442\u043e\u043c\u0443 \u0447\u0442\u043e \u0434\u0438\u0441\u043a \u0431\u044b\u043b \u043e\u0442\u043a\u043b\u044e\u0447\u0451\u043d. \u0418\u0437\u0432\u043b\u0435\u043a\u0430\u0439\u0442\u0435 \u0434\u0438\u0441\u043a, \u043f\u0440\u0435\u0436\u0434\u0435 \u0447\u0435\u043c \u043e\u0442\u043a\u043b\u044e\u0447\u0430\u0442\u044c \u0435\u0433\u043e."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ har laddats ur eftersom enheten kopplades bort. Mata ut en enhet innan du kopplar bort den."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "S\u00fcr\u00fcc\u00fc ba\u011flant\u0131s\u0131 kesildi\u011fi i\u00e7in %@ bo\u015falt\u0131ld\u0131. Bir s\u00fcr\u00fcc\u00fcy\u00fc ay\u0131rmadan \u00f6nce \u00e7\u0131kar\u0131n."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ \u0432\u0438\u0432\u0430\u043d\u0442\u0430\u0436\u0435\u043d\u043e, \u0431\u043e \u0434\u0438\u0441\u043a \u0431\u0443\u043b\u043e \u0432\u0456\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u043e. \u0412\u0438\u0442\u044f\u0433\u0430\u0439\u0442\u0435 \u0434\u0438\u0441\u043a, \u043f\u0435\u0440\u0448 \u043d\u0456\u0436 \u0432\u0456\u0434\u043a\u043b\u044e\u0447\u0430\u0442\u0438 \u0439\u043e\u0433\u043e."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0110\u00e3 d\u1ee1 b\u1ecf %@ v\u00ec \u1ed5 \u0111\u0129a c\u1ee7a n\u00f3 \u0111\u00e3 b\u1ecb ng\u1eaft k\u1ebft n\u1ed1i. H\u00e3y \u0111\u1ea9y \u1ed5 \u0111\u0129a ra tr\u01b0\u1edbc khi ng\u1eaft k\u1ebft n\u1ed1i."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u7531\u4e8e\u9a71\u52a8\u5668\u5df2\u65ad\u5f00\u8fde\u63a5\uff0c\u5df2\u5378\u8f7d %@\u3002\u8bf7\u5148\u63a8\u51fa\u9a71\u52a8\u5668\uff0c\u518d\u5c06\u5176\u65ad\u5f00\u3002"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u7531\u65bc\u78c1\u789f\u6a5f\u5df2\u4e2d\u65b7\u9023\u7dda\uff0c\u5df2\u5378\u8f09 %@\u3002\u8acb\u5148\u9000\u51fa\u78c1\u789f\u6a5f\uff0c\u518d\u5c07\u5176\u62d4\u9664\u3002"
+          }
+        }
+      }
+    },
+    "Could not unload %@ because it is still in use, so the drive was not ejected.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u062a\u0639\u0630\u0651\u0631 \u0625\u0644\u063a\u0627\u0621 \u062a\u062d\u0645\u064a\u0644 %@ \u0644\u0623\u0646\u0647 \u0644\u0627 \u064a\u0632\u0627\u0644 \u0642\u064a\u062f \u0627\u0644\u0627\u0633\u062a\u062e\u062f\u0627\u0645\u060c \u0644\u0630\u0644\u0643 \u0644\u0645 \u064a\u062a\u0645 \u0625\u062e\u0631\u0627\u062c \u0645\u062d\u0631\u0643 \u0627\u0644\u0623\u0642\u0631\u0627\u0635."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ konnte nicht entladen werden, weil es noch verwendet wird. Das Laufwerk wurde daher nicht ausgeworfen."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not unload %@ because it is still in use, so the drive was not ejected."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo descargar %@ porque sigue en uso, por lo que no se expuls\u00f3 la unidad."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible de d\u00e9charger %@ car il est encore utilis\u00e9, donc le disque n'a pas \u00e9t\u00e9 \u00e9ject\u00e9."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05dc\u05d0 \u05e0\u05d9\u05ea\u05df \u05d4\u05d9\u05d4 \u05dc\u05e4\u05e8\u05d5\u05e7 \u05d0\u05ea %@ \u05de\u05db\u05d9\u05d5\u05d5\u05df \u05e9\u05d4\u05d5\u05d0 \u05e2\u05d3\u05d9\u05d9\u05df \u05d1\u05e9\u05d9\u05de\u05d5\u05e9, \u05d5\u05dc\u05db\u05df \u05d4\u05db\u05d5\u05e0\u05df \u05dc\u05d0 \u05d4\u05d5\u05e6\u05d0."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ \u0915\u094b \u0905\u0928\u0932\u094b\u0921 \u0928\u0939\u0940\u0902 \u0915\u093f\u092f\u093e \u091c\u093e \u0938\u0915\u093e \u0915\u094d\u092f\u094b\u0902\u0915\u093f \u0935\u0939 \u0905\u092d\u0940 \u092d\u0940 \u0909\u092a\u092f\u094b\u0917 \u092e\u0947\u0902 \u0939\u0948, \u0907\u0938\u0932\u093f\u090f \u0921\u094d\u0930\u093e\u0907\u0935 \u0915\u094b \u0907\u091c\u0947\u0915\u094d\u091f \u0928\u0939\u0940\u0902 \u0915\u093f\u092f\u093e \u0917\u092f\u093e\u0964"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ tidak dapat dibongkar karena masih digunakan, sehingga drive tidak dikeluarkan."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossibile scaricare %@ perch\u00e9 \u00e8 ancora in uso, quindi l'unit\u00e0 non \u00e8 stata espulsa."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ \u306f\u307e\u3060\u4f7f\u7528\u4e2d\u306e\u305f\u3081\u30a2\u30f3\u30ed\u30fc\u30c9\u3067\u304d\u305a\u3001\u30c9\u30e9\u30a4\u30d6\u306f\u53d6\u308a\u51fa\u3055\u308c\u307e\u305b\u3093\u3067\u3057\u305f\u3002"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@\uc774(\uac00) \uc544\uc9c1 \uc0ac\uc6a9 \uc911\uc774\uc5b4\uc11c \uc5b8\ub85c\ub4dc\ud560 \uc218 \uc5c6\uc73c\ubbc0\ub85c \ub4dc\ub77c\uc774\ube0c\ub97c \ucd94\ucd9c\ud558\uc9c0 \uc54a\uc558\uc2b5\ub2c8\ub2e4."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ kon niet worden ontladen omdat het nog in gebruik is, dus de schijf is niet uitgeworpen."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nie uda\u0142o si\u0119 wy\u0142adowa\u0107 %@, poniewa\u017c jest nadal u\u017cywany, wi\u0119c dysk nie zosta\u0142 wysuni\u0119ty."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "N\u00e3o foi poss\u00edvel descarregar %@ porque ainda est\u00e1 em uso, ent\u00e3o a unidade n\u00e3o foi ejetada."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0432\u044b\u0433\u0440\u0443\u0437\u0438\u0442\u044c %@, \u0442\u0430\u043a \u043a\u0430\u043a \u043e\u043d \u0432\u0441\u0451 \u0435\u0449\u0451 \u0438\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0435\u0442\u0441\u044f, \u043f\u043e\u044d\u0442\u043e\u043c\u0443 \u0434\u0438\u0441\u043a \u043d\u0435 \u0431\u044b\u043b \u0438\u0437\u0432\u043b\u0435\u0447\u0451\u043d."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Det gick inte att ladda ur %@ eftersom den fortfarande anv\u00e4nds, s\u00e5 enheten matades inte ut."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ bo\u015falt\u0131lamad\u0131 \u00e7\u00fcnk\u00fc h\u00e2l\u00e2 kullan\u0131mda, bu y\u00fczden s\u00fcr\u00fcc\u00fc \u00e7\u0131kar\u0131lmad\u0131."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041d\u0435 \u0432\u0434\u0430\u043b\u043e\u0441\u044f \u0432\u0438\u0432\u0430\u043d\u0442\u0430\u0436\u0438\u0442\u0438 %@, \u043e\u0441\u043a\u0456\u043b\u044c\u043a\u0438 \u0432\u0456\u043d \u0434\u043e\u0441\u0456 \u0432\u0438\u043a\u043e\u0440\u0438\u0441\u0442\u043e\u0432\u0443\u0454\u0442\u044c\u0441\u044f, \u0442\u043e\u043c\u0443 \u0434\u0438\u0441\u043a \u043d\u0435 \u0431\u0443\u043b\u043e \u0432\u0438\u0442\u044f\u0433\u043d\u0443\u0442\u043e."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kh\u00f4ng th\u1ec3 d\u1ee1 b\u1ecf %@ v\u00ec v\u1eabn \u0111ang \u0111\u01b0\u1ee3c s\u1eed d\u1ee5ng, n\u00ean \u1ed5 \u0111\u0129a ch\u01b0a \u0111\u01b0\u1ee3c \u0111\u1ea9y ra."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u65e0\u6cd5\u5378\u8f7d %@\uff0c\u56e0\u4e3a\u5b83\u4ecd\u5728\u4f7f\u7528\u4e2d\uff0c\u6240\u4ee5\u672a\u63a8\u51fa\u9a71\u52a8\u5668\u3002"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u7121\u6cd5\u5378\u8f09 %@\uff0c\u56e0\u70ba\u5b83\u4ecd\u5728\u4f7f\u7528\u4e2d\uff0c\u6240\u4ee5\u672a\u9000\u51fa\u78c1\u789f\u6a5f\u3002"
+          }
+        }
+      }
+    },
     "Model unloaded": {
       "extractionState": "manual",
       "localizations": {

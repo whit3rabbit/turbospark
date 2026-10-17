@@ -21,8 +21,16 @@ import OpenKind
 public final class AppModel: ObservableObject {
     /// Currently active navigation section in the main window.
     var audioSummaryInFlight = false
+    /// Whether `audioWorkspace` has been built. The eject coordinator asks
+    /// before it reads the workspace, because reading a lazy property builds it
+    /// (it loads the audio library), and a launch with no audio use must not.
+    var audioWorkspaceCreated = false
     lazy var audioWorkspace: AudioWorkspaceController = {
         let workspace = AudioWorkspaceController()
+        audioWorkspaceCreated = true
+        workspace.onResidentModelChanged = { [weak self] in
+            self?.ejectCoordination?.coordinator.scheduleRefresh()
+        }
         workspace.installHandler = { [weak self] profile, acknowledged in
             self?.enqueueAudioDownload(profile: profile, acknowledged: acknowledged) ?? false
         }
@@ -116,6 +124,17 @@ public final class AppModel: ObservableObject {
     /// The one-time conversion of a store a past Move Store moved. Created when
     /// library monitoring starts, never at `init`.
     var moveStoreMigration: MoveStoreMigration?
+    /// Lets a drive with loaded models eject in one action, and ends the
+    /// sessions of a drive pulled without ejecting (tasks 5.11 and 5.12).
+    /// Created with library monitoring, dropped by `shutdown()`.
+    var ejectCoordination: LibraryEjectCoordination?
+    /// How many releases for an eject are in progress. While it is above zero
+    /// nothing may start a model turn on the chat session (`isEjecting`).
+    var ejectHoldCount = 0
+    /// Where each audio model attached to the running server was loaded from,
+    /// by the id the server serves it under. The server reports only ids, and
+    /// the eject coordinator needs the path to know which drive holds it.
+    @Published var serverAudioModelPaths: [String: String] = [:]
     /// Catalog entries available for download.
     @Published public var catalog: [CatalogEntry] = []
     /// Valid image-generation installs, separate from text model rows.

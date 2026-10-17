@@ -259,10 +259,14 @@ final class MoveStoreMigrationTests: LibraryStateTestCase {
         let model = await makeModel(using: makeState())
         model.stopCronScheduler()
         let before = try TurboSparkCatalog.storeRoot()
-        model.startLibraryMonitoring(events: { AsyncStream<VolumeEvent>.makeStream().0 })
+        // A fake host: the eject coordinator would otherwise register with the
+        // process-wide monitor, and a test must not touch DiskArbitration.
+        model.startLibraryMonitoring(
+            events: { AsyncStream<VolumeEvent>.makeStream().0 }, approvalHost: { FakeApprovalHost() })
         await model.moveStoreMigration?.waitUntilIdle()
         model.libraryState.stop()
         model.moveStoreMigration?.stop()
+        model.ejectCoordination?.stop()
 
         XCTAssertEqual(service.importRoots, [moved], "starting library monitoring runs the conversion")
         XCTAssertNil(ModelStoreRootRecord.load(), "the live record is cleared")
