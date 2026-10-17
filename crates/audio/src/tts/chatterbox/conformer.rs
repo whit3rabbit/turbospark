@@ -261,12 +261,7 @@ struct LinearNoSub {
 }
 
 impl LinearNoSub {
-    fn load(
-        file: &SafetensorsFile,
-        prefix: &str,
-        in_dim: usize,
-        out_dim: usize,
-    ) -> Result<Self> {
+    fn load(file: &SafetensorsFile, prefix: &str, in_dim: usize, out_dim: usize) -> Result<Self> {
         Ok(LinearNoSub {
             linear: SaLinear::load(file, &format!("{prefix}.linear"), in_dim, out_dim)?,
             norm: SaLayerNorm::load(file, &format!("{prefix}.norm"), out_dim)?,
