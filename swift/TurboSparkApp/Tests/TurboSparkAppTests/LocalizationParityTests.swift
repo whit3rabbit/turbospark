@@ -585,6 +585,14 @@ final class LocalizationParityTests: XCTestCase {
         for entry in SettingsControlCatalog.entries {
             values.append(("SettingsControlCatalog.title", entry.title))
         }
+        // The libraries section (tasks 6.1 and 6.2): a library's status and
+        // the actions on its row render their titles as keys.
+        for status in LibraryRowStatus.allCases {
+            values.append(("LibraryRowStatus.title", status.title))
+        }
+        for action in LibraryRowAction.allCases {
+            values.append(("LibraryRowAction.title", action.title))
+        }
         let missing = values.filter { strings[$0.value] == nil }
             .map { "\($0.source): \($0.value)" }
         XCTAssertTrue(

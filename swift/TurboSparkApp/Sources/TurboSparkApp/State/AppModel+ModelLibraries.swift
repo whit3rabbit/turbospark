@@ -494,6 +494,34 @@ final class LibraryState: ObservableObject {
         return added
     }
 
+    /// Stops listing the library `id` and its models through the engine (off
+    /// the main actor) and refreshes. Never touches a file. Throws the engine's
+    /// refusal; the list is refreshed either way, because a refusal such as
+    /// `unknown_library` means another window already changed it.
+    func removeLibrary(id: String) async throws {
+        let service = self.service
+        do {
+            try await Task.detached(priority: .userInitiated) { try service.remove(id: id) }.value
+        } catch {
+            await refresh()
+            throw error
+        }
+        await refresh()
+    }
+
+    /// Makes `id` (or `internal` for This Mac) the library new downloads go to.
+    /// Same threading and refresh rules as `removeLibrary`.
+    func setDefaultLibrary(id: String) async throws {
+        let service = self.service
+        do {
+            try await Task.detached(priority: .userInitiated) { try service.setDefault(id: id) }.value
+        } catch {
+            await refresh()
+            throw error
+        }
+        await refresh()
+    }
+
     // MARK: - Offers (requirements 4.3, 4.4)
 
     /// Looks for a library on a newly mounted volume, off the main actor, and

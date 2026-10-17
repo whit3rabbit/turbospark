@@ -41,6 +41,12 @@ final class FakeModelLibraryService: ModelLibraryService, @unchecked Sendable {
         /// Changes to the registry that a test did not script: a remove, a
         /// default change or a forget. A surprise removal must make none.
         var writeCalls: [String] = []
+        /// Scripted failures of `remove` and `setDefault`.
+        var removeError: Error?
+        var setDefaultError: Error?
+        /// When true `remove` and `setDefault` change the scripted list, as the
+        /// engine does, instead of recording the call and failing as unscripted.
+        var appliesWrites = false
     }
 
     private let lock = NSLock()
@@ -118,12 +124,44 @@ final class FakeModelLibraryService: ModelLibraryService, @unchecked Sendable {
     var writeCalls: [String] { with { $0.writeCalls } }
 
     func remove(id: String) throws {
-        with { $0.writeCalls.append("remove \(id)") }
-        throw FakeServiceError.unscripted("remove")
+        note("remove")
+        try with { state in
+            state.writeCalls.append("remove \(id)")
+            if let error = state.removeError { throw error }
+            guard state.appliesWrites else { throw FakeServiceError.unscripted("remove") }
+            if id == "internal" {
+                throw TurboSparkError(code: .invalidArgument, message: "internal_library: This Mac cannot be removed")
+            }
+            guard let removed = state.libraries.first(where: { $0.id == id }) else {
+                throw TurboSparkError(code: .invalidArgument, message: "unknown_library: no library has the id \(id)")
+            }
+            state.libraries.removeAll { $0.id == id }
+            state.installed.removeAll { $0.library == id }
+            // Removing the default hands it back to This Mac, as the engine does.
+            if removed.isDefault {
+                state.libraries = state.libraries.map { Self.copy($0, isDefault: $0.isInternal) }
+            }
+        }
     }
+
     func setDefault(id: String) throws {
-        with { $0.writeCalls.append("setDefault \(id)") }
-        throw FakeServiceError.unscripted("setDefault")
+        note("setDefault")
+        try with { state in
+            state.writeCalls.append("setDefault \(id)")
+            if let error = state.setDefaultError { throw error }
+            guard state.appliesWrites else { throw FakeServiceError.unscripted("setDefault") }
+            guard state.libraries.contains(where: { $0.id == id }) else {
+                throw TurboSparkError(code: .invalidArgument, message: "unknown_library: no library has the id \(id)")
+            }
+            state.libraries = state.libraries.map { Self.copy($0, isDefault: $0.id == id) }
+        }
+    }
+
+    private static func copy(_ library: ModelLibrary, isDefault: Bool) -> ModelLibrary {
+        ModelLibrary(
+            id: library.id, name: library.name, root: library.root, available: library.available,
+            duplicate: library.duplicate, modelCount: library.modelCount, isDefault: isDefault,
+            lastSeen: library.lastSeen, isInternal: library.isInternal)
     }
     func forget(installId: String) throws {
         with { $0.writeCalls.append("forget \(installId)") }

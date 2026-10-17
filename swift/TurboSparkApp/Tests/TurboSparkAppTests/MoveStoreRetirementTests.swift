@@ -198,7 +198,9 @@ final class MoveStoreRetirementTests: XCTestCase {
             },
             "no search entry may offer moving the store")
 
-        // The regeneration removed one entry and no other.
+        // The regeneration removed one entry and no other. The libraries
+        // section (task 6.1) then added its two: the section and its Add
+        // Library button.
         let models = Set(entries.filter { $0.pane == .models }.map(\.title))
         XCTAssertEqual(
             models,
@@ -207,6 +209,7 @@ final class MoveStoreRetirementTests: XCTestCase {
                 "Hugging Face Authentication", "LM Studio Library Integration",
                 "Maximum allocation", "Minimum AutoFit context length",
                 "Mirror Endpoint ($HF_ENDPOINT)", "Model loading guardrails",
+                "Model libraries", "Add Library\u{2026}",
             ])
         XCTAssertEqual(Set(entries.map(\.id)).count, entries.count, "search targets stay unique")
     }

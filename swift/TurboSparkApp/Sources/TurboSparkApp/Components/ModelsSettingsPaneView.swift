@@ -44,6 +44,11 @@ public struct ModelsSettingsPaneView: View {
                 HfAuthTokenCardView(model: model)
                     .settingsControl("Hugging Face Authentication", pane: .models, timing: .immediate)
 
+                // Section 0: model libraries (drives that hold models). Above
+                // the storage section on purpose: a library is where models
+                // can live besides the home that section describes.
+                ModelLibrariesSectionView(model: model)
+
                 // Section 1: TurboSpark Primary Storage
                 turboSparkStorageSection
 

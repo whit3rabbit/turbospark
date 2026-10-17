@@ -87,8 +87,8 @@ final class MoveStoreMigration: ObservableObject {
         AppStorageRoot.machineRoot.appendingPathComponent(pendingFileName)
     }
 
-    /// Shown only if the pending file cannot be read or saved. It has no
-    /// catalog key yet (task 6 adds it with the other library strings).
+    /// Shown only if the pending file cannot be read or saved (a catalog key,
+    /// translated into every language, since task 6.1).
     private static let pendingLabel: String.LocalizationValue = "Moved store conversion"
 
     // MARK: Published state
@@ -104,9 +104,11 @@ final class MoveStoreMigration: ObservableObject {
     @Published private(set) var lastImported: ImportedStore?
 
     /// A conversion is unfinished: the next launch or mount imports again.
-    private(set) var isPending = false
-    /// Why the last attempt did not finish, escaped for a log. Not shown.
-    private(set) var lastFailure: String?
+    /// Published so the libraries section can say a conversion is stuck.
+    @Published private(set) var isPending = false
+    /// Why the last attempt did not finish, escaped for a log. The libraries
+    /// section shows a generic sentence while it is set and never this text.
+    @Published private(set) var lastFailure: String?
     /// Events fully handled so far. A test seam for waiting on the stream.
     private(set) var handledEventCount = 0
 
@@ -124,6 +126,11 @@ final class MoveStoreMigration: ObservableObject {
     private var eventTask: Task<Void, Never>?
     private var runner: Task<Void, Never>?
     private var rerunRequested = false
+    /// Bumped by every `abandon()` that cleared the record. A run notes it
+    /// before it hands the root to the engine, and a run that finds it changed
+    /// afterwards must not keep, write or list anything for a conversion the
+    /// user ended.
+    private var abandonCount = 0
     /// What the pending file holds, as far as this process knows, so an
     /// unchanged state is not written again at every launch.
     private var writtenPending: MovedStorePendingFile?
@@ -233,10 +240,15 @@ final class MoveStoreMigration: ObservableObject {
         // The engine reads the mount table and the drive and writes the
         // registry, so none of it runs on the main actor.
         let service = self.service
+        let abandonsBefore = abandonCount
         let outcome = await Task.detached(priority: .utility) { () -> Result<ImportedStore, Error> in
             Result { try service.importMovedRoot(root) }
         }.value
 
+        if abandonCount != abandonsBefore {
+            await settleAfterAbandon(outcome)
+            return
+        }
         switch outcome {
         case .success(let imported):
             await finish(imported, root: root)
@@ -315,6 +327,60 @@ final class MoveStoreMigration: ObservableObject {
         isPending = false
         discardPendingFile()
         libraryState.setPendingMovedStore(nil)
+    }
+
+    // MARK: - Stopping the wait
+
+    /// Ends the conversion at the user's request: the record no longer names
+    /// the store, the pending file is discarded, the placeholder row goes, and
+    /// nothing is left pending (requirement 9.3, and the stuck states the 5.10
+    /// review found: a root that never answers, a refusal that repeats).
+    ///
+    /// **IT FORGETS; IT DOES NOT DELETE.** No model, marker or folder on the
+    /// drive is read or written, no library is removed and nothing is
+    /// imported. The models stay where they are, and the folder can be added
+    /// as a library by hand at any time.
+    ///
+    /// **THE RECORD GOES FIRST.** If it cannot be cleared the placeholder, the
+    /// pending file and the pending state all stay, and the answer is false, so
+    /// the next launch cannot find a record with no explanation and the user is
+    /// told. A call with nothing recorded finds nothing to clear and still
+    /// answers true, so a repeated tap or a second window is harmless.
+    ///
+    /// A run that is already inside the engine when this is called finishes on
+    /// its own and its answer is settled by `settleAfterAbandon`: it must not
+    /// bring the conversion back.
+    @discardableResult
+    func abandon() -> Bool {
+        if record.load() != nil, !record.clear() {
+            logLine("the moved store could not be forgotten: its record could not be cleared")
+            return false
+        }
+        abandonCount += 1
+        // A follow-up run folded in earlier has nothing left to convert.
+        rerunRequested = false
+        discardPendingFile()
+        libraryState.setPendingMovedStore(nil)
+        isPending = false
+        lastFailure = nil
+        lastCopyFailures = []
+        lastImported = nil
+        return true
+    }
+
+    /// The engine's answer to a run the user abandoned while it was in flight.
+    ///
+    /// A failure is dropped: there is no record to keep, no pending file to
+    /// write and no placeholder to list. A success means the drive was there
+    /// after all and the engine registered the library, which is real and
+    /// listed now, so the libraries and the picker list are read again; the
+    /// record stays cleared and no copy failure is held for a retry.
+    private func settleAfterAbandon(_ outcome: Result<ImportedStore, Error>) async {
+        becomeIdle()
+        if case .success = outcome {
+            await libraryState.refresh()
+            onImported()
+        }
     }
 
     // MARK: - The pending file
