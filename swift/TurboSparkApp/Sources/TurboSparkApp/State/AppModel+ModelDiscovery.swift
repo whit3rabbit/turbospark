@@ -283,6 +283,13 @@ extension AppModel {
             || servedIDs.contains(servedModelID(for: model))
     }
 
+    /// Whether `catalogRows` holds a row at `model`'s path (the rule described in
+    /// the first doc block above).
+    ///
+    /// **NO LONGER THE DELETE GUARD** (task 6.4). `deleteModel` decides by the
+    /// row's identity (`ModelIdentityKey.isPlaceholder`): the engine's available
+    /// list does not hold a model whose drive is away, and reading it cost a
+    /// synchronous engine call on the main actor. Only the path rule is kept.
     static func isCatalogTracked(model: InstalledModel, in catalogRows: [InstalledModel]) -> Bool {
         let stdPath = URL(fileURLWithPath: model.path).standardizedFileURL.path
         return catalogRows.contains { entry in

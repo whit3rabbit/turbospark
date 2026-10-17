@@ -324210,6 +324210,2757 @@
         }
       }
     },
+    "Missing": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0645\u0641\u0642\u0648\u062f"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fehlt"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Missing"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Falta"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Introuvable"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05d7\u05e1\u05e8"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0917\u093e\u092f\u092c"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hilang"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mancante"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u898b\u3064\u304b\u308a\u307e\u305b\u3093"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uc5c6\uc74c"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ontbreekt"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Brak"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ausente"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u0435\u0442"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saknas"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eksik"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0412\u0456\u0434\u0441\u0443\u0442\u043d\u044f"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "B\u1ecb thi\u1ebfu"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5df2\u4e22\u5931"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5df2\u907a\u5931"
+          }
+        }
+      }
+    },
+    "Unknown library": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0645\u0643\u062a\u0628\u0629 \u063a\u064a\u0631 \u0645\u0639\u0631\u0648\u0641\u0629"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unbekannte Bibliothek"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unknown library"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Biblioteca desconocida"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Biblioth\u00e8que inconnue"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05e1\u05e4\u05e8\u05d9\u05d9\u05d4 \u05dc\u05d0 \u05d9\u05d3\u05d5\u05e2\u05d4"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0905\u091c\u094d\u091e\u093e\u0924 \u0932\u093e\u0907\u092c\u094d\u0930\u0947\u0930\u0940"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pustaka tidak dikenal"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Libreria sconosciuta"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u4e0d\u660e\u306a\u30e9\u30a4\u30d6\u30e9\u30ea"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uc54c \uc218 \uc5c6\ub294 \ub77c\uc774\ube0c\ub7ec\ub9ac"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Onbekende bibliotheek"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nieznana biblioteka"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Biblioteca desconhecida"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041d\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043d\u0430\u044f \u0431\u0438\u0431\u043b\u0438\u043e\u0442\u0435\u043a\u0430"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ok\u00e4nt bibliotek"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bilinmeyen kitapl\u0131k"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041d\u0435\u0432\u0456\u0434\u043e\u043c\u0430 \u0431\u0456\u0431\u043b\u0456\u043e\u0442\u0435\u043a\u0430"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Th\u01b0 vi\u1ec7n kh\u00f4ng x\u00e1c \u0111\u1ecbnh"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u672a\u77e5\u6a21\u578b\u5e93"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u672a\u77e5\u6a21\u578b\u5eab"
+          }
+        }
+      }
+    },
+    "About %@ to load": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u064a\u0633\u062a\u063a\u0631\u0642 \u0627\u0644\u062a\u062d\u0645\u064a\u0644 \u0646\u062d\u0648 %@"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Etwa %@ zum Laden"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "About %@ to load"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unos %@ para cargar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Environ %@ pour charger"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05d4\u05d8\u05e2\u05d9\u05e0\u05d4 \u05ea\u05d9\u05de\u05e9\u05da \u05db-%@"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0932\u094b\u0921 \u0939\u094b\u0928\u0947 \u092e\u0947\u0902 \u0932\u0917\u092d\u0917 %@ \u0932\u0917\u0947\u0902\u0917\u0947"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sekitar %@ untuk memuat"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Circa %@ per caricare"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u8aad\u307f\u8fbc\u307f\u306b\u7d04 %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\ub85c\ub4dc\ud558\ub294 \ub370 \uc57d %@ \uc18c\uc694"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ongeveer %@ om te laden"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0141adowanie potrwa ok. %@"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cerca de %@ para carregar"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430 \u0437\u0430\u0439\u043c\u0451\u0442 \u043e\u043a\u043e\u043b\u043e %@"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cirka %@ att ladda"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Y\u00fcklenmesi yakla\u015f\u0131k %@ s\u00fcrer"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0417\u0430\u0432\u0430\u043d\u0442\u0430\u0436\u0435\u043d\u043d\u044f \u0437\u0430\u0439\u043c\u0435 \u0431\u043b\u0438\u0437\u044c\u043a\u043e %@"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "M\u1ea5t kho\u1ea3ng %@ \u0111\u1ec3 t\u1ea3i"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u52a0\u8f7d\u7ea6\u9700 %@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u8f09\u5165\u7d04\u9700 %@"
+          }
+        }
+      }
+    },
+    "Connect %@ to load": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0635\u0650\u0644 %@ \u0644\u0644\u062a\u062d\u0645\u064a\u0644"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zum Laden %@ verbinden"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connect %@ to load"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conecta %@ para cargar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connectez %@ pour charger"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05d7\u05d1\u05e8 \u05d0\u05ea %@ \u05db\u05d3\u05d9 \u05dc\u05d8\u05e2\u05d5\u05df"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0932\u094b\u0921 \u0915\u0930\u0928\u0947 \u0915\u0947 \u0932\u093f\u090f %@ \u0915\u0928\u0947\u0915\u094d\u091f \u0915\u0930\u0947\u0902"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hubungkan %@ untuk memuat"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Collega %@ per caricare"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u8aad\u307f\u8fbc\u3080\u306b\u306f %@ \u3092\u63a5\u7d9a\u3057\u3066\u304f\u3060\u3055\u3044"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\ub85c\ub4dc\ud558\ub824\uba74 %@\uc744(\ub97c) \uc5f0\uacb0\ud558\uc138\uc694"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sluit %@ aan om te laden"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pod\u0142\u0105cz %@, aby za\u0142adowa\u0107"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conecte %@ para carregar"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041f\u043e\u0434\u043a\u043b\u044e\u0447\u0438\u0442\u0435 %@, \u0447\u0442\u043e\u0431\u044b \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anslut %@ f\u00f6r att ladda"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Y\u00fcklemek i\u00e7in %@ s\u00fcr\u00fcc\u00fcs\u00fcn\u00fc ba\u011flay\u0131n"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041f\u0456\u0434\u043a\u043b\u044e\u0447\u0456\u0442\u044c %@, \u0449\u043e\u0431 \u0437\u0430\u0432\u0430\u043d\u0442\u0430\u0436\u0438\u0442\u0438"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "K\u1ebft n\u1ed1i %@ \u0111\u1ec3 t\u1ea3i"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u8bf7\u8fde\u63a5 %@ \u4ee5\u52a0\u8f7d"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u8acb\u9023\u63a5 %@ \u4ee5\u8f09\u5165"
+          }
+        }
+      }
+    },
+    "The files for this model are missing.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0645\u0644\u0641\u0627\u062a \u0647\u0630\u0627 \u0627\u0644\u0646\u0645\u0648\u0630\u062c \u0645\u0641\u0642\u0648\u062f\u0629."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Dateien dieses Modells fehlen."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The files for this model are missing."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Faltan los archivos de este modelo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les fichiers de ce mod\u00e8le sont introuvables."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05d4\u05e7\u05d1\u05e6\u05d9\u05dd \u05e9\u05dc \u05d4\u05de\u05d5\u05d3\u05dc \u05d4\u05d6\u05d4 \u05d7\u05e1\u05e8\u05d9\u05dd."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0907\u0938 \u092e\u0949\u0921\u0932 \u0915\u0940 \u092b\u093c\u093e\u0907\u0932\u0947\u0902 \u0928\u0939\u0940\u0902 \u092e\u093f\u0932 \u0930\u0939\u0940 \u0939\u0948\u0902\u0964"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "File model ini tidak ditemukan."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "I file di questo modello non si trovano."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u3053\u306e\u30e2\u30c7\u30eb\u306e\u30d5\u30a1\u30a4\u30eb\u304c\u898b\u3064\u304b\u308a\u307e\u305b\u3093\u3002"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uc774 \ubaa8\ub378\uc758 \ud30c\uc77c\uc774 \uc5c6\uc2b5\ub2c8\ub2e4."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "De bestanden van dit model ontbreken."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Brakuje plik\u00f3w tego modelu."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Os arquivos deste modelo est\u00e3o ausentes."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0424\u0430\u0439\u043b\u044b \u044d\u0442\u043e\u0439 \u043c\u043e\u0434\u0435\u043b\u0438 \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Filerna f\u00f6r den h\u00e4r modellen saknas."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu modelin dosyalar\u0131 eksik."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0424\u0430\u0439\u043b\u0438 \u0446\u0456\u0454\u0457 \u043c\u043e\u0434\u0435\u043b\u0456 \u0432\u0456\u0434\u0441\u0443\u0442\u043d\u0456."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kh\u00f4ng t\u00ecm th\u1ea5y c\u00e1c t\u1ec7p c\u1ee7a m\u00f4 h\u00ecnh n\u00e0y."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u6b64\u6a21\u578b\u7684\u6587\u4ef6\u5df2\u4e22\u5931\u3002"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u6b64\u6a21\u578b\u7684\u6a94\u6848\u5df2\u907a\u5931\u3002"
+          }
+        }
+      }
+    },
+    "Remove from list": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0625\u0632\u0627\u0644\u0629 \u0645\u0646 \u0627\u0644\u0642\u0627\u0626\u0645\u0629"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aus Liste entfernen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove from list"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quitar de la lista"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retirer de la liste"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05d4\u05e1\u05e8 \u05de\u05d4\u05e8\u05e9\u05d9\u05de\u05d4"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0938\u0942\u091a\u0940 \u0938\u0947 \u0939\u091f\u093e\u090f\u0902"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hapus dari daftar"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rimuovi dall'elenco"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u30ea\u30b9\u30c8\u304b\u3089\u524a\u9664"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\ubaa9\ub85d\uc5d0\uc11c \uc81c\uac70"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uit lijst verwijderen"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usu\u0144 z listy"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remover da lista"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0423\u0431\u0440\u0430\u0442\u044c \u0438\u0437 \u0441\u043f\u0438\u0441\u043a\u0430"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ta bort fr\u00e5n listan"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Listeden kald\u0131r"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041f\u0440\u0438\u0431\u0440\u0430\u0442\u0438 \u0437\u0456 \u0441\u043f\u0438\u0441\u043a\u0443"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "X\u00f3a kh\u1ecfi danh s\u00e1ch"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u4ece\u5217\u8868\u4e2d\u79fb\u9664"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5f9e\u6e05\u55ae\u4e2d\u79fb\u9664"
+          }
+        }
+      }
+    },
+    "Remove %@ from the list?": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0625\u0632\u0627\u0644\u0629 %@ \u0645\u0646 \u0627\u0644\u0642\u0627\u0626\u0645\u0629\u061f"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ aus der Liste entfernen?"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove %@ from the list?"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u00bfQuitar %@ de la lista?"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retirer %@ de la liste ?"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05dc\u05d4\u05e1\u05d9\u05e8 \u05d0\u05ea %@ \u05de\u05d4\u05e8\u05e9\u05d9\u05de\u05d4?"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ \u0915\u094b \u0938\u0942\u091a\u0940 \u0938\u0947 \u0939\u091f\u093e\u090f\u0902?"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hapus %@ dari daftar?"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rimuovere %@ dall'elenco?"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ \u3092\u30ea\u30b9\u30c8\u304b\u3089\u524a\u9664\u3057\u307e\u3059\u304b\uff1f"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@\uc744(\ub97c) \ubaa9\ub85d\uc5d0\uc11c \uc81c\uac70\ud560\uae4c\uc694?"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ uit de lijst verwijderen?"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usun\u0105\u0107 %@ z listy?"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remover %@ da lista?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0423\u0431\u0440\u0430\u0442\u044c %@ \u0438\u0437 \u0441\u043f\u0438\u0441\u043a\u0430?"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ta bort %@ fr\u00e5n listan?"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ listeden kald\u0131r\u0131ls\u0131n m\u0131?"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041f\u0440\u0438\u0431\u0440\u0430\u0442\u0438 %@ \u0437\u0456 \u0441\u043f\u0438\u0441\u043a\u0443?"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "X\u00f3a %@ kh\u1ecfi danh s\u00e1ch?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u8981\u4ece\u5217\u8868\u4e2d\u79fb\u9664 %@ \u5417\uff1f"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u8981\u5f9e\u6e05\u55ae\u4e2d\u79fb\u9664 %@ \u55ce\uff1f"
+          }
+        }
+      }
+    },
+    "TurboSpark stops listing this model. Its files are not deleted.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0633\u064a\u062a\u0648\u0642\u0641 TurboSpark \u0639\u0646 \u0639\u0631\u0636 \u0647\u0630\u0627 \u0627\u0644\u0646\u0645\u0648\u0630\u062c. \u0644\u0646 \u062a\u064f\u062d\u0630\u0641 \u0645\u0644\u0641\u0627\u062a\u0647."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark listet dieses Modell nicht mehr auf. Seine Dateien werden nicht gel\u00f6scht."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark stops listing this model. Its files are not deleted."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark dejar\u00e1 de mostrar este modelo. Sus archivos no se eliminan."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark n'affichera plus ce mod\u00e8le. Ses fichiers ne sont pas supprim\u00e9s."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark \u05d9\u05e4\u05e1\u05d9\u05e7 \u05dc\u05d4\u05e6\u05d9\u05d2 \u05d0\u05ea \u05d4\u05de\u05d5\u05d3\u05dc \u05d4\u05d6\u05d4. \u05d4\u05e7\u05d1\u05e6\u05d9\u05dd \u05e9\u05dc\u05d5 \u05dc\u05d0 \u05d9\u05d9\u05de\u05d7\u05e7\u05d5."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark \u0907\u0938 \u092e\u0949\u0921\u0932 \u0915\u094b \u0938\u0942\u091a\u0940 \u092e\u0947\u0902 \u0926\u093f\u0916\u093e\u0928\u093e \u092c\u0902\u0926 \u0915\u0930 \u0926\u0947\u0917\u093e\u0964 \u0907\u0938\u0915\u0940 \u092b\u093c\u093e\u0907\u0932\u0947\u0902 \u0939\u091f\u093e\u0908 \u0928\u0939\u0940\u0902 \u091c\u093e\u090f\u0902\u0917\u0940\u0964"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark berhenti menampilkan model ini. File-nya tidak dihapus."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark non mostrer\u00e0 pi\u00f9 questo modello. I suoi file non vengono eliminati."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark\u306f\u3053\u306e\u30e2\u30c7\u30eb\u3092\u4e00\u89a7\u306b\u8868\u793a\u3057\u306a\u304f\u306a\u308a\u307e\u3059\u3002\u30d5\u30a1\u30a4\u30eb\u306f\u524a\u9664\u3055\u308c\u307e\u305b\u3093\u3002"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark\uc5d0\uc11c \uc774 \ubaa8\ub378\uc774 \ubaa9\ub85d\uc5d0 \ub354 \uc774\uc0c1 \ud45c\uc2dc\ub418\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4. \ud30c\uc77c\uc740 \uc0ad\uc81c\ub418\uc9c0 \uc54a\uc2b5\ub2c8\ub2e4."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark toont dit model niet meer. De bestanden worden niet verwijderd."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark przestanie wy\u015bwietla\u0107 ten model. Jego pliki nie zostan\u0105 usuni\u0119te."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O TurboSpark deixar\u00e1 de listar este modelo. Os arquivos dele n\u00e3o ser\u00e3o exclu\u00eddos."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark \u043f\u0435\u0440\u0435\u0441\u0442\u0430\u043d\u0435\u0442 \u043f\u043e\u043a\u0430\u0437\u044b\u0432\u0430\u0442\u044c \u044d\u0442\u0443 \u043c\u043e\u0434\u0435\u043b\u044c. \u0415\u0451 \u0444\u0430\u0439\u043b\u044b \u043d\u0435 \u0443\u0434\u0430\u043b\u044f\u044e\u0442\u0441\u044f."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark slutar visa den h\u00e4r modellen. Filerna tas inte bort."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark bu modeli listelemeyi b\u0131rak\u0131r. Dosyalar\u0131 silinmez."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark \u043f\u0435\u0440\u0435\u0441\u0442\u0430\u043d\u0435 \u043f\u043e\u043a\u0430\u0437\u0443\u0432\u0430\u0442\u0438 \u0446\u044e \u043c\u043e\u0434\u0435\u043b\u044c. \u0407\u0457 \u0444\u0430\u0439\u043b\u0438 \u043d\u0435 \u0431\u0443\u0434\u0435 \u0432\u0438\u0434\u0430\u043b\u0435\u043d\u043e."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark s\u1ebd ng\u1eebng li\u1ec7t k\u00ea m\u00f4 h\u00ecnh n\u00e0y. C\u00e1c t\u1ec7p c\u1ee7a n\u00f3 kh\u00f4ng b\u1ecb x\u00f3a."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark \u5c06\u4e0d\u518d\u5217\u51fa\u6b64\u6a21\u578b\u3002\u5176\u6587\u4ef6\u4e0d\u4f1a\u88ab\u5220\u9664\u3002"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark \u5c07\u4e0d\u518d\u5217\u51fa\u6b64\u6a21\u578b\u3002\u5176\u6a94\u6848\u4e0d\u6703\u88ab\u522a\u9664\u3002"
+          }
+        }
+      }
+    },
+    "This permanently deletes the model files (%@) from the drive of the library %@.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0633\u064a\u0624\u062f\u064a \u0647\u0630\u0627 \u0625\u0644\u0649 \u062d\u0630\u0641 \u0645\u0644\u0641\u0627\u062a \u0627\u0644\u0646\u0645\u0648\u0630\u062c (%@) \u0646\u0647\u0627\u0626\u064a\u064b\u0627 \u0645\u0646 \u0645\u062d\u0631\u0643 \u0623\u0642\u0631\u0627\u0635 \u0627\u0644\u0645\u0643\u062a\u0628\u0629 %@."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dadurch werden die Modelldateien (%@) endg\u00fcltig vom Laufwerk der Bibliothek %@ gel\u00f6scht."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This permanently deletes the model files (%@) from the drive of the library %@."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Esto elimina de forma permanente los archivos del modelo (%@) de la unidad de la biblioteca %@."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cette action supprime d\u00e9finitivement les fichiers du mod\u00e8le (%@) du disque de la biblioth\u00e8que %@."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05e4\u05e2\u05d5\u05dc\u05d4 \u05d6\u05d5 \u05ea\u05de\u05d7\u05e7 \u05dc\u05e6\u05de\u05d9\u05ea\u05d5\u05ea \u05d0\u05ea \u05e7\u05d5\u05d1\u05e6\u05d9 \u05d4\u05de\u05d5\u05d3\u05dc (%@) \u05de\u05d4\u05db\u05d5\u05e0\u05df \u05e9\u05dc \u05d4\u05e1\u05e4\u05e8\u05d9\u05d9\u05d4 %@."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0907\u0938\u0938\u0947 \u092e\u0949\u0921\u0932 \u0915\u0940 \u092b\u093c\u093e\u0907\u0932\u0947\u0902 (%@) \u0932\u093e\u0907\u092c\u094d\u0930\u0947\u0930\u0940 %@ \u0915\u0940 \u0921\u094d\u0930\u093e\u0907\u0935 \u0938\u0947 \u0939\u092e\u0947\u0936\u093e \u0915\u0947 \u0932\u093f\u090f \u0939\u091f \u091c\u093e\u090f\u0902\u0917\u0940\u0964"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ini menghapus permanen file model (%@) dari drive pustaka %@."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Questa operazione elimina definitivamente i file del modello (%@) dall'unit\u00e0 della libreria %@."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u30e2\u30c7\u30eb\u306e\u30d5\u30a1\u30a4\u30eb\uff08%@\uff09\u3092\u3001\u30e9\u30a4\u30d6\u30e9\u30ea\u300c%@\u300d\u306e\u30c9\u30e9\u30a4\u30d6\u304b\u3089\u5b8c\u5168\u306b\u524a\u9664\u3057\u307e\u3059\u3002"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\ubaa8\ub378 \ud30c\uc77c(%@)\uc774 \ub77c\uc774\ube0c\ub7ec\ub9ac %@\uc758 \ub4dc\ub77c\uc774\ube0c\uc5d0\uc11c \uc601\uad6c\uc801\uc73c\ub85c \uc0ad\uc81c\ub429\ub2c8\ub2e4."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hiermee worden de modelbestanden (%@) definitief verwijderd van de schijf van de bibliotheek %@."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Spowoduje to trwa\u0142e usuni\u0119cie plik\u00f3w modelu (%@) z dysku biblioteki %@."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Isso exclui permanentemente os arquivos do modelo (%@) da unidade da biblioteca %@."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0424\u0430\u0439\u043b\u044b \u043c\u043e\u0434\u0435\u043b\u0438 (%@) \u0431\u0443\u0434\u0443\u0442 \u0431\u0435\u0437\u0432\u043e\u0437\u0432\u0440\u0430\u0442\u043d\u043e \u0443\u0434\u0430\u043b\u0435\u043d\u044b \u0441 \u0434\u0438\u0441\u043a\u0430 \u0431\u0438\u0431\u043b\u0438\u043e\u0442\u0435\u043a\u0438 %@."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Detta tar bort modellfilerna (%@) permanent fr\u00e5n enheten f\u00f6r biblioteket %@."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu i\u015flem, model dosyalar\u0131n\u0131 (%@) %@ kitapl\u0131\u011f\u0131n\u0131n s\u00fcr\u00fcc\u00fcs\u00fcnden kal\u0131c\u0131 olarak siler."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0424\u0430\u0439\u043b\u0438 \u043c\u043e\u0434\u0435\u043b\u0456 (%@) \u0431\u0443\u0434\u0435 \u0431\u0435\u0437\u043f\u043e\u0432\u043e\u0440\u043e\u0442\u043d\u043e \u0432\u0438\u0434\u0430\u043b\u0435\u043d\u043e \u0437 \u0434\u0438\u0441\u043a\u0430 \u0431\u0456\u0431\u043b\u0456\u043e\u0442\u0435\u043a\u0438 %@."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Thao t\u00e1c n\u00e0y x\u00f3a v\u0129nh vi\u1ec5n c\u00e1c t\u1ec7p m\u00f4 h\u00ecnh (%@) kh\u1ecfi \u1ed5 \u0111\u0129a c\u1ee7a th\u01b0 vi\u1ec7n %@."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u8fd9\u5c06\u6c38\u4e45\u5220\u9664\u6a21\u578b\u6587\u4ef6\uff08%@\uff09\uff0c\u8fd9\u4e9b\u6587\u4ef6\u4f4d\u4e8e\u6a21\u578b\u5e93 %@ \u7684\u9a71\u52a8\u5668\u4e0a\u3002"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u9019\u5c07\u6c38\u4e45\u522a\u9664\u6a21\u578b\u6a94\u6848\uff08%@\uff09\uff0c\u9019\u4e9b\u6a94\u6848\u4f4d\u65bc\u6a21\u578b\u5eab %@ \u7684\u78c1\u789f\u6a5f\u4e0a\u3002"
+          }
+        }
+      }
+    },
+    "A model is installing or moving, so '%@' was left as it is. Try again when it finishes.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u064a\u062c\u0631\u064a \u062a\u062b\u0628\u064a\u062a \u0646\u0645\u0648\u0630\u062c \u0623\u0648 \u0646\u0642\u0644\u0647\u060c \u0644\u0630\u0627 \u062a\u064f\u0631\u0643 '%@' \u0643\u0645\u0627 \u0647\u0648. \u062d\u0627\u0648\u0644 \u0645\u0631\u0629 \u0623\u062e\u0631\u0649 \u0639\u0646\u062f \u0627\u0646\u062a\u0647\u0627\u0621 \u0630\u0644\u0643."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ein Modell wird gerade installiert oder verschoben, daher wurde '%@' nicht ver\u00e4ndert. Versuchen Sie es erneut, wenn der Vorgang abgeschlossen ist."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A model is installing or moving, so '%@' was left as it is. Try again when it finishes."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Se est\u00e1 instalando o moviendo un modelo, as\u00ed que '%@' no se modific\u00f3. Int\u00e9ntalo de nuevo cuando termine."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un mod\u00e8le est en cours d'installation ou de d\u00e9placement, '%@' n'a donc pas \u00e9t\u00e9 modifi\u00e9. R\u00e9essayez une fois l'op\u00e9ration termin\u00e9e."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05de\u05d5\u05d3\u05dc \u05de\u05d5\u05ea\u05e7\u05df \u05d0\u05d5 \u05de\u05d5\u05e2\u05d1\u05e8 \u05db\u05e2\u05ea, \u05d5\u05dc\u05db\u05df '%@' \u05e0\u05e9\u05d0\u05e8 \u05db\u05e4\u05d9 \u05e9\u05d4\u05d9\u05d4. \u05e0\u05e1\u05d4 \u05e9\u05d5\u05d1 \u05d1\u05e1\u05d9\u05d5\u05dd."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0915\u094b\u0908 \u092e\u0949\u0921\u0932 \u0907\u0902\u0938\u094d\u091f\u0949\u0932 \u092f\u093e \u0938\u094d\u0925\u093e\u0928\u093e\u0902\u0924\u0930\u093f\u0924 \u0939\u094b \u0930\u0939\u093e \u0939\u0948, \u0907\u0938\u0932\u093f\u090f '%@' \u0915\u094b \u091c\u0948\u0938\u093e \u0925\u093e \u0935\u0948\u0938\u093e \u0939\u0940 \u091b\u094b\u0921\u093c\u093e \u0917\u092f\u093e\u0964 \u0907\u0938\u0915\u0947 \u092a\u0942\u0930\u093e \u0939\u094b\u0928\u0947 \u092a\u0930 \u092b\u093f\u0930 \u092a\u094d\u0930\u092f\u093e\u0938 \u0915\u0930\u0947\u0902\u0964"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sebuah model sedang diinstal atau dipindahkan, jadi '%@' dibiarkan apa adanya. Coba lagi setelah selesai."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un modello \u00e8 in fase di installazione o spostamento, quindi '%@' non \u00e8 stato modificato. Riprova al termine."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u30e2\u30c7\u30eb\u306e\u30a4\u30f3\u30b9\u30c8\u30fc\u30eb\u307e\u305f\u306f\u79fb\u52d5\u4e2d\u306e\u305f\u3081\u3001'%@' \u306f\u5909\u66f4\u3055\u308c\u307e\u305b\u3093\u3067\u3057\u305f\u3002\u5b8c\u4e86\u3057\u3066\u304b\u3089\u3082\u3046\u4e00\u5ea6\u304a\u8a66\u3057\u304f\u3060\u3055\u3044\u3002"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\ubaa8\ub378\uc744 \uc124\uce58\ud558\uac70\ub098 \uc774\ub3d9\ud558\ub294 \uc911\uc774\uc5b4\uc11c '%@'\uc740(\ub294) \ubcc0\uacbd\ub418\uc9c0 \uc54a\uc558\uc2b5\ub2c8\ub2e4. \uc644\ub8cc\ub41c \ud6c4 \ub2e4\uc2dc \uc2dc\ub3c4\ud558\uc138\uc694."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Er wordt een model ge\u00efnstalleerd of verplaatst, dus '%@' is niet gewijzigd. Probeer het opnieuw als dit klaar is."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trwa instalowanie lub przenoszenie modelu, wi\u0119c '%@' pozosta\u0142 bez zmian. Spr\u00f3buj ponownie po jego zako\u0144czeniu."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Um modelo est\u00e1 sendo instalado ou movido, ent\u00e3o '%@' n\u00e3o foi alterado. Tente novamente quando terminar."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0418\u0434\u0451\u0442 \u0443\u0441\u0442\u0430\u043d\u043e\u0432\u043a\u0430 \u0438\u043b\u0438 \u043f\u0435\u0440\u0435\u043c\u0435\u0449\u0435\u043d\u0438\u0435 \u043c\u043e\u0434\u0435\u043b\u0438, \u043f\u043e\u044d\u0442\u043e\u043c\u0443 '%@' \u043e\u0441\u0442\u0430\u043b\u0441\u044f \u0431\u0435\u0437 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0439. \u041f\u043e\u0432\u0442\u043e\u0440\u0438\u0442\u0435 \u043f\u043e\u043f\u044b\u0442\u043a\u0443 \u043f\u043e\u0441\u043b\u0435 \u0437\u0430\u0432\u0435\u0440\u0448\u0435\u043d\u0438\u044f."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "En modell installeras eller flyttas, s\u00e5 '%@' l\u00e4mnades som det var. F\u00f6rs\u00f6k igen n\u00e4r det \u00e4r klart."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bir model y\u00fckleniyor veya ta\u015f\u0131n\u0131yor, bu y\u00fczden '%@' de\u011fi\u015ftirilmedi. Bitti\u011finde yeniden deneyin."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0422\u0440\u0438\u0432\u0430\u0454 \u0432\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d\u043d\u044f \u0430\u0431\u043e \u043f\u0435\u0440\u0435\u043c\u0456\u0449\u0435\u043d\u043d\u044f \u043c\u043e\u0434\u0435\u043b\u0456, \u0442\u043e\u043c\u0443 '%@' \u0437\u0430\u043b\u0438\u0448\u0435\u043d\u043e \u0431\u0435\u0437 \u0437\u043c\u0456\u043d. \u041f\u043e\u0432\u0442\u043e\u0440\u0456\u0442\u044c \u0441\u043f\u0440\u043e\u0431\u0443 \u043f\u0456\u0441\u043b\u044f \u0437\u0430\u0432\u0435\u0440\u0448\u0435\u043d\u043d\u044f."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "M\u1ed9t m\u00f4 h\u00ecnh \u0111ang \u0111\u01b0\u1ee3c c\u00e0i \u0111\u1eb7t ho\u1eb7c di chuy\u1ec3n n\u00ean '%@' \u0111\u01b0\u1ee3c gi\u1eef nguy\u00ean. H\u00e3y th\u1eed l\u1ea1i khi ho\u00e0n t\u1ea5t."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u6709\u6a21\u578b\u6b63\u5728\u5b89\u88c5\u6216\u79fb\u52a8\uff0c\u56e0\u6b64\u672a\u66f4\u6539 '%@'\u3002\u8bf7\u5728\u5b8c\u6210\u540e\u91cd\u8bd5\u3002"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u6709\u6a21\u578b\u6b63\u5728\u5b89\u88dd\u6216\u79fb\u52d5\uff0c\u56e0\u6b64\u672a\u66f4\u6539 '%@'\u3002\u8acb\u5728\u5b8c\u6210\u5f8c\u518d\u8a66\u4e00\u6b21\u3002"
+          }
+        }
+      }
+    },
+    "'%@' is no longer in the model list.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0644\u0645 \u064a\u0639\u062f '%@' \u0641\u064a \u0642\u0627\u0626\u0645\u0629 \u0627\u0644\u0646\u0645\u0627\u0630\u062c."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' ist nicht mehr in der Modellliste."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' is no longer in the model list."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' ya no est\u00e1 en la lista de modelos."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' ne figure plus dans la liste des mod\u00e8les."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' \u05db\u05d1\u05e8 \u05d0\u05d9\u05e0\u05d5 \u05d1\u05e8\u05e9\u05d9\u05de\u05ea \u05d4\u05de\u05d5\u05d3\u05dc\u05d9\u05dd."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' \u0905\u092c \u092e\u0949\u0921\u0932 \u0938\u0942\u091a\u0940 \u092e\u0947\u0902 \u0928\u0939\u0940\u0902 \u0939\u0948\u0964"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' tidak ada lagi di daftar model."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' non \u00e8 pi\u00f9 nell'elenco dei modelli."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' \u306f\u30e2\u30c7\u30eb\u306e\u4e00\u89a7\u306b\u3042\u308a\u307e\u305b\u3093\u3002"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@'\uc740(\ub294) \ub354 \uc774\uc0c1 \ubaa8\ub378 \ubaa9\ub85d\uc5d0 \uc5c6\uc2b5\ub2c8\ub2e4."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' staat niet meer in de lijst met modellen."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' nie ma ju\u017c na li\u015bcie modeli."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' n\u00e3o est\u00e1 mais na lista de modelos."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' \u0431\u043e\u043b\u044c\u0448\u0435 \u043d\u0435\u0442 \u0432 \u0441\u043f\u0438\u0441\u043a\u0435 \u043c\u043e\u0434\u0435\u043b\u0435\u0439."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' finns inte l\u00e4ngre i modelllistan."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' art\u0131k model listesinde de\u011fil."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' \u0431\u0456\u043b\u044c\u0448\u0435 \u043d\u0435\u043c\u0430\u0454 \u0432 \u0441\u043f\u0438\u0441\u043a\u0443 \u043c\u043e\u0434\u0435\u043b\u0435\u0439."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' kh\u00f4ng c\u00f2n trong danh s\u00e1ch m\u00f4 h\u00ecnh."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' \u5df2\u4e0d\u5728\u6a21\u578b\u5217\u8868\u4e2d\u3002"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' \u5df2\u4e0d\u5728\u6a21\u578b\u6e05\u55ae\u4e2d\u3002"
+          }
+        }
+      }
+    },
+    "'%@' could not be changed because of a file system error.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u062a\u0639\u0630\u0651\u0631 \u062a\u063a\u064a\u064a\u0631 '%@' \u0628\u0633\u0628\u0628 \u062e\u0637\u0623 \u0641\u064a \u0646\u0638\u0627\u0645 \u0627\u0644\u0645\u0644\u0641\u0627\u062a."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' konnte wegen eines Dateisystemfehlers nicht ge\u00e4ndert werden."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' could not be changed because of a file system error."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo modificar '%@' por un error del sistema de archivos."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' n'a pas pu \u00eatre modifi\u00e9 en raison d'une erreur du syst\u00e8me de fichiers."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05dc\u05d0 \u05e0\u05d9\u05ea\u05df \u05d4\u05d9\u05d4 \u05dc\u05e9\u05e0\u05d5\u05ea \u05d0\u05ea '%@' \u05d1\u05d2\u05dc\u05dc \u05e9\u05d2\u05d9\u05d0\u05ea \u05de\u05e2\u05e8\u05db\u05ea \u05e7\u05d1\u05e6\u05d9\u05dd."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u092b\u093c\u093e\u0907\u0932 \u0938\u093f\u0938\u094d\u091f\u092e \u0924\u094d\u0930\u0941\u091f\u093f \u0915\u0947 \u0915\u093e\u0930\u0923 '%@' \u0915\u094b \u092c\u0926\u0932\u093e \u0928\u0939\u0940\u0902 \u091c\u093e \u0938\u0915\u093e\u0964"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' tidak dapat diubah karena kesalahan sistem file."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Non \u00e8 stato possibile modificare '%@' a causa di un errore del file system."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u30d5\u30a1\u30a4\u30eb\u30b7\u30b9\u30c6\u30e0\u306e\u30a8\u30e9\u30fc\u306e\u305f\u3081\u3001'%@' \u3092\u5909\u66f4\u3067\u304d\u307e\u305b\u3093\u3067\u3057\u305f\u3002"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\ud30c\uc77c \uc2dc\uc2a4\ud15c \uc624\ub958\ub85c '%@'\uc744(\ub97c) \ubcc0\uacbd\ud558\uc9c0 \ubabb\ud588\uc2b5\ub2c8\ub2e4."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' kon niet worden gewijzigd vanwege een bestandssysteemfout."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nie uda\u0142o si\u0119 zmieni\u0107 '%@' z powodu b\u0142\u0119du systemu plik\u00f3w."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "N\u00e3o foi poss\u00edvel alterar '%@' por causa de um erro do sistema de arquivos."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0438\u0437\u043c\u0435\u043d\u0438\u0442\u044c '%@' \u0438\u0437-\u0437\u0430 \u043e\u0448\u0438\u0431\u043a\u0438 \u0444\u0430\u0439\u043b\u043e\u0432\u043e\u0439 \u0441\u0438\u0441\u0442\u0435\u043c\u044b."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' kunde inte \u00e4ndras p\u00e5 grund av ett filsystemfel."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dosya sistemi hatas\u0131 nedeniyle '%@' de\u011fi\u015ftirilemedi."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041d\u0435 \u0432\u0434\u0430\u043b\u043e\u0441\u044f \u0437\u043c\u0456\u043d\u0438\u0442\u0438 '%@' \u0447\u0435\u0440\u0435\u0437 \u043f\u043e\u043c\u0438\u043b\u043a\u0443 \u0444\u0430\u0439\u043b\u043e\u0432\u043e\u0457 \u0441\u0438\u0441\u0442\u0435\u043c\u0438."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kh\u00f4ng th\u1ec3 thay \u0111\u1ed5i '%@' do l\u1ed7i h\u1ec7 th\u1ed1ng t\u1ec7p."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u7531\u4e8e\u6587\u4ef6\u7cfb\u7edf\u9519\u8bef\uff0c\u65e0\u6cd5\u66f4\u6539 '%@'\u3002"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u7531\u65bc\u6a94\u6848\u7cfb\u7d71\u932f\u8aa4\uff0c\u7121\u6cd5\u66f4\u6539 '%@'\u3002"
+          }
+        }
+      }
+    },
+    "'%@' is in a read-only library, so it was left as it is.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u064a\u0642\u0639 '%@' \u0641\u064a \u0645\u0643\u062a\u0628\u0629 \u0644\u0644\u0642\u0631\u0627\u0621\u0629 \u0641\u0642\u0637\u060c \u0644\u0630\u0627 \u062a\u064f\u0631\u0643 \u0643\u0645\u0627 \u0647\u0648."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' liegt in einer schreibgesch\u00fctzten Bibliothek und wurde daher nicht ver\u00e4ndert."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' is in a read-only library, so it was left as it is."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' est\u00e1 en una biblioteca de solo lectura, as\u00ed que no se modific\u00f3."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' se trouve dans une biblioth\u00e8que en lecture seule et n'a donc pas \u00e9t\u00e9 modifi\u00e9."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' \u05e0\u05de\u05e6\u05d0 \u05d1\u05e1\u05e4\u05e8\u05d9\u05d9\u05d4 \u05dc\u05e7\u05e8\u05d9\u05d0\u05d4 \u05d1\u05dc\u05d1\u05d3, \u05d5\u05dc\u05db\u05df \u05e0\u05e9\u05d0\u05e8 \u05db\u05e4\u05d9 \u05e9\u05d4\u05d9\u05d4."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' \u0915\u0947\u0935\u0932-\u092a\u0920\u0928 \u0935\u093e\u0932\u0940 \u0932\u093e\u0907\u092c\u094d\u0930\u0947\u0930\u0940 \u092e\u0947\u0902 \u0939\u0948, \u0907\u0938\u0932\u093f\u090f \u0909\u0938\u0947 \u091c\u0948\u0938\u093e \u0925\u093e \u0935\u0948\u0938\u093e \u0939\u0940 \u091b\u094b\u0921\u093c\u093e \u0917\u092f\u093e\u0964"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' berada di pustaka hanya-baca, jadi dibiarkan apa adanya."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' si trova in una libreria di sola lettura, quindi non \u00e8 stato modificato."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' \u306f\u8aad\u307f\u53d6\u308a\u5c02\u7528\u306e\u30e9\u30a4\u30d6\u30e9\u30ea\u306b\u3042\u308b\u305f\u3081\u3001\u5909\u66f4\u3055\u308c\u307e\u305b\u3093\u3067\u3057\u305f\u3002"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@'\uc740(\ub294) \uc77d\uae30 \uc804\uc6a9 \ub77c\uc774\ube0c\ub7ec\ub9ac\uc5d0 \uc788\uc5b4 \ubcc0\uacbd\ub418\uc9c0 \uc54a\uc558\uc2b5\ub2c8\ub2e4."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' staat in een alleen-lezen bibliotheek en is daarom niet gewijzigd."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' znajduje si\u0119 w bibliotece tylko do odczytu, wi\u0119c pozosta\u0142 bez zmian."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' est\u00e1 em uma biblioteca somente leitura, ent\u00e3o n\u00e3o foi alterado."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' \u043d\u0430\u0445\u043e\u0434\u0438\u0442\u0441\u044f \u0432 \u0431\u0438\u0431\u043b\u0438\u043e\u0442\u0435\u043a\u0435 \u0442\u043e\u043b\u044c\u043a\u043e \u0434\u043b\u044f \u0447\u0442\u0435\u043d\u0438\u044f, \u043f\u043e\u044d\u0442\u043e\u043c\u0443 \u043e\u0441\u0442\u0430\u043b\u0441\u044f \u0431\u0435\u0437 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0439."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' finns i ett skrivskyddat bibliotek och l\u00e4mnades d\u00e4rf\u00f6r som det var."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' salt okunur bir kitapl\u0131kta oldu\u011fu i\u00e7in de\u011fi\u015ftirilmedi."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' \u0440\u043e\u0437\u0442\u0430\u0448\u043e\u0432\u0430\u043d\u043e \u0432 \u0431\u0456\u0431\u043b\u0456\u043e\u0442\u0435\u0446\u0456 \u043b\u0438\u0448\u0435 \u0434\u043b\u044f \u0447\u0438\u0442\u0430\u043d\u043d\u044f, \u0442\u043e\u043c\u0443 \u0439\u043e\u0433\u043e \u0437\u0430\u043b\u0438\u0448\u0435\u043d\u043e \u0431\u0435\u0437 \u0437\u043c\u0456\u043d."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' n\u1eb1m trong th\u01b0 vi\u1ec7n ch\u1ec9 \u0111\u1ecdc n\u00ean \u0111\u01b0\u1ee3c gi\u1eef nguy\u00ean."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' \u4f4d\u4e8e\u53ea\u8bfb\u6a21\u578b\u5e93\u4e2d\uff0c\u56e0\u6b64\u672a\u88ab\u66f4\u6539\u3002"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' \u4f4d\u65bc\u552f\u8b80\u6a21\u578b\u5eab\u4e2d\uff0c\u56e0\u6b64\u672a\u88ab\u66f4\u6539\u3002"
+          }
+        }
+      }
+    },
+    "TurboSpark could not change '%@'.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u062a\u0639\u0630\u0651\u0631 \u0639\u0644\u0649 TurboSpark \u062a\u063a\u064a\u064a\u0631 '%@'."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark konnte '%@' nicht \u00e4ndern."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark could not change '%@'."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark no pudo modificar '%@'."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark n'a pas pu modifier '%@'."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark \u05dc\u05d0 \u05d4\u05e6\u05dc\u05d9\u05d7 \u05dc\u05e9\u05e0\u05d5\u05ea \u05d0\u05ea '%@'."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark '%@' \u0915\u094b \u092c\u0926\u0932 \u0928\u0939\u0940\u0902 \u0938\u0915\u093e\u0964"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark tidak dapat mengubah '%@'."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark non \u00e8 riuscito a modificare '%@'."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark\u306f '%@' \u3092\u5909\u66f4\u3067\u304d\u307e\u305b\u3093\u3067\u3057\u305f\u3002"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark\uc5d0\uc11c '%@'\uc744(\ub97c) \ubcc0\uacbd\ud558\uc9c0 \ubabb\ud588\uc2b5\ub2c8\ub2e4."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark kon '%@' niet wijzigen."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark nie m\u00f3g\u0142 zmieni\u0107 '%@'."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O TurboSpark n\u00e3o conseguiu alterar '%@'."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark \u043d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0438\u0437\u043c\u0435\u043d\u0438\u0442\u044c '%@'."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark kunde inte \u00e4ndra '%@'."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark '%@' \u00f6\u011fesini de\u011fi\u015ftiremedi."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark \u043d\u0435 \u0432\u0434\u0430\u043b\u043e\u0441\u044f \u0437\u043c\u0456\u043d\u0438\u0442\u0438 '%@'."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark kh\u00f4ng th\u1ec3 thay \u0111\u1ed5i '%@'."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark \u65e0\u6cd5\u66f4\u6539 '%@'\u3002"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark \u7121\u6cd5\u66f4\u6539 '%@'\u3002"
+          }
+        }
+      }
+    },
+    "TurboSpark could not change '%@': %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u062a\u0639\u0630\u0651\u0631 \u0639\u0644\u0649 TurboSpark \u062a\u063a\u064a\u064a\u0631 '%@': %@"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark konnte '%@' nicht \u00e4ndern: %@"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark could not change '%@': %@"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark no pudo modificar '%@': %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark n'a pas pu modifier '%@' : %@"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark \u05dc\u05d0 \u05d4\u05e6\u05dc\u05d9\u05d7 \u05dc\u05e9\u05e0\u05d5\u05ea \u05d0\u05ea '%@': %@"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark '%@' \u0915\u094b \u092c\u0926\u0932 \u0928\u0939\u0940\u0902 \u0938\u0915\u093e: %@"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark tidak dapat mengubah '%@': %@"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark non \u00e8 riuscito a modificare '%@': %@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark\u306f '%@' \u3092\u5909\u66f4\u3067\u304d\u307e\u305b\u3093\u3067\u3057\u305f: %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark\uc5d0\uc11c '%@'\uc744(\ub97c) \ubcc0\uacbd\ud558\uc9c0 \ubabb\ud588\uc2b5\ub2c8\ub2e4: %@"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark kon '%@' niet wijzigen: %@"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark nie m\u00f3g\u0142 zmieni\u0107 '%@': %@"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O TurboSpark n\u00e3o conseguiu alterar '%@': %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark \u043d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0438\u0437\u043c\u0435\u043d\u0438\u0442\u044c '%@': %@"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark kunde inte \u00e4ndra '%@': %@"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark '%@' \u00f6\u011fesini de\u011fi\u015ftiremedi: %@"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark \u043d\u0435 \u0432\u0434\u0430\u043b\u043e\u0441\u044f \u0437\u043c\u0456\u043d\u0438\u0442\u0438 '%@': %@"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark kh\u00f4ng th\u1ec3 thay \u0111\u1ed5i '%@': %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark \u65e0\u6cd5\u66f4\u6539 '%@'\uff1a%@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark \u7121\u6cd5\u66f4\u6539 '%@'\uff1a%@"
+          }
+        }
+      }
+    },
+    "Removed '%@' from the list.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u062a\u0645\u062a \u0625\u0632\u0627\u0644\u0629 '%@' \u0645\u0646 \u0627\u0644\u0642\u0627\u0626\u0645\u0629."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' wurde aus der Liste entfernt."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Removed '%@' from the list."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Se quit\u00f3 '%@' de la lista."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' a \u00e9t\u00e9 retir\u00e9 de la liste."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' \u05d4\u05d5\u05e1\u05e8 \u05de\u05d4\u05e8\u05e9\u05d9\u05de\u05d4."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' \u0915\u094b \u0938\u0942\u091a\u0940 \u0938\u0947 \u0939\u091f\u093e \u0926\u093f\u092f\u093e \u0917\u092f\u093e\u0964"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' dihapus dari daftar."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' \u00e8 stato rimosso dall'elenco."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' \u3092\u30ea\u30b9\u30c8\u304b\u3089\u524a\u9664\u3057\u307e\u3057\u305f\u3002"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@'\uc744(\ub97c) \ubaa9\ub85d\uc5d0\uc11c \uc81c\uac70\ud588\uc2b5\ub2c8\ub2e4."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' is uit de lijst verwijderd."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usuni\u0119to '%@' z listy."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' foi removido da lista."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041c\u043e\u0434\u0435\u043b\u044c '%@' \u0443\u0431\u0440\u0430\u043d\u0430 \u0438\u0437 \u0441\u043f\u0438\u0441\u043a\u0430."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' har tagits bort fr\u00e5n listan."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "'%@' listeden kald\u0131r\u0131ld\u0131."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041c\u043e\u0434\u0435\u043b\u044c '%@' \u043f\u0440\u0438\u0431\u0440\u0430\u043d\u043e \u0437\u0456 \u0441\u043f\u0438\u0441\u043a\u0443."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0110\u00e3 x\u00f3a '%@' kh\u1ecfi danh s\u00e1ch."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5df2\u4ece\u5217\u8868\u4e2d\u79fb\u9664 '%@'\u3002"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5df2\u5f9e\u6e05\u55ae\u4e2d\u79fb\u9664 '%@'\u3002"
+          }
+        }
+      }
+    },
+    "By Location": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u062d\u0633\u0628 \u0627\u0644\u0645\u0648\u0642\u0639"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nach Speicherort"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "By Location"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Por ubicaci\u00f3n"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Par emplacement"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05dc\u05e4\u05d9 \u05de\u05d9\u05e7\u05d5\u05dd"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0938\u094d\u0925\u093e\u0928 \u0915\u0947 \u0905\u0928\u0941\u0938\u093e\u0930"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Menurut Lokasi"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Per posizione"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5834\u6240\u5225"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uc704\uce58\ubcc4"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Op locatie"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wed\u0142ug lokalizacji"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Por local"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041f\u043e \u0440\u0430\u0441\u043f\u043e\u043b\u043e\u0436\u0435\u043d\u0438\u044e"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Efter plats"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Konuma G\u00f6re"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0417\u0430 \u0440\u043e\u0437\u0442\u0430\u0448\u0443\u0432\u0430\u043d\u043d\u044f\u043c"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Theo v\u1ecb tr\u00ed"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u6309\u4f4d\u7f6e"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u4f9d\u4f4d\u7f6e"
+          }
+        }
+      }
+    },
+    "Available now": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0627\u0644\u0645\u062a\u0627\u062d\u0629 \u0627\u0644\u0622\u0646"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Jetzt verf\u00fcgbar"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Available now"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Disponibles ahora"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Disponibles maintenant"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05d6\u05de\u05d9\u05e0\u05d9\u05dd \u05e2\u05db\u05e9\u05d9\u05d5"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0905\u092d\u0940 \u0909\u092a\u0932\u092c\u094d\u0927"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tersedia sekarang"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Disponibili ora"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u4eca\u3059\u3050\u4f7f\u7528\u53ef\u80fd"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uc9c0\uae08 \uc0ac\uc6a9 \uac00\ub2a5"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nu beschikbaar"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dost\u0119pne teraz"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dispon\u00edveis agora"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0414\u043e\u0441\u0442\u0443\u043f\u043d\u044b \u0441\u0435\u0439\u0447\u0430\u0441"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tillg\u00e4ngliga nu"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u015eu an kullan\u0131labilir"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0414\u043e\u0441\u0442\u0443\u043f\u043d\u0456 \u0437\u0430\u0440\u0430\u0437"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "C\u00f3 s\u1eb5n ngay"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5f53\u524d\u53ef\u7528"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u76ee\u524d\u53ef\u7528"
+          }
+        }
+      }
+    },
+    "Hide models whose drive is not connected or whose files are missing": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0625\u062e\u0641\u0627\u0621 \u0627\u0644\u0646\u0645\u0627\u0630\u062c \u0627\u0644\u062a\u064a \u0644\u0645 \u064a\u062a\u0645 \u062a\u0648\u0635\u064a\u0644 \u0645\u062d\u0631\u0643 \u0623\u0642\u0631\u0627\u0635\u0647\u0627 \u0623\u0648 \u0627\u0644\u062a\u064a \u0645\u0644\u0641\u0627\u062a\u0647\u0627 \u0645\u0641\u0642\u0648\u062f\u0629"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modelle ausblenden, deren Laufwerk nicht verbunden ist oder deren Dateien fehlen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hide models whose drive is not connected or whose files are missing"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Oculta los modelos cuya unidad no est\u00e1 conectada o cuyos archivos faltan"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Masque les mod\u00e8les dont le disque n'est pas connect\u00e9 ou dont les fichiers sont introuvables"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05d4\u05e1\u05ea\u05e8 \u05de\u05d5\u05d3\u05dc\u05d9\u05dd \u05e9\u05d4\u05db\u05d5\u05e0\u05df \u05e9\u05dc\u05d4\u05dd \u05d0\u05d9\u05e0\u05d5 \u05de\u05d7\u05d5\u05d1\u05e8 \u05d0\u05d5 \u05e9\u05d4\u05e7\u05d1\u05e6\u05d9\u05dd \u05e9\u05dc\u05d4\u05dd \u05d7\u05e1\u05e8\u05d9\u05dd"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0909\u0928 \u092e\u0949\u0921\u0932 \u0915\u094b \u091b\u093f\u092a\u093e\u090f\u0902 \u091c\u093f\u0928\u0915\u0940 \u0921\u094d\u0930\u093e\u0907\u0935 \u0915\u0928\u0947\u0915\u094d\u091f \u0928\u0939\u0940\u0902 \u0939\u0948 \u092f\u093e \u091c\u093f\u0928\u0915\u0940 \u092b\u093c\u093e\u0907\u0932\u0947\u0902 \u0917\u093e\u092f\u092c \u0939\u0948\u0902"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sembunyikan model yang drive-nya tidak terhubung atau file-nya hilang"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nasconde i modelli la cui unit\u00e0 non \u00e8 collegata o i cui file non si trovano"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u30c9\u30e9\u30a4\u30d6\u304c\u63a5\u7d9a\u3055\u308c\u3066\u3044\u306a\u3044\u30e2\u30c7\u30eb\u3084\u3001\u30d5\u30a1\u30a4\u30eb\u304c\u898b\u3064\u304b\u3089\u306a\u3044\u30e2\u30c7\u30eb\u3092\u975e\u8868\u793a\u306b\u3057\u307e\u3059"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\ub4dc\ub77c\uc774\ube0c\uac00 \uc5f0\uacb0\ub418\uc9c0 \uc54a\uc558\uac70\ub098 \ud30c\uc77c\uc774 \uc5c6\ub294 \ubaa8\ub378\uc744 \uc228\uae41\ub2c8\ub2e4"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verberg modellen waarvan de schijf niet is aangesloten of waarvan de bestanden ontbreken"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ukryj modele, kt\u00f3rych dysk nie jest pod\u0142\u0105czony lub kt\u00f3rych plik\u00f3w brakuje"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Oculta modelos cuja unidade n\u00e3o est\u00e1 conectada ou cujos arquivos est\u00e3o ausentes"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0421\u043a\u0440\u044b\u0442\u044c \u043c\u043e\u0434\u0435\u043b\u0438, \u0434\u0438\u0441\u043a \u043a\u043e\u0442\u043e\u0440\u044b\u0445 \u043d\u0435 \u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0451\u043d \u0438\u043b\u0438 \u0444\u0430\u0439\u043b\u044b \u043a\u043e\u0442\u043e\u0440\u044b\u0445 \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "D\u00f6lj modeller vars enhet inte \u00e4r ansluten eller vars filer saknas"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "S\u00fcr\u00fcc\u00fcs\u00fc ba\u011fl\u0131 olmayan veya dosyalar\u0131 eksik olan modelleri gizle"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041f\u0440\u0438\u0445\u043e\u0432\u0430\u0442\u0438 \u043c\u043e\u0434\u0435\u043b\u0456, \u0434\u0438\u0441\u043a \u044f\u043a\u0438\u0445 \u043d\u0435 \u043f\u0456\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u043e \u0430\u0431\u043e \u0444\u0430\u0439\u043b\u0438 \u044f\u043a\u0438\u0445 \u0432\u0456\u0434\u0441\u0443\u0442\u043d\u0456"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u1ea8n c\u00e1c m\u00f4 h\u00ecnh c\u00f3 \u1ed5 \u0111\u0129a ch\u01b0a k\u1ebft n\u1ed1i ho\u1eb7c b\u1ecb thi\u1ebfu t\u1ec7p"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u9690\u85cf\u9a71\u52a8\u5668\u672a\u8fde\u63a5\u6216\u6587\u4ef6\u5df2\u4e22\u5931\u7684\u6a21\u578b"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u96b1\u85cf\u78c1\u789f\u6a5f\u672a\u9023\u63a5\u6216\u6a94\u6848\u5df2\u907a\u5931\u7684\u6a21\u578b"
+          }
+        }
+      }
+    },
+    "No Models Available Now": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0644\u0627 \u062a\u0648\u062c\u062f \u0646\u0645\u0627\u0630\u062c \u0645\u062a\u0627\u062d\u0629 \u0627\u0644\u0622\u0646"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Derzeit keine Modelle verf\u00fcgbar"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No Models Available Now"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No hay modelos disponibles ahora"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucun mod\u00e8le disponible pour le moment"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05d0\u05d9\u05df \u05de\u05d5\u05d3\u05dc\u05d9\u05dd \u05d6\u05de\u05d9\u05e0\u05d9\u05dd \u05db\u05e2\u05ea"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0905\u092d\u0940 \u0915\u094b\u0908 \u092e\u0949\u0921\u0932 \u0909\u092a\u0932\u092c\u094d\u0927 \u0928\u0939\u0940\u0902"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tidak Ada Model yang Tersedia Sekarang"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nessun modello disponibile ora"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u4eca\u3059\u3050\u4f7f\u3048\u308b\u30e2\u30c7\u30eb\u306f\u3042\u308a\u307e\u305b\u3093"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uc9c0\uae08 \uc0ac\uc6a9\ud560 \uc218 \uc788\ub294 \ubaa8\ub378 \uc5c6\uc74c"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nu geen modellen beschikbaar"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Brak dost\u0119pnych modeli"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nenhum modelo dispon\u00edvel agora"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0421\u0435\u0439\u0447\u0430\u0441 \u043d\u0435\u0442 \u0434\u043e\u0441\u0442\u0443\u043f\u043d\u044b\u0445 \u043c\u043e\u0434\u0435\u043b\u0435\u0439"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Inga modeller tillg\u00e4ngliga nu"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u015eu an Kullan\u0131labilir Model Yok"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0417\u0430\u0440\u0430\u0437 \u043d\u0435\u043c\u0430\u0454 \u0434\u043e\u0441\u0442\u0443\u043f\u043d\u0438\u0445 \u043c\u043e\u0434\u0435\u043b\u0435\u0439"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hi\u1ec7n kh\u00f4ng c\u00f3 m\u00f4 h\u00ecnh n\u00e0o kh\u1ea3 d\u1ee5ng"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u5f53\u524d\u6ca1\u6709\u53ef\u7528\u7684\u6a21\u578b"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u76ee\u524d\u6c92\u6709\u53ef\u7528\u7684\u6a21\u578b"
+          }
+        }
+      }
+    },
+    "Connect a drive, or turn off Available now to see every model.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0635\u0650\u0644 \u0645\u062d\u0631\u0643 \u0623\u0642\u0631\u0627\u0635\u060c \u0623\u0648 \u0623\u0648\u0642\u0641 \u00ab\u0627\u0644\u0645\u062a\u0627\u062d\u0629 \u0627\u0644\u0622\u0646\u00bb \u0644\u0639\u0631\u0636 \u0643\u0644 \u0627\u0644\u0646\u0645\u0627\u0630\u062c."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verbinden Sie ein Laufwerk oder schalten Sie \u201eJetzt verf\u00fcgbar\u201c aus, um alle Modelle zu sehen."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connect a drive, or turn off Available now to see every model."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conecta una unidad o desactiva \u00abDisponibles ahora\u00bb para ver todos los modelos."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connectez un disque ou d\u00e9sactivez \u00ab Disponibles maintenant \u00bb pour voir tous les mod\u00e8les."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05d7\u05d1\u05e8 \u05db\u05d5\u05e0\u05df, \u05d0\u05d5 \u05db\u05d1\u05d4 \u05d0\u05ea \"\u05d6\u05de\u05d9\u05e0\u05d9\u05dd \u05e2\u05db\u05e9\u05d9\u05d5\" \u05db\u05d3\u05d9 \u05dc\u05e8\u05d0\u05d5\u05ea \u05d0\u05ea \u05db\u05dc \u05d4\u05de\u05d5\u05d3\u05dc\u05d9\u05dd."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0938\u092d\u0940 \u092e\u0949\u0921\u0932 \u0926\u0947\u0916\u0928\u0947 \u0915\u0947 \u0932\u093f\u090f \u0921\u094d\u0930\u093e\u0907\u0935 \u0915\u0928\u0947\u0915\u094d\u091f \u0915\u0930\u0947\u0902 \u092f\u093e \u201c\u0905\u092d\u0940 \u0909\u092a\u0932\u092c\u094d\u0927\u201d \u092c\u0902\u0926 \u0915\u0930\u0947\u0902\u0964"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hubungkan drive, atau matikan \u201cTersedia sekarang\u201d untuk melihat semua model."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Collega un'unit\u00e0 o disattiva \u00abDisponibili ora\u00bb per vedere tutti i modelli."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u30c9\u30e9\u30a4\u30d6\u3092\u63a5\u7d9a\u3059\u308b\u304b\u3001\u300c\u4eca\u3059\u3050\u4f7f\u7528\u53ef\u80fd\u300d\u3092\u30aa\u30d5\u306b\u3059\u308b\u3068\u3001\u3059\u3079\u3066\u306e\u30e2\u30c7\u30eb\u3092\u8868\u793a\u3067\u304d\u307e\u3059\u3002"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\ub4dc\ub77c\uc774\ube0c\ub97c \uc5f0\uacb0\ud558\uac70\ub098 '\uc9c0\uae08 \uc0ac\uc6a9 \uac00\ub2a5'\uc744 \ub044\uba74 \ubaa8\ub4e0 \ubaa8\ub378\uc744 \ubcfc \uc218 \uc788\uc2b5\ub2c8\ub2e4."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sluit een schijf aan of schakel \u2018Nu beschikbaar\u2019 uit om alle modellen te zien."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pod\u0142\u0105cz dysk lub wy\u0142\u0105cz \u201eDost\u0119pne teraz\u201d, aby zobaczy\u0107 wszystkie modele."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conecte uma unidade ou desative \u201cDispon\u00edveis agora\u201d para ver todos os modelos."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041f\u043e\u0434\u043a\u043b\u044e\u0447\u0438\u0442\u0435 \u0434\u0438\u0441\u043a \u0438\u043b\u0438 \u0432\u044b\u043a\u043b\u044e\u0447\u0438\u0442\u0435 \u00ab\u0414\u043e\u0441\u0442\u0443\u043f\u043d\u044b \u0441\u0435\u0439\u0447\u0430\u0441\u00bb, \u0447\u0442\u043e\u0431\u044b \u0443\u0432\u0438\u0434\u0435\u0442\u044c \u0432\u0441\u0435 \u043c\u043e\u0434\u0435\u043b\u0438."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anslut en enhet eller st\u00e4ng av \u201dTillg\u00e4ngliga nu\u201d f\u00f6r att se alla modeller."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "T\u00fcm modelleri g\u00f6rmek i\u00e7in bir s\u00fcr\u00fcc\u00fc ba\u011flay\u0131n veya \u201c\u015eu an kullan\u0131labilir\u201d se\u00e7ene\u011fini kapat\u0131n."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041f\u0456\u0434\u043a\u043b\u044e\u0447\u0456\u0442\u044c \u0434\u0438\u0441\u043a \u0430\u0431\u043e \u0432\u0438\u043c\u043a\u043d\u0456\u0442\u044c \u00ab\u0414\u043e\u0441\u0442\u0443\u043f\u043d\u0456 \u0437\u0430\u0440\u0430\u0437\u00bb, \u0449\u043e\u0431 \u043f\u043e\u0431\u0430\u0447\u0438\u0442\u0438 \u0432\u0441\u0456 \u043c\u043e\u0434\u0435\u043b\u0456."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "H\u00e3y k\u1ebft n\u1ed1i \u1ed5 \u0111\u0129a ho\u1eb7c t\u1eaft \u201cC\u00f3 s\u1eb5n ngay\u201d \u0111\u1ec3 xem m\u1ecdi m\u00f4 h\u00ecnh."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u8bf7\u8fde\u63a5\u9a71\u52a8\u5668\uff0c\u6216\u5173\u95ed\u201c\u5f53\u524d\u53ef\u7528\u201d\u4ee5\u67e5\u770b\u6240\u6709\u6a21\u578b\u3002"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u8acb\u9023\u63a5\u78c1\u789f\u6a5f\uff0c\u6216\u95dc\u9589\u300c\u76ee\u524d\u53ef\u7528\u300d\u4ee5\u67e5\u770b\u6240\u6709\u6a21\u578b\u3002"
+          }
+        }
+      }
+    },
     "Model unloaded": {
       "extractionState": "manual",
       "localizations": {

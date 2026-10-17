@@ -435,7 +435,27 @@ extension AppModel {
         }
     }
 
+    /// Deletes `model` from disk, or removes a scanned row from the list.
+    ///
+    /// **EVERY ENGINE ROW IS DELETED BY THE ENGINE, THROUGH ITS INSTALL ID, OFF
+    /// THE MAIN ACTOR** (task 6.4, BINDING from the 4.6 review). The old code
+    /// fell back to `FileManager.removeItem(model.path)` after any error from
+    /// the engine's alias delete, which for a library row deleted the recorded
+    /// path of a drive that was away (or another drive mounted there), followed
+    /// links planted on the drive, bypassed the engine's `busy` refusal and left
+    /// the registry and the library marker listing a model that was gone. That
+    /// fallback does not exist any more: the app never removes a path it
+    /// recorded for a row the engine owns. A row only a scan found keeps today's
+    /// rule below.
     public func deleteModel(_ model: InstalledModel) {
+        _ = startModelDelete(model)
+    }
+
+    /// `deleteModel`, returning the work it started so a test can wait for it.
+    /// Nil when it was refused, finished at once (a scanned row) or is already
+    /// running for this row.
+    @discardableResult
+    func startModelDelete(_ model: InstalledModel) -> Task<Void, Never>? {
         // **THE BYTES BEING DELETED MAY BE MAPPED RIGHT NOW** (state#43).
         // This had no `!generating` guard, and `unloadModel()` returns
         // SILENTLY while a turn is running -- so `selected` was nilled anyway
@@ -445,7 +465,7 @@ extension AppModel {
             showToast(
                 AppStrings.localized("Cannot delete '\(model.alias)' while a turn is running. Stop it first."),
                 style: .warning)
-            return
+            return nil
         }
         // **AND AN OPEN IN FLIGHT IS THE SAME HAZARD ONE STEP EARLIER**
         // (state#73). `ts_session_open` runs on the binding's private queue
@@ -459,7 +479,7 @@ extension AppModel {
             showToast(
                 AppStrings.localized("Cannot delete '\(model.alias)' while a model is loading. Wait for it to finish."),
                 style: .warning)
-            return
+            return nil
         }
         // And a SERVED model has a second holder the Chat pane cannot see
         // (`swift/CLAUDE.md` Gotcha 26): the server keeps it resident and
@@ -469,49 +489,39 @@ extension AppModel {
             showToast(
                 AppStrings.localized("'\(model.alias)' is attached to the running server. Detach it there first."),
                 style: .warning)
-            return
+            return nil
         }
         // Humanize owns a separate mapping that the Chat session cannot see.
         // Keep this guard here so deletion from Installed Models is safe too.
-        if humanizeWorkspace.usesModel(at: model.path) {
+        // It is released with the chat model, after the delete has succeeded.
+        let humanizeHoldsIt = humanizeWorkspace.usesModel(at: model.path)
+        if humanizeHoldsIt {
             guard !humanizeWorkspace.isBusy else {
                 showToast(AppStrings.localized("Stop Humanize before deleting its model."), style: .warning)
-                return
+                return nil
             }
-            humanizeWorkspace.unload()
-        }
-        // **MATCHED ON PATH ALONE** (state#14): `alias` is not unique once a
-        // scanned row exists, so an `alias ||` arm unloads the session of a
-        // DIFFERENT model that happens to share the name.
-        if selected?.path == model.path {
-            unloadModel()
-            selected = nil
         }
 
-        // Only a model this app actually installed through `TurboSparkCatalog`
-        // may have its file bytes removed. A row that only ever came from
-        // scanning LM Studio's library or a user's custom folder
-        // (`refreshModels()`'s LM Studio/Custom merge) is not in the
-        // catalog's own install list; deleting it used to fall through to an
-        // unconditional `removeItem` on whatever path the scan found, which
-        // destroys files the app never wrote and only discovered by walking
-        // a directory it was pointed at -- the opposite of the "without
-        // copying any bytes" promise that scan makes.
-        let catalogInstalled: [InstalledModel]
-        do {
-            catalogInstalled = try TurboSparkCatalog.installed()
-        } catch {
-            // Refusing beats guessing: an unreadable list cannot distinguish
-            // "this app installed it" from "it was only scanned", and the two
-            // answers differ by whether bytes get removed.
-            self.error =
-                "Could not read the installed-model list, so '\(model.alias)' was not deleted: "
-                + error.localizedDescription
-            return
-        }
-        let isCatalogTracked = Self.isCatalogTracked(model: model, in: catalogInstalled)
-
-        guard isCatalogTracked else {
+        // **A ROW ONLY A SCAN FOUND IS NEVER THE ENGINE'S, AND ITS FILES ARE
+        // NEVER THE APP'S TO DELETE.** A row that came from scanning LM Studio's
+        // library or a user's custom folder (`refreshModels()`'s merge) carries
+        // the placeholder identity the app's scanners build
+        // (`ModelIdentityKey.isPlaceholder`). Deleting it used to fall through to
+        // an unconditional `removeItem` on whatever path the scan found, which
+        // destroys files the app never wrote and only discovered by walking a
+        // directory it was pointed at -- the opposite of the "without copying
+        // any bytes" promise that scan makes. It leaves the list and stays out
+        // of the next scan; nothing is deleted, so nothing can fail, and the
+        // model can be released at once.
+        guard !ModelIdentityKey.isPlaceholder(model) else {
+            if humanizeHoldsIt { humanizeWorkspace.unload() }
+            // **MATCHED ON PATH ALONE** (state#14): `alias` is not unique once
+            // a scanned row exists, so an `alias ||` arm unloads the session of
+            // a DIFFERENT model that happens to share the name.
+            if selected?.path == model.path {
+                unloadModel()
+                selected = nil
+            }
             // **EXCLUDED, NOT FORGOTTEN** (state#88). This dropped the row's
             // notes, tags and favorite and left the bytes alone -- and the
             // next scan walked the same directory and put the row straight
@@ -524,51 +534,129 @@ extension AppModel {
                 AppStrings.localized(
                     "Removed '\(model.alias)' from TurboSpark. The file was left on disk at \(model.path); restore it under Settings > Models."),
                 style: .info, duration: 5.0)
-            return
+            return nil
         }
 
-        var deleted = false
-        var lastError: Error?
-
-        // 1. Try TurboSparkCatalog delete
-        do {
-            try TurboSparkCatalog.delete(model.alias)
-            deleted = true
-        } catch {
-            lastError = error
+        // A model whose drive is away has nothing to delete: the engine would
+        // refuse (`not_connected`) and the recorded path may now be another
+        // drive. The row offers no removal until the drive is connected.
+        guard model.availability != .notConnected else {
+            showToast(
+                ModelDeleteText.notConnected(alias: model.alias, libraryName: model.connectName ?? model.libraryName),
+                style: .warning)
+            return nil
         }
+        guard !modelsBeingChanged.contains(model.installId) else { return nil }
+        modelsBeingChanged.insert(model.installId)
 
-        // 2. If catalog delete failed or model is an external file, try direct filesystem removal
-        if !deleted {
-            let expanded = ModelStorageManager.expandPath(model.path)
-            if FileManager.default.fileExists(atPath: expanded) {
-                do {
-                    try FileManager.default.removeItem(atPath: expanded)
-                    deleted = true
-                    lastError = nil
-                } catch {
-                    lastError = error
-                }
+        // **THE ENGINE CALL IS OFF THE MAIN ACTOR AND THE SESSION STAYS.** It
+        // can read the mount table, remove many gigabytes and write
+        // `installed.json`, and it answers `busy` while an install or a move
+        // runs. A refused delete changes nothing, so the loaded model, the
+        // selection and the notes stay as they were until the engine has said
+        // yes.
+        let service = libraryState.service
+        let installId = model.installId
+        return Task { [weak self] in
+            let outcome = await Task.detached(priority: .userInitiated) {
+                Result { try service.deleteInstall(installId: installId) }
+            }.value
+            await self?.finishModelDelete(model, outcome: outcome)
+        }
+    }
+
+    /// What follows an answer from the engine's delete.
+    private func finishModelDelete(_ model: InstalledModel, outcome: Result<Void, Error>) async {
+        modelsBeingChanged.remove(model.installId)
+        switch outcome {
+        case .failure(let error):
+            // A warning toast, not `error`: a refusal is an answer to what the
+            // user asked, and an unplugged drive is never an availability
+            // banner (requirement 3.4).
+            showToast(
+                ModelDeleteText.failure(
+                    error, alias: model.alias, libraryName: model.connectName ?? model.libraryName),
+                style: .warning)
+            // `busy` changed nothing. Any other answer may mean the lists are
+            // out of date (`unknown_install`: someone else removed it).
+            if (error as? TurboSparkError)?.libraryFault?.code != .busy {
+                await libraryState.refresh()
             }
-        }
-
-        // The remembered reasoning level is part of the same record (task
-        // 5.5), so it goes with the notes and tags. A legacy path entry that
-        // was never read is pruned too: nothing used to prune it, so
-        // `settings.json` accumulated an entry per model ever deleted, and a
-        // later install at the same path silently inherited a level its own
-        // user never chose (state#96).
-        ModelOrganizationStore.shared.removeMetadata(for: model)
-        modelReasoningDefaults.removeValue(forKey: model.path)
-        persistSettings()
-        refreshModels()
-
-        if deleted {
+        case .success:
+            if humanizeWorkspace.usesModel(at: model.path) { humanizeWorkspace.unload() }
+            // **MATCHED ON PATH ALONE** (state#14), and a model that cannot be
+            // unloaded because a turn started during the delete stays selected:
+            // `selected` nil beside a live session is the state#43 mismatch.
+            if selected?.path == model.path {
+                unloadModel()
+                if session == nil { selected = nil }
+            }
+            // The remembered reasoning level is part of the same record (task
+            // 5.5), so it goes with the notes and tags. A legacy path entry that
+            // was never read is pruned too: nothing used to prune it, so
+            // `settings.json` accumulated an entry per model ever deleted, and a
+            // later install at the same path silently inherited a level its own
+            // user never chose (state#96).
+            ModelOrganizationStore.shared.removeMetadata(for: model)
+            modelReasoningDefaults.removeValue(forKey: model.path)
+            persistSettings()
+            refreshModels()
+            await libraryState.refresh()
             showToast(AppStrings.localized("Deleted model '\(model.alias)'"), style: .info)
-        } else if let err = lastError {
-            let msg = AppStrings.localized("Failed to delete model: \(err.localizedDescription)")
-            self.error = msg
-            showToast(msg, style: .error)
+        }
+    }
+
+    // MARK: - Remove from list
+
+    /// Stops listing a model the engine knows, without touching a file: what a
+    /// model whose folder is missing offers besides Delete (requirement 3.7). A
+    /// model on a drive that is away offers it no longer, because the engine
+    /// forgets a row only with its library connected.
+    public func removeModelFromList(_ model: InstalledModel) {
+        _ = startRemoveFromList(model)
+    }
+
+    /// `removeModelFromList`, returning the work it started so a test can wait.
+    ///
+    /// The engine's forget needs the model's library connected and writable (its
+    /// marker must stop listing the model too), so for a drive that is away it
+    /// answers `not_connected`; the toast says so and the row stays.
+    @discardableResult
+    func startRemoveFromList(_ model: InstalledModel) -> Task<Void, Never>? {
+        // A row a scan found has no registry entry: its "remove" is Delete.
+        guard !ModelIdentityKey.isPlaceholder(model) else { return nil }
+        guard !modelsBeingChanged.contains(model.installId) else { return nil }
+        modelsBeingChanged.insert(model.installId)
+
+        let service = libraryState.service
+        let installId = model.installId
+        return Task { [weak self] in
+            let outcome = await Task.detached(priority: .userInitiated) {
+                Result { try service.forget(installId: installId) }
+            }.value
+            await self?.finishRemoveFromList(model, outcome: outcome)
+        }
+    }
+
+    private func finishRemoveFromList(_ model: InstalledModel, outcome: Result<Void, Error>) async {
+        modelsBeingChanged.remove(model.installId)
+        switch outcome {
+        case .failure(let error):
+            showToast(
+                ModelDeleteText.failure(
+                    error, alias: model.alias, libraryName: model.connectName ?? model.libraryName),
+                style: .warning)
+            if (error as? TurboSparkError)?.libraryFault?.code != .busy {
+                await libraryState.refresh()
+            }
+        case .success:
+            // Its notes and tags stay: the files may still be on the drive, and
+            // a library added again brings the model back under the same id.
+            if selected?.path == model.path, loadedModelPath != model.path {
+                selected = nil
+            }
+            await libraryState.refresh()
+            showToast(ModelDeleteText.removedFromList(alias: model.alias), style: .info)
         }
     }
 }

@@ -47,6 +47,17 @@ protocol ModelLibraryService: Sendable {
     func forget(installId: String) throws
     func importMovedRoot(_ root: String) throws -> ImportedStore
 
+    // MARK: Deletes
+
+    /// Deletes a text install by the `installId` of its row: its folder, its
+    /// registry row and its entry in its library's marker. The engine finds the
+    /// install where its library is NOW and refuses a library that is not
+    /// connected or is read-only, so this is the only delete a library row may
+    /// use. A folder that is already gone is only forgotten (success).
+    func deleteInstall(installId: String) throws
+    /// The same for an image install (`<library>:image/<alias>`).
+    func deleteImageInstall(installId: String) throws
+
     // MARK: Moves
 
     /// Moves an install to another library. Blocks for as long as the copy
@@ -113,6 +124,14 @@ struct LiveModelLibraryService: ModelLibraryService {
 
     func importMovedRoot(_ root: String) throws -> ImportedStore {
         try TurboSparkLibraries.importMovedRoot(root)
+    }
+
+    func deleteInstall(installId: String) throws {
+        try TurboSparkCatalog.deleteInstall(installId: installId)
+    }
+
+    func deleteImageInstall(installId: String) throws {
+        try TurboSparkCatalog.deleteImageInstall(installId: installId)
     }
 
     func move(

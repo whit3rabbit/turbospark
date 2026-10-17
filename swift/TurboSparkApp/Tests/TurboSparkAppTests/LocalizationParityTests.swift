@@ -593,6 +593,15 @@ final class LocalizationParityTests: XCTestCase {
         for action in LibraryRowAction.allCases {
             values.append(("LibraryRowAction.title", action.title))
         }
+        // The Installed Models list (tasks 6.4 and 6.5): the status words of an
+        // offline or missing row, and the group modes the sort menu renders as
+        // keys (a new mode is easy to add as an enum case and forget as a key).
+        for status in InstalledRowStatus.allCases {
+            values.append(("InstalledRowStatus.title", status.title))
+        }
+        for option in ModelManagerView.GroupOption.allCases {
+            values.append(("ModelManagerView.GroupOption.rawValue", option.rawValue))
+        }
         let missing = values.filter { strings[$0.value] == nil }
             .map { "\($0.source): \($0.value)" }
         XCTAssertTrue(

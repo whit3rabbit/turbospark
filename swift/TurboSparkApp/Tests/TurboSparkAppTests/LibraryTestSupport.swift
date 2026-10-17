@@ -47,6 +47,25 @@ final class FakeModelLibraryService: ModelLibraryService, @unchecked Sendable {
         /// When true `remove` and `setDefault` change the scripted list, as the
         /// engine does, instead of recording the call and failing as unscripted.
         var appliesWrites = false
+        /// One record per `deleteInstall`, `deleteImageInstall` or `forget`:
+        /// the call, the install id and whether the calling thread was main.
+        var deleteCalls: [DeleteCall] = []
+        /// Scripted failure of a delete or a forget; nil lets it run.
+        var deleteError: Error?
+        var forgetError: Error?
+        /// Parks a delete INSIDE the engine call until a test signals it, so
+        /// the test can look at the app while the engine is "busy removing
+        /// gigabytes". `deleteEntered` is signalled when the call arrives.
+        var deleteGate: DispatchSemaphore?
+        var deleteEntered: DispatchSemaphore?
+    }
+
+    /// One delete-family call as the engine would have seen it.
+    struct DeleteCall: Equatable {
+        enum Kind: Equatable { case text, image, forget }
+        let kind: Kind
+        let installId: String
+        let onMainThread: Bool
     }
 
     private let lock = NSLock()
@@ -164,8 +183,41 @@ final class FakeModelLibraryService: ModelLibraryService, @unchecked Sendable {
             lastSeen: library.lastSeen, isInternal: library.isInternal)
     }
     func forget(installId: String) throws {
-        with { $0.writeCalls.append("forget \(installId)") }
-        throw FakeServiceError.unscripted("forget")
+        let onMain = Thread.isMainThread
+        try with { state in
+            state.writeCalls.append("forget \(installId)")
+            state.deleteCalls.append(DeleteCall(kind: .forget, installId: installId, onMainThread: onMain))
+            if let error = state.forgetError { throw error }
+            guard state.appliesWrites else { throw FakeServiceError.unscripted("forget") }
+            state.installed.removeAll { $0.installId == installId }
+        }
+    }
+
+    var deleteCalls: [DeleteCall] { with { $0.deleteCalls } }
+
+    func deleteInstall(installId: String) throws {
+        try recordDelete(.text, installId: installId)
+    }
+
+    func deleteImageInstall(installId: String) throws {
+        try recordDelete(.image, installId: installId)
+    }
+
+    /// Records the call, parks it if a gate is set, then answers the script.
+    /// The gate wait runs OUTSIDE the lock so the test can read the fake.
+    private func recordDelete(_ kind: DeleteCall.Kind, installId: String) throws {
+        let onMain = Thread.isMainThread
+        let (gate, entered) = with { state -> (DispatchSemaphore?, DispatchSemaphore?) in
+            state.deleteCalls.append(DeleteCall(kind: kind, installId: installId, onMainThread: onMain))
+            return (state.deleteGate, state.deleteEntered)
+        }
+        entered?.signal()
+        gate?.wait()
+        try with { state in
+            if let error = state.deleteError { throw error }
+            guard state.appliesWrites else { throw FakeServiceError.unscripted("delete \(installId)") }
+            state.installed.removeAll { $0.installId == installId }
+        }
     }
     func importMovedRoot(_ root: String) throws -> ImportedStore {
         note("importMovedRoot")

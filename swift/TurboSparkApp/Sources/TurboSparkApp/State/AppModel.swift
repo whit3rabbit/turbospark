@@ -121,6 +121,10 @@ public final class AppModel: ObservableObject {
     /// here on purpose: views that show library state observe this object
     /// directly, so a mount does not redraw every screen.
     var libraryState = LibraryState()
+    /// Install ids of the rows a delete or a remove-from-list is running on.
+    /// The engine call can take minutes on a large model, so the row's Delete is
+    /// disabled meanwhile and a second request for the same row is refused.
+    @Published var modelsBeingChanged: Set<String> = []
     /// The one-time conversion of a store a past Move Store moved. Created when
     /// library monitoring starts, never at `init`.
     var moveStoreMigration: MoveStoreMigration?

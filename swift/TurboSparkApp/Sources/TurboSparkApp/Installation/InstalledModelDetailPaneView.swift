@@ -5,10 +5,39 @@ import TurboSpark
 /// Right-column detail inspector for an installed model in the Model Manager.
 struct InstalledModelDetailPaneView: View {
     @ObservedObject var model: AppModel
+    /// Observed directly (`AppModel` does not publish it): the pane redraws when
+    /// the model's drive is plugged or unplugged while it is open.
+    @ObservedObject private var libraryState: LibraryState
     let installedModel: InstalledModel
     @ObservedObject private var orgStore = ModelOrganizationStore.shared
+    /// Read so the strings built from `AppStrings` follow the language picker.
+    @Environment(\.locale) private var locale
 
     @State private var showingDeleteConfirm = false
+    @State private var showingRemoveConfirm = false
+
+    init(model: AppModel, installedModel: InstalledModel) {
+        self.model = model
+        self.installedModel = installedModel
+        _libraryState = ObservedObject(wrappedValue: model.libraryState)
+    }
+
+    private var language: AppLanguage {
+        _ = locale
+        return AppStrings.currentLanguage
+    }
+
+    /// Where the model is and whether it can be opened, from the library state.
+    private var rowModel: InstalledModelRowModel {
+        InstalledModelRowModel.make(
+            for: installedModel, in: libraryState,
+            isMoE: descriptor.routingType == .moe, language: language)
+    }
+
+    /// The library's name for the confirmations, as the library list has it now.
+    private var libraryName: String? {
+        libraryState.library(for: installedModel)?.name ?? installedModel.libraryName
+    }
 
     private var descriptor: ModelFeatureDescriptor {
         // Pass the open session's own report when this model is the loaded
@@ -71,6 +100,7 @@ struct InstalledModelDetailPaneView: View {
             VStack(alignment: .leading, spacing: 20) {
                 InstalledModelHeroHeaderView(
                     installedModel: installedModel,
+                    rowModel: rowModel,
                     visuals: visuals,
                     descriptor: descriptor,
                     isCurrentlyLoaded: isCurrentlyLoaded,
@@ -83,13 +113,16 @@ struct InstalledModelDetailPaneView: View {
 
                 InstalledModelActionBarView(
                     installedModel: installedModel,
+                    rowModel: rowModel,
                     isCurrentlyLoaded: isCurrentlyLoaded,
                     canUnloadModel: model.canUnloadModel,
                     canDeleteModel: model.canDeleteModel,
+                    isChanging: model.modelsBeingChanged.contains(installedModel.installId),
                     onLoad: { model.selectModel(installedModel) },
                     onUnload: { model.unloadModel() },
                     onStartChat: { model.openChatWithModel(installedModel) },
-                    onDelete: { showingDeleteConfirm = true }
+                    onDelete: { showingDeleteConfirm = true },
+                    onRemoveFromList: { showingRemoveConfirm = true }
                 )
 
                 InstalledModelFeatureBadgesView(descriptor: descriptor)
@@ -141,17 +174,42 @@ struct InstalledModelDetailPaneView: View {
             loadedFit = rows?.first { $0.alias == alias }
         }
         .confirmationDialog(
-            Text("Delete \(installedModel.alias)?", bundle: .module),
+            Text(verbatim: deleteDialog.title),
             isPresented: $showingDeleteConfirm,
             titleVisibility: .visible
         ) {
             Button(role: .destructive) {
                 model.deleteModel(installedModel)
-            } label: { Text("Delete Model", bundle: .module) }
+            } label: { Text(verbatim: deleteDialog.confirmTitle) }
             Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
         } message: {
-            Text("This will permanently remove the model files (\(MetricFormat.storage(installedModel.installBytes))) from disk at:\n\(installedModel.path)", bundle: .module)
+            // A library model names its library and says the files on that
+            // drive are deleted; a model on this Mac names its path.
+            Text(verbatim: deleteDialog.message)
         }
+        .confirmationDialog(
+            Text(verbatim: removeDialog.title),
+            isPresented: $showingRemoveConfirm,
+            titleVisibility: .visible
+        ) {
+            Button(role: .destructive) {
+                model.removeModelFromList(installedModel)
+            } label: { Text(verbatim: removeDialog.confirmTitle) }
+            Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
+        } message: {
+            Text(verbatim: removeDialog.message)
+        }
+    }
+
+    /// The delete confirmation, in the picker's language.
+    private var deleteDialog: ModelDeleteDialog {
+        ModelDeleteDialog(model: installedModel, libraryName: libraryName, language: language)
+    }
+
+    /// "Remove from list" never deletes a file, whatever the row says: its
+    /// confirmation is the list-only one.
+    private var removeDialog: ModelDeleteDialog {
+        ModelDeleteDialog(removingFromList: installedModel, language: language)
     }
 
     /// Everything the ladder depends on. `OpenOptions` values are not
@@ -171,6 +229,9 @@ struct InstalledModelDetailPaneView: View {
     /// would inherit that and block the main thread on every selection.
     private func loadLadder() async {
         ladder = nil
+        // A model that is away or missing has nothing at its recorded path to
+        // read, and a drive of the same name may be mounted there.
+        guard installedModel.availability == .available else { return }
         let path = installedModel.path
         let slots = model.activeCacheSlots
         let guard_ = model.activeLoadGuard
