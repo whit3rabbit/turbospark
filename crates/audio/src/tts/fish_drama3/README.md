@@ -88,3 +88,13 @@ times real time).
 - Python's `\w` is approximated by `char::is_alphanumeric` plus `_`, and
   `str.isdigit` by `char::is_numeric`, in the chunker's edge characters.
 - No `speed` and no `instruct`: delivery cues go inline (`[whispers]`).
+- The default main-draw recipe is Fish Audio's serving recipe
+  (`SamplingParams::FISH_SERVING`: temperature 1.0, top-p 0.9, top-k 30, the
+  same RAS), the default of SGLang-Omni `fishaudio_drama3/speech_request.py`.
+  mlx-audio defaults to 0.7, 0.7 and 30, kept as `SamplingParams::REFERENCE`
+  for parity runs. Under it the first draw in a pause keeps only a few
+  silence tokens, and a sentence gap or a turn change trapped 12 of 24 test
+  takes in silence until the chunk's cap, against 4 of 24
+  (`docs/FISH_DRAMA3_PHASE0.md`, sampling recipe).
+- `ChunkEnd` also reports the chunk's `limit` (its text cap or `max_frames`),
+  which the reference does not track.

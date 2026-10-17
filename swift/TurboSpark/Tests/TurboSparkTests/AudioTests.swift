@@ -114,6 +114,13 @@ final class AudioTests: XCTestCase {
         XCTAssertNil(copy.segments[0].words)
         XCTAssertEqual(copy.segments[0].timing, "clip")
     }
+    func testAudioResultStoppedEarlyRoundTripsAndDefaultsToFalse() throws {
+        let stopped = AudioResult(seed: 9, stoppedEarly: true)
+        XCTAssertEqual(try JSONDecoder().decode(AudioResult.self, from: JSONEncoder().encode(stopped)), stopped)
+        let older = try JSONDecoder().decode(AudioResult.self, from: Data(#"{"seed": 9}"#.utf8))
+        XCTAssertFalse(older.stoppedEarly)
+        XCTAssertEqual(older.seed, 9)
+    }
     func testPCMFormatUsesInterleavedFramesForDuration() {
         let pcm = AudioPCM(format: AudioPCMFormat(sampleRate: 48_000, channels: 2), samples: Array(repeating: 0, count: 96_000))
         XCTAssertEqual(pcm.durationSeconds, 1)
@@ -129,6 +136,7 @@ final class AudioTests: XCTestCase {
         request.caption = "piano"; request.lyrics = "[instrumental]"
         request.durationSeconds = 0.12; request.steps = 1; request.seed = 7
         let result = try await session.execute(request)
+        XCTAssertFalse(result.stoppedEarly, "only a Drama 3 take reports stopping early")
         let pcm = try XCTUnwrap(result.pcm)
         XCTAssertEqual(pcm.format.channels, 2)
         XCTAssertEqual(pcm.format.sampleRate, 44_100)

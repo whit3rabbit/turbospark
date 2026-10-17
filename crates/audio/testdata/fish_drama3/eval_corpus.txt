@@ -1,0 +1,33 @@
+# Drama 3 evaluation corpus for crates/runtime/examples/fish_drama3_wer.rs.
+# 20 plain English sentences, then 8 lines that stress pauses, turns, cues,
+# numbers, German and a long chunk. Written 2026-10-16 to replace the Phase 0
+# corpus, which was kept off the repository and is no longer available. Keep
+# lines in languages Parakeet TDT transcribes, so every WER means something.
+The quick brown fox jumps over the lazy dog.
+Please close the window before you leave the office tonight.
+The train to the coast leaves at seven, so we should pack early.
+She opened the letter slowly and read it twice before saying anything.
+Nobody expected the old radio in the attic to work after all these years.
+If the weather holds, the festival will open on the riverbank this weekend.
+He forgot his umbrella again, and of course it started raining on the way home.
+The museum added a new wing for maps, compasses and early navigation tools.
+Could you send me the final draft by Thursday afternoon?
+Our neighbors planted tomatoes, peppers and three kinds of basil this spring.
+The engineer checked every bolt on the bridge before the inspection began.
+After the storm passed, the whole street came outside to clear the branches.
+I think the recipe needs less salt and a little more lemon.
+The library stays open late on Fridays for students preparing for exams.
+A small cat followed us all the way from the market to the front door.
+The orchestra tuned their instruments while the audience found their seats.
+We drove for hours through the desert without seeing another car.
+Remember to water the plants and feed the fish while I am away.
+The new software update fixed the crash but made the battery drain faster.
+Every morning the baker arrives at four to start the first batch of bread.
+Welcome back. This is a short voiceover test with no reference voice.
+<|speaker:0|> Are you coming tonight? <|speaker:1|> I don't know yet. <|speaker:0|> Let me know by six.
+<|speaker:0|> Did you lock the car? <|speaker:1|> Yes, twice.
+[laughs] Oh, that is the best thing I have heard all week. [pause] Seriously.
+[sighs] Fine. If we miss it, it's on you.
+The invoice lists 3 boxes at 12.50 each, for a total of 37.50, due on May 4th.
+Wir treffen uns morgen um acht Uhr vor dem Bahnhof.
+The lighthouse keeper climbed the spiral stairs each evening to light the lamp. Ships far out at sea watched for its beam, and fishermen used it to find the harbor in fog. When the lamp was finally automated, the keeper stayed on to tend the garden.

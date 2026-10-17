@@ -43,6 +43,18 @@ receipt in the managed store (`ts_audio_install_with_options`, with the
 `fish_audio_community_license` acknowledgment). The receipt records the size
 and sha256 of every converted file. The macOS app does not list it yet.
 
+## Takes that stop early
+
+Some takes speak the first sentence, a turn, or the words before a
+`[pause]`, and then only silence until the frame cap
+(`docs/FISH_DRAMA3_PHASE0.md`, sampling recipe). The default sampler is Fish
+Audio's serving recipe (temperature 1.0, top-p 0.9, top-k 30), which traps
+far fewer takes than mlx-audio's 0.7 and 0.7: 4 of 12 seeds of
+`Welcome back. This is a short voiceover test with no reference voice.`
+went silent under mlx-audio's recipe, against 0 of 12. The runtime reports a
+take that still stopped early as `stopped_early` in the audio job result,
+and a host can retake it with another seed.
+
 ## Speak
 
 ```sh

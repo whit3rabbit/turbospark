@@ -4,8 +4,14 @@
 //! ```sh
 //! cargo run --release -p turbospark-runtime --example fish_drama3_wer -- \
 //!     <install-dir> <corpus.txt | --smoke> <parakeet-dir> [seed=0] [expert-slots=16] \
-//!     [out-dir]
+//!     [out-dir | -] [recipe=fish|reference]
 //! ```
+//!
+//! `recipe` picks the main sampler: `fish` (the default, Fish Audio's serving
+//! recipe, `SamplingParams::FISH_SERVING`) or `reference` (mlx-audio's,
+//! `SamplingParams::REFERENCE`), so the two can be compared on one corpus.
+//! Each clip also prints every chunk's frames against its limit and how it
+//! stopped, and whether the runner reports the take as stopped early.
 //!
 //! `<corpus.txt>` holds one sentence per line (blank lines and lines starting
 //! with `#` are skipped). A line may carry `[cues]` and speaker tags: the
@@ -35,7 +41,10 @@ use std::path::{Path, PathBuf};
 
 use audio::stt::parakeet::ParakeetTdt;
 use audio::tts::fish_drama3::chunking::{split_text, spoken_text};
-use turbospark_runtime::fish_drama3::{Drama3Request, FishDrama3Runner, MAX_CONTEXT};
+use audio::tts::fish_drama3::sampling::SamplingParams;
+use turbospark_runtime::fish_drama3::{
+    Drama3Request, Drama3Sampling, FishDrama3Runner, MAX_CONTEXT,
+};
 use turbospark_runtime::{ExpertCacheSlots, ExpertResidency};
 
 #[path = "../tests/common/wer.rs"]
@@ -123,7 +132,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let stt_dir = PathBuf::from(args.next().ok_or("parakeet dir")?);
     let seed: u64 = args.next().map_or(Ok(0), |s| s.parse())?;
     let slots: usize = args.next().map_or(Ok(16), |s| s.parse())?;
-    let out_dir = args.next().map(PathBuf::from);
+    let out_dir = args.next().filter(|d| d != "-").map(PathBuf::from);
+    let (recipe_name, recipe) = match args.next().as_deref() {
+        None | Some("fish") => ("fish", SamplingParams::FISH_SERVING),
+        Some("reference") => ("reference", SamplingParams::REFERENCE),
+        Some(other) => return Err(format!("recipe {other:?}: fish or reference").into()),
+    };
+    let sampling = Drama3Sampling {
+        temperature: Some(recipe.temperature),
+        top_p: Some(recipe.top_p),
+        top_k: Some(recipe.top_k),
+        max_frames: None,
+    };
+    eprintln!("recipe {recipe_name}: {recipe:?}");
 
     let smoke = corpus_arg == "--smoke";
     let corpus: Vec<String> = if smoke {
@@ -156,19 +177,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut failed = 0usize;
     let mut flagged = 0usize;
+    let mut early = 0usize;
     let mut wers = Vec::new();
+    let mut passing_wers = Vec::new();
+    // The largest share of its limit an EOS chunk of a passing clip used: the
+    // text cap keeps every normal clip under half of it.
+    let mut widest_share = 0f64;
     for (i, text) in corpus.iter().enumerate() {
         let mut samples = Vec::new();
         let request = Drama3Request {
             text,
             reference: None,
             seed,
-            sampling: Default::default(),
+            sampling,
         };
-        runner.synthesize(&request, &|| false, |pcm| {
+        let take = runner.synthesize(&request, &|| false, |pcm| {
             samples.extend(pcm);
             true
         })?;
+        let chunk_list = take
+            .chunks
+            .iter()
+            .map(|c| format!("{}/{} {:?}", c.frames, c.limit, c.stop))
+            .collect::<Vec<_>>()
+            .join(", ");
         let frames = samples.len().div_ceil(FRAME_SAMPLES);
         let tail = trailing_silent_frames(&samples);
         let wave = audio::Waveform {
@@ -192,20 +224,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let score = wer::wer(&spoken_words(text), &transcript);
         let verdict = verdict(score, tail);
         match verdict {
-            Verdict::Pass => {}
+            Verdict::Pass => {
+                passing_wers.push(score);
+                for c in &take.chunks {
+                    if c.stop == audio::tts::fish_drama3::generate::ChunkStop::Eos {
+                        widest_share = widest_share.max(c.frames as f64 / c.limit as f64);
+                    }
+                }
+            }
             Verdict::Fail => failed += 1,
             _ => flagged += 1,
         }
+        if take.stopped_early() {
+            early += 1;
+        }
         wers.push(score);
         println!(
-            "clip {i:>3} seed {seed}: {frames:>4} frames, tail {tail:>4} silent, WER {score:.3}, {verdict:?}\n  text: {text}\n  heard: {transcript}"
+            "clip {i:>3} seed {seed}: {frames:>4} frames, tail {tail:>4} silent, WER {score:.3}, {verdict:?}\n  chunks: {chunk_list}; longest silence {} frames; stopped early {}\n  text: {text}\n  heard: {transcript}",
+            take.longest_silence_frames,
+            take.stopped_early()
         );
     }
     let mean = wers.iter().sum::<f64>() / wers.len() as f64;
+    let passing_mean = passing_wers.iter().sum::<f64>() / passing_wers.len().max(1) as f64;
     println!(
-        "{} clips at seed {seed}: {failed} failed, {flagged} flagged (one half of the rule), \
-         mean WER {mean:.3}{}",
+        "{} clips at seed {seed}, recipe {recipe_name}: {failed} failed, {flagged} flagged (one \
+         half of the rule), {early} reported stopped early, mean WER {mean:.3}, mean WER of \
+         passing clips {passing_mean:.3}, widest EOS chunk {:.0}% of its limit{}",
         corpus.len(),
+        widest_share * 100.0,
         if smoke {
             " (SMOKE CORPUS, not a quality result)"
         } else {

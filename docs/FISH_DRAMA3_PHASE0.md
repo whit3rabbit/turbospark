@@ -97,12 +97,19 @@ speakers each. Every chunk sees the first and the previous chunk as history.
 
 ### Sampling recipe
 
-Temperature 0.7, top-p 0.7, top-k 30, at most 1024 frames per chunk. The
-temperature applies before top-p. The cumulative mass runs over the full
-vocabulary. The token that crosses top-p is dropped unless it ranks first.
-Repetition-aware sampling: when a semantic main token repeats one of the last
-16 main tokens, it is replaced by a second draw at temperature 1.0, top-k 30,
-top-p 0.95.
+The reference recipe (mlx-audio, `SamplingParams::REFERENCE`) is temperature
+0.7, top-p 0.7, top-k 30, at most 1024 frames per chunk. The temperature
+applies before top-p. The cumulative mass runs over the full vocabulary. The
+token that crosses top-p is dropped unless it ranks first. Repetition-aware
+sampling: when a semantic main token repeats one of the last 16 main tokens,
+it is replaced by a second draw at temperature 1.0, top-k 30, top-p 0.95.
+
+**Product default since 2026-10-16: Fish Audio's serving recipe**
+(`SamplingParams::FISH_SERVING`): temperature 1.0, top-p 0.9, top-k 30, the
+same RAS and top-p rule. It is the default of Fish Audio's own runtime
+(SGLang-Omni `fishaudio_drama3/speech_request.py` at 28c3e35a). The measured
+reason is under "Pause trap and the recipe" below. Every measurement above
+that heading ran the reference recipe.
 
 **Text-scaled frame cap (not in the reference).** A chunk also stops at
 `64 + 24 * tokens + 22 * speaker_tags + 108 * cues` frames when that is under
@@ -112,9 +119,11 @@ paired-tag markup removed (`chunking::spoken_text`). A paired tag counts as a
 cue. Below about 40 tokens the scaled cap is the tighter one, and longer
 chunks keep the 1024 bound.
 
-`ChunkEnd` reports `TextCap` apart from `Eos` and `MaxFrames`, and
-`FishDrama3Runner` logs every chunk that ends without EOS. `text_cap: None`
-(`text-cap=off` in `fish_drama3_say`) restores the reference's behavior.
+`ChunkEnd` reports `TextCap` apart from `Eos` and `MaxFrames`, with the
+chunk's `limit`. `FishDrama3Runner` logs every chunk that ends without EOS
+and returns a `Drama3Take` whose `stopped_early()` says the take likely
+stopped speaking early (below). `text_cap: None` (`text-cap=off` in
+`fish_drama3_say`) restores the reference's behavior.
 
 Measured 2026-10-15 with the cap off: `fish_drama3_say` on the pinned 4-bit
 install (Metal trunk, tower and codec, 16 streamed slots) ran the
@@ -193,6 +202,68 @@ so the runs were stopped. Until they run, only the prompt is cleared. The
 rest of the loop (trunk numerics, tower, sampling) has no teacher-forced
 parity against mlx-audio yet (see Gates), so the 70 to 80% failure rate is
 not yet attributed to the port or to the model.
+
+**Pause trap and the recipe (2026-10-16).** A per-frame trace of the main
+draw (`fish_drama3_say` with a throwaway probe) shows the mechanism on
+`Welcome back. This is a short voiceover test with no reference voice.` In
+the gap after a sentence the semantic head spreads its mass over a few
+silence tokens (top-1 0.2 to 0.36) with EOS near 0, so the model is pausing,
+not ending. Under top-p 0.7 the first draw keeps one to three of those
+tokens and can never pick speech. The only way back is the RAS retry (T 1.0,
+top-p 0.95), which fires on almost every silent frame. Seed 1 leaves a
+13-frame gap through a retry. Seed 0 never does: 12 voiced frames, then 411
+silent ones to the 424-frame cap. Fish Audio's own runtime samples the main
+draw at T 1.0 and top-p 0.9 with the same RAS, so speech tokens survive the
+first draw too.
+
+Same install and probe, text cap on. A take fails when it ends without EOS or
+holds hundreds of silent frames:
+
+| Text | Reference recipe | Fish Audio's recipe |
+| --- | --- | --- |
+| The voiceover script, seeds 0 to 11 | 4 of 12 | 0 of 12 |
+| Three-turn dialogue, seeds 0 to 5 | 4 of 6 | 1 of 6 |
+| `[laughs] ... [pause] Seriously.`, seeds 0 to 5 | 4 of 6 | 3 of 6 |
+| Total | 12 of 24 | 4 of 24 (Fisher exact, two-sided, about 0.03) |
+
+An explicit `[pause]` still traps half the takes under either recipe, so the
+recipe is not the whole fix there.
+
+Corpus check through `FishDrama3Runner` (`fish_drama3_wer`,
+`crates/audio/testdata/fish_drama3/eval_corpus.txt`: 20 English sentences,
+the voiceover script, two dialogues, two cue lines, numbers, German and a
+249-byte chunk; seeds 0 and 1; Parakeet TDT on the CPU). The Phase 0 corpus
+was kept off the repository and is gone, so this one replaces it:
+
+| Recipe, seed | Reported stopped early | Failed (harness rule) | Mean WER | WER of passing clips | Widest EOS chunk |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Reference, 0 | 4 | 1 | 8.1% | 2.6% | 33% of its limit |
+| Reference, 1 | 4 | 2 | 9.1% | 2.0% | 42% |
+| Fish Audio, 0 | 1 | 0 | 1.9% | 1.6% | 39% |
+| Fish Audio, 1 | 0 | 0 | 0.8% | 0.8% | 42% |
+
+Under the reference recipe even a plain sentence (`The train to the coast
+leaves at seven, ...`) and the 249-byte chunk (to `max_frames`) were
+trapped. The one Fish Audio take reported stopped early is the `[pause]`
+line, which never spoke `Seriously.` The harness's two-halves rule marks
+only three of the nine trapped takes as failed. Every completed chunk used
+at most 42% of its limit, so the `TextCap::MEASURED` constants still hold
+under the new recipe. Fish Audio's recipe became the product default on this
+evidence. The host was loaded by other sessions' builds, which changes
+timing only; a seed fixes the frame counts.
+
+**Stopped early.** `Drama3Take::stopped_early` is true when a chunk ends
+without EOS, or the emitted audio holds a silent run of
+`STUCK_SILENCE_FRAMES` (160 frames, 7.4 s, at -45 dBFS per 2048-sample
+frame). Completed takes pause at most 78 frames, and one trapped take reached
+EOS only after 359 silent frames, which a chunk-stop check alone would miss.
+It reaches the app as `AudioResult.stoppedEarly`, and the app retakes such a
+take with a fresh seed at most twice when the seed was left to it.
+`crates/bench/tests/fish_drama3_pause_trap_gate.rs` holds the 24 takes above,
+through the runner, to a frozen count. It measured 4 of 24, the same takes
+and frame counts as the probe, and the longest silence in a completed take
+was 50 frames. With the default reverted to the reference recipe it measured
+12 of 24 and failed.
 
 ## Tensor inventory (from the headers)
 

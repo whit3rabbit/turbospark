@@ -119,7 +119,7 @@ pub struct GenerateOptions {
 impl Default for GenerateOptions {
     fn default() -> Self {
         GenerateOptions {
-            sampling: SamplingParams::REFERENCE,
+            sampling: SamplingParams::FISH_SERVING,
             max_frames: DEFAULT_MAX_FRAMES,
             text_cap: Some(TextCap::MEASURED),
             seed: 0,
@@ -145,10 +145,12 @@ pub enum ChunkStop {
 pub enum FrameEvent {
     /// A generated frame's codes, `num_codebooks` of them.
     Frame { chunk: usize, codes: Vec<i32> },
-    /// A text chunk finished; `frames` is its count.
+    /// A text chunk finished; `frames` is its count and `limit` the most it
+    /// could take (its text cap or `max_frames`).
     ChunkEnd {
         chunk: usize,
         frames: usize,
+        limit: usize,
         stop: ChunkStop,
     },
 }
@@ -450,6 +452,7 @@ impl Drama3 {
             if on_event(FrameEvent::ChunkEnd {
                 chunk: chunk_index,
                 frames,
+                limit,
                 stop: if eos_seen { ChunkStop::Eos } else { cut },
             }) == Flow::Stop
             {
@@ -626,6 +629,20 @@ mod tests {
         d.tokenizer.encode(words, false).unwrap().get_ids().len()
     }
 
+    /// The product samples with Fish Audio's serving recipe. Under the
+    /// mlx-audio recipe a sentence gap trapped 4 of 12 seeds of one script in
+    /// silence, against 0 of 12 (`docs/FISH_DRAMA3_PHASE0.md`).
+    #[test]
+    fn the_default_samples_with_fish_audios_serving_recipe() {
+        let sampling = GenerateOptions::default().sampling;
+        assert_eq!(sampling, SamplingParams::FISH_SERVING);
+        assert_eq!(
+            (sampling.temperature, sampling.top_k, sampling.top_p),
+            (1.0, 30, 0.9)
+        );
+        assert_ne!(sampling, SamplingParams::REFERENCE);
+    }
+
     #[test]
     fn the_text_cap_adds_base_tokens_tags_and_cues() {
         let cap = TextCap::MEASURED;
@@ -707,6 +724,10 @@ mod tests {
             },
         );
         assert_eq!(ending(&capped), (limit, ChunkStop::TextCap));
+        assert!(
+            matches!(capped.last(), Some(FrameEvent::ChunkEnd { limit: l, .. }) if *l == limit),
+            "the chunk end reports the cap it ran into"
+        );
         // The cap cuts the same frames short; it does not change them.
         assert_eq!(capped[..limit], free[..limit]);
         // A cap at max_frames leaves max_frames in charge.
@@ -732,7 +753,11 @@ mod tests {
             let mut d = drama();
             let mut backbone = FakeBackbone::new(d.config.hidden_size);
             let mut events = Vec::new();
+            // The recipe and seed this test was sized for: the fake model
+            // ends early at seed 5 under the default recipe. Draw order does
+            // not depend on the recipe.
             let options = GenerateOptions {
+                sampling: SamplingParams::REFERENCE,
                 max_frames: 12,
                 seed: 5,
                 overlap_tower_tail: overlap,

@@ -163,9 +163,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             FrameEvent::ChunkEnd {
                 chunk,
                 frames,
+                limit,
                 stop,
             } => {
-                eprintln!("chunk {chunk}: {frames} frames, stop {stop:?}");
+                eprintln!("chunk {chunk}: {frames} of {limit} frames, stop {stop:?}");
             }
         }
         Flow::Continue

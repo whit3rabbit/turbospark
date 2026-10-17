@@ -242,6 +242,16 @@ when this file gets updated relative to the version bump and the tag.
   floor. 2.7.2 also releases `write.lock` explicitly, so a process the app
   spawns on another thread can no longer hold the code index's lock and turn
   an incremental update into a full rebuild.
+- `crates/audio`, `crates/runtime`: Fish Audio Drama 3 samples with Fish
+  Audio's serving recipe by default (temperature 1.0, top-p 0.9, top-k 30,
+  the same RAS; `SamplingParams::FISH_SERVING`), the default of its
+  SGLang-Omni runtime. mlx-audio's 0.7, 0.7 and 30 stay available as
+  `SamplingParams::REFERENCE`. Under it a sentence gap or a turn change
+  trapped 12 of 24 test takes in silence until the chunk's cap, against 4 of
+  24. Requests that set `temperature`, `top_p` or `top_k` are unchanged.
+  `FrameEvent::ChunkEnd` gains `limit`, and `FishDrama3Runner::synthesize`
+  returns a `Drama3Take` (samples emitted, each chunk's frames, limit and
+  stop, the longest silent run) instead of the sample count.
 - `swift/TurboSparkApp`: the project code index moved to
   `~/Library/Caches/TurboSpark/syntext/<digest>.syntext`. The old base64 name
   failed for project paths over about 185 bytes. Existing indexes rebuild
@@ -319,6 +329,14 @@ when this file gets updated relative to the version bump and the tag.
   whole layer on every pass: Fish Audio Drama 3 and MiniCPM-V 4.7 decoded 70
   to 180 times slower mapped than streamed. Asked for by name past the
   budget it is refused with the reason; `auto` resolves down to streamed.
+- `crates/runtime`, `swift/TurboSparkApp`: a Fish Audio Drama 3 take that
+  went silent after its first sentence, turn or `[pause]` was returned as if
+  it were complete, with the rest of the text never spoken. The runner now
+  reports a take whose chunk hit its frame cap without EOS, or that held a
+  silent run of 160 frames (7.4 s), as `stopped_early` in the audio job
+  result (C header, `AudioResult.stoppedEarly` in Swift). The app retakes such
+  a take with a fresh seed at most twice when the seed was left to it, then
+  saves the last take and says it stopped early.
 - `crates/catalog`: `InstalledModel::effective_modality` now derives the `Audio`
   modality from install path, `audio-receipt.json`, or speech metadata if a model
   was recorded with default `text` modality in `installed.json`. `installed_report`

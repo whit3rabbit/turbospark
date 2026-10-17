@@ -524507,6 +524507,137 @@
           }
         }
       }
+    },
+    "The model stopped speaking before the end of the text. Generate again for a new take." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "توقف النموذج عن الكلام قبل نهاية النص. أعد التوليد للحصول على نسخة جديدة."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das Modell hat vor dem Ende des Textes aufgehört zu sprechen. Generiere erneut für einen neuen Take."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The model stopped speaking before the end of the text. Generate again for a new take."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El modelo dejó de hablar antes del final del texto. Genera de nuevo para obtener una nueva toma."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le modèle a cessé de parler avant la fin du texte. Générez à nouveau pour obtenir une nouvelle prise."
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "המודל הפסיק לדבר לפני סוף הטקסט. צור שוב כדי לקבל טייק חדש."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "मॉडल ने टेक्स्ट के अंत से पहले बोलना बंद कर दिया। नया टेक पाने के लिए फिर से उत्पन्न करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Model berhenti berbicara sebelum akhir teks. Hasilkan lagi untuk mendapatkan take baru."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Il modello ha smesso di parlare prima della fine del testo. Genera di nuovo per ottenere una nuova take."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "モデルがテキストの最後まで話す前に止まりました。もう一度生成して新しいテイクを作成してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모델이 텍스트 끝까지 말하기 전에 멈췄습니다. 다시 생성하여 새 테이크를 만드세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Het model stopte met spreken voor het einde van de tekst. Genereer opnieuw voor een nieuwe take."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Model przestał mówić przed końcem tekstu. Wygeneruj ponownie, aby uzyskać nową wersję."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O modelo parou de falar antes do fim do texto. Gere novamente para obter uma nova tomada."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель перестала говорить до конца текста. Сгенерируйте ещё раз, чтобы получить новый дубль."
+          }
+        },
+        "sv" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modellen slutade tala före slutet av texten. Generera igen för en ny tagning."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Model metnin sonuna gelmeden konuşmayı bıraktı. Yeni bir çekim için yeniden oluşturun."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель перестала говорити до кінця тексту. Згенеруйте ще раз, щоб отримати новий дубль."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mô hình đã ngừng nói trước khi hết văn bản. Hãy tạo lại để có lượt thu mới."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型在文本结束前停止了朗读。请重新生成以获得新版本。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型在文字結束前停止了朗讀。請重新生成以取得新版本。"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

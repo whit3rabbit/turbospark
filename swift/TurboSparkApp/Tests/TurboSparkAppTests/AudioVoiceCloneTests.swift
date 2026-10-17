@@ -220,4 +220,29 @@ final class AudioVoiceCloneTests: XCTestCase {
         try AudioMediaIO.render(take.clips, store: assets, to: export)
         XCTAssertEqual(try AVAudioFile(forReading: export).length, clip.frameCount)
     }
+
+    /// A take the runtime reports as stopped early is retaken with a fresh
+    /// seed at most twice. A complete take, or a seed the user chose (it
+    /// would give the same take), is kept. The retake keeps every other
+    /// field of the request it replaces.
+    func testATakeThatStoppedEarlyIsRetakenWithAFreshSeedAtMostTwice() {
+        var sent = AudioRequest(task: .textToSpeech)
+        sent.text = "Welcome back. This is a short voiceover test."
+        sent.seed = 11
+        sent.consent = true
+        let stopped = AudioResult(seed: 11, stoppedEarly: true)
+        let retake = { (output: AudioResult, recipeSeed: UInt64?, retakes: Int) in
+            AudioWorkspaceController.retakeRequest(after: output, sent: sent, recipeSeed: recipeSeed, retakes: retakes, freshSeed: { 42 })
+        }
+        XCTAssertNil(retake(AudioResult(seed: 11), 0, 0), "a complete take is kept")
+        let next = retake(stopped, 0, 0)
+        XCTAssertEqual(next?.seed, 42)
+        XCTAssertEqual(next?.text, sent.text)
+        XCTAssertEqual(next?.consent, true)
+        XCTAssertNotNil(retake(stopped, nil, 0), "an unset seed is the app's to draw")
+        XCTAssertNotNil(retake(stopped, 0, AudioWorkspaceController.earlyStopRetakes - 1))
+        XCTAssertNil(retake(stopped, 0, AudioWorkspaceController.earlyStopRetakes), "retakes are bounded")
+        XCTAssertEqual(AudioWorkspaceController.earlyStopRetakes, 2)
+        XCTAssertNil(retake(stopped, 7, 0), "a chosen seed gives the same take again")
+    }
 }

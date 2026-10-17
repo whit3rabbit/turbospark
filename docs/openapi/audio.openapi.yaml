@@ -351,8 +351,8 @@ components:
         seed: { type: integer, minimum: 0, description: 'Makes a MegaTTS3, OmniVoice or Drama 3 run repeatable (default 0).' }
         p_w: { type: number, minimum: 0.1, maximum: 5, description: MegaTTS3 intelligibility weight (default 1.4); OmniVoice and Drama 3 refuse it. }
         t_w: { type: number, minimum: 0.1, maximum: 10, description: MegaTTS3 similarity weight (default 3.0); OmniVoice and Drama 3 refuse it. }
-        temperature: { type: number, minimum: 0, description: 'Drama 3 sampling temperature (default 0.7). Other models refuse it.' }
-        top_p: { type: number, exclusiveMinimum: 0, maximum: 1, description: 'Drama 3 nucleus sampling cutoff (default 0.7). Other models refuse it.' }
+        temperature: { type: number, minimum: 0, description: 'Drama 3 sampling temperature (default 1.0). Other models refuse it.' }
+        top_p: { type: number, exclusiveMinimum: 0, maximum: 1, description: 'Drama 3 nucleus sampling cutoff (default 0.9). Other models refuse it.' }
         top_k: { type: integer, minimum: 1, description: 'Drama 3 top-k sampling (default 30). Other models refuse it.' }
         max_frames: { type: integer, minimum: 1, maximum: 1024, description: 'Drama 3 upper bound on the frames generated for one text chunk (default 1024). Other models refuse it.' }
     GenerateRequest:

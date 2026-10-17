@@ -102,9 +102,11 @@ characters, `speed` 0.5 to 2.0. Voice cloning fields:
   estimated length.
 - Drama 3 speaks without a reference and clones with one (1 to 30 seconds, any
   sample rate). A reference needs `consent: true` and `reference_text`, the
-  exact words spoken in it. `temperature` (default 0.7), `top_p` (0.7),
+  exact words spoken in it. `temperature` (default 1.0), `top_p` (0.9),
   `top_k` (30) and `max_frames` (1 to 1024, a bound on one chunk) are Drama 3
-  only and every other model refuses them. `steps`, `speed` other than 1.0,
+  only and every other model refuses them. The defaults are Fish Audio's
+  serving recipe, not mlx-audio's 0.7 and 0.7, which traps far more takes in
+  silence after a sentence or a turn (`docs/FISH_DRAMA3_PHASE0.md`). `steps`, `speed` other than 1.0,
   `instruction`, `p_w` and `t_w` are refused by name.
 - `reference_text` and `instruction`: Qwen3-TTS only; MegaTTS3 aligns the
   reference itself and refuses both. OmniVoice reads `reference_text` (the
