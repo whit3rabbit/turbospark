@@ -155,13 +155,15 @@ when this file gets updated relative to the version bump and the tag.
   which also sets it against memory.
 
 ### Changed
-- `swift/TurboSparkApp`: syntext moves to 2.7.1 (`exact: "2.7.1"`) and adds
+- `swift/TurboSparkApp`: syntext moves to 2.7.2 (`exact: "2.7.2"`) and adds
   the `SyntextContext` product. The previous `exact: "2.5.0"` pin linked the
   2.4.0 xcframework, because syntext's `vX.Y.Z` tags through 2.7.0 pin the
   previous release's binary, so `grep_search`'s `literal_search` and context
-  lines silently did nothing. 2.7.1 is the first syntext tag that pins its
-  own binary, and its blake3 objects no longer target macOS 14.5 against the
-  app's 14.0 floor.
+  lines silently did nothing. From 2.7.1, syntext tags pin their own binary,
+  and its blake3 objects no longer target macOS 14.5 against the app's 14.0
+  floor. 2.7.2 also releases `write.lock` explicitly, so a process the app
+  spawns on another thread can no longer hold the code index's lock and turn
+  an incremental update into a full rebuild.
 - `swift/TurboSparkApp`: the project code index moved to
   `~/Library/Caches/TurboSpark/syntext/<digest>.syntext`. The old base64 name
   failed for project paths over about 185 bytes. Existing indexes rebuild
