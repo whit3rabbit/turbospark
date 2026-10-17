@@ -12,7 +12,7 @@ Host-side sampling and token selection.
 - Inputs are logits. Apply normalization exactly once in the sampler.
 - Deterministic mode is an exact `temperature == 0.0` decision. A tiny
   nonzero temperature still exercises sampling.
-- Preserve top-k, top-p, temperature, seed, and special-token behavior.
+- Preserve top-k, top-p, min-p, temperature, seed, and penalty behavior.
 - Test both greedy and sampled paths. Greedy cannot expose distribution errors.
 
 ## Checks

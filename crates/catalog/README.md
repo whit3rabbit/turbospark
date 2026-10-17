@@ -25,7 +25,7 @@ catalog = { package = "turbospark-catalog", path = "../catalog" }
 - `entry.rs`: `CatalogEntry` representing one curated model row (`Source`, `Sidecars`, `SourceKind`, `Status`, `MtpSource`, `Measured`). Enforces structural invariants at load time.
 - `catalog.rs`: `Catalog` managing the embedded table (`models.json`, via `include_str!`) merged with an optional `$TURBOSPARK_HOME/models.json` local override table.
 - `hf.rs`: Lightweight Hugging Face API client handling file listings, small config JSON fetches, and content-length queries without downloading model weights.
-- `auth.rs`: Hugging Face authentication token resolution (CLI argument, environment variable, keychain store, cache file) and validation against `whoami-v2`.
+- `auth.rs`: Hugging Face authentication token resolution (CLI argument, environment variable, store file, cache file) and validation against `whoami-v2`.
 - `probe/`: Fast, header-only checkpoint inspector evaluating architecture compatibility, quantization formats, and memory headroom:
   - `gguf.rs`: GGUF header parser and block type compatibility checker.
   - `safetensors.rs`: Safetensors JSON header parser and tensor shape validator.
@@ -53,7 +53,7 @@ cargo test -p turbospark-catalog --test catalog_network --release -- --ignored -
 
 ## Tests
 
-- `tests/catalog.rs`: Validates catalog JSON parsing, alias uniqueness, and entry validation.
+- `tests/catalog.rs`: Validates catalog JSON parsing, the embedded table's structural invariants, and entry validation.
 - `tests/probe.rs`: Tests header-only probe logic against synthetic GGUF and Safetensors headers.
 - `tests/store.rs`: Verifies local model installation bookkeeping, path lookups, and deletion.
 - `tests/catalog_network.rs`: Opt-in rot guard verifying that remote Hugging Face repos and filenames in `models.json` remain active.
@@ -81,6 +81,6 @@ cargo run --release -p turbospark-cli --bin turbospark-model -- pull tinyllama
 
 ## Crate Gotchas
 
-1. **Header-Only Probe**: `probe` reads only the first few kilobytes of remote checkpoint files to extract metadata, tensor headers, and block quantization types. It exits with a non-zero code if any layer lacks an optimized Metal kernel.
+1. **Header-Only Probe**: `probe` reads only the first few kilobytes of remote checkpoint files to extract metadata, tensor headers, and block quantization types. It exits with a non-zero code when a gate refuses the checkpoint, for example a block type that has neither a Metal kernel nor a transcode path.
 2. **Layer-by-Layer Streaming and Resume**: `pull` streams weights into repacked files without requiring a complete source checkpoint first. For immutable revisions it also retains SHA-256 checked range chunks until the install verifies, so temporary disk can approach download size plus install size. Failed and cancelled pulls reuse those chunks; floating revisions do not.
-3. **Mandatory Sidecar Verification**: Installation requires required tokenizer sidecars (`tokenizer.json`, `tokenizer_config.json`, `preprocessor_config.json` for vision models). Any stale temporary sidecar files are explicitly pruned before writing the install receipt.
+3. **Mandatory Sidecar Verification**: Installation requires the sidecars each row needs (`tokenizer.json` for model rows, `preprocessor_config.json` for vision-tower rows; `tokenizer_config.json` is optional). Any stale temporary sidecar files are explicitly pruned before writing the install receipt.

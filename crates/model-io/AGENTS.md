@@ -10,8 +10,9 @@ Checkpoint manifests, tensor metadata, mappings, and resident buffers.
 
 ## Rules
 
-- Keep `#![forbid(unsafe_code)]` except for the documented mmap boundary in
-  resident buffers and safetensors intake.
+- Keep `unsafe` restricted to the documented narrow boundary: the mmap calls
+  in resident buffers and safetensors intake, plus the single `statvfs`
+  free-space call in `disk_space`.
 - Decode family validation is structural. Resolve the family before applying
   family defaults, and reject missing or mismatched manifest fields.
 - Keep on-disk names, canonical family strings, ArchConfig fields, and
