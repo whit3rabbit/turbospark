@@ -150,6 +150,35 @@ public struct InstalledModel: Decodable, Sendable, Identifiable, Equatable {
     /// The GGUF quantization label chosen for a variant install, if any.
     public let variant: String?
 
+    // The fields below describe WHERE the model is. An engine from before
+    // model libraries sends none of them, and every row it listed was a
+    // This Mac row that could be opened, so that is what absence decodes to
+    // (and what the memberwise defaults describe).
+
+    /// The holding library's id: `internal` for This Mac, nil for a custom
+    /// location (`pull --out`), and nil from an older engine. Use
+    /// `locationKind` to tell those two apart, never this alone.
+    public let library: String?
+    /// The library's name, raw. For This Mac it is the English literal "This
+    /// Mac", for a custom folder "custom location", and for a library that is
+    /// no longer listed "unknown library": localize from `locationKind`, and
+    /// run a real library's name through `UntrustedText.display`.
+    public let libraryName: String?
+    /// `<library>:<modality>/<alias>`, the identity a move, a forget and a
+    /// delete take. `library` is `internal` when the row has none, so an older
+    /// engine's row is `internal:text/<alias>`. A row an app built itself from
+    /// a folder the registry never listed has no registry identity: do not
+    /// pass its default to a move or a delete.
+    public let installId: String
+    /// Whether the model can be opened now. `TurboSparkCatalog.installed()`
+    /// returns only `.available` rows; `installedWithAvailability()` returns
+    /// the rest.
+    public let availability: LibraryAvailability
+    public let locationKind: LibraryLocationKind
+    /// The library, or for a custom folder the volume, to connect when
+    /// `availability` is `.notConnected`. Raw and untrusted.
+    public let connectName: String?
+
     public init(
         alias: String,
         repo: String,
@@ -161,7 +190,13 @@ public struct InstalledModel: Decodable, Sendable, Identifiable, Equatable {
         installedOn: String = "",
         status: String? = nil,
         kind: String? = nil,
-        variant: String? = nil
+        variant: String? = nil,
+        library: String? = nil,
+        libraryName: String? = nil,
+        installId: String? = nil,
+        availability: LibraryAvailability = .available,
+        locationKind: LibraryLocationKind = .thisMac,
+        connectName: String? = nil
     ) {
         self.alias = alias
         self.repo = repo
@@ -174,12 +209,23 @@ public struct InstalledModel: Decodable, Sendable, Identifiable, Equatable {
         self.status = status
         self.kind = kind
         self.variant = variant
+        self.library = library
+        self.libraryName = libraryName
+        self.installId = installId ?? "internal:\(modality)/\(alias)"
+        self.availability = availability
+        self.locationKind = locationKind
+        self.connectName = connectName
     }
 
     enum CodingKeys: String, CodingKey {
         case alias, repo, revision, path, family, modality, status, kind, variant
+        case library, availability
         case installBytes = "install_bytes"
         case installedOn = "installed_on"
+        case libraryName = "library_name"
+        case installId = "install_id"
+        case locationKind = "location_kind"
+        case connectName = "connect_name"
     }
 
     public init(from decoder: Decoder) throws {
@@ -195,6 +241,23 @@ public struct InstalledModel: Decodable, Sendable, Identifiable, Equatable {
         self.status = try values.decodeIfPresent(String.self, forKey: .status)
         self.kind = try values.decodeIfPresent(String.self, forKey: .kind)
         self.variant = try values.decodeIfPresent(String.self, forKey: .variant)
+        // `decodeIfPresent` reads a JSON null as nil too, which is what a
+        // custom location sends.
+        let library = try values.decodeIfPresent(String.self, forKey: .library)
+        self.library = library
+        self.libraryName = try values.decodeIfPresent(String.self, forKey: .libraryName)
+        self.installId = try values.decodeIfPresent(String.self, forKey: .installId)
+            ?? "internal:\(self.modality)/\(self.alias)"
+        self.availability = try values.decodeIfPresent(LibraryAvailability.self, forKey: .availability)
+            ?? .available
+        // An install RESULT carries `library` but not `location_kind`, and
+        // it is a row in the library it names, so read that rather than
+        // labelling a library install as This Mac.
+        let inferredKind: LibraryLocationKind =
+            (library != nil && library != "internal") ? .library : .thisMac
+        self.locationKind = try values.decodeIfPresent(LibraryLocationKind.self, forKey: .locationKind)
+            ?? inferredKind
+        self.connectName = try values.decodeIfPresent(String.self, forKey: .connectName)
     }
 }
 
@@ -218,6 +281,18 @@ public struct ImageInstalledModel: Decodable, Sendable, Identifiable, Equatable 
     /// back to the Swift mirror only for a row from an older engine that does
     /// not send it.
     public let family: String
+    /// The holding library's id (`internal` for This Mac). Nil for a row of
+    /// `imageInstalled(in:)`, which scans a folder outside every library, and
+    /// for a payload from before model libraries.
+    public let library: String?
+    /// The library's name, raw (This Mac's is the English literal). Nil when
+    /// `library` is.
+    public let libraryName: String?
+    /// `<library>:image/<alias>`, the identity a move and a delete take. Nil
+    /// when `library` is: a scanned folder is no registry install, so there is
+    /// nothing to name, and an id invented for it could address a different
+    /// install of the same alias.
+    public let installId: String?
 
     public init(
         alias: String,
@@ -229,7 +304,10 @@ public struct ImageInstalledModel: Decodable, Sendable, Identifiable, Equatable 
         schedulerSteps: UInt32,
         quantization: String = "unknown",
         sourcePath: String? = nil,
-        family: String? = nil
+        family: String? = nil,
+        library: String? = nil,
+        libraryName: String? = nil,
+        installId: String? = nil
     ) {
         self.alias = alias
         self.modelID = modelID
@@ -241,10 +319,14 @@ public struct ImageInstalledModel: Decodable, Sendable, Identifiable, Equatable 
         self.quantization = quantization
         self.sourcePath = sourcePath
         self.family = family ?? ImageModelFamily.family(for: modelID)
+        self.library = library
+        self.libraryName = libraryName
+        self.installId = installId
     }
 
     private enum CodingKeys: String, CodingKey {
         case alias, modelID, revision, path, width, height, schedulerSteps, quantization, sourcePath, family
+        case library, libraryName, installId
     }
 
     public init(from decoder: Decoder) throws {
@@ -260,6 +342,9 @@ public struct ImageInstalledModel: Decodable, Sendable, Identifiable, Equatable 
         self.sourcePath = try values.decodeIfPresent(String.self, forKey: .sourcePath)
         self.family = try values.decodeIfPresent(String.self, forKey: .family)
             ?? ImageModelFamily.family(for: self.modelID)
+        self.library = try values.decodeIfPresent(String.self, forKey: .library)
+        self.libraryName = try values.decodeIfPresent(String.self, forKey: .libraryName)
+        self.installId = try values.decodeIfPresent(String.self, forKey: .installId)
     }
 }
 
@@ -402,8 +487,29 @@ public enum TurboSparkCatalog {
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
-    /// What text models are installed in `~/.turbospark/models/text`.
+    /// The text models that can be opened now: This Mac's, and those in a
+    /// connected library.
+    ///
+    /// **This keeps its contract from before model libraries: every row it
+    /// returns is usable.** The app feeds the list to its pickers, gating and
+    /// session selection unfiltered, so a model on an unplugged drive or with
+    /// its folder gone must not appear here. Use `installedWithAvailability()`
+    /// for the rows that cannot be opened, which a model list shows as "Not
+    /// connected" or "Missing".
+    ///
+    /// Call off the main actor: the listing can read the mount table, probe a
+    /// drive and write `installed.json` once.
     public static func installed() throws -> [InstalledModel] {
+        try installedWithAvailability().filter { $0.availability == .available }
+    }
+
+    /// Every text model the registry lists, including those in a library that
+    /// is not connected (`availability == .notConnected`, with `connectName`
+    /// naming what to connect) and those whose folder is gone (`.missing`).
+    /// Sorted by alias. Listing never fails because a drive is away.
+    ///
+    /// Call off the main actor, as for `installed()`.
+    public static func installedWithAvailability() throws -> [InstalledModel] {
         try decode([InstalledModel].self, from: try takeString { ts_installed_json($0) })
     }
 
@@ -570,9 +676,51 @@ public enum TurboSparkCatalog {
         return try decode(ControlVectorInfo.self, from: json)
     }
 
-    /// Deletes an installed model from `~/.turbospark` and removes its directory.
+    /// Deletes an installed model of THIS MAC by alias: its directory and its
+    /// row. An alias says nothing of where an install is, so an alias a
+    /// library holds is refused with the `useInstallId` code and nothing is
+    /// deleted: use `deleteInstall(installId:)`.
+    ///
+    /// **Do not fall back to removing the row's `path` yourself when this
+    /// throws.** `useInstallId`, `busy` and the own-folder refusals are the
+    /// engine protecting files, and a raw delete of a recorded path follows
+    /// planted links and can remove a different drive mounted at the old
+    /// mount point.
     public static func delete(_ alias: String) throws {
         try check(alias.withCString { ts_model_delete($0) })
+    }
+
+    /// Deletes a text install by the `installId` of its row: its folder, its
+    /// registry row and its entry in the library's marker. The install is
+    /// looked for where its library is NOW, never at the row's recorded
+    /// `path`, and nothing is deleted through a link. A This Mac row
+    /// (`internal:text/<alias>`) is deleted at its own folder.
+    ///
+    /// A library that is not connected or is read-only is refused with
+    /// nothing touched (`notConnected`, `libraryReadOnly`); a folder that is
+    /// already gone is only forgotten, and the call succeeds, so this also
+    /// serves "remove from the list" for a missing row. For a row whose
+    /// library is not connected, offer `TurboSparkLibraries.forget(installId:)`
+    /// instead. Other refusals: `unknownInstall`, `unknownLibrary`, `io`, and
+    /// `busy` while an install or a move runs.
+    ///
+    /// Unload the model first: this library cannot see sessions. Call off the
+    /// main actor, because the delete can read the mount table, remove many
+    /// gigabytes and write `installed.json`.
+    public static func deleteInstall(installId: String) throws {
+        try check(installId.withCString { ts_model_delete_install($0) })
+    }
+
+    /// Deletes an image install by the `installId` of its row
+    /// (`<library>:image/<alias>`), with the MLX source folder kept beside it.
+    /// Image installs are not recorded, so there is no row to forget, and a
+    /// folder that is not there is `unknownInstall`. Placed and removed as
+    /// `deleteInstall(installId:)` does; an id of This Mac
+    /// (`internal:image/<alias>`) is `deleteImage` of the alias and answers
+    /// with the message that call gives, which carries no code. Same
+    /// refusals, and the same off-main-actor and unload rules.
+    public static func deleteImageInstall(installId: String) throws {
+        try check(installId.withCString { ts_image_delete_install($0) })
     }
 
     /// Ranks curated models by hardware fit for this machine at `context`.
@@ -695,6 +843,25 @@ public enum TurboSparkCatalog {
     /// network failure gives it -- nothing of the partial install is kept,
     /// and the error carries the "install cancelled" text.
     public static func install(_ alias: String) -> AsyncThrowingStream<InstallEvent, Error> {
+        install(alias, library: nil)
+    }
+
+    /// `install(_:)` into the library whose `ModelLibrary.id` is `library`.
+    /// Nil, `internal` and an empty string all mean This Mac.
+    ///
+    /// The destination is settled before the first request, so a refusal costs
+    /// no download. The stream throws a `TurboSparkError` whose `libraryFault`
+    /// is `notConnected`, `libraryReadOnly`, `unknownLibrary` (a NAME is not an
+    /// id) or `aliasElsewhere` (the alias is already installed in another
+    /// place: offer a move), or `libraryDisconnected` when the drive is lost
+    /// while the walk runs and nothing partial is listed; or `busy` while a
+    /// move runs. Any other failure keeps its message with no code, as before
+    /// libraries. The finished row carries `library`, `libraryName` and
+    /// `installId`.
+    public static func install(
+        _ alias: String,
+        library: String?
+    ) -> AsyncThrowingStream<InstallEvent, Error> {
         AsyncThrowingStream { continuation in
             // A dedicated thread, not a global queue slot: this blocks for
             // tens of minutes, and parking a shared concurrent-queue worker
@@ -704,8 +871,13 @@ public enum TurboSparkCatalog {
                 let userdata = Unmanaged.passRetained(box).toOpaque()
                 defer { Unmanaged<InstallBox>.fromOpaque(userdata).release() }
                 do {
+                    let options = try installDestinationOptions(library: library)
                     let json = try takeString { out in
-                        alias.withCString { ts_install($0, installCallback, userdata, out) }
+                        alias.withCString { a in
+                            withOptionalCString(options) { o in
+                                ts_install_with_options(a, o, installCallback, userdata, out)
+                            }
+                        }
                     }
                     continuation.yield(.finished(try decode(InstalledModel.self, from: json)))
                     continuation.finish()
@@ -721,14 +893,31 @@ public enum TurboSparkCatalog {
     /// Downloads and packs one curated image source into the shared image
     /// store. The source is staged temporarily and removed after publication.
     public static func installImage(_ alias: String) -> AsyncThrowingStream<ImageInstallEvent, Error> {
+        installImage(alias, library: nil)
+    }
+
+    /// `installImage(_:)` into a library. The library's own staging folder
+    /// holds the download and the build, and the install is published into
+    /// its `image` folder only when complete. Destination and errors as for
+    /// `install(_:library:)`.
+    public static func installImage(
+        _ alias: String,
+        library: String?
+    ) -> AsyncThrowingStream<ImageInstallEvent, Error> {
         AsyncThrowingStream { continuation in
             let thread = Thread {
                 let box = ImageInstallBox(continuation)
                 let userdata = Unmanaged.passRetained(box).toOpaque()
                 defer { Unmanaged<ImageInstallBox>.fromOpaque(userdata).release() }
                 do {
+                    let options = try installDestinationOptions(library: library)
                     let json = try takeString { out in
-                        alias.withCString { ts_image_install($0, imageInstallCallback, userdata, out) }
+                        alias.withCString { a in
+                            withOptionalCString(options) { o in
+                                ts_image_install_with_options(
+                                    a, o, imageInstallCallback, userdata, out)
+                            }
+                        }
                     }
                     continuation.yield(.finished(
                         try decode(ImageInstalledModel.self, from: json)))
@@ -754,18 +943,35 @@ public enum TurboSparkCatalog {
         file: String? = nil,
         sidecarRepo: String? = nil
     ) -> AsyncThrowingStream<InstallEvent, Error> {
+        install(repo: repo, alias: alias, file: file, sidecarRepo: sidecarRepo, library: nil)
+    }
+
+    /// `install(repo:alias:file:sidecarRepo:)` into a library. The
+    /// destination is settled before the probe, the walk's first request.
+    /// Destination and errors as for `install(_:library:)`.
+    public static func install(
+        repo: String,
+        alias: String,
+        file: String? = nil,
+        sidecarRepo: String? = nil,
+        library: String?
+    ) -> AsyncThrowingStream<InstallEvent, Error> {
         AsyncThrowingStream { continuation in
             let thread = Thread {
                 let box = InstallBox(continuation)
                 let userdata = Unmanaged.passRetained(box).toOpaque()
                 defer { Unmanaged<InstallBox>.fromOpaque(userdata).release() }
                 do {
+                    let options = try installDestinationOptions(library: library)
                     let json = try takeString { out in
                         repo.withCString { r in
                             alias.withCString { a in
                                 withOptionalCString(file) { f in
                                     withOptionalCString(sidecarRepo) { s in
-                                        ts_install_repo(r, a, f, s, installCallback, userdata, out)
+                                        withOptionalCString(options) { o in
+                                            ts_install_repo_with_options(
+                                                r, a, f, s, o, installCallback, userdata, out)
+                                        }
                                     }
                                 }
                             }
@@ -780,6 +986,18 @@ public enum TurboSparkCatalog {
             thread.name = "com.turbospark.install"
             thread.start()
         }
+    }
+
+    /// The options JSON of an install entry point for a destination:
+    /// `{"library": "<id>"}`, or nil for This Mac so a call with no
+    /// destination sends exactly what it sent before libraries. Encoded, never
+    /// interpolated, because an id comes from outside this process.
+    static func installDestinationOptions(library: String?) throws -> String? {
+        try encodeOptions(InstallDestination(library: library))
+    }
+
+    private struct InstallDestination: Encodable {
+        let library: String?
     }
 
     /// Signals every in-flight install walk to stop.
@@ -905,7 +1123,7 @@ private let storeRelocationCallback: TsInstallCallback = { userdata, kind, _, _,
 ///
 /// Written out rather than using `?.withCString`, which cannot express the
 /// null case without duplicating the body.
-private func withOptionalCString<R>(
+func withOptionalCString<R>(
     _ value: String?,
     _ body: (UnsafePointer<CChar>?) -> R
 ) -> R {

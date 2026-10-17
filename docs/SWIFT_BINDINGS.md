@@ -967,7 +967,8 @@ artifact is the same either way.
 
 ```swift
 let rows = try TurboSparkCatalog.available()      // curated table, with `installed`
-let mine = try TurboSparkCatalog.installed()      // what is in ~/.turbospark
+let mine = try TurboSparkCatalog.installed()      // what can be opened now (see "Model libraries")
+let all = try TurboSparkCatalog.installedWithAvailability()  // plus Not connected and Missing rows
 let cost = try TurboSparkCatalog.cost(of: "gemma4")
 // Ranked by hardware fit. Pass the SAME guard your sessions open with, or
 // the ranking and the loader's refusal describe different machines.
@@ -984,8 +985,11 @@ let ladder = try TurboSparkCatalog.contextLadder(modelPath: "gemma4", loadGuard:
 // Inspect control vector metadata before opening:
 let cv = try TurboSparkCatalog.controlVectorInfo(path: "/path/to/vector.gguf")
 
-// Delete an installed model to recover disk space:
-try TurboSparkCatalog.delete("gemma4")
+// Delete an installed model to recover disk space. Takes the row's installId,
+// not its alias: an alias says nothing of which library holds it.
+try TurboSparkCatalog.deleteInstall(installId: row.installId)
+// delete(_ alias:) still exists for This Mac rows and refuses an alias a
+// library holds ("use_install_id").
 
 // Check if an alias or directory is installed, and resolve canonical path:
 if try TurboSparkCatalog.isInstalled("gemma4") {
@@ -1088,6 +1092,216 @@ probe calls to target the specified base mirror URL.
 
 ---
 
+## Model libraries
+
+A **library** is a folder on a directly connected drive that holds model files.
+**This Mac** is the implicit one (id `internal`, at `<store root>/models`) and
+cannot be removed. The list of libraries lives in the store root, so unplugging
+a drive never takes it along, and each library also carries a marker file on
+its drive so another Mac can adopt it. The header's "model libraries" block is
+the contract. This section is the Swift side of it.
+
+```swift
+// Call these off the main actor: they read the mount table, probe a drive and
+// can write the registry (`Task.detached { Result { ... } }`, as the audio
+// screens do).
+let libraries = try TurboSparkLibraries.list()                  // This Mac first
+let added = try TurboSparkLibraries.add(path: "/Volumes/T7")    // adopts or creates /Volumes/T7/TurboSpark
+print(added.skipped)                                            // marker rows not recorded (alias already elsewhere)
+try TurboSparkLibraries.setDefault(id: added.library.id)        // or "internal"
+try TurboSparkLibraries.remove(id: added.library.id)            // never touches a file
+let marker = try TurboSparkLibraries.discover(volumeRoot: "/Volumes/T7")  // nil: no library there
+
+// Install into a library. nil, "internal" and "" all mean This Mac.
+for try await event in TurboSparkCatalog.install("gemma4", library: added.library.id) { ... }
+for try await event in TurboSparkCatalog.install(repo: "o/r", alias: "mine", library: id) { ... }
+for try await event in TurboSparkCatalog.installImage("z-image", library: id) { ... }
+let record = try AudioCatalog.install(profile.identity, library: id)   // blocking, like the others
+```
+
+`ModelLibrary` decodes the list: `id`, `name`, `root` (nil while the drive is
+not connected), `available`, `duplicate` (true for ONE listing, after a drive
+came back under a new name, so do not treat it as sticky), `modelCount`,
+`isDefault` (exactly one library), `lastSeen` (`YYYY-MM-DD` or nil) and
+`isInternal`. **Pass the `id` to every call, never the name.** A name gives the
+`unknown_library` code. The name of This Mac is the English literal "This Mac":
+show your own localized label when `isInternal`.
+
+### Rows, availability, and the old contract
+
+`TurboSparkCatalog.installed()` **keeps its contract from before libraries: it
+returns only rows that can be opened now** (This Mac's, and those in a
+connected library). The app feeds it to pickers, gating and session selection
+unfiltered, so a model on an unplugged drive must never be in it. The rows
+that cannot be opened come from `installedWithAvailability()`, sorted by alias:
+
+| `InstalledModel` field | Meaning |
+|---|---|
+| `availability` | `.available`, `.notConnected` (the drive is away, row stays listed, not an error) or `.missing` (drive connected, folder gone, or the library is no longer listed) |
+| `locationKind` | `.thisMac`, `.library`, `.custom` (a `pull --out` folder) or `.unknown` (a library that is no longer listed). Told from ids and paths, NEVER from `libraryName`, which a marker can set to "This Mac" |
+| `library` | the library id, `internal` for This Mac, nil for a custom location (and from an older engine) |
+| `libraryName` | raw name (English literals "This Mac", "custom location", "unknown library"): localize from `locationKind` |
+| `installId` | `<library>:<modality>/<alias>`, the identity move, forget and delete take |
+| `connectName` | the library, or for a custom folder the volume, to connect when `.notConnected` |
+| `path` | where the install is NOW for a connected library, the last recorded path otherwise |
+
+Image rows (`ImageInstalledModel`) gain `library`, `libraryName` and `installId`.
+They are nil for `imageInstalled(in:)`, which scans a folder outside every
+library and so names no registry install. `AudioCatalog.installed()` gains a
+fifth list, `notConnected` (`[AudioNotConnectedInstall]`: `record`, `identity`,
+`libraryName`), which is empty from an older engine. An unplugged drive is a
+state to show, never an error, and `incompatible` never holds one.
+
+Every field above decodes with a default, so a payload from before libraries
+reads as an available This Mac row. The memberwise `InstalledModel(...)` and
+`ImageInstalledModel(...)` initializers keep every parameter they had and add
+the new ones last with those defaults. An install RESULT carries `library`,
+`library_name` and `install_id` but not `availability` or `location_kind`, so
+`locationKind` is read from `library` there (`.library` unless it is `internal`).
+
+### Moving
+
+```swift
+let outcome = try await TurboSparkLibraries.move(
+    installId: row.installId, to: destination.id,
+    freeBytes: Int64(destinationFreeBytes)) { done, total in
+        // Byte progress only, on the move's own thread: first (0, total), then
+        // cumulative. Take the maximum if a bar is driven from it.
+    }
+// Elsewhere, from any thread:
+TurboSparkLibraries.cancelMove()
+```
+
+The engine call blocks for as long as the copy takes, so `move` runs it on a
+dedicated thread and the caller awaits. **Cancelling the awaiting `Task` does
+not stop the copy**: call `cancelMove()`, which makes `move` throw `cancelled`
+with the original untouched and the partial copy removed. `cancelMove()`
+returns false when no move runs (not an error) and leaves install walks alone,
+as `cancelInstall()` leaves moves alone.
+
+`MoveOutcome` has three cases and **all of them mean the install is in the
+destination**: `.moved`, `.sourceMarkerStale` (the original library's marker
+still lists it, harmless) and `.sourceCleanupFailed` (the original folder at
+`path` could not be deleted, so tell the user to delete it by hand). `installId`
+is the install's NEW id. Do not show a failure for any of them. An outcome this
+build does not know decodes as `.unrecognized` and means the same.
+
+`freeBytes` is the destination's free space as the app measured it. Below the
+model's size the move is refused before anything is copied
+(`insufficient_space`). Pass nil only when it could not be measured: the move
+is then refused as `free_space_unknown` before anything else, even for a
+destination that is not connected, so pass nil only for a connected one. The
+required and available figures of a refusal exist only in the engine's
+sentence, so compute them from the row's `installBytes` and your own
+measurement. Unload the model first: this library cannot see sessions.
+
+### Deleting and forgetting
+
+`deleteInstall(installId:)` and `deleteImageInstall(installId:)` place the
+install where its library is NOW, never at the row's recorded `path`, which
+names the mount point of the time and can answer for a different drive mounted
+there. A library that is not connected or is read-only is refused with nothing
+touched. A folder that is already gone, or reached through a link, is only
+forgotten and the call succeeds, so it also serves "remove from the list" for a
+missing row. For a `.notConnected` row, offer
+`TurboSparkLibraries.forget(installId:)` (drops the row and the marker entry,
+deletes no file, and an unlisted id is not an error).
+
+**Do not follow a refused delete with a raw `FileManager.removeItem(row.path)`.**
+`use_install_id`, `busy`, `not_connected` and the own-folder refusal are the
+engine protecting files, and a raw delete follows planted links, removes
+whatever is mounted at the old path, and leaves the registry and marker rows.
+`delete(_ alias:)` stays for This Mac rows and refuses an alias a library holds
+with `use_install_id`. Every delete is refused as `busy` while an install or a
+move runs.
+
+### Importing a moved store
+
+`importMovedRoot(_:)` registers the `models` folder of a store Move Store moved
+and copies its embedding and OCR models into the home. The result is an
+`ImportedStore`. **The conversion is not finished while `copyFailures` is
+non-empty** (`isComplete` is false): the copies are retried only when the import
+is called again, so keep it pending, retrying on mount and at launch, or show
+the failures. `needsAdoption` lists music installs with no receipt, which the
+user moves to This Mac and adopts there.
+
+### Error codes
+
+A refusal puts a stable lowercase code first in the engine's last-error string,
+`"<code>: <sentence>"`. The Swift wrappers still throw `TurboSparkError`
+(`code` is the status, `message` the whole string), and
+`error.libraryFault` reads the prefix:
+
+```swift
+do { try await TurboSparkLibraries.move(...) }
+catch let error as TurboSparkError {
+    switch error.libraryFault?.code {
+    case .insufficientSpace?: ...
+    case .busy?: ...                 // an install or a move is running
+    case nil: ...                    // no code: show error.message
+    default: ...
+    }
+}
+```
+
+`LibraryFault` carries `code` (a `LibraryErrorCode`), `status`, the raw
+`sentence`, and `displaySentence`. A message with no code is not a library
+fault and `libraryFault` is nil. That includes `options is not valid install
+options`, a cancelled install (`install cancelled`) and every install failure
+that keeps its pre-library form. An unknown but well-formed code decodes as
+`.unrecognized(code)`, never a crash.
+
+| Code | Status | Returned by |
+|---|---|---|
+| `same_disk_as_home`, `network`, `small_file_limit`, `read_only`, `nested`, `inside_home`, `unknown_volume`, `not_a_directory` (`LibraryRefusal`, via `.refusal`) | invalidArgument | `add`, `importMovedRoot` (`nested`) |
+| `unknown_library` | invalidArgument | `remove`, `setDefault`, installs, `move`, deletes |
+| `internal_library` | invalidArgument | `remove` of This Mac |
+| `not_connected` | invalidArgument | `importMovedRoot` (root missing), `forget`, installs, `move`, deletes, `AudioCatalog.resolve` |
+| `marker`, `io` | invalidArgument | any call that reads or writes a library |
+| `library_disconnected` | invalidArgument | `forget`, installs (the drive left mid-install, nothing partial is listed) |
+| `library_read_only` | invalidArgument | `forget`, installs, `move`, deletes (a library a newer build wrote) |
+| `home_only` | invalidArgument | `forget`, `move` (embedding and OCR models). Reserved for installs |
+| `alias_elsewhere` | invalidArgument | installs (alias and modality already installed elsewhere, so offer a move) |
+| `unknown_install` | invalidArgument | `move`, `deleteInstall`, `deleteImageInstall`, `delete(_:)` |
+| `use_install_id` | invalidArgument | `delete(_:)` of an alias a library holds |
+| `same_library`, `destination_taken`, `insufficient_space`, `verify_failed`, `free_space_unknown` | invalidArgument | `move` |
+| `cancelled` | cancelled | `move` after `cancelMove()` |
+| `busy` | busy | a library change, `forget`, `importMovedRoot`, any delete, `AudioCatalog.adopt`, `delete` and `deleteLegacy`, installs and `move` while an install or a move runs |
+
+**`busy` is keyed on the message prefix, never on the status alone.**
+`TurboSparkError.Code.busy` already meant "the native audio device or session
+is busy" (`AudioWorkspaceController+Installs` keys on it), and the same status
+now also carries the library `busy: ...`. The audio message has no prefix, so
+`error.libraryFault?.code == .busy` is the library case and a `.busy` with no
+`libraryFault` is the audio device. The `busy` check is made once, before the
+work, so it is not atomic against an install that begins afterwards: while you
+change libraries, also stop queueing installs. A move never returns
+`library_disconnected` (a drive lost mid-move is `not_connected`).
+
+### Untrusted text
+
+Library and volume names, aliases, install ids, marker names, copy-failure
+keys and the leftover `path` come from a drive anyone could have written. The
+engine passes names and ids raw (JSON-escaped only) because they are
+identities, and escapes and caps error sentences at 300 characters. Show any of
+them through `UntrustedText.display(_:limit:)`, which escapes control and
+bidirectional formatting characters (a right-to-left override can make
+`gnp.exe` read as `exe.png`) in the engine's own spelling, then cuts to 120
+characters by default with `...`. `LibraryFault.displaySentence` does that for
+the sentence, and `sentence` stays raw for logs. Zero-width and other
+invisible format characters outside the bidirectional set are not escaped.
+
+### Testing
+
+The package suites link the RELEASE archive, where the `TURBOSPARK_TEST_*`
+location overrides do not exist, so no fake drive can be mounted. They decode
+fixtures with and without the new fields (`LibraryWireTests`), map every code in
+the table from a `"<code>: sentence"` string (`LibraryErrorTests`), and run the
+real engine against a throwaway home with This Mac only (`LibraryEngineTests`).
+Drives, moves and connected-library deletes are covered by the Rust FFI tests.
+
+---
+
 ## Errors
 
 ```swift
@@ -1101,11 +1315,15 @@ do {
 ```
 
 `.cancelled` is the caller's own cancel request ending an install, an audio
-job, or an audio open (`AudioOpenToken`). It is not a failure and should not be shown as one. (A cancelled TEXT turn
+job, an audio open (`AudioOpenToken`), or a model move. It is not a failure and should not be shown as one. (A cancelled TEXT turn
 is not an error at all: it returns normally with `stopReason == .cancelled` and
-the partial text.) `.busy` means the resource is in use by another operation,
-today the native audio device or session; unlike `.open`, retrying once that
-job finishes can succeed. Before 2026-10 a cancelled install or audio job came back as `.generate` and
+the partial text.) `.busy` means the resource is in use by another operation:
+the native audio device or session, OR a library change, delete, install or
+move refused while an install or a move runs. Unlike `.open`, retrying once that
+job finishes can succeed. **The two busy cases share a status and are told
+apart by the message prefix**, so read `error.libraryFault?.code == .busy`
+for the library one and treat a `.busy` with no `libraryFault` as the audio
+device (see "Model libraries", "Error codes"). Before 2026-10 a cancelled install or audio job came back as `.generate` and
 a busy audio open as `.open`.
 
 `.panic` means a panic was caught at the boundary. The process is intact and
@@ -1223,11 +1441,21 @@ request metadata powers deterministic regeneration and the Gallery carousel.
 | `ts_server_info_json(server, out)` | host, port, active model IDs, auth, uptime |
 | `ts_server_poll_events_json(server, max, out)` | drain server event ring buffer |
 | `ts_catalog_json(out)` | every platform |
-| `ts_installed_json(out)` | every platform |
+| `ts_installed_json(out)` | every platform. Text rows from This Mac and every library, INCLUDING Not connected and Missing rows, each with `library`, `library_name`, `install_id`, `availability`, `location_kind`, `connect_name`. Swift: `installedWithAvailability()` returns all, `installed()` only the available ones |
 | `ts_image_catalog_json(out)` | curated image sources, every platform |
-| `ts_image_installed_json(out)` | installed image rows under the image namespace, every platform |
+| `ts_image_installed_json(out)` | installed image rows from This Mac and every connected library, every platform. Rows gain `library`, `libraryName`, `installId` |
 | `ts_image_installed_in_json(root, out)` | image installs under a folder outside the store: the folder and its immediate subdirectories, or one install bundle. Read-only; fails if `root` is not a directory. Swift: `TurboSparkCatalog.imageInstalled(in:)` |
-| `ts_model_delete(alias)` | delete installed model directory and forget row |
+| `ts_model_delete(alias)` | delete a This Mac install by alias (directory and row). An alias a library holds is refused as `use_install_id`. Swift: `TurboSparkCatalog.delete(_:)` |
+| `ts_model_delete_install(install_id)` | delete a text install where its library is NOW, by the row's `install_id`. Swift: `deleteInstall(installId:)` |
+| `ts_image_delete_install(install_id)` | delete an image install by `installId`. Swift: `deleteImageInstall(installId:)` |
+| `ts_libraries_json(out)` | every library, This Mac first, after locating each. Swift: `TurboSparkLibraries.list()` |
+| `ts_library_add(path, name, out)` | add or adopt a library, answers `{library, skipped}`. Swift: `add(path:name:)` |
+| `ts_library_remove(id)` / `ts_library_set_default(id)` | stop listing a library (no file touched) / choose the download default. Swift: `remove(id:)`, `setDefault(id:)` |
+| `ts_library_discover_json(volume_root, out)` | the marker at the top of a volume, or `null`. Swift: `discover(volumeRoot:)` |
+| `ts_model_forget(install_id)` | drop a row and its marker entry, deleting no file. Swift: `forget(installId:)` |
+| `ts_model_move(install_id, library_id, free_bytes, cb, ud, out)` | blocking move between libraries, byte progress only. Swift: `async move(installId:to:freeBytes:progress:)` |
+| `ts_model_move_cancel()` | stop the move in flight. Swift: `cancelMove()` |
+| `ts_store_import_moved_root(root, out)` | register a moved store as a library. Swift: `importMovedRoot(_:)` |
 | `ts_recommend_json(context, options_json, out)` | rank curated models by hardware fit; `options_json` takes `loadGuard` and may be NULL; each row also carries `evidence` (`discovered` / `caveat` / `runs` / `verified`) and `suspicious` |
 | `ts_probe_json(repo, file, sidecar, out)` | header-only, no download |
 | `ts_context_ladder_json(model_path, options_json, out)` | memory cost per context rung for installed model |
@@ -1237,8 +1465,11 @@ request metadata powers deterministic regeneration and the Gallery carousel.
 | `ts_family_capabilities_json(family, out)` | `{family, known, steeringSupported}` from the persisted family spelling |
 | `ts_install_bytes_json(alias, out)` | cost before committing |
 | `ts_install(alias, cb, ud, out)` | blocks for minutes; later calls reuse verified ranges for pinned revisions |
+| `ts_install_with_options(alias, options_json, cb, ud, out)` | `ts_install` into `{"library": "<id>"}`. Swift: `install(_:library:)` (the no-destination call now goes through this entry point with NULL options) |
 | `ts_install_repo(repo, alias, file, sidecars, cb, ud, out)` | install arbitrary HF repository |
+| `ts_install_repo_with_options(repo, alias, file, sidecars, options_json, cb, ud, out)` | the same into a library. Swift: `install(repo:alias:file:sidecarRepo:library:)` |
 | `ts_image_install(alias, cb, ud, out)` | ranged download and pack; later calls reuse verified ranges |
+| `ts_image_install_with_options(alias, options_json, cb, ud, out)` | the same into a library. Swift: `installImage(_:library:)` |
 | `ts_embedding_encode_json(model_path, texts_json, out)` | standalone batch text embedding generation |
 | `ts_cosine_similarity(a, b, len)` | cosine similarity between two float vectors |
 | `ts_image_session_open(model_dir, out)` | open a verified image install |
@@ -1549,13 +1780,15 @@ passes none.
 
 ### Installs: installed, adopt, delete
 
-`AudioCatalog.installed()` returns four lists. `installed` are receipt-backed
+`AudioCatalog.installed()` returns five lists (the fifth, `notConnected`, holds
+installs in a model library whose drive is away: see "Model libraries"). `installed` are receipt-backed
 and usable. `needsAdoption` are installs the receipt store does not know yet
 but whose identity matches a pinned profile: a model pulled by the CLI
 (`pull-audio` of a music model) writes no receipt, so without adoption it is
 invisible. `AudioCatalog.adopt(_:)` verifies it and makes it usable.
 `incompatible` are installs that exist on disk but cannot be used, with the
-engine's reason; `otherAudio` is audio the pinned profiles do not describe.
+engine's reason (which can echo a library name and a mount path from a drive,
+so show it through `UntrustedText.display`); `otherAudio` is audio the pinned profiles do not describe.
 Removal is `AudioCatalog.delete(_:)` for a receipt-backed install and
 `AudioCatalog.deleteLegacy(_:)` for an unadopted one (including a damaged one;
 it refuses a receipt-backed install). Close any resident `AudioSession` on the

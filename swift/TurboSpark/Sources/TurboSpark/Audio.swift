@@ -111,6 +111,14 @@ public struct AudioInstalledRecord: Codable, Sendable, Equatable, Identifiable {
     public let family: String
     public let status: String
     public let installBytes: UInt64
+    /// The holding library's id. Absent for a This Mac row an older engine
+    /// wrote, and for a row the registry keeps without one.
+    public let library: String?
+    /// The library's name, raw and untrusted. Only an install result carries
+    /// it; a report row names its library through `AudioNotConnectedInstall`.
+    public let libraryName: String?
+    /// `<library>:audio/<alias>`. Only an install result carries it.
+    public let installId: String?
 }
 public struct AudioLegacyInstall: Codable, Sendable, Equatable {
     public let record: AudioInstalledRecord
@@ -119,13 +127,45 @@ public struct AudioLegacyInstall: Codable, Sendable, Equatable {
 public struct AudioIncompatibleInstall: Codable, Sendable, Equatable {
     public let record: AudioInstalledRecord
     public let identity: AudioProfileIdentity?
+    /// An engine message that can echo a library name and a mount path from a
+    /// drive: show it through `UntrustedText.display`.
     public let error: String
+}
+/// An audio install whose library's drive is not connected. It is a state to
+/// show ("Not connected", naming the drive), never an error, and it is not in
+/// `incompatible`.
+public struct AudioNotConnectedInstall: Codable, Sendable, Equatable {
+    /// The registry row as recorded. Its `path` is where the install was last
+    /// found, under the drive's mount point at that time.
+    public let record: AudioInstalledRecord
+    public let identity: AudioProfileIdentity?
+    /// The library to connect. Raw and untrusted; the engine's resolve
+    /// sentence can lose its call to action when this is very long, so build
+    /// your own statement from this name rather than showing that sentence.
+    public let libraryName: String
 }
 public struct AudioInstalledReport: Codable, Sendable, Equatable {
     public let installed: [AudioInstalledRecord]
     public let needsAdoption: [AudioLegacyInstall]
     public let incompatible: [AudioIncompatibleInstall]
     public let otherAudio: [AudioInstalledRecord]
+    /// Installs in a library that is not connected. Empty from an engine
+    /// that predates model libraries.
+    public let notConnected: [AudioNotConnectedInstall]
+
+    private enum CodingKeys: String, CodingKey {
+        case installed, needsAdoption, incompatible, otherAudio, notConnected
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        installed = try values.decode([AudioInstalledRecord].self, forKey: .installed)
+        needsAdoption = try values.decode([AudioLegacyInstall].self, forKey: .needsAdoption)
+        incompatible = try values.decode([AudioIncompatibleInstall].self, forKey: .incompatible)
+        otherAudio = try values.decode([AudioInstalledRecord].self, forKey: .otherAudio)
+        notConnected = try values.decodeIfPresent(
+            [AudioNotConnectedInstall].self, forKey: .notConnected) ?? []
+    }
 }
 public struct AudioFamilyCapability: Codable, Sendable, Identifiable, Equatable {
     public var id: String { family }
@@ -184,10 +224,16 @@ public enum AudioCatalog {
     /// Blocking transfer; call off the main actor. Existing Catalog install controls apply.
     /// `acknowledged` lists the ids of the profile's `requiredAcknowledgments`
     /// the user accepted; a missing one is refused before any download.
+    /// `library` is the `ModelLibrary.id` to install into (nil or `internal`
+    /// is This Mac). A destination the engine refuses fails before the first
+    /// request with a `TurboSparkError` whose `libraryFault` is `notConnected`,
+    /// `libraryReadOnly`, `unknownLibrary` or `aliasElsewhere`, or `busy` while
+    /// a move runs. The result carries `library`, `libraryName` and `installId`.
     public static func install(_ identity: AudioProfileIdentity, acknowledged: [String] = [],
+                               library: String? = nil,
                                progress: @escaping @Sendable (AudioDownloadProgress) -> Void = { _ in }) throws -> AudioInstalledRecord {
         let json = try audioEncode(identity)
-        let options = try audioEncode(AudioInstallOptions(acknowledged: acknowledged))
+        let options = try audioEncode(AudioInstallOptions(acknowledged: acknowledged, library: library))
         let box = AudioDownloadBox(progress)
         let context = Unmanaged.passUnretained(box).toOpaque()
         return try audioDecode(AudioInstalledRecord.self, takeString { out in json.withCString { identity in options.withCString { options in
@@ -200,7 +246,13 @@ public enum AudioCatalog {
         } } })
     }
 }
-private struct AudioInstallOptions: Encodable { let acknowledged: [String] }
+/// Internal rather than private so a test can pin the wire keys. `library` is
+/// omitted when nil, so a call with no destination sends the bytes it sent
+/// before libraries.
+struct AudioInstallOptions: Encodable {
+    let acknowledged: [String]
+    let library: String?
+}
 public struct AudioDownloadProgress: Sendable {
     public let path: String?
     public let completedBytes: UInt64
