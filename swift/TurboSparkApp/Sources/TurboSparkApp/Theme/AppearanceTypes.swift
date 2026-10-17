@@ -92,7 +92,7 @@ public struct ThemeModeConfig: Codable, Equatable, Sendable {
         foregroundHex: String = "#1A1C1F",
         uiFontFamily: String = "System default",
         uiFontWeight: String = "Regular",
-        codeFontFamily: String = "System default",
+        codeFontFamily: String = AppFontCatalog.factoryCodeFamily,
         codeFontWeight: String = "Regular",
         translucentSidebar: Bool = true,
         contrast: Double = 45.0
@@ -141,7 +141,7 @@ public struct ThemeModeConfig: Codable, Equatable, Sendable {
         foregroundHex: "#141A24",
         uiFontFamily: "System default",
         uiFontWeight: "Regular",
-        codeFontFamily: "System default",
+        codeFontFamily: AppFontCatalog.factoryCodeFamily,
         codeFontWeight: "Regular",
         translucentSidebar: true,
         contrast: 52.0
@@ -155,7 +155,7 @@ public struct ThemeModeConfig: Codable, Equatable, Sendable {
         foregroundHex: "#F2F5FB",
         uiFontFamily: "System default",
         uiFontWeight: "Regular",
-        codeFontFamily: "System default",
+        codeFontFamily: AppFontCatalog.factoryCodeFamily,
         codeFontWeight: "Regular",
         translucentSidebar: true,
         contrast: 68.0

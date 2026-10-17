@@ -23,7 +23,7 @@ public final class AppearanceManager: ObservableObject {
         didSet { persist() }
     }
 
-    /// User interface text scaling level (Default, Large, Extra Large).
+    /// User interface text scaling level (Small, Default, Large, Extra Large).
     @Published public var textSize: AppTextSize {
         didSet { persist() }
     }
@@ -280,26 +280,28 @@ public final class AppearanceManager: ObservableObject {
     /// Steps the interface text size larger, up to Extra Large.
     public func makeTextBigger() {
         switch textSize {
+        case .small: textSize = .standard
         case .standard: textSize = .large
         case .large: textSize = .extraLarge
         case .extraLarge: break
         }
     }
 
-    /// Steps the interface text size smaller, down to Default.
+    /// Steps the interface text size smaller, down to Small.
     public func makeTextSmaller() {
         switch textSize {
         case .extraLarge: textSize = .large
         case .large: textSize = .standard
-        case .standard: break
+        case .standard: textSize = .small
+        case .small: break
         }
     }
 
-    /// Resets the interface text size to Default (16px UI, 12px code).
+    /// Resets the interface text size to Default (14px UI, 12px code).
     public func resetTextSize() {
         textSize = .standard
-        uiFontSize = 16.0
-        codeFontSize = 12.0
+        uiFontSize = AppFontCatalog.factoryUISize
+        codeFontSize = AppFontCatalog.factoryCodeSize
     }
 
     /// Restores every appearance field to the factory archive: system mode,
