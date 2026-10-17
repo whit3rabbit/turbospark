@@ -1,12 +1,13 @@
 import AppKit
 import SwiftUI
 
-/// Floating action bar containing copy, share, read out loud, and timestamp actions for a message.
+/// Hover action row under a message: icon-only copy, share, read out loud
+/// and the editing actions, then the timestamp.
 ///
 /// The optional actions are the message-editing affordances (`AppModel+
 /// MessageEditing.swift`): variant navigation, in-place edit, branch, and
 /// retry. Each is nil where it does not apply -- the row decides, so this
-/// view stays a dumb pill strip.
+/// view stays a dumb icon strip.
 struct MessageActionBarView: View {
     let text: String
     let messageID: UUID
@@ -30,36 +31,20 @@ struct MessageActionBarView: View {
     var actionsDisabled: Bool = false
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 2) {
             if variantCount > 1, let variantStep {
                 MessageVariantSwitcherView(
                     position: variantPosition, count: variantCount, step: variantStep)
             }
 
             if let standingInstructionAction {
-                Button(action: standingInstructionAction) {
-                    HStack(spacing: 4) {
-                        Image(systemName: isStandingInstruction ? "pin.fill" : "pin")
-                            .themedFont(.tiny, weight: .medium)
-                            .accessibilityHidden(true)
-                        standingInstructionTitle
-                            .themedFont(.tiny, weight: .medium)
-                    }
-                    .foregroundStyle(
-                        isStandingInstruction ? TurboSparkTheme.accentColor : Color.secondary)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 4)
-                    .background(
-                        Color.primary.opacity(0.04),
-                        in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .disabled(actionsDisabled)
-                .opacity(actionsDisabled ? 0.4 : 1)
-                .help(standingInstructionTitle)
-                .accessibilityLabel(standingInstructionTitle)
-                .accessibilityIdentifier("message-standing-instruction-toggle")
+                AppIconButton(
+                    isStandingInstruction ? "pin.fill" : "pin",
+                    label: standingInstructionTitle,
+                    action: standingInstructionAction)
+                    .buttonStyle(MessageIconActionStyle(isActive: isStandingInstruction))
+                    .disabled(actionsDisabled)
+                    .accessibilityIdentifier("message-standing-instruction-toggle")
             }
 
             MessageCopyButton(text: text)
@@ -70,30 +55,31 @@ struct MessageActionBarView: View {
             }
 
             if let editAction {
-                MessagePillActionButton(
-                    icon: "pencil", label: "Edit",
-                    help: "Edit this message and regenerate the reply",
-                    accessibilityName: "Edit message",
+                MessageIconActionButton(
+                    icon: "pencil",
+                    name: "Edit message",
+                    hint: "Edit this message and regenerate the reply",
                     disabled: actionsDisabled, action: editAction)
             }
 
             if let branchAction {
-                MessagePillActionButton(
-                    icon: "arrow.triangle.branch", label: "Branch",
-                    help: "Edit this message in a branched copy of the conversation",
-                    accessibilityName: "Branch message",
+                MessageIconActionButton(
+                    icon: "arrow.triangle.branch",
+                    name: "Branch message",
+                    hint: "Edit this message in a branched copy of the conversation",
                     disabled: actionsDisabled, action: branchAction)
             }
 
             if let retryAction {
-                MessagePillActionButton(
-                    icon: "arrow.clockwise", label: "Retry",
-                    help: "Generate a new reply to the same prompt",
-                    accessibilityName: "Retry message",
+                MessageIconActionButton(
+                    icon: "arrow.clockwise",
+                    name: "Retry message",
+                    hint: "Generate a new reply to the same prompt",
                     disabled: actionsDisabled, action: retryAction)
             }
 
             MessageTimestampBadge(date: date)
+                .padding(.leading, 4)
         }
     }
 
@@ -104,39 +90,61 @@ struct MessageActionBarView: View {
     }
 }
 
-/// The shared pill button the editing affordances render as. Matches the
-/// existing copy/share pills' look without restating them.
+/// An icon-only message action. `name` is the tooltip and the VoiceOver
+/// name (through `AppIconButton`, so the two cannot drift); `hint` keeps the
+/// longer explanation the old text pill showed as its tooltip.
 ///
-/// `label`, `help` and `accessibilityName` are catalog keys; the name is its
-/// own key rather than "label + message" so each language words it whole.
-struct MessagePillActionButton: View {
+/// `name` and `hint` are catalog keys; the name is its own key rather than
+/// "label + message" so each language words it whole.
+struct MessageIconActionButton: View {
     let icon: String
-    let label: LocalizedStringKey
-    let help: LocalizedStringKey
-    let accessibilityName: LocalizedStringKey
+    let name: LocalizedStringKey
+    let hint: LocalizedStringKey
     let disabled: Bool
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 4) {
-                Image(systemName: icon)
-                    .themedFont(.tiny, weight: .medium)
-                    .accessibilityHidden(true)
-                Text(label, bundle: .module)
-                    .themedFont(.tiny, weight: .medium)
-            }
-            .foregroundStyle(Color.secondary)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 4)
-            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        AppIconButton(icon, label: Text(name, bundle: .module), action: action)
+            .buttonStyle(MessageIconActionStyle())
+            .disabled(disabled)
+            .accessibilityHint(Text(hint, bundle: .module))
+    }
+}
+
+/// The shared look of the message actions: a 24 pt quiet glyph with a hover
+/// fill. Icon-only replaced text pills ("Pin instruction", "Copy", "Share",
+/// "Read") that made one row of a short message wider than the message.
+/// The frame grows with the text size so Extra Large keeps a real target.
+struct MessageIconActionStyle: ButtonStyle {
+    /// Accent ink for a state that is on: pinned, just copied, speaking.
+    var isActive = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        MessageIconActionBody(configuration: configuration, isActive: isActive)
+    }
+}
+
+private struct MessageIconActionBody: View {
+    let configuration: ButtonStyleConfiguration
+    let isActive: Bool
+    @Environment(\.appTheme) private var theme
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var isHovered = false
+
+    var body: some View {
+        let side = 24 * AppMetrics.textScale(theme)
+        configuration.label
+            .labelStyle(.iconOnly)
+            .themedFont(.small, weight: .medium)
+            .foregroundStyle(isActive ? AnyShapeStyle(.appAccent) : AnyShapeStyle(.appSecondary))
+            .frame(width: side, height: side)
+            .background(
+                theme.foreground.opacity(isHovered || configuration.isPressed ? 0.07 : 0),
+                in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
             .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(disabled)
-        .opacity(disabled ? 0.4 : 1)
-        .help(Text(help, bundle: .module))
-        .accessibilityLabel(Text(accessibilityName, bundle: .module))
+            .opacity(isEnabled ? 1 : 0.4)
+            .onHover { isHovered = $0 }
+            .tsAnimation(TSMotion.hover, value: isHovered)
     }
 }
 
@@ -146,22 +154,14 @@ struct MessageShareButton: View {
 
     var body: some View {
         ShareLink(item: text) {
-            HStack(spacing: 4) {
+            Label {
+                Text("Share message", bundle: .module)
+            } icon: {
                 Image(systemName: "square.and.arrow.up")
-                    .themedFont(.tiny, weight: .medium)
-                    .accessibilityHidden(true)
-                Text("Share", bundle: .module)
-                    .themedFont(.tiny, weight: .medium)
             }
-            .foregroundStyle(Color.secondary)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 4)
-            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(MessageIconActionStyle())
         .help(Text("Share message", bundle: .module))
-        .accessibilityLabel(Text("Share message", bundle: .module))
     }
 }
 
@@ -176,32 +176,15 @@ struct MessageSpeechButton: View {
     }
 
     var body: some View {
-        Button {
+        AppIconButton(
+            isSpeakingThis ? "stop.fill" : "speaker.wave.2",
+            label: isSpeakingThis
+                ? Text("Stop reading message out loud", bundle: .module)
+                : Text("Read message out loud", bundle: .module)
+        ) {
             speechManager.toggleSpeech(text: text, messageID: messageID)
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: isSpeakingThis ? "stop.fill" : "speaker.wave.2")
-                    .themedFont(.tiny, weight: .medium)
-                    .accessibilityHidden(true)
-                (isSpeakingThis ? Text("Stop", bundle: .module) : Text("Read", bundle: .module))
-                    .themedFont(.tiny, weight: .medium)
-            }
-            .foregroundStyle(isSpeakingThis ? TurboSparkTheme.accentColor : Color.secondary)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 4)
-            .background(
-                isSpeakingThis ? TurboSparkTheme.accentColor.opacity(0.12) : Color.primary.opacity(0.04),
-                in: RoundedRectangle(cornerRadius: 6, style: .continuous)
-            )
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .help(isSpeakingThis
-              ? Text("Stop reading out loud", bundle: .module)
-              : Text("Read message out loud", bundle: .module))
-        .accessibilityLabel(isSpeakingThis
-                            ? Text("Stop reading message out loud", bundle: .module)
-                            : Text("Read message out loud", bundle: .module))
+        .buttonStyle(MessageIconActionStyle(isActive: isSpeakingThis))
     }
 }
 
@@ -212,28 +195,19 @@ struct MessageTimestampBadge: View {
     @Environment(\.locale) private var locale
 
     var body: some View {
-        HStack(spacing: 3) {
-            Image(systemName: "clock")
-                .themedFont(.tiny, weight: .medium)
-                .foregroundStyle(.tertiary)
-                .accessibilityHidden(true)
-            Text(isHovered ? MessageTimestampFormatter.standardString(for: date, locale: locale) : MessageTimestampFormatter.relativeString(for: date, locale: locale))
-                .themedFont(.tiny)
-                .foregroundStyle(.appSecondary)
-                .lineLimit(1)
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 4)
-        .background(Color.primary.opacity(isHovered ? 0.08 : 0.04), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-        .onHover { hovering in
-            TSMotion.animate(.easeInOut(duration: 0.15)) {
-                isHovered = hovering
+        Text(isHovered ? MessageTimestampFormatter.standardString(for: date, locale: locale) : MessageTimestampFormatter.relativeString(for: date, locale: locale))
+            .themedFont(.tiny)
+            .foregroundStyle(.appSecondary)
+            .lineLimit(1)
+            .onHover { hovering in
+                TSMotion.animate(TSMotion.hover) {
+                    isHovered = hovering
+                }
             }
-        }
-        .help(MessageTimestampFormatter.exactString(for: date, locale: locale))
-        .accessibilityLabel(Text(
-            "Sent \(MessageTimestampFormatter.relativeString(for: date, locale: locale)), \(MessageTimestampFormatter.exactString(for: date, locale: locale))",
-            bundle: .module))
+            .help(MessageTimestampFormatter.exactString(for: date, locale: locale))
+            .accessibilityLabel(Text(
+                "Sent \(MessageTimestampFormatter.relativeString(for: date, locale: locale)), \(MessageTimestampFormatter.exactString(for: date, locale: locale))",
+                bundle: .module))
     }
 }
 
@@ -243,29 +217,17 @@ struct MessageCopyButton: View {
     @State private var isCopied = false
 
     var body: some View {
-        Button {
+        AppIconButton(
+            isCopied ? "checkmark" : "doc.on.doc",
+            label: isCopied ? Text("Copied", bundle: .module) : Text("Copy message", bundle: .module)
+        ) {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
             TSMotion.animate(.easeInOut(duration: 0.15)) {
                 isCopied = true
             }
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
-                    .themedFont(.tiny, weight: .medium)
-                    .accessibilityHidden(true)
-                (isCopied ? Text("Copied", bundle: .module) : Text("Copy", bundle: .module))
-                    .themedFont(.tiny, weight: .medium)
-            }
-            .foregroundStyle(isCopied ? TurboSparkTheme.accentColor : Color.secondary)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 4)
-            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .help(Text("Copy message text", bundle: .module))
-        .accessibilityLabel(isCopied ? Text("Copied", bundle: .module) : Text("Copy message", bundle: .module))
+        .buttonStyle(MessageIconActionStyle(isActive: isCopied))
         .accessibilityHint(Text("Copies this message to the clipboard", bundle: .module))
         .task(id: isCopied) {
             guard isCopied else { return }
