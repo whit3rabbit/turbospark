@@ -25,12 +25,11 @@ let package = Package(
         .package(path: "Vendor/Qwen3TTS"),
         .package(url: "https://github.com/sqlcipher/SQLCipher.swift.git", from: "4.10.0"),
         .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.4.0"),
-        // Pinned by revision, never by an exact `vX.Y.Z` tag: syntext's release
-        // workflow commits the xcframework pin AFTER tagging, so the `v2.5.0`
-        // tag linked the 2.4.0 binary. This is the `swift-v2.7.0` commit,
-        // which pins syntext-swift-2.7.0.xcframework.zip (syntext docs/SWIFT.md).
-        .package(url: "https://github.com/whit3rabbit/syntext",
-                 revision: "1a26441ddf646720cfb8828d894353659b48af56"),
+        // Exact is safe from 2.7.1 on: the tag pins its own xcframework zip.
+        // Tags through v2.7.0 pinned the PREVIOUS release's zip (`v2.5.0`
+        // linked the 2.4.0 binary), so never pin one of those exactly; use
+        // its `swift-vX.Y.Z` commit by revision. See docs/SYNTEXT.md section 6.
+        .package(url: "https://github.com/whit3rabbit/syntext", exact: "2.7.1"),
         .package(url: "https://github.com/sparkle-project/Sparkle.git", from: "2.9.6")
     ],
     targets: [

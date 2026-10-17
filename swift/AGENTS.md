@@ -85,9 +85,10 @@ staging files changed.
   `scripts/verify-app-bundle.sh` (it launches the built app and checks every
   Mach-O's deployment target) after any change to bundle layout, resources,
   `Package.swift`, or the Xcode pin. CI runs it before the DMG is built.
-- Pin syntext by `revision:` (a `swift-vX.Y.Z` commit), never `exact:` on a
-  tag up to 2.7.0. Those tags pin the previous release's xcframework, and
-  `exact: "2.5.0"` linked 2.4.0 with no error. After a bump,
+- syntext is pinned `exact:` from 2.7.1 on. Never pin an exact tag up to
+  2.7.0: those tags pin the previous release's xcframework, and
+  `exact: "2.5.0"` linked 2.4.0 with no error. For one of those, pin its
+  `swift-vX.Y.Z` commit by `revision:`. After any bump,
   `.build/workspace-state.json` must name the matching zip
   (`docs/SYNTEXT.md` section 6). An archive member built above the 14.0 floor
   is only an ld warning, which `verify-app-bundle.sh` cannot see.

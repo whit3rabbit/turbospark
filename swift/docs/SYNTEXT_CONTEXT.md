@@ -169,7 +169,7 @@ Design notes:
   reconcile plan, kept-turn arithmetic past a summary and a pin, the injection
   target, the byte-identical prompt when nothing is outside, the fallback when
   the final prompt would not fit, the reserve refit, and the setting's decode.
-- `ChatRecallStoreTests` runs the real 2.7.0 store in a temporary folder. It
+- `ChatRecallStoreTests` runs the real syntext store in a temporary folder. It
   covers the round trip after a reopen, the 0700 folder, the protected and
   disabled gates, per-chat isolation, kept turns excluded from evidence,
   forgotten text gone from the disk after compaction, and the rebuild after a

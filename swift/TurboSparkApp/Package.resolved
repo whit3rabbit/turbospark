@@ -149,7 +149,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/whit3rabbit/syntext",
       "state" : {
-        "revision" : "1a26441ddf646720cfb8828d894353659b48af56"
+        "revision" : "459bb27f233acfc55e8bd471a01e40dfc649cb5b",
+        "version" : "2.7.1"
       }
     },
     {

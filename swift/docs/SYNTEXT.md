@@ -147,31 +147,31 @@ is committed.
 Both export `_rust_eh_personality`, and ld64 fails on the duplicate. The app
 build sets `TURBOSPARK_LOCALIZE_RUST_SYMBOLS=1`, and `scripts/swift-lib.sh`
 then makes the symbol local in `libturbospark_ffi.a` with `nmedit -R`. Moving
-to 2.7.0 added no new duplicate (checked with a clean link, 2026-10-16). The
-2.7.0 archive's `blake3_neon.o` is built for macOS 14.5 against the app's
-14.0 floor. ld warns, and the object is SIMD code with no OS calls.
+to 2.7.0 and then 2.7.1 added no new duplicate (checked with clean links,
+2026-10-16). 2.7.0's blake3 C objects were built for macOS 14.5 against the
+app's 14.0 floor and drew ld warnings. From 2.7.1 every member targets macOS
+12 or lower, and syntext's build fails if one does not.
 
 ## 6. Package Dependency
 
 In `swift/TurboSparkApp/Package.swift`:
 ```swift
-.package(url: "https://github.com/whit3rabbit/syntext",
-         revision: "1a26441ddf646720cfb8828d894353659b48af56"),
+.package(url: "https://github.com/whit3rabbit/syntext", exact: "2.7.1"),
 ```
 with products `Syntext` and `SyntextContext`.
 
-**Pin by revision, never by an exact `vX.Y.Z` tag.** syntext's release
-workflow publishes the xcframework from the tag push, then commits the
-`url`/`checksum` pin to `main` and tags that commit `swift-vX.Y.Z`. Each
-`vX.Y.Z` tag therefore pins the PREVIOUS release's binary: `exact: "2.5.0"`
-linked the 2.4.0 xcframework, which silently ignored `fixedStrings`,
-`wordRegexp`, and context lines. SwiftPM cannot use `swift-vX.Y.Z` as a
-version, so the app pins that commit by revision. The revision above is
-`swift-v2.7.0` (xcframework 2.7.0, checksum `510f0c33...a510`). syntext's
-`docs/SWIFT.md` documents the same rule. To upgrade: find the
-`swift-vX.Y.Z` commit (`git rev-list -n1 swift-vX.Y.Z`), update the revision,
-`swift package resolve`, and confirm `.build/workspace-state.json` names the
-matching `syntext-swift-X.Y.Z.xcframework.zip`.
+**Exact pins are safe from 2.7.1 on, and only from 2.7.1 on.** Through
+2.7.0, syntext's release built the xcframework from the tag push and pinned
+it on `main` afterwards (tagged `swift-vX.Y.Z`), so each `vX.Y.Z` tag pinned
+the PREVIOUS release's binary. `exact: "2.5.0"` linked the 2.4.0 xcframework,
+which silently ignored `fixedStrings`, `wordRegexp`, and context lines, and
+the app then pinned the `swift-v2.7.0` commit by revision. Since 2.7.1,
+syntext stages the zip and pins it before tagging, so the `v2.7.1` tag
+resolves to its own `syntext-swift-2.7.1.xcframework.zip` (checksum
+`b1b2faf4...c477`). For any release up to 2.7.0, pin its `swift-vX.Y.Z`
+commit by revision instead (syntext `docs/SWIFT.md`). To upgrade: change the
+version, `swift package resolve`, and confirm `.build/workspace-state.json`
+names the matching `syntext-swift-X.Y.Z.xcframework.zip`.
 
 CI and contributors need no Rust toolchain for syntext: SwiftPM downloads
 the release zip and verifies its checksum.
