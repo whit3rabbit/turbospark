@@ -100,6 +100,10 @@ staging files changed.
   stored rather than dropping the key). Probe for an item with an
   attributes-only query, never by reading the secret. Show the system's reason
   on failure (`TypeSafeKeychain.describe`), not a bare "could not save".
+  Do not launch the installed or an older build to compare behavior while
+  testing credential storage: builds before v0.3.2 create the TypeSafe Keychain
+  item at start when it is missing and read it on every start, which recreates
+  the state under test.
 - macOS privacy prompts (microphone, screen and system audio recording) are
   opt-in the same way. Only `RecordingPermissions` calls
   `AVCaptureDevice.requestAccess` or `CGRequestScreenCaptureAccess`, from the

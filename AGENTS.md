@@ -1,32 +1,35 @@
 # AGENTS.md
 
-This file is the short, always-loaded orientation for the TurboSpark Rust and
-Swift workspace. Keep detailed procedures, measurements, and historical
-evidence in the linked project docs. Do not turn this file into a changelog.
+Short, always-loaded orientation for the TurboSpark Rust and Swift workspace.
+Deep procedures and measurements live in the linked docs. Do not turn this
+file into a changelog.
 
 ## First read
 
 - Read the nearest crate or app instructions before changing code:
   `crates/<name>/AGENTS.md` or `swift/AGENTS.md`.
-- ALWAYS read [DESIGN.md](DESIGN.md) before any UI or design change in the
-  macOS app: views, controls, copy, color, type, layout, menus, shortcuts,
-  or motion. It holds the accessibility, theming, localization, and layout
-  rules that earlier UI defects came from. Then read
-  [docs/design-system/](docs/design-system/README.md) for exact values and
-  per-control guides: tokens for every theme with computed contrast, the
-  type scale, spacing, radii, and each control's SwiftUI call. DESIGN.md
-  decides rules and the Swift theme code decides values. The claude.ai
-  Design System artifact is a rendered copy of that folder, so read the
-  folder.
+- ALWAYS read [DESIGN.md](DESIGN.md) before any macOS app UI change: views,
+  controls, copy, color, type, layout, menus, shortcuts, or motion. It holds
+  the accessibility, theming, localization, and layout rules that earlier UI
+  defects came from.
+- Then read [docs/design-system/](docs/design-system/README.md) for token
+  values, the type scale, and per-control SwiftUI guides. DESIGN.md decides
+  rules and the Swift theme code decides values. The claude.ai Design System
+  artifact is a rendered copy of that folder, so read the folder.
 - Read [API workspace](docs/API_WORKSPACE.md) when changing Text, Image, or
-  TypeSafe serving. Text and Image share the TurboSpark listener; TypeSafe
+  TypeSafe serving. Text and Image share the TurboSpark listener. TypeSafe
   owns a separate loopback OpenKind daemon and Keychain key.
 - Read `docs/DEVELOPMENT.md` before setup or build failures.
 - Read `docs/TESTING.md` before adding or changing tests.
 - Read `docs/BENCHMARKING.md` and `docs/BENCHMARKS.md` before quoting or
-  re-freezing a number.
+  re-freezing a number. Protocols and frozen rows live there and in
+  `.claude/docs/benchmarks.md`, so never add benchmark numbers to AGENTS.md files.
 - Read `docs/NEW_MODEL.md` before adding a model family or checkpoint path.
-- Read `docs/RELEASE.md` before any release work, tag creation, or changelog update.
+- Read `docs/RELEASE.md` before any release work, tag creation, or changelog
+  update. It covers the release flow, `CHANGELOG.md` requirements, and the
+  decoupled on-demand crate publishing workflow.
+- Read [Kiro workflow](.claude/docs/kiro-workflow.md) before spec or steering
+  work (`.kiro/specs/`, `.kiro/steering/`, `.agents/skills/kiro-*`).
 - Read the relevant page under `.claude/docs/` for deep verification,
   benchmark, harness, install, power, cross-engine, or diagnostic work.
 
@@ -50,8 +53,13 @@ The root references are:
   device. `crates/vision-io` is intentionally part of the portable
   cross-target check.
 - Keep source, comments, and docs ASCII. Do not use emojis or em dashes.
-- Preserve concurrent work. Inspect `git status` before editing, do not reset,
-  clean, or check out another session's files, and stage only intended paths.
+- Preserve concurrent work. Inspect `git status` before editing, never reset,
+  clean, or check out another session's files, and stage only intended paths,
+  re-checking status right before staging.
+- A shared file (`CHANGELOG.md`, `README.md`, `docs/`) can hold another
+  session's hunks, or already be committed with yours. Read its `git diff`
+  before staging. If an uncommitted dependency makes a partial commit unsafe,
+  report it instead of staging unrelated work.
 - `target/`, build products, staged generated Swift FFI files, and local
   machine notes are not release source.
 - Use `st` for repository search. Run `st index` when its index is stale or
@@ -69,12 +77,14 @@ The root references are:
   inner pool, autoreleased command objects accumulate for the life of the
   process.
 - KV cache sizing and ring capacity are part of correctness. Derive the ring
-  from the layer mask and include capacity in pipeline-cache constants.
+  from the layer mask and put capacity and every kernel function constant
+  (split-KV GQA: group, simdgroups, head_dim, unroll) in the pipeline cache
+  key. A missing constant silently reuses the wrong pipeline.
 - Routed expert slots are dispatched in router ranking order. Slot order is
   reduction order.
 - Token IDs crossing crate boundaries remain signed 32-bit
-  (`turbospark_core::TokenId`). Resolve fixture IDs from a loaded tokenizer;
-  never copy numeric IDs from fixture JSON.
+  (`turbospark_core::TokenId`). Resolve fixture IDs from a loaded tokenizer.
+  Never copy numeric IDs from fixture JSON.
 - Family support is cross-layer. Trace the family enum and persisted string
   through model-io, runtime, FFI, Swift, catalog, CLI, server, docs, and tests.
 - Unsafe code is intentional only in the documented ABI, mapping, and streaming
@@ -84,50 +94,35 @@ The root references are:
   memory mapping, kernels, or FFI, run the relevant cross-target and real
   hardware checks from the verification reference.
 - A composite measurement inherits the limits of its components. Do not turn a
-  projection, CPU run, synthetic fixture, or contaminated host reading into a
-  real Metal, quality, or memory claim.
+  compile, CPU run, projection, synthetic fixture, or contaminated host reading
+  into a hardware-gate, Metal, quality, or memory claim.
 - Do not widen quality or resource tolerances without new evidence. Preserve
   negative findings and refusal paths in the canonical docs.
-- Keep Metal JIT warmup opt-in (`TURBOSPARK_METAL_KERNEL_WARMUP=1`);
-  the Qwen MoE experiment found no repeatable startup gain. Read
+- Keep Metal JIT warmup opt-in (`TURBOSPARK_METAL_KERNEL_WARMUP=1`). Read
   [MoE startup](docs/MOE_STARTUP.md) before changing the default.
-- Read [MLX kernel experiments](docs/MLX_KERNELS.md) before reusing oMLX
-  or MLX kernels, and the [speedup playbook](docs/SPEEDUP_PLAYBOOK.md)
-  before kernel performance work. Steel is the dense qwen prefill default.
-  Another family still needs its own real-model quality, memory, and paired
-  performance gates before it takes Steel or the GQA decode attention.
-- Qwen MoE chunked prefill (`qwenGdnMoe`: Qwen 3.6, Ornith 35B) batches its
-  resident weight reads by default on INT4 installs, with routed experts
-  staying on the per-token loop. Batched reduction-order drift flips routing
-  near-ties (mean KL probe bound 1e-2 nats, top-1 agreement >= 50%; not the
-  dense 1e-3). `TURBOSPARK_BATCHED_GEMV=0` restores the byte-identical
-  per-token path. MiniCPM-V 4.7 (BF16 resident matrices) keeps the per-token
-  path. Ornith 35B real-install checks are owed. See `docs/BATCHED_PREFILL.md`.
+- Steel is the dense qwen prefill default. Another family needs its own
+  real-model quality, memory, and paired performance gates before it takes
+  Steel or the GQA decode attention.
+- Read [MLX kernel experiments](docs/MLX_KERNELS.md) before reusing oMLX or
+  MLX kernels, and the [speedup playbook](docs/SPEEDUP_PLAYBOOK.md) before
+  kernel performance work.
+- Qwen MoE batched prefill has its own drift bounds and opt-out. Read
+  `crates/runtime/AGENTS.md` and `docs/BATCHED_PREFILL.md` before changing it.
 - Voice cloning with MegaTTS3 requires explicit caller consent up front
   (`consent: true`) because community WavVAE encoder provenance is unverified.
-  On macOS it defaults to Metal; the portable CPU reference path is an opt-in
-  fallback only. Steps default to 16 (presets: Fast=8, Balanced=16, Best=32).
   In the app, consent covers one exact reference region and is never carried
-  over by reusing or recording a reference (`swift/AGENTS.md`). Voice cloning
-  in the app requires native Metal or MLX acceleration (both MegaTTS3 and
-  OmniVoice provide native Metal acceleration). Portable CPU-only engines
-  remain withheld from the Voice Cloning page until an accelerated offload is
-  implemented.
-- Split-KV decode attention in Metal: the GQA partial kernel bakes group,
-  simdgroups, head_dim, and unroll into function constants that MUST be
-  included in its pipeline cache key to prevent silent wrong-pipeline reuse.
+  over by reusing or recording a reference (`swift/AGENTS.md`).
 - Release builds pin the runner and Xcode by name (`XCODE_VERSION` in
-  `release.yml`, asserted after selection), never `latest`. `ci.yml`'s
-  `package-macos` also builds with the oldest supported Xcode, because the
-  toolchain changes SwiftPM's generated resource lookup. Read
+  `release.yml`, asserted after selection), never `latest`.
+- `ci.yml`'s `package-macos` also builds with the oldest supported Xcode,
+  because the toolchain changes SwiftPM's generated resource lookup. Read
   `swift/AGENTS.md` before touching resources or `Package.swift` targets.
 - Credentials are not stored by default. Keychain use is opt-in per credential
-  and never happens at launch for an unused feature. See `swift/AGENTS.md`.
+  and never happens at launch for an unused feature.
 - macOS privacy prompts (microphone, screen recording) appear only after the
   user chooses Allow, and a declined permission never blocks features that do
-  not need it. Only `RecordingPermissions` asks. See `swift/AGENTS.md`.
-- App UI, localization, and store durability: follow [DESIGN.md](DESIGN.md).
-  Every UI string must use bundled `Text` or `AppStrings.localized` to pass the
+  not need it. Only `RecordingPermissions` asks. Both rules: `swift/AGENTS.md`.
+- Every UI string uses bundled `Text` or `AppStrings.localized` to pass the
   ten localization parity gates. `AppJSONStore` must quarantine corrupt files
   rather than overwriting them, preventing silent data loss.
 
@@ -161,41 +156,25 @@ make dmg
 `verify-app-bundle.sh` runs the built app. Packaging success alone shipped two
 releases that crashed on launch.
 
-Before cutting an app release or tag, always review `docs/RELEASE.md` for the
-release flow, changelog update requirements (`CHANGELOG.md`), and the decoupled
-on-demand crate publishing workflow.
-
 The commands above are the baseline only. Changes to decode, quantization,
 sampling, KV, Metal, model intake, FFI, or real-install behavior require the
 additional gates documented in [verification](.claude/docs/verification.md)
-and [model gates](.claude/docs/model-gates.md). Do not claim a hardware gate
-from compilation or a CPU-only result.
+and [model gates](.claude/docs/model-gates.md).
 
 ## Change boundaries
 
 - Keep crate-local architecture and gotchas in the nearest crate file. Do not
   copy root rules into every module.
-- Keep benchmark protocols and frozen rows in `docs/BENCHMARKING.md`,
-  `docs/BENCHMARKS.md`, and `.claude/docs/benchmarks.md`. Do not add
-  benchmark numbers to AGENTS.md files.
-- Keep release and packaging procedures in `docs/RELEASE.md` and the
-  verification reference. Always review `docs/RELEASE.md` before releasing.
-- Keep project planning in the existing planning document, design rationale in
-  `docs/`, and unfinished work in the issue tracker. Do not append
-  session summaries or dated handoff notes here.
-- For a contested file, re-check status immediately before staging. If a
-  dependency on another uncommitted file makes a clean partial commit unsafe,
-  report the dependency instead of staging unrelated work.
-- A shared file (`CHANGELOG.md`, `README.md`, `docs/`) can hold another
-  session's hunks, and another session's whole-file commit can already contain
-  yours. Read `git diff` of it before staging, and stage by path.
-- Local green is not release evidence. Your Xcode can be newer than the pinned
-  one (a beta has been seen), your `.build` can hold stale objects that hide a
-  clean-build failure, and your tree can differ from your commit. Follow the
-  pre-publish checklist in `docs/RELEASE.md` and let the CI matrix decide.
+- Release and packaging procedures live in `docs/RELEASE.md` and the
+  verification reference, design rationale in `docs/`, and unfinished work in
+  the issue tracker. Do not append session summaries or dated handoff notes here.
+- Local green is not release evidence. Your Xcode can differ from the pinned
+  one, your `.build` can hold stale objects that hide a clean-build failure,
+  and your tree can differ from your commit. Follow the pre-publish checklist
+  in `docs/RELEASE.md` and let the CI matrix decide.
 - Do not launch the installed or an older build to compare behavior while
   testing credential storage. It can recreate the very state under test
-  (builds before v0.3.2 create the TypeSafe Keychain item at start when it is missing and read it on every start).
+  (`swift/AGENTS.md` lists the affected versions).
 - Every new test must exercise the behavior it claims to cover. Mutation-check
   new guards when the behavior is subtle, and assert that a mutation applied
   before treating a survivor as evidence.
@@ -210,15 +189,14 @@ from compilation or a CPU-only result.
 - `crates/compute`, `crates/core`, `crates/selection`,
   `crates/tokenizer`, `crates/streaming`, `crates/invocation`: portable
   primitives and protocol boundaries.
-- `crates/audio`: unified portable audio crate: DSP primitives (waveform,
-  WAV, resampling, FFT, STFT, mel), neural tensor ops, and models organized
-  by role (music, STT, TTS, VAD, STS, codec, LID); see `docs/AUDIO.md`.
-- `crates/embeddings`: portable embedding models (EmbeddingGemma,
-  Snowflake arctic-embed, SigLIP2 NaFlex, CLAP) with pinned HF and MLX
-  checkpoints, sentence-transformers pooling, and similarity scoring; see
+- `crates/window-fit`: context-window and memory-fit calculations.
+- `crates/image`, `crates/vision-io`: image and vision preprocessing.
+- `crates/audio`: portable audio crate (DSP, neural ops, TTS, STT, music,
+  VAD, codecs). See `docs/AUDIO.md`.
+- `crates/embeddings`: portable embedding models with pinned checkpoints. See
   `crates/embeddings/MODELS.md`.
 - `crates/coreml`: the Apple Core ML runner (macOS stub elsewhere). Model
-  pipelines on it live in `crates/runtime/src/coreml/`; see
+  pipelines on it live in `crates/runtime/src/coreml/`. See
   [Core ML models](docs/COREML.md).
 - `crates/ffi`: the C ABI consumed by Swift.
 - `crates/cli`, `crates/catalog`, `crates/server`: user-facing install,
@@ -231,76 +209,4 @@ from compilation or a CPU-only result.
 ## Final handoff
 
 Report the files changed, focused checks run, any unrelated checkout failures,
-and whether a real hardware or release gate was actually run. Keep claims
-bounded by the evidence in the current checkout.
-
-
-# Agentic SDLC and Spec-Driven Development
-
-Kiro-style Spec-Driven Development on an agentic SDLC
-
-## Project Memory
-Project memory keeps persistent guidance (steering, specs notes, component docs) so Codex honors your standards each run. Treat it as the long-lived source of truth for patterns, conventions, and decisions.
-
-- Use `.kiro/steering/` for project-wide policies: architecture principles, naming schemes, security constraints, tech stack decisions, api standards, etc.
-- Use local `AGENTS.md` files for feature or library context (e.g. `src/lib/payments/AGENTS.md`): describe domain assumptions, API contracts, or testing conventions specific to that folder. Codex auto-loads these when working in the matching path.
-- Specs notes stay with each spec (under `.kiro/specs/`) to guide specification-level workflows.
-
-## Project Context
-
-### Paths
-- Steering: `.kiro/steering/`
-- Specs: `.kiro/specs/`
-
-### Steering vs Specification
-
-**Steering** (`.kiro/steering/`) - Guide AI with project-wide rules and context
-**Specs** (`.kiro/specs/`) - Formalize development process for individual features
-
-### Active Specifications
-- Check `.kiro/specs/` for active specifications
-- Use `$kiro-spec-status [feature-name]` to check progress
-
-## Development Guidelines
-- Think in English, generate responses in English. All Markdown content written to project files (e.g., requirements.md, design.md, tasks.md, research.md, validation reports) MUST be written in the target language configured for this specification (see spec.json.language).
-
-## Minimal Workflow
-- Phase 0 (optional): `$kiro-steering`, `$kiro-steering-custom`
-- Discovery: `$kiro-discovery "idea"` -- determines action path, writes brief.md + roadmap.md for multi-spec projects
-- Phase 1 (Specification):
-  - Single spec: `$kiro-spec-quick {feature} [--auto]` or step by step:
-    - `$kiro-spec-init "description"`
-    - `$kiro-spec-requirements {feature}`
-    - `$kiro-validate-gap {feature}` (optional: for existing codebase)
-    - `$kiro-spec-design {feature} [-y]`
-    - `$kiro-validate-design {feature}` (optional: design review)
-    - `$kiro-spec-tasks {feature} [-y]`
-  - Multi-spec: `$kiro-spec-batch` -- creates all specs from roadmap.md in parallel by dependency wave
-- Phase 2 (Implementation): `$kiro-impl {feature} [tasks] [--review required|inline|off]`
-  - Without task numbers: autonomous mode (subagent per task + independent review + final validation)
-  - With task numbers: manual mode (selected tasks in main context, still reviewer-gated before completion)
-  - `--review off` skips task-local review; use it intentionally and keep `$kiro-validate-impl {feature}` as the final quality gate
-  - `$kiro-validate-impl {feature}` (standalone re-validation)
-- Progress check: `$kiro-spec-status {feature}` (use anytime)
-
-## Skills Structure
-Skills are located in `.agents/skills/kiro-*/SKILL.md`
-- Each skill is a directory with a `SKILL.md` file
-- Use `/skills` to inspect currently available skills
-- Invoke a skill directly with `$kiro-<skill-name>`
-- `kiro-review` -- task-local adversarial review protocol used by reviewer subagents
-- `kiro-debug` -- root-cause-first debug protocol used by debugger subagents
-- `kiro-verify-completion` -- fresh-evidence gate before success or completion claims
-- Use skills explicitly requested by the user and skills relevant to the task's domain, including design, accessibility, and UX.
-- Select skills from their descriptions or metadata first, then read only the selected skills and the references needed for the task.
-- Follow explicit host and project rules and retain required workflow checks. Do not skip relevant skills just because the task is small.
-
-## Development Rules
-- Keep steering current and verify alignment with `$kiro-spec-status`
-- Follow the user's instructions precisely, and within that scope act autonomously: gather the necessary context and complete the requested work end-to-end in this run, asking questions only when essential information is missing or the instructions are critically ambiguous.
-
-## Steering Configuration
-- For spec and implementation work, load the core steering files below from `.kiro/steering/`. Reuse current context rather than rereading unchanged files.
-- Load additional steering only when required by project rules or relevant to the task.
-- Default files: `product.md`, `tech.md`, `structure.md`
-- Custom files are supported (managed via `$kiro-steering-custom`)
+and whether a real hardware or release gate was actually run.

@@ -38,8 +38,11 @@ policy.
 - Qwen MoE batched prefill (`qwenGdnMoe`) batches resident weight reads by
   default on INT4 installs, while routed experts keep the per-token loop.
   Reduction-order drift flips routing near-ties, held to a 1e-2 nats mean KL
-  probe bound (`crates/bench/tests/qwen36_prefill_arm_probe.rs`).
-  `TURBOSPARK_BATCHED_GEMV=0` opts out to the byte-identical per-token path.
+  probe bound with top-1 agreement >= 50% (the dense bound is 1e-3), see
+  `crates/bench/tests/qwen36_prefill_arm_probe.rs`. The family covers Qwen 3.6
+  and Ornith 35B. MiniCPM-V 4.7 (BF16 resident matrices) keeps the per-token
+  path. `TURBOSPARK_BATCHED_GEMV=0` opts out to the byte-identical per-token
+  path. See `docs/BATCHED_PREFILL.md`.
 
 ## Checks
 
