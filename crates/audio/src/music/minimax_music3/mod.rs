@@ -24,7 +24,7 @@
 
 pub mod backend;
 pub mod precision;
-pub use euler::{FlowGuidance, FlowSolver};
+pub use euler::{FlowGuidance, FlowProfile, FlowSolver};
 pub use output_stats::{output_stats, OutputStats};
 pub use precision::Music3Precision;
 pub use progress::{Control, Progress};
@@ -465,10 +465,10 @@ impl TextGenerateRequest {
 
     /// Check request values without loading a model or tokenizing the prompt.
     pub fn validate(&self) -> Result<()> {
-        self.resolve().map(|_| ())
+        self.resolve(FlowProfile::REFERENCE_STEPS).map(|_| ())
     }
 
-    fn resolve(&self) -> Result<(f64, usize, u64)> {
+    fn resolve(&self, default_steps: usize) -> Result<(f64, usize, u64)> {
         if self.caption.trim().is_empty() {
             return Err(SpeechError::Input {
                 why: "A music description is required".to_string(),
@@ -485,7 +485,7 @@ impl TextGenerateRequest {
                 why: "duration must be greater than 0 and no more than 360 seconds".to_string(),
             });
         }
-        let steps = self.steps.unwrap_or(30);
+        let steps = self.steps.unwrap_or(default_steps);
         if !(1..=30).contains(&steps) {
             return Err(SpeechError::Input {
                 why: "steps must be between 1 and 30".to_string(),
@@ -521,6 +521,8 @@ pub struct Model {
     flow_guidance: Cell<FlowGuidance>,
     // Opt-in flow integrator; `FlowSolver::Euler` is the reference path.
     flow_solver: Cell<FlowSolver>,
+    // Steps for a request that names none: 30, or 21 under `FlowProfile::Fast`.
+    default_steps: Cell<usize>,
 }
 
 /// Chunk windows over `num_frames` AR frames: 200-frame windows hopping
@@ -736,6 +738,7 @@ impl Model {
             stage: RefCell::new(StageTimings::default()),
             flow_guidance: Cell::new(FlowGuidance::EXACT),
             flow_solver: Cell::new(FlowSolver::Euler),
+            default_steps: Cell::new(FlowProfile::REFERENCE_STEPS),
         })
     }
 
@@ -753,6 +756,16 @@ impl Model {
     /// trajectory (second order, no extra DiT forward) and is opt-in.
     pub fn set_flow_solver(&self, solver: FlowSolver) {
         self.flow_solver.set(solver);
+    }
+
+    /// Apply a named flow profile: its solver, guidance schedule, and the step
+    /// count used when a request names none. A later `set_flow_solver` or
+    /// `set_flow_guidance` overrides that part only. `Model` itself opens in
+    /// [`FlowProfile::Exact`].
+    pub fn set_flow_profile(&self, profile: FlowProfile) {
+        self.flow_guidance.set(profile.guidance());
+        self.flow_solver.set(profile.solver());
+        self.default_steps.set(profile.default_steps());
     }
 
     /// Generate from the public caption-and-lyrics contract using the
@@ -792,7 +805,7 @@ impl Model {
     ) -> Result<Option<(Generation, StageTimings)>> {
         let started = Instant::now();
         *self.stage.borrow_mut() = StageTimings::default();
-        let (duration, steps, seed) = request.resolve()?;
+        let (duration, steps, seed) = request.resolve(self.default_steps.get())?;
         let frames = ((duration * self.config.frame_rate).trunc() as usize).max(1);
         let prompt_text = assemble_prompt(&request.caption, &request.lyrics);
         let text_ids = match &self.tokenizer {

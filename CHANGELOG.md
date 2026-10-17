@@ -203,6 +203,17 @@ when this file gets updated relative to the version bump and the tag.
   which also sets it against memory.
 
 ### Changed
+- MiniMax Music 3 now opens in a faster flow profile by default (`Music3Runner`,
+  `turbospark-music`, and so the app, server and FFI): Adams-Bashforth 2 with the
+  unconditional guidance branch reused (interval 3, warmup 2) and 21 steps when a
+  request names none, so 30 DiT forwards instead of 60. On one 8 s prompt it runs
+  in about 55 percent of the exact time with a correlation of 0.974 against the
+  exact 30-step audio, and it no longer follows MLX's trajectory. Restore the
+  reference with `--flow-profile exact` or `Music3Runner::set_flow_profile`;
+  `Model` and the MLX parity fixtures stay exact. Exact kernel work in the same
+  change: the four-bit tiled linear hoists per-word decode work and stages
+  activations four wide (bit-identical output, 8 s at 30 steps 124.6 s to 85.6 s
+  on an M4 Max, DiT stage 95.3 s to 59.3 s).
 - `swift/TurboSparkApp`: syntext moves to 2.7.2 (`exact: "2.7.2"`) and adds
   the `SyntextContext` product. The previous `exact: "2.5.0"` pin linked the
   2.4.0 xcframework, because syntext's `vX.Y.Z` tags through 2.7.0 pin the

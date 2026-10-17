@@ -1034,27 +1034,31 @@ fn depth_decoder_steps_match_the_reference() {
 #[test]
 fn caption_request_matches_upstream_defaults_and_validation() {
     let request = TextGenerateRequest::new("soft piano ballad", "[verse]\nFirst line");
-    assert_eq!(request.resolve().unwrap(), (60.0, 30, 0));
+    assert_eq!(request.resolve(30).unwrap(), (60.0, 30, 0));
+    // The default step count comes from the caller; a named count always wins.
+    assert_eq!(request.resolve(21).unwrap(), (60.0, 21, 0));
 
     let mut custom = request.clone();
     custom.duration_seconds = Some(1.99);
     custom.steps = Some(4);
     custom.seed = Some(17);
-    assert_eq!(custom.resolve().unwrap(), (1.99, 4, 17));
+    assert_eq!(custom.resolve(30).unwrap(), (1.99, 4, 17));
 
     assert!(TextGenerateRequest::new("  ", "[instrumental]")
-        .resolve()
+        .resolve(30)
         .is_err());
-    assert!(TextGenerateRequest::new("piano", " \n ").resolve().is_err());
+    assert!(TextGenerateRequest::new("piano", " \n ")
+        .resolve(30)
+        .is_err());
     for duration in [0.0, -1.0, 360.01, f64::NAN, f64::INFINITY] {
         let mut invalid = request.clone();
         invalid.duration_seconds = Some(duration);
-        assert!(invalid.resolve().is_err(), "duration {duration}");
+        assert!(invalid.resolve(30).is_err(), "duration {duration}");
     }
     for steps in [0, 31] {
         let mut invalid = request.clone();
         invalid.steps = Some(steps);
-        assert!(invalid.resolve().is_err(), "steps {steps}");
+        assert!(invalid.resolve(30).is_err(), "steps {steps}");
     }
 }
 
@@ -1622,6 +1626,67 @@ fn flow_guidance_reuse_is_opt_in_and_gated_by_warmup() {
         model.run_flow(&hiddens, frames, steps, 7).unwrap(),
         reference
     );
+}
+
+#[test]
+fn flow_profile_sets_solver_guidance_and_the_default_step_count() {
+    use super::{FlowGuidance, FlowProfile, FlowSolver};
+    assert_eq!(FlowProfile::default(), FlowProfile::Exact);
+    assert_eq!(FlowProfile::Exact.solver(), FlowSolver::Euler);
+    assert_eq!(FlowProfile::Exact.guidance(), FlowGuidance::EXACT);
+    assert_eq!(FlowProfile::Exact.default_steps(), 30);
+    assert_eq!(FlowProfile::Fast.solver(), FlowSolver::AdamsBashforth2);
+    assert_eq!(
+        (
+            FlowProfile::Fast.guidance().uncond_interval,
+            FlowProfile::Fast.guidance().uncond_warmup
+        ),
+        (3, 2)
+    );
+    assert_eq!(FlowProfile::Fast.default_steps(), 21);
+    // 21 steps with interval 3 / warmup 2 is 21 conditional + 9 unconditional.
+    assert_eq!(FlowProfile::Fast.guidance().uncond_forwards(21), 9);
+
+    let flow_total = |model: &Model, steps: Option<usize>| -> usize {
+        let mut request = progress_request(0.5);
+        request.steps = steps;
+        let mut total = None;
+        model
+            .generate_text_with_progress(&request, |event| {
+                if let Progress::FlowStep { total: t, .. } = event {
+                    total = Some(t);
+                }
+                Control::Continue
+            })
+            .unwrap()
+            .expect("not cancelled");
+        total.expect("a flow step was reported")
+    };
+    let model = load_plain_model();
+    // A fresh model is exact, so library users and the MLX fixtures see no change.
+    assert_eq!(flow_total(&model, None), 30);
+    model.set_flow_profile(FlowProfile::Fast);
+    assert_eq!(flow_total(&model, None), 21);
+    // An explicit step count is always honored.
+    assert_eq!(flow_total(&model, Some(5)), 5);
+    model.set_flow_profile(FlowProfile::Exact);
+    assert_eq!(flow_total(&model, None), 30);
+
+    // The fast profile changes the trajectory; exact restores it bit for bit.
+    let (shape, hiddens) = read_npy("long_flow_hiddens.npy");
+    let frames = shape[1];
+    let reference = model.run_flow(&hiddens, frames, 4, 7).unwrap();
+    model.set_flow_profile(FlowProfile::Fast);
+    let fast = model.run_flow(&hiddens, frames, 4, 7).unwrap();
+    assert_ne!(fast, reference);
+    assert!(fast.iter().all(|v| v.is_finite()));
+    model.set_flow_profile(FlowProfile::Exact);
+    assert_eq!(model.run_flow(&hiddens, frames, 4, 7).unwrap(), reference);
+    // A later single override replaces only its own part of the profile.
+    model.set_flow_profile(FlowProfile::Fast);
+    model.set_flow_solver(FlowSolver::Euler);
+    model.set_flow_guidance(FlowGuidance::EXACT).unwrap();
+    assert_eq!(model.run_flow(&hiddens, frames, 4, 7).unwrap(), reference);
 }
 
 /// Integrate `dx/dt = -x` from 0 to 1 with `n` equal steps through the same

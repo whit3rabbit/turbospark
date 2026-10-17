@@ -104,6 +104,51 @@ pub enum FlowSolver {
     AdamsBashforth2,
 }
 
+/// Named flow settings for the whole request.
+///
+/// `Exact` is the MLX reference trajectory: Euler, both CFG branches every
+/// step, 30 steps unless the caller says otherwise. `Fast` is Adams-Bashforth 2
+/// with the unconditional branch reused (interval 3, warmup 2) and 21 steps
+/// unless the caller says otherwise: 30 DiT forwards instead of 60, which
+/// measured about half the DiT time at a correlation of 0.974 against the exact
+/// output on one prompt. It changes the audio and is not an MLX-parity mode.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FlowProfile {
+    #[default]
+    Exact,
+    Fast,
+}
+
+impl FlowProfile {
+    pub const REFERENCE_STEPS: usize = 30;
+    pub const FAST_STEPS: usize = 21;
+
+    pub fn solver(self) -> FlowSolver {
+        match self {
+            Self::Exact => FlowSolver::Euler,
+            Self::Fast => FlowSolver::AdamsBashforth2,
+        }
+    }
+
+    pub fn guidance(self) -> FlowGuidance {
+        match self {
+            Self::Exact => FlowGuidance::EXACT,
+            Self::Fast => FlowGuidance {
+                uncond_interval: 3,
+                uncond_warmup: 2,
+            },
+        }
+    }
+
+    /// Steps used when the request does not name a count.
+    pub fn default_steps(self) -> usize {
+        match self {
+            Self::Exact => Self::REFERENCE_STEPS,
+            Self::Fast => Self::FAST_STEPS,
+        }
+    }
+}
+
 /// Second-order Adams-Bashforth velocity for equally spaced steps. Each
 /// operation rounds to `dtype` like the rest of the update, so the effective
 /// velocity enters `update` exactly the way a model velocity does.

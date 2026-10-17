@@ -6,8 +6,8 @@ use audio::music::minimax_music3::backend::{
 };
 use audio::music::minimax_music3::precision::{bf16_silu_table, DType};
 use audio::music::minimax_music3::{
-    Control, GenerateRequest, Generation, Model, ModelConfig, Music3Precision, Progress,
-    SamplingTrace, StageTimings, TextGenerateRequest,
+    Control, FlowProfile, GenerateRequest, Generation, Model, ModelConfig, Music3Precision,
+    Progress, SamplingTrace, StageTimings, TextGenerateRequest,
 };
 use audio::{Result, SpeechError};
 use gpu::{
@@ -625,6 +625,9 @@ impl Music3Runner {
             silu: RefCell::new(None),
         });
         let model = Model::load_converted_with_backend_and_precision(path, backend, precision)?;
+        // The runner serves the app, server, FFI and CLI, so it opens in the
+        // faster profile. The MLX parity gates call `set_flow_profile(Exact)`.
+        model.set_flow_profile(FlowProfile::Fast);
         Ok(Self {
             model,
             device,
@@ -642,16 +645,22 @@ impl Music3Runner {
     pub fn config(&self) -> &ModelConfig {
         self.model.config()
     }
-    /// Opt in to reusing the flow unconditional CFG branch between steps.
-    /// The default (`FlowGuidance::EXACT`) is the reference trajectory.
+    /// Select the named flow profile. The runner opens in
+    /// [`FlowProfile::Fast`]; [`FlowProfile::Exact`] restores the MLX
+    /// reference trajectory (Euler, both CFG branches, 30 default steps).
+    pub fn set_flow_profile(&self, profile: FlowProfile) {
+        self.model.set_flow_profile(profile);
+    }
+    /// Override the flow unconditional CFG schedule (the profile sets it by
+    /// default; `FlowGuidance::EXACT` evaluates both branches every step).
     pub fn set_flow_guidance(
         &self,
         guidance: audio::music::minimax_music3::FlowGuidance,
     ) -> Result<()> {
         self.model.set_flow_guidance(guidance)
     }
-    /// Opt in to the second-order Adams-Bashforth flow integrator. The
-    /// default (`FlowSolver::Euler`) is the reference trajectory.
+    /// Override the flow integrator (the profile sets it by default;
+    /// `FlowSolver::Euler` is the reference trajectory).
     pub fn set_flow_solver(&self, solver: audio::music::minimax_music3::FlowSolver) {
         self.model.set_flow_solver(solver);
     }

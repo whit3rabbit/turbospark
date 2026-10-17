@@ -514,7 +514,32 @@ at the real shapes (691 positions, 32 heads of 64, rotary 32, feed-forward
 `dit_block_sequences_match_the_per_op_flow_bitwise` the whole flow stage on
 the seven tiny native profiles. Every guard was mutation-checked.
 
-## Flow guidance reuse (opt-in)
+## Default flow profile
+
+`Music3Runner` (the app, server, FFI and `turbospark-music` all use it) opens in
+`FlowProfile::Fast`: Adams-Bashforth 2, the unconditional guidance branch
+reused at interval 3 after a warmup of 2, and 21 steps when a request names no
+count. That is 30 DiT forwards instead of 60. An explicit step count is always
+honored, so a client that sends 30 (the Swift default) gets AB2 with reuse at 30
+steps. `FlowProfile::Exact` restores the reference: Euler, both branches every
+step, 30 steps by default.
+
+This default does **not** follow MLX's trajectory. The audio differs from the
+exact output (the measured drift is in the AB2 section: correlation 0.974 and
+1.30 dB log-band L1 for the 21-step fast profile against the exact 30-step
+WAV, one prompt, one seed, no listening test). Everything that compares against
+MLX or a CPU reference pins the exact profile.
+
+- `turbospark-music generate --flow-profile exact` (or `fast`); the
+  `--flow-uncond-interval`, `--flow-uncond-warmup` and `--flow-solver` flags
+  override that part of either profile.
+- `Music3Runner::set_flow_profile(FlowProfile::Exact)` and
+  `Model::set_flow_profile`. `Model` itself still opens in `Exact`, so library
+  users and the fixture tests see the reference path.
+- `music3_bench` and `ab_music3_flow.py` default to `exact` so the WAV hashes in
+  this file stay reproducible; pass `--flow-profile fast` to measure the default.
+
+## Flow guidance reuse
 
 At the default 30 steps the DiT dominates a request: each Euler step runs the
 conditional and the unconditional (CFG) forward, and the 1-step table above
@@ -528,9 +553,10 @@ port (`flow_uncond_interval`); the numbers below are ours.
 
 Enable it with `Model::set_flow_guidance` / `Music3Runner::set_flow_guidance`,
 or `turbospark-music generate --flow-uncond-interval 3 [--flow-uncond-warmup 2]`.
-The default is `FlowGuidance::EXACT` (interval 1): the reference trajectory,
-with the 1 s, 2-step, seed 7 WAV still at SHA-256 `29c340d1...`. Reuse changes
-the output, so it is never implied by another option.
+`FlowGuidance::EXACT` (interval 1) is the reference trajectory, with the 1 s,
+2-step, seed 7 WAV at SHA-256 `29c340d1...` (the `Model` and `exact` profile
+behavior). The runner's default fast profile turns reuse on; see "Default flow
+profile". Reuse changes the output.
 
 Measured 2026-10-08 on Apple M4 Max, AC power, release build, the pinned
 `mlx-community/MiniMax-Music3-4bit` snapshot (`c7ea32923b24`), caption "upbeat
@@ -563,7 +589,7 @@ different metric. Treat it as a speed option, and listen before relying on it.
 It is a flow-stage saving only: the AR stage and vocoder are unchanged, and a
 60 s request is still far from real time.
 
-### Flow solver: Adams-Bashforth 2 (opt-in)
+### Flow solver: Adams-Bashforth 2
 
 `FlowSolver::AdamsBashforth2` integrates the flow with `x += dt * (1.5 v - 0.5
 v_prev)` instead of Euler's `x += dt * v`. It is second order on the uniform
@@ -575,9 +601,9 @@ Euler.
 
 Enable it with `Model::set_flow_solver` / `Music3Runner::set_flow_solver`, or
 `turbospark-music generate --flow-solver ab2` (`music3_bench` takes the same
-flag). The default is `FlowSolver::Euler`, the reference trajectory, so the WAV
-hashes above are unchanged. AB2 changes the output and is never implied by
-another option.
+flag). `FlowSolver::Euler` is the reference trajectory and the `Model` and `exact`
+profile default, so the WAV hashes above are unchanged there. The runner's
+default fast profile selects AB2; see "Default flow profile".
 
 Verified in tests: the combiner is second order on `dx/dt = -x` (halving the
 step quarters the error where Euler's halves), a one-step request is bit-equal
@@ -672,6 +698,28 @@ Checkpoint-native BF16 activation parity, song quality, quiet-host frozen
 performance rows, durations beyond the 16 s memory probe, the other pinned
 profiles (8-bit, MXFP8, and the rest), real-time performance, and FFI/Swift
 integration require separate qualification.
+
+Native 4-bit comparison against MLX 0.32.3, measured 2026-10-17 on an Apple M4
+Max (`applegpu_g16s`) with the pinned `mlx-audio` `feb25a37` and the installed
+4-bit snapshot (`c7ea32923b24`), 3 AR frames, 2 flow steps, seed 7, the exact
+flow profile. Frame 0 warmup, ours against MLX, per sampled codebook:
+
+| Codebook | Hidden max abs error | Guided logits max abs error |
+|---|---|---|
+| 0 (semantic) | 0 (8,192 values) | 0 (200,000 values) |
+| 1 to 3 | 0.063 to 0.125 | 0.094 to 0.125 |
+| 4 to 7 | 0.89 to 1.09 | 2.70 to 5.22 |
+
+The semantic step is bit-exact and the first depth steps are within one bf16
+step, but from codebook 4 (a 10-row depth step and up) the logits drift by
+several units, which is enough to change sampled codes. The ignored test
+`real_music3_pinned_4bit_native_matches_mlx_and_resets` therefore fails here: its
+4-bit logits tolerance is 3.0 and the worst error is 3.82. The same test fails
+with the identical 3.8203125 on the commit before the kernel work in this
+section, so this is not a regression from it, and the MLX qmv batch limits for
+this chip (13, 15, 13) match `linear_plan`. The probe does not write the
+`encoding` field the test's tolerance table reads; set `"encoding": "affine4"` in
+`request.json` to reach the 4-bit tolerances. Root cause is open.
 
 The AR stage now runs about nine command buffers per frame (seven depth steps,
 one LM decode step, the head) plus the depth projections between steps, and a

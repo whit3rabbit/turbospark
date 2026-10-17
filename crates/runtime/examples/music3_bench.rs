@@ -28,8 +28,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut precision = Music3Precision::Checkpoint;
     let mut warmup = false;
     let mut flow_only = false;
-    let mut guidance = audio::music::minimax_music3::FlowGuidance::EXACT;
-    let mut solver = audio::music::minimax_music3::FlowSolver::Euler;
+    // The benchmark defaults to the exact profile so the recorded WAV hashes
+    // stay reproducible; the runner itself opens in the fast profile.
+    let mut profile = audio::music::minimax_music3::FlowProfile::Exact;
+    let (mut interval, mut uncond_warmup) = (None, None);
+    let mut solver = None;
     while let Some(flag) = args.next() {
         if flag == "--warmup" {
             warmup = true;
@@ -49,13 +52,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--duration" => duration = Some(value.parse::<f64>()?),
             "--steps" => steps = Some(value.parse::<usize>()?),
             "--seed" => seed = Some(value.parse::<u64>()?),
-            "--flow-uncond-interval" => guidance.uncond_interval = value.parse()?,
-            "--flow-uncond-warmup" => guidance.uncond_warmup = value.parse()?,
+            "--flow-uncond-interval" => interval = Some(value.parse::<usize>()?),
+            "--flow-uncond-warmup" => uncond_warmup = Some(value.parse::<usize>()?),
             "--flow-solver" => {
-                solver = match value.as_str() {
+                solver = Some(match value.as_str() {
                     "euler" => audio::music::minimax_music3::FlowSolver::Euler,
                     "ab2" => audio::music::minimax_music3::FlowSolver::AdamsBashforth2,
                     other => return Err(format!("unknown flow solver {other}").into()),
+                })
+            }
+            "--flow-profile" => {
+                profile = match value.as_str() {
+                    "exact" => audio::music::minimax_music3::FlowProfile::Exact,
+                    "fast" => audio::music::minimax_music3::FlowProfile::Fast,
+                    other => return Err(format!("unknown flow profile {other}").into()),
                 }
             }
             "--precision" => {
@@ -79,8 +89,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let opened = Instant::now();
     let runner = turbospark_runtime::Music3Runner::open_with_precision(&model, precision)?;
     let open = opened.elapsed();
-    runner.set_flow_guidance(guidance)?;
-    runner.set_flow_solver(solver);
+    runner.set_flow_profile(profile);
+    if interval.is_some() || uncond_warmup.is_some() {
+        let mut guidance = profile.guidance();
+        guidance.uncond_interval = interval.unwrap_or(guidance.uncond_interval);
+        guidance.uncond_warmup = uncond_warmup.unwrap_or(guidance.uncond_warmup);
+        runner.set_flow_guidance(guidance)?;
+    }
+    if let Some(solver) = solver {
+        runner.set_flow_solver(solver);
+    }
 
     let mut warmup_ms = None;
     if warmup {

@@ -1,8 +1,25 @@
 #![cfg(target_os = "macos")]
 
-use audio::music::minimax_music3::{GenerateRequest, Model, TextGenerateRequest};
+use audio::music::minimax_music3::{FlowProfile, GenerateRequest, Model, TextGenerateRequest};
 use std::path::PathBuf;
 use turbospark_runtime::Music3Runner;
+
+/// The runner opens in the fast profile; every test here compares against an
+/// MLX or CPU reference, so it pins the exact (reference) profile.
+fn open_exact_with_precision(
+    path: &std::path::Path,
+    precision: audio::music::minimax_music3::Music3Precision,
+) -> audio::Result<Music3Runner> {
+    let runner = Music3Runner::open_with_precision(path, precision)?;
+    runner.set_flow_profile(FlowProfile::Exact);
+    Ok(runner)
+}
+
+fn open_exact(path: &std::path::Path) -> audio::Result<Music3Runner> {
+    let runner = Music3Runner::open(path)?;
+    runner.set_flow_profile(FlowProfile::Exact);
+    Ok(runner)
+}
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -33,7 +50,7 @@ fn music3_metal_matches_cpu_ar_and_waveform_and_resets() {
         .collect();
     for tree in ["converted_plain", "converted_q8"] {
         let cpu = Model::load_converted(&fixture(tree)).unwrap();
-        let runner = Music3Runner::open_with_precision(
+        let runner = open_exact_with_precision(
             &fixture(tree),
             audio::music::minimax_music3::Music3Precision::Float32,
         )
@@ -71,7 +88,7 @@ fn music3_metal_matches_cpu_ar_and_waveform_and_resets() {
 
 #[test]
 fn music3_metal_validates_text_and_request() {
-    let runner = Music3Runner::open(&fixture("converted_plain")).unwrap();
+    let runner = open_exact(&fixture("converted_plain")).unwrap();
     let mut request = TextGenerateRequest::new("piano", "[instrumental]");
     request.duration_seconds = Some(0.04);
     request.steps = Some(1);
@@ -93,7 +110,7 @@ fn music3_metal_validates_text_and_request() {
 #[test]
 fn music3_metal_preserves_two_chunk_overlap_and_stereo_crop() {
     let cpu = Model::load_converted(&fixture("converted_plain")).unwrap();
-    let runner = Music3Runner::open_with_precision(
+    let runner = open_exact_with_precision(
         &fixture("converted_plain"),
         audio::music::minimax_music3::Music3Precision::Float32,
     )
@@ -116,7 +133,7 @@ fn music3_metal_preserves_two_chunk_overlap_and_stereo_crop() {
 fn music3_real_checkpoint_generates_stereo_waveform() {
     let path = std::env::var_os("TURBOSPARK_MUSIC3_INSTALL_DIR")
         .expect("set TURBOSPARK_MUSIC3_INSTALL_DIR to the pinned checkpoint");
-    let runner = Music3Runner::open(&PathBuf::from(path)).unwrap();
+    let runner = open_exact(&PathBuf::from(path)).unwrap();
     assert_eq!(runner.config().hidden_size, 4096);
     assert_eq!(runner.config().num_hidden_layers, 36);
     assert!(runner.resident_weight_bytes() > 1_000_000_000);
@@ -168,7 +185,7 @@ fn music3_real_checkpoint_matches_controlled_float32_reference() {
             .map(|v| f32::from_le_bytes(v.try_into().unwrap()))
             .collect::<Vec<_>>()
     };
-    let runner = Music3Runner::open_with_precision(
+    let runner = open_exact_with_precision(
         &PathBuf::from(model),
         audio::music::minimax_music3::Music3Precision::Float32,
     )
@@ -212,7 +229,7 @@ fn native_gate(model: &std::path::Path, reference: &std::path::Path, repeat: boo
         "affine8" => (0.05, 0.05, 0.05),
         _ => (1e-3, 1e-3, 1e-3),
     };
-    let runner = Music3Runner::open_with_precision(model, Music3Precision::Checkpoint).unwrap();
+    let runner = open_exact_with_precision(model, Music3Precision::Checkpoint).unwrap();
     let mut first_codes = None;
     let mut first_wave = None;
     for _ in 0..if repeat { 2 } else { 1 } {
@@ -335,7 +352,7 @@ fn native_201_frame_overlap_and_cropping_match_mlx() {
     let path = fixture("precision/long201");
     let request: serde_json::Value =
         serde_json::from_slice(&std::fs::read(path.join("request.json")).unwrap()).unwrap();
-    let runner = Music3Runner::open(&path).unwrap();
+    let runner = open_exact(&path).unwrap();
     let wave = runner
         .run_flow(
             &read_f32(&path.join("hiddens.f32")),
@@ -391,12 +408,55 @@ fn real_music3_pinned_4bit_native_matches_mlx_and_resets() {
 }
 
 #[test]
+fn runner_opens_in_the_fast_profile_and_exact_restores_the_reference() {
+    use audio::music::minimax_music3::{Control, Music3Precision, Progress};
+    let path = fixture("converted_plain");
+    let runner = Music3Runner::open_with_precision(&path, Music3Precision::Float32).unwrap();
+    let total = |runner: &Music3Runner, steps: Option<usize>| -> usize {
+        let mut request = TextGenerateRequest::new("piano", "[instrumental]");
+        request.duration_seconds = Some(0.12);
+        request.steps = steps;
+        request.seed = Some(7);
+        let mut total = None;
+        runner
+            .generate_text_with_progress(&request, |event| {
+                if let Progress::FlowStep { total: t, .. } = event {
+                    total = Some(t);
+                }
+                Control::Continue
+            })
+            .unwrap()
+            .expect("not cancelled");
+        total.expect("a flow step was reported")
+    };
+    // Fresh runner: fast profile, 21 steps when none are named.
+    assert_eq!(total(&runner, None), 21);
+    assert_eq!(total(&runner, Some(4)), 4);
+    runner.set_flow_profile(FlowProfile::Exact);
+    assert_eq!(total(&runner, None), 30);
+
+    // The exact profile reproduces the CPU model's trajectory; the default does not.
+    let model = Model::load_converted_with_precision(&path, Music3Precision::Float32).unwrap();
+    let mut request = TextGenerateRequest::new("piano", "[instrumental]");
+    request.duration_seconds = Some(0.12);
+    request.steps = Some(4);
+    request.seed = Some(7);
+    let reference = model.generate_text(&request).unwrap().waveform;
+    let exact = runner.generate_text(&request).unwrap().waveform;
+    close(&exact, &reference, 5e-4);
+    let fast = Music3Runner::open_with_precision(&path, Music3Precision::Float32).unwrap();
+    let fast = fast.generate_text(&request).unwrap().waveform;
+    assert_eq!(fast.len(), reference.len());
+    assert!(fast.iter().all(|v| v.is_finite()));
+    assert_ne!(fast, exact, "the fast profile must change the trajectory");
+}
+
+#[test]
 fn cooperative_controls_cancel_inside_euler_and_replay_exact_stereo() {
     use audio::music::minimax_music3::{Control, Music3Precision, Progress};
     use std::sync::{atomic::AtomicBool, Arc};
     let runner =
-        Music3Runner::open_with_precision(&fixture("converted_plain"), Music3Precision::Float32)
-            .unwrap();
+        open_exact_with_precision(&fixture("converted_plain"), Music3Precision::Float32).unwrap();
     let mut request = TextGenerateRequest::new("piano", "[instrumental]");
     request.duration_seconds = Some(0.12);
     request.steps = Some(2);
@@ -435,7 +495,7 @@ fn music3_cancellation_during_compute_resets_for_the_next_request() {
         atomic::{AtomicBool, Ordering},
         Arc,
     };
-    let runner = Music3Runner::open_with_precision(
+    let runner = open_exact_with_precision(
         &fixture("converted_plain"),
         audio::music::minimax_music3::Music3Precision::Float32,
     )
@@ -523,7 +583,7 @@ fn sequence_and_per_op_ar_paths_are_bit_identical() {
         let ids = serde_json::from_value::<Vec<i32>>(request["ids"].clone()).unwrap();
         let frames = request["frames"].as_u64().unwrap() as usize;
         let seed = request["seed"].as_u64().unwrap();
-        let runner = Music3Runner::open_with_precision(&path, Music3Precision::Checkpoint).unwrap();
+        let runner = open_exact_with_precision(&path, Music3Precision::Checkpoint).unwrap();
 
         runner.set_trace_observer(|_| {});
         runner.reset_dispatch_profile();
@@ -557,8 +617,7 @@ fn cancellation_inside_depth_sequence_resets_for_the_next_request() {
         Arc,
     };
     let runner =
-        Music3Runner::open_with_precision(&fixture("precision/bf16"), Music3Precision::Checkpoint)
-            .unwrap();
+        open_exact_with_precision(&fixture("precision/bf16"), Music3Precision::Checkpoint).unwrap();
     let mut request = TextGenerateRequest::new("piano", "[instrumental]");
     request.duration_seconds = Some(0.12);
     request.steps = Some(1);
@@ -598,8 +657,7 @@ fn kv_cache_returns_to_the_host_mid_request_without_changing_output() {
     use audio::music::minimax_music3::{Control, Music3Precision, Progress};
     use std::sync::{atomic::AtomicBool, Arc};
     let runner =
-        Music3Runner::open_with_precision(&fixture("precision/bf16"), Music3Precision::Checkpoint)
-            .unwrap();
+        open_exact_with_precision(&fixture("precision/bf16"), Music3Precision::Checkpoint).unwrap();
     let mut request = TextGenerateRequest::new("piano", "[instrumental]");
     request.duration_seconds = Some(0.24);
     request.steps = Some(1);
@@ -650,7 +708,7 @@ fn dit_block_sequences_match_the_per_op_flow_bitwise() {
         let frames = request["frames"].as_u64().unwrap() as usize;
         let steps = request["steps"].as_u64().unwrap() as usize;
         let seed = request["seed"].as_u64().unwrap();
-        let runner = Music3Runner::open_with_precision(&path, Music3Precision::Checkpoint).unwrap();
+        let runner = open_exact_with_precision(&path, Music3Precision::Checkpoint).unwrap();
         let bits = |w: &[f32]| w.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
 
         runner.set_trace_observer(|_| {});
