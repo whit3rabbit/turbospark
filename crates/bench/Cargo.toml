@@ -16,11 +16,18 @@ path = "src/main.rs"
 name = "turbospark-startup-probe"
 path = "src/startup_probe_main.rs"
 
+# Frozen E meeting scorer (`meeting` module): cpWER against the frozen AMI panel.
+[[bin]]
+name = "meeting_eval"
+path = "src/meeting_eval_main.rs"
+
 [dependencies]
 foundation = { package = "turbospark-core", path = "../core", version = "0.3.2" }
 runtime = { package = "turbospark-runtime", path = "../runtime", version = "0.3.2" }
 selection = { package = "turbospark-selection", path = "../selection", version = "0.3.2" }
 tokenizer = { package = "turbospark-tokenizer", path = "../tokenizer", version = "0.3.2" }
+# SegLST and reference parsing in the portable `meeting` module.
+serde_json = "1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 repack = { package = "turbospark-repack", path = "../repack", version = "0.3.2" }

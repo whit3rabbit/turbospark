@@ -46,6 +46,25 @@ Speaker Prediction Head (Subpixel Upsampling Conv + Sigmoid) -> `[frames, 8]`
   - Deterministic stage fixtures: Feature stacking order, Hann window padding, NeoX RoPE tables, subpixel head reshape, and AOSC compression match reference values.
   - Full-window and streaming feed methods verified against MLX golden outputs.
 
+## Coupled mode (Frozen E)
+
+`NemotronDiarization::coupled` runs the diarizer inside NeMo's multitalker
+ASR loop (Speech 218d0b4 `configure_diar_streaming`): it takes the ASR's own
+log-mel chunk minus the ASR pre-encode cache instead of computing its own
+features, uses one 14-frame chunk per ASR step with no left or right
+context, `fifo_len` 264 and `spkcache_update_period` 222, and returns 80 ms
+predictions (the mean of each 8-frame group of the 10 ms head). The session
+holds its own geometry, so `feed` callers are unaffected, and a regression
+digest of `generate_stream` was captured before the refactor.
+
+`coupled_chunk_preds_match_nemo` feeds NeMo's features for 54 steps of an
+AMI clip (through the first FIFO overflow and AOSC compression) and matches
+NeMo's chunk predictions within 2.3e-6 with identical cache and FIFO lengths.
+Use weights converted from the pinned `.nemo` at `f667ed73`
+(`scripts/convert_multitalker_nemo.py convert-diar`). The
+`mlx-community/Nemotron-3-Diarization` conversion comes from revision
+`723e19c6`.
+
 ## Example Usage
 
 Run the Nemotron diarization demo:

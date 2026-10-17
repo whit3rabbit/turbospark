@@ -1,0 +1,72 @@
+{
+ "description": "NeMo Speech 218d0b4 Multitalker Parakeet goldens (Frozen E geometry)",
+ "trace_meta": {
+  "wav": "IS1004a_00140_00260.wav",
+  "wav_sha256": "e5f0c4e4ac6c1fdbcbb8df935854a2de071b3fefce0ad91173594905294ce861",
+  "driver_sha256": "7c34077ce6f4286e5ad3f390994683ef957d965bb93e05dea1a51fb2c8b0b56e",
+  "torch": "2.14.1",
+  "threads": 4,
+  "streams_length": 12001,
+  "pad_and_drop_preencoded": true,
+  "streaming_cfg": {
+   "chunk_size": [
+    105,
+    112
+   ],
+   "shift_size": [
+    105,
+    112
+   ],
+   "cache_drop_size": 0,
+   "last_channel_cache_size": 70,
+   "valid_out_len": 14,
+   "pre_encode_cache_size": [
+    0,
+    9
+   ],
+   "drop_extra_pre_encoded": 2,
+   "last_channel_num": 0,
+   "last_time_num": 0
+  },
+  "diar_modules": {
+   "chunk_len": 14,
+   "chunk_left_context": 0,
+   "chunk_right_context": 0,
+   "fifo_len": 264,
+   "spkcache_len": 264,
+   "spkcache_update_period": 222
+  },
+  "diar_output_subsampling_factor": 8,
+  "diar_async_streaming": false
+ },
+ "steps": 6,
+ "kernel_step": 46,
+ "license": "Audio from the AMI Meeting Corpus (CC BY 4.0), https://groups.inf.ed.ac.uk/ami/corpus/license.shtml",
+ "generator": "crates/audio/scripts/generate_multitalker_fixture.py",
+ "files_sha256": {
+  "features.npy": "be800b01e6134e7bf988057a2fbab8e89ec1d70552b7ca57b7cef6cb07c6f5ce",
+  "steps.json": "ac507009f975d285bd67582c17a0116232182309777b529aac61e141c7dfce08",
+  "step_0000_pre_encoded.npy": "e030d8147d519e8d0d660033a1cabc79390d92e9ecf1db3e961ad83c5015d2d7",
+  "step_0000_layer0_input.npy": "ce4ccfc736be400429264c39123761274307c1ff80577ee66efc8cd8a91e503d",
+  "step_0000_encoded.npy": "2c911969be4ebc5fe52468cb0d152b2683778ff7f6bb003112b6043b3c3e30b7",
+  "step_0001_pre_encoded.npy": "d6ed58c12baa48e09cf3f7812d234ec095a9e9b0d5a56d00a8ae6c72a436c7da",
+  "step_0001_layer0_input.npy": "d06381f709d5070ea88dc6bb14b58503ef3744c6e03a1468123b959a55e9643b",
+  "step_0001_encoded.npy": "1c441668d7c1c7758d05cdd2ddc4dcc2d49b934666dfab8bc5663c1955b9136a",
+  "step_0002_pre_encoded.npy": "e9c67edff6b9013271c4b15d500f45bc873080330f995bc1766dab480ff2ae1d",
+  "step_0002_layer0_input.npy": "3fed4367893dfe94844e79736861fc8554aa896ab17495081762c352c8981ac0",
+  "step_0002_encoded.npy": "a4093fe0f16d12571f7e7304dabad5176682d685ea1259f131c91d2cf0c2f3de",
+  "step_0003_pre_encoded.npy": "d8368dc0700d9ae6170c9b978efeab5aac3b529a1e1bdb8e94778fbdccd7b306",
+  "step_0003_layer0_input.npy": "6d3b36a9c99f159e0af41749c0096d2e901442bc7dc557efc126ed7df2883ca2",
+  "step_0003_encoded.npy": "32d676634e9550af951a20c4ebde39826eb22937686ac74cde99c87666487bcc",
+  "step_0004_pre_encoded.npy": "869e6dc0e8a835ece14d693a334fd56968b633628d2f048314d28bfed3c72be0",
+  "step_0004_layer0_input.npy": "9512f2a144d21093ccc35e4662640b79a18d5902fb5e3aa035b6e0fe839b2370",
+  "step_0004_encoded.npy": "18e5748cbe2e8925ce0cb43c37b905ad2072548b4d912f5601325501d36b52f3",
+  "step_0005_pre_encoded.npy": "0b4fdd1d051c21240620fbaf6e7ff57086ea70a97b558c1727a5cbce2085394d",
+  "step_0005_layer0_input.npy": "cc65be0efee8235ce5529b2131fe4dc955aeb739e6d5fdfca347c106111b9bdc",
+  "step_0005_encoded.npy": "884965a8b6e625d80b0b23ad016c171c618e4d7fba1d02c773f7c8d273aeceed",
+  "kernel_case_pre_encoded.npy": "13dc72afe7b7db348c494c4c082e9888515000a6bec8e71a83514c2964e710c4",
+  "kernel_case_spk.npy": "7cf1231d3e6ded11fd97b4c6201fa917728b8db269d4d485a1c807822b7b48aa",
+  "kernel_case_bg.npy": "3858de782645bc408aef82535ea63a65196e02df77663c1ec36c2c2d3c872920",
+  "kernel_case_layer0_input.npy": "d8dbac6a0305818e1863ab0ef8415ebf27708dd27fd44b11ca3b66bee7b435b4"
+ }
+}
