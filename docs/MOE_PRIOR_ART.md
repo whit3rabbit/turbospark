@@ -447,8 +447,88 @@ Metal, and the graph waits for it, so every offload costs time.
 That closes the speed case for this M4 Max. The 40-core part was not
 measured. It pairs the same ANE with a larger GPU, so it should do no
 better, but that is an inference. The result fits the core-count reading of
-the fork's +28% on a 10-core M4. M4 Pro, other models, F16 checkpoints, and
-any energy case were not measured here.
+the fork's +28% on a 10-core M4. M4 Pro, other models and F16 checkpoints
+were not measured here. Energy is below the sweep table.
+
+
+**Per-matmul energy, from the same sweep.** The meter is the fork's IOReport
+model of the whole machine, so these ratios compare only within the sweep.
+Each row is the median over the 21 cases at that token count:
+
+| Tokens per matmul | ANE speed vs Metal | ANE energy vs Metal |
+|---:|---:|---:|
+| 32 | 0.09x | 3.90x |
+| 128 | 0.25x | 1.34x |
+| 512 | 0.42x | 0.56x |
+| 1024 | 0.54x | 0.36x |
+| 2048 | 0.64x | 0.30x |
+
+Routing every case where the ANE is cheaper (50 of 105) would take 1.58x
+Metal's matmul time for 0.36x its modeled energy. Below about 512 tokens
+the ANE costs energy as well as time.
+
+**Whole-prompt energy, measured.** Same build, model and machine (2026-10-17).
+Metal alone against ANE + Metal with the `-ot` placement, which is the
+diagnostic arm and not the fork as shipped. Default gate, `-p 4096 -n 0`.
+The fork's `joules.py` was read at `llama-bench`'s per-rep progress markers,
+so load, warmup and teardown are excluded. Each arm ran 24 reps per setting
+in AMMA then MAAM order, all clean, with three 60 s idle windows per setting
+(about 2.5 W).
+
+| Microbatch | Arm | s per prompt | J per prompt, idle-subtracted | Average W |
+|---|---|---:|---:|---:|
+| 512 | Metal | 6.00 | 335 | 58 |
+| 512 | ANE + Metal | 10.67 | 160 | 17.5 |
+| 2048 | Metal | 5.99 | 339 | 59 |
+| 2048 | ANE + Metal | 8.25 | 125 | 17.7 |
+
+On the mixed path a 4096-token prompt takes 1.38x to 1.78x as long. It
+uses 0.37x to 0.48x the modeled energy. This is modeled energy, not wall
+power, so compare the arms only with each other.
+
+Metal's energy is almost all GPU (about 305 of 350 J). On the mixed path the
+GPU draws 35 to 57 J and the ANE 38 to 40 J. Raw logs:
+`~/models/ane-probe/results/energy/` on the test machine.
+
+**Why a concurrent split might still win here.** phhusson's design note
+([llama.cpp discussion #29861](https://github.com/ggml-org/llama.cpp/discussions/29861))
+names three ways to share work. Layer split gives the NPU whole ops. Tensor
+split gives the NPU and the GPU parts of one matmul's rows at once. Mode
+split uses the NPU for prefill and the GPU for decode. His large wins came
+from tensor plus mode split. Prefill went from 60 to 115 tok/s on the
+base-M4 Bonsai branch, and from 150 to 330 on a Ryzen NPU.
+
+`main-npu` does layer and mode split only, so an offloaded matmul wins only
+when the ANE alone is faster. A row split adds the ANE's rate to the GPU's
+instead. On this M4 Max it could beat Metal alone, although the ANE is the
+slower device. For a quantized model the F16 weight conversion also runs on
+the GPU and would eat into that. Not built here, and not measured.
+
+**When each path is the better choice:**
+
+| Situation | Better | Basis |
+|---|---|---|
+| Pro or Max GPU, speed | Metal alone | Measured here: 1.35x to 2.25x faster |
+| Base chip (8 to 10 GPU cores), long prompt, microbatch 2048 | ANE + Metal | The fork's figures, not reproduced: +28% (9B Q4_K_M), +21% (2.6B F16), no gain at microbatch 512 |
+| Battery or background prefill, 512+ tokens per batch | ANE + Metal | Measured here: 0.37x to 0.48x modeled energy per prompt, at 1.38x to 1.78x the time |
+| Decode, or short prompts | Metal alone | No matmul under 32 tokens offloads, and small batches cost more energy on the ANE |
+| Max GPU, concurrent row split | Unknown | Could beat Metal alone, unbuilt in `main-npu` |
+
+**Kept as a parked option.** Nothing here is worth porting today. It needs
+private API, a per-format F16 conversion kernel and new precision gates. On
+this machine it does not win on speed either.
+
+The energy result makes a low-power prefill mode the strongest case, at
+about half the energy for a prompt 1.4x to 1.8x slower. It still owes wall
+power (`scripts/power.sh`) and a product call on that trade. This engine
+already uses the ANE the supported way, through Core ML, for small
+fixed-shape models where it wins (`docs/COREML.md`). Reopen the LLM prefill
+case on any of these:
+
+1. A base-chip target where `ane-sweep.py` shows the ANE ahead of Metal.
+2. A low-power prefill mode whose whole-prompt energy beats Metal by enough
+   to pay for the slower prompt.
+3. A concurrent row-split prototype that beats Metal alone on a Max.
 
 **What it costs.**
 
