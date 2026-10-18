@@ -6,10 +6,6 @@ struct AudioLibraryView: View {
     @State private var filter: AudioLibraryFilter = .all
     @State private var collection: String?
     @State private var tag: String?
-    @State private var editingItem: AudioLibraryItem?
-    @State private var editingCollection = false
-    @State private var editedName = ""
-    @State private var deletingItem: AudioLibraryItem?
 
     private var visibleItems: [AudioLibraryItem] {
         AudioLibraryOrganizer.filter(controller.filteredItems, by: filter, collection: collection, tag: tag)
@@ -33,15 +29,6 @@ struct AudioLibraryView: View {
                 }
             }
         }
-        .sheet(item: $editingItem) { item in
-            AudioNameSheet(title: editingCollection ? "Collection" : "Rename", value: $editedName,
-                           allowEmpty: editingCollection) {
-                if editingCollection { controller.organize(item, collection: editedName) }
-                else { controller.rename(item, title: editedName) }
-                editingItem = nil
-            }
-        }
-        .modifier(AudioDeleteConfirmation(controller: controller, item: $deletingItem))
     }
 
     private var library: some View {
@@ -71,15 +58,7 @@ struct AudioLibraryView: View {
                 }.padding(.vertical, 20)
             } else {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 8) {
-                        ForEach(AudioLibraryOrganizer.grouped(visibleItems), id: \.group) { section in
-                            Text(LocalizedStringKey(section.group.titleKey), bundle: .module)
-                                .themedFont(.small, weight: .semibold).foregroundStyle(.appSecondary)
-                                .accessibilityAddTraits(.isHeader)
-                                .padding(.top, section.group == .today ? 0 : 6)
-                            ForEach(section.items) { item in libraryRow(item) }
-                        }
-                    }
+                    AudioLibraryList(controller: controller, items: visibleItems)
                 }.frame(minHeight: 180)
             }
             Spacer(minLength: 0)
@@ -103,63 +82,6 @@ struct AudioLibraryView: View {
                     .foregroundStyle(.appSecondary).multilineTextAlignment(.center)
             }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-    }
-
-    private func libraryRow(_ item: AudioLibraryItem) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Button { controller.select(item) } label: {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(item.title).themedFont(.base, weight: .medium).lineLimit(2)
-                    HStack {
-                        Text(item.createdAt, format: .dateTime.month(.abbreviated).day())
-                        if item.hasPlayableAudio { Text(audioTime(item.duration)).monospacedDigit() }
-                    }.themedFont(.small).foregroundStyle(.appSecondary)
-                    if !item.collection.isEmpty { Text(item.collection).themedFont(.small).foregroundStyle(.appSecondary) }
-                    if !item.tagList.isEmpty {
-                        Label { Text(verbatim: item.tagList.joined(separator: ", ")).lineLimit(1) } icon: { Image(systemName: "tag") }
-                            .themedFont(.small).foregroundStyle(.appSecondary)
-                    }
-                    if item.status != .completed {
-                        Label { Text(LocalizedStringKey(item.status.audioTitle), bundle: .module) }
-                            icon: { Image(systemName: item.status.audioSymbol) }
-                            .themedFont(.small)
-                    }
-                }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityAddTraits(controller.selectedID == item.id ? .isSelected : [])
-            .accessibilityAction(named: Text("Favorite", bundle: .module)) { controller.toggleFavorite(item) }
-            .accessibilityAction(named: Text("Rename", bundle: .module)) { beginEditing(item, collection: false) }
-            .accessibilityAction(named: Text("Delete", bundle: .module)) { deletingItem = item }
-            VStack(spacing: 8) {
-                Button { controller.toggleFavorite(item) } label: {
-                    Image(systemName: item.favorite ? "star.fill" : "star")
-                }.buttonStyle(.plain)
-                    .accessibilityLabel(Text(item.favorite ? "Remove favorite" : "Favorite", bundle: .module))
-                Menu {
-                    Button { beginEditing(item, collection: false) } label: { Text("Rename", bundle: .module) }
-                    Button { beginEditing(item, collection: true) } label: { Text("Collection", bundle: .module) }
-                    Button { controller.select(item); controller.duplicateSelected() } label: {
-                        Text("Duplicate with changes", bundle: .module)
-                    }
-                    Divider()
-                    Button(role: .destructive) { deletingItem = item } label: { Text("Delete", bundle: .module) }
-                } label: { Image(systemName: "ellipsis") }
-                .menuStyle(.borderlessButton).fixedSize()
-                .accessibilityLabel(Text("Audio actions", bundle: .module))
-                .disabled(controller.hasRecordingActivity || controller.isBusy)
-                AudioDeleteButton(controller: controller, item: item, compact: true)
-            }
-        }
-        .padding(12)
-        .background(.appSurface, in: RoundedRectangle(cornerRadius: 10))
-        .overlay { RoundedRectangle(cornerRadius: 10).stroke(controller.selectedID == item.id ? .appAccent : .appBorder, lineWidth: controller.selectedID == item.id ? 2 : 1) }
-    }
-
-    private func beginEditing(_ item: AudioLibraryItem, collection: Bool) {
-        editingCollection = collection
-        editedName = collection ? item.collection : item.title
-        editingItem = item
     }
 }
 
@@ -317,28 +239,5 @@ struct AudioItemDetailView: View {
                 }.padding(.vertical, 4)
             }
         } label: { Text("Tracks and sections", bundle: .module) }
-    }
-}
-
-private extension AudioLibraryItem.Status {
-    var audioTitle: String {
-        switch self {
-        case .draft: return "Draft"
-        case .recording: return "Recording"
-        case .processing: return "Processing"
-        case .completed: return "Completed"
-        case .interrupted: return "Interrupted"
-        case .failed: return "Failed"
-        }
-    }
-    var audioSymbol: String {
-        switch self {
-        case .draft: return "pencil"
-        case .recording: return "record.circle"
-        case .processing: return "hourglass"
-        case .completed: return "checkmark.circle"
-        case .interrupted: return "pause.circle"
-        case .failed: return "exclamationmark.triangle"
-        }
     }
 }

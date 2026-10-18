@@ -60,7 +60,8 @@ chord, so each chord has exactly one owner on the page.
 
 | Shortcut | Action | Description |
 | :--- | :--- | :--- |
-| `Cmd+Shift+R` | Start Recording | Starts a take on the Record page with the chosen recording type and sources. Bound on the page's Start button, not in a menu. |
+| `Cmd+Shift+R` | Start Recording | Starts a take on the Record page with the chosen recording type and sources, or in the current Speech-to-Text mode with that mode's sources. Bound on the shared record bar's Start button (`AudioRecordBar`), not in a menu. |
+| `Cmd+Return` | Transcribe | In Speech-to-Text's Any Audio mode, transcribes the selected file or capture. |
 
 ### Model Management (Model Menu)
 

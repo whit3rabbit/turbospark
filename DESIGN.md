@@ -52,7 +52,8 @@ Build from these instead of local variants. They live in
 `Sources/Theme/AppControls.swift`, `Sources/Theme/AppSurfaces.swift`,
 `Sources/Theme/AppProgressBar.swift`, `Sources/Theme/AppAttention.swift`,
 `Sources/Theme/AppWaveform.swift`, `Sources/Theme/AppPreferenceOptions.swift`,
-`Sources/Theme/AppStrings.swift` and `Sources/Theme/TurboSparkMotion.swift`.
+`Sources/Theme/AppPillPicker.swift`, `Sources/Theme/AppStrings.swift` and
+`Sources/Theme/TurboSparkMotion.swift`.
 
 | Need | Use |
 | :--- | :--- |
@@ -63,6 +64,7 @@ Build from these instead of local variants. They live in
 | Search | `AppSearchField(text:prompt:)`, with `focus:` for a field that takes focus |
 | An icon-only action | `AppIconButton(symbol, label: Text(...)) { ... }` |
 | A composer-style toggle chip | `AppChip(Text(...), systemImage:isOn:) { ... }` |
+| Switching one pane between a few modes | `AppPillPicker(selection:items:label:)` with `AppPillItem(value:label:systemImage:liveLabel:)`, two to four short options, inside an `AppAdaptiveHeader` so it reflows to its own row; never wrap it in another `ViewThatFits` |
 | A multi-line editor | `TextEditor(...).appEditorSurface(minHeight:)` |
 | A focus glow on an editor with no native ring | `.appFocusGlow(_:radius:halo:)` |
 | A card | `.appCardSurface(padding:)` |
