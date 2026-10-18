@@ -205,6 +205,11 @@ impl Music3Device {
     pub fn resident_weight_bytes(&self) -> usize {
         self.state.resident.get()
     }
+    /// The Metal device's name, which the split-K heuristics key on (so the
+    /// output bits can differ between GPU models).
+    pub fn device_name(&self) -> String {
+        self.state.context.borrow().device().name().to_owned()
+    }
 
     #[allow(clippy::too_many_arguments)]
     pub fn load_weight(
