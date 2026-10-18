@@ -80,7 +80,46 @@ final class FakeModelLibraryService: ModelLibraryService, @unchecked Sendable {
         /// Answers an audio install. It runs on the calling thread, OUTSIDE the
         /// lock, so a test can park it.
         var audioInstallScript: (@Sendable (InstallCall) throws -> AudioInstalledRecord)?
+        /// Every move the app asked the engine for, in order, recorded before any
+        /// script runs.
+        var moveCalls: [MoveCall] = []
+        /// Answers a move. It runs OUTSIDE the lock, on whatever thread the async
+        /// call landed on, and gets the progress callback the app passed. It may
+        /// park (`MoveGate`) and may throw the engine's error. Nil: an
+        /// unscripted call, which throws.
+        var moveScript: MoveScript?
+        /// When true a move that succeeds relocates the row in `installed` to the
+        /// destination, as the engine rewrites its registry.
+        var appliesMoves = false
+        /// Every `cancelMove`, with the thread that made it.
+        var cancelCalls: [CancelCall] = []
+        /// What `cancelMove` answers, unless `cancelHandler` is set.
+        var cancelAnswer = true
+        /// Runs on a `cancelMove`, outside the lock, and gives its answer. A test
+        /// uses it to let a parked move see the cancel.
+        var cancelHandler: (@Sendable () -> Bool)?
     }
+
+    typealias MoveScript = @Sendable (MoveCall, @escaping @Sendable (UInt64, UInt64) -> Void) async throws
+        -> MoveOutcome
+
+    /// One move as the engine would have seen it.
+    struct MoveCall: Equatable {
+        let installId: String
+        let libraryId: String
+        /// Exactly what the app passed: nil is the ABI's "could not measure".
+        let freeBytes: Int64?
+        let onMainThread: Bool
+        /// The Mach thread the call started on (before its first suspension).
+        let threadID: UInt32
+    }
+
+    struct CancelCall: Equatable {
+        let onMainThread: Bool
+        let threadID: UInt32
+    }
+
+    static func currentThreadID() -> UInt32 { pthread_mach_thread_np(pthread_self()) }
 
     /// One install as the engine would have seen it.
     struct InstallCall: Equatable {
@@ -276,14 +315,58 @@ final class FakeModelLibraryService: ModelLibraryService, @unchecked Sendable {
         return try handler(root)
     }
 
+    var moveCalls: [MoveCall] { with { $0.moveCalls } }
+    var cancelCalls: [CancelCall] { with { $0.cancelCalls } }
+
     func move(
         installId: String, to libraryId: String, freeBytes: Int64?,
         progress: @escaping @Sendable (UInt64, UInt64) -> Void
     ) async throws -> MoveOutcome {
-        throw FakeServiceError.unscripted("move")
+        // Recorded before the first suspension, so `threadID` is the thread the
+        // engine call would have been entered on.
+        let call = MoveCall(
+            installId: installId, libraryId: libraryId, freeBytes: freeBytes,
+            onMainThread: Thread.isMainThread, threadID: Self.currentThreadID())
+        let (script, applies) = with { state -> (MoveScript?, Bool) in
+            state.moveCalls.append(call)
+            return (state.moveScript, state.appliesMoves)
+        }
+        guard let script else { throw FakeServiceError.unscripted("move") }
+        let outcome = try await script(call, progress)
+        if applies {
+            with { state in
+                guard let index = state.installed.firstIndex(where: { $0.installId == installId }) else { return }
+                let destination = state.libraries.first { $0.id == libraryId }
+                state.installed[index] = Self.relocated(
+                    state.installed[index], to: destination, newInstallId: outcome.installId)
+            }
+        }
+        return outcome
     }
 
-    func cancelMove() -> Bool { false }
+    /// The row as the engine lists it after a move: the destination's library,
+    /// root, id and kind, everything else as it was.
+    static func relocated(_ row: InstalledModel, to library: ModelLibrary?, newInstallId: String) -> InstalledModel {
+        let isInternal = library?.isInternal ?? true
+        let root = library?.root ?? "/Users/test/.turbospark/models"
+        return InstalledModel(
+            alias: row.alias, repo: row.repo, revision: row.revision,
+            path: "\(root)/\(row.modality)/\(row.alias).gturbo", family: row.family,
+            modality: row.modality, installBytes: row.installBytes, installedOn: row.installedOn,
+            status: row.status, kind: row.kind, variant: row.variant,
+            library: isInternal ? "internal" : library?.id, libraryName: library?.name,
+            installId: newInstallId, availability: .available,
+            locationKind: isInternal ? .thisMac : .library)
+    }
+
+    func cancelMove() -> Bool {
+        let call = CancelCall(onMainThread: Thread.isMainThread, threadID: Self.currentThreadID())
+        let (handler, answer) = with { state -> ((@Sendable () -> Bool)?, Bool) in
+            state.cancelCalls.append(call)
+            return (state.cancelHandler, state.cancelAnswer)
+        }
+        return handler?() ?? answer
+    }
 
     var installCalls: [InstallCall] { with { $0.installCalls } }
 
@@ -338,6 +421,41 @@ final class FakeModelLibraryService: ModelLibraryService, @unchecked Sendable {
             throw FakeServiceError.unscripted("installAudio")
         }
         return try script(call)
+    }
+}
+
+/// A gate an async script waits on without holding a thread, so a test can look
+/// at the app while a scripted engine call is "copying gigabytes".
+final class MoveGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var opened = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var arrivals = 0
+
+    /// How many callers have reached `wait()`, whether or not it has opened.
+    var arrived: Int { lock.lock(); defer { lock.unlock() }; return arrivals }
+
+    func wait() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            lock.lock()
+            arrivals += 1
+            if opened {
+                lock.unlock()
+                continuation.resume()
+            } else {
+                waiters.append(continuation)
+                lock.unlock()
+            }
+        }
+    }
+
+    func open() {
+        lock.lock()
+        opened = true
+        let parked = waiters
+        waiters = []
+        lock.unlock()
+        for continuation in parked { continuation.resume() }
     }
 }
 
@@ -504,6 +622,37 @@ enum LibraryFixtures {
              "copiedToHome":[],"copyFailures":[\(failures)],"restoredCatalogOverride":false}
             """
         return try JSONDecoder().decode(ImportedStore.self, from: Data(json.utf8))
+    }
+
+    /// What `ts_model_move` answers, through the package's own decoder
+    /// (`MoveOutcome` has no public initializer). `kind` is the wire outcome:
+    /// `moved`, `source_marker_stale`, `source_cleanup_failed` or one this build
+    /// does not know.
+    static func moveOutcome(
+        _ kind: String, installId: String, staleMarker: String? = nil, path: String? = nil
+    ) throws -> MoveOutcome {
+        func quoted(_ value: String?) -> String {
+            guard let value else { return "null" }
+            let data = try! JSONEncoder().encode(value)
+            return String(decoding: data, as: UTF8.self)
+        }
+        let json = """
+            {"outcome":"\(kind)","installId":\(quoted(installId)),"staleMarker":\(quoted(staleMarker)),
+             "path":\(quoted(path))}
+            """
+        return try JSONDecoder().decode(MoveOutcome.self, from: Data(json.utf8))
+    }
+
+    /// The engine's error for a refused or failed move: the code first, then a
+    /// sentence the app must never show.
+    static func moveError(_ code: String, sentence: String = "engine sentence") -> TurboSparkError {
+        let status: TurboSparkError.Code
+        switch code {
+        case "busy": status = .busy
+        case "cancelled": status = .cancelled
+        default: status = .invalidArgument
+        }
+        return TurboSparkError(code: status, message: "\(code): \(sentence)")
     }
 
     static func volume(

@@ -6,6 +6,10 @@ import TurboSpark
 
 extension AppModel {
     public func attachAudioSpeechModelToServer(_ model: AudioInstalledRecord) {
+        if isMoving(path: model.path) {
+            announceModelBeingMoved()
+            return
+        }
         guard let server else { return }
         do {
             try server.attachAudioSpeechModel(id: model.alias)
@@ -75,6 +79,11 @@ extension AppModel {
 
         do {
             try Task.checkCancellation()
+            // The synthesizer is opened from the folder here, per request. A model that
+            // is attached and then moved answers with the reason, and is not opened.
+            if isMoving(path: model.path) {
+                throw TurboSparkError(code: .open, message: ModelMoveText.modelBeingMoved())
+            }
             let directory = URL(fileURLWithPath: model.path, isDirectory: true)
 
             // Decode reference audio if provided (base64)

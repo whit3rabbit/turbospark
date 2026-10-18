@@ -602,6 +602,10 @@ final class LocalizationParityTests: XCTestCase {
         for option in ModelManagerView.GroupOption.allCases {
             values.append(("ModelManagerView.GroupOption.rawValue", option.rawValue))
         }
+        // The move sheet (task 6.11): the phase line under the progress bar.
+        for phase in MoveProgress.Phase.allCases {
+            values.append(("MoveProgress.Phase.title", phase.title))
+        }
         let missing = values.filter { strings[$0.value] == nil }
             .map { "\($0.source): \($0.value)" }
         XCTAssertTrue(

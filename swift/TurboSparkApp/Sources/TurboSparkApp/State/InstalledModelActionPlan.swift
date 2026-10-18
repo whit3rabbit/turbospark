@@ -53,9 +53,16 @@ struct InstalledModelActionPlan: Equatable {
     let startChat: StartChat
     /// Reveal in Finder needs files that can be reached.
     let revealEnabled: Bool
+    /// "Move to..." (task 6.11): a real install, available, on This Mac or in a
+    /// library. Never a row only a scan found, a custom folder, a library that is
+    /// no longer listed, or a model on a drive that is away or whose files are
+    /// gone. A model that is loaded still offers it: the sheet gives the reason
+    /// the move is refused (requirement 7.5) instead of hiding the action.
+    let offersMove: Bool
 
     init(rowModel: InstalledModelRowModel, isCurrentlyLoaded: Bool) {
         revealEnabled = rowModel.status == nil
+        offersMove = rowModel.status == nil && (rowModel.locationKind == .thisMac || rowModel.locationKind == .library)
 
         if isCurrentlyLoaded {
             loadControl = .unload

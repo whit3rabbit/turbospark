@@ -34,6 +34,7 @@ public final class AppModel: ObservableObject {
         workspace.installHandler = { [weak self] profile, acknowledged, library in
             self?.enqueueAudioDownload(profile: profile, acknowledged: acknowledged, library: library) ?? false
         }
+        workspace.modelMoving = { [weak self] in self?.isMoving(path: $0) == true }
         workspace.summaryAvailable = { [weak self] in self?.canSummarizeAudio == true }
         workspace.summaryHandler = { [weak self] item in
             guard let self else { throw CancellationError() }
@@ -54,6 +55,7 @@ public final class AppModel: ObservableObject {
         controller.installHandler = { [weak self] in
             self?.installModel(alias: HumanizeController.modelAlias)
         }
+        controller.modelMoving = { [weak self] in self?.isMoving(path: $0) == true }
         controller.baseOptions = { [weak self] in
             var options = OpenOptions()
             guard let self else { return options }
@@ -151,6 +153,38 @@ public final class AppModel: ObservableObject {
     /// The engine call can take minutes on a large model, so the row's Delete is
     /// disabled meanwhile and a second request for the same row is refused.
     @Published var modelsBeingChanged: Set<String> = []
+    /// The model move in flight, from the moment it starts until it ends in ANY way
+    /// (task 6.11, `AppModel+Moves.swift`). `isInstallOrMoveRunning` reads it.
+    @Published var activeMove: MoveProgress?
+    /// The move sheet on screen. Hosted by the Installed Models list and the Audio
+    /// picker, which present it for their own kinds of model.
+    @Published var moveSheet: ModelMoveSheetModel?
+    /// The model the last move put somewhere else, for the screens that remember
+    /// a model by path (the Installed Models list keeps its own selected path).
+    @Published var lastMovedModel: MovedModelEvent?
+    /// Bookkeeping a move needs that no view reads.
+    var moveDriver = MoveDriverState()
+    /// How the move asks what holds a model. Live by default; a test replaces the
+    /// readers it cannot build (a loaded session needs a multi-gigabyte model).
+    var moveHolderProbe = MoveHolderProbe()
+    /// The size of a model folder the listing does not record. Blocking: it walks
+    /// the folder, so the sheet calls it off the main actor.
+    var modelSizeReader: @Sendable (String) -> UInt64 = { ModelStorageManager.directorySize(at: $0) }
+    /// Reads the engine's image installs, which a move re-reads to find where the
+    /// image went. A seam: the app suites link the release engine.
+    var imageInstalledReader: () throws -> [ImageInstalledModel] = { try TurboSparkCatalog.imageInstalled() }
+    /// Hands a moved model's per-model state (favorite, tags, notes, nickname and
+    /// reasoning default) to its new install id: the old id, the new id and the path
+    /// the model had BEFORE the move. A seam so a test can see exactly what the move
+    /// passed; `ModelOrganizationStoreTests` pin what the store does with it.
+    var metadataRekey: (String, String, String?) -> Void = { old, new, legacyPath in
+        ModelOrganizationStore.shared.rekey(from: old, to: new, legacyPath: legacyPath)
+    }
+    /// The least time between two progress figures the sheet is told about.
+    var moveProgressInterval: TimeInterval = 0.1
+    /// How long a move waits for the library listing after it ended before it says
+    /// how. A listing that hangs on a pulled drive must not hold the answer back.
+    var moveRefreshPatience: Duration = .seconds(3)
     /// The one-time conversion of a store a past Move Store moved. Created when
     /// library monitoring starts, never at `init`.
     var moveStoreMigration: MoveStoreMigration?

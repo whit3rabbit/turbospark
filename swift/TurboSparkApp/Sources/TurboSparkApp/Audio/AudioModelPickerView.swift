@@ -111,6 +111,7 @@ struct AudioModelPickerView: View {
         } message: {
             if let name = controller.selectedProfile?.displayName { Text(name) }
         }
+        .modelMoveSheet(model: model, kinds: [.audio])
         .alert(
             Text("Install anyway?", bundle: .module),
             isPresented: Binding(
@@ -153,6 +154,15 @@ struct AudioModelPickerView: View {
             }
             .appAction(.primary, size: .large)
             .disabled(controller.isManagingInstall || controller.isBusy)
+        }
+        // An installed model with a receipt can move to another library (task 6.11).
+        // The sheet says why it cannot while the model is resident or served.
+        if let subject = controller.moveSubject(for: profile) {
+            Button { model.presentMoveSheet(for: subject) } label: {
+                Label { Text("Move to...", bundle: .module) } icon: { Image(systemName: "arrow.left.arrow.right.circle") }
+            }
+            .appAction(.secondary, size: .small)
+            .disabled(controller.isManagingInstall || model.modelsBeingChanged.contains(subject.installId))
         }
         if controller.canDeleteSelectedModel {
             Button(role: .destructive) { confirmingDelete = true } label: {

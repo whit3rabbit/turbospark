@@ -75,6 +75,16 @@ struct ModelManagerView: View {
                 selectedModelPath = model.selected?.path ?? model.installed.first?.path
             }
         }
+        // The move sheet lives here, not in the detail pane: the pane disappears
+        // when the row it shows has moved, and the sheet must outlive it to say
+        // what happened.
+        .modelMoveSheet(model: model, kinds: [.text, .image])
+        .onChange(of: model.lastMovedModel) { _, moved in
+            // The list keeps its own selected path, and a moved model has a new one.
+            if let moved, let followed = moved.follow(selectedPath: selectedModelPath) {
+                selectedModelPath = followed
+            }
+        }
     }
 
     /// The model-type switch plus the scope line. The picker's label is

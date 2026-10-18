@@ -56,7 +56,7 @@ extension AppModel {
             installed = catalogRows
             catalog = try TurboSparkCatalog.available()
             imageCatalog = try TurboSparkCatalog.imageAvailable()
-            managedImageModels = try TurboSparkCatalog.imageInstalled()
+            managedImageModels = try imageInstalledReader()
             // Rows from the last scan stay until the new scan lands, so a
             // selected side-loaded model does not vanish during a refresh.
             applyImageModels()

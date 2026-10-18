@@ -190,6 +190,18 @@ struct ImageModelManagerView: View {
             // additional model folder is dropped from the list and its files
             // stay where they are, the same rule the text models follow.
             let managed = model.isManagedImageModel(image)
+            // Only an install the engine lists can be moved (task 6.11); the sheet
+            // is hosted by the Installed Models list around this page.
+            if let subject = MoveSubject.make(image: image, isManaged: managed) {
+                Button {
+                    model.presentMoveSheet(for: subject)
+                } label: {
+                    Label { Text("Move to...", bundle: .module) } icon: { Image(systemName: "arrow.left.arrow.right.circle") }
+                }
+                .appAction(.secondary, size: .small)
+                .disabled(model.modelsBeingChanged.contains(subject.installId))
+                .accessibilityValue(Text(verbatim: UntrustedText.display(image.alias)))
+            }
             Button(role: .destructive) {
                 imageToDelete = image
             } label: {

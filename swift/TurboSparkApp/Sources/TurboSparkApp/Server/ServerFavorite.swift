@@ -197,6 +197,37 @@ extension ServerFavorite {
         copy.modelInstallIds = ids
         return copy
     }
+
+    /// This favorite after the model `oldInstallId` (listed at `oldPath`) was moved
+    /// to another library and is `newInstallId` now (task 6.11, requirement 8.1), or
+    /// nil when it does not hold that model.
+    ///
+    /// An entry is the model's when it stores the old id, or when it stores no id
+    /// (a favorite saved before identities existed) and its path is the old path.
+    /// Only the identities are rewritten, aligned by index and without trailing
+    /// blanks: the paths stay as they are (the key an older app reads), which is
+    /// what `rekeyed(in:)` does too. An entry that already has an id of its own
+    /// is never claimed by a path.
+    ///
+    /// The favorite resolved through the library-independent part of the id
+    /// without this (`row(for:in:)`, step 2), so this is the explicit record of
+    /// what that fallback finds, not the only thing keeping the favorite alive.
+    func followingMove(from oldInstallId: String, oldPath: String, to newInstallId: String) -> ServerFavorite? {
+        var ids = (0..<modelCount).map { index in index < modelInstallIds.count ? modelInstallIds[index] : "" }
+        var changed = false
+        for index in ids.indices {
+            let path = index < modelPaths.count ? modelPaths[index] : ""
+            let claimed = ids[index] == oldInstallId || (ids[index].isEmpty && !path.isEmpty && path == oldPath)
+            if claimed, ids[index] != newInstallId {
+                ids[index] = newInstallId
+                changed = true
+            }
+        }
+        guard changed else { return nil }
+        var copy = self
+        copy.modelInstallIds = Self.trimmed(ids)
+        return copy
+    }
 }
 
 extension AppModel {

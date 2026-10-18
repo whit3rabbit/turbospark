@@ -161,8 +161,14 @@ extension AppModel {
     /// message, clears the draft, and then returns silently at
     /// `executeGenerationTurn`'s `session` guard -- a prompt consumed with no
     /// reply and no error (state#33).
+    ///
+    /// **NOT WHILE THE SELECTED MODEL IS BEING MOVED** (task 6.11). The Model menu's
+    /// "Load Chat Model" reads this, and the engine removes the original folder when
+    /// the move ends; `requestLoad` and `canOpenNow` refuse as well, so a stale menu
+    /// is not the only thing between a click and the load.
     public var canLoadModel: Bool {
         !generating && !submitting && !opening && session == nil && selected != nil
+            && !(selected.map { isMoving($0) } ?? false)
     }
 
     /// Whether the active model session can be reloaded.

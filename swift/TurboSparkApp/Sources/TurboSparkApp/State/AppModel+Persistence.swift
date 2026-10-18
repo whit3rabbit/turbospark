@@ -576,6 +576,10 @@ extension AppModel {
         ejectCoordination = nil
         libraryOfferAnnouncer?.stop()
         libraryOfferAnnouncer = nil
+        // A model move is the longest thing the app starts and the engine keeps
+        // going on its own thread: ask it to stop, and never leave it on screen.
+        // The engine leaves the original intact (task 6.11).
+        cancelActiveMoveForShutdown()
         // First, so the engine stops answering requests for a model that is
         // about to be released (`swift/CLAUDE.md` Gotcha 26).
         stopServer()

@@ -145,7 +145,12 @@ when its model is opened.
 When an id entry and a legacy entry both exist, the id entry wins field by
 field where it has a value (`ModelCustomMetadata.filling(gapsFrom:)`). A move
 calls `ModelOrganizationStore.rekey(from:to:legacyPath:)` with the old and new
-ids. A corrupt file is quarantined by `AppJSONStore` like every other store.
+ids (`AppModel+Moves.swift`, after the engine reports the install is in the
+destination). `legacyPath` is the path BEFORE the move, because an entry no view
+has read since an older build still sits under `alias::oldPath`, and a
+reasoning default still in `settings.json` is folded into the record first for
+the same reason. A move that fails or is cancelled writes none of it. A corrupt
+file is quarantined by `AppJSONStore` like every other store.
 
 **Server favorites follow the same identity** (`settings.json`, `serverFavorites`,
 requirement 8.1). A favorite keeps `modelInstallIds` beside the legacy
@@ -157,6 +162,32 @@ against the library rows, writes the ids back and saves settings, and leaves the
 paths for an older app. A load looks an id up first, then the same
 `<modality>/<alias>` under another library (sole candidate only), then the path,
 and reports a model on a drive that is not connected as such (requirement 8.2).
+
+A model move rewrites the id slot of every favorite that holds the model
+(`ServerFavorite.followingMove`: the old id, or a path-only entry at the old
+path) and leaves the paths alone.
+
+**A model that is being moved is never loaded** (task 6.11). The engine removes
+the original folder once the copy is verified, so a load that began during the
+copy would map files that are about to go. `activeMove` is set at the claim,
+before the engine is called, and cleared when the move ends in any way.
+`AppModel.isMoving` answers from it, by row, by install id or by folder.
+
+`requestLoad` answers `.busy` with a toast, and `canOpenNow` refuses, which
+covers `open`, a reload, a server attach, a favorite's auto-start and the load
+after an install. `canLoadModel` greys the Model menu item. The loaders that open
+a folder and not a row ask for themselves: Humanize, the image session (the
+Images screen and the API worker share one), the audio session, the Qwen speech
+job, and the server's image and audio attaches. A load of another model is not
+affected.
+
+Quitting during a move cancels it without asking. `shutdown()` sends the engine
+a cancel, and sends it again on the first progress figure if the engine had not
+registered the move yet. Nothing is written afterwards, the original stays where
+it was, and a `.staging/move-*` folder may be left on the destination (the
+engine has no sweep yet). An unplugged drive arrives as `not_connected`. An eject
+under a running move is not coordinated: the eject coordinator knows only loaded
+models.
 
 **Model library state is memory, except offer dismissals.** `LibraryState`
 (`AppModel+ModelLibraries.swift`) holds libraries, link speeds, free space,

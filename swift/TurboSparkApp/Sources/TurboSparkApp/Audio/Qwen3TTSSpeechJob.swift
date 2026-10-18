@@ -124,6 +124,12 @@ final class Qwen3TTSSpeechJob: @unchecked Sendable {
 extension AudioWorkspaceController {
     func synthesizeQwenSpeech(_ recipe: AudioRecipe, profile: AudioProfile, source: AudioLibraryItem,
                               report: @escaping @Sendable (AudioProgress) -> Void) async throws -> AudioResult {
+        // This job opens its model from the folder itself, not through
+        // `residentSession`, so it asks on its own. Before the resident session is
+        // closed: a refused job leaves the workspace as it was.
+        if let installed = installedPaths[profile.identity.alias], modelMoving?(installed) == true {
+            throw AudioWorkspaceError.message(ModelMoveText.modelBeingMoved())
+        }
         idleTask?.cancel()
         let old = session; let access = modelAccessURL
         session = nil; sessionKey = nil; modelAccessURL = nil

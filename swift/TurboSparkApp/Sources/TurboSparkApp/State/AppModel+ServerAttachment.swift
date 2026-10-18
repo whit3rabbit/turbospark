@@ -289,6 +289,10 @@ extension AppModel {
 
     /// Attaches an audio model (speech-to-text, text-to-speech, or music) to the running server.
     public func attachAudioModelToServer(path: String, task: String = "") {
+        if isMoving(path: path) {
+            announceModelBeingMoved()
+            return
+        }
         guard let server, !serverBusy else { return }
         serverBusy = true
         Task {

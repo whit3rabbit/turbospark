@@ -24,16 +24,22 @@ enum LibrarySpeedTestState: Equatable {
 }
 
 extension AppModel {
-    /// A text, image or audio install is running. The engine refuses a change
-    /// to the library list then (`busy`), so the section disables its changes
-    /// instead of letting the user find out by trying. The move flow (task
-    /// 6.11) joins this when it exists.
+    /// A text, image or audio install is running.
     ///
     /// The audio workspace is asked only if it was built: reading the lazy
     /// property builds it, and a settings pane must not load the audio library
     /// to answer a question about installs.
-    var isInstallOrMoveRunning: Bool {
+    var isInstallRunning: Bool {
         isInstallingModel || isInstallingImageModel || (audioWorkspaceCreated && audioWorkspace.isInstalling)
+    }
+
+    /// An install or a model move is running. The engine refuses a change to the
+    /// library list then (`busy`), so the section, the offer banner and every other
+    /// library change disable themselves instead of letting the user find out by
+    /// trying. A move counts from the moment it starts (`activeMove`) until it ends
+    /// in any way (task 6.11).
+    var isInstallOrMoveRunning: Bool {
+        isInstallRunning || activeMove != nil
     }
 }
 

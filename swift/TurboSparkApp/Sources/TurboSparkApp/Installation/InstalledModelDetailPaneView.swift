@@ -125,7 +125,14 @@ struct InstalledModelDetailPaneView: View {
                     onUnload: { model.unloadModel() },
                     onStartChat: { model.openChatWithModel(installedModel) },
                     onDelete: { showingDeleteConfirm = true },
-                    onRemoveFromList: { showingRemoveConfirm = true }
+                    onRemoveFromList: { showingRemoveConfirm = true },
+                    onMove: {
+                        // The sheet is hosted by the list, which outlives this
+                        // pane: the pane is gone once the row has moved.
+                        if let subject = MoveSubject.make(text: installedModel) {
+                            model.presentMoveSheet(for: subject)
+                        }
+                    }
                 )
 
                 InstalledModelFeatureBadgesView(descriptor: descriptor)

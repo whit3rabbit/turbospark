@@ -81,6 +81,10 @@ final class HumanizeController: ObservableObject {
     /// else nil. Such a model is neither installed (it cannot be opened) nor
     /// missing, and offering to download it again would only be refused.
     var notConnectedStatement: () -> String? = { nil }
+    /// Whether the model at a path is being moved to another library. The move
+    /// removes the original folder when it ends, so the engine is never opened from a
+    /// path for which this says yes. Set by the owner; nothing moves in a test.
+    var modelMoving: (String) -> Bool = { _ in false }
     /// Starts the catalog download of the model.
     var installHandler: () -> Void = {}
     /// The resource policy to open under (power profile, load guard). Only
@@ -150,6 +154,12 @@ final class HumanizeController: ObservableObject {
     /// An explicit load lets the user prepare the model before writing a draft.
     func load() {
         guard isInstalled, !isBusy, !engineLoaded else { return }
+        // Said, not dropped: this button is live when the move began after the view
+        // last drew. `ensureEngine` refuses the same way for every other entry.
+        if let path = installedPath(), modelMoving(path) {
+            errorMessage = HumanizeError.modelMoving.errorDescription
+            return
+        }
         phase = .loadingModel
         operationPath = installedPath()
         task = Task { [weak self] in
@@ -213,6 +223,9 @@ final class HumanizeController: ObservableObject {
         defer { finishOperation() }
         do {
             guard let path = operationPath else { throw HumanizeError.notInstalled }
+            // Before the planner reads the model's tokenizer: a model that is being
+            // moved is neither counted against nor opened.
+            guard !modelMoving(path) else { throw HumanizeError.modelMoving }
             let counter = countDraftTokens
             let plan = try await HumanizePlanner.plan(draft) { try await counter($0, path) }
             try Task.checkCancellation()
@@ -311,6 +324,9 @@ final class HumanizeController: ObservableObject {
         guard let path = operationPath, installedPath() == path else {
             throw HumanizeError.notInstalled
         }
+        // The one place the engine is opened from a path: the move's hazard stops here
+        // for `load()`, for a run and for anything added later.
+        guard !modelMoving(path) else { throw HumanizeError.modelMoving }
         if let engine, enginePath == path { return engine }
         phase = .loadingModel
         let opened = try await openEngine(path)
@@ -329,9 +345,12 @@ final class HumanizeController: ObservableObject {
 enum HumanizeError: LocalizedError {
     case notInstalled
     case passageTooLong
+    case modelMoving
 
     var errorDescription: String? {
         switch self {
+        case .modelMoving:
+            return ModelMoveText.modelBeingMoved()
         case .passageTooLong:
             return AppStrings.localized("One passage is too long for the model. Add paragraph breaks and try again.")
         case .notInstalled:

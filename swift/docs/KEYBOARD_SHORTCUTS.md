@@ -116,6 +116,19 @@ are disabled there (`AppNavigationSection.runsChatGenerationCommand` and
    - **Reduce Transparency (`accessibilityReduceTransparency`)**: Disables frosted glass and translucent materials, replacing sidebar and card backgrounds with solid high-contrast surfaces.
    - **Dynamic Type & Larger Text (`dynamicTypeSize`)**: Font sizes in UI controls and code snippets scale proportionally with system-wide text size adjustments set in macOS Accessibility Settings.
 
+## The model move sheet
+
+"Move to..." in the Installed Models list and the Audio picker opens
+`ModelMoveSheet`. `Return` presses the sheet's one primary button (Move, Retry
+or Done) and `Escape` closes it, as in every other sheet. **While a move runs
+the sheet cannot be dismissed**: Escape and the close gesture do nothing
+(`interactiveDismissDisabled`, and no button carries the cancel shortcut),
+because one stray key must not abandon a copy that has run for twenty minutes.
+
+Cancel is a button. It asks the engine to stop, and the sheet reads "Cancelling..."
+until the engine answers. The progress, the phase and the outcome are one
+VoiceOver element each, and an outcome is announced.
+
 ## Alternate chords (unsloth studio compatibility)
 
 Added 2026-09-07 (`AlternateShortcutBridge.swift`). unsloth studio's

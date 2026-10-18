@@ -72,10 +72,17 @@ final class AudioWorkspaceController: ObservableObject {
     @Published var pendingTranscriptEdits: [UUID: [AudioLibrarySegment]] = [:]
     @Published var preferences = AudioWorkspacePreferences()
     @Published var installedPaths: [String: String] = [:]
+    /// The receipt-backed installs the report listed, by alias: the library and the
+    /// size a move needs (task 6.11). `installedPaths` is derived from the same rows.
+    @Published var installedRecords: [String: AudioInstalledRecord] = [:]
 
     let pendingAssetOwner = UUID()
     let lifetime = AudioOperationLifetime()
     var summaryHandler: ((AudioLibraryItem) async throws -> AudioMeetingSummary)?
+    /// Whether the model at a path is being moved to another library. The move removes
+    /// the original folder when it ends, so a session is never opened from a path for
+    /// which this says yes (`residentSession`, the Qwen speech job). Set by the owner.
+    var modelMoving: ((String) -> Bool)?
     var summaryAvailable: (() -> Bool)?
     var canSummarizeMeeting: Bool { selectedItem?.preferredTranscript != nil && summaryAvailable?() == true }
     /// Queues a managed download. The second argument lists the ids of the
@@ -530,6 +537,7 @@ final class AudioWorkspaceController: ObservableObject {
                 self.familyCapabilities = snapshot.capabilities
                 self.profiles = snapshot.profiles
                 self.installedPaths = Dictionary(installed.installed.map { ($0.alias, $0.path) }, uniquingKeysWith: { first, _ in first })
+                self.installedRecords = Dictionary(installed.installed.map { ($0.alias, $0) }, uniquingKeysWith: { first, _ in first })
                 self.needsAdoption = installed.needsAdoption
                 self.incompatibleInstalls = installed.incompatible
                 // Installs on a drive that is away: kept as their own state.
@@ -576,7 +584,10 @@ final class AudioWorkspaceController: ObservableObject {
             guard let self, self.valid(token) else { return }
             self.isInstalling = false
             switch result {
-            case .success(let record): self.installedPaths[record.alias] = record.path; self.status = AppStrings.localized("Audio model installed")
+            case .success(let record):
+                self.installedPaths[record.alias] = record.path
+                self.installedRecords[record.alias] = record
+                self.status = AppStrings.localized("Audio model installed")
             case .failure(let error): self.error = error.localizedDescription
             }
         }
@@ -592,6 +603,13 @@ final class AudioWorkspaceController: ObservableObject {
             _ = resolved.startAccessingSecurityScopedResource(); url = resolved; path = resolved.path
         } else if let installed = installedPaths[profile.identity.alias] { path = installed }
         else { throw AudioWorkspaceError.message(AppStrings.localized("Download this model or choose its checkpoint folder.")) }
+        // **NOT A MODEL THAT IS BEING MOVED**: the engine removes the folder it is
+        // opened from when the move ends. Checked on the resolved path, so a local
+        // checkpoint bookmark that points into a moving install is covered too.
+        if modelMoving?(path) == true {
+            url?.stopAccessingSecurityScopedResource()
+            throw AudioWorkspaceError.message(ModelMoveText.modelBeingMoved())
+        }
         let key = "\(profile.family):\(profile.identity.task.rawValue):\(path):\(portable):\(experimentalMetal)"
         if sessionKey == key, let session { url?.stopAccessingSecurityScopedResource(); return session }
         if let previous = session { await Task.detached { previous.close() }.value }

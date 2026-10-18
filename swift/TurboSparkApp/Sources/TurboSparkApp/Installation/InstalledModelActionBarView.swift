@@ -42,6 +42,9 @@ struct InstalledModelActionBarView: View {
     let onStartChat: () -> Void
     let onDelete: () -> Void
     let onRemoveFromList: () -> Void
+    /// Opens the move sheet (task 6.11). The sheet gives the reason when a move is
+    /// refused, so the button is not hidden for a model that is loaded.
+    let onMove: () -> Void
 
     private var plan: InstalledModelActionPlan {
         InstalledModelActionPlan(rowModel: rowModel, isCurrentlyLoaded: isCurrentlyLoaded)
@@ -97,6 +100,18 @@ struct InstalledModelActionBarView: View {
                         ?? (Text("Reveal in Finder", bundle: .module) + Text(verbatim: ": \(installedModel.path)")))
                 .accessibilityLabel(Text("Reveal in Finder", bundle: .module))
                 .accessibilityAddTraits(.isLink)
+
+                // A real install on This Mac or a connected drive can move to
+                // another library; the sheet says why when it cannot yet.
+                if plan.offersMove {
+                    Button(action: onMove) {
+                        Label { Text("Move to...", bundle: .module) } icon: { Image(systemName: "arrow.left.arrow.right.circle") }
+                    }
+                    .appAction(.secondary)
+                    .disabled(isChanging)
+                    .accessibilityLabel(Text("Move to...", bundle: .module))
+                    .accessibilityValue(Text(verbatim: UntrustedText.display(installedModel.alias)))
+                }
             }
 
             Spacer(minLength: 0)

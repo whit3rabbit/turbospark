@@ -56,10 +56,13 @@ struct PendingLoadConfirmation: Identifiable, Equatable {
 ///   Model menu, the installed-model detail pane (Load, Load anyway, Start Chat),
 ///   the Model Hub's Load and Chat, the `/model` command, a folder chosen in the
 ///   open panel, and the server pane's Attach.
-/// - Cannot ask, and load as they did (minus a model that is not available, which
-///   `open(_:)` refuses): the load that follows an install, a reload of the model
-///   in memory, Humanize's own engine, and a server favorite's auto-start. Launch
-///   restoration only SELECTS a model; it never loads one.
+/// - Cannot ask, and load as they did (minus a model that is not available or is
+///   being moved, which `open(_:)` refuses): the load that follows an install, a
+///   reload of the model in memory, Humanize's own engine, and a server favorite's
+///   auto-start. Launch restoration only SELECTS a model; it never loads one.
+/// - A model that is BEING MOVED answers every one of them with a refusal
+///   (`isMoving`): the engine removes its folder when the move ends. Humanize, the
+///   image session and the audio session ask it themselves.
 extension AppModel {
     /// The gate of `model` as the libraries stand now: its live availability, its
     /// library, that library's link and measured speed.
@@ -90,6 +93,14 @@ extension AppModel {
         confirmed: Bool = false,
         bringWindowForward: Bool = false
     ) -> LoadRequestOutcome {
+        // **A MODEL THAT IS BEING MOVED IS NEVER LOADED** (task 6.11). The engine
+        // removes the original folder once the copy is verified, so a load that began
+        // now would map files that are about to go (the state#43 class). First of all
+        // the answers: nothing about a moving model is resident, warned or confirmed.
+        if isMoving(model) {
+            announceModelBeingMoved()
+            return .busy
+        }
         let resident = loadedModelPath == model.path
         if resident, case .chat(let switchToChat) = purpose {
             // Already in memory: nothing is read, nothing is warned about.
@@ -153,6 +164,12 @@ extension AppModel {
     /// engine open refuses a model whose drive is away or whose folder is gone,
     /// even from a path that cannot ask (a load after an install, a favorite).
     func canOpenNow(_ model: InstalledModel) -> Bool {
+        // The same refusal for the paths that cannot ask: the load after an install, a
+        // reload, a server attach and a favorite's auto-start all end here.
+        if isMoving(model) {
+            announceModelBeingMoved()
+            return false
+        }
         let gate = loadGate(for: model)
         if !gate.canLoad { announceCannotLoad(gate) }
         return gate.canLoad

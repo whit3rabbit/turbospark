@@ -23,7 +23,9 @@ extension AppModel {
     func canQueueModelDownload(_ request: ModelDownload.Request) -> Bool {
         let hasRoom = modelDownloads.count < ModelDownloadHistoryStore.limit
             || modelDownloads.contains(where: { $0.status.isTerminal })
-        return !modelDownloadsShuttingDown && !generating && hasRoom
+        // A move holds the engine's one install-or-move slot: the engine answers
+        // every install `busy` meanwhile, so the button is off (task 6.11).
+        return !modelDownloadsShuttingDown && !generating && activeMove == nil && hasRoom
             && !isModelDownloadPending(request)
     }
 
@@ -47,6 +49,12 @@ extension AppModel {
     /// 2.4). Embedding and OCR requests never keep one (requirement 2.5).
     @discardableResult
     func enqueueModelDownload(_ request: ModelDownload.Request, library: String? = nil) -> Bool {
+        // A move is running: say why, in the sentence every busy refusal uses,
+        // instead of a button that does nothing.
+        guard activeMove == nil else {
+            showToast(LibraryActionText.busy(), style: .warning, duration: 8.0)
+            return false
+        }
         guard canQueueModelDownload(request) else {
             if isModelDownloadPending(request) { isDownloadManagerExpanded = true }
             return false
@@ -78,7 +86,8 @@ extension AppModel {
     func startNextModelDownloadIfPossible(
         start: ((ModelDownload.Request) -> Void)? = nil
     ) {
-        guard !modelDownloadsShuttingDown, !generating,
+        // A queued row waits for a move to end: the move's tail starts it.
+        guard !modelDownloadsShuttingDown, !generating, activeMove == nil,
               Self.modelInstallOwner == nil, !hasActiveModelDownload,
               let index = modelDownloads.lastIndex(where: { $0.status == .queued })
         else { return }
