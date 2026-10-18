@@ -22,7 +22,7 @@ use crate::models::vad::nemotron_diarization::CoupledDiarizer;
 use crate::{ops, Result, SpeechError};
 
 use super::frontend::LiveFrontend;
-use super::seglst::{HypothesisView, SeglstEntry, SentenceBuilder};
+use super::seglst::{HypothesisView, SeglstEntry, SegmentUpdate, SentenceBuilder, SentenceCursor};
 use super::{Features, MultitalkerAsr, SpeakerEncoder, SpeakerStream, StepOutput, Token};
 
 /// Scheduler settings; [`CoupledConfig::frozen_e`] is the qualified one.
@@ -559,6 +559,9 @@ pub struct LiveSession<'m, D: DiarizationSource> {
     /// Absolute frame of the next step's first new frame.
     next_frame: usize,
     state: LiveState,
+    cursor: SentenceCursor,
+    /// Polled before each step; true stops the call with an error.
+    cancel: Option<Box<dyn Fn() -> bool + Send + 'm>>,
 }
 
 impl<'m, D: DiarizationSource> LiveSession<'m, D> {
@@ -569,6 +572,8 @@ impl<'m, D: DiarizationSource> LiveSession<'m, D> {
             pending: vec![0.0; asr.pre_encode_cache_frames() * mels],
             next_frame: 0,
             state: LiveState::Open,
+            cursor: SentenceCursor::default(),
+            cancel: None,
             inner: CoupledSession::new(asr, diar, cfg),
         })
     }
@@ -620,9 +625,32 @@ impl<'m, D: DiarizationSource> LiveSession<'m, D> {
         Ok(reports)
     }
 
+    /// Stops a call before its next step once `cancel` returns true. The
+    /// call fails and, as with any failed step, closes the session.
+    pub fn with_cancel(mut self, cancel: Box<dyn Fn() -> bool + Send + 'm>) -> Self {
+        self.cancel = Some(cancel);
+        self
+    }
+
     /// The SegLST so far.
     pub fn seglst(&self) -> Vec<SeglstEntry> {
         self.inner.seglst()
+    }
+
+    /// Segments new or changed since the last call, keyed by
+    /// `(speaker, index)`.
+    pub fn take_segment_updates(&mut self) -> Vec<SegmentUpdate> {
+        self.inner.track.sentences.changes(&mut self.cursor)
+    }
+
+    /// Mel frames (10 ms each) stepped so far.
+    pub fn processed_frames(&self) -> usize {
+        self.next_frame
+    }
+
+    /// PCM samples received so far.
+    pub fn samples_received(&self) -> usize {
+        self.frontend.samples_received()
     }
 
     /// Cumulative 80 ms predictions after speaker zeroing.
@@ -662,15 +690,24 @@ impl<'m, D: DiarizationSource> LiveSession<'m, D> {
         );
         let mut reports = Vec::new();
         while self.pending.len() / mels >= cache + shift {
+            self.check_cancel()?;
             reports.push(self.step(shift, false)?);
         }
         if end {
             let tail = self.pending.len() / mels - cache;
             if tail > 0 && (self.next_frame == 0 || tail >= factor) {
+                self.check_cancel()?;
                 reports.push(self.step(tail, true)?);
             }
         }
         Ok(reports)
+    }
+
+    fn check_cancel(&self) -> Result<()> {
+        match &self.cancel {
+            Some(cancel) if cancel() => Err(SpeechError::Audio("cancelled".into())),
+            _ => Ok(()),
+        }
     }
 
     /// One step over `new` frames behind the pre-encode cache.

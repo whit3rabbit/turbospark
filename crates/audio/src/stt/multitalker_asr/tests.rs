@@ -527,13 +527,36 @@ fn assert_live_clip_matches_nemo<D: scheduler::DiarizationSource>(
     let mut session =
         scheduler::LiveSession::new(model, diar, scheduler::CoupledConfig::frozen_e()).unwrap();
     let mut reports = Vec::new();
+    let mut held = std::collections::BTreeMap::new();
     let (mut at, mut sizes) = (0, [3_331usize, 97, 16_000, 160, 40_001].iter().cycle());
     while at < wav.samples.len() {
         let n = (*sizes.next().unwrap()).min(wav.samples.len() - at);
         reports.extend(session.append(&wav.samples[at..at + n]).unwrap());
+        for u in session.take_segment_updates() {
+            held.insert((u.speaker, u.index), (u.start_time, u.end_time, u.words));
+        }
         at += n;
     }
     reports.extend(session.finish().unwrap());
+    for u in session.take_segment_updates() {
+        held.insert((u.speaker, u.index), (u.start_time, u.end_time, u.words));
+    }
+    // The deltas, applied as a consumer would, are the final SegLST.
+    let mut from_updates: Vec<_> = held
+        .into_iter()
+        .map(|((spk, _), (start, end, words))| (spk, start, end, words))
+        .collect();
+    let mut from_entries: Vec<_> = session
+        .seglst()
+        .into_iter()
+        .map(|e| (e.speaker, e.start_time, e.end_time, e.words))
+        .collect();
+    from_updates.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    from_entries.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    assert_eq!(
+        from_updates, from_entries,
+        "segment updates replay to the SegLST"
+    );
     assert_reports_match_nemo(&reports, &session.seglst(), trace, &session_id);
     assert!(
         session.append(&[0.0]).is_err(),
@@ -606,4 +629,27 @@ fn live_session_refuses_work_after_a_failed_step_but_not_a_bad_chunk() {
     assert!(session.append(&silence).is_err());
     let again = session.append(&[0.0; 160]).unwrap_err().to_string();
     assert!(again.contains("failed on an earlier step"), "{again}");
+}
+
+/// A cancel hook stops a call before its next step and closes the session.
+#[test]
+fn live_session_cancel_stops_before_the_next_step() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    let Some(model) = gated_model() else { return };
+    let stop = Arc::new(AtomicBool::new(false));
+    let mut session = scheduler::LiveSession::new(
+        &model,
+        scheduler::ReplayedDiarization::new(Vec::new(), 8),
+        scheduler::CoupledConfig::frozen_e(),
+    )
+    .unwrap()
+    .with_cancel(Box::new({
+        let stop = Arc::clone(&stop);
+        move || stop.load(Ordering::Acquire)
+    }));
+    stop.store(true, Ordering::Release);
+    let err = session.append(&vec![0.01f32; 16_000 * 3]).unwrap_err();
+    assert!(err.to_string().contains("cancelled"), "{err}");
+    assert!(session.append(&[0.0; 160]).is_err());
 }

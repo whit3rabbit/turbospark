@@ -40,6 +40,25 @@ struct SpeakerSentences {
     seen: bool,
 }
 
+/// A segment that is new, or changed, since the last
+/// [`SentenceBuilder::changes`] call. `index` counts the speaker's sentences,
+/// so a consumer keys on `(speaker, index)` and replaces what it holds.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SegmentUpdate {
+    pub speaker: String,
+    pub index: usize,
+    pub start_time: f64,
+    pub end_time: f64,
+    pub words: String,
+}
+
+/// What [`SentenceBuilder::changes`] already reported, per speaker: the
+/// sentence count and the last sentence's end time and words.
+#[derive(Debug, Clone, Default)]
+pub struct SentenceCursor {
+    seen: Vec<(usize, Option<(f64, String)>)>,
+}
+
 /// Per-session sentence state for every speaker id.
 #[derive(Debug, Clone)]
 pub struct SentenceBuilder {
@@ -169,6 +188,46 @@ impl SentenceBuilder {
         }
     }
 
+    /// Segments new or changed since `cursor` last saw this builder, then
+    /// advances `cursor`. Only a speaker's last sentence can change after it
+    /// is written (a step extends it or attaches punctuation), so that one is
+    /// resent when its end time or words moved. Values are as
+    /// [`entries`](Self::entries) reports them: times rounded, leading space
+    /// stripped, empty sentences skipped.
+    pub fn changes(&self, cursor: &mut SentenceCursor) -> Vec<SegmentUpdate> {
+        cursor
+            .seen
+            .resize_with(self.speakers.len(), Default::default);
+        let mut out = Vec::new();
+        for (spk, s) in self.speakers.iter().enumerate().filter(|(_, s)| s.seen) {
+            let (count, last) = &mut cursor.seen[spk];
+            let snapshot = |e: &SeglstEntry| (e.end_time, e.words.clone());
+            let unchanged =
+                *count > 0 && s.sentences.get(*count - 1).map(snapshot).as_ref() == last.as_ref();
+            let from = if unchanged {
+                *count
+            } else {
+                count.saturating_sub(1)
+            };
+            for (index, e) in s.sentences.iter().enumerate().skip(from) {
+                let words = e.words.trim_start();
+                if words.trim().is_empty() {
+                    continue;
+                }
+                out.push(SegmentUpdate {
+                    speaker: e.speaker.clone(),
+                    index,
+                    start_time: round3(e.start_time),
+                    end_time: round3(e.end_time),
+                    words: words.to_string(),
+                });
+            }
+            *count = s.sentences.len();
+            *last = s.sentences.last().map(snapshot);
+        }
+        out
+    }
+
     /// NeMo `_compute_hypothesis_timestamps`.
     fn timestamps(&self, spk: usize, hyp: &HypothesisView<'_>, offset: f64) -> (f64, f64, bool) {
         let s = &self.speakers[spk];
@@ -281,6 +340,66 @@ mod tests {
                 ("speaker_1".into(), 13.76, 14.0, "Right then".into()),
             ]
         );
+    }
+
+    /// Applying `changes` after every update reproduces `entries`, including
+    /// a sentence extended in place and punctuation attached to the previous
+    /// one.
+    #[test]
+    fn changes_replay_to_the_same_segments_as_entries() {
+        use std::collections::BTreeMap;
+        let steps: Vec<(f64, Vec<Option<HypothesisView<'static>>>)> = vec![
+            (0.0, vec![view("and during", &[3, 4, 5], 14)]),
+            (1.12, vec![view("and during each", &[3, 4, 5, 16], 28)]),
+            (
+                2.24,
+                vec![
+                    view("and during each", &[3, 4, 5, 16], 42),
+                    view("okay", &[30], 42),
+                ],
+            ),
+            (
+                5.6,
+                vec![
+                    view("and during eachother word", &[3, 4, 5, 16, 72, 73], 84),
+                    view("okay", &[30], 84),
+                ],
+            ),
+            (
+                10.08,
+                vec![
+                    view("and during eachother word", &[3, 4, 5, 16, 72, 73], 140),
+                    view("okay. right then", &[30, 130, 131, 132], 140),
+                ],
+            ),
+        ];
+        let mut b = SentenceBuilder::new(0.08, 1.0);
+        let mut cursor = SentenceCursor::default();
+        let mut held: BTreeMap<(String, usize), (f64, f64, String)> = BTreeMap::new();
+        let mut resent = 0;
+        for (offset, hyps) in &steps {
+            b.update(*offset, hyps);
+            let updates = b.changes(&mut cursor);
+            resent += updates.len();
+            for u in updates {
+                held.insert((u.speaker, u.index), (u.start_time, u.end_time, u.words));
+            }
+            let mut want: Vec<_> = b
+                .entries()
+                .into_iter()
+                .map(|e| (e.speaker, e.start_time, e.end_time, e.words))
+                .collect();
+            let mut got: Vec<_> = held
+                .iter()
+                .map(|((spk, _), (s, e, w))| (spk.clone(), *s, *e, w.clone()))
+                .collect();
+            want.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            got.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            assert_eq!(got, want, "after the update at offset {offset}");
+        }
+        assert!(b.changes(&mut cursor).is_empty(), "nothing changed since");
+        // Nothing is resent when a step adds no text (step 2 for speaker 0).
+        assert!(resent < steps.len() * 4, "{resent}");
     }
 
     /// Speakers that were never decoded produce nothing, and empty text never
