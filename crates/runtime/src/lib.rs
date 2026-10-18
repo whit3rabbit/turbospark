@@ -84,6 +84,8 @@ pub use whisper::{WhisperProgress, WhisperRunner, WhisperSegment, WhisperTranscr
 #[cfg(target_os = "macos")]
 pub mod moonshine;
 #[cfg(target_os = "macos")]
+pub mod nemotron_diar_metal;
+#[cfg(target_os = "macos")]
 pub mod qwen3_asr;
 #[cfg(target_os = "macos")]
 pub mod qwen3_asr_metal;

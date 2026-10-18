@@ -65,6 +65,13 @@ Use weights converted from the pinned `.nemo` at `f667ed73`
 `mlx-community/Nemotron-3-Diarization` conversion comes from revision
 `723e19c6`.
 
+`CoupledDiarizer::with_executor` swaps `encoder_forward` for an
+`EncoderExecutor`, which is how `crates/runtime/src/nemotron_diar_metal.rs`
+runs the encoder stack on Metal in f32. That path is tolerance-gated, not
+bit-exact: `crates/runtime/tests/nemotron_diar_metal.rs` holds the encoder
+to 1e-4 of RMS and the coupled chunk predictions to 1e-4 of NeMo with no
+0.5 decision flips. The CPU path stays the default and the reference.
+
 ## Example Usage
 
 Run the Nemotron diarization demo:

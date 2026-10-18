@@ -948,17 +948,19 @@ impl NemotronDiarization {
         feature_length: usize,
         state: &mut StreamingState,
         central_frames: usize,
-    ) -> Vec<f32> {
-        self.streaming_step_with(
-            &self.config.modules,
-            &self.aosc_cfg,
-            features,
-            window_frames,
-            feature_length,
-            state,
-            central_frames,
-        )
-        .high_central
+    ) -> Result<Vec<f32>> {
+        Ok(self
+            .streaming_step_with(
+                &self.config.modules,
+                &self.aosc_cfg,
+                features,
+                window_frames,
+                feature_length,
+                state,
+                central_frames,
+                None,
+            )?
+            .high_central)
     }
 
     /// [`streaming_step`](Self::streaming_step) with explicit streaming and
@@ -966,7 +968,8 @@ impl NemotronDiarization {
     /// touching the model's configuration. Also returns the chunk at encoder
     /// resolution: NeMo's 80 ms chunk predictions are the mean of each
     /// `subsampling_factor` group of the 10 ms head output, which is exactly
-    /// the `low` array this step already scores the cache with.
+    /// the `low` array this step already scores the cache with. `executor`
+    /// replaces [`encoder_forward`](Self::encoder_forward) when set.
     #[allow(clippy::too_many_arguments)]
     fn streaming_step_with(
         &self,
@@ -977,7 +980,8 @@ impl NemotronDiarization {
         feature_length: usize,
         state: &mut StreamingState,
         central_frames: usize,
-    ) -> StepPreds {
+        executor: Option<&mut (dyn EncoderExecutor + '_)>,
+    ) -> Result<StepPreds> {
         let factor = m.subsampling_factor;
         let d = self.emb_dim();
         let n_spk = self.config.num_speakers;
@@ -991,11 +995,14 @@ impl NemotronDiarization {
         combined.extend_from_slice(&state.spkcache);
         combined.extend_from_slice(&state.fifo);
         combined.extend_from_slice(&chunk);
-        self.encoder_forward(
-            &mut combined,
+        let (rows, valid) = (
             cache_len + fifo_len + chunk_rows,
             lengths + cache_len + fifo_len,
         );
+        match executor {
+            Some(executor) => executor.encoder_forward(&mut combined, rows, valid)?,
+            None => self.encoder_forward(&mut combined, rows, valid),
+        }
         let mut high = self.speaker_head(&combined, cache_len + fifo_len + chunk_rows);
 
         // Zero the subpixel padding frames past the valid span.
@@ -1066,7 +1073,7 @@ impl NemotronDiarization {
             }
         }
         state.frames_processed += central_frames;
-        result
+        Ok(result)
     }
 
     /// Feeds one chunk of raw mono PCM at the model sample rate (the
@@ -1129,7 +1136,7 @@ impl NemotronDiarization {
             )?;
             let feature_length = window_frames.min(available);
             let result =
-                self.streaming_step(&features, window_frames, feature_length, &mut state, n);
+                self.streaming_step(&features, window_frames, feature_length, &mut state, n)?;
             outputs.push(result);
             let keep_from =
                 (state.frames_processed * proc.hop_length).saturating_sub(proc.n_fft / 2 + 1);
@@ -1313,6 +1320,84 @@ impl SpeakerConfig {
     }
 }
 
+/// Runs [`NemotronDiarization::encoder_forward`] somewhere else, such as
+/// the runtime's Metal path. `x` is `[rows, d_model]` t-major, updated in
+/// place, and keys at or past `lengths` are masked. An executor documents
+/// its own tolerance against the CPU encoder; it is not bit-exact.
+pub trait EncoderExecutor: Send {
+    fn encoder_forward(&mut self, x: &mut [f32], rows: usize, lengths: usize) -> Result<()>;
+}
+
+/// One transformer layer's weights, borrowed for upload to a device.
+/// Linear weights are `[out, in]`.
+pub struct EncoderLayerWeights<'a> {
+    pub norm1: (&'a [f32], &'a [f32]),
+    /// Fused `[3 * d_model, d_model]` projection, Q then K then V rows.
+    pub qkv_w: &'a [f32],
+    pub qkv_b: Option<&'a [f32]>,
+    pub out_w: &'a [f32],
+    pub out_b: &'a [f32],
+    pub norm2: (&'a [f32], &'a [f32]),
+    pub ff1_w: &'a [f32],
+    pub ff1_b: &'a [f32],
+    pub ff2_w: &'a [f32],
+    pub ff2_b: &'a [f32],
+}
+
+/// The encoder's geometry and weights, borrowed for a device executor
+/// that reproduces [`NemotronDiarization::encoder_forward`]: optional
+/// input scaling and embed norm, then pre-norm layers (layer norm, fused
+/// QKV, NeoX RoPE on Q and K, key-masked attention, output projection,
+/// residual, layer norm, erf-GELU feed-forward, residual), then the final
+/// layer norm. Every layer norm uses `eps = 1e-5`.
+pub struct EncoderWeights<'a> {
+    pub d_model: usize,
+    pub heads: usize,
+    pub ff_hidden: usize,
+    pub rotary_dim: usize,
+    pub rope_base: f32,
+    pub xscaling: bool,
+    pub embed_norm: Option<(&'a [f32], &'a [f32])>,
+    pub layers: Vec<EncoderLayerWeights<'a>>,
+    pub final_norm: (&'a [f32], &'a [f32]),
+}
+
+impl NemotronDiarization {
+    /// The encoder weights and geometry for a device executor.
+    pub fn encoder_weights(&self) -> EncoderWeights<'_> {
+        let enc = &self.config.encoder;
+        EncoderWeights {
+            d_model: enc.d_model,
+            heads: enc.n_heads,
+            ff_hidden: (enc.d_model as f32 * enc.ff_expansion) as usize,
+            rotary_dim: self.rotary_dim(),
+            rope_base: enc.rope_base,
+            xscaling: enc.xscaling,
+            embed_norm: self
+                .embed_norm
+                .as_ref()
+                .map(|(w, b)| (w.as_slice(), b.as_slice())),
+            layers: self
+                .layers
+                .iter()
+                .map(|l| EncoderLayerWeights {
+                    norm1: (&l.norm1_w, &l.norm1_b),
+                    qkv_w: &l.attn.w_qkv_w,
+                    qkv_b: l.attn.w_qkv_b.as_deref(),
+                    out_w: &l.attn.out_w,
+                    out_b: &l.attn.out_b,
+                    norm2: (&l.norm2_w, &l.norm2_b),
+                    ff1_w: &l.ffn.l1_w,
+                    ff1_b: &l.ffn.l1_b,
+                    ff2_w: &l.ffn.l2_w,
+                    ff2_b: &l.ffn.l2_b,
+                })
+                .collect(),
+            final_norm: (&self.final_norm_w, &self.final_norm_b),
+        }
+    }
+}
+
 /// The diarizer stepped by an external feature stream, as NeMo's
 /// `SpeakerTaggedASR` does: each call takes the ASR's own mel chunk (with
 /// the ASR pre-encode cache already removed) and returns that chunk's
@@ -1326,6 +1411,8 @@ pub struct CoupledDiarizer<'m> {
     state: StreamingState,
     /// Cumulative `[frames, num_speakers]` predictions at 80 ms.
     preds: Vec<f32>,
+    /// Runs the encoder in place of the CPU path when set.
+    executor: Option<Box<dyn EncoderExecutor + 'm>>,
 }
 
 impl NemotronDiarization {
@@ -1355,7 +1442,22 @@ impl NemotronDiarization {
             state: self.init_streaming_state(),
             preds: Vec::new(),
             model: self,
+            executor: None,
         })
+    }
+}
+
+impl<'m> CoupledDiarizer<'m> {
+    /// Runs the encoder through `executor` (a device path) from the next
+    /// step on.
+    pub fn with_executor(mut self, executor: Box<dyn EncoderExecutor + 'm>) -> Self {
+        self.executor = Some(executor);
+        self
+    }
+
+    /// The model this session steps.
+    pub fn model(&self) -> &'m NemotronDiarization {
+        self.model
     }
 }
 
@@ -1389,7 +1491,8 @@ impl CoupledDiarizer<'_> {
             valid,
             &mut self.state,
             frames,
-        );
+            self.executor.as_deref_mut(),
+        )?;
         let start = self.preds.len();
         self.preds.extend_from_slice(&step.low_chunk);
         Ok(&self.preds[start..])

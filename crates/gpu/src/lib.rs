@@ -126,6 +126,8 @@ mod moe_prefill_batch_gguf;
 #[cfg(target_os = "macos")]
 mod moonshine_frontend;
 #[cfg(target_os = "macos")]
+mod nemotron_diar;
+#[cfg(target_os = "macos")]
 mod ple;
 #[cfg(target_os = "macos")]
 mod power_state;
@@ -339,6 +341,8 @@ pub use moonshine_frontend::{
     encode_moonshine_conv1d, encode_moonshine_embed, encode_moonshine_groupnorm,
     encode_moonshine_rope, encode_moonshine_swiglu, encode_moonshine_tanh,
 };
+#[cfg(target_os = "macos")]
+pub use nemotron_diar::encode_rope_neox_rows as encode_nemotron_rope_neox;
 #[cfg(target_os = "macos")]
 pub use ple::encode_ple_gate;
 #[cfg(target_os = "macos")]

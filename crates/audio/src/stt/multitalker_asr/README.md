@@ -106,6 +106,7 @@ environment (CPU, FP32).
 | Full IS1004a clip, replayed NeMo diarization | All 108 steps identical; SegLST identical |
 | Full IS1004a clip, live coupled diarizer | All 108 steps identical (chunk predictions within 4.2e-6); SegLST identical |
 | Frozen AMI panel, live pipeline | SegLST identical to NeMo CPU on all 12 clips (356 segments: speakers, millisecond times, words). 160/1740 on the matched six (9.20%) and 355/3814 on the 12-clip panel (9.31%), every clip equal to its frozen count |
+| Frozen AMI panel, diarizer encoder on Metal (f32, `crates/runtime/src/nemotron_diar_metal.rs`) | Encoder within 1.4e-5 of RMS of the CPU on a full 542-row window; coupled chunk predictions within 2.2e-6 of NeMo over 54 steps, no 0.5 decision flips, identical cache and FIFO lengths; panel SegLST identical to NeMo on all 12 clips, 160/1740 and 355/3814 |
 
 Tolerances on large-magnitude tensors are RMS-scaled (`max |a - b| / rms(b)
 <= 1e-4`) because f32 accumulation order differs from torch's blocked GEMM.
@@ -124,6 +125,12 @@ with the tiled kernels alone and 153.9 s before them. IS1004a_00140 (2
 speakers) 35.0 s (RTF 0.29) against 47.5 s and 142.7 s. The SegLST is
 identical across all three builds.
 
+With the diarizer encoder on Metal (`crates/runtime` example
+`frozen_e_metal`, ASR still on the CPU, same host): IS1000a_00510 16.9 and
+16.7 s (RTF 0.14) against 36.9 s with the CPU diarizer from the same
+binary, and RTF 0.13 to 0.17 across the 12-clip panel. The CPU ASR
+encoder is now the critical path.
+
 ## Tests
 
 | Test | Needs |
@@ -132,6 +139,7 @@ identical across all three builds.
 | `frozen_e_step_geometry_known_values`, `speaker_kernels_match_nemo`, `stream_steps_match_nemo` | `TURBOSPEECH_MULTITALKER_MODEL` |
 | `frontend_matches_nemo`, `scheduler_with_replayed_diarization_matches_nemo_full_clip` | plus `TURBOSPEECH_FROZEN_E_TRACE` |
 | `scheduler_with_live_diarization_matches_nemo_full_clip` | plus `TURBOSPEECH_NEMOTRON_MODEL` |
+| `crates/runtime/tests/nemotron_diar_metal.rs`, `crates/gpu/tests/nemotron_diar_parity.rs` | A Metal device, plus `TURBOSPEECH_NEMOTRON_MODEL` for the runtime test |
 
 `TURBOSPEECH_FROZEN_E_TRACE` is a trace directory from
 `scripts/nemo_multitalker_trace.py` (its `meta.json` names the clip). The
@@ -162,7 +170,9 @@ cargo run -p turbospark-bench --release --bin meeting_eval -- score --seglst <ru
 ## Open
 
 - Runtime session, FFI, Swift and catalog `can_run` (Phase 5).
-- Metal or Core ML encoder and diarizer (Phase 4). Only F32 weights load.
+- The ASR encoder on Metal (relative-position cached attention, the
+  causal conv module, per-speaker caches). The diarizer encoder runs on
+  Metal already. Only F32 weights load.
 - A live incremental frontend. The port computes features over the whole
   recording, as the frozen replay did.
 - Recordings outside the frozen panel.
