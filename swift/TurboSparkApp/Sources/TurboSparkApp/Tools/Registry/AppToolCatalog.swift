@@ -247,26 +247,44 @@ public enum AppToolCatalog {
     /// project, agent, feature, and runtime filters used by prompt assembly.
     public static func captureTurnAvailableTools(
         for project: AppProject?,
+        chatToolsEnabled: Bool = false,
         globalMcpServers: [McpServerConfig],
         contextTokens: Int?,
         webToolsEnabled: Bool,
         browserAvailability: BrowserToolAvailability = .disabled
     ) -> TurnAvailableTools {
-        guard let project else { return TurnAvailableTools(definitions: []) }
-        let promptDefinitions = tools(
-            for: project.agentType,
-            projectURL: project.rootDirectoryURL,
+        if let project {
+            let promptDefinitions = tools(
+                for: project.agentType,
+                projectURL: project.rootDirectoryURL,
+                contextTokens: contextTokens,
+                webToolsEnabled: webToolsEnabled,
+                browserAvailability: browserAvailability)
+            let visibleServers = AppToolCatalogMcp.visibleServers(
+                global: globalMcpServers, project: project)
+            let mcpSnapshot = AppToolCatalogMcp.catalogSnapshot(
+                servers: visibleServers, permissions: project.permissions)
+            return TurnAvailableTools(
+                definitions: promptDefinitions + mcpSnapshot.definitions,
+                promptDefinitions: promptDefinitions,
+                deferredMcpTools: mcpSnapshot.deferredDescriptors)
+        }
+
+        guard chatToolsEnabled else { return TurnAvailableTools(definitions: []) }
+
+        let chatDefinitions = tools(
+            for: .general,
+            projectURL: nil,
             contextTokens: contextTokens,
             webToolsEnabled: webToolsEnabled,
-            browserAvailability: browserAvailability)
-        let visibleServers = AppToolCatalogMcp.visibleServers(
-            global: globalMcpServers, project: project)
-        let mcpSnapshot = AppToolCatalogMcp.catalogSnapshot(
-            servers: visibleServers, permissions: project.permissions)
+            browserAvailability: browserAvailability
+        ).filter { tool in
+            !AppToolRegistry.workspaceRootedToolNames.contains(tool.function.name.lowercased())
+        }
         return TurnAvailableTools(
-            definitions: promptDefinitions + mcpSnapshot.definitions,
-            promptDefinitions: promptDefinitions,
-            deferredMcpTools: mcpSnapshot.deferredDescriptors)
+            definitions: chatDefinitions,
+            promptDefinitions: chatDefinitions,
+            deferredMcpTools: [])
     }
 
     /// Generates Markdown / XML system prompt guidance for tool use.

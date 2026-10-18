@@ -515701,6 +515701,691 @@
         }
       }
     },
+    "Enable tools in Chat" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enable tools in Chat"
+          }
+        },
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "تمكين الأدوات في الدردشة"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tools im Chat aktivieren"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Activar herramientas en el chat"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Activer les outils dans le chat"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "הפעלת כלים בצ'אט"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "चैट में टूल सक्षम करें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aktifkan alat di Obrolan"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Abilita strumenti nella chat"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "チャットでツールを有効にする"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "채팅에서 도구 활성화"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tools in chat inschakelen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Włącz narzędzia na czacie"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ativar ferramentas no chat"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включить инструменты в чате"
+          }
+        },
+        "sv" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aktivera verktyg i chatten"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "เปิดใช้งานเครื่องมือในแชท"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sohbette araçları etkinleştir"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Увімкнути інструменти в чаті"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bật công cụ trong Trò chuyện"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在聊天中启用工具"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在聊天中啟用工具"
+          }
+        }
+      }
+    },
+    "Tools enabled in Chat" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tools enabled in Chat"
+          }
+        },
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "تم تمكين الأدوات في الدردشة"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tools im Chat aktiviert"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Herramientas activadas en el chat"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Outils activés dans le chat"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "הכלים מופעלים בצ'אט"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "चैट में टूल सक्षम हैं"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alat diaktifkan di Obrolan"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Strumenti abilitati nella chat"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "チャットでツールが有効"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "채팅에서 도구 활성화됨"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tools ingeschakeld in chat"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Narzędzia włączone na czacie"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ferramentas ativadas no chat"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Инструменты в чате включены"
+          }
+        },
+        "sv" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verktyg aktiverade i chatten"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "เปิดใช้งานเครื่องมือในแชทแล้ว"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sohbette araçlar etkin"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Інструменти в чаті ввімкнено"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Công cụ đã được bật trong Trò chuyện"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已在聊天中启用工具"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已在聊天中啟用工具"
+          }
+        }
+      }
+    },
+    "Tools in Chat" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tools in Chat"
+          }
+        },
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "الأدوات في الدردشة"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tools im Chat"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Herramientas en el chat"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Outils dans le chat"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "כלים בצ'אט"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "चैट में टूल"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Alat di Obrolan"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Strumenti nella chat"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "チャット内のツール"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "채팅 내 도구"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tools in chat"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Narzędzia na czacie"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ferramentas no chat"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Инструменты в чате"
+          }
+        },
+        "sv" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verktyg i chatten"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "เครื่องมือในแชท"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sohbetteki Araçlar"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Інструменти в чаті"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Công cụ trong Trò chuyện"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "聊天中的工具"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "聊天中的工具"
+          }
+        }
+      }
+    },
+    "Enable tools in Chat by default" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enable tools in Chat by default"
+          }
+        },
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "تمكين الأدوات في الدردشة افتراضيًا"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tools im Chat standardmäßig aktivieren"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Activar herramientas en el chat por omisión"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Activer les outils dans le chat par défaut"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "הפעלת כלים בצ'אט כברירת מחדל"
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "डिफ़ॉल्ट रूप से चैट में टूल सक्षम करें"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aktifkan alat di Obrolan secara default"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Abilita strumenti nella chat per impostazione predefinita"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "デフォルトでチャットのツールを有効にする"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "기본적으로 채팅에서 도구 활성화"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tools in chat standaard inschakelen"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Domyślnie włącz narzędzia na czacie"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ativar ferramentas no chat por padrão"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включать инструменты в чате по умолчанию"
+          }
+        },
+        "sv" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Aktivera verktyg i chatten som standard"
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "เปิดใช้งานเครื่องมือในแชทตามค่าเริ่มต้น"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sohbette araçları varsayılan olarak etkinleştir"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Увімкнути інструменти в чаті за замовчуванням"
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bật công cụ trong Trò chuyện theo mặc định"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "默认在聊天中启用工具"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "預設在聊天中啟用工具"
+          }
+        }
+      }
+    },
+    "Allows the assistant to use web search, browser automation, interactive questions, and global integrations during conversational chats. Codebase file edits and terminal commands remain scoped to Projects." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Allows the assistant to use web search, browser automation, interactive questions, and global integrations during conversational chats. Codebase file edits and terminal commands remain scoped to Projects."
+          }
+        },
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "يسمح للمساعد باستخدام البحث على الويب والأتمتة في المتصفح والأسئلة التفاعلية والتكاملات العامة أثناء محادثات الدردشة. تبقى تعديلات ملفات قاعدة التعليمات البرمجية وأوامر الطرفية مقتصرة على المشاريع."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ermöglicht dem Assistenten die Nutzung von Websuche, Browser-Automatisierung, interaktiven Fragen und globalen Integrationen in Chats. Code-Dateibearbeitungen und Terminalbefehle bleiben Projekten vorbehalten."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Permite al asistente usar búsqueda web, automatización del navegador, preguntas interactivas e integraciones globales en el chat. La edición de archivos de código y comandos de terminal permanecen limitados a Proyectos."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Permet à l'assistant d'utiliser la recherche web, l'automatisation du navigateur, les questions interactives et les intégrations globales dans les chats. Les modifications de code et commandes de terminal restent réservées aux Projets."
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "מאפשר לעוזר להשתמש בחיפוש באינטרנט, אוטומציה של דפדפן, שאלות אינטראקטיביות ואינטגרציות גלובליות במהלך צ'אטים. עריכת קבצי קוד ופקודות טרמינל נשארות מוגבלות לפרויקטים בלבד."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "सहायक को बातचीत के दौरान वेब खोज, ब्राउज़र ऑटोमेशन, इंटरैक्टिव प्रश्न और वैश्विक एकीकरण का उपयोग करने की अनुमति देता है। कोडबेस फ़ाइल संपादन और टर्मिनल कमांड प्रोजेक्ट्स तक ही सीमित रहते हैं।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Memungkinkan asisten menggunakan pencarian web, otomatisasi browser, pertanyaan interaktif, dan integrasi global selama obrolan. Pengeditan file kode dan perintah terminal tetap dibatasi pada Proyek."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Consente all'assistente di utilizzare ricerca web, automazione del browser, domande interattive e integrazioni globali durante le chat. Le modifiche ai file di codice e i comandi del terminale rimangono limitati ai Progetti."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "チャット会話中にアシスタントがウェブ検索、ブラウザ自動化、対話型質問、グローバル連携を使用できるようにします。コードベースのファイル編集とターミナルコマンドはプロジェクトに限定されます。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대화형 채팅 중에 어시스턴트가 웹 검색, 브라우저 자동화, 대화형 질문 및 전역 통합을 사용할 수 있도록 허용합니다. 코드베이스 파일 편집 및 터미널 명령은 프로젝트 범위로 제한됩니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hiermee kan de assistent zoekopdrachten op het web, browserautomatisering, interactieve vragen en globale integraties gebruiken tijdens chats. Het bewerken van codebestanden en terminalopdrachten blijft beperkt tot Projecten."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Umożliwia asystentowi korzystanie z wyszukiwania w sieci, automatyzacji przeglądarki, interaktywnych pytań i globalnych integracji podczas czatów. Edycja plików kodu i polecenia terminala pozostają ograniczone do Projektów."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Permite que o assistente use pesquisa na web, automação do navegador, perguntas interativas e integrações globais durante conversas no chat. As edições de arquivos de código e comandos de terminal permanecem limitadas a Projetos."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Позволяет ассистенту использовать веб-поиск, автоматизацию браузера, интерактивные вопросы и глобальные интеграции в беседах чата. Редактирование файлов кодовой базы и команды терминала остаются привязаны к Проектам."
+          }
+        },
+        "sv" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Låter assistenten använda webbsökning, webbläsarautomatisering, interaktiva frågor och globala integrationer under chattar. Redigering av kodfiler och terminalkommandon förblir begränsade till Projekt."
+          }
+        },
+        "th" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "อนุญาตให้ผู้ช่วยใช้การค้นหาเว็บ การทำงานอัตโนมัติในเบราว์เซอร์ คำถามแบบโต้ตอบ และการผสานรวมทั่วไประหว่างการสนทนาในแชท การแก้ไขไฟล์โค้ดและคำสั่งเทอร์มินัลยังคงจำกัดไว้เฉพาะในโปรเจกต์"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Asistanın sohbetler sırasında web araması, tarayıcı otomasyonu, etkileşimli sorular ve genel entegrasyonlar kullanmasına izin verir. Kod tabanı dosya düzenlemeleri ve terminal komutları Projeler ile sınırlı kalır."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Дозволяє асистенту використовувати вебпошук, автоматизацію браузера, інтерактивні запитання та глобальні інтеграції під час спілкування в чаті. Редагування файлів кодової бази та команди термінала залишаються обмеженими Проєктами."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cho phép trợ lý sử dụng tìm kiếm web, tự động hóa trình duyệt, câu hỏi tương tác và các tích hợp toàn cầu trong khi trò chuyện. Việc chỉnh sửa tệp mã nguồn và lệnh dòng lệnh vẫn chỉ giới hạn trong Dự án."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允许助手在会话聊天中使用网络搜索、浏览器自动化、互动式提问和全局集成。代码库文件修改和终端命令仍严格限制在项目中。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允許助手在對話聊天中使用網路搜尋、瀏覽器自動化、互動式提問和全域整合。程式碼庫檔案修改和終端機指令仍嚴格限制在專案中。"
+          }
+        }
+      }
+    },
     "Voice Notes" : {
       "extractionState" : "manual",
       "localizations" : {
