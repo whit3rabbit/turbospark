@@ -1,0 +1,87 @@
+{
+  "generator": "crates/embeddings/tools/gen_embeddinggemma_fixtures.py",
+  "packages": {
+    "torch": "2.14.1",
+    "numpy": "2.5.4",
+    "safetensors": "0.8.0",
+    "transformers": "4.57.1",
+    "sentence-transformers": "5.1.2",
+    "tokenizers": "0.22.2"
+  },
+  "reference": "transformers Gemma3TextModel (sdpa, f32, CPU) + sentence-transformers",
+  "pins": {
+    "real": {
+      "repo": "google/embeddinggemma-300m",
+      "revision": "57c266a740f537b4dc058e1b0cda161fd15afa75"
+    },
+    "mlx": {
+      "bf16": {
+        "repo": "mlx-community/embeddinggemma-300m-bf16",
+        "revision": "2f420efb007317a1ef2aa1608f87ef24226e6807"
+      },
+      "8bit": {
+        "repo": "mlx-community/embeddinggemma-300m-8bit",
+        "revision": "c8316c9e35cf8830541b04d315398c67faa6e497"
+      },
+      "4bit": {
+        "repo": "mlx-community/embeddinggemma-300m-4bit",
+        "revision": "5d9ef074df3957afc5c77127f208fddbc3c54187"
+      }
+    },
+    "qat": {
+      "q8": {
+        "repo": "google/embeddinggemma-300m-qat-q8_0-unquantized",
+        "revision": "7b5b24595322ab0ea4d08827066860a6df8cb0aa"
+      },
+      "q4": {
+        "repo": "google/embeddinggemma-300m-qat-q4_0-unquantized",
+        "revision": "7740c61c3ad98a9deb8423a20388ab6c3c5c45f2"
+      }
+    },
+    "tiny": "seeded random init (numpy default_rng(0)), no download"
+  },
+  "files": {
+    "mlx_provenance.json": "647c2658ee6261cbeae4774f066cbbb17bf771d3da406efd67263ef1a1510fc0",
+    "real_cases.json": "17ca378ee4cdbb002ce0cb632f1ab9209923af6d494eaafa9bc25d5dd1b54956",
+    "real_embed.npy": "17b2905d17caeedd4b202bf97438684f516ce3d401bb228833223b699a06a5e6",
+    "real_embed_mrl256.npy": "86f2123d65f44d3adf64b4be32583bdc236d544044e32ed08781849c78b71291",
+    "real_mlx_4bit_embed.npy": "ee2d7fee7af1fdedee801c7e18f21a2a8da33ccddee15be6d044258cf0186e60",
+    "real_mlx_8bit_embed.npy": "db63cceaeb5796ef3d77ac5e5a43557e90151b9739f399c16ab1f450b3ff8fe2",
+    "real_mlx_bf16_embed.npy": "a6f1b088a8baab78bc9c74cf33021335ca076ca9b540e63bc686a9b8eeaf5637",
+    "real_qat_q4_embed.npy": "2af2de9d73bda3d7ad78651fbbb6d5e77dd2433aa13c085c728a8971602f68c5",
+    "real_qat_q8_embed.npy": "ade212fdb44e9711459fb8c0255db7266c2742efb376d9be2527f25ec2b8cb37",
+    "real_trace_case0.npy": "a151bc50f725e7e27405e9b39ed680af2ac7aedb653e7a53d3d6f2eae4313a09",
+    "tiny_cases.json": "6dfc2c1eccf203487f5f3d5ea5a16f375074d2e4e8904e8d3ad6329d593eb142",
+    "tiny_hf/1_Pooling/config.json": "21fe43e9223100b3c400ea62cab08e82e1ba956a3a6f0fd61c296667115a6244",
+    "tiny_hf/2_Dense/config.json": "5cd15117f9e90a584a3169f50d4e3a452d0af4960a26491ecc0e1056dc70855a",
+    "tiny_hf/2_Dense/model.safetensors": "6763d408dc663bac473153a9a77549ee83378cc4eed739b0678c57a5d2c8be39",
+    "tiny_hf/3_Dense/config.json": "82f9615cbc9e5dc5cdba3be1d29af3d4cf2fd16defcbc572fd2f4dfb2fdaebcc",
+    "tiny_hf/3_Dense/model.safetensors": "07f7ba117e272d1b8213349ceb0d6fceb4694ebf06bc9862f2317f5e7295783f",
+    "tiny_hf/config.json": "db556f192445ca437c94d74bad07d03e761c521c36af38dbf7d44cf12e4e45f2",
+    "tiny_hf/config_sentence_transformers.json": "aa6911645c3704654d1e82dac67ca585cd74643146aeb216231ca0bfafacdf5d",
+    "tiny_hf/model.safetensors": "fd2858ba1d61b4b7a67c71650fbf75f655f1da3d06eb1c9762a7d75060a5f641",
+    "tiny_hf/modules.json": "9f00b27129bc079099d3321ab00ee5dfbefd1c9b0eca1120272ed62a4cf313f8",
+    "tiny_hf/sentence_bert_config.json": "d00118a88697733d247d319f5b69fd277906d15f6924dac5327e3a0977f527fb",
+    "tiny_hf_embed_0.npy": "f2533ea385bb25143041940c7865c4ed84c9d4c5ac223492b5f3e261035f073a",
+    "tiny_hf_embed_1.npy": "b49509ef82554ce178727e45d8fa957ad5e6d76954ca302037b590cb30f2da62",
+    "tiny_hf_embed_2.npy": "c84aac1a9bf7d65c2972d04d35f2c05a1c21c178853b7a4f059d9b2fcb8bbc3c",
+    "tiny_hf_embed_3.npy": "fe22a521081e71543dfc36101878800824c7de19101bef04eb6dda0801368f56",
+    "tiny_hf_hidden_0.npy": "1c320de8ed290d8bbcd7445dec0e40862b5f5c084a23cd338b7142d0997083e6",
+    "tiny_hf_hidden_1.npy": "644c4a0945d01c79b44fcff177223c8c493c021c92dc9c46a7a1a863d38d43d6",
+    "tiny_hf_hidden_2.npy": "a9f1f034758d0f034e5b465708b40ac79c8e7dc2fc874ee90590e314b18e9ecc",
+    "tiny_hf_hidden_3.npy": "2e3498786dadb1293fd966bcb488d4ac965f8d7907f0c002f5d4457b395e9c05",
+    "tiny_mlx_q4/config.json": "d10cdf1cf7b7bdf10322e53d4caa53666954bea32d538bddee8d3e95a67d1c39",
+    "tiny_mlx_q4/config_sentence_transformers.json": "aa6911645c3704654d1e82dac67ca585cd74643146aeb216231ca0bfafacdf5d",
+    "tiny_mlx_q4/model.safetensors": "dc37b545c0492dbe9364db3e28f78765611b77e77be9396bc502407670102387",
+    "tiny_mlx_q4/modules.json": "9f00b27129bc079099d3321ab00ee5dfbefd1c9b0eca1120272ed62a4cf313f8",
+    "tiny_mlx_q4/sentence_bert_config.json": "d00118a88697733d247d319f5b69fd277906d15f6924dac5327e3a0977f527fb",
+    "tiny_q4_embed_0.npy": "9741cfa64ec219ca5059e8d88dc3184e5d79b3f97d1cf16ddffabf80c415b100",
+    "tiny_q4_embed_1.npy": "5dead353db84731856207f3095e68424aee8a083b1e0808578c701829b8314d1",
+    "tiny_q4_embed_2.npy": "09bd81b1dec2a0ab62c3c2823daad5e70a7f40288d14779d82228e19718ad20f",
+    "tiny_q4_embed_3.npy": "f536a02c3aed7304169bf14c911ccb6d9910b25bf3d14fbed9c9fb9ab8e558a0",
+    "tiny_q4_hidden_0.npy": "1d43e54bcb321c302de40b2781f46fbf9197c4167f1dba37236eb4943e5fbc71",
+    "tiny_q4_hidden_1.npy": "693eb5011370d883d75f913f150893344711d6540d9f137dd01242d395a50308",
+    "tiny_q4_hidden_2.npy": "aa5e877633972500e73be11ab0176d833147a2593780c9cb27f0d5e9c9a8d731",
+    "tiny_q4_hidden_3.npy": "1bd0f33de1588d20666e064b10a90aeee1ac6dde0947fe676dc64144f1fcb1d8"
+  }
+}

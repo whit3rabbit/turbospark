@@ -65,7 +65,7 @@ extension ThemePreset {
     private static func palette(_ id: String, _ name: String, _ la: String, _ lb: String, _ lf: String,
                                 _ da: String, _ db: String, _ df: String) -> ThemePreset {
         ThemePreset(id: id, name: name,
-            light: ThemeModeConfig(preset: name, accentName: name, accentHex: la, backgroundHex: lb, foregroundHex: lf),
+            light: ThemeModeConfig(preset: name, accentName: name, accentHex: la, backgroundHex: lb, foregroundHex: lf, contrast: 45),
             dark: ThemeModeConfig(preset: name, accentName: name, accentHex: da, backgroundHex: db, foregroundHex: df, contrast: 65))
     }
 }

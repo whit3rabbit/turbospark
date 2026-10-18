@@ -15,7 +15,7 @@ gpu = { package = "turbospark-gpu", path = "../gpu" }
 
 ## Platform Requirements
 
-- **macOS only**: All source code is platform-gated with `#[cfg(target_os = "macos")]`. On non-macOS platforms, this crate compiles to an empty module.
+- **macOS only**: All source code is platform-gated with `#[cfg(target_os = "macos")]`. On non-macOS platforms, this crate compiles to nothing but a `TokenId` re-export.
 - Requires a Metal-capable Apple Silicon device (M1/M2/M3/M4) and the Xcode Metal toolchain (`xcrun -sdk macosx metal`) for compiling shaders and running tests.
 
 ## Key Modules
@@ -31,19 +31,19 @@ gpu = { package = "turbospark-gpu", path = "../gpu" }
 - `rms_norm.rs`: RMSNorm dispatches (`rmsnorm_no_scale`, `rmsnorm_bf16w`, headwise norm).
 - `rope.rs`: Rotary positional embedding dispatches (`rope_proportional_neox`, `rope_neox_subdim`, 2D spatial RoPE, YaRN).
 - `gdn.rs`, `gdn_shape.rs`, `gdn_state.rs`: Gated-DeltaNet linear attention dispatches (conv, SiLU, delta recurrence, gated norm) and persistent state buffers.
-- `dequant_int4_gemv.rs`, `dequant_int8_gemv.rs`, `dequant_int4_batch.rs`: INT4/INT8 affine GEMV and batch GEMM dispatches.
+- `dequant_int4_gemv.rs`, `dequant_int8_gemv.rs`, `dequant_int4_batch.rs`, `dequant_int8_batch.rs`: INT4/INT8 affine GEMV and batch GEMM dispatches.
 - `dequant_1bit_gemv.rs`, `dequant_1bit_gemm_batch.rs`, `dequant_2bit_gemv.rs`, `dequant_2bit_gemm_batch.rs`: 1-bit and 2-bit affine GEMV and speculative verification batch GEMM dispatches.
 - `dequant_iq_gemv.rs` & `dequant_q2_k_gemv.rs`: GGUF importance-quantized (IQ) codebook and Q2_K dispatches.
-- `dequant_q4_k_gemv.rs`, `dequant_q5_k_gemv.rs`, `dequant_q6_k_gemv.rs`, `dequant_q8_0_gemv.rs`: Standard GGUF k-quant dispatches.
-- `dflash_conv.rs`: DFlash block drafter causal convolution dispatches.
+- `dequant_q3_k_gemv.rs`, `dequant_q4_k_gemv.rs`, `dequant_q5_k_gemv.rs`, `dequant_q6_k_gemv.rs`, `dequant_q8_0_gemv.rs`: Standard GGUF k-quant dispatches.
+- `dflash_conv.rs`: DFlash block drafter grouped dynamic depthwise convolution dispatches.
 - `qsa_indexer.rs` & `qsa_indexer_state.rs`: QSA sparse attention indexer dispatches.
 - `ple.rs`: Per-layer n-gram embedding table dispatches.
 - `minimax_router.rs`: MiniMax FP32 sigmoid router dispatches.
 - `hyper_connection.rs`: Multi-stream residual connection dispatches.
 - `whisper_conv.rs` & `whisper_encoder.rs`: Metal compute dispatches for Whisper speech-to-text 1D convolution and transformer encoder blocks.
-- `moonshine_frontend.rs`: Moonshine speech encoder preprocessing and linear attention Metal dispatches.
+- `moonshine_frontend.rs`: Moonshine speech encoder preprocessing Metal dispatches (conv1d, groupnorm, RoPE, embedding, SwiGLU, tanh).
 - `resident_metal.rs`: `ResidentGpuWeights` zero-copy `MTLBuffer` creation over memory-mapped weight slices (`newBufferWithBytesNoCopy`).
-- `shaders/`: Metal Shading Language source files containing compute kernels across 39 `.metal` files.
+- `shaders/`: Metal Shading Language source files containing compute kernels across 46 `.metal` files.
 
 ## Development & Test Commands
 
@@ -57,7 +57,7 @@ cargo test -p turbospark-gpu --test rms_norm_parity -- --nocapture
 
 ## Tests
 
-This crate contains 61 integration test suites in `tests/` comparing GPU kernel outputs against CPU reference calculations in `crates/compute`:
+This crate contains 82 integration test suites in `tests/`, the parity ones comparing GPU kernel outputs against CPU reference calculations in `crates/compute`:
 - Quantization parity: `dequant_1bit_gemv_parity.rs`, `dequant_1bit_gemm_parity.rs`, `dequant_2bit_gemv_parity.rs`, `dequant_2bit_gemm_parity.rs`, `dequant_int4_gemv_parity.rs`, `dequant_int4_gemm_parity.rs`, `dequant_int8_gemv_parity.rs`, `dequant_iq_gemv_parity.rs`, `dequant_q4_k_gemv_parity.rs`, `dequant_q5_k_gemv_parity.rs`, `dequant_q6_k_gemv_parity.rs`, `dequant_q8_0_gemv_parity.rs`.
 - Attention and KV cache: `attention_decode_parity.rs`, `attention_indexed_parity.rs`, `attention_tq_parity.rs`, `attention_sinks.rs`, `attention_swa.rs`, `kv_cache.rs`, `kv_cache_quant.rs`, `kv_quantize_parity.rs`.
 - Normalization and activations: `rms_norm_parity.rs`, `rms_norm_grouped_parity.rs`, `scaled_norm_and_embed.rs`, `unary_activation_parity.rs`, `logit_softmax_parity.rs`.
@@ -69,4 +69,4 @@ This crate contains 61 integration test suites in `tests/` comparing GPU kernel 
 
 1. **Address-Keyed Pipeline Cache**: `MetalContext::pipeline` keys its function and pipeline caches on static shader string memory address (`&'static str`), NOT string contents. Callers must pass identical `include_str!` static constants.
 2. **Autorelease Pool Wrapping**: Metal command buffer and encoder allocations create autoreleased objects (~6 KiB per buffer). Tight decode loops must wrap dispatches inside `gpu::autorelease_pool` to avoid memory accumulation.
-3. **MoE Phase 2 Reduction Top-K**: `moe_phase2_down_reduce` dynamically dispatches up to runtime `top_k` slots (supporting architectures like `qwen4_exp` with `top_k=10`), while standard GGUF MoE kernels require exactly matching slot buffers.
+3. **MoE Phase 2 Reduction Top-K**: `moe_phase2_down_reduce_k8` dynamically dispatches up to runtime `top_k` slots (supporting architectures like `qwen4_exp` with `top_k=10`), while standard GGUF MoE kernels require exactly matching slot buffers.

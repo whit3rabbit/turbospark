@@ -68,3 +68,6 @@ testdata/
 !crates/bench/testdata/
 crates/audio/testdata/stepaudio2/tiny_weights.safetensors
 crates/audio/testdata/tts_chatterbox/dbg_*
+!crates/coreml/testdata/
+!crates/embeddings/testdata/
+!crates/runtime/testdata/

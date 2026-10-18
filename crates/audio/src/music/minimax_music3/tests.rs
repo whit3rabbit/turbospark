@@ -1034,27 +1034,31 @@ fn depth_decoder_steps_match_the_reference() {
 #[test]
 fn caption_request_matches_upstream_defaults_and_validation() {
     let request = TextGenerateRequest::new("soft piano ballad", "[verse]\nFirst line");
-    assert_eq!(request.resolve().unwrap(), (60.0, 30, 0));
+    assert_eq!(request.resolve(30).unwrap(), (60.0, 30, 0));
+    // The default step count comes from the caller; a named count always wins.
+    assert_eq!(request.resolve(21).unwrap(), (60.0, 21, 0));
 
     let mut custom = request.clone();
     custom.duration_seconds = Some(1.99);
     custom.steps = Some(4);
     custom.seed = Some(17);
-    assert_eq!(custom.resolve().unwrap(), (1.99, 4, 17));
+    assert_eq!(custom.resolve(30).unwrap(), (1.99, 4, 17));
 
     assert!(TextGenerateRequest::new("  ", "[instrumental]")
-        .resolve()
+        .resolve(30)
         .is_err());
-    assert!(TextGenerateRequest::new("piano", " \n ").resolve().is_err());
+    assert!(TextGenerateRequest::new("piano", " \n ")
+        .resolve(30)
+        .is_err());
     for duration in [0.0, -1.0, 360.01, f64::NAN, f64::INFINITY] {
         let mut invalid = request.clone();
         invalid.duration_seconds = Some(duration);
-        assert!(invalid.resolve().is_err(), "duration {duration}");
+        assert!(invalid.resolve(30).is_err(), "duration {duration}");
     }
     for steps in [0, 31] {
         let mut invalid = request.clone();
         invalid.steps = Some(steps);
-        assert!(invalid.resolve().is_err(), "steps {steps}");
+        assert!(invalid.resolve(30).is_err(), "steps {steps}");
     }
 }
 
@@ -1291,11 +1295,14 @@ fn mixed_residual_embeddings_promote_each_depth_head_after_the_first() {
     model.generate_frame_hiddens(&ids, 1, 7).unwrap();
     let calls = recorded.borrow();
     assert!(!calls.is_empty());
-    assert_eq!(calls.len() % (2 * (model.config.num_codebooks - 1)), 0);
-    for frame in calls.chunks_exact(2 * (model.config.num_codebooks - 1)) {
-        assert_eq!(&frame[..2], &[precision::DType::Bf16; 2]);
+    // MLX applies each audio head once over both CFG rows, so a frame makes one
+    // head call per residual codebook (a per-row call would make two).
+    let per_frame = model.config.num_codebooks - 1;
+    assert_eq!(calls.len() % per_frame, 0);
+    for frame in calls.chunks_exact(per_frame) {
+        assert_eq!(frame[0], precision::DType::Bf16);
         assert!(
-            frame[2..].iter().all(|d| *d == precision::DType::F32),
+            frame[1..].iter().all(|d| *d == precision::DType::F32),
             "later depth heads: {frame:?}"
         );
     }
@@ -1622,6 +1629,147 @@ fn flow_guidance_reuse_is_opt_in_and_gated_by_warmup() {
         model.run_flow(&hiddens, frames, steps, 7).unwrap(),
         reference
     );
+}
+
+#[test]
+fn flow_profile_sets_solver_guidance_and_the_default_step_count() {
+    use super::{FlowGuidance, FlowProfile, FlowSolver};
+    assert_eq!(FlowProfile::default(), FlowProfile::Exact);
+    assert_eq!(FlowProfile::Exact.solver(), FlowSolver::Euler);
+    assert_eq!(FlowProfile::Exact.guidance(), FlowGuidance::EXACT);
+    assert_eq!(FlowProfile::Exact.default_steps(), 30);
+    assert_eq!(FlowProfile::Fast.solver(), FlowSolver::AdamsBashforth2);
+    assert_eq!(
+        (
+            FlowProfile::Fast.guidance().uncond_interval,
+            FlowProfile::Fast.guidance().uncond_warmup
+        ),
+        (3, 2)
+    );
+    assert_eq!(FlowProfile::Fast.default_steps(), 21);
+    // 21 steps with interval 3 / warmup 2 is 21 conditional + 9 unconditional.
+    assert_eq!(FlowProfile::Fast.guidance().uncond_forwards(21), 9);
+
+    let flow_total = |model: &Model, steps: Option<usize>| -> usize {
+        let mut request = progress_request(0.5);
+        request.steps = steps;
+        let mut total = None;
+        model
+            .generate_text_with_progress(&request, |event| {
+                if let Progress::FlowStep { total: t, .. } = event {
+                    total = Some(t);
+                }
+                Control::Continue
+            })
+            .unwrap()
+            .expect("not cancelled");
+        total.expect("a flow step was reported")
+    };
+    let model = load_plain_model();
+    // A fresh model is exact, so library users and the MLX fixtures see no change.
+    assert_eq!(flow_total(&model, None), 30);
+    model.set_flow_profile(FlowProfile::Fast);
+    assert_eq!(flow_total(&model, None), 21);
+    // An explicit step count is always honored.
+    assert_eq!(flow_total(&model, Some(5)), 5);
+    model.set_flow_profile(FlowProfile::Exact);
+    assert_eq!(flow_total(&model, None), 30);
+
+    // The fast profile changes the trajectory; exact restores it bit for bit.
+    let (shape, hiddens) = read_npy("long_flow_hiddens.npy");
+    let frames = shape[1];
+    let reference = model.run_flow(&hiddens, frames, 4, 7).unwrap();
+    model.set_flow_profile(FlowProfile::Fast);
+    let fast = model.run_flow(&hiddens, frames, 4, 7).unwrap();
+    assert_ne!(fast, reference);
+    assert!(fast.iter().all(|v| v.is_finite()));
+    model.set_flow_profile(FlowProfile::Exact);
+    assert_eq!(model.run_flow(&hiddens, frames, 4, 7).unwrap(), reference);
+    // A later single override replaces only its own part of the profile.
+    model.set_flow_profile(FlowProfile::Fast);
+    model.set_flow_solver(FlowSolver::Euler);
+    model.set_flow_guidance(FlowGuidance::EXACT).unwrap();
+    assert_eq!(model.run_flow(&hiddens, frames, 4, 7).unwrap(), reference);
+}
+
+/// Integrate `dx/dt = -x` from 0 to 1 with `n` equal steps through the same
+/// `ab2_velocity` and `update` the flow loop uses, and return |x(1) - e^-1|.
+fn ode_error(n: usize, ab2: bool) -> f64 {
+    use precision::DType;
+    let delta = 1.0f32 / n as f32;
+    let mut x = 1.0f32;
+    let mut previous: Option<f32> = None;
+    for _ in 0..n {
+        let velocity = -x;
+        let effective = match (ab2, previous) {
+            (true, Some(p)) => euler::ab2_velocity(velocity, p, DType::F32),
+            _ => velocity,
+        };
+        previous = Some(velocity);
+        x = euler::update(x, effective, delta, DType::F32, DType::F32);
+    }
+    (f64::from(x) - (-1.0f64).exp()).abs()
+}
+
+#[test]
+fn ab2_is_second_order_where_euler_is_first_order() {
+    let (e10, e20, e40) = (
+        ode_error(10, false),
+        ode_error(20, false),
+        ode_error(40, false),
+    );
+    let (a10, a20, a40) = (
+        ode_error(10, true),
+        ode_error(20, true),
+        ode_error(40, true),
+    );
+    // Halving the step halves Euler's error and quarters AB2's.
+    assert!(e10 / e20 > 1.8 && e10 / e20 < 2.3, "euler {e10} {e20}");
+    assert!(e20 / e40 > 1.8 && e20 / e40 < 2.3, "euler {e20} {e40}");
+    assert!(a10 / a20 > 3.3, "ab2 {a10} {a20}");
+    assert!(a20 / a40 > 3.3, "ab2 {a20} {a40}");
+    assert!(a20 < e20 / 5.0, "ab2 {a20} should beat euler {e20}");
+}
+
+#[test]
+fn ab2_velocity_extrapolates_and_rounds_like_the_update() {
+    use precision::DType;
+    assert_eq!(euler::ab2_velocity(2.0, 1.0, DType::F32), 2.5);
+    // A constant velocity field is reproduced exactly.
+    assert_eq!(euler::ab2_velocity(0.75, 0.75, DType::F32), 0.75);
+    // Every operation rounds to the working dtype.
+    let bf = euler::ab2_velocity(1.0078125, 0.0, DType::Bf16);
+    assert_eq!(bf, DType::Bf16.round(DType::Bf16.round(1.5 * 1.0078125)));
+}
+
+#[test]
+fn flow_solver_ab2_is_opt_in_and_restarts_every_chunk() {
+    use super::FlowSolver;
+    let model = load_plain_model();
+    let (shape, hiddens) = read_npy("long_flow_hiddens.npy");
+    let frames = shape[1];
+    assert!(
+        chunk_starts(frames).len() > 1,
+        "the fixture must span several chunks to exercise the restart"
+    );
+    let reference = model.run_flow(&hiddens, frames, 4, 7).unwrap();
+
+    // A single step has no history in any chunk, so AB2 is Euler. If history
+    // leaked across a chunk boundary, the later chunks would differ here.
+    let one_step = model.run_flow(&hiddens, frames, 1, 7).unwrap();
+    model.set_flow_solver(FlowSolver::AdamsBashforth2);
+    assert_eq!(model.run_flow(&hiddens, frames, 1, 7).unwrap(), one_step);
+
+    // More steps use the extrapolation: a different, finite, repeatable result.
+    let ab2 = model.run_flow(&hiddens, frames, 4, 7).unwrap();
+    assert_eq!(ab2.len(), reference.len());
+    assert!(ab2.iter().all(|v| v.is_finite()));
+    assert_ne!(ab2, reference, "ab2 must change the trajectory");
+    assert_eq!(model.run_flow(&hiddens, frames, 4, 7).unwrap(), ab2);
+
+    // The setting is per model and switching back restores the reference.
+    model.set_flow_solver(FlowSolver::Euler);
+    assert_eq!(model.run_flow(&hiddens, frames, 4, 7).unwrap(), reference);
 }
 
 // ---------------------------------------------------------------------------

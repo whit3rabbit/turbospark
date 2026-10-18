@@ -8,6 +8,7 @@ Music generation models in TurboSpark produce polyphonic musical compositions an
 
 - **In-Crate Directory**: [`crates/audio/src/music/minimax_music3/`](../../crates/audio/src/music/minimax_music3/)
 - **Documentation**: [`crates/audio/src/music/minimax_music3/README.md`](../../crates/audio/src/music/minimax_music3/README.md)
+- **Engineering notes** (speed, MLX parity, the dense-matmul finding, pitfalls, how to verify): [`minimax_music3.md`](minimax_music3.md). Run `scripts/verify-music3.sh` before and after changing a kernel.
 - **Upstream URLs**:
   - Reference: [`mlx_audio/music/models/minimax_music3/`](https://github.com/Blaizzy/mlx-audio/tree/main/mlx_audio/music/models/minimax_music3)
   - Hugging Face Repositories: `MiniMaxAI/MiniMax-Music3`, `mlx-community/MiniMax-Music3-8bit`, `mlx-community/MiniMax-Music3-4bit`

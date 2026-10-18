@@ -311,6 +311,97 @@ impl Music3Sequence {
         })
     }
 
+    /// A single-group convolution with the synchronous call's plan, so its bits
+    /// equal `Music3Weight::convolution_batched_typed`. `bias` is added in the
+    /// kernel.
+    #[allow(clippy::too_many_arguments)]
+    pub fn convolution(
+        &mut self,
+        x: Music3Slot,
+        weight: &Music3Weight,
+        bias: Option<&[f32]>,
+        ic: usize,
+        oc: usize,
+        kernel: usize,
+        stride: usize,
+        pad: usize,
+        dilation: usize,
+        transpose: bool,
+        dtype: Music3DType,
+        batch: usize,
+    ) -> Result<Music3Slot, GpuError> {
+        if !Rc::ptr_eq(&weight.state, &self.state) {
+            return Err(bad("Music 3 weight belongs to another device"));
+        }
+        let plan = weight.conv_plan(
+            self.len(x)?,
+            bias.map(<[f32]>::len),
+            ic,
+            oc,
+            kernel,
+            stride,
+            pad,
+            dilation,
+            transpose,
+            dtype,
+            1,
+            false,
+            batch,
+        )?;
+        autorelease_pool(|| {
+            let bias = bias.map(|b| self.upload(b)).transpose()?;
+            let out = self.output(plan.count);
+            let mut c = self.state.context.borrow_mut();
+            let (xb, xo) = self.binding(x)?;
+            let (ob, _) = self.binding(out)?;
+            let bb = match bias {
+                Some(slot) => self.binding(slot)?.0,
+                None => &self.buffers[self.zero],
+            };
+            weight.encode_conv(&mut c, self.pass()?, &plan, (xb, xo), bb, ob)?;
+            Ok(out)
+        })
+    }
+
+    /// The vocoder's Snake activation with the synchronous call's kernel and
+    /// parameters, over channel-major `[channels, frames]`.
+    pub fn snake(
+        &mut self,
+        x: Music3Slot,
+        alpha: &[f32],
+        channels: usize,
+        frames: usize,
+        dtype: Music3DType,
+    ) -> Result<Music3Slot, GpuError> {
+        let count = product(&[channels, frames])?;
+        if count == 0 || self.len(x)? != count || alpha.len() != channels {
+            return Err(bad("Music 3 Snake geometry mismatch"));
+        }
+        let params = bytes(&[frames as u32, dtype as u32, count as u32, 2.0f32.to_bits()]);
+        autorelease_pool(|| {
+            let alpha = self.upload(alpha)?;
+            let out = self.output(count);
+            let mut c = self.state.context.borrow_mut();
+            let pipeline = c.pipeline(
+                super::source(dtype),
+                "music3_snake",
+                &crate::rms_norm::unused_function_constants(),
+                b"",
+            )?;
+            let (xb, xo) = self.binding(x)?;
+            let (ab, ao) = self.binding(alpha)?;
+            let (ob, _) = self.binding(out)?;
+            self.pass()?.encode_threads_3d(
+                &pipeline,
+                &[(xb, 0, xo), (ab, 1, ao), (ob, 2, 0)],
+                &[(&params, 3)],
+                (count as u64, 1, 1),
+                (128, 1, 1),
+            );
+            Ok(out)
+        })
+    }
+
     pub fn rms_norm(
         &mut self,
         x: Music3Slot,

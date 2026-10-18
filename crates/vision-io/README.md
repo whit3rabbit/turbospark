@@ -8,7 +8,7 @@ Downstream workspace crates depend on it under its real package name, no alias:
 
 ```toml
 [dependencies]
-turbospark-vision-io = { path = "../vision-io", version = "0.1.0" }
+turbospark-vision-io = { path = "../vision-io", version = "0.3.2" }
 ```
 
 ## Purpose & Role
@@ -48,10 +48,11 @@ Beside it, three tables of pure index and weight arithmetic:
 - `resize.rs`: Deterministic PIL-compatible bicubic image resampling implemented in fixed-point arithmetic.
 - `normalize.rs`: Per-channel mean/standard deviation normalization and float scaling.
 - `patchify.rs`: Extraction of spatial patch rows into the merge-window ordering (`patch_rows`, `GridThw`).
+- `preprocess.rs`: The composed pipeline (`preprocess`, `PreprocessedImage`) chaining smart resize, bicubic resample, normalization, and patchify.
 - `pos_embed.rs`: 2D bilinear interpolation weight and index calculator for position embeddings.
 - `rope.rs`: 2D spatial RoPE frequency table generator for vision attention.
 - `mrope.rs`: Multimodal 3D RoPE coordinate triple assignment for prompt/image token merging.
-- `rounding.rs`: Fixed-point numerical rounding helpers.
+- `rounding.rs`: Shared rounding helpers matching Python's `round()` convention (`round_half_to_even`).
 - `error.rs`: Typed preprocessing and dimension validation errors.
 
 ## Development & Test Commands

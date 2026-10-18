@@ -192,6 +192,7 @@ struct MessageRowView: View {
     @ObservedObject var model: AppModel
     let message: AppChatMessage
     @State private var isHovered = false
+    @State private var showsReasoning = false
     @State private var branchTarget: AppModel.BranchTarget?
     @ObservedObject private var speechManager = AppSpeechSynthesizer.shared
 
@@ -523,22 +524,22 @@ struct MessageRowView: View {
                 }
             } else {
                 VStack(alignment: .leading, spacing: 10) {
-                    if message.toolCalls.isEmpty {
-                        HStack(spacing: 6) {
-                            Image(systemName: "sparkles")
-                                .themedFont(.small, weight: .bold)
-                                .foregroundStyle(.appAccent)
-                                .accessibilityHidden(true)
-                            Text(model.selected?.alias ?? "TurboSpark")
-                                .themedFont(.small, weight: .semibold)
-                                .foregroundStyle(theme.metadataForeground)
+                    // One line for the model and its reasoning, the same row
+                    // the reply showed while it ran. A tool-call step keeps
+                    // no model header (the turn already has one), so it shows
+                    // the line only when there is reasoning to reveal.
+                    if message.toolCalls.isEmpty || !message.reasoning.isEmpty {
+                        ChatActivityLine(
+                            modelName: message.toolCalls.isEmpty
+                                ? (model.selected?.alias ?? "TurboSpark") : nil,
+                            label: message.reasoning.isEmpty
+                                ? nil : Text("Thought process", bundle: .module),
+                            reasoningExpanded: message.reasoning.isEmpty ? nil : $showsReasoning)
+                            .accessibilityHeading(.h2)
+                            .padding(.bottom, -6)
+                        if showsReasoning && !message.reasoning.isEmpty {
+                            ReasoningTraceView(reasoning: message.reasoning)
                         }
-                        .accessibilityHeading(.h2)
-                        .padding(.bottom, -2)
-                    }
-
-                    if !message.reasoning.isEmpty {
-                        ReasoningDisclosureView(reasoning: message.reasoning)
                     }
 
                     if !message.toolCalls.isEmpty {
@@ -656,73 +657,116 @@ struct ActiveStreamingRowView: View {
     let reasoning: String
     let isRunning: Bool
 
+    /// When this reply started, for the elapsed time on its activity line.
+    /// Reset when a new run starts while the row stays mounted.
+    @State private var startedAt = Date()
+    /// Live reasoning starts closed: the activity line previews its latest
+    /// line, and the chevron reveals the rest.
+    @State private var showsReasoning = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "sparkles")
-                    .themedFont(.small, weight: .bold)
-                    .foregroundStyle(.appAccent)
-                    .accessibilityHidden(true)
-                Text(model.selected?.alias ?? "TurboSpark")
-                    .themedFont(.small, weight: .semibold)
-                    .foregroundStyle(theme.metadataForeground)
-            }
-            .padding(.bottom, -2)
+            activityLine
+                .padding(.bottom, -6)
 
-            if isRunning && output.isEmpty && reasoning.isEmpty {
-                HStack(spacing: 8) {
-                    TaskProgressFlameIcon(size: 16)
-                    waitingStatusText
-                        .themedFont(.base)
-                        .foregroundStyle(theme.metadataForeground)
-                }
-                .padding(.vertical, 8)
-                // Combine the spinner and status into one announcement.
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(model.reasoning != .off
-                                    ? Text("Thinking", bundle: .module)
-                                    : Text("Generating response", bundle: .module))
-                .accessibilityHint(model.reasoning != .off
-                                   ? Text("The model is reasoning before producing a response", bundle: .module)
-                                   : Text("The model is preparing a response", bundle: .module))
-            } else {
-                if !reasoning.isEmpty {
-                    ReasoningDisclosureView(reasoning: reasoning, defaultExpanded: true)
-                }
-                if let pending = model.pendingToolCall {
-                    ToolCallCardView(model: model, call: pending, result: nil)
-                }
-                // Foreground subagent runs proposed by THIS turn stream
-                // here, the same place the approval card goes up. The run's
-                // own chat is what filters, never a selection made later.
-                ForEach(liveRunsForChat) { state in
-                    SubagentLiveCardView(state: state)
-                }
-                if !output.isEmpty {
-                    ChatMessageMarkdownView(output)
-                }
+            if showsReasoning && !reasoning.isEmpty {
+                ReasoningTraceView(reasoning: reasoning)
             }
-
-            if isRunning {
-                StreamingStatusFooterView(model: model)
-                    .padding(.top, 2)
+            if let pending = model.pendingToolCall {
+                ToolCallCardView(model: model, call: pending, result: nil)
+            }
+            // Foreground subagent runs proposed by THIS turn stream
+            // here, the same place the approval card goes up. The run's
+            // own chat is what filters, never a selection made later.
+            ForEach(liveRunsForChat) { state in
+                SubagentLiveCardView(state: state)
+            }
+            if !output.isEmpty {
+                ChatMessageMarkdownView(output)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .onChange(of: isRunning) { wasRunning, running in
+            if running && !wasRunning { startedAt = Date() }
+        }
     }
 
-    /// Copy shown while nothing has streamed yet: which of the waiting
-    /// states (tool approval, prefill, reasoning, or plain decode) the turn is in.
-    private var waitingStatusText: Text {
-        if model.pendingToolCall != nil {
-            Text("Awaiting tool confirmation...", bundle: .module)
-        } else if model.phase == .prefill {
-            Text("Reading prompt...", bundle: .module)
-        } else if model.reasoning != .off {
-            Text("Thinking...", bundle: .module)
-        } else {
-            Text("Generating response...", bundle: .module)
+    private var status: ChatActivityStatus {
+        var inputs = ChatActivityStatus.Inputs()
+        inputs.isCancellationPending = model.isCancellationPending
+        inputs.isEscCancelArmed = model.isEscCancelArmed
+        inputs.pendingToolName = model.pendingToolCall?.name
+        if model.imageModeEnabled, let job = model.imageJob {
+            inputs.imageJob = (
+                job.status == .waiting, job.stage, job.completed, job.total,
+                model.imageProgressFraction)
         }
+        inputs.isPrefill = model.phase == .prefill
+        inputs.prefillDone = model.livePrefillDone
+        inputs.prefillTotal = model.livePrefillTotal
+        inputs.runningToolName = model.selectedTurnMessages.last?.toolCalls
+            .first(where: { $0.status == .running })?.name
+        inputs.activeTask = model.activeTaskDescription
+        inputs.reasoning = reasoning
+        inputs.hasOutput = !output.isEmpty
+        return ChatActivityStatus.resolve(inputs)
+    }
+
+    /// The reply's one-line header. Once the run ends (the row lingers
+    /// only until the message commits) it drops back to the model name.
+    private var activityLine: some View {
+        let modelName = model.selected?.alias ?? "TurboSpark"
+        let canExpand = !reasoning.isEmpty
+        guard isRunning else {
+            return ChatActivityLine(
+                modelName: modelName,
+                label: canExpand ? Text("Thought process", bundle: .module) : nil,
+                reasoningExpanded: canExpand ? $showsReasoning : nil)
+        }
+
+        var line = ChatActivityLine(
+            modelName: modelName, isLive: true, startedAt: startedAt,
+            reasoningExpanded: canExpand ? $showsReasoning : nil)
+        line.counts = model.liveTokenCount > 0
+            ? Text("\(model.liveTokenCount) tokens", bundle: .module) : nil
+        switch status {
+        case .stopping:
+            line.label = Text("Stopping", bundle: .module)
+        case .escArmed:
+            line.label = Text("Press Esc again to stop", bundle: .module)
+            line.tone = .attention
+        case .needsConfirmation(let tool):
+            line.label = Text("Needs confirmation for \(tool)", bundle: .module)
+            line.tone = .attention
+        case .imageWaiting:
+            line.label = Text("Waiting for image slot", bundle: .module)
+        case let .imageStage(stage, completed, total, fraction):
+            line.label = stage.map(GenerateControl.imageStageText)
+                ?? Text("Generating image", bundle: .module)
+            line.progress = .some(fraction)
+            line.counts = total > 0 ? Text(verbatim: "\(completed)/\(total)") : nil
+        case let .readingPrompt(done, total):
+            line.label = Text("Reading prompt...", bundle: .module)
+            if total > 0 {
+                line.progress = .some(min(1, Double(done) / Double(total)))
+                line.counts = Text("\(done.formatted()) / \(total.formatted()) tokens", bundle: .module)
+            } else {
+                line.progress = .some(nil)
+                line.counts = nil
+            }
+        case .runningTool(let name):
+            line.label = Text("Running tools...", bundle: .module)
+            line.detail = name
+            line.detailIsCode = true
+        case .task(let task):
+            line.label = Text(verbatim: task)
+        case .thinking(let latestLine):
+            line.label = Text("Thinking...", bundle: .module)
+            line.detail = latestLine
+        case .generating:
+            line.label = Text("Generating response...", bundle: .module)
+        }
+        return line
     }
 
     /// Live foreground subagent runs belonging to this chat, oldest first.
@@ -907,55 +951,5 @@ struct CompactionDividerView: View {
         .padding(.vertical, 2)
         .accessibilityLabel(Text("Earlier conversation compacted into a summary", bundle: .module))
         .accessibilityHint(Text("Expands to show the summary the model sees instead of those messages", bundle: .module))
-    }
-}
-
-/// Collapsible disclosure view for model reasoning and chain of thought.
-private struct ReasoningDisclosureView: View {
-    @Environment(\.appTheme) private var theme
-    let reasoning: String
-    var defaultExpanded: Bool = false
-
-    @State private var isExpanded: Bool = false
-    /// Whether the user has clicked the disclosure. Until they do, the
-    /// panel shows `defaultExpanded`; with a `true` default the old
-    /// `defaultExpanded || isExpanded` binding could never read false, so
-    /// the live trace was permanently pinned open.
-    @State private var hasUserOverride: Bool = false
-
-    var body: some View {
-        DisclosureGroup(
-            isExpanded: Binding(
-                get: { hasUserOverride ? isExpanded : defaultExpanded },
-                set: { newValue in
-                    hasUserOverride = true
-                    isExpanded = newValue
-                }
-            )
-        ) {
-            Text(reasoning)
-                .font(theme.code(.large))
-                .foregroundStyle(theme.metadataForeground)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.primary.opacity(0.03))
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .textSelection(.enabled)
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "brain")
-                    .themedFont(.small)
-                    .foregroundStyle(.appAccent)
-                    .accessibilityHidden(true)
-                Text("Thought process", bundle: .module)
-                    .themedFont(.small, weight: .medium)
-                    .foregroundStyle(theme.metadataForeground)
-            }
-        }
-        .padding(.vertical, 2)
-        .help(Text("Model thought process and reasoning trace", bundle: .module))
-        .accessibilityLabel(Text("Thought process", bundle: .module))
-        .accessibilityHint(Text("Expands to reveal the model's chain-of-thought reasoning", bundle: .module))
     }
 }

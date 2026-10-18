@@ -18,8 +18,9 @@
 //! and the refusal work at all, on a synthetic fixture, in about a second.
 
 use half::f16;
+use model_io::mapped_residency_fits;
 use turbospark_repack::build_synthetic_gemma4_real_install;
-use turbospark_runtime::{ChunkedPrefillRunner, RealForwardRunner};
+use turbospark_runtime::{recommended_max_working_set, ChunkedPrefillRunner, RealForwardRunner};
 
 const VOCAB: i64 = 128;
 const PROMPT: [i32; 11] = [5, 9, 2, 7, 1, 3, 8, 4, 6, 0, 11];
@@ -53,6 +54,14 @@ const PROMPT: [i32; 11] = [5, 9, 2, 7, 1, 3, 8, 4, 6, 0, 11];
 /// wrong answer: the fix is a named error, not a crash with a good pedigree.
 #[test]
 fn mapped_residency_opens_and_then_refuses_the_batched_routed_pair_by_name() {
+    let working_set_bytes = recommended_max_working_set().map_or(0, |(bytes, _)| bytes);
+    if !mapped_residency_fits(working_set_bytes, 0, 0) {
+        eprintln!(
+            "host Metal working set ({:.2} GiB) does not fit mapped residency reserve (>= 10 GiB); skipping",
+            working_set_bytes as f64 / (1u64 << 30) as f64
+        );
+        return;
+    }
     let dir = std::env::temp_dir().join(format!(
         "turbospark-mapped-residency-{}",
         std::process::id()

@@ -58,6 +58,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => return Err("unknown reference precision".into()),
     };
     let runner = turbospark_runtime::Music3Runner::open_with_precision(&model, precision)?;
+    // The runner opens in the fast flow profile; the probe's waveforms are compared
+    // against the MLX reference, so it needs the reference trajectory.
+    runner.set_flow_profile(audio::music::minimax_music3::FlowProfile::Exact);
     if std::env::var_os("TURBOSPARK_MUSIC3_TRACE").is_some() {
         let trace_dir = output.join("stages");
         fs::create_dir_all(&trace_dir)?;

@@ -147,8 +147,8 @@ is committed.
 Both export `_rust_eh_personality`, and ld64 fails on the duplicate. The app
 build sets `TURBOSPARK_LOCALIZE_RUST_SYMBOLS=1`, and `scripts/swift-lib.sh`
 then makes the symbol local in `libturbospark_ffi.a` with `nmedit -R`. Moving
-to 2.7.0 and then 2.7.1 added no new duplicate (checked with clean links,
-2026-10-16). 2.7.0's blake3 C objects were built for macOS 14.5 against the
+to 2.7.0, 2.7.1, and 2.7.2 added no new duplicate (checked with clean links,
+2026-10-16 and 2026-10-17). 2.7.0's blake3 C objects were built for macOS 14.5 against the
 app's 14.0 floor and drew ld warnings. From 2.7.1 every member targets macOS
 12 or lower, and syntext's build fails if one does not.
 
@@ -156,9 +156,15 @@ app's 14.0 floor and drew ld warnings. From 2.7.1 every member targets macOS
 
 In `swift/TurboSparkApp/Package.swift`:
 ```swift
-.package(url: "https://github.com/whit3rabbit/syntext", exact: "2.7.1"),
+.package(url: "https://github.com/whit3rabbit/syntext", exact: "2.7.2"),
 ```
-with products `Syntext` and `SyntextContext`.
+with products `Syntext` and `SyntextContext`. 2.7.2 resolves to
+`syntext-swift-2.7.2.xcframework.zip` (checksum `8bb9c662...d416`). It
+carries syntext's `write.lock` fix: the lock is now unlocked explicitly on
+drop. Before, a child process forked by another thread kept it held until its
+`exec`, and a committed change could silently become a full rebuild. The app
+is exposed to that: it runs the index in-process while spawning `git` and
+shell processes on other threads.
 
 **Exact pins are safe from 2.7.1 on, and only from 2.7.1 on.** Through
 2.7.0, syntext's release built the xcframework from the tag push and pinned
@@ -166,9 +172,9 @@ it on `main` afterwards (tagged `swift-vX.Y.Z`), so each `vX.Y.Z` tag pinned
 the PREVIOUS release's binary. `exact: "2.5.0"` linked the 2.4.0 xcframework,
 which silently ignored `fixedStrings`, `wordRegexp`, and context lines, and
 the app then pinned the `swift-v2.7.0` commit by revision. Since 2.7.1,
-syntext stages the zip and pins it before tagging, so the `v2.7.1` tag
-resolves to its own `syntext-swift-2.7.1.xcframework.zip` (checksum
-`b1b2faf4...c477`). For any release up to 2.7.0, pin its `swift-vX.Y.Z`
+syntext stages the zip and pins it before tagging, so each `vX.Y.Z` tag
+resolves to its own `syntext-swift-X.Y.Z.xcframework.zip`. For any release
+up to 2.7.0, pin its `swift-vX.Y.Z`
 commit by revision instead (syntext `docs/SWIFT.md`). To upgrade: change the
 version, `swift package resolve`, and confirm `.build/workspace-state.json`
 names the matching `syntext-swift-X.Y.Z.xcframework.zip`.

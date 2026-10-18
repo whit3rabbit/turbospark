@@ -52,7 +52,8 @@ Build from these instead of local variants. They live in
 `Sources/Theme/AppControls.swift`, `Sources/Theme/AppSurfaces.swift`,
 `Sources/Theme/AppProgressBar.swift`, `Sources/Theme/AppAttention.swift`,
 `Sources/Theme/AppWaveform.swift`, `Sources/Theme/AppPreferenceOptions.swift`,
-`Sources/Theme/AppStrings.swift` and `Sources/Theme/TurboSparkMotion.swift`.
+`Sources/Theme/AppPillPicker.swift`, `Sources/Theme/AppStrings.swift` and
+`Sources/Theme/TurboSparkMotion.swift`.
 
 | Need | Use |
 | :--- | :--- |
@@ -63,6 +64,7 @@ Build from these instead of local variants. They live in
 | Search | `AppSearchField(text:prompt:)`, with `focus:` for a field that takes focus |
 | An icon-only action | `AppIconButton(symbol, label: Text(...)) { ... }` |
 | A composer-style toggle chip | `AppChip(Text(...), systemImage:isOn:) { ... }` |
+| Switching one pane between a few modes | `AppPillPicker(selection:items:label:)` with `AppPillItem(value:label:systemImage:liveLabel:)`, two to four short options, inside an `AppAdaptiveHeader` so it reflows to its own row; never wrap it in another `ViewThatFits` |
 | A multi-line editor | `TextEditor(...).appEditorSurface(minHeight:)` |
 | A focus glow on an editor with no native ring | `.appFocusGlow(_:radius:halo:)` |
 | A card | `.appCardSurface(padding:)` |
@@ -228,6 +230,15 @@ the app taking access, and macOS shows each prompt only once.
 - A size the scale lacks is a new `AppFontStep` case, documented in its doc
   table, with the pinned expectation in `FontPropagationTests` updated
   (Gotcha 63).
+- The factory base is 14pt UI and 12pt code (`AppFontCatalog.factoryUISize`
+  and `factoryCodeSize`), with Hack as the code family. The doc table and the
+  design system list roles at the 16pt design reference
+  (`AppFontCatalog.defaultUISize`), which `textScale` and `ui(fitting:)`
+  divide by. Never change the reference to move the default: it reflows
+  every frame. Change the `factory*` constants instead.
+- Text Size is Small (0.875), Default, Large, Extra Large. Small is below
+  the reference, so `textScale` clamps at 1 and frames keep their designed
+  size while the text shrinks.
 - Font families come from Appearance settings. A site that must look serif
   or monospaced at the default passes `systemDesign:`.
 
@@ -401,7 +412,7 @@ Then look at the change in the running app. A green build proves none of the
 following, and a UI change is not verified until the touched screens have
 been checked against them:
 
-- Default and Extra Large text size.
+- Small, Default, and Extra Large text size.
 - The narrowest window the view allows.
 - Light, dark, and one custom theme.
 - Keyboard only, including sheets and menus.

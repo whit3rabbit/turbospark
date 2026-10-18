@@ -1,6 +1,6 @@
 # turbospark-image
 
-Portable image preprocessing and macOS image execution boundaries.
+Native image generation pipeline with a portable CPU core and a macOS Metal execution boundary.
 
 ## Read first
 

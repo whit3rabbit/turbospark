@@ -6,8 +6,8 @@ use audio::music::minimax_music3::backend::{
 };
 use audio::music::minimax_music3::precision::{bf16_silu_table, DType};
 use audio::music::minimax_music3::{
-    Control, GenerateRequest, Generation, Model, ModelConfig, Music3Precision, Progress,
-    SamplingTrace, StageTimings, TextGenerateRequest,
+    Control, FlowProfile, GenerateRequest, Generation, Model, ModelConfig, Music3Precision,
+    Progress, SamplingTrace, StageTimings, TextGenerateRequest,
 };
 use audio::{Result, SpeechError};
 use gpu::{
@@ -212,6 +212,52 @@ impl Sequence for MetalSequence<'_> {
         let result = self
             .inner
             .linear(x, &weight.0, bias, rows, input_dim, output_dim, dtype(d));
+        self.push(result)
+    }
+    fn convolution(
+        &mut self,
+        x: Slot,
+        weight: &dyn DeviceWeight,
+        bias: Option<&[f32]>,
+        s: ConvShape,
+        batch: usize,
+        d: DType,
+    ) -> Result<Slot> {
+        checkpoint(&self.backend.cancellation)?;
+        let weight = weight
+            .as_any()
+            .and_then(|w| w.downcast_ref::<Weight>())
+            .ok_or_else(|| SpeechError::Unsupported {
+                why: "Music 3 Metal sequence needs a Metal-resident weight".into(),
+            })?;
+        let x = self.slot(x)?;
+        let result = self.inner.convolution(
+            x,
+            &weight.0,
+            bias,
+            s.input_channels,
+            s.output_channels,
+            s.kernel,
+            s.stride,
+            s.padding,
+            s.dilation,
+            s.transpose,
+            dtype(d),
+            batch,
+        );
+        self.push(result)
+    }
+    fn snake(
+        &mut self,
+        x: Slot,
+        alpha: &[f32],
+        channels: usize,
+        frames: usize,
+        d: DType,
+    ) -> Result<Slot> {
+        checkpoint(&self.backend.cancellation)?;
+        let x = self.slot(x)?;
+        let result = self.inner.snake(x, alpha, channels, frames, dtype(d));
         self.push(result)
     }
     fn layer_norm(
@@ -565,11 +611,21 @@ impl DeviceWeight for Weight {
         s: ConvShape,
         d: DType,
     ) -> Result<Vec<f32>> {
+        self.convolution_batched(input, bias, s, 1, d)
+    }
+    fn convolution_batched(
+        &self,
+        input: &[f32],
+        bias: Option<&[f32]>,
+        s: ConvShape,
+        batch: usize,
+        d: DType,
+    ) -> Result<Vec<f32>> {
         checkpoint(&self.1)?;
         let started = Instant::now();
         let result = self
             .0
-            .convolution_typed(
+            .convolution_batched_typed(
                 input,
                 bias,
                 s.input_channels,
@@ -580,6 +636,7 @@ impl DeviceWeight for Weight {
                 s.dilation,
                 s.transpose,
                 dtype(d),
+                batch,
             )
             .map_err(device_error);
         record(
@@ -625,6 +682,9 @@ impl Music3Runner {
             silu: RefCell::new(None),
         });
         let model = Model::load_converted_with_backend_and_precision(path, backend, precision)?;
+        // The runner serves the app, server, FFI and CLI, so it opens in the
+        // faster profile. The MLX parity gates call `set_flow_profile(Exact)`.
+        model.set_flow_profile(FlowProfile::Fast);
         Ok(Self {
             model,
             device,
@@ -642,13 +702,24 @@ impl Music3Runner {
     pub fn config(&self) -> &ModelConfig {
         self.model.config()
     }
-    /// Opt in to reusing the flow unconditional CFG branch between steps.
-    /// The default (`FlowGuidance::EXACT`) is the reference trajectory.
+    /// Select the named flow profile. The runner opens in
+    /// [`FlowProfile::Fast`]; [`FlowProfile::Exact`] restores the MLX
+    /// reference trajectory (Euler, both CFG branches, 30 default steps).
+    pub fn set_flow_profile(&self, profile: FlowProfile) {
+        self.model.set_flow_profile(profile);
+    }
+    /// Override the flow unconditional CFG schedule (the profile sets it by
+    /// default; `FlowGuidance::EXACT` evaluates both branches every step).
     pub fn set_flow_guidance(
         &self,
         guidance: audio::music::minimax_music3::FlowGuidance,
     ) -> Result<()> {
         self.model.set_flow_guidance(guidance)
+    }
+    /// Override the flow integrator (the profile sets it by default;
+    /// `FlowSolver::Euler` is the reference trajectory).
+    pub fn set_flow_solver(&self, solver: audio::music::minimax_music3::FlowSolver) {
+        self.model.set_flow_solver(solver);
     }
     /// Per-operation call counts and wall time since the last reset,
     /// slowest total first. Weight upload during `open` is not included.

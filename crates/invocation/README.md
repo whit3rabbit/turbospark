@@ -1,6 +1,6 @@
 # turbospark-invocation
 
-Pure CLI argument parsing, command-line request assembly (`InvocationRequest`), option definitions (`OPTIONS`), diagnostic error formatting, typed failures (`ParseFailure`), and usage rendering.
+Pure CLI argument parsing, command-line request assembly (`InvocationRequest`), option definitions (`OPTIONS`), exit-status and stream-routing diagnostics, typed failures (`ParseFailure`), and usage rendering.
 
 Performs no filesystem, environment, or process I/O.
 
@@ -26,7 +26,7 @@ invocation = { package = "turbospark-invocation", path = "../invocation" }
 - `parser.rs`: Pure flag parser. One left-to-right token scan converts values into validated data types, then fixed-order whole-invocation checks run.
 - `request.rs`: Fully assembled `InvocationRequest` struct holding validated configuration (model path, sampling options, steering vectors, cache sizing, vision sidecar paths).
 - `failure.rs`: `ParseFailure` enum for typed parse errors, missing arguments, and usage violations.
-- `diagnostics.rs`: Formats user-friendly, terminal-rendered diagnostic errors with actionable remediation advice.
+- `diagnostics.rs`: Maps a parse outcome to a process exit status (success, or a distinct invalid-invocation status) and a stream routing decision (primary vs diagnostic stream).
 - `usage.rs`: Generates formatted help and option usage documentation.
 
 ## Development & Test Commands
@@ -39,8 +39,8 @@ cargo test -p turbospark-invocation
 ## Tests
 
 This crate contains 5 integration test files in `tests/`:
-- `parse_failures.rs`: Validates error handling on unrecognized flags, missing values, and conflicting arguments.
-- `parse_ordering.rs`: Verifies parser invariance regardless of argument order.
+- `parse_failures.rs`: Validates error handling on unrecognized flags, missing required options, and conflicting arguments.
+- `parse_ordering.rs`: Verifies ordering, precedence, and purity: literal value consumption, short-circuit position, whole-invocation check order, and repeatable parses.
 - `parse_outcomes.rs`: Tests successful parsing across complex flag combinations (multi-vector steering, vision flags, sampling presets).
 - `request_defaults.rs`: Confirms default values match documented runtime configuration defaults.
 - `usage_and_status.rs`: Asserts option table invariants and help text rendering.
@@ -51,7 +51,7 @@ This crate contains 5 integration test files in `tests/`:
    1. The `OPTIONS` table in `src/options.rs`.
    2. No-value flag `match` in `src/parser.rs` (the `if !decl.takes_value` branch).
    3. Value-taking flag `match` in `src/parser.rs` (after the value lookup).
-   4. The `InvocationRequest` struct definition and field initializers in `src/request.rs`.
+   4. The `InvocationRequest` struct definition in `src/request.rs` and its field initializer in `src/parser.rs`'s `Success` construction.
    5. Option-count assertions in `tests/usage_and_status.rs`.
    A flag in `OPTIONS` with no `match` arm panics at runtime through `unreachable!`. The compiler does not catch it.
 2. **IO Isolation**: `InvocationRequest` does not check if model directories or message files exist; filesystem existence is verified downstream by `turbospark-cli` or `turbospark-runtime`.

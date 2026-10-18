@@ -85,17 +85,17 @@ public struct ThemeModeConfig: Codable, Equatable, Sendable {
     public var contrast: Double
 
     public init(
-        preset: String = "Codex",
-        accentName: String = "Black",
-        accentHex: String = "#000000",
+        preset: String = "Spark Blue",
+        accentName: String = "Spark",
+        accentHex: String = "#1D6FE0",
         backgroundHex: String = "#FFFFFF",
-        foregroundHex: String = "#1A1C1F",
+        foregroundHex: String = "#141A24",
         uiFontFamily: String = "System default",
         uiFontWeight: String = "Regular",
         codeFontFamily: String = AppFontCatalog.factoryCodeFamily,
         codeFontWeight: String = "Regular",
         translucentSidebar: Bool = true,
-        contrast: Double = 45.0
+        contrast: Double = 52.0
     ) {
         self.preset = preset
         self.accentName = accentName
@@ -365,7 +365,7 @@ public struct AccentOption: Identifiable, Equatable, Sendable {
     /// curated six did not cover the shipped presets: Codex is `#111827` /
     /// `#F3F4F6` and Charcoal Mono is `#18181B` / `#E4E4E7`, none of which is
     /// an option, so 4 of the 10 preset-and-mode combinations drew an empty
-    /// Accent control -- including Codex, which is the DEFAULT. It reads as a
+    /// Accent control -- including presets like Codex or Charcoal Mono. It reads as a
     /// broken control rather than as an unlisted color.
     ///
     /// Widening the curated list would fix those four and break again at the

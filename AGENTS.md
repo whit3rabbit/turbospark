@@ -189,8 +189,9 @@ and [model gates](.claude/docs/model-gates.md).
 - `crates/compute`, `crates/core`, `crates/selection`,
   `crates/tokenizer`, `crates/streaming`, `crates/invocation`: portable
   primitives and protocol boundaries.
-- `crates/window-fit`: context-window and memory-fit calculations.
-- `crates/image`, `crates/vision-io`: image and vision preprocessing.
+- `crates/window-fit`: deterministic conversation-window fitting.
+- `crates/image`: native text-to-image generation pipeline.
+- `crates/vision-io`: portable vision preprocessing.
 - `crates/audio`: portable audio crate (DSP, neural ops, TTS, STT, music,
   VAD, codecs). See `docs/AUDIO.md`.
 - `crates/embeddings`: portable embedding models with pinned checkpoints. See

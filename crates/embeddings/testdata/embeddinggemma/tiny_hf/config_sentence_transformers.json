@@ -1,0 +1,9 @@
+{
+  "prompts": {
+    "query": "task: search result | query: ",
+    "document": "title: none | text: ",
+    "STS": "task: sentence similarity | query: "
+  },
+  "default_prompt_name": null,
+  "similarity_fn_name": "cosine"
+}
