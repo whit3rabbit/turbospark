@@ -85,8 +85,9 @@ turbospark-speak --model ~/models/fish-drama3-4bit \
   --text "Something new, in that voice." --output cloned.wav
 ```
 
-`--seed` repeats a run. `--temperature`, `--top-p`, `--top-k` and
-`--max-frames` override the reference sampler recipe (0.7, 0.7, 30, 1024).
+`--seed` repeats a run. Without it each run draws its own seed and prints
+it, so running again is a new take. `--temperature`, `--top-p`, `--top-k` and
+`--max-frames` override Fish Audio's sampler recipe (1.0, 0.9, 30, 1024).
 `--max-frames` only shortens a chunk. A text-scaled cap still applies beneath
 it, because some texts run away without one.
 
@@ -100,7 +101,9 @@ curl http://127.0.0.1:8080/v1/audio/speech \
 ```
 
 The model id is the install directory's name. Output is 44.1 kHz mono, `wav`
-or `pcm`, and the rate is in the `x-audio-sample-rate` header.
+or `pcm`, and the rate is in the `x-audio-sample-rate` header. A request
+without `seed` draws a fresh one, so asking again is a new take, and the
+seed a take used is in the `x-turbospark-seed` header.
 
 With a `reference_audio` the request is a clone and needs `consent: true` and
 `reference_text`. `temperature`, `top_p`, `top_k` and `max_frames` are

@@ -32,10 +32,11 @@ speed control. Without --reference the model picks the voice.
 --reference is a recording of the voice to clone, 1 through 30 seconds, mono or
 multichannel at any sample rate. It needs --reference-text, the exact words
 spoken in it, and --consent, which states you have the right to use that voice.
---seed (default 0) makes a run repeatable. --temperature (default 0.7, finite and
-not negative), --top-p (default 0.7, above 0 through 1), --top-k (default 30, at
-least 1) and --max-frames (default and most 1024; a frame is 46.4 ms) override
-the reference sampler recipe.
+--seed N makes a run repeatable. Without it each run draws its own seed and
+prints it, so running again gives a new take. --temperature (default 1.0, finite
+and not negative), --top-p (default 0.9, above 0 through 1), --top-k (default 30,
+at least 1) and --max-frames (default and most 1024; a frame is 46.4 ms) override
+Fish Audio's sampler recipe.
 ";
 
 /// Upper bound on `--text-file`, in bytes.
@@ -49,7 +50,8 @@ struct SpeakOptions {
     reference: Option<PathBuf>,
     reference_text: Option<String>,
     consent: bool,
-    seed: u64,
+    /// None draws a fresh seed per run (`fresh_seed`).
+    seed: Option<u64>,
     temperature: Option<f32>,
     top_p: Option<f32>,
     top_k: Option<usize>,
@@ -227,7 +229,7 @@ fn parse_args(args: &[String]) -> Result<SpeakOptions, Error> {
         reference,
         reference_text,
         consent,
-        seed: seed.unwrap_or(0),
+        seed,
         temperature,
         top_p,
         top_k,
@@ -293,9 +295,24 @@ fn require_drama3(model: &Path) -> Result<(), Error> {
     }
 }
 
-/// The request and the reference PCM it travels with.
+/// A seed for a run that names none. The runtime takes every seed
+/// literally, so a fixed default repeated one take on every run, and some
+/// Drama 3 seeds go silent after the first sentence.
+fn fresh_seed() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    // Two seeds drawn in one process always differ, whatever the clock.
+    static DRAWN: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64;
+    nanos ^ (u64::from(std::process::id()) << 32) ^ DRAWN.fetch_add(1, Ordering::Relaxed)
+}
+
+/// The request and the reference PCM it travels with, at `seed`.
 fn build_request(
     options: &SpeakOptions,
+    seed: u64,
     reference: Option<(Vec<f32>, u32)>,
 ) -> (AudioRequest, Vec<f32>) {
     let (samples, rate) = match reference {
@@ -305,7 +322,7 @@ fn build_request(
     let request = AudioRequest {
         task: AudioTask::TextToSpeech,
         text: options.text.clone(),
-        seed: Some(options.seed),
+        seed: Some(seed),
         reference_text: options.reference_text.clone(),
         reference_sample_rate: rate,
         consent: options.consent,
@@ -327,7 +344,8 @@ fn prepare_request(options: &SpeakOptions) -> Result<(AudioRequest, Vec<f32>), E
         .as_deref()
         .map(load_reference)
         .transpose()?;
-    let (request, samples) = build_request(options, reference);
+    let seed = options.seed.unwrap_or_else(fresh_seed);
+    let (request, samples) = build_request(options, seed, reference);
     validate_request(FISH_DRAMA3_FAMILY, &request, &samples).map_err(Error::Usage)?;
     Ok((request, samples))
 }
@@ -381,14 +399,23 @@ fn speak(options: &SpeakOptions) -> Result<(), Error> {
         (started.elapsed() - opened).as_secs_f64()
     );
     println!(
-        "wrote {:.2} s of audio ({} samples at {} Hz, {} channel{}) to {}",
+        "wrote {:.2} s of audio ({} samples at {} Hz, {} channel{}) to {}, seed {}",
         wave.duration_seconds(),
         wave.frame_count(),
         format.sample_rate,
         channels,
         if channels == 1 { "" } else { "s" },
-        options.output.display()
+        options.output.display(),
+        result
+            .seed
+            .map_or_else(|| "unknown".to_string(), |s| s.to_string())
     );
+    if result.stopped_early {
+        eprintln!(
+            "warning: the take likely stopped speaking before the end of the text; run again \
+             without --seed for a new take"
+        );
+    }
     Ok(())
 }
 
@@ -437,7 +464,7 @@ mod tests {
     fn parses_defaults_and_every_override() {
         let o = parse_args(&base()).unwrap();
         assert_eq!(o.text, "hello there");
-        assert_eq!(o.seed, 0);
+        assert_eq!(o.seed, None, "no --seed draws a fresh one per run");
         assert_eq!(o.wav_format, WavFormat::Pcm16);
         assert!(o.reference.is_none() && !o.consent);
         assert_eq!(
@@ -460,7 +487,7 @@ mod tests {
             "float32",
         ]))
         .unwrap();
-        assert_eq!(o.seed, 9);
+        assert_eq!(o.seed, Some(9));
         assert_eq!(o.temperature, Some(0.5));
         assert_eq!(o.top_p, Some(0.9));
         assert_eq!(o.top_k, Some(40));
@@ -555,7 +582,7 @@ mod tests {
     #[test]
     fn requests_carry_exactly_what_was_asked() {
         let o = parse_args(&clone_args(&["--consent", "--seed", "3", "--top-k", "12"])).unwrap();
-        let (request, samples) = build_request(&o, Some((vec![0.1; 44_100 * 2], 44_100)));
+        let (request, samples) = build_request(&o, 3, Some((vec![0.1; 44_100 * 2], 44_100)));
         assert_eq!(samples.len(), 88_200);
         assert_eq!(request.task, AudioTask::TextToSpeech);
         assert_eq!(request.seed, Some(3));
@@ -569,7 +596,7 @@ mod tests {
 
         // Plain speech: no PCM, no rate, and the runtime accepts it.
         let plain = parse_args(&base()).unwrap();
-        let (request, samples) = build_request(&plain, None);
+        let (request, samples) = build_request(&plain, 5, None);
         assert!(samples.is_empty() && request.reference_sample_rate.is_none());
         assert!(validate_request(FISH_DRAMA3_FAMILY, &request, &samples).is_ok());
     }
@@ -586,7 +613,7 @@ mod tests {
             vec!["--max-frames", "1025"],
         ] {
             let o = parse_args(&with(&extra)).unwrap();
-            let (request, samples) = build_request(&o, None);
+            let (request, samples) = build_request(&o, 0, None);
             assert!(
                 validate_request(FISH_DRAMA3_FAMILY, &request, &samples).is_err(),
                 "{extra:?} accepted by the runtime"
@@ -594,8 +621,25 @@ mod tests {
         }
         // A clip under one second is refused before any model loads.
         let o = parse_args(&clone_args(&["--consent"])).unwrap();
-        let (request, samples) = build_request(&o, Some((vec![0.1; 1_000], 44_100)));
+        let (request, samples) = build_request(&o, 0, Some((vec![0.1; 1_000], 44_100)));
         assert!(validate_request(FISH_DRAMA3_FAMILY, &request, &samples).is_err());
+    }
+
+    /// No --seed is a new take each run. The runtime takes a seed
+    /// literally, so the old default of 0 repeated one take, and some Drama 3
+    /// seeds go silent after the first sentence. A seed the caller names,
+    /// 0 included, is used as given.
+    #[test]
+    fn no_seed_draws_a_fresh_one_and_a_named_seed_is_kept() {
+        let mut options = parse_args(&base()).unwrap();
+        let first = prepare_request(&options).unwrap().0.seed;
+        let second = prepare_request(&options).unwrap().0.seed;
+        assert!(first.is_some() && second.is_some());
+        assert_ne!(first, second, "two runs without --seed are two takes");
+        for named in [0u64, 9] {
+            options.seed = Some(named);
+            assert_eq!(prepare_request(&options).unwrap().0.seed, Some(named));
+        }
     }
 
     #[test]
@@ -661,7 +705,7 @@ mod tests {
             reference: None,
             reference_text: None,
             consent: false,
-            seed: 0,
+            seed: Some(0),
             temperature: None,
             top_p: None,
             top_k: None,

@@ -96,7 +96,9 @@ characters, `speed` 0.5 to 2.0. Voice cloning fields:
   the reference voice.
 - `steps` (1 to 100): MegaTTS3 defaults to 16 (the app's Fast, Balanced and
   Best are 8, 16 and 32); OmniVoice defaults to 32 diffusion steps. `seed`
-  defaults to 0. `p_w` (intelligibility, 0.1 to 5, default 1.4) and `t_w`
+  defaults to 0 for MegaTTS3 and OmniVoice. Without one, Drama 3 draws a fresh
+  seed per request, so asking again is a new take, and every Drama 3 response
+  names its seed in `x-turbospark-seed`. `p_w` (intelligibility, 0.1 to 5, default 1.4) and `t_w`
   (similarity, 0.1 to 10, default 3.0) are MegaTTS3 options; OmniVoice
   refuses both. `speed` scales MegaTTS3's durations and divides OmniVoice's
   estimated length.

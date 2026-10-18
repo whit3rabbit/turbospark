@@ -354,6 +354,13 @@ when this file gets updated relative to the version bump and the tag.
   result (C header, `AudioResult.stoppedEarly` in Swift). The app retakes such
   a take with a fresh seed at most twice when the seed was left to it, then
   saves the last take and says it stopped early.
+- `crates/server`, `crates/cli`: a Fish Audio Drama 3 request without a seed
+  ran at seed 0, so every request and every `turbospark-speak` run of one
+  text gave the same take, and a take that went silent did so every time.
+  `/v1/audio/speech` now draws a fresh seed for a Drama 3 request that names
+  none and returns the seed in `x-turbospark-seed` (as image generation
+  does). `turbospark-speak` draws one per run and prints it, and warns when
+  the take stopped early. A seed the caller names, 0 included, is kept.
 - `crates/catalog`: `InstalledModel::effective_modality` now derives the `Audio`
   modality from install path, `audio-receipt.json`, or speech metadata if a model
   was recorded with default `text` modality in `installed.json`. `installed_report`

@@ -550,6 +550,9 @@ paths:
           headers:
             x-audio-sample-rate:
               schema: { type: integer }
+            x-turbospark-seed:
+              description: 'Drama 3 only: the seed the take used.'
+              schema: { type: integer }
           content:
             audio/wav:
               schema: { type: string, format: binary }
@@ -1071,7 +1074,7 @@ components:
         instruction: { type: string, description: 'Emotion, style, or delivery guidance (Qwen3-TTS and OmniVoice, at most 512 bytes; MegaTTS3 and Drama 3 refuse it, Drama 3 takes inline cues such as [whispers] in the text instead).' }
         consent: { type: boolean, description: 'Required true for cloning: MegaTTS3 always, OmniVoice and Drama 3 whenever reference_audio is present. The caller states it has the right to use the reference voice.' }
         steps: { type: integer, minimum: 1, maximum: 100, description: 'Diffusion steps: MegaTTS3 default 16 (8, 16 and 32 are Fast, Balanced and Best), OmniVoice default 32. Fewer is faster. Drama 3 has no steps and refuses it.' }
-        seed: { type: integer, minimum: 0, description: 'Makes a MegaTTS3, OmniVoice or Drama 3 run repeatable (default 0).' }
+        seed: { type: integer, minimum: 0, description: 'Makes a MegaTTS3, OmniVoice or Drama 3 run repeatable. MegaTTS3 and OmniVoice default to 0. Without it Drama 3 draws a fresh seed and names it in x-turbospark-seed.' }
         p_w: { type: number, minimum: 0.1, maximum: 5, description: MegaTTS3 intelligibility weight (default 1.4); OmniVoice and Drama 3 refuse it. }
         t_w: { type: number, minimum: 0.1, maximum: 10, description: MegaTTS3 similarity weight (default 3.0); OmniVoice and Drama 3 refuse it. }
         temperature: { type: number, minimum: 0, description: 'Drama 3 sampling temperature (default 1.0). Other models refuse it.' }
