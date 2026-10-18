@@ -238,6 +238,31 @@ impl Music3Device {
     pub fn device_name(&self) -> String {
         self.state.context.borrow().device().name().to_owned()
     }
+    pub fn probe_info(&self) -> String {
+        use metal::MTLGPUFamily as F;
+        let c = self.state.context.borrow();
+        let d = c.device();
+        let fams: Vec<_> = [
+            ("Apple6", F::Apple6),
+            ("Apple7", F::Apple7),
+            ("Apple8", F::Apple8),
+            ("Apple9", F::Apple9),
+        ]
+        .iter()
+        .map(|(n, f)| format!("{n}={}", d.supports_family(*f)))
+        .collect();
+        format!(
+            "name={:?} families=[{}] unified={} max_tg={:?} max_tg_mem={} low_power={} headless={} registry={}",
+            d.name(),
+            fams.join(","),
+            d.has_unified_memory(),
+            d.max_threads_per_threadgroup(),
+            d.max_threadgroup_memory_length(),
+            d.is_low_power(),
+            d.is_headless(),
+            d.registry_id()
+        )
+    }
 
     #[allow(clippy::too_many_arguments)]
     pub fn load_weight(
@@ -1525,6 +1550,12 @@ impl Music3Weight {
             16
         };
         p.push(wide_lanes as u32);
+        p.push(
+            std::env::var("PROBE_QVAR")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0u32),
+        );
         let p = bytes(&p);
         // The Music 3 LM head window (`logit_window` in the audio crate)
         // is exact only while every output tile is at most 64 wide and

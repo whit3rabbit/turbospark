@@ -74,6 +74,10 @@ inline float music_value(device const uchar *w, device const float *sc,
     return (code&8 ? -x : x)*scale;
 }
 
+inline float probe_unfused(float a,float b,float c,float d) {
+#pragma METAL fp contract(off)
+    return a*b+c*d;
+}
 kernel void music3_linear(device const uchar *w [[buffer(0)]],
  device const float *sc [[buffer(1)]], device const float *off [[buffer(2)]],
  device const uchar *bs [[buffer(3)]], device const float *x [[buffer(4)]],
@@ -172,7 +176,14 @@ kernel void music3_linear(device const uchar *w [[buffer(0)]],
                     }
                     xsum+=xs;
                 }
-                sum+=dot*music_sc(sc,ulong(o)*(cols/p[3])+g)+xsum*music_sc(off,ulong(o)*(cols/p[3])+g);
+                {
+                    float sv_=music_sc(sc,ulong(o)*(cols/p[3])+g), ov_=music_sc(off,ulong(o)*(cols/p[3])+g);
+                    uint var_=p[15];
+                    if(var_==1) sum+=fma(dot,sv_,xsum*ov_);
+                    else if(var_==2) sum+=fma(xsum,ov_,dot*sv_);
+                    else if(var_==3) sum+=probe_unfused(dot,sv_,xsum,ov_);
+                    else sum+=dot*sv_+xsum*ov_;
+                }
             }
         } else for(uint c=begin+tid;c<end;c+=128) {
             float weight=music_value(w,sc,off,bs,p,o,c);

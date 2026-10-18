@@ -872,10 +872,68 @@ fn probe_profile(encoding: &str, fakes: &[&str], out: &mut String) {
         );
     }
 }
+fn probe_trace(encoding: &str, out: &mut String) {
+    use audio::music::minimax_music3::Music3Precision;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let reference = fixture("precision").join(encoding);
+    let request: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(reference.join("request.json")).unwrap()).unwrap();
+    let ids = serde_json::from_value::<Vec<i32>>(request["ids"].clone()).unwrap();
+    let runner = open_exact_with_precision(&reference, Music3Precision::Checkpoint).unwrap();
+    let log = Rc::new(RefCell::new(Vec::<String>::new()));
+    let sink = log.clone();
+    runner.set_trace_observer(move |st| {
+        let mut l = sink.borrow_mut();
+        if l.len() >= 400 {
+            return;
+        }
+        let h = st.values.iter().fold(0xcbf29ce484222325u64, |h, v| {
+            (h ^ u64::from(v.to_bits())).wrapping_mul(0x100000001b3)
+        });
+        let head: Vec<String> = st
+            .values
+            .iter()
+            .take(4)
+            .map(|v| format!("{:08x}", v.to_bits()))
+            .collect();
+        let i = l.len();
+        l.push(format!(
+            "T{i:03} {} {:?} {h:016x} {}",
+            st.name,
+            st.shape,
+            head.join(",")
+        ));
+        if matches!(st.name, "ar.0.q" | "ar.0.gate" | "ar.0.down") {
+            let all: Vec<String> = st
+                .values
+                .iter()
+                .map(|v| format!("{:08x}", v.to_bits()))
+                .collect();
+            l.push(format!("D{i:03} {}", all.join("")));
+        }
+    });
+    let _ = runner.generate_frame_hiddens_traced(
+        &ids,
+        request["frames"].as_u64().unwrap() as usize,
+        request["seed"].as_u64().unwrap(),
+        |_| {},
+    );
+    *out += &format!("== trace {encoding}\n");
+    for l in log.borrow().iter() {
+        *out += &format!("{l}\n");
+    }
+}
 #[test]
 fn zz_probe_ci_device() {
     let mut out = String::new();
-    probe_profile("affine4", &["", "Apple M1", "Apple M4 Max"], &mut out);
+    for v in ["0", "1", "2", "3"] {
+        std::env::set_var("PROBE_QVAR", v);
+        out += &format!("##### PROBE_QVAR={v}\n");
+        probe_profile("affine4", &[""], &mut out);
+    }
+    std::env::remove_var("PROBE_QVAR");
+    probe_trace("affine4", &mut out);
     for e in ["bf16", "affine8", "affine6"] {
         probe_profile(e, &[""], &mut out);
     }
