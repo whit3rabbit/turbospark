@@ -30,6 +30,10 @@ pub struct WeightData<'a> {
     pub scales: &'a [f32],
     pub offsets: &'a [f32],
     pub block_scales: &'a [u8],
+    /// Output rows of the full matrix when `shape` is a row window of it.
+    /// The device plans width-dependent kernel choices (the dense split-K)
+    /// from the full matrix, so the window reproduces its columns bit for bit.
+    pub planned_rows: Option<usize>,
 }
 
 #[derive(Clone, Copy, Debug)]

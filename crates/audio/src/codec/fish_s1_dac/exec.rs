@@ -66,6 +66,7 @@ impl DacExec {
             scales: &[],
             offsets: &[],
             block_scales: &[],
+            planned_rows: None,
         })?;
         self.weights.borrow_mut().insert(key, weight.clone());
         Ok(weight)

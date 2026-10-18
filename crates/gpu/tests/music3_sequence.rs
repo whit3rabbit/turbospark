@@ -88,6 +88,66 @@ fn lm_head_window_reproduces_full_head_columns_bitwise() {
     }
 }
 
+/// The window must reproduce the full head on every chip's plan, not only the
+/// chip the test runs on. Below M3 a 2 to 15 row dense projection takes the
+/// tiled kernel, whose split-K choice reads the output width, so a window
+/// that plans from its own width splits where the full head does not.
+#[test]
+fn lm_head_window_matches_full_head_under_every_chips_plan() {
+    let (vocab, hidden, rows) = (5000, 4096, 2);
+    let weights = bf16_bytes(&values(vocab * hidden, 11));
+    let x: Vec<f32> = values(rows * hidden, 12)
+        .into_iter()
+        .map(|v| bf16::from_f32(v).to_f32())
+        .collect();
+    let row_bytes = hidden * 2;
+    for chip in [
+        "Apple M1 (Virtual)",
+        "Apple M2 Pro",
+        "Apple M3 Pro",
+        "Apple M4 Max",
+        "Apple M5",
+    ] {
+        let device = Music3Device::with_device_name(chip).unwrap();
+        let full = device
+            .load_weight(
+                &[vocab, hidden],
+                &weights,
+                Music3Encoding::Bf16,
+                &[],
+                &[],
+                &[],
+            )
+            .unwrap();
+        let want = full
+            .linear_typed(&x, None, rows, hidden, vocab, Music3DType::Bf16)
+            .unwrap();
+        for window in [64..1088, 1984..5000] {
+            let head = device
+                .load_weight(
+                    &[window.len(), hidden],
+                    &weights[window.start * row_bytes..window.end * row_bytes],
+                    Music3Encoding::Bf16,
+                    &[],
+                    &[],
+                    &[],
+                )
+                .unwrap()
+                .planned_as_rows(vocab);
+            let got = head
+                .linear_typed(&x, None, rows, hidden, window.len(), Music3DType::Bf16)
+                .unwrap();
+            for r in 0..rows {
+                assert_bits(
+                    &got[r * window.len()..(r + 1) * window.len()],
+                    &want[r * vocab + window.start..r * vocab + window.end],
+                    &format!("{chip} window {window:?} row {r}"),
+                );
+            }
+        }
+    }
+}
+
 use turbospark_audio::music::minimax_music3::precision::{bf16_silu_table, DType};
 use turbospark_gpu::{Music3Sequence, Music3Slot, Music3Weight};
 
