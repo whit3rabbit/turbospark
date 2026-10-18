@@ -226,6 +226,10 @@ when this file gets updated relative to the version bump and the tag.
   `scripts/verify-music3.sh`, golden hash files with
   `crates/gpu/tests/music3_oracle.rs`, `music3_mlx_linear_cmp`, and a zero-tolerance
   4-bit MLX gate. See `docs/audio/minimax_music3.md`.
+- MiniMax Music 3 vocoder runs each block (transposed conv plus three residual
+  units) as one Metal command buffer via `Sequence::convolution` and
+  `Sequence::snake`. Bit-identical to the per-op path, 8 s vocoder about 6.7 s to
+  about 4.0 s on an M4 Max (indicative, busy host).
 - `swift/TurboSparkApp`: syntext moves to 2.7.2 (`exact: "2.7.2"`) and adds
   the `SyntextContext` product. The previous `exact: "2.5.0"` pin linked the
   2.4.0 xcframework, because syntext's `vX.Y.Z` tags through 2.7.0 pin the

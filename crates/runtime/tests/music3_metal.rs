@@ -721,6 +721,44 @@ fn kv_cache_returns_to_the_host_mid_request_without_changing_output() {
     assert_eq!(bits(&per_op.waveform), bits(&sequence.waveform));
 }
 
+/// One command buffer per vocoder block must reproduce the per-operation
+/// decode bit for bit on every tiny native profile. The vocoder is the last
+/// stage, so equal waveforms from an observed (per-op) and an unobserved
+/// (sequence) run, with the profile showing which ran, pin it.
+#[test]
+fn vocoder_block_sequences_match_the_per_op_decode_bitwise() {
+    use audio::music::minimax_music3::Music3Precision;
+    for encoding in [
+        "bf16", "affine8", "affine6", "affine4", "mxfp8", "mxfp4", "nvfp4",
+    ] {
+        let path = fixture("precision").join(encoding);
+        let runner = open_exact_with_precision(&path, Music3Precision::Checkpoint).unwrap();
+        let mut request = TextGenerateRequest::new("piano", "[instrumental]");
+        request.duration_seconds = Some(0.24);
+        request.steps = Some(1);
+        request.seed = Some(7);
+        let bits = |w: &[f32]| w.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
+
+        runner.set_trace_observer(|_| {});
+        runner.reset_dispatch_profile();
+        let per_op = runner.generate_text(&request).unwrap();
+        assert_eq!(sequence_calls(&runner, "vocoder_block"), 0, "{encoding}");
+
+        runner.clear_trace_observer();
+        runner.reset_dispatch_profile();
+        let sequence = runner.generate_text(&request).unwrap();
+        assert!(
+            sequence_calls(&runner, "vocoder_block") > 0,
+            "{encoding}: vocoder sequence ran"
+        );
+        assert_eq!(
+            bits(&sequence.waveform),
+            bits(&per_op.waveform),
+            "{encoding}: vocoder paths differ"
+        );
+    }
+}
+
 /// One command buffer per DiT block must reproduce the per-operation flow
 /// stage bit for bit on every tiny native profile, and the profile must
 /// show which path ran.

@@ -214,6 +214,52 @@ impl Sequence for MetalSequence<'_> {
             .linear(x, &weight.0, bias, rows, input_dim, output_dim, dtype(d));
         self.push(result)
     }
+    fn convolution(
+        &mut self,
+        x: Slot,
+        weight: &dyn DeviceWeight,
+        bias: Option<&[f32]>,
+        s: ConvShape,
+        batch: usize,
+        d: DType,
+    ) -> Result<Slot> {
+        checkpoint(&self.backend.cancellation)?;
+        let weight = weight
+            .as_any()
+            .and_then(|w| w.downcast_ref::<Weight>())
+            .ok_or_else(|| SpeechError::Unsupported {
+                why: "Music 3 Metal sequence needs a Metal-resident weight".into(),
+            })?;
+        let x = self.slot(x)?;
+        let result = self.inner.convolution(
+            x,
+            &weight.0,
+            bias,
+            s.input_channels,
+            s.output_channels,
+            s.kernel,
+            s.stride,
+            s.padding,
+            s.dilation,
+            s.transpose,
+            dtype(d),
+            batch,
+        );
+        self.push(result)
+    }
+    fn snake(
+        &mut self,
+        x: Slot,
+        alpha: &[f32],
+        channels: usize,
+        frames: usize,
+        d: DType,
+    ) -> Result<Slot> {
+        checkpoint(&self.backend.cancellation)?;
+        let x = self.slot(x)?;
+        let result = self.inner.snake(x, alpha, channels, frames, dtype(d));
+        self.push(result)
+    }
     fn layer_norm(
         &mut self,
         x: Slot,

@@ -105,6 +105,18 @@ vocoder about 6.7 s against roughly 1 s (MLX's flow stage at 1 step, vocoder
 included, is only 1.7 to 1.9 s). The vocoder is the largest ratio (about 6x) and
 the DiT the largest absolute gap.
 
+**Vocoder as one submission per block.** Each vocoder block (transposed conv plus
+three residual units) now records into a single command buffer
+(`Sequence::convolution` and `Sequence::snake`; bf16 device weights only, the
+per-op path otherwise and under a trace observer). Values are bit-identical to
+the per-op path (`vocoder_block_sequences_match_the_per_op_decode_bitwise`, all
+seven tiny profiles) and `verify-music3.sh --mlx` stays green. Vocoder time at
+8 s drops from about 6.7 s to about 4.0 s (`--flow-only`, 1 step, flow 6.05 s
+with the DiT about 2.0 s, load average 8 from another session's build, so
+indicative). What remains is kernel time: the largest blocks take 0.6 to 0.7 s
+each, from the transposed conv's serial split-K partitions, the conv loaders'
+runtime divisions and uncoalesced weight reads, and Snake's `precise::sin`.
+
 This does not make MLX the right default for TurboSpark: it would put a Python and
 MLX runtime inside a native app. It does mean there is real headroom in our
 kernels, and MLX is now a trustworthy oracle for finding it, because the outputs

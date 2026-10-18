@@ -208,6 +208,37 @@ pub trait Sequence {
         shape: AttentionShape,
         dtype: DType,
     ) -> Result<Slot>;
+    /// A single-group convolution with the bias added in the kernel; `shape`,
+    /// `batch` and `dtype` as passed to [`DeviceWeight::convolution_batched`].
+    /// Backends that cannot record it report [`SpeechError::Unsupported`] and
+    /// the caller keeps the per-operation path.
+    #[allow(clippy::too_many_arguments)]
+    fn convolution(
+        &mut self,
+        _x: Slot,
+        _weight: &dyn DeviceWeight,
+        _bias: Option<&[f32]>,
+        _shape: ConvShape,
+        _batch: usize,
+        _dtype: DType,
+    ) -> Result<Slot> {
+        Err(SpeechError::Unsupported {
+            why: "sequence does not record convolutions".into(),
+        })
+    }
+    /// [`ComputeBackend::snake`] on a slot.
+    fn snake(
+        &mut self,
+        _x: Slot,
+        _alpha: &[f32],
+        _channels: usize,
+        _frames: usize,
+        _dtype: DType,
+    ) -> Result<Slot> {
+        Err(SpeechError::Unsupported {
+            why: "sequence does not record Snake".into(),
+        })
+    }
     /// `dtype.round(a + b)`.
     fn add_round(&mut self, a: Slot, b: Slot, dtype: DType) -> Result<Slot>;
     /// `fused.round(gate.silu(g) * u)`.

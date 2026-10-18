@@ -130,6 +130,25 @@ impl ResidualUnit {
     fn dtype(&self, input: DType) -> DType {
         input.promote(self.conv2.dtype(self.conv1.dtype(input)))
     }
+    fn sequence_ready(&self, input: DType) -> bool {
+        self.conv1.sequence_ready(input) && self.conv2.sequence_ready(self.conv1.dtype(input))
+    }
+    /// [`Self::forward`] recorded into `seq` (BF16, see [`Self::sequence_ready`]).
+    fn forward_sequence(
+        &self,
+        seq: &mut dyn backend::Sequence,
+        x: backend::Slot,
+        frames: usize,
+        dtype: DType,
+    ) -> Result<backend::Slot> {
+        let channels = self.snake1_alpha.len();
+        let a = seq.snake(x, &self.snake1_alpha, channels, frames, dtype)?;
+        let y = self.conv1.forward_sequence(seq, a, dtype)?;
+        let conv1_dtype = self.conv1.dtype(dtype);
+        let a = seq.snake(y, &self.snake2_alpha, channels, frames, conv1_dtype)?;
+        let y = self.conv2.forward_sequence(seq, a, conv1_dtype)?;
+        seq.add_round(x, y, self.dtype(dtype))
+    }
     fn forward(
         &self,
         x: &[f32],
@@ -251,6 +270,52 @@ impl VocoderBlock {
             .iter()
             .fold(self.conv_t1.dtype(input), |d, u| u.dtype(d))
     }
+    /// The whole block as one device submission. `None` when the backend has
+    /// no sequence (or a trace observer is set), a stage is not BF16 device
+    /// work, or the device result is unusable; the caller then runs the
+    /// per-operation path, which gives the same values.
+    fn forward_sequence(
+        &self,
+        x: &[f32],
+        frames: usize,
+        input_dtype: DType,
+        compute: &Option<Rc<dyn ComputeBackend>>,
+    ) -> Result<Option<Vec<f32>>> {
+        let Some(compute) = compute else {
+            return Ok(None);
+        };
+        let mut dtype = self.conv_t1.dtype(input_dtype);
+        let mut ready = self.conv_t1.sequence_ready(input_dtype) && dtype == DType::Bf16;
+        for unit in &self.res_units {
+            ready = ready && unit.sequence_ready(dtype);
+            dtype = unit.dtype(dtype);
+            ready = ready && dtype == DType::Bf16;
+        }
+        if !ready {
+            return Ok(None);
+        }
+        let Some(mut seq) = compute.sequence("vocoder_block", &[frames]) else {
+            return Ok(None);
+        };
+        let in_dim = self.snake1_alpha.len();
+        let x = seq.upload(x)?;
+        let activated = seq.snake(x, &self.snake1_alpha, in_dim, frames, input_dtype)?;
+        let mut y =
+            self.conv_t1
+                .forward_sequence(seq.as_mut(), activated, input_dtype, STEREO_CHANNELS)?;
+        let frames = self.conv_t1.output_frames(frames);
+        let dtype = self.conv_t1.dtype(input_dtype);
+        for unit in &self.res_units {
+            y = unit.forward_sequence(seq.as_mut(), y, frames, dtype)?;
+        }
+        let Some(mut read) = seq.finish(&[y])? else {
+            return Ok(None);
+        };
+        let out = read.pop().unwrap_or_default();
+        // A frame count that disagrees with the kernel's would be a geometry
+        // bug here, not a value difference: take the checked per-op path.
+        Ok((out.len() == self.out_dim * frames).then_some(out))
+    }
     fn forward(
         &self,
         x: &[f32],
@@ -259,6 +324,9 @@ impl VocoderBlock {
         compute: &Option<Rc<dyn ComputeBackend>>,
         stage: &str,
     ) -> Result<Vec<f32>> {
+        if let Some(out) = self.forward_sequence(x, frames, input_dtype, compute)? {
+            return Ok(out);
+        }
         let in_dim = self.snake1_alpha.len();
         let activated =
             activate_snake(x, &self.snake1_alpha, in_dim, frames, input_dtype, compute)?;

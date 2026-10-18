@@ -479,11 +479,20 @@ pub fn run(mode: &str, emit: &mut dyn FnMut(String)) {
                 (64, 100, 16, 8, 4, 1, true, 29),
                 (130, 70, 8, 4, 2, 1, true, 55),
             ];
+            // The vocoder's real 8 s shapes (latent length 689, four upsampling blocks).
             let timing_cases: Vec<ConvCase> = vec![
+                (1536, 768, 16, 8, 4, 1, true, 689),
+                (768, 768, 7, 1, 3, 1, false, 5512),
+                (768, 768, 1, 1, 0, 1, false, 5512),
+                (768, 384, 16, 8, 4, 1, true, 5512),
+                (384, 384, 7, 1, 3, 1, false, 44096),
+                (384, 384, 1, 1, 0, 1, false, 44096),
+                (384, 192, 8, 4, 2, 1, true, 44096),
                 (192, 192, 7, 1, 3, 1, false, 176384),
                 (192, 192, 1, 1, 0, 1, false, 176384),
-                (384, 192, 8, 4, 2, 1, true, 44096),
-                (1536, 768, 16, 8, 4, 1, true, 689),
+                (192, 96, 4, 2, 1, 1, true, 176384),
+                (96, 96, 7, 1, 3, 1, false, 352768),
+                (96, 96, 1, 1, 0, 1, false, 352768),
             ];
             let cases = if mode == "conv_hashes" {
                 hash_cases

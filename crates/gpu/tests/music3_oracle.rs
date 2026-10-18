@@ -14,8 +14,12 @@
 //!         > crates/gpu/tests/golden/music3_hashes.txt
 //!     cargo run --release -p turbospark-gpu --example music3_linear_bench -- dit_hashes \
 //!         > crates/gpu/tests/golden/music3_dit_hashes.txt
+//!     cargo run --release -p turbospark-gpu --example music3_linear_bench -- conv_hashes \
+//!         > crates/gpu/tests/golden/music3_conv_hashes.txt
 //!
-//! Dense bf16/f16 kernels are not covered here: they are checked against MLX
+//! The convolution golden pins the tiled conv's bits (K order, split-K, bias) so a
+//! restructuring of its loaders is checked without needing MLX. Dense bf16/f16
+//! linear kernels are not covered here: they are checked against MLX
 //! itself by `examples/music3_mlx_linear_cmp.rs` (see docs/audio/minimax_music3.md).
 
 #![cfg(target_os = "macos")]
@@ -59,4 +63,9 @@ fn affine_linear_hashes_match_the_golden_file() {
 #[test]
 fn dit_shape_hashes_match_the_golden_file() {
     check("dit_hashes", include_str!("golden/music3_dit_hashes.txt"));
+}
+
+#[test]
+fn convolution_hashes_match_the_golden_file() {
+    check("conv_hashes", include_str!("golden/music3_conv_hashes.txt"));
 }

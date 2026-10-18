@@ -136,6 +136,15 @@ struct LinearPlan {
     groups: u64,
     count: usize,
 }
+/// Planned convolution: kernel, packed parameters, and dispatch size.
+struct ConvPlan {
+    source: &'static str,
+    kernel: &'static str,
+    params: Vec<u8>,
+    groups: u64,
+    threads: u64,
+    count: usize,
+}
 impl Drop for Music3Weight {
     fn drop(&mut self) {
         self.state
@@ -1691,10 +1700,11 @@ impl Music3Weight {
         )
     }
     #[allow(clippy::too_many_arguments)]
-    fn convolution_impl(
+    #[allow(clippy::too_many_arguments)]
+    fn conv_plan(
         &self,
-        input: &[f32],
-        bias: Option<&[f32]>,
+        input_len: usize,
+        bias_len: Option<usize>,
         ic: usize,
         oc: usize,
         kernel: usize,
@@ -1706,7 +1716,7 @@ impl Music3Weight {
         groups: usize,
         kokoro: bool,
         batch: usize,
-    ) -> Result<Vec<f32>, GpuError> {
+    ) -> Result<ConvPlan, GpuError> {
         if groups == 0 || ic % groups != 0 || oc % groups != 0 {
             return Err(bad("audio convolution groups do not divide channels"));
         }
@@ -1723,13 +1733,13 @@ impl Music3Weight {
             || stride == 0
             || dilation == 0
             || (transpose && dilation != 1)
-            || input.is_empty()
-            || input.len() % ic != 0
-            || bias.is_some_and(|b| b.len() != oc)
+            || input_len == 0
+            || input_len % ic != 0
+            || bias_len.is_some_and(|b| b != oc)
         {
             return Err(bad("Music 3 convolution geometry mismatch"));
         }
-        let len = input.len() / ic;
+        let len = input_len / ic;
         let padding = pad
             .checked_mul(2)
             .ok_or_else(|| bad("Music 3 padding overflows"))?;
@@ -1778,48 +1788,108 @@ impl Music3Weight {
             transpose as usize,
             len,
             outlen,
-            bias.is_some() as usize,
+            bias_len.is_some() as usize,
             dtype as usize,
             self.encoding.parameters().0 as usize,
             groups,
             (kokoro || implicit_order) as usize,
             conv_split,
         ])?);
+        let kernel_name = if depth {
+            "audio_depthwise_transpose"
+        } else if groups != 1 {
+            "audio_conv_grouped"
+        } else if mma {
+            "music3_conv_tiled_32x32"
+        } else {
+            "music3_conv"
+        };
+        Ok(ConvPlan {
+            source: if kokoro { KOKORO_SOURCE } else { source(dtype) },
+            kernel: kernel_name,
+            params: p,
+            groups: if depth {
+                (outlen.div_ceil(8) * oc) as u64
+            } else if mma {
+                (outlen.div_ceil(32) * oc.div_ceil(32)) as u64
+            } else {
+                count as u64
+            },
+            threads: if depth { 32 } else { 128 },
+            count,
+        })
+    }
+    /// Append one planned convolution to `pass`. `x` is `(buffer, byte offset)`.
+    fn encode_conv(
+        &self,
+        c: &mut MetalContext,
+        pass: &PassEncoder,
+        plan: &ConvPlan,
+        x: (&MetalBuffer, u64),
+        bias: &MetalBuffer,
+        out: &MetalBuffer,
+    ) -> Result<(), GpuError> {
+        let pipeline = c.pipeline(
+            plan.source,
+            plan.kernel,
+            &crate::rms_norm::unused_function_constants(),
+            b"",
+        )?;
+        pass.encode_threadgroups(
+            &pipeline,
+            &[
+                (&self.bytes, 0, 0),
+                (x.0, 1, x.1),
+                (bias, 2, 0),
+                (out, 3, 0),
+            ],
+            &[(&plan.params, 4)],
+            plan.groups,
+            plan.threads,
+        );
+        Ok(())
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn convolution_impl(
+        &self,
+        input: &[f32],
+        bias: Option<&[f32]>,
+        ic: usize,
+        oc: usize,
+        kernel: usize,
+        stride: usize,
+        pad: usize,
+        dilation: usize,
+        transpose: bool,
+        dtype: Music3DType,
+        groups: usize,
+        kokoro: bool,
+        batch: usize,
+    ) -> Result<Vec<f32>, GpuError> {
+        let plan = self.conv_plan(
+            input.len(),
+            bias.map(<[f32]>::len),
+            ic,
+            oc,
+            kernel,
+            stride,
+            pad,
+            dilation,
+            transpose,
+            dtype,
+            groups,
+            kokoro,
+            batch,
+        )?;
         autorelease_pool(|| {
             let mut c = self.state.context.borrow_mut();
-            let pipeline = c.pipeline(
-                if kokoro { KOKORO_SOURCE } else { source(dtype) },
-                if depth {
-                    "audio_depthwise_transpose"
-                } else if groups != 1 {
-                    "audio_conv_grouped"
-                } else if mma {
-                    "music3_conv_tiled_32x32"
-                } else {
-                    "music3_conv"
-                },
-                &crate::rms_norm::unused_function_constants(),
-                b"",
-            )?;
             let x = c.new_buffer_with_data(input);
             let b = c.new_buffer_with_data(bias.unwrap_or(&[0.0]));
-            let out = c.new_output_buffer((count * 4) as u64);
+            let out = c.new_output_buffer((plan.count * 4) as u64);
             let pass = c.begin_pass();
-            pass.encode_threadgroups(
-                &pipeline,
-                &[(&self.bytes, 0, 0), (&x, 1, 0), (&b, 2, 0), (&out, 3, 0)],
-                &[(&p, 4)],
-                if depth {
-                    (outlen.div_ceil(8) * oc) as u64
-                } else if mma {
-                    (outlen.div_ceil(32) * oc.div_ceil(32)) as u64
-                } else {
-                    count as u64
-                },
-                if depth { 32 } else { 128 },
-            );
+            self.encode_conv(&mut c, &pass, &plan, (&x, 0), &b, &out)?;
             pass.commit_and_wait_checked()?;
-            finite_output(&out, count)
+            finite_output(&out, plan.count)
         })
     }
     /// One threadgroup owns recurrence state; no host round-trip per timestep.
