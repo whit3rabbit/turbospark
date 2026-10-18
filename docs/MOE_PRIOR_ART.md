@@ -4,9 +4,11 @@ Reviewed 2026-10-14 for anything the routed-expert streamer
 (`crates/streaming`) or the MoE layer paths could borrow. The `main-npu`
 part was re-read on 2026-10-17, after the fork's author pointed to it in the
 review of PR #151: the first pass took one number from that branch and
-missed its quantized-weight path. Every source was read, none was built or
-run, and nothing here is a measurement on this engine. A row below is a
-claim from the source until the experiment it names has run on a Mac.
+missed its quantized-weight path. Every source was read. Only `main-npu` was
+built and run, on one M4 Max (see "Measured on an M4 Max"). The engine
+measurements items 1 to 3 cite live in `docs/EXPERT_ROUTING.md`. Any other
+row is a claim from the source until the experiment it names has run on a
+Mac.
 
 Sources and the revisions read:
 
@@ -382,18 +384,71 @@ same weights. Prefill is compute-bound, so the ANE adds compute rather than
 competing for bandwidth, which is why the row split beats either device
 alone.
 
-**The hardware is the open question.** Every Apple number above is from a
+**The hardware was the open question.** Every Apple number above is from a
 plain M4, whose GPU has at most 10 cores. The ANE is the same 16-core unit
 on M4 Pro and M4 Max, while the GPU grows to as many as 40 cores. So a plain
-M4 is the case most favorable to the ANE. On an M4 Max, expect the gate to offload
-fewer shapes and each to gain less. That is an inference from core counts,
-not a measurement.
+M4 is the case most favorable to the ANE. On one M4 Max, the fork's mixed
+arm loses to Metal alone at every gate and microbatch tried.
 
-The cheapest test needs no code here. Build the fork, run its
-`llama-bench -dev MTL0,ANE/MTL0` comparison on a Q4_K_M checkpoint, and run
-`scripts/ane-sweep.py`, both on an M4 Max on AC power. A Metal-only arm that
-matches or beats the mixed arm there closes the question for that class of
-machine.
+**Measured on an M4 Max** (2026-10-17). These are measurements of the
+llama.cpp fork (`main-npu` at `689fd77`, built with `-DGGML_ANE=ON`), not of
+this engine. The host is an Apple M4 Max (14-core CPU, 32-core GPU,
+16-core ANE, 36 GB) on macOS 26.6.2 (25G83). It ran on AC power with no other
+GPU or build job running. The model is bartowski's
+`MiMo-V2.6-Distill-Qwen-9B-Q4_K_M.gguf`, the file behind the README's +28%
+row.
+
+Each invocation of
+`llama-bench -dev MTL0,ANE/MTL0 -sm layer -ts 1/0 -ngl 99 -p 4096 -n 32 -r 5`
+came after a discarded warmup invocation, and the device order flipped every
+round. A cell is the pp4096 mean and sample standard deviation in tok/s.
+Each covers 20 timed runs (4 rounds of 5), or 10 for the fitted gate.
+
+| Gate (`MIN_MACS`, `MIN_INTENSITY`) | Batch | Metal only | ANE + Metal | Change |
+|---|---|---|---|---|
+| Default (6e9, 45) | b 2048, ub 512 | 677.5 +/- 5.1 | 301.5 +/- 5.8 | -55% |
+| Default (6e9, 45) | b 4096, ub 2048 | 672.4 +/- 5.6 | 461.3 +/- 6.6 | -31% |
+| Fitted (0, 206.95) | b 2048, ub 512 | 681.8 +/- 16.7 | 149.8 +/- 0.4 | -78% |
+| Fitted (0, 206.95) | b 4096, ub 2048 | 687.9 +/- 5.6 | 153.9 +/- 1.2 | -78% |
+| Default, refused weights on Metal | b 2048, ub 512 | 686.9 +/- 16.5 | 375.0 +/- 6.2 | -45% |
+| Default, refused weights on Metal | b 4096, ub 2048 | 692.3 +/- 3.1 | 512.7 +/- 18.9 | -26% |
+
+The sweep agrees: `scripts/ane-sweep.py` timed 105 cases and found none
+where the ANE beat Metal. They span Q4_K, Q6_K, and Q8_0, 32 to 2048
+tokens, and seven shapes, among them this model's 1024 x 4096 K and V
+projections. Each case ran twice. The best was 0.79x (Q6_K 4096 x 12288 at 2048
+tokens). At 512 tokens, shapes of 4096 x 4096 and up ran at 0.42x to 0.53x.
+
+The fit returned `GGML_ANE_MIN_MACS=0` and `GGML_ANE_MIN_INTENSITY=206.95`,
+a bound just above the highest measured intensity, so it routes nothing.
+The ANE did use 3.3x to 3.8x less modeled energy per matmul at 2048 tokens.
+That is the fork's IOReport meter, whole machine, and comparable only within
+the sweep.
+
+Part of the loss is the fork's loader, not the ANE. With the ANE as the
+layer device, every weight the ANE refuses at load goes to the CPU instead
+of Metal. That is 242 tensors: norms, conv1d weights, SSM parameters, the
+full-attention K and V projections, and the output head.
+`docs/backend/ANE.md` describes a fallback to peer devices, but `src/` at
+`689fd77` has none. The load probe is a 512-token matmul, so placement
+follows the gate at 512 tokens whatever the run's microbatch.
+
+The graph then has 4815 splits against Metal's 34, and tg32 halves (56.0 to
+27.0) though no decode matmul offloads. The fitted gate refuses every
+matmul, which puts nearly all layer weights on the CPU. That is the 150
+tok/s row, and it says nothing about the ANE.
+
+The last two rows are a diagnostic, not the fork as shipped. An `-ot`
+override puts the refused tensors on Metal. Only the token embedding stays
+on the CPU, and tg32 comes back to 55 to 56 tok/s. Prefill still loses 26%
+to 45%. On this machine an offloaded matmul runs slower on the ANE than on
+Metal, and the graph waits for it, so every offload costs time.
+
+That closes the speed case for this M4 Max. The 40-core part was not
+measured. It pairs the same ANE with a larger GPU, so it should do no
+better, but that is an inference. The result fits the core-count reading of
+the fork's +28% on a 10-core M4. M4 Pro, other models, F16 checkpoints, and
+any energy case were not measured here.
 
 **What it costs.**
 
