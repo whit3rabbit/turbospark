@@ -7,7 +7,6 @@ import Foundation
 /// docs/FLUIDAUDIO.md has the pins, layouts and placements behind each case.
 enum FluidAudioFamily: String, CaseIterable, Sendable {
     case sileroVAD = "fluidaudio_silero_vad"
-    case diarizer = "fluidaudio_diarizer"
     case kokoroANE = "fluidaudio_kokoro_ane"
     case pocketTTS = "fluidaudio_pocket_tts"
     case senseVoice = "fluidaudio_sensevoice"
@@ -20,7 +19,7 @@ enum FluidAudioFamily: String, CaseIterable, Sendable {
         switch self {
         case .kokoroANE: return "kokoro-82m-coreml"
         case .pocketTTS: return "Models/pocket-tts"
-        case .sileroVAD, .diarizer, .senseVoice, .paraformerZh, .parakeetJa: return nil
+        case .sileroVAD, .senseVoice, .paraformerZh, .parakeetJa: return nil
         }
     }
 
@@ -35,7 +34,7 @@ enum FluidAudioFamily: String, CaseIterable, Sendable {
         switch self {
         case .paraformerZh, .parakeetJa:
             return true
-        case .sileroVAD, .diarizer, .kokoroANE, .pocketTTS, .senseVoice:
+        case .sileroVAD, .kokoroANE, .pocketTTS, .senseVoice:
             return false
         }
     }

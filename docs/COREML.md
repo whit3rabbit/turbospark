@@ -436,13 +436,17 @@ day.
 Some audio rows run in the app through the FluidAudio Swift package (exact
 0.15.5), not through `crates/coreml`. Rust still pins, downloads, verifies,
 lists and deletes them like any audio profile. The evidence behind every value
-below is [FLUIDAUDIO_PHASE0.md](FLUIDAUDIO_PHASE0.md). No such row ships yet:
-this is the catalog half. The app side is [FLUIDAUDIO.md](FLUIDAUDIO.md).
+below is [FLUIDAUDIO_PHASE0.md](FLUIDAUDIO_PHASE0.md). Five rows ship:
+`parakeet-ja-coreml`, `paraformer-zh-coreml`, `silero-vad-coreml`,
+`kokoro-82m-ane-coreml` and `pocket-tts-coreml`. The app side is
+[FLUIDAUDIO.md](FLUIDAUDIO.md).
 
 - **Backend `swift_coreml`.** The families are `fluidaudio_silero_vad`,
-  `fluidaudio_diarizer`, `fluidaudio_kokoro_ane`, `fluidaudio_pocket_tts`,
-  `fluidaudio_sensevoice`, `fluidaudio_paraformer_zh` and
-  `fluidaudio_parakeet_ja` (`profile_capabilities`). `can_run` is false because
+  `fluidaudio_kokoro_ane`, `fluidaudio_pocket_tts`, `fluidaudio_sensevoice`,
+  `fluidaudio_paraformer_zh` and `fluidaudio_parakeet_ja`
+  (`profile_capabilities`). The diarizer has no family of its own: the same
+  `speaker-diarization-coreml` pin already runs in Rust as
+  `pyannote_community1`, and the app reaches it through the FFI. `can_run` is false because
   a Rust session never opens one. The reason text says so, and the generic row
   path keeps it.
 - **`http_api: false`.** No HTTP server can attach these. The server refuses

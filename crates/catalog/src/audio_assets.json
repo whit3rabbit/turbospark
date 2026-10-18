@@ -1770,6 +1770,720 @@
           }
         ]
       }
+    },
+    {
+      "alias": "silero-vad-coreml",
+      "assets": [
+        {
+          "path": "silero-vad-unified-256ms-v6.2.1.mlmodelc/analytics/coremldata.bin",
+          "sha256": "8067594eb3126ab8318af507f0c00cabfed40d5fedb8a0ee5075dd02e903d909",
+          "size": 243
+        },
+        {
+          "path": "silero-vad-unified-256ms-v6.2.1.mlmodelc/coremldata.bin",
+          "sha256": "7db35a4fd995222a7fb0129713473b15d1462572ab4a2e5e4d56bcaad9e40f41",
+          "size": 625
+        },
+        {
+          "path": "silero-vad-unified-256ms-v6.2.1.mlmodelc/metadata.json",
+          "sha256": "2740be542c611e1ba358e1849b4e265c65cdf0b17192767e1e5de86a31ac94d6",
+          "size": 3335
+        },
+        {
+          "path": "silero-vad-unified-256ms-v6.2.1.mlmodelc/model.mil",
+          "sha256": "c6a9d1bf22d413265da0a07a1d14151c3ea2fad296b3aa5859275b33ef1c3270",
+          "size": 176918
+        },
+        {
+          "path": "silero-vad-unified-256ms-v6.2.1.mlmodelc/weights/weight.bin",
+          "sha256": "53ecc8b5081146140ab654c89109cf001f2183abddd7a2411c5081feeffff063",
+          "size": 882304
+        }
+      ],
+      "source": {
+        "repository": "FluidInference/silero-vad-coreml",
+        "revision": "b419383c55c110e2c9271fa6ee0ea83d03c70d96"
+      },
+      "metadata": {
+        "task": "speech_detection",
+        "family": "fluidaudio_silero_vad",
+        "display_name": "Silero VAD (Core ML)",
+        "required_files": [
+          "silero-vad-unified-256ms-v6.2.1.mlmodelc/analytics/coremldata.bin",
+          "silero-vad-unified-256ms-v6.2.1.mlmodelc/coremldata.bin",
+          "silero-vad-unified-256ms-v6.2.1.mlmodelc/metadata.json",
+          "silero-vad-unified-256ms-v6.2.1.mlmodelc/model.mil",
+          "silero-vad-unified-256ms-v6.2.1.mlmodelc/weights/weight.bin"
+        ],
+        "sample_rate": 16000,
+        "channels": 1,
+        "languages": [],
+        "voices": [],
+        "max_input_seconds": 1800
+      }
+    },
+    {
+      "alias": "kokoro-82m-ane-coreml",
+      "assets": [
+        {
+          "path": "ANE/KokoroAlbert.mlmodelc/analytics/coremldata.bin",
+          "sha256": "14a61873d8759a38b79c93f9021ae865f408f56301209a0168dbfc2283265ccd",
+          "size": 243
+        },
+        {
+          "path": "ANE/KokoroAlbert.mlmodelc/coremldata.bin",
+          "sha256": "70b6d2f8429229f6800dda9480341669f7ac0eabf05a82934d8632ab2b4b63a6",
+          "size": 433
+        },
+        {
+          "path": "ANE/KokoroAlbert.mlmodelc/metadata.json",
+          "sha256": "fe1d005481f646707a948267ac089dfb2cd2ccea7d5827a14c28587eb4c89930",
+          "size": 2480
+        },
+        {
+          "path": "ANE/KokoroAlbert.mlmodelc/model.mil",
+          "sha256": "2038154d06a20e399a8ae35ec5c9242702cb23db8dd24dde7679cd53708e4eae",
+          "size": 101485
+        },
+        {
+          "path": "ANE/KokoroAlbert.mlmodelc/weights/weight.bin",
+          "sha256": "36089a39359b800d3e2c60e5e8ac9217d8f2d1010a8b9273192290e621f1fabc",
+          "size": 5718848
+        },
+        {
+          "path": "ANE/KokoroAlignment.mlmodelc/analytics/coremldata.bin",
+          "sha256": "f6074d1039a9151d0f97dc6ec9ee0cd9c7b865f1af646d718ab38b659fa84f3f",
+          "size": 243
+        },
+        {
+          "path": "ANE/KokoroAlignment.mlmodelc/coremldata.bin",
+          "sha256": "9a0fb4a536f665a052914d7f17b0e6ac80a3614f702e4be87ac0302c1143a4ea",
+          "size": 484
+        },
+        {
+          "path": "ANE/KokoroAlignment.mlmodelc/metadata.json",
+          "sha256": "6f610d23b9f93c7f1a968d6a861efa99725a191de696bf1c3be334ead39b7f00",
+          "size": 3021
+        },
+        {
+          "path": "ANE/KokoroAlignment.mlmodelc/model.mil",
+          "sha256": "eb3a618bda0cdf95cdffab586ef5c76333d0d0a1dcb881190b3ef414f3421b3e",
+          "size": 8194
+        },
+        {
+          "path": "ANE/KokoroAlignment.mlmodelc/weights/weight.bin",
+          "sha256": "2e7d69128b59d615fc3d3cf85637a687235fc086b1eb136359adb11a61615f6b",
+          "size": 4128
+        },
+        {
+          "path": "ANE/KokoroNoise.mlmodelc/analytics/coremldata.bin",
+          "sha256": "de1b584b3959d91905a458b20fc3fb6bd26b68d1eac0b4576aeccd1a7235b133",
+          "size": 243
+        },
+        {
+          "path": "ANE/KokoroNoise.mlmodelc/coremldata.bin",
+          "sha256": "6e675b07b45f7586222870758a1edfc7f5b87cd639c06acdb7191db09783283f",
+          "size": 440
+        },
+        {
+          "path": "ANE/KokoroNoise.mlmodelc/metadata.json",
+          "sha256": "eb3102217532d952479c6f1b04d26d7ac4cdbc59875b6a23e8aae86e5e02c2bc",
+          "size": 3020
+        },
+        {
+          "path": "ANE/KokoroNoise.mlmodelc/model.mil",
+          "sha256": "5af26daba7b289a1e635846ea3ad8400d346e3aee9f05b5a8912ae97db286bb0",
+          "size": 91698
+        },
+        {
+          "path": "ANE/KokoroNoise.mlmodelc/weights/weight.bin",
+          "sha256": "5da4ccb85b789bdf0ac634cf817171c428853c39d8bc81f29b864f0eba3aa0d0",
+          "size": 4580160
+        },
+        {
+          "path": "ANE/KokoroNoise_v2.mlmodelc/analytics/coremldata.bin",
+          "sha256": "53af6bf61482f6002bdb6e3a62f30774cde6e96411aebd888222a34b369f3d04",
+          "size": 243
+        },
+        {
+          "path": "ANE/KokoroNoise_v2.mlmodelc/coremldata.bin",
+          "sha256": "9911047f924b41f8b92811c32c50b7c718bd7b0c14842b3bc1b66b9ffe341a19",
+          "size": 440
+        },
+        {
+          "path": "ANE/KokoroNoise_v2.mlmodelc/metadata.json",
+          "sha256": "eb3102217532d952479c6f1b04d26d7ac4cdbc59875b6a23e8aae86e5e02c2bc",
+          "size": 3020
+        },
+        {
+          "path": "ANE/KokoroNoise_v2.mlmodelc/model.mil",
+          "sha256": "60233949d896f15ef38aea19afda558935d7569fa77a3ca4babddd3ffe845a36",
+          "size": 93152
+        },
+        {
+          "path": "ANE/KokoroNoise_v2.mlmodelc/weights/weight.bin",
+          "sha256": "1102fc2d31dfcfe3de3978a4c78b65202ff8b0a4d55a9304213bd4e8bda66bc2",
+          "size": 4580160
+        },
+        {
+          "path": "ANE/KokoroPostAlbert.mlmodelc/analytics/coremldata.bin",
+          "sha256": "6640044c875505382edbc361cdd56f3f1c30f082953e0f9473a31ae3f71e6c43",
+          "size": 243
+        },
+        {
+          "path": "ANE/KokoroPostAlbert.mlmodelc/coremldata.bin",
+          "sha256": "86de3ab0c1e8c6f8842b57bc24695a5099590c49b864e3fa2737b1fb5b15ba3b",
+          "size": 556
+        },
+        {
+          "path": "ANE/KokoroPostAlbert.mlmodelc/metadata.json",
+          "sha256": "2e3be1af412a76e340120a01cd04a502666371ada86b1fdaf5a622896e0bf979",
+          "size": 4171
+        },
+        {
+          "path": "ANE/KokoroPostAlbert.mlmodelc/model.mil",
+          "sha256": "450b73a3b179e1702e7b2210bad008eac20d58b2d6076e3c2de76290a66e5fef",
+          "size": 60047
+        },
+        {
+          "path": "ANE/KokoroPostAlbert.mlmodelc/weights/weight.bin",
+          "sha256": "e4f300a23cc2e05d38680d9fc94681cc722d445076d1d248f83255122ba091c8",
+          "size": 13806464
+        },
+        {
+          "path": "ANE/KokoroProsody.mlmodelc/analytics/coremldata.bin",
+          "sha256": "7708aab83deabd72539512acd850447fa955187608d9710a828943aa8498c6b8",
+          "size": 243
+        },
+        {
+          "path": "ANE/KokoroProsody.mlmodelc/coremldata.bin",
+          "sha256": "d65d87f246a6546c0fb7af6efe020106c38604e5c2b9ca00a78561c115dda33e",
+          "size": 421
+        },
+        {
+          "path": "ANE/KokoroProsody.mlmodelc/metadata.json",
+          "sha256": "a780887a790fe54e2ad14d26b2d936eca4fc6ab9f727e60f7e01f0c208163eef",
+          "size": 2721
+        },
+        {
+          "path": "ANE/KokoroProsody.mlmodelc/model.mil",
+          "sha256": "e6b332f1ed1b22178a406a16c9767c0eed2d64b7f0c17c86ccb2b6abf863b1ed",
+          "size": 79705
+        },
+        {
+          "path": "ANE/KokoroProsody.mlmodelc/weights/weight.bin",
+          "sha256": "d3c2670eb0c528802f0815d917dcb77bf17faf063bd2bc09cfd0970e2bc1444c",
+          "size": 8454272
+        },
+        {
+          "path": "ANE/KokoroProsody_v2.mlmodelc/analytics/coremldata.bin",
+          "sha256": "804d7d2e9a8fed345cedb57da61bd27fdd95db22a070cfa7d42ccd4f8e80a443",
+          "size": 243
+        },
+        {
+          "path": "ANE/KokoroProsody_v2.mlmodelc/coremldata.bin",
+          "sha256": "db8776a4896f690fd254cdb68a4551c168411c9b3fb98219630215bc3c357986",
+          "size": 421
+        },
+        {
+          "path": "ANE/KokoroProsody_v2.mlmodelc/model.mil",
+          "sha256": "e6acad9f44d70b1dba0aea6a5d25ee4edf68fe8f2933399ee81f70ace61cbc8b",
+          "size": 73353
+        },
+        {
+          "path": "ANE/KokoroProsody_v2.mlmodelc/weights/weight.bin",
+          "sha256": "70eea4cd2523992fa1fea840e31ab6f4fdd69c1598e220985a2ae6ea5da1e944",
+          "size": 8513664
+        },
+        {
+          "path": "ANE/KokoroTail.mlmodelc/analytics/coremldata.bin",
+          "sha256": "7dd3d6b8cfbcdcac37b46f6eb1312b842b972dc75f7cb9968f349fedfc0d77db",
+          "size": 243
+        },
+        {
+          "path": "ANE/KokoroTail.mlmodelc/coremldata.bin",
+          "sha256": "f28f17e4217d7ec1bed48bff4c65287169daa9198315f6fffb00a1483831f5d3",
+          "size": 392
+        },
+        {
+          "path": "ANE/KokoroTail.mlmodelc/metadata.json",
+          "sha256": "7708ecc145eecf8e3ef5ef8979ea7a4f77d04c8da787454c6d9190e5300fc50b",
+          "size": 1872
+        },
+        {
+          "path": "ANE/KokoroTail.mlmodelc/model.mil",
+          "sha256": "b0b8fd573bac76ba7eb85730eeb25538fc7f1c666ecbf939fd4b3a4ad4495ad7",
+          "size": 7014
+        },
+        {
+          "path": "ANE/KokoroTail.mlmodelc/weights/weight.bin",
+          "sha256": "2d4877b5d2725a9f017653e391638bee1262d1877a080bce09726aae128fecb2",
+          "size": 81088
+        },
+        {
+          "path": "ANE/KokoroTail_v2.mlmodelc/analytics/coremldata.bin",
+          "sha256": "a06e4b91c2b8a8be3ff701558a5f1f6484921f948202663fe6df78f248d42222",
+          "size": 243
+        },
+        {
+          "path": "ANE/KokoroTail_v2.mlmodelc/coremldata.bin",
+          "sha256": "527271f6df56cc308a5f89374c92108aef7b837ab15f0ba4900d555588dbd905",
+          "size": 392
+        },
+        {
+          "path": "ANE/KokoroTail_v2.mlmodelc/metadata.json",
+          "sha256": "7708ecc145eecf8e3ef5ef8979ea7a4f77d04c8da787454c6d9190e5300fc50b",
+          "size": 1872
+        },
+        {
+          "path": "ANE/KokoroTail_v2.mlmodelc/model.mil",
+          "sha256": "b0b8fd573bac76ba7eb85730eeb25538fc7f1c666ecbf939fd4b3a4ad4495ad7",
+          "size": 7014
+        },
+        {
+          "path": "ANE/KokoroTail_v2.mlmodelc/weights/weight.bin",
+          "sha256": "8ede31ec20df7d86a124287ac12d13507651e2a693e9d4f35f0e7f92cba422c7",
+          "size": 81088
+        },
+        {
+          "path": "ANE/KokoroVocoder.mlmodelc/analytics/coremldata.bin",
+          "sha256": "1cc4f1e6436597c6d458a845570d9d0ace458813ff90f225d08e0e713496b463",
+          "size": 243
+        },
+        {
+          "path": "ANE/KokoroVocoder.mlmodelc/coremldata.bin",
+          "sha256": "71bac80d2f2f077fefc0d66cdc39c0faaa96540b3a6149093ef29de01b1f8764",
+          "size": 626
+        },
+        {
+          "path": "ANE/KokoroVocoder.mlmodelc/metadata.json",
+          "sha256": "a8e768f151225a52476d35f6ab90805ae00f1f78b83be4ca21327029c800c183",
+          "size": 4331
+        },
+        {
+          "path": "ANE/KokoroVocoder.mlmodelc/model.mil",
+          "sha256": "52f2febec45094e78a5948a3a47f023be8fc57cfd48cc99e8d4c358a13674ef2",
+          "size": 309000
+        },
+        {
+          "path": "ANE/KokoroVocoder.mlmodelc/weights/weight.bin",
+          "sha256": "6d1f96eb50218ab687b12d6d862d2ae854c12b7165c3cd9b6b5cef261ef02ff1",
+          "size": 48889920
+        },
+        {
+          "path": "ANE/LICENSE",
+          "sha256": "f29080b0389b53eb15c81fd882c3c71dcbf92b99c5d94ea51df9d7d877fd9fe4",
+          "size": 11339
+        },
+        {
+          "path": "ANE/af_heart.bin",
+          "sha256": "d583ccff3cdca2f7fae535cb998ac07e9fcb90f09737b9a41fa2734ec44a8f0b",
+          "size": 522240
+        },
+        {
+          "path": "ANE/vocab.json",
+          "sha256": "8d65b0188b77eafc60751dac42bbac7ab5f5685074af44db91d1877b42dc1d7c",
+          "size": 1416
+        }
+      ],
+      "source": {
+        "repository": "FluidInference/kokoro-82m-coreml",
+        "revision": "e61d9ee79a01ad4ebf6b3d8bcfe2a03f6b8da105"
+      },
+      "metadata": {
+        "task": "text_to_speech",
+        "family": "fluidaudio_kokoro_ane",
+        "display_name": "Kokoro 82M (Neural Engine)",
+        "required_files": [
+          "ANE/KokoroAlbert.mlmodelc/analytics/coremldata.bin",
+          "ANE/KokoroAlbert.mlmodelc/coremldata.bin",
+          "ANE/KokoroAlbert.mlmodelc/metadata.json",
+          "ANE/KokoroAlbert.mlmodelc/model.mil",
+          "ANE/KokoroAlbert.mlmodelc/weights/weight.bin",
+          "ANE/KokoroAlignment.mlmodelc/analytics/coremldata.bin",
+          "ANE/KokoroAlignment.mlmodelc/coremldata.bin",
+          "ANE/KokoroAlignment.mlmodelc/metadata.json",
+          "ANE/KokoroAlignment.mlmodelc/model.mil",
+          "ANE/KokoroAlignment.mlmodelc/weights/weight.bin",
+          "ANE/KokoroNoise.mlmodelc/analytics/coremldata.bin",
+          "ANE/KokoroNoise.mlmodelc/coremldata.bin",
+          "ANE/KokoroNoise.mlmodelc/metadata.json",
+          "ANE/KokoroNoise.mlmodelc/model.mil",
+          "ANE/KokoroNoise.mlmodelc/weights/weight.bin",
+          "ANE/KokoroNoise_v2.mlmodelc/analytics/coremldata.bin",
+          "ANE/KokoroNoise_v2.mlmodelc/coremldata.bin",
+          "ANE/KokoroNoise_v2.mlmodelc/metadata.json",
+          "ANE/KokoroNoise_v2.mlmodelc/model.mil",
+          "ANE/KokoroNoise_v2.mlmodelc/weights/weight.bin",
+          "ANE/KokoroPostAlbert.mlmodelc/analytics/coremldata.bin",
+          "ANE/KokoroPostAlbert.mlmodelc/coremldata.bin",
+          "ANE/KokoroPostAlbert.mlmodelc/metadata.json",
+          "ANE/KokoroPostAlbert.mlmodelc/model.mil",
+          "ANE/KokoroPostAlbert.mlmodelc/weights/weight.bin",
+          "ANE/KokoroProsody.mlmodelc/analytics/coremldata.bin",
+          "ANE/KokoroProsody.mlmodelc/coremldata.bin",
+          "ANE/KokoroProsody.mlmodelc/metadata.json",
+          "ANE/KokoroProsody.mlmodelc/model.mil",
+          "ANE/KokoroProsody.mlmodelc/weights/weight.bin",
+          "ANE/KokoroProsody_v2.mlmodelc/analytics/coremldata.bin",
+          "ANE/KokoroProsody_v2.mlmodelc/coremldata.bin",
+          "ANE/KokoroProsody_v2.mlmodelc/model.mil",
+          "ANE/KokoroProsody_v2.mlmodelc/weights/weight.bin",
+          "ANE/KokoroTail.mlmodelc/analytics/coremldata.bin",
+          "ANE/KokoroTail.mlmodelc/coremldata.bin",
+          "ANE/KokoroTail.mlmodelc/metadata.json",
+          "ANE/KokoroTail.mlmodelc/model.mil",
+          "ANE/KokoroTail.mlmodelc/weights/weight.bin",
+          "ANE/KokoroTail_v2.mlmodelc/analytics/coremldata.bin",
+          "ANE/KokoroTail_v2.mlmodelc/coremldata.bin",
+          "ANE/KokoroTail_v2.mlmodelc/metadata.json",
+          "ANE/KokoroTail_v2.mlmodelc/model.mil",
+          "ANE/KokoroTail_v2.mlmodelc/weights/weight.bin",
+          "ANE/KokoroVocoder.mlmodelc/analytics/coremldata.bin",
+          "ANE/KokoroVocoder.mlmodelc/coremldata.bin",
+          "ANE/KokoroVocoder.mlmodelc/metadata.json",
+          "ANE/KokoroVocoder.mlmodelc/model.mil",
+          "ANE/KokoroVocoder.mlmodelc/weights/weight.bin",
+          "ANE/LICENSE",
+          "ANE/af_heart.bin",
+          "ANE/vocab.json"
+        ],
+        "sample_rate": 24000,
+        "channels": 1,
+        "languages": [
+          "en-US"
+        ],
+        "voices": [
+          "af_heart"
+        ],
+        "max_input_seconds": null,
+        "install_subdir": "kokoro-82m-coreml"
+      }
+    },
+    {
+      "alias": "pocket-tts-coreml",
+      "assets": [
+        {
+          "path": "v2.1/english/cond_prefill.mlmodelc/analytics/coremldata.bin",
+          "sha256": "324406d83f9685577c6665f231fdfa02518b8addceb54a780feaa968a04c33df",
+          "size": 243
+        },
+        {
+          "path": "v2.1/english/cond_prefill.mlmodelc/coremldata.bin",
+          "sha256": "12714da8d2ebae282e353e6785d4472ff5b87f656661d60eff769c584969f415",
+          "size": 1151
+        },
+        {
+          "path": "v2.1/english/cond_prefill.mlmodelc/model.mil",
+          "sha256": "7a93a23c94ec90b583531b6f9edf32aa34edb1de7564bcbef9354b8069f2d140",
+          "size": 228662
+        },
+        {
+          "path": "v2.1/english/cond_prefill.mlmodelc/weights/weight.bin",
+          "sha256": "3a40a5ef3158ef91bfbf932be1c6ee44daca10a856fbb30b9a6720ad9424df8c",
+          "size": 133237248
+        },
+        {
+          "path": "v2.1/english/constants_bin/alba.safetensors",
+          "sha256": "69c32db63ca56843d994f81f343f62e0bf2d73f7e4c9bc73e44bb1110b1d8845",
+          "size": 6194424
+        },
+        {
+          "path": "v2.1/english/constants_bin/anna.safetensors",
+          "sha256": "5ea82f78db006c9fd34e32ddd5aae82674b5b32646097977436458d00af80dfa",
+          "size": 7816440
+        },
+        {
+          "path": "v2.1/english/constants_bin/azelma.safetensors",
+          "sha256": "9f3e69f29075f991fd47774566865ef0e0e637cb5a35992c9919761b5b84b1de",
+          "size": 7963896
+        },
+        {
+          "path": "v2.1/english/constants_bin/bill_boerst.safetensors",
+          "sha256": "75610127d44e0b05b442154f80f89f993df235aecc6cad7070f11000d006c188",
+          "size": 6735096
+        },
+        {
+          "path": "v2.1/english/constants_bin/bos_before_voice.bin",
+          "sha256": "6ac530a104e3f3d2b2ff15f3fad63540f2619b31db78b159c0595a108f142caf",
+          "size": 4096
+        },
+        {
+          "path": "v2.1/english/constants_bin/bos_emb.bin",
+          "sha256": "52f1a157fa35fc100213e6e0fafa74703be99db8faa42de3e99feda607ac7b63",
+          "size": 128
+        },
+        {
+          "path": "v2.1/english/constants_bin/caro_davy.safetensors",
+          "sha256": "a5961b63a2e7a5cfd7edc383aa9042fb70fd14a9dee6310cdc633881a7f2449a",
+          "size": 5260536
+        },
+        {
+          "path": "v2.1/english/constants_bin/charles.safetensors",
+          "sha256": "299edc20182eeccfbf94e308626f259da4fbf339daa8d5905218f2b1774639b8",
+          "size": 6194424
+        },
+        {
+          "path": "v2.1/english/constants_bin/eponine.safetensors",
+          "sha256": "bda3b76a384ff355fe0350736387765946304ae8ca16e59f60ea3296a1c99cc6",
+          "size": 6931704
+        },
+        {
+          "path": "v2.1/english/constants_bin/estelle.safetensors",
+          "sha256": "ccebef7f51762c7fc08870f5ecf268e8713551ae2c9f7984ddaec0c1e1c77153",
+          "size": 8258808
+        },
+        {
+          "path": "v2.1/english/constants_bin/eve.safetensors",
+          "sha256": "ea9c2faf862a6c9d2cb61910fdf02842ae56940382cc8c1000fdb1b43269692b",
+          "size": 6538488
+        },
+        {
+          "path": "v2.1/english/constants_bin/fantine.safetensors",
+          "sha256": "51a8a4355d7f912d4959e4b1918314fda85ad47eba0a33a1d78a4a505d3465f5",
+          "size": 6538488
+        },
+        {
+          "path": "v2.1/english/constants_bin/george.safetensors",
+          "sha256": "0c1c6c57c55a98d81254b33728150c7776f40647fe95258d1a6c1a02780b5d02",
+          "size": 6243576
+        },
+        {
+          "path": "v2.1/english/constants_bin/giovanni.safetensors",
+          "sha256": "a5ee718157ec1c6fd9c1e66a7733c7e6337d474a74a7da756455d27717885c59",
+          "size": 4621552
+        },
+        {
+          "path": "v2.1/english/constants_bin/jane.safetensors",
+          "sha256": "37386227ca8ec5bf1b8e516c13d132ce5ff5437a304fe90129a1c62f41d9a008",
+          "size": 7374072
+        },
+        {
+          "path": "v2.1/english/constants_bin/javert.safetensors",
+          "sha256": "0ae88e03ca4e76a0e16cbf321a807428febda9d9e9bc0358c02e7f9c9e2c263b",
+          "size": 6194424
+        },
+        {
+          "path": "v2.1/english/constants_bin/juergen.safetensors",
+          "sha256": "e74d67b38339fc01118e3bbe2c90d6d40e601b161dbf7be906421956ba80a532",
+          "size": 6243576
+        },
+        {
+          "path": "v2.1/english/constants_bin/lola.safetensors",
+          "sha256": "34972e86b07b17272a8061460054a08119399cace9454979052b9e2d96664e8c",
+          "size": 5948664
+        },
+        {
+          "path": "v2.1/english/constants_bin/marius.safetensors",
+          "sha256": "04f84efcb77a0547ba582c058db496f7ff4920891d49d37b9950d128422582a8",
+          "size": 6194424
+        },
+        {
+          "path": "v2.1/english/constants_bin/mary.safetensors",
+          "sha256": "a8f2adf260cab966fe0a113d6b549d6efdeaa79de544ae0ff34b5b6a41445a59",
+          "size": 6194424
+        },
+        {
+          "path": "v2.1/english/constants_bin/michael.safetensors",
+          "sha256": "8937f724ac4719b9aa51ea0ba1f18f9de0af7a663ad6263558266c1a53c9722d",
+          "size": 7275768
+        },
+        {
+          "path": "v2.1/english/constants_bin/paul.safetensors",
+          "sha256": "ed7a019168f94dfe77009f1b0de59387abc6fbb0db954d38ce722ecb77da61aa",
+          "size": 6980856
+        },
+        {
+          "path": "v2.1/english/constants_bin/peter_yearsley.safetensors",
+          "sha256": "dd977a6e15591e347c9a23fa7cc09e35a65b462917f5eeb162baff6dc9e3f685",
+          "size": 3736816
+        },
+        {
+          "path": "v2.1/english/constants_bin/rafael.safetensors",
+          "sha256": "ac19f099f6cd839875a629c3e2e91e0dfc2c197acf2875db168d0ae244fb58bd",
+          "size": 6194424
+        },
+        {
+          "path": "v2.1/english/constants_bin/stuart_bell.safetensors",
+          "sha256": "5a49da7ca5df05d02587ec4a0981c0d318e045f68e24423c4203ce474d9b33dc",
+          "size": 5260536
+        },
+        {
+          "path": "v2.1/english/constants_bin/text_embed_table.bin",
+          "sha256": "2512f9edd82ab0c68bb42a5fcd329a371eaf63ee6fb5275dfb1bc9536592bb0e",
+          "size": 16388096
+        },
+        {
+          "path": "v2.1/english/constants_bin/tokenizer.model",
+          "sha256": "d461765ae179566678c93091c5fa6f2984c31bbe990bf1aa62d92c64d91bc3f6",
+          "size": 59339
+        },
+        {
+          "path": "v2.1/english/constants_bin/vera.safetensors",
+          "sha256": "4bf50ddd957b5d218b264fdcf18efbbc7384d12da3eca98ca19b9e8dd6976acc",
+          "size": 6735096
+        },
+        {
+          "path": "v2.1/english/flow_decoder_fused.mlmodelc/analytics/coremldata.bin",
+          "sha256": "17cf344fd2be66e934982944a7a252da17087efbc9daac0d3dfb4e8e95797264",
+          "size": 243
+        },
+        {
+          "path": "v2.1/english/flow_decoder_fused.mlmodelc/coremldata.bin",
+          "sha256": "69ff9affa07e38b1a511ac8d71c594eeeb236389ddbe74f4fabdfa45db4edf7a",
+          "size": 413
+        },
+        {
+          "path": "v2.1/english/flow_decoder_fused.mlmodelc/model.mil",
+          "sha256": "0257898b9a6ce06c961959aae993bb27c558f509fbea7407d094b879f872ec3f",
+          "size": 333331
+        },
+        {
+          "path": "v2.1/english/flow_decoder_fused.mlmodelc/weights/weight.bin",
+          "sha256": "f28a1bd0af940a195802e9d702c9e050f3e69d265e582f3d0fdf4001709eb30c",
+          "size": 19012608
+        },
+        {
+          "path": "v2.1/english/flowlm_step.mlmodelc/analytics/coremldata.bin",
+          "sha256": "fcc771807d303b09425871201b9c20fd82b92bdb869ca567e9011402b6b844b3",
+          "size": 243
+        },
+        {
+          "path": "v2.1/english/flowlm_step.mlmodelc/coremldata.bin",
+          "sha256": "4cf9fcee17a690def93f29ebdffbe3fd4cbfda442666e282f2bc8673947c1707",
+          "size": 1191
+        },
+        {
+          "path": "v2.1/english/flowlm_step.mlmodelc/model.mil",
+          "sha256": "9f3d6b3d0441d083f39e293d8878c58a53b8156e0d1e434c123d325dcc8c9030",
+          "size": 236884
+        },
+        {
+          "path": "v2.1/english/flowlm_step.mlmodelc/weights/weight.bin",
+          "sha256": "5f63c2466dd9c1a29b074c467cc32b1fe47d77afa745e86f03ae7e862ac05aa7",
+          "size": 152186240
+        },
+        {
+          "path": "v2.1/english/manifest.json",
+          "sha256": "f8ee44b3d8bfbb1a56698e9a313944dabda530f9c5d809f0a0135ad64ffad3a8",
+          "size": 739
+        },
+        {
+          "path": "v2.1/english/mimi_decoder.mlmodelc/analytics/coremldata.bin",
+          "sha256": "be4199b44838e2fb199bb44b7649531d28fe847a1a6633fd9f8ca89576c5a7f8",
+          "size": 243
+        },
+        {
+          "path": "v2.1/english/mimi_decoder.mlmodelc/coremldata.bin",
+          "sha256": "9d8644e2caad1513153ac28f1ba8090fcd2facdbd5d2621bf8016186fa932bf8",
+          "size": 1777
+        },
+        {
+          "path": "v2.1/english/mimi_decoder.mlmodelc/metadata.json",
+          "sha256": "aaca1b55b078095e72ee4826a94297fc070526d9f4cd3507464e7f2afaa73376",
+          "size": 16844
+        },
+        {
+          "path": "v2.1/english/mimi_decoder.mlmodelc/model.mil",
+          "sha256": "f7176b3b3d800de308ac01cb83d1f3e9b555e70b44d299efd4a21c9c27eecc16",
+          "size": 107403
+        },
+        {
+          "path": "v2.1/english/mimi_decoder.mlmodelc/weights/weight.bin",
+          "sha256": "c93d182f9ad8c1042ec8302093aabb4e310d76616932dd12720e03b5d07f7c64",
+          "size": 41768256
+        }
+      ],
+      "source": {
+        "repository": "FluidInference/pocket-tts-coreml",
+        "revision": "91748676fe3c8b2eb3007b3125253bcd898202c3"
+      },
+      "metadata": {
+        "task": "text_to_speech",
+        "family": "fluidaudio_pocket_tts",
+        "display_name": "PocketTTS (Core ML)",
+        "required_files": [
+          "v2.1/english/cond_prefill.mlmodelc/analytics/coremldata.bin",
+          "v2.1/english/cond_prefill.mlmodelc/coremldata.bin",
+          "v2.1/english/cond_prefill.mlmodelc/model.mil",
+          "v2.1/english/cond_prefill.mlmodelc/weights/weight.bin",
+          "v2.1/english/constants_bin/alba.safetensors",
+          "v2.1/english/constants_bin/anna.safetensors",
+          "v2.1/english/constants_bin/azelma.safetensors",
+          "v2.1/english/constants_bin/bill_boerst.safetensors",
+          "v2.1/english/constants_bin/bos_before_voice.bin",
+          "v2.1/english/constants_bin/bos_emb.bin",
+          "v2.1/english/constants_bin/caro_davy.safetensors",
+          "v2.1/english/constants_bin/charles.safetensors",
+          "v2.1/english/constants_bin/eponine.safetensors",
+          "v2.1/english/constants_bin/estelle.safetensors",
+          "v2.1/english/constants_bin/eve.safetensors",
+          "v2.1/english/constants_bin/fantine.safetensors",
+          "v2.1/english/constants_bin/george.safetensors",
+          "v2.1/english/constants_bin/giovanni.safetensors",
+          "v2.1/english/constants_bin/jane.safetensors",
+          "v2.1/english/constants_bin/javert.safetensors",
+          "v2.1/english/constants_bin/juergen.safetensors",
+          "v2.1/english/constants_bin/lola.safetensors",
+          "v2.1/english/constants_bin/marius.safetensors",
+          "v2.1/english/constants_bin/mary.safetensors",
+          "v2.1/english/constants_bin/michael.safetensors",
+          "v2.1/english/constants_bin/paul.safetensors",
+          "v2.1/english/constants_bin/peter_yearsley.safetensors",
+          "v2.1/english/constants_bin/rafael.safetensors",
+          "v2.1/english/constants_bin/stuart_bell.safetensors",
+          "v2.1/english/constants_bin/text_embed_table.bin",
+          "v2.1/english/constants_bin/tokenizer.model",
+          "v2.1/english/constants_bin/vera.safetensors",
+          "v2.1/english/flow_decoder_fused.mlmodelc/analytics/coremldata.bin",
+          "v2.1/english/flow_decoder_fused.mlmodelc/coremldata.bin",
+          "v2.1/english/flow_decoder_fused.mlmodelc/model.mil",
+          "v2.1/english/flow_decoder_fused.mlmodelc/weights/weight.bin",
+          "v2.1/english/flowlm_step.mlmodelc/analytics/coremldata.bin",
+          "v2.1/english/flowlm_step.mlmodelc/coremldata.bin",
+          "v2.1/english/flowlm_step.mlmodelc/model.mil",
+          "v2.1/english/flowlm_step.mlmodelc/weights/weight.bin",
+          "v2.1/english/manifest.json",
+          "v2.1/english/mimi_decoder.mlmodelc/analytics/coremldata.bin",
+          "v2.1/english/mimi_decoder.mlmodelc/coremldata.bin",
+          "v2.1/english/mimi_decoder.mlmodelc/metadata.json",
+          "v2.1/english/mimi_decoder.mlmodelc/model.mil",
+          "v2.1/english/mimi_decoder.mlmodelc/weights/weight.bin"
+        ],
+        "sample_rate": 24000,
+        "channels": 1,
+        "languages": [
+          "en"
+        ],
+        "voices": [
+          "alba",
+          "anna",
+          "azelma",
+          "bill_boerst",
+          "caro_davy",
+          "charles",
+          "eponine",
+          "estelle",
+          "eve",
+          "fantine",
+          "george",
+          "giovanni",
+          "jane",
+          "javert",
+          "juergen",
+          "lola",
+          "marius",
+          "mary",
+          "michael",
+          "paul",
+          "peter_yearsley",
+          "rafael",
+          "stuart_bell",
+          "vera"
+        ],
+        "max_input_seconds": null,
+        "install_subdir": "Models/pocket-tts"
+      }
     }
   ]
 }

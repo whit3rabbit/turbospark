@@ -46,7 +46,7 @@ extension FluidAudioEngine {
         switch family {
         case .parakeetJa: return try ParakeetJaTranscriber(root: installRoot)
         case .paraformerZh: return try ParaformerTranscriber(root: installRoot)
-        case .sileroVAD, .diarizer, .kokoroANE, .pocketTTS, .senseVoice:
+        case .sileroVAD, .kokoroANE, .pocketTTS, .senseVoice:
             throw FluidAudioModelError.notSpeech(family)
         }
     }

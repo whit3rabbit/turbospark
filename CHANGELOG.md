@@ -14,6 +14,14 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- Audio catalog: pinned rows for FluidAudio's Silero VAD
+  (`silero-vad-coreml`), Kokoro 82M on the Neural Engine
+  (`kokoro-82m-ane-coreml`) and PocketTTS (`pocket-tts-coreml`), so they
+  install from `turbospark-model pull-audio` and verify like any audio row.
+  The app does not offer them yet: their adapters are not wired. PocketTTS
+  leaves out the `cosette` and `jean` voices, whose license is non-commercial.
+  The unused `fluidaudio_diarizer` family is gone: speaker labels use the
+  `speaker-diarization-coreml` row, which the Rust runner already executes.
 - `turbospark-model list-audio` and `pull-audio` cover every pinned audio model,
   not only MiniMax Music 3: speech, TTS, diarization and the app-only
   FluidAudio Core ML rows (`parakeet-ja-coreml`, `paraformer-zh-coreml`). A

@@ -67,8 +67,10 @@ the Rust session, Qwen3-TTS in Swift MLX, FluidAudio, or nothing. A
 `FluidAudioFamily` case with `hasAdapter` true. Every other Swift-hosted row is
 unsupported, and the pickers hide it. `hasAdapter` means the workspace can run
 the family end to end, so it flips in the change that wires the family's jobs
-and residency, not in the one that adds its adapter. Until then the family's
-rows ship in the catalog but no picker offers them.
+and residency, not in the one that adds its adapter. Until then a
+family's rows ship in the catalog and install from the CLI
+(`turbospark-model pull-audio <alias>`), but neither a picker nor the app's
+Installed list offers them.
 
 `AudioEngineLabel` names the engine beside each model: in the picker rows,
 under the selected model, in Model details and on the Advanced page. For Core
@@ -82,7 +84,6 @@ server refuses also show App only.
 | Family | Pin | Install layout | Entry point | Placement |
 |---|---|---|---|---|
 | `fluidaudio_silero_vad` | `silero-vad-coreml@b419383c` | flat | own `MLModel`, then `VadManager(config:vadModel:)` | CPU |
-| `fluidaudio_diarizer` | `speaker-diarization-coreml@7eab74f3` | flat | own MLModels and PLDA psi, then `OfflineDiarizerModels(...)` and `initialize(models:)` | mixed |
 | `fluidaudio_kokoro_ane` | `kokoro-82m-coreml@e61d9ee7` (`ANE/`) | `kokoro-82m-coreml` | `KokoroAneManager(variant: .english, directory:)`, phonemes only | mixed |
 | `fluidaudio_pocket_tts` | `pocket-tts-coreml@91748676` (`v2.1/english/`) | `Models/pocket-tts` | `PocketTtsManager(language: .english, directory:, precision: .fp16, placement: .gpu)` | GPU |
 | `fluidaudio_sensevoice` | `sensevoice-small-coreml@74bdbe74` | flat | none: not shipped (see Not done) | Neural Engine |
@@ -170,6 +171,9 @@ the Record page. Live drafts during a recording stay on Rust sessions.
 
 ## Not done
 
+- Speaker labels use the `speaker-diarization-coreml` row, which the Rust
+  runner executes (`pyannote_community1`). There is no FluidAudio diarizer
+  family: it would be the same pin under a second alias.
 - VAD and speaker labels, then TTS. `hasAdapter` is true only for
   `fluidaudio_parakeet_ja` and `fluidaudio_paraformer_zh`.
 - Live drafts while recording do not use FluidAudio models.
