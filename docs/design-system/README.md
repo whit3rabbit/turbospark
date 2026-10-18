@@ -125,13 +125,13 @@ The eight themes in this system are Spark Blue, Codex, and TurboSpark Emerald, e
 
 ## Type
 
-One canonical scale, sized by role. Each role is a multiplier of the user's base size (16pt UI, 12pt code by default), so Text Size (Default 1.0, Large 1.15, Extra Large 1.30) and Dynamic Type move every surface together.
+One canonical scale, sized by role. Each role is a multiplier of the user's base size (14pt UI, 12pt code by default), so Text Size (Small 0.875, Default 1.0, Large 1.15, Extra Large 1.30) and Dynamic Type move every surface together. The point sizes in `tokens.json` and the component previews are the roles at the 16pt design reference base (`AppFontCatalog.defaultUISize`), which layout scaling divides by. The factory base is 14pt (`AppFontCatalog.factoryUISize`), so the app draws each role at 0.875x of the listed size: micro 8, tiny 10, small 11, callout 12, base 14, large 15, title3 16, title2 18, title 24, hero 26, display 32. Existing installs keep whatever base they saved.
 
 - Body and transcript: `base`. Control labels, card and sheet titles: `callout`. Secondary rows, sidebar text, subtitles: `small`. Timestamps, dense metadata: `tiny`. Overline badges and chart ticks: `micro`, never for sentences.
 - Headings: `title3` for sections and empty states, `title2` for panes, `title` for windows. Mark every heading with `.accessibilityAddTraits(.isHeader)`.
 - Code and machine facts: `code` (12pt) for code blocks, terminal output, model ids, paths, token counts, and chords. `code-callout` is for telemetry in the top bar and status strip.
 - The welcome greeting is the one serif line in the app: `greeting`, the system serif at display size, regular weight. Use it nowhere else.
-- The interface face is the system font (SF Pro) unless the user picks another. The code face is SF Mono. Geist and Geist Mono are bundled options and the web fallback in this system. Line heights here are the web rendition. SwiftUI uses each face's natural leading.
+- The interface face is the system font (SF Pro) unless the user picks another. The code face is Hack, bundled with the app (`AppFontCatalog.factoryCodeFamily`), and the web specimens use it first. SF Mono, Geist Mono and the other bundled families are options. If Hack fails to register the theme falls back to the system monospaced face. Line heights here are the web rendition. SwiftUI uses each face's natural leading.
 - The Appearance options type group in `tokens.json` shows the bundled families a user can choose: Inter for the interface, and JetBrains Mono, Fira Code, Cascadia Code, Hack, and Source Code Pro for code. They are specimens. A view never names a family, it reads the theme. Iosevka also ships but is not carried here (11 MB per file).
 - A size the scale lacks is a new `AppFontStep` case with its pinned expectation in `FontPropagationTests`, never a literal.
 
@@ -208,7 +208,7 @@ The string catalog is the source of truth for 21 languages: English, Spanish, Fr
 - Leading and trailing, never left and right. Arabic and Hebrew mirror the whole layout, and progress mirrors as a whole drawing.
 - Budget for expansion: German runs about a third longer than English, and Extra Large text adds 30% more. Headers reflow. Labels wrap or truncate with the full text in the tooltip.
 - Glyphs, units, numbers, key names, code, file names, model ids, and URLs are verbatim. Language names stay in their own script.
-- Check every UI change in English, German, and Arabic or Hebrew, at Default and Extra Large text, and in light, dark, and one custom theme.
+- Check every UI change in English, German, and Arabic or Hebrew, at Small, Default, and Extra Large text, and in light, dark, and one custom theme.
 
 ## Iconography
 

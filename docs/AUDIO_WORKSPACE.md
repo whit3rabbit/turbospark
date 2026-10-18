@@ -7,6 +7,19 @@ in memory and offer Retry; do not close the profile while that warning remains.
 
 ## Record and transcribe
 
+Speech-to-Text has three modes, chosen with the pills at the top of the page.
+Voice Notes records the microphone, Meeting records the microphone and the app
+playing the call, and Any Audio captures another app's audio or transcribes an
+imported file. Each mode lists only its own takes and files them into its own
+collection (Voice notes, Meetings, App audio), whatever the Record page's type
+is set to.
+
+One record bar sits at the bottom of every mode, and only one capture
+runs at a time: switching modes while recording changes the view, not the take,
+and the recording mode's pill shows a live dot. The top bar's recording badge
+opens the page or mode that started the capture. The Record page stays for
+Sound takes and hand-picked sources.
+
 Choose a microphone, app audio, or both. Check devices and permissions before
 starting. System audio uses ScreenCaptureKit on macOS 14; microphone audio uses
 AVAudioEngine. TurboSpark playback is excluded and screen frames are not saved.

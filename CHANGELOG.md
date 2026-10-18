@@ -20,20 +20,6 @@ when this file gets updated relative to the version bump and the tag.
   backbone (`crates/audio/src/lm/falcon_h1.rs`) on 0.1b, fast AR residual codec
   loop, reference-exact legacy top-k/top-p and RAS repetition rescue sampling,
   and offline fixture parity against mlx-audio 0.5.8 (`e1b19b90`).
-- Routed-expert cache slot tiers 192 and 256 added to `ALLOWED_CACHE_SLOTS`
-  in `turbospark-core` (`runtime_config.rs`) and `turbospark-model-io`
-  (`expert_cache_policy.rs`). The `auto` slot tiering policy resolves to 192
-  when free memory is at least 64 GiB and 256 when free memory is at least
-  128 GiB (one quarter of free memory covering slot memory). Validated on the
-  512-expert `qwen4exp` install streamed from external SSD storage.
-- `docs/EXPERT_ROUTING.md`: Phase 0 and Phase 1 measurements for external SSD
-  streaming of the 512-expert `qwen4exp` model over 10 Gb/s USB, documenting
-  page-cache double-counting vs slot cache hits, `F_NOCACHE` baseline device
-  rates (~627 MB/s), and GPU command buffer completion wait bounds.
-- `swift/TurboSparkApp`: In-memory Qwen3-TTS session residency in
-  `AudioWorkspaceController` (`residentQwenSession(for:)`), caching the loaded
-  MLX model graph across repeated speech jobs to eliminate re-initialization
-  overhead while honoring explicit Load and Unload actions.
 - OmniVoice multilingual zero-shot TTS with voice cloning, end to end with Native Metal acceleration.
   `crates/audio/src/tts/omnivoice/` completes its fixture-verified port with
   the intake layers the released checkpoints need: the rowwise int8 scheme
@@ -60,6 +46,45 @@ when this file gets updated relative to the version bump and the tag.
   Gates: cross-engine encode parity exact against the Python reference on
   bfloat16 (70 frames x 8 codebooks); 8-bit profile deterministic and verified;
   catalog, runtime, FFI, server, and Swift suites green.
+- `crates/audio`: VoxCPM (MiniCPM backbone, LongRoPE factor tables, CFG
+  zero-star flow DiT, causal-conv AudioVAE) and VoxCPM2 (fusion-concat
+  conditioning, two-token mu DiT, reference/continuation prompts, and
+  SR-conditioned 48 kHz AudioVAE) TTS family ports with catalog assets.
+- Fish Audio Drama 3 text-to-speech, ported end to end from mlx-audio
+  (`crates/audio/src/tts/fish_drama3/`, family `fish_drama3`). The Qwen3.5-MoE
+  text backbone runs as a headless `qwenGdnMoe` trunk with its routed experts
+  streamed from disk, so a job peaks near 5.6 GB against mlx-audio's 26 GB,
+  with a Metal tower and a Metal Fish S1 codec on its own worker thread.
+  `POST /v1/audio/speech` serves it at 44.1 kHz with consent-gated voice
+  cloning and new `temperature`, `top_p`, `top_k` and `max_frames` sampler
+  fields (refused for every other family). The new `turbospark-speak` CLI
+  speaks through the same audio session, and `turbospark-model pull-drama3`
+  streams the pinned `mlx-community/fish-audio-drama-3-4bit` checkpoint by
+  range read so the 20 GB source is never stored whole, behind the Fish Audio
+  Community License acknowledgment. The audio catalog gains a derived
+  conversion install (`fish-drama3-4bit`) that builds the headless layout in
+  a staging directory and hashes every output into the receipt. The
+  text-scaled frame cap is measured from 125 clips, the codec tower tail
+  overlaps the next backbone step with identical codes
+  (`TURBOSPARK_DRAMA3_SERIAL=1` runs it serially), and frozen memory-oracle
+  (6,411 MiB ceiling) and leak gates hold the open on M4 Max. Parakeet
+  transcribes the gate clips word for word.
+- More TTS family ports in `crates/audio`: Chatterbox and Chatterbox Turbo
+  (T3 backbone with voice encoder, conformer front end, flow and HiFT
+  decoders), Irodori TTS (Japanese rectified-flow DiT over DACVAE latents at
+  48 kHz), and Voxtral TTS 4B (LM backbone predicting a semantic code and
+  flow-matched acoustic codes per frame). All are ported at the pinned
+  mlx-audio revision; real-model parity for the Chatterbox families is still
+  in progress, and none of the four is in the catalog yet.
+- Routed-expert cache slot tiers 192 and 256 added to `ALLOWED_CACHE_SLOTS`
+  in `turbospark-core` (`runtime_config.rs`) and `turbospark-model-io`
+  (`expert_cache_policy.rs`). The `auto` slot tiering policy resolves to 192
+  when free memory is at least 64 GiB and 256 when free memory is at least
+  128 GiB (one quarter of free memory covering slot memory). Validated on the
+  512-expert `qwen4exp` install streamed from external SSD storage. The
+  streaming measurements behind the tiering (page-cache double-counting vs
+  slot cache hits, `F_NOCACHE` device rates, GPU command-buffer wait bounds)
+  are recorded in `docs/EXPERT_ROUTING.md`.
 - Chunked prefill for the qwen MoE flow (`qwenGdnMoe`: Qwen 3.6 35B-A3B,
   Ornith 35B, MiniCPM-V 4.7), `crates/runtime/src/families/qwen/moe_prefill.rs`.
   The attention and router half of up to 16 tokens runs before one wait per
@@ -99,6 +124,15 @@ when this file gets updated relative to the version bump and the tag.
     sessions, `--stt-model`, FFI STT sessions, and the
     `parakeet-redux-coreml` audio catalog profile. Token-identical to the CPU
     Redux decoder on the gate clips.
+  - Parakeet Ultra (Unified) streaming speech-to-text: the int8 encoder on
+    the Neural Engine with the log-mel and RNNT steps on the CPU, the
+    `ts_audio_stream_open`/`append`/`finish`/`cancel`/`close` C ABI with
+    Swift `AudioStream` bindings, live text while recording in the app's
+    Record page, and Audio library organization and search.
+  - Speaker diarization on a pyannote community-1 Core ML export through the
+    native audio surface: who-spoke-when turns. Transcripts carry
+    per-segment speakers, and the app renders localized speaker labels and
+    stitches segment boundaries across transcription windows.
   - EmbeddingGemma 2 text, image and audio embeddings
     (`embeddinggemma-2-coreml`) with task prompts and Matryoshka sizes:
     `/v1/embeddings`, `ts_embedding_encode_json`, the new
@@ -127,10 +161,20 @@ when this file gets updated relative to the version bump and the tag.
   - `turbospark_coreml::compute_plan` and the `coreml_plan` example: the
     device Core ML plans for each op (`MLComputePlan`, macOS 14.4+), to
     check whether an export really reaches the Neural Engine.
-- `crates/audio`: VoxCPM (MiniCPM backbone, LongRoPE factor tables, CFG
-  zero-star flow DiT, causal-conv AudioVAE) and VoxCPM2 (fusion-concat
-  conditioning, two-token mu DiT, reference/continuation prompts, and
-  SR-conditioned 48 kHz AudioVAE) TTS family ports with catalog assets.
+- Offline speech recognition in the app through FluidAudio
+  (`swift/TurboSparkApp`, `crates/catalog`). Two app-only catalog rows,
+  `parakeet-ja-coreml` (Japanese) and `paraformer-zh-coreml` (Mandarin, with
+  the FunASR Model License acknowledgment), run on a new `swift_coreml`
+  backend: the app loads them through the FluidAudio package (pinned exact
+  0.15.5 and held offline with a blocked model registry, checked by an
+  isolation scan), validates each model against its recorded export
+  signature, and plans per-family audio windows (30 s overlapping for
+  Parakeet ja, 15 s bounded for Paraformer). The rows answer the Transcribe
+  page and refine finished recordings, share one resident model slot with
+  the Rust session and Qwen3-TTS, and are labeled with engine and measured
+  Core ML placement in the pickers. They are app-only: `http_api` is false
+  and the server refuses those aliases in load and attach. SenseVoice was
+  evaluated and left out because its encoders are not deterministic.
 - `swift/TurboSparkApp`: an Embeddings tab in the API workspace. It picks
   the server's embedding model (saved, and attached again after every start),
   attaches and detaches it live without blocking the UI on a first Core ML
@@ -140,6 +184,10 @@ when this file gets updated relative to the version bump and the tag.
   Verified only when their gates ran on that pin, other paths are checked
   with the new `ts_embedding_probe_json` and shown as Not verified, or
   refused with the reason when the family does not run here.
+- `swift/TurboSparkApp`: in-memory Qwen3-TTS session residency in
+  `AudioWorkspaceController` (`residentQwenSession(for:)`), caching the loaded
+  MLX model graph across repeated speech jobs to eliminate re-initialization
+  overhead while honoring explicit Load and Unload actions.
 - `swift/TurboSparkApp`: bundled open-source fonts for code and UI rendering
   with license notices and Settings catalog entries: Iosevka, Geist, Geist Mono,
   Cascadia Code, Hack, and Source Code Pro.
@@ -155,13 +203,45 @@ when this file gets updated relative to the version bump and the tag.
   which also sets it against memory.
 
 ### Changed
-- `swift/TurboSparkApp`: syntext moves to 2.7.1 (`exact: "2.7.1"`) and adds
+- MiniMax Music 3 now opens in a faster flow profile by default (`Music3Runner`,
+  `turbospark-music`, and so the app, server and FFI): Adams-Bashforth 2 with the
+  unconditional guidance branch reused (interval 3, warmup 2) and 21 steps when a
+  request names none, so 30 DiT forwards instead of 60. On one 8 s prompt it runs
+  in about 55 percent of the exact time with a correlation of 0.974 against the
+  exact 30-step audio, and it no longer follows MLX's trajectory. Restore the
+  reference with `--flow-profile exact` or `Music3Runner::set_flow_profile`;
+  `Model` and the MLX parity fixtures stay exact. Exact kernel work in the same
+  change: the four-bit tiled linear hoists per-word decode work and stages
+  activations four wide (bit-identical output, 8 s at 30 steps 124.6 s to 85.6 s
+  on an M4 Max, DiT stage 95.3 s to 59.3 s).
+- MiniMax Music 3 exact profile now matches MLX 0.32.3's matmul, convolution and
+  quantized split-K dispatch, so the pinned 4-bit profile is bit-identical to MLX
+  end to end (hiddens, logits, sampled codes, flow noise, DiT, vocoder, waveform;
+  verified for 3 frames at 2 steps and 25 frames at 4 steps). `music3_gemv_wide`
+  and dense split-K for 2+ rows, both CFG rows batched through the depth
+  projection and heads, chunk-major K order for implicit-GEMM convs, split-K with
+  ascending taps and a stereo batch hint for transposed convs, and MLX's
+  column-reduce order for more than 8 split-K partials. The exact profile's output
+  changes (8 s at 1 step now `46243600...`, at 30 steps `1cbb8ce0...`). Guards:
+  `scripts/verify-music3.sh`, golden hash files with
+  `crates/gpu/tests/music3_oracle.rs`, `music3_mlx_linear_cmp`, and a zero-tolerance
+  4-bit MLX gate. See `docs/audio/minimax_music3.md`.
+- MiniMax Music 3 vocoder runs each block (transposed conv plus three residual
+  units) as one Metal command buffer via `Sequence::convolution` and
+  `Sequence::snake`. Bit-identical to the per-op path, 8 s vocoder about 6.7 s to
+  about 4.0 s on an M4 Max (indicative, busy host). Transposed convs with stride
+  above 1 and 8-aligned channels run `music3_convt_phase`, which skips the taps
+  an output phase cannot see (exact zero blocks): bit-identical, the vocoder
+  about 2.6 s.
+- `swift/TurboSparkApp`: syntext moves to 2.7.2 (`exact: "2.7.2"`) and adds
   the `SyntextContext` product. The previous `exact: "2.5.0"` pin linked the
   2.4.0 xcframework, because syntext's `vX.Y.Z` tags through 2.7.0 pin the
   previous release's binary, so `grep_search`'s `literal_search` and context
-  lines silently did nothing. 2.7.1 is the first syntext tag that pins its
-  own binary, and its blake3 objects no longer target macOS 14.5 against the
-  app's 14.0 floor.
+  lines silently did nothing. From 2.7.1, syntext tags pin their own binary,
+  and its blake3 objects no longer target macOS 14.5 against the app's 14.0
+  floor. 2.7.2 also releases `write.lock` explicitly, so a process the app
+  spawns on another thread can no longer hold the code index's lock and turn
+  an incremental update into a full rebuild.
 - `swift/TurboSparkApp`: the project code index moved to
   `~/Library/Caches/TurboSpark/syntext/<digest>.syntext`. The old base64 name
   failed for project paths over about 185 bytes. Existing indexes rebuild
@@ -211,6 +291,11 @@ when this file gets updated relative to the version bump and the tag.
   resident matrices) keeps the per-token arm. Ornith 35B, checked on a real
   install, passes the same probe at 6.7e-3 to 8.2e-3 nats with its frozen
   quality and memory gates reproduced.
+- `crates/streaming`: the routed slot cache can decay its LFU counts.
+  `TURBOSPARK_EXPERT_CACHE_DECAY=N` (a positive integer) halves every count
+  each N plans, so a workload change is not shadowed by stale favorites.
+  Output is unchanged; only which experts stay resident moves. Unset keeps
+  the cumulative LFU.
 - `swift/TurboSparkApp`: Voice Cloning filters candidate voice cloning models to
   those with native Metal or MLX acceleration (`clonesNatively`). Portable CPU-only
   models such as OmniVoice are not presented as voice clone engines until a
@@ -219,14 +304,47 @@ when this file gets updated relative to the version bump and the tag.
   Unload actions and a Loaded badge matching the model action bars across other
   workspaces, with loading spinners during model verification. Resident audio
   models are wired into `AppModel`'s `canUnloadAnyModel` and top-bar unload menu.
+- `swift/TurboSparkApp`: a Small text size joins the appearance settings, and
+  the factory defaults are now the 14pt UI size with Hack as the code font.
+- `swift/TurboSparkApp`: recording access is asked for only after the user
+  allows it. Starting a recording checks microphone and screen recording
+  status and opens an access sheet that explains how audio is used and shows
+  each permission's state; the macOS prompt appears only after Allow, and
+  declining leaves import, transcription and editing usable.
 
 ### Fixed
+- `crates/runtime`, `crates/model-io`: a no-copy mapped expert residency is
+  refused past Metal's wired budget instead of being opened. Under memory
+  pressure the driver unwires layers and an in-order decode then re-wires a
+  whole layer on every pass: Fish Audio Drama 3 and MiniCPM-V 4.7 decoded 70
+  to 180 times slower mapped than streamed. Asked for by name past the
+  budget it is refused with the reason; `auto` resolves down to streamed.
 - `crates/catalog`: `InstalledModel::effective_modality` now derives the `Audio`
   modality from install path, `audio-receipt.json`, or speech metadata if a model
   was recorded with default `text` modality in `installed.json`. `installed_report`
   also discovers verified `.gturbo` audio models in `models/audio/` that were
   missing from the manifest. This fixes an issue where already-installed audio
   models offered a spurious download button that failed with "audio install already exists".
+- `crates/catalog`, `swift/TurboSparkApp`: installs on external store drives
+  are safer. An install recorded while its drive was unmounted no longer
+  deletes that drive's rows from `installed.json` (`Store::record` replaces
+  only the row it is writing); an install onto a missing store volume is
+  blocked and names the drive instead of reporting the boot disk's free
+  space; and the pinned download cache is deleted after a verified install
+  instead of keeping a full copy (about 4 GB after a day of installs). A
+  failed install keeps its cache so a retry can resume. The Qwen3.8-Flash-Next
+  catalog row also follows Swift1.5's repository rename.
+- `crates/ffi`: an app-started server inherits the active store root
+  (`TURBOSPARK_HOME`) instead of resolving aliases against `~/.turbospark`,
+  cancellation is armed before a heavy-work gate wait rather than after, and
+  entry points that need macOS report `TS_ERR_UNSUPPORTED` on other hosts.
+- `crates/cli`: a refused or failed generation exits 1 instead of 0, and
+  `--image` refuses `--chat`.
+- `crates/streaming`: the Linux io_uring read source could not complete a
+  single read: five ring, entry and sqe flags were mis-valued (each wrong
+  bit was another valid flag) and the completion cursor walked off its
+  array. The values are pinned against `linux/io_uring.h` and a parity test
+  reads through the ring past the wrap. Auto still resolves to pread.
 - `swift/TurboSparkApp`: `AudioModelPickerView` suppresses download and retry
   buttons when an audio model is already installed.
 - `swift/TurboSparkApp`: `ToolRiskClassifier.isSensitivePath` now also flags
@@ -235,10 +353,11 @@ when this file gets updated relative to the version bump and the tag.
   picker, `@` mention completion, and project tree view.
 - `swift/TurboSparkApp`: polished prompt composer editor layout, model download
   state progress, and model management cards.
-- `crates/audio` nemo alignment: `merge_longest_contiguous` and
+- `crates/audio` alignment: nemo `merge_longest_contiguous` and
   `merge_longest_common_subsequence` dropped every token of the second chunk
-  past the overlap window. They now keep the rest of the chunk, as upstream
-  mlx-audio does.
+  past the overlap window; they now keep the rest of the chunk, as upstream
+  mlx-audio does. Bark alignment was fixed and its fixtures regenerated for
+  end-to-end scenario parity.
 - `swift/TurboSparkApp` `grep_search`: once syntext refused a commit as
   overlay-full, the error was swallowed and every file created afterwards
   stayed unsearchable until a manual Reindex. It now rebuilds in the
@@ -248,6 +367,9 @@ when this file gets updated relative to the version bump and the tag.
   `path` scope, an escaping or absolute `path` is an error instead of a
   whole-repository search, and results are capped at 500 matches and 10
   context lines.
+- `swift/TurboSparkApp`: selecting a different take (a new generation,
+  import or recording) stops the previous take's playback instead of
+  resuming the old player over the new take.
 
 ### Security
 - `swift/TurboSparkApp` `grep_search`, indexed and unindexed, no longer

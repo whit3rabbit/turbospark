@@ -1,8 +1,8 @@
 # turbospark-repack
 
-Safetensors header parsing, ranged HTTP downloads (`RangeSource`), INT4/INT8 quantization repack pipelines, `.gturbo` directory installation builder (`gturbo_writer/`), synthetic test model generators (`synthetic_model/`), directional steering vector repacker (`control_vector.rs`), Hugging Face checkpoint converters (`hf_checkpoint.rs`, `gemma4_checkpoint/`), and GGUF repackers (`gguf_checkpoint/`).
+Safetensors header parsing, ranged HTTP downloads (`RangeSource`), INT4/INT8 quantization repack pipelines, `.gturbo` directory installation builder (`gturbo_writer/`), synthetic test model generators (`synthetic_model/`), llama.cpp-layout control vector loader and writer (`control_vector.rs`), Hugging Face checkpoint converters (`hf_checkpoint.rs`, `gemma4_checkpoint/`), and GGUF repackers (`gguf_checkpoint/`).
 
-Downstream workspace crates import this package via the `repack` alias:
+Some downstream workspace crates import this package via the `repack` alias:
 
 ```toml
 [dependencies]
@@ -11,7 +11,7 @@ repack = { package = "turbospark-repack", path = "../repack" }
 
 ## Purpose & Role
 
-`turbospark-repack` transforms raw Hugging Face Safetensors or GGUF model checkpoints into the engine's optimized `.gturbo` on-disk format. It downloads weights via byte-range requests without downloading entire multi-gigabyte files upfront, quantizes float weights into INT4/INT8 affine formats, separates resident trunk weights from streamable MoE expert blobs, and writes cryptographic manifests and install receipts.
+`turbospark-repack` transforms raw Hugging Face Safetensors or GGUF model checkpoints into the engine's optimized `.gturbo` on-disk format. It downloads weights via byte-range requests without downloading entire multi-gigabyte files upfront, quantizes float weights into INT4/INT8 affine formats, separates resident trunk weights from streamable MoE expert blobs, and writes SHA-256 checksummed manifests.
 
 ## Safety
 
@@ -22,11 +22,11 @@ repack = { package = "turbospark-repack", path = "../repack" }
 
 - `safetensors_header.rs`: Pure JSON parser for Safetensors file headers without loading weight payloads into memory.
 - `ranged_download/`: High-performance HTTP range-request client (`RangeSource`) for streaming weight chunks directly into repack pipelines.
-- `repack.rs`: Quantization repack kernels converting FP32 and BF16 tensors into INT4 and INT8 affine blocks with group scaling.
+- `repack.rs`: Quantization repack kernels converting FP32 matrices into INT4 and INT8 affine blocks with group scaling.
 - `gturbo_writer/`: Constructs the `.gturbo` directory hierarchy and serializes `manifest.json` and layout files.
-- `resident_writer.rs` & `resident_reader.rs`: Serializes and verifies `model_weights.bin` resident tensor blobs and their binary index.
+- `resident_writer.rs` & `resident_reader.rs`: Serializes and reads back `model_weights.bin` resident tensor blobs and their binary index.
 - `arch_registry.rs`: Multi-family architecture registry mapping raw checkpoint metadata to supported internal families.
-- `control_vector.rs`: Repacks directional steering vectors and obliteration matrices into `.gturbo` format.
+- `control_vector.rs`: Reads and writes llama.cpp-layout GGUF control vectors (`direction.N` F32 tensors) and resolves them into model-io `SteeringSet`s.
 - `gemma4_checkpoint/`: Checkpoint pipeline for Gemma 4 and Qwen 3.6 Safetensors checkpoints.
 - `gguf_checkpoint/`: GGUF repacker handling GGUF tensor walks, F32 transcoding, and V-head conventions.
 - `gguf_config/`, `gguf_header/`, `gguf_names/`, `gguf_set.rs`: GGUF metadata extraction, tensor name mapping, and split multi-file GGUF sets.
@@ -34,7 +34,7 @@ repack = { package = "turbospark-repack", path = "../repack" }
 - `manifest_peek.rs`: Inspects install metadata without full directory traversals.
 - `trained_context.rs`: Extracts and bounds trained context lengths from config keys.
 - `synthetic_model/`, `synthetic_real.rs`, `synthetic_qwen/`, `synthetic_spark.rs`, `synthetic_llama.rs`, `synthetic_muse.rs`, `synthetic_gguf/`: Deterministic synthetic test model generators for offline integration testing.
-- `install_verifier.rs`: Validates repacked install directories against checksums and receipts.
+- `install_verifier.rs`: Validates repacked install directories by re-hashing every file against its declared SHA-256 checksum.
 
 ## Development & Test Commands
 
@@ -49,7 +49,7 @@ cargo test -p turbospark-repack --test hf_checkpoint_network --release -- --igno
 
 ## Tests
 
-This crate contains 70 integration test files in `tests/`:
+This crate contains 80 integration test files in `tests/`:
 - Checkpoint conversion: `gemma4_checkpoint.rs`, `gguf_checkpoint.rs`, `hf_checkpoint.rs`, `mtp_graft.rs`.
 - GGUF parsing and normalization: `gguf_header.rs`, `gguf_config.rs`, `gguf_names.rs`, `gguf_set.rs`, `gguf_llama_rope_patch.rs`, `gguf_qwen_convention_patch.rs`.
 - Architecture config tests: `arch_registry.rs`, `qwen35_config.rs`, `qwen36_config.rs`, `qwen4_config.rs`, `museglimmer_config.rs`, `ornith_config.rs`.

@@ -176,9 +176,9 @@ struct AudioRecordingBadge: View {
 
     var body: some View {
         if controller.hasRecordingActivity {
-            // A voice reference records from the Voice Cloning page, where its
-            // inline recorder is; a meeting records from Record.
-            Button { openWorkspace(); controller.selectPage(controller.isRecordingVoiceReference ? .voiceClone : .record) } label: {
+            // Opens the page that started the capture: Voice Cloning for a
+            // voice reference, the Speech-to-Text mode, or Record.
+            Button { openWorkspace(); controller.openActiveCapture() } label: {
                 HStack(spacing: 6) {
                     if controller.recordingSetupStatus != nil {
                         Image(systemName: "hourglass")

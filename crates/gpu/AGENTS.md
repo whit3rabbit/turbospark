@@ -24,6 +24,12 @@ threadgroup shape, or normalization convention on the device.
   correctness bug.
 - Gated GDN normalization uses exactly 128 threads per threadgroup. Preserve
   the kernel's layout contract.
+- Music 3 kernels (`music3.metal`, `music3.rs`) carry an MLX bit-exactness
+  contract. Before and after any change there, run `scripts/verify-music3.sh`;
+  add `--mlx MODEL_DIR` when a dense or quantized linear kernel, a row-count
+  threshold, or the depth/flow call shapes changed. A passing hash oracle does
+  not cover dense kernels, and a raised tolerance is a finding, not a fix. Read
+  [docs/audio/minimax_music3.md](../../docs/audio/minimax_music3.md) first.
 - Split-KV decode attention: the GQA-shared partial (`attention_decode_gqa_partial`)
   serves all Q heads in a group from one K/V load. Its function constants
   (group, simdgroups, head_dim, unroll) MUST be appended to the pipeline cache

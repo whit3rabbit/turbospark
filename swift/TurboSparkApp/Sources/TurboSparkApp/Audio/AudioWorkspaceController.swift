@@ -38,6 +38,8 @@ final class AudioWorkspaceController: ObservableObject {
     @Published var isInstalling = false
     @Published var isRecording = false
     @Published var recordingSetupStatus: String?
+    /// The page that started the current capture (SpeechToTextMode.swift).
+    @Published var captureOrigin: AudioCaptureOrigin?
     var hasRecordingActivity: Bool { isRecording || recordingSetupStatus != nil }
     @Published var isPaused = false
     @Published var recordingSeconds: Double = 0
@@ -138,7 +140,7 @@ final class AudioWorkspaceController: ObservableObject {
         do {
             preferences = try library.preferences()
             recipe = preferences.recipe; page = preferences.page
-            restoreRecordingPreset()
+            restoreCaptureSources()
             // A saved page or task from a build that offered controls the
             // runtime cannot open would restore into a dead end.
             if !AudioWorkspacePage.tools.contains(page), page == .cleanup { page = .library }
@@ -263,7 +265,10 @@ final class AudioWorkspaceController: ObservableObject {
         guard self.page != page else { return }
         flushPreferences()
         stopReferencePreview()
+        let leaving = self.page
         self.page = page
+        // Speech-to-Text and Record set sources differently; each gets its own back.
+        if page == .transcribe || (page == .record && leaving == .transcribe) { restoreCaptureSources() }
         recipe.task = task.rawValue
         recipe.modelID = preferences.selectedModels[modelSelectionKey]
         if page != .advanced { recipe.experimentalBackend = nil }

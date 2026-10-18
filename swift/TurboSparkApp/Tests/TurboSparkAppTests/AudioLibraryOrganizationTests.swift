@@ -122,9 +122,18 @@ final class AudioLibraryOrganizationTests: XCTestCase {
     func testAudioShortcutsAreListedAndMatchTheRecordButton() throws {
         let row = KeyboardShortcutCatalog.audio.rows.first { $0.label == "Start Recording" }
         XCTAssertEqual(row?.keys, "\u{21E7} \u{2318} R")
-        let panel = try String(contentsOf: URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Sources/TurboSparkApp/Audio/AudioRecordingPanel.swift"), encoding: .utf8)
-        XCTAssertTrue(panel.contains(#".keyboardShortcut("r", modifiers: [.command, .shift])"#), "the pane lists the chord the button binds")
+        func source(_ name: String) throws -> String {
+            try String(contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent("Sources/TurboSparkApp/Audio/\(name)"), encoding: .utf8)
+        }
+        let chord = #".keyboardShortcut("r", modifiers: [.command, .shift])"#
+        XCTAssertTrue(try source("AudioRecordBar.swift").contains(chord), "the pane lists the chord the button binds")
+        // One Start button binds it: every page that records mounts the shared bar.
+        for page in ["AudioRecordingPanel.swift", "SpeechToTextWorkspaceView.swift"] {
+            let text = try source(page)
+            XCTAssertTrue(text.contains("AudioRecordBar("), "\(page) records through the shared bar")
+            XCTAssertFalse(text.contains(#".keyboardShortcut("r""#), "\(page) does not bind a second Start")
+        }
     }
 }

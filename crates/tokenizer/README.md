@@ -1,6 +1,6 @@
 # turbospark-tokenizer
 
-Tokenizer wrapper around Hugging Face `tokenizers` (`MfTokenizer`), chat dialect resolution (Gemma 4, ChatML/Qwen, DeepSeek-V4, Mistral, Harmony/gpt-oss, Muse Glimmer, Llama-3, MiniMax), chat template rendering (text-only and `minijinja` + `pycompat`), streaming detokenization (`MfDetokenizer`), stop condition matching (`StreamingStopMatcher`), tool call DSL parsers, reasoning effort controls, and streaming structured decoder (`StructuredAssistantDecoder`).
+Tokenizer wrapper around Hugging Face `tokenizers` (`MfTokenizer`), chat dialect resolution (Gemma 4, ChatML/Qwen, DeepSeek-V4 and V2, Mistral, Harmony/gpt-oss, Muse Glimmer, Llama-3, Spark, MiniMax, GLM, Kimi), chat template rendering (text-only and `minijinja` + `pycompat`), streaming detokenization (`MfDetokenizer`), stop condition matching (`StreamingStopMatcher`), tool call DSL parsers, reasoning effort controls, and streaming structured decoder (`StructuredAssistantDecoder`).
 
 Downstream workspace crates import this package via the `tokenizer` alias:
 
@@ -21,18 +21,18 @@ tokenizer = { package = "turbospark-tokenizer", path = "../tokenizer" }
 ## Key Modules
 
 - `dialect/`: Resolves model-specific special tokens, channel delimiters, and formatting conventions for supported families:
-  - `resolvers.rs` / `resolve.rs`: Architecture-based dialect resolution.
+  - `resolvers.rs` / `resolve.rs`: Dialect detection from the loaded tokenizer's special tokens, and per-dialect token ID resolution.
   - `minimax.rs`: MiniMax dialect special tokens.
   - `config.rs`: Generation configuration dialect mapping.
-- `chat_template/`: Built-in text chat template rendering used as a fallback when `chat_template.jinja` is absent.
+- `chat_template/`: Built-in text chat template rendering used as a fallback when a checkpoint ships no template (in either of HF's two conventions).
 - `jinja_chat_template.rs`: High-fidelity Jinja template engine wrapper (`minijinja` + `pycompat`) executing checkpoint-provided `chat_template.jinja`.
 - `jinja_compat.rs` & `jinja_date.rs`: Python-compatible Jinja runtime filters and date/time functions required by modern chat templates.
 - `json_value.rs`: Lightweight JSON value representation used inside Jinja template contexts.
-- `reasoning.rs`: Reasoning effort configuration (`low`, `medium`, `high`) and reasoning token formatting.
+- `reasoning.rs`: Reasoning effort configuration (`off`, `low`, `medium`, `high`, `xhigh`) and reasoning token formatting.
 - `detokenizer.rs`: `MfDetokenizer` for incremental UTF-8 token decoding without garbled multibyte characters.
-- `stop_matcher.rs`: `StreamingStopMatcher` for evaluating dynamic stop strings, EOS token sets, and maximum generation boundaries.
-- `structured_decoder/`: `StructuredAssistantDecoder` for streaming JSON validation and structured schema constraints.
-- `tool_call/`: Dialect-specific tool call DSL parsers (Gemma, Qwen, DeepSeek XML/JSON formats).
+- `stop_matcher.rs`: `StreamingStopMatcher` for incremental stop-string matching across streaming text chunks, so a stop string split across chunks is still caught.
+- `structured_decoder/`: `StructuredAssistantDecoder` for splitting streamed output into visible content, reasoning traces, and parsed tool calls per dialect.
+- `tool_call/`: Dialect-specific tool call DSL parsers (Gemma DSL, Qwen ChatML, DeepSeek DSML, Mistral `[TOOL_CALLS]`, GLM XML, Kimi section markers).
 
 ## Development & Test Commands
 
@@ -43,11 +43,11 @@ cargo test -p turbospark-tokenizer
 
 ## Tests
 
-This crate includes 14 comprehensive test suites in `tests/`:
-- Dialect parity: `chatml_dialect.rs`, `deepseek_dialect.rs`, `harmony_dialect.rs`, `llama3_dialect.rs`, `minimax_dialect.rs`.
+This crate includes 17 comprehensive test suites in `tests/`:
+- Dialect parity: `chatml_dialect.rs`, `deepseek_dialect.rs`, `glm_dialect.rs`, `harmony_dialect.rs`, `kimi_dialect.rs`, `llama3_dialect.rs`, `minimax_dialect.rs`.
 - Chat templates: `installed_template.rs`, `jinja_chat_template.rs`.
 - Streaming and stop conditions: `generation_config_eos.rs`, `harmony_channels.rs`, `vision_markers.rs`.
-- Structured decoding and tool calling: `structured_decoder.rs`, `tool_call_support.rs`, `tool_calls.rs`.
+- Structured decoding and tool calling: `mistral_tool_calls.rs`, `structured_decoder.rs`, `tool_call_support.rs`, `tool_calls.rs`.
 - Reasoning traces: `reasoning_effort.rs`.
 
 ## Crate Gotchas

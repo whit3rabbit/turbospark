@@ -12,8 +12,10 @@ OpenAI, Anthropic, Ollama-compatible, and scripted server surfaces.
 
 ## Rules
 
-- The real server uses one runner per process and serves the documented OpenAI,
-  Anthropic, and Ollama-compatible routes. Preserve each wire format.
+- The real server uses one runner per process (more only under `--pool-size`,
+  which opens N runners of one install behind a single public id) and serves
+  the documented OpenAI, Anthropic, and Ollama-compatible routes. Preserve
+  each wire format.
 - API keys protect configured routes. The server provides no TLS; state that
   boundary in operational docs.
 - Keep scripted and real backends separate. Scripted tests do not establish

@@ -24,8 +24,8 @@ cannot drift between the three.
 | `Ctrl+Cmd+S` | Toggle Sidebar | Shows or hides the panel beside the icon rail (the chat list in Chat, the page list in Audio). The rail stays. Disabled in sections without a panel. |
 | `Cmd+Shift+I` | Toggle Inspector | Expands or collapses the right-hand model and runtime inspector. |
 | `Cmd++` | Make Text Bigger | Increases in-app text readability and Dynamic Type scale. |
-| `Cmd+-` | Make Text Smaller | Decreases in-app text size scale. |
-| `Cmd+0` | Default Text Size | Resets text scaling to system standard. |
+| `Cmd+-` | Make Text Smaller | Steps the text size down toward Small (Small, Default, Large, Extra Large). |
+| `Cmd+0` | Default Text Size | Resets text size to Default and the base sizes to the factory 14px UI and 12px code. |
 
 ### Conversations (Chat Menu)
 
@@ -60,7 +60,8 @@ chord, so each chord has exactly one owner on the page.
 
 | Shortcut | Action | Description |
 | :--- | :--- | :--- |
-| `Cmd+Shift+R` | Start Recording | Starts a take on the Record page with the chosen recording type and sources. Bound on the page's Start button, not in a menu. |
+| `Cmd+Shift+R` | Start Recording | Starts a take on the Record page with the chosen recording type and sources, or in the current Speech-to-Text mode with that mode's sources. Bound on the shared record bar's Start button (`AudioRecordBar`), not in a menu. |
+| `Cmd+Return` | Transcribe | In Speech-to-Text's Any Audio mode, transcribes the selected file or capture. |
 
 ### Model Management (Model Menu)
 

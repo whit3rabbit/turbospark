@@ -227,7 +227,7 @@ Storage preflights should retain at least 20 GiB headroom.
 2. **Cold mmap as a Replacement for Streaming**: `pread` is strictly superior for cold uncached experts (74.8s vs 2.5s prefill). `mmap` is only used for warm residency (`docs/EXPERT_RESIDENCY.md`).
 3. **RDADVISE as Default**: No stable production benefit.
 4. **Expert Prefetch / Speculation**: Two predictors measured negative. Copied expert IDs hit 7%. PILOT router lookahead hits 70.6% recall but scales total bytes read above demand path (1.03x-1.85x) at high cache hit rates (`docs/EXPERT_ROUTING.md`).
-5. **Expert Pread Tuning**: `MISS_READ_CHUNK_BYTES` (840 KiB) and `POOL_THREADS` (8) are at measured local optima.
+5. **Expert Pread Tuning**: `MISS_READ_CHUNK_BYTES` (840 KiB) and `POOL_THREADS` (8) are at measured local optima. Re-swept disk-bound on qwen4exp from an external SSD (2026-10-17): 16-32 threads and whole-expert reads moved expert io 5% and decode within noise, because a layer's misses, not the pool, bound queue depth (`docs/EXPERT_ROUTING.md`).
 6. **Deferred End-of-Token Wait**: Max theoretical gain 0.25 ms/token (1.4%); bottlenecked by layer dependencies.
 7. **GPU-Side Router Top-K**: Host top-k overhead is 0.13 ms/token; GPU top-k only relocates synchronization.
 8. **Buying Back Hit-CB Overlap in Kernel**: Determinism fix costs <2% throughput; modifying vendored kernel not justified.

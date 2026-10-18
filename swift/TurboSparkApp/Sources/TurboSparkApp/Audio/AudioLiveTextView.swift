@@ -7,6 +7,9 @@ import TurboSpark
 @MainActor
 struct AudioLiveTextView: View {
     @ObservedObject var live: AudioLiveText
+    /// The Record page keeps live text short under its controls; a
+    /// Speech-to-Text mode gives it the pane.
+    var maxHeight: CGFloat = 220
     @ObservedObject private var appearance = AppearanceManager.shared
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
 
@@ -32,7 +35,7 @@ struct AudioLiveTextView: View {
                         }
                         .padding(10)
                     }
-                    .frame(minHeight: 72, maxHeight: 220)
+                    .frame(minHeight: 72, maxHeight: maxHeight)
                     .background(.appPage, in: RoundedRectangle(cornerRadius: 8))
                     .overlay { RoundedRectangle(cornerRadius: 8).stroke(.appBorder, lineWidth: 1) }
                     .onChange(of: live.text) { _, _ in

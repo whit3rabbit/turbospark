@@ -52,10 +52,11 @@ license file beside it.
 
 | Family | Role | In `tokens.json` |
 | --- | --- | --- |
-| System (SF Pro, SF Mono, New York) | Default interface, code, and greeting faces | `sans`, `mono`, `serif` stacks |
+| System (SF Pro, New York) | Default interface and greeting faces. SF Mono is a code option and the system fallback | `sans`, `serif` stacks |
+| Hack | Default code face, bundled | `hack`, first in the `mono` stack, `type.fonts` |
 | Geist, Geist Mono | Bundled options and the web fallback | `sans`, `mono` stacks, `type.fonts` |
 | Inter | Bundled interface option | `inter`, Appearance options group |
-| JetBrains Mono, Fira Code, Cascadia Code, Hack, Source Code Pro | Bundled code options | one family each, Appearance options group |
+| JetBrains Mono, Fira Code, Cascadia Code, Source Code Pro | Bundled code options | one family each, Appearance options group |
 | Iosevka | Bundled code option | Not carried (11 MB per file) |
 
 `tokens.json` lists font files as `fonts/<file>`, the layout of the rendered

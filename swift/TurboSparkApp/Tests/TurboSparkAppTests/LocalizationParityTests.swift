@@ -595,6 +595,13 @@ final class LocalizationParityTests: XCTestCase {
         for preset in AudioRecordingPreset.allCases {
             values.append(("AudioRecordingPreset.titleKey", preset.titleKey))
         }
+        // The Speech-to-Text pill renders each mode's title as a key.
+        for mode in SpeechToTextMode.allCases {
+            values.append(("SpeechToTextMode.titleKey", mode.titleKey))
+        }
+        for status in [AudioLibraryItem.Status.draft, .recording, .processing, .completed, .interrupted, .failed] {
+            values.append(("AudioLibraryItem.Status.audioTitle", status.audioTitle))
+        }
         for filter in AudioLibraryFilter.allCases {
             values.append(("AudioLibraryFilter.titleKey", filter.titleKey))
         }
