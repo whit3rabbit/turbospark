@@ -21,6 +21,7 @@
 use crate::models::vad::nemotron_diarization::CoupledDiarizer;
 use crate::{ops, Result, SpeechError};
 
+use super::frontend::LiveFrontend;
 use super::seglst::{HypothesisView, SeglstEntry, SentenceBuilder};
 use super::{Features, MultitalkerAsr, SpeakerEncoder, SpeakerStream, StepOutput, Token};
 
@@ -522,6 +523,174 @@ impl Transcripts<'_> {
             })
             .collect();
         self.sentences.update(offset, &views);
+        Ok(report)
+    }
+}
+
+/// The session lifecycle of a [`LiveSession`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LiveState {
+    Open,
+    Finished,
+    /// A step failed partway, so the caches and decoder state are no longer
+    /// those of any prefix of the audio.
+    Failed,
+}
+
+/// A recording transcribed while its PCM arrives: [`CoupledSession`]'s
+/// steps, driven by [`LiveFrontend`] instead of a whole-file [`Features`].
+///
+/// Every step is the batch step on the same frames, so the SegLST equals
+/// `CoupledSession::run` on the whole recording. Two things differ, neither
+/// in a value: the diarizer cannot run a step ahead (the next chunk's audio
+/// does not exist yet), and a full chunk is stepped with `last = false`
+/// because the end of the stream is only known at [`finish`](Self::finish).
+/// With Frozen E's 14-row chunks `last` changes nothing for a full chunk,
+/// which the equality tests hold to NeMo's trace. Text trails the audio by
+/// one chunk (1.12 s) plus the frontend's 16 ms of right context.
+///
+/// The caller supplies 16 kHz mono PCM; this type does not resample.
+pub struct LiveSession<'m, D: DiarizationSource> {
+    inner: CoupledSession<'m, D>,
+    frontend: LiveFrontend,
+    /// Frame-major mel starting `pre_encode_cache` frames before the next
+    /// step's first new frame (zeros before the recording starts).
+    pending: Vec<f32>,
+    /// Absolute frame of the next step's first new frame.
+    next_frame: usize,
+    state: LiveState,
+}
+
+impl<'m, D: DiarizationSource> LiveSession<'m, D> {
+    pub fn new(asr: &'m MultitalkerAsr, diar: D, cfg: CoupledConfig) -> Result<Self> {
+        let mels = asr.config().num_mels;
+        Ok(Self {
+            frontend: asr.live_frontend()?,
+            pending: vec![0.0; asr.pre_encode_cache_frames() * mels],
+            next_frame: 0,
+            state: LiveState::Open,
+            inner: CoupledSession::new(asr, diar, cfg),
+        })
+    }
+
+    /// Runs the ASR encoder layers on a device; see
+    /// [`CoupledSession::with_encoder`].
+    pub fn with_encoder(mut self, encoder: Box<dyn SpeakerEncoder + 'm>) -> Self {
+        self.inner = self.inner.with_encoder(encoder);
+        self
+    }
+
+    /// Adds PCM and returns a report for each chunk it completed. After an
+    /// error the session refuses further work.
+    pub fn append(&mut self, pcm: &[f32]) -> Result<Vec<StepReport>> {
+        self.require_open()?;
+        // Refused before anything is consumed, so the caller can resend.
+        if pcm.iter().any(|s| !s.is_finite()) {
+            return Err(SpeechError::Input {
+                why: "Multitalker input must be finite mono PCM".into(),
+            });
+        }
+        let frames = match self.frontend.push(pcm) {
+            Ok(frames) => frames,
+            Err(e) => {
+                self.state = LiveState::Failed;
+                return Err(e);
+            }
+        };
+        self.pending.extend_from_slice(&frames);
+        self.guarded(|session| session.drain(false))
+    }
+
+    /// Ends the recording: steps the remaining full chunks and the final
+    /// partial one (a tail shorter than a subsampling group is dropped, as
+    /// in the batch plan). The session is then finished.
+    pub fn finish(&mut self) -> Result<Vec<StepReport>> {
+        self.require_open()?;
+        let frames = match self.frontend.finish() {
+            Ok(frames) => frames,
+            Err(e) => {
+                // A recording too short to score leaves nothing to resume.
+                self.state = LiveState::Failed;
+                return Err(e);
+            }
+        };
+        self.pending.extend_from_slice(&frames);
+        let reports = self.guarded(|session| session.drain(true))?;
+        self.state = LiveState::Finished;
+        Ok(reports)
+    }
+
+    /// The SegLST so far.
+    pub fn seglst(&self) -> Vec<SeglstEntry> {
+        self.inner.seglst()
+    }
+
+    /// Cumulative 80 ms predictions after speaker zeroing.
+    pub fn diarization(&self) -> &[f32] {
+        self.inner.diarization()
+    }
+
+    fn require_open(&self) -> Result<()> {
+        match self.state {
+            LiveState::Open => Ok(()),
+            LiveState::Finished => Err(SpeechError::Input {
+                why: "live session was finished; open a new one".into(),
+            }),
+            LiveState::Failed => Err(SpeechError::Input {
+                why: "live session failed on an earlier step; open a new one".into(),
+            }),
+        }
+    }
+
+    /// Runs `body` on a pool worker and poisons the session if it fails.
+    fn guarded<R: Send>(&mut self, body: impl FnOnce(&mut Self) -> Result<R> + Send) -> Result<R> {
+        let result = ops::in_pool(|| body(self));
+        if result.is_err() {
+            self.state = LiveState::Failed;
+        }
+        result
+    }
+
+    /// Steps every full chunk, then (when `end`) the final partial one.
+    fn drain(&mut self, end: bool) -> Result<Vec<StepReport>> {
+        let asr = self.inner.asr;
+        let (mels, cache, shift, factor) = (
+            asr.config().num_mels,
+            asr.pre_encode_cache_frames(),
+            asr.shift_frames(),
+            asr.config().subsampling_factor,
+        );
+        let mut reports = Vec::new();
+        while self.pending.len() / mels >= cache + shift {
+            reports.push(self.step(shift, false)?);
+        }
+        if end {
+            let tail = self.pending.len() / mels - cache;
+            if tail > 0 && (self.next_frame == 0 || tail >= factor) {
+                reports.push(self.step(tail, true)?);
+            }
+        }
+        Ok(reports)
+    }
+
+    /// One step over `new` frames behind the pre-encode cache.
+    fn step(&mut self, new: usize, last: bool) -> Result<StepReport> {
+        let asr = self.inner.asr;
+        let (mels, cache) = (asr.config().num_mels, asr.pre_encode_cache_frames());
+        let frames = cache + new;
+        let window = Features {
+            frames,
+            mels,
+            data: self.pending[..frames * mels].to_vec(),
+        };
+        let CoupledSession {
+            diar, cfg, track, ..
+        } = &mut self.inner;
+        let n_spk = diar.num_speakers();
+        let chunk = diarize(diar, cfg, &window, cache, new)?;
+        let report = track.transcribe(asr, cfg, n_spk, &chunk, &window, cache, new, cache, last)?;
+        self.pending.drain(..new * mels);
+        self.next_frame += new;
         Ok(report)
     }
 }
