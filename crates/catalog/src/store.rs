@@ -365,9 +365,42 @@ fn entry_bytes(path: &Path) -> u64 {
     }
 }
 
+/// Refuses while a model library is listed in `home`.
+///
+/// A relocation copies `models`, `installed.json` and `models.json` and then
+/// deletes them from the home, and the home's `installed.json` holds the
+/// registry rows of every library. It also leaves `libraries.json` behind in
+/// the old home, so the new one would list none. A list that cannot be read
+/// cannot vouch that there are none, so it refuses too. Checked before the
+/// destination is touched.
+fn refuse_while_libraries_exist(home: &Path) -> Result<(), String> {
+    const ADVICE: &str = "model libraries replace moving the store: add a library for the \
+                          drive, and move models between libraries";
+    let registry = LibraryRegistry::load(home);
+    let report = registry.load_report();
+    if registry.libraries().len() > 1 {
+        return Err(format!(
+            "the store cannot be relocated while model libraries are listed, because it would \
+             delete their model records from the home folder; {ADVICE}"
+        ));
+    }
+    if report.quarantined.is_some() || report.unreadable.is_some() {
+        return Err(format!(
+            "the store cannot be relocated while the library list cannot be read, because it \
+             might hold model libraries; {ADVICE}"
+        ));
+    }
+    Ok(())
+}
+
 /// Copies the managed store, verifies its model payload, rewrites in-root
 /// install paths, removes the old managed entries, and activates the new root.
 /// The destination must be empty so the operation never merges unrelated stores.
+///
+/// Retired: the app no longer offers moving the store, model libraries replace
+/// it, and this refuses once any library is listed (see
+/// [`refuse_while_libraries_exist`]). It stays for callers of the C export
+/// `ts_store_relocate` that have no library.
 pub fn relocate_default_store(
     destination: &Path,
     mut on_progress: impl FnMut(u64, u64),
@@ -376,6 +409,7 @@ pub fn relocate_default_store(
         "neither TURBOSPARK_HOME nor HOME is set, so there is no source store".to_string()
     })?;
     let source = source.canonicalize().unwrap_or_else(|_| source.clone());
+    refuse_while_libraries_exist(&source)?;
     let destination = if destination.is_absolute() {
         destination.to_path_buf()
     } else {

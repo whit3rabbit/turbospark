@@ -42,6 +42,9 @@ pub unsafe extern "C" fn ts_store_root_set(root: *const c_char) -> c_int {
 }
 
 /// Relocates the managed store and activates the destination on success.
+///
+/// Retired: refused while any model library is listed, because it deletes the
+/// home's install records (see `catalog::relocate_default_store`).
 #[no_mangle]
 pub unsafe extern "C" fn ts_store_relocate(
     destination: *const c_char,

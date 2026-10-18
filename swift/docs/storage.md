@@ -42,8 +42,10 @@ DELETED them from the root. The engine root is the home now, and the home's
 `installed.json` holds the registry rows of every library, so a caller would
 strip them. `relocate_default_store` (FFI `ts_store_relocate`, Swift
 `TurboSparkCatalog.relocateStore`) therefore stays only as a retired engine
-export with no app caller, and `MoveStoreRetirementTests` fails if any app
-source references the sheet or the call again. A token file stays where it is:
+export with no app caller. The engine refuses it while any library is listed
+(or the list cannot be read), before it touches the destination, and the Swift
+wrapper and its two types are marked deprecated. `MoveStoreRetirementTests`
+fails if any app source references the sheet or the call again. A token file stays where it is:
 the Hugging Face token is a credential, not a model-store artifact, and was
 never copied by that operation.
 

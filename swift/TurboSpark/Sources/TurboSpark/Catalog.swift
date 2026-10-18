@@ -388,6 +388,7 @@ public struct InstallCost: Decodable, Sendable, Equatable {
 }
 
 /// Result of relocating the managed TurboSpark store.
+@available(*, deprecated, message: "Move Store is retired. The engine refuses the relocation once a model library is listed, because it deletes the home's install records. Use TurboSparkLibraries.add(path:name:) and TurboSparkLibraries.move(...).")
 public struct StoreRelocation: Decodable, Sendable, Equatable {
     public let source: String
     public let destination: String
@@ -410,6 +411,7 @@ public enum ImageInstallEvent: Sendable, Equatable {
 }
 
 /// Progress from a managed store relocation.
+@available(*, deprecated, message: "Move Store is retired. The engine refuses the relocation once a model library is listed, because it deletes the home's install records. Use TurboSparkLibraries.add(path:name:) and TurboSparkLibraries.move(...).")
 public enum StoreRelocationEvent: Sendable, Equatable {
     case bytes(done: UInt64, total: UInt64)
     case finished(StoreRelocation)
@@ -441,6 +443,10 @@ public enum TurboSparkCatalog {
 
     /// Relocates the managed store on a dedicated thread. The source is only
     /// removed after the destination and install-record paths verify.
+    ///
+    /// Retired: it deletes the install records of every model library from the
+    /// home, so the engine refuses it once any library is listed.
+    @available(*, deprecated, message: "Move Store is retired. The engine refuses the relocation once a model library is listed, because it deletes the home's install records. Use TurboSparkLibraries.add(path:name:) and TurboSparkLibraries.move(...).")
     public static func relocateStore(to destination: String) -> AsyncThrowingStream<StoreRelocationEvent, Error> {
         AsyncThrowingStream { continuation in
             let thread = Thread {
@@ -1105,6 +1111,7 @@ private let imageInstallCallback: TsInstallCallback = { userdata, kind, text, le
     }
 }
 
+@available(*, deprecated)
 private final class StoreRelocationBox: @unchecked Sendable {
     let continuation: AsyncThrowingStream<StoreRelocationEvent, Error>.Continuation
 
@@ -1113,6 +1120,7 @@ private final class StoreRelocationBox: @unchecked Sendable {
     }
 }
 
+@available(*, deprecated)
 private let storeRelocationCallback: TsInstallCallback = { userdata, kind, _, _, done, total in
     guard let userdata, kind == TS_INSTALL_BYTES else { return }
     let box = Unmanaged<StoreRelocationBox>.fromOpaque(userdata).takeUnretainedValue()

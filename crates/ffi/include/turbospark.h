@@ -1103,9 +1103,12 @@ int32_t ts_store_root_get(char **out);
  * TURBOSPARK_HOME/HOME resolution. */
 int32_t ts_store_root_set(const char *root);
 
-/* Copies and verifies the managed store at destination, then activates it.
- * The destination must be empty. Progress uses TS_INSTALL_BYTES.
- * Refused (TS_ERR_INVALID_ARGUMENT) while any install is running. */
+/* Retired: model libraries replace moving the store. Copies and verifies the
+ * managed store at destination, then activates it. The destination must be
+ * empty. Progress uses TS_INSTALL_BYTES. Refused (TS_ERR_INVALID_ARGUMENT)
+ * while any install is running, and while any model library is listed or the
+ * library list cannot be read: it deletes the home's install records, which
+ * hold every library's models. */
 int32_t ts_store_relocate(const char *destination, TsInstallCallback cb,
                           void *userdata, char **result_json);
 

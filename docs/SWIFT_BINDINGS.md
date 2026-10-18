@@ -1228,7 +1228,9 @@ user moves to This Mac and adopts there.
 **Move Store is retired, and nothing in the app calls the engine's relocation.**
 `TurboSparkCatalog.relocateStore(to:)` (the wrapper over the C export
 `ts_store_relocate`, which runs the Rust `relocate_default_store`) stays as a
-retired engine export with no app caller. It copies `models`, `installed.json`
+retired engine export with no app caller. It is marked deprecated, and the
+engine refuses it while any library is listed or the library list cannot be
+read. Without a library it copies `models`, `installed.json`
 and `models.json` out of the engine root and then DELETES them from it, and the
 engine root is the home, whose `installed.json` holds the registry rows of every
 library. Do not call it. Moving a model between libraries is
