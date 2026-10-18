@@ -229,7 +229,10 @@ when this file gets updated relative to the version bump and the tag.
 - MiniMax Music 3 vocoder runs each block (transposed conv plus three residual
   units) as one Metal command buffer via `Sequence::convolution` and
   `Sequence::snake`. Bit-identical to the per-op path, 8 s vocoder about 6.7 s to
-  about 4.0 s on an M4 Max (indicative, busy host).
+  about 4.0 s on an M4 Max (indicative, busy host). Transposed convs with stride
+  above 1 and 8-aligned channels run `music3_convt_phase`, which skips the taps
+  an output phase cannot see (exact zero blocks): bit-identical, the vocoder
+  about 2.6 s.
 - `swift/TurboSparkApp`: syntext moves to 2.7.2 (`exact: "2.7.2"`) and adds
   the `SyntextContext` product. The previous `exact: "2.5.0"` pin linked the
   2.4.0 xcframework, because syntext's `vX.Y.Z` tags through 2.7.0 pin the

@@ -329,7 +329,7 @@ about 2.4x slower in the exact profile (85.6 s) and about 1.7x slower in the Fas
 profile (about 63 s, busy host), producing the same audio: the 30-step 16-bit WAV
 equals MLX's output in 0 of 705,536 samples. The vocoder shows the largest ratio
 (about 6.7 s against roughly 1 s before the vocoder blocks became one
-command buffer each; about 4.0 s after, indicative on a busy host). Details in
+command buffer each; about 4.0 s after, about 2.6 s with the polyphase transposed conv; indicative on a busy host). Details in
 [docs/audio/minimax_music3.md](../../../../../docs/audio/minimax_music3.md).
 
 ### Exactness cost

@@ -478,6 +478,13 @@ pub fn run(mode: &str, emit: &mut dyn FnMut(String)) {
                 (96, 50, 4, 2, 1, 1, true, 101),
                 (64, 100, 16, 8, 4, 1, true, 29),
                 (130, 70, 8, 4, 2, 1, true, 55),
+                // Long enough that MLX does not split K (the polyphase kernel's cases),
+                // with channels that are and are not multiples of 8.
+                (192, 96, 16, 8, 4, 1, true, 600),
+                (96, 50, 4, 2, 1, 1, true, 2000),
+                (64, 100, 16, 8, 4, 1, true, 500),
+                (48, 24, 8, 4, 2, 1, true, 900),
+                (130, 70, 8, 4, 2, 1, true, 400),
             ];
             // The vocoder's real 8 s shapes (latent length 689, four upsampling blocks).
             let timing_cases: Vec<ConvCase> = vec![

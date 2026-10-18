@@ -494,6 +494,60 @@ kernel void music3_conv_tiled(device const uchar *w [[buffer(0)]],device const f
 }
 template [[host_name("music3_conv_tiled_32x32")]] [[kernel]] decltype(music3_conv_tiled<2,2,2,2>) music3_conv_tiled<2,2,2,2>;
 
+// Polyphase form of music3_conv_tiled for a transposed convolution with
+// ic % 8 == 0 and a single K partition. Output t = j*stride + phase only sees
+// the taps k = r0 + stride*m (r0 = (phase+pad) % stride), at input j + c - m;
+// every other tap is a block of exact zero products in music3_conv_tiled
+// (ic % 8 == 0 keeps each 8-wide MMA block inside one tap), and adding an
+// all-zero block leaves the accumulator unchanged. Dropping those blocks and
+// keeping the taps in ascending order therefore gives the same bits for
+// 1/stride of the work. A tile is 32 consecutive j of one phase.
+template <uint SR, uint SO, uint RM, uint RN>
+kernel void music3_convt_phase(device const uchar *w [[buffer(0)]],device const float *x [[buffer(1)]],
+ device const float *bias [[buffer(2)]],device float *y [[buffer(3)]],constant uint *p [[buffer(4)]],
+ uint tid [[thread_index_in_threadgroup]],uint gid [[threadgroup_position_in_grid]]) {
+    constexpr uint SGR=8*RM,SGO=8*RN,SGE=SGR*SGO,PER=SGE/32,TR=SR*SGR,TO=SO*SGO,BK=32;
+    uint ic=p[0],oc=p[1],ksize=p[2],stride=p[3],pad=p[4],len=p[7],outlen=p[8];
+    uint oblocks=(oc+TO-1)/TO,jtiles=((outlen+stride-1)/stride+TR-1)/TR;
+    uint o0=(gid%oblocks)*TO,j0=((gid/oblocks)%jtiles)*TR,phase=gid/(oblocks*jtiles);
+    uint simd=tid/32,lane=tid%32,sr=simd/SO,so=simd%SO;
+    uint r0=(phase+pad)%stride,c=(phase+pad-r0)/stride;
+    uint taps=r0<ksize ? (ksize-r0+stride-1)/stride : 0,total_k=taps*ic;
+    threadgroup float xs[TR*BK],ws[BK*TO],res[SR*SO*SGE];
+    simdgroup_float8x8 acc[RM][RN];
+    for(uint i=0;i<RM;i++) for(uint j=0;j<RN;j++) acc[i][j]=simdgroup_float8x8(0.0f);
+    for(uint q0=0;q0<total_k;q0+=BK) {
+        for(uint idx=tid;idx<TR*BK;idx+=128) {
+            uint r=idx%TR,q=q0+idx/TR,j=j0+r,m=q/ic,i=q%ic;
+            int pos=int(j)+int(c)-int(m);
+            bool valid=q<total_k && j*stride+phase<outlen && pos>=0 && uint(pos)<len;
+            xs[r*BK+idx/TR]=valid ? x[ulong(i)*len+uint(pos)] : 0;
+        }
+        for(uint idx=tid;idx<TO*BK;idx+=128) {
+            uint oo=idx%TO,q=q0+idx/TO,o=o0+oo,m=q/ic,ii=q%ic,kk=r0+stride*m;
+            ulong wi=(ulong(ii)*oc+o)*ksize+kk;
+            ws[(idx/TO)*TO+oo]=o<oc && q<total_k ? (p[11]==0 ? ((device const float*)w)[wi] : p[11]==1 ? float(((device const half*)w)[wi]) : as_type<float>(uint(((device const ushort*)w)[wi])<<16)) : 0;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        for(uint kb=0;kb<BK/8;kb++) {
+            if(q0+kb*8>=total_k) break;
+            simdgroup_float8x8 a[RM],b[RN];
+            for(uint i=0;i<RM;i++) simdgroup_load(a[i],xs+(sr*SGR+i*8)*BK+kb*8,BK);
+            for(uint j=0;j<RN;j++) simdgroup_load(b[j],ws+(kb*8)*TO+so*SGO+j*8,TO);
+            for(uint i=0;i<RM;i++) for(uint j=0;j<RN;j++) simdgroup_multiply_accumulate(acc[i][j],a[i],b[j],acc[i][j]);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    for(uint i=0;i<RM;i++) for(uint j=0;j<RN;j++) simdgroup_store(acc[i][j],res+simd*SGE+i*8*SGO+j*8,SGO);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for(uint m=0;m<PER;m++) {
+        uint e=lane+32*m,rr=e%SGR,oo=e/SGR,t=(j0+sr*SGR+rr)*stride+phase,o=o0+so*SGO+oo;
+        float total=res[simd*SGE+rr*SGO+oo];
+        if(t<outlen && o<oc) y[ulong(o)*outlen+t]=music_round(music_round(total,p[10])+(p[9] ? bias[o] : 0),p[10]);
+    }
+}
+template [[host_name("music3_convt_phase_32x32")]] [[kernel]] decltype(music3_convt_phase<2,2,2,2>) music3_convt_phase<2,2,2,2>;
+
 // Channel-major activations, PyTorch convolution weight layouts.
 kernel void music3_conv(device const uchar *w [[buffer(0)]],
  device const float *x [[buffer(1)]], device const float *bias [[buffer(2)]],

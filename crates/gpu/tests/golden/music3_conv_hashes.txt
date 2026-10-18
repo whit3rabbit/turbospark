@@ -18,3 +18,13 @@ conv ic=64 oc=100 k=16 s=8 p=4 d=1 t=true len=29 F16 mean_ms=0.00 cd66e6192e07c7
 conv ic=64 oc=100 k=16 s=8 p=4 d=1 t=true len=29 Bf16 mean_ms=0.00 dccb1582a3c7c7a5
 conv ic=130 oc=70 k=8 s=4 p=2 d=1 t=true len=55 F16 mean_ms=0.00 68b01d63fcbccc45
 conv ic=130 oc=70 k=8 s=4 p=2 d=1 t=true len=55 Bf16 mean_ms=0.00 eebb7d839ea40c45
+conv ic=192 oc=96 k=16 s=8 p=4 d=1 t=true len=600 F16 mean_ms=0.00 413b52c01cef4325
+conv ic=192 oc=96 k=16 s=8 p=4 d=1 t=true len=600 Bf16 mean_ms=0.00 f47256fbfeb3c325
+conv ic=96 oc=50 k=4 s=2 p=1 d=1 t=true len=2000 F16 mean_ms=0.00 eee11b8d955f8c25
+conv ic=96 oc=50 k=4 s=2 p=1 d=1 t=true len=2000 Bf16 mean_ms=0.00 5f8ad60b0ffb8c25
+conv ic=64 oc=100 k=16 s=8 p=4 d=1 t=true len=500 F16 mean_ms=0.00 7f753b0dc6353525
+conv ic=64 oc=100 k=16 s=8 p=4 d=1 t=true len=500 Bf16 mean_ms=0.00 5831e22a3272f525
+conv ic=48 oc=24 k=8 s=4 p=2 d=1 t=true len=900 F16 mean_ms=0.00 261836a8e5e6e125
+conv ic=48 oc=24 k=8 s=4 p=2 d=1 t=true len=900 Bf16 mean_ms=0.00 d47f06291aa3c125
+conv ic=130 oc=70 k=8 s=4 p=2 d=1 t=true len=400 F16 mean_ms=0.00 8e239fa4fade1125
+conv ic=130 oc=70 k=8 s=4 p=2 d=1 t=true len=400 Bf16 mean_ms=0.00 5707ccb56c459125

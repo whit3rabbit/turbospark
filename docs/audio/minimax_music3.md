@@ -113,9 +113,23 @@ the per-op path (`vocoder_block_sequences_match_the_per_op_decode_bitwise`, all
 seven tiny profiles) and `verify-music3.sh --mlx` stays green. Vocoder time at
 8 s drops from about 6.7 s to about 4.0 s (`--flow-only`, 1 step, flow 6.05 s
 with the DiT about 2.0 s, load average 8 from another session's build, so
-indicative). What remains is kernel time: the largest blocks take 0.6 to 0.7 s
-each, from the transposed conv's serial split-K partitions, the conv loaders'
-runtime divisions and uncoalesced weight reads, and Snake's `precise::sin`.
+indicative). 
+
+**Parallel split-K does not apply to the vocoder.** It was the first guess for
+the remaining 4 s, and per-conv timing refuted it: MLX splits K only for small
+outputs, and at 8 s every transposed conv is far above that threshold
+(`conv_split` is 1). The real cost was that the tiled kernel walked all
+`kernel` taps of a stride-`s` transposed conv although only `kernel / s` touch
+input; the rest are blocks of exact zero products. `music3_convt_phase` tiles
+over output phase and runs only the taps a phase can see (same ascending
+order, `ic % 8 == 0` so each 8-wide MMA block sits inside one tap, and an
+all-zero block leaves the accumulator unchanged), so the bits are identical.
+Per-half transposed convs: 189, 371, 204 and 73 ms become 21, 40, 76 and 60 ms;
+the vocoder drops to about 2.6 s (busy host, indicative). Guards: the conv
+golden gained long transposed cases recorded with the old kernel, and the MLX
+harness diffs all four blocks' transposed convs at lengths up to 300, 0 differing.
+Remaining time is the k7 residual convs (43 to 108 ms each at the large sizes),
+the k1 convs, Snake, and the phase kernel's strided output stores.
 
 This does not make MLX the right default for TurboSpark: it would put a Python and
 MLX runtime inside a native app. It does mean there is real headroom in our

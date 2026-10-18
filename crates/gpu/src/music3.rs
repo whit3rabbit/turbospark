@@ -1795,10 +1795,22 @@ impl Music3Weight {
             (kokoro || implicit_order) as usize,
             conv_split,
         ])?);
+        // Taps of a transposed conv that miss the input are exact zero blocks, so
+        // a single-partition stride > 1 conv with 8-aligned channels runs only
+        // the taps each output phase can see (see `music3_convt_phase`).
+        let phase = mma
+            && !kokoro
+            && transpose
+            && groups == 1
+            && conv_split == 1
+            && stride > 1
+            && ic % 8 == 0;
         let kernel_name = if depth {
             "audio_depthwise_transpose"
         } else if groups != 1 {
             "audio_conv_grouped"
+        } else if phase {
+            "music3_convt_phase_32x32"
         } else if mma {
             "music3_conv_tiled_32x32"
         } else {
@@ -1810,6 +1822,8 @@ impl Music3Weight {
             params: p,
             groups: if depth {
                 (outlen.div_ceil(8) * oc) as u64
+            } else if phase {
+                (stride * outlen.div_ceil(stride).div_ceil(32) * oc.div_ceil(32)) as u64
             } else if mma {
                 (outlen.div_ceil(32) * oc.div_ceil(32)) as u64
             } else {
