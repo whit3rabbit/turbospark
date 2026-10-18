@@ -28,6 +28,7 @@ use gpu::{
     encode_conformer_glu_extend, encode_conformer_relpos_attention, encode_conformer_silu,
     encode_whisper_add, encode_whisper_layer_norm, encode_whisper_matmul_bias, read_f32_buffer,
     write_buffer_bytes, ConformerRelPosAttention, F32View, MetalBuffer, MetalContext, PassEncoder,
+    MAX_STREAM_HEAD_DIM, MAX_STREAM_KEYS,
 };
 
 fn device_error(why: impl std::fmt::Display) -> SpeechError {
@@ -121,11 +122,24 @@ impl MultitalkerEncoderMetal {
     /// Uploads `asr`'s streaming encoder weights. Fails when no Metal
     /// device initializes; the caller keeps the CPU encoder.
     pub fn new(asr: &MultitalkerAsr) -> Result<Self> {
-        let context = MetalContext::new().map_err(device_error)?;
         let w = asr.stream_weights();
-        if w.heads == 0 || w.hidden % w.heads != 0 || w.conv_kernel == 0 {
+        if w.heads == 0 || w.hidden % w.heads != 0 || w.conv_kernel == 0 || w.chunk == 0 {
             return Err(device_error("invalid encoder geometry"));
         }
+        // The attention kernel keeps one score per key and one query vector
+        // per head in threadgroup memory. Refuse a checkpoint that does not
+        // fit here, so the caller keeps the CPU encoder instead of failing
+        // on the first step.
+        if w.attn_frames + w.chunk > MAX_STREAM_KEYS || w.hidden / w.heads > MAX_STREAM_HEAD_DIM {
+            return Err(device_error(format!(
+                "attention of {} cache + {} chunk rows and head size {} exceeds the kernel's \
+                 {MAX_STREAM_KEYS} keys and {MAX_STREAM_HEAD_DIM} lanes",
+                w.attn_frames,
+                w.chunk,
+                w.hidden / w.heads
+            )));
+        }
+        let context = MetalContext::new().map_err(device_error)?;
         let up = |data: &[f32]| context.new_buffer_with_data(data);
         let norm = |(weight, bias): (&[f32], Option<&[f32]>)| {
             let zeros;
@@ -282,7 +296,9 @@ impl MultitalkerEncoderMetal {
                 )?;
                 in_cur = !in_cur;
             }
-            pass.commit_and_wait();
+            // A faulted buffer completes "normally" and leaves stale rows and
+            // half-updated slot caches behind, so check the status.
+            pass.commit_and_wait_checked()?;
             Ok(in_cur)
         })
     }

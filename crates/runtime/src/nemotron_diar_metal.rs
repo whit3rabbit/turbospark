@@ -185,7 +185,9 @@ impl<'m> NemotronDiarMetal<'m> {
                 du,
                 EPS,
             )?;
-            pass.commit_and_wait();
+            // A faulted buffer completes "normally" and leaves stale rows
+            // in shared memory, so check the status before they are read.
+            pass.commit_and_wait_checked()?;
             Ok(())
         })
     }

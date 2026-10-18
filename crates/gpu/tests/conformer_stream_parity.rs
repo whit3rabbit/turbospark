@@ -288,3 +288,62 @@ fn relpos_attention_matches_cpu() {
         assert!(diff < 1e-5, "relpos valid {valid}: max |d| {diff}");
     }
 }
+
+/// A window shorter than `attn_frames + valid` would make the kernel's
+/// position row underflow, and more than `MAX_STREAM_KEYS` keys would
+/// overrun its score array. Both are refused before anything is encoded.
+#[test]
+fn relpos_attention_refuses_windows_and_key_counts_it_cannot_index() {
+    let mut context = MetalContext::new().expect("Metal device");
+    let buf = upload(&context, &[0.0f32; 4]);
+    let firsts = context.new_buffer_with_data(&[0u32]);
+    let ok = ConformerRelPosAttention {
+        speakers: 1,
+        rows: 14,
+        valid: 14,
+        heads: 1,
+        head_dim: 4,
+        attn_frames: 70,
+        window: 84,
+    };
+    let cases = [
+        (
+            "window under attn_frames + valid",
+            ConformerRelPosAttention { window: 83, ..ok },
+        ),
+        (
+            "keys over the score array",
+            ConformerRelPosAttention {
+                attn_frames: 250,
+                window: 264,
+                ..ok
+            },
+        ),
+        (
+            "key count overflows u32",
+            ConformerRelPosAttention {
+                attn_frames: u32::MAX,
+                window: u32::MAX,
+                ..ok
+            },
+        ),
+    ];
+    for (name, shape) in cases {
+        let pass = context.begin_pass();
+        let view = || F32View::new(&buf);
+        let result = encode_conformer_relpos_attention(
+            &mut context,
+            &pass,
+            view(),
+            view(),
+            view(),
+            view(),
+            view(),
+            view(),
+            &firsts,
+            view(),
+            shape,
+        );
+        assert!(result.is_err(), "{name} was accepted");
+    }
+}

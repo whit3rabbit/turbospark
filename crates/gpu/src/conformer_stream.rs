@@ -209,9 +209,13 @@ pub fn encode_relpos_attention(
             "relpos attention shape {s:?} exceeds the kernel"
         )));
     }
-    if (s.attn_frames + s.valid) as usize > MAX_STREAM_KEYS
+    // The kernel reads position row `window - 1 + key - attn_frames - query`
+    // in u32 arithmetic. The smallest (key 0, last valid query) is
+    // `window - attn_frames - valid`, so a window under `attn_frames + valid`
+    // underflows into a read far outside the table.
+    let keys = s.attn_frames.checked_add(s.valid);
+    if keys.is_none_or(|keys| keys as usize > MAX_STREAM_KEYS || s.window < keys)
         || s.window < s.rows
-        || s.window < s.valid
     {
         return Err(GpuError::InvalidInput(format!(
             "relpos attention keys or window out of range: {s:?}"
