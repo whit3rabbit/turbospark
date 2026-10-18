@@ -389,15 +389,30 @@ fn assert_full_clip_matches_nemo<D: scheduler::DiarizationSource>(
     diar: D,
     trace: &Path,
 ) {
-    let meta: Value =
-        serde_json::from_str(&std::fs::read_to_string(trace.join("meta.json")).unwrap()).unwrap();
-    let wav_path = std::path::PathBuf::from(meta["wav"].as_str().unwrap());
-    let session_id = wav_path.file_stem().unwrap().to_string_lossy().into_owned();
-    let wav = crate::wav::read_wav_f32(&wav_path).unwrap();
+    let (wav, session_id) = trace_wav(trace);
     let features = model.features(&wav.samples, 16_000).unwrap();
     let mut session =
         scheduler::CoupledSession::new(model, diar, scheduler::CoupledConfig::frozen_e());
     let reports = session.run(&features).unwrap();
+    assert_reports_match_nemo(&reports, &session.seglst(), trace, &session_id);
+}
+
+/// The traced clip's samples and session id.
+fn trace_wav(trace: &Path) -> (crate::waveform::Waveform, String) {
+    let meta: Value =
+        serde_json::from_str(&std::fs::read_to_string(trace.join("meta.json")).unwrap()).unwrap();
+    let wav_path = std::path::PathBuf::from(meta["wav"].as_str().unwrap());
+    let session_id = wav_path.file_stem().unwrap().to_string_lossy().into_owned();
+    (crate::wav::read_wav_f32(&wav_path).unwrap(), session_id)
+}
+
+/// Every step and the final SegLST of a run against NeMo's trace.
+fn assert_reports_match_nemo(
+    reports: &[scheduler::StepReport],
+    seglst: &[seglst::SeglstEntry],
+    trace: &Path,
+    session_id: &str,
+) {
     let nemo: Vec<Value> = std::fs::read_to_string(trace.join("trace.jsonl"))
         .unwrap()
         .lines()
@@ -429,9 +444,8 @@ fn assert_full_clip_matches_nemo<D: scheduler::DiarizationSource>(
             "step {k} cache"
         );
     }
-    let got: Vec<Value> = session
-        .seglst()
-        .into_iter()
+    let got: Vec<Value> = seglst
+        .iter()
         .map(|e| {
             json!({"speaker": e.speaker, "start_time": e.start_time, "end_time": e.end_time,
                    "words": e.words, "session_id": session_id})
@@ -499,4 +513,143 @@ fn scheduler_with_live_diarization_matches_nemo_full_clip() {
         )
         .unwrap();
     assert_full_clip_matches_nemo(&model, coupled, &trace);
+}
+
+/// Streams the traced clip through [`scheduler::LiveSession`] in uneven PCM
+/// pieces (smaller than a hop, odd, and larger than a chunk) and requires the
+/// same steps and SegLST as the whole-file run.
+fn assert_live_clip_matches_nemo<D: scheduler::DiarizationSource>(
+    model: &MultitalkerAsr,
+    diar: D,
+    trace: &Path,
+) {
+    let (wav, session_id) = trace_wav(trace);
+    let mut session =
+        scheduler::LiveSession::new(model, diar, scheduler::CoupledConfig::frozen_e()).unwrap();
+    let mut reports = Vec::new();
+    let mut held = std::collections::BTreeMap::new();
+    let (mut at, mut sizes) = (0, [3_331usize, 97, 16_000, 160, 40_001].iter().cycle());
+    while at < wav.samples.len() {
+        let n = (*sizes.next().unwrap()).min(wav.samples.len() - at);
+        reports.extend(session.append(&wav.samples[at..at + n]).unwrap());
+        for u in session.take_segment_updates() {
+            held.insert((u.speaker, u.index), (u.start_time, u.end_time, u.words));
+        }
+        at += n;
+    }
+    reports.extend(session.finish().unwrap());
+    for u in session.take_segment_updates() {
+        held.insert((u.speaker, u.index), (u.start_time, u.end_time, u.words));
+    }
+    // The deltas, applied as a consumer would, are the final SegLST.
+    let mut from_updates: Vec<_> = held
+        .into_iter()
+        .map(|((spk, _), (start, end, words))| (spk, start, end, words))
+        .collect();
+    let mut from_entries: Vec<_> = session
+        .seglst()
+        .into_iter()
+        .map(|e| (e.speaker, e.start_time, e.end_time, e.words))
+        .collect();
+    from_updates.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    from_entries.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    assert_eq!(
+        from_updates, from_entries,
+        "segment updates replay to the SegLST"
+    );
+    assert_reports_match_nemo(&reports, &session.seglst(), trace, &session_id);
+    assert!(
+        session.append(&[0.0]).is_err(),
+        "a finished session is closed"
+    );
+}
+
+/// Live ASR side with NeMo's recorded diarizer predictions replayed.
+#[test]
+fn live_session_with_replayed_diarization_matches_nemo_full_clip() {
+    let Some(model) = gated_model() else { return };
+    let Some(trace) = gated_trace() else { return };
+    let steps: Vec<Vec<f32>> = std::fs::read_to_string(trace.join("trace.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|l| {
+            let row: Value = serde_json::from_str(l).unwrap();
+            row["chunk_preds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .flat_map(|r| r.as_array().unwrap().iter())
+                .map(|v| v.as_f64().unwrap() as f32)
+                .collect()
+        })
+        .collect();
+    assert_live_clip_matches_nemo(
+        &model,
+        scheduler::ReplayedDiarization::new(steps, 8),
+        &trace,
+    );
+}
+
+/// The whole live pipeline: incremental frontend, coupled diarizer and
+/// Multitalker, against NeMo's trace.
+#[test]
+fn live_session_with_live_diarization_matches_nemo_full_clip() {
+    let Some(model) = gated_model() else { return };
+    let Some(trace) = gated_trace() else { return };
+    let Ok(diar_dir) = std::env::var("TURBOSPEECH_NEMOTRON_MODEL") else {
+        eprintln!("skipping: TURBOSPEECH_NEMOTRON_MODEL unset");
+        return;
+    };
+    let diar =
+        crate::models::vad::nemotron_diarization::NemotronDiarization::load(Path::new(&diar_dir))
+            .unwrap();
+    let coupled = diar
+        .coupled(
+            diar.config()
+                .modules
+                .multitalker_coupled(model.chunk_rows()),
+        )
+        .unwrap();
+    assert_live_clip_matches_nemo(&model, coupled, &trace);
+}
+
+/// A failed step poisons the session, and a non-finite chunk does not.
+#[test]
+fn live_session_refuses_work_after_a_failed_step_but_not_a_bad_chunk() {
+    let Some(model) = gated_model() else { return };
+    let mut session = scheduler::LiveSession::new(
+        &model,
+        scheduler::ReplayedDiarization::new(Vec::new(), 8),
+        scheduler::CoupledConfig::frozen_e(),
+    )
+    .unwrap();
+    assert!(session.append(&[f32::NAN]).is_err());
+    // No replayed step exists, so the first full chunk fails the diarizer.
+    let silence = vec![0.01f32; 16_000 * 3];
+    assert!(session.append(&silence).is_err());
+    let again = session.append(&[0.0; 160]).unwrap_err().to_string();
+    assert!(again.contains("failed on an earlier step"), "{again}");
+}
+
+/// A cancel hook stops a call before its next step and closes the session.
+#[test]
+fn live_session_cancel_stops_before_the_next_step() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    let Some(model) = gated_model() else { return };
+    let stop = Arc::new(AtomicBool::new(false));
+    let mut session = scheduler::LiveSession::new(
+        &model,
+        scheduler::ReplayedDiarization::new(Vec::new(), 8),
+        scheduler::CoupledConfig::frozen_e(),
+    )
+    .unwrap()
+    .with_cancel(Box::new({
+        let stop = Arc::clone(&stop);
+        move || stop.load(Ordering::Acquire)
+    }));
+    stop.store(true, Ordering::Release);
+    let err = session.append(&vec![0.01f32; 16_000 * 3]).unwrap_err();
+    assert!(err.to_string().contains("cancelled"), "{err}");
+    assert!(session.append(&[0.0; 160]).is_err());
 }

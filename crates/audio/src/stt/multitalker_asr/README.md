@@ -146,6 +146,9 @@ one command buffer per step and keeps each speaker's caches resident.
 | `frozen_e_step_geometry_known_values`, `speaker_kernels_match_nemo`, `stream_steps_match_nemo` | `TURBOSPEECH_MULTITALKER_MODEL` |
 | `frontend_matches_nemo`, `scheduler_with_replayed_diarization_matches_nemo_full_clip` | plus `TURBOSPEECH_FROZEN_E_TRACE` |
 | `scheduler_with_live_diarization_matches_nemo_full_clip` | plus `TURBOSPEECH_NEMOTRON_MODEL` |
+| `live_session_with_replayed_diarization_matches_nemo_full_clip` | `TURBOSPEECH_MULTITALKER_MODEL` and `TURBOSPEECH_FROZEN_E_TRACE` |
+| `live_session_with_live_diarization_matches_nemo_full_clip`, `crates/runtime` `streams_the_traced_clip_to_nemo_seglst` | plus `TURBOSPEECH_NEMOTRON_MODEL` |
+| `live_frames_equal_whole_file_bitwise`, `changes_replay_to_the_same_segments_as_entries` | Nothing |
 | `crates/runtime/tests/nemotron_diar_metal.rs`, `crates/gpu/tests/nemotron_diar_parity.rs` | A Metal device, plus `TURBOSPEECH_NEMOTRON_MODEL` for the runtime test |
 | `crates/runtime/tests/multitalker_metal.rs`, `crates/gpu/tests/conformer_stream_parity.rs` | A Metal device, plus `TURBOSPEECH_MULTITALKER_MODEL` for the runtime test |
 
@@ -175,12 +178,97 @@ python3 -I crates/audio/scripts/diff_multitalker_trace.py <run dir>/<id>.trace.j
 cargo run -p turbospark-bench --release --bin meeting_eval -- score --seglst <run dir>/seglst.json --clips matched6
 ```
 
+## Live streaming
+
+The batch pipeline above computes features over the whole recording. The
+live path steps the same chunks while PCM arrives.
+
+- `LiveFrontend` (`frontend.rs`) turns PCM into the same log-mel frames as
+  `MultitalkerAsr::features`. Each frame comes from the same `nemo_mel` call
+  on a hop-aligned window of raw samples, so it is bit-identical to its
+  whole-file value. Only the last two frames wait for `finish()`, which
+  supplies the zero padding and the mask past `samples / hop`. The
+  whole-file call refuses input past 2^24 samples (about 17.5 minutes) and
+  this path has no such cap.
+- `LiveSession` (`scheduler.rs`) drives `CoupledSession`'s steps from that
+  frontend. `append()` returns a report per completed chunk and `finish()`
+  steps the remaining full chunks and the final partial one, dropping a tail
+  shorter than a subsampling group as the batch plan does. Text trails the
+  audio by one chunk (1.12 s) plus 16 ms of right context.
+- Two differences from the batch run, neither in a value. The diarizer cannot
+  run a step ahead, because the next chunk's audio does not exist yet. A
+  full chunk steps with `last = false`, because the end of the stream is
+  only known at `finish()`. With 14-row chunks `last` changes nothing for a
+  full chunk, and the equality tests hold that to NeMo.
+- A failed step closes the session, since the caches no longer match any
+  prefix of the audio. A non-finite chunk is refused without consuming it.
+  A cancel hook is polled before each step.
+- `SentenceBuilder::changes` reports the segments new or changed since a
+  cursor, keyed by speaker and sentence index. Only a speaker's last
+  sentence can change after it is written, so that one is resent when its
+  end time or words moved.
+- `MultitalkerStreamSession` (`crates/runtime/src/native_audio/`) owns both
+  models and the `LiveSession` on one worker thread. `append`, `finish` and
+  `cancel` reach it over a channel. A concurrent call is refused as busy and
+  cancel is terminal. It takes no heavy-work guard, because a recording can
+  outlast a chat reply, and it runs on the CPU. Its `SpeakerStreamUpdate`
+  carries the changed `segments` (`speaker`, `index`, `start_seconds`,
+  `end_seconds`, `text`), `active_speakers`, `received_seconds`,
+  `processed_seconds` and `is_final`. Memory is admitted once at open from
+  the two checkpoints' file sizes. That estimate has not been measured.
+
+## Status
+
+Not wired into any user-facing surface. The catalog row is `can_run: false`,
+and there is no `ts_multitalker_stream_*` FFI, Swift adapter, CLI command or
+server route. The pipeline runs only through the `multitalker_meeting` and
+`frozen_e_metal` examples and the runtime session.
+
+Not recommended for end users yet:
+
+- Quality is proven on one panel, the 12 frozen AMI clips. Nothing outside
+  it has been tried.
+- The Metal diarizer path is intermittent (below), and the Metal ASR path
+  differs from NeMo's SegLST on 9 of 12 clips.
+- Peak memory and power have not been measured.
+- Timings come from a loaded host and are not benchmarks.
+
 ## Open
 
-- Runtime session, FFI, Swift and catalog `can_run` (Phase 5).
-- The speaker kernels, pre-encode and RNN-T decode still run on the CPU.
-  Both encoders run on Metal (opt-in, tolerance-gated, not bit-exact).
-  Only F32 weights load. No GPU memory or power measurement yet.
-- A live incremental frontend. The port computes features over the whole
-  recording, as the frozen replay did.
-- Recordings outside the frozen panel.
+1. **`nemotron_diar_metal` is intermittent.** On a loaded host (load 7 to
+   14) `cargo test -p turbospark-runtime --release --test nemotron_diar_metal`
+   failed in 3 of the first 4 runs against a 1e-4 bound (measured 2.2e-6 on
+   a quiet host): full window max abs diff 6.0e-1, coupled chunk
+   predictions max dp 4.5e-2, 2.5e-2 and 2.9e-3. It failed once with the
+   status-check fix reverted (1.2e-3), then passed 4 of 4. The 0.5 decision
+   flips stayed at 0. The cause is not found. Run-to-run variation on
+   identical inputs points at a hazard or race in the diarizer pass.
+   `multitalker_metal` and the gpu parity tests passed in every run. Treat
+   the diarizer Metal path as unqualified.
+2. **Metal default-on gates.** Memory, power and a formal paired benchmark
+   on a quiet host on AC power (`docs/BENCHMARKING.md`,
+   `.claude/docs/power-measurement.md`). Metal stays opt-in until they pass.
+3. **Phase 5 wiring.** The `ts_multitalker_stream_*` FFI inside the ABI
+   guard, modeled on `crates/ffi/src/api/audio_stream.rs` (JSON updates,
+   busy and cancelled status codes, close refused while a call runs). Then
+   the Swift adapter (read `swift/AGENTS.md`, `DESIGN.md` and
+   `docs/API_WORKSPACE.md` first), then catalog `can_run: true`. The caller
+   supplies 16 kHz mono PCM, so resampling lives in the host. Measure the
+   admission estimate before relying on it.
+4. **Metal near-tie flips.** With the ASR encoder on Metal the SegLST
+   differs from NeMo on 9 of 12 clips (cpWER totals match). Precise math did
+   not help (158/1740 and 364/3814). Levers not tried: a tighter GEMM
+   reduction order and f32 accumulation in relpos attention.
+5. **Still on the CPU.** The speaker kernels, pre-encode (`conv2d`
+   `dw_striding`) and RNN-T decode. Profile first. Smaller CPU items not
+   done: speaker row-stacking in the CPU encoder, a 16x6 tile, and tuning
+   `PAR_MIN_WORK` now that the rayon pool exists.
+6. **Recordings outside the frozen panel**, after the decisions are frozen.
+7. **Not run:** `cargo check --target x86_64-unknown-linux-gnu -p
+   turbospark-audio` (`onig_sys` needs a cross gcc on the dev host), the app
+   and release gates, and a `CHANGELOG.md` entry (`docs/RELEASE.md`).
+8. **Unrelated and pre-existing:**
+   `whisper::parity_tests::whisper_log_mel_matches_old_pipeline_bitwise`
+   fails by 1 ULP in release builds only.
+
+Only F32 weights load.
