@@ -524638,6 +524638,137 @@
           }
         }
       }
+    },
+    "This model picks the voice. To speak in a voice you choose, use Voice Cloning." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "يختار هذا النموذج الصوت بنفسه. للتحدث بصوت تختاره، استخدم استنساخ الصوت."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieses Modell wählt die Stimme selbst. Um mit einer Stimme Ihrer Wahl zu sprechen, verwenden Sie Stimmklonen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This model picks the voice. To speak in a voice you choose, use Voice Cloning."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Este modelo elige la voz. Para hablar con una voz que tú elijas, usa Clonación de voz."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ce modèle choisit la voix. Pour parler avec une voix de votre choix, utilisez Clonage de voix."
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "המודל הזה בוחר את הקול בעצמו. כדי לדבר בקול שתבחר, השתמש בשיבוט קול."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "यह मॉडल आवाज़ खुद चुनता है। अपनी चुनी हुई आवाज़ में बोलने के लिए आवाज क्लोनिंग का उपयोग करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Model ini memilih suaranya sendiri. Untuk berbicara dengan suara pilihan Anda, gunakan Kloning Suara."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Questo modello sceglie la voce da solo. Per parlare con una voce a tua scelta, usa Clonazione vocale."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このモデルは声を自動で選びます。選んだ声で話すには、音声クローン作成を使用してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 모델은 목소리를 직접 고릅니다. 원하는 목소리로 말하려면 음성 복제를 사용하세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dit model kiest zelf de stem. Gebruik Stemklonen om te spreken met een stem die je zelf kiest."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ten model sam wybiera głos. Aby mówić wybranym przez siebie głosem, użyj Klonowania głosu."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Este modelo escolhe a voz sozinho. Para falar com uma voz escolhida por você, use Clonagem de voz."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Эта модель сама выбирает голос. Чтобы говорить выбранным вами голосом, используйте Клонирование голоса."
+          }
+        },
+        "sv" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Den här modellen väljer rösten själv. Använd Röstkloning för att tala med en röst som du väljer."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bu model sesi kendisi seçer. Seçtiğiniz bir sesle konuşmak için Ses Klonlama'yı kullanın."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ця модель сама обирає голос. Щоб говорити вибраним вами голосом, скористайтеся Клонуванням голосу."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mô hình này tự chọn giọng nói. Để nói bằng giọng bạn chọn, hãy dùng Nhân bản giọng nói."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此模型会自行选择声音。若要使用你选择的声音说话，请使用语音克隆。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此模型會自行選擇聲音。若要使用你選擇的聲音說話，請使用語音克隆。"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

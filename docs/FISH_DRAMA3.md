@@ -41,7 +41,37 @@ place. Ctrl-C stops the walk and removes the partial directory.
 The catalog profile `fish-drama3-4bit` installs through the same walk with a
 receipt in the managed store (`ts_audio_install_with_options`, with the
 `fish_audio_community_license` acknowledgment). The receipt records the size
-and sha256 of every converted file. The macOS app does not list it yet.
+and sha256 of every converted file.
+
+## In the app
+
+The macOS app lists Drama 3 on the Voiceover and Voice Cloning pages (and
+in Advanced). Download asks you to accept the license terms first, then runs
+the same conversion. "Choose local model folder" takes an install from
+`pull-drama3` instead.
+
+On Voiceover, Drama 3 speaks the script in a voice the model picks. It needs
+no reference, no consent, and no transcript. The page shows no voice list
+and no speed slider, since Drama 3 has neither.
+
+Each Voiceover take draws its own seed (the take saves it), so Generate again
+is a different take. Some seeds speak the first sentence and then only
+silence until the frame cap (`docs/FISH_DRAMA3_PHASE0.md`, dialogue and cue
+failures). Measured 2026-10-16 on the 4-bit install with
+`Welcome back. This is a short voiceover test with no reference voice.`:
+seeds 1 to 4 ended by EOS at 95 to 113 frames, and seeds 0 and 5 voiced
+under 1 s and ran to the 424-frame text cap. The app sent seed 0 on every
+run before this, so that script failed every time.
+
+A clone on Voice Cloning needs a reference recording, your confirmation that
+you have the right to use the voice, and the exact words spoken in the
+reference. A reference taken from a transcribed recording fills the
+transcript in. There is no speed control and no quality preset. Cues go
+inline in the script.
+
+Advanced always clones. OmniVoice follows the same split: Voiceover speaks
+without a reference (it keeps its speed slider and language list), and Voice
+Cloning clones.
 
 ## Takes that stop early
 
