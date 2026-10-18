@@ -365,7 +365,9 @@ when this file gets updated relative to the version bump and the tag.
   silent run of 160 frames (7.4 s), as `stopped_early` in the audio job
   result (C header, `AudioResult.stoppedEarly` in Swift). The app retakes such
   a take with a fresh seed at most twice when the seed was left to it, then
-  saves the last take and says it stopped early.
+  saves the last take and says it stopped early. A Drama 3 clone on Voice
+  Cloning with seed 0 now draws its own seed, as Voiceover does, so a failing
+  take no longer repeats on every Generate.
 - `crates/server`, `crates/cli`: a Fish Audio Drama 3 request without a seed
   ran at seed 0, so every request and every `turbospark-speak` run of one
   text gave the same take, and a take that went silent did so every time.

@@ -33,7 +33,10 @@ extension AudioWorkspaceController {
     /// A natively cloning run (MegaTTS3, OmniVoice, Drama 3): its reference
     /// arrives as the session PCM at 24 kHz, and consent holds only for that
     /// exact region.
-    nonisolated static func nativeCloneRequest(_ base: AudioRequest, family: String, speech: AudioSpeechSettings?) -> AudioRequest {
+    nonisolated static func nativeCloneRequest(
+        _ base: AudioRequest, family: String, speech: AudioSpeechSettings?,
+        freshSeed: () -> UInt64 = { UInt64.random(in: 1...UInt64.max) }
+    ) -> AudioRequest {
         var request = base
         let options = speech?.cloneOptions ?? AudioCloneOptions()
         request.steps = options.steps
@@ -57,6 +60,10 @@ extension AudioWorkspaceController {
             request.tW = nil
             let transcript = speech?.referenceText.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             request.referenceText = transcript.isEmpty ? nil : transcript
+            // Seed 0 is a new take each run, as on Voiceover: the runtime
+            // takes 0 literally, and a take that goes silent after its first
+            // sentence would repeat on every Generate.
+            if (request.seed ?? 0) == 0 { request.seed = freshSeed() }
             return request
         }
         request.pW = options.intelligibility

@@ -482,6 +482,23 @@ final class AudioVoiceCloneTests: XCTestCase {
         XCTAssertNil(retake(stopped, 7, 0), "a chosen seed gives the same take again")
     }
 
+    /// A Drama 3 clone with seed 0 draws its own seed, as Voiceover does, so a
+    /// take that went silent after its first sentence does not repeat on
+    /// every Generate. A seed the user chose is kept. The other cloners keep
+    /// their seed as sent.
+    @MainActor func testVoiceCloneGivesDrama3SeedZeroAFreshSeed() {
+        let speech = AudioSpeechSettings()
+        var base = AudioRequest(task: .textToSpeech)
+        for (seed, want) in [(UInt64?(0), UInt64?(42)), (nil, 42), (7, 7)] {
+            base.seed = seed
+            XCTAssertEqual(AudioWorkspaceController.nativeCloneRequest(base, family: "fish_drama3", speech: speech, freshSeed: { 42 }).seed, want, "\(String(describing: seed))")
+        }
+        base.seed = 0
+        for family in ["megatts3", "omnivoice"] {
+            XCTAssertEqual(AudioWorkspaceController.nativeCloneRequest(base, family: family, speech: speech, freshSeed: { 42 }).seed, 0, family)
+        }
+    }
+
     /// The Voice Clone page clones with Drama 3 end to end: the catalog
     /// profile, a local install folder, an imported reference with its
     /// transcript, consent, the Metal session, and the saved 44.1 kHz take.

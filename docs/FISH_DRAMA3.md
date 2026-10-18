@@ -54,14 +54,12 @@ On Voiceover, Drama 3 speaks the script in a voice the model picks. It needs
 no reference, no consent, and no transcript. The page shows no voice list
 and no speed slider, since Drama 3 has neither.
 
-Each Voiceover take draws its own seed (the take saves it), so Generate again
-is a different take. Some seeds speak the first sentence and then only
-silence until the frame cap (`docs/FISH_DRAMA3_PHASE0.md`, dialogue and cue
-failures). Measured 2026-10-16 on the 4-bit install with
-`Welcome back. This is a short voiceover test with no reference voice.`:
-seeds 1 to 4 ended by EOS at 95 to 113 frames, and seeds 0 and 5 voiced
-under 1 s and ran to the 424-frame text cap. The app sent seed 0 on every
-run before this, so that script failed every time.
+Each take draws its own seed on Voiceover and on Voice Cloning (the take
+saves it), so Generate again is a different take. A seed you set is kept.
+When the runtime reports a take that stopped early (below), the app retakes
+it with a new seed, at most twice. If the last take still stopped early, it
+is saved and the page says so. With a seed you set, the app does not retake,
+since that seed gives the same take.
 
 A clone on Voice Cloning needs a reference recording, your confirmation that
 you have the right to use the voice, and the exact words spoken in the
