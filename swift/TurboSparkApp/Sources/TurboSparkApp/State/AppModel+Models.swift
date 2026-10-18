@@ -13,27 +13,34 @@ extension AppModel {
     // `internal` rather than `private`: exercised directly by
     // ModelIdentityTests via `@testable import`.
     /// Returns whether a load was actually started.
+    ///
+    /// **THROUGH THE CHOKE POINT** (task 6.7). A warned model asks first
+    /// (`requestLoad`) and a model that is not there is refused, so this returns
+    /// false for both: nothing started.
     @discardableResult
     public func selectModel(_ model: InstalledModel) -> Bool {
-        // Keyed on path (state#14): two distinct rows can share an alias
-        // when one is a scanned LM Studio/Custom entry, so alias equality
-        // here could read "already selected" for a DIFFERENT model on disk
-        // and silently refuse to switch to it.
-        // **"ALREADY SELECTED" IS NOT "ALREADY LOADED"** (state#84). This
-        // returned whenever the paths matched, session or no session -- so
-        // after an unload, or after an open that FAILED, both "Load Model"
-        // and "Load & Chat" were dead for the very model the user was
-        // looking at, with nothing on screen to say why. The refusal is for
-        // a redundant re-open, which needs a live session to be redundant.
-        guard !generating, !opening,
-            !(loadedModelPath == model.path)
-        else { return false }
+        requestLoad(model, purpose: .chat(switchToChat: false)) == .started
+    }
+
+    /// The load itself, once the gate has said yes.
+    ///
+    /// Keyed on path (state#14): two distinct rows can share an alias
+    /// when one is a scanned LM Studio/Custom entry, so alias equality
+    /// here could read "already selected" for a DIFFERENT model on disk
+    /// and silently refuse to switch to it.
+    /// **"ALREADY SELECTED" IS NOT "ALREADY LOADED"** (state#84). This
+    /// returned whenever the paths matched, session or no session -- so
+    /// after an unload, or after an open that FAILED, both "Load Model"
+    /// and "Load & Chat" were dead for the very model the user was
+    /// looking at, with nothing on screen to say why. The refusal is for
+    /// a redundant re-open, which needs a live session to be redundant
+    /// (`requestLoad` makes it against what the session was opened with).
+    func beginChatLoad(_ model: InstalledModel) {
         selected = model
         modelPathText = model.path
         Task {
             await open(model)
         }
-        return true
     }
 
     public func openModelHub() {
@@ -44,10 +51,9 @@ extension AppModel {
         // Compared against what the session was OPENED with, not `selected`:
         // an install that finishes mid-turn selects the new row while the
         // old model stays loaded, and "already selected" then skipped the load.
-        if loadedModelPath != model.path {
-            selectModel(model)
-        }
-        activeSection = .chat
+        // The Chat pane opens once the load has started, or at once for the model
+        // already in memory; a warned model keeps the pane until it is answered.
+        requestLoad(model, purpose: .chat(switchToChat: true))
     }
 
     /// Re-reads machine telemetry (thermal state, memory pressure, Low Power
@@ -285,6 +291,12 @@ extension AppModel {
         // up naming different models -- the pane says one thing and the turn
         // runs another, with no error anywhere.
         guard !generating, !opening else { return }
+        // **THE NET UNDER EVERY LOAD PATH** (task 6.7, requirement 3.3): a model
+        // whose drive is away or whose folder is gone is never opened, whatever
+        // asked, including the paths that cannot ask a question (the load after
+        // an install, a reload). The interactive paths were refused earlier by
+        // `requestLoad`; this one says why in a toast and never in `error`.
+        guard canOpenNow(model) else { return }
         if let steeringReason = steeringOpenBlockReason(for: model) {
             let message = AppStrings.localized(
                 "Cannot load \(model.alias) with steering enabled: \(steeringReason)")
@@ -292,6 +304,7 @@ extension AppModel {
             showToast(message, style: .error, duration: 8.0)
             return
         }
+        loadObserver?(model)
         opening = true
         defer { opening = false }
         await openSession(model)
@@ -300,7 +313,7 @@ extension AppModel {
     /// The load itself, shared by `open(_:)` and `setModelURL(_:)` so the
     /// steering check, reasoning clamp, server re-attach and estimate refresh
     /// cannot drift apart again. The caller owns `opening`.
-    private func openSession(_ model: InstalledModel) async {
+    func openSession(_ model: InstalledModel) async {
         error = nil
         // **DETACHED RATHER THAN MERELY DROPPED, and detached rather than
         // stopping the whole server.** `session = nil` alone leaves the OLD
@@ -353,11 +366,11 @@ extension AppModel {
         }
     }
 
+    /// Loads the selected model: the Load button and the Model menu's Load Chat
+    /// Model. Through the choke point, so a warned model asks first.
     public func loadModel() {
         guard let selected else { return }
-        Task {
-            await open(selected)
-        }
+        requestLoad(selected, purpose: .chat(switchToChat: false))
     }
 
     public func reloadModel() {
@@ -414,6 +427,15 @@ extension AppModel {
             }
             ?? InstalledModel(
                 alias: url.lastPathComponent, repo: "", path: path, family: "")
+        // A folder inside a library on a slow drive asks like any other load;
+        // a folder nobody installed (no registry row) has no library to advise
+        // on and loads at once.
+        requestLoad(row, purpose: .chosenFolder)
+    }
+
+    /// Opens the folder the user chose, once the gate has said yes.
+    func beginOpeningFolder(_ row: InstalledModel) {
+        let path = URL(fileURLWithPath: row.path).standardizedFileURL.path
         if let steeringReason = steeringOpenBlockReason(for: row) {
             let message = AppStrings.localized(
                 "Cannot load \(row.alias) with steering enabled: \(steeringReason)")
@@ -421,6 +443,7 @@ extension AppModel {
             showToast(message, style: .error, duration: 8.0)
             return
         }
+        loadObserver?(row)
         // Set synchronously: the loading indicator keys off it, and it must
         // be true the moment this returns (state#11).
         opening = true

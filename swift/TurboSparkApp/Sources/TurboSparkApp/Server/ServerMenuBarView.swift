@@ -315,17 +315,25 @@ public struct ServerMenuBarView: View {
     @ViewBuilder
     private var modelsSubmenu: some View {
         Menu {
-            if model.installed.isEmpty {
-                Text("No models installed", bundle: .module)
-                Button {
-                    model.showMainWindow(navigatingTo: .modelHub)
-                } label: { Text("Discover Models...", bundle: .module) }
+            // The loadable list only (requirement 3.3).
+            let loadable = model.loadableModels
+            if loadable.isEmpty {
+                if let statement = model.notConnectedStatement {
+                    Text(verbatim: statement)
+                } else {
+                    Text("No models installed", bundle: .module)
+                    Button {
+                        model.showMainWindow(navigatingTo: .modelHub)
+                    } label: { Text("Discover Models...", bundle: .module) }
+                }
             } else {
-                ForEach(model.installed) { installedModel in
+                ForEach(loadable) { installedModel in
                     let isAttached = isModelAttached(installedModel)
                     let isCurrentChat = model.selected?.path == installedModel.path
                     Button {
-                        model.selectModel(installedModel)
+                        // A menu cannot host the "Load anyway" question: for a
+                        // warned model the main window comes forward to ask.
+                        model.requestLoad(installedModel, bringWindowForward: true)
                     } label: {
                         if isAttached {
                             Label { Text("\(installedModel.alias) (Active)", bundle: .module) } icon: { Image(systemName: "checkmark") }

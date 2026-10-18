@@ -662,6 +662,10 @@ extension AppModel {
         guard !libraryState.isRunning else { return }
         // Before the first event, so an offer found at launch is announced.
         startLibraryOfferAnnouncements(ledger: offerLedger)
+        // Before the first listing lands, so the pickers' list follows it too: a
+        // successful Add (which does not reload models) and every mount, unmount
+        // and rename reach `installed` through this (task 6.8).
+        startInstalledListFollowing()
         libraryState.start(events: events())
         startMoveStoreMigration(events: events())
         startEjectCoordination(

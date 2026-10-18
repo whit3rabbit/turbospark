@@ -147,6 +147,9 @@ struct RootView: View {
             })) {
                 ProjectToolApprovalSheet(model: model)
         }
+        // The one "Load anyway" question: every interactive load reaches it
+        // through `AppModel.requestLoad`, and no picker carries a dialog.
+        .modifier(LoadAnywayConfirmation(model: model))
         .onReceive(NotificationCenter.default.publisher(for: .toggleChatSidebar)) { _ in
             isSidebarExpanded.toggle()
         }

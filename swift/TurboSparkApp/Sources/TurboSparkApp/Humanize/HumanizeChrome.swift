@@ -80,15 +80,23 @@ struct HumanizeModelBar: View {
     private var state: ModelLoaderControl.LoaderState {
         if downloadPending { return .installing }
         if controller.phase == .loadingModel { return .opening }
-        if !controller.isInstalled { return .noneInstalled }
+        if !controller.isInstalled {
+            // On a drive that is away is not "not downloaded": downloading it
+            // again would only be refused, and the drive is what to connect.
+            return notConnectedStatement == nil ? .noneInstalled : .notConnected
+        }
         return controller.engineLoaded ? .ready : .notLoaded
     }
+
+    private var notConnectedStatement: String? { controller.notConnectedStatement() }
 
     var body: some View {
         HStack(spacing: 0) {
             chooser
-            Rectangle().fill(.appBorder).frame(width: 0.5, height: barHeight * 0.55)
-            action
+            if state != .notConnected {
+                Rectangle().fill(.appBorder).frame(width: 0.5, height: barHeight * 0.55)
+                action
+            }
         }
         .frame(height: barHeight)
         .background(TurboSparkTheme.surfaceColor, in: Capsule())
@@ -150,6 +158,7 @@ struct HumanizeModelBar: View {
         case .ready:
             Text("Ready", bundle: .module) + Text(verbatim: " -- \(HumanizePlanner.window.formatted()) ctx")
         case .notLoaded: Text("Not loaded", bundle: .module)
+        case .notConnected: Text(verbatim: notConnectedStatement ?? "")
         case .noneInstalled, .noneSelected: Text("Not downloaded", bundle: .module)
         }
     }

@@ -43,8 +43,13 @@ public final class AppModel: ObservableObject {
     }()
     lazy var humanizeWorkspace: HumanizeController = {
         let controller = HumanizeController()
+        // The loadable list, not `installed`: a Humanizer on a drive that is away
+        // cannot be opened, and "not installed" would offer to download it again.
         controller.installedPath = { [weak self] in
-            self?.installed.first { $0.alias == HumanizeController.modelAlias }?.path
+            self?.loadableModels.first { $0.alias == HumanizeController.modelAlias }?.path
+        }
+        controller.notConnectedStatement = { [weak self] in
+            self?.notConnectedStatement(forAlias: HumanizeController.modelAlias)
         }
         controller.installHandler = { [weak self] in
             self?.installModel(alias: HumanizeController.modelAlias)
@@ -121,6 +126,24 @@ public final class AppModel: ObservableObject {
     /// here on purpose: views that show library state observe this object
     /// directly, so a mount does not redraw every screen.
     var libraryState = LibraryState()
+    /// Reads the engine's available-only installed list. A seam: the app suites
+    /// link the release engine, which cannot be given a library to list, so a test
+    /// answers from its fake service the way the engine answers from its registry.
+    var catalogInstalledReader: () throws -> [InstalledModel] = { try TurboSparkCatalog.installed() }
+    /// Re-reads `installed` when the library list changes, so it follows mounts,
+    /// unmounts and renames (task 6.8, `LoadableModels.swift`). Started with
+    /// library monitoring, cancelled by `shutdown()`.
+    var installedListFollower: AnyCancellable?
+    /// A reload is already waiting for the main actor: further changes join it.
+    var installedReloadScheduled = false
+    /// A warned model the user chose and has not yet answered for: the one
+    /// "Load anyway" question (task 6.7). Presented once, at the window root
+    /// (`LoadAnywayConfirmation`); set only by `requestLoad`.
+    @Published var pendingLoadConfirmation: PendingLoadConfirmation?
+    /// Told, right before the engine open begins, which model it is for. A test
+    /// seam: a real open needs a multi-gigabyte install, and what these cases
+    /// assert is WHETHER a path started one.
+    var loadObserver: ((InstalledModel) -> Void)?
     /// Install ids of the rows a delete or a remove-from-list is running on.
     /// The engine call can take minutes on a large model, so the row's Delete is
     /// disabled meanwhile and a second request for the same row is refused.

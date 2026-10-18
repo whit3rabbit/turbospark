@@ -15,11 +15,23 @@ extension AppModel {
     /// Whether generation is currently running.
     public var isRunning: Bool { generating }
 
-    /// Whether at least one model is installed locally.
-    public var isModelInstalled: Bool { !installed.isEmpty }
+    /// Whether at least one model can be loaded right now.
+    public var isModelInstalled: Bool { !loadableModels.isEmpty }
 
-    /// Whether no models are installed and initial installation is required.
-    public var requiresModelInstallation: Bool { installed.isEmpty }
+    /// Whether no models exist and initial installation is required.
+    ///
+    /// **A MODEL ON AN UNPLUGGED DRIVE IS A MODEL** (task 6.8). A user whose only
+    /// models are on a drive that is away has nothing loadable and nothing to
+    /// install: the first-run "install a model" screen would tell them nothing
+    /// exists, and `showsNoModelInstalledBanner` would warn about an error that is
+    /// a cable. They see their model as not connected instead
+    /// (`notConnectedStatement`, in the loader and the pickers), and the setup
+    /// screen returns when the drive's models are gone from the list too. A model
+    /// whose folder is gone does not count: there is nothing to connect, and
+    /// installing is the right prompt.
+    public var requiresModelInstallation: Bool {
+        loadableModels.isEmpty && notConnectedModels.isEmpty
+    }
 
     /// Whether the chat pane shows the first-run model setup screen instead
     /// of the conversation.

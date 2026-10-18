@@ -8,14 +8,19 @@ extension InspectorView {
             Picker(selection: Binding(
                 get: { model.selected?.alias ?? "" },
                 set: { alias in
-                    guard let m = model.installed.first(where: { $0.alias == alias }) else { return }
+                    guard let m = model.loadableModels.first(where: { $0.alias == alias }) else { return }
                     model.selectModel(m)
                 }
             )) {
-                if model.installed.isEmpty {
-                    Text("No models installed", bundle: .module).tag("")
+                // The loadable list only (requirement 3.3).
+                if model.loadableModels.isEmpty {
+                    if let statement = model.notConnectedStatement {
+                        Text(verbatim: statement).tag("")
+                    } else {
+                        Text("No models installed", bundle: .module).tag("")
+                    }
                 }
-                ForEach(model.installed) { m in
+                ForEach(model.loadableModels) { m in
                     let visuals = ModelFamilyVisuals.resolve(alias: m.alias, family: m.family, name: m.alias)
                     Label {
                         Text(verbatim: "\(m.alias) (\(visuals.family))")

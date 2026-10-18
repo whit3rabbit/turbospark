@@ -46,7 +46,7 @@ extension AppModel {
             // been left on disk for a model this app did install.
             var catalogRows: [InstalledModel] = []
             do {
-                catalogRows = try TurboSparkCatalog.installed()
+                catalogRows = try catalogInstalledReader()
             } catch {
                 self.error =
                     "Could not read the installed-model list: \(error.localizedDescription). "
@@ -220,19 +220,24 @@ extension AppModel {
     /// alias-based lookups can silently rebind to the WRONG row once two rows
     /// happen to share one. Path is the one field that actually identifies a
     /// single file on disk.
+    ///
+    /// **FROM THE LOADABLE LIST** (task 6.8, requirement 3.3). A selection rests on
+    /// a model that can be opened: after a drive leaves, the selected row moves to
+    /// one that can. It only SELECTS; restoring a selection never loads anything.
     private func reconcileSelection() {
         // The loaded model is never "gone" just because its row is not in
         // `installed` yet or at all: the catalog rows land before the LM
         // Studio / custom-folder scan merges, and a manually opened path has
-        // no row. Rebinding to `installed.first` there named and reloaded a
+        // no row. Rebinding to the first row there named and reloaded a
         // different model than the one resident.
         let loaded = loadedModelPath
+        let loadable = loadableModels
         if let currentPath = selected?.path {
-            if !installed.contains(where: { $0.path == currentPath }), currentPath != loaded {
-                selected = installed.first
+            if !loadable.contains(where: { $0.path == currentPath }), currentPath != loaded {
+                selected = loadable.first
             }
         } else if loaded == nil {
-            selected = installed.first
+            selected = loadable.first
         }
         if let selected {
             modelPathText = selected.path

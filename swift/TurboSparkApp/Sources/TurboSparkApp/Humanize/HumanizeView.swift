@@ -21,8 +21,10 @@ struct HumanizeView: View {
     @State private var confirmingDelete = false
     @FocusState private var draftFocused: Bool
 
+    /// From the loadable list: a Humanizer on a drive that is away cannot be
+    /// opened, counted or deleted from here.
     private var installedModel: InstalledModel? {
-        model.installed.first { $0.alias == HumanizeController.modelAlias }
+        model.loadableModels.first { $0.alias == HumanizeController.modelAlias }
     }
 
     var body: some View {

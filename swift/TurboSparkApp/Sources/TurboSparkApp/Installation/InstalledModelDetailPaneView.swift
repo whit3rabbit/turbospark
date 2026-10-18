@@ -119,6 +119,9 @@ struct InstalledModelDetailPaneView: View {
                     canDeleteModel: model.canDeleteModel,
                     isChanging: model.modelsBeingChanged.contains(installedModel.installId),
                     onLoad: { model.selectModel(installedModel) },
+                    // The same load as Load, minus the question: the warning is
+                    // on screen beside the button (requirement 5.5).
+                    onLoadAnyway: { model.loadAnyway(installedModel) },
                     onUnload: { model.unloadModel() },
                     onStartChat: { model.openChatWithModel(installedModel) },
                     onDelete: { showingDeleteConfirm = true },

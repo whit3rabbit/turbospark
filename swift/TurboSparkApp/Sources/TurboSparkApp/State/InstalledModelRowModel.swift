@@ -79,8 +79,14 @@ struct InstalledModelRowModel: Equatable, Sendable {
     /// Mac, an unavailable row and a link with no known rate.
     let estimatedLoadSeconds: Int?
     let estimateText: String?
-    /// Why Load is not offered, nil when it is (task 6.7 replaces the action).
+    /// Why Load is not offered, nil when it is. Under it, the action bar shows
+    /// this as a statement in place of the Load button (task 6.7).
     let loadBlockedReason: String?
+    /// Whether, and on what terms, the model may be loaded now (task 6.7).
+    let gate: LoadGate
+    /// The speed warning that stands beside "Load anyway", nil when the gate does
+    /// not warn. Never set for a model that cannot be loaded: the statement wins.
+    let warningText: String?
     /// Delete removes the model's files, so it is offered only for a model whose
     /// files can be reached. A model on a drive that is away is never offered it
     /// (the engine would refuse, and the recorded path may be another drive now),
@@ -170,19 +176,12 @@ struct InstalledModelRowModel: Equatable, Sendable {
                 "About \(Self.durationText(seconds: $0, language: language)) to load", language: language)
         }
 
-        let blocked: String?
-        switch status {
-        case .notConnected?:
-            let drive = (model.connectName ?? model.libraryName).flatMap { $0.isEmpty ? nil : $0 }
-                ?? library?.name
-            let name = drive.map { UntrustedText.display($0) }
-                ?? AppStrings.localized("Unknown library", language: language)
-            blocked = AppStrings.localized("Connect \(name) to load", language: language)
-        case .missing?:
-            blocked = AppStrings.localized("The files for this model are missing.", language: language)
-        case nil:
-            blocked = nil
-        }
+        // The gate decides what replaces Load and what warns beside it. Its
+        // sentences are `LoadGateText`'s, the same ones the confirmation uses.
+        let gate = LoadGate.evaluate(
+            model: model, library: library, connection: connection, measuredMBps: measuredMBps,
+            isMoE: isMoE, physicalMemoryBytes: physicalMemoryBytes)
+        let blocked = LoadGateText.statement(for: gate, language: language)
 
         let size = MetricFormat.storage(model.installBytes)
 
@@ -196,6 +195,8 @@ struct InstalledModelRowModel: Equatable, Sendable {
         self.estimatedLoadSeconds = seconds
         self.estimateText = estimateText
         self.loadBlockedReason = blocked
+        self.gate = gate
+        self.warningText = LoadGateText.warning(for: gate, language: language)
         self.sizeText = size
         self.accessibilityParts = [model.alias, text, statusText, size, estimateText].compactMap { $0 }
     }

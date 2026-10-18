@@ -77,6 +77,10 @@ final class HumanizeController: ObservableObject {
     /// The installed model's path, or nil when it is not installed. Set by
     /// the owner so this type never imports `AppModel`.
     var installedPath: () -> String? = { nil }
+    /// "Connect T7 to load" when the model is installed on a drive that is away,
+    /// else nil. Such a model is neither installed (it cannot be opened) nor
+    /// missing, and offering to download it again would only be refused.
+    var notConnectedStatement: () -> String? = { nil }
     /// Starts the catalog download of the model.
     var installHandler: () -> Void = {}
     /// The resource policy to open under (power profile, load guard). Only

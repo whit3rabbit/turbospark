@@ -586,6 +586,7 @@ extension AppModel {
         // running: a vault lock gets here too, and stopping the monitor
         // outside app termination stalls the next unmount (LibraryVolumeMonitor).
         libraryState.stop()
+        stopInstalledListFollowing()
         moveStoreMigration?.stop()
 
         // A reply that is still streaming exists only in `outputText`; the

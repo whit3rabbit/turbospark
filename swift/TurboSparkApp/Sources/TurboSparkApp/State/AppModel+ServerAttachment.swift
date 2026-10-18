@@ -69,7 +69,16 @@ extension AppModel {
     /// would map its weights twice, so the pane offers models the app does
     /// not already have open; attaching the CHAT session is
     /// `attachChatSession()` and is the cheap path.
+    ///
+    /// **THROUGH THE CHOKE POINT** (task 6.7): opening a second session reads the
+    /// whole model from its drive, so a warned model asks first, and a model whose
+    /// drive is away is refused.
     public func attachModelToServer(_ model: InstalledModel) {
+        requestLoad(model, purpose: .serverAttach)
+    }
+
+    /// The attach itself, once the gate has said yes.
+    func beginServerAttach(_ model: InstalledModel) {
         guard let server, !serverBusy else { return }
         // The chat model is already resident: serve THAT session instead of
         // mapping the same install a second time (doubled weights and KV, or
@@ -106,6 +115,12 @@ extension AppModel {
     private func performServerAttach(_ model: InstalledModel, to server: TurboSparkServer) async {
         defer { serverBusy = false }
         guard self.server === server else { return }
+        // The net under the attach paths, the favorite's auto-start among them: a
+        // model whose drive is away or whose folder is gone is never opened.
+        // `loadServerFavorite` already skips such a model with its own toast;
+        // this one covers a row that went stale between that check and here.
+        guard canOpenNow(model) else { return }
+        loadObserver?(model)
         do {
             let session = try await TurboSparkSession(
                 modelPath: model.path, options: buildOpenOptions(modelPath: model.path))

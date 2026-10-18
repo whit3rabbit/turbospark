@@ -328160,6 +328160,661 @@
         }
       }
     },
+    "Load anyway": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u062a\u062d\u0645\u064a\u0644 \u0639\u0644\u0649 \u0623\u064a \u062d\u0627\u0644"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trotzdem laden"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Load anyway"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cargar de todos modos"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Charger quand m\u00eame"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05d8\u05e2\u05df \u05d1\u05db\u05dc \u05d6\u05d0\u05ea"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u092b\u093f\u0930 \u092d\u0940 \u0932\u094b\u0921 \u0915\u0930\u0947\u0902"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tetap muat"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Carica comunque"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u3053\u306e\u307e\u307e\u8aad\u307f\u8fbc\u3080"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uadf8\ub798\ub3c4 \ub85c\ub4dc"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Toch laden"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Za\u0142aduj mimo to"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Carregar mesmo assim"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0412\u0441\u0451 \u0440\u0430\u0432\u043d\u043e \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ladda \u00e4nd\u00e5"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yine de y\u00fckle"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0423\u0441\u0435 \u043e\u0434\u043d\u043e \u0437\u0430\u0432\u0430\u043d\u0442\u0430\u0436\u0438\u0442\u0438"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "V\u1eabn t\u1ea3i"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u4ecd\u7136\u52a0\u8f7d"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u4ecd\u8981\u8f09\u5165"
+          }
+        }
+      }
+    },
+    "This drive's connection is slow, so loading will take about %@.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0627\u062a\u0635\u0627\u0644 \u0645\u062d\u0631\u0643 \u0627\u0644\u0623\u0642\u0631\u0627\u0635 \u0647\u0630\u0627 \u0628\u0637\u064a\u0621\u060c \u0644\u0630\u0627 \u0633\u064a\u0633\u062a\u063a\u0631\u0642 \u0627\u0644\u062a\u062d\u0645\u064a\u0644 \u0646\u062d\u0648 %@."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Verbindung dieses Laufwerks ist langsam, daher dauert das Laden etwa %@."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This drive's connection is slow, so loading will take about %@."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La conexi\u00f3n de esta unidad es lenta, as\u00ed que la carga tardar\u00e1 unos %@."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La connexion de ce disque est lente, le chargement prendra donc environ %@."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05d4\u05d7\u05d9\u05d1\u05d5\u05e8 \u05e9\u05dc \u05d4\u05db\u05d5\u05e0\u05df \u05d4\u05d6\u05d4 \u05d0\u05d9\u05d8\u05d9, \u05d5\u05dc\u05db\u05df \u05d4\u05d8\u05e2\u05d9\u05e0\u05d4 \u05ea\u05d9\u05de\u05e9\u05da \u05db-%@."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0907\u0938 \u0921\u094d\u0930\u093e\u0907\u0935 \u0915\u093e \u0915\u0928\u0947\u0915\u094d\u0936\u0928 \u0927\u0940\u092e\u093e \u0939\u0948, \u0907\u0938\u0932\u093f\u090f \u0932\u094b\u0921 \u0939\u094b\u0928\u0947 \u092e\u0947\u0902 \u0932\u0917\u092d\u0917 %@ \u0932\u0917\u0947\u0902\u0917\u0947\u0964"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Koneksi drive ini lambat, jadi pemuatan akan memakan waktu sekitar %@."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La connessione di questa unit\u00e0 \u00e8 lenta, quindi il caricamento richieder\u00e0 circa %@."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u3053\u306e\u30c9\u30e9\u30a4\u30d6\u306e\u63a5\u7d9a\u306f\u9045\u3044\u305f\u3081\u3001\u8aad\u307f\u8fbc\u307f\u306b\u306f\u7d04 %@ \u304b\u304b\u308a\u307e\u3059\u3002"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uc774 \ub4dc\ub77c\uc774\ube0c\uc758 \uc5f0\uacb0 \uc18d\ub3c4\uac00 \ub290\ub824\uc11c \ub85c\ub4dc\ud558\ub294 \ub370 \uc57d %@ \uac78\ub9bd\ub2c8\ub2e4."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "De verbinding van deze schijf is traag, dus laden duurt ongeveer %@."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Po\u0142\u0105czenie z tym dyskiem jest wolne, wi\u0119c \u0142adowanie potrwa ok. %@."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A conex\u00e3o desta unidade \u00e9 lenta, ent\u00e3o o carregamento levar\u00e1 cerca de %@."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041f\u043e\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u0435 \u044d\u0442\u043e\u0433\u043e \u0434\u0438\u0441\u043a\u0430 \u043c\u0435\u0434\u043b\u0435\u043d\u043d\u043e\u0435, \u043f\u043e\u044d\u0442\u043e\u043c\u0443 \u0437\u0430\u0433\u0440\u0443\u0437\u043a\u0430 \u0437\u0430\u0439\u043c\u0451\u0442 \u043e\u043a\u043e\u043b\u043e %@."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Den h\u00e4r enhetens anslutning \u00e4r l\u00e5ngsam, s\u00e5 det tar cirka %@ att ladda."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu s\u00fcr\u00fcc\u00fcn\u00fcn ba\u011flant\u0131s\u0131 yava\u015f, bu y\u00fczden y\u00fckleme yakla\u015f\u0131k %@ s\u00fcrecek."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041f\u0456\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u043d\u044f \u0446\u044c\u043e\u0433\u043e \u0434\u0438\u0441\u043a\u0430 \u043f\u043e\u0432\u0456\u043b\u044c\u043d\u0435, \u0442\u043e\u043c\u0443 \u0437\u0430\u0432\u0430\u043d\u0442\u0430\u0436\u0435\u043d\u043d\u044f \u0437\u0430\u0439\u043c\u0435 \u0431\u043b\u0438\u0437\u044c\u043a\u043e %@."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "K\u1ebft n\u1ed1i c\u1ee7a \u1ed5 \u0111\u0129a n\u00e0y ch\u1eadm, n\u00ean vi\u1ec7c t\u1ea3i s\u1ebd m\u1ea5t kho\u1ea3ng %@."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u6b64\u9a71\u52a8\u5668\u7684\u8fde\u63a5\u901f\u5ea6\u8f83\u6162\uff0c\u56e0\u6b64\u52a0\u8f7d\u7ea6\u9700 %@\u3002"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u6b64\u78c1\u789f\u6a5f\u7684\u9023\u63a5\u901f\u5ea6\u8f03\u6162\uff0c\u56e0\u6b64\u8f09\u5165\u7d04\u9700 %@\u3002"
+          }
+        }
+      }
+    },
+    "This drive's connection is slow, so loading will take a long time.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0627\u062a\u0635\u0627\u0644 \u0645\u062d\u0631\u0643 \u0627\u0644\u0623\u0642\u0631\u0627\u0635 \u0647\u0630\u0627 \u0628\u0637\u064a\u0621\u060c \u0644\u0630\u0627 \u0633\u064a\u0633\u062a\u063a\u0631\u0642 \u0627\u0644\u062a\u062d\u0645\u064a\u0644 \u0648\u0642\u062a\u064b\u0627 \u0637\u0648\u064a\u0644\u064b\u0627."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Verbindung dieses Laufwerks ist langsam, daher dauert das Laden lange."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This drive's connection is slow, so loading will take a long time."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La conexi\u00f3n de esta unidad es lenta, as\u00ed que la carga tardar\u00e1 mucho."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La connexion de ce disque est lente, le chargement sera donc long."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05d4\u05d7\u05d9\u05d1\u05d5\u05e8 \u05e9\u05dc \u05d4\u05db\u05d5\u05e0\u05df \u05d4\u05d6\u05d4 \u05d0\u05d9\u05d8\u05d9, \u05d5\u05dc\u05db\u05df \u05d4\u05d8\u05e2\u05d9\u05e0\u05d4 \u05ea\u05d9\u05de\u05e9\u05da \u05d6\u05de\u05df \u05e8\u05d1."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0907\u0938 \u0921\u094d\u0930\u093e\u0907\u0935 \u0915\u093e \u0915\u0928\u0947\u0915\u094d\u0936\u0928 \u0927\u0940\u092e\u093e \u0939\u0948, \u0907\u0938\u0932\u093f\u090f \u0932\u094b\u0921 \u0939\u094b\u0928\u0947 \u092e\u0947\u0902 \u0915\u093e\u092b\u093c\u0940 \u0938\u092e\u092f \u0932\u0917\u0947\u0917\u093e\u0964"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Koneksi drive ini lambat, jadi pemuatan akan memakan waktu lama."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La connessione di questa unit\u00e0 \u00e8 lenta, quindi il caricamento richieder\u00e0 molto tempo."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u3053\u306e\u30c9\u30e9\u30a4\u30d6\u306e\u63a5\u7d9a\u306f\u9045\u3044\u305f\u3081\u3001\u8aad\u307f\u8fbc\u307f\u306b\u9577\u3044\u6642\u9593\u304c\u304b\u304b\u308a\u307e\u3059\u3002"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uc774 \ub4dc\ub77c\uc774\ube0c\uc758 \uc5f0\uacb0 \uc18d\ub3c4\uac00 \ub290\ub824\uc11c \ub85c\ub4dc\ud558\ub294 \ub370 \uc624\ub79c \uc2dc\uac04\uc774 \uac78\ub9bd\ub2c8\ub2e4."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "De verbinding van deze schijf is traag, dus laden duurt lang."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Po\u0142\u0105czenie z tym dyskiem jest wolne, wi\u0119c \u0142adowanie potrwa d\u0142ugo."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A conex\u00e3o desta unidade \u00e9 lenta, ent\u00e3o o carregamento levar\u00e1 muito tempo."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041f\u043e\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u0438\u0435 \u044d\u0442\u043e\u0433\u043e \u0434\u0438\u0441\u043a\u0430 \u043c\u0435\u0434\u043b\u0435\u043d\u043d\u043e\u0435, \u043f\u043e\u044d\u0442\u043e\u043c\u0443 \u0437\u0430\u0433\u0440\u0443\u0437\u043a\u0430 \u0437\u0430\u0439\u043c\u0451\u0442 \u043c\u043d\u043e\u0433\u043e \u0432\u0440\u0435\u043c\u0435\u043d\u0438."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Den h\u00e4r enhetens anslutning \u00e4r l\u00e5ngsam, s\u00e5 det tar l\u00e5ng tid att ladda."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu s\u00fcr\u00fcc\u00fcn\u00fcn ba\u011flant\u0131s\u0131 yava\u015f, bu y\u00fczden y\u00fckleme uzun s\u00fcrecek."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u041f\u0456\u0434\u043a\u043b\u044e\u0447\u0435\u043d\u043d\u044f \u0446\u044c\u043e\u0433\u043e \u0434\u0438\u0441\u043a\u0430 \u043f\u043e\u0432\u0456\u043b\u044c\u043d\u0435, \u0442\u043e\u043c\u0443 \u0437\u0430\u0432\u0430\u043d\u0442\u0430\u0436\u0435\u043d\u043d\u044f \u0437\u0430\u0439\u043c\u0435 \u0431\u0430\u0433\u0430\u0442\u043e \u0447\u0430\u0441\u0443."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "K\u1ebft n\u1ed1i c\u1ee7a \u1ed5 \u0111\u0129a n\u00e0y ch\u1eadm, n\u00ean vi\u1ec7c t\u1ea3i s\u1ebd m\u1ea5t nhi\u1ec1u th\u1eddi gian."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u6b64\u9a71\u52a8\u5668\u7684\u8fde\u63a5\u901f\u5ea6\u8f83\u6162\uff0c\u56e0\u6b64\u52a0\u8f7d\u9700\u8981\u5f88\u957f\u65f6\u95f4\u3002"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u6b64\u78c1\u789f\u6a5f\u7684\u9023\u63a5\u901f\u5ea6\u8f03\u6162\uff0c\u56e0\u6b64\u8f09\u5165\u9700\u8981\u5f88\u9577\u6642\u9593\u3002"
+          }
+        }
+      }
+    },
+    "This model likely streams from the drive, so generation speed will be limited by the drive.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0645\u0646 \u0627\u0644\u0645\u0631\u062c\u062d \u0623\u0646 \u064a\u064f\u0628\u064e\u062b \u0647\u0630\u0627 \u0627\u0644\u0646\u0645\u0648\u0630\u062c \u0645\u0646 \u0645\u062d\u0631\u0643 \u0627\u0644\u0623\u0642\u0631\u0627\u0635\u060c \u0644\u0630\u0627 \u0633\u062a\u0643\u0648\u0646 \u0633\u0631\u0639\u0629 \u0627\u0644\u062a\u0648\u0644\u064a\u062f \u0645\u062d\u062f\u0648\u062f\u0629 \u0628\u0633\u0631\u0639\u0629 \u0645\u062d\u0631\u0643 \u0627\u0644\u0623\u0642\u0631\u0627\u0635."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dieses Modell wird wahrscheinlich vom Laufwerk gestreamt, daher wird die Generierungsgeschwindigkeit vom Laufwerk begrenzt."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This model likely streams from the drive, so generation speed will be limited by the drive."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Es probable que este modelo se transmita desde la unidad, por lo que la velocidad de generaci\u00f3n estar\u00e1 limitada por la unidad."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ce mod\u00e8le est probablement diffus\u00e9 depuis le disque, la vitesse de g\u00e9n\u00e9ration sera donc limit\u00e9e par le disque."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05e1\u05d1\u05d9\u05e8 \u05e9\u05d4\u05de\u05d5\u05d3\u05dc \u05d4\u05d6\u05d4 \u05d9\u05d5\u05d6\u05e8\u05dd \u05de\u05d4\u05db\u05d5\u05e0\u05df, \u05d5\u05dc\u05db\u05df \u05de\u05d4\u05d9\u05e8\u05d5\u05ea \u05d4\u05d9\u05e6\u05d9\u05e8\u05d4 \u05ea\u05d5\u05d2\u05d1\u05dc \u05e2\u05dc \u05d9\u05d3\u05d9 \u05d4\u05db\u05d5\u05e0\u05df."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u092f\u0939 \u092e\u0949\u0921\u0932 \u0938\u0902\u092d\u0935\u0924\u0903 \u0921\u094d\u0930\u093e\u0907\u0935 \u0938\u0947 \u0938\u094d\u091f\u094d\u0930\u0940\u092e \u0939\u094b\u0917\u093e, \u0907\u0938\u0932\u093f\u090f \u091c\u0928\u0930\u0947\u0936\u0928 \u0915\u0940 \u0917\u0924\u093f \u0921\u094d\u0930\u093e\u0907\u0935 \u0926\u094d\u0935\u093e\u0930\u093e \u0938\u0940\u092e\u093f\u0924 \u0939\u094b\u0917\u0940\u0964"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model ini kemungkinan akan di-stream dari drive, sehingga kecepatan pembuatan teks dibatasi oleh drive."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Questo modello probabilmente viene trasmesso dall'unit\u00e0, quindi la velocit\u00e0 di generazione sar\u00e0 limitata dall'unit\u00e0."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u3053\u306e\u30e2\u30c7\u30eb\u306f\u30c9\u30e9\u30a4\u30d6\u304b\u3089\u30b9\u30c8\u30ea\u30fc\u30df\u30f3\u30b0\u3055\u308c\u308b\u53ef\u80fd\u6027\u304c\u9ad8\u304f\u3001\u751f\u6210\u901f\u5ea6\u306f\u30c9\u30e9\u30a4\u30d6\u306b\u3088\u3063\u3066\u5236\u9650\u3055\u308c\u307e\u3059\u3002"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uc774 \ubaa8\ub378\uc740 \ub4dc\ub77c\uc774\ube0c\uc5d0\uc11c \uc2a4\ud2b8\ub9ac\ubc0d\ub420 \uac00\ub2a5\uc131\uc774 \ub192\uc73c\ubbc0\ub85c \uc0dd\uc131 \uc18d\ub3c4\uac00 \ub4dc\ub77c\uc774\ube0c\uc5d0 \uc758\ud574 \uc81c\ud55c\ub429\ub2c8\ub2e4."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dit model wordt waarschijnlijk vanaf de schijf gestreamd, dus de generatiesnelheid wordt door de schijf beperkt."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ten model prawdopodobnie jest strumieniowany z dysku, wi\u0119c szybko\u015b\u0107 generowania b\u0119dzie ograniczona przez dysk."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Este modelo provavelmente \u00e9 transmitido da unidade, ent\u00e3o a velocidade de gera\u00e7\u00e3o ser\u00e1 limitada pela unidade."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u042d\u0442\u0430 \u043c\u043e\u0434\u0435\u043b\u044c, \u0441\u043a\u043e\u0440\u0435\u0435 \u0432\u0441\u0435\u0433\u043e, \u0441\u0447\u0438\u0442\u044b\u0432\u0430\u0435\u0442\u0441\u044f \u0441 \u0434\u0438\u0441\u043a\u0430 \u043f\u043e\u0442\u043e\u043a\u043e\u043c, \u043f\u043e\u044d\u0442\u043e\u043c\u0443 \u0441\u043a\u043e\u0440\u043e\u0441\u0442\u044c \u0433\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u0438 \u0431\u0443\u0434\u0435\u0442 \u043e\u0433\u0440\u0430\u043d\u0438\u0447\u0435\u043d\u0430 \u0434\u0438\u0441\u043a\u043e\u043c."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Den h\u00e4r modellen str\u00f6mmas sannolikt fr\u00e5n enheten, s\u00e5 genereringshastigheten begr\u00e4nsas av enheten."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu model b\u00fcy\u00fck olas\u0131l\u0131kla s\u00fcr\u00fcc\u00fcden ak\u0131\u015f olarak okunur, bu y\u00fczden \u00fcretim h\u0131z\u0131 s\u00fcr\u00fcc\u00fc taraf\u0131ndan s\u0131n\u0131rlan\u0131r."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0426\u044f \u043c\u043e\u0434\u0435\u043b\u044c, \u0456\u043c\u043e\u0432\u0456\u0440\u043d\u043e, \u0437\u0447\u0438\u0442\u0443\u0454\u0442\u044c\u0441\u044f \u0437 \u0434\u0438\u0441\u043a\u0430 \u043f\u043e\u0442\u043e\u043a\u043e\u043c, \u0442\u043e\u043c\u0443 \u0448\u0432\u0438\u0434\u043a\u0456\u0441\u0442\u044c \u0433\u0435\u043d\u0435\u0440\u0430\u0446\u0456\u0457 \u0431\u0443\u0434\u0435 \u043e\u0431\u043c\u0435\u0436\u0435\u043d\u0430 \u0434\u0438\u0441\u043a\u043e\u043c."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "M\u00f4 h\u00ecnh n\u00e0y c\u00f3 kh\u1ea3 n\u0103ng \u0111\u01b0\u1ee3c truy\u1ec1n tr\u1ef1c ti\u1ebfp t\u1eeb \u1ed5 \u0111\u0129a, n\u00ean t\u1ed1c \u0111\u1ed9 t\u1ea1o s\u1ebd b\u1ecb gi\u1edbi h\u1ea1n b\u1edfi \u1ed5 \u0111\u0129a."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u6b64\u6a21\u578b\u5f88\u53ef\u80fd\u4ece\u9a71\u52a8\u5668\u6d41\u5f0f\u8bfb\u53d6\uff0c\u56e0\u6b64\u751f\u6210\u901f\u5ea6\u4f1a\u53d7\u9a71\u52a8\u5668\u9650\u5236\u3002"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u6b64\u6a21\u578b\u5f88\u53ef\u80fd\u5f9e\u78c1\u789f\u6a5f\u4e32\u6d41\u8b80\u53d6\uff0c\u56e0\u6b64\u751f\u6210\u901f\u5ea6\u6703\u53d7\u78c1\u789f\u6a5f\u9650\u5236\u3002"
+          }
+        }
+      }
+    },
+    "Load %@ anyway?": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0647\u0644 \u062a\u0631\u064a\u062f \u062a\u062d\u0645\u064a\u0644 %@ \u0639\u0644\u0649 \u0623\u064a \u062d\u0627\u0644\u061f"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ trotzdem laden?"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Load %@ anyway?"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u00bfCargar %@ de todos modos?"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Charger %@ quand m\u00eame ?"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u05dc\u05d8\u05e2\u05d5\u05df \u05d0\u05ea %@ \u05d1\u05db\u05dc \u05d6\u05d0\u05ea?"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ \u0915\u094b \u092b\u093f\u0930 \u092d\u0940 \u0932\u094b\u0921 \u0915\u0930\u0947\u0902?"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tetap muat %@?"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Caricare %@ comunque?"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ \u3092\u3053\u306e\u307e\u307e\u8aad\u307f\u8fbc\u307f\u307e\u3059\u304b\uff1f"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\uadf8\ub798\ub3c4 %@\uc744(\ub97c) \ub85c\ub4dc\ud558\uc2dc\uaca0\uc2b5\ub2c8\uae4c?"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ toch laden?"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Za\u0142adowa\u0107 %@ mimo to?"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Carregar %@ mesmo assim?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0412\u0441\u0451 \u0440\u0430\u0432\u043d\u043e \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c %@?"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ladda %@ \u00e4nd\u00e5?"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ yine de y\u00fcklensin mi?"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u0423\u0441\u0435 \u043e\u0434\u043d\u043e \u0437\u0430\u0432\u0430\u043d\u0442\u0430\u0436\u0438\u0442\u0438 %@?"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "V\u1eabn t\u1ea3i %@?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u4ecd\u8981\u52a0\u8f7d %@ \u5417\uff1f"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\u4ecd\u8981\u8f09\u5165 %@ \u55ce\uff1f"
+          }
+        }
+      }
+    },
     "Model unloaded": {
       "extractionState": "manual",
       "localizations": {
