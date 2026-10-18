@@ -31,8 +31,8 @@ enum ModelProbeGating {
         variants: RepoVariants?,
         ggufFile: String,
         selectedVariant: RepoVariant?,
-        freeDiskBytes: UInt64?,
-        unmountedStoreVolume: String? = nil
+        freeDiskBytes: UInt64? = nil,
+        destination: InstallGateDestination? = nil
     ) -> ModelInstallDecision {
         if let err = probeError {
             return .blocked(err)
@@ -62,14 +62,17 @@ enum ModelProbeGating {
                     )
             )
         }
+        // The chosen destination's room and name when the sheet has one. A caller
+        // with only a number is asking about This Mac.
         return ModelInstallGate.decide(
             probeRunnable: report.runnable,
             refusedBecause: report.refusedBecause,
             verdict: report.fit?.verdict,
             installBytes: report.downloadBytes ?? selectedVariant?.bytes,
             downloadBytes: report.downloadBytes ?? selectedVariant?.bytes,
-            freeDiskBytes: freeDiskBytes,
-            unmountedStoreVolume: unmountedStoreVolume
+            to: destination
+                ?? InstallGateDestination(
+                    libraryName: nil, notConnectedName: nil, freeBytes: freeDiskBytes)
         )
     }
 }

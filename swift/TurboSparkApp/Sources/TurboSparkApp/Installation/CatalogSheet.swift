@@ -13,6 +13,14 @@ struct CatalogSheet: View {
     @State private var customRepo = ""
     @State private var customAlias = ""
     @State private var isCustomExpanded = false
+    /// The library the user picked for the installs on this sheet. Nil follows
+    /// the default (requirement 2.2). Per install: not remembered across launches.
+    @State private var destination: String?
+
+    /// The `library:` the installs take for the menu's choice: nil for This Mac.
+    private var chosenLibrary: String? {
+        model.installDestinations.libraryForInstall(selection: destination)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -52,6 +60,10 @@ struct CatalogSheet: View {
                 if model.isInstallingModel {
                     installProgressBox
                 }
+
+                // Where an install from this sheet goes: only when there is a
+                // choice (requirement 2.1).
+                InstallDestinationPicker(model: model, selection: $destination)
 
                 installedSection
                 curatedSection
@@ -191,7 +203,7 @@ struct CatalogSheet: View {
                             .foregroundStyle(.appSecondary)
                     } else {
                         Button {
-                            model.installModel(alias: entry.alias)
+                            model.installModel(alias: entry.alias, library: chosenLibrary)
                         } label: { Text("Install", bundle: .module) }
                         .appAction(.secondary, size: .small)
                         .disabled(model.isRunning || !model.canInstall(alias: entry.alias))
@@ -218,7 +230,7 @@ struct CatalogSheet: View {
                 .textFieldStyle(.roundedBorder)
 
                 Button {
-                    model.installRepo(repo: customRepo, alias: customAlias)
+                    model.installRepo(repo: customRepo, alias: customAlias, library: chosenLibrary)
                 } label: { Text("Install Custom Repo", bundle: .module) }
                 .appAction(.secondary, size: .small)
                 .disabled(

@@ -27,6 +27,23 @@ downloading, paused, packing, or verifying becomes Interrupted. Loading becomes
 Completed because the native install was already committed before loading
 began.
 
+## Destination
+
+A row carries the library it installs into (`ModelDownload.library`, a
+`ModelLibrary.id`). Absent means This Mac, so a row saved before libraries reads
+as This Mac and its saved bytes do not change. The destination rides on the row
+so a queued install, a retry and a restart keep it. It is not part of the queue
+key, because alias plus modality is unique across every library.
+
+`AppModel.enqueueModelDownload(_:library:)` refuses a destination that is not
+connected before anything is queued, and embedding requests never keep one.
+Text, repository, image and audio transfers start through the library service
+seam (`ModelLibraryService.install*`), so the engine settles the destination
+before its first request. A drive lost mid-install ends the row as Failed with
+one localized sentence per engine code (`InstallFailureText`) and a warning
+toast, never the app error, and the library state and the installed list are
+read again so no partial model stays on screen.
+
 ## Network path
 
 Text GGUF and safetensors reads and curated image files share

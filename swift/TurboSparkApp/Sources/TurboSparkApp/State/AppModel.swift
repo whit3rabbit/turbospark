@@ -26,13 +26,13 @@ public final class AppModel: ObservableObject {
     /// (it loads the audio library), and a launch with no audio use must not.
     var audioWorkspaceCreated = false
     lazy var audioWorkspace: AudioWorkspaceController = {
-        let workspace = AudioWorkspaceController()
+        let workspace = AudioWorkspaceController(installService: libraryState.service)
         audioWorkspaceCreated = true
         workspace.onResidentModelChanged = { [weak self] in
             self?.ejectCoordination?.coordinator.scheduleRefresh()
         }
-        workspace.installHandler = { [weak self] profile, acknowledged in
-            self?.enqueueAudioDownload(profile: profile, acknowledged: acknowledged) ?? false
+        workspace.installHandler = { [weak self] profile, acknowledged, library in
+            self?.enqueueAudioDownload(profile: profile, acknowledged: acknowledged, library: library) ?? false
         }
         workspace.summaryAvailable = { [weak self] in self?.canSummarizeAudio == true }
         workspace.summaryHandler = { [weak self] item in
@@ -130,6 +130,9 @@ public final class AppModel: ObservableObject {
     /// link the release engine, which cannot be given a library to list, so a test
     /// answers from its fake service the way the engine answers from its registry.
     var catalogInstalledReader: () throws -> [InstalledModel] = { try TurboSparkCatalog.installed() }
+    /// Reads This Mac's free space for the install gate and the destination menu.
+    /// A seam: a test cannot make the boot disk full or empty.
+    var thisMacFreeSpaceReader: () -> UInt64? = { ModelInstallGate.freeSpaceOnThisMac() }
     /// Re-reads `installed` when the library list changes, so it follows mounts,
     /// unmounts and renames (task 6.8, `LoadableModels.swift`). Started with
     /// library monitoring, cancelled by `shutdown()`.

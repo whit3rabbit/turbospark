@@ -29,6 +29,14 @@ struct ImageModelControls: View {
     @ObservedObject var model: AppModel
     @Binding var importing: Bool
     @State private var browsingFamily: String?
+    /// The library the user picked for a download from this panel. Nil follows
+    /// the default (requirement 2.2). Per install: not remembered across launches.
+    @State private var destination: String?
+
+    /// The `library:` the downloads take for the menu's choice: nil for This Mac.
+    private var chosenLibrary: String? {
+        model.installDestinations.libraryForInstall(selection: destination)
+    }
 
     private var families: [String] {
         let set = Set(
@@ -62,6 +70,20 @@ struct ImageModelControls: View {
     }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            controlRow
+            // Where a download goes: only when there is a choice (2.1), and only
+            // while a download is on offer here.
+            if !sources.isEmpty {
+                InstallDestinationPicker(model: model, selection: $destination)
+            }
+        }
+        .themedFont(.small)
+        .disabled(model.isRunning)
+        .onChange(of: model.imageModelPath) { browsingFamily = nil }
+    }
+
+    private var controlRow: some View {
         HStack(alignment: .top, spacing: 16) {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Model", bundle: .module).themedFont(.tiny, weight: .medium)
@@ -104,7 +126,7 @@ struct ImageModelControls: View {
                     }
                     if !installed.isEmpty && !sources.isEmpty { Divider() }
                     ForEach(sources) { source in
-                        Button { model.installImageModel(source) } label: {
+                        Button { model.installImageModel(source, library: chosenLibrary) } label: {
                             Label {
                                 Text("Download", bundle: .module)
                                     + Text(verbatim: " " + ImageModelPresentation.quantization(source.quantization))
@@ -135,7 +157,7 @@ struct ImageModelControls: View {
                     Text("Download", bundle: .module)
                         .themedFont(.tiny).hidden().accessibilityHidden(true)
                     Button {
-                        model.installImageModel(source)
+                        model.installImageModel(source, library: chosenLibrary)
                     } label: {
                         Label {
                             Text("Download", bundle: .module)
@@ -169,8 +191,5 @@ struct ImageModelControls: View {
                 }
             }
         }
-        .themedFont(.small)
-        .disabled(model.isRunning)
-        .onChange(of: model.imageModelPath) { browsingFamily = nil }
     }
 }

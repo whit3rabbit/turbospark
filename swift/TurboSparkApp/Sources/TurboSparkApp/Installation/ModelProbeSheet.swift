@@ -22,6 +22,9 @@ struct ModelProbeSheet: View {
     // overwrite the result of a newer one.
     @State private var probeGeneration = 0
     @State private var variantsGeneration = 0
+    /// The library the user picked for this install. Nil follows the default
+    /// (requirement 2.2). Per install: it is not remembered across launches.
+    @State private var destination: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -53,9 +56,13 @@ struct ModelProbeSheet: View {
             variants: variants,
             ggufFile: ggufFile,
             selectedVariant: selectedVariant,
-            freeDiskBytes: ModelInstallGate.freeSpaceOnModelStore(),
-            unmountedStoreVolume: ModelInstallGate.unmountedStoreVolume()
+            destination: model.installDestinations.gateDestination(library: chosenLibrary)
         )
+    }
+
+    /// The `library:` the install takes for the menu's choice: nil for This Mac.
+    private var chosenLibrary: String? {
+        model.installDestinations.libraryForInstall(selection: destination)
     }
 
     private var selectedVariant: RepoVariant? {
@@ -309,6 +316,9 @@ struct ModelProbeSheet: View {
                     .foregroundStyle(decision.isBlocked ? Color.red : Color.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            // Where the model will be installed: only when there is a choice
+            // (requirement 2.1), and the gate above counts that library's room.
+            InstallDestinationPicker(model: model, selection: $destination)
             HStack {
                 Button { runProbe() } label: { Text("Run Probe", bundle: .module) }
                     .appAction(.secondary)
@@ -428,7 +438,8 @@ struct ModelProbeSheet: View {
             repo: cleanRepo,
             alias: alias,
             file: ggufFile.isEmpty ? nil : ggufFile,
-            sidecarRepo: cleanSidecar.isEmpty ? nil : cleanSidecar)
+            sidecarRepo: cleanSidecar.isEmpty ? nil : cleanSidecar,
+            library: chosenLibrary)
         dismiss()
     }
 }

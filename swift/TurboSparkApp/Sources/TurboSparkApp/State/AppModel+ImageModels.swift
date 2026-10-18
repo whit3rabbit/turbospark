@@ -113,7 +113,10 @@ extension AppModel {
 
     /// Downloads a supported MLX source through the catalog install ABI.
     /// The source is packed and verified before it becomes selectable.
-    public func installImageModel(_ source: ImageCatalogEntry) {
+    ///
+    /// `library` is where the model goes (nil is This Mac). It rides on the queued
+    /// row, and the engine settles it before the first request.
+    public func installImageModel(_ source: ImageCatalogEntry, library: String? = nil) {
         guard Self.testedImageModelAliases.contains(source.alias),
               Self.supportsMLXImageModel(modelID: source.modelID) else {
             showToast(
@@ -127,10 +130,10 @@ extension AppModel {
             }
             return
         }
-        enqueueModelDownload(.image(alias: source.alias))
+        enqueueModelDownload(.image(alias: source.alias), library: library)
     }
 
-    func startImageModelInstall(alias: String) {
+    func startImageModelInstall(alias: String, library: String? = nil) {
         Self.modelInstallOwner = self
         isInstallingImageModel = true
         installingAlias = alias
@@ -150,7 +153,9 @@ extension AppModel {
                 self.startNextModelDownloadIfPossible()
             }
             do {
-                for try await event in TurboSparkCatalog.installImage(alias) {
+                for try await event in self.libraryState.service.installImage(
+                    alias: alias, library: Self.destinationLibrary(library))
+                {
                     if self.modelDownloadsShuttingDown {
                         TurboSparkCatalog.cancelInstall()
                         continue
@@ -158,7 +163,7 @@ extension AppModel {
                     if self.isCancellingModelInstall {
                         if case .finished = event {
                             self.setModelDownloadStatus(.completed)
-                            self.refreshModels()
+                            self.refreshAfterInstallSuccess()
                         } else {
                             TurboSparkCatalog.cancelInstall()
                         }
@@ -177,7 +182,8 @@ extension AppModel {
                         }
                     case let .finished(model):
                         self.setModelDownloadStatus(.completed)
-                        self.refreshModels()
+                        // Listed under the library it went into (requirement 2.6).
+                        self.refreshAfterInstallSuccess()
                         self.selectImageModel(model)
                         self.showToast(
                             AppStrings.localized("Installed image model '\(model.alias)'."),
@@ -191,10 +197,20 @@ extension AppModel {
                 }
             } catch {
                 if !self.modelDownloadsShuttingDown && !self.isCancellingModelInstall {
-                    self.setModelDownloadStatus(.failed, failure: error.localizedDescription)
-                    self.showToast(
-                        AppStrings.localized("Image model install failed: \(error.localizedDescription)"),
-                        style: .error, duration: 6.0)
+                    if let sentence = self.libraryInstallFailureSentence(
+                        error, alias: alias, library: library, modality: "image")
+                    {
+                        // A drive that is away or was lost: its own sentence and a
+                        // warning, never the app's error (requirement 2.4).
+                        self.presentLibraryInstallFailure(sentence)
+                    } else {
+                        self.setModelDownloadStatus(.failed, failure: error.localizedDescription)
+                        self.showToast(
+                            AppStrings.localized("Image model install failed: \(error.localizedDescription)"),
+                            style: .error, duration: 6.0)
+                    }
+                    // No partial model stays on screen.
+                    self.refreshAfterInstallFailure()
                 }
             }
             guard !self.modelDownloadsShuttingDown else { return }

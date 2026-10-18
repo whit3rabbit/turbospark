@@ -28,6 +28,10 @@ final class AudioWorkspaceController: ObservableObject {
     /// Installs that exist on disk but cannot be used as they are, with the
     /// engine's reason. Shown so a broken install is visible, not just absent.
     @Published var incompatibleInstalls: [AudioIncompatibleInstall] = []
+    /// Installs in a library whose drive is not connected (task 6.10). A state to
+    /// show, not an error: they are not `incompatibleInstalls`, they are not in
+    /// `installedPaths`, and none of them can be run.
+    @Published var notConnectedInstalls: [AudioNotConnectedInstall] = []
     @Published var isManagingInstall = false
     @Published var familyCapabilities: [AudioFamilyCapability] = []
     @Published var search = ""
@@ -75,8 +79,14 @@ final class AudioWorkspaceController: ObservableObject {
     var summaryAvailable: (() -> Bool)?
     var canSummarizeMeeting: Bool { selectedItem?.preferredTranscript != nil && summaryAvailable?() == true }
     /// Queues a managed download. The second argument lists the ids of the
-    /// profile's acknowledgments the user accepted.
-    var installHandler: ((AudioProfile, [String]) -> Bool)?
+    /// profile's acknowledgments the user accepted; the third is the library it
+    /// goes into (nil is This Mac).
+    var installHandler: ((AudioProfile, [String], String?) -> Bool)?
+    /// How the catalog is read: the live engine, or a test's answer. It runs off
+    /// the main actor.
+    let catalogReader: @Sendable () throws -> AudioCatalogSnapshot
+    /// The one door to the engine for an install that no queue owns.
+    let installService: ModelLibraryService
     let library: AudioLibraryStore
     let assets: ManagedAssetStore
     let profileID: String?
@@ -124,8 +134,13 @@ final class AudioWorkspaceController: ObservableObject {
     var importTask: Task<Void, Never>?
     var scratchURLs: Set<URL> = []
 
-    init(library: AudioLibraryStore = AudioLibraryStore(), assets: ManagedAssetStore = .shared) {
+    init(
+        library: AudioLibraryStore = AudioLibraryStore(), assets: ManagedAssetStore = .shared,
+        catalogReader: @escaping @Sendable () throws -> AudioCatalogSnapshot = AudioCatalogSnapshot.live,
+        installService: ModelLibraryService = LiveModelLibraryService()
+    ) {
         self.library = library; self.assets = assets
+        self.catalogReader = catalogReader; self.installService = installService
         profileID = ProfileVaultStore.shared.session?.profileID
         do {
             preferences = try library.preferences()
@@ -174,6 +189,14 @@ final class AudioWorkspaceController: ObservableObject {
     var modelInstalled: Bool {
         guard let id = recipe.modelID else { return false }
         return installedPaths[id] != nil || preferences.localModels[id] != nil
+    }
+    /// Whether `profile` can be used, is installed on a drive that is away, or is
+    /// not installed. The picker and the install button read this, so an offline
+    /// install is shown as such and never offered a download.
+    func installStatus(for profile: AudioProfile) -> AudioInstallStatus {
+        AudioInstallStatus.resolve(
+            alias: profile.identity.alias, installedPaths: installedPaths,
+            localModels: Set(preferences.localModels.keys), notConnected: notConnectedInstalls)
     }
     var selectedLocalModelURL: URL? {
         guard let id = recipe.modelID, let bookmark = preferences.localModels[id] else { return nil }
@@ -490,8 +513,9 @@ final class AudioWorkspaceController: ObservableObject {
         isRefreshingModels = true
         modelCatalogError = nil
         let token = epoch
+        let reader = catalogReader
         Task { [weak self] in
-            let result = await Task.detached { Result { (try AudioCatalog.profiles(), try AudioCatalog.installed(), try AudioCatalog.capabilities()) } }.value
+            let result = await Task.detached { Result { try reader() } }.value
             guard let self, self.valid(token) else { return }
             self.isRefreshingModels = false
             defer {
@@ -501,12 +525,15 @@ final class AudioWorkspaceController: ObservableObject {
                 }
             }
             switch result {
-            case .success(let (profiles, installed, capabilities)):
-                self.familyCapabilities = capabilities
-                self.profiles = profiles
+            case .success(let snapshot):
+                let installed = snapshot.installed
+                self.familyCapabilities = snapshot.capabilities
+                self.profiles = snapshot.profiles
                 self.installedPaths = Dictionary(installed.installed.map { ($0.alias, $0.path) }, uniquingKeysWith: { first, _ in first })
                 self.needsAdoption = installed.needsAdoption
                 self.incompatibleInstalls = installed.incompatible
+                // Installs on a drive that is away: kept as their own state.
+                self.notConnectedInstalls = installed.notConnected
                 self.restoreModelSelection()
                 self.normalizeModelOptions()
             case .failure(let error): self.modelCatalogError = error.localizedDescription
@@ -525,15 +552,27 @@ final class AudioWorkspaceController: ObservableObject {
     }
     /// `acknowledged` lists the accepted ids of the profile's
     /// `requiredAcknowledgments`; the native installer refuses a missing one.
-    func installSelectedModel(acknowledged: [String] = []) {
+    /// `library` is where the model goes (nil is This Mac).
+    func installSelectedModel(acknowledged: [String] = [], library: String? = nil) {
         guard let profile = selectedProfile, !profile.identity.repository.isEmpty, !isBusy else { return }
-        if let installHandler { _ = installHandler(profile, acknowledged); return }
+        // An install on a drive that is away is not a download to start: the
+        // engine would refuse it as `alias_elsewhere`, and the picker offers the
+        // statement instead of the button.
+        if case .notConnected = installStatus(for: profile) { return }
+        if let installHandler { _ = installHandler(profile, acknowledged, library); return }
         guard !isInstalling else { return }
         isInstalling = true; error = nil
         status = AppStrings.localized("Downloading audio model")
         let token = epoch
+        let service = installService
         Task { [weak self] in
-            let result = await Task.detached { Result { try AudioCatalog.install(profile.identity, acknowledged: acknowledged) } }.value
+            let result = await Task.detached {
+                Result {
+                    try service.installAudio(
+                        profile.identity, acknowledged: acknowledged,
+                        library: AppModel.destinationLibrary(library), progress: { _ in })
+                }
+            }.value
             guard let self, self.valid(token) else { return }
             self.isInstalling = false
             switch result {

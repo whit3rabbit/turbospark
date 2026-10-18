@@ -160,11 +160,7 @@ struct ModelLibraryRowModel: Equatable, Identifiable, Sendable {
 
         let freeSpaceText: String? = {
             guard connected, let freeBytes else { return nil }
-            let amount = freeBytes.formatted(
-                ByteCountFormatStyle(
-                    style: .file, allowedUnits: .all, spellsOutZero: false, includesActualByteCount: false,
-                    locale: language.locale))
-            return AppStrings.localized("\(amount) free", language: language)
+            return Self.freeSpaceText(freeBytes, language: language)
         }()
 
         // A link means nothing for This Mac (requirement 5.7), for a library
@@ -300,6 +296,16 @@ struct ModelLibraryRowModel: Equatable, Identifiable, Sendable {
             parts.append(linkRate(bits, language: language))
         }
         return parts.isEmpty ? AppStrings.localized("Unknown", language: language) : parts.joined(separator: " ")
+    }
+
+    /// "900 GB free": the one reading of a drive's free space, so the library
+    /// row, the install destination menu and the move sheet say it the same way.
+    static func freeSpaceText(_ freeBytes: Int64, language: AppLanguage) -> String {
+        let amount = freeBytes.formatted(
+            ByteCountFormatStyle(
+                style: .file, allowedUnits: .all, spellsOutZero: false, includesActualByteCount: false,
+                locale: language.locale))
+        return AppStrings.localized("\(amount) free", language: language)
     }
 
     /// "480 Mb/s", "10 Gb/s": the unit is a unit, not a word to translate.

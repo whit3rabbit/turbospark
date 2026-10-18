@@ -64,6 +64,34 @@ final class FakeModelLibraryService: ModelLibraryService, @unchecked Sendable {
         var addGate: DispatchSemaphore?
         /// Whether the thread that ran each `add` was the main thread, in order.
         var addOnMainThread: [Bool] = []
+        /// Parks `libraries()` INSIDE the engine call until a test signals it, as a
+        /// drive that was just pulled can hold a real listing. `listEntered` is
+        /// signalled when a call arrives.
+        var listGate: DispatchSemaphore?
+        var listEntered: DispatchSemaphore?
+        /// Every install the app started, in order, with the destination it asked
+        /// for (nil is This Mac). Recorded before any script runs, so a refused
+        /// install is on the list too.
+        var installCalls: [InstallCall] = []
+        /// Answers a text, repo or image install. Nil: the stream fails as
+        /// unscripted, after the call is recorded.
+        var textInstallScript: (@Sendable (InstallCall) -> AsyncThrowingStream<InstallEvent, Error>)?
+        var imageInstallScript: (@Sendable (InstallCall) -> AsyncThrowingStream<ImageInstallEvent, Error>)?
+        /// Answers an audio install. It runs on the calling thread, OUTSIDE the
+        /// lock, so a test can park it.
+        var audioInstallScript: (@Sendable (InstallCall) throws -> AudioInstalledRecord)?
+    }
+
+    /// One install as the engine would have seen it.
+    struct InstallCall: Equatable {
+        enum Kind: Equatable { case text, repo, image, audio }
+        let kind: Kind
+        let alias: String
+        /// The `library:` argument, exactly as the app passed it.
+        let library: String?
+        let repo: String?
+        let acknowledged: [String]
+        let onMainThread: Bool
     }
 
     /// One delete-family call as the engine would have seen it.
@@ -106,6 +134,10 @@ final class FakeModelLibraryService: ModelLibraryService, @unchecked Sendable {
 
     func libraries() throws -> [ModelLibrary] {
         note("libraries")
+        // Parked OUTSIDE the lock so a test can read the fake while it waits.
+        let (gate, entered) = with { state in (state.listGate, state.listEntered) }
+        entered?.signal()
+        gate?.wait()
         return try with { state -> [ModelLibrary] in
             state.listCalls += 1
             if let error = state.listError { throw error }
@@ -253,25 +285,59 @@ final class FakeModelLibraryService: ModelLibraryService, @unchecked Sendable {
 
     func cancelMove() -> Bool { false }
 
+    var installCalls: [InstallCall] { with { $0.installCalls } }
+
+    /// Records the call and returns the script that answers it, if any.
+    private func recordInstall(_ call: InstallCall) -> State {
+        with { state in
+            state.installCalls.append(call)
+            return state
+        }
+    }
+
     func installText(alias: String, library: String?) -> AsyncThrowingStream<InstallEvent, Error> {
-        AsyncThrowingStream { $0.finish(throwing: FakeServiceError.unscripted("installText")) }
+        let call = InstallCall(
+            kind: .text, alias: alias, library: library, repo: nil, acknowledged: [],
+            onMainThread: Thread.isMainThread)
+        guard let script = recordInstall(call).textInstallScript else {
+            return AsyncThrowingStream { $0.finish(throwing: FakeServiceError.unscripted("installText")) }
+        }
+        return script(call)
     }
 
     func installRepo(
         repo: String, alias: String, file: String?, sidecarRepo: String?, library: String?
     ) -> AsyncThrowingStream<InstallEvent, Error> {
-        AsyncThrowingStream { $0.finish(throwing: FakeServiceError.unscripted("installRepo")) }
+        let call = InstallCall(
+            kind: .repo, alias: alias, library: library, repo: repo, acknowledged: [],
+            onMainThread: Thread.isMainThread)
+        guard let script = recordInstall(call).textInstallScript else {
+            return AsyncThrowingStream { $0.finish(throwing: FakeServiceError.unscripted("installRepo")) }
+        }
+        return script(call)
     }
 
     func installImage(alias: String, library: String?) -> AsyncThrowingStream<ImageInstallEvent, Error> {
-        AsyncThrowingStream { $0.finish(throwing: FakeServiceError.unscripted("installImage")) }
+        let call = InstallCall(
+            kind: .image, alias: alias, library: library, repo: nil, acknowledged: [],
+            onMainThread: Thread.isMainThread)
+        guard let script = recordInstall(call).imageInstallScript else {
+            return AsyncThrowingStream { $0.finish(throwing: FakeServiceError.unscripted("installImage")) }
+        }
+        return script(call)
     }
 
     func installAudio(
         _ identity: AudioProfileIdentity, acknowledged: [String], library: String?,
         progress: @escaping @Sendable (AudioDownloadProgress) -> Void
     ) throws -> AudioInstalledRecord {
-        throw FakeServiceError.unscripted("installAudio")
+        let call = InstallCall(
+            kind: .audio, alias: identity.alias, library: library, repo: nil, acknowledged: acknowledged,
+            onMainThread: Thread.isMainThread)
+        guard let script = recordInstall(call).audioInstallScript else {
+            throw FakeServiceError.unscripted("installAudio")
+        }
+        return try script(call)
     }
 }
 

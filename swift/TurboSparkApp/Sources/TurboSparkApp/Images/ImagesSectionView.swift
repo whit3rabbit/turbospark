@@ -16,6 +16,9 @@ struct ImagesSectionView: View {
     @AppStorage("TurboSpark.imageModelRecommendationSeen")
     private var imageModelRecommendationSeen = false
     @State private var showingImageModelRecommendation = false
+    /// The library the user picked for the first download. Nil follows the
+    /// default (requirement 2.2). Per install: not remembered across launches.
+    @State private var downloadDestination: String?
 
     private var artifacts: [AppArtifact] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -181,8 +184,12 @@ struct ImagesSectionView: View {
                     bundle: .module)
             ) {
                 if model.imageModelPath.isEmpty, let source = model.imageDownloadChoices.first {
+                    // Where the download goes: only when there is a choice (2.1).
+                    InstallDestinationPicker(model: model, selection: $downloadDestination)
                     Button {
-                        model.installImageModel(source)
+                        model.installImageModel(
+                            source,
+                            library: model.installDestinations.libraryForInstall(selection: downloadDestination))
                     } label: {
                         Label {
                             Text("Download", bundle: .module)
