@@ -798,3 +798,87 @@ fn dit_block_sequences_match_the_per_op_flow_bitwise() {
         );
     }
 }
+
+fn worst(a: &[f32], b: &[f32]) -> f32 {
+    a.iter()
+        .zip(b)
+        .fold(0.0f32, |w, (x, y)| w.max((x - y).abs()))
+}
+fn diffs(a: &[f32], b: &[f32]) -> String {
+    let d: Vec<_> = a
+        .iter()
+        .zip(b)
+        .enumerate()
+        .filter(|(_, (x, y))| x != y)
+        .collect();
+    let first: Vec<_> = d
+        .iter()
+        .take(6)
+        .map(|(i, (x, y))| format!("[{i}] {x} vs {y}"))
+        .collect();
+    format!("n={}/{} first: {}", d.len(), a.len(), first.join("; "))
+}
+fn probe_profile(encoding: &str, fakes: &[&str], out: &mut String) {
+    use audio::music::minimax_music3::Music3Precision;
+    let reference = fixture("precision").join(encoding);
+    let request: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(reference.join("request.json")).unwrap()).unwrap();
+    let ids = serde_json::from_value::<Vec<i32>>(request["ids"].clone()).unwrap();
+    let expected_warmup: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(reference.join("warmup.json")).unwrap()).unwrap();
+    for fake in fakes {
+        if fake.is_empty() {
+            std::env::remove_var("PROBE_FAKE_CHIP");
+        } else {
+            std::env::set_var("PROBE_FAKE_CHIP", fake);
+        }
+        let runner = open_exact_with_precision(&reference, Music3Precision::Checkpoint).unwrap();
+        *out += &format!("== {encoding} fake={fake:?}\n");
+        let mut lines = vec![];
+        let (hidden, codes) = runner
+            .generate_frame_hiddens_traced(
+                &ids,
+                request["frames"].as_u64().unwrap() as usize,
+                request["seed"].as_u64().unwrap(),
+                |t| {
+                    if t.frame == 0 {
+                        let eh =
+                            read_f32(&reference.join(format!("warmup_{}_hidden.f32", t.codebook)));
+                        let el =
+                            read_f32(&reference.join(format!("warmup_{}_logits.f32", t.codebook)));
+                        let s =
+                            serde_json::json!(t.sampled) == expected_warmup[t.codebook]["sampled"];
+                        lines.push(format!(
+                            "cb{} hidden={} logits={} sampled_ok={s}\n    hidden {}\n    logits {}",
+                            t.codebook,
+                            worst(t.hiddens, &eh),
+                            worst(t.guided_logits, &el),
+                            diffs(t.hiddens, &eh),
+                            diffs(t.guided_logits, &el)
+                        ));
+                    }
+                },
+            )
+            .unwrap();
+        for l in lines {
+            *out += &format!("  {l}\n");
+        }
+        let expected_codes: Vec<Vec<i32>> =
+            serde_json::from_slice(&std::fs::read(reference.join("codes.json")).unwrap()).unwrap();
+        *out += &format!(
+            "  codes_equal={} all_hidden: {}\n",
+            codes == expected_codes,
+            diffs(&hidden, &read_f32(&reference.join("hiddens.f32")))
+        );
+    }
+}
+#[test]
+fn zz_probe_ci_device() {
+    let mut out = String::new();
+    probe_profile("affine4", &["", "Apple M1", "Apple M4 Max"], &mut out);
+    for e in ["bf16", "affine8", "affine6"] {
+        probe_profile(e, &[""], &mut out);
+    }
+    let dev = gpu::Music3Device::new().unwrap().device_name();
+    panic!("PROBE device_name={dev:?}\n{out}");
+}

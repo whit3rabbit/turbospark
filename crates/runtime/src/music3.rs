@@ -674,7 +674,11 @@ impl Music3Runner {
         Self::open_with_precision(path, Music3Precision::Checkpoint)
     }
     pub fn open_with_precision(path: &Path, precision: Music3Precision) -> Result<Self> {
-        let device = Music3Device::new().map_err(device_error)?;
+        let device = match std::env::var("PROBE_FAKE_CHIP") {
+            Ok(n) => Music3Device::with_device_name(&n),
+            Err(_) => Music3Device::new(),
+        }
+        .map_err(device_error)?;
         let observer = Rc::new(RefCell::new(None));
         let cancellation = Rc::new(RefCell::new(None));
         let profile = Profile::default();
