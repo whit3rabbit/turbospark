@@ -198,16 +198,8 @@ impl MlxConvTranspose1d {
                 self.weight.output_dtype(input).promote(b.dtype)
             })
     }
-    pub(crate) fn forward_typed(
-        &self,
-        x: &[f32],
-        seq: usize,
-        input_dtype: DType,
-    ) -> Result<Vec<f32>> {
-        self.forward_batched(x, seq, input_dtype, 1)
-    }
-    /// [`Self::forward_typed`] for one element of `batch` inputs that MLX decodes
-    /// in a single call, so the backend can match its K split.
+    /// One element of `batch` inputs that MLX decodes in a single call (the
+    /// vocoder's two stereo halves), so the backend can match MLX's K split.
     pub(crate) fn forward_batched(
         &self,
         x: &[f32],

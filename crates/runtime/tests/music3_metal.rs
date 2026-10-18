@@ -224,10 +224,9 @@ fn native_gate(model: &std::path::Path, reference: &std::path::Path, repeat: boo
     let expected_warmup: serde_json::Value =
         serde_json::from_slice(&std::fs::read(reference.join("warmup.json")).unwrap()).unwrap();
     let (warmup_tol, hidden_tol, wave_tol) = match request["encoding"].as_str().unwrap_or("") {
-        // Affine 4-bit is bit-exact against MLX 0.32.3 through the AR stage
-        // (hiddens, logits and sampled codes). The wave tolerance stays loose
-        // until the flow stage is traced against MLX.
-        "affine4" => (0.0, 0.0, 3.0),
+        // Affine 4-bit is bit-exact against MLX 0.32.3 end to end: hiddens,
+        // logits, sampled codes, flow noise, DiT, vocoder and the waveform.
+        "affine4" => (0.0, 0.0, 0.0),
         "mxfp4" | "nvfp4" => (3.0, 3.0, 3.0),
         "affine6" | "mxfp8" => (0.1, 0.1, 0.1),
         "affine8" => (0.05, 0.05, 0.05),

@@ -28,12 +28,6 @@ fn main() {
         let manifest: serde_json::Value =
             serde_json::from_slice(&fs::read(dir.join("cases.json")).unwrap()).unwrap();
         assert_eq!(manifest["mlx_version"], "0.32.3");
-        let rows_list: Vec<usize> = manifest["rows"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| v.as_u64().unwrap() as usize)
-            .collect();
         let device = Music3Device::new().unwrap();
         let mut total_bad = 0usize;
         for case in manifest["cases"].as_array().unwrap() {
@@ -65,6 +59,12 @@ fn main() {
                     .unwrap()
             };
             let x = read_f32(&dir.join(format!("{name}.x.f32")));
+            let rows_list: Vec<usize> = case["rows"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_u64().unwrap() as usize)
+                .collect();
             for &rows in &rows_list {
                 let expected = read_f32(&dir.join(format!("{name}.y{rows}.f32")));
                 let got = weight

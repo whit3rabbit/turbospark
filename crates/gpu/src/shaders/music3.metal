@@ -735,6 +735,15 @@ kernel void music3_linear_tiled(device const uchar *w [[buffer(0)]],
     threadgroup float xs[TR*BK],ws[BK*TO],res[SR*SO*SGE];
     float total[PER];
     for(uint m=0;m<PER;m++) total[m]=0;
+    // Quantized split-K: MLX's qmm_t_splitk writes each partial in the activation
+    // dtype and sums them with its column reduce. Below 32 partials that kernel
+    // gives each of min(8, parts) threads every 8th row, summed in bf16, then folds
+    // the thread totals in order; at 32 its looped kernel ends in a simd_sum, a
+    // float sum rounded once. `lanes` holds those thread totals. (Kokoro, p[12],
+    // keeps its own sequential fold.)
+    bool mlx_reduce=!p[12];
+    float lanes[8][PER];
+    for(uint t=0;t<8;t++) for(uint m=0;m<PER;m++) lanes[t][m]=0;
     bool quant=p[0]>=3,fast4=p[0]==3 && p[2]==4;
     uint words=(cols*p[2]+31)/32;
     for(uint part=0;part<parts;part++) {
@@ -808,9 +817,27 @@ kernel void music3_linear_tiled(device const uchar *w [[buffer(0)]],
             float r=res[simd*SGE+lane+32*m];
             // p[13]: dense split-K sums float32 partials in order (MLX's gemm_splitk_accum);
             // the quantized path stores each partial in the activation dtype first.
-            total[m]=parts>1 ? (p[13]!=0 ? total[m]+r : music_round(total[m]+music_round(r,p[6]),p[6])) : r;
+            if(parts==1) total[m]=r;
+            else if(p[13]!=0) total[m]+=r;
+            else if(mlx_reduce) {
+                float rb=music_round(r,p[6]);
+                if(parts==32) lanes[0][m]+=rb;
+                else { uint L=min(8u,parts),t=part%L; lanes[t][m]=part<L ? rb : music_round(lanes[t][m]+rb,p[6]); }
+            }
+            else total[m]=music_round(total[m]+music_round(r,p[6]),p[6]);
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if(parts>1 && p[13]==0 && mlx_reduce) {
+        for(uint m=0;m<PER;m++) {
+            if(parts==32) total[m]=music_round(lanes[0][m],p[6]);
+            else {
+                uint L=min(8u,parts);
+                float tot=lanes[0][m];
+                for(uint t=1;t<L;t++) tot=music_round(lanes[t][m]+tot,p[6]);
+                total[m]=tot;
+            }
+        }
     }
     for(uint m=0;m<PER;m++) {
         uint e=lane+32*m,row=r0+sr*SGR+e/SGO,o=o0+so*SGO+e%SGO;

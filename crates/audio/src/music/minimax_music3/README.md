@@ -222,10 +222,11 @@ controlled f32 gate into BF16 equivalence or a song-quality claim.
 
 > The WAV hashes in this section (`29c340d1...`, `16c5db73...`, `361ad4d6...`) and
 > every "byte-identical" claim describe the commits they were measured on, all
-> before `cc9344ee`. That commit changed the exact profile's arithmetic on purpose
-> so it matches MLX (dense matmul dispatch); the exact 8 s hashes are now
-> `bf3d26d5...` (1 step) and `e87ffd16...` (30 steps). Timing after that commit has
-> not been re-measured. See [docs/audio/minimax_music3.md](../../../../../docs/audio/minimax_music3.md).
+> before `cc9344ee`. Since then the exact profile's arithmetic changed on purpose
+> to match MLX (dense matmul, convolution and quantized split-K dispatch); its 8 s
+> hashes are now `46243600...` (1 step) and `1cbb8ce0...` (30 steps). Timing after
+> the changes is in the "Exactness cost" note below.
+> See [docs/audio/minimax_music3.md](../../../../../docs/audio/minimax_music3.md).
 
 Indicative, not frozen: Apple M4 Max, AC power, release build, the cached
 `mlx-community/MiniMax-Music3-4bit` snapshot (`c7ea32923b24`), seed 7, caption
@@ -317,6 +318,25 @@ Tried and not kept (no demonstrated gain on a busy host, so no code):
   per weight: kept because it is exact and cheap, but it moved the 8 s MXFP8
   depth stage only from about 47.6 s to 45.0 s. MXFP8 GEMVs read twice the
   bytes of 4-bit and are not decode-bound.
+
+### Exactness cost
+
+Making the exact profile bit-identical to MLX (dense, convolution and quantized
+split-K dispatch) cost almost nothing. Apple M4 Max, AC power, 1-minute load
+average 1.4 to 3, release builds, 8 s clip, the 4-bit profile, two alternating
+single runs per arm of the build before the changes (`a517d23d`) and after
+(`benchmark_music3.py`; the WAV hashes differ by design):
+
+| | before | after |
+|---|---|---|
+| 1 step | 29.2 s, 28.0 s | 29.0 s, 29.0 s |
+| 30 steps | 85.4 s, 83.9 s | 85.6 s, 85.7 s |
+| depth, DiT, LM decode (30 steps, mean) | 13.0, 58.5, 6.1 s | 13.1, 58.7, 6.0 s |
+| vocoder (mean) | 5.8 to 6.1 s | 6.7 s |
+
+About 1% at 30 steps. The vocoder is the only stage that moved (about 0.7 s): its
+transposed convolutions now run MLX's split-K partitions and the tiled conv
+gathers chunk-major. Two runs per arm, not a frozen benchmark row.
 
 ### DiT projection kernel: hoisted 4-bit decode
 
@@ -762,12 +782,21 @@ GEMM from 16), a different kernel from the two single-row calls we made. The
 Since `cc9344ee` (`music3_gemv_wide`, dense split-K, and both CFG rows batched
 through the projection and heads), against the natural MLX reference all eight
 codebooks' hiddens and logits, every sampled code, every frame's codes and all
-98,304 final hiddens are bit-identical, and 65 of 65 linear cases in
-`music3_mlx_linear_cmp` match. Not yet exact: the waveform. With identical
-hiddens and identical supplied noise the flow output correlates 0.68 with MLX, so
-the DiT and vocoder remain untraced. The affine hash oracles are unchanged; the
-exact profile's WAV hashes are not (8 s at 1 step `bf3d26d5...`, at 30 steps
-`e87ffd16...`, were `16c5db73...` and `361ad4d6...`).
+98,304 final hiddens are bit-identical. The waveform was still off (correlation
+0.68 with identical hiddens and noise); a stage-by-stage trace of the flow half
+found the DiT exact and three more MLX dispatch rules in the convolutions and the
+quantized split-K reduction (chunk-major K order for implicit-GEMM convs, split-K
+plus ascending taps plus a stereo batch hint for the transposed convs, and
+MLX's column-reduce order for more than 8 partials). With those, the pinned 4-bit
+profile is bit-identical to MLX 0.32.3 end to end: noise, DiT, vocoder and the
+waveform, for 3 frames at 2 flow steps and 25 frames at 4 flow steps (88,064 of
+88,064 samples). `music3_mlx_linear_cmp` diffs the dense, 4-bit and convolution
+kernels against MLX on the real weights with 0 differing values. The affine hash
+oracles changed once, on purpose, for the quantized split-K cases with more than 8
+partials (221 `hashes` lines; the 192 real-shape lines did not move). The exact
+profile's 8 s WAV hashes are now `46243600...` (1 step) and `1cbb8ce0...` (30
+steps), were `16c5db73...` and `361ad4d6...`. Only the affine 4-bit profile has
+been compared; the other profiles and a multi-chunk song are open.
 
 The probe does not write the `encoding` field the test's tolerance table reads;
 `scripts/verify-music3.sh --mlx` sets `"encoding": "affine4"` in `request.json`.

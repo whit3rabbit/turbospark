@@ -23,7 +23,8 @@
 # ~/.cache/turbospark/music3-mlx (Python 3.12: 3.15 only offered mlx 0.32.4),
 # dumps MLX's own linear outputs on the real depth weights and requires
 # our kernels to match bit for bit, then regenerates a native MLX reference and
-# runs the ignored 4-bit parity test against it. Needs network the first time.
+# runs the ignored 4-bit parity test against it (hiddens, logits, codes, flow and
+# the waveform, all bit-exact). Needs network the first time.
 #
 # Timing is not checked here. Benchmark on AC power only: a run that started on
 # battery silently halved the clocks mid-measurement.
@@ -94,11 +95,12 @@ rm -rf "$work/linear"
 cargo run -q --release -p turbospark-gpu --example music3_mlx_linear_cmp -- \
   "$work/linear" --require-exact
 
-step "stage 2b: native 4-bit AR path against MLX"
+step "stage 2b: native 4-bit pipeline (25 frames, 4 flow steps) against MLX, waveform included"
 rm -rf "$work/reference"
 PYTHONPATH="$work/mlx-audio" "$work/venv/bin/python" \
   crates/audio/tools/probe_minimax_music3_reference.py \
-  --model "$mlx_model" --output "$work/reference" --checkpoint-revision "$revision"
+  --model "$mlx_model" --output "$work/reference" --checkpoint-revision "$revision" \
+  --frames 25 --steps 4
 # The probe does not record the encoding the test's tolerance table reads.
 "$work/venv/bin/python" - "$work/reference/request.json" <<'PY'
 import json, sys
@@ -113,4 +115,4 @@ TURBOSPARK_MUSIC3_REFERENCE_DIR="$work/reference" \
   real_music3_pinned_4bit -- --ignored
 
 echo
-echo "all Music 3 gates passed (kernels, MLX linear diff, 4-bit AR parity)"
+echo "all Music 3 gates passed (kernels, MLX linear and conv diff, 4-bit end-to-end parity)"

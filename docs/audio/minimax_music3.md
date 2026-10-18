@@ -9,24 +9,25 @@ the next person does not rediscover them. Written 2026-10-17 on an Apple M4 Max
 
 Run `scripts/verify-music3.sh` before and after touching a Music 3 kernel. It
 fails if an "exact" change moved a bit. `--mlx MODEL_DIR` adds the diff against
-MLX itself.
+MLX itself, which is the only check that covers dense and convolution kernels.
 
 ## Status
 
 | Question | Answer |
 |---|---|
-| Are the affine 4-bit kernels bit-exact with MLX? | Yes, rows 1 to 16, on the real depth weights (65 of 65 cases with the dense ones below) |
-| Are the dense bf16 kernels bit-exact with MLX? | Yes since `cc9344ee`, rows 1 to 16, for the depth projection and heads |
-| Is the 4-bit AR path (hiddens, logits, sampled codes) identical to MLX? | Yes: zero differing values across all 8 codebooks, every code, all final hiddens, on the natural reference |
-| Is the end-to-end waveform identical to MLX? | **No.** With identical hiddens and identical noise the flow output correlates 0.68 with MLX. The flow half is untraced. |
-| What does the app, server, FFI and CLI run by default? | `FlowProfile::Fast`, which is not MLX's trajectory (see below) |
+| Is the pinned 4-bit profile bit-identical to MLX 0.32.3? | **Yes, end to end**: hiddens, logits, sampled codes, flow noise, DiT, vocoder and the waveform. Verified for 3 frames at 2 flow steps and for 25 frames at 4 flow steps (all 88,064 samples equal). |
+| Which kernels are diffed against MLX bit for bit? | Dense bf16 (depth projection and heads, rows 1 to 16), 4-bit affine (depth layers rows 1 to 16, the DiT's `proj_in` and `proj_out` rows 16 to 691), and convolutions (condition encoder, vocoder input, residual, 1x1 and transposed convs). 0 differing values. |
+| Are the other profiles (6-bit, 8-bit, MXFP8, MXFP4, NVFP4) verified exact? | **No.** Only the affine 4-bit profile has been compared. The kernels they use are shared, but nothing has been checked. |
+| Has a multi-chunk song (over 200 frames) been compared with MLX? | No. Chunk overlap and stitching are covered by fixtures, not by this comparison. |
+| What does the app, server, FFI and CLI run by default? | `FlowProfile::Fast`, which is not MLX's trajectory by design (see below). |
 | Has anyone listened to the fast profile? | No. Every quality number here is a drift metric on one prompt and one seed. |
 
 ## Two flow profiles
 
 `Music3Runner` opens in `FlowProfile::Fast`; `Model` (the library) opens in
 `Exact`. A runner can be switched with `set_flow_profile`, and the CLI takes
-`--flow-profile fast|exact`.
+`--flow-profile fast|exact`. Everything that compares with MLX or a CPU
+reference must use `Exact`.
 
 | | Exact | Fast |
 |---|---|---|
@@ -34,10 +35,12 @@ MLX itself.
 | Unconditional guidance branch | every step | reused, interval 3 after warmup 2 |
 | Steps when a request names none | 30 | 21 |
 | DiT forwards for one chunk | 60 | 30 |
-| Matches MLX | yes (AR exact, flow open) | no, by design |
+| Matches MLX | yes (4-bit verified) | no, by design |
 
 Measured on one 8 s prompt, scored against the exact 30-step audio
-(`ab_music3_flow.py`, `spectral_distance.py`, single runs):
+(`ab_music3_flow.py`, `spectral_distance.py`, single runs, taken before the
+convolution and dense-dispatch fixes below, which move the exact reference by
+only a few bf16 steps):
 
 | Setting | DiT forwards | Correlation | Log-band L1 |
 |---|---|---|---|
@@ -66,7 +69,7 @@ The kernel work, all exact (hash oracles and WAV hashes unchanged at the time):
   10.3 ms. After that, decode is about 2.7 ms and the MMAs about 3.4 ms (near
   the f32 ALU rate) of 10.7, with about 4.5 ms of staging, barriers and epilogue.
 - End to end on the 8 s clip (medians of 3, interleaved, byte-identical WAVs,
-  before the dense dispatch fix): 30 steps 124.6 s to 85.6 s, DiT stage 95.3 s to
+  before the MLX-dispatch fixes): 30 steps 124.6 s to 85.6 s, DiT stage 95.3 s to
   59.3 s; 1 step 36.9 s to 33.1 s.
 - Not worth repeating: taller or wider tiles (64x32, 32x64, 64x64: 64x64 was 2.3x
   slower), remapping lanes so neighbours read contiguous words, aliasing the
@@ -79,64 +82,93 @@ The kernel work, all exact (hash oracles and WAV hashes unchanged at the time):
 - audio.cpp's remaining idea is AR guidance truncation (conditional-only after
   frame 50, halving the AR rows). Not implemented: it changes the AR trajectory.
 
-## The 4-bit MLX gap: what it actually was
+Timing after the MLX-dispatch fixes: see the README's Metal performance section.
+
+## The MLX gaps, in the order they were found
 
 The ignored test `real_music3_pinned_4bit_native_matches_mlx_and_resets` failed at
-3.82 against its 3.0 tolerance. The sequence of wrong and right explanations is
-the lesson.
+3.82 against its 3.0 tolerance, and the end-to-end waveform correlated only 0.47
+to 0.68 with MLX. Each explanation along the way was wrong until a bit-level
+comparison replaced the theory. **Every one of these looked like "noise" until it
+was isolated.**
 
 1. **Wrong: "a kernel threshold mismatch."** MLX's qmv batch limits for this chip
    (13, 15, 13) match `linear_plan`.
-2. **Wrong: "sampling noise, so exactness is impossible."** The test compared
+2. **Wrong: "sampling noise, so exactness is impossible."** The old test compared
    codebooks 4 to 7 after the sampler had already picked a different code at
-   codebook 3 (ours 585, MLX 594), so those rows were incomparable. That
-   explained the size of the error but not the flip. Concluding "inexact by
-   nature" here was the mistake: **one differing bit amplified by a top-k draw
-   looks exactly like noise.**
-3. **Right: the first differing tensor.** Comparing per-operation traces with
-   identical inputs (teacher forcing) showed 2 of 16384 values differing at the
-   input to depth layer 0, one bf16 step. A bf16 add of equal operands cannot
-   differ, so the dense `depth.projection` feeding it did.
-4. **Cause.** `depth.projection` and `depth.audio_heads` are **dense bf16**, not
-   4-bit. MLX 0.32.3 applies each to both CFG rows in one matmul (M = 2), which is
-   a different kernel from two single-row calls. We called them one row at a time.
+   codebook 3 (ours 585, MLX 594). Concluding "inexact by nature" was the mistake:
+   **one differing bit amplified by a top-k draw looks exactly like noise.**
+3. **Dense matmul dispatch (`cc9344ee`).** `depth.projection` and
+   `depth.audio_heads` are dense bf16, and MLX applies each to both CFG rows in
+   one matmul. We ran two single-row calls. Fixed with `music3_gemv_wide`, dense
+   split-K, and batching.
+4. **Convolution K order.** MLX's implicit-GEMM conv loader visits the taps inside
+   each 16-channel chunk, so K runs chunk-major, not tap-major. Our conv summed
+   tap-major, which differed in about 8 of 10,000 values.
+5. **Transposed convolution.** MLX runs it as an unfold plus a split-K matmul,
+   sums the taps in ascending weight order, and sees both stereo halves as one
+   batch (so `M = 2 x output positions`, which changes the partition count).
+6. **Quantized split-K reduction order.** The partials are summed by a generic
+   column reduce whose order changes with the partition count.
 
-MLX 0.32.3 dense `x @ W^T` dispatch on M3 and later (source: `mlx/backend/metal/
-matmul.cpp`, `kernels/gemv.h` at `v0.32.3`):
+After 3 to 6 the first differing tensor disappears: against the natural MLX
+reference the whole pipeline is identical, with MLX's own noise.
+
+### MLX dense `x @ W^T` dispatch (M3 and later; `matmul.cpp`, `gemv.h` at `v0.32.3`)
 
 | Rows (M) | Kernel | Notes |
 |---|---|---|
 | 1 | gemv | already exact in ours |
-| 2 to 15 | `gemv_wide` | needs K % 4 == 0, bf16 or f16, N > 1. float4 `dot` chunks, unroll 8, lane block sums folded in order, halving `simd_shuffle_down`. 32 lanes per row when `ceil(M/5) == 1` or N <= 64, else 16. The result for a vector does not depend on how vectors are grouped. |
-| 16 and up, small M x N | split-K GEMM | when `ceil(M/16) * ceil(N/16) <= 2048` (Max and Ultra, else 1024), `K/16 >= 8`, `K >= max(M,N)`. Partitions = `clamp(next_pow2((K/16) / (ceil(M/32) * ceil(N/32))), 2, 32)`. Float32 partials, summed in partition order, rounded once. |
+| 2 to 15 | `gemv_wide` | needs K % 4 == 0, bf16 or f16, N > 1. float4 `dot` chunks, unroll 8, lane block sums folded in order, halving `simd_shuffle_down`. 32 lanes per row when `ceil(M/5) == 1` or N <= 64, else 16. |
+| 16 and up, small M x N | split-K GEMM | when `ceil(M/16) * ceil(N/16) <= 2048` (Max and Ultra, else 1024), `K/16 >= 8`, `K >= max(M,N)`. Partitions = `clamp(next_pow2((K/16) / (ceil(M/32) * ceil(N/32))), 2, 32)`. Float32 partials summed in partition order, rounded once. |
 | otherwise | steel GEMM, single K chain | |
 
-Implemented in `crates/gpu/src/shaders/music3.metal` (`music3_gemv_wide`, the
-`p[13]` dense split-K fold) and `crates/gpu/src/music3.rs` (`linear_plan`). The
-three projections and the head are batched over both CFG rows in
-`minimax_music3/mod.rs` and `depth.rs` (including the device-sequence head path).
+### MLX convolution dispatch (`conv.cpp`)
 
-Result: 65 of 65 linear cases exact against MLX; on the natural reference all
-eight codebooks' hiddens and logits, every sampled code, and all 98,304 final
-hiddens are bit-identical.
+| Convolution | MLX path | What we match |
+|---|---|---|
+| groups 1, non-transposed, C and O 16-aligned (or small) | implicit-GEMM kernel | tap-inside-16-channel-chunk K order (`p[13]` in `music3_conv_tiled`) |
+| transposed (input-dilated) | unfold, then `steel_matmul(M = batch x outlen, N = oc, K = taps x ic)` | the dense split-K rule above, ascending tap order, and a `batch` hint (the vocoder passes 2) through `DeviceWeight::convolution_batched` |
+
+### MLX quantized matmul dispatch (`quantized.cpp`)
+
+For `M >= vector_limit` with transposed weights and one batch, `qmm_splitk` runs
+`split_k = max(1, 512 / (ceil(M/32) * ceil(N/32)))` partitions (capped by
+`K / max(group_size, 32)` and reduced until it divides K), each partial written
+in the activation dtype. The partials are summed by a column reduce:
+
+| Partitions R | Order |
+|---|---|
+| 2 to 8 | one row per thread, ordered fold: the plain sequential bf16 sum |
+| 9 to 16 | `min(8, R)` threads, thread `t` sums rows `t, t+8, ...` in bf16, then the thread totals are folded in order |
+| 32 | float sum of all partials (`simd_sum`), rounded once |
+| other | not modelled (falls back to the sequential sum) |
+
+Implemented in `music3_linear_tiled` (the `lanes` accumulators) and
+`crates/gpu/src/music3.rs` (`mlx_splitk_partitions`, `linear_plan`).
 
 ## How to find an MLX mismatch (the method)
 
 1. **Compare one operation, not a pipeline.** `crates/audio/tools/
    gen_music3_mlx_linear_cases.py` runs the MLX operation on the real checkpoint
-   weights at rows 1 to 16 and dumps inputs and outputs;
-   `crates/gpu/examples/music3_mlx_linear_cmp.rs --require-exact` diffs our
-   kernel bit for bit. No sampling or model code is involved.
+   weights at the row counts and lengths that matter and dumps inputs and
+   outputs; `crates/gpu/examples/music3_mlx_linear_cmp.rs --require-exact` diffs
+   our kernel bit for bit. It prints where the first few misses sit.
 2. **Teacher-force.** `probe_minimax_music3_reference.py --force-warmup-codes
    '[...]'` replaces MLX's draws with ours so every depth step sees the same input.
-   Without it a one-ulp difference flips a draw and everything downstream is
-   incomparable.
-3. **Walk the trace to the first difference.** `--trace --trace-max-calls N` on
-   MLX versus `TURBOSPARK_MUSIC3_TRACE=1` on `music3_backend_probe`. Compare in
-   order and count differing values, not just the maximum.
+3. **Walk the trace to the first difference, and count differing values, not the
+   maximum.** `--trace --trace-max-calls N` on MLX versus
+   `TURBOSPARK_MUSIC3_TRACE=1` on `music3_backend_probe`. A stage that matches
+   proves everything upstream of it is exact; the first mismatch names the
+   operation.
 4. **Read the pinned MLX source** for the dispatch rule before guessing. The
-   heuristics (`get_qmv_batch_limit`, `gemv_wide_config`, the split-K trigger)
-   are device-generation dependent.
+   heuristics (`get_qmv_batch_limit`, `gemv_wide_config`, the split-K triggers,
+   the conv dispatcher, `strided_reduce_general_dispatch`) are device-generation
+   dependent and live in `matmul.cpp`, `quantized.cpp`, `conv.cpp`, `reduce.cpp`.
+5. **A mismatch rate tells you what kind of difference it is.** About 1 in 10,000
+   is a different fp32 summation order. A few percent is a different rounding
+   point. Near 100% is a different algorithm. A mismatch that only appears at some
+   lengths is a heuristic that depends on the shape (partition counts, batch).
 
 ## Pitfalls checklist
 
@@ -146,33 +178,42 @@ hiddens are bit-identical.
   default to `exact` for that reason; pass `--flow-profile fast` to measure the
   default.
 - **A loose tolerance hides a real bug.** The 4-bit gate sat at 3.0 on a 1e-3
-  quantity. Treat a tolerance that needed raising as a finding, not a fix.
-- **The hash oracles cover affine kernels only.** `hashes` and `dit_hashes` are
-  checked against golden files by `crates/gpu/tests/music3_oracle.rs`. Dense
-  kernels are covered only by the MLX linear diff, so changing one without
-  running `scripts/verify-music3.sh --mlx` is blind.
+  quantity and later at "while the draws match". It is now zero tolerance for
+  `affine4`: hiddens, logits, codes and the waveform must be bit-identical.
+  Treat a tolerance that needed raising as a finding, not a fix.
+- **MLX heuristics see the batch.** The vocoder's two stereo halves are one MLX
+  call, so its split-K rule sees twice the rows. Run per half without the hint and
+  the partition count, and so the rounding, differs.
+- **The hash oracles cover affine linear kernels only.** `hashes` and `dit_hashes`
+  are checked against golden files by `crates/gpu/tests/music3_oracle.rs`. Dense
+  and convolution kernels are covered only by the MLX diff, so changing one
+  without running `scripts/verify-music3.sh --mlx` is blind. The goldens
+  changed once on purpose (221 `hashes` lines) when the quantized split-K
+  reduction began following MLX for more than 8 partitions; the 192 real-shape
+  lines did not move.
 - **Python 3.15 only offered `mlx` 0.32.4**, and the probes refuse any other
   MLX version. Python 3.12 (and 3.14) list 0.32.3; the script uses 3.12.
 - **The reference probe does not write `"encoding"`** into `request.json`; the
   test's tolerance table reads it. The verify script adds `"affine4"`.
 - **Benchmark only on AC power with a quiet host.** A timing loop that started on
   AC silently continued on battery and the same binary slowed by 2x partway
-  through; `pmset -g batt` before and after. A 1-minute load average above 2
+  through; check `pmset -g batt` before and after. A 1-minute load average above 2
   usually means another session is running.
 - **The `#[ignore]`d MLX tests never run in CI.** They run only through
   `scripts/verify-music3.sh --mlx`, so run it after any Music 3 change.
-- **Changing the exact path changes the recorded WAV hashes.** After
-  `cc9344ee` the exact profile writes `bf3d26d5...` (8 s, 1 step) and
-  `e87ffd16...` (8 s, 30 steps), no longer `16c5db73...` and `361ad4d6...`.
+- **Exact output changes the recorded WAV hashes.** After the dense, convolution
+  and reduction fixes the exact profile writes `46243600...` (8 s, 1 step) and
+  `1cbb8ce0...` (8 s, 30 steps), no longer `16c5db73...` and `361ad4d6...`.
+- **Verify a mutation actually applied.** One check this session passed because a
+  `sed` expression silently did nothing; assert the edit changed the file.
 
 ## Open
 
-- **The flow half.** With identical hiddens and identical noise (supplied through
-  `--noise-file` on both sides) the waveform correlation against MLX is 0.68. The
-  DiT and vocoder have not been traced stage by stage the way the depth decoder
-  was. Until they are, "matches MLX" holds for the AR stage only.
-- **Re-time after the dense fix.** The speed numbers above predate it; the timing
-  run was invalidated by a switch to battery power.
+- **The other profiles.** 6-bit, 8-bit, MXFP8, MXFP4 and NVFP4 share kernels with
+  the verified one but have not been compared with MLX.
+- **A multi-chunk song.** Compare a request over 200 frames with MLX to cover chunk
+  carry and stitching.
+- **Re-time the depth stage and a full song.** See the README performance section.
 - **Listening.** Intelligibility, transients and chunk seams for the Fast profile.
-- **MLX itself as a speed reference.** Not benchmarked against ours on this
-  clip. The README's 56 s MLX figure is from an earlier session on MLX 0.31.2.
+- **MLX itself as a speed reference.** Not benchmarked against ours on this clip.
+  The README's 56 s MLX figure is from an earlier session on MLX 0.31.2.

@@ -22,14 +22,20 @@ from pathlib import Path
 import mlx.core as mx
 import numpy as np
 
-ROWS = [1, 2, 3, 4, 5, 6, 8, 10, 12, 13, 14, 15, 16]
-# (name, tensor prefix, kind). Dense bf16 weights have only `.weight`.
+# Row counts: 1 to 16 around the qmv/qmm and gemv_wide thresholds (the depth
+# decoder runs 2 to 16 rows), and the DiT sequence lengths a real song produces.
+ROWS_DEPTH = [1, 2, 3, 4, 5, 6, 8, 10, 12, 13, 14, 15, 16]
+ROWS_DIT = [16, 17, 24, 32, 48, 64, 86, 100, 128, 200, 345, 691]
+# (name, tensor prefix, kind, rows). Dense bf16 weights have only `.weight`.
 CASES = [
-    ("depth_projection", "rvq_depth_decoder.projection", "dense"),
-    ("depth_head0", "rvq_depth_decoder.audio_heads.0", "dense"),
-    ("depth_l0_to_q", "rvq_depth_decoder.layers.0.attn.to_q", "affine4"),
-    ("depth_l0_gate", "rvq_depth_decoder.layers.0.gate_proj", "affine4"),
-    ("depth_l0_down", "rvq_depth_decoder.layers.0.down_proj", "affine4"),
+    ("depth_projection", "rvq_depth_decoder.projection", "dense", ROWS_DEPTH),
+    ("depth_head0", "rvq_depth_decoder.audio_heads.0", "dense", ROWS_DEPTH),
+    ("depth_l0_to_q", "rvq_depth_decoder.layers.0.attn.to_q", "affine4", ROWS_DEPTH),
+    ("depth_l0_gate", "rvq_depth_decoder.layers.0.gate_proj", "affine4", ROWS_DEPTH),
+    ("depth_l0_down", "rvq_depth_decoder.layers.0.down_proj", "affine4", ROWS_DEPTH),
+    # The DiT's thin quantized layers (small N, long K) take MLX's split-K qmm.
+    ("dit_proj_out", "transformer.proj_out", "affine4", ROWS_DIT),
+    ("dit_proj_in", "transformer.proj_in", "affine4", ROWS_DIT),
 ]
 
 
@@ -54,8 +60,8 @@ def main():
     for path in sorted(glob.glob(str(args.model / "model-*.safetensors"))):
         tensors.update(mx.load(path))
     mx.random.seed(args.seed)
-    manifest = {"mlx_version": mx.__version__, "rows": ROWS, "cases": []}
-    for name, prefix, kind in CASES:
+    manifest = {"mlx_version": mx.__version__, "cases": []}
+    for name, prefix, kind, rows_list in CASES:
         weight = tensors[prefix + ".weight"]
         if kind == "dense":
             out_dim, in_dim = weight.shape
@@ -71,10 +77,10 @@ def main():
             quant = {"bits": 4, "group_size": in_dim // scales.shape[1]}
         # One input block per case; row r uses its first r rows, so a smaller
         # row count is a prefix of a larger one.
-        x = (mx.random.normal((max(ROWS), in_dim)) * 1.5).astype(mx.bfloat16)
+        x = (mx.random.normal((max(rows_list), in_dim)) * 1.5).astype(mx.bfloat16)
         mx.eval(x)
         (args.output / f"{name}.x.f32").write_bytes(f32_of(x).tobytes())
-        for rows in ROWS:
+        for rows in rows_list:
             xr = x[:rows]
             if kind == "dense":
                 y = xr @ weight.T
@@ -86,7 +92,7 @@ def main():
             mx.eval(y)
             assert y.dtype == mx.bfloat16, y.dtype
             (args.output / f"{name}.y{rows}.f32").write_bytes(f32_of(y).tobytes())
-        manifest["cases"].append({"name": name, "kind": kind, "in": int(in_dim), "out": int(out_dim), "quant": quant})
+        manifest["cases"].append({"name": name, "kind": kind, "in": int(in_dim), "out": int(out_dim), "quant": quant, "rows": rows_list})
         print(name, kind, in_dim, out_dim, flush=True)
     # Convolutions MLX runs for the flow condition encoder and the vocoder. MLX
     # keeps convolution weights channels-last ([O, K, C], and [C_out, K, C_in]
