@@ -1,0 +1,62 @@
+{
+ "arm": "E",
+ "source": "qualification_metrics.json",
+ "matched_six": [
+  "IS1000a_00510_00630",
+  "IS1001a_00390_00510",
+  "IS1002b_00880_01000",
+  "IS1003a_00320_00440",
+  "IS1004a_00140_00260",
+  "IS1005a_00440_00560"
+ ],
+ "clips": {
+  "IS1000a_00510_00630": {
+   "cpwer_errors": 25,
+   "reference_tokens": 239
+  },
+  "IS1000a_01241_01361": {
+   "cpwer_errors": 54,
+   "reference_tokens": 347
+  },
+  "IS1001a_00390_00510": {
+   "cpwer_errors": 28,
+   "reference_tokens": 286
+  },
+  "IS1001a_00634_00754": {
+   "cpwer_errors": 38,
+   "reference_tokens": 364
+  },
+  "IS1002b_00880_01000": {
+   "cpwer_errors": 47,
+   "reference_tokens": 466
+  },
+  "IS1002b_02053_02173": {
+   "cpwer_errors": 15,
+   "reference_tokens": 415
+  },
+  "IS1003a_00320_00440": {
+   "cpwer_errors": 31,
+   "reference_tokens": 370
+  },
+  "IS1003a_00446_00566": {
+   "cpwer_errors": 30,
+   "reference_tokens": 288
+  },
+  "IS1004a_00140_00260": {
+   "cpwer_errors": 2,
+   "reference_tokens": 219
+  },
+  "IS1004a_00608_00728": {
+   "cpwer_errors": 33,
+   "reference_tokens": 326
+  },
+  "IS1005a_00440_00560": {
+   "cpwer_errors": 27,
+   "reference_tokens": 160
+  },
+  "IS1005a_00692_00812": {
+   "cpwer_errors": 25,
+   "reference_tokens": 334
+  }
+ }
+}

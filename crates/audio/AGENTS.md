@@ -23,7 +23,7 @@ Unified portable audio crate: DSP primitives (waveform, WAV I/O, resampling, FFT
 
 All models and model families reside under their respective role directories:
 - `src/music/<family>/`: Music generation (e.g. `minimax_music3`)
-- `src/stt/<family>/`: Speech-to-text (e.g. `canary`, `fireredasr2`, `fun_asr_nano`, `glmasr`, `granite_speech`, `granite_speech5_ctc`, `higgs_audio_3`, `mega_asr`, `mms`, `moonshine`, `moss_transcribe_diarize`, `nemotron_asr`, `parakeet`, `phonon`, `qwen3_asr`, `qwen3_forced_aligner`, `sensevoice`, `whisper`)
+- `src/stt/<family>/`: Speech-to-text (e.g. `canary`, `fireredasr2`, `fun_asr_nano`, `glmasr`, `granite_speech`, `granite_speech5_ctc`, `higgs_audio_3`, `mega_asr`, `mms`, `moonshine`, `moss_transcribe_diarize`, `multitalker_asr`, `nemotron_asr`, `parakeet`, `phonon`, `qwen3_asr`, `qwen3_forced_aligner`, `sensevoice`, `whisper`)
 - `src/tts/<family>/`: Text-to-speech (e.g. `arktts`, `bailingmm`, `bark`, `breeze_tts`, `chatterbox`, `chatterbox_turbo`, `confucius4`, `dia`, `dramabox`, `echo_tts`, `fish_drama3`, `fish_qwen3_omni`, `higgs_audio`, `higgs_audio_v3`, `indextts`, `irodori_tts`, `kitten_tts`, `kokoro`, `kugelaudio`, `llama`, `longcat_audiodit`, `megatts3`, `melotts`, `moss_tts`, `moss_tts_nano`, `omnivoice`, `outetts`, `pocket_tts`, `qwen3`, `rumik_oss`, `sesame`, `soprano`, `spark`, `tada`, `vibevoice`, `voxcpm`, `voxcpm2`, `voxtral_tts`, `zonos2`)
 - `src/vad/<family>/`: Voice activity detection and diarization (e.g. `silero_vad`, `sortformer`, `nemotron_diarization`)
 - `src/sts/<family>/`: Speech-to-speech and enhancement (e.g. `deepfilternet`, `dialogue_sidon`, `mel_roformer`, `mossformer2_se`, `sam_audio`)

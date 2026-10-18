@@ -18,7 +18,7 @@ use crate::nn::json::{frontend_len, frontend_seconds_to_samples};
 use crate::nn::symmetric_hann;
 use crate::{Result, SpeechError};
 
-mod encoder;
+pub(crate) mod encoder;
 pub(crate) mod rnnt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,6 +112,13 @@ fn context_pair(value: &Value, field: &str) -> Result<[usize; 2]> {
     Ok(out)
 }
 
+/// Whether the checkpoint carries Nemotron 3.5's language prompt kernel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PromptPolicy {
+    Required,
+    Absent,
+}
+
 impl NemotronAsrConfig {
     pub fn from_json(value: &Value) -> Result<Self> {
         if string(value, "model_type")? != "nemotron_asr" {
@@ -119,9 +126,23 @@ impl NemotronAsrConfig {
                 why: "config is not a Nemotron ASR checkpoint".into(),
             });
         }
+        Self::parse(value, PromptPolicy::Required)
+    }
+
+    /// The same encoder, decoder and joint graph without a language prompt
+    /// (Multitalker Parakeet, which shares this cache-aware FastConformer).
+    /// The caller checks `model_type`; prompt fields come back empty.
+    pub(crate) fn from_json_prompt_free(value: &Value) -> Result<Self> {
+        Self::parse(value, PromptPolicy::Absent)
+    }
+
+    fn parse(value: &Value, policy: PromptPolicy) -> Result<Self> {
         let pre = required(value, "preprocessor")?;
         let encoder = required(value, "encoder")?;
-        let prompt = required(value, "prompt")?;
+        let prompt = match policy {
+            PromptPolicy::Required => Some(required(value, "prompt")?),
+            PromptPolicy::Absent => None,
+        };
         let decoder = required(value, "decoder")?;
         let joint = required(value, "joint")?;
 
@@ -206,32 +227,40 @@ impl NemotronAsrConfig {
             ));
         }
 
-        let prompt_indices_object = required(prompt, "prompt_dictionary")?
-            .as_object()
-            .ok_or_else(|| bad("prompt.prompt_dictionary", "must be an object"))?;
-        let num_prompts = positive(prompt, "num_prompts")?;
-        let mut prompt_indices = Vec::with_capacity(prompt_indices_object.len());
-        for (language, index) in prompt_indices_object {
-            let index = index
-                .as_u64()
-                .and_then(|n| usize::try_from(n).ok())
-                .filter(|&n| n < num_prompts)
-                .ok_or_else(|| bad("prompt.prompt_dictionary", "index exceeds num_prompts"))?;
-            prompt_indices.push((language.clone(), index));
-        }
-        let default_language = required(value, "default_language")?
-            .as_str()
-            .ok_or_else(|| bad("default_language", "must be a string"))?
-            .to_string();
-        if !prompt_indices
-            .iter()
-            .any(|(language, _)| language == &default_language)
-        {
-            return Err(bad(
-                "default_language",
-                "must be present in prompt.prompt_dictionary",
-            ));
-        }
+        let (prompt_indices, num_prompts, prompt_hidden, default_language) = match prompt {
+            Some(prompt) => {
+                let prompt_indices_object = required(prompt, "prompt_dictionary")?
+                    .as_object()
+                    .ok_or_else(|| bad("prompt.prompt_dictionary", "must be an object"))?;
+                let num_prompts = positive(prompt, "num_prompts")?;
+                let mut prompt_indices = Vec::with_capacity(prompt_indices_object.len());
+                for (language, index) in prompt_indices_object {
+                    let index = index
+                        .as_u64()
+                        .and_then(|n| usize::try_from(n).ok())
+                        .filter(|&n| n < num_prompts)
+                        .ok_or_else(|| {
+                            bad("prompt.prompt_dictionary", "index exceeds num_prompts")
+                        })?;
+                    prompt_indices.push((language.clone(), index));
+                }
+                let default_language = required(value, "default_language")?
+                    .as_str()
+                    .ok_or_else(|| bad("default_language", "must be a string"))?
+                    .to_string();
+                if !prompt_indices
+                    .iter()
+                    .any(|(language, _)| language == &default_language)
+                {
+                    return Err(bad(
+                        "default_language",
+                        "must be present in prompt.prompt_dictionary",
+                    ));
+                }
+                (prompt_indices, num_prompts, Some(prompt), default_language)
+            }
+            None => (Vec::new(), 0, None, String::new()),
+        };
 
         let vocabulary = required(value, "vocabulary")?
             .as_array()
@@ -274,7 +303,10 @@ impl NemotronAsrConfig {
             vocabulary,
             prompt_indices,
             num_prompts,
-            prompt_hidden: positive(prompt, "prompt_hidden")?,
+            prompt_hidden: match prompt_hidden {
+                Some(prompt) => positive(prompt, "prompt_hidden")?,
+                None => 0,
+            },
             encoder_layers: positive(encoder, "n_layers")?,
             encoder_hidden,
             encoder_heads,

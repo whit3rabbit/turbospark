@@ -1,0 +1,19 @@
+{
+ "description": "Frozen E reference fixtures for the cpWER scorer gate.",
+ "provenance": {
+  "drive_run": "TurboSpark_Nemotron_E_Qualification_v3/runs/20261016T120640Z_ce70e6ae",
+  "scorer": "notebook cell 8A (tokens/edit/cpwer), ported in crates/bench/scripts/frozen_e_score.py",
+  "audio_source": "AMI corpus Mix-Headset WAVs; clips rebuilt by crates/bench/scripts/prepare_frozen_e_clips.py"
+ },
+ "license": "Reference words and segments derive from the AMI Meeting Corpus manual annotations v1.6.2, CC BY 4.0, https://groups.inf.ed.ac.uk/ami/corpus/license.shtml",
+ "source_sha256": {
+  "evaluation_manifest.json": "c6972c6a99a06c4275ccb93e5451951498e3bb0982715314aa3fd2a560c3e17e",
+  "E_seglst.json": "b10bd08a086f4640036e73bbc9b9db9069db369f6304d727a355995fc8d46243",
+  "TurboSpark_Nemotron_E_Frozen_Qualification_v3.ipynb": "e1760ec0405c3ac25ab5bc7d23fbee7fbdc9b9b587545348599ce98234b7a30d"
+ },
+ "output_sha256": {
+  "references.json": "48937024a03d52f16dfad805c4303547754302fc9cce6870820349d5ff70a930",
+  "E_seglst.json": "b10bd08a086f4640036e73bbc9b9db9069db369f6304d727a355995fc8d46243",
+  "frozen_counts.json": "9a016ef4f04cf9c381540a387cc37ba06139e54b9a125de1e3ef5001c4109d93"
+ }
+}

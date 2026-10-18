@@ -1,0 +1,468 @@
+[
+ {
+  "step": 0,
+  "asr_chunk_frames": 121,
+  "asr_chunk_len": 121,
+  "drop_extra_pre_encoded": 2,
+  "pre_encoded_len": 14,
+  "active": [
+   0
+  ],
+  "spk_targets": [
+   [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  ],
+  "bg_targets": [
+   [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  ],
+  "tokens": [
+   []
+  ],
+  "token_frames": [
+   []
+  ],
+  "texts": [
+   ""
+  ],
+  "decoded_length": [
+   14
+  ],
+  "cache_last_channel_len": [
+   14
+  ]
+ },
+ {
+  "step": 1,
+  "asr_chunk_frames": 121,
+  "asr_chunk_len": 121,
+  "drop_extra_pre_encoded": 2,
+  "pre_encoded_len": 14,
+  "active": [
+   0
+  ],
+  "spk_targets": [
+   [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+   ]
+  ],
+  "bg_targets": [
+   [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  ],
+  "tokens": [
+   [
+    117,
+    809,
+    20
+   ]
+  ],
+  "token_frames": [
+   [
+    19,
+    26,
+    27
+   ]
+  ],
+  "texts": [
+   "And during"
+  ],
+  "decoded_length": [
+   28
+  ],
+  "cache_last_channel_len": [
+   28
+  ]
+ },
+ {
+  "step": 2,
+  "asr_chunk_frames": 121,
+  "asr_chunk_len": 121,
+  "drop_extra_pre_encoded": 2,
+  "pre_encoded_len": 14,
+  "active": [
+   0
+  ],
+  "spk_targets": [
+   [
+    1.0,
+    1.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  ],
+  "bg_targets": [
+   [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  ],
+  "tokens": [
+   [
+    117,
+    809,
+    20,
+    53,
+    322,
+    83,
+    319
+   ]
+  ],
+  "token_frames": [
+   [
+    19,
+    26,
+    27,
+    29,
+    29,
+    32,
+    32
+   ]
+  ],
+  "texts": [
+   "And during each step"
+  ],
+  "decoded_length": [
+   42
+  ],
+  "cache_last_channel_len": [
+   42
+  ]
+ },
+ {
+  "step": 3,
+  "asr_chunk_frames": 121,
+  "asr_chunk_len": 121,
+  "drop_extra_pre_encoded": 2,
+  "pre_encoded_len": 14,
+  "active": [
+   0
+  ],
+  "spk_targets": [
+   [
+    0.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+   ]
+  ],
+  "bg_targets": [
+   [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  ],
+  "tokens": [
+   [
+    117,
+    809,
+    20,
+    53,
+    322,
+    83,
+    319
+   ]
+  ],
+  "token_frames": [
+   [
+    19,
+    26,
+    27,
+    29,
+    29,
+    32,
+    32
+   ]
+  ],
+  "texts": [
+   "And during each step"
+  ],
+  "decoded_length": [
+   56
+  ],
+  "cache_last_channel_len": [
+   56
+  ]
+ },
+ {
+  "step": 4,
+  "asr_chunk_frames": 121,
+  "asr_chunk_len": 121,
+  "drop_extra_pre_encoded": 2,
+  "pre_encoded_len": 14,
+  "active": [
+   0
+  ],
+  "spk_targets": [
+   [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  ],
+  "bg_targets": [
+   [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  ],
+  "tokens": [
+   [
+    117,
+    809,
+    20,
+    53,
+    322,
+    83,
+    319,
+    652,
+    29,
+    53,
+    322,
+    439
+   ]
+  ],
+  "token_frames": [
+   [
+    19,
+    26,
+    27,
+    29,
+    29,
+    32,
+    32,
+    57,
+    62,
+    65,
+    65,
+    68
+   ]
+  ],
+  "texts": [
+   "And during each step uh of each des"
+  ],
+  "decoded_length": [
+   70
+  ],
+  "cache_last_channel_len": [
+   70
+  ]
+ },
+ {
+  "step": 5,
+  "asr_chunk_frames": 121,
+  "asr_chunk_len": 121,
+  "drop_extra_pre_encoded": 2,
+  "pre_encoded_len": 14,
+  "active": [
+   0
+  ],
+  "spk_targets": [
+   [
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+   ]
+  ],
+  "bg_targets": [
+   [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ]
+  ],
+  "tokens": [
+   [
+    117,
+    809,
+    20,
+    53,
+    322,
+    83,
+    319,
+    652,
+    29,
+    53,
+    322,
+    439,
+    370,
+    58,
+    7,
+    947
+   ]
+  ],
+  "token_frames": [
+   [
+    19,
+    26,
+    27,
+    29,
+    29,
+    32,
+    32,
+    57,
+    62,
+    65,
+    65,
+    68,
+    70,
+    79,
+    82,
+    82
+   ]
+  ],
+  "texts": [
+   "And during each step uh of each design we wi"
+  ],
+  "decoded_length": [
+   84
+  ],
+  "cache_last_channel_len": [
+   70
+  ]
+ }
+]
