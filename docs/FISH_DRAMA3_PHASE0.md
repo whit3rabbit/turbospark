@@ -579,6 +579,28 @@ separate from the guard and is not made here.
 - **End the chunk after the last retry.** Saves the trap's tail, but a false
   trigger would then drop words. Running to the cap as today loses nothing.
 
+### Gate by recipe and guard (2026-10-18)
+
+`crates/bench/tests/fish_drama3_pause_trap_gate.rs` on origin/main
+(9a3bf8db) plus the recipe change and the guard, pinned 4-bit install, 16
+streamed slots, M4 Max. It counts takes `Drama3Take::stopped_early` reports,
+selecting the recipe with `TURBOSPARK_DRAMA3_GATE_RECIPE` and the guard with
+`TURBOSPARK_DRAMA3_GATE_GUARD`. Each count is frozen per configuration. No
+request failed in the 96 takes.
+
+| Recipe, guard | Stopped early | Voiceover (12) | Dialogue (6) | Pause cue (6) |
+| --- | ---: | ---: | ---: | ---: |
+| Reference, off (the loop before) | 12 of 24 | 4 | 4 | 4 |
+| Fish Audio, off | 4 of 24 | 0 | 1 | 3 |
+| Reference, on | 2 of 24 | 1 | 0 | 1 |
+| Fish Audio, on (the default) | 0 of 24 | 0 | 0 | 0 |
+
+With both, the guard retried four takes (dialogue seed 3 once, the pause cue
+at seeds 0 and 3 once and at seed 2 four times), and each then ended by EOS.
+The masking of the residual heads to the codec's 1,024 codes
+(`81d7bced`, claude/wizardly-jennings-0c4e66) is not in this tree. No take
+here drew a code past the book, so these counts do not depend on it.
+
 ## Tensor inventory (from the headers)
 
 1,841 tensors in six shards. Names: `backbone.model.{embed_tokens,layers.N,norm}`,
