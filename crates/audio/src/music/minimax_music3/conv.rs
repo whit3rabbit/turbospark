@@ -201,13 +201,24 @@ impl MlxConvTranspose1d {
     pub(crate) fn forward_typed(
         &self,
         x: &[f32],
+        seq: usize,
+        input_dtype: DType,
+    ) -> Result<Vec<f32>> {
+        self.forward_batched(x, seq, input_dtype, 1)
+    }
+    /// [`Self::forward_typed`] for one element of `batch` inputs that MLX decodes
+    /// in a single call, so the backend can match its K split.
+    pub(crate) fn forward_batched(
+        &self,
+        x: &[f32],
         _seq: usize,
         input_dtype: DType,
+        batch: usize,
     ) -> Result<Vec<f32>> {
         let projection_dtype = self.weight.output_dtype(input_dtype);
         let dtype = self.dtype(input_dtype);
         let separate_bias = dtype != projection_dtype;
-        let mut output = self.weight.convolution(
+        let mut output = self.weight.convolution_batched(
             x,
             if separate_bias {
                 None
@@ -223,6 +234,7 @@ impl MlxConvTranspose1d {
                 dilation: 1,
                 transpose: true,
             },
+            batch,
             projection_dtype,
         )?;
         if separate_bias {

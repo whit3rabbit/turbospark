@@ -565,11 +565,21 @@ impl DeviceWeight for Weight {
         s: ConvShape,
         d: DType,
     ) -> Result<Vec<f32>> {
+        self.convolution_batched(input, bias, s, 1, d)
+    }
+    fn convolution_batched(
+        &self,
+        input: &[f32],
+        bias: Option<&[f32]>,
+        s: ConvShape,
+        batch: usize,
+        d: DType,
+    ) -> Result<Vec<f32>> {
         checkpoint(&self.1)?;
         let started = Instant::now();
         let result = self
             .0
-            .convolution_typed(
+            .convolution_batched_typed(
                 input,
                 bias,
                 s.input_channels,
@@ -580,6 +590,7 @@ impl DeviceWeight for Weight {
                 s.dilation,
                 s.transpose,
                 dtype(d),
+                batch,
             )
             .map_err(device_error);
         record(

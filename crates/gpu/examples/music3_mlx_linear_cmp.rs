@@ -88,6 +88,91 @@ fn main() {
                 );
             }
         }
+        for conv in manifest["convs"].as_array().into_iter().flatten() {
+            let name = conv["name"].as_str().unwrap();
+            let get = |key: &str| conv[key].as_u64().unwrap() as usize;
+            let (ic, oc, kernel) = (get("in"), get("out"), get("kernel"));
+            let (stride, pad, dilation) = (get("stride"), get("pad"), get("dilation"));
+            let transpose = conv["transpose"].as_bool().unwrap();
+            let shape = if transpose {
+                [ic, oc, kernel]
+            } else {
+                [oc, ic, kernel]
+            };
+            let weight = device
+                .load_weight(
+                    &shape,
+                    &fs::read(dir.join(format!("{name}.w.bin"))).unwrap(),
+                    Music3Encoding::Bf16,
+                    &[],
+                    &[],
+                    &[],
+                )
+                .unwrap();
+            let bias = conv["bias"]
+                .as_bool()
+                .unwrap()
+                .then(|| read_f32(&dir.join(format!("{name}.bias.f32"))));
+            for len in conv["lens"].as_array().unwrap() {
+                let len = len.as_u64().unwrap() as usize;
+                let x = read_f32(&dir.join(format!("{name}.x{len}.f32")));
+                let run = |bias: Option<&[f32]>| {
+                    weight
+                        .convolution_typed(
+                            &x,
+                            bias,
+                            ic,
+                            oc,
+                            kernel,
+                            stride,
+                            pad,
+                            dilation,
+                            transpose,
+                            Music3DType::Bf16,
+                        )
+                        .unwrap()
+                };
+                let diff = |got: &[f32], file: &str| -> (usize, f32) {
+                    let expected = read_f32(&dir.join(file));
+                    assert_eq!(got.len(), expected.len(), "{file}");
+                    let bad = got
+                        .iter()
+                        .zip(&expected)
+                        .filter(|(a, b)| a.to_bits() != b.to_bits())
+                        .count();
+                    let worst = got
+                        .iter()
+                        .zip(&expected)
+                        .map(|(a, b)| (a - b).abs())
+                        .fold(0.0f32, f32::max);
+                    (bad, worst)
+                };
+                let got = run(bias.as_deref());
+                let (bad, worst) = diff(&got, &format!("{name}.y{len}.f32"));
+                if bad > 0 && bad <= 4 {
+                    // Output is channel-major [oc, outlen]: show where the few misses sit.
+                    let expected = read_f32(&dir.join(format!("{name}.y{len}.f32")));
+                    let outlen = got.len() / oc;
+                    for (i, (a, b)) in got.iter().zip(&expected).enumerate() {
+                        if a.to_bits() != b.to_bits() {
+                            println!(
+                                "    differs at channel {} time {}: got {a} expected {b}",
+                                i / outlen,
+                                i % outlen
+                            );
+                        }
+                    }
+                }
+                // The convolution alone, so a bias-add difference shows separately.
+                let (raw_bad, _) = diff(&run(None), &format!("{name}.raw{len}.f32"));
+                total_bad += bad;
+                println!(
+                    "{name:<18} {} {ic}->{oc} k{kernel} s{stride} d{dilation} len={len:<3} differing={bad}/{} max_abs={worst:.5} (conv alone: {raw_bad})",
+                    if transpose { "convT" } else { "conv " },
+                    got.len()
+                );
+            }
+        }
         println!("total differing values: {total_bad}");
         if require_exact && total_bad != 0 {
             ExitCode::FAILURE

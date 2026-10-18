@@ -50,6 +50,9 @@ pub(crate) struct Vocoder {
     backend: Option<Rc<dyn ComputeBackend>>,
 }
 
+/// The latent splits into two stereo halves that MLX decodes as one batch of two.
+const STEREO_CHANNELS: usize = 2;
+
 pub(crate) fn snake(x: &mut [f32], alpha: &[f32], channels: usize, frames: usize, dtype: DType) {
     for c in 0..channels {
         let a = dtype.round(alpha[c]);
@@ -266,9 +269,9 @@ impl VocoderBlock {
             input_dtype,
             &[in_dim, frames],
         );
-        let mut y = self
-            .conv_t1
-            .forward_typed(&activated, frames, input_dtype)?;
+        let mut y =
+            self.conv_t1
+                .forward_batched(&activated, frames, input_dtype, STEREO_CHANNELS)?;
         let mut frames = y.len() / self.out_dim;
         let mut dtype = self.conv_t1.dtype(input_dtype);
         backend::trace(

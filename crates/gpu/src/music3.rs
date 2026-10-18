@@ -8,6 +8,25 @@ use std::rc::Rc;
 pub(crate) static SOURCE: &str = include_str!("shaders/music3.metal");
 // Native MLX arithmetic needs precise division; the FP32 diagnostic keeps its
 // established compiler policy. Both sources are bundled and cache separately.
+/// MLX's `steel_gemm_splitk_axpby` rule: for a small `M x N` output with a long
+/// `K` it runs the K range as several partitions, each a float32 chain from zero,
+/// then sums the partials in order and rounds once. Returns the partition count,
+/// or `None` when MLX uses a single K chain (or the partitions would be ragged,
+/// which this does not model). The Max and Ultra GPUs take larger shapes.
+fn mlx_splitk_partitions(device_name: &str, m: usize, n: usize, k: usize) -> Option<usize> {
+    let threshold = if device_name.contains("Max") || device_name.contains("Ultra") {
+        2048
+    } else {
+        1024
+    };
+    if m.div_ceil(16) * n.div_ceil(16) > threshold || k / 16 < 8 || k < m.max(n) {
+        return None;
+    }
+    let tiles = m.div_ceil(32) * n.div_ceil(32);
+    let parts = ((k / 16) / tiles).next_power_of_two().clamp(2, 32);
+    (k % (parts * 16) == 0).then_some(parts)
+}
+
 static KOKORO_SOURCE: &str = concat!(
     "// turbospark: precise-math\n#define KOKORO_CONTRACTS\n",
     include_str!("shaders/music3.metal"),
@@ -1367,22 +1386,9 @@ impl Music3Weight {
         // heads hit this with both CFG rows batched (M = 2).
         let mut dense_split = false;
         if dtype != Music3DType::F32 && self.encoding.parameters().0 < 3 && !kokoro && rows > 1 {
-            let (tm, tn) = (rows.div_ceil(16), output_dim.div_ceil(16));
-            let threshold = if name.contains("Max") || name.contains("Ultra") {
-                2048
-            } else {
-                1024
-            };
-            if tm * tn <= threshold && input_dim / 16 >= 8 && input_dim >= rows.max(output_dim) {
-                let (tm32, tn32) = (rows.div_ceil(32), output_dim.div_ceil(32));
-                let parts = ((input_dim / 16) / (tm32 * tn32))
-                    .next_power_of_two()
-                    .clamp(2, 32);
-                // Equal partitions only; a ragged K keeps the single chain.
-                if input_dim % (parts * 16) == 0 {
-                    split = parts;
-                    dense_split = true;
-                }
+            if let Some(parts) = mlx_splitk_partitions(&name, rows, output_dim, input_dim) {
+                split = parts;
+                dense_split = true;
             }
         }
         if kokoro && rows > 1 {
@@ -1624,8 +1630,31 @@ impl Music3Weight {
         transpose: bool,
         dtype: Music3DType,
     ) -> Result<Vec<f32>, GpuError> {
+        self.convolution_batched_typed(
+            input, bias, ic, oc, kernel, stride, pad, dilation, transpose, dtype, 1,
+        )
+    }
+    /// [`Self::convolution_typed`] for one element of a batch of `batch`
+    /// independent inputs that MLX would run as a single call. Each element's
+    /// output depends only on its own input; `batch` changes only how MLX splits
+    /// K (its split-K rule sees `batch * outlen` rows), which changes rounding.
+    #[allow(clippy::too_many_arguments)]
+    pub fn convolution_batched_typed(
+        &self,
+        input: &[f32],
+        bias: Option<&[f32]>,
+        ic: usize,
+        oc: usize,
+        kernel: usize,
+        stride: usize,
+        pad: usize,
+        dilation: usize,
+        transpose: bool,
+        dtype: Music3DType,
+        batch: usize,
+    ) -> Result<Vec<f32>, GpuError> {
         self.convolution_impl(
-            input, bias, ic, oc, kernel, stride, pad, dilation, transpose, dtype, 1, false,
+            input, bias, ic, oc, kernel, stride, pad, dilation, transpose, dtype, 1, false, batch,
         )
     }
     #[allow(clippy::too_many_arguments)]
@@ -1658,6 +1687,7 @@ impl Music3Weight {
             Music3DType::F32,
             groups,
             true,
+            1,
         )
     }
     #[allow(clippy::too_many_arguments)]
@@ -1675,6 +1705,7 @@ impl Music3Weight {
         dtype: Music3DType,
         groups: usize,
         kokoro: bool,
+        batch: usize,
     ) -> Result<Vec<f32>, GpuError> {
         if groups == 0 || ic % groups != 0 || oc % groups != 0 {
             return Err(bad("audio convolution groups do not divide channels"));
@@ -1721,7 +1752,22 @@ impl Music3Weight {
         .ok_or_else(|| bad("Music 3 convolution collapsed or overflowed"))?;
         let count = product(&[oc, outlen])?;
         let mma = groups == 1 && (kokoro || dtype != Music3DType::F32);
+        // MLX runs a stride-any, non-transposed single-group convolution with
+        // 16-aligned channels through its implicit-GEMM kernel, whose K order
+        // visits the taps inside each 16-channel chunk. Match that order.
+        let implicit_order =
+            !kokoro && mma && !transpose && ic % 16 == 0 && (oc <= 16 || oc % 16 == 0);
         let depth = kokoro && transpose && groups == ic && ic == oc;
+        // A transposed convolution is an input-dilated conv, which MLX runs as an
+        // unfold followed by `steel_matmul(M = output positions, N = oc,
+        // K = taps * ic)`: the same split-K rule as the dense matmul. K is
+        // tap-major, as ours already is.
+        let conv_split = if mma && !kokoro && transpose && groups == 1 {
+            let name = self.state.context.borrow().device().name().to_owned();
+            mlx_splitk_partitions(&name, outlen * batch.max(1), oc, kernel * ic).unwrap_or(1)
+        } else {
+            1
+        };
         let p = bytes(&params(&[
             ic,
             oc,
@@ -1736,7 +1782,8 @@ impl Music3Weight {
             dtype as usize,
             self.encoding.parameters().0 as usize,
             groups,
-            (kokoro) as usize,
+            (kokoro || implicit_order) as usize,
+            conv_split,
         ])?);
         autorelease_pool(|| {
             let mut c = self.state.context.borrow_mut();

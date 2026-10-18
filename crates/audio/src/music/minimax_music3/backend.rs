@@ -76,6 +76,21 @@ pub trait DeviceWeight {
         shape: ConvShape,
         dtype: DType,
     ) -> Result<Vec<f32>>;
+    /// [`Self::convolution`] for one element of `batch` independent inputs that
+    /// MLX runs as a single call. Each output is unchanged; only a backend's
+    /// choice of K split can depend on `batch` (MLX's split-K rule sees
+    /// `batch * outlen` rows). Backends without that rule ignore it.
+    fn convolution_batched(
+        &self,
+        input: &[f32],
+        bias: Option<&[f32]>,
+        shape: ConvShape,
+        batch: usize,
+        dtype: DType,
+    ) -> Result<Vec<f32>> {
+        let _ = batch;
+        self.convolution(input, bias, shape, dtype)
+    }
     /// Groups are explicit because Kokoro includes depthwise transpose pools.
     fn convolution_grouped(
         &self,
@@ -567,6 +582,20 @@ impl Weight {
         match self {
             Self::Cpu { data: v, .. } => Ok(ops::embedding(v, width, ids)),
             Self::Device { weight, .. } => weight.embedding(ids, width),
+        }
+    }
+    /// [`Self::convolution`] when MLX would run `batch` inputs as one call.
+    pub(crate) fn convolution_batched(
+        &self,
+        input: &[f32],
+        bias: Option<&[f32]>,
+        s: ConvShape,
+        batch: usize,
+        dtype: DType,
+    ) -> Result<Vec<f32>> {
+        match self {
+            Self::Device { weight, .. } => weight.convolution_batched(input, bias, s, batch, dtype),
+            _ => self.convolution(input, bias, s, dtype),
         }
     }
     pub(crate) fn convolution(

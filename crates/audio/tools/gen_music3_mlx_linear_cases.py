@@ -1,7 +1,8 @@
 """Dump MLX 0.32.3 linear outputs on real Music 3 weights, for a bit-exact diff.
 
 For a handful of real depth-decoder projections, run the operation MLX itself
-runs (`x @ w.T` for dense bf16, `mx.quantized_matmul` for 4-bit affine) at every
+runs (`x @ w.T` for dense bf16, `mx.quantized_matmul` for 4-bit affine, and the
+flow condition encoder's kernel-3 `mx.conv1d`) at every
 row count that matters (1 to 16, around the qmv/qmm threshold), and write the
 weight, the input and MLX's output so that
 `crates/gpu/examples/music3_mlx_linear_cmp.rs` can compare our Metal kernels
@@ -87,6 +88,52 @@ def main():
             (args.output / f"{name}.y{rows}.f32").write_bytes(f32_of(y).tobytes())
         manifest["cases"].append({"name": name, "kind": kind, "in": int(in_dim), "out": int(out_dim), "quant": quant})
         print(name, kind, in_dim, out_dim, flush=True)
+    # Convolutions MLX runs for the flow condition encoder and the vocoder. MLX
+    # keeps convolution weights channels-last ([O, K, C], and [C_out, K, C_in]
+    # for a transposed one); our device convolution takes PyTorch layouts
+    # ([oc, ic, K] and [ic, oc, K]) and channel-major [C, len] activations.
+    # (name, weight tensor, transposed, stride, padding, dilation, input lengths)
+    convs = [
+        ("condition_proj", "condition_encoder.proj", False, 1, 1, 1, [1, 2, 3, 5, 8, 16, 17, 40, 100]),
+        ("voc_dec_in_proj", "vocoder.dec_in_proj", False, 1, 0, 1, [3, 10, 40]),
+        ("voc_conv_in", "vocoder.conv_in", False, 1, 3, 1, [3, 10, 40]),
+        ("voc_b0_conv_t1", "vocoder.blocks.0.conv_t1", True, 8, 4, 1, [3, 10, 40]),
+        ("voc_b0_u1_conv1", "vocoder.blocks.0.res_unit1.conv1", False, 1, 3, 1, [10, 80, 160]),
+        ("voc_b0_u2_conv1", "vocoder.blocks.0.res_unit2.conv1", False, 1, 9, 3, [10, 80, 160]),
+        ("voc_b0_u3_conv1", "vocoder.blocks.0.res_unit3.conv1", False, 1, 27, 9, [10, 80, 160]),
+        ("voc_b0_u1_conv2", "vocoder.blocks.0.res_unit1.conv2", False, 1, 0, 1, [10, 80, 160]),
+    ]
+    manifest["convs"] = []
+    for name, prefix, transposed, stride, padding, dilation, lens in convs:
+        weight = tensors[prefix + ".weight"]
+        bias = tensors.get(prefix + ".bias")
+        if transposed:
+            out_ch, kernel, in_ch = weight.shape
+            layout = weight.transpose(2, 0, 1)  # [ic, oc, K]
+        else:
+            out_ch, kernel, in_ch = weight.shape
+            layout = weight.transpose(0, 2, 1)  # [oc, ic, K]
+        (args.output / f"{name}.w.bin").write_bytes(bf16_bits(layout).tobytes())
+        if bias is not None:
+            (args.output / f"{name}.bias.f32").write_bytes(f32_of(bias).tobytes())
+        for length in lens:
+            x = (mx.random.normal((1, length, in_ch)) * 1.5).astype(mx.bfloat16)
+            if transposed:
+                raw = mx.conv_transpose1d(x, weight, stride=stride, padding=padding)
+            else:
+                raw = mx.conv1d(x, weight, stride=stride, padding=padding, dilation=dilation)
+            y = raw + bias if bias is not None else raw
+            mx.eval(x, raw, y)
+            assert y.dtype == mx.bfloat16, y.dtype
+            (args.output / f"{name}.x{length}.f32").write_bytes(f32_of(x[0].T).tobytes())
+            (args.output / f"{name}.raw{length}.f32").write_bytes(f32_of(raw[0].T).tobytes())
+            (args.output / f"{name}.y{length}.f32").write_bytes(f32_of(y[0].T).tobytes())
+        manifest["convs"].append({
+            "name": name, "in": int(in_ch), "out": int(out_ch), "kernel": int(kernel),
+            "stride": stride, "pad": padding, "dilation": dilation, "transpose": transposed,
+            "bias": bias is not None, "lens": lens,
+        })
+        print(name, "convT" if transposed else "conv", in_ch, out_ch, kernel, flush=True)
     (args.output / "cases.json").write_text(json.dumps(manifest, indent=1) + "\n")
 
 

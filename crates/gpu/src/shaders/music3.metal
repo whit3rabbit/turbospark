@@ -437,33 +437,40 @@ kernel void music3_conv_tiled(device const uchar *w [[buffer(0)]],device const f
     uint total_k=ic*ksize,oblocks=(oc+TO-1)/TO,t0=(gid/oblocks)*TR,o0=(gid%oblocks)*TO;
     uint simd=tid/32,lane=tid%32,sr=simd/SO,so=simd%SO;
     threadgroup float xs[TR*BK],ws[BK*TO],res[SR*SO*SGE];
+    // p[14] K partitions (1 unless MLX runs this conv as an unfold plus a split-K
+    // GEMM): each is its own float32 chain from zero, summed in order after.
+    uint parts=p[14];
+    float total[PER];
+    for(uint m=0;m<PER;m++) total[m]=0;
+    for(uint part=0;part<parts;part++) {
     simdgroup_float8x8 c[RM][RN];
     for(uint i=0;i<RM;i++) for(uint j=0;j<RN;j++) c[i][j]=simdgroup_float8x8(0.0f);
-    for(uint f0=0;f0<total_k;f0+=BK) {
+    uint begin=part*(total_k/parts),end=begin+total_k/parts;
+    for(uint f0=begin;f0<end;f0+=BK) {
         for(uint idx=tid;idx<TR*BK;idx+=128) {
             uint r=idx%TR,kc=idx/TR,t=t0+r,f=f0+kc,k=f/ic,i=f%ic;
-#ifdef KOKORO_CONTRACTS
-            // The implicit-convolution loader visits taps within each 16-channel chunk.
+            // MLX's implicit-GEMM conv loader visits the taps inside each 16-channel
+            // chunk (its channel jump rewinds the taps), so K runs chunk-major, not
+            // tap-major. p[13] selects it: Kokoro always, Music 3 when the shape
+            // takes MLX's implicit-GEMM path (see the host).
             if(p[13] && !transpose && ic%16==0) { k=(f/16)%ksize;i=(f/(16*ksize))*16+f%16; }
-#endif
-            if(transpose) k=ksize-1-k;
+            // MLX's unfold walks the taps of a transposed conv in ascending weight
+            // order (w[0] first), so no flip: the pairing w[k] with x[(t+pad-k)/stride]
+            // is unchanged, only the summation order.
             int pos=int(t*stride+k*dilation)-int(pad);
-            bool valid=t<outlen && f<total_k;
+            bool valid=t<outlen && f<end;
             if(transpose) {pos=int(t+pad)-int(k);valid=valid && pos>=0 && uint(pos)%stride==0;pos/=int(stride);}
             xs[r*BK+kc]=valid && pos>=0 && uint(pos)<len ? x[ulong(i)*len+uint(pos)] : 0;
         }
         for(uint idx=tid;idx<TO*BK;idx+=128) {
             uint oo=idx%TO,kc=idx/TO,o=o0+oo,ff=f0+kc,kk=ff/ic,ii=ff%ic;
-#ifdef KOKORO_CONTRACTS
             if(p[13] && !transpose && ic%16==0) { kk=(ff/16)%ksize;ii=(ff/(16*ksize))*16+ff%16; }
-#endif
-            if(transpose) kk=ksize-1-kk;
             ulong wi=transpose ? (ulong(ii)*oc+o)*ksize+kk : (ulong(o)*ic+ii)*ksize+kk;
-            ws[kc*TO+oo]=o<oc && ff<total_k ? (p[11]==0 ? ((device const float*)w)[wi] : p[11]==1 ? float(((device const half*)w)[wi]) : as_type<float>(uint(((device const ushort*)w)[wi])<<16)) : 0;
+            ws[kc*TO+oo]=o<oc && ff<end ? (p[11]==0 ? ((device const float*)w)[wi] : p[11]==1 ? float(((device const half*)w)[wi]) : as_type<float>(uint(((device const ushort*)w)[wi])<<16)) : 0;
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
         for(uint kb=0;kb<BK/8;kb++) {
-            if(f0+kb*8>=total_k) break;
+            if(f0+kb*8>=end) break;
             simdgroup_float8x8 a[RM],b[RN];
             for(uint i=0;i<RM;i++) simdgroup_load(a[i],xs+(sr*SGR+i*8)*BK+kb*8,BK);
             for(uint j=0;j<RN;j++) simdgroup_load(b[j],ws+(kb*8)*TO+so*SGO+j*8,TO);
@@ -473,10 +480,16 @@ kernel void music3_conv_tiled(device const uchar *w [[buffer(0)]],device const f
     }
     for(uint i=0;i<RM;i++) for(uint j=0;j<RN;j++) simdgroup_store(c[i][j],res+simd*SGE+i*8*SGO+j*8,SGO);
     threadgroup_barrier(mem_flags::mem_threadgroup);
+    for(uint m=0;m<PER;m++) {
+        float r=res[simd*SGE+(lane+32*m)%SGR*SGO+(lane+32*m)/SGR];
+        total[m]=parts>1 ? total[m]+r : r;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
     // Lanes cover consecutive time steps so the channel-major store is contiguous.
     for(uint m=0;m<PER;m++) {
         uint e=lane+32*m,rr=e%SGR,oo=e/SGR,t=t0+sr*SGR+rr,o=o0+so*SGO+oo;
-        if(t<outlen && o<oc) y[ulong(o)*outlen+t]=music_round(music_round(res[simd*SGE+rr*SGO+oo],p[10])+(p[9] ? bias[o] : 0),p[10]);
+        if(t<outlen && o<oc) y[ulong(o)*outlen+t]=music_round(music_round(total[m],p[10])+(p[9] ? bias[o] : 0),p[10]);
     }
 }
 template [[host_name("music3_conv_tiled_32x32")]] [[kernel]] decltype(music3_conv_tiled<2,2,2,2>) music3_conv_tiled<2,2,2,2>;
