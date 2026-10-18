@@ -23,6 +23,7 @@
 //! Each speaker stream keeps its own encoder caches and decoder state; the
 //! weights are shared.
 
+pub mod frontend;
 pub mod scheduler;
 pub mod seglst;
 
@@ -390,6 +391,34 @@ impl MultitalkerAsr {
         1 + (self.pre_encode_cache_frames() - 1) / self.config.subsampling_factor
     }
 
+    /// The checkpoint's frontend: centered STFT with zero (constant) padding,
+    /// no normalization, and NeMo's mask on frames past `samples / hop`.
+    fn mel_options(&self) -> NemoMelOptions {
+        NemoMelOptions {
+            stft: StftOptions {
+                fft_size: self.config.n_fft,
+                hop: self.config.hop_samples,
+                window: symmetric_hann(self.config.window_samples),
+                center: true,
+            },
+            sample_rate: self.config.sample_rate,
+            num_mels: self.config.num_mels,
+            normalize: NemoMelNormalization::None,
+            preemphasis: self.config.preemphasis,
+            log_zero_guard_value: self.config.log_zero_guard_value,
+            pad_to: 0,
+            pad_value: 0.0,
+            normalize_valid_frames: true,
+        }
+    }
+
+    /// A frontend that turns PCM into the same frames as
+    /// [`features`](Self::features) while it arrives, without the
+    /// whole-file length cap. The caller checks the sample rate.
+    pub fn live_frontend(&self) -> Result<frontend::LiveFrontend> {
+        frontend::LiveFrontend::new(self.mel_options())
+    }
+
     /// Whole-recording features for mono PCM at the model rate.
     pub fn features(&self, samples: &[f32], sample_rate: u32) -> Result<Features> {
         if sample_rate != self.config.sample_rate {
@@ -405,23 +434,7 @@ impl MultitalkerAsr {
                 why: "Multitalker input must be nonempty finite mono PCM".into(),
             });
         }
-        let options = NemoMelOptions {
-            stft: StftOptions {
-                fft_size: self.config.n_fft,
-                hop: self.config.hop_samples,
-                window: symmetric_hann(self.config.window_samples),
-                center: true,
-            },
-            sample_rate: self.config.sample_rate,
-            num_mels: self.config.num_mels,
-            normalize: NemoMelNormalization::None,
-            preemphasis: self.config.preemphasis,
-            log_zero_guard_value: self.config.log_zero_guard_value,
-            pad_to: 0,
-            pad_value: 0.0,
-            // NeMo masks frames at or past `samples / hop` to `pad_value`.
-            normalize_valid_frames: true,
-        };
+        let options = self.mel_options();
         let mel =
             nemo_log_mel_spectrogram_with_padding(samples, &options, StftPaddingMode::Constant)?;
         let frames = mel.len();
