@@ -4,9 +4,10 @@ Reviewed 2026-10-14 for anything the routed-expert streamer
 (`crates/streaming`) or the MoE layer paths could borrow. The `main-npu`
 part was re-read on 2026-10-17, after the fork's author pointed to it in the
 review of PR #151: the first pass took one number from that branch and
-missed its quantized-weight path. Every source was read. Only `main-npu` and
-a Core ML probe of this engine's prefill matmuls were run, on one M4 Max (see
-"Measured on an M4 Max" and "Phase 0 in this engine"). The engine
+missed its quantized-weight path. Every source was read. Only `main-npu`, a
+Core ML probe of this engine's prefill matmuls, and a prototype split inside
+this engine's prefill were run, on one M4 Max (see "Measured on an M4 Max",
+"Phase 0 in this engine", and "Phase 1 in this engine"). The engine
 measurements items 1 to 3 cite live in `docs/EXPERT_ROUTING.md`. Any other
 row is a claim from the source until the experiment it names has run on a
 Mac.
@@ -518,6 +519,7 @@ matmul, conversion included, at 1.10x to 1.77x faster.
 | Battery or background prefill, 512+ tokens per batch | ANE + Metal | Measured here: 0.37x to 0.48x modeled energy per prompt, at 1.38x to 1.78x the time |
 | Decode, or short prompts | Metal alone | No matmul under 32 tokens offloads, and small batches cost more energy on the ANE |
 | Max GPU, concurrent row split, 512+ tokens per matmul | ANE + Steel split | Phase 0, per matmul and not end to end: 1.10x to 1.77x faster (1.24x or more in 8 of 10 cases) at 0.65x to 0.74x the modeled energy |
+| Max GPU, dense qwen38 prefill at a 2048-row micro-batch | ANE + Steel split of gate and up (an uncommitted prototype) | Phase 1, end to end on one 2,940-token prompt: 1.142x faster at 0.896x the modeled energy, greedy output unchanged |
 
 **A parked option, reopened by Phase 0.** Porting `main-npu` as written is
 still not worth it. It needs private API and does not win on speed here.
@@ -537,8 +539,8 @@ case on any of these:
 2. A low-power prefill mode whose whole-prompt energy beats Metal by enough
    to pay for the slower prompt.
 3. A concurrent row-split prototype that beats Metal alone on a Max. Phase 0
-   meets this per matmul, not yet end to end, so the next step is its
-   Phase 1.
+   met this per matmul, and Phase 1 end to end for gate and up alone. What
+   is left is the default call, and Phase 1 lists what it would owe.
 
 **What it costs.**
 
@@ -698,7 +700,8 @@ off by default. Steel stays the default. It needs:
   any new prefill path here needs (`docs/BATCHED_PREFILL.md`), plus wall
   power.
 
-Energy mode would be a second opt-in, for long prompts on battery.
+Energy mode would be a second opt-in, for long prompts on battery. Phase 1
+below took the split for gate and up.
 
 ### Micro-batch width and the prefill split, end to end
 
@@ -800,7 +803,8 @@ last row, so masked work stays small. A default change would still owe:
 
 - Scratch, about 337 KiB per row (computed, not measured). That is 21 MiB at
   64, 168 MiB at 512, and 674 MiB at 2048.
-- The `qwen38_prefill_arm_probe` KL bound, measured only at 64.
+- The `qwen38_prefill_arm_probe` KL bound, measured here only at 64. Phase 1
+  below measured it at 2048 too: 1.547e-5 nats mean, inside the bound.
 - The coupling to `MAX_PREFILL_ROWS`, which also sizes `scratch.x` and the
   MTP state and bounds the MTP prime-row assert.
 - The noise from 512 up, and a 0.25 to 0.31 s larger non-projection remainder
@@ -818,6 +822,183 @@ about 1.20x on projections and 1.13x on prefill. At 2048 rows they give about
 That model assumes z splits like GDN qkv and that K, V, a, and b do not split.
 It also assumes the split runs inside the same serial command buffer at no
 extra cost. Energy was not measured here.
+
+### Phase 1 in this engine: the gate/up split, end to end
+
+An opt-in prototype splits one projection class, the MLP gate and up
+projections, between the ANE and Steel inside the real dense qwen38 chunked
+prefill. On a 2,940-token prompt at a 2048-row micro-batch, it is 1.142x
+faster than Steel alone at the same width. Modeled energy falls to 0.896x.
+Breaking the micro-batch's command buffer at every split costs nothing
+measurable on the GPU. Greedy output is unchanged, and the KL probe stays
+inside its bound.
+
+Measured 2026-10-18 on the same M4 Max with `~/models/qwen38-27b.gturbo` and
+the width sweep's prompt. These are readings, not frozen rows in
+`docs/BENCHMARKS.md`. Steel stays the default, and the prototype was never
+committed. Its patch (on `cd34e2dd`, width seams included), programs,
+scripts, and raw logs are in `~/models/ane-split/` on the test machine.
+
+**The prototype.** It compiles only with the `ane-split-probe` cargo
+feature, so the default build and the app link do not change. It runs only
+when `TURBOSPARK_PROBE_ANE_SPLIT=ane` is set, at the width the sweep's seam
+selects.
+
+- **Program.** One Core ML program per token count (512, 1024, 2048) computes
+  the ANE rows of gate and of up in one prediction, `wg * a^T` and
+  `wu * a^T`. All three operands are F16 inputs, and K is sliced at 2048 as
+  in Phase 0. `coreml_plan --units ane` places every operation on the ANE.
+  The packages carry no weights and are 12 KiB each.
+- **Rows.** The ANE takes the first 8,192 rows of gate and of up, Phase 0's
+  47%. Steel computes the other 9,216 rows of each straight into the shared
+  output. The vendored kernel is instantiated `aligned_N`, so its `N`
+  argument is only the output row stride. Passing the full row count there
+  writes the slice at its column offset with no shader change.
+- **Conversions on Metal.** INT4 rows to an F16 IOSurface plane, a per-token
+  power-of-two activation scale, and an exact transpose and unscale into the
+  output. They cost 1.43 ms of GPU per layer at 2048 rows, 92 ms per
+  micro-batch. Inputs and outputs are IOSurface-backed `MLMultiArray`s bound
+  through `outputBackings`, so Core ML copies nothing.
+- **The break.** One command buffer per micro-batch becomes 129. Each layer's
+  segment waits on an `MTLSharedEvent`, converts the previous layer's ANE
+  rows, finishes that layer's FFN, and runs the current layer up to its
+  gate/up input and conversions. Steel's rows follow in a buffer of their
+  own. The host waits for the segment, runs the prediction, and signals the
+  event.
+- **Control.** `TURBOSPARK_PROBE_ANE_SPLIT=break` keeps the same buffers,
+  event waits, and host loop. Steel takes every row and nothing runs on the
+  ANE.
+
+Every buffer is encoded before any is committed, the default arm's
+encode-then-run shape, so overlapping encode with GPU work does not flatter
+the split. A default command queue holds 64 buffers, and creating the 65th
+blocks until one completes. The first version deadlocked on that, and the
+feature build raises the capacity to 512.
+
+**Correctness before the real model.** A synthetic test at the real gate/up
+shape compares the split against one-shot Steel. Steel's rows are
+bit-identical. The ANE rows' worst per-token normalized error is 0.00094,
+against 0.00065 to 0.00148 in Phase 0. Without the per-token scale it is
+0.97, so the ANE does flush the small rows.
+
+**Method.** One process per run, a discarded warmup round, then 6
+interleaved rounds that alternate direction. Before every run the driver
+required:
+
+- AC power.
+- No build, test, or GPU process from another session.
+- GPU utilization under 10% for 5 s.
+- The CPUs at least 85% idle, and no other process above 50% CPU.
+
+A run was dirty if any `top` sample during it showed another process above
+50% CPU or all others above 150%. That rule was set before the campaign.
+Dirty runs were redone in place, 5 of 29 timed runs, for Spotlight's `mds`
+and for `mediaanalysisd`. One of them took 13% more GPU time than the clean
+mean, which is why the rule exists.
+
+Prefill time runs from the first micro-batch to the last, on runtime markers.
+It leaves out the split's one-time program load: 0.19 to 0.20 s per process
+once compiled and cached, 2.4 to 3.1 s cold. The CLI's prefill figure
+includes it. Energy is IOReport's whole-machine Energy Model, read at the
+same markers and idle-subtracted with the 20 s windows around each round
+(0.63 to 0.96 W). It is modeled energy, not wall power.
+
+**Results.** Width 2048, 2,940 tokens, six clean runs per arm.
+
+| Arm | Prefill s | Speed | GPU s | Energy J, idle-subtracted |
+|---|---:|---:|---:|---:|
+| Steel only | 21.028 +/- 0.225 | 1.000x | 20.415 | 1034.9 |
+| Break control | 20.818 +/- 0.020 | 1.010x | 20.243 | 1049.3 (1.014x) |
+| Split, 8,192 ANE rows | 18.420 +/- 0.050 | 1.142x | 17.515 | 927.4 (0.896x) |
+| Split, 7,168 rows for the tail program | 18.238 +/- 0.026 | 1.153x | 17.614 | 922.7 (0.892x) |
+
+The prompt runs as micro-batches of 2048 and 892 rows. The 892-row one pads
+to the 1024-token program, where 8,192 ANE rows leave the GPU waiting 229 ms
+per micro-batch. A 7,168-row share for that program removes the wait. That
+share was picked from earlier runs of this same prompt. So the last row is
+tuned on its own evaluation prompt, and the third row is not.
+
+The 2048-row micro-batch alone goes from 14.34 s to 12.32 to 12.34 s in the
+two split arms, 1.162x to 1.164x. Per layer the prediction takes 34.3 ms and
+Steel's rows take 36.1 ms, so the ANE finishes first. Average power is 50.0
+to 51.4 W in every arm, so the energy saving is the time saving. GPU energy falls from 857 J to 719 to 724 J, and
+the ANE adds 21 to 22 J and DRAM about 5 J.
+
+**What the break costs.**
+
+- **On the GPU, nothing measurable.** The break control runs within 1% of
+  Steel alone, and its logits are bit-identical.
+- **On the host, 32 to 44 ms per 2048-row micro-batch**, 0.5 to 0.7 ms per
+  layer. In the tuned arm, 8.6 ms of that is the host noticing that segments
+  finished. The GPU spends 0.5 ms waiting on late predictions and 22.7 ms
+  resuming after the signals.
+- **Under load it grows.** On a busier host the same counters reached 0.9 s
+  per micro-batch. The prediction slowed to about 42 ms per layer, and the
+  GPU waited on it. Each resume after a late signal took about 5 ms. A split
+  whose ANE half finishes first does not pay that resume, so the balance
+  matters more than the break.
+
+The model above assumed the split runs inside the serial command buffer at
+no extra cost, and for gate and up that holds. Steel spends 4.32 s of the
+2048-row micro-batch on gate and up. Phase 0's 1.77x ratio applied to that
+predicts 1.155x, and the micro-batch measured 1.162x to 1.164x.
+
+**Quality.**
+
+- Greedy md5 of 96 generated tokens: `86e4b4b0` in all 58 runs across both
+  campaigns and every arm, the default width 64 included. The width sweep
+  recorded the same md5.
+- `qwen38_prefill_arm_probe`: final-position KL against the per-token
+  reference over six prompts of 64 to 3000 tokens, bound 1e-3. Two
+  measurement-only additions to the test set the outer chunk and add the
+  break and split arms.
+
+| Arm | Mean KL, nats | Top-1 |
+|---|---:|---:|
+| Default (Steel, width 64, chunk 128) | 1.893e-5 | 6/6 |
+| Default, per-row attention | 2.031e-5 | 6/6 |
+| Steel, width 2048, chunk 2048 | 1.547e-5 | 6/6 |
+| Break, width 2048 | 1.547e-5 (bit-identical to Steel) | 6/6 |
+| Split, width 2048 | 1.624e-5 | 6/6 |
+
+The split ran on the 1000, 2000, and 3000-token prompts. The three shorter
+ones fall under its 512-row floor and ran Steel. Its worst logit difference
+against Steel at the same width is 0.0195.
+
+**What it does not show.**
+
+- Only gate and up are split. The 1.36x modeled above at 2048 rows needs
+  every projection class split, and this run checks the model for one.
+- One prompt and one machine. Other chips, installs, and families are
+  unmeasured. A base-chip GPU is smaller against the same ANE, so its best
+  share and its gain probably differ.
+- Memory was computed, not measured. The planes take 600 to 630 MiB across
+  the three programs, each with its own weight planes. That is on top of the
+  674 MiB width-2048 scratch.
+- ANE contention. Another process using the ANE at the same time was not
+  tested. The busy-host campaign is the only hint, and it cut the gain.
+- Failure handling. A failed prediction drains the GPU and returns an error,
+  with no fallback to Steel. A non-finite ANE output is not detected.
+- Wall power, sampled quality, and the memory oracle were not run.
+
+**What a default would owe.** The split pays off on prompts long enough to
+fill 512-row micro-batches. Below that it does nothing, and decode never uses
+it. Before it takes any family's default on macOS it needs:
+
+- The other projection classes split, or a measured reason to stop at gate
+  and up.
+- The real-model quality, memory, and paired speed and energy gates in
+  `docs/BATCHED_PREFILL.md`, the memory oracle at width 2048 with the planes
+  resident, and wall power.
+- At least one more chip, a base M4 first, since the best share is per
+  machine.
+- A fallback to Steel when Core ML fails or the ANE runs slow, and a
+  non-finite check on the ANE rows.
+- Programs built or shipped per shape, and one weight plane shared across
+  them.
+- The width change's own debts, listed in the width section above.
+- The app link, since IOSurface and CoreVideo join it: `make swift-app`,
+  `scripts/verify-app-bundle.sh`, and the oldest-Xcode CI build.
 
 ## llama.cpp #30340
 
