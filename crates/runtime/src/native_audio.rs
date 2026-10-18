@@ -10,7 +10,9 @@ use std::thread::JoinHandle;
 
 pub const MAX_PCM_CHUNK: usize = 32_000;
 pub const MAX_INPUT_SAMPLES: usize = 16_000 * 1800;
+mod multitalker_stream;
 mod stream;
+pub use multitalker_stream::{MultitalkerStreamSession, SpeakerSegment, SpeakerStreamUpdate};
 pub use stream::AudioStreamSession;
 
 /// Parakeet Unified's encoder is a streaming-only export: a batch job would

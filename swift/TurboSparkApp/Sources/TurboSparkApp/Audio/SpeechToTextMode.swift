@@ -84,12 +84,20 @@ extension AudioWorkspaceController {
     }
 
     /// Switching only changes what the page shows while a capture runs. The
-    /// running take keeps its sources and live text, which stop and the
-    /// final pass still read.
+    /// running take keeps its sources, live text and model, which stop and
+    /// the final pass still read. Each mode has its own final model, so the
+    /// recipe's model is saved under the mode it leaves and the next mode's
+    /// is restored.
     func selectSpeechToTextMode(_ mode: SpeechToTextMode) {
         guard mode != speechToTextMode else { return }
         stopPlayback()
+        if page == .transcribe, let model = recipe.modelID { preferences.selectedModels[modelSelectionKey] = model }
         preferences.speechToTextMode = mode.rawValue
+        if page == .transcribe {
+            recipe.modelID = preferences.selectedModels[modelSelectionKey]
+            restoreModelSelection()
+            normalizeModelOptions()
+        }
         if !hasRecordingActivity { applySpeechToTextSources() }
         flushPreferences()
     }

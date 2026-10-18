@@ -8,6 +8,8 @@ extension AudioWorkspaceController {
         case .voiceClone: return "text_to_speech:clone"
         case .voiceDesign: return "text_to_speech:design"
         case .voiceover: return AudioTask.textToSpeech.rawValue
+        // Each Speech-to-Text mode keeps its own final model.
+        case .transcribe: return SpeechToTextModels.key(speechToTextMode, .final)
         default:
             if task == .textToSpeech, let mode = recipe.speech?.mode, mode != .customVoice {
                 return "text_to_speech:" + (mode == .clone ? "clone" : "design")

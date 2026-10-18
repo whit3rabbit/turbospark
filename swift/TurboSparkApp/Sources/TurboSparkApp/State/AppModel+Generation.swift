@@ -90,7 +90,8 @@ extension AppModel {
             supportsImageBearingToolResults: session.info.vision.active,
             maximumPixelCount: session.info.vision.maxPixels)
         let turnAvailableTools = captureTurnTools(project: turnProject, session: session)
-        let turnAllowsToolCalls = interactionMode == .projects && turnProject != nil
+        let turnAllowsToolCalls = (interactionMode == .projects && turnProject != nil)
+            || (interactionMode == .chat && chatToolsEnabled)
         // **THE NATIVE LANE IS DECIDED ONCE PER TURN** (`AppModel+NativeToolCalling`).
         // When on, the engine renders the offered tools' full definitions and
         // parses the checkpoint's own call markup; the prompt does not also

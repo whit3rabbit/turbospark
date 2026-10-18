@@ -473,27 +473,7 @@ impl NemotronDiarization {
             weights
         };
 
-        let aosc_cfg = AoscModulesConfig {
-            num_speakers: m.num_speakers,
-            fc_d_model: m.fc_d_model,
-            tf_d_model: m.tf_d_model,
-            subsampling_factor: m.subsampling_factor,
-            chunk_len: m.chunk_len,
-            fifo_len: m.fifo_len,
-            spkcache_len: m.spkcache_len,
-            spkcache_update_period: m.spkcache_update_period,
-            chunk_left_context: m.chunk_left_context,
-            chunk_right_context: m.chunk_right_context,
-            spkcache_sil_frames_per_spk: m.spkcache_sil_frames_per_spk,
-            pred_score_threshold: m.pred_score_threshold,
-            max_index: m.max_index,
-            scores_boost_latest: m.scores_boost_latest,
-            sil_threshold: m.sil_threshold,
-            strong_boost_rate: m.strong_boost_rate,
-            weak_boost_rate: m.weak_boost_rate,
-            min_pos_scores_rate: m.min_pos_scores_rate,
-            use_aosc: m.use_aosc,
-        };
+        let aosc_cfg = aosc_config(m);
 
         Ok(NemotronDiarization {
             config,
@@ -526,6 +506,39 @@ impl NemotronDiarization {
         self.aosc_cfg.chunk_right_context = right;
         self.aosc_cfg.fifo_len = fifo;
         self.aosc_cfg.spkcache_update_period = period;
+    }
+}
+
+/// One streaming step's predictions for the central chunk.
+struct StepPreds {
+    /// 10 ms head output, `[central_frames, num_speakers]`.
+    high_central: Vec<f32>,
+    /// Encoder resolution (80 ms), `[ceil(central_frames / factor), num_speakers]`.
+    low_chunk: Vec<f32>,
+}
+
+/// The AOSC parameters in the shape the shared sortformer compression consumes.
+fn aosc_config(m: &SpeakerConfig) -> AoscModulesConfig {
+    AoscModulesConfig {
+        num_speakers: m.num_speakers,
+        fc_d_model: m.fc_d_model,
+        tf_d_model: m.tf_d_model,
+        subsampling_factor: m.subsampling_factor,
+        chunk_len: m.chunk_len,
+        fifo_len: m.fifo_len,
+        spkcache_len: m.spkcache_len,
+        spkcache_update_period: m.spkcache_update_period,
+        chunk_left_context: m.chunk_left_context,
+        chunk_right_context: m.chunk_right_context,
+        spkcache_sil_frames_per_spk: m.spkcache_sil_frames_per_spk,
+        pred_score_threshold: m.pred_score_threshold,
+        max_index: m.max_index,
+        scores_boost_latest: m.scores_boost_latest,
+        sil_threshold: m.sil_threshold,
+        strong_boost_rate: m.strong_boost_rate,
+        weak_boost_rate: m.weak_boost_rate,
+        min_pos_scores_rate: m.min_pos_scores_rate,
+        use_aosc: m.use_aosc,
     }
 }
 
@@ -935,8 +948,40 @@ impl NemotronDiarization {
         feature_length: usize,
         state: &mut StreamingState,
         central_frames: usize,
-    ) -> Vec<f32> {
-        let m = self.config.modules.clone();
+    ) -> Result<Vec<f32>> {
+        Ok(self
+            .streaming_step_with(
+                &self.config.modules,
+                &self.aosc_cfg,
+                features,
+                window_frames,
+                feature_length,
+                state,
+                central_frames,
+                None,
+            )?
+            .high_central)
+    }
+
+    /// [`streaming_step`](Self::streaming_step) with explicit streaming and
+    /// AOSC parameters, so the coupled mode can run its own geometry without
+    /// touching the model's configuration. Also returns the chunk at encoder
+    /// resolution: NeMo's 80 ms chunk predictions are the mean of each
+    /// `subsampling_factor` group of the 10 ms head output, which is exactly
+    /// the `low` array this step already scores the cache with. `executor`
+    /// replaces [`encoder_forward`](Self::encoder_forward) when set.
+    #[allow(clippy::too_many_arguments)]
+    fn streaming_step_with(
+        &self,
+        m: &SpeakerConfig,
+        aosc: &AoscModulesConfig,
+        features: &[f32],
+        window_frames: usize,
+        feature_length: usize,
+        state: &mut StreamingState,
+        central_frames: usize,
+        executor: Option<&mut (dyn EncoderExecutor + '_)>,
+    ) -> Result<StepPreds> {
         let factor = m.subsampling_factor;
         let d = self.emb_dim();
         let n_spk = self.config.num_speakers;
@@ -950,11 +995,14 @@ impl NemotronDiarization {
         combined.extend_from_slice(&state.spkcache);
         combined.extend_from_slice(&state.fifo);
         combined.extend_from_slice(&chunk);
-        self.encoder_forward(
-            &mut combined,
+        let (rows, valid) = (
             cache_len + fifo_len + chunk_rows,
             lengths + cache_len + fifo_len,
         );
+        match executor {
+            Some(executor) => executor.encoder_forward(&mut combined, rows, valid)?,
+            None => self.encoder_forward(&mut combined, rows, valid),
+        }
         let mut high = self.speaker_head(&combined, cache_len + fifo_len + chunk_rows);
 
         // Zero the subpixel padding frames past the valid span.
@@ -983,8 +1031,11 @@ impl NemotronDiarization {
 
         let n_enc = central_frames.div_ceil(factor);
         let start = cache_len + fifo_len;
-        let result =
-            high[start * factor * n_spk..(start * factor + central_frames) * n_spk].to_vec();
+        let result = StepPreds {
+            high_central: high[start * factor * n_spk..(start * factor + central_frames) * n_spk]
+                .to_vec(),
+            low_chunk: low[start * n_spk..(start + n_enc) * n_spk].to_vec(),
+        };
 
         state.fifo.extend_from_slice(&chunk[..n_enc * d]);
         let mut fifo_preds = Vec::with_capacity((fifo_len + n_enc) * n_spk);
@@ -1014,7 +1065,7 @@ impl NemotronDiarization {
                     &state.spkcache_preds,
                     frames,
                     &self.modules.learnable_sil_emb,
-                    &self.aosc_cfg,
+                    aosc,
                 );
                 state.spkcache = c;
                 state.spkcache_preds = p;
@@ -1022,7 +1073,7 @@ impl NemotronDiarization {
             }
         }
         state.frames_processed += central_frames;
-        result
+        Ok(result)
     }
 
     /// Feeds one chunk of raw mono PCM at the model sample rate (the
@@ -1085,7 +1136,7 @@ impl NemotronDiarization {
             )?;
             let feature_length = window_frames.min(available);
             let result =
-                self.streaming_step(&features, window_frames, feature_length, &mut state, n);
+                self.streaming_step(&features, window_frames, feature_length, &mut state, n)?;
             outputs.push(result);
             let keep_from =
                 (state.frames_processed * proc.hop_length).saturating_sub(proc.n_fft / 2 + 1);
@@ -1244,6 +1295,232 @@ impl NemotronDiarization {
     /// Sets the streaming latency profile (offline, low_latency, ultra_low_latency).
     pub fn set_streaming_profile(&mut self, profile: StreamingProfile) {
         self.config.modules.apply_streaming_profile(profile);
+    }
+}
+
+// =============================================================================
+// Coupled mode: the diarizer inside NeMo's multitalker ASR loop
+// =============================================================================
+
+impl SpeakerConfig {
+    /// The geometry NeMo's multitalker driver (`configure_diar_streaming`,
+    /// Speech 218d0b4) gives the diarizer for Frozen E: one chunk per ASR
+    /// step (14 encoder frames for `att_context_size = [70, 13]`), no left or
+    /// right context, `fifo_len = 264`, `spkcache_update_period = 222`, and
+    /// the checkpoint's own speaker-cache length and AOSC thresholds.
+    pub fn multitalker_coupled(&self, asr_valid_out_len: usize) -> SpeakerConfig {
+        SpeakerConfig {
+            chunk_len: asr_valid_out_len,
+            chunk_left_context: 0,
+            chunk_right_context: 0,
+            fifo_len: 264,
+            spkcache_update_period: 222,
+            ..self.clone()
+        }
+    }
+}
+
+/// Runs [`NemotronDiarization::encoder_forward`] somewhere else, such as
+/// the runtime's Metal path. `x` is `[rows, d_model]` t-major, updated in
+/// place, and keys at or past `lengths` are masked. An executor documents
+/// its own tolerance against the CPU encoder; it is not bit-exact.
+pub trait EncoderExecutor: Send {
+    fn encoder_forward(&mut self, x: &mut [f32], rows: usize, lengths: usize) -> Result<()>;
+}
+
+/// One transformer layer's weights, borrowed for upload to a device.
+/// Linear weights are `[out, in]`.
+pub struct EncoderLayerWeights<'a> {
+    pub norm1: (&'a [f32], &'a [f32]),
+    /// Fused `[3 * d_model, d_model]` projection, Q then K then V rows.
+    pub qkv_w: &'a [f32],
+    pub qkv_b: Option<&'a [f32]>,
+    pub out_w: &'a [f32],
+    pub out_b: &'a [f32],
+    pub norm2: (&'a [f32], &'a [f32]),
+    pub ff1_w: &'a [f32],
+    pub ff1_b: &'a [f32],
+    pub ff2_w: &'a [f32],
+    pub ff2_b: &'a [f32],
+}
+
+/// The encoder's geometry and weights, borrowed for a device executor
+/// that reproduces [`NemotronDiarization::encoder_forward`]: optional
+/// input scaling and embed norm, then pre-norm layers (layer norm, fused
+/// QKV, NeoX RoPE on Q and K, key-masked attention, output projection,
+/// residual, layer norm, erf-GELU feed-forward, residual), then the final
+/// layer norm. Every layer norm uses `eps = 1e-5`.
+pub struct EncoderWeights<'a> {
+    pub d_model: usize,
+    pub heads: usize,
+    pub ff_hidden: usize,
+    pub rotary_dim: usize,
+    pub rope_base: f32,
+    pub xscaling: bool,
+    pub embed_norm: Option<(&'a [f32], &'a [f32])>,
+    pub layers: Vec<EncoderLayerWeights<'a>>,
+    pub final_norm: (&'a [f32], &'a [f32]),
+}
+
+impl NemotronDiarization {
+    /// The encoder weights and geometry for a device executor.
+    pub fn encoder_weights(&self) -> EncoderWeights<'_> {
+        let enc = &self.config.encoder;
+        EncoderWeights {
+            d_model: enc.d_model,
+            heads: enc.n_heads,
+            ff_hidden: (enc.d_model as f32 * enc.ff_expansion) as usize,
+            rotary_dim: self.rotary_dim(),
+            rope_base: enc.rope_base,
+            xscaling: enc.xscaling,
+            embed_norm: self
+                .embed_norm
+                .as_ref()
+                .map(|(w, b)| (w.as_slice(), b.as_slice())),
+            layers: self
+                .layers
+                .iter()
+                .map(|l| EncoderLayerWeights {
+                    norm1: (&l.norm1_w, &l.norm1_b),
+                    qkv_w: &l.attn.w_qkv_w,
+                    qkv_b: l.attn.w_qkv_b.as_deref(),
+                    out_w: &l.attn.out_w,
+                    out_b: &l.attn.out_b,
+                    norm2: (&l.norm2_w, &l.norm2_b),
+                    ff1_w: &l.ffn.l1_w,
+                    ff1_b: &l.ffn.l1_b,
+                    ff2_w: &l.ffn.l2_w,
+                    ff2_b: &l.ffn.l2_b,
+                })
+                .collect(),
+            final_norm: (&self.final_norm_w, &self.final_norm_b),
+        }
+    }
+}
+
+/// The diarizer stepped by an external feature stream, as NeMo's
+/// `SpeakerTaggedASR` does: each call takes the ASR's own mel chunk (with
+/// the ASR pre-encode cache already removed) and returns that chunk's
+/// speaker probabilities at encoder resolution (80 ms). The model is
+/// borrowed immutably, so [`NemotronDiarization::feed`] callers are not
+/// affected by the coupled geometry.
+pub struct CoupledDiarizer<'m> {
+    model: &'m NemotronDiarization,
+    modules: SpeakerConfig,
+    aosc: AoscModulesConfig,
+    state: StreamingState,
+    /// Cumulative `[frames, num_speakers]` predictions at 80 ms.
+    preds: Vec<f32>,
+    /// Runs the encoder in place of the CPU path when set.
+    executor: Option<Box<dyn EncoderExecutor + 'm>>,
+}
+
+impl NemotronDiarization {
+    /// Starts a coupled session with `modules` (usually
+    /// [`SpeakerConfig::multitalker_coupled`] of this model's config).
+    pub fn coupled(&self, modules: SpeakerConfig) -> Result<CoupledDiarizer<'_>> {
+        let own = &self.config.modules;
+        if modules.num_speakers != own.num_speakers
+            || modules.fc_d_model != own.fc_d_model
+            || modules.tf_d_model != own.tf_d_model
+            || modules.subsampling_factor != own.subsampling_factor
+        {
+            return Err(SpeechError::BadConfig {
+                field: "modules".into(),
+                why: "coupled modules must keep the checkpoint's speaker-head dimensions".into(),
+            });
+        }
+        if modules.chunk_left_context != 0 || modules.chunk_right_context != 0 {
+            return Err(SpeechError::Unsupported {
+                why: "coupled diarization has no left or right context in the Frozen E driver"
+                    .into(),
+            });
+        }
+        Ok(CoupledDiarizer {
+            aosc: aosc_config(&modules),
+            modules,
+            state: self.init_streaming_state(),
+            preds: Vec::new(),
+            model: self,
+            executor: None,
+        })
+    }
+}
+
+impl<'m> CoupledDiarizer<'m> {
+    /// Runs the encoder through `executor` (a device path) from the next
+    /// step on.
+    pub fn with_executor(mut self, executor: Box<dyn EncoderExecutor + 'm>) -> Self {
+        self.executor = Some(executor);
+        self
+    }
+
+    /// The model this session steps.
+    pub fn model(&self) -> &'m NemotronDiarization {
+        self.model
+    }
+}
+
+impl CoupledDiarizer<'_> {
+    /// One coupled step. `mel` is channel-major `[n_mels, frames]` with
+    /// `frames <= chunk_len * subsampling_factor`; `valid <= frames` is the
+    /// stream's valid length inside it (shorter on the final chunk). Returns
+    /// this chunk's `[ceil(frames / factor), num_speakers]` probabilities,
+    /// which are also appended to [`cumulative_preds`](Self::cumulative_preds).
+    pub fn step(&mut self, mel: &[f32], frames: usize, valid: usize) -> Result<&[f32]> {
+        let factor = self.modules.subsampling_factor;
+        let n_mels = self.model.config.encoder.feat_in;
+        if frames == 0 || frames > self.modules.chunk_len * factor || valid > frames {
+            return Err(SpeechError::Input {
+                why: format!(
+                    "coupled diarizer chunk of {frames} frames ({valid} valid) exceeds {} x {factor}",
+                    self.modules.chunk_len
+                ),
+            });
+        }
+        if mel.len() != n_mels * frames {
+            return Err(SpeechError::Input {
+                why: format!("expected {n_mels} x {frames} mel values, got {}", mel.len()),
+            });
+        }
+        let step = self.model.streaming_step_with(
+            &self.modules,
+            &self.aosc,
+            mel,
+            frames,
+            valid,
+            &mut self.state,
+            frames,
+            self.executor.as_deref_mut(),
+        )?;
+        let start = self.preds.len();
+        self.preds.extend_from_slice(&step.low_chunk);
+        Ok(&self.preds[start..])
+    }
+
+    /// Every step's 80 ms probabilities so far, `[frames, num_speakers]`.
+    pub fn cumulative_preds(&self) -> &[f32] {
+        &self.preds
+    }
+
+    /// Speakers per prediction row.
+    pub fn num_speakers(&self) -> usize {
+        self.modules.num_speakers
+    }
+
+    /// Current speaker-cache length in encoder frames.
+    pub fn spkcache_frames(&self) -> usize {
+        self.state.spkcache.len() / self.model.emb_dim()
+    }
+
+    /// Current FIFO length in encoder frames.
+    pub fn fifo_frames(&self) -> usize {
+        self.state.fifo.len() / self.model.emb_dim()
+    }
+
+    /// The coupled streaming geometry.
+    pub fn modules(&self) -> &SpeakerConfig {
+        &self.modules
     }
 }
 
@@ -1563,5 +1840,208 @@ mod tests {
         for (a, b) in preds.iter().zip(&out_preds) {
             assert!(close(*a, *b, 1e-4), "aosc pred mismatch {a} vs {b}");
         }
+    }
+
+    /// Captured on HEAD c4217879 before the coupled-mode refactor (f667ed73 conversion).
+    const FEED_DIGEST: (usize, usize, u64) = (32000, 4000, 713_276_500_483_838_668);
+
+    /// The pinned Nemotron-3 checkpoint for gated tests: `TURBOSPEECH_NEMOTRON_MODEL`
+    /// holding a conversion of nvidia/Nemotron-3-Diarization at `f667ed73`
+    /// (crates/audio/scripts/convert_multitalker_nemo.py convert-diar).
+    fn pinned_model_dir() -> Option<std::path::PathBuf> {
+        let dir = std::env::var("TURBOSPEECH_NEMOTRON_MODEL").ok()?;
+        let dir = std::path::PathBuf::from(dir);
+        let config = std::fs::read_to_string(dir.join("config.json")).ok()?;
+        let config: Value = serde_json::from_str(&config).ok()?;
+        if config["source_revision"] != "f667ed73aee57d40cc39428eb768b4fd87a0a29e" {
+            eprintln!(
+                "skipping: {} is not the pinned f667ed73 conversion",
+                dir.display()
+            );
+            return None;
+        }
+        Some(dir)
+    }
+
+    /// Deterministic 16 kHz test signal: two drifting tones plus LCG noise.
+    fn procedural_audio(seconds: usize) -> Vec<f32> {
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        (0..seconds * 16_000)
+            .map(|i| {
+                seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+                let noise = ((seed >> 40) as f32 / (1u64 << 24) as f32 - 0.5) * 0.02;
+                let t = i as f32 / 16_000.0;
+                let a = (t * (220.0 + 30.0 * (t * 0.1).sin()) * std::f32::consts::TAU).sin();
+                let b = (t * 523.0 * std::f32::consts::TAU).sin() * (t * 0.37).sin().max(0.0);
+                0.2 * a + 0.15 * b + noise
+            })
+            .collect()
+    }
+
+    fn fnv1a_bits(values: &[f32]) -> u64 {
+        values.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, v| {
+            v.to_bits()
+                .to_le_bytes()
+                .iter()
+                .fold(h, |h, &b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3))
+        })
+    }
+
+    /// `feed()` regression digest for the coupled-mode refactor: file-mode
+    /// streaming probabilities with the Low preset on a 40 s procedural
+    /// signal (FIFO overflow and AOSC both run). Captured on the code before
+    /// the refactor; checkpoint gated.
+    #[test]
+    fn streaming_refactor_keeps_feed_digest() {
+        let Some(dir) = pinned_model_dir() else {
+            eprintln!("skipping: TURBOSPEECH_NEMOTRON_MODEL unset or not pinned");
+            return;
+        };
+        let mut model = NemotronDiarization::load(&dir).unwrap();
+        model.set_latency_preset(LatencyPreset::Low);
+        let (results, state) = model
+            .generate_stream(&procedural_audio(40), &GenerateOptions::default())
+            .unwrap();
+        let probs: Vec<f32> = results
+            .iter()
+            .flat_map(|r| r.speaker_probs.iter().copied())
+            .collect();
+        let got = (probs.len(), state.frames_processed, fnv1a_bits(&probs));
+        eprintln!("FEED_DIGEST {got:?}");
+        assert_eq!(got, FEED_DIGEST);
+    }
+
+    /// A model with the given config and no weights: enough for
+    /// configuration checks that never run the network.
+    fn shell_model(config: NemotronConfig) -> NemotronDiarization {
+        NemotronDiarization {
+            aosc_cfg: aosc_config(&config.modules),
+            config,
+            pre_encode_proj_w: vec![],
+            embed_norm: None,
+            layers: Vec::new(),
+            final_norm_w: vec![],
+            final_norm_b: vec![],
+            modules: SpeakerModules {
+                encoder_proj_w: vec![],
+                encoder_proj_b: vec![],
+                hidden_to_hidden_w: vec![],
+                hidden_to_hidden_b: vec![],
+                single_to_spks_w: vec![],
+                single_to_spks_b: vec![],
+                subpixel_w: vec![],
+                subpixel_b: vec![],
+                learnable_sil_emb: vec![],
+                hidden_to_spks_w: vec![],
+                hidden_to_spks_b: vec![],
+                activity_head: None,
+            },
+            window: vec![],
+            fb: vec![],
+        }
+    }
+
+    /// Frozen E's coupled geometry from NeMo's `configure_diar_streaming`:
+    /// the ASR chunk, no context, FIFO 264, update period 222, and every
+    /// other module setting kept from the checkpoint.
+    #[test]
+    fn multitalker_coupled_modules_known_values() {
+        let base = default_config().modules;
+        let m = base.multitalker_coupled(14);
+        assert_eq!(
+            (
+                m.chunk_len,
+                m.chunk_left_context,
+                m.chunk_right_context,
+                m.fifo_len,
+                m.spkcache_update_period
+            ),
+            (14, 0, 0, 264, 222)
+        );
+        assert_eq!(m.spkcache_len, base.spkcache_len);
+        assert_eq!(m.sil_threshold, base.sil_threshold);
+        assert_eq!(m.pred_score_threshold, base.pred_score_threshold);
+        assert_eq!(m.num_speakers, base.num_speakers);
+    }
+
+    /// The coupled session keeps its own geometry: the model's config is
+    /// unchanged, and context or head-dimension changes are refused.
+    #[test]
+    fn coupled_does_not_mutate_model_config() {
+        let model = shell_model(default_config());
+        let before = format!("{:?}", model.config().modules);
+        let coupled = model
+            .coupled(model.config().modules.multitalker_coupled(14))
+            .unwrap();
+        assert_eq!(coupled.modules().chunk_len, 14);
+        assert_eq!(coupled.modules().fifo_len, 264);
+        assert_eq!(format!("{:?}", model.config().modules), before);
+        assert_eq!(model.aosc_cfg.chunk_len, model.config().modules.chunk_len);
+
+        let mut with_context = model.config().modules.multitalker_coupled(14);
+        with_context.chunk_right_context = 1;
+        assert!(model.coupled(with_context).is_err());
+        let mut wrong_head = model.config().modules.multitalker_coupled(14);
+        wrong_head.num_speakers = 4;
+        assert!(model.coupled(wrong_head).is_err());
+    }
+
+    /// Coupled chunk predictions against NeMo Speech 218d0b4 on CPU
+    /// (`testdata/nemotron_diarization/coupled`, written by
+    /// `scripts/generate_coupled_diar_fixture.py` from a Frozen E trace).
+    /// The NeMo features go in directly, so the frontend is not under test.
+    /// Covers 54 steps, including the first FIFO overflow and AOSC
+    /// compression (step 34). Checkpoint gated.
+    #[test]
+    fn coupled_chunk_preds_match_nemo() {
+        let Some(dir) = pinned_model_dir() else {
+            eprintln!("skipping: TURBOSPEECH_NEMOTRON_MODEL unset or not pinned");
+            return;
+        };
+        let model = NemotronDiarization::load(&dir).unwrap();
+        let (fshape, feats) = read_npy(&testdata("coupled/features.npy"));
+        let (pshape, golden) = read_npy(&testdata("coupled/chunk_preds.npy"));
+        let state: Value =
+            serde_json::from_str(&std::fs::read_to_string(testdata("coupled/state.json")).unwrap())
+                .unwrap();
+        let (n_mels, total) = (fshape[0], fshape[1]);
+        let (steps, rows, n_spk) = (pshape[0], pshape[1], pshape[2]);
+        assert_eq!((n_mels, rows, n_spk, total), (128, 14, 8, steps * 112));
+
+        let mut coupled = model
+            .coupled(model.config().modules.multitalker_coupled(14))
+            .unwrap();
+        let mut worst = 0.0f32;
+        for step in 0..steps {
+            let mut chunk = vec![0.0f32; n_mels * 112];
+            for m in 0..n_mels {
+                chunk[m * 112..(m + 1) * 112]
+                    .copy_from_slice(&feats[m * total + step * 112..m * total + (step + 1) * 112]);
+            }
+            let preds = coupled.step(&chunk, 112, 112).unwrap().to_vec();
+            let want = &golden[step * rows * n_spk..(step + 1) * rows * n_spk];
+            for (i, (a, b)) in preds.iter().zip(want).enumerate() {
+                worst = worst.max((a - b).abs());
+                assert!(
+                    close(*a, *b, 1e-4),
+                    "step {step} row {} spk {}: {a} vs NeMo {b}",
+                    i / n_spk,
+                    i % n_spk
+                );
+                if (b - 0.5).abs() >= 1e-3 {
+                    assert_eq!(*a > 0.5, *b > 0.5, "step {step}: 0.5 decision differs");
+                }
+            }
+            assert_eq!(
+                (coupled.spkcache_frames(), coupled.fifo_frames()),
+                (
+                    state[step]["spkcache"].as_u64().unwrap() as usize,
+                    state[step]["fifo"].as_u64().unwrap() as usize
+                ),
+                "step {step}: cache/FIFO lengths"
+            );
+        }
+        eprintln!("coupled diarizer max |dp| over {steps} steps: {worst:e}");
+        assert_eq!(coupled.cumulative_preds().len(), steps * rows * n_spk);
     }
 }

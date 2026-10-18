@@ -90,12 +90,24 @@ extension AudioWorkspaceController {
         }
     }
 
+    /// The diarization model that labels an item, or nil to skip labels. A
+    /// take or import that belongs to a Speech-to-Text mode is labeled only
+    /// while that mode's switch is on, with the mode's own choice, and not at
+    /// all while that model is not installed. Other takes (the Record page's
+    /// Sound and hand-picked sources) keep the first installed model.
+    func diarizationProfile(for item: AudioLibraryItem) -> AudioProfile? {
+        guard let mode = speechToTextMode(for: item) else { return installedDiarizationProfile }
+        guard labelsSpeakers(in: mode) else { return nil }
+        guard let profile = speechToTextProfile(mode, .speakers), profile.capabilities.canRun, isInstalled(profile) else { return nil }
+        return profile
+    }
+
     /// Labels the speakers of the final transcript `revision` of take `id`.
     /// Does nothing when no diarization model is installed or the take is
     /// longer than the model accepts. The labels land only on that revision,
     /// so an edit made meanwhile (a newer user revision) is never touched.
     func labelSpeakers(item: AudioLibraryItem, into id: UUID, revision: UUID, words: [ClosedRange<Double>], token: UUID) async throws {
-        guard let profile = installedDiarizationProfile else { return }
+        guard let profile = diarizationProfile(for: item) else { return }
         let limit = Double(profile.capabilities.maxInputSeconds ?? 1800)
         guard item.duration <= limit else { return }
         status = AppStrings.localized("Labeling speakers")

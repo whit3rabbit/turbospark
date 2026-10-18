@@ -4,6 +4,7 @@ import SwiftUI
 /// seam a small, direct test surface for both directions of the UI contract.
 @MainActor
 struct ChatRuntimeSettingsBindings {
+    let chatToolsEnabled: Binding<Bool>
     let microcompactEnabled: Binding<Bool>
     let autoContinuationEnabled: Binding<Bool>
     let nativeToolCallingEnabled: Binding<Bool>
@@ -13,6 +14,13 @@ struct ChatRuntimeSettingsBindings {
     let instructionPinTokenCeiling: Binding<Int>
 
     init(model: AppModel) {
+        chatToolsEnabled = Binding(
+            get: { model.chatToolsEnabled },
+            set: { value in
+                model.chatToolsEnabled = value
+                model.persistSettingsDebounced()
+            }
+        )
         microcompactEnabled = Binding(
             get: { model.microcompactEnabled },
             set: { value in
