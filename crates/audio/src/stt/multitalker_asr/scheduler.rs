@@ -22,7 +22,7 @@ use crate::models::vad::nemotron_diarization::CoupledDiarizer;
 use crate::{ops, Result, SpeechError};
 
 use super::seglst::{HypothesisView, SeglstEntry, SentenceBuilder};
-use super::{Features, MultitalkerAsr, SpeakerStream, StepOutput, Token};
+use super::{Features, MultitalkerAsr, SpeakerEncoder, SpeakerStream, StepOutput, Token};
 
 /// Scheduler settings; [`CoupledConfig::frozen_e`] is the qualified one.
 #[derive(Debug, Clone, PartialEq)]
@@ -213,19 +213,21 @@ pub struct CoupledSession<'m, D: DiarizationSource> {
     asr: &'m MultitalkerAsr,
     diar: D,
     cfg: CoupledConfig,
-    track: Transcripts,
+    track: Transcripts<'m>,
 }
 
 /// The ASR side of a session: everything a step reads or writes after
 /// diarization, kept apart from the diarizer so the two can step
 /// concurrently.
-struct Transcripts {
+struct Transcripts<'m> {
     preds: Vec<f32>,
     speakers: Vec<SpeakerStream>,
     decoded: Vec<bool>,
     sentences: SentenceBuilder,
     offset: f64,
     step: usize,
+    /// Runs the encoder layers on a device in place of the CPU when set.
+    encoder: Option<Box<dyn SpeakerEncoder + 'm>>,
 }
 
 /// Step 1: diarization on the chunk without the ASR pre-encode cache, with
@@ -255,11 +257,20 @@ impl<'m, D: DiarizationSource> CoupledSession<'m, D> {
                 preds: Vec::new(),
                 offset: 0.0,
                 step: 0,
+                encoder: None,
             },
             asr,
             diar,
             cfg,
         }
+    }
+
+    /// Runs the ASR encoder layers through `encoder` (a device path holding
+    /// every speaker's caches) instead of the CPU. Set it before the first
+    /// step: the device's caches start empty.
+    pub fn with_encoder(mut self, encoder: Box<dyn SpeakerEncoder + 'm>) -> Self {
+        self.track.encoder = Some(encoder);
+        self
     }
 
     /// Streams the whole recording, chunked as NeMo's
@@ -325,7 +336,7 @@ impl<'m, D: DiarizationSource> CoupledSession<'m, D> {
     }
 }
 
-impl Transcripts {
+impl Transcripts<'_> {
     /// Steps 2 to 7 for one chunk, given its diarization `chunk`.
     #[allow(clippy::too_many_arguments)]
     fn transcribe(
@@ -429,13 +440,44 @@ impl Transcripts {
             .collect();
         let outs: Vec<Result<StepOutput>> = {
             use rayon::prelude::*;
-            streams
-                .par_iter_mut()
-                .zip(conditions.par_iter())
-                .map(|(stream, (target, background))| {
-                    asr.step(&pre, target, background, stream, last)
-                })
-                .collect()
+            match self.encoder.as_deref_mut() {
+                None => streams
+                    .par_iter_mut()
+                    .zip(conditions.par_iter())
+                    .map(|(stream, (target, background))| {
+                        asr.step(&pre, target, background, stream, last)
+                    })
+                    .collect(),
+                // A device encoder steps every active speaker in one call;
+                // the speaker kernels before it and the decode after it stay
+                // per speaker on the pool.
+                Some(encoder) => {
+                    let inputs: Vec<Vec<f32>> = conditions
+                        .par_iter()
+                        .map(|(target, background)| {
+                            asr.apply_speaker_kernels(&pre, target, background)
+                        })
+                        .collect();
+                    let cache_lens: Vec<usize> = streams.iter().map(|s| s.cache_len()).collect();
+                    let views: Vec<&[f32]> = inputs.iter().map(Vec::as_slice).collect();
+                    let encoded =
+                        encoder.stream_layers(&active, &views, pre.rows, pre.valid, &cache_lens)?;
+                    if encoded.len() != active.len() {
+                        return Err(SpeechError::Audio(format!(
+                            "device encoder returned {} speakers for {}",
+                            encoded.len(),
+                            active.len()
+                        )));
+                    }
+                    streams
+                        .par_iter_mut()
+                        .zip(inputs.into_par_iter().zip(encoded.into_par_iter()))
+                        .map(|(stream, (input, rows))| {
+                            asr.step_encoded(&pre, input, rows, stream, last)
+                        })
+                        .collect()
+                }
+            }
         };
         drop(streams);
         for ((&s, out), (target, background)) in active.iter().zip(outs).zip(conditions) {

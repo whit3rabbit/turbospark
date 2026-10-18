@@ -1,13 +1,15 @@
 //! Frozen E meeting transcription with the Nemotron-3 diarization encoder
-//! on Metal (`nemotron_diar_metal`) or on the CPU, for paired runs and the
-//! panel cpWER gate. The ASR stays on the CPU.
+//! (`nemotron_diar_metal`) and the Multitalker ASR encoder layers
+//! (`multitalker_metal`) each on Metal or on the CPU, for paired runs and
+//! the panel cpWER gate. Speaker kernels and the RNN-T decode stay on the
+//! CPU.
 //!
 //! ```text
 //! cargo run -p turbospark-runtime --release --example frozen_e_metal -- \
 //!   --model ~/models/multitalker-parakeet-streaming-0.6b-v1-f32 \
 //!   --diar ~/models/Nemotron-3-Diarization-f667ed73-turbospark \
 //!   --clips ~/models/frozen-e/clips --out ~/models/frozen-e/metal-run \
-//!   [--ids ID,ID] [--diar-device metal|cpu]
+//!   [--ids ID,ID] [--diar-device metal|cpu] [--asr-device metal|cpu]
 //! ```
 //!
 //! Writes `<out>/seglst.json` in the layout of `crates/audio`'s
@@ -20,6 +22,7 @@ use audio::models::stt::multitalker_asr::scheduler::{CoupledConfig, CoupledSessi
 use audio::models::stt::multitalker_asr::MultitalkerAsr;
 use audio::models::vad::nemotron_diarization::NemotronDiarization;
 use serde_json::{json, Value};
+use turbospark_runtime::multitalker_metal::MultitalkerEncoderMetal;
 use turbospark_runtime::nemotron_diar_metal::NemotronDiarMetal;
 
 struct Args {
@@ -29,11 +32,20 @@ struct Args {
     out: PathBuf,
     ids: Vec<String>,
     metal: bool,
+    asr_metal: bool,
+}
+
+fn device(flag: &str, value: &str) -> Result<bool, String> {
+    match value {
+        "metal" => Ok(true),
+        "cpu" => Ok(false),
+        other => Err(format!("{flag} {other}: expected metal or cpu")),
+    }
 }
 
 fn parse_args() -> Result<Args, String> {
-    let (mut model, mut diar, mut clips, mut out, mut ids, mut metal) =
-        (None, None, None, None, Vec::new(), true);
+    let (mut model, mut diar, mut clips, mut out, mut ids) = (None, None, None, None, Vec::new());
+    let (mut metal, mut asr_metal) = (true, true);
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
         let value = it.next().ok_or(format!("{flag} needs a value"))?;
@@ -49,13 +61,8 @@ fn parse_args() -> Result<Args, String> {
                     .map(String::from)
                     .collect()
             }
-            "--diar-device" => {
-                metal = match value.as_str() {
-                    "metal" => true,
-                    "cpu" => false,
-                    other => return Err(format!("--diar-device {other}: expected metal or cpu")),
-                }
-            }
+            "--diar-device" => metal = device(&flag, &value)?,
+            "--asr-device" => asr_metal = device(&flag, &value)?,
             other => return Err(format!("unknown flag {other}")),
         }
     }
@@ -66,6 +73,7 @@ fn parse_args() -> Result<Args, String> {
         out: out.ok_or("--out is required")?,
         ids,
         metal,
+        asr_metal,
     })
 }
 
@@ -91,7 +99,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&args.out)?;
     let asr = MultitalkerAsr::open(&args.model)?;
     let diar = NemotronDiarization::load(&args.diar)?;
-    let device = if args.metal { "metal" } else { "cpu" };
+    let name = |metal: bool| if metal { "metal" } else { "cpu" };
+    let mut asr_encoder = if args.asr_metal {
+        Some(MultitalkerEncoderMetal::new(&asr)?)
+    } else {
+        None
+    };
     let mut seglst: Vec<Value> = Vec::new();
     for id in clip_ids(&args.clips, &args.ids)? {
         let w = audio::read_wav_f32(&args.clips.join(format!("{id}.wav")))?;
@@ -105,14 +118,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             coupled = coupled.with_executor(Box::new(NemotronDiarMetal::new(&diar)?));
         }
         let mut session = CoupledSession::new(&asr, coupled, CoupledConfig::frozen_e());
+        if let Some(encoder) = asr_encoder.as_mut() {
+            encoder.reset();
+            session = session.with_encoder(Box::new(encoder));
+        }
         let start = Instant::now();
         let reports = session.run(&features)?;
         let seconds = w.samples.len() as f64 / 16_000.0;
         let elapsed = start.elapsed().as_secs_f64();
         eprintln!(
-            "{id}: {} steps, {seconds:.1} s audio in {elapsed:.1} s (RTF {:.2}, diarizer {device})",
+            "{id}: {} steps, {seconds:.1} s audio in {elapsed:.1} s (RTF {:.2}, diarizer {}, \
+             asr {})",
             reports.len(),
-            elapsed / seconds
+            elapsed / seconds,
+            name(args.metal),
+            name(args.asr_metal)
         );
         seglst.extend(session.seglst().into_iter().map(|e| {
             json!({

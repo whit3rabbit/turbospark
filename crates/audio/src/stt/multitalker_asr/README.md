@@ -107,6 +107,7 @@ environment (CPU, FP32).
 | Full IS1004a clip, live coupled diarizer | All 108 steps identical (chunk predictions within 4.2e-6); SegLST identical |
 | Frozen AMI panel, live pipeline | SegLST identical to NeMo CPU on all 12 clips (356 segments: speakers, millisecond times, words). 160/1740 on the matched six (9.20%) and 355/3814 on the 12-clip panel (9.31%), every clip equal to its frozen count |
 | Frozen AMI panel, diarizer encoder on Metal (f32, `crates/runtime/src/nemotron_diar_metal.rs`) | Encoder within 1.4e-5 of RMS of the CPU on a full 542-row window; coupled chunk predictions within 2.2e-6 of NeMo over 54 steps, no 0.5 decision flips, identical cache and FIFO lengths; panel SegLST identical to NeMo on all 12 clips, 160/1740 and 355/3814 |
+| Frozen AMI panel, ASR encoder layers on Metal too (f32, `crates/runtime/src/multitalker_metal.rs`) | Encoder within 2.4e-5 of RMS of NeMo and the CPU over the 6 NeMo fixture steps; batched slots within 1.7e-4 of independent CPU streams (a silent target with an active background moves the CPU itself 8.5e-5 for a one-ulp input change). Greedy near-ties flip, so the SegLST differs from NeMo on 9 of 12 clips, but cpWER is 160/1740 and 355/3814, equal to Frozen E (two clips move by one error in opposite directions). Precise Metal math does not remove the flips (158/1740, 364/3814) |
 
 Tolerances on large-magnitude tensors are RMS-scaled (`max |a - b| / rms(b)
 <= 1e-4`) because f32 accumulation order differs from torch's blocked GEMM.
@@ -128,8 +129,14 @@ identical across all three builds.
 With the diarizer encoder on Metal (`crates/runtime` example
 `frozen_e_metal`, ASR still on the CPU, same host): IS1000a_00510 16.9 and
 16.7 s (RTF 0.14) against 36.9 s with the CPU diarizer from the same
-binary, and RTF 0.13 to 0.17 across the 12-clip panel. The CPU ASR
-encoder is now the critical path.
+binary, and RTF 0.13 to 0.17 across the 12-clip panel.
+
+With the ASR encoder layers on Metal as well (`--asr-device metal`, with
+the speaker kernels and the RNN-T decode still on the CPU), interleaved with
+the CPU ASR from the same binary while another session compiled on the
+CPU (load 6 to 10): IS1000a_00510 11.7, 12.0 and 11.7 s (RTF 0.10)
+against 17.2, 19.9 and 21.7 s. The device runs every active speaker in
+one command buffer per step and keeps each speaker's caches resident.
 
 ## Tests
 
@@ -140,6 +147,7 @@ encoder is now the critical path.
 | `frontend_matches_nemo`, `scheduler_with_replayed_diarization_matches_nemo_full_clip` | plus `TURBOSPEECH_FROZEN_E_TRACE` |
 | `scheduler_with_live_diarization_matches_nemo_full_clip` | plus `TURBOSPEECH_NEMOTRON_MODEL` |
 | `crates/runtime/tests/nemotron_diar_metal.rs`, `crates/gpu/tests/nemotron_diar_parity.rs` | A Metal device, plus `TURBOSPEECH_NEMOTRON_MODEL` for the runtime test |
+| `crates/runtime/tests/multitalker_metal.rs`, `crates/gpu/tests/conformer_stream_parity.rs` | A Metal device, plus `TURBOSPEECH_MULTITALKER_MODEL` for the runtime test |
 
 `TURBOSPEECH_FROZEN_E_TRACE` is a trace directory from
 `scripts/nemo_multitalker_trace.py` (its `meta.json` names the clip). The
@@ -170,9 +178,9 @@ cargo run -p turbospark-bench --release --bin meeting_eval -- score --seglst <ru
 ## Open
 
 - Runtime session, FFI, Swift and catalog `can_run` (Phase 5).
-- The ASR encoder on Metal (relative-position cached attention, the
-  causal conv module, per-speaker caches). The diarizer encoder runs on
-  Metal already. Only F32 weights load.
+- The speaker kernels, pre-encode and RNN-T decode still run on the CPU.
+  Both encoders run on Metal (opt-in, tolerance-gated, not bit-exact).
+  Only F32 weights load. No GPU memory or power measurement yet.
 - A live incremental frontend. The port computes features over the whole
   recording, as the frozen replay did.
 - Recordings outside the frozen panel.

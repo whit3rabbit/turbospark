@@ -657,7 +657,102 @@ pub(crate) struct StreamGeometry {
     pos: Vec<Vec<f32>>,
 }
 
+/// One Conformer layer's weights, borrowed for a device executor of
+/// [`NemotronEncoder::stream_layers`]. Linear weights are `[out, in]`;
+/// norms are `(weight, bias)`.
+pub struct StreamLayerWeights<'a> {
+    pub norm_ff1: (&'a [f32], Option<&'a [f32]>),
+    pub ff1_in: &'a [f32],
+    pub ff1_out: &'a [f32],
+    pub norm_attn: (&'a [f32], Option<&'a [f32]>),
+    pub q: &'a [f32],
+    pub k: &'a [f32],
+    pub v: &'a [f32],
+    pub out: &'a [f32],
+    /// `linear_pos` of the relative-position table, `[2 * window - 1,
+    /// hidden]` with `window = attn_frames + chunk`.
+    pub pos: &'a [f32],
+    /// `[heads, head_dim]`.
+    pub bias_u: &'a [f32],
+    pub bias_v: &'a [f32],
+    pub norm_conv: (&'a [f32], Option<&'a [f32]>),
+    /// Pointwise conv in, `[2 * hidden, hidden]`.
+    pub pointwise_in: &'a [f32],
+    /// Depthwise conv, `[hidden, kernel]`.
+    pub depthwise: &'a [f32],
+    pub depthwise_bias: Option<&'a [f32]>,
+    pub conv_norm: (&'a [f32], Option<&'a [f32]>),
+    /// Pointwise conv out, `[hidden, hidden]`.
+    pub pointwise_out: &'a [f32],
+    pub norm_ff2: (&'a [f32], Option<&'a [f32]>),
+    pub ff2_in: &'a [f32],
+    pub ff2_out: &'a [f32],
+    pub norm_out: (&'a [f32], Option<&'a [f32]>),
+}
+
+/// The streaming encoder's geometry and weights, borrowed for a device
+/// executor that reproduces `stream_layers`. Every norm uses `eps`.
+pub struct StreamEncoderWeights<'a> {
+    pub hidden: usize,
+    pub heads: usize,
+    pub ff_hidden: usize,
+    pub conv_kernel: usize,
+    pub attn_frames: usize,
+    pub chunk: usize,
+    pub eps: f32,
+    pub layers: Vec<StreamLayerWeights<'a>>,
+}
+
+fn norm_view(norm: &LayerNorm) -> (&[f32], Option<&[f32]>) {
+    (&norm.weight, norm.bias.as_deref())
+}
+
 impl NemotronEncoder {
+    /// The streaming weights for `geometry`, for a device executor.
+    pub(crate) fn stream_weights<'a>(
+        &'a self,
+        geometry: &'a StreamGeometry,
+    ) -> StreamEncoderWeights<'a> {
+        let first = self.layers.first();
+        StreamEncoderWeights {
+            hidden: self.hidden,
+            heads: first.map_or(0, |l| l.heads),
+            ff_hidden: first.map_or(0, |l| l.hidden * l.expansion),
+            conv_kernel: first.map_or(0, |l| l.convolution.kernel),
+            attn_frames: geometry.attn_frames,
+            chunk: geometry.chunk,
+            eps: LN_EPS,
+            layers: self
+                .layers
+                .iter()
+                .zip(&geometry.pos)
+                .map(|(l, pos)| StreamLayerWeights {
+                    norm_ff1: norm_view(&l.norm_ff1),
+                    ff1_in: &l.ff1.input.weight,
+                    ff1_out: &l.ff1.output.weight,
+                    norm_attn: norm_view(&l.norm_attn),
+                    q: &l.attention.q.weight,
+                    k: &l.attention.k.weight,
+                    v: &l.attention.v.weight,
+                    out: &l.attention.out.weight,
+                    pos,
+                    bias_u: &l.attention.bias_u,
+                    bias_v: &l.attention.bias_v,
+                    norm_conv: norm_view(&l.norm_conv),
+                    pointwise_in: &l.convolution.pointwise_in,
+                    depthwise: &l.convolution.depthwise,
+                    depthwise_bias: l.convolution.depthwise_bias.as_deref(),
+                    conv_norm: norm_view(&l.convolution.norm),
+                    pointwise_out: &l.convolution.pointwise_out,
+                    norm_ff2: norm_view(&l.norm_ff2),
+                    ff2_in: &l.ff2.input.weight,
+                    ff2_out: &l.ff2.output.weight,
+                    norm_out: norm_view(&l.norm_out),
+                })
+                .collect(),
+        }
+    }
+
     /// Streaming geometry for `context = [left, right]` (chunked limited).
     /// Chunks must align with NeMo's chunk index over `[cache ; chunk]`,
     /// which holds when the left context is a whole number of chunks.

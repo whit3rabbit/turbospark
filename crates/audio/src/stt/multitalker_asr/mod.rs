@@ -38,6 +38,7 @@ use turbospark_model_io::safetensors::SafetensorsFile;
 use crate::models::stt::nemotron_asr::encoder::{
     EncoderStreamCache, NemotronEncoder, StreamGeometry,
 };
+pub use crate::models::stt::nemotron_asr::encoder::{StreamEncoderWeights, StreamLayerWeights};
 use crate::models::stt::nemotron_asr::rnnt::{
     greedy_resume, GreedyStreamState, Joint, NemotronPredictor,
 };
@@ -178,6 +179,43 @@ impl SpeakerStream {
     /// Valid rows in the attention cache (NeMo `cache_last_channel_len`).
     pub fn cache_len(&self) -> usize {
         self.cache.attn_len
+    }
+}
+
+/// Runs the streaming encoder layers for several speakers in one call, on
+/// a device that holds each speaker's attention and conv caches. Not
+/// bit-exact against the CPU `stream_layers`; an implementation documents
+/// its tolerance.
+pub trait SpeakerEncoder: Send {
+    /// `inputs[b]` is the layer-0 input (`[rows, hidden]`, from
+    /// [`MultitalkerAsr::apply_speaker_kernels`]) of the speaker whose
+    /// caches live in slot `slots[b]`; `cache_lens[b]` is that speaker's
+    /// valid attention-cache rows before this step and `valid` the chunk's
+    /// real rows. Returns each speaker's `[rows, hidden]` encoder output in
+    /// the same order. A slot's caches start zeroed and change only when
+    /// the slot is stepped.
+    fn stream_layers(
+        &mut self,
+        slots: &[usize],
+        inputs: &[&[f32]],
+        rows: usize,
+        valid: usize,
+        cache_lens: &[usize],
+    ) -> Result<Vec<Vec<f32>>>;
+}
+
+/// Lends a device encoder to a session, so its resident weights outlive
+/// one recording; the caller resets its caches between sessions.
+impl<T: SpeakerEncoder + ?Sized> SpeakerEncoder for &mut T {
+    fn stream_layers(
+        &mut self,
+        slots: &[usize],
+        inputs: &[&[f32]],
+        rows: usize,
+        valid: usize,
+        cache_lens: &[usize],
+    ) -> Result<Vec<Vec<f32>>> {
+        (**self).stream_layers(slots, inputs, rows, valid, cache_lens)
     }
 }
 
@@ -450,6 +488,48 @@ impl MultitalkerAsr {
             pre.valid,
             &mut stream.cache,
         )?;
+        self.decode_step(pre, layer0_input, encoded, stream, keep_all)
+    }
+
+    /// [`step`](Self::step) after a [`SpeakerEncoder`] ran the encoder
+    /// layers for this speaker: advances the stream's attention-cache
+    /// length as `stream_layers` does (the device holds the caches
+    /// themselves), then decodes. `layer0_input` comes from
+    /// [`apply_speaker_kernels`](Self::apply_speaker_kernels).
+    pub fn step_encoded(
+        &self,
+        pre: &PreEncoded,
+        layer0_input: Vec<f32>,
+        encoded: Vec<f32>,
+        stream: &mut SpeakerStream,
+        keep_all: bool,
+    ) -> Result<StepOutput> {
+        if encoded.len() != pre.rows * self.config.encoder_hidden {
+            return Err(SpeechError::Audio(format!(
+                "device encoder returned {} values for {} rows",
+                encoded.len(),
+                pre.rows
+            )));
+        }
+        stream.cache.attn_len = (stream.cache.attn_len + pre.rows).min(self.geometry.attn_frames);
+        self.decode_step(pre, layer0_input, encoded, stream, keep_all)
+    }
+
+    /// The streaming encoder's weights, for a [`SpeakerEncoder`] device.
+    pub fn stream_weights(&self) -> StreamEncoderWeights<'_> {
+        self.encoder.stream_weights(&self.geometry)
+    }
+
+    /// Greedy RNN-T over this step's encoder rows, resumed from the
+    /// stream's decoder state.
+    fn decode_step(
+        &self,
+        pre: &PreEncoded,
+        layer0_input: Vec<f32>,
+        encoded: Vec<f32>,
+        stream: &mut SpeakerStream,
+        keep_all: bool,
+    ) -> Result<StepOutput> {
         let encoded_len = if keep_all {
             pre.valid
         } else {
