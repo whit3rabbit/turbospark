@@ -213,6 +213,10 @@ extension AppModel {
 
     func performServerStart(attachChat: Bool) async {
         defer { serverBusy = false }
+        // Cleared here rather than in `startServer()`: a favorite starts
+        // through this path too, and a stale failure would reappear in the
+        // menu bar after that server is stopped.
+        serverStartFailure = nil
         // The embedding model is attached after the server is up, not as a
         // start option: a refused or slow one (a first Core ML load) must
         // not fail or stall the start.
@@ -297,6 +301,7 @@ extension AppModel {
             // publish point and stopped itself, reporting "Server
             // stopped" for a server the user had just asked for.
             self.serverStopRequested = false
+            self.serverStartFailure = error.localizedDescription
             let msg = AppStrings.localized("Failed to start server: \(error.localizedDescription)")
             self.error = msg
             showToast(msg, style: .error)

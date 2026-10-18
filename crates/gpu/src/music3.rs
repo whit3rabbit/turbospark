@@ -8,6 +8,25 @@ use std::rc::Rc;
 pub(crate) static SOURCE: &str = include_str!("shaders/music3.metal");
 // Native MLX arithmetic needs precise division; the FP32 diagnostic keeps its
 // established compiler policy. Both sources are bundled and cache separately.
+/// MLX's `steel_gemm_splitk_axpby` rule: for a small `M x N` output with a long
+/// `K` it runs the K range as several partitions, each a float32 chain from zero,
+/// then sums the partials in order and rounds once. Returns the partition count,
+/// or `None` when MLX uses a single K chain (or the partitions would be ragged,
+/// which this does not model). The Max and Ultra GPUs take larger shapes.
+fn mlx_splitk_partitions(device_name: &str, m: usize, n: usize, k: usize) -> Option<usize> {
+    let threshold = if device_name.contains("Max") || device_name.contains("Ultra") {
+        2048
+    } else {
+        1024
+    };
+    if m.div_ceil(16) * n.div_ceil(16) > threshold || k / 16 < 8 || k < m.max(n) {
+        return None;
+    }
+    let tiles = m.div_ceil(32) * n.div_ceil(32);
+    let parts = ((k / 16) / tiles).next_power_of_two().clamp(2, 32);
+    (k % (parts * 16) == 0).then_some(parts)
+}
+
 static KOKORO_SOURCE: &str = concat!(
     "// turbospark: precise-math\n#define KOKORO_CONTRACTS\n",
     include_str!("shaders/music3.metal"),
@@ -115,6 +134,15 @@ struct LinearPlan {
     kernel: &'static str,
     params: Vec<u8>,
     groups: u64,
+    count: usize,
+}
+/// Planned convolution: kernel, packed parameters, and dispatch size.
+struct ConvPlan {
+    source: &'static str,
+    kernel: &'static str,
+    params: Vec<u8>,
+    groups: u64,
+    threads: u64,
     count: usize,
 }
 impl Drop for Music3Weight {
@@ -1358,6 +1386,20 @@ impl Music3Weight {
                 split -= 1;
             }
         }
+        // MLX multiplies a small dense bf16/f16 matrix by a tall-K weight with a
+        // split-K GEMM (`steel_gemm_splitk_axpby`): each K partition accumulates in
+        // its own float32 chain, the partials are summed in float32 in partition
+        // order, and the sum is rounded once. A single K chain differs in the last
+        // bit for a few outputs, which is enough to flip a sampled code downstream.
+        // M == 1 is a GEMV and keeps its own kernel. The depth projection and audio
+        // heads hit this with both CFG rows batched (M = 2).
+        let mut dense_split = false;
+        if dtype != Music3DType::F32 && self.encoding.parameters().0 < 3 && !kokoro && rows > 1 {
+            if let Some(parts) = mlx_splitk_partitions(&name, rows, output_dim, input_dim) {
+                split = parts;
+                dense_split = true;
+            }
+        }
         if kokoro && rows > 1 {
             // MLX 0.31.2 uses the larger threshold on Max/Ultra devices.
             let threshold = if name.contains("Max") || name.contains("Ultra") {
@@ -1418,6 +1460,27 @@ impl Music3Weight {
         let fp_wide = fp_gemv && wide;
         let fp_vector = fp_gemv && !wide && values_per_lane != 0;
         p.push((kokoro) as u32);
+        // 1: sum the K partitions in float32 without rounding each one first.
+        p.push(dense_split as u32);
+        // MLX's wide GEMV for 2 to 15 vectors against a dense bf16/f16 matrix on M3
+        // and later (`gemv_wide`): up to five vectors per pass, at most three passes,
+        // 32 lanes per row for one pass or a tiny output, otherwise 16.
+        let dense_wide = dtype != Music3DType::F32
+            && matches!(self.encoding.parameters().0, 1 | 2)
+            && !kokoro
+            && bias_len.is_none()
+            && (2..=15).contains(&rows)
+            && output_dim > 1
+            && input_dim % 4 == 0
+            && ["M3", "M4", "M5"]
+                .iter()
+                .any(|generation| name.contains(generation));
+        let wide_lanes = if rows.div_ceil(5) == 1 || output_dim <= 64 {
+            32
+        } else {
+            16
+        };
+        p.push(wide_lanes as u32);
         let p = bytes(&p);
         // The Music 3 LM head window (`logit_window` in the audio crate)
         // is exact only while every output tile is at most 64 wide and
@@ -1428,7 +1491,9 @@ impl Music3Weight {
             } else {
                 weight_source(dtype, self.scales_bf16)
             },
-            kernel: if mma && rows <= 16 {
+            kernel: if dense_wide {
+                "music3_gemv_wide"
+            } else if mma && rows <= 16 {
                 "music3_linear_tiled_16x64"
             } else if mma {
                 "music3_linear_tiled_32x32"
@@ -1444,7 +1509,9 @@ impl Music3Weight {
                 "music3_linear"
             },
             params: p,
-            groups: if mma && rows <= 16 {
+            groups: if dense_wide {
+                output_dim.div_ceil(4 * (32 / wide_lanes)) as u64
+            } else if mma && rows <= 16 {
                 (rows.div_ceil(16) * output_dim.div_ceil(64)) as u64
             } else if mma {
                 (rows.div_ceil(32) * output_dim.div_ceil(32)) as u64
@@ -1572,8 +1639,31 @@ impl Music3Weight {
         transpose: bool,
         dtype: Music3DType,
     ) -> Result<Vec<f32>, GpuError> {
+        self.convolution_batched_typed(
+            input, bias, ic, oc, kernel, stride, pad, dilation, transpose, dtype, 1,
+        )
+    }
+    /// [`Self::convolution_typed`] for one element of a batch of `batch`
+    /// independent inputs that MLX would run as a single call. Each element's
+    /// output depends only on its own input; `batch` changes only how MLX splits
+    /// K (its split-K rule sees `batch * outlen` rows), which changes rounding.
+    #[allow(clippy::too_many_arguments)]
+    pub fn convolution_batched_typed(
+        &self,
+        input: &[f32],
+        bias: Option<&[f32]>,
+        ic: usize,
+        oc: usize,
+        kernel: usize,
+        stride: usize,
+        pad: usize,
+        dilation: usize,
+        transpose: bool,
+        dtype: Music3DType,
+        batch: usize,
+    ) -> Result<Vec<f32>, GpuError> {
         self.convolution_impl(
-            input, bias, ic, oc, kernel, stride, pad, dilation, transpose, dtype, 1, false,
+            input, bias, ic, oc, kernel, stride, pad, dilation, transpose, dtype, 1, false, batch,
         )
     }
     #[allow(clippy::too_many_arguments)]
@@ -1606,13 +1696,15 @@ impl Music3Weight {
             Music3DType::F32,
             groups,
             true,
+            1,
         )
     }
     #[allow(clippy::too_many_arguments)]
-    fn convolution_impl(
+    #[allow(clippy::too_many_arguments)]
+    fn conv_plan(
         &self,
-        input: &[f32],
-        bias: Option<&[f32]>,
+        input_len: usize,
+        bias_len: Option<usize>,
         ic: usize,
         oc: usize,
         kernel: usize,
@@ -1623,7 +1715,8 @@ impl Music3Weight {
         dtype: Music3DType,
         groups: usize,
         kokoro: bool,
-    ) -> Result<Vec<f32>, GpuError> {
+        batch: usize,
+    ) -> Result<ConvPlan, GpuError> {
         if groups == 0 || ic % groups != 0 || oc % groups != 0 {
             return Err(bad("audio convolution groups do not divide channels"));
         }
@@ -1640,13 +1733,13 @@ impl Music3Weight {
             || stride == 0
             || dilation == 0
             || (transpose && dilation != 1)
-            || input.is_empty()
-            || input.len() % ic != 0
-            || bias.is_some_and(|b| b.len() != oc)
+            || input_len == 0
+            || input_len % ic != 0
+            || bias_len.is_some_and(|b| b != oc)
         {
             return Err(bad("Music 3 convolution geometry mismatch"));
         }
-        let len = input.len() / ic;
+        let len = input_len / ic;
         let padding = pad
             .checked_mul(2)
             .ok_or_else(|| bad("Music 3 padding overflows"))?;
@@ -1669,7 +1762,22 @@ impl Music3Weight {
         .ok_or_else(|| bad("Music 3 convolution collapsed or overflowed"))?;
         let count = product(&[oc, outlen])?;
         let mma = groups == 1 && (kokoro || dtype != Music3DType::F32);
+        // MLX runs a stride-any, non-transposed single-group convolution with
+        // 16-aligned channels through its implicit-GEMM kernel, whose K order
+        // visits the taps inside each 16-channel chunk. Match that order.
+        let implicit_order =
+            !kokoro && mma && !transpose && ic % 16 == 0 && (oc <= 16 || oc % 16 == 0);
         let depth = kokoro && transpose && groups == ic && ic == oc;
+        // A transposed convolution is an input-dilated conv, which MLX runs as an
+        // unfold followed by `steel_matmul(M = output positions, N = oc,
+        // K = taps * ic)`: the same split-K rule as the dense matmul. K is
+        // tap-major, as ours already is.
+        let conv_split = if mma && !kokoro && transpose && groups == 1 {
+            let name = self.state.context.borrow().device().name().to_owned();
+            mlx_splitk_partitions(&name, outlen * batch.max(1), oc, kernel * ic).unwrap_or(1)
+        } else {
+            1
+        };
         let p = bytes(&params(&[
             ic,
             oc,
@@ -1680,47 +1788,122 @@ impl Music3Weight {
             transpose as usize,
             len,
             outlen,
-            bias.is_some() as usize,
+            bias_len.is_some() as usize,
             dtype as usize,
             self.encoding.parameters().0 as usize,
             groups,
-            (kokoro) as usize,
+            (kokoro || implicit_order) as usize,
+            conv_split,
         ])?);
+        // Taps of a transposed conv that miss the input are exact zero blocks, so
+        // a single-partition stride > 1 conv with 8-aligned channels runs only
+        // the taps each output phase can see (see `music3_convt_phase`).
+        let phase = mma
+            && !kokoro
+            && transpose
+            && groups == 1
+            && conv_split == 1
+            && stride > 1
+            && ic % 8 == 0;
+        let kernel_name = if depth {
+            "audio_depthwise_transpose"
+        } else if groups != 1 {
+            "audio_conv_grouped"
+        } else if phase {
+            "music3_convt_phase_32x32"
+        } else if mma {
+            "music3_conv_tiled_32x32"
+        } else {
+            "music3_conv"
+        };
+        Ok(ConvPlan {
+            source: if kokoro { KOKORO_SOURCE } else { source(dtype) },
+            kernel: kernel_name,
+            params: p,
+            groups: if depth {
+                (outlen.div_ceil(8) * oc) as u64
+            } else if phase {
+                (stride * outlen.div_ceil(stride).div_ceil(32) * oc.div_ceil(32)) as u64
+            } else if mma {
+                (outlen.div_ceil(32) * oc.div_ceil(32)) as u64
+            } else {
+                count as u64
+            },
+            threads: if depth { 32 } else { 128 },
+            count,
+        })
+    }
+    /// Append one planned convolution to `pass`. `x` is `(buffer, byte offset)`.
+    fn encode_conv(
+        &self,
+        c: &mut MetalContext,
+        pass: &PassEncoder,
+        plan: &ConvPlan,
+        x: (&MetalBuffer, u64),
+        bias: &MetalBuffer,
+        out: &MetalBuffer,
+    ) -> Result<(), GpuError> {
+        let pipeline = c.pipeline(
+            plan.source,
+            plan.kernel,
+            &crate::rms_norm::unused_function_constants(),
+            b"",
+        )?;
+        pass.encode_threadgroups(
+            &pipeline,
+            &[
+                (&self.bytes, 0, 0),
+                (x.0, 1, x.1),
+                (bias, 2, 0),
+                (out, 3, 0),
+            ],
+            &[(&plan.params, 4)],
+            plan.groups,
+            plan.threads,
+        );
+        Ok(())
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn convolution_impl(
+        &self,
+        input: &[f32],
+        bias: Option<&[f32]>,
+        ic: usize,
+        oc: usize,
+        kernel: usize,
+        stride: usize,
+        pad: usize,
+        dilation: usize,
+        transpose: bool,
+        dtype: Music3DType,
+        groups: usize,
+        kokoro: bool,
+        batch: usize,
+    ) -> Result<Vec<f32>, GpuError> {
+        let plan = self.conv_plan(
+            input.len(),
+            bias.map(<[f32]>::len),
+            ic,
+            oc,
+            kernel,
+            stride,
+            pad,
+            dilation,
+            transpose,
+            dtype,
+            groups,
+            kokoro,
+            batch,
+        )?;
         autorelease_pool(|| {
             let mut c = self.state.context.borrow_mut();
-            let pipeline = c.pipeline(
-                if kokoro { KOKORO_SOURCE } else { source(dtype) },
-                if depth {
-                    "audio_depthwise_transpose"
-                } else if groups != 1 {
-                    "audio_conv_grouped"
-                } else if mma {
-                    "music3_conv_tiled_32x32"
-                } else {
-                    "music3_conv"
-                },
-                &crate::rms_norm::unused_function_constants(),
-                b"",
-            )?;
             let x = c.new_buffer_with_data(input);
             let b = c.new_buffer_with_data(bias.unwrap_or(&[0.0]));
-            let out = c.new_output_buffer((count * 4) as u64);
+            let out = c.new_output_buffer((plan.count * 4) as u64);
             let pass = c.begin_pass();
-            pass.encode_threadgroups(
-                &pipeline,
-                &[(&self.bytes, 0, 0), (&x, 1, 0), (&b, 2, 0), (&out, 3, 0)],
-                &[(&p, 4)],
-                if depth {
-                    (outlen.div_ceil(8) * oc) as u64
-                } else if mma {
-                    (outlen.div_ceil(32) * oc.div_ceil(32)) as u64
-                } else {
-                    count as u64
-                },
-                if depth { 32 } else { 128 },
-            );
+            self.encode_conv(&mut c, &pass, &plan, (&x, 0), &b, &out)?;
             pass.commit_and_wait_checked()?;
-            finite_output(&out, count)
+            finite_output(&out, plan.count)
         })
     }
     /// One threadgroup owns recurrence state; no host round-trip per timestep.

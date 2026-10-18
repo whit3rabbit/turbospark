@@ -29,7 +29,7 @@ let package = Package(
         // Tags through v2.7.0 pinned the PREVIOUS release's zip (`v2.5.0`
         // linked the 2.4.0 binary), so never pin one of those exactly; use
         // its `swift-vX.Y.Z` commit by revision. See docs/SYNTEXT.md section 6.
-        .package(url: "https://github.com/whit3rabbit/syntext", exact: "2.7.1"),
+        .package(url: "https://github.com/whit3rabbit/syntext", exact: "2.7.2"),
         .package(url: "https://github.com/sparkle-project/Sparkle.git", from: "2.9.6"),
         // Exact on purpose. From v0.15.6 FluidAudio links a Rust staticlib
         // (NemoTextProcessing): a duplicate _rust_eh_personality and a fourth

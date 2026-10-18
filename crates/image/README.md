@@ -1,6 +1,6 @@
 # turbospark-image
 
-Native Z-Image-Turbo image generation pipeline: prompt conditioning, Qwen3 text encoder, dense diffusion transformer, FlowMatch Euler scheduler, VAE decoder, packed component install format, macOS Metal backend, and pure-Rust CPU reference backend.
+Native image generation pipeline for the Z-Image-Turbo, Qwen-Image-2.1, Qwen-Image-2.1-Turbo, and Krea 2 Turbo families: prompt conditioning, Qwen3 text encoder, dense diffusion transformer, FlowMatch Euler scheduler, VAE decoder, packed component install format, macOS Metal backend, and pure-Rust CPU reference backend.
 
 Detailed architectural specifications and benchmark numbers are documented in [`docs/ZIMAGE_TURBO.md`](../../docs/ZIMAGE_TURBO.md) and design records in [`docs/IMAGE_GENERATION.md`](../../docs/IMAGE_GENERATION.md).
 
@@ -8,12 +8,12 @@ Downstream workspace crates import this package via the `turbospark_image` libra
 
 ```toml
 [dependencies]
-turbospark-image = { path = "../image", version = "0.1.0" }
+turbospark-image = { path = "../image", version = "0.3.2" }
 ```
 
 ## Purpose & Role
 
-`turbospark-image` provides an end-to-end, zero-dependency native diffusion pipeline for image generation on Apple Silicon, with a portable CPU reference implementation for non-macOS targets.
+`turbospark-image` provides an end-to-end, pure-Rust native diffusion pipeline for image generation on Apple Silicon, with a portable CPU reference implementation for non-macOS targets.
 
 This crate is NOT a text-model family and does not plug into `RealForwardRunner`. Image installs carry their own manifest schema, install receipts, and resource envelopes validated via `install.rs`.
 
@@ -24,7 +24,7 @@ This crate is NOT a text-model family and does not plug into `RealForwardRunner`
 
 ## Key Modules
 
-- `install.rs`: Image model manifest schema, receipt verification, and fixed resource envelope constants.
+- `install.rs`: Image model manifest schema, receipt verification, and per-family resource envelope constants.
 - `builder.rs` / `builder_files.rs` / `builder_manifest.rs`: Offline install builder for assembling packed `.gturbo` image directories.
 - `packed.rs`: Packed component store reader (`index.json` + `tensors.bin`) supporting the legacy affine INT4 group-64 layout and MLX affine U32 weights at 2, 3, 4, 5, 6, or 8 bits with F16/BF16 scale-bias companions.
 - `conditioning.rs`: Prompt framing, tokenizer loading, and padded token ID preparation.
@@ -75,4 +75,4 @@ cargo test -p turbospark-image --test zimage_mlx_payload_network --release \
 
 1. **Platform Dependency Gating**: Metal and GPU dependencies live under `[target.'cfg(target_os = "macos")'.dependencies]`. All Metal calls must remain gated behind `#[cfg(target_os = "macos")]` to maintain cross-target buildability.
 2. **Autorelease Pool Encapsulation**: A full image generation pass executes hundreds of Metal command passes across text encoding, denoising steps, and VAE decoding. Inner stages must manage autorelease pools to prevent unbounded memory growth.
-3. **Distinct Install Architecture**: Image checkpoints must never be loaded into `turbospark-runtime` or `turbospark-model` text pipelines; they have distinct manifest structures and execution requirements.
+3. **Distinct Install Architecture**: Image checkpoints must never be loaded into `turbospark-runtime` or `turbospark-model-io` text pipelines; they have distinct manifest structures and execution requirements.

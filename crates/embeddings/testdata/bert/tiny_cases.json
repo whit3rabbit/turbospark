@@ -1,0 +1,203 @@
+{
+ "cases": {
+  "bert": [
+   {
+    "ids": [
+     2,
+     7,
+     3
+    ],
+    "mask": null
+   },
+   {
+    "ids": [
+     2,
+     11,
+     5,
+     9,
+     40,
+     3
+    ],
+    "mask": null
+   },
+   {
+    "ids": [
+     2,
+     7,
+     12,
+     17,
+     22,
+     27,
+     32,
+     37,
+     42,
+     47,
+     52,
+     57,
+     62,
+     67,
+     72,
+     77,
+     82,
+     87,
+     92,
+     7,
+     12,
+     17,
+     22,
+     3
+    ],
+    "mask": null
+   },
+   {
+    "ids": [
+     2,
+     17,
+     23,
+     3,
+     0,
+     0,
+     0
+    ],
+    "mask": [
+     1,
+     1,
+     1,
+     1,
+     0,
+     0,
+     0
+    ]
+   },
+   {
+    "ids": [
+     2,
+     0,
+     15,
+     0,
+     3
+    ],
+    "mask": null
+   }
+  ],
+  "xlmr": [
+   {
+    "ids": [
+     0,
+     7,
+     2
+    ],
+    "mask": null
+   },
+   {
+    "ids": [
+     0,
+     11,
+     5,
+     9,
+     40,
+     2
+    ],
+    "mask": null
+   },
+   {
+    "ids": [
+     0,
+     9,
+     16,
+     23,
+     30,
+     37,
+     44,
+     51,
+     58,
+     65,
+     72,
+     79,
+     86,
+     93,
+     10,
+     17,
+     24,
+     31,
+     38,
+     45,
+     52,
+     59,
+     66,
+     2
+    ],
+    "mask": null
+   },
+   {
+    "ids": [
+     0,
+     17,
+     23,
+     2,
+     1,
+     1,
+     1
+    ],
+    "mask": [
+     1,
+     1,
+     1,
+     1,
+     0,
+     0,
+     0
+    ]
+   },
+   {
+    "ids": [
+     0,
+     1,
+     15,
+     1,
+     1,
+     30,
+     2
+    ],
+    "mask": null
+   }
+  ]
+ },
+ "variants": {
+  "bert": "bert",
+  "xlmr": "xlmr",
+  "q4": "xlmr",
+  "q6": "xlmr",
+  "bf16": "xlmr"
+ },
+ "config": {
+  "bert": {
+   "vocab_size": 96,
+   "hidden_size": 64,
+   "num_hidden_layers": 2,
+   "num_attention_heads": 4,
+   "intermediate_size": 128,
+   "hidden_act": "gelu",
+   "max_position_embeddings": 24,
+   "type_vocab_size": 2,
+   "layer_norm_eps": 1e-12,
+   "pad_token_id": 0,
+   "position_embedding_type": "absolute"
+  },
+  "xlmr": {
+   "vocab_size": 96,
+   "hidden_size": 64,
+   "num_hidden_layers": 2,
+   "num_attention_heads": 4,
+   "intermediate_size": 128,
+   "hidden_act": "gelu",
+   "max_position_embeddings": 26,
+   "type_vocab_size": 1,
+   "layer_norm_eps": 1e-05,
+   "pad_token_id": 1,
+   "bos_token_id": 0,
+   "eos_token_id": 2,
+   "position_embedding_type": "absolute"
+  }
+ }
+}

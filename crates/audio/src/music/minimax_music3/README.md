@@ -220,6 +220,14 @@ controlled f32 gate into BF16 equivalence or a song-quality claim.
 
 ## Metal performance
 
+> The WAV hashes in this section (`29c340d1...`, `16c5db73...`, `361ad4d6...`) and
+> every "byte-identical" claim describe the commits they were measured on, all
+> before `cc9344ee`. Since then the exact profile's arithmetic changed on purpose
+> to match MLX (dense matmul, convolution and quantized split-K dispatch); its 8 s
+> hashes are now `46243600...` (1 step) and `1cbb8ce0...` (30 steps). Timing after
+> the changes is in the "Exactness cost" note below.
+> See [docs/audio/minimax_music3.md](../../../../../docs/audio/minimax_music3.md).
+
 Indicative, not frozen: Apple M4 Max, AC power, release build, the cached
 `mlx-community/MiniMax-Music3-4bit` snapshot (`c7ea32923b24`), seed 7, caption
 "upbeat acoustic folk with warm guitar", lyrics `[instrumental]`, one discarded
@@ -310,6 +318,105 @@ Tried and not kept (no demonstrated gain on a busy host, so no code):
   per weight: kept because it is exact and cheap, but it moved the 8 s MXFP8
   depth stage only from about 47.6 s to 45.0 s. MXFP8 GEMVs read twice the
   bytes of 4-bit and are not decode-bound.
+
+### MLX as a speed reference
+
+Real MLX 0.32.3 (Python, `mlx-audio` `feb25a37`, its own `generate`) on the same
+host and clip, 4-bit profile, seed 7, AC power, one run per row after a warmup:
+1 step 11.0 s and 11.7 s (AR 9.3 to 9.9 s, flow with vocoder 1.7 to 1.9 s); 30
+steps 36.6 s (AR 10.9 s, flow 25.8 s). Two 1-step runs hash identically. Ours is
+about 2.4x slower in the exact profile (85.6 s) and about 1.7x slower in the Fast
+profile (about 63 s, busy host), producing the same audio: the 30-step 16-bit WAV
+equals MLX's output in 0 of 705,536 samples. The vocoder shows the largest ratio
+(about 6.7 s against roughly 1 s before the vocoder blocks became one
+command buffer each; about 4.0 s after, about 2.6 s with the polyphase transposed conv; indicative on a busy host). Details in
+[docs/audio/minimax_music3.md](../../../../../docs/audio/minimax_music3.md).
+
+### Exactness cost
+
+Making the exact profile bit-identical to MLX (dense, convolution and quantized
+split-K dispatch) cost almost nothing. Apple M4 Max, AC power, 1-minute load
+average 1.4 to 3, release builds, 8 s clip, the 4-bit profile, two alternating
+single runs per arm of the build before the changes (`a517d23d`) and after
+(`benchmark_music3.py`; the WAV hashes differ by design):
+
+| | before | after |
+|---|---|---|
+| 1 step | 29.2 s, 28.0 s | 29.0 s, 29.0 s |
+| 30 steps | 85.4 s, 83.9 s | 85.6 s, 85.7 s |
+| depth, DiT, LM decode (30 steps, mean) | 13.0, 58.5, 6.1 s | 13.1, 58.7, 6.0 s |
+| vocoder (mean) | 5.8 to 6.1 s | 6.7 s |
+
+About 1% at 30 steps. The vocoder is the only stage that moved (about 0.7 s): its
+transposed convolutions now run MLX's split-K partitions and the tiled conv
+gathers chunk-major. Two runs per arm, not a frozen benchmark row.
+
+### DiT projection kernel: hoisted 4-bit decode
+
+`music3_linear_tiled` decodes each four-bit weight tile in the threadgroup
+before the 8x8 MMAs. Ablating it on the three real 691-row DiT shapes (quiet
+host, `music3_linear_bench sequence_timing`, 691 x 2048 x 16384 shown, 18.3 ms)
+located the time: removing the decode left 10.2 ms, removing the activation
+staging left 15.3 ms, removing the MMAs left 15.6 ms, and removing all three
+left 4.2 ms of barriers and epilogue. The matrix unit was about 15 percent of
+the kernel, so this projection was decode-bound, not MMA-bound (about 2.5
+TFLOPS).
+
+The fast four-bit path now reads the 32-bit word, the scale and the offset once
+per lane and reuses them for all eight codes, instead of recomputing the 64-bit
+group index and reloading them for each code. Each weight is still
+`float(code) * scale + offset` rounded the same way, and the MMA chain is
+untouched. Interleaved on the same quiet host, before to after: 2048x2048
+2.45 to 1.85 ms, 2048x16384 18.3 to 13.3 ms, 8192x2048 9.5 to 7.5 ms, so the
+six projections of a block go from about 36.6 to about 28 ms.
+
+End to end on the real 4-bit checkpoint (8 s, medians of three interleaved runs
+per arm, release builds of the commit before and after, AC power, CPU about 87
+percent idle but a 1-minute load average of 8, so not a benchmark row): 1 step
+32.9 s to 30.1 s (RTF 4.11 to 3.76); 30 steps 130.0 s to 109.4 s (RTF 16.25 to
+13.68), with the DiT stage 100.3 s to 78.7 s. The depth stage also fell (15.8
+to 13.9 s at 1 step) because its row-14 and row-16 steps use the same tiled
+kernel. Both arms wrote byte-identical WAVs (`16c5db73...` for 8 s, 1 step and
+`361ad4d6...` for 8 s, 30 steps, the hashes recorded above).
+
+Exactness: `music3_linear_bench hashes` (1,021 lines) and the new `dit_hashes`
+mode (192 lines: 4- and 8-bit, groups 32 and 64, F16 and BF16, the real
+691-row DiT shapes plus 690 and 129 rows and a ragged 2200-wide output, with and
+without bias) are identical before and after. A mutation that perturbs the
+hoisted weight changes 92 and 96 of those lines, so the oracle does run the new
+path. The `music3_sequence`, `music3_parity`, `music3_precision` and
+`music3_metal` gates pass.
+
+A second exact change in the same kernel: the activation tile is staged with
+four-wide loads (`packed_float4`, so no alignment beyond a float is assumed)
+when the row length and K chunk start are multiples of four and the chunk is
+full, and falls back to the scalar loop otherwise. It moves the same values.
+Kernel level (`sequence_timing`, quiet GPU, three repeats): 691 x 2048 x 2048
+1.84 to 1.48 ms, 691 x 2048 x 16384 12.9 to 10.3 ms, 691 x 8192 x 2048 7.25 to
+5.1 ms. End to end, interleaved against the build with only the decode hoist
+(medians of three, byte-identical WAVs `16c5db73...` and `361ad4d6...`, host
+busier than the run above so absolute times are higher): 1 step 35.3 s to
+34.2 s, 30 steps 113.6 s to 99.4 s, DiT stage 81.5 s to 68.2 s. The oracles
+(`hashes`, `dit_hashes`) are unchanged, and a mutation that swaps two lanes of
+the vector store changes 321 of 1,021 and all 192 lines.
+
+After both changes, a second ablation of the 691 x 2048 x 16384 projection
+(10.7 ms) puts the four-bit decode at about 2.7 ms and the MMAs at about 3.4 ms
+(roughly 14 TFLOPS on their own, near the f32 ALU rate), with about 4.5 ms of
+staging, barriers and epilogue. Further exact gains would need those stages to
+overlap the MMAs; not attempted.
+
+Tried and not kept, with the same oracle and timing:
+
+- Taller or wider tiles (64x32, 32x64, 64x64 with the same 128 threads and MMA
+  chain). The decode is then shared by more rows, but 64x32 gained 8 percent on
+  ff_in and lost 18 percent on ff_out, and 64x64 was 2.3x slower, so none was
+  kept.
+- Making the K word the fastest lane index so neighbouring lanes read
+  contiguous words: no gain over the hoist alone.
+- A bf16 operand MMA would only speed up the part that is not the limit.
+- Aliasing the result tile onto the activation and weight tiles (12 KB to 8 KB
+  of threadgroup memory per group): about 1.5 percent, inside the noise.
 
 ### LM head window and AR command buffers
 
@@ -447,7 +554,32 @@ at the real shapes (691 positions, 32 heads of 64, rotary 32, feed-forward
 `dit_block_sequences_match_the_per_op_flow_bitwise` the whole flow stage on
 the seven tiny native profiles. Every guard was mutation-checked.
 
-## Flow guidance reuse (opt-in)
+## Default flow profile
+
+`Music3Runner` (the app, server, FFI and `turbospark-music` all use it) opens in
+`FlowProfile::Fast`: Adams-Bashforth 2, the unconditional guidance branch
+reused at interval 3 after a warmup of 2, and 21 steps when a request names no
+count. That is 30 DiT forwards instead of 60. An explicit step count is always
+honored, so a client that sends 30 (the Swift default) gets AB2 with reuse at 30
+steps. `FlowProfile::Exact` restores the reference: Euler, both branches every
+step, 30 steps by default.
+
+This default does **not** follow MLX's trajectory. The audio differs from the
+exact output (the measured drift is in the AB2 section: correlation 0.974 and
+1.30 dB log-band L1 for the 21-step fast profile against the exact 30-step
+WAV, one prompt, one seed, no listening test). Everything that compares against
+MLX or a CPU reference pins the exact profile.
+
+- `turbospark-music generate --flow-profile exact` (or `fast`); the
+  `--flow-uncond-interval`, `--flow-uncond-warmup` and `--flow-solver` flags
+  override that part of either profile.
+- `Music3Runner::set_flow_profile(FlowProfile::Exact)` and
+  `Model::set_flow_profile`. `Model` itself still opens in `Exact`, so library
+  users and the fixture tests see the reference path.
+- `music3_bench` and `ab_music3_flow.py` default to `exact` so the WAV hashes in
+  this file stay reproducible; pass `--flow-profile fast` to measure the default.
+
+## Flow guidance reuse
 
 At the default 30 steps the DiT dominates a request: each Euler step runs the
 conditional and the unconditional (CFG) forward, and the 1-step table above
@@ -461,9 +593,10 @@ port (`flow_uncond_interval`); the numbers below are ours.
 
 Enable it with `Model::set_flow_guidance` / `Music3Runner::set_flow_guidance`,
 or `turbospark-music generate --flow-uncond-interval 3 [--flow-uncond-warmup 2]`.
-The default is `FlowGuidance::EXACT` (interval 1): the reference trajectory,
-with the 1 s, 2-step, seed 7 WAV still at SHA-256 `29c340d1...`. Reuse changes
-the output, so it is never implied by another option.
+`FlowGuidance::EXACT` (interval 1) is the reference trajectory, with the 1 s,
+2-step, seed 7 WAV at SHA-256 `29c340d1...` (the `Model` and `exact` profile
+behavior). The runner's default fast profile turns reuse on; see "Default flow
+profile". Reuse changes the output.
 
 Measured 2026-10-08 on Apple M4 Max, AC power, release build, the pinned
 `mlx-community/MiniMax-Music3-4bit` snapshot (`c7ea32923b24`), caption "upbeat
@@ -496,6 +629,69 @@ different metric. Treat it as a speed option, and listen before relying on it.
 It is a flow-stage saving only: the AR stage and vocoder are unchanged, and a
 60 s request is still far from real time.
 
+### Flow solver: Adams-Bashforth 2
+
+`FlowSolver::AdamsBashforth2` integrates the flow with `x += dt * (1.5 v - 0.5
+v_prev)` instead of Euler's `x += dt * v`. It is second order on the uniform
+sigma schedule and costs no extra DiT forward, so it is meant to be paired with
+fewer steps. `v` is the final guided velocity, so it composes with
+`FlowGuidance` reuse. The first step of every chunk has no history and is
+Euler, and history never crosses a chunk, so a one-step request is identical to
+Euler.
+
+Enable it with `Model::set_flow_solver` / `Music3Runner::set_flow_solver`, or
+`turbospark-music generate --flow-solver ab2` (`music3_bench` takes the same
+flag). `FlowSolver::Euler` is the reference trajectory and the `Model` and `exact`
+profile default, so the WAV hashes above are unchanged there. The runner's
+default fast profile selects AB2; see "Default flow profile".
+
+Verified in tests: the combiner is second order on `dx/dt = -x` (halving the
+step quarters the error where Euler's halves), a one-step request is bit-equal
+to Euler across a multi-chunk fixture, and the default path passes every pinned
+flow test.
+
+Measured 2026-10-17 on Apple M4 Max, AC power, release build, the pinned 4-bit
+snapshot (`c7ea32923b24`), caption "upbeat acoustic folk with warm guitar",
+lyrics `[instrumental]`, seed 7, 8 s (one chunk), one run per variant through
+`ab_music3_flow.py`, scored against the exact 30-step WAV with
+`spectral_distance.py`. The 1-minute load average was 8 but the CPU was about
+87 percent idle and the GPU idle, so DiT times are single runs and indicative,
+not benchmark rows. The `e21` and `reuse30` rows reproduce the figures above
+to the digit.
+
+| Variant (steps, solver, reuse) | DiT forwards | DiT | Correlation | Log-band L1 |
+|---|---|---|---|---|
+| exact: 30, Euler (reference) | 60 | 77.3 s | 1.0000 | 0 |
+| 30, AB2 | 60 | 76.1 s | 0.9911 | 1.60 dB |
+| 30, Euler, reuse 3/2 | 42 | 53.8 s | 0.9947 | 1.13 dB |
+| 21, Euler | 42 | 54.2 s | 0.9548 | 1.48 dB |
+| 21, AB2 | 42 | 55.2 s | 0.9730 | 1.33 dB |
+| 21, Euler, reuse 3/2 | 30 | 37.6 s | 0.9605 | 1.50 dB |
+| 21, AB2, reuse 3/2 | 30 | 36.5 s | 0.9742 | 1.30 dB |
+| 15, Euler | 30 | 39.0 s | 0.7249 | 2.93 dB |
+| 15, AB2 | 30 | 38.1 s | 0.7831 | 2.01 dB |
+| 15, AB2, reuse 3/2 | 22 | 28.9 s | 0.7988 | 1.90 dB |
+
+What it shows:
+
+- At equal steps AB2 is closer to the 30-step reference than Euler (21 steps:
+  0.973 vs 0.955; 15 steps: 0.783 vs 0.725). The gain is modest.
+- Fifteen steps is not enough for either solver here (about 0.78), so the
+  "15 AB2 steps matches 30 Euler steps" result reported for an external CUDA
+  port does not reproduce on this stack.
+- At equal cost, 42 forwards: Euler 30 with reuse (0.9947) beats AB2 21
+  (0.9730). At 30 forwards: AB2 21 with reuse (0.9742, 1.30 dB) beats Euler 21
+  with reuse (0.9605, 1.50 dB), both far above 15 steps. So the useful
+  combination is AB2 with reuse and about 21 steps, at roughly half the DiT time
+  of the exact path.
+- Euler 30 and AB2 30 agree at 0.9911 against each other, so the Euler
+  reference is not penalizing the more accurate solver much.
+
+Limits: one prompt, one seed, one run each, a drift metric and not a quality
+score, and no listening test (intelligibility, transients, chunk seams over a
+full song). Treat AB2 and reuse as speed options to listen to before relying on
+them.
+
 ### Evaluated against audio.cpp, not adopted
 
 - Flow chunk hop 150 (audio.cpp `flow_chunk_hop_frames`): not implemented.
@@ -513,6 +709,35 @@ It is a flow-stage saving only: the AR stage and vocoder are unchanged, and a
   pass (extra rows are nearly free when dispatch-bound), overlapping AR with
   flow (needs a `Send` backend), and a full on-device depth frame (needs a
   bit-exact on-device MLX threefry top-k).
+
+Re-read 2026-10-17 against `fspecii/audio.cpp-lowend-gpu` (`cc8d599`) and the
+upstream `0xShug0/audio.cpp` Music 3 docs:
+
+- AR guidance truncation (`MM3_AR_CFG_FRAMES=50`, `MM3_DEPTH_B1=1`): full CFG
+  for the first 50 frames (2 s), conditional only afterwards, which halves the
+  rows of the LM decode and depth steps (LM 36.5 to 28 ms per frame on their
+  CUDA stack). Our depth GEMVs cost roughly in proportion to rows, so this is
+  the largest remaining AR lever here; by arithmetic on the profile it could save
+  up to half of the depth stage on an 8 s clip. Not implemented: it changes the
+  AR trajectory, and the fork's own rule is that anything touching the AR
+  trajectory, chunking or context has to be judged by ear on a full song. Open.
+- Their negative results line up with ours and are not worth repeating: a fused
+  depth graph (zero gain), AR/flow pipelining on one GPU (net negative), a q4_0
+  depth decoder (vocal-band energy 87 to 61 percent), an F16 vocoder (15x
+  slower), and a third-order solver (worse than AB2). Their AB2 claim, 15 steps
+  matching 30 Euler steps, did not reproduce on this stack (see the AB2 table).
+- Flow chunk hop 150: the fork found it audibly broke songs although every
+  spectral metric passed, while the upstream doc advertises it as a 35 percent
+  flow saving. The two disagree; keep it unadopted.
+- Upstream `MM3_DEPTH_GPU_SAMPLE` and `MM3_DEPTH_GPU_FRAME` (device top-k sampler
+  and full device depth frame) are documented as byte-exact and perf-neutral,
+  which supports leaving the on-device depth frame deferred.
+- An F16 KV cache halves the decode allocation (about 50 percent longer songs on
+  a 12 GB card). Ours is f32 at 576 KB per position (about 0.9 GB for 60 s,
+  about 8 GB at the 360 s ceiling); F16 would change attention arithmetic.
+- `ensemble_takes` (K takes through one batched AR pass) and
+  `pipeline_overlap` (a second CUDA stream) are throughput features; neither
+  fits our row-proportional GEMVs or single-queue backend without new work.
 
 ## Rust API
 
@@ -542,6 +767,52 @@ Checkpoint-native BF16 activation parity, song quality, quiet-host frozen
 performance rows, durations beyond the 16 s memory probe, the other pinned
 profiles (8-bit, MXFP8, and the rest), real-time performance, and FFI/Swift
 integration require separate qualification.
+
+Native 4-bit comparison against MLX 0.32.3, measured 2026-10-17 on an Apple M4
+Max (`applegpu_g16s`) with the pinned `mlx-audio` `feb25a37` and the installed
+4-bit snapshot (`c7ea32923b24`), 3 AR frames, 2 flow steps, seed 7, the exact
+flow profile. The full account, the method, and the MLX dispatch rules are in
+[docs/audio/minimax_music3.md](../../../../../docs/audio/minimax_music3.md).
+
+Before `cc9344ee`, frame 0 warmup differed from MLX like this:
+
+| Codebook | Hidden max abs error | Guided logits max abs error |
+|---|---|---|
+| 0 (semantic) | 0 | 0 |
+| 1 to 3 | 0.063 to 0.094 | 0.094 to 0.125 |
+| 4 to 7 | 0.89 to 1.09 | 2.70 to 5.22 |
+
+That looked like a kernel gap at 10 or more rows, then like unavoidable sampling
+noise (ours drew 585 where MLX drew 594 at codebook 3, and every later depth step
+embedded a different code, so codebooks 4 to 7 were incomparable). Neither was
+right. Teacher forcing and a per-operation trace put the first difference at the
+input to depth layer 0: two values of 16,384, one bf16 step. The cause was
+dense: `depth.projection` and `depth.audio_heads` are bf16, and MLX applies each
+to both CFG rows in one matmul (`gemv_wide` for 2 to 15 rows, a float32 split-K
+GEMM from 16), a different kernel from the two single-row calls we made. The
+4-bit affine kernels were already bit-exact at every row count.
+
+Since `cc9344ee` (`music3_gemv_wide`, dense split-K, and both CFG rows batched
+through the projection and heads), against the natural MLX reference all eight
+codebooks' hiddens and logits, every sampled code, every frame's codes and all
+98,304 final hiddens are bit-identical. The waveform was still off (correlation
+0.68 with identical hiddens and noise); a stage-by-stage trace of the flow half
+found the DiT exact and three more MLX dispatch rules in the convolutions and the
+quantized split-K reduction (chunk-major K order for implicit-GEMM convs, split-K
+plus ascending taps plus a stereo batch hint for the transposed convs, and
+MLX's column-reduce order for more than 8 partials). With those, the pinned 4-bit
+profile is bit-identical to MLX 0.32.3 end to end: noise, DiT, vocoder and the
+waveform, for 3 frames at 2 flow steps and 25 frames at 4 flow steps (88,064 of
+88,064 samples). `music3_mlx_linear_cmp` diffs the dense, 4-bit and convolution
+kernels against MLX on the real weights with 0 differing values. The affine hash
+oracles changed once, on purpose, for the quantized split-K cases with more than 8
+partials (221 `hashes` lines; the 192 real-shape lines did not move). The exact
+profile's 8 s WAV hashes are now `46243600...` (1 step) and `1cbb8ce0...` (30
+steps), were `16c5db73...` and `361ad4d6...`. Only the affine 4-bit profile has
+been compared; the other profiles and a multi-chunk song are open.
+
+The probe does not write the `encoding` field the test's tolerance table reads;
+`scripts/verify-music3.sh --mlx` sets `"encoding": "affine4"` in `request.json`.
 
 The AR stage now runs about nine command buffers per frame (seven depth steps,
 one LM decode step, the head) plus the depth projections between steps, and a

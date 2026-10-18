@@ -120,10 +120,16 @@ runtime dispatch or default was changed by the probe itself. **Update
 2026-10-11:** the kernel is now vendored from MLX's own `quantized.h` (MIT,
 `scripts/vendor_mlx_steel_qmm.py`) and is the dense qwen chunked-prefill
 default at a 64-row micro-batch, after the gates below ran on the real
-`qwen38-27b` trunk (`docs/BATCHED_PREFILL.md`, last section). The installed Qwen 3.6 MoE path
-currently refuses chunked prefill, so the QKV-sized matrix result does not
-establish an acceleration for that installed model. No Gemma 4 or dense
-INT4 Qwen checkpoint was available for a matching full-model run here.
+`qwen38-27b` trunk (`docs/BATCHED_PREFILL.md`, "The dense qwen batched arm
+becomes the default, on Steel").
+
+**Update 2026-10-15:** the qwen MoE half (Qwen 3.6, Ornith 35B) now
+prefills its GDN and attention projections and its shared expert as M-row
+GEMMs on Steel, while the routed experts keep the per-token loop. On a
+2,940-token Qwen 3.6 prompt that prefilled 1.42-1.56x faster than the
+per-token arm. It holds to a MoE KL bound rather than the dense one
+(`docs/BATCHED_PREFILL.md`, "The qwen MoE batched arm"). Gemma 4 does not
+use Steel, and no Gemma 4 run on it exists.
 
 A runtime port must qualify a matching chunked-prefill checkpoint through
 the [model gates](../.claude/docs/model-gates.md): independent kernel

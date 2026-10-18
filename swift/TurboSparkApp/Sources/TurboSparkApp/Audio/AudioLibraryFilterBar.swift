@@ -56,7 +56,7 @@ struct AudioRecordingPresetPicker: View {
             get: { controller.effectiveRecordingPreset },
             set: { if let preset = $0 { controller.applyRecordingPreset(preset) } }
         )) {
-            ForEach(AudioRecordingPreset.allCases) { preset in
+            ForEach(AudioRecordingPreset.recordPageCases) { preset in
                 Label { Text(LocalizedStringKey(preset.titleKey), bundle: .module) } icon: { Image(systemName: preset.symbol) }
                     .tag(Optional(preset))
             }

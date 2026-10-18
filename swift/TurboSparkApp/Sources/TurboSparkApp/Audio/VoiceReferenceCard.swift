@@ -152,7 +152,10 @@ struct VoiceReferenceCard: View {
                     ? controller.recordingSeconds / AudioWorkspaceController.voiceReferenceRecordingLimit : nil,
                 label: Text("Recording", bundle: .module),
                 valueText: Text(verbatim: audioTime(controller.recordingSeconds)))
-            VoiceReferenceLiveLevels(controller: controller)
+            AudioLiveLevels(controller: controller)
+                .padding(.horizontal, 10).padding(.vertical, 8)
+                .background(.appPage.opacity(0.6), in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous).stroke(.appBorder, lineWidth: 1))
             HStack(spacing: 8) {
                 Image(systemName: "mic.fill").themedFont(.tiny).foregroundStyle(.appSecondary).accessibilityHidden(true)
                 AppProgressBar(value: Double(max(0, min(1, controller.inputLevel))), label: Text("Input level", bundle: .module),
@@ -304,37 +307,5 @@ private struct VoiceReferenceDetails: View {
             .appAction(.quiet, size: .small)
             .disabled(!editable)
         }
-    }
-}
-
-/// The live picture of what the microphone hears while a reference records:
-/// the last couple of seconds of input level, scrolling toward the trailing
-/// edge. The meter below it carries the value for VoiceOver.
-@MainActor
-private struct VoiceReferenceLiveLevels: View {
-    @ObservedObject var controller: AudioWorkspaceController
-
-    @ObservedObject private var appearanceManager = AppearanceManager.shared
-    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
-    @State private var levels = [Float](repeating: 0, count: Self.barCount)
-
-    private static let barCount = 56
-
-    private var reduceMotion: Bool {
-        appearanceManager.shouldReduceMotion(systemReduceMotion: systemReduceMotion)
-    }
-
-    var body: some View {
-        AppLevelWaveform(levels: levels)
-            .padding(.horizontal, 10).padding(.vertical, 8)
-            .background(.appPage.opacity(0.6), in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous).stroke(.appBorder, lineWidth: 1))
-            // Sampling runs only while this view exists, which is only while
-            // a reference records. Reduce Motion samples slowly so the bars
-            // step instead of streaming.
-            .onReceive(Timer.publish(every: reduceMotion ? 0.25 : 0.06, on: .main, in: .common).autoconnect()) { _ in
-                guard controller.isRecording else { return }
-                levels = AppLevelWaveform.pushed(controller.inputLevel, onto: levels, count: Self.barCount)
-            }
     }
 }

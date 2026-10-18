@@ -1,0 +1,58 @@
+{
+  "generator": "crates/embeddings/tools/gen_nomic_bert_fixtures.py",
+  "packages": {
+    "torch": "2.14.1",
+    "numpy": "2.5.4",
+    "safetensors": "0.8.0",
+    "transformers": "4.57.1",
+    "sentence-transformers": "5.1.2",
+    "tokenizers": "0.22.2",
+    "einops": "0.8.1"
+  },
+  "reference": "remote NomicBertModel (pinned .py, transformers 4.57.1, f32, CPU) + sentence-transformers",
+  "pins": {
+    "real": {
+      "repo": "Snowflake/snowflake-arctic-embed-m-long",
+      "revision": "92d97331f1f4b6a366c1f161354b9f3390cc219f"
+    },
+    "tiny": "seeded random init (numpy default_rng(0)) of the remote classes, no download"
+  },
+  "remote_code_sha256": {
+    "modeling_hf_nomic_bert.py": "90570ba771cb802592f5bdccec9a9616f65f27151a559d8228d7d990f3807050",
+    "configuration_hf_nomic_bert.py": "8b42dd8e1d73af914e227f0a38138686ef63121fb468815a4293f868d2071d74"
+  },
+  "files": {
+    "real_cases.json": "661af99870161ccffb11797e9c202405a4db97557ee5a39eca6cdb4a370bc8c7",
+    "real_embed.npy": "574cf6e2a3fe8e2adf00ff7a5e5950deb0e6bb6b81f490263a5f27d83663c685",
+    "real_rotary_cos_rows.npy": "fab8f8e87ac643bd43e6b997d686549da31f2c8713267b8f23b391718149061b",
+    "real_rotary_inv_freq.npy": "46c84ae4905a903636ba793b0cf9c6f12abd98de3e127d129d954123fd89900e",
+    "real_rotary_sin_rows.npy": "82683cc4031c8e3308d3d805b4fbd89b17974f75aeeb299f8205b8ce9c683b68",
+    "real_trace_case0.npy": "def83981e60551beddd7e3cb227b7f58ee184c4cc3129be8087e7675741c94ac",
+    "tiny/1_Pooling/config.json": "37fd2d13c45b0ff2d846ee5b66c3f33c9e6b3b72a6adca6d617bf014bde6c70e",
+    "tiny/config.json": "2269409b52d8e101a816225a9da60a64d41fa28ab85a2db5511129f5965d621e",
+    "tiny/config_sentence_transformers.json": "6b2fa0e3fbc4b872cf3c78af907f308aaf26f438a8c86a5d8628a8d35582f48d",
+    "tiny/model.safetensors": "b2ad350c8b8ed3b47437fe78726bc288c19a54b5f3a6a935866944b953d87223",
+    "tiny/modules.json": "21ddb3037a55ebf4549eb5c1dc44c3f28f10b56ec7f1335c92fd90e5b30d88ac",
+    "tiny/sentence_bert_config.json": "e938f936ec4aae1ec7b178977b4e9cf8593ae9ee3481759a4612d78e4d442001",
+    "tiny_cases.json": "6a3eb4e096ee4213ceaa0fc0852a7a6185c97f13f3494d0428236108ffb15273",
+    "tiny_embed_0.npy": "2b66b41951724b8d0720c17f3b21133fdbd0688fee3e451b86bc662cc9b79f07",
+    "tiny_embed_1.npy": "4a73e5d6802e4bd42a9cfce052cb8b7e042c304d197a5a6929af3a06a1aba6c6",
+    "tiny_embed_2.npy": "e1007dcf8a73343938a9c5f6e4629b93d65fae62b22e5b3ddb42aebca1c5d531",
+    "tiny_embed_3.npy": "6c82c7572ab685f8c1bd48975d50946e50fafdce56ee47eb4006d85b4d29b0db",
+    "tiny_embed_4.npy": "421c2aef10c5388172dc23624e8840281e14df8cc21959d0bde6df4430fb9a62",
+    "tiny_embed_5.npy": "f511a9b3fa08cc38cbaf5dc6353ed7cdf7585ecdb724270ca02524c76c14df68",
+    "tiny_hidden_0.npy": "f1e5199a92cd10f301d8f09566ef7bdc4d7454ebc6698b45db23c3b7d566a16f",
+    "tiny_hidden_1.npy": "e7b7200424aaf9728173bf48cc081f5dc3ead7bbbca41654a598c653750d149c",
+    "tiny_hidden_2.npy": "580074365fafed28f6b08772913eee342e9b23973eb73c9519ed2ddc5ee74b20",
+    "tiny_hidden_3.npy": "6bc76dbd9df914db534f6deb0719e2ce14b52a0146198ac7210697d692a27887",
+    "tiny_hidden_4.npy": "c82453ea66f1e82503b8579463822fbf68eb7638986643800fb048ccb7d22239",
+    "tiny_hidden_5.npy": "791647e2cd219457191896355ff8d179676738feeadf593423f4bb823e3039c6",
+    "tiny_rotary_inv_freq_0.npy": "1c40731fc6fb3204df5ac14adf7f13838626cb624bfd4a65e2d93d0eb2a409ee",
+    "tiny_rotary_inv_freq_1.npy": "1c40731fc6fb3204df5ac14adf7f13838626cb624bfd4a65e2d93d0eb2a409ee",
+    "tiny_rotary_inv_freq_2.npy": "1c40731fc6fb3204df5ac14adf7f13838626cb624bfd4a65e2d93d0eb2a409ee",
+    "tiny_rotary_inv_freq_3.npy": "f55aa3e45cede0da64706c46201633333c590dedc803d8e14c91588cb472ae5d",
+    "tiny_rotary_inv_freq_4.npy": "0a43ed7eaffe70706a8ba9ba51b10c8bd8f3e4fc5d528872b08a75452044cb5a",
+    "tiny_rotary_inv_freq_5.npy": "7c7a8a1e09be6b5fddc0b5730269e6ed9d031056e43e651f85f6ff18557fc571",
+    "tokenizer.json": "91f1def9b9391fdabe028cd3f3fcc4efd34e5d1f08c3bf2de513ebb5911a1854"
+  }
+}

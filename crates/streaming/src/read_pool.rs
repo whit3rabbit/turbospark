@@ -31,6 +31,11 @@ use crate::error::StreamerError;
 /// ms/token: 4 threads 3.97-4.03, **8 threads 3.65-3.74**, 16 threads
 /// 3.70-3.76. 8 beat 4 in every round; 8 against 16 is a wash, so the
 /// smaller pool wins on parked-thread cost. Do not re-derive it.
+///
+/// Re-swept DISK-BOUND 2026-10-17 (qwen4exp from a USB SSD, page cache on):
+/// 16 threads changed nothing, because a layer misses only about 2.8
+/// experts per pass and never fills 8 (`docs/EXPERT_ROUTING.md`,
+/// "Read-pool depth on the disk-bound install").
 const POOL_THREADS: usize = 8;
 
 /// One unit of parallel read work: a byte range of the stream copied into

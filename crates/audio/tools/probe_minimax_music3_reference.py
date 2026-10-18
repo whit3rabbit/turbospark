@@ -342,7 +342,7 @@ class Trace:
         self.condition_dtype = condition.dtype
 
 
-def capture_ar(model, ids, output, frames, seed):
+def capture_ar(model, ids, output, frames, seed, forced_warmup=None):
     codes = []
     original = ar.ar_one_frame
     original_sampler = ar.sample_top_k
@@ -368,6 +368,10 @@ def capture_ar(model, ids, output, frames, seed):
 
     def sample(logits, key, top_k):
         result = original_sampler(logits, key, top_k)
+        if collecting and forced_warmup is not None and len(warmup) < len(forced_warmup):
+            # Teacher forcing: replace the draw, keep the key stream, so every
+            # depth step sees the same input as the run being compared.
+            result = (mx.array([forced_warmup[len(warmup)]], dtype=result[0].dtype), result[1])
         if collecting:
             codebook = len(warmup)
             mx.eval(last_hidden, logits, result[0], key)
@@ -417,6 +421,10 @@ def main():
                         help="maximum dumps per stage, 0 records all calls")
     parser.add_argument("--hiddens-file", type=Path, help="supplied planar f32/npy [1,frames,codebooks*hidden] input; skip AR")
     parser.add_argument("--noise-file", type=Path, help="supplied f32/npy noise, concatenated in native chunk order")
+    parser.add_argument("--force-warmup-codes", type=json.loads, metavar="JSON",
+                        help="JSON list of the frame 0 sampled values (warmup.json order, semantic token first) "
+                             "to use instead of the reference draws. Without it a one-ulp logit difference can "
+                             "flip a draw and make every later depth step incomparable.")
     parser.add_argument("--checkpoint-revision", help="immutable checkpoint revision for probe provenance")
     args = parser.parse_args()
     if args.trace_max_calls < 0:
@@ -444,7 +452,7 @@ def main():
     tracer = Trace(model, args.output, args.trace, args.trace_max_calls, noise)
     with tracer:
         if ids is not None:
-            hiddens, codes, warmup = capture_ar(model, ids, args.output, args.frames, args.seed)
+            hiddens, codes, warmup = capture_ar(model, ids, args.output, args.frames, args.seed, args.force_warmup_codes)
         mx.eval(hiddens)
         wave = model._run_flow(hiddens, args.steps, args.seed)
         mx.eval(wave)
@@ -469,6 +477,7 @@ def main():
         "supplied_hiddens": str(args.hiddens_file) if args.hiddens_file else None,
         "supplied_noise": str(args.noise_file) if args.noise_file else None,
         "noise_shapes": tracer.noise_shapes, "trace_max_calls": args.trace_max_calls,
+        "force_warmup_codes": args.force_warmup_codes,
     }, indent=2) + "\n")
     print(json.dumps({"frames": int(hiddens.shape[1]), "sampled_frames": len(codes),
                       "shape": list(wave.shape), "finite": bool(np.isfinite(np.asarray(wave.astype(mx.float32))).all())}), flush=True)

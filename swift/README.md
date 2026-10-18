@@ -12,7 +12,7 @@ This directory contains the Swift packages and native desktop application for Tu
 
 ```
 swift/
-+-- docs/                            # 34 architectural, audit, and reference guides
++-- docs/                            # Architectural, audit, and reference guides
 +-- TurboSpark/                      # SwiftPM library package (macOS 13.0+)
 |   +-- Package.swift
 |   +-- Sources/
@@ -22,22 +22,29 @@ swift/
 |       \-- TurboSparkTests/         # ABI surface and real-install integration tests
 \-- TurboSparkApp/                   # macOS SwiftUI Application (macOS 14.0+)
     +-- Package.swift
-    +-- Localization/                # String catalogs (Localizable.xcstrings) and compiled .lproj
+    +-- Localization/                # String catalogs (Localizable.xcstrings) and Info.plist
     +-- Sources/TurboSparkApp/
     |   +-- App/                     # Entry point (TurboSparkApp.swift, RootView.swift)
-    |   +-- Chrome/                  # Window chrome, top bar, navigation rail, status bar
+    |   +-- Audio/                   # Audio Studio: recording, transcription, TTS, voice cloning, music
+    |   +-- Browser/                 # Built-in browser panes, tabs, and settings
+    |   +-- BrowserAutomation/       # Agent-driven browser automation sessions
+    |   +-- Chrome/                  # Window chrome, top bar, navigation rail, status bar, fan readout
     |   +-- Components/              # Settings panes (Appearance, MCP, Plugins, Models, Soul Prompt)
-    |   +-- Diagnostics/             # Inspector, telemetry, runner metrics, status HUD, fan control
+    |   +-- Diagnostics/             # Inspector, telemetry, sampling, runner diagnostics, usage dashboard
     |   +-- Files/                   # AttachmentImporter, FilePreviewView, FilesSectionView
     |   +-- Generation/              # Chat sidebar, message pane, prompt composer, context ring
     |   +-- Humanize/                # Text rewriting, diff calculation, custom rules, and audit
+    |   +-- Images/                  # Image generation UI: composer, gallery, styles
+    |   +-- Import/                  # Chrome bookmark importer
     |   +-- Installation/            # Model catalog downloader, ModelDetailPaneView, probe
     |   +-- Presentation/            # Markdown rendering, document text extraction (PDF/Word/Excel)
-    |   +-- Resources/               # App prompts, bundled logos, command gate weights, soul prompts
     |   +-- Server/                  # Text/Image server and TypeSafe playground UI
     |   +-- State/                   # AppModel state coordinator, multi-profile storage, compaction
     |   +-- Theme/                  # Typography, colors, appearance tokens, dock icon, accessibility
-    |   \-- Tools/                   # Agent tools, MCP client, Syntext search, sandbox, command gate
+    |   +-- Tools/                   # Agent tools, MCP client, Syntext search, sandbox, command gate
+    |   \-- Workflows/               # Workflow run engine, interpreter, and journal
+    +-- Sources/TurboSparkAppResources/
+    |   \-- Resources/               # Bundled prompts, logos, fonts, icons, permission-gate weights, compiled .lproj
     \-- Tests/TurboSparkAppTests/    # 100+ app unit and integration tests
 ```
 
@@ -196,7 +203,7 @@ import TurboSpark
 
 // Start the TurboSpark server on loopback
 let server = try TurboSparkServer.start(options: ServerOptions(port: 8080))
-try server.attach(session: session)
+try server.attach(session)
 if let url = server.baseURL {
     print("API server listening at \(url)/v1/chat/completions")
 }

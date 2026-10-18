@@ -1,0 +1,33 @@
+{
+  "architectures": [
+    "Gemma3TextModel"
+  ],
+  "model_type": "gemma3_text",
+  "vocab_size": 48,
+  "hidden_size": 64,
+  "intermediate_size": 128,
+  "num_hidden_layers": 3,
+  "num_attention_heads": 4,
+  "num_key_value_heads": 2,
+  "head_dim": 16,
+  "query_pre_attn_scalar": 12,
+  "sliding_window": 4,
+  "layer_types": [
+    "sliding_attention",
+    "full_attention",
+    "sliding_attention"
+  ],
+  "rope_theta": 1000000.0,
+  "rope_local_base_freq": 10000.0,
+  "max_position_embeddings": 64,
+  "rms_norm_eps": 1e-06,
+  "hidden_activation": "gelu_pytorch_tanh",
+  "use_bidirectional_attention": true,
+  "attn_logit_softcapping": null,
+  "final_logit_softcapping": null,
+  "rope_scaling": null,
+  "attention_bias": false,
+  "pad_token_id": 0,
+  "bos_token_id": 2,
+  "eos_token_id": 1
+}

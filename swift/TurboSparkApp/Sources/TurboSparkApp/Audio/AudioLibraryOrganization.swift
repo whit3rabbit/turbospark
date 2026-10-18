@@ -1,16 +1,22 @@
 import Foundation
 
-/// What a take on the Record page is for. Picking one sets the sources and
-/// live text, and files new takes into its collection. Named apart from
-/// `AudioPreset`, which saves a whole recipe.
+/// What a take is for. Picking one sets the sources and live text, and
+/// files new takes into its collection. Named apart from `AudioPreset`,
+/// which saves a whole recipe.
 enum AudioRecordingPreset: String, CaseIterable, Identifiable, Sendable {
     case voiceNote, meeting, sound
+    /// Another app's audio with no microphone: Speech-to-Text's Any Audio
+    /// mode records these. The Record page does not offer it.
+    case appAudio
     var id: String { rawValue }
+    /// The Record page's choices. App audio belongs to Speech-to-Text.
+    static let recordPageCases: [AudioRecordingPreset] = [.voiceNote, .meeting, .sound]
     var titleKey: String {
         switch self {
         case .voiceNote: return "Voice note"
         case .meeting: return "Meeting or call"
         case .sound: return "Sound"
+        case .appAudio: return "App audio"
         }
     }
     var symbol: String {
@@ -18,11 +24,12 @@ enum AudioRecordingPreset: String, CaseIterable, Identifiable, Sendable {
         case .voiceNote: return "mic"
         case .meeting: return "person.2.wave.2"
         case .sound: return "waveform"
+        case .appAudio: return "macwindow"
         }
     }
-    var capturesMicrophone: Bool { true }
+    var capturesMicrophone: Bool { self != .appAudio }
     /// A call's other side comes from the app playing it.
-    var capturesSystemAudio: Bool { self == .meeting }
+    var capturesSystemAudio: Bool { self == .meeting || self == .appAudio }
     /// A sound recording has no speech to read.
     var liveText: Bool { self != .sound }
     /// The name a new take starts with, before its date.
@@ -31,6 +38,7 @@ enum AudioRecordingPreset: String, CaseIterable, Identifiable, Sendable {
         case .voiceNote: return AppStrings.localized("Voice note")
         case .meeting: return AppStrings.localized("Meeting")
         case .sound: return AppStrings.localized("Sound")
+        case .appAudio: return AppStrings.localized("App audio")
         }
     }
     /// The collection name used the first time, in the current language.
@@ -39,6 +47,7 @@ enum AudioRecordingPreset: String, CaseIterable, Identifiable, Sendable {
         case .voiceNote: return AppStrings.localized("Voice notes")
         case .meeting: return AppStrings.localized("Meetings")
         case .sound: return AppStrings.localized("Sounds")
+        case .appAudio: return AppStrings.localized("App audio")
         }
     }
     func matches(microphone: Bool, systemAudio: Bool) -> Bool {

@@ -49,6 +49,7 @@ extension AudioWorkspaceController {
         let token = epoch; let attempt = UUID()
         let checksMicrophone = captureMicrophone; let checksSystemAudio = captureSystemAudio
         let dependencies = recordingSetupDependencies
+        captureOrigin = originForNewCapture(asVoiceReference: false)
         recordingSetupAttempt = attempt; error = nil
         showRecordingSetup(checksMicrophone ? microphoneSetupMessage : systemSetupMessage)
         recordingSetupTask = Task { [weak self] in
@@ -97,7 +98,8 @@ extension AudioWorkspaceController {
         }
         stopPlayback(); stopReferencePreview(); error = nil
         let stamp = Date().formatted(date: .abbreviated, time: .shortened)
-        let preset = asVoiceReference ? nil : effectiveRecordingPreset
+        let preset = asVoiceReference ? nil : activeRecordingPreset
+        captureOrigin = originForNewCapture(asVoiceReference: asVoiceReference)
         let title = asVoiceReference ? AppStrings.localized("Voice reference \(stamp)") : (preset?.takeTitle ?? AppStrings.localized("Meeting")) + " " + stamp
         var item = AudioLibraryItem(title: title, kind: .recording)
         // A preset files its takes into its collection; a custom take is unfiled.

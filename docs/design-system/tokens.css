@@ -344,7 +344,7 @@
   --progress-compact: 4px;
   --progress-regular: 8px;
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Geist", system-ui, sans-serif;
-  --font-mono: ui-monospace, "SF Mono", "Geist Mono", Menlo, monospace;
+  --font-mono: "Hack", ui-monospace, "SF Mono", "Geist Mono", Menlo, monospace;
   --font-serif: ui-serif, "New York", Georgia, serif;
   --font-inter: "Inter", -apple-system, system-ui, sans-serif;
   --font-jetbrains: "JetBrains Mono", ui-monospace, monospace;
