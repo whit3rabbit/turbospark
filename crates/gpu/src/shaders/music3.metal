@@ -697,8 +697,12 @@ kernel void music3_norm(device const float *x [[buffer(0)]], device const float 
 kernel void music3_rope(device const float *x [[buffer(0)]], device float *y [[buffer(1)]], constant uint *p [[buffer(2)]], uint gid [[thread_position_in_grid]]) {
     uint dim=p[2],hdim=dim/2,d=gid%hdim,vector=gid/hdim,t=(vector/p[1])%p[0];
     ulong base=ulong(vector)*dim;
-    float freq=exp2(-float(d)/float(hdim)*as_type<float>(p[4]));
-    float angle=float(t+p[3])*freq, co=metal::fast::cos(angle), si=metal::fast::sin(angle);
+    uint rv=p[6];
+    float e_=-float(d)/float(hdim)*as_type<float>(p[4]);
+    float freq=(rv==1||rv==3) ? metal::precise::exp2(e_) : exp2(e_);
+    float angle=float(t+p[3])*freq;
+    float co=(rv==1||rv==2) ? metal::precise::cos(angle) : metal::fast::cos(angle);
+    float si=(rv==1||rv==2) ? metal::precise::sin(angle) : metal::fast::sin(angle);
     float a=x[base+d], b=x[base+hdim+d];
     // Pin contraction order: cancellation can cross a BF16 rounding tie.
     y[base+d]=music_round(fma(a,co,-b*si),p[5]);

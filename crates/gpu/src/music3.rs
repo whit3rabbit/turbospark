@@ -992,6 +992,10 @@ fn rope_params(
         offset as u32,
         theta.log2().to_bits(),
         dtype as u32,
+        std::env::var("PROBE_ROPE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0u32),
     ]);
     Ok((p, count / 2))
 }

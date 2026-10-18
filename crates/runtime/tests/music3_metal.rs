@@ -930,9 +930,42 @@ fn probe_trace(encoding: &str, out: &mut String) {
         *out += &format!("{l}\n");
     }
 }
+fn probe_rope(out: &mut String) {
+    let dev = gpu::Music3Device::new().unwrap();
+    for v in ["0", "1", "2", "3"] {
+        std::env::set_var("PROBE_ROPE", v);
+        for (dim, seq, theta) in [
+            (16usize, 64usize, 10000.0f32),
+            (64, 512, 10000.0),
+            (128, 4096, 1.0e6),
+            (128, 16384, 1.0e6),
+        ] {
+            let mut state = 0x9e3779b97f4a7c15u64 ^ (dim as u64);
+            let x: Vec<f32> = (0..seq * dim)
+                .map(|_| {
+                    state ^= state >> 12;
+                    state ^= state << 25;
+                    state ^= state >> 27;
+                    let r = state.wrapping_mul(0x2545F4914F6CDD1D) >> 40;
+                    f32::from_bits((((r as f32 / 16777216.0) * 2.0 - 1.0).to_bits()) & 0xffff0000)
+                })
+                .collect();
+            for dtype in [gpu::Music3DType::Bf16, gpu::Music3DType::F32] {
+                let y = dev.rope(&x, 1, seq, 1, dim, 0, theta, dtype).unwrap();
+                let h = y.iter().fold(0xcbf29ce484222325u64, |h, v| {
+                    (h ^ u64::from(v.to_bits())).wrapping_mul(0x100000001b3)
+                });
+                *out +=
+                    &format!("ROPE var={v} dim={dim} seq={seq} theta={theta} {dtype:?} {h:016x}\n");
+            }
+        }
+    }
+    std::env::remove_var("PROBE_ROPE");
+}
 #[test]
 fn zz_probe_ci_device() {
     let mut out = String::new();
+    probe_rope(&mut out);
     for v in ["0", "1", "2", "3"] {
         std::env::set_var("PROBE_QVAR", v);
         out += &format!("##### PROBE_QVAR={v}\n");
