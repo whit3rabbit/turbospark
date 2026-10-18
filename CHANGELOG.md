@@ -214,6 +214,14 @@ when this file gets updated relative to the version bump and the tag.
   change: the four-bit tiled linear hoists per-word decode work and stages
   activations four wide (bit-identical output, 8 s at 30 steps 124.6 s to 85.6 s
   on an M4 Max, DiT stage 95.3 s to 59.3 s).
+- MiniMax Music 3 exact profile now matches MLX 0.32.3's dense matmul dispatch
+  (`music3_gemv_wide` for 2 to 15 rows, float32 split-K from 16, both CFG rows
+  batched through the depth projection and heads), so the native 4-bit AR path is
+  bit-identical to MLX: hiddens, logits, sampled codes. This changes the exact
+  profile's output (8 s at 1 step now `bf3d26d5...`, at 30 steps `e87ffd16...`).
+  The waveform still differs from MLX (flow stage untraced). New guards:
+  `scripts/verify-music3.sh`, golden hash files with `crates/gpu/tests/music3_oracle.rs`,
+  and `music3_mlx_linear_cmp`. See `docs/audio/minimax_music3.md`.
 - `swift/TurboSparkApp`: syntext moves to 2.7.2 (`exact: "2.7.2"`) and adds
   the `SyntextContext` product. The previous `exact: "2.5.0"` pin linked the
   2.4.0 xcframework, because syntext's `vX.Y.Z` tags through 2.7.0 pin the

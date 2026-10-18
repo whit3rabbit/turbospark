@@ -220,6 +220,13 @@ controlled f32 gate into BF16 equivalence or a song-quality claim.
 
 ## Metal performance
 
+> The WAV hashes in this section (`29c340d1...`, `16c5db73...`, `361ad4d6...`) and
+> every "byte-identical" claim describe the commits they were measured on, all
+> before `cc9344ee`. That commit changed the exact profile's arithmetic on purpose
+> so it matches MLX (dense matmul dispatch); the exact 8 s hashes are now
+> `bf3d26d5...` (1 step) and `e87ffd16...` (30 steps). Timing after that commit has
+> not been re-measured. See [docs/audio/minimax_music3.md](../../../../../docs/audio/minimax_music3.md).
+
 Indicative, not frozen: Apple M4 Max, AC power, release build, the cached
 `mlx-community/MiniMax-Music3-4bit` snapshot (`c7ea32923b24`), seed 7, caption
 "upbeat acoustic folk with warm guitar", lyrics `[instrumental]`, one discarded
@@ -731,55 +738,39 @@ integration require separate qualification.
 Native 4-bit comparison against MLX 0.32.3, measured 2026-10-17 on an Apple M4
 Max (`applegpu_g16s`) with the pinned `mlx-audio` `feb25a37` and the installed
 4-bit snapshot (`c7ea32923b24`), 3 AR frames, 2 flow steps, seed 7, the exact
-flow profile. Frame 0 warmup, ours against MLX, per sampled codebook, on the
-reference's own draws:
+flow profile. The full account, the method, and the MLX dispatch rules are in
+[docs/audio/minimax_music3.md](../../../../../docs/audio/minimax_music3.md).
+
+Before `cc9344ee`, frame 0 warmup differed from MLX like this:
 
 | Codebook | Hidden max abs error | Guided logits max abs error |
 |---|---|---|
-| 0 (semantic) | 0 (8,192 values) | 0 (200,000 values) |
+| 0 (semantic) | 0 | 0 |
 | 1 to 3 | 0.063 to 0.094 | 0.094 to 0.125 |
 | 4 to 7 | 0.89 to 1.09 | 2.70 to 5.22 |
 
-The codebook 4 to 7 rows are not a kernel gap. The two runs draw different
-codes at codebook 3 (ours 585, MLX 594, same key): the guided logits differ by
-up to one bf16 step (0.094 to 0.125), which is enough to flip a top-k
-categorical draw, and every later depth step then embeds a different code. The
-10-row step (sequence 5) is where the inputs first differ, not where the
-arithmetic does. Forcing MLX to our frame 0 draws
-(`probe_minimax_music3_reference.py --force-warmup-codes
-'[152575,147,505,585,967,508,981,573]'`, the semantic token first) gives:
+That looked like a kernel gap at 10 or more rows, then like unavoidable sampling
+noise (ours drew 585 where MLX drew 594 at codebook 3, and every later depth step
+embedded a different code, so codebooks 4 to 7 were incomparable). Neither was
+right. Teacher forcing and a per-operation trace put the first difference at the
+input to depth layer 0: two values of 16,384, one bf16 step. The cause was
+dense: `depth.projection` and `depth.audio_heads` are bf16, and MLX applies each
+to both CFG rows in one matmul (`gemv_wide` for 2 to 15 rows, a float32 split-K
+GEMM from 16), a different kernel from the two single-row calls we made. The
+4-bit affine kernels were already bit-exact at every row count.
 
-| Codebook | Hidden max abs error | Guided logits max abs error |
-|---|---|---|
-| 0 | 0 | 0 |
-| 1 to 7 | 0.063 to 0.094 | 0.094 to 0.125 |
+Since `cc9344ee` (`music3_gemv_wide`, dense split-K, and both CFG rows batched
+through the projection and heads), against the natural MLX reference all eight
+codebooks' hiddens and logits, every sampled code, every frame's codes and all
+98,304 final hiddens are bit-identical, and 65 of 65 linear cases in
+`music3_mlx_linear_cmp` match. Not yet exact: the waveform. With identical
+hiddens and identical supplied noise the flow output correlates 0.68 with MLX, so
+the DiT and vocoder remain untraced. The affine hash oracles are unchanged; the
+exact profile's WAV hashes are not (8 s at 1 step `bf3d26d5...`, at 30 steps
+`e87ffd16...`, were `16c5db73...` and `361ad4d6...`).
 
-Per operation (`--trace --trace-max-calls 7`, layer 0, the seven warmup depth
-calls, 4 to 16 rows) the same forced run shows q/k/v at most 0.0078, attention
-at most 0.0078, the post-attention residual at most 0.016, gate/up at most
-0.031, down at most 0.0625 (0.25 once at call 5), the layer output at most
-0.125 and the final norm at most 0.125, with a mean absolute error under 5e-4
-in layer 0 (0.0035 after the final norm). Rows 10 to 16 behave like rows 4 to 8, so the qmv/qmm row
-threshold, the packed GEMV, the depth attention kernel choice, and split-K are
-not the cause. The residual one-step noise starts at the first depth
-projection (one element of `depth.position` differs by 2e-5 at call 0) and is
-rounding order, not a systematic error.
-
-`native_gate` in `crates/runtime/tests/music3_metal.rs` used to compare
-codebooks 4 to 7 after the draws had diverged, which is why the ignored test
-`real_music3_pinned_4bit_native_matches_mlx_and_resets` failed with 3.8203125
-against 3.0 (identically before the kernel work in this section). It now
-compares a codebook's hiddens and logits only while every earlier draw matches
-the reference, with the tolerance unchanged, and bounds the sampled codes by
-the semantic and residual vocabularies (the old `0..256` bound was wrong for
-both). With `--force-warmup-codes` all eight codebooks are compared; without it
-only the codebooks up to the first flipped draw are. Both pass here. Mutating
-the match tracking brings back the 3.8203125 failure. The probe does not write
-the `encoding` field the test's tolerance table reads; set `"encoding":
-"affine4"` in `request.json` to reach the 4-bit tolerances. No exact kernel
-change is needed or possible: a one-ulp difference in the guided logits flips
-draws at some rate against any MLX build, so sampled codes stay an
-inexact-parity quantity for 4-bit.
+The probe does not write the `encoding` field the test's tolerance table reads;
+`scripts/verify-music3.sh --mlx` sets `"encoding": "affine4"` in `request.json`.
 
 The AR stage now runs about nine command buffers per frame (seven depth steps,
 one LM decode step, the head) plus the depth projections between steps, and a
