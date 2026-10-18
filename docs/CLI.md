@@ -8,7 +8,7 @@ The binaries are:
 
 - `turbospark` -- unified entry point providing intuitive subcommands for chat/generation (`run`, `image`), server management (`serve`, `start`, `stop`, `restart`, `status`), agent connectors (`start claude`, `start codex`), and model operations (`list`, `pull`, `info`, `rm`, `probe`, `recommend`, `auth`).
 - `turbospark-check` -- run generation once against an install: a raw prompt, a rendered chat conversation, or an interactive REPL. See [`crates/cli/AGENTS.md`](../crates/cli/AGENTS.md).
-- `turbospark-model` -- find, inspect, and install text models into `~/.turbospark/models/text`, image models into `~/.turbospark/models/image`, and pinned MiniMax Music 3 profiles into `~/.turbospark/models/audio`. See [`docs/MODELS.md`](MODELS.md).
+- `turbospark-model` -- find, inspect, and install text models into `~/.turbospark/models/text`, image models into `~/.turbospark/models/image`, and pinned MiniMax Music 3 profiles into `~/.turbospark/models/audio`, or into a model library on an external drive. See [`docs/MODELS.md`](MODELS.md) and [Model libraries](#model-libraries).
 - `turbospark-image` -- pack a local Diffusers image export or generate one PNG. See [`docs/IMAGE_GENERATION.md`](IMAGE_GENERATION.md).
 - `turbospark-music` -- generate MiniMax Music 3 WAV files from an installed profile or local model directory. Full-size converted profiles use the Metal runner on macOS; tiny fixtures also support the portable CPU reference path.
 - `turbospark-clone` -- clone a voice from a short reference recording and speak new English text with MegaTTS3 (Metal on macOS), from the installed `megatts3-f32` profile (install it in the app) or a local converted model directory. See [`crates/audio/src/tts/megatts3/README.md`](../crates/audio/src/tts/megatts3/README.md).
@@ -436,23 +436,113 @@ turbospark-model <command> [flags...]
 
 | Command | Args | Flags | What it does |
 | --- | --- | --- | --- |
-| `list` | none | `--filter TEXT` | prints every curated catalog row, marks installed ones |
+| `list` | none | `--filter TEXT` | prints every curated catalog row, marks installed ones, then an `installed:` table of every install with its kind, its library (`This Mac`, a library's name, or `custom location`), and whether it is `available`, `not connected`, or `missing`; `--filter` narrows both |
 | `list-speech` | none | none | prints bundled speech models (Whisper entries and Qwen3-ASR) for Speech-to-Text |
 | `list-audio` | none | none | prints pinned audio models (MiniMax Music 3 profiles and assets) |
 | `info` | `<alias>` | none | prints one catalog row in full, including its gate targets |
 | `probe` | `<repo>[@rev]` | `--file NAME.gguf`, `--sidecar-repo REPO[@rev]` | reads a Hugging Face repo's headers only, no download; reports whether this engine would run it |
 | `recommend` | none | `--context N`, `--budget BYTES`, `--load-guard TIER`, `--probe`, `--discover [N]` | ranks models by whether they fit this machine and how much is known about them; `--load-guard` MUST match what the session will open with, since the ranking and the loader's refusal share one memory budget; `--budget` accepts bare bytes or suffixes (`36G`, `36GB`, `36GiB`); `--context` defaults to `4096`; `--probe` reads every curated row's header for exact numbers, `--discover` also ranks the N most-downloaded GGUF repos on Hugging Face (default `20`) through the same probe |
-| `pull` | `<alias>`, or `--repo REPO[@rev] --alias NAME` | `--out DIR`, `--file NAME.gguf`, `--sidecar-repo REPO[@rev]`, `--force` | installs a curated model, or any repository the probe accepts; `--out` overrides install destination; `--force` installs past a probe refusal |
-| `pull-audio` | `<alias>` | `--out DIR` | installs one pinned MiniMax Music 3 audio profile |
-| `pull-image` | `--alias NAME`, or `--repo REPO[@rev]` | `--source DIR`, `--model-id ID`, `--model-revision REV` | downloads and installs a pinned image model export |
-| `pull-vision` | `<alias>`, or `--repo REPO[@rev] --alias NAME` | `--file NAME.gguf` | installs a curated or custom vision-tower sidecar |
+| `pull` | `<alias>`, or `--repo REPO[@rev] --alias NAME` | `--out DIR`, `--library NAME`, `--file NAME.gguf`, `--sidecar-repo REPO[@rev]`, `--force` | installs a curated model, or any repository the probe accepts; `--out` overrides install destination; `--library` installs into a [model library](#model-libraries) instead (not with `--out`); `--force` installs past a probe refusal |
+| `pull-audio` | `<alias>` | `--library NAME` | installs one pinned MiniMax Music 3 audio profile |
+| `pull-image` | `--alias NAME`, or `--repo REPO[@rev]` | `--source DIR`, `--model-id ID`, `--model-revision REV`, `--library NAME` | downloads and installs a pinned image model export |
+| `pull-vision` | `<alias>`, or `--repo REPO[@rev] --alias NAME` | `--file NAME.gguf`, `--library NAME` | installs a curated or custom vision-tower sidecar |
 | `path` | `<alias>` | none | prints the install directory (fails loudly if not installed) |
 | `rm` | `<alias>` | `--yes` / `-y` | deletes an install; without `--yes`, prompts for the alias name to confirm |
 | `auth` | none | `--clear`, `--status`, `--set` | inspects, saves, or clears Hugging Face credentials in `~/.turbospark/hf_token`; `--set` reads from a non-echoing prompt when interactive, or from stdin when piped |
+| `library list` | none | none | lists This Mac and every model library, with its location, status, and model count |
+| `library add` | `<PATH>` | `--name NAME` | adds a folder on a directly connected drive as a library, or adopts the library already there with its models |
+| `library remove` | `<NAME>` | `--yes` / `-y` | stops listing a library and its models; no file is touched; without `--yes`, prompts for the name to confirm |
+| `library default` | `<NAME>` | none | makes a library the destination of new downloads |
+| `move` | `<alias>` | `--to LIBRARY`, `--kind KIND` | moves an install to another library: copy, verify the copy, then delete the original |
 
 Global options: `--help` / `-h` / `help`, `--version` / `-V` / `version`. For gated repositories, set `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`; credentials are never accepted in command-line arguments.
 
 Flags not accepted by the given command are rejected rather than silently ignored.
+
+### Model libraries
+
+A model library is a folder that holds installs. `This Mac` (the `models`
+folder in `TURBOSPARK_HOME`, `~/.turbospark` by default) is always the first
+library, and the others are folders on directly connected external drives. The
+list of libraries is `libraries.json` in `TURBOSPARK_HOME`. Each drive's folder
+carries its own `library.json` marker, so a library's models are found again on
+another Mac or after the drive is renamed.
+
+```sh
+turbospark-model library list
+turbospark-model library add /Volumes/T7 --name Fast
+turbospark-model library default Fast
+turbospark-model pull qwen3vl-4b --library Fast
+turbospark-model move qwen3vl-4b --to "This Mac"
+turbospark-model library remove Fast
+```
+
+`<NAME>`, `--library`, and `--to` take a library's name (case-insensitive) or
+its id. Two libraries can share a name, because an adopted library keeps the
+name its drive gives it. A name that matches several is refused with their ids
+so you can pick one. `move --to` also takes `This Mac` or `internal` for the
+internal library, even beside a drive library that took the same name.
+
+**`library list`** prints `NAME`, `LOCATION`, `STATUS`, and `MODELS`, This Mac
+first. `(default)` marks the library new downloads go to. `STATUS` is
+`connected`, or `not connected, last seen <date>` with the location where the
+drive was last seen. A listing never fails over bookkeeping: a list that could
+not be parsed is set aside and a warning on stderr names where, and a failed
+last-seen write is a warning too.
+
+**`library add <PATH> [--name NAME]`** takes the folder `PATH` itself when it
+holds a library marker, else its `TurboSpark` child when that holds one, else
+`PATH` when it is named `TurboSpark`, else it creates a `TurboSpark` child. The
+top of a volume is never the root. Adding a folder that already holds a library
+adopts it with its models and lists it under the name on its marker, or under
+`--name` when given. A new library is named after its drive unless `--name` is
+given. Models whose alias another library already has are not listed, and the
+command prints them. Adding a library that is already listed says so and
+changes nothing. A location is refused, with one sentence naming the rule it
+broke, when it:
+
+- is on the same disk as This Mac, or overlaps the TurboSpark home folder
+- is on a network share
+- is on a filesystem that cannot hold a file of 4 GiB or larger (FAT32, which macOS reports as `msdos`)
+- is on a read-only drive
+- is not an existing folder, or is on a drive TurboSpark cannot identify
+- overlaps a library that is already listed
+
+**`library remove <NAME> [--yes]`** stops listing the library and its models.
+It never deletes or changes a file on the drive, and adding the folder again
+lists its models again. This Mac cannot be removed. Removing the default
+library makes This Mac the default again.
+
+**`library default <NAME>`** makes the library the destination of new downloads.
+This Mac is the default until you choose another.
+
+**`--library NAME`** on `pull`, `pull-vision`, `pull-image`, and `pull-audio`
+installs into that library. Without it, a pull goes to the default library. The
+destination is settled before any network request, so a library that is not
+connected, is read-only, or already holds an install of that alias fails
+before anything downloads. A library you named is never swapped for another.
+When the default library is the one that is not connected, the pull installs
+into This Mac instead and prints a `note:` naming the library. `--library` and
+`--out` each name a destination, so together they are a usage error (exit `2`).
+
+**`move <ALIAS> --to <LIBRARY> [--kind KIND]`** moves one install to another
+library, This Mac included. It copies, verifies the copy, records the new
+location, and only then deletes the original, so a failure or a Ctrl-C before
+the record leaves the original in place. It refuses before copying when the
+destination lacks the free space, and when either library is not connected.
+`--kind` is `text`, `vision`, `audio`, or `image`, and is needed only when the
+alias names installs of more than one kind. Embedding and OCR models stay on
+This Mac and cannot be moved. The command has no view of other processes:
+do not run an install, or load the model, in another process while it moves.
+A leftover original that could not be deleted is a warning that names it, and
+the exit status is still `0` because the install is in its destination.
+
+Flags a command does not take are rejected (exit `2`), so `library add` with
+`--yes` fails rather than ignoring it. Refusals and failed operations exit `1`.
+
+`turbospark list` and `turbospark pull` hand their arguments to
+`turbospark-model`, so `--library` and the `installed:` table work there too.
+`library` and `move` exist only on `turbospark-model`.
 
 See [`docs/MODELS.md`](MODELS.md) for the catalog itself, and what it takes
 to add a row.
