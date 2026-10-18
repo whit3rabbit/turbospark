@@ -675,7 +675,9 @@ It adds the ANE's rate to the GPU's instead of replacing it.
   pass, the same tokens in 64-token dispatches took 1.05x to 1.38x one-shot
   Steel's time. Part of any end-to-end gain would come from wider micro-batches
   alone. The split's 1.24x to 1.77x is against one-shot Steel at the same
-  width.
+  width. A metered follow-up did not reproduce that penalty (1.03x to 1.11x)
+  and found wider micro-batches worth at most 3.7% end to end. See the next
+  section.
 - The split's Steel rows land in a separate buffer. Writing the ANE rows into
   the shared output at their row offset is not measured.
 - Shapes are static, so each shape and token count is its own compiled
@@ -697,6 +699,125 @@ off by default. Steel stays the default. It needs:
   power.
 
 Energy mode would be a second opt-in, for long prompts on battery.
+
+### Micro-batch width and the prefill split, end to end
+
+Wider micro-batches run correctly at every width from 128 to 2048 rows with
+no new kernel, but they barely speed prefill up. The best width, 256, is
+3.7% faster than the default 64. Steel is already compute-bound at 64 rows.
+INT4 projections hold 71% to 73% of prefill GPU time, which bounds what any
+ANE split can buy.
+
+Measured 2026-10-18 on the same M4 Max (32-core GPU) with the real
+`~/models/qwen38-27b.gturbo`. These are readings, not frozen rows in
+`docs/BENCHMARKS.md`. Nothing below changed a default, and the measurement
+seams were never committed.
+
+**Method.** The prompt is the frozen `long-synthesis` text as one user
+message through the chat template, 2,940 tokens, greedy. Each run is its own
+process. A discarded warmup round comes first, then interleaved rounds that
+alternate direction. Before every run the driver required AC power, no build,
+test, or GPU process from another session, and GPU utilization under 10% for
+5 s. A watcher flagged any overlap, and no timed run had one.
+
+GPU time is the sum of each micro-batch command buffer's GPU interval. Width
+came from a measurement-only env var read where the scratch is allocated. The
+op-class split came from a second env var that dropped one class from the
+Steel prefill arm. A class's cost is the drop in GPU time. Scripts, raw logs,
+and the patch are in `~/models/qwen38-prefill-width/` on the test machine.
+
+**Width.** Prefill tok/s is prompt tokens over prefill wall seconds, mean and
+sample standard deviation. The first five rows are one session of 3 rounds,
+the last two another session of 2 rounds.
+
+| Width (outer chunk) | Prefill tok/s | GPU s |
+|---|---:|---:|
+| 64 (128), the default | 139.03 +/- 0.15 | 20.632 |
+| 64 (512), control | 138.77 +/- 1.03 | 20.666 |
+| 128 (128) | 142.49 +/- 0.64 | 20.141 |
+| 256 (256) | 144.13 +/- 0.98 | 19.913 |
+| 512 (512) | 141.70 +/- 1.31 | 20.249 |
+| 1024 (1024) | 139.73 +/- 4.13 | 20.555 |
+| 2048 (2048) | 139.00 +/- 3.02 | 20.604 |
+
+From 512 up the gain fades and the spread grows. Across sessions, 512's GPU
+total ran 20.04 to 20.59 s, against 20.60 to 20.65 s at 64. CPU encoding is
+0.33 to 0.38 s of a 21 s prefill, so prefill is GPU-bound at about 7.0 ms of
+GPU per token.
+
+**Where prefill GPU time goes.** Three rounds per arm, each spread under
+0.05 s.
+
+| Class | Width 64 | Width 512 |
+|---|---:|---:|
+| INT4 projections (MLP gate/up/down, GDN qkv/z/a/b/out, attention q+gate/k/v/o) | 15.09 s, 73.2% | 14.27 s, 71.2% |
+| GDN recurrence (conv prefill, conv tail, delta rule) | 1.42 s, 6.9% | 1.37 s, 6.8% |
+| Attention (GQA rows partial) | 0.46 s, 2.2% | 0.45 s, 2.3% |
+| Everything else (norms, RoPE, gates, residuals, embedding, head) | 3.63 s, 17.6% | 3.94 s, 19.7% |
+| Total | 20.60 s | 20.04 s |
+
+A second method agrees. A scratch test timed every projection that one
+2,940-token prompt issues, at the real shapes and layer counts. It applied the
+runtime's rule for Steel or the scalar kernel and rotated two weight copies so
+nothing stayed cache-resident. It gives 15.25 s at width 64 and 14.40 s at
+512, within 1% of the knockout.
+
+Per-micro-batch GPU time against position has a slope of about 0.1 ms per
+token per 1,000 positions, which matches attention near 2%.
+
+**Why width barely helps.** Steel's time per matrix is close to linear in
+rows. Gate or up (17408 x 5120) takes 1.09 ms at 64 rows, 8.46 ms at 512, and
+33.8 ms at 2048. That is 10.4 TFLOPS at 64, rising to 10.8 by 512 and flat to
+2048.
+
+Down reaches 9.8 TFLOPS at 64 and 10.7 at 512. Projection time falls from
+15.25 s to 14.40 s by width 512 and stays there.
+
+The quick pass's 1.05x to 1.38x penalty did not reproduce. Eight 64-row
+matrices against one 512-row matrix cost 1.03x (gate, up) to 1.11x (o_proj),
+and down cost 1.09x. Phase 0's one-shot Steel times match this run's within
+1% to 6% at both token counts, so the split ratios above rest on a sound
+baseline. Only the quick pass's 64-row arm read high, and why was not
+isolated.
+
+**A cost the split exposed.** GDN `in_proj_a` and `in_proj_b` are 48 rows
+each, not a whole 32-row Steel tile, so they run the scalar kernel. At that
+size it is latency-bound: 0.24 ms per matrix per 64-row micro-batch, for
+0.24 MB of weights.
+
+Over 96 matrices per micro-batch that is 1.07 s per prompt, 5.2% of prefill
+GPU time, at every width. Moving them onto Steel (for example, alongside
+`in_proj_z`, 6,240 rows together) is unmeasured.
+
+**Quality.** The greedy md5 of 96 generated tokens matched across all widths
+from 64 to 2048, over 35 runs in two sessions. `qwen38_prefill_arm_probe`
+was not run, so this is weaker evidence than that probe's KL bound.
+
+**What blocks wider widths.** Nothing functional. Steel takes any row count
+as one dispatch, and so do the GQA rows partial and the GDN conv and delta
+kernels. The rows partial bounds each threadgroup's staged range by its own
+last row, so masked work stays small. A default change would still owe:
+
+- Scratch, about 337 KiB per row (computed, not measured). That is 21 MiB at
+  64, 168 MiB at 512, and 674 MiB at 2048.
+- The `qwen38_prefill_arm_probe` KL bound, measured only at 64.
+- The coupling to `MAX_PREFILL_ROWS`, which also sizes `scratch.x` and the
+  MTP state and bounds the MTP prime-row assert.
+- The noise from 512 up, and a 0.25 to 0.31 s larger non-projection remainder
+  at 512 whose cause was not isolated.
+
+**What it means for Phase 1 (modeled, not measured).** Everything except the
+projections takes 5.5 to 5.8 s. Even free projections would cap prefill at
+about 3.5x. Wide micro-batches cost the GPU nothing, so the ANE can get the
+512- or 2048-row matmuls it needs.
+
+At 512 rows, Phase 0's split ratios applied to this run's Steel times give
+about 1.20x on projections and 1.13x on prefill. At 2048 rows they give about
+1.58x and 1.36x.
+
+That model assumes z splits like GDN qkv and that K, V, a, and b do not split.
+It also assumes the split runs inside the same serial command buffer at no
+extra cost. Energy was not measured here.
 
 ## llama.cpp #30340
 
