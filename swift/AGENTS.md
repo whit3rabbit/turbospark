@@ -71,6 +71,16 @@ staging files changed.
   `runsChatGenerationCommand` enables chat generation only in Chat. Full-bleed
   workspaces (`.images`, `.audio`, `.humanize`) declare `ownsGenerationShortcuts`
   to bind those chords to their own run/stop controls.
+- Tool options in Chat vs Projects: In Chat (`interactionMode == .chat`), tools
+  can be toggled on/off via `chatToolsEnabled` (persisted in `MacAppSettings`,
+  default true, toggled by the `AppChip` button below the prompt composer or
+  the composer plus menu, and configured in General Settings). When enabled in
+  Chat, turns only offer and dispatch rootless tools (web search, web fetch,
+  browser automation, interactive questions, checklists, planning, memory,
+  and automation). File editing, directory navigation, codebase search, and
+  shell commands (`workspaceRootedToolNames`) as well as custom/MCP tools
+  strictly require an active project root (`interactionMode == .projects` and
+  `project != nil`) to prevent path traversal and home-directory pollution.
 - Resources live in the `TurboSparkAppResources` target
   (`Sources/TurboSparkAppResources/Resources`), and the `TurboSparkApp` target
   declares none. `Bundle.module` in the app is a hand-written forwarder
