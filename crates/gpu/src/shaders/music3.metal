@@ -74,7 +74,11 @@ inline float music_value(device const uchar *w, device const float *sc,
     return (code&8 ? -x : x)*scale;
 }
 
-inline float probe_unfused(float a,float b,float c,float d) {
+inline float probe_unfused_ma(float a,float b,float c) {
+#pragma METAL fp contract(off)
+    return c+a*b;
+}
+inline float probe_unfused_pair(float a,float b,float c,float d) {
 #pragma METAL fp contract(off)
     return a*b+c*d;
 }
@@ -107,7 +111,12 @@ kernel void music3_linear(device const uchar *w [[buffer(0)]],
         if(tid<8) for(uint g=tid;g<cols/p[3];g+=8) {
             for(uint c=g*p[3];c<(g+1)*p[3];c+=8) {
                 float acc=0;
-                for(uint i=0;i<min(8u,(g+1)*p[3]-c);i++) acc+=x[ulong(row)*cols+c+i]*music_value(w,sc,off,bs,p,o,c+i);
+                for(uint i=0;i<min(8u,(g+1)*p[3]-c);i++) {
+                    float t_=music_value(w,sc,off,bs,p,o,c+i);
+                    if(p[15]==0) acc+=x[ulong(row)*cols+c+i]*t_;
+                    else if(p[15]==2) acc=probe_unfused_ma(x[ulong(row)*cols+c+i],t_,acc);
+                    else acc=fma(x[ulong(row)*cols+c+i],t_,acc);
+                }
                 result+=acc;
             }
         }
@@ -180,15 +189,17 @@ kernel void music3_linear(device const uchar *w [[buffer(0)]],
                     float sv_=music_sc(sc,ulong(o)*(cols/p[3])+g), ov_=music_sc(off,ulong(o)*(cols/p[3])+g);
                     uint var_=p[15];
                     if(var_==1) sum+=fma(dot,sv_,xsum*ov_);
-                    else if(var_==2) sum+=fma(xsum,ov_,dot*sv_);
-                    else if(var_==3) sum+=probe_unfused(dot,sv_,xsum,ov_);
+                    else if(var_==2) sum+=probe_unfused_pair(dot,sv_,xsum,ov_);
+                    else if(var_==3) sum+=fma(xsum,ov_,dot*sv_);
                     else sum+=dot*sv_+xsum*ov_;
                 }
             }
         } else for(uint c=begin+tid;c<end;c+=128) {
             float weight=music_value(w,sc,off,bs,p,o,c);
             if(p[0]==3 && p[6]!=0 && p[9]) weight=music_round(weight,p[6]);
-            sum+=x[ulong(row)*cols+c]*weight;
+            if(p[15]==0) sum+=x[ulong(row)*cols+c]*weight;
+            else if(p[15]==2) sum=probe_unfused_ma(x[ulong(row)*cols+c],weight,sum);
+            else sum=fma(x[ulong(row)*cols+c],weight,sum);
         }
         sum=simd_sum(sum);
         if(tid%32==0) parts[tid/32]=sum;
@@ -237,13 +248,21 @@ kernel void music3_linear_wide(device const uchar *w [[buffer(0)]],
                     uint word=u[c/8];
                     float4 xa=*(device const float4*)(xr+c), xb=*(device const float4*)(xr+c+4);
                     float xv[8]={xa.x,xa.y,xa.z,xa.w,xb.x,xb.y,xb.z,xb.w};
-                    for(uint i=0;i<8;i++) acc+=xv[i]*(float((word>>(4*i))&15u)*s+f);
+                    for(uint i=0;i<8;i++) {
+                        float w_=float((word>>(4*i))&15u)*s+f;
+                        if(p[15]==0) acc+=xv[i]*w_;
+                        else if(p[15]==2) acc=probe_unfused_ma(xv[i],w_,acc);
+                        else acc=fma(xv[i],w_,acc);
+                    }
                 } else {
                     for(uint i=0;i<8;i++) {
                         uint bit=(c+i)*bits,shift=bit%32;
                         uint code=u[bit/32]>>shift; if(shift+bits>32) code|=u[bit/32+1]<<(32-shift);
                         code&=(1u<<bits)-1;
-                        acc+=xr[c+i]*(float(code)*s+f);
+                        float w_=float(code)*s+f;
+                        if(p[15]==0) acc+=xr[c+i]*w_;
+                        else if(p[15]==2) acc=probe_unfused_ma(xr[c+i],w_,acc);
+                        else acc=fma(xr[c+i],w_,acc);
                     }
                 }
                 result+=acc;

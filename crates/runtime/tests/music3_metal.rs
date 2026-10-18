@@ -1,5 +1,11 @@
 #![cfg(target_os = "macos")]
 
+extern crate gpu as turbospark_gpu;
+
+#[path = "../../gpu/examples/music3_linear_bench.rs"]
+#[allow(dead_code)]
+mod bench;
+
 use audio::music::minimax_music3::{FlowProfile, GenerateRequest, Model, TextGenerateRequest};
 use std::path::PathBuf;
 use turbospark_runtime::Music3Runner;
@@ -930,6 +936,38 @@ fn zz_probe_ci_device() {
     for v in ["0", "1", "2", "3"] {
         std::env::set_var("PROBE_QVAR", v);
         out += &format!("##### PROBE_QVAR={v}\n");
+        for (mode, golden) in [
+            (
+                "hashes",
+                include_str!("../../gpu/tests/golden/music3_hashes.txt"),
+            ),
+            (
+                "dit_hashes",
+                include_str!("../../gpu/tests/golden/music3_dit_hashes.txt"),
+            ),
+            (
+                "conv_hashes",
+                include_str!("../../gpu/tests/golden/music3_conv_hashes.txt"),
+            ),
+        ] {
+            let mut got = Vec::new();
+            bench::run(mode, &mut |line| got.push(line));
+            let want: Vec<&str> = golden.lines().collect();
+            let bad: Vec<_> = got
+                .iter()
+                .zip(&want)
+                .filter(|(a, b)| a.as_str() != **b)
+                .map(|(a, _)| a.rsplit_once(' ').map_or(a.as_str(), |x| x.0).to_owned())
+                .collect();
+            out += &format!(
+                "GRID var={v} {mode}: {} of {} differ\n",
+                bad.len(),
+                want.len()
+            );
+            for b in bad.iter().take(12) {
+                out += &format!("GRIDDIFF var={v} {b}\n");
+            }
+        }
         probe_profile("affine4", &[""], &mut out);
     }
     std::env::remove_var("PROBE_QVAR");
