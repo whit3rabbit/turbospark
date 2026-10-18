@@ -319,6 +319,18 @@ Tried and not kept (no demonstrated gain on a busy host, so no code):
   depth stage only from about 47.6 s to 45.0 s. MXFP8 GEMVs read twice the
   bytes of 4-bit and are not decode-bound.
 
+### MLX as a speed reference
+
+Real MLX 0.32.3 (Python, `mlx-audio` `feb25a37`, its own `generate`) on the same
+host and clip, 4-bit profile, seed 7, AC power, one run per row after a warmup:
+1 step 11.0 s and 11.7 s (AR 9.3 to 9.9 s, flow with vocoder 1.7 to 1.9 s); 30
+steps 36.6 s (AR 10.9 s, flow 25.8 s). Two 1-step runs hash identically. Ours is
+about 2.4x slower in the exact profile (85.6 s) and about 1.7x slower in the Fast
+profile (about 63 s, busy host), producing the same audio: the 30-step 16-bit WAV
+equals MLX's output in 0 of 705,536 samples. The vocoder shows the largest ratio
+(about 6.7 s against roughly 1 s). Details in
+[docs/audio/minimax_music3.md](../../../../../docs/audio/minimax_music3.md).
+
 ### Exactness cost
 
 Making the exact profile bit-identical to MLX (dense, convolution and quantized

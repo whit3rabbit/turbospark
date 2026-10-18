@@ -16,9 +16,9 @@ MLX itself, which is the only check that covers dense and convolution kernels.
 | Question | Answer |
 |---|---|
 | Is the pinned 4-bit profile bit-identical to MLX 0.32.3? | **Yes, end to end**: hiddens, logits, sampled codes, flow noise, DiT, vocoder and the waveform. Verified for 3 frames at 2 flow steps and for 25 frames at 4 flow steps (all 88,064 samples equal). |
+| Does that hold at product scale? | Yes. 8 s, 200 frames, 30 flow steps: our 16-bit WAV equals MLX's output in 0 of 705,536 samples. A 210-frame request (two chunks, 2 flow steps) matches in all 740,352 samples, with identical codes and hiddens. |
 | Which kernels are diffed against MLX bit for bit? | Dense bf16 (depth projection and heads, rows 1 to 16), 4-bit affine (depth layers rows 1 to 16, the DiT's `proj_in` and `proj_out` rows 16 to 691), and convolutions (condition encoder, vocoder input, residual, 1x1 and transposed convs). 0 differing values. |
 | Are the other profiles (6-bit, 8-bit, MXFP8, MXFP4, NVFP4) verified exact? | **No.** Only the affine 4-bit profile has been compared. The kernels they use are shared, but nothing has been checked. |
-| Has a multi-chunk song (over 200 frames) been compared with MLX? | No. Chunk overlap and stitching are covered by fixtures, not by this comparison. |
 | What does the app, server, FFI and CLI run by default? | `FlowProfile::Fast`, which is not MLX's trajectory by design (see below). |
 | Has anyone listened to the fast profile? | No. Every quality number here is a drift metric on one prompt and one seed. |
 
@@ -83,6 +83,32 @@ The kernel work, all exact (hash oracles and WAV hashes unchanged at the time):
   frame 50, halving the AR rows). Not implemented: it changes the AR trajectory.
 
 Timing after the MLX-dispatch fixes: see the README's Metal performance section.
+
+## Real MLX is faster than we are
+
+Measured 2026-10-17 on the same M4 Max, 8 s clip, seed 7, the 4-bit profile, MLX
+0.32.3 (Python, `mlx-audio` `feb25a37`, its own `generate` pipeline) against our
+native Metal path. AC power; MLX numbers are one run per row after a warmup, ours
+are the AC runs from the README ("Exactness cost"). MLX is deterministic: two
+1-step runs hashed identically.
+
+| | MLX total | MLX AR | MLX flow incl. vocoder | Ours exact | Ours Fast (21 steps) |
+|---|---|---|---|---|---|
+| 1 step | 11.0 s, 11.7 s | 9.3 s, 9.9 s | 1.7 s, 1.9 s | 29.0 s | not measured |
+| 30 steps | **36.6 s** | 10.9 s | 25.8 s | 85.6 s | about 63 s (busy host) |
+
+So MLX is about 2.4x faster than our exact path and about 1.7x faster than our
+Fast profile, for the same audio (bit-identical at 30 steps). Where the gap is,
+by stage (ours from the 30-step run, mean): AR about 20 s against MLX's 11 s
+(depth 13 s, LM decode 6 s); the DiT about 59 s against about 24 s; and the
+vocoder about 6.7 s against roughly 1 s (MLX's flow stage at 1 step, vocoder
+included, is only 1.7 to 1.9 s). The vocoder is the largest ratio (about 6x) and
+the DiT the largest absolute gap.
+
+This does not make MLX the right default for TurboSpark: it would put a Python and
+MLX runtime inside a native app. It does mean there is real headroom in our
+kernels, and MLX is now a trustworthy oracle for finding it, because the outputs
+are identical.
 
 ## The MLX gaps, in the order they were found
 
@@ -211,9 +237,7 @@ Implemented in `music3_linear_tiled` (the `lanes` accumulators) and
 
 - **The other profiles.** 6-bit, 8-bit, MXFP8, MXFP4 and NVFP4 share kernels with
   the verified one but have not been compared with MLX.
-- **A multi-chunk song.** Compare a request over 200 frames with MLX to cover chunk
-  carry and stitching.
 - **Re-time the depth stage and a full song.** See the README performance section.
 - **Listening.** Intelligibility, transients and chunk seams for the Fast profile.
-- **MLX itself as a speed reference.** Not benchmarked against ours on this clip.
-  The README's 56 s MLX figure is from an earlier session on MLX 0.31.2.
+- **Closing the speed gap to MLX** (see above): the vocoder first, then the DiT and
+  the AR stage. Any change must keep `scripts/verify-music3.sh --mlx` green.
