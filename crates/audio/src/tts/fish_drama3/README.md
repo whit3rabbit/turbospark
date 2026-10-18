@@ -85,6 +85,14 @@ times real time).
 - Draws use the crate's threefry keys, not MLX's global random state.
   Sampled codes differ from the reference's for the same seed, while the
   distributions match.
+- The nine residual heads score 4096 codes each. The Fish S1 DAC's acoustic
+  books hold 1024 (`FishS1DacConfig::build_ae()`), and the codec refuses a
+  code past them, which fails the whole request. The loop draws from the
+  first 1024 entries of each head. The cut comes before top-k and top-p, so
+  the nucleus mass runs over codes the codec can decode
+  (`Drama3Config::acoustic_codebook_size`). Book 0, the main token's
+  semantic code, keeps all 4096. Whether the pinned reference does the same
+  was not compared when this was added.
 - Python's `\w` is approximated by `char::is_alphanumeric` plus `_`, and
   `str.isdigit` by `char::is_numeric`, in the chunker's edge characters.
 - No `speed` and no `instruct`: delivery cues go inline (`[whispers]`).

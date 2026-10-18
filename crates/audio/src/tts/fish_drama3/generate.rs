@@ -511,6 +511,7 @@ impl Drama3 {
         let candidates = self.config.candidate_ids();
         let band = self.config.semantic_band();
         let eos = self.config.eos_token_id;
+        let acoustic = self.config.acoustic_codebook_size();
         let dim = backbone.hidden_size();
         let mut keys = KeySequence::new(options.seed);
         let mut stats = GenerateStats::default();
@@ -614,7 +615,12 @@ impl Drama3 {
                     (p.frames, p.voiced) = (count, voiced);
                 }
                 let mut sample = |_: usize, head: &[f32]| {
-                    sampling::sample(head, options.sampling, keys.next()) as i32
+                    // Each head scores the semantic book's 4096 codes, but the
+                    // codec's acoustic books hold fewer, and it refuses a code
+                    // past them. The cut comes before top-k and top-p, so the
+                    // mass they take is over the codes that can be decoded.
+                    let codes = &head[..acoustic.min(head.len())];
+                    sampling::sample(codes, options.sampling, keys.next()) as i32
                 };
                 let codes = if options.overlap_tower_tail {
                     let [c0, c1] =
@@ -1050,6 +1056,110 @@ mod tests {
             a.last(),
             Some(FrameEvent::ChunkEnd { chunk: 0, .. })
         ));
+    }
+
+    /// The golden tower with every residual head replaced by a fixed 4096-wide
+    /// row, the width of the real tower's heads. The tower underneath still
+    /// runs, so its cache stays consistent, and gets the code the loop drew.
+    struct WideHeads {
+        inner: CpuTower,
+        row: Vec<f32>,
+    }
+
+    impl TowerModel for WideHeads {
+        fn config(&self) -> &TowerConfig {
+            self.inner.config()
+        }
+
+        fn embeddings(&self) -> &TowerEmbeddings {
+            self.inner.embeddings()
+        }
+
+        fn position(&self) -> usize {
+            self.inner.position()
+        }
+
+        fn truncate(&mut self, position: usize) -> Result<()> {
+            self.inner.truncate(position)
+        }
+
+        fn semantic_logits(&mut self, hidden: &[f32]) -> Result<Vec<f32>> {
+            self.inner.semantic_logits(hidden)
+        }
+
+        fn prefill(&mut self, hidden: &[f32], frames: &[&[i32]], labels: &[&[i32]]) -> Result<()> {
+            self.inner.prefill(hidden, frames, labels)
+        }
+
+        fn begin_residual_codes(
+            &mut self,
+            hidden: &[f32],
+            main: i32,
+            frame: &[i32],
+            sample: &mut dyn FnMut(usize, &[f32]) -> i32,
+        ) -> Result<[i32; 2]> {
+            let row = &self.row;
+            self.inner
+                .begin_residual_codes(hidden, main, frame, &mut |head, _| sample(head, row))
+        }
+
+        fn finish_residual_codes(
+            &mut self,
+            sample: &mut dyn FnMut(usize, &[f32]) -> i32,
+        ) -> Result<Vec<i32>> {
+            let row = &self.row;
+            self.inner
+                .finish_residual_codes(&mut |head, _| sample(head, row))
+        }
+    }
+
+    /// A head that scores a code past the codec's acoustic books highest, as
+    /// the real heads did on a frame that failed the codec with `code 3403
+    /// outside the codebook of 1024`, must not be drawn from.
+    #[test]
+    fn residual_codes_never_pass_the_codecs_acoustic_books() {
+        let probe = drama();
+        let acoustic = probe.config.acoustic_codebook_size();
+        // The Fish S1 DAC's nine acoustic books (`fish_s1_dac` tests pin the
+        // same number). The rows below key off it, so a wrong limit would
+        // otherwise move the test with it.
+        assert_eq!(acoustic, 1024);
+        // Deterministic whatever the key: one candidate holds all the mass
+        // (the crossing rule keeps rank 0 alone), so the draw is the argmax.
+        let mut row = vec![-10.0f32; 4096];
+        row[acoustic - 1] = 5.0; // the best code the codec can decode
+        row[3403] = 15.0; // the code of the failure
+        row[acoustic] = 20.0; // the first code past the book, best of all
+        for overlap_tower_tail in [false, true] {
+            let mut d = drama_with(|inner| {
+                Box::new(WideHeads {
+                    inner,
+                    row: row.clone(),
+                })
+            });
+            let options = GenerateOptions {
+                max_frames: 12,
+                seed: 5,
+                overlap_tower_tail,
+                ..GenerateOptions::default()
+            };
+            let events = run_with(&mut d, "Hallo du. Wie geht es dir heute?", options);
+            let frames: Vec<&Vec<i32>> = events
+                .iter()
+                .filter_map(|e| match e {
+                    FrameEvent::Frame { codes, .. } => Some(codes),
+                    _ => None,
+                })
+                .collect();
+            assert!(frames.len() > 4, "too few frames: {}", frames.len());
+            for codes in frames {
+                assert_eq!(codes.len(), d.config.tower.num_codebooks);
+                assert!(
+                    codes[1..].iter().all(|&c| c == acoustic as i32 - 1),
+                    "overlap {overlap_tower_tail}: {codes:?}"
+                );
+            }
+        }
     }
 
     #[test]

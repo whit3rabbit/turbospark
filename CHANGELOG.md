@@ -361,6 +361,11 @@ when this file gets updated relative to the version bump and the tag.
   none and returns the seed in `x-turbospark-seed` (as image generation
   does). `turbospark-speak` draws one per run and prints it, and warns when
   the take stopped early. A seed the caller names, 0 included, is kept.
+- `crates/audio`: Fish Audio Drama 3 draws its residual codes from the first
+  1024 entries of each tower head. The heads score 4096 codes, the Fish S1
+  DAC's acoustic books hold 1024, and a draw past them failed the whole
+  request in the codec (`code 3403 outside the codebook of 1024`). The limit
+  comes from the codec geometry, not a literal.
 - `crates/catalog`: `InstalledModel::effective_modality` now derives the `Audio`
   modality from install path, `audio-receipt.json`, or speech metadata if a model
   was recorded with default `text` modality in `installed.json`. `installed_report`
