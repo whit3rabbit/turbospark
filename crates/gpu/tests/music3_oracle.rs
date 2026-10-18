@@ -79,12 +79,7 @@ fn check(mode: &str, golden: &str) {
     );
 }
 
-// The goldens were generated on an M4 Max. The GitHub macOS runner's GPU
-// produces different bits for the bits=2 split-K rows, so this arm is red there
-// while the DiT and conv arms match. Run it on the golden hardware with
-// `cargo test -p turbospark-gpu --test music3_oracle -- --ignored`.
 #[test]
-#[ignore = "goldens are M4 Max bits; the CI runner's GPU differs on bits=2 split-K rows"]
 fn affine_linear_hashes_match_the_golden_file() {
     if !affine_golden_applies() {
         return;
