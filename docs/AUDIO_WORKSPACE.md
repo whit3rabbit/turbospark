@@ -39,6 +39,18 @@ follows Any Audio. With the switch off, the final pass skips labeling. Sound
 takes and takes with hand-picked sources keep the first installed diarization
 model.
 
+When a Meeting take's final pass labels its speakers, Name the Speakers lists
+each voice with its talk time, its longest line, a few seconds of it to play,
+and a name field. Names and merges are saved on the take by the voice's
+diarization id (`speakerNames`, `speakerMerges`), never in the segments, which
+keep that id in `speakerID`. A rename therefore reaches every line, every
+transcript revision, and the Text, SRT, WebVTT, and JSON exports, and clearing a
+name or separating a merge restores the default label. JSON exports put the name
+in `speaker` and keep the raw id. The diarizer reports no measure of how alike
+two voices sound, so the sheet offers a plain Merge Into choice, not a
+suggestion. The transcript's Name Speakers... button opens the same sheet later,
+and each line's speaker menu moves only that line to another voice.
+
 Installed > Audio lists the same models with the Text and Image lifecycle:
 installed, local folders, installs found on disk without a receipt, installs
 that need attention, installs the catalog no longer lists, and the pinned
@@ -189,8 +201,14 @@ modules and internal codecs are not presented as runnable jobs.
 - Speaker diarization runs the pinned Core ML pyannote community-1 export
   (`speaker-diarization-coreml`, macOS 15+) from the Advanced page. Once it is
   installed, the Record page's final pass labels each segment of a take with a
-  speaker ("Speaker 1", "Speaker 2", ...). Takes over 30 minutes stay
-  unlabeled. See [Core ML models](COREML.md).
+  speaker ("Speaker 1", "Speaker 2", ...). A take longer than the model's
+  30 minutes is labeled in parts of at most 30 minutes that share 5 minutes
+  and start on whole seconds (`AudioSpeakerParts`). A later part's voice takes
+  an earlier label only when at least 8 seconds, and 70% of its time in the
+  shared span, agree with one earlier voice. Any other voice starts a new
+  speaker, so a voice that is silent in the shared span can appear twice (merge
+  it in Name the Speakers), but voices are never joined on weaker evidence.
+  The sheet says how many parts were used. See [Core ML models](COREML.md).
 - Enhancement, separation, alignment, speech detection, codecs, the CPU
   diarization families (Sortformer, Nemotron), and other transcription families
   stay unavailable until their native adapters and model gates exist. Their

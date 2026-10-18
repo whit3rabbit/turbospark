@@ -28,6 +28,18 @@ struct SpeechToTextWorkspaceView: View {
                 .padding(.horizontal, 24).padding(.vertical, 12)
         }
         .tsAnimation(TSMotion.pane, value: mode)
+        .sheet(item: speakerNaming) { item in
+            AudioSpeakerNamingSheet(controller: controller, item: item, purpose: .afterTake)
+        }
+    }
+
+    /// The Meeting take whose final pass just labeled its speakers, while the
+    /// Meeting pane shows and nothing records. Closing the sheet clears it.
+    private var speakerNaming: Binding<AudioLibraryItem?> {
+        Binding(get: {
+            guard mode == .meeting, !controller.hasRecordingActivity, let id = controller.speakerNamingID else { return nil }
+            return controller.items.first { $0.id == id }
+        }, set: { if $0 == nil { controller.speakerNamingID = nil } })
     }
 
     private var modePicker: some View {
