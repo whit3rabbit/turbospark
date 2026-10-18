@@ -598,6 +598,17 @@ final class LocalizationParityTests: XCTestCase {
         // The Speech-to-Text pill renders each mode's title as a key.
         for mode in SpeechToTextMode.allCases {
             values.append(("SpeechToTextMode.titleKey", mode.titleKey))
+            // The models popover and Installed name each job per mode.
+            for job in SpeechToTextJob.allCases {
+                values.append(("SpeechToTextMode.titleKey(for:)", mode.titleKey(for: job)))
+            }
+        }
+        for job in SpeechToTextJob.allCases {
+            values.append(("SpeechToTextJob.hintKey", job.hintKey))
+        }
+        // Installed > Audio renders each list section header as a key.
+        for group in AudioInstalledEntry.Group.allCases {
+            values.append(("AudioInstalledEntry.Group.titleKey", group.titleKey))
         }
         for status in [AudioLibraryItem.Status.draft, .recording, .processing, .completed, .interrupted, .failed] {
             values.append(("AudioLibraryItem.Status.audioTitle", status.audioTitle))

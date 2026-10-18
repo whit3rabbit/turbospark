@@ -72,32 +72,8 @@ struct SpeechToTextWorkspaceView: View {
         .appAction(.secondary, size: .small)
         .help(Text("Audio model", bundle: .module))
         .popover(isPresented: $showingModels, arrowEdge: .bottom) {
-            SpeechToTextModelPanel(model: model, controller: controller)
+            SpeechToTextModelPanel(model: model, controller: controller, mode: mode)
         }
-    }
-}
-
-/// The model, language and live text model, in the header button's popover.
-/// One model serves every mode for now.
-@MainActor
-struct SpeechToTextModelPanel: View {
-    @ObservedObject var model: AppModel
-    @ObservedObject var controller: AudioWorkspaceController
-    @Environment(\.appTheme) private var theme
-
-    var body: some View {
-        let scale = AppMetrics.textScale(theme)
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                AudioModelPickerView(model: model, controller: controller)
-                AudioLanguagePicker(controller: controller)
-                AudioLiveTextModelRow(model: model, controller: controller)
-            }
-            .padding(18)
-        }
-        // A popover sizes to its content, and a scroll view has none.
-        .frame(width: 360 * scale)
-        .frame(minHeight: 240 * scale, idealHeight: 480 * scale, maxHeight: 640 * scale)
     }
 }
 

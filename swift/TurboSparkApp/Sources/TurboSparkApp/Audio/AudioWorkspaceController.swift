@@ -31,6 +31,10 @@ final class AudioWorkspaceController: ObservableObject {
     /// Installs that exist on disk but cannot be used as they are, with the
     /// engine's reason. Shown so a broken install is visible, not just absent.
     @Published var incompatibleInstalls: [AudioIncompatibleInstall] = []
+    /// The verified installs with their sizes, and managed audio installs the
+    /// catalog no longer lists, for Installed > Audio.
+    @Published var installedRecords: [AudioInstalledRecord] = []
+    @Published var otherAudioInstalls: [AudioInstalledRecord] = []
     @Published var isManagingInstall = false
     @Published var familyCapabilities: [AudioFamilyCapability] = []
     @Published var search = ""
@@ -291,6 +295,10 @@ final class AudioWorkspaceController: ObservableObject {
         if let remembered = preferences.selectedModels[modelSelectionKey],
            availableProfiles.contains(where: { $0.identity.alias == remembered }) {
             recipe.modelID = remembered
+        } else if page == .transcribe {
+            // A mode with no choice of its own starts from the shared one.
+            recipe.modelID = SpeechToTextModels.resolve(
+                speechToTextMode, .final, profiles: profiles, selected: preferences.selectedModels, isInstalled: isInstalled)?.identity.alias
         } else if task == .speechToText {
             // Catalog order lists Whisper first; the preference order puts the
             // most accurate runnable transcriber first. An installed runnable
@@ -551,6 +559,8 @@ final class AudioWorkspaceController: ObservableObject {
                 self.installedPaths = Dictionary(installed.installed.map { ($0.alias, $0.path) }, uniquingKeysWith: { first, _ in first })
                 self.needsAdoption = installed.needsAdoption
                 self.incompatibleInstalls = installed.incompatible
+                self.installedRecords = installed.installed
+                self.otherAudioInstalls = installed.otherAudio
                 self.restoreModelSelection()
                 self.normalizeModelOptions()
             case .failure(let error): self.modelCatalogError = error.localizedDescription
@@ -558,8 +568,11 @@ final class AudioWorkspaceController: ObservableObject {
         }
     }
     func chooseModelFolder() {
-        guard let profile = selectedProfile, AudioRuntimeProvider(profile).acceptsLocalFolder,
-              !isBusy, !hasRecordingActivity else { return }
+        if let profile = selectedProfile { chooseModelFolder(for: profile) }
+    }
+    /// Uses a checkpoint folder for `profile` instead of its managed install.
+    func chooseModelFolder(for profile: AudioProfile) {
+        guard AudioRuntimeProvider(profile).acceptsLocalFolder, !isBusy, !hasRecordingActivity else { return }
         let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false
         panel.message = AppStrings.localized("Choose a checkpoint folder for the selected audio model.")
         guard panel.runModal() == .OK, let url = panel.url else { return }
@@ -571,7 +584,10 @@ final class AudioWorkspaceController: ObservableObject {
     /// `acknowledged` lists the accepted ids of the profile's
     /// `requiredAcknowledgments`; the native installer refuses a missing one.
     func installSelectedModel(acknowledged: [String] = []) {
-        guard let profile = selectedProfile, !profile.identity.repository.isEmpty, !isBusy else { return }
+        if let profile = selectedProfile { install(profile, acknowledged: acknowledged) }
+    }
+    func install(_ profile: AudioProfile, acknowledged: [String] = []) {
+        guard !profile.identity.repository.isEmpty, !isBusy else { return }
         if let installHandler { _ = installHandler(profile, acknowledged); return }
         guard !isInstalling else { return }
         isInstalling = true; error = nil
@@ -732,12 +748,30 @@ final class AudioWorkspaceController: ObservableObject {
         modelInstalled && selectedProfileIsRunnable && !isModelLoaded && opening == nil && !isBusy && !isInstalling
     }
 
+    /// Whether `profile` can be loaded now, outside the page's own picker.
+    /// A streaming-only model opens per take and is never held loaded.
+    func canLoad(_ profile: AudioProfile) -> Bool {
+        let streamingOnly = profile.identity.task == .speechToText && !profile.capabilities.operations.contains("transcribe")
+        return isInstalled(profile) && AudioRuntimeProvider(profile).canRun(profile) && profile.identity.task.isRunnable
+            && !streamingOnly && !isProfileLoaded(profile) && opening == nil && !isBusy && !isInstalling
+    }
+
     var canUnloadModel: Bool {
         (session != nil || qwenModel != nil || loadedModelAlias != nil) && !isBusy && !isRecording
     }
 
     func loadModel() {
         guard let profile = selectedProfile, canLoadModel else { return }
+        load(profile, portable: allowPortableExperiment, experimentalMetal: allowExperimentalMetal)
+    }
+
+    /// Makes `profile` the one resident audio model, replacing any other.
+    func load(_ profile: AudioProfile) {
+        guard canLoad(profile) else { return }
+        load(profile, portable: false, experimentalMetal: false)
+    }
+
+    private func load(_ profile: AudioProfile, portable: Bool, experimentalMetal: Bool) {
         let token = epoch
         Task { [weak self] in
             guard let self, self.valid(token) else { return }
@@ -748,7 +782,7 @@ final class AudioWorkspaceController: ObservableObject {
                 case .fluidAudio(let family):
                     _ = try await self.residentFluidTranscriber(for: profile, family: family)
                 case .rust, .unsupported:
-                    _ = try await self.residentSession(for: profile, portable: self.allowPortableExperiment, experimentalMetal: self.allowExperimentalMetal)
+                    _ = try await self.residentSession(for: profile, portable: portable, experimentalMetal: experimentalMetal)
                 }
                 self.status = AppStrings.localized("Loaded \(profile.displayName)")
             } catch {

@@ -240,6 +240,9 @@ struct AudioWorkspacePreferences: Codable, Sendable {
     /// Speech-to-Text's mode (`SpeechToTextMode` raw value). Optional and a
     /// raw string so older profiles decode and an unknown value falls back.
     var speechToTextMode: String? = nil
+    /// Whether each Speech-to-Text mode labels speakers, by mode raw value.
+    /// Optional so older profiles decode. A missing mode uses its default.
+    var speakerLabels: [String: Bool]? = nil
     /// Each preset's collection name, localized once at first use and kept,
     /// so changing the app language does not split a collection.
     var presetCollections: [String: String]? = nil
