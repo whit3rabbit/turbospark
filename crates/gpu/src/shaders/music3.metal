@@ -103,7 +103,7 @@ kernel void music3_linear(device const uchar *w [[buffer(0)]],
         if(tid<8) for(uint g=tid;g<cols/p[3];g+=8) {
             for(uint c=g*p[3];c<(g+1)*p[3];c+=8) {
                 float acc=0;
-                for(uint i=0;i<min(8u,(g+1)*p[3]-c);i++) acc+=x[ulong(row)*cols+c+i]*music_value(w,sc,off,bs,p,o,c+i);
+                for(uint i=0;i<min(8u,(g+1)*p[3]-c);i++) acc=fma(x[ulong(row)*cols+c+i],music_value(w,sc,off,bs,p,o,c+i),acc);
                 result+=acc;
             }
         }
@@ -172,12 +172,14 @@ kernel void music3_linear(device const uchar *w [[buffer(0)]],
                     }
                     xsum+=xs;
                 }
-                sum+=dot*music_sc(sc,ulong(o)*(cols/p[3])+g)+xsum*music_sc(off,ulong(o)*(cols/p[3])+g);
+                // Explicit fma: left to the compiler, the pair of products fuses on an
+                // M4 Max but not on every GPU, and the last bit moves.
+                sum+=fma(dot,music_sc(sc,ulong(o)*(cols/p[3])+g),xsum*music_sc(off,ulong(o)*(cols/p[3])+g));
             }
         } else for(uint c=begin+tid;c<end;c+=128) {
             float weight=music_value(w,sc,off,bs,p,o,c);
             if(p[0]==3 && p[6]!=0 && p[9]) weight=music_round(weight,p[6]);
-            sum+=x[ulong(row)*cols+c]*weight;
+            sum=fma(x[ulong(row)*cols+c],weight,sum);
         }
         sum=simd_sum(sum);
         if(tid%32==0) parts[tid/32]=sum;
@@ -226,13 +228,13 @@ kernel void music3_linear_wide(device const uchar *w [[buffer(0)]],
                     uint word=u[c/8];
                     float4 xa=*(device const float4*)(xr+c), xb=*(device const float4*)(xr+c+4);
                     float xv[8]={xa.x,xa.y,xa.z,xa.w,xb.x,xb.y,xb.z,xb.w};
-                    for(uint i=0;i<8;i++) acc+=xv[i]*(float((word>>(4*i))&15u)*s+f);
+                    for(uint i=0;i<8;i++) acc=fma(xv[i],fma(float((word>>(4*i))&15u),s,f),acc);
                 } else {
                     for(uint i=0;i<8;i++) {
                         uint bit=(c+i)*bits,shift=bit%32;
                         uint code=u[bit/32]>>shift; if(shift+bits>32) code|=u[bit/32+1]<<(32-shift);
                         code&=(1u<<bits)-1;
-                        acc+=xr[c+i]*(float(code)*s+f);
+                        acc=fma(xr[c+i],fma(float(code),s,f),acc);
                     }
                 }
                 result+=acc;
