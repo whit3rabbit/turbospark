@@ -111,6 +111,16 @@ impl Music3Encoding {
 struct State {
     context: RefCell<MetalContext>,
     resident: Cell<usize>,
+    /// Plan kernels as if on this chip (see [`Music3Device::with_device_name`]).
+    name_override: Option<String>,
+}
+impl State {
+    /// The chip name the MLX-matching plans key on.
+    fn device_name(&self) -> String {
+        self.name_override
+            .clone()
+            .unwrap_or_else(|| self.context.borrow().device().name().to_owned())
+    }
 }
 #[derive(Clone)]
 pub struct Music3Device {
@@ -127,6 +137,10 @@ pub struct Music3Weight {
     resident: usize,
     /// Scales and offsets are stored as bf16 (bit-identical widening).
     scales_bf16: bool,
+    /// Output rows of the matrix this weight is a row window of, when it is
+    /// one. MLX picks a dense projection's split-K from the whole matrix, so
+    /// a window plans from this width to reproduce the full head's columns.
+    plan_rows: Option<usize>,
 }
 /// Planned projection: kernel, packed parameters, and threadgroup count.
 struct LinearPlan {
@@ -199,8 +213,22 @@ impl Music3Device {
             state: Rc::new(State {
                 context: RefCell::new(MetalContext::new()?),
                 resident: Cell::new(0),
+                name_override: None,
             }),
         })
+    }
+    /// A device that plans its kernels as if the GPU were named `name`.
+    ///
+    /// Several choices that reproduce MLX depend on the chip (the split-K
+    /// limits and `mlx_splitk_partitions`). This runs those choices for
+    /// another chip on the real GPU, so a test on one machine can cover the
+    /// plans of the others. The kernels themselves still run on this GPU.
+    pub fn with_device_name(name: &str) -> Result<Self, GpuError> {
+        let mut device = Self::new()?;
+        Rc::get_mut(&mut device.state)
+            .expect("a new device has one owner")
+            .name_override = Some(name.to_owned());
+        Ok(device)
     }
     pub fn resident_weight_bytes(&self) -> usize {
         self.state.resident.get()
@@ -333,6 +361,7 @@ impl Music3Device {
                 encoding,
                 resident,
                 scales_bf16,
+                plan_rows: None,
             })
         })
     }
@@ -1237,6 +1266,14 @@ fn finite_output(out: &MetalBuffer, count: usize) -> Result<Vec<f32>, GpuError> 
     Ok(values)
 }
 impl Music3Weight {
+    /// Marks this weight as a window of `rows` output rows of a larger
+    /// matrix, so kernel choices that depend on the output width (the dense
+    /// split-K) are made for the whole matrix. Exact only while the window
+    /// is 64-aligned, as the LM head's is.
+    pub fn planned_as_rows(mut self, rows: usize) -> Self {
+        self.plan_rows = Some(rows);
+        self
+    }
     fn parameters(&self) -> Vec<u32> {
         let (mode, bits, group) = self.encoding.parameters();
         vec![mode, self.shape[1] as u32, bits, group as u32]
@@ -1345,7 +1382,7 @@ impl Music3Weight {
             rows as u32,
         ]);
         // MLX stores split-K partials in the activation dtype before reduction.
-        let name = self.state.context.borrow().device().name().to_owned();
+        let name = self.state.device_name();
         let medium = input_dim <= 4096 && output_dim <= 4096;
         let small = input_dim <= 2048 && output_dim <= 2048;
         let limit = if name.contains("Ultra") {
@@ -1400,7 +1437,9 @@ impl Music3Weight {
         // heads hit this with both CFG rows batched (M = 2).
         let mut dense_split = false;
         if dtype != Music3DType::F32 && self.encoding.parameters().0 < 3 && !kokoro && rows > 1 {
-            if let Some(parts) = mlx_splitk_partitions(&name, rows, output_dim, input_dim) {
+            if let Some(parts) =
+                mlx_splitk_partitions(&name, rows, self.plan_rows.unwrap_or(output_dim), input_dim)
+            {
                 split = parts;
                 dense_split = true;
             }
@@ -1778,7 +1817,7 @@ impl Music3Weight {
         // K = taps * ic)`: the same split-K rule as the dense matmul. K is
         // tap-major, as ours already is.
         let conv_split = if mma && !kokoro && transpose && groups == 1 {
-            let name = self.state.context.borrow().device().name().to_owned();
+            let name = self.state.device_name();
             mlx_splitk_partitions(&name, outlen * batch.max(1), oc, kernel * ic).unwrap_or(1)
         } else {
             1

@@ -412,6 +412,10 @@ impl ComputeBackend for Backend {
                 name: data.name.into(),
                 why: error.to_string(),
             })?;
+        let weight = match data.planned_rows {
+            Some(rows) => weight.planned_as_rows(rows),
+            None => weight,
+        };
         Ok(Rc::new(Weight(
             weight,
             self.cancellation.clone(),
