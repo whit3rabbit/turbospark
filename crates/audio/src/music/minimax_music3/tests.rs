@@ -1295,11 +1295,14 @@ fn mixed_residual_embeddings_promote_each_depth_head_after_the_first() {
     model.generate_frame_hiddens(&ids, 1, 7).unwrap();
     let calls = recorded.borrow();
     assert!(!calls.is_empty());
-    assert_eq!(calls.len() % (2 * (model.config.num_codebooks - 1)), 0);
-    for frame in calls.chunks_exact(2 * (model.config.num_codebooks - 1)) {
-        assert_eq!(&frame[..2], &[precision::DType::Bf16; 2]);
+    // MLX applies each audio head once over both CFG rows, so a frame makes one
+    // head call per residual codebook (a per-row call would make two).
+    let per_frame = model.config.num_codebooks - 1;
+    assert_eq!(calls.len() % per_frame, 0);
+    for frame in calls.chunks_exact(per_frame) {
+        assert_eq!(frame[0], precision::DType::Bf16);
         assert!(
-            frame[2..].iter().all(|d| *d == precision::DType::F32),
+            frame[1..].iter().all(|d| *d == precision::DType::F32),
             "later depth heads: {frame:?}"
         );
     }

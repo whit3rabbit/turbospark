@@ -1358,6 +1358,33 @@ impl Music3Weight {
                 split -= 1;
             }
         }
+        // MLX multiplies a small dense bf16/f16 matrix by a tall-K weight with a
+        // split-K GEMM (`steel_gemm_splitk_axpby`): each K partition accumulates in
+        // its own float32 chain, the partials are summed in float32 in partition
+        // order, and the sum is rounded once. A single K chain differs in the last
+        // bit for a few outputs, which is enough to flip a sampled code downstream.
+        // M == 1 is a GEMV and keeps its own kernel. The depth projection and audio
+        // heads hit this with both CFG rows batched (M = 2).
+        let mut dense_split = false;
+        if dtype != Music3DType::F32 && self.encoding.parameters().0 < 3 && !kokoro && rows > 1 {
+            let (tm, tn) = (rows.div_ceil(16), output_dim.div_ceil(16));
+            let threshold = if name.contains("Max") || name.contains("Ultra") {
+                2048
+            } else {
+                1024
+            };
+            if tm * tn <= threshold && input_dim / 16 >= 8 && input_dim >= rows.max(output_dim) {
+                let (tm32, tn32) = (rows.div_ceil(32), output_dim.div_ceil(32));
+                let parts = ((input_dim / 16) / (tm32 * tn32))
+                    .next_power_of_two()
+                    .clamp(2, 32);
+                // Equal partitions only; a ragged K keeps the single chain.
+                if input_dim % (parts * 16) == 0 {
+                    split = parts;
+                    dense_split = true;
+                }
+            }
+        }
         if kokoro && rows > 1 {
             // MLX 0.31.2 uses the larger threshold on Max/Ultra devices.
             let threshold = if name.contains("Max") || name.contains("Ultra") {
@@ -1418,6 +1445,27 @@ impl Music3Weight {
         let fp_wide = fp_gemv && wide;
         let fp_vector = fp_gemv && !wide && values_per_lane != 0;
         p.push((kokoro) as u32);
+        // 1: sum the K partitions in float32 without rounding each one first.
+        p.push(dense_split as u32);
+        // MLX's wide GEMV for 2 to 15 vectors against a dense bf16/f16 matrix on M3
+        // and later (`gemv_wide`): up to five vectors per pass, at most three passes,
+        // 32 lanes per row for one pass or a tiny output, otherwise 16.
+        let dense_wide = dtype != Music3DType::F32
+            && matches!(self.encoding.parameters().0, 1 | 2)
+            && !kokoro
+            && bias_len.is_none()
+            && (2..=15).contains(&rows)
+            && output_dim > 1
+            && input_dim % 4 == 0
+            && ["M3", "M4", "M5"]
+                .iter()
+                .any(|generation| name.contains(generation));
+        let wide_lanes = if rows.div_ceil(5) == 1 || output_dim <= 64 {
+            32
+        } else {
+            16
+        };
+        p.push(wide_lanes as u32);
         let p = bytes(&p);
         // The Music 3 LM head window (`logit_window` in the audio crate)
         // is exact only while every output tile is at most 64 wide and
@@ -1428,7 +1476,9 @@ impl Music3Weight {
             } else {
                 weight_source(dtype, self.scales_bf16)
             },
-            kernel: if mma && rows <= 16 {
+            kernel: if dense_wide {
+                "music3_gemv_wide"
+            } else if mma && rows <= 16 {
                 "music3_linear_tiled_16x64"
             } else if mma {
                 "music3_linear_tiled_32x32"
@@ -1444,7 +1494,9 @@ impl Music3Weight {
                 "music3_linear"
             },
             params: p,
-            groups: if mma && rows <= 16 {
+            groups: if dense_wide {
+                output_dim.div_ceil(4 * (32 / wide_lanes)) as u64
+            } else if mma && rows <= 16 {
                 (rows.div_ceil(16) * output_dim.div_ceil(64)) as u64
             } else if mma {
                 (rows.div_ceil(32) * output_dim.div_ceil(32)) as u64

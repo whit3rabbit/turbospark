@@ -63,7 +63,7 @@ use crate::quant::QuantScheme;
 use crate::Result;
 use crate::SpeechError;
 
-use backend::{ComputeBackend, Weight};
+use backend::ComputeBackend;
 use depth::{DepthDecoder, DepthDims};
 use dit::{DitDims, FlowMatchingTransformer};
 use fusion::{ConditionDims, ConditionEncoder};
@@ -1060,16 +1060,18 @@ impl Model {
 
             // Depth expansion over both CFG rows.
             let lap = Instant::now();
-            let mut sequence: Vec<f32> = Vec::new();
-            for b in 0..2 {
-                sequence.extend(ops_linear_no_bias(
-                    &last_hidden[b * hidden..(b + 1) * hidden],
-                    &self.depth.projection,
-                    hidden,
-                    hidden,
-                    self.lm.output_dtype(),
-                )?);
-            }
+            // MLX applies the dense projection to both CFG rows in one matmul
+            // (`depth.projection(last_hidden)` on `[2, hidden]`), a different
+            // kernel from two single-row calls, so batch them the same way.
+            let sequence = backend::linear(
+                &last_hidden[..2 * hidden],
+                &self.depth.projection,
+                None,
+                2,
+                hidden,
+                hidden,
+                self.lm.output_dtype(),
+            )?;
             // Reorder the two rows into [2, 1, hidden].
             let semantic_embed = self.lm.embed_ids(
                 &[
@@ -1079,16 +1081,15 @@ impl Model {
                 2,
                 1,
             )?;
-            let mut semantic_projected = Vec::with_capacity(2 * hidden);
-            for b in 0..2 {
-                semantic_projected.extend(ops_linear_no_bias(
-                    &semantic_embed[b * hidden..(b + 1) * hidden],
-                    &self.depth.projection,
-                    hidden,
-                    hidden,
-                    self.lm.dtype(),
-                )?);
-            }
+            let semantic_projected = backend::linear(
+                &semantic_embed[..2 * hidden],
+                &self.depth.projection,
+                None,
+                2,
+                hidden,
+                hidden,
+                self.lm.dtype(),
+            )?;
             let residual = config.num_codebooks - 1;
             let mut codes = vec![semantic_code];
             let mut hidden_parts: Vec<f32> = Vec::with_capacity(residual * hidden);
@@ -1149,13 +1150,19 @@ impl Model {
                     depth_input_dtype = depth_input_dtype
                         .promote(self.depth.projection.output_dtype(self.depth.dtype()));
                     let embed = self.depth.embed_code(code, index - 1);
-                    extra_embeddings.extend(ops_linear_no_bias(
-                        embed,
+                    // Both CFG rows carry the same sampled code; MLX projects the
+                    // `[2, hidden]` pair, so do the same and keep one row.
+                    let pair = [embed, embed].concat();
+                    let projected = backend::linear(
+                        &pair,
                         &self.depth.projection,
+                        None,
+                        2,
                         hidden,
                         hidden,
                         self.depth.dtype(),
-                    )?);
+                    )?;
+                    extra_embeddings.extend_from_slice(&projected[..hidden]);
                 }
             }
 
@@ -1563,16 +1570,6 @@ fn semantic_guided(config: &ModelConfig, start: usize, width: usize, logits: &[f
 }
 
 /// `x [1, rows] @ w.T` with no bias, `w` stored `[out, in]`.
-fn ops_linear_no_bias(
-    x: &[f32],
-    w: &Weight,
-    inn: usize,
-    out: usize,
-    dtype: precision::DType,
-) -> Result<Vec<f32>> {
-    backend::linear(x, w, None, 1, inn, out, dtype)
-}
-
 /// `[1, target, dim]` row-major -> `[dim, target]` channel-major.
 fn condition_row_major_to_channel(x: &[f32], dim: usize, target: usize) -> Vec<f32> {
     let mut out = vec![0.0f32; dim * target];

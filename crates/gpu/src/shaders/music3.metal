@@ -330,6 +330,65 @@ kernel void music3_linear_fp_vector(device const uchar *w [[buffer(0)]],
     if(live && lane==0) y[pair]=music_round(music_round(result,p[6])+(p[5] ? bias[uint(pair%out)] : 0),p[6]);
 }
 
+// MLX 0.32's `gemv_wide` (mlx/backend/metal/kernels/gemv.h): out[M, N] = x[M, K] @ w[N, K]^T
+// for 2 to 15 vectors against a dense bf16 or f16 matrix on M3 and later. Each of
+// k_lanes lanes owns every k_lanes-th float4 chunk of K, adds eight chunk dots at a
+// time into a block sum, folds the block sums in order, then reduces the lanes with
+// halving shuffles. The rows of a simdgroup stay separate when k_lanes is 16.
+// The result for one vector does not depend on how vectors are grouped, so only
+// k_lanes (p[14]) matters. Rounds once to the activation dtype.
+inline float4 music_w4(device const ushort *row,uint idx,uint mode) {
+    float4 r;
+    for(uint i=0;i<4;i++) {
+        ushort u=row[idx*4+i];
+        r[i]=mode==2 ? as_type<float>(uint(u)<<16) : float(as_type<half>(u));
+    }
+    return r;
+}
+kernel void music3_gemv_wide(device const uchar *w [[buffer(0)]],
+ device const float *sc [[buffer(1)]],device const float *off [[buffer(2)]],
+ device const uchar *bs [[buffer(3)]],device const float *x [[buffer(4)]],
+ device const float *bias [[buffer(5)]],device float *y [[buffer(6)]],
+ constant uint *p [[buffer(7)]],uint gid [[threadgroup_position_in_grid]],
+ uint simd_gid [[simdgroup_index_in_threadgroup]],uint simd_lid [[thread_index_in_simdgroup]]) {
+    uint mode=p[0],K=p[1],N=p[4],M=p[7],k_lanes=p[14];
+    uint rps=32/k_lanes;
+    uint k_lane=simd_lid%k_lanes,sg_row=simd_lid/k_lanes;
+    uint out_row=gid*(4*rps)+simd_gid*rps+sg_row;
+    uint row=min(out_row,N-1);
+    device const ushort *wr=(device const ushort*)w+ulong(row)*K;
+    uint n_v4=K/4,n_main=n_v4-n_v4%(k_lanes*8);
+    float result[16];
+    for(uint v=0;v<16;v++) result[v]=0;
+    for(uint base=0;base<n_main;base+=k_lanes*8) {
+        float4 wf[8];
+        for(uint i=0;i<8;i++) wf[i]=music_w4(wr,base+i*k_lanes+k_lane,mode);
+        for(uint v=0;v<M;v++) {
+            float acc=0;
+            device const float *xv=x+ulong(v)*K;
+            for(uint i=0;i<8;i++) {
+                uint c=(base+i*k_lanes+k_lane)*4;
+                acc+=dot(wf[i],float4(xv[c],xv[c+1],xv[c+2],xv[c+3]));
+            }
+            result[v]+=acc;
+        }
+    }
+    for(uint idx=n_main+k_lane;idx<n_v4;idx+=k_lanes) {
+        float4 wf=music_w4(wr,idx,mode);
+        for(uint v=0;v<M;v++) {
+            device const float *xv=x+ulong(v)*K;
+            uint c=idx*4;
+            result[v]+=dot(wf,float4(xv[c],xv[c+1],xv[c+2],xv[c+3]));
+        }
+    }
+    for(uint v=0;v<M;v++) {
+        for(ushort o=k_lanes/2;o>=1;o>>=1) result[v]+=simd_shuffle_down(result[v],o);
+    }
+    if(k_lane==0 && out_row<N) {
+        for(uint v=0;v<M;v++) y[ulong(v)*N+out_row]=music_round(result[v],p[6]);
+    }
+}
+
 kernel void music3_embedding(device const uchar *w [[buffer(0)]],
  device const float *sc [[buffer(1)]], device const float *off [[buffer(2)]],
  device const uchar *bs [[buffer(3)]], device const int *ids [[buffer(4)]],
@@ -734,7 +793,9 @@ kernel void music3_linear_tiled(device const uchar *w [[buffer(0)]],
         threadgroup_barrier(mem_flags::mem_threadgroup);
         for(uint m=0;m<PER;m++) {
             float r=res[simd*SGE+lane+32*m];
-            total[m]=parts>1 ? music_round(total[m]+music_round(r,p[6]),p[6]) : r;
+            // p[13]: dense split-K sums float32 partials in order (MLX's gemm_splitk_accum);
+            // the quantized path stores each partial in the activation dtype first.
+            total[m]=parts>1 ? (p[13]!=0 ? total[m]+r : music_round(total[m]+music_round(r,p[6]),p[6])) : r;
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
