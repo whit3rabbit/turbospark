@@ -68,6 +68,7 @@ enum SettingsControlCatalog {
         .init(title: "Context Compaction", pane: .general, timing: .immediate),
         .init(title: "Continue responses after output limits", pane: .general, timing: .nextTurn),
         .init(title: "Enable Syntext project indexing", pane: .general, timing: .immediate),
+        .init(title: "Enable tools in Chat by default", pane: .general, timing: .nextTurn),
         .init(title: "Import from Other Agents\u{2026}", pane: .general, timing: .action),
         .init(title: "Include pinned instructions in model requests", pane: .general, timing: .nextTurn),
         .init(title: "Keep recent messages verbatim", pane: .general, timing: .nextTurn),

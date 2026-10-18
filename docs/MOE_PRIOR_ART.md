@@ -430,8 +430,11 @@ layer device, every weight the ANE refuses at load goes to the CPU instead
 of Metal. That is 242 tensors: norms, conv1d weights, SSM parameters, the
 full-attention K and V projections, and the output head.
 `docs/backend/ANE.md` describes a fallback to peer devices, but `src/` at
-`689fd77` has none. The load probe is a 512-token matmul, so placement
-follows the gate at 512 tokens whatever the run's microbatch.
+`689fd77` has none. The fork's author confirmed on PR #151 that the CPU
+fallback is unintended, likely a rebase regression, so the `-ot` rows in the
+table above are closer to the intended fork. The load probe is a 512-token
+matmul, so placement follows the gate at 512 tokens whatever the run's
+microbatch.
 
 The graph then has 4815 splits against Metal's 34, and tg32 halves (56.0 to
 27.0) though no decode matmul offloads. The fitted gate refuses every

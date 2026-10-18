@@ -321,6 +321,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     public var microcompactEnabled: Bool
     /// Whether output-limit responses may continue automatically.
     public var autoContinuationEnabled: Bool
+    /// Whether tools are offered by default in conversational Chat mode.
+    public var chatToolsEnabled: Bool
     /// Offer tools through the engine's native tool calling when the loaded
     /// checkpoint supports it. Off keeps the prompt-described text lane.
     public var nativeToolCallingEnabled: Bool
@@ -486,6 +488,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         evidenceReducer: Bool = true,
         todoBoundaryCompaction: Bool = true,
         compactionKeepRecentTurns: Int = 2,
+        chatToolsEnabled: Bool = true,
         microcompactEnabled: Bool = true,
         autoContinuationEnabled: Bool = true,
         nativeToolCallingEnabled: Bool = true,
@@ -568,6 +571,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.evidenceReducer = evidenceReducer
         self.todoBoundaryCompaction = todoBoundaryCompaction
         self.compactionKeepRecentTurns = compactionKeepRecentTurns
+        self.chatToolsEnabled = chatToolsEnabled
         self.microcompactEnabled = microcompactEnabled
         self.autoContinuationEnabled = autoContinuationEnabled
         self.nativeToolCallingEnabled = nativeToolCallingEnabled
@@ -707,6 +711,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
             Bool.self, forKey: .todoBoundaryCompaction, fallback: true)
         self.compactionKeepRecentTurns = c.decodeLenient(
             Int.self, forKey: .compactionKeepRecentTurns, fallback: 2)
+        self.chatToolsEnabled = c.decodeLenient(
+            Bool.self, forKey: .chatToolsEnabled, fallback: true)
         self.microcompactEnabled = c.decodeLenient(
             Bool.self, forKey: .microcompactEnabled, fallback: true)
         self.autoContinuationEnabled = c.decodeLenient(

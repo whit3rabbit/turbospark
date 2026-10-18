@@ -20,6 +20,32 @@ and the recording mode's pill shows a live dot. The top bar's recording badge
 opens the page or mode that started the capture. The Record page stays for
 Sound takes and hand-picked sources.
 
+Each mode keeps one model per job: Live Text (Live Captions in Any Audio),
+Final Transcript, and Speakers. The header's model button lists them, each with
+its state, Load Model or Unload, Download, and a Change list of the catalog
+profiles that can do that job. The choice is saved per mode and job
+(`speech_to_text:<mode>:<job>`) and applies to the next take. A mode with no
+choice of its own keeps the earlier behavior: the shared Speech-to-Text choice
+for the final pass, Parakeet Unified for live text, and the first installed
+diarization model for speakers.
+
+Deleting a model moves every mode that used it to the best installed model left
+for that job.
+
+Speaker labels are optional per mode, with a Label speakers switch on the
+Speakers slot. Meeting starts with it on, Voice Notes and Any Audio with it off.
+A take follows the mode of its preset, from either page, and an imported file
+follows Any Audio. With the switch off, the final pass skips labeling. Sound
+takes and takes with hand-picked sources keep the first installed diarization
+model.
+
+Installed > Audio lists the same models with the Text and Image lifecycle:
+installed, local folders, installs found on disk without a receipt, installs
+that need attention, installs the catalog no longer lists, and the pinned
+profiles this Mac can download. Its Used By card shows and changes which mode
+uses a model for which job. Memory figures are the catalog's estimate
+(`resident_memory_bytes`), not a measurement.
+
 Choose a microphone, app audio, or both. Check devices and permissions before
 starting. System audio uses ScreenCaptureKit on macOS 14; microphone audio uses
 AVAudioEngine. TurboSpark playback is excluded and screen frames are not saved.
@@ -176,6 +202,11 @@ until cancellation has actually drained. The workspace keeps one audio model
 resident and unloads it after five idle minutes, or immediately via the explicit
 Unload button or the window toolbar's eject menu.
 Qwen3-TTS releases its model at the end of each speech job.
+
+Loading another model, such as a meeting's speaker model after its transcriber,
+replaces the resident one. Live text opens its own stream for each take beside
+that one model. Holding several batch models loaded at once would need the
+controller to keep a session per model, which it does not.
 
 ## Storage and qualification
 

@@ -206,6 +206,27 @@ web tools need no root and still run. There is no defensible default root.
 `/` makes the containment check a no-op and `~` holds every credential on
 the machine (Gotcha 30).
 
+### Chat vs Projects: tool availability and user options
+
+TurboSpark separates tool execution environments between **Chat** and **Projects** to protect host security while providing assistants with web, planning, and reasoning capabilities:
+
+- **Projects Mode (`interactionMode == .projects` with an active project)**:
+  Full access to the project's tool suite according to its profile (`tools(for: profile, projectURL: url)`). This includes workspace-rooted tools (`workspaceRootedToolNames`: `read_file`, `write_file`, `edit_file`, `grep_search`, `search_code`, `list_directory`, `run_command`, `bashoutput`, `killshell`), project skills, and configured MCP servers.
+
+- **Chat Mode (`interactionMode == .chat`)**:
+  Designed for general and conversational assistance. Tools are toggled via `chatToolsEnabled` (persisted in `MacAppSettings`, default `true`):
+  - **When enabled (`chatToolsEnabled == true`)**: The turn offers only rootless tools. `AppToolCatalog.captureTurnAvailableTools` pulls `.general` tools with a `nil` project URL and strictly filters out all tools in `AppToolRegistry.workspaceRootedToolNames`. This safely exposes web search (`websearch`), web fetch (`webfetch`, `read_url_content`), browser automation subagents, structured user questionnaires (`askuserquestion`), checklists (`todowrite`), planning mode (`enterplanmode`/`exitplanmode`), memory (`memory`), and automation (`croncreate`, `sleep`, `pushnotification`), while withholding file edits and host shell execution.
+  - **When disabled (`chatToolsEnabled == false`)**: The turn completely disables tool advertising, prompt injection, and tool call extraction (`turnAllowsToolCalls == false`).
+
+**User Controls and Settings:**
+1. **Composer Chip Button**: An `AppChip` toggle button ("Tools", wrench and screwdriver icon) located in the leading action row directly beneath the text editor in Chat mode allows immediate single-click toggling before sending a turn.
+2. **Plus Menu (`+`)**: A toggle item in the attachment/plus menu ("Tools in Chat") provides discoverability.
+3. **General Settings**: Under the "Chat & Runtime" section of General Settings, "Enable tools in Chat by default" sets the persistent default for new sessions.
+
+**Defense in Depth:**
+Even if a model in Chat mode produces a tool call targeting a file or terminal tool, `AppToolRegistry.execute` validates the presence of a project root for all names in `workspaceRootedToolNames`, refusing execution with a clear safety error.
+
+
 **Containment is on the FILE tools only.** `resolveSecurePath` refuses
 absolute and `~` paths and compares the resolved target against the resolved
 root with symlinks followed on both sides. `AppToolSandbox.validateWritePath`

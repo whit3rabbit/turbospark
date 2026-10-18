@@ -34,22 +34,40 @@ final class AudioLiveText: ObservableObject {
 }
 
 extension AudioWorkspaceController {
+    /// The live text model the Record page uses, and every Speech-to-Text
+    /// mode until it picks its own.
     static let liveTextAlias = "parakeet-unified-en-coreml"
 
-    var liveTextProfile: AudioProfile? { profiles.first { $0.identity.alias == Self.liveTextAlias } }
-    var liveTextModelPath: String? { installedPaths[Self.liveTextAlias] }
+    /// The mode whose live text model applies: the running capture's, else
+    /// the page's. The Record page has no mode.
+    var liveTextMode: SpeechToTextMode? {
+        if let activeCaptureOrigin {
+            if case .speechToText(let mode) = activeCaptureOrigin { return mode }
+            return nil
+        }
+        return page == .transcribe ? speechToTextMode : nil
+    }
+
+    func liveTextProfile(for mode: SpeechToTextMode?) -> AudioProfile? {
+        if let mode { return speechToTextProfile(mode, .live) }
+        return profiles.first { $0.identity.alias == Self.liveTextAlias }
+    }
+    var liveTextProfile: AudioProfile? { liveTextProfile(for: liveTextMode) }
+    var liveTextModelPath: String? { liveTextProfile.flatMap { installedPaths[$0.identity.alias] } }
 
     /// Why the next take will not stream live text, or nil when it will.
     /// Without streaming, the draft-every-15-seconds path still runs.
-    var liveStreamingUnavailableReason: String? {
-        guard let profile = liveTextProfile else {
+    var liveStreamingUnavailableReason: String? { liveStreamingUnavailableReason(for: liveTextMode) }
+
+    func liveStreamingUnavailableReason(for mode: SpeechToTextMode?) -> String? {
+        guard let profile = self.liveTextProfile(for: mode) else {
             return AppStrings.localized("Streaming live text needs the live text model, which this catalog does not list.")
         }
         if !profile.capabilities.canRun {
             return profile.capabilities.unavailableReason
                 ?? AppStrings.localized("The live text model cannot run on this Mac.")
         }
-        if liveTextModelPath == nil {
+        if installedPaths[profile.identity.alias] == nil {
             return AppStrings.localized("Download the live text model to see words as they are spoken.")
         }
         if !Self.isEnglish(recipe.language) {
@@ -76,7 +94,11 @@ extension AudioWorkspaceController {
     /// capture starts so the feed sees the first packet.
     func startLiveText(itemID: UUID, capture: AudioCapture) {
         live.clear()
-        guard streamsLiveText, let path = liveTextModelPath else { return }
+        // The capture's origin is set before this, while it is not yet active.
+        var mode: SpeechToTextMode?
+        if case .speechToText(let origin)? = captureOrigin { mode = origin }
+        guard liveTranscription, liveStreamingUnavailableReason(for: mode) == nil,
+              let path = liveTextProfile(for: mode).flatMap({ installedPaths[$0.identity.alias] }) else { return }
         let feed = AudioLiveFeed()
         capture.attachLiveFeed(feed)
         let token = epoch
