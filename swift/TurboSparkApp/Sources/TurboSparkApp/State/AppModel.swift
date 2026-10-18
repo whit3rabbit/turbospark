@@ -132,6 +132,12 @@ public final class AppModel: ObservableObject {
     /// link the release engine, which cannot be given a library to list, so a test
     /// answers from its fake service the way the engine answers from its registry.
     var catalogInstalledReader: () throws -> [InstalledModel] = { try TurboSparkCatalog.installed() }
+    /// Classifies an additional model scan folder before `refreshModels()` walks
+    /// it (task 6.12). A seam: a test marks a real temp folder as being on an
+    /// unplugged drive and checks that nothing in it is listed.
+    var scanFolderStatusReader: @Sendable (String) -> ScanFolderStatus = {
+        ModelStorageManager.scanFolderStatus($0)
+    }
     /// Reads This Mac's free space for the install gate and the destination menu.
     /// A seam: a test cannot make the boot disk full or empty.
     var thisMacFreeSpaceReader: () -> UInt64? = { ModelInstallGate.freeSpaceOnThisMac() }

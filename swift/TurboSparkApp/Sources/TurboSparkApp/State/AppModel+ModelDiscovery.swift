@@ -95,10 +95,17 @@ extension AppModel {
             // actor (this is a recursive `FileManager.enumerator` plus a
             // second full walk per bundle found), so the fix is to store
             // that task rather than to wrap it.
+            // **A FOLDER ON AN UNPLUGGED DRIVE IS NOT WALKED, AND IS NOT AN
+            // ERROR** (task 6.12, requirements 3.4 and 3.9). Settings shows it
+            // as Not connected; here it simply contributes no rows, exactly as a
+            // missing library contributes none. The status is read inside the
+            // task because a connected drive's folder is a stat on that drive.
+            let folderStatus = scanFolderStatusReader
             modelScanTask = Task.detached(priority: .utility) { [weak self] in
+                let reachable = customDirs.filter { folderStatus($0) == .connected }
                 let scanned = ModelStorageManager.scanExternal(
-                    lmStudioPath: lmPath, customPaths: customDirs)
-                let scannedImages = Self.scanImageInstalls(in: customDirs)
+                    lmStudioPath: lmPath, customPaths: reachable)
+                let scannedImages = Self.scanImageInstalls(in: reachable)
                 guard !Task.isCancelled, let self else { return }
                 await MainActor.run {
                     self.mergeScannedModels(scanned, into: catalogRows)

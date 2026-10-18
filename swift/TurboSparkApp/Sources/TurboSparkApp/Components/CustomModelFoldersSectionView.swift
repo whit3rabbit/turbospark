@@ -8,16 +8,48 @@ import TurboSpark
 @MainActor
 struct CustomModelFoldersSectionView: View {
     @ObservedObject var model: AppModel
+    /// **OBSERVED DIRECTLY**, like the Model libraries section: `AppModel` does
+    /// not publish it (a mount would redraw every screen), and a mount or an
+    /// unmount is exactly when a row here changes.
+    @ObservedObject private var libraryState: LibraryState
 
-    /// Model counts per folder, from the last `rescanCounts()`.
+    /// Read so the strings built below follow the language picker: they come
+    /// from `AppStrings`, which has no dependency SwiftUI can see.
+    @Environment(\.locale) private var locale
+
+    /// What the last `reread()` found per folder: whether it can be read and how
+    /// many models are in it.
     ///
     /// `ModelStorageManager.scanModels` walks the whole directory tree with
     /// a `FileManager.enumerator`, stat-ing every entry -- real I/O, not a
     /// property read. It used to run inline in `body`, so SwiftUI re-ran the
     /// walk, for every configured folder, on every body evaluation this view
     /// received for any reason (`swift/docs/SWIFT_SETTINGS_AUDIT.md`). `.task(id:)`
-    /// below reruns this exactly when the folder list changes.
-    @State private var scannedCounts: [String: Int] = [:]
+    /// below reruns this exactly when the folder list changes or a volume
+    /// comes or goes.
+    @State private var readings: [String: ScanFolderReading] = [:]
+
+    init(model: AppModel) {
+        self.model = model
+        _libraryState = ObservedObject(wrappedValue: model.libraryState)
+    }
+
+    /// Why `reread()` runs: the folder list, or a drive coming or going.
+    ///
+    /// **THE VOLUME COUNT IS THE TRIGGER, NOT THE LIBRARY LIST.** A scan folder
+    /// on a drive that holds no library changes nothing in `libraries`, and the
+    /// row must still flip when the drive is plugged in. `LibraryState` already
+    /// counts the mounts, unmounts and renames the process-wide volume monitor
+    /// reports, so no second workspace observer is added here.
+    private struct ReadTrigger: Equatable {
+        let folders: [String]
+        let volumeChanges: Int
+    }
+
+    private var language: AppLanguage {
+        _ = locale
+        return AppStrings.currentLanguage
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -66,68 +98,90 @@ struct CustomModelFoldersSectionView: View {
             }
             .modelsSettingsCard()
         }
-        .task(id: model.customModelDirectories) {
-            await rescanCounts()
+        .task(id: ReadTrigger(folders: model.customModelDirectories, volumeChanges: libraryState.volumeChangeCount)) {
+            await reread()
         }
     }
 
     private func folderRow(_ dir: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "folder")
-                .foregroundStyle(.appSecondary)
-                .accessibilityHidden(true)
-            SettingsPathText(dir)
-            Spacer()
-
-            // A count label rather than a plural sentence: the catalog
-            // carries no plural variants for this key.
-            Text("Models: \(scannedCounts[dir] ?? 0)", bundle: .module)
-                .themedFont(.tiny)
-                .foregroundStyle(.appSecondary)
-                .fixedSize()
-
-            AppIconButton("arrow.up.right.square", label: Text("Reveal in Finder", bundle: .module)) {
-                ModelStorageManager.revealInFinder(path: dir)
-            }
-            .appAction(.quiet, size: .small)
-
-            AppIconButton("trash", label: Text("Remove this folder from scan list", bundle: .module), role: .destructive) {
-                removeCustomFolder(dir)
-            }
-            .appAction(.quiet, size: .small)
-            .foregroundStyle(.red)
-        }
-        .padding(8)
-        .background(.appSurface)
-        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
+        ScanFolderRowView(
+            row: ScanFolderRowModel(path: dir, reading: readings[dir], language: language),
+            reveal: { ModelStorageManager.revealInFinder(path: dir) },
+            remove: { removeCustomFolder(dir) })
     }
 
-    /// Walks off the main actor: a folder on an external or network drive can
-    /// take seconds, and the walk used to block the UI.
-    private func rescanCounts() async {
-        let folders = model.customModelDirectories
-        let counts = await Task.detached(priority: .utility) {
-            Self.folderCounts(for: folders)
-        }.value
-        guard !Task.isCancelled else { return }
-        scannedCounts = counts
+    /// Reads every folder off the main actor: a folder on an external or network
+    /// drive can take seconds, and the walk used to block the UI.
+    private func reread() async {
+        guard let fresh = await Self.readOffMainActor(model.customModelDirectories) else { return }
+        readings = fresh
+    }
+
+    /// `readFolders` on a utility thread. Nil when the caller was cancelled (the
+    /// folder list changed again, or a second volume event arrived): a reading
+    /// that was superseded is never applied.
+    ///
+    /// The detached task is cancelled with the caller. A detached task does not
+    /// inherit cancellation, and without this a hub with three drives would start
+    /// three full walks that all run to the end.
+    nonisolated static func readOffMainActor(
+        _ folders: [String],
+        status: @escaping @Sendable (String) -> ScanFolderStatus = { ModelStorageManager.scanFolderStatus($0) },
+        count: @escaping @Sendable (String) -> Int = { CustomModelFoldersSectionView.modelCount(in: $0) }
+    ) async -> [String: ScanFolderReading]? {
+        let work = Task.detached(priority: .utility) {
+            CustomModelFoldersSectionView.readFolders(folders, status: status, count: count)
+        }
+        let result = await withTaskCancellationHandler {
+            await work.value
+        } onCancel: {
+            work.cancel()
+        }
+        return Task.isCancelled ? nil : result
+    }
+
+    /// Whether each folder can be read and, for a connected one, how many
+    /// models it holds.
+    ///
+    /// **A FOLDER THAT CANNOT BE READ IS NOT WALKED** (requirement 3.9): the
+    /// status is a stat of the mount point, and the count, a recursive walk, runs
+    /// only for a folder that exists. A repeated path is read once.
+    nonisolated static func readFolders(
+        _ folders: [String],
+        status: (String) -> ScanFolderStatus = { ModelStorageManager.scanFolderStatus($0) },
+        count: (String) -> Int = { CustomModelFoldersSectionView.modelCount(in: $0) }
+    ) -> [String: ScanFolderReading] {
+        var statuses: [String: ScanFolderStatus] = [:]
+        var connected: [String] = []
+        for folder in folders where statuses[folder] == nil {
+            if Task.isCancelled { return [:] }
+            let found = status(folder)
+            statuses[folder] = found
+            if found == .connected { connected.append(folder) }
+        }
+        let counts = folderCounts(for: connected, count: count)
+        return statuses.reduce(into: [:]) { result, entry in
+            result[entry.key] = ScanFolderReading(status: entry.value, modelCount: counts[entry.key] ?? 0)
+        }
     }
 
     /// `customModelDirectories` is decoded leniently and never deduplicated,
     /// so a repeated path must not trap the dictionary build.
     nonisolated static func folderCounts(
-        for folders: [String], count: (String) -> Int = {
-            // Image installs live in the same folders and are found by the
-            // image scan, not the text-model one, so the count adds both.
-            ModelStorageManager.scanModels(in: $0, sourceTag: "Custom").count
-                + ((try? TurboSparkCatalog.imageInstalled(in: ModelStorageManager.expandPath($0)))?.count ?? 0)
-        }
+        for folders: [String], count: (String) -> Int = { CustomModelFoldersSectionView.modelCount(in: $0) }
     ) -> [String: Int] {
         var result: [String: Int] = [:]
         for folder in folders where result[folder] == nil {
             result[folder] = count(folder)
         }
         return result
+    }
+
+    /// Image installs live in the same folders and are found by the image scan,
+    /// not the text-model one, so the count adds both.
+    nonisolated static func modelCount(in folder: String) -> Int {
+        ModelStorageManager.scanModels(in: folder, sourceTag: "Custom").count
+            + ((try? TurboSparkCatalog.imageInstalled(in: ModelStorageManager.expandPath(folder)))?.count ?? 0)
     }
 
     private func addCustomFolder() {

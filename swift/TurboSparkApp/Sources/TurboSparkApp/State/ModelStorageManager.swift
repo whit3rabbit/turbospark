@@ -303,7 +303,71 @@ public enum ModelStorageManager {
     }
 }
 
+/// Whether an additional model scan folder can be read now (requirement 3.9).
+public enum ScanFolderStatus: Equatable, Sendable {
+    /// The folder exists.
+    case connected
+    /// The folder is on a volume whose mount point is absent: an unplugged
+    /// drive. The name is the drive's own spelling, unescaped: it is a key for
+    /// comparison, and whoever shows it goes through `UntrustedText.display`.
+    case notConnected(volumeName: String)
+    /// The folder is not on a missing volume and does not exist.
+    case notFound
+}
+
 extension ModelStorageManager {
+    /// Whether the scan folder at `path` can be read, answered without walking it.
+    ///
+    /// **A VOLUME IS GONE WHEN ITS MOUNT POINT IS GONE, AND NOTHING ELSE.**
+    /// macOS keeps `/Volumes` root-owned, so an entry appears there when a drive
+    /// mounts and goes when it leaves. A path under `<volumesRoot>/<name>` whose
+    /// `<volumesRoot>/<name>` is absent is therefore an unplugged drive, and the
+    /// dead path below it is never asked about. The boot volume shows up as
+    /// `/Volumes/Macintosh HD`, a link to `/`: the mount point exists, so the
+    /// folder behind it is judged on its own. Symlinks are never resolved here
+    /// (that would turn that link into `/` and lose the volume).
+    ///
+    /// **THE PATH IS READ BY COMPONENT.** A string prefix would take `T70` for
+    /// `T7` and `/Volumes2/x` for `/Volumes/x`. `.` and `..` are resolved
+    /// lexically, so `/Volumes/T7/../T7/models` and a trailing slash name the same
+    /// folder as the plain spelling. `..` is lexical on purpose: the first
+    /// component under the root is what decides, and the file system is not asked.
+    ///
+    /// Pure: `volumesRoot` and `pathExists` are injected, so a test uses a temp
+    /// directory as the volumes root and never reads a real drive.
+    public static func scanFolderStatus(
+        _ path: String, volumesRoot: String = "/Volumes",
+        pathExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
+    ) -> ScanFolderStatus {
+        let expanded = expandPath(path)
+        guard !expanded.isEmpty else { return .notFound }
+        // A relative path is nowhere under the volumes root.
+        guard expanded.hasPrefix("/") else { return pathExists(expanded) ? .connected : .notFound }
+
+        let folder = absoluteComponents(expanded)
+        let root = absoluteComponents(expandPath(volumesRoot))
+        if folder.count > root.count, Array(folder.prefix(root.count)) == root {
+            let name = folder[root.count]
+            let mountPoint = "/" + (root + [name]).joined(separator: "/")
+            if !pathExists(mountPoint) { return .notConnected(volumeName: name) }
+        }
+        return pathExists("/" + folder.joined(separator: "/")) ? .connected : .notFound
+    }
+
+    /// The components of an absolute path with `.`, empty parts and `..` resolved
+    /// lexically. A `..` at the top stays at the top, as the file system does.
+    private static func absoluteComponents(_ path: String) -> [String] {
+        var result: [String] = []
+        for part in path.split(separator: "/", omittingEmptySubsequences: true) {
+            switch part {
+            case ".": continue
+            case "..": _ = result.popLast()
+            default: result.append(String(part))
+            }
+        }
+        return result
+    }
+
     /// Scans the external model directories, off the main actor.
     ///
     /// `nonisolated` and taking plain values so `AppModel.refreshModels` can

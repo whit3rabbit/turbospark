@@ -291,7 +291,7 @@ final class LoadableModelsTests: LibraryStateTestCase {
         }
         let state = makeState()
         await state.refresh()
-        let model = await makeModel(using: state)
+        let model = await makeFollowingModel(state)
         model.installed = [
             LibraryFixtures.row("local"), LibraryFixtures.row("on-t7", library: t7),
             LibraryFixtures.row("on-spare", library: spare),
@@ -308,7 +308,7 @@ final class LoadableModelsTests: LibraryStateTestCase {
         }
         let state = makeState()
         await state.refresh()
-        let model = await makeModel(using: state)
+        let model = await makeFollowingModel(state)
         model.installed = [LibraryFixtures.row(humanizer, library: spare)]
 
         XCTAssertNil(model.humanizeWorkspace.installedPath(), "the Humanizer's drive is away: it cannot be loaded")
@@ -338,7 +338,7 @@ final class LoadableModelsTests: LibraryStateTestCase {
     }
 
     func testAUserWhoseOnlyModelsAreOnAnUnpluggedDriveIsNotToldToInstallOne() async {
-        let model = await makeModel(using: await offlineOnlyState())
+        let model = await makeFollowingModel(await offlineOnlyState())
         model.installed = []
 
         XCTAssertFalse(model.requiresModelInstallation)
@@ -352,11 +352,18 @@ final class LoadableModelsTests: LibraryStateTestCase {
         let state = makeState()
         service.with { $0.installed = [] }
         await state.refresh()
-        let model = await makeModel(using: state)
+        let model = await makeFollowingModel(state)
         model.installed = []
 
         XCTAssertTrue(model.requiresModelInstallation)
-        XCTAssertTrue(model.showsModelSetupScreen)
+        // The routing is asked with an empty transcript on purpose: a fresh
+        // `AppModel` reads the saved chat history, and another suite in the same
+        // process (ImageWorkspaceTests) can leave a transcript there, which says
+        // nothing about whether this user has a model.
+        XCTAssertTrue(
+            AppModel.showsModelSetupScreenTerms(
+                requiresInstall: model.requiresModelInstallation, installing: model.isInstallingModel,
+                hasTranscript: false))
         XCTAssertTrue(model.showsNoModelInstalledBanner)
         XCTAssertNil(model.notConnectedStatement)
     }
@@ -369,7 +376,7 @@ final class LoadableModelsTests: LibraryStateTestCase {
         }
         let state = makeState()
         await state.refresh()
-        let model = await makeModel(using: state)
+        let model = await makeFollowingModel(state)
         model.installed = []
 
         XCTAssertTrue(model.requiresModelInstallation)
@@ -386,7 +393,7 @@ final class LoadableModelsTests: LibraryStateTestCase {
         }
         let state = makeState()
         await state.refresh()
-        let model = await makeModel(using: state)
+        let model = await makeFollowingModel(state)
         model.installed = [LibraryFixtures.row("local")]
 
         XCTAssertFalse(model.requiresModelInstallation)

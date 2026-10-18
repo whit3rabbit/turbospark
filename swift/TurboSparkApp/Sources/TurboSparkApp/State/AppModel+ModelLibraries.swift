@@ -71,6 +71,14 @@ final class LibraryState: ObservableObject {
     /// conversion into a library is waiting for it (requirement 9.3). Set and
     /// cleared by `MoveStoreMigration` only.
     @Published private(set) var pendingMovedStore: PendingMovedStore?
+    /// Mounts, unmounts and renames seen so far, ONE per event and bumped at once,
+    /// not after the debounced refresh. It exists for views whose answer depends
+    /// on a path rather than on a library: an additional model scan folder on a
+    /// drive that holds no library changes nothing in `libraries`, yet plugging
+    /// the drive in must flip its row (task 6.12). `willUnmount` is not counted:
+    /// it fires for an eject the user may still cancel. Reading it adds no second
+    /// workspace observer; the process-wide monitor feeds `handle(_:)`.
+    @Published private(set) var volumeChangeCount = 0
 
     /// The id of the placeholder row `displayLibraries` appends for
     /// `pendingMovedStore`. A real library id is a v4 UUID, which this can
@@ -224,6 +232,7 @@ final class LibraryState: ObservableObject {
         defer { handledEventCount += 1 }
         switch event {
         case .mounted(let volume):
+            volumeChangeCount += 1
             scheduleRefresh()
             discoverOffer(on: volume)
 
@@ -231,6 +240,7 @@ final class LibraryState: ObservableObject {
             break
 
         case .didUnmount(let volume):
+            volumeChangeCount += 1
             // The speed goes first and without waiting: it was measured on a
             // drive that is no longer there, and nothing may read it in the
             // meantime.
@@ -239,6 +249,7 @@ final class LibraryState: ObservableObject {
             scheduleRefresh()
 
         case .renamed(let old, let new):
+            volumeChangeCount += 1
             // The probe caches by mount path until told otherwise, and both
             // paths may be cached. The speed belongs to the old name's drive
             // reading; the refresh re-resolves the library at its new root.
