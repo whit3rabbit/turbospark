@@ -324,6 +324,8 @@ public final class AppModel: ObservableObject {
     @Published public var microcompactEnabled: Bool = true
     /// Whether output-limit responses may continue automatically.
     @Published public var autoContinuationEnabled: Bool = true
+    /// Whether tools are offered in conversational Chat mode.
+    @Published public var chatToolsEnabled: Bool = true
     /// Offer tools through the engine's native tool calling when the loaded
     /// checkpoint supports it, instead of describing them in the prompt.
     @Published public var nativeToolCallingEnabled: Bool = true

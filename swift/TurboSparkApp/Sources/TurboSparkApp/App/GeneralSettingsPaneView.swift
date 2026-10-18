@@ -278,6 +278,17 @@ struct GeneralSettingsPaneView: View {
     private var chatRuntimeSection: some View {
         let controls = ChatRuntimeSettingsBindings(model: model)
         return Section(header: Text("Chat Runtime", bundle: .module)) {
+            Toggle(isOn: controls.chatToolsEnabled) {
+                Text("Enable tools in Chat by default", bundle: .module)
+            }
+            .settingsControl("Enable tools in Chat by default", pane: .general, timing: .nextTurn)
+            Text(
+                "Allows the assistant to use web search, browser automation, interactive questions, and global integrations during conversational chats. Codebase file edits and terminal commands remain scoped to Projects.",
+                bundle: .module
+            )
+            .font(theme.ui(.small))
+            .foregroundStyle(.appSecondary)
+
             Toggle(isOn: controls.microcompactEnabled) {
                 Text("Compact older tool results", bundle: .module)
             }

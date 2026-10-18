@@ -52,6 +52,10 @@ struct PromptComposerFooter: View {
 
             ToolApprovalDropdown(model: model)
 
+            if model.interactionMode == .chat {
+                ChatToolsToggleButton(model: model)
+            }
+
             SearchToggleButton(model: model)
 
             if model.selectedProject != nil {

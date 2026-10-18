@@ -1,0 +1,50 @@
+{
+ "description": "NeMo Speech 218d0b4 coupled Nemotron-3 diarizer goldens (Frozen E geometry)",
+ "trace_meta": {
+  "wav": "IS1004a_00140_00260.wav",
+  "wav_sha256": "e5f0c4e4ac6c1fdbcbb8df935854a2de071b3fefce0ad91173594905294ce861",
+  "driver_sha256": "7c34077ce6f4286e5ad3f390994683ef957d965bb93e05dea1a51fb2c8b0b56e",
+  "torch": "2.14.1",
+  "threads": 4,
+  "streams_length": 12001,
+  "pad_and_drop_preencoded": true,
+  "streaming_cfg": {
+   "chunk_size": [
+    105,
+    112
+   ],
+   "shift_size": [
+    105,
+    112
+   ],
+   "cache_drop_size": 0,
+   "last_channel_cache_size": 70,
+   "valid_out_len": 14,
+   "pre_encode_cache_size": [
+    0,
+    9
+   ],
+   "drop_extra_pre_encoded": 2,
+   "last_channel_num": 0,
+   "last_time_num": 0
+  },
+  "diar_modules": {
+   "chunk_len": 14,
+   "chunk_left_context": 0,
+   "chunk_right_context": 0,
+   "fifo_len": 264,
+   "spkcache_len": 264,
+   "spkcache_update_period": 222
+  },
+  "diar_output_subsampling_factor": 8,
+  "diar_async_streaming": false
+ },
+ "steps": 54,
+ "license": "Audio from the AMI Meeting Corpus (CC BY 4.0), https://groups.inf.ed.ac.uk/ami/corpus/license.shtml",
+ "generator": "crates/audio/scripts/generate_coupled_diar_fixture.py",
+ "files_sha256": {
+  "features.npy": "499798f3c24cd8ce992546359cfbcc48529335e59b0d7c18cdd215c5e1adea67",
+  "chunk_preds.npy": "dc70e8408e47246289674299c825d138c09a4265ec44c08a82b7a7a3e45e35f5",
+  "state.json": "1eeb5defe0a72bd8b2639ccdfe1563c9212bfcc01b35da7fb1b437d4e803d13d"
+ }
+}

@@ -6,6 +6,9 @@
 /// Benchmarking protocol case definitions and runner logic.
 pub mod protocol;
 
+/// Speaker-attributed meeting scoring (cpWER) for the Frozen E port.
+pub mod meeting;
+
 /// Memory sampling helpers (macOS phys_footprint).
 #[cfg(target_os = "macos")]
 pub mod memory;

@@ -4,8 +4,9 @@ Reviewed 2026-10-14 for anything the routed-expert streamer
 (`crates/streaming`) or the MoE layer paths could borrow. The `main-npu`
 part was re-read on 2026-10-17, after the fork's author pointed to it in the
 review of PR #151: the first pass took one number from that branch and
-missed its quantized-weight path. Every source was read. Only `main-npu` was
-built and run, on one M4 Max (see "Measured on an M4 Max"). The engine
+missed its quantized-weight path. Every source was read. Only `main-npu` and
+a Core ML probe of this engine's prefill matmuls were run, on one M4 Max (see
+"Measured on an M4 Max" and "Phase 0 in this engine"). The engine
 measurements items 1 to 3 cite live in `docs/EXPERT_ROUTING.md`. Any other
 row is a claim from the source until the experiment it names has run on a
 Mac.
@@ -43,7 +44,7 @@ budget, a cold-read tuning pass, or Neural Engine offload.
 | Per-expert contiguous pages, pread over cold mmap, concurrent misses, shared expert overlap | jitllm | already here | none |
 | Cross-layer router prefetch | jitllm `Config.StreamPrefetch` | closed here (warm); jitllm's disk-bound result lowers the prior on the owed cold sweep | none new |
 | Moving blocks between devices, routed experts on the CPU | jitllm `moveblocks.go`, `streamBank.runHost` | does not apply to unified memory | none |
-| Neural Engine prefill matmuls, Metal converting weights and activations | phhusson `main-npu` | not started; dense matmuls only, any quant with an F16 conversion, private API | a separate decision, not MoE work; benchmark the fork on M4 Max first |
+| Neural Engine prefill matmuls, Metal converting weights and activations | phhusson `main-npu` | **Phase 0 measured** (2026-10-18): the fork loses on an M4 Max, but the same matmul through public Core ML, split with Steel, ran 1.10x to 1.77x faster per matmul (1.24x or more in 8 of 10 cases) | an opt-in Phase 1 split prototype with real-model gates, a separate decision from MoE work |
 | Neural Engine row-split prefill on repacked 2-bit weights | phhusson `apple/bonsai-pq20`, `h3.c-ane` | not started; one encoding, private API | only if the `main-npu` route is taken and Bonsai needs more |
 | Cross-device zero-copy buffers | llama.cpp #30340 | unified memory already has it | only a fence lesson, for ANE work |
 
@@ -430,8 +431,11 @@ layer device, every weight the ANE refuses at load goes to the CPU instead
 of Metal. That is 242 tensors: norms, conv1d weights, SSM parameters, the
 full-attention K and V projections, and the output head.
 `docs/backend/ANE.md` describes a fallback to peer devices, but `src/` at
-`689fd77` has none. The load probe is a 512-token matmul, so placement
-follows the gate at 512 tokens whatever the run's microbatch.
+`689fd77` has none. The fork's author confirmed on PR #151 that the CPU
+fallback is unintended, likely a rebase regression, so the `-ot` rows in the
+table above are closer to the intended fork. The load probe is a 512-token
+matmul, so placement follows the gate at 512 tokens whatever the run's
+microbatch.
 
 The graph then has 4815 splits against Metal's 34, and tg32 halves (56.0 to
 27.0) though no decode matmul offloads. The fitted gate refuses every
@@ -502,7 +506,8 @@ base-M4 Bonsai branch, and from 150 to 330 on a Ryzen NPU.
 when the ANE alone is faster. A row split adds the ANE's rate to the GPU's
 instead. On this M4 Max it could beat Metal alone, although the ANE is the
 slower device. For a quantized model the F16 weight conversion also runs on
-the GPU and would eat into that. Not built here, and not measured.
+the GPU and would eat into that. Phase 0 below measured it against Steel per
+matmul, conversion included, at 1.10x to 1.77x faster.
 
 **When each path is the better choice:**
 
@@ -512,14 +517,17 @@ the GPU and would eat into that. Not built here, and not measured.
 | Base chip (8 to 10 GPU cores), long prompt, microbatch 2048 | ANE + Metal | The fork's figures, not reproduced: +28% (9B Q4_K_M), +21% (2.6B F16), no gain at microbatch 512 |
 | Battery or background prefill, 512+ tokens per batch | ANE + Metal | Measured here: 0.37x to 0.48x modeled energy per prompt, at 1.38x to 1.78x the time |
 | Decode, or short prompts | Metal alone | No matmul under 32 tokens offloads, and small batches cost more energy on the ANE |
-| Max GPU, concurrent row split | Unknown | Could beat Metal alone, unbuilt in `main-npu` |
+| Max GPU, concurrent row split, 512+ tokens per matmul | ANE + Steel split | Phase 0, per matmul and not end to end: 1.10x to 1.77x faster (1.24x or more in 8 of 10 cases) at 0.65x to 0.74x the modeled energy |
 
-**Kept as a parked option.** Nothing here is worth porting today. It needs
-private API, a per-format F16 conversion kernel and new precision gates. On
-this machine it does not win on speed either.
+**A parked option, reopened by Phase 0.** Porting `main-npu` as written is
+still not worth it. It needs private API and does not win on speed here.
+Phase 0 below answered both for one route. Public Core ML runs the same
+matmul on the ANE, and a concurrent split with Steel beats Steel per matmul.
+That route still needs a per-format F16 conversion kernel and new precision
+gates.
 
-The energy result makes a low-power prefill mode the strongest case, at
-about half the energy for a prompt 1.4x to 1.8x slower. It still owes wall
+The fork's energy result made a low-power prefill mode the strongest case. It
+used about half the energy for a prompt 1.4x to 1.8x slower. It still owes wall
 power (`scripts/power.sh`) and a product call on that trade. This engine
 already uses the ANE the supported way, through Core ML, for small
 fixed-shape models where it wins (`docs/COREML.md`). Reopen the LLM prefill
@@ -528,7 +536,9 @@ case on any of these:
 1. A base-chip target where `ane-sweep.py` shows the ANE ahead of Metal.
 2. A low-power prefill mode whose whole-prompt energy beats Metal by enough
    to pay for the slower prompt.
-3. A concurrent row-split prototype that beats Metal alone on a Max.
+3. A concurrent row-split prototype that beats Metal alone on a Max. Phase 0
+   meets this per matmul, not yet end to end, so the next step is its
+   Phase 1.
 
 **What it costs.**
 
@@ -550,10 +560,143 @@ case on any of these:
 
 The LICENSE here reads "Clean-room implementation", so the forks' code
 should be re-derived from the documented mechanism rather than copied, even
-though MIT would allow copying. Treat it as a separate go/no-go decision
-about private API, with a dense-prefill scope. If it is taken, start from
-`main-npu`'s route rather than the row split, because it does not tie the
-ANE to one encoding. It is not a streaming change.
+though MIT would allow copying. Treat the work as a separate go/no-go
+decision with a dense-prefill scope, which no longer has to include private
+API. If it is taken, pair `main-npu`'s Metal conversion with Phase 0's row
+split. Then the ANE never sees the weight encoding, which
+`apple/bonsai-pq20` ties to one. It is not a streaming change.
+
+### Phase 0 in this engine: Core ML matmuls against Steel
+
+Measured 2026-10-18 on the M4 Max above. This is a standalone probe, not a
+runtime change. It asks two questions at the qwen38 (Qwen3.8-27B)
+projection shapes. Can the public Core ML API run `main-npu`'s matmul on
+the ANE? And does that matmul, alone or split with Steel, beat Steel?
+
+The probe sources, raw logs, and summary are in `~/models/ane-phase0/` on
+the test machine. None of it is in the repository.
+
+**The program.** One Core ML ML program per shape and token count computes
+`W * A^T`. Both operands are F16 inputs, so one compiled program serves
+every layer of that shape. K is sliced at 2048 and the partial products are
+summed in F16. That is `main-npu`'s program shape, re-derived from its
+description.
+
+It was built with coremltools 9.0 (the pin in
+`crates/coreml/tools/gen_coreml_fixtures.py`) for macOS 15 at F16 compute
+precision. The inputs and the output (through
+`MLPredictionOptions.outputBackings`) are IOSurface-backed `MLMultiArray`s.
+Metal reads and writes them in place, so nothing is copied. No private class
+or selector is used.
+
+**Placement.** The `coreml_plan` example (`crates/coreml`) with
+`--units ane` placed every op on the ANE for all five shapes at 512 and 2048
+tokens. That includes gate and up (M = 17408) and down (K = 17408), above
+the 16384 maximum `main-npu` accepts. The IOReport ANE channel drew energy
+during every prediction, so the ANE ran them.
+
+**The arms.** The weights are synthetic INT4 in this engine's layout (group
+64, BF16 scale and bias), made with the recipe in
+`crates/gpu/tests/qwen38_int4_prefill_gemm_probe.rs`.
+
+- **Steel.** The engine's own `dequant_int4_steel.metal`, one dispatch over
+  all the tokens.
+- **Whole ANE.** Metal dequantizes the weights to an F16 scratch and scales
+  each token by a power of two. The ANE runs the program, and Metal
+  transposes and unscales the F16 output. All three steps are in the time,
+  and every handoff waits on the CPU (no shared events).
+- **Split.** The ANE runs the first 47% of the rows (rounded to 64) through
+  the same steps. Steel computes the rest at the same time. The conversion
+  must run first and alone: committed beside Steel's buffer, it delayed the
+  ANE, and the split ran slower than Steel.
+- **Core ML only.** The prediction alone on static inputs, a diagnostic.
+
+**Correctness.** Against Steel, the ANE's worst normalized row error was
+0.00065 to 0.00148, inside the probe's 0.005 bound. Against an FP64 CPU
+reference on sampled rows, the ANE was 0.0006 to 0.0012 off and Steel about
+0.0004. Synthetic weights have no real activation outliers, so this is not
+a quality gate.
+
+**Method.** Energy is the sum of the 12 top-level IOReport Energy Model
+channels, read at a handshake, so model load, compile, and warmup are
+excluded. Each shape and token count got a 20 s idle window. Then each arm
+ran for about 3 s, in the order Steel, whole ANE, split, Core ML only, then
+reversed. The two rounds' times agree within 2%.
+
+Each arm waited for about 10 s with no build or test process, GPU
+utilization under 35%, and AC power. A watcher flagged any build that
+started during a window. The three configurations with a flagged reading
+were rerun clean.
+
+Time is the ANE arm's ms over Steel's, and speed is Steel's ms over the
+split's. Energy is idle-subtracted modeled energy per matmul, over Steel's.
+
+| Shape (M x K) | Tokens | Steel ms | Whole ANE time | Whole ANE energy | Split speed | Split energy |
+|---|---:|---:|---:|---:|---:|---:|
+| gate, up (17408 x 5120) | 512 | 8.34 | 1.94x | 0.40x | 1.31x | 0.74x |
+| gate, up (17408 x 5120) | 2048 | 32.78 | 1.30x | 0.26x | 1.77x | 0.67x |
+| down (5120 x 17408) | 512 | 8.42 | 1.87x | 0.45x | 1.10x | 0.72x |
+| down (5120 x 17408) | 2048 | 32.45 | 1.35x | 0.23x | 1.52x | 0.65x |
+| attention q and gate (12288 x 5120) | 512 | 5.88 | 1.91x | 0.38x | 1.26x | 0.73x |
+| attention q and gate (12288 x 5120) | 2048 | 22.95 | 1.33x | 0.25x | 1.73x | 0.66x |
+| GDN qkv (10240 x 5120) | 512 | 4.95 | 1.94x | 0.35x | 1.24x | 0.73x |
+| GDN qkv (10240 x 5120) | 2048 | 19.18 | 1.35x | 0.25x | 1.71x | 0.66x |
+| o_proj, out_proj (5120 x 6144) | 512 | 3.06 | 2.12x | 0.42x | 1.10x | 0.73x |
+| o_proj, out_proj (5120 x 6144) | 2048 | 11.52 | 1.44x | 0.25x | 1.53x | 0.65x |
+
+Attention K and V (1024 x 5120) were not run.
+
+**Go/no-go.** The bars were set before the pass.
+
+- **Split, at least 1.1x Steel's speed: go.** It passes 9 of 10. Outside
+  down and o_proj at 512 tokens it runs 1.24x to 1.77x. Down at 512 misses at
+  1.099x, and o_proj at 512 passes at 1.103x. It costs 0.65x to 0.74x
+  Steel's energy everywhere.
+- **Energy mode, the whole matmul at no more than 0.6x Steel's energy within
+  1.4x its time: go at 2048 tokens only.** Four of five shapes pass, at
+  0.23x to 0.26x the energy and 1.30x to 1.35x the time. o_proj misses at
+  1.44x. At 512 tokens every shape fails on time (1.87x to 2.12x), at 0.35x
+  to 0.45x the energy.
+
+At 512 tokens the split's ANE half finishes last: 5.6 ms against Steel's
+4.3 ms at gate and up. A smaller ANE share should help there. At 2048 the
+halves finish within 3% of each other for gate and up, q and gate, and GDN
+qkv. Down and o_proj leave the ANE about 14% behind.
+
+Whole-matmul offload behaves like the fork's sweep: slower than the GPU, and
+cheaper in energy from 512 tokens up. The split is what changes the answer.
+It adds the ANE's rate to the GPU's instead of replacing it.
+
+**What it does not show.**
+
+- It is per matmul, not end to end. The dense qwen prefill feeds Steel 64
+  tokens at a time (`crates/runtime/src/families/qwen/prefill.rs`), so the
+  runtime never issues a matmul this wide. In a quick ungated, unmetered
+  pass, the same tokens in 64-token dispatches took 1.05x to 1.38x one-shot
+  Steel's time. Part of any end-to-end gain would come from wider micro-batches
+  alone. The split's 1.24x to 1.77x is against one-shot Steel at the same
+  width.
+- The split's Steel rows land in a separate buffer. Writing the ANE rows into
+  the shared output at their row offset is not measured.
+- Shapes are static, so each shape and token count is its own compiled
+  program. Compile and load time was excluded and not measured.
+- Synthetic weights, modeled energy (not wall power), 3 s arms, one machine.
+  A steady 17% to 26% GPU load from outside the probe, likely the window
+  server, is why the gate allowed 35%. It faded when the display slept
+  partway through. Idle power fell with it, from about 3 W to as low as
+  0.5 W, so compare raw energies only within a configuration.
+
+**Phase 1, if taken.** An opt-in split prototype on the public Core ML API,
+off by default. Steel stays the default. It needs:
+
+- ANE micro-batches of 512 or 2048 tokens, with Steel taking the tail.
+- The ANE rows written straight into the shared output.
+- Per-shape program builds at first use, with their load cost measured.
+- The real-model quality, memory, and paired prefill speed and energy gates
+  any new prefill path here needs (`docs/BATCHED_PREFILL.md`), plus wall
+  power.
+
+Energy mode would be a second opt-in, for long prompts on battery.
 
 ## llama.cpp #30340
 

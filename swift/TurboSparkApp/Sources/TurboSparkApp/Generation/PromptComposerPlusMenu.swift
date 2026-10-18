@@ -294,6 +294,17 @@ struct PromptComposerPlusMenu: View {
     @ViewBuilder
     private var modesSection: some View {
         Section {
+            if model.interactionMode == .chat {
+                Toggle(isOn: Binding(
+                    get: { model.chatToolsEnabled },
+                    set: { newValue in
+                        model.chatToolsEnabled = newValue
+                        model.persistSettingsDebounced()
+                    })) {
+                    Label { Text("Tools in Chat", bundle: .module) } icon: { Image(systemName: "wrench.and.screwdriver") }
+                }
+            }
+
             // A Toggle so the menu shows the native checkmark and VoiceOver
             // reads the on/off state, rather than an icon swap.
             Toggle(isOn: $model.webSearchEnabled) {

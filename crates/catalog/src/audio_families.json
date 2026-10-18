@@ -206,6 +206,20 @@
     "evidence": "crates/audio/src/stt/moss_transcribe_diarize/README.md; historical evidence only, not rerun by capability discovery"
   },
   {
+    "family": "stt/multitalker_asr",
+    "task": "speech_to_text",
+    "operations": [
+      "step",
+      "run"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "No native runtime, admission, cancellation and Swift adapter has been qualified for this family",
+    "source": "crates/audio/src/stt/multitalker_asr/mod.rs",
+    "evidence": "crates/audio/src/stt/multitalker_asr/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
     "family": "stt/nemo",
     "task": "speech_to_text",
     "operations": [],

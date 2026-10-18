@@ -67,6 +67,11 @@ TurboSpark provides over 30 native tools covering file manipulation, indexed sem
 
 Unlike single-purpose scripting agents, TurboSpark tools run directly in-process within the Swift desktop application, interfacing with the underlying Rust inference engine and macOS system capabilities. Each tool features strict parameter validation, path containment checks (`resolveSecurePath`), write sandboxing (`AppToolSandbox`), and integration with the multi-tier permission engine (`AppToolPermissionEngine`).
 
+TurboSpark enforces two primary tool environments:
+- **Projects Mode**: All tools matching the active project profile are offered, including workspace-rooted file inspection/editing, codebase search, and terminal command execution.
+- **Chat Mode**: When tools are enabled (`chatToolsEnabled == true`, on by default and toggled via the composer `AppChip` button or settings), only **rootless** tools (web search, web fetch, browser automation, interactive questionnaires, planning, checklists, memory, and automation) are advertised and executed. Tools marked `Workspace Rooted: Yes` below are excluded in Chat mode to prevent path traversal or uncontrolled host terminal execution.
+
+
 ---
 
 ## File Operations

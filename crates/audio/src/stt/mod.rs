@@ -18,6 +18,7 @@ pub mod mms;
 pub mod moonshine;
 pub mod moss_music;
 pub mod moss_transcribe_diarize;
+pub mod multitalker_asr;
 pub mod nemo;
 pub mod nemotron_asr;
 pub mod parakeet;
@@ -52,6 +53,7 @@ pub use moss_music::{MossMusic, MossMusicProfile, MOSS_MUSIC_8B_THINKING_4BIT};
 pub use moss_transcribe_diarize::{
     MossTranscribeDiarize, MossTranscribeDiarizeProfile, MOSS_TRANSCRIBE_DIARIZE_4BIT,
 };
+pub use multitalker_asr::{MultitalkerAsr, MultitalkerProfile, MULTITALKER_PARAKEET_STREAMING_V1};
 pub use nemo::{AlignedResult, AlignedSentence, AlignedToken};
 pub use nemotron_asr::{NemotronAsr, NemotronAsrConfig, NemotronAsrProfile, NEMOTRON_3_5_ASR};
 pub use parakeet::{

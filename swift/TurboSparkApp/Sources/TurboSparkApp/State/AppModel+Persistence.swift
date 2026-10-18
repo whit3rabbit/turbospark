@@ -114,6 +114,7 @@ extension AppModel {
         ChatRecallStore.shared.purgeIfDisallowed()
         self.compactionKeepRecentTurns = AppChatCompaction.clampKeepRecent(
             settings.compactionKeepRecentTurns)
+        self.chatToolsEnabled = settings.chatToolsEnabled
         self.microcompactEnabled = settings.microcompactEnabled
         self.autoContinuationEnabled = settings.autoContinuationEnabled
         self.nativeToolCallingEnabled = settings.nativeToolCallingEnabled
@@ -258,6 +259,7 @@ extension AppModel {
             evidenceReducer: evidenceReducerEnabled,
             todoBoundaryCompaction: todoBoundaryCompactionEnabled,
             compactionKeepRecentTurns: compactionKeepRecentTurns,
+            chatToolsEnabled: chatToolsEnabled,
             microcompactEnabled: microcompactEnabled,
             autoContinuationEnabled: autoContinuationEnabled,
             nativeToolCallingEnabled: nativeToolCallingEnabled,

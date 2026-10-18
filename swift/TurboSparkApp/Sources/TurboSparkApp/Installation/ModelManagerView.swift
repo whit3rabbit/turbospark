@@ -22,14 +22,20 @@ struct ModelManagerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ModelManagerHeaderView(model: model)
-            Divider()
             // The kind is chosen in the panel beside the rail
-            // (`InstalledSidebarPanel`), which also says where audio models live.
-            if model.installedModelKind == .text {
+            // (`InstalledSidebarPanel`). Audio brings its own header: its
+            // counts and Rescan read the audio catalog, not the text store.
+            switch model.installedModelKind {
+            case .text:
+                ModelManagerHeaderView(model: model)
+                Divider()
                 textModelContent
-            } else {
+            case .images:
+                ModelManagerHeaderView(model: model)
+                Divider()
                 ImageModelManagerView(model: model)
+            case .audio:
+                AudioInstalledModelsView(model: model, controller: model.audioWorkspace)
             }
         }
         .task {

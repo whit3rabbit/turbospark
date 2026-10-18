@@ -218,31 +218,83 @@ pub(crate) fn greedy_tokens(
     blank_id: usize,
     max_symbols: usize,
 ) -> Result<Vec<usize>> {
+    let mut state = GreedyStreamState::new(predictor, blank_id);
+    Ok(greedy_resume(
+        predictor,
+        joint,
+        features,
+        frames,
+        encoder_hidden,
+        blank_id,
+        max_symbols,
+        &mut state,
+        0,
+    )?
+    .into_iter()
+    .map(|(token, _)| token)
+    .collect())
+}
+
+/// Decoder state carried between streaming chunks: the last emitted token,
+/// the LSTM state before consuming it, and the cached prediction for that
+/// pair. Starting a chunk from it continues the greedy search exactly where
+/// the previous chunk stopped, as NeMo's `partial_hypotheses` do.
+#[derive(Clone)]
+pub(crate) struct GreedyStreamState {
+    last_token: usize,
+    hidden: Vec<Vec<f32>>,
+    cell: Vec<Vec<f32>>,
+    proposal: Option<Proposal>,
+}
+
+impl GreedyStreamState {
+    /// The start-of-sequence state: blank (the zero embedding), zero LSTM.
+    pub(crate) fn new(predictor: &NemotronPredictor, blank_id: usize) -> Self {
+        Self {
+            last_token: blank_id,
+            hidden: vec![vec![0.0; predictor.hidden]; predictor.layers.len()],
+            cell: vec![vec![0.0; predictor.hidden]; predictor.layers.len()],
+            proposal: None,
+        }
+    }
+}
+
+/// Greedy RNN-T decode of `frames` encoder frames continuing from `state`.
+/// Returns `(token, frame_offset + frame)` per emitted token.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn greedy_resume(
+    predictor: &NemotronPredictor,
+    joint: &Joint,
+    features: &[f32],
+    frames: usize,
+    encoder_hidden: usize,
+    blank_id: usize,
+    max_symbols: usize,
+    state: &mut GreedyStreamState,
+    frame_offset: usize,
+) -> Result<Vec<(usize, usize)>> {
+    if frames == 0 {
+        return Ok(Vec::new());
+    }
     let encoder_projected = joint.project_encoder(&features[..frames * encoder_hidden], frames);
     let joint_hidden = encoder_projected.len().checked_div(frames).unwrap_or(0);
-    let mut last_token = blank_id;
-    let mut hidden = vec![vec![0.0; predictor.hidden]; predictor.layers.len()];
-    let mut cell = vec![vec![0.0; predictor.hidden]; predictor.layers.len()];
-    // (projected prediction, proposed hidden, proposed cell) for the
-    // current (last_token, hidden, cell).
-    let mut proposal: Option<Proposal> = None;
     let mut tokens = Vec::new();
     let mut frame = 0;
     let mut symbols = 0;
     while frame < frames {
-        if proposal.is_none() {
+        if state.proposal.is_none() {
             let (prediction, proposed_hidden, proposed_cell) = predictor.step(
-                (last_token != blank_id).then_some(last_token),
-                &hidden,
-                &cell,
+                (state.last_token != blank_id).then_some(state.last_token),
+                &state.hidden,
+                &state.cell,
             )?;
-            proposal = Some((
+            state.proposal = Some((
                 joint.project_predictor(&prediction),
                 proposed_hidden,
                 proposed_cell,
             ));
         }
-        let (predictor_projected, _, _) = proposal.as_ref().expect("proposal just computed");
+        let (predictor_projected, _, _) = state.proposal.as_ref().expect("proposal just computed");
         let logits = joint.logits(
             &encoder_projected[frame * joint_hidden..(frame + 1) * joint_hidden],
             predictor_projected,
@@ -254,11 +306,11 @@ pub(crate) fn greedy_tokens(
             continue;
         }
 
-        last_token = token;
-        let (_, proposed_hidden, proposed_cell) = proposal.take().expect("proposal present");
-        hidden = proposed_hidden;
-        cell = proposed_cell;
-        tokens.push(token);
+        state.last_token = token;
+        let (_, proposed_hidden, proposed_cell) = state.proposal.take().expect("proposal present");
+        state.hidden = proposed_hidden;
+        state.cell = proposed_cell;
+        tokens.push((token, frame_offset + frame));
         symbols += 1;
         if symbols >= max_symbols {
             frame += 1;
@@ -543,5 +595,62 @@ mod tests {
         // Both decisions must occur, and blanks must follow tokens, or the
         // cache-reuse path is never exercised.
         assert!(emitted > 0 && blanks > 0, "vacuous test inputs");
+    }
+
+    /// Decoding a sequence in chunks, resuming from the carried state at each
+    /// frame boundary, emits the same tokens at the same global frames as one
+    /// pass over all frames.
+    #[test]
+    fn greedy_resume_split_equals_single_pass() {
+        let mut emitted = 0;
+        for (seed, frames, max_symbols, blank_bias, chunk) in [
+            (11u64, 40usize, 4usize, 1.0f32, 3usize),
+            (12, 33, 2, 2.0, 7),
+            (13, 28, 6, 0.5, 14),
+            (14, 17, 1, 3.0, 1),
+        ] {
+            let mut rng = Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
+            let predictor = predictor(&mut rng);
+            let joint = joint(&mut rng, blank_bias);
+            let features = rng.vec(frames * ENCODER, 1.5);
+            let mut whole = GreedyStreamState::new(&predictor, VOCAB);
+            let want = greedy_resume(
+                &predictor,
+                &joint,
+                &features,
+                frames,
+                ENCODER,
+                VOCAB,
+                max_symbols,
+                &mut whole,
+                0,
+            )
+            .unwrap();
+            let mut state = GreedyStreamState::new(&predictor, VOCAB);
+            let mut got = Vec::new();
+            let mut start = 0;
+            while start < frames {
+                let n = chunk.min(frames - start);
+                got.extend(
+                    greedy_resume(
+                        &predictor,
+                        &joint,
+                        &features[start * ENCODER..],
+                        n,
+                        ENCODER,
+                        VOCAB,
+                        max_symbols,
+                        &mut state,
+                        start,
+                    )
+                    .unwrap(),
+                );
+                start += n;
+            }
+            assert_eq!(got, want, "seed {seed}, chunk {chunk}");
+            assert_eq!(state.last_token, whole.last_token);
+            emitted += want.len();
+        }
+        assert!(emitted > 0, "vacuous test inputs");
     }
 }

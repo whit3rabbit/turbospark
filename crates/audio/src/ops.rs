@@ -7,10 +7,15 @@
 //! loaders convert checkpoint exceptions before calling in.
 //!
 //! Matmul and conv spend their time in cache-friendly loops and split
-//! output rows across threads with `std::thread::scope`, so the crate
-//! stays dependency-free. Numeric behavior is the plain IEEE f32
-//! reduction order of the loops below; no model may assume more precision
-//! than that.
+//! output rows across rayon's global worker pool (already in this crate's
+//! tree through `tokenizers`); [`in_pool`] lets a caller run a whole loop
+//! of model calls on that pool. Multi-row `linear` and pointwise convs
+//! (`gemm_tiled`) and the attention scores share one register-tiled dot
+//! kernel (`tile_dot_rows`) that vectorizes across independent outputs,
+//! never across a reduction.
+//! Numeric behavior is the plain IEEE f32 reduction order of the loops
+//! below, held bit for bit against the retained naive references in
+//! `kernel_parity.rs`; no model may assume more precision than that.
 
 /// Element count of a shape, saturating instead of overflowing.
 fn product(shape: &[usize]) -> usize {
@@ -60,13 +65,17 @@ pub fn linear(
     assert_eq!(w.len(), n * k, "linear weight {} != {}x{}", w.len(), n, k);
     let mut out = vec![0.0f32; m * n];
     if m >= 4 {
-        par_rows(m, &mut out, n, k * n, |row_start, row_end, rows| {
-            for i in row_start..row_end {
-                let x_row = &x[i * k..(i + 1) * k];
-                let out_row = &mut rows[(i - row_start) * n..(i - row_start + 1) * n];
-                linear_cols(x_row, w, bias, k, 0, out_row);
-            }
-        });
+        gemm_tiled(
+            x,
+            Layout::RowMajor,
+            w,
+            BiasAt::Last(bias),
+            m,
+            k,
+            n,
+            &mut out,
+            Layout::RowMajor,
+        );
     } else {
         // Decode shapes (m == 1) have no rows to split, and the vocabulary
         // projection is the largest matvec in the crate, so split the
@@ -126,101 +135,263 @@ fn linear_cols(
     }
 }
 
-/// Smallest total multiply-add count worth waking threads for. A scoped
-/// thread costs tens of microseconds to start and join, so smaller
-/// problems stay on the caller; decode calls this with tiny `m` thousands
-/// of times in a row.
+/// Input rows per register tile of [`gemm_tiled`].
+const TILE_ROWS: usize = 8;
+/// Output columns per register tile of [`gemm_tiled`].
+const TILE_COLS: usize = 8;
+
+/// How [`gemm_tiled`] indexes an `[m, cols]` operand: `RowMajor` is
+/// `[m][cols]` (the `linear` layout), `ChannelMajor` is `[cols][m]` (the
+/// conv layout, `m` time or spatial positions per channel).
+#[derive(Clone, Copy)]
+enum Layout {
+    RowMajor,
+    ChannelMajor,
+}
+
+/// Where [`gemm_tiled`] adds the bias. `Last` is `linear`'s order: the sum
+/// starts at `+0.0` and the bias, or `0.0`, is added at the end. `First`
+/// is the convs' order: the sum starts at the bias, or `0.0`.
+#[derive(Clone, Copy)]
+enum BiasAt<'a> {
+    Last(Option<&'a [f32]>),
+    First(Option<&'a [f32]>),
+}
+
+/// `out[r, c] = sum over ki of x[r, ki] * w[c, ki]` with `w` stored
+/// `[n, k]`, tiled so each weight row is read once per `TILE_ROWS` input
+/// rows instead of once per row (the per-row loops were memory bound and
+/// streamed the whole weight matrix for every row).
+///
+/// The bits are the plain loops': each output's sum starts where `bias`
+/// says, adds `x * w` products in ascending `k` order as separate
+/// multiply and add steps (Rust never contracts them to a fused
+/// multiply-add), and for `BiasAt::Last` adds the bias, or `0.0`, at the
+/// end. Vector lanes run over independent rows of a transposed input
+/// block, never over `k`, and padded rows are computed and dropped. Tiles
+/// are independent, so how they are spread across threads never changes a
+/// value.
+#[allow(clippy::too_many_arguments)]
+fn gemm_tiled(
+    x: &[f32],
+    x_layout: Layout,
+    w: &[f32],
+    bias: BiasAt<'_>,
+    m: usize,
+    k: usize,
+    n: usize,
+    out: &mut [f32],
+    out_layout: Layout,
+) {
+    debug_assert!(x.len() == m * k && w.len() == n * k && out.len() == m * n);
+    let row_blocks = m.div_ceil(TILE_ROWS);
+    let threads = if m.saturating_mul(k).saturating_mul(n) < PAR_MIN_WORK {
+        1
+    } else {
+        thread_count()
+    };
+    // Enough jobs to balance performance and efficiency cores, but column
+    // chunks wide enough that packing the input block stays a few percent.
+    let max_splits = n.div_ceil(8 * TILE_COLS).max(1);
+    let splits = (4 * threads).div_ceil(row_blocks).clamp(1, max_splits);
+    let chunk = n.div_ceil(splits).next_multiple_of(TILE_COLS);
+    let col_chunks = n.div_ceil(chunk);
+    let span = |job: usize| {
+        let (block, part) = (job / col_chunks, job % col_chunks);
+        let r0 = block * TILE_ROWS;
+        (
+            r0,
+            TILE_ROWS.min(m - r0),
+            part * chunk,
+            ((part + 1) * chunk).min(n),
+        )
+    };
+    // One tile in `out_layout` order: `[rows][width]` or `[width][rows]`.
+    let job = |job: usize| {
+        let (r0, rows, c0, c1) = span(job);
+        let mut xt = vec![0.0f32; k * TILE_ROWS];
+        match x_layout {
+            Layout::RowMajor => {
+                for r in 0..rows {
+                    for (ki, &v) in x[(r0 + r) * k..(r0 + r + 1) * k].iter().enumerate() {
+                        xt[ki * TILE_ROWS + r] = v;
+                    }
+                }
+            }
+            Layout::ChannelMajor => {
+                for (ki, lanes) in xt.chunks_exact_mut(TILE_ROWS).enumerate() {
+                    lanes[..rows].copy_from_slice(&x[ki * m + r0..ki * m + r0 + rows]);
+                }
+            }
+        }
+        let width = c1 - c0;
+        let mut tile = vec![0.0f32; rows * width];
+        let mut run = |col: usize, cols: usize| {
+            let mut init = [0.0f32; TILE_COLS];
+            let mut last = [0.0f32; TILE_COLS];
+            for j in 0..cols {
+                match bias {
+                    BiasAt::Last(b) => last[j] = b.map_or(0.0, |b| b[col + j]),
+                    BiasAt::First(b) => init[j] = b.map_or(0.0, |b| b[col + j]),
+                }
+            }
+            let mut store = |j: usize, lanes: &[f32; TILE_ROWS]| {
+                for (r, &v) in lanes[..rows].iter().enumerate() {
+                    let v = match bias {
+                        BiasAt::Last(_) => v + last[j],
+                        BiasAt::First(_) => v,
+                    };
+                    let at = match out_layout {
+                        Layout::RowMajor => r * width + col - c0 + j,
+                        Layout::ChannelMajor => (col - c0 + j) * rows + r,
+                    };
+                    tile[at] = v;
+                }
+            };
+            if cols == TILE_COLS {
+                let acc = tile_dot::<TILE_COLS>(&xt, w, k, col, init);
+                acc.iter()
+                    .enumerate()
+                    .for_each(|(j, lanes)| store(j, lanes));
+            } else {
+                for (j, &start) in init[..cols].iter().enumerate() {
+                    let acc = tile_dot::<1>(&xt, w, k, col + j, [start]);
+                    store(j, &acc[0]);
+                }
+            }
+        };
+        let mut col = c0;
+        while col < c1 {
+            let cols = TILE_COLS.min(c1 - col);
+            run(col, cols);
+            col += cols;
+        }
+        tile
+    };
+    let jobs = row_blocks * col_chunks;
+    let tiles: Vec<Vec<f32>> = if threads == 1 {
+        (0..jobs).map(job).collect()
+    } else {
+        par_map(jobs, job)
+    };
+    for (index, tile) in tiles.iter().enumerate() {
+        let (r0, rows, c0, c1) = span(index);
+        match out_layout {
+            Layout::RowMajor => {
+                for (r, src) in tile.chunks_exact(c1 - c0).enumerate() {
+                    out[(r0 + r) * n + c0..(r0 + r) * n + c1].copy_from_slice(src);
+                }
+            }
+            Layout::ChannelMajor => {
+                for (j, src) in tile.chunks_exact(rows).enumerate() {
+                    let c = c0 + j;
+                    out[c * m + r0..c * m + r0 + rows].copy_from_slice(src);
+                }
+            }
+        }
+    }
+}
+
+/// `C` output columns from `col0` for one transposed `[k, TILE_ROWS]`
+/// input block: `acc[j][r]` is the sum for row `r` and column `col0 + j`,
+/// starting at `init[j]` and adding products in ascending `k` order.
+fn tile_dot<const C: usize>(
+    xt: &[f32],
+    w: &[f32],
+    k: usize,
+    col0: usize,
+    init: [f32; C],
+) -> [[f32; TILE_ROWS]; C] {
+    tile_dot_rows(
+        xt,
+        std::array::from_fn(|j| &w[(col0 + j) * k..(col0 + j + 1) * k]),
+        init,
+    )
+}
+
+/// [`tile_dot`] against `C` explicit weight rows of `k` values each (`k`
+/// is `xt.len() / TILE_ROWS`), for callers whose rows are strided.
+fn tile_dot_rows<const C: usize>(
+    xt: &[f32],
+    rows: [&[f32]; C],
+    init: [f32; C],
+) -> [[f32; TILE_ROWS]; C] {
+    let mut acc = init.map(|v| [v; TILE_ROWS]);
+    for (ki, lanes) in xt.chunks_exact(TILE_ROWS).enumerate() {
+        let lanes: &[f32; TILE_ROWS] = lanes.try_into().unwrap();
+        for (acc_col, row) in acc.iter_mut().zip(&rows) {
+            let wv = row[ki];
+            for (a, &xv) in acc_col.iter_mut().zip(lanes) {
+                *a += xv * wv;
+            }
+        }
+    }
+    acc
+}
+
+/// Smallest total multiply-add count worth handing to the worker pool.
+/// Dispatch and wake-up cost a few microseconds, so smaller problems stay
+/// on the caller; decode calls this with tiny `m` thousands of times in a
+/// row.
 const PAR_MIN_WORK: usize = 1 << 18;
 
-/// Worker threads available to the kernels, read once. The OS query is
-/// not free on every platform and the answer does not change mid-run.
+/// Worker threads in the kernels' pool (rayon's global pool, started once
+/// and reused, instead of fresh scoped threads per call).
 pub(crate) fn thread_count() -> usize {
-    static THREADS: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *THREADS.get_or_init(|| {
-        std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1)
-    })
+    rayon::current_num_threads()
+}
+
+/// Runs `op` on a worker of the kernels' pool and waits for it. Kernel
+/// calls made from a pool worker dispatch through rayon's in-pool path:
+/// the caller works alongside the other workers and spins briefly instead
+/// of sleeping on a condvar, which is much cheaper for the many small
+/// calls of a streaming step. Wrap a whole loop of model calls, not each
+/// call. Values never depend on which thread runs what.
+pub fn in_pool<R: Send>(op: impl FnOnce() -> R + Send) -> R {
+    if rayon::current_thread_index().is_some() {
+        return op();
+    }
+    rayon::scope(|_| op())
 }
 
 /// Runs `body(start, end, rows)` over contiguous row ranges of an
-/// `m x row_len` output, splitting across threads when `m * work_per_row`
+/// `m x row_len` output, splitting across the pool when `m * work_per_row`
 /// multiply-adds justify it. Rows are independent, so how they are
-/// grouped never changes any value.
+/// grouped never changes any value. Ranges outnumber threads so idle
+/// workers steal from slower ones (efficiency cores, preempted threads).
 fn par_rows(
     m: usize,
     out: &mut [f32],
     row_len: usize,
     work_per_row: usize,
-    body: impl Fn(usize, usize, &mut [f32]) + Sync,
+    body: impl Fn(usize, usize, &mut [f32]) + Sync + Send,
 ) {
+    use rayon::prelude::*;
     let threads = thread_count();
-    if threads <= 1 || m < 2 || m.saturating_mul(work_per_row) < PAR_MIN_WORK {
+    if threads <= 1 || m < 2 || row_len == 0 || m.saturating_mul(work_per_row) < PAR_MIN_WORK {
         body(0, m, out);
         return;
     }
-    let chunks = threads.min(m);
-    let per = m.div_ceil(chunks);
-    std::thread::scope(|scope| {
-        let mut rest = &mut out[..];
-        let mut start = 0;
-        for _ in 0..chunks {
-            if start >= m {
-                break;
-            }
-            let end = (start + per).min(m);
-            let (head, tail) = rest.split_at_mut((end - start) * row_len);
-            rest = tail;
-            let body_ref = &body;
-            scope.spawn(move || body_ref(start, end, head));
-            start = end;
-        }
-    });
+    let per = m.div_ceil((4 * threads).min(m));
+    out[..m * row_len]
+        .par_chunks_mut(per * row_len)
+        .enumerate()
+        .for_each(|(index, rows)| {
+            let start = index * per;
+            body(start, (start + per).min(m), rows);
+        });
 }
 
-/// Runs `job(0..count)` on scoped worker threads and returns the results in
+/// Runs `job(0..count)` on the worker pool and returns the results in
 /// index order. For independent, single-threaded jobs (each result depends
 /// only on its index), so the output equals `(0..count).map(job)` exactly;
 /// jobs are handed out dynamically but placed by index.
-pub(crate) fn par_map<T: Send>(count: usize, job: impl Fn(usize) -> T + Sync) -> Vec<T> {
-    let threads = thread_count().min(count);
-    if threads <= 1 {
+pub(crate) fn par_map<T: Send>(count: usize, job: impl Fn(usize) -> T + Sync + Send) -> Vec<T> {
+    use rayon::prelude::*;
+    if thread_count().min(count) <= 1 {
         return (0..count).map(job).collect();
     }
-    let next = std::sync::atomic::AtomicUsize::new(0);
-    let parts: Vec<Vec<(usize, T)>> = std::thread::scope(|scope| {
-        let workers: Vec<_> = (0..threads)
-            .map(|_| {
-                scope.spawn(|| {
-                    let mut mine = Vec::new();
-                    loop {
-                        let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        if index >= count {
-                            break;
-                        }
-                        mine.push((index, job(index)));
-                    }
-                    mine
-                })
-            })
-            .collect();
-        workers
-            .into_iter()
-            .map(|worker| {
-                worker
-                    .join()
-                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-            })
-            .collect()
-    });
-    let mut slots: Vec<Option<T>> = (0..count).map(|_| None).collect();
-    for (index, value) in parts.into_iter().flatten() {
-        slots[index] = Some(value);
-    }
-    slots
-        .into_iter()
-        .map(|slot| slot.expect("every job index ran once"))
-        .collect()
+    (0..count).into_par_iter().map(job).collect()
 }
 
 /// Row-wise LayerNorm: `(x - mean) / sqrt(var + eps) * w (+ b)`. The
@@ -363,6 +534,23 @@ pub fn conv1d(
     let k_eff = (kernel - 1) * dilation + 1;
     let out_seq = (seq + 2 * padding - k_eff) / stride + 1;
     let mut out = vec![0.0f32; out_ch * out_seq];
+    if kernel == 1 && stride == 1 && padding == 0 && groups == 1 {
+        // Pointwise: no tap falls in padding, so each output is its bias
+        // plus the input channels in ascending order, the tiled GEMM's
+        // bias-first sum over time-major rows.
+        gemm_tiled(
+            x,
+            Layout::ChannelMajor,
+            w,
+            BiasAt::First(bias),
+            seq,
+            in_ch,
+            out_ch,
+            &mut out,
+            Layout::ChannelMajor,
+        );
+        return out;
+    }
     par_rows(
         out_ch,
         &mut out,
@@ -536,35 +724,64 @@ pub fn conv2d(
     let out_w = (w_dim + 2 * padding - kw) / stride + 1;
     let in_per_g = in_ch / groups;
     let out_per_g = out_ch / groups;
-    let mut out = vec![0.0f32; out_ch * out_h * out_w];
-    for oc in 0..out_ch {
-        let g = oc / out_per_g;
-        for oh in 0..out_h {
-            for ow in 0..out_w {
-                let mut acc = bias.map_or(0.0, |b| b[oc]);
-                for ic_in_g in 0..in_per_g {
-                    let ic = g * in_per_g + ic_in_g;
-                    let x_ch = &x[ic * h * w_dim..(ic + 1) * h * w_dim];
-                    let w_base = (((oc * in_per_g) + ic_in_g) * kh) * kw;
-                    for kh_i in 0..kh {
-                        let ih = oh * stride + kh_i;
-                        if ih < padding || ih - padding >= h {
-                            continue;
-                        }
-                        let ih = ih - padding;
-                        for kw_i in 0..kw {
-                            let iw = ow * stride + kw_i;
-                            if iw < padding || iw - padding >= w_dim {
-                                continue;
+    let plane = out_h * out_w;
+    let mut out = vec![0.0f32; out_ch * plane];
+    if kh == 1 && kw == 1 && stride == 1 && padding == 0 && groups == 1 {
+        // Pointwise: each output is its bias plus the input channels in
+        // ascending order, the tiled GEMM's bias-first sum over positions.
+        gemm_tiled(
+            x,
+            Layout::ChannelMajor,
+            w,
+            BiasAt::First(bias),
+            plane,
+            in_ch,
+            out_ch,
+            &mut out,
+            Layout::ChannelMajor,
+        );
+        return out;
+    }
+    // Output channels are independent, so they split across threads; each
+    // output keeps the (input channel, kh, kw) ascending tap order.
+    par_rows(
+        out_ch,
+        &mut out,
+        plane,
+        in_per_g * kh * kw * plane,
+        |o0, o1, rows| {
+            for oc in o0..o1 {
+                let g = oc / out_per_g;
+                let out_plane = &mut rows[(oc - o0) * plane..(oc - o0 + 1) * plane];
+                for oh in 0..out_h {
+                    for ow in 0..out_w {
+                        let mut acc = bias.map_or(0.0, |b| b[oc]);
+                        for ic_in_g in 0..in_per_g {
+                            let ic = g * in_per_g + ic_in_g;
+                            let x_ch = &x[ic * h * w_dim..(ic + 1) * h * w_dim];
+                            let w_base = (((oc * in_per_g) + ic_in_g) * kh) * kw;
+                            for kh_i in 0..kh {
+                                let ih = oh * stride + kh_i;
+                                if ih < padding || ih - padding >= h {
+                                    continue;
+                                }
+                                let ih = ih - padding;
+                                for kw_i in 0..kw {
+                                    let iw = ow * stride + kw_i;
+                                    if iw < padding || iw - padding >= w_dim {
+                                        continue;
+                                    }
+                                    acc += x_ch[ih * w_dim + (iw - padding)]
+                                        * w[w_base + kh_i * kw + kw_i];
+                                }
                             }
-                            acc += x_ch[ih * w_dim + (iw - padding)] * w[w_base + kh_i * kw + kw_i];
                         }
+                        out_plane[oh * out_w + ow] = acc;
                     }
                 }
-                out[oc * out_h * out_w + oh * out_w + ow] = acc;
             }
-        }
-    }
+        },
+    );
     out
 }
 
@@ -698,30 +915,91 @@ pub fn sdpa_strided_into(
     assert_eq!(q.len(), qh * dq);
     debug_assert!(k.len() >= k_base + (kv.max(1) - 1) * k_stride + dq);
     debug_assert!(v.len() >= v_base + (kv.max(1) - 1) * v_stride + dv);
-    // Heads are independent, so they split across threads; each worker
-    // reuses one scores row for all of its heads.
+    // Query rows are independent, so they split across threads.
     par_rows(qh, out, dv, kv * (dq + dv), |h0, h1, rows| {
-        let mut scores = vec![0.0f32; kv];
-        for h in h0..h1 {
-            let q_row = &q[h * dq..(h + 1) * dq];
-            for (j, score) in scores.iter_mut().enumerate() {
-                let k_row = &k[k_base + j * k_stride..k_base + j * k_stride + dq];
-                let mut acc = 0.0f32;
-                for (&qv, &kv_val) in q_row.iter().zip(k_row) {
-                    acc += qv * kv_val;
-                }
-                *score = acc * scale + mask.map_or(0.0, |m| m[h * kv + j]);
+        sdpa_rows(
+            rows, h0, h1, q, k, k_base, k_stride, v, v_base, v_stride, mask, kv, dq, dv, scale,
+        );
+    });
+}
+
+/// Query rows `h0..h1` of [`sdpa_strided_into`] into `rows` (`[h1 - h0,
+/// dv]`, zeroed by the caller). Scores up to `TILE_ROWS` queries against
+/// `TILE_COLS` keys per tile: lanes run over queries and columns over
+/// keys, so every score is still one ascending-`dq` sum from `0.0`, but
+/// the tile keeps many independent sums in flight instead of one
+/// dependent chain.
+#[allow(clippy::too_many_arguments)]
+fn sdpa_rows(
+    rows: &mut [f32],
+    h0: usize,
+    h1: usize,
+    q: &[f32],
+    k: &[f32],
+    k_base: usize,
+    k_stride: usize,
+    v: &[f32],
+    v_base: usize,
+    v_stride: usize,
+    mask: Option<&[f32]>,
+    kv: usize,
+    dq: usize,
+    dv: usize,
+    scale: f32,
+) {
+    let key = |j: usize| &k[k_base + j * k_stride..k_base + j * k_stride + dq];
+    let mut scores = vec![0.0f32; TILE_ROWS * kv];
+    let mut xt = vec![0.0f32; dq * TILE_ROWS];
+    let mut hb = h0;
+    while hb < h1 {
+        let count = TILE_ROWS.min(h1 - hb);
+        xt.fill(0.0);
+        for r in 0..count {
+            for (d, &qv) in q[(hb + r) * dq..(hb + r + 1) * dq].iter().enumerate() {
+                xt[d * TILE_ROWS + r] = qv;
             }
-            softmax_row(&mut scores);
+        }
+        let mut j = 0;
+        while j < kv {
+            let cols = TILE_COLS.min(kv - j);
+            let mut place = |c: usize, lanes: &[f32; TILE_ROWS]| {
+                for (r, &acc) in lanes[..count].iter().enumerate() {
+                    scores[r * kv + j + c] = acc;
+                }
+            };
+            if cols == TILE_COLS {
+                let acc = tile_dot_rows::<TILE_COLS>(
+                    &xt,
+                    std::array::from_fn(|c| key(j + c)),
+                    [0.0; TILE_COLS],
+                );
+                acc.iter()
+                    .enumerate()
+                    .for_each(|(c, lanes)| place(c, lanes));
+            } else {
+                for c in 0..cols {
+                    place(c, &tile_dot_rows::<1>(&xt, [key(j + c)], [0.0])[0]);
+                }
+            }
+            j += cols;
+        }
+        for r in 0..count {
+            let h = hb + r;
+            let row = &mut scores[r * kv..(r + 1) * kv];
+            for (j, score) in row.iter_mut().enumerate() {
+                *score = *score * scale + mask.map_or(0.0, |m| m[h * kv + j]);
+            }
+            softmax_row(row);
             let out_row = &mut rows[(h - h0) * dv..(h - h0 + 1) * dv];
-            for (j, &p) in scores.iter().enumerate() {
+            for (j, &p) in row.iter().enumerate() {
                 let v_row = &v[v_base + j * v_stride..v_base + j * v_stride + dv];
                 for (o, &vv) in out_row.iter_mut().zip(v_row) {
                     *o += p * vv;
                 }
             }
         }
-    });
+        hb += count;
+    }
 }
 
 /// Splits a row-major `[seq, heads * head_dim]` activation into head-major
@@ -772,8 +1050,9 @@ pub fn merge_heads(x: &[f32], seq: usize, heads: usize, head_dim: usize) -> Vec<
 /// Multi-head attention over head-major planes: `q [heads, seq_q,
 /// head_dim]`, `k`/`v [heads, seq_kv, head_dim]` to `[heads, seq_q,
 /// head_dim]`. `mask` is one additive `[seq_q, seq_kv]` bias shared by
-/// every head. Each head runs [`sdpa`] unchanged and writes straight into
-/// the result, so the values match a per-head `sdpa` loop bit for bit.
+/// every head. Every (head, query) row runs [`sdpa`]'s row computation
+/// unchanged and writes straight into the result, so the values match a
+/// per-head `sdpa` loop bit for bit; all heads share one dispatch.
 #[allow(clippy::too_many_arguments)]
 pub fn mha(
     q: &[f32],
@@ -790,26 +1069,41 @@ pub fn mha(
     assert_eq!(k.len(), heads * seq_kv * head_dim);
     assert_eq!(v.len(), heads * seq_kv * head_dim);
     let mut out = vec![0.0f32; heads * seq_q * head_dim];
-    for h in 0..heads {
-        let qp = h * seq_q * head_dim;
-        let kp = h * seq_kv * head_dim;
-        sdpa_strided_into(
-            &mut out[qp..qp + seq_q * head_dim],
-            &q[qp..qp + seq_q * head_dim],
-            k,
-            kp,
-            head_dim,
-            v,
-            kp,
-            head_dim,
-            mask,
-            seq_q,
-            seq_kv,
-            head_dim,
-            head_dim,
-            scale,
-        );
-    }
+    par_rows(
+        heads * seq_q,
+        &mut out,
+        head_dim,
+        seq_kv * 2 * head_dim,
+        |g0, g1, rows| {
+            // A range may span heads; each piece stays within one head so
+            // its query tiles share that head's K and V.
+            let mut g = g0;
+            while g < g1 {
+                let head = g / seq_q;
+                let end = ((head + 1) * seq_q).min(g1);
+                let qp = head * seq_q * head_dim;
+                let kp = head * seq_kv * head_dim;
+                sdpa_rows(
+                    &mut rows[(g - g0) * head_dim..(end - g0) * head_dim],
+                    g - head * seq_q,
+                    end - head * seq_q,
+                    &q[qp..qp + seq_q * head_dim],
+                    k,
+                    kp,
+                    head_dim,
+                    v,
+                    kp,
+                    head_dim,
+                    mask,
+                    seq_kv,
+                    head_dim,
+                    head_dim,
+                    scale,
+                );
+                g = end;
+            }
+        },
+    );
     out
 }
 
