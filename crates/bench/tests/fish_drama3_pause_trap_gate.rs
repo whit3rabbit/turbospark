@@ -11,6 +11,8 @@
 //! exact: a change that raises it is a regression in the recipe, the loop or
 //! the numerics. mlx-audio's recipe (`SamplingParams::REFERENCE`) traps more
 //! than the frozen count at these seeds, so reverting the default fails here.
+//! So does turning the pause guard off (`FishDrama3Runner::set_pause_guard`),
+//! which leaves 4 of the 24 trapped.
 //!
 //!   TURBOSPARK_FISH_DRAMA3_INSTALL_DIR=~/models/fish-drama3-4bit \
 //!     cargo test -p turbospark-bench --test fish_drama3_pause_trap_gate --release -- --ignored --nocapture
@@ -35,9 +37,10 @@ const CASES: [(&str, std::ops::Range<u64>); 3] = [
     ),
 ];
 
-/// Takes of [`CASES`] reported stopped early under the default recipe, on
-/// the pinned 4-bit install at 16 streamed slots (M4 Max, 2026-10-16).
-const FROZEN_STOPPED: usize = 4;
+/// Takes of [`CASES`] reported stopped early under the default recipe and
+/// the pause guard (`PauseGuard::MEASURED`), on the pinned 4-bit install at
+/// 16 streamed slots (M4 Max, 2026-10-17). It was 4 with the guard off.
+const FROZEN_STOPPED: usize = 0;
 
 #[test]
 #[ignore = "needs a real Drama 3 install via TURBOSPARK_FISH_DRAMA3_INSTALL_DIR"]
@@ -70,7 +73,12 @@ fn fish_drama3_pause_traps_stay_at_the_frozen_count() {
             let chunks: Vec<String> = take
                 .chunks
                 .iter()
-                .map(|c| format!("{}/{} {:?}", c.frames, c.limit, c.stop))
+                .map(|c| {
+                    format!(
+                        "{}/{} {:?} {} retries",
+                        c.frames, c.limit, c.stop, c.retries
+                    )
+                })
                 .collect();
             eprintln!(
                 "pause gate: seed {seed:>2} {chunks:?}, longest silence {} frames, stopped early \
@@ -87,8 +95,12 @@ fn fish_drama3_pause_traps_stay_at_the_frozen_count() {
         "pause gate: {} of {takes} takes stopped early (frozen {FROZEN_STOPPED})",
         stopped.len()
     );
+    // At a frozen count of 0 this reads `len() <= 0`, which clippy flags. The
+    // form stays so a later freeze above 0 needs only the constant changed.
+    #[allow(clippy::absurd_extreme_comparisons)]
+    let within = stopped.len() <= FROZEN_STOPPED;
     assert!(
-        stopped.len() <= FROZEN_STOPPED,
+        within,
         "{} of {takes} takes stopped early, above the frozen {FROZEN_STOPPED}: {stopped:?}",
         stopped.len()
     );

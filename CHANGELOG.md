@@ -242,6 +242,23 @@ when this file gets updated relative to the version bump and the tag.
   floor. 2.7.2 also releases `write.lock` explicitly, so a process the app
   spawns on another thread can no longer hold the code index's lock and turn
   an incremental update into a full rebuild.
+- `crates/audio`, `crates/runtime`: Fish Audio Drama 3 resamples a pause the
+  model may never leave (`GenerateOptions::pause_guard`, on by default;
+  `PauseGuard::MEASURED`). In some takes the model pauses at a sentence gap, a
+  turn change or a `[pause]` and stays silent until the chunk's frame cap.
+  The generation loop now reads each drawn main token as voiced or silent
+  from a table (`fish_drama3::voiced`, built by
+  `scripts/fish_drama3_voiced_table.py`), and holds a pause's frames back
+  from its first silent frame. If the pause reaches 128 frames it rolls the
+  trunk and tower back to the pause's start and draws again, up to 6 times per
+  chunk, then runs on as before. A pause that ends by itself goes out
+  unchanged. Frames in a pause reach the codec only when it ends, so a
+  streamed response delays each pause by its length (56 frames, 2.6 s, at
+  most on the takes measured). `FrameEvent` gains `Held` and `ChunkEnd`
+  gains `retries`. `FishDrama3Runner::set_pause_guard(None)` restores the old
+  loop. The pause-trap gate goes from 4 of 24 takes stopped early to 0, and
+  the `[pause]` line's three trapped seeds recover. `docs/FISH_DRAMA3_PHASE0.md`
+  has the measurements.
 - `crates/audio`, `crates/runtime`: Fish Audio Drama 3 samples with Fish
   Audio's serving recipe by default (temperature 1.0, top-p 0.9, top-k 30,
   the same RAS; `SamplingParams::FISH_SERVING`), the default of its

@@ -55,6 +55,16 @@ went silent under mlx-audio's recipe, against 0 of 12. The runtime reports a
 take that still stopped early as `stopped_early` in the audio job result,
 and a host can retake it with another seed.
 
+Before a take reaches that point, the generation loop already tries to get
+out of a pause it may not leave. It holds a pause's frames back, and if the
+pause reaches 128 frames (5.9 s) it goes back to the pause's start and draws
+again, up to 6 times per chunk. A pause that ends by itself goes out
+unchanged. The cost is timing: a frame inside a pause reaches the codec when
+the pause ends, so a streamed `/v1/audio/speech` response delays each pause
+by its length (56 frames, 2.6 s, at most on the takes measured). On the
+pause-trap gate this took 4 of 24 stopped-early takes to 0
+(`docs/FISH_DRAMA3_PHASE0.md`, Pause guard).
+
 ## Speak
 
 ```sh

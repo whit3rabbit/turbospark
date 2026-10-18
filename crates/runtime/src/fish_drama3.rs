@@ -227,6 +227,7 @@ pub struct FishDrama3Runner {
     codec: crate::fish_drama3_codec::CodecWorker,
     /// Content hash of the last reference and its encoded utterance.
     voice: Option<(u64, audio::tts::fish_drama3::prompt::Utterance)>,
+    pause_guard: Option<audio::tts::fish_drama3::generate::PauseGuard>,
 }
 
 impl FishDrama3Runner {
@@ -250,7 +251,18 @@ impl FishDrama3Runner {
             backbone: TrunkBackbone::new(trunk),
             codec,
             voice: None,
+            pause_guard: audio::tts::fish_drama3::generate::GenerateOptions::default().pause_guard,
         })
+    }
+
+    /// Whether generation resamples a pause the model may never leave
+    /// (`PauseGuard`, on by default). `None` runs the reference's loop, for an
+    /// A/B against it.
+    pub fn set_pause_guard(
+        &mut self,
+        guard: Option<audio::tts::fish_drama3::generate::PauseGuard>,
+    ) {
+        self.pause_guard = guard;
     }
 
     /// Metal buffers the trunk's context has allocated so far (see
@@ -330,7 +342,8 @@ impl FishDrama3Runner {
     ) -> std::result::Result<Drama3Take, String> {
         use audio::tts::fish_drama3::generate::{ChunkStop, Flow, FrameEvent};
         // Refused before the reference is encoded, which costs seconds.
-        let options = request.sampling.options(request.seed)?;
+        let mut options = request.sampling.options(request.seed)?;
+        options.pause_guard = self.pause_guard;
         let references = match request.reference {
             Some((samples, rate, transcript)) => vec![self.reference(samples, rate, transcript)?],
             None => Vec::new(),
@@ -358,12 +371,17 @@ impl FishDrama3Runner {
                             return Flow::Stop;
                         }
                     }
+                    // A frame the pause guard holds back reaches the codec
+                    // only if the pause ends, so nothing goes out yet. The
+                    // stop flag above is still polled once per frame.
+                    FrameEvent::Held { .. } => {}
                     // A chunk cut short still plays, so it never ends silently.
                     FrameEvent::ChunkEnd {
                         chunk,
                         frames,
                         limit,
                         stop,
+                        retries,
                     } => {
                         if stop != ChunkStop::Eos {
                             eprintln!(
@@ -375,6 +393,7 @@ impl FishDrama3Runner {
                             frames,
                             limit,
                             stop,
+                            retries,
                         });
                     }
                 }
@@ -411,6 +430,8 @@ pub struct ChunkReport {
     /// The most frames the chunk could take (its text cap or `max_frames`).
     pub limit: usize,
     pub stop: audio::tts::fish_drama3::generate::ChunkStop,
+    /// Times the pause guard rolled a long pause back and drew again.
+    pub retries: usize,
 }
 
 /// Samples per codec frame (46.4 ms at 44.1 kHz).
@@ -523,7 +544,7 @@ impl Delivery {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use audio::tts::fish_drama3::generate::{ChunkStop, GenerateOptions, TextCap};
+    use audio::tts::fish_drama3::generate::{ChunkStop, GenerateOptions, PauseGuard, TextCap};
     use audio::tts::fish_drama3::sampling::{SamplingParams, DEFAULT_MAX_FRAMES};
 
     /// No overrides is the product default, Fish Audio's serving recipe, the
@@ -539,6 +560,7 @@ mod tests {
         assert_eq!(got.seed, 7);
         assert_eq!(got.text_cap, Some(TextCap::MEASURED));
         assert_eq!(got.overlap_tower_tail, want.overlap_tower_tail);
+        assert_eq!(got.pause_guard, Some(PauseGuard::MEASURED));
     }
 
     #[test]
@@ -624,6 +646,7 @@ mod tests {
             frames: 100,
             limit: 424,
             stop,
+            retries: 0,
         }
     }
 

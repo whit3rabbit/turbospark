@@ -4,8 +4,13 @@
 //! ```sh
 //! cargo run --release -p turbospark-runtime --example fish_drama3_wer -- \
 //!     <install-dir> <corpus.txt | --smoke> <parakeet-dir> [seed=0] [expert-slots=16] \
-//!     [out-dir | -] [recipe=fish|reference]
+//!     [out-dir | -] [recipe=fish|reference] [guard=on|off|hold:retry:retries]
 //! ```
+//!
+//! `guard` sets the pause guard (`FishDrama3Runner::set_pause_guard`): `on`
+//! is the default (`PauseGuard::MEASURED`), `off` the loop without it, and
+//! `hold:retry:retries` the default with those three settings. Each chunk
+//! prints its guard retries.
 //!
 //! `recipe` picks the main sampler: `fish` (the default, Fish Audio's serving
 //! recipe, `SamplingParams::FISH_SERVING`) or `reference` (mlx-audio's,
@@ -41,6 +46,7 @@ use std::path::{Path, PathBuf};
 
 use audio::stt::parakeet::ParakeetTdt;
 use audio::tts::fish_drama3::chunking::{split_text, spoken_text};
+use audio::tts::fish_drama3::generate::PauseGuard;
 use audio::tts::fish_drama3::sampling::SamplingParams;
 use turbospark_runtime::fish_drama3::{
     Drama3Request, Drama3Sampling, FishDrama3Runner, MAX_CONTEXT,
@@ -138,13 +144,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("reference") => ("reference", SamplingParams::REFERENCE),
         Some(other) => return Err(format!("recipe {other:?}: fish or reference").into()),
     };
+    let guard_arg = args.next().unwrap_or_else(|| "on".into());
+    let guard = match guard_arg.as_str() {
+        "on" => Some(PauseGuard::MEASURED),
+        "off" => None,
+        setting => {
+            let parts: Vec<usize> = setting
+                .split(':')
+                .map(str::parse)
+                .collect::<Result<_, _>>()
+                .map_err(|e| format!("guard {setting:?}: {e}"))?;
+            let [hold_after, retry_after, max_retries] = parts[..] else {
+                return Err(format!("guard {setting:?}: on, off or hold:retry:retries").into());
+            };
+            Some(PauseGuard {
+                hold_after,
+                retry_after,
+                max_retries,
+                ..PauseGuard::MEASURED
+            })
+        }
+    };
     let sampling = Drama3Sampling {
         temperature: Some(recipe.temperature),
         top_p: Some(recipe.top_p),
         top_k: Some(recipe.top_k),
         max_frames: None,
     };
-    eprintln!("recipe {recipe_name}: {recipe:?}");
+    eprintln!("recipe {recipe_name}: {recipe:?}, pause guard {guard_arg}: {guard:?}");
 
     let smoke = corpus_arg == "--smoke";
     let corpus: Vec<String> = if smoke {
@@ -173,6 +200,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ExpertResidency::Streamed,
         MAX_CONTEXT,
     )?;
+    runner.set_pause_guard(guard);
     let rate = runner.sample_rate();
 
     let mut failed = 0usize;
@@ -198,7 +226,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let chunk_list = take
             .chunks
             .iter()
-            .map(|c| format!("{}/{} {:?}", c.frames, c.limit, c.stop))
+            .map(|c| {
+                format!(
+                    "{}/{} {:?} {} retries",
+                    c.frames, c.limit, c.stop, c.retries
+                )
+            })
             .collect::<Vec<_>>()
             .join(", ");
         let frames = samples.len().div_ceil(FRAME_SAMPLES);

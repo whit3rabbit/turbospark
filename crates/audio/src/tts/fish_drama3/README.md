@@ -98,3 +98,12 @@ times real time).
   (`docs/FISH_DRAMA3_PHASE0.md`, sampling recipe).
 - `ChunkEnd` also reports the chunk's `limit` (its text cap or `max_frames`),
   which the reference does not track.
+- The loop resamples a pause that outlives every healthy one
+  (`PauseGuard`, `GenerateOptions::pause_guard`), which the reference does
+  not. It reads each main token as voiced or silent from a table of 4,096
+  bits (`voiced.rs`), holds a pause's frames back, and rolls the backbone and
+  tower back to the pause's start when it reaches 128 frames. Six rollbacks
+  per chunk at most. A pause that ends by itself, and every take the guard
+  never fires on, go out as the reference's loop gives them, and
+  `pause_guard: None` is that loop. An explicit `[pause]` trapped 3 of 6 takes
+  under the serving recipe (`docs/FISH_DRAMA3_PHASE0.md`, Pause guard).
