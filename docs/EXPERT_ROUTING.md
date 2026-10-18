@@ -547,6 +547,8 @@ since the routing is deterministic.
   chunking. There is no software loss to recover inside the current
   pattern; the bench says whole-expert reads at 16 threads would be ~26%
   faster on this device.
+  (Measured end to end on 2026-10-17: 5% of expert io, not 26%. See "Read-pool
+  depth on the disk-bound install" at the end of this page.)
 - **A second, cache-independent bucket is as large as expert io.** The
   layer cb1 wait (attention plus router) is 120-150 ms/token at every slot
   count, ~40% of the step. The catalog row for this same install records
@@ -756,3 +758,45 @@ the A/B above is the reason not to act on a hit rate alone.
   have aged out. Neither is measured.
 - The 16-slot gain is real but belongs to a configuration `auto` does not
   pick on this machine.
+
+## Read-pool depth on the disk-bound install, measured (2026-10-17)
+
+`docs/MOE_PRIOR_ART.md` item 3 asked whether `POOL_THREADS` (8) and
+`MISS_READ_CHUNK_BYTES` (840 KiB), both tuned on warm page-cache copies, are
+wrong when reads come from a device. The raw bench in the disk-bound section
+read whole experts at 778-786 MB/s with 16-32 threads, against 617 MB/s for
+the engine's pattern.
+
+Same harness, install and host as the decay pair above: qwen4exp at `auto`
+(96 slots), cumulative LFU, page cache on, one binary per arm built from
+`095dbd70` with only the two constants changed (manifest in
+`/Volumes/T7/turbospark/phase4-readpool/bin/`). Arms ran ABCD then DCBA after
+a discarded warmup, all eight clean (no other session's build or GPU test
+during any arm).
+
+| arm | threads | chunk | tok/s, 2 runs (mean) | expert io ms/pass | physical MiB/token |
+|---|---:|---|---|---:|---:|
+| A (shipped) | 8 | 840 KiB | 4.14-4.58 (4.36) | 92.5 | 56.8 |
+| B | 16 | 840 KiB | 4.31-4.53 (4.42) | 93.9 | 57.9 |
+| C | 16 | whole expert | 4.45-4.61 (4.53) | 87.4 | 56.6 |
+| D | 32 | whole expert | 4.56-4.58 (4.57) | 87.8 | 56.9 |
+
+Output was byte-identical across all eight arms.
+
+- **More threads alone do nothing** (B). The bound is not the pool: at 72.2%
+  hits and top-10, a layer misses about 2.8 experts per pass, and layers
+  read in turn. So a batch holds about 5.6 chunks at 840 KiB, below 8
+  threads already. This is arithmetic from the hit rate, not a measured
+  queue depth.
+- **Whole-expert reads cut expert io 5%** (C, D), likely from fewer, larger
+  requests. Decode moved +4-5% on the means, inside the shipped arm's own
+  4.14-4.58 spread.
+- **The raw bench's 26% is not reachable this way.** It ran 16-32 reads at
+  once. A layer-at-a-time engine offers about 3, and more depth means
+  reading ahead of the router, which is the prefetch this page has already
+  measured negative.
+
+Decision: the constants stay. Whole-expert reads would also undo streaming
+Gotcha 4: a lone warm miss would read single-threaded, which is the case
+chunking was built for. The `F_NOCACHE` arm after a purge was not run; the
+same per-layer bound applies to it.

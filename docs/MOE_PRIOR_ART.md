@@ -37,7 +37,7 @@ budget, a cold-read tuning pass, or Neural Engine offload.
 | Aging the cache's use counts | jitllm ROADMAP 12 (from ds4) | **measured, default unchanged**: the `TURBOSPARK_EXPERT_CACHE_DECAY` seam (2026-10-13) won at 16 slots and cost 17-50% of decode at the `auto` 96 on two families | a physical-bytes-aware arm, see `docs/EXPERT_ROUTING.md` |
 | One slot budget shared by all layers | jitllm `format/jlm/read.go` `evictOne` | **closed** on the qwen4exp replay: `pool lru` buys no hit rate over per-layer LRU | only if a pooled decayed policy replays ahead first |
 | An offline-optimal bound before policy work | jitllm `engine/model/route_test.go` `replayBelady` | **built here**: `scripts/expert_policy_replay.py` | run it on real captures |
-| Queue depth for cold reads | jitllm `format/jlm/read.go`, PL 15r | **open**: `POOL_THREADS` and the chunk size were swept warm | re-sweep under the disk-bound seams |
+| Queue depth for cold reads | jitllm `format/jlm/read.go`, PL 15r | **measured, constants unchanged**: on the disk-bound qwen4exp, 16-32 threads and whole-expert reads moved expert io 5% and decode within noise | none; depth is bounded by misses per layer |
 | Per-expert contiguous pages, pread over cold mmap, concurrent misses, shared expert overlap | jitllm | already here | none |
 | Cross-layer router prefetch | jitllm `Config.StreamPrefetch` | closed here (warm); jitllm's disk-bound result lowers the prior on the owed cold sweep | none new |
 | Moving blocks between devices, routed experts on the CPU | jitllm `moveblocks.go`, `streamBank.runHost` | does not apply to unified memory | none |
@@ -181,6 +181,14 @@ with two chunk sizes). Run every bypassed arm consecutively after one purge,
 per Gotcha 8's rule that the pair cannot be interleaved. A win here would
 matter to `auto` mapped residency's cold first prefill and to
 memory-tight machines. It would not touch warm decode.
+
+**Measured 2026-10-17, page cache on.** On the disk-bound qwen4exp from
+the T7, 16 threads changed nothing, and whole-expert reads at 16-32 threads
+cut expert io 5% with decode inside run-to-run noise. Per-layer queue depth
+is set by misses per layer (about 2.8 at the `auto` 96 slots), not by the
+pool, so jitllm's ladder cannot be climbed one layer at a time
+(`docs/EXPERT_ROUTING.md`, "Read-pool depth"). The purged `F_NOCACHE` arms
+were not run.
 
 The `MADV_WILLNEED` row is a Linux measurement. It is still evidence about
 `docs/EXPERT_RESIDENCY.md`'s unbuilt `madvise(MADV_WILLNEED)` item and the
