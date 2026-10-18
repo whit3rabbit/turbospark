@@ -109,6 +109,10 @@ final class AudioWorkspaceController: ObservableObject {
     var referencePreviewTask: Task<Void, Never>?
     var referencePlayer: AVAudioPlayer?
     @Published var referencePlaying = false
+    /// The Meeting take whose Name the Speakers sheet is due, and the voice
+    /// whose sample plays there, by speaker key (AudioSpeakerLabels.swift).
+    @Published var speakerNamingID: UUID?
+    @Published var speakerSampleKey: String?
     @Published var session: AudioSession?
     @Published var qwenModel: Qwen3TTSModel?
     /// A resident FluidAudio recognizer (AudioWorkspaceFluid.swift). Released
