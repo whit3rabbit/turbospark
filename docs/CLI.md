@@ -84,7 +84,8 @@ image namespace; they are not text model rows and are not opened by
 ### MiniMax Music 3
 
 List and install one of the seven pinned MiniMax Music 3 profiles with
-`turbospark-model list-audio` and `turbospark-model pull-audio <alias>`.
+`turbospark-model list-audio` and `turbospark-model pull-audio <alias>`
+(the same commands install every other pinned audio model).
 MXFP8 is the recommended profile. MXFP4 and NVFP4 are marked experimental.
 The generation command accepts caption text and exactly one lyrics source:
 
@@ -439,17 +440,17 @@ turbospark-model <command> [flags...]
 | --- | --- | --- | --- |
 | `list` | none | `--filter TEXT` | prints every curated catalog row, marks installed ones |
 | `list-speech` | none | none | prints bundled speech models (Whisper entries and Qwen3-ASR) for Speech-to-Text |
-| `list-audio` | none | none | prints pinned audio models (MiniMax Music 3 profiles and assets) |
+| `list-audio` | none | none | prints every pinned audio model (speech, TTS, diarization, music) with its size, where it runs (`rust`, `app only`, `no runner`), whether it is installed, and the `--accept` ids its terms need |
 | `info` | `<alias>` | none | prints one catalog row in full, including its gate targets |
 | `probe` | `<repo>[@rev]` | `--file NAME.gguf`, `--sidecar-repo REPO[@rev]` | reads a Hugging Face repo's headers only, no download; reports whether this engine would run it |
 | `recommend` | none | `--context N`, `--budget BYTES`, `--load-guard TIER`, `--probe`, `--discover [N]` | ranks models by whether they fit this machine and how much is known about them; `--load-guard` MUST match what the session will open with, since the ranking and the loader's refusal share one memory budget; `--budget` accepts bare bytes or suffixes (`36G`, `36GB`, `36GiB`); `--context` defaults to `4096`; `--probe` reads every curated row's header for exact numbers, `--discover` also ranks the N most-downloaded GGUF repos on Hugging Face (default `20`) through the same probe |
 | `pull` | `<alias>`, or `--repo REPO[@rev] --alias NAME` | `--out DIR`, `--file NAME.gguf`, `--sidecar-repo REPO[@rev]`, `--force` | installs a curated model, or any repository the probe accepts; `--out` overrides install destination; `--force` installs past a probe refusal |
-| `pull-audio` | `<alias>` | `--out DIR` | installs one pinned MiniMax Music 3 audio profile |
+| `pull-audio` | `<alias>` | `--accept ID` (repeatable) | installs one pinned audio model into `<root>/models/audio/<alias>.gturbo`, the place the app reads. A model with terms prints them and refuses until each id is passed with `--accept`. Rows marked `app only` (FluidAudio Core ML) install here but run only in the TurboSpark app. `fish-drama3-4bit` converts on install: use `pull-drama3` |
 | `pull-image` | `--alias NAME`, or `--repo REPO[@rev]` | `--source DIR`, `--model-id ID`, `--model-revision REV` | downloads and installs a pinned image model export |
 | `pull-drama3` | none | `--out DIR`, `--accept-fish-license` | converts Fish Audio Drama 3 into `DIR` from its pinned MLX checkpoint. Needs about 25 GiB free and tens of minutes. See [`docs/FISH_DRAMA3.md`](FISH_DRAMA3.md) |
 | `pull-vision` | `<alias>`, or `--repo REPO[@rev] --alias NAME` | `--file NAME.gguf` | installs a curated or custom vision-tower sidecar |
-| `path` | `<alias>` | none | prints the install directory (fails loudly if not installed) |
-| `rm` | `<alias>` | `--yes` / `-y` | deletes an install; without `--yes`, prompts for the alias name to confirm |
+| `path` | `<alias>` | none | prints the install directory, text or audio alias (fails loudly if not installed) |
+| `rm` | `<alias>` | `--yes` / `-y` | deletes a text or audio install; without `--yes`, prompts for the alias name to confirm. Audio rows go through the catalog's ownership-checked delete |
 | `auth` | none | `--clear`, `--status`, `--set` | inspects, saves, or clears Hugging Face credentials in `~/.turbospark/hf_token`; `--set` reads from a non-echoing prompt when interactive, or from stdin when piped |
 
 Global options: `--help` / `-h` / `help`, `--version` / `-V` / `version`. For gated repositories, set `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`; credentials are never accepted in command-line arguments.

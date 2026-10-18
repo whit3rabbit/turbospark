@@ -27,7 +27,8 @@ USAGE:
 COMMANDS:
     list [--filter TEXT]        curated models, marking the ones installed
     list-speech                 bundled whisper entries (STT installs)
-    list-audio                  pinned MiniMax Music 3 profiles
+    list-audio                  every pinned audio model (speech, TTS, music,
+                                diarization), marking the ones installed
     info <ALIAS>                one model in full, with its gate targets
     probe <REPO>[@REV]          what this engine makes of a Hugging Face repo,
                                 reading headers only: no download
@@ -40,7 +41,9 @@ COMMANDS:
                                 download and install a pinned HF image export
     pull-image --alias z-image-turbo
                                 install the pinned image-catalog source
-    pull-audio <ALIAS>           install one pinned MiniMax Music 3 profile
+    pull-audio <ALIAS> [--accept ID]...
+                                install one pinned audio model; a model with
+                                terms prints them and needs each --accept ID
     pull-drama3 --out <DIR> --accept-fish-license
                                 install Fish Audio Drama 3 (44.1 kHz speech)
                                 from its pinned MLX conversion, about 22 GiB
@@ -89,6 +92,8 @@ OPTIONS:
     --clear                     clear saved Hugging Face token (for `auth`)
     --status                    verify and show authentication status (for `auth`)
     --set                       read and save a Hugging Face token (for `auth`)
+    --accept <ID>               accept one of a model's terms by id (repeatable,
+                                for `pull-audio`; `list-audio` shows the ids)
     --accept-fish-license       accept the Fish Audio Community License
                                 (for `pull-drama3`; the terms print first)
     --force                     install past a probe refusal
@@ -167,6 +172,8 @@ pub struct Options {
     pub filter: Option<String>,
     pub force: bool,
     pub accept_fish_license: bool,
+    /// Acknowledgment ids accepted with `--accept`, for `pull-audio`.
+    pub accept: Vec<String>,
     pub yes: bool,
     pub set: bool,
     pub clear: bool,
@@ -215,8 +222,7 @@ fn run(args: &[String]) -> Result<(), Error> {
             if !positionals.is_empty() {
                 return Err(Error::Usage("list-audio takes no arguments".to_string()));
             }
-            model_cmd::list_audio(&store);
-            Ok(())
+            model_cmd::list_audio(&store)
         }
         "info" => {
             options.reject_unused(&[])?;
@@ -255,9 +261,9 @@ fn run(args: &[String]) -> Result<(), Error> {
             model_cmd::pull_image(&catalog, &store, &client, &positionals, &options)
         }
         "pull-audio" => {
-            options.reject_unused(&[])?;
+            options.reject_unused(&["accept"])?;
             let alias = one_positional(&positionals, "pull-audio", "<ALIAS>")?;
-            model_cmd::pull_audio(&catalog, &store, &client, alias)
+            model_cmd::pull_audio(&catalog, &store, &client, alias, &options)
         }
         "pull-drama3" => {
             options.reject_unused(&["out", "accept-fish-license"])?;
@@ -455,6 +461,11 @@ fn parse(args: &[String]) -> Result<(Vec<String>, Options), Error> {
             "--force" => {
                 options.force = true;
                 seen.push("force");
+            }
+            "--accept" => {
+                let value = value_for(&mut index, "--accept")?;
+                options.accept.push(value);
+                seen.push("accept");
             }
             "--accept-fish-license" => {
                 options.accept_fish_license = true;

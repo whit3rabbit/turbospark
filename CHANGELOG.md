@@ -14,6 +14,13 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- `turbospark-model list-audio` and `pull-audio` cover every pinned audio model,
+  not only MiniMax Music 3: speech, TTS, diarization and the app-only
+  FluidAudio Core ML rows (`parakeet-ja-coreml`, `paraformer-zh-coreml`). A
+  model with terms prints them and needs `--accept <id>`. `path` and `rm` now
+  resolve audio aliases (delete is the catalog's ownership-checked one), and
+  the unified `turbospark` binary forwards `list-audio`, `list-speech` and
+  `pull-audio`. Installs land where the app reads them.
 - ArkTTS multilingual zero-shot TTS preview family port (`crates/audio/src/tts/arktts/`).
   DualAR transformer architecture plus bundled 44.1 kHz decode-only speech codec:
   pure-attention slow stack on 0.6b and hybrid Mamba-2 + attention Falcon H1
