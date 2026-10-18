@@ -102,7 +102,7 @@ final class ModelLibrariesController: ObservableObject {
     }
 
     /// The real test: reads from the drive on its own thread.
-    static let liveSpeedTest: SpeedTestRunner = { root, isInternal in
+    nonisolated static let liveSpeedTest: SpeedTestRunner = { root, isInternal in
         try await DriveSpeedTest.measureReadSpeed(libraryRoot: root, isInternal: isInternal)
     }
 

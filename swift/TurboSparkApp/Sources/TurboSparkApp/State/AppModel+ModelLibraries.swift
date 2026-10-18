@@ -47,7 +47,7 @@ final class LibraryState: ObservableObject {
 
     /// Requirements 4.1 and 4.6 allow five seconds end to end; a burst of
     /// mount events (a hub with three drives) collapses into one refresh.
-    static let refreshDebounce: Duration = .milliseconds(500)
+    nonisolated static let refreshDebounce: Duration = .milliseconds(500)
     static let internalLibraryId = "internal"
 
     // MARK: Published state
@@ -157,7 +157,7 @@ final class LibraryState: ObservableObject {
         dismissalsURL: URL = AppStorageRoot.file("library_offer_dismissals.json"),
         debounce: Duration = LibraryState.refreshDebounce,
         sleep: @escaping Sleep = { try await Task.sleep(for: $0) },
-        freeSpace: @escaping FreeSpaceReader = LibraryState.availableCapacity
+        freeSpace: @escaping FreeSpaceReader = { LibraryState.availableCapacity(at: $0) }
     ) {
         self.service = service
         self.probe = probe

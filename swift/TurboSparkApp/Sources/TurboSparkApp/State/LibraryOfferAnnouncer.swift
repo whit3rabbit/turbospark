@@ -11,11 +11,11 @@ import Foundation
 @MainActor
 final class LibraryOfferAnnouncementLedger {
     /// The one the app uses.
-    static let process = LibraryOfferAnnouncementLedger()
+    nonisolated static let process = LibraryOfferAnnouncementLedger()
 
     private var announced: Set<String> = []
 
-    init() {}
+    nonisolated init() {}
 
     /// Records `markerId`. True the first time, false for every repeat.
     func record(_ markerId: String) -> Bool {
