@@ -43,6 +43,15 @@ policy.
   and Ornith 35B. MiniCPM-V 4.7 (BF16 resident matrices) keeps the per-token
   path. `TURBOSPARK_BATCHED_GEMV=0` opts out to the byte-identical per-token
   path. See `docs/BATCHED_PREFILL.md`.
+- Music 3 zero-tolerance MLX matches are device-bound. The GitHub macOS
+  runner's GPU ("Apple Paravirtual device") returns different cos and sin than
+  the M4 Max that produced the pinned references, so `music3_rope` moves in the
+  last bit (`fast::` and `precise::` alike) and the `affine4` tiny profile in
+  `tests/music3_metal.rs` flips a bf16 rounding. That comparison runs only on
+  `Apple M4 Max` (or with `TURBOSPARK_MUSIC3_ORACLE_ANY_DEVICE=1`); other GPUs
+  still check reset, finiteness and sizes. Do not widen the tolerance or chase
+  it in the quantized kernels (explicit `fma` changed nothing). Details:
+  `docs/audio/minimax_music3.md`.
 
 ## Checks
 
