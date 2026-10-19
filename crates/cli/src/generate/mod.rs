@@ -23,7 +23,7 @@ use std::io::Write;
 use invocation::{InvocationRequest, Mode};
 use runtime::{
     run_raw_completion, run_raw_completion_chunked, run_raw_completion_speculative,
-    GenerationConfig, RawDecodeResult, TurnSplitter,
+    run_raw_completion_speculative_adaptive, GenerationConfig, RawDecodeResult, TurnSplitter,
 };
 use tokenizer::{Message, MfTokenizer, ReasoningEffort, ReasoningSupport};
 
@@ -533,6 +533,19 @@ pub(crate) fn stream_turn(
         // the speculative loop has its own prefill (it primes the drafter as
         // it walks) and no chunked variant. They are not composable today and
         // pretending otherwise would silently run one of them.
+        (SpeculationPlan::Enabled { block }, _) if session.adaptive_depth => {
+            run_raw_completion_speculative_adaptive(
+                &mut session.runner,
+                &session.tokenizer,
+                prompt_ids,
+                &config,
+                session.max_context,
+                vocab_size,
+                *block,
+                runtime::AdaptiveDepth::DEFAULT_FLOOR,
+                on_progress,
+            )?
+        }
         (SpeculationPlan::Enabled { block }, _) => run_raw_completion_speculative(
             &mut session.runner,
             &session.tokenizer,

@@ -63,6 +63,7 @@ mod session_pool;
 #[cfg(target_os = "macos")]
 mod speculation_policy;
 mod speculative;
+mod speculative_adaptive;
 #[cfg(target_os = "macos")]
 mod startup;
 #[cfg(target_os = "macos")]
@@ -155,9 +156,11 @@ pub use speculation_policy::{
     SpeculationPlan, SpeculativeDrafter,
 };
 pub use speculative::{
-    run_raw_completion_speculative, run_raw_completion_speculative_cancellable,
-    DEFAULT_SPECULATION_BLOCK,
+    run_raw_completion_speculative, run_raw_completion_speculative_adaptive,
+    run_raw_completion_speculative_adaptive_cancellable,
+    run_raw_completion_speculative_cancellable, DEFAULT_SPECULATION_BLOCK,
 };
+pub use speculative_adaptive::AdaptiveDepth;
 #[cfg(target_os = "macos")]
 pub use steering::{family_dispatches_steering, SteeringPolicy, SteeringVector, MAX_STEER_ROWS};
 pub use turn_stream::{TurnEvent, TurnSplitter};

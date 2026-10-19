@@ -152,6 +152,35 @@ final class SurfaceTests: XCTestCase {
         }
     }
 
+    /// The adaptive spellings are the CLI's, and the engine agrees on them.
+    ///
+    /// Encoding is pinned here and the Rust side's parse is pinned in
+    /// `open_tests.rs`; only this pair together says the two sides meet.
+    func testAdaptiveSpeculationEncodesAsTheCLISpelling() throws {
+        let encoded = try JSONEncoder().encode([
+            OpenOptions.Speculation.adaptive(), .adaptive(cap: 12),
+        ])
+        XCTAssertEqual(
+            String(decoding: encoded, as: UTF8.self), #"["adaptive","adaptive:12"]"#)
+    }
+
+    /// A cap with no room above the floor is refused by name, before the
+    /// install is touched.
+    func testAnAdaptiveCapWithNoHeadroomIsRefusedByName() async throws {
+        var options = OpenOptions()
+        options.speculation = .adaptive(cap: 2)
+        do {
+            _ = try await TurboSparkSession(
+                modelPath: "/nonexistent/model.gturbo", options: options)
+            XCTFail("an adaptive cap of 2 should throw")
+        } catch let error as TurboSparkError {
+            XCTAssertTrue(
+                error.message.contains("adaptive") && error.message.contains("speculation"),
+                "expected the option and the value, got \(error.message)")
+            XCTAssertFalse(error.message.contains("/nonexistent"))
+        }
+    }
+
     /// Tests that a drafter name the engine does not know is refused.
     func testAnUnknownDrafterIsRefusedRatherThanDefaulted() async throws {
         // The enum cannot produce this, so it is built by hand: the point

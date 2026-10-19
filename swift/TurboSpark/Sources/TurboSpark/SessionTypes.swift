@@ -180,6 +180,9 @@ public struct SessionInfo: Decodable, Sendable, Equatable {
         /// turn decodes sequentially whatever this says. Send
         /// `GenerateOptions.temperature = 0` to speculate.
         public let block: Int?
+        /// True when `block` is the CAP of adaptive depth and not a fixed
+        /// round size. False whenever `block` is nil.
+        public let adaptive: Bool
         /// Non-nil exactly when `block` is. Two drafters serve one family
         /// with different shapes and different measured optima, so a
         /// throughput figure is unreadable without knowing which ran.
@@ -190,5 +193,20 @@ public struct SessionInfo: Decodable, Sendable, Equatable {
         /// at a time with nothing said is the failure this feature exists
         /// to end.
         public let reason: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case block, adaptive, drafter, reason
+        }
+
+        /// `adaptive` is DEFAULTED, not required: a report from an engine
+        /// that predates adaptive depth omits it, and "absent" can only mean
+        /// a fixed block.
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            block = try c.decodeIfPresent(Int.self, forKey: .block)
+            adaptive = try c.decodeIfPresent(Bool.self, forKey: .adaptive) ?? false
+            drafter = try c.decodeIfPresent(Drafter.self, forKey: .drafter)
+            reason = try c.decodeIfPresent(String.self, forKey: .reason)
+        }
     }
 }

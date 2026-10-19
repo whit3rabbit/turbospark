@@ -93,6 +93,11 @@ pub struct SessionCore {
     /// macOS-only and this struct is not; the human-readable half of the
     /// plan is already carried in `info.speculation`.
     pub(crate) speculation_block: Option<usize>,
+    /// Whether `speculation_block` is a CAP the adaptive depth controller
+    /// moves under rather than a fixed round size. Meaningful only when the
+    /// block is `Some`; kept beside it as a plain `bool` for the same reason
+    /// the block is a plain `usize`.
+    pub(crate) speculation_adaptive: bool,
     /// The guard tier this session actually opened under (vision memory
     /// sidecar Part B3). Carried so a later image's pixel-budget clamp
     /// resolves against the SAME tier `maxContext` did, never a second,

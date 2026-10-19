@@ -52,6 +52,14 @@ public struct OpenOptions: Encodable, Sendable {
         /// A named block size. The engine accepts 1 through 15; anything
         /// else throws, naming the range.
         case block(UInt32)
+        /// **Experimental.** Draft between a floor of 2 and `cap`, moving
+        /// with the acceptance each round saw. Step drafter (MTP) only, and
+        /// like `.block` it throws from `TurboSparkSession.init` when the
+        /// install cannot serve it. `cap` is 3 through 15; nil takes the
+        /// engine's default (4). The head is allocated at the cap, and
+        /// `SessionInfo.speculation.block` reports the cap with
+        /// `adaptive == true`. `.auto` never picks it.
+        case adaptive(cap: UInt32? = nil)
 
         public func encode(to encoder: Encoder) throws {
             var c = encoder.singleValueContainer()
@@ -59,6 +67,8 @@ public struct OpenOptions: Encodable, Sendable {
             case .auto: try c.encode("auto")
             case .off: try c.encode("off")
             case .block(let n): try c.encode(n)
+            case .adaptive(let cap):
+                try c.encode(cap.map { "adaptive:\($0)" } ?? "adaptive")
             }
         }
     }

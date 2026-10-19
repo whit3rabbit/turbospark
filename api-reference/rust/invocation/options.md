@@ -69,10 +69,10 @@ All `--image` values land in one turn unless `--image-batch` is set. With `--ima
 
 | Flag | Takes value | Default | Accepted values | Request field |
 | --- | --- | --- | --- | --- |
-| `--speculative` | Yes | `auto` | `auto`, `off`, or an integer from `1` to `15` | `speculation` |
+| `--speculative` | Yes | `auto` | `auto`, `off`, an integer from `1` to `15`, or `adaptive[:MAX]` (MAX `3` to `15`, default `4`; experimental) | `speculation` |
 | `--speculative-drafter` | Yes | `auto` | `auto`, `mtp`, `dflash` | `speculative_drafter` |
 
-`auto` for `--speculative` warns and decodes sequentially when the install cannot speculate. A named block size fails outright in that case, so a benchmark cannot quietly run without speculation. Detecting a drafter does not switch it on, and `auto` does not enable a DFlash drafter by default.
+`auto` for `--speculative` warns and decodes sequentially when the install cannot speculate. A named block size, and `adaptive`, fail outright in that case, so a benchmark cannot quietly run without speculation. `adaptive` moves the round size between 2 and MAX for the MTP head only and measured no faster than the fixed default (`docs/MTP_SPECULATIVE.md`); `auto` never selects it. Detecting a drafter does not switch it on, and `auto` does not enable a DFlash drafter by default.
 
 ## Steering
 

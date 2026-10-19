@@ -288,6 +288,9 @@ pub struct SpeculationInfo {
     /// speculate at all. Null is the "is it on" test; there is no separate
     /// flag to disagree with it.
     pub block: Option<usize>,
+    /// True when `block` is the CAP of adaptive depth rather than a fixed
+    /// round size. Always false while `block` is null.
+    pub adaptive: bool,
     /// `mtp` | `dflash`, present only when `block` is. Two drafters serve
     /// one family with different shapes and different measured optima, so a
     /// throughput figure is unreadable without knowing which one ran.

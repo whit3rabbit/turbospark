@@ -41,6 +41,11 @@ pub enum Speculation {
     Off,
     /// Draft this many tokens per round, or fail naming the reason.
     Block(u32),
+    /// Draft between [`crate::AdaptiveDepth::DEFAULT_FLOOR`] and this cap,
+    /// moving with the acceptance each round saw. Step drafter (MTP) only,
+    /// and a named request like [`Speculation::Block`]: it fails rather than
+    /// quietly running something else. `Auto` never picks it.
+    Adaptive(u32),
 }
 
 /// Which drafter [`Speculation`] drives. The two are ALTERNATIVES
@@ -245,10 +250,14 @@ pub fn draft_policies(choice: &DrafterChoice, speculation: Speculation) -> Draft
             // could read is `None`, and that has to keep asking for the head
             // so a broken install still fails at open with the engine's own
             // message rather than being explained by a guess.
-            Speculation::Block(_) if choice.install_has_mtp_head == Some(false) => {
+            Speculation::Block(_) | Speculation::Adaptive(_)
+                if choice.install_has_mtp_head == Some(false) =>
+            {
                 MtpDraftPolicy::Off
             }
-            Speculation::Block(n) => MtpDraftPolicy::Fixed(n as usize),
+            // The head is opened at the CAP: the state is sized by the
+            // deepest round it may be asked to serve.
+            Speculation::Block(n) | Speculation::Adaptive(n) => MtpDraftPolicy::Fixed(n as usize),
         }),
         // `Auto` is resolved by `resolve_drafter` before this is called and
         // cannot reach here; it shares the DFlash2 arm if it ever does.
@@ -257,6 +266,10 @@ pub fn draft_policies(choice: &DrafterChoice, speculation: Speculation) -> Draft
             dflash: match speculation {
                 Speculation::Off => DflashDraftPolicy::Off,
                 Speculation::Auto => DflashDraftPolicy::Auto,
+                // Adaptive depth is the step drafter's. Opening nothing lets
+                // the open succeed so `resolve_speculation` can refuse by
+                // name, as it does for a named block the install cannot serve.
+                Speculation::Adaptive(_) => DflashDraftPolicy::Off,
                 // The MTP arm's headless guard, on the drafter it is missing
                 // from. `Some(false)` and never a bare falsy test, for that
                 // arm's reason: `None` is an unreadable index and has to keep
@@ -321,10 +334,22 @@ pub fn resolve_speculation(
             reason: Some(reason),
         }),
         (Speculation::Auto, None) => Ok(SpeculationPlan::Enabled { block: auto_block }),
-        (Speculation::Block(_), Some(reason)) => Err(format!(
+        (Speculation::Block(_) | Speculation::Adaptive(_), Some(reason)) => Err(format!(
             "--speculative was asked for but cannot be served: {reason}"
         )),
-        (Speculation::Block(n), None) => {
+        (Speculation::Adaptive(_), None) if drafter == SpeculativeDrafter::Dflash => Err(
+            "--speculative was asked for but cannot be served: adaptive depth moves the round \
+             size of the step drafter; the DFlash2 block drafter proposes a fixed block"
+                .to_string(),
+        ),
+        (Speculation::Adaptive(n), None) if n < foundation::runtime_config::MIN_ADAPTIVE_CAP => {
+            Err(format!(
+                "--speculative was asked for but cannot be served: adaptive cap {n} is below \
+                 {}, which would be a fixed block with extra steps",
+                foundation::runtime_config::MIN_ADAPTIVE_CAP
+            ))
+        }
+        (Speculation::Block(n) | Speculation::Adaptive(n), None) => {
             if !foundation::runtime_config::ALLOWED_SPECULATION_BLOCKS.contains(&n) {
                 return Err(format!(
                     "--speculative was asked for but cannot be served: block {n} is outside allowed range {:?}",

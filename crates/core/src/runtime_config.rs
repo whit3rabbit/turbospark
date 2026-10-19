@@ -42,6 +42,16 @@ pub const ALLOWED_CACHE_SLOTS: [u32; 10] = [8, 16, 24, 32, 48, 64, 96, 128, 192,
 /// this purpose.
 pub const ALLOWED_SPECULATION_BLOCKS: std::ops::RangeInclusive<u32> = 1..=15;
 
+/// The cap `--speculative adaptive` takes when none is named. Low on
+/// purpose: the first measurement (`docs/MTP_SPECULATIVE.md`) found nothing
+/// to gain above depth 4 on this engine and a large loss from lingering
+/// there. It also bounds the open-time scratch.
+pub const DEFAULT_ADAPTIVE_CAP: u32 = 4;
+
+/// The smallest adaptive cap that gives the controller room to move. Its
+/// floor is 2, so a cap of 2 would be a fixed block 2 with extra steps.
+pub const MIN_ADAPTIVE_CAP: u32 = 3;
+
 /// Documented default cache-slot count.
 pub const DEFAULT_CACHE_SLOTS: u32 = 16;
 

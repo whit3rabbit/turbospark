@@ -75,6 +75,23 @@ fn speculation(value: &Option<serde_json::Value>) -> Result<runtime::Speculation
         Some(serde_json::Value::String(s)) if s.eq_ignore_ascii_case("off") => {
             Ok(runtime::Speculation::Off)
         }
+        // Experimental and step-drafter only; the same spellings the CLI
+        // takes. The cap bounds are read from `foundation` like the block's.
+        Some(serde_json::Value::String(s)) if s.eq_ignore_ascii_case("adaptive") => Ok(
+            runtime::Speculation::Adaptive(foundation::runtime_config::DEFAULT_ADAPTIVE_CAP),
+        ),
+        Some(serde_json::Value::String(s))
+            if s.len() > "adaptive:".len() && s[..9].eq_ignore_ascii_case("adaptive:") =>
+        {
+            let min = foundation::runtime_config::MIN_ADAPTIVE_CAP;
+            match s["adaptive:".len()..].parse::<u32>() {
+                Ok(n) if allowed.contains(&n) && n >= min => Ok(runtime::Speculation::Adaptive(n)),
+                _ => Err(format!(
+                    "speculation \"adaptive:N\" needs N in {min}..={}, got {s:?}",
+                    allowed.end()
+                )),
+            }
+        }
         Some(serde_json::Value::String(s)) => match s.parse::<u64>() {
             Ok(n) => block(n),
             Err(_) => Err(format!(
@@ -494,6 +511,10 @@ pub(crate) fn open_with_failure(
         runtime::SpeculationPlan::Enabled { block } => Some(*block),
         runtime::SpeculationPlan::Disabled { .. } => None,
     };
+    // Only meaningful with a block: a plan that resolved to Disabled has no
+    // cap to adapt under, and `info` must not report one.
+    let speculation_adaptive =
+        speculation_block.is_some() && matches!(asked, runtime::Speculation::Adaptive(_));
 
     let profile = runtime::resolve_profile(requested_profile);
     let rate = runtime::rate_control_for(profile, options.max_tokens_per_sec);
@@ -553,6 +574,7 @@ pub(crate) fn open_with_failure(
         },
         speculation: SpeculationInfo {
             block: speculation_block,
+            adaptive: speculation_adaptive,
             drafter: speculation_block.map(|_| drafter_name(choice.drafter).to_string()),
             reason: match speculation_plan {
                 runtime::SpeculationPlan::Disabled { reason } => reason,
@@ -586,6 +608,7 @@ pub(crate) fn open_with_failure(
         max_context: plan.resolved,
         rate,
         speculation_block,
+        speculation_adaptive,
         info,
         load_policy,
         committed_bytes: committed.total(),

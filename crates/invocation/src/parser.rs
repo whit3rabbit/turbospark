@@ -10,8 +10,9 @@ use crate::options::OPTIONS;
 use crate::request::{
     ExpertCacheSlots, ExpertResidency, InvocationRequest, KvBits, LoadGuard, MaxContext, Mode,
     PowerProfile, PrefillChunk, ReadAheadMode, ReasoningEffort, Speculation, SpeculativeDrafter,
-    SteeringMode, ALLOWED_SPECULATION_BLOCKS, DEFAULT_MAX_NEW, DEFAULT_REPETITION_PENALTY,
-    DEFAULT_TEMPERATURE, DEFAULT_TOP_K, DEFAULT_TOP_P, MAX_TOP_K,
+    SteeringMode, ALLOWED_SPECULATION_BLOCKS, DEFAULT_ADAPTIVE_CAP, DEFAULT_MAX_NEW,
+    DEFAULT_REPETITION_PENALTY, DEFAULT_TEMPERATURE, DEFAULT_TOP_K, DEFAULT_TOP_P, MAX_TOP_K,
+    MIN_ADAPTIVE_CAP,
 };
 use foundation::runtime_config::{ALLOWED_CACHE_SLOTS, ALLOWED_CHUNK_SIZES};
 
@@ -219,6 +220,13 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
             "--speculative" => match value.as_str() {
                 "auto" => speculation = Speculation::Auto,
                 "off" => speculation = Speculation::Off,
+                "adaptive" => speculation = Speculation::Adaptive(DEFAULT_ADAPTIVE_CAP),
+                v if v.starts_with("adaptive:") => match v["adaptive:".len()..].parse::<u32>() {
+                    Ok(n) if ALLOWED_SPECULATION_BLOCKS.contains(&n) && n >= MIN_ADAPTIVE_CAP => {
+                        speculation = Speculation::Adaptive(n)
+                    }
+                    _ => return invalid("--speculative", value),
+                },
                 _ => match value.parse::<u32>() {
                     Ok(n) if ALLOWED_SPECULATION_BLOCKS.contains(&n) => {
                         speculation = Speculation::Block(n)

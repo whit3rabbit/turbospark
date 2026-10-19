@@ -178,8 +178,10 @@ pub const OPTIONS: &[OptionDecl] = &[
         takes_value: true,
         is_required: false,
         is_mode_selecting: false,
-        usage_hint: "speculative decoding: auto, off, or a block size 1-15 \
-                     (default auto; a named block FAILS if the model cannot serve it)",
+        usage_hint: "speculative decoding: auto, off, a block size 1-15, or \
+                     adaptive[:MAX] (MAX 3-15, default 4; depth moves with acceptance, \
+                     experimental). Default auto; a named block FAILS if the model \
+                     cannot serve it",
     },
     OptionDecl {
         flag: "--speculative-drafter",

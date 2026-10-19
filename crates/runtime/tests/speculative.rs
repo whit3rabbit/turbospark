@@ -22,9 +22,9 @@ use foundation::LogitValue;
 use selection::ShapingConfig;
 use tokenizer::MfTokenizer;
 use turbospark_runtime::{
-    run_raw_completion, run_raw_completion_speculative, run_raw_completion_speculative_cancellable,
-    GenerationConfig, LogitProducer, RawDecodeProgress, RawDecodeResult, RuntimeError,
-    SpeculativeProducer, StopReason,
+    run_raw_completion, run_raw_completion_speculative, run_raw_completion_speculative_adaptive,
+    run_raw_completion_speculative_cancellable, GenerationConfig, LogitProducer, RawDecodeProgress,
+    RawDecodeResult, RuntimeError, SpeculativeProducer, StopReason,
 };
 
 fn load_tokenizer() -> MfTokenizer {
@@ -1264,4 +1264,159 @@ fn record_committed_captures_accepted_feed_prefixes() {
             "committed tokens start at or after prompt"
         );
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_adaptive(
+    tokenizer: &MfTokenizer,
+    truth: &[i32],
+    prompt: &[i32],
+    config: &GenerationConfig,
+    vocab: usize,
+    drafter: Drafter,
+    cap: usize,
+    floor: usize,
+) -> (RawDecodeResult, Vec<i32>, ScriptedTarget) {
+    let mut producer = ScriptedTarget::new(vocab, truth.to_vec(), drafter);
+    let mut events = Vec::new();
+    let result = run_raw_completion_speculative_adaptive(
+        &mut producer,
+        tokenizer,
+        prompt,
+        config,
+        4096,
+        vocab,
+        cap,
+        floor,
+        |e| events.push(e),
+    )
+    .expect("adaptive run");
+    // The same cursor police the fixed loop is held to: a controller that
+    // changes the round size must not leave the engine ahead of the stream.
+    assert_eq!(producer.cursor, result.kv_position);
+    assert_eq!(result.kv_backed_token_ids.len(), result.kv_position);
+    (result, collect_tokens(&events), producer)
+}
+
+/// The controller moves the round size and nothing else, so the committed
+/// stream must equal the sequential one for every drafter quality.
+#[test]
+fn adaptive_depth_is_lossless_against_sequential() {
+    let tokenizer = load_tokenizer();
+    let vocab = tokenizer.vocab_size;
+    let truth = plain_truth(&tokenizer);
+    let prompt = tokenizer.encode("hi", false);
+    let config = greedy_config(120);
+    let (_, reference) = run_sequential(&tokenizer, &truth, &prompt, &config, vocab);
+
+    for drafter in [Drafter::Perfect, Drafter::Useless, Drafter::Alternating] {
+        let (result, tokens, _) =
+            run_adaptive(&tokenizer, &truth, &prompt, &config, vocab, drafter, 8, 2);
+        assert_eq!(tokens, reference, "{drafter:?}: stream diverged");
+        assert_eq!(result.new_tokens, 120, "{drafter:?}");
+    }
+}
+
+/// A perfect drafter must be allowed to climb: the same 120 tokens take
+/// fewer verify passes than fixed block 2, which is the entire point.
+#[test]
+fn adaptive_depth_climbs_on_a_perfect_drafter() {
+    let tokenizer = load_tokenizer();
+    let vocab = tokenizer.vocab_size;
+    let truth = plain_truth(&tokenizer);
+    let prompt = tokenizer.encode("hi", false);
+    let config = greedy_config(120);
+
+    let (_, _, fixed_calls) = run_speculative(
+        &tokenizer,
+        &truth,
+        &prompt,
+        &config,
+        vocab,
+        Drafter::Perfect,
+        2,
+    );
+    let (_, _, adaptive) = run_adaptive(
+        &tokenizer,
+        &truth,
+        &prompt,
+        &config,
+        vocab,
+        Drafter::Perfect,
+        8,
+        2,
+    );
+    assert!(
+        adaptive.verify_calls.get() < fixed_calls,
+        "adaptive took {} verifies against fixed block 2's {fixed_calls}",
+        adaptive.verify_calls.get()
+    );
+}
+
+/// A drafter that is always wrong must pin the controller at the floor, so
+/// the run costs exactly what fixed block 2 costs and no deep round is paid
+/// for.
+#[test]
+fn adaptive_depth_stays_at_the_floor_on_a_useless_drafter() {
+    let tokenizer = load_tokenizer();
+    let vocab = tokenizer.vocab_size;
+    let truth = plain_truth(&tokenizer);
+    let prompt = tokenizer.encode("hi", false);
+    let config = greedy_config(120);
+
+    let mut fixed = ScriptedTarget::new(vocab, truth.clone(), Drafter::Useless);
+    run_raw_completion_speculative(
+        &mut fixed,
+        &tokenizer,
+        &prompt,
+        &config,
+        4096,
+        vocab,
+        2,
+        |_| {},
+    )
+    .expect("fixed run");
+    let (_, _, adaptive) = run_adaptive(
+        &tokenizer,
+        &truth,
+        &prompt,
+        &config,
+        vocab,
+        Drafter::Useless,
+        8,
+        2,
+    );
+    // Rows, not just calls: a controller that climbed and fell back would
+    // match the call count and still have paid for deeper verifies.
+    assert_eq!(adaptive.verify_calls.get(), fixed.verify_calls.get());
+    assert_eq!(adaptive.verify_rows.get(), fixed.verify_rows.get());
+}
+
+/// Rounds shortened by the budget must not feed the controller and must
+/// still never write past the admitted window.
+#[test]
+fn adaptive_depth_respects_the_window_it_was_admitted_under() {
+    let tokenizer = load_tokenizer();
+    let vocab = tokenizer.vocab_size;
+    let truth = plain_truth(&tokenizer);
+    let prompt = tokenizer.encode("hi", false);
+    let max_new = 40u32;
+    let max_context = (prompt.len() + max_new as usize) as u32;
+    let config = greedy_config(max_new);
+
+    let mut producer = ScriptedTarget::new(vocab, truth, Drafter::Perfect);
+    let result = run_raw_completion_speculative_adaptive(
+        &mut producer,
+        &tokenizer,
+        &prompt,
+        &config,
+        max_context,
+        vocab,
+        8,
+        2,
+        |_| {},
+    )
+    .expect("fits the admitted window");
+    assert_eq!(result.new_tokens, max_new as usize);
+    assert!(producer.high_water.get() <= max_context as usize);
 }

@@ -269,12 +269,19 @@ void ts_string_free(char *s);
  *                       null ASKS THE OS, so Low Power Mode selects
  *                       efficiency. Name one explicitly when measuring.
  *   maxTokensPerSec   number | null
- *   speculation       "off" | "auto" | number | "<number>" | null
+ *   speculation       "off" | "auto" | number | "<number>" | "adaptive" |
+ *                       "adaptive:<N>" | null
  *                       (default auto). Resolved at OPEN, because that is
  *                       where the drafter's state is allocated. A NAMED
  *                       block that cannot be served fails this call; "auto"
  *                       that cannot be served opens and reports why in
  *                       sessionInfo.speculation.
+ *                       "adaptive" is EXPERIMENTAL and step-drafter (MTP)
+ *                       only: the round size moves between 2 and a cap N
+ *                       (3..15, default 4) with the acceptance each round
+ *                       saw. It is a named request like a number, so it
+ *                       fails this call when it cannot be served, and
+ *                       "auto" never picks it. The head is allocated at N.
  *   speculativeDrafter "auto" | "mtp" | "dflash" | null
  *                       (default auto). "auto" ENABLES an MTP head and only
  *                       REPORTS a DFlash2 one, which is measured rather
@@ -449,7 +456,7 @@ void ts_image_buffer_free(uint8_t *bytes, size_t len);
  *     "steering": { "active", "supported", "reason", "mode", "scale",
  *                   "summary" },
  *     "toolCalling": { "native", "reason" },
- *     "speculation": { "block", "drafter", "reason" },
+ *     "speculation": { "block", "adaptive", "drafter", "reason" },
  *     "vision": { "active", "imageTokenId", "reason", "source",
  *                 "sidecarPath" },
  *     "kvBits",
@@ -504,7 +511,9 @@ void ts_image_buffer_free(uint8_t *bytes, size_t len);
  * does not draft ahead; that null IS the "is it on" test, and drafter
  * ("mtp" | "dflash") is non-null exactly when block is. speculation.reason
  * says why it is off when a caller might have expected otherwise, and is
- * null both when they asked for "off" and when it is on.
+ * null both when they asked for "off" and when it is on. speculation.adaptive
+ * is true when block is the CAP of adaptive depth rather than a fixed round
+ * size, and is always false while block is null.
  *
  * vision.active MEANS "AN IMAGE WOULD BE SERVED", NOT "A TOWER EXISTS", and
  * a host must gate its attach control on it rather than on the family name.

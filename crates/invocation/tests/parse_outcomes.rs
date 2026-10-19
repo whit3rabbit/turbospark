@@ -397,6 +397,9 @@ fn a_speculation_policy_parses_from_its_three_spellings() {
     // The bound is the batched verify's row cap: a round of block B verifies
     // B + 1 rows against MAX_BATCH_ROWS = 16.
     assert_eq!(spec("15"), Speculation::Block(15));
+    assert_eq!(spec("adaptive"), Speculation::Adaptive(4));
+    assert_eq!(spec("adaptive:3"), Speculation::Adaptive(3));
+    assert_eq!(spec("adaptive:15"), Speculation::Adaptive(15));
 
     // And the DEFAULT is Auto, which is the value that decides whether an
     // install carrying a head speculates without anyone asking.
@@ -406,7 +409,22 @@ fn a_speculation_policy_parses_from_its_three_spellings() {
 
 #[test]
 fn an_out_of_range_or_misspelled_speculation_block_is_refused() {
-    for bad in ["0", "16", "99", "yes", "on", "-1", ""] {
+    // `adaptive:2` is a fixed block 2 with extra steps, so it is refused
+    // rather than quietly accepted; the others are out of range or noise.
+    for bad in [
+        "0",
+        "16",
+        "99",
+        "yes",
+        "on",
+        "-1",
+        "",
+        "adaptive:",
+        "adaptive:2",
+        "adaptive:16",
+        "adaptive:x",
+        "adaptive3",
+    ] {
         let outcome = parse(&tok(&[
             "--model",
             "m",

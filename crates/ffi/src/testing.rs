@@ -56,6 +56,7 @@ pub fn session_for_testing_named(
         // decision: this is the absence of a capability, not a caller's
         // choice, which is why the reported `reason` is null too.
         speculation_block: None,
+        speculation_adaptive: false,
         info: wire::SessionInfo {
             model_path: model_path.to_string(),
             family: "<scripted>".to_string(),

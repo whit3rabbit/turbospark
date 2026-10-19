@@ -51,6 +51,11 @@ pub(crate) struct Session {
     /// Whether this session drafts ahead, resolved once at open against the
     /// install and the sampling settings. See [`resolve_speculation`].
     pub(crate) speculation: SpeculationPlan,
+    /// Whether the plan's block is a CAP the adaptive controller moves under
+    /// rather than a fixed round size. A separate flag and not a plan variant
+    /// because the server and the C ABI also match on `SpeculationPlan` and
+    /// neither serves adaptive depth yet.
+    pub(crate) adaptive_depth: bool,
     /// The guard tier this session actually opened under (vision memory
     /// sidecar Part B3). Carried so a later `--image`'s pixel-budget clamp
     /// resolves against the SAME tier `--max-context` did, never a second,
@@ -363,7 +368,15 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
                     runtime::SpeculativeDrafter::Dflash => "dflash2 (block drafter)",
                     _ => "mtp head (step drafter)",
                 };
-                eprintln!("speculative decoding: on, {which}, block {block}");
+                if matches!(asked, runtime::Speculation::Adaptive(_)) {
+                    eprintln!(
+                        "speculative decoding: on, {which}, adaptive depth {}..{block} \
+                         (experimental, constants unmeasured)",
+                        runtime::AdaptiveDepth::DEFAULT_FLOOR
+                    );
+                } else {
+                    eprintln!("speculative decoding: on, {which}, block {block}");
+                }
             }
             // A WARNING and not silence. An install carrying a drafter and
             // decoding one token at a time with nothing said is the exact
@@ -385,6 +398,7 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
         runner,
         shaping,
         speculation,
+        adaptive_depth: matches!(asked, runtime::Speculation::Adaptive(_)),
         rate,
         max_context: plan.resolved,
         load_policy,
@@ -454,6 +468,7 @@ fn map_speculation(speculation: invocation::Speculation) -> runtime::Speculation
         invocation::Speculation::Auto => runtime::Speculation::Auto,
         invocation::Speculation::Off => runtime::Speculation::Off,
         invocation::Speculation::Block(n) => runtime::Speculation::Block(n),
+        invocation::Speculation::Adaptive(n) => runtime::Speculation::Adaptive(n),
     }
 }
 

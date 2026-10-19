@@ -33,6 +33,7 @@ use crate::producer::SpeculativeProducer;
 use crate::raw_completion::{
     CancelFlag, RawDecodeProgress, RawDecodeResult, StopReason, TokenSink, NEVER,
 };
+use crate::speculative_adaptive::AdaptiveDepth;
 
 /// How many tokens a round proposes. Block 2 is the measured optimum on the
 /// one real drafter (`docs/MTP.md`: 1.44x, against 1.03x at 4 and 0.71x at
@@ -90,6 +91,97 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
     max_context: u32,
     vocab_size: usize,
     block: usize,
+    cancel: CancelFlag<'_>,
+    on_progress: impl FnMut(RawDecodeProgress),
+) -> Result<RawDecodeResult, RuntimeError> {
+    run_speculative(
+        producer,
+        tokenizer,
+        prompt_ids,
+        config,
+        max_context,
+        vocab_size,
+        block,
+        None,
+        cancel,
+        on_progress,
+    )
+}
+
+/// [`run_raw_completion_speculative`] with an ADAPTIVE round size: `cap` is
+/// the most a round may propose (the drafter must have been opened at least
+/// that deep) and `floor` the least, with [`AdaptiveDepth`] moving between
+/// them from the acceptance each round saw. Opt-in; the fixed entry points
+/// above are unchanged. See `speculative_adaptive` for why every constant
+/// behind this is unmeasured until the paired gate has run.
+#[allow(clippy::too_many_arguments)]
+pub fn run_raw_completion_speculative_adaptive<P: SpeculativeProducer>(
+    producer: &mut P,
+    tokenizer: &MfTokenizer,
+    prompt_ids: &[TokenId],
+    config: &GenerationConfig,
+    max_context: u32,
+    vocab_size: usize,
+    cap: usize,
+    floor: usize,
+    on_progress: impl FnMut(RawDecodeProgress),
+) -> Result<RawDecodeResult, RuntimeError> {
+    run_raw_completion_speculative_adaptive_cancellable(
+        producer,
+        tokenizer,
+        prompt_ids,
+        config,
+        max_context,
+        vocab_size,
+        cap,
+        floor,
+        NEVER,
+        on_progress,
+    )
+}
+
+/// [`run_raw_completion_speculative_adaptive`], polling `cancel` the way
+/// [`run_raw_completion_speculative_cancellable`] does.
+#[allow(clippy::too_many_arguments)]
+pub fn run_raw_completion_speculative_adaptive_cancellable<P: SpeculativeProducer>(
+    producer: &mut P,
+    tokenizer: &MfTokenizer,
+    prompt_ids: &[TokenId],
+    config: &GenerationConfig,
+    max_context: u32,
+    vocab_size: usize,
+    cap: usize,
+    floor: usize,
+    cancel: CancelFlag<'_>,
+    on_progress: impl FnMut(RawDecodeProgress),
+) -> Result<RawDecodeResult, RuntimeError> {
+    run_speculative(
+        producer,
+        tokenizer,
+        prompt_ids,
+        config,
+        max_context,
+        vocab_size,
+        cap,
+        Some(AdaptiveDepth::new(floor, cap)),
+        cancel,
+        on_progress,
+    )
+}
+
+/// The one loop. `block` is the CAP: with `adaptive` None every round
+/// proposes `block`, which is the loop exactly as it was before the
+/// controller existed.
+#[allow(clippy::too_many_arguments)]
+fn run_speculative<P: SpeculativeProducer>(
+    producer: &mut P,
+    tokenizer: &MfTokenizer,
+    prompt_ids: &[TokenId],
+    config: &GenerationConfig,
+    max_context: u32,
+    vocab_size: usize,
+    block: usize,
+    mut adaptive: Option<AdaptiveDepth>,
     cancel: CancelFlag<'_>,
     mut on_progress: impl FnMut(RawDecodeProgress),
 ) -> Result<RawDecodeResult, RuntimeError> {
@@ -289,6 +381,8 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
     let mut stat_offered = vec![0usize; block];
     let mut stat_matched = vec![0usize; block];
     let mut stat_rollbacks = 0usize;
+    // Rounds per proposed depth, so an adaptive run shows where it sat.
+    let mut stat_depth = vec![0usize; block + 1];
 
     'rounds: loop {
         // `next` was sampled but not yet fed. Committing it first is what
@@ -310,7 +404,11 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
         // which `check_admission` sized for the COMMITTED stream.
         let budget_room = (config.max_new_tokens as usize).saturating_sub(sink.generated);
         let context_room = (max_context as usize).saturating_sub(position);
-        let round_block = block.min(budget_room).min(context_room);
+        let wanted = adaptive.as_ref().map_or(block, |a| a.depth().min(block));
+        let round_block = wanted.min(budget_room).min(context_room);
+        // A round shortened by the budget or the window says nothing about
+        // acceptance, so it must not feed the controller.
+        let truncated = round_block < wanted;
         if round_block == 0 {
             return Err(RuntimeError::Producer(
                 "round_block is 0: no room after admission; invariant violation".to_string(),
@@ -490,6 +588,16 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
             }
         }
         stat_accepted += accepted;
+        if stats {
+            stat_depth[round_block] += 1;
+        }
+        // A round a stop cut short never saw the rest of its proposals, so
+        // its `accepted` undercounts and would read as a miss.
+        if let Some(a) = adaptive.as_mut() {
+            if !truncated && stopped.is_none() {
+                a.observe(proposals.len(), accepted);
+            }
+        }
         // What the engine has absorbed beyond the committed stream. A
         // committed proposal advanced `history`; a rejected or unreached one
         // did not, and neither did a proposal that stopped the run.
@@ -598,6 +706,13 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
             })
             .collect();
         eprintln!("[spec-stats] per-position acceptance: {}", curve.join(" "));
+        let depths: Vec<String> = stat_depth
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| **n > 0)
+            .map(|(d, n)| format!("{d}:{n}"))
+            .collect();
+        eprintln!("[spec-stats] rounds per depth: {}", depths.join(" "));
     }
 
     Ok(RawDecodeResult {

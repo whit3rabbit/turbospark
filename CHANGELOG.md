@@ -14,6 +14,13 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- Experimental `--speculative adaptive[:MAX]` (MAX 3-15, default 4) for the MTP
+  step drafter, also `speculation: "adaptive"` on the C ABI and
+  `OpenOptions.Speculation.adaptive(cap:)` in Swift. The round size moves
+  between 2 and the cap with the acceptance each round saw. Lossless, and
+  after a retune within noise of the fixed block 2 default (no measured gain,
+  one short recall case 9 to 19 percent slower), so it is opt-in and `auto` is
+  unchanged. See `docs/MTP_SPECULATIVE.md`.
 - Audio catalog: pinned rows for FluidAudio's Silero VAD
   (`silero-vad-coreml`), Kokoro 82M on the Neural Engine
   (`kokoro-82m-ane-coreml`) and PocketTTS (`pocket-tts-coreml`), so they

@@ -67,7 +67,8 @@ that ports. Three ideas do, and none of them is code:
    implemented 2026-09-11 for this drafter (ROADMAP P1 item 4;
    `docs/SPECULATIVE_DECODING.md`'s sampled section owns the algorithm and
    the proof).
-3. **Draft-depth auto-tuning.**
+3. **Draft-depth auto-tuning.** Tried 2026-10-18 and NOT adopted as a default
+   (see "Adaptive draft depth" below).
 
 **Take no MTPLX source.** Its license is verified stock Apache-2.0, so
 inclusion is legal but adds NOTICE obligations to a repo that is uniformly
@@ -589,6 +590,92 @@ verify. What separates them is not the kernel but what each divides by:
 a verify pass divides by an accept length and keeps only the accepted
 prefix, a prefill chunk keeps all M of its tokens, and a dense decode has
 no un-amortizable expert term to begin with.
+
+## Adaptive draft depth (measured 2026-10-18: lossless, no gain over fixed 2)
+
+`--speculative adaptive[:MAX]` (C ABI `speculation: "adaptive"`, Swift
+`.adaptive(cap:)`) moves the per-round block between a floor of 2 and a cap
+from the acceptance each round saw. The idea is ggml-org/llama.cpp#27210
+(`draft-mtp-adaptive`); the code and every constant here are our own, because
+that PR's floor of 3 and its 3-to-4 barrier were tuned on another engine.
+Experimental, opt-in, step drafter only, and `auto` never picks it.
+
+First iteration. Gate: `crates/bench/tests/adaptive_depth_gate.rs`, the real `qwen38-27b-mtp`
+install (installed to an external drive), greedy, 256 tokens (the recall case
+stops at 100), head opened at 8 for every arm, 3 interleaved reps with rotated
+order. Median decode tok/s:
+
+| prompt | sequential | fixed 2 | fixed 3 | fixed 4 | adaptive 2..8 | adaptive / fixed 2 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| prose | 21.17 | 28.17 | 25.87 | 14.30 | 28.39 | 1.008x |
+| reasoning | 19.18 | 35.39 | 36.86 | 24.40 | 29.44 | 0.832x |
+| code | 19.92 | 39.27 | 40.52 | 29.36 | 23.92 | 0.609x |
+| recall | 18.34 | 34.03 | 40.88 | 28.44 | 30.21 | 0.888x |
+
+**Lossless:** every arm reproduced the non-speculative token stream on every
+prompt. **Not a win:** adaptive is flat on prose and slower than fixed 2
+everywhere else, by 11 to 39 percent.
+
+**Why, from the depth histograms (`TURBOSPARK_SPEC_STATS=1`).** On code the
+controller sat at depth 4 to 7 for 48 of 58 rounds, accepting 3.41 of the
+proposals per round with a rollback in 31 of 58 rounds. Per-position acceptance
+past the third position was 0.72 to 0.50, so the extra draft steps and verify
+rows were mostly paid for and discarded. The initial constants climb after 2
+clean rounds from depth 5 up and drop only after `4 * depth` accumulated
+misses, which is far too eager for a head whose acceptance decays this fast
+and whose verify cost is near-linear (the block 2 optimum above). The
+controller did what it was written to do; the constants are wrong for this
+engine.
+
+**Read these numbers with their limits.** The host was NOT quiet: load averages
+read 7.2 at the start and 14.8 at the end, and another process was using the
+GPU intermittently. The fixed 4 prose figure (14.30) is an outlier of exactly
+that kind. The depth histograms and acceptance are deterministic (identical
+across reps), so the controller behaviour stands; the tok/s ratios are
+preliminary. Fixed 3 beat fixed 2 by 4, 4 and 20 percent on reasoning, code
+and recall (the last over only 100 tokens) and lost 8 percent on prose, which
+is inside this run's noise and does not move the default.
+
+### Second iteration: strict climb, low cap (measured 2026-10-18, same day)
+
+The first run's histograms said what was wrong, so the constants changed: a
+climb now needs 8 consecutive clean rounds from depth 2 and 3, 6 from 4, 4
+above that, and the drop budget is 2 missed tokens at any depth (one total
+miss above the floor drops at once). The default cap went from 8 to 4. The
+break-even arithmetic above predicts nothing to gain past depth 3 unless the
+whole accept chain stays near 1.0, and a long clean streak is the only
+evidence of that. Same gate, same install, arms `adaptive 2..4` (the new
+default) and `adaptive 2..8`; host quieter (load 2.95 at the start, no other
+GPU job), though not frozen-protocol quiet. Median decode tok/s:
+
+| prompt | sequential | fixed 2 | fixed 3 | fixed 4 | adaptive 2..4 | adaptive 2..8 | a4 / f2 | a8 / f2 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| prose | 21.81 | 26.54 | 21.37 | 14.15 | 25.39 | 26.61 | 0.957x | 1.003x |
+| reasoning | 21.67 | 29.53 | 35.51 | 24.02 | 33.43 | 34.26 | 1.132x | 1.160x |
+| code | 20.95 | 36.29 | 36.48 | 26.66 | 35.42 | 35.21 | 0.976x | 0.970x |
+| recall | 21.12 | 41.04 | 45.68 | 26.58 | 33.28 | 37.44 | 0.811x | 0.912x |
+
+Lossless on every arm and prompt again. The harm is gone: code went from
+0.61x to 0.97x and prose is level. On code the controller now spends 58 of 83
+rounds at the floor, 19 at depth 3 and 5 at depth 4, with 13 rollbacks in 83
+rounds instead of 31 in 58.
+
+**There is still no evidence of a gain, and the run-to-run spread is the
+reason to say so plainly.** Fixed 2 itself moved by up to 20 percent between
+the two runs of the same binary (reasoning 35.39 then 29.53, recall 34.03 then
+41.04), so the reasoning ratios above (1.13x, 1.16x) are mostly a low fixed 2
+reading: fixed 3 read 35.51 there and fixed 2 read 35.39 in the first run.
+The recall case stops at 100 tokens, 25 rounds, which is shorter than the 16
+clean rounds the controller needs to reach depth 4, so it pays for the ramp
+and never collects. Fixed 3 beat fixed 2 on reasoning, code and recall in
+both runs by 0 to 20 percent and lost on prose both times (-8 and -19
+percent), which is a prose penalty and not a default I would ship.
+
+**Decision.** Default stays fixed block 2. The retuned adaptive mode is safe
+to leave in as an opt-in (lossless, within noise of fixed 2 except on a
+100-token run) and is NOT a win to turn on. A claim that it helps needs a
+recall or code case long enough (about 1,000 tokens) to outlast the ramp, 5 or
+more reps, and a host held to the frozen-protocol quietness.
 
 ## Sources
 
