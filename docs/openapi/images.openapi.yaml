@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: TurboSpark Images API
-  version: 0.3.2
+  version: 0.4.0
   description: |
     Local image generation endpoints served by `turbospark-server`
     (`turbospark serve`) for diffusion models (e.g., Z-Image Turbo, Qwen-Image 2.1).

@@ -8,7 +8,7 @@ Downstream workspace crates import this package via the `turbospark_image` libra
 
 ```toml
 [dependencies]
-turbospark-image = { path = "../image", version = "0.3.2" }
+turbospark-image = { path = "../image", version = "0.4.0" }
 ```
 
 ## Purpose & Role

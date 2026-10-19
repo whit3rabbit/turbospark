@@ -13,6 +13,8 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-18
+
 ### Added
 - `swift/TurboSparkApp`: Fish Audio Drama 3 (`fish-drama3-4bit`) on the
   Voice Cloning page and in Advanced. The app sends Drama 3's own request
