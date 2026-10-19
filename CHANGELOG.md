@@ -13,6 +13,15 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+### Changed
+- Qwen batched prefill, speculative verify and MTP head priming now encode their
+  small per-row operations (q/gate split, q/k norm, RoPE, output gate, FFN
+  activation, residual adds and norms) as one dispatch over all rows instead of
+  one per row. Each row computes the same bits. In one paired measurement on
+  Qwen3.8-27B (2,564-token prompt, six interleaved pairs) prefill took 18.85 s
+  against 20.38 s. Verify and priming were checked on synthetic installs only.
+  `TURBOSPARK_QWEN_BATCHED_ROW_OPS=0` restores the per-row form.
+
 ## [0.4.0] - 2026-10-18
 
 ### Added
