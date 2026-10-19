@@ -314,6 +314,7 @@ extension AudioWorkspaceController {
                 guard self.valid(token) else { return }
                 self.publish(try self.library.update(id) { $0.status = .completed; $0.updatedAt = Date() })
                 if let labelFailure { self.status = AppStrings.localized("Transcript saved. Speakers could not be labeled: \(labelFailure)") }
+                else if self.offersSpeakerNaming(id, revision: transcription.revision) { self.speakerNamingID = id }
                 self.transcriptBacklog = 0
                 // The final transcript is in: embed it for meaning search.
                 self.librarySearch.scheduleIndexing(self)
