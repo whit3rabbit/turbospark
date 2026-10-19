@@ -165,6 +165,15 @@ fn steering_gate(gate: Option<f64>) -> Result<f32, String> {
     }
 }
 
+/// Maps the wire spelling of `anePrefill`: `auto`, `split`, `off`, `break`.
+pub(crate) fn ane_prefill_mode(value: Option<&str>) -> Result<runtime::AnePrefillMode, String> {
+    match value {
+        None | Some("auto") => Ok(runtime::AnePrefillMode::Auto),
+        Some(s) => runtime::AnePrefillMode::parse(s)
+            .ok_or_else(|| format!("anePrefill must be auto, split, off or break, got {s:?}")),
+    }
+}
+
 #[derive(Debug)]
 pub(crate) enum OpenFailure {
     ContextRefused(runtime::ContextRefused),
@@ -261,6 +270,7 @@ pub(crate) fn open_with_failure(
         .map(power_profile)
         .transpose()?;
     let kv_quant = kv_bits(&options.kv_bits)?;
+    let requested_ane_mode = ane_prefill_mode(options.ane_prefill.as_deref())?;
 
     if options.steering.is_none()
         && (requested_steering_mode.is_some()
@@ -408,6 +418,13 @@ pub(crate) fn open_with_failure(
     // into a faster one.
     let prefix_reuse = options.prefix_reuse.unwrap_or(true);
     runner.set_prefix_reuse(prefix_reuse);
+    runner.set_ane_prefill(
+        requested_ane_mode,
+        options
+            .ane_prefill_dir
+            .as_deref()
+            .map(std::path::PathBuf::from),
+    );
 
     // Vision memory sidecar (Part A4): attach BEFORE any image is ever
     // processed and before `vision_info` below reads `has_vision_tower` /
@@ -568,6 +585,29 @@ pub(crate) fn open_with_failure(
         ),
         kv_bits: kv_quant.label(),
         prefix_reuse,
+        ane_prefill: crate::wire::AnePrefillInfo {
+            active: runner.ane_prefill_mode().is_split(),
+            mode: runner.ane_prefill_mode().as_str().to_string(),
+            supported: runner.ane_prefill_supported(),
+            reason: if !runner.ane_prefill_supported() {
+                if !runtime::hardware_supports_ane_prefill() {
+                    Some("requires Apple Silicon M4 or newer".to_string())
+                } else {
+                    Some("only supported for dense Qwen models".to_string())
+                }
+            } else if !runner.ane_prefill_mode().is_split() {
+                if requested_ane_mode == runtime::AnePrefillMode::Off {
+                    None
+                } else {
+                    Some("prefill programs not found or inactive".to_string())
+                }
+            } else {
+                None
+            },
+            programs_dir: runner
+                .ane_prefill_programs()
+                .map(|p| p.display().to_string()),
+        },
         special_tokens: crate::wire::SpecialTokensInfo {
             bos_id: (tokenizer.bos_id >= 0).then_some(tokenizer.bos_id),
             eos_id: (tokenizer.eos_id >= 0).then_some(tokenizer.eos_id),

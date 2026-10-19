@@ -105,6 +105,8 @@ const MANIFEST_FORMAT: u64 = 1;
 pub enum AnePrefillMode {
     /// Steel only, the default.
     Off,
+    /// Automatically enabled on Apple Silicon M4+ for dense Qwen models.
+    Auto,
     /// Split each class between the ANE and Steel.
     Split,
     /// Break the micro-batch at every split point but run every row on
@@ -113,13 +115,73 @@ pub enum AnePrefillMode {
 }
 
 impl AnePrefillMode {
-    fn from_env_value(v: &str) -> Self {
-        match v.trim() {
+    pub fn from_env_value(v: &str) -> Self {
+        match v.trim().to_ascii_lowercase().as_str() {
+            "auto" => Self::Auto,
             "1" | "on" | "split" => Self::Split,
             "break" => Self::Break,
             _ => Self::Off,
         }
     }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "auto" => Some(Self::Auto),
+            "off" | "0" | "false" => Some(Self::Off),
+            "1" | "on" | "true" | "split" => Some(Self::Split),
+            "break" => Some(Self::Break),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Auto => "auto",
+            Self::Split => "split",
+            Self::Break => "break",
+        }
+    }
+
+    pub fn is_split(&self) -> bool {
+        matches!(self, Self::Split)
+    }
+}
+
+/// Whether this chip brand or device name indicates an Apple Silicon M4 or newer chip
+/// (e.g. "Apple M4", "Apple M4 Pro", "Apple M4 Max", "Apple M5", or A18+).
+pub fn chip_is_m4_or_newer(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    if let Some(pos) = lower.find("apple m") {
+        let rest = &lower[pos + "apple m".len()..];
+        let num_str: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if let Ok(gen) = num_str.parse::<u32>() {
+            return gen >= 4;
+        }
+    }
+    for token in lower.split(|c: char| !c.is_ascii_alphanumeric()) {
+        if token.starts_with('m') && token.len() >= 2 {
+            if let Ok(gen) = token[1..].parse::<u32>() {
+                return gen >= 4;
+            }
+        }
+        if token.starts_with('a') && token.len() >= 3 {
+            if let Ok(gen) = token[1..].parse::<u32>() {
+                return gen >= 18;
+            }
+        }
+    }
+    false
+}
+
+/// Checks whether the host hardware has an Apple Silicon M4 or newer chip.
+pub fn hardware_supports_ane_prefill() -> bool {
+    if let Some((_, name)) = crate::recommended_max_working_set() {
+        if chip_is_m4_or_newer(&name) {
+            return true;
+        }
+    }
+    false
 }
 
 /// The runner's split configuration.
@@ -151,8 +213,20 @@ impl AnePrefill {
         }
     }
 
+    pub(crate) fn mode(&self) -> AnePrefillMode {
+        self.mode
+    }
+
+    pub(crate) fn programs(&self) -> Option<&Path> {
+        self.programs.as_deref()
+    }
+
     fn on(&self) -> bool {
-        self.mode != AnePrefillMode::Off
+        match self.mode {
+            AnePrefillMode::Off => false,
+            AnePrefillMode::Auto => hardware_supports_ane_prefill(),
+            AnePrefillMode::Split | AnePrefillMode::Break => true,
+        }
     }
 }
 
@@ -568,9 +642,32 @@ fn ensure(
     mode: SplitMode,
     m: usize,
 ) -> bool {
-    let Some(dir) = dir else {
+    let candidate = dir.map(Path::to_path_buf).or_else(|| {
+        if let Some(env_dir) = std::env::var_os("TURBOSPARK_ANE_PREFILL_DIR").map(PathBuf::from) {
+            if env_dir.join("manifest.json").exists() {
+                return Some(env_dir);
+            }
+        }
+        if let Ok(home) = std::env::var("HOME") {
+            let p1 = PathBuf::from(&home).join(".turbospark/models/ane-prefill/qwen38");
+            if p1.join("manifest.json").exists() {
+                return Some(p1);
+            }
+            let p2 = PathBuf::from(&home).join(".turbospark/ane-prefill/qwen38");
+            if p2.join("manifest.json").exists() {
+                return Some(p2);
+            }
+            let p3 = PathBuf::from(&home).join("models/ane-prefill/qwen38");
+            if p3.join("manifest.json").exists() {
+                return Some(p3);
+            }
+        }
+        None
+    });
+    let Some(dir) = candidate.as_deref().or(dir) else {
         if state.is_none() {
-            let reason = "TURBOSPARK_ANE_PREFILL_DIR is not set".to_string();
+            let reason = "TURBOSPARK_ANE_PREFILL_DIR is not set and no ane-prefill programs found"
+                .to_string();
             eprintln!("[ane-prefill] off: {reason}. Prefill runs on Steel.");
             *state = Some(AneSplitState::new(
                 context,
@@ -643,6 +740,13 @@ impl RealForwardRunner {
     fn ane_prefill_mode_for(&mut self, m: usize, batched: bool) -> Option<SplitMode> {
         let mode = match self.ane_prefill.mode {
             AnePrefillMode::Off => return None,
+            AnePrefillMode::Auto => {
+                if hardware_supports_ane_prefill() {
+                    SplitMode::Ane
+                } else {
+                    return None;
+                }
+            }
             AnePrefillMode::Split => SplitMode::Ane,
             AnePrefillMode::Break => SplitMode::Break,
         };
@@ -1449,6 +1553,7 @@ mod manifest_tests {
     #[test]
     fn env_values_pick_the_mode() {
         for (v, mode) in [
+            ("auto", AnePrefillMode::Auto),
             ("1", AnePrefillMode::Split),
             ("on", AnePrefillMode::Split),
             ("break", AnePrefillMode::Break),
@@ -1458,6 +1563,40 @@ mod manifest_tests {
         ] {
             assert_eq!(AnePrefillMode::from_env_value(v), mode, "{v:?}");
         }
+    }
+
+    #[test]
+    fn parse_recognises_modes() {
+        assert_eq!(AnePrefillMode::parse("auto"), Some(AnePrefillMode::Auto));
+        assert_eq!(AnePrefillMode::parse("split"), Some(AnePrefillMode::Split));
+        assert_eq!(AnePrefillMode::parse("on"), Some(AnePrefillMode::Split));
+        assert_eq!(AnePrefillMode::parse("1"), Some(AnePrefillMode::Split));
+        assert_eq!(AnePrefillMode::parse("break"), Some(AnePrefillMode::Break));
+        assert_eq!(AnePrefillMode::parse("off"), Some(AnePrefillMode::Off));
+        assert_eq!(AnePrefillMode::parse("0"), Some(AnePrefillMode::Off));
+        assert_eq!(AnePrefillMode::parse("invalid"), None);
+    }
+
+    #[test]
+    fn chip_detection_identifies_m4_and_newer() {
+        assert!(chip_is_m4_or_newer("Apple M4"));
+        assert!(chip_is_m4_or_newer("Apple M4 Pro"));
+        assert!(chip_is_m4_or_newer("Apple M4 Max"));
+        assert!(chip_is_m4_or_newer("Apple M4 Ultra"));
+        assert!(chip_is_m4_or_newer("Apple M5"));
+        assert!(chip_is_m4_or_newer("Apple M5 Max"));
+        assert!(chip_is_m4_or_newer("Apple A18 Pro"));
+
+        assert!(!chip_is_m4_or_newer("Apple M1"));
+        assert!(!chip_is_m4_or_newer("Apple M1 Pro"));
+        assert!(!chip_is_m4_or_newer("Apple M1 Max"));
+        assert!(!chip_is_m4_or_newer("Apple M2"));
+        assert!(!chip_is_m4_or_newer("Apple M2 Ultra"));
+        assert!(!chip_is_m4_or_newer("Apple M3"));
+        assert!(!chip_is_m4_or_newer("Apple M3 Max"));
+        assert!(!chip_is_m4_or_newer("Apple A17 Pro"));
+        assert!(!chip_is_m4_or_newer("Intel(R) Core(TM) i9-9980HK"));
+        assert!(!chip_is_m4_or_newer(""));
     }
 }
 

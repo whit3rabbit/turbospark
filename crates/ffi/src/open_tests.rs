@@ -225,3 +225,28 @@ fn prefix_reuse_is_off_only_when_asked_and_defaults_to_on() {
     assert!(absent.prefix_reuse.unwrap_or(true));
     assert!(!off.prefix_reuse.unwrap_or(true));
 }
+
+#[test]
+fn ane_prefill_mode_defaults_to_auto_and_rejects_typos() {
+    assert_eq!(
+        ane_prefill_mode(None).unwrap(),
+        runtime::AnePrefillMode::Auto
+    );
+    assert_eq!(
+        ane_prefill_mode(Some("auto")).unwrap(),
+        runtime::AnePrefillMode::Auto
+    );
+    assert_eq!(
+        ane_prefill_mode(Some("split")).unwrap(),
+        runtime::AnePrefillMode::Split
+    );
+    assert_eq!(
+        ane_prefill_mode(Some("off")).unwrap(),
+        runtime::AnePrefillMode::Off
+    );
+    assert_eq!(
+        ane_prefill_mode(Some("break")).unwrap(),
+        runtime::AnePrefillMode::Break
+    );
+    assert!(ane_prefill_mode(Some("invalid")).is_err());
+}

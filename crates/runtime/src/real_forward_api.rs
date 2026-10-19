@@ -252,7 +252,61 @@ impl RealForwardRunner {
         mode: crate::AnePrefillMode,
         programs: Option<std::path::PathBuf>,
     ) {
-        self.ane_prefill = crate::families::qwen::AnePrefill::new(mode, programs);
+        let resolved_mode = match mode {
+            crate::AnePrefillMode::Auto => {
+                if crate::hardware_supports_ane_prefill()
+                    && self.arch.family == model_io::ModelFamily::QwenGdnDense
+                {
+                    crate::AnePrefillMode::Split
+                } else {
+                    crate::AnePrefillMode::Off
+                }
+            }
+            other => other,
+        };
+        self.ane_prefill = crate::families::qwen::AnePrefill::new(resolved_mode, programs);
+    }
+
+    #[cfg(not(feature = "ane-prefill"))]
+    pub fn set_ane_prefill(
+        &mut self,
+        _mode: crate::AnePrefillMode,
+        _programs: Option<std::path::PathBuf>,
+    ) {
+    }
+
+    /// The current ANE prefill mode configured on this runner.
+    #[cfg(feature = "ane-prefill")]
+    pub fn ane_prefill_mode(&self) -> crate::AnePrefillMode {
+        self.ane_prefill.mode()
+    }
+
+    #[cfg(not(feature = "ane-prefill"))]
+    pub fn ane_prefill_mode(&self) -> crate::AnePrefillMode {
+        crate::AnePrefillMode::Off
+    }
+
+    /// The programs directory used for the ANE prefill split, if any.
+    #[cfg(feature = "ane-prefill")]
+    pub fn ane_prefill_programs(&self) -> Option<&Path> {
+        self.ane_prefill.programs()
+    }
+
+    #[cfg(not(feature = "ane-prefill"))]
+    pub fn ane_prefill_programs(&self) -> Option<&Path> {
+        None
+    }
+
+    /// Whether this runner's architecture and hardware support the ANE prefill split.
+    #[cfg(feature = "ane-prefill")]
+    pub fn ane_prefill_supported(&self) -> bool {
+        crate::hardware_supports_ane_prefill()
+            && self.arch.family == model_io::ModelFamily::QwenGdnDense
+    }
+
+    #[cfg(not(feature = "ane-prefill"))]
+    pub fn ane_prefill_supported(&self) -> bool {
+        false
     }
 
     /// [`RealForwardRunner::open`] with an explicit KV capacity: the

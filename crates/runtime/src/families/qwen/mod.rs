@@ -30,7 +30,52 @@ mod verify_layers;
 #[cfg(feature = "ane-prefill")]
 pub(crate) use ane_split::AnePrefill;
 #[cfg(feature = "ane-prefill")]
-pub use ane_split::AnePrefillMode;
+pub use ane_split::{chip_is_m4_or_newer, hardware_supports_ane_prefill, AnePrefillMode};
+
+#[cfg(not(feature = "ane-prefill"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AnePrefillMode {
+    Off,
+    Auto,
+    Split,
+    Break,
+}
+
+#[cfg(not(feature = "ane-prefill"))]
+impl AnePrefillMode {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "auto" => Some(Self::Auto),
+            "off" | "0" | "false" => Some(Self::Off),
+            "1" | "on" | "true" | "split" => Some(Self::Split),
+            "break" => Some(Self::Break),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Auto => "auto",
+            Self::Split => "split",
+            Self::Break => "break",
+        }
+    }
+
+    pub fn is_split(&self) -> bool {
+        matches!(self, Self::Split)
+    }
+}
+
+#[cfg(not(feature = "ane-prefill"))]
+pub fn chip_is_m4_or_newer(_name: &str) -> bool {
+    false
+}
+
+#[cfg(not(feature = "ane-prefill"))]
+pub fn hardware_supports_ane_prefill() -> bool {
+    false
+}
 pub(crate) use attn::{encode_full_attention_block, QkNormConvention};
 /// Re-exported for `real_forward_rollback`'s retaining rollback, whose
 /// replay half lives beside the verify encoders it mirrors.

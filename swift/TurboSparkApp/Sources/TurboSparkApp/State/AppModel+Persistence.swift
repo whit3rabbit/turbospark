@@ -73,6 +73,8 @@ extension AppModel {
         self.runtimeOptions.speculation = AppSpeculationOption(rawValue: settings.speculation) ?? .auto
         self.runtimeOptions.speculativeDrafter = AppSpeculativeDrafterOption(rawValue: settings.speculativeDrafter) ?? .auto
         self.runtimeOptions.kvBits = AppKvBitsOption(rawValue: settings.kvBits) ?? .auto
+        self.runtimeOptions.anePrefill = AppAnePrefillOption(rawValue: settings.anePrefill) ?? .auto
+        self.runtimeOptions.anePrefillDir = settings.anePrefillDir
         self.runtimeOptions.maxTokensPerSec = settings.maxTokensPerSec
         self.runtimeOptions.steeringPath = settings.steeringPath.isEmpty ? nil : settings.steeringPath
         self.runtimeOptions.steeringMode = AppSteeringModeOption(rawValue: settings.steeringMode) ?? .ablate
@@ -234,6 +236,8 @@ extension AppModel {
             speculation: runtimeOptions.speculation.rawValue,
             speculativeDrafter: runtimeOptions.speculativeDrafter.rawValue,
             kvBits: runtimeOptions.kvBits.rawValue,
+            anePrefill: runtimeOptions.anePrefill.rawValue,
+            anePrefillDir: runtimeOptions.anePrefillDir,
             maxTokensPerSec: runtimeOptions.maxTokensPerSec,
             steeringPath: runtimeOptions.steeringPath ?? "",
             steeringMode: runtimeOptions.steeringMode.rawValue,

@@ -229,6 +229,11 @@ extension AppModel {
         default:
             options.kvBits = runtimeOptions.kvBits.kvBits
         }
+        options.anePrefill = runtimeOptions.anePrefill.anePrefill
+        let aneDir = runtimeOptions.anePrefillDir.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !aneDir.isEmpty {
+            options.anePrefillDir = aneDir
+        }
         if runtimeOptions.maxTokensPerSec > 0 {
             options.maxTokensPerSec = runtimeOptions.maxTokensPerSec
         }
