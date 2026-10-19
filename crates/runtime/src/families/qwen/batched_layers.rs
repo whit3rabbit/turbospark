@@ -109,38 +109,59 @@ pub(crate) fn encode_full_attention_block_batched(
         QkNormConvention::Centered => gpu::encode_rms_norm_bf16w_perhead_centered,
     };
     let theta = arch.full_rope_theta as f32;
-    for m in 0..batch {
-        let position = start_position + m;
-        gpu::encode_split_q_gate(
+    // The M rows sit contiguously (`q_packed`/`q`/`attn_gate` at a row stride
+    // of a whole number of heads, K at `kv_dim` per slot, checked above), and
+    // split, norm and gate are per head or per element, so M rows are just M
+    // times the heads in one dispatch with the same arithmetic per element.
+    // RoPE takes its row's position from the grid. One dispatch per tensor
+    // instead of five per row.
+    let rows = batch as u32;
+    gpu::encode_split_q_gate(
+        context,
+        pass,
+        (&batched.q_packed, 0),
+        (&batched.q, 0),
+        (&batched.attn_gate, 0),
+        num_heads * rows,
+        head_dim,
+    )
+    .map_err(gpu_err)?;
+    encode_qk_norm(
+        context,
+        pass,
+        (&batched.q, 0),
+        q_norm,
+        (&batched.q, 0),
+        num_heads * rows,
+        head_dim,
+        RMS_EPS,
+    )
+    .map_err(gpu_err)?;
+    let k_rows = (k_buf, k_off as u64);
+    encode_qk_norm(
+        context,
+        pass,
+        k_rows,
+        k_norm,
+        k_rows,
+        num_kv * rows,
+        head_dim,
+        RMS_EPS,
+    )
+    .map_err(gpu_err)?;
+    for (data, heads) in [((&batched.q, 0), num_heads), (k_rows, num_kv)] {
+        gpu::encode_rope_neox_subdim_rows(
             context,
             pass,
-            (&batched.q_packed, (m * 2 * q_dim) as u64 * 2),
-            (&batched.q, (m * q_dim) as u64 * 2),
-            (&batched.attn_gate, (m * q_dim) as u64 * 2),
-            num_heads,
+            data,
+            start_position as u32,
+            rows,
+            heads,
             head_dim,
+            qwen.rotary_dim,
+            theta,
         )
         .map_err(gpu_err)?;
-
-        let q_row = (&batched.q, (m * q_dim) as u64 * 2);
-        let k_row = (k_buf, (k_off + m * kv_dim * 2) as u64);
-        for (data, weight, heads) in [(q_row, q_norm, num_heads), (k_row, k_norm, num_kv)] {
-            encode_qk_norm(context, pass, data, weight, data, heads, head_dim, RMS_EPS)
-                .map_err(gpu_err)?;
-        }
-        for (data, heads) in [(q_row, num_heads), (k_row, num_kv)] {
-            gpu::encode_rope_neox_subdim(
-                context,
-                pass,
-                data,
-                position as u32,
-                heads,
-                head_dim,
-                qwen.rotary_dim,
-                theta,
-            )
-            .map_err(gpu_err)?;
-        }
     }
 
     // Attention loops, and the span is what makes the loop causal: query m
@@ -206,15 +227,17 @@ pub(crate) fn encode_full_attention_block_batched(
             )
             .map_err(gpu_err)?;
         }
-        gpu::encode_sigmoid_gate_mul(
-            context,
-            pass,
-            (&batched.attn_out, (m * q_dim) as u64 * 2),
-            (&batched.attn_gate, (m * q_dim) as u64 * 2),
-            q_dim as u32,
-        )
-        .map_err(gpu_err)?;
     }
+    // Elementwise, so one dispatch over all M rows once every row's attention
+    // output is written (the loop above reuses `scratch.attn`, not `attn_out`).
+    gpu::encode_sigmoid_gate_mul(
+        context,
+        pass,
+        (&batched.attn_out, 0),
+        (&batched.attn_gate, 0),
+        (q_dim * batch) as u32,
+    )
+    .map_err(gpu_err)?;
 
     encode_gemm_rows(
         context,

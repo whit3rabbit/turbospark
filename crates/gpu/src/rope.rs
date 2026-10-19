@@ -160,6 +160,53 @@ pub fn encode_rope_neox_subdim(
     Ok(())
 }
 
+/// [`encode_rope_neox_subdim`] over `rows` contiguous `[num_heads, head_dim]`
+/// rows at positions `start_position..start_position + rows`, in one
+/// dispatch. Each row is bit-identical to the single-row dispatch at its
+/// position (same `apply_neox_pair`, same `float(position)`).
+#[allow(clippy::too_many_arguments)]
+pub fn encode_rope_neox_subdim_rows(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    data: (&metal::Buffer, u64),
+    start_position: u32,
+    rows: u32,
+    num_heads: u32,
+    head_dim: u32,
+    rotary_dim: u32,
+    theta: f32,
+) -> Result<(), GpuError> {
+    if rotary_dim % 2 != 0 || rotary_dim > head_dim {
+        return Err(GpuError::PipelineCreate(format!(
+            "rope_neox_subdim_rows rotary_dim {rotary_dim} must be even and at most head_dim {head_dim}"
+        )));
+    }
+    let pipeline = context.pipeline(
+        SOURCE,
+        "rope_neox_subdim_rows",
+        &unused_function_constants(),
+        b"",
+    )?;
+    pass.encode_threads_3d(
+        &pipeline,
+        &[(data.0, 0, data.1)],
+        &[
+            (u32_bytes(&start_position), 1),
+            (u32_bytes(&head_dim), 2),
+            (u32_bytes(&num_heads), 3),
+            (f32_bytes(&theta), 4),
+            (u32_bytes(&rotary_dim), 5),
+        ],
+        (
+            (rotary_dim / 2).max(1) as u64,
+            num_heads.max(1) as u64,
+            rows.max(1) as u64,
+        ),
+        (1, 1, 1),
+    );
+    Ok(())
+}
+
 /// Encoder-level `rope_mrope_interleaved`: Qwen 3.8's interleaved mRoPE
 /// (ROADMAP M-V5). [`encode_rope_neox_subdim`]'s element set and frequency
 /// divisor, with each pair's position chosen from `(t, h, w)` by the
