@@ -16,6 +16,30 @@ when this file gets updated relative to the version bump and the tag.
 ## [0.4.0] - 2026-10-18
 
 ### Added
+- Tools in Chat. Chat turns now offer the rootless tools (web search and fetch,
+  browser automation, questions, checklists, planning, memory, automation)
+  behind a Tools toggle, on by default: a chip below the composer, an item in
+  the plus menu, and "Enable tools in Chat by default" in General Settings. File
+  edit, search, shell and MCP or custom tools stay Projects-only, so Chat cannot
+  touch the filesystem or run commands.
+- Speech-to-Text is one pane with three modes picked from a pill switcher:
+  Voice Notes (microphone), Meeting (microphone and the app playing the call)
+  and Any Audio (another app's audio or an imported file). Each mode lists its
+  own takes and files them in its own collection. Each mode keeps one model per
+  job (Live Text, Final Transcript, Speakers), shown in a header popover with
+  its state, and Installed gains an Audio view. A mode with no choice of its
+  own keeps the earlier behavior.
+- Native Frozen E meeting transcription: Nemotron-3 diarization coupled to
+  Multitalker Parakeet in `crates/audio` (`stt/multitalker_asr`,
+  `vad/nemotron_diarization`), on CPU and, opt-in, on Metal. On the reference
+  clip the SegLST equals NeMo Speech 218d0b4's, and the CPU path has bit-exact
+  tiled GEMM and rayon speedups of about 4x. Live use: `LiveFrontend` and
+  `LiveSession` turn PCM into the same log-mel frames as the whole-file call
+  (bit for bit), and `MultitalkerStreamSession` in `crates/runtime` runs it on
+  a worker thread, CPU only. This is the library layer: the FFI and the app do
+  not use it yet. The diarizer Metal path is unqualified, because
+  `nemotron_diar_metal` was intermittent on a loaded host and the cause is not
+  found.
 - `swift/TurboSparkApp`: Fish Audio Drama 3 (`fish-drama3-4bit`) on the
   Voice Cloning page and in Advanced. The app sends Drama 3's own request
   (the reference transcript, speed 1.0, no steps, instruction or guidance
@@ -354,6 +378,11 @@ when this file gets updated relative to the version bump and the tag.
   declining leaves import, transcription and editing usable.
 
 ### Fixed
+- `crates/gpu`, `crates/audio`: the Music 3 LM head window plans its split-K
+  from the full head width. Below M3 a dense bf16 projection of 2 to 15 rows
+  takes the tiled kernel, whose split-K reads the output width, so a window
+  logit could differ from the full head's, and from MLX's, in the last bf16
+  bit, which can flip a sampled code. M3 and later were not affected.
 - `crates/runtime`, `crates/model-io`: a no-copy mapped expert residency is
   refused past Metal's wired budget instead of being opened. Under memory
   pressure the driver unwires layers and an in-order decode then re-wires a
