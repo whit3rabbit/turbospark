@@ -35,11 +35,38 @@ extension AudioWorkspaceController {
         }
         return profile.family != "qwen3_tts" && profile.capabilities.supportsVoiceClone
     }
-    var selectedProfileClonesNatively: Bool { Self.clonesNatively(selectedProfile) }
+    /// The native cloners whose runtime also speaks with no reference, in a
+    /// voice the model picks (`fish_drama3_request`, `omnivoice_request`).
+    /// MegaTTS3 cannot, so it stays off Voiceover.
+    nonisolated static let referenceFreeSpeechFamilies: Set<String> = ["omnivoice", "fish_drama3"]
+    /// Whether a run clones from a reference. A native cloner that can speak
+    /// without one clones only in clone mode, which `normalizeModelOptions`
+    /// sets on every page but Voiceover. Any other native cloner always does.
+    nonisolated static func runClonesNatively(_ profile: AudioProfile, speech: AudioSpeechSettings?) -> Bool {
+        guard clonesNatively(profile) else { return false }
+        return speech?.mode == .clone || !referenceFreeSpeechFamilies.contains(profile.family)
+    }
+    /// The selected run clones from a reference (Voice Cloning, Advanced).
+    var selectedProfileClonesNatively: Bool {
+        selectedProfile.map { Self.runClonesNatively($0, speech: recipe.speech) } ?? false
+    }
+    /// The selected native cloner speaks without a reference (Voiceover).
+    var selectedProfileSpeaksWithoutReference: Bool {
+        Self.clonesNatively(selectedProfile) && !selectedProfileClonesNatively
+    }
+    /// The native families whose request shape `nativeCloneRequest` builds.
+    nonisolated static let nativeCloneRequestFamilies: Set<String> = ["megatts3", "omnivoice", "fish_drama3"]
+    /// Drama 3 clones only from the reference's exact words, and has no
+    /// speed, steps or guidance weights.
+    var selectedProfileNeedsReferenceTranscript: Bool { selectedProfile?.family == "fish_drama3" }
     func speechProfileMatchesPage(_ profile: AudioProfile) -> Bool {
         // A streaming-only model (Parakeet Unified) serves live text, not a
         // batch transcription job, which would refuse to open it.
         if profile.identity.task == .speechToText && !profile.capabilities.operations.contains("transcribe") { return false }
+        // Any other native cloner would get MegaTTS3's request, which the
+        // runtime refuses for another family. A new cloner stays unlisted
+        // until `nativeCloneRequest` builds its shape.
+        if Self.clonesNatively(profile) && !Self.nativeCloneRequestFamilies.contains(profile.family) { return false }
         switch page {
         case .voiceClone:
             if profile.family == "omnivoice" {
@@ -49,7 +76,9 @@ extension AudioWorkspaceController {
             }
             return (profile.family == "qwen3_tts" || Self.clonesNatively(profile)) && Self.speechMode(for: profile) == .clone
         case .voiceDesign: return profile.family == "qwen3_tts" && Self.speechMode(for: profile) == .design
-        case .voiceover: return Self.speechMode(for: profile) == .customVoice
+        case .voiceover:
+            if Self.clonesNatively(profile) { return Self.referenceFreeSpeechFamilies.contains(profile.family) }
+            return Self.speechMode(for: profile) == .customVoice
         default: return true
         }
     }
@@ -77,6 +106,10 @@ extension AudioWorkspaceController {
     nonisolated static let speechTextCharacterLimit = 6_000
     var speechValidationMessage: String? {
         if selectedProfileClonesNatively { return nativeCloneValidationMessage }
+        if selectedProfileSpeaksWithoutReference {
+            return recipe.text.count > Self.speechTextCharacterLimit
+                ? AppStrings.localized("Split speech text longer than 6,000 characters into sections.") : nil
+        }
         guard selectedProfile?.family == "qwen3_tts" else { return nil }
         if recipe.text.count > Self.speechTextCharacterLimit { return AppStrings.localized("Split speech text longer than 6,000 characters into sections.") }
         if speechSettings.mode == .clone {
@@ -99,6 +132,9 @@ extension AudioWorkspaceController {
         }
         if cloneOptions.consentedReference != reference {
             return AppStrings.localized("Confirm you have the right to use this voice.")
+        }
+        if selectedProfileNeedsReferenceTranscript && speechSettings.referenceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return AppStrings.localized("Enter the exact transcript of the selected reference region.")
         }
         return nil
     }

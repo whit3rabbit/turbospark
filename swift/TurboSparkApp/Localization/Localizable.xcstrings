@@ -524508,6 +524508,268 @@
         }
       }
     },
+    "The model stopped speaking before the end of the text. Generate again for a new take." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "توقف النموذج عن الكلام قبل نهاية النص. أعد التوليد للحصول على نسخة جديدة."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das Modell hat vor dem Ende des Textes aufgehört zu sprechen. Generiere erneut für einen neuen Take."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The model stopped speaking before the end of the text. Generate again for a new take."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El modelo dejó de hablar antes del final del texto. Genera de nuevo para obtener una nueva toma."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le modèle a cessé de parler avant la fin du texte. Générez à nouveau pour obtenir une nouvelle prise."
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "המודל הפסיק לדבר לפני סוף הטקסט. צור שוב כדי לקבל טייק חדש."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "मॉडल ने टेक्स्ट के अंत से पहले बोलना बंद कर दिया। नया टेक पाने के लिए फिर से उत्पन्न करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Model berhenti berbicara sebelum akhir teks. Hasilkan lagi untuk mendapatkan take baru."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Il modello ha smesso di parlare prima della fine del testo. Genera di nuovo per ottenere una nuova take."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "モデルがテキストの最後まで話す前に止まりました。もう一度生成して新しいテイクを作成してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모델이 텍스트 끝까지 말하기 전에 멈췄습니다. 다시 생성하여 새 테이크를 만드세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Het model stopte met spreken voor het einde van de tekst. Genereer opnieuw voor een nieuwe take."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Model przestał mówić przed końcem tekstu. Wygeneruj ponownie, aby uzyskać nową wersję."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "O modelo parou de falar antes do fim do texto. Gere novamente para obter uma nova tomada."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель перестала говорить до конца текста. Сгенерируйте ещё раз, чтобы получить новый дубль."
+          }
+        },
+        "sv" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modellen slutade tala före slutet av texten. Generera igen för en ny tagning."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Model metnin sonuna gelmeden konuşmayı bıraktı. Yeni bir çekim için yeniden oluşturun."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель перестала говорити до кінця тексту. Згенеруйте ще раз, щоб отримати новий дубль."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mô hình đã ngừng nói trước khi hết văn bản. Hãy tạo lại để có lượt thu mới."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型在文本结束前停止了朗读。请重新生成以获得新版本。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型在文字結束前停止了朗讀。請重新生成以取得新版本。"
+          }
+        }
+      }
+    },
+    "This model picks the voice. To speak in a voice you choose, use Voice Cloning." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "يختار هذا النموذج الصوت بنفسه. للتحدث بصوت تختاره، استخدم استنساخ الصوت."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieses Modell wählt die Stimme selbst. Um mit einer Stimme Ihrer Wahl zu sprechen, verwenden Sie Stimmklonen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This model picks the voice. To speak in a voice you choose, use Voice Cloning."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Este modelo elige la voz. Para hablar con una voz que tú elijas, usa Clonación de voz."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ce modèle choisit la voix. Pour parler avec une voix de votre choix, utilisez Clonage de voix."
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "המודל הזה בוחר את הקול בעצמו. כדי לדבר בקול שתבחר, השתמש בשיבוט קול."
+          }
+        },
+        "hi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "यह मॉडल आवाज़ खुद चुनता है। अपनी चुनी हुई आवाज़ में बोलने के लिए आवाज क्लोनिंग का उपयोग करें।"
+          }
+        },
+        "id" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Model ini memilih suaranya sendiri. Untuk berbicara dengan suara pilihan Anda, gunakan Kloning Suara."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Questo modello sceglie la voce da solo. Per parlare con una voce a tua scelta, usa Clonazione vocale."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このモデルは声を自動で選びます。選んだ声で話すには、音声クローン作成を使用してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 모델은 목소리를 직접 고릅니다. 원하는 목소리로 말하려면 음성 복제를 사용하세요."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dit model kiest zelf de stem. Gebruik Stemklonen om te spreken met een stem die je zelf kiest."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ten model sam wybiera głos. Aby mówić wybranym przez siebie głosem, użyj Klonowania głosu."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Este modelo escolhe a voz sozinho. Para falar com uma voz escolhida por você, use Clonagem de voz."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Эта модель сама выбирает голос. Чтобы говорить выбранным вами голосом, используйте Клонирование голоса."
+          }
+        },
+        "sv" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Den här modellen väljer rösten själv. Använd Röstkloning för att tala med en röst som du väljer."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bu model sesi kendisi seçer. Seçtiğiniz bir sesle konuşmak için Ses Klonlama'yı kullanın."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ця модель сама обирає голос. Щоб говорити вибраним вами голосом, скористайтеся Клонуванням голосу."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mô hình này tự chọn giọng nói. Để nói bằng giọng bạn chọn, hãy dùng Nhân bản giọng nói."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此模型会自行选择声音。若要使用你选择的声音说话，请使用语音克隆。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此模型會自行選擇聲音。若要使用你選擇的聲音說話，請使用語音克隆。"
+          }
+        }
+      }
+    },
     "Name the Speakers" : {
       "extractionState" : "manual",
       "localizations" : {

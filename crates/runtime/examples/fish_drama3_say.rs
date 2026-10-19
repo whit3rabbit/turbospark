@@ -160,12 +160,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     book.push(code);
                 }
             }
+            FrameEvent::Held { .. } => {}
             FrameEvent::ChunkEnd {
                 chunk,
                 frames,
+                limit,
                 stop,
+                retries,
             } => {
-                eprintln!("chunk {chunk}: {frames} frames, stop {stop:?}");
+                eprintln!(
+                    "chunk {chunk}: {frames} of {limit} frames, stop {stop:?}, {retries} pause retries"
+                );
             }
         }
         Flow::Continue

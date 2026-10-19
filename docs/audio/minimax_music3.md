@@ -243,6 +243,47 @@ Implemented in `music3_linear_tiled` (the `lanes` accumulators) and
   changed once on purpose (221 `hashes` lines) when the quantized split-K
   reduction began following MLX for more than 8 partitions; the 192 real-shape
   lines did not move.
+- **Output bits depend on the chip.** The kernels reproduce MLX's choices, and
+  several depend on the GPU: the quantized split-K limit by chip name
+  (`Ultra`, `M5`, `M3` or `M4`, other) and the dense split-K threshold in
+  `mlx_splitk_partitions` (`Max` or `Ultra`). The first CI run of the oracle,
+  on a runner GPU, matched the DiT-shape and convolution goldens but not the
+  affine grid, which passes on an M4 Max in debug and release. The affine
+  golden is therefore a property of the M4 Max that produced it, and a golden
+  per chip would be needed for CI to guard it. Which differing lines exist on
+  the runner, and whether the name branches are the whole cause, were not
+  looked at. `Music3Device::with_device_name` plans kernels as if on another
+  chip while running on the real GPU, so one machine can test the plans of the
+  others. Use it in any test whose result depends on a split choice.
+- **The CI runner's trig differs from the M4 Max.** The runner's GPU reports
+  itself as "Apple Paravirtual device" (no Apple GPU family). On the tiny
+  `affine4` profile its stage trace is bit-identical to the M4 Max through
+  every norm and QKV projection and first differs at `ar.0.q_rope`: the
+  `music3_rope` cos and sin differ in the last bit, for `metal::fast::` and for
+  `metal::precise::` alike (31 of 32 probed rope hashes differ, with the
+  exp2 variant irrelevant). On the M4 Max `fast` and `precise` agree and are
+  not correctly rounded either (`sin(1.0)` is one ulp high), so no portable
+  rewrite reproduces the reference; MLX's own rope on the runner would move
+  too. A one-ulp angle change only sometimes flips a bf16 rounding, which is
+  why bf16 and affine8 stay exact and affine4 does not. Explicit `fma` in the
+  quantized kernels was tried and changed nothing on the runner. The zero
+  tolerance `affine4` comparison in
+  `seven_native_tiny_profiles_match_pinned_mlx_and_reset` therefore runs only
+  on `Apple M4 Max` (or with `TURBOSPARK_MUSIC3_ORACLE_ANY_DEVICE=1`); other
+  devices still run it twice and check reset, finiteness and sizes. The other
+  six profiles keep their tolerances everywhere. Not explained: the runner
+  also differs from the affine hash golden on rows 2 to 13 at K = 512 for
+  every bit width (387 of 1021 lines), a path the tiny profiles do not reach.
+- **A row window must plan from the whole matrix.** Below M3 a dense bf16
+  projection of 2 to 15 rows takes the tiled kernel and picks its split-K from
+  the output width. The LM head window (a slice of the head) planned from its own
+  width, so at K = 4096 the 3016-row window split in two and the 5000-row head
+  did not, and a logit differed in the last bf16 bit (-19.625 against -19.75 at
+  column 2499 on the CI runner). `WeightData::planned_rows` now carries the
+  full head's rows and `Music3Weight::planned_as_rows` applies it.
+  `lm_head_window_matches_full_head_under_every_chips_plan` covers M1 to M5
+  names. M3 and later take the wide GEMV, which has no split, and were never
+  affected. Any other slice of a larger matrix needs the same treatment.
 - **Python 3.15 only offered `mlx` 0.32.4**, and the probes refuse any other
   MLX version. Python 3.12 (and 3.14) list 0.32.3; the script uses 3.12.
 - **The reference probe does not write `"encoding"`** into `request.json`; the

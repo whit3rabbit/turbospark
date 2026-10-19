@@ -85,6 +85,33 @@ times real time).
 - Draws use the crate's threefry keys, not MLX's global random state.
   Sampled codes differ from the reference's for the same seed, while the
   distributions match.
+- The nine residual heads score 4096 codes each. The Fish S1 DAC's acoustic
+  books hold 1024 (`FishS1DacConfig::build_ae()`), and the codec refuses a
+  code past them, which fails the whole request. The loop draws from the
+  first 1024 entries of each head. The cut comes before top-k and top-p, so
+  the nucleus mass runs over codes the codec can decode
+  (`Drama3Config::acoustic_codebook_size`). Book 0, the main token's
+  semantic code, keeps all 4096. Whether the pinned reference does the same
+  was not compared when this was added.
 - Python's `\w` is approximated by `char::is_alphanumeric` plus `_`, and
   `str.isdigit` by `char::is_numeric`, in the chunker's edge characters.
 - No `speed` and no `instruct`: delivery cues go inline (`[whispers]`).
+- The default main-draw recipe is Fish Audio's serving recipe
+  (`SamplingParams::FISH_SERVING`: temperature 1.0, top-p 0.9, top-k 30, the
+  same RAS), the default of SGLang-Omni `fishaudio_drama3/speech_request.py`.
+  mlx-audio defaults to 0.7, 0.7 and 30, kept as `SamplingParams::REFERENCE`
+  for parity runs. Under it the first draw in a pause keeps only a few
+  silence tokens, and a sentence gap or a turn change trapped 12 of 24 test
+  takes in silence until the chunk's cap, against 4 of 24
+  (`docs/FISH_DRAMA3_PHASE0.md`, sampling recipe).
+- `ChunkEnd` also reports the chunk's `limit` (its text cap or `max_frames`),
+  which the reference does not track.
+- The loop resamples a pause that outlives every healthy one
+  (`PauseGuard`, `GenerateOptions::pause_guard`), which the reference does
+  not. It reads each main token as voiced or silent from a table of 4,096
+  bits (`voiced.rs`), holds a pause's frames back, and rolls the backbone and
+  tower back to the pause's start when it reaches 128 frames. Six rollbacks
+  per chunk at most. A pause that ends by itself, and every take the guard
+  never fires on, go out as the reference's loop gives them, and
+  `pause_guard: None` is that loop. An explicit `[pause]` trapped 3 of 6 takes
+  under the serving recipe (`docs/FISH_DRAMA3_PHASE0.md`, Pause guard).

@@ -27,7 +27,10 @@
 //!    reference. That adds the codec encoder's weights and a longer prompt.
 //!    The reference is synthetic (the model's own output), so this measures
 //!    memory and says nothing about voice quality.
-//! 3. Warm replays of [`TEXT`]: up to four, stopping once one grows the
+//! 3. One request the pause guard rolls back ([`PAUSED`]): its restore point
+//!    is a second recurrent-state snapshot beside the system block's, and the
+//!    run must report at least one retry so the peak covers it.
+//! 4. Warm replays of [`TEXT`]: up to four, stopping once one grows the
 //!    footprint by no more than 8 MiB.
 //!
 //! The peak is sampled from a thread every 25 ms as well as at each emitted
@@ -79,6 +82,12 @@ const REFERENCE_TEXT: &str =
     "The history of the lighthouse begins with fires lit on hilltops to guide sailors home.";
 const REFERENCE_SECONDS: usize = 6;
 const MIN_AUDIO_SECONDS: usize = 25;
+
+/// A `[pause]` the model traps at seed 0 without the pause guard
+/// (`fish_drama3_pause_trap_gate.rs`), so the guard takes a restore point
+/// and rolls back.
+const PAUSED: &str =
+    "[laughs] Oh, that is the best thing I have heard all week. [pause] Seriously.";
 
 /// Footprint peak from a thread, so a transient between emitted pieces is
 /// not missed. Stops and joins on drop.
@@ -224,6 +233,36 @@ fn fish_drama3_peak_footprint_and_steady_state() {
     assert!(
         cloned_audio.len() >= MIN_AUDIO_SECONDS * rate,
         "the cloned run produced under {MIN_AUDIO_SECONDS}s of audio"
+    );
+
+    let retries: usize = runner
+        .synthesize(
+            &Drama3Request {
+                text: PAUSED,
+                reference: None,
+                seed: 0,
+                sampling: Default::default(),
+            },
+            &|| false,
+            |_| {
+                sampler.sample();
+                true
+            },
+        )
+        .expect("a Drama 3 request should synthesize")
+        .chunks
+        .iter()
+        .map(|c| c.retries)
+        .sum();
+    sampler.sample();
+    eprintln!(
+        "fish_drama3_memory_oracle: paused run, {retries} guard retries, peak so far {:.1} MiB",
+        watcher.peak_mib()
+    );
+    assert!(
+        retries > 0,
+        "the paused request made no guard rollback, so the peak does not cover the guard's \
+         restore point"
     );
 
     // Steady state: everything the plain request touches is warm, so
