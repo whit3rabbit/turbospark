@@ -131,6 +131,20 @@ final class AudioMusicExperienceTests: XCTestCase {
         }
     }
 
+    @MainActor func testEngineStageIdsNeverReachTheMusicStatus() async throws {
+        try await withController { controller, _ in
+            controller.isBusy = true
+            let runID = UUID(); controller.activeRunID = runID
+            controller.generationProgress = AudioGenerationProgress()
+            // Every native job starts with "running"; the second id is unknown.
+            for stage in ["running", "vocoder_pass"] {
+                controller.receiveProgress(try self.event(stage, 0), runID: runID, token: controller.epoch)
+                XCTAssertEqual(controller.status, AppStrings.localized("Encoding prompt"), stage)
+            }
+            controller.isBusy = false
+        }
+    }
+
     @MainActor func testPersonalPromptsPersistSearchRenameDeleteAndKeepRunSettings() async throws {
         try await withController { controller, library in
             XCTAssertFalse(controller.savePrompt(name: "Empty"))

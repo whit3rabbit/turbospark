@@ -56,11 +56,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             seed,
             sampling: Default::default(),
         };
-        let emitted = runner.synthesize(&request, &|| false, |pcm| {
-            first.get_or_insert_with(|| started.elapsed());
-            samples.extend(pcm);
-            true
-        })?;
+        let emitted = runner
+            .synthesize(&request, &|| false, |pcm| {
+                first.get_or_insert_with(|| started.elapsed());
+                samples.extend(pcm);
+                true
+            })?
+            .emitted;
         let wall = started.elapsed().as_secs_f64();
         let audio = emitted as f64 / rate as f64;
         eprintln!(

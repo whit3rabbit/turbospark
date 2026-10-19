@@ -20,9 +20,23 @@ extension AudioWorkspaceController {
         request.durationSeconds = recipe.durationSeconds; request.steps = recipe.steps; request.seed = recipe.seed
         return request
     }
-    /// A natively cloning run (MegaTTS3): its reference arrives as the
-    /// session PCM at 24 kHz, and consent holds only for that exact region.
-    nonisolated static func nativeCloneRequest(_ base: AudioRequest, family: String, speech: AudioSpeechSettings?) -> AudioRequest {
+    /// The request a run sends. A native cloner's run either clones, and
+    /// passes its reference as PCM (`runClonesNatively`), or speaks with no
+    /// reference.
+    static func runRequest(_ recipe: AudioRecipe, task: AudioTask, profile: AudioProfile) -> AudioRequest {
+        let base = request(from: recipe, task: task)
+        guard task == .textToSpeech, clonesNatively(profile) else { return base }
+        return runClonesNatively(profile, speech: recipe.speech)
+            ? nativeCloneRequest(base, family: profile.family, speech: recipe.speech)
+            : referenceFreeSpeechRequest(base, family: profile.family)
+    }
+    /// A natively cloning run (MegaTTS3, OmniVoice, Drama 3): its reference
+    /// arrives as the session PCM at 24 kHz, and consent holds only for that
+    /// exact region.
+    nonisolated static func nativeCloneRequest(
+        _ base: AudioRequest, family: String, speech: AudioSpeechSettings?,
+        freshSeed: () -> UInt64 = { UInt64.random(in: 1...UInt64.max) }
+    ) -> AudioRequest {
         var request = base
         let options = speech?.cloneOptions ?? AudioCloneOptions()
         request.steps = options.steps
@@ -35,11 +49,70 @@ extension AudioWorkspaceController {
             request.tW = nil
             return request
         }
+        if family == "fish_drama3" {
+            // Drama 3 refuses speed other than 1.0, an instruction (cues go
+            // inline in the script) and the guidance weights, and ignores
+            // steps. A clone needs the reference's exact words.
+            request.steps = nil
+            request.speed = 1
+            request.instruction = nil
+            request.pW = nil
+            request.tW = nil
+            let transcript = speech?.referenceText.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            request.referenceText = transcript.isEmpty ? nil : transcript
+            // Seed 0 is a new take each run, as on Voiceover: the runtime
+            // takes 0 literally, and a take that goes silent after its first
+            // sentence would repeat on every Generate.
+            if (request.seed ?? 0) == 0 { request.seed = freshSeed() }
+            return request
+        }
         request.pW = options.intelligibility
         request.tW = options.similarity
         // The engine aligns the reference itself and takes no style prompt.
         request.instruction = nil
         request.referenceText = nil
+        return request
+    }
+    /// Retakes of a take the runtime reports as stopped early (Drama 3 went
+    /// silent after a sentence, turn or pause and never spoke the rest).
+    nonisolated static let earlyStopRetakes = 2
+    /// The next request after `output`, or nil to keep it: a take that stopped
+    /// speaking early is retaken with a fresh seed, at most `earlyStopRetakes`
+    /// times, unless the user chose the seed (that seed gives the same take).
+    nonisolated static func retakeRequest(
+        after output: AudioResult, sent: AudioRequest, recipeSeed: UInt64?, retakes: Int,
+        freshSeed: () -> UInt64 = { UInt64.random(in: 1...UInt64.max) }
+    ) -> AudioRequest? {
+        guard output.stoppedEarly, (recipeSeed ?? 0) == 0, retakes < earlyStopRetakes else { return nil }
+        var next = sent
+        next.seed = freshSeed()
+        return next
+    }
+    /// A native cloner speaking on Voiceover with no reference (Drama 3,
+    /// OmniVoice): no PCM, consent, transcript or guidance weights, and the
+    /// model picks the voice.
+    nonisolated static func referenceFreeSpeechRequest(
+        _ base: AudioRequest, family: String,
+        freshSeed: () -> UInt64 = { UInt64.random(in: 1...UInt64.max) }
+    ) -> AudioRequest {
+        var request = base
+        // Seed 0 is a new take each run, as Qwen3 does on this page. The
+        // runtime takes 0 literally, so every run of a script repeated one
+        // take, and Drama 3 goes silent after the first sentence at some
+        // seeds (0 among them). The take saves the seed it used.
+        if (request.seed ?? 0) == 0 { request.seed = freshSeed() }
+        request.consent = false
+        request.referenceSampleRate = nil
+        request.referenceText = nil
+        request.instruction = nil
+        request.pW = nil
+        request.tW = nil
+        // The page has no steps control, and the recipe's count belongs to
+        // the music page, so the engine's own default applies. Drama 3 has
+        // no steps at all.
+        request.steps = nil
+        // Drama 3 refuses any speed but 1.0, and the page hides its slider.
+        if family == "fish_drama3" { request.speed = 1 }
         return request
     }
     /// The catalog declares the CPU as this profile's runtime, so running on
@@ -92,7 +165,9 @@ extension AudioWorkspaceController {
         status = AppStrings.localized("Waiting for background work")
         let token = epoch; let currentTask = task
         let portable = (page == .advanced && allowPortableExperiment) || Self.runsOnDeclaredCPU(profile)
-        let clonesNatively = currentTask == .textToSpeech && Self.clonesNatively(profile)
+        // Only a cloning run reads its reference as PCM. On Voiceover a
+        // native cloner's request carries none (`runRequest`).
+        let clonesNatively = currentTask == .textToSpeech && Self.runClonesNatively(profile, speech: inputs.speech)
         let experimentalMetal = page == .advanced && allowExperimentalMetal
         jobTask = Task { [weak self] in
             guard let self else { return }
@@ -124,9 +199,9 @@ extension AudioWorkspaceController {
                     throw AudioWorkspaceError.message(AppStrings.localized("Runtime unavailable"))
                 }
                 let session = provider == .qwenMLX ? nil : try await self.residentSession(for: profile, portable: portable, experimentalMetal: experimentalMetal, source: result)
-                var request = Self.request(from: inputs, task: currentTask)
-                if clonesNatively { request = Self.nativeCloneRequest(request, family: profile.family, speech: inputs.speech) }
+                let request = Self.runRequest(inputs, task: currentTask, profile: profile)
                 var labelFailure: String?
+                var stoppedEarly = false
                 if currentTask == .speechToText {
                     guard let selected else { throw AudioWorkspaceError.message(AppStrings.localized("Import or select a recording first.")) }
                     guard let session else { throw CancellationError() }
@@ -162,20 +237,26 @@ extension AudioWorkspaceController {
                     let report: @Sendable (AudioProgress) -> Void = { [weak self] update in
                         Task { @MainActor in self?.receiveProgress(update, runID: result.id, token: token) }
                     }
-                    let output: AudioResult
+                    var output: AudioResult
                     if provider == .qwenMLX {
                         output = try await self.synthesizeQwenSpeech(inputs, profile: profile, source: result, report: report)
                     } else {
                         guard let session else { throw CancellationError() }
-                        output = try await session.execute(request, pcm: pcm) { [weak self] update in
-                            Task { @MainActor in
-                                self?.receiveProgress(update, runID: result.id, token: token)
-                            }
+                        var sent = request
+                        output = try await session.execute(sent, pcm: pcm, progress: report)
+                        var retakes = 0
+                        while let retake = Self.retakeRequest(after: output, sent: sent, recipeSeed: inputs.seed, retakes: retakes) {
+                            try Task.checkCancellation()
+                            guard self.valid(token) else { return }
+                            retakes += 1
+                            sent = retake
+                            output = try await session.execute(sent, pcm: pcm, progress: report)
                         }
                     }
                     try Task.checkCancellation()
                     guard self.valid(token) else { return }
                     if synthesis { _ = try Self.validateGeneratedAudio(output.pcm) }
+                    stoppedEarly = output.stoppedEarly
                     self.generationProgress?.saving()
                     self.speechRun?.enter(.saving)
                     self.status = AppStrings.localized("Saving audio")
@@ -210,6 +291,9 @@ extension AudioWorkspaceController {
                 if currentTask == .speechToText { try self.persistMutation(result.id) { $0.status = .completed; $0.updatedAt = Date() } }
                 if let labelFailure { self.status = AppStrings.localized("Transcript saved. Speakers could not be labeled: \(labelFailure)") }
                 else { self.status = AppStrings.localized("Saved in this profile") }
+                if stoppedEarly {
+                    self.error = AppStrings.localized("The model stopped speaking before the end of the text. Generate again for a new take.")
+                }
             } catch {
                 guard self.valid(token) else { return }
                 let cancelled = Task.isCancelled

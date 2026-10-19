@@ -14,6 +14,18 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- `swift/TurboSparkApp`: Fish Audio Drama 3 (`fish-drama3-4bit`) on the
+  Voice Cloning page and in Advanced. The app sends Drama 3's own request
+  (the reference transcript, speed 1.0, no steps, instruction or guidance
+  weights) and asks for the reference's transcript beside consent. The model
+  summary shows "Built with Fish Audio", as its license requires.
+- `swift/TurboSparkApp`: the Voiceover page speaks with Drama 3 and
+  OmniVoice without a reference, in a voice the model picks. The run sends
+  no PCM, consent or transcript. Drama 3 gets speed 1.0, and OmniVoice keeps
+  its speed slider without guidance weights. Voice Cloning and Advanced still
+  clone. A Voiceover take with seed 0 draws its own seed, so Generate again
+  is a new take: the runtime took 0 literally, and Drama 3 repeated a take
+  that went silent after the first sentence on every run.
 - ArkTTS multilingual zero-shot TTS preview family port (`crates/audio/src/tts/arktts/`).
   DualAR transformer architecture plus bundled 44.1 kHz decode-only speech codec:
   pure-attention slow stack on 0.6b and hybrid Mamba-2 + attention Falcon H1
@@ -242,6 +254,33 @@ when this file gets updated relative to the version bump and the tag.
   floor. 2.7.2 also releases `write.lock` explicitly, so a process the app
   spawns on another thread can no longer hold the code index's lock and turn
   an incremental update into a full rebuild.
+- `crates/audio`, `crates/runtime`: Fish Audio Drama 3 resamples a pause the
+  model may never leave (`GenerateOptions::pause_guard`, on by default;
+  `PauseGuard::MEASURED`). In some takes the model pauses at a sentence gap, a
+  turn change or a `[pause]` and stays silent until the chunk's frame cap.
+  The generation loop now reads each drawn main token as voiced or silent
+  from a table (`fish_drama3::voiced`, built by
+  `scripts/fish_drama3_voiced_table.py`), and holds a pause's frames back
+  from its first silent frame. If the pause reaches 128 frames it rolls the
+  trunk and tower back to the pause's start and draws again, up to 6 times per
+  chunk, then runs on as before. A pause that ends by itself goes out
+  unchanged. Frames in a pause reach the codec only when it ends, so a
+  streamed response delays each pause by its length (56 frames, 2.6 s, at
+  most on the takes measured). `FrameEvent` gains `Held` and `ChunkEnd`
+  gains `retries`. `FishDrama3Runner::set_pause_guard(None)` restores the old
+  loop. The pause-trap gate goes from 4 of 24 takes stopped early to 0, and
+  the `[pause]` line's three trapped seeds recover. `docs/FISH_DRAMA3_PHASE0.md`
+  has the measurements.
+- `crates/audio`, `crates/runtime`: Fish Audio Drama 3 samples with Fish
+  Audio's serving recipe by default (temperature 1.0, top-p 0.9, top-k 30,
+  the same RAS; `SamplingParams::FISH_SERVING`), the default of its
+  SGLang-Omni runtime. mlx-audio's 0.7, 0.7 and 30 stay available as
+  `SamplingParams::REFERENCE`. Under it a sentence gap or a turn change
+  trapped 12 of 24 test takes in silence until the chunk's cap, against 4 of
+  24. Requests that set `temperature`, `top_p` or `top_k` are unchanged.
+  `FrameEvent::ChunkEnd` gains `limit`, and `FishDrama3Runner::synthesize`
+  returns a `Drama3Take` (samples emitted, each chunk's frames, limit and
+  stop, the longest silent run) instead of the sample count.
 - `swift/TurboSparkApp`: the project code index moved to
   `~/Library/Caches/TurboSpark/syntext/<digest>.syntext`. The old base64 name
   failed for project paths over about 185 bytes. Existing indexes rebuild
@@ -319,6 +358,28 @@ when this file gets updated relative to the version bump and the tag.
   whole layer on every pass: Fish Audio Drama 3 and MiniCPM-V 4.7 decoded 70
   to 180 times slower mapped than streamed. Asked for by name past the
   budget it is refused with the reason; `auto` resolves down to streamed.
+- `crates/runtime`, `swift/TurboSparkApp`: a Fish Audio Drama 3 take that
+  went silent after its first sentence, turn or `[pause]` was returned as if
+  it were complete, with the rest of the text never spoken. The runner now
+  reports a take whose chunk hit its frame cap without EOS, or that held a
+  silent run of 160 frames (7.4 s), as `stopped_early` in the audio job
+  result (C header, `AudioResult.stoppedEarly` in Swift). The app retakes such
+  a take with a fresh seed at most twice when the seed was left to it, then
+  saves the last take and says it stopped early. A Drama 3 clone on Voice
+  Cloning with seed 0 now draws its own seed, as Voiceover does, so a failing
+  take no longer repeats on every Generate.
+- `crates/server`, `crates/cli`: a Fish Audio Drama 3 request without a seed
+  ran at seed 0, so every request and every `turbospark-speak` run of one
+  text gave the same take, and a take that went silent did so every time.
+  `/v1/audio/speech` now draws a fresh seed for a Drama 3 request that names
+  none and returns the seed in `x-turbospark-seed` (as image generation
+  does). `turbospark-speak` draws one per run and prints it, and warns when
+  the take stopped early. A seed the caller names, 0 included, is kept.
+- `crates/audio`: Fish Audio Drama 3 draws its residual codes from the first
+  1024 entries of each tower head. The heads score 4096 codes, the Fish S1
+  DAC's acoustic books hold 1024, and a draw past them failed the whole
+  request in the codec (`code 3403 outside the codebook of 1024`). The limit
+  comes from the codec geometry, not a literal.
 - `crates/catalog`: `InstalledModel::effective_modality` now derives the `Audio`
   modality from install path, `audio-receipt.json`, or speech metadata if a model
   was recorded with default `text` modality in `installed.json`. `installed_report`

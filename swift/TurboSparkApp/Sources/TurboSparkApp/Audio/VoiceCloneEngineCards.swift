@@ -1,7 +1,9 @@
 import SwiftUI
 
 /// The selected engine's own cards in the voice setup column: consent and
-/// quality for MegaTTS3, transcript and sampling for Qwen3-TTS.
+/// quality for MegaTTS3 and OmniVoice, consent and transcript for Drama 3
+/// (which has no steps or guidance weights), transcript and sampling for
+/// Qwen3-TTS.
 @MainActor
 struct VoiceCloneEngineCards: View {
     @ObservedObject var controller: AudioWorkspaceController
@@ -18,9 +20,13 @@ struct VoiceCloneEngineCards: View {
     var body: some View {
         if controller.selectedProfileClonesNatively {
             consentCard.id(VoiceCloneStep.consent)
-            qualityCard
+            if controller.selectedProfileNeedsReferenceTranscript {
+                transcriptCard(offersEmbeddingOnly: false).id(VoiceCloneStep.transcript)
+            } else {
+                qualityCard
+            }
         } else if controller.selectedProfile?.family == "qwen3_tts" {
-            transcriptCard.id(VoiceCloneStep.transcript)
+            transcriptCard(offersEmbeddingOnly: true).id(VoiceCloneStep.transcript)
             qwenSettingsCard
         }
     }
@@ -68,11 +74,14 @@ struct VoiceCloneEngineCards: View {
         .appCardSurface()
     }
 
-    private var transcriptCard: some View {
+    /// Qwen3-TTS can clone from the speaker embedding alone. Drama 3 always
+    /// needs the transcript, so it never sees that choice, and a saved
+    /// embedding-only setting from Qwen3 does not hide its editor.
+    private func transcriptCard(offersEmbeddingOnly: Bool) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             AppSectionHeader(title: Text("Transcript of reference speech", bundle: .module))
-            Qwen3EmbeddingOnlyToggle(controller: controller)
-            if !controller.speechSettings.embeddingOnly {
+            if offersEmbeddingOnly { Qwen3EmbeddingOnlyToggle(controller: controller) }
+            if !offersEmbeddingOnly || !controller.speechSettings.embeddingOnly {
                 AudioMeasuredTextEditor(
                     text: controller.speechBinding(\.referenceText),
                     label: Text("Transcript of reference speech", bundle: .module),

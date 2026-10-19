@@ -164,8 +164,15 @@ staging files changed.
 - The Voice Cloning page only presents models with native Metal or MLX
   acceleration (`clonesNatively`). Portable CPU-only models remain gated to
   the Advanced portable experiment and must not be presented as voice clone
-  options until an accelerated backend is implemented. OmniVoice and MegaTTS3
-  are Metal-accelerated and present on the Voice Cloning page.
+  options until an accelerated backend is implemented. OmniVoice, MegaTTS3
+  and Drama 3 are Metal-accelerated and present on the Voice Cloning page.
+  A new native cloner stays unlisted until `nativeCloneRequest` builds its
+  request shape and its family joins `nativeCloneRequestFamilies`. Without
+  that it gets MegaTTS3's request, which the runtime refuses.
+  Drama 3 and OmniVoice also speak on Voiceover with no reference
+  (`referenceFreeSpeechFamilies`). Whether a run clones follows the
+  recipe's speech mode (`runClonesNatively`), which `normalizeModelOptions`
+  sets by page, never the profile alone. MegaTTS3 always clones.
 - Audio model residency lifecycle is managed by `AudioWorkspaceController`
   (`isModelLoaded`, `canLoadModel`, `canUnloadModel`). Unloading is wired into
   `AppModel.canUnloadAnyModel` and the top bar eject button, ensuring audio

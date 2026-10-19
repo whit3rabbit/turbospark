@@ -40,11 +40,24 @@ pub struct SamplingParams {
 }
 
 impl SamplingParams {
-    /// The reference recipe (temperature 0.7, top-k 30, top-p 0.7).
+    /// The reference recipe (temperature 0.7, top-k 30, top-p 0.7), mlx-audio's
+    /// default. Parity runs against mlx-audio use it.
     pub const REFERENCE: SamplingParams = SamplingParams {
         temperature: DEFAULT_TEMPERATURE,
         top_k: DEFAULT_TOP_K,
         top_p: DEFAULT_TOP_P,
+    };
+
+    /// Fish Audio's serving recipe (temperature 1.0, top-k 30, top-p 0.9), the
+    /// product default. SGLang-Omni `fishaudio_drama3/speech_request.py`
+    /// defaults to it, with the same RAS. Under [`Self::REFERENCE`] the first
+    /// draw in a pause keeps only a few silence tokens, so a sentence gap or a
+    /// turn change traps far more takes in silence until the chunk's cap
+    /// (`docs/FISH_DRAMA3_PHASE0.md`, sampling recipe).
+    pub const FISH_SERVING: SamplingParams = SamplingParams {
+        temperature: 1.0,
+        top_k: 30,
+        top_p: 0.9,
     };
 
     /// Refuses settings the reference would fail on or that select nothing.
@@ -267,6 +280,7 @@ mod tests {
     #[test]
     fn validation_refuses_degenerate_settings() {
         assert!(SamplingParams::REFERENCE.validate().is_ok());
+        assert!(SamplingParams::FISH_SERVING.validate().is_ok());
         for bad in [
             SamplingParams {
                 top_k: 0,

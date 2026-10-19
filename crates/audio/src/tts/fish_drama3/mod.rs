@@ -15,6 +15,7 @@ pub mod generate;
 pub mod prompt;
 pub mod sampling;
 pub mod tower;
+pub mod voiced;
 
 /// Pinned mlx-audio commit this port was transcribed from.
 pub const REFERENCE_COMMIT: &str = "dad2087f790dfe96b07d5aac1405db4b578b411f";

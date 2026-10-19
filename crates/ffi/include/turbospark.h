@@ -1675,8 +1675,11 @@ typedef struct TsAudioJob TsAudioJob;
  *
  * ts_audio_job_run's result is {"transcript": {...} | null, "pcm_format":
  * {"sample_rate", "channels"} | null, "sample_count": number, "seed": number
- * | null}. A cancelled or failed run returns non-zero with the reason in
- * ts_last_error.
+ * | null, "stopped_early": bool}. stopped_early is true when a Drama 3 take
+ * likely stopped speaking before its text ended (a chunk hit its frame cap
+ * without EOS, or the audio held a silence no completed take has); a host can
+ * retake with another seed. It is false for every other model. A cancelled or
+ * failed run returns non-zero with the reason in ts_last_error.
  *
  * CANCELLATION. ts_audio_job_cancel and ts_audio_session_cancel never block
  * and are safe from any thread, including during run. ts_audio_job_status_json

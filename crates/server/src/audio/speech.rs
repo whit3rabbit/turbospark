@@ -12,6 +12,9 @@
 //! encode, and refuses by name). `stream=true` is `pcm` only: a chunked body
 //! with one chunk per synthesized segment, so the first audio leaves before
 //! the last segment is generated.
+//! A Drama 3 request without `seed` draws a fresh one, and every Drama 3
+//! response names the seed it used in `x-turbospark-seed`, as image
+//! generation does.
 
 use axum::body::Body;
 use axum::extract::State;
@@ -30,6 +33,22 @@ const MIN_SPEED: f32 = 0.5;
 const MAX_SPEED: f32 = 2.0;
 /// Base64 of a 30 s reference: 48 kHz stereo f32 WAV is about 15.4 MB.
 const MAX_REFERENCE_BASE64: usize = 24 << 20;
+
+/// The seed a Drama 3 request runs with: the caller's, or a fresh one. The
+/// runtime takes every seed literally, so a default of 0 gave one take for
+/// every request, and some seeds go silent after the first sentence.
+fn drama3_seed(requested: Option<u64>) -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    // Two requests in the same clock tick still draw different seeds.
+    static DRAWN: AtomicU64 = AtomicU64::new(0);
+    requested.unwrap_or_else(|| {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64;
+        nanos ^ DRAWN.fetch_add(0x9E37_79B9_7F4A_7C15, Ordering::Relaxed)
+    })
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -232,6 +251,14 @@ pub(crate) async fn speech(
                 }
             }
         }
+        let seed = if family == Some("fish_drama3") {
+            Some(drama3_seed(input.seed))
+        } else {
+            input.seed
+        };
+        let seed_header = seed
+            .filter(|_| family == Some("fish_drama3"))
+            .map(|s| HeaderValue::from_str(&s.to_string()).expect("digits are a valid header"));
         let request = SpeechRequest {
             model: input.model,
             text: input.input,
@@ -243,7 +270,7 @@ pub(crate) async fn speech(
             instruction: input.instruction,
             consent: input.consent.unwrap_or(false),
             steps: input.steps,
-            seed: input.seed,
+            seed,
             p_w: input.p_w,
             t_w: input.t_w,
             temperature: input.temperature,
@@ -291,6 +318,9 @@ pub(crate) async fn speech(
                 "x-audio-sample-rate",
                 HeaderValue::from_str(&rate.to_string()).expect("digits are a valid header"),
             );
+            if let Some(seed) = seed_header {
+                headers.insert("x-turbospark-seed", seed);
+            }
             return response;
         }
 
@@ -319,6 +349,9 @@ pub(crate) async fn speech(
             "x-audio-sample-rate",
             HeaderValue::from_str(&rate.to_string()).expect("digits are a valid header"),
         );
+        if let Some(seed) = seed_header {
+            headers.insert("x-turbospark-seed", seed);
+        }
         response
     })
     .await
