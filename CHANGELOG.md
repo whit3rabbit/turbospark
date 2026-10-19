@@ -29,6 +29,16 @@ when this file gets updated relative to the version bump and the tag.
   job (Live Text, Final Transcript, Speakers), shown in a header popover with
   its state, and Installed gains an Audio view. A mode with no choice of its
   own keeps the earlier behavior.
+- Name the Speakers. After a Meeting take's final pass labels its speakers, a
+  sheet lists each voice with its talk time and longest line, plays a sample,
+  and lets you name it, merge it into another voice, or separate a merged
+  voice. The transcript's Name Speakers button opens the same sheet later. One
+  name per voice reaches every line, revision and export (Text, SRT, WebVTT and
+  JSON with the name and the raw id), and clearing it restores the default
+  label. Takes saved before this decode as they were. A take longer than the
+  model's 30 minutes is labeled in parts that share 5 minutes, and a later
+  part's voice takes an earlier label only when at least 8 s and 70% of the
+  shared time agree, otherwise it starts a new speaker.
 - Native Frozen E meeting transcription: Nemotron-3 diarization coupled to
   Multitalker Parakeet in `crates/audio` (`stt/multitalker_asr`,
   `vad/nemotron_diarization`), on CPU and, opt-in, on Metal. On the reference
