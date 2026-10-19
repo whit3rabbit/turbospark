@@ -208,7 +208,40 @@ fn read_f32(path: &std::path::Path) -> Vec<f32> {
         .map(|v| f32::from_le_bytes(v.try_into().unwrap()))
         .collect()
 }
-fn native_gate(model: &std::path::Path, reference: &std::path::Path, repeat: bool) {
+/// The GPU whose bits the pinned MLX references were generated on.
+///
+/// A zero-tolerance match needs the same sin and cos as the reference. Apple
+/// GPUs differ there: on the GitHub runner's "Apple Paravirtual device" the
+/// rope kernel's cos and sin differ from the M4 Max in the last bit, for both
+/// `fast::` and `precise::` (the stage trace is identical through the QKV
+/// projections and norms, and first differs at `ar.0.q_rope`). A last-bit
+/// change then flips a bf16 rounding in the 4-bit profile. Set
+/// `TURBOSPARK_MUSIC3_ORACLE_ANY_DEVICE=1` to compare on any device.
+const MLX_REFERENCE_DEVICE: &str = "Apple M4 Max";
+
+fn mlx_reference_applies() -> bool {
+    if std::env::var_os("TURBOSPARK_MUSIC3_ORACLE_ANY_DEVICE").is_some() {
+        return true;
+    }
+    let name = gpu::Music3Device::new().unwrap().device_name();
+    if name == MLX_REFERENCE_DEVICE {
+        return true;
+    }
+    eprintln!(
+        "affine4 is checked for reset and shape only: its MLX reference is for {MLX_REFERENCE_DEVICE}, this is {name}"
+    );
+    false
+}
+
+/// With `against_reference` false the run still resets and repeats, and its
+/// outputs must be finite and the right size, but it is not compared with the
+/// pinned MLX values.
+fn native_gate(
+    model: &std::path::Path,
+    reference: &std::path::Path,
+    repeat: bool,
+    against_reference: bool,
+) {
     use audio::music::minimax_music3::Music3Precision;
     let request: serde_json::Value =
         serde_json::from_slice(&std::fs::read(reference.join("request.json")).unwrap()).unwrap();
@@ -251,7 +284,7 @@ fn native_gate(model: &std::path::Path, reference: &std::path::Path, repeat: boo
                 request["seed"].as_u64().unwrap(),
                 |t| {
                     if t.frame == 0 {
-                        if inputs_match {
+                        if inputs_match && against_reference {
                             close(
                                 t.hiddens,
                                 &read_f32(
@@ -314,7 +347,13 @@ fn native_gate(model: &std::path::Path, reference: &std::path::Path, repeat: boo
         } else {
             first_wave = Some(wave.clone());
         }
-        if !is_4bit {
+        if !against_reference {
+            assert!(hidden.iter().all(|v| v.is_finite()));
+            assert_eq!(hidden.len(), read_f32(&reference.join("hiddens.f32")).len());
+            assert!(wave.iter().all(|v| v.is_finite()));
+            assert_eq!(wave.len(), read_f32(&reference.join("wave.f32")).len());
+            assert_eq!(codes.len(), expected_codes.len());
+        } else if !is_4bit {
             assert_eq!(warmup, expected_warmup);
             assert_eq!(codes, expected_codes);
             close(
@@ -367,14 +406,15 @@ fn native_gate(model: &std::path::Path, reference: &std::path::Path, repeat: boo
 }
 
 #[test]
-#[ignore = "zero-tolerance MLX match holds on the M4 Max but is one bf16 step off on the CI runner's GPU"]
 fn seven_native_tiny_profiles_match_pinned_mlx_and_reset() {
     for encoding in [
         "bf16", "affine8", "affine6", "affine4", "mxfp8", "mxfp4", "nvfp4",
     ] {
         eprintln!("native profile: {encoding}");
         let path = fixture("precision").join(encoding);
-        native_gate(&path, &path, true);
+        // Only affine4 compares at zero tolerance, so only it needs the reference GPU.
+        let against_reference = encoding != "affine4" || mlx_reference_applies();
+        native_gate(&path, &path, true, against_reference);
     }
 }
 #[test]
@@ -412,7 +452,7 @@ fn real_music3_native_checkpoint_matches_mlx() {
     );
     assert_eq!(request["hiddens_dtype"], "bfloat16");
     assert_eq!(request["wave_dtype"], "bfloat16");
-    native_gate(&model, &reference, false);
+    native_gate(&model, &reference, false, true);
 }
 
 #[test]
@@ -434,7 +474,7 @@ fn real_music3_pinned_4bit_native_matches_mlx_and_resets() {
     );
     assert_eq!(request["hiddens_dtype"], "bfloat16");
     assert_eq!(request["wave_dtype"], "bfloat16");
-    native_gate(&model, &reference, true);
+    native_gate(&model, &reference, true, true);
 }
 
 #[test]
