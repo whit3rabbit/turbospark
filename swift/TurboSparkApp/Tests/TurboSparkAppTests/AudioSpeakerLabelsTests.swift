@@ -34,19 +34,20 @@ final class AudioSpeakerLabelsTests: XCTestCase {
         }
     }
 
+    /// Turns keep the runtime's ids, so a rename on the take can be undone,
+    /// and move onto the take's timeline by a part's offset.
     func testTurnsKeepTimedLabeledSegmentsOnly() {
-        withLanguage(.english) {
-            let transcript = AudioTranscript(text: "", segments: [
-                AudioSegment(startSeconds: 0, endSeconds: 2, text: "", timing: "segment", speaker: "S1"),
-                AudioSegment(startSeconds: 2, endSeconds: 2, text: "", timing: "segment", speaker: "S2"),
-                AudioSegment(startSeconds: 3, endSeconds: 4, text: "", timing: "segment", speaker: nil),
-                AudioSegment(startSeconds: 4, endSeconds: 6, text: "", timing: "segment", speaker: "S2"),
-            ])
-            XCTAssertEqual(AudioSpeakerLabels.turns(transcript), [
-                .init(speaker: "Speaker 1", start: 0, end: 2),
-                .init(speaker: "Speaker 2", start: 4, end: 6),
-            ])
-        }
+        let transcript = AudioTranscript(text: "", segments: [
+            AudioSegment(startSeconds: 0, endSeconds: 2, text: "", timing: "segment", speaker: "S1"),
+            AudioSegment(startSeconds: 2, endSeconds: 2, text: "", timing: "segment", speaker: "S2"),
+            AudioSegment(startSeconds: 3, endSeconds: 4, text: "", timing: "segment", speaker: nil),
+            AudioSegment(startSeconds: 4, endSeconds: 6, text: "", timing: "segment", speaker: "S2"),
+        ])
+        XCTAssertEqual(AudioSpeakerLabels.turns(transcript), [
+            .init(speaker: "S1", start: 0, end: 2),
+            .init(speaker: "S2", start: 4, end: 6),
+        ])
+        XCTAssertEqual(AudioSpeakerLabels.turns(transcript, offset: 1100).first, .init(speaker: "S1", start: 1100, end: 1102))
     }
 
     func testWordsDecideTheSpeakerAndManualLabelsStay() {
@@ -68,6 +69,7 @@ final class AudioSpeakerLabelsTests: XCTestCase {
         let words: [ClosedRange<Double>] = [0...1, 1...2, 2...3.5, 4.2...5, 5...7.8, 8.1...8.9]
         let labeled = AudioSpeakerLabels.assign(segments, words: words, turns: turns)
         XCTAssertEqual(labeled.map(\.speaker), ["A", "B", "Alice", "A", nil])
+        XCTAssertEqual(labeled.map(\.speakerID), ["A", "B", nil, "A", nil], "the manual label gets no id")
         XCTAssertEqual(labeled.map(\.id), segments.map(\.id), "segments keep their identity")
         XCTAssertEqual(labeled.map(\.text), segments.map(\.text))
     }
@@ -101,6 +103,8 @@ final class AudioSpeakerLabelsRealModelTests: XCTestCase {
         _ = try vault.prepareForLaunch()
         let controller = AudioWorkspaceController(library: AudioLibraryStore(repository: ProfileRepository(store: vault)), assets: ManagedAssetStore(vault: vault))
         controller.liveTranscription = false
+        // Imports follow Any Audio, where speaker labels are opt-in.
+        controller.preferences.speakerLabels = [SpeechToTextMode.anyAudio.rawValue: true]
         // The init refresh would overwrite the paths set below.
         while controller.isRefreshingModels || controller.profiles.isEmpty { try await Task.sleep(nanoseconds: 50_000_000) }
         for (alias, path) in installs { controller.installedPaths[alias] = path }
@@ -256,10 +260,12 @@ final class AudioSpeakerLabelsRealModelTests: XCTestCase {
             if text.contains("planning call") || text.contains("thursday") { XCTAssertEqual(segment.speaker, first, segment.text) }
             if text.contains("migration") || text.contains("three hours") { XCTAssertEqual(segment.speaker, second, segment.text) }
         }
-        // Display names in order of first appearance, not the runtime ids.
+        // Display names in order of first appearance, not the runtime ids,
+        // which stay beside them for the take's names and merges.
         XCTAssertEqual(first, AudioSpeakerLabels.displayName("S1"))
         XCTAssertEqual(second, AudioSpeakerLabels.displayName("S2"))
         XCTAssertNotEqual(first, "S1")
+        XCTAssertEqual(Set(final.segments.compactMap(\.speakerID)), ["S1", "S2"])
     }
 
     /// An imported meeting on the Speech-to-Text page gets the same labels as
@@ -290,6 +296,40 @@ final class AudioSpeakerLabelsRealModelTests: XCTestCase {
         }
         assertOneCopyAtEachSeam(final.segments)
         XCTAssertEqual(controller.status, AppStrings.localized("Saved in this profile"))
+    }
+
+    /// A Meeting take's final pass on the Meeting pane labels its speakers
+    /// with raw ids and asks for their names.
+    @MainActor func testMeetingFinalPassAsksForNames() async throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let ultra = env["TURBOSPARK_PARAKEET_COREML_MODEL"], let diarization = env["TURBOSPARK_DIARIZATION_COREML_MODEL"] else {
+            throw XCTSkip("set TURBOSPARK_PARAKEET_COREML_MODEL and TURBOSPARK_DIARIZATION_COREML_MODEL")
+        }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let call = try synthesizeCall(in: root.appendingPathComponent("call"))
+        let controller = try await makeController(root: root.appendingPathComponent("profile"), installs: ["parakeet-ultra-coreml": ultra, "speaker-diarization-coreml": diarization])
+        defer { controller.shutdown() }
+        controller.selectPage(.transcribe)
+        controller.selectSpeechToTextMode(.meeting)
+
+        let data = try Data(contentsOf: call.url)
+        let asset = try controller.assets.store(data: data, fileName: "meeting.wav", mimeType: "audio/wav")
+        var item = AudioLibraryItem(title: "Planning call", kind: .recording)
+        item.recordingPreset = AudioRecordingPreset.meeting.rawValue
+        item.clips = [AudioLibraryClip(assetReference: asset.storedReference, sampleRate: 22_050, channels: 1, frameCount: Int64((data.count - 44) / 4), source: "microphone")]
+        item.recipe.task = AudioTask.speechToText.rawValue
+        item.recipe.modelID = "parakeet-ultra-coreml"
+        try controller.save(item)
+        XCTAssertNil(controller.speakerNamingID)
+
+        controller.refineRecording(item.id)
+        await controller.jobTask?.value
+        let saved = try XCTUnwrap(controller.library.item(item.id))
+        XCTAssertEqual(saved.status, .completed, saved.failure ?? controller.status)
+        let final = try XCTUnwrap(saved.transcripts.last(where: { $0.source == .final }))
+        XCTAssertEqual(Set(final.segments.compactMap(\.speakerID)), ["S1", "S2"], controller.status)
+        XCTAssertEqual(controller.speakerNamingID, item.id)
     }
 
     /// The native job reports a cancel as its own error, not CancellationError,

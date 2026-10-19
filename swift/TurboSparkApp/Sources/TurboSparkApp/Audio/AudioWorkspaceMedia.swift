@@ -178,7 +178,7 @@ extension AudioWorkspaceController {
         } catch { isExporting = false; fail(error) }
     }
     func exportTranscript(_ item: AudioLibraryItem, format: AudioTranscriptExportFormat) {
-        guard !isShutDown, !hasRecordingActivity, let transcript = item.preferredTranscript else { return }
+        guard !isShutDown, !hasRecordingActivity, item.preferredTranscript != nil else { return }
         let token = epoch
         let panel = NSSavePanel(); panel.canCreateDirectories = true
         let suffix = format == .text ? "txt" : format.rawValue
@@ -186,17 +186,7 @@ extension AudioWorkspaceController {
         panel.nameFieldStringValue = ProfileBackup.sanitizedFileName(item.title, fallback: "Transcript") + "." + suffix
         guard panel.runModal() == .OK, let url = panel.url, valid(token), !hasRecordingActivity else { return }
         do {
-            let data: Data
-            switch format {
-            case .text: data = Data(AudioTranscriptExport.text(transcript.segments).utf8)
-            case .srt: data = Data(AudioTranscriptExport.srt(transcript.segments).utf8)
-            case .vtt: data = Data(AudioTranscriptExport.vtt(transcript.segments).utf8)
-            case .json:
-                let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-                var portable = item
-                portable.localModelBookmark = nil
-                data = try encoder.encode(portable)
-            }
+            guard let data = try AudioTranscriptExport.data(item, format: format) else { return }
             try data.write(to: url, options: .atomic)
             status = AppStrings.localized("Transcript exported")
         } catch { self.error = error.localizedDescription }

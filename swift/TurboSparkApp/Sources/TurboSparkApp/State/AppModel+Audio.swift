@@ -35,7 +35,8 @@ extension AppModel {
         audioSummaryInFlight = true; generating = true
         let modelAlias = selected?.alias
         defer { audioSummaryInFlight = false; generating = false }
-        let chunks = AudioMeetingSummary.chunks(transcript.segments)
+        // The take's speaker names, so the summary can attribute owners.
+        let chunks = AudioMeetingSummary.chunks(AudioSpeakerRoster(item).labeled(transcript.segments))
         var sections: [String] = []
         var sourceTimes: [Double] = []
         for chunk in chunks {
