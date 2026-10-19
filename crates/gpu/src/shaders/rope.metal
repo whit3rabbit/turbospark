@@ -101,6 +101,35 @@ kernel void rope_neox_subdim(
                     float(position), theta);
 }
 
+// `rope_neox_subdim` over M contiguous rows at consecutive positions: row
+// `gid.z` rotates at `start_position + gid.z`. It calls `apply_neox_pair` with
+// the same float(position), so each row is bit-identical to a single-row
+// dispatch at that position. It exists so a batched verify or prefill chunk
+// pays one dispatch per tensor instead of one per row.
+kernel void rope_neox_subdim_rows(
+    device half* data [[buffer(0)]],
+    constant uint& start_position [[buffer(1)]],
+    constant uint& head_dim [[buffer(2)]],
+    constant uint& num_heads [[buffer(3)]],
+    constant float& theta [[buffer(4)]],
+    constant uint& rotary_dim [[buffer(5)]],
+    uint3 gid [[thread_position_in_grid]]
+) {
+    const uint pair = gid.x;
+    const uint head_index = gid.y;
+    const uint token_index = gid.z;
+    const uint dimension = rope_head_dim(head_dim);
+    const uint heads = rope_num_heads(num_heads);
+    const uint half_rotary = rotary_dim / 2u;
+    if (pair >= half_rotary || head_index >= heads) return;
+
+    device half* head = data
+        + token_index * heads * dimension
+        + head_index * dimension;
+    apply_neox_pair(head, pair, half_rotary, rotary_dim,
+                    float(start_position + token_index), theta);
+}
+
 // Qwen 3.8's INTERLEAVED mRoPE (ROADMAP M-V5, `docs/VISION_PHASE0.md` item
 // 2). `rope_neox_subdim` with the scalar position replaced by a per-pair
 // choice among (t, h, w).
