@@ -8,11 +8,12 @@ use crate::real_forward_dispatch::encode_gemm_rows;
 use crate::real_forward_types::{DecodeScratch, RealForwardError};
 use crate::real_forward_utils::norm_view;
 
-/// Whether the batched attention layer runs its split, norm, RoPE and gate as
-/// one dispatch per tensor over all M rows (the default) or as one per row.
+/// Whether the batched layers run their per-row ops (attention's split, norm,
+/// RoPE and gate, the dense FFN's activation and residual add) as one dispatch
+/// per tensor over all M rows (the default) or as one per row.
 /// Both are bit-identical; `TURBOSPARK_QWEN_BATCHED_ROW_OPS=0` selects the
 /// per-row form. Resolved once, never per layer or per token.
-fn row_batched_ops() -> bool {
+pub(crate) fn row_batched_ops() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("TURBOSPARK_QWEN_BATCHED_ROW_OPS").as_deref() != Ok("0"))
 }
@@ -626,8 +627,8 @@ pub(crate) fn replay_linear_state_batched(
     Ok(())
 }
 
-/// The dense FFN at M rows: batched gate/up, `silu_mul` per token, batched
-/// down, then the raw residual add per token. `prefix` is `TRUNK_PREFIX`,
+/// The dense FFN at M rows: batched gate/up, `silu_mul` over the rows, batched
+/// down, then the raw residual add over the rows. `prefix` is `TRUNK_PREFIX`,
 /// or `MTP_PREFIX` for the head, whose FFN is the trunk's dense width.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_dense_ffn_batched(
@@ -669,17 +670,31 @@ pub(crate) fn encode_dense_ffn_batched(
     } else {
         gpu::encode_gelu_mul
     };
-    for m in 0..batch {
-        let row = (m * inter) as u64 * 2;
+    // Elementwise over M contiguous rows, so one dispatch of M * inter is the
+    // same arithmetic per element (`row_batched_ops` selects the per-row form).
+    if row_batched_ops() {
         act(
             context,
             pass,
-            (&batched.ffn_gate, row),
-            (&batched.ffn_up, row),
-            (&batched.ffn_act, row),
-            inter as u32,
+            (&batched.ffn_gate, 0),
+            (&batched.ffn_up, 0),
+            (&batched.ffn_act, 0),
+            (inter * batch) as u32,
         )
         .map_err(gpu_err)?;
+    } else {
+        for m in 0..batch {
+            let row = (m * inter) as u64 * 2;
+            act(
+                context,
+                pass,
+                (&batched.ffn_gate, row),
+                (&batched.ffn_up, row),
+                (&batched.ffn_act, row),
+                inter as u32,
+            )
+            .map_err(gpu_err)?;
+        }
     }
 
     encode_gemm_rows(
@@ -696,16 +711,27 @@ pub(crate) fn encode_dense_ffn_batched(
         batched.steel_gemm,
     )?;
 
-    for m in 0..batch {
-        let row = (m * hidden) as u64 * 2;
+    if row_batched_ops() {
         gpu::encode_residual_add(
             context,
             pass,
-            (&scratch.x, row),
-            (&batched.h2, row),
-            hidden as u32,
+            (&scratch.x, 0),
+            (&batched.h2, 0),
+            (hidden * batch) as u32,
         )
         .map_err(gpu_err)?;
+    } else {
+        for m in 0..batch {
+            let row = (m * hidden) as u64 * 2;
+            gpu::encode_residual_add(
+                context,
+                pass,
+                (&scratch.x, row),
+                (&batched.h2, row),
+                hidden as u32,
+            )
+            .map_err(gpu_err)?;
+        }
     }
     Ok(())
 }
