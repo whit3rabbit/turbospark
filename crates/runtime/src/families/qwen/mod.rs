@@ -2,6 +2,8 @@
 //! BOTH the `qwen36` family and (ROADMAP's 1-bit entry) the dense `qwen3_5`
 //! one, which differ in their FFN half and in nothing else.
 
+#[cfg(feature = "ane-prefill")]
+mod ane_split;
 mod attn;
 mod batched;
 mod batched_layers;
@@ -25,6 +27,10 @@ mod produce;
 mod state;
 mod verify_layers;
 
+#[cfg(feature = "ane-prefill")]
+pub(crate) use ane_split::AnePrefill;
+#[cfg(feature = "ane-prefill")]
+pub use ane_split::AnePrefillMode;
 pub(crate) use attn::{encode_full_attention_block, QkNormConvention};
 /// Re-exported for `real_forward_rollback`'s retaining rollback, whose
 /// replay half lives beside the verify encoders it mirrors.

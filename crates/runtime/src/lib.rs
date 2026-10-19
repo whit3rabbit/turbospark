@@ -117,6 +117,8 @@ pub use model_io::{
 };
 
 pub use error::RuntimeError;
+#[cfg(all(target_os = "macos", feature = "ane-prefill"))]
+pub use families::qwen::AnePrefillMode;
 #[cfg(target_os = "macos")]
 pub use families::qwen::{
     install_has_dflash, install_has_mtp_head, DflashDraftPolicy, DraftPolicies, MtpDraftPolicy,

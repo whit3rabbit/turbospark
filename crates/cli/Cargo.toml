@@ -45,6 +45,11 @@ path = "src/bin/speak.rs"
 name = "turbospark-ocr"
 path = "src/bin/ocr.rs"
 
+# The opt-in ANE+Steel prefill split (`turbospark-runtime`'s `ane-prefill`,
+# docs/SPEEDUP_PLAYBOOK.md). Off by default.
+[features]
+ane-prefill = ["runtime/ane-prefill"]
+
 [dependencies]
 libc = "0.2"
 invocation = { package = "turbospark-invocation", path = "../invocation", version = "0.4.0" }

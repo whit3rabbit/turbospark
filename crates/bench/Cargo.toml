@@ -8,6 +8,10 @@ repository.workspace = true
 publish = false  # dev harness: reads local model installs, not useful on crates.io
 description = "Throughput benchmark harness: three fixed prompts, fixed seeds, a discarded warmup run per prompt, driven through the raw-completion loop."
 
+# Adds the ANE prefill arms to `qwen38_prefill_arm_probe`. Off by default.
+[features]
+ane-prefill = ["runtime/ane-prefill"]
+
 [[bin]]
 name = "turbospark-bench"
 path = "src/main.rs"

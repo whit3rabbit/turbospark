@@ -8,6 +8,11 @@ repository.workspace = true
 publish.workspace = true
 description = "Apple Core ML runner: load compiled or packaged models, marshal tensors, run stateless and stateful predictions."
 
+# The opt-in ANE+Steel prefill split (docs/SPEEDUP_PLAYBOOK.md). Off by
+# default so the default build and the app link are unchanged.
+[features]
+ane-prefill = []
+
 [lib]
 name = "turbospark_coreml"
 path = "src/lib.rs"

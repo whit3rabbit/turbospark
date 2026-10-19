@@ -238,6 +238,23 @@ impl RealForwardRunner {
         self.prefill_rows_attention = on;
     }
 
+    /// `TURBOSPARK_ANE_PREFILL` and `TURBOSPARK_ANE_PREFILL_DIR`: the opt-in
+    /// ANE+Steel prefill split for the dense qwen family, reading its Core ML
+    /// programs and `manifest.json` from `programs`
+    /// (`crates/coreml/tools/gen_ane_prefill_programs.py`). Takes effect at
+    /// the next chunk. Programs that are missing or do not match this
+    /// install turn the split off with one warning, and prefill runs on
+    /// Steel. It needs micro-batches of at least 512 rows, so a prefill chunk
+    /// of 2048.
+    #[cfg(feature = "ane-prefill")]
+    pub fn set_ane_prefill(
+        &mut self,
+        mode: crate::AnePrefillMode,
+        programs: Option<std::path::PathBuf>,
+    ) {
+        self.ane_prefill = crate::families::qwen::AnePrefill::new(mode, programs);
+    }
+
     /// [`RealForwardRunner::open`] with an explicit KV capacity: the
     /// per-layer K/V buffers are sized `max_context * kv_stride` up front
     /// (the decode hot path never allocates), so generation past

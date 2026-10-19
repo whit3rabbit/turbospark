@@ -12,6 +12,12 @@ description = "The raw-completion prefill+decode loop: wires a LogitProducer, th
 name = "turbospark_runtime"
 path = "src/lib.rs"
 
+# The opt-in ANE+Steel prefill split for the dense qwen family
+# (`families/qwen/ane_split.rs`, docs/SPEEDUP_PLAYBOOK.md). Off by default:
+# the default build, the default prefill path and the app link are unchanged.
+[features]
+ane-prefill = ["gpu/ane-prefill", "turbospark-coreml/ane-prefill"]
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 foundation = { package = "turbospark-core", path = "../core", version = "0.4.0" }

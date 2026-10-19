@@ -11,6 +11,11 @@ description = "Metal GPU backend: pipeline cache and kernel dispatch, validated 
 # the crates.io 10 MB limit; nothing outside tests reads them.
 exclude = ["tests/fixtures/"]
 
+# The opt-in ANE+Steel prefill split (docs/SPEEDUP_PLAYBOOK.md). Off by
+# default so the default build and the app link are unchanged.
+[features]
+ane-prefill = []
+
 [lib]
 name = "turbospark_gpu"
 path = "src/lib.rs"

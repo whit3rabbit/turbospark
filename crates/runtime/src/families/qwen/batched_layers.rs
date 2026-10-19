@@ -38,15 +38,46 @@ pub(crate) fn encode_full_attention_block_batched(
     start_position: usize,
     batch: usize,
 ) -> Result<(), RealForwardError> {
-    let gpu_err = RealForwardError::Gpu;
-    let hidden = arch.hidden_size as usize;
-    let num_heads = arch.num_heads as u32;
-    let num_kv = arch.num_full_kv_heads as u32;
-    let head_dim = arch.full_head_dim as u32;
-    let q_dim = (num_heads * head_dim) as usize;
-    let kv_dim = (num_kv * head_dim) as usize;
-    let name = |suffix: &str| prefixed_layer_tensor(prefix, layer, &format!("self_attn.{suffix}"));
+    let slots = full_attention_kv_slots(arch, kv, layer, start_position)?;
+    encode_full_attention_in_proj_batched(
+        context, pass, weights, index, arch, batched, slots, prefix, layer, batch, true,
+    )?;
+    encode_full_attention_core_batched(
+        context,
+        pass,
+        weights,
+        index,
+        arch,
+        qwen,
+        scratch,
+        batched,
+        slots,
+        prefix,
+        layer,
+        qk_norms,
+        start_position,
+        batch,
+    )?;
+    encode_full_attention_o_proj_batched(
+        context, pass, weights, index, arch, batched, prefix, layer, batch,
+    )
+}
 
+/// The K and V cache slots a mask-1 layer's batched projections write, as
+/// `(k_buf, k_off, v_buf, v_off)` with byte offsets.
+pub(crate) type KvSlots<'a> = (&'a gpu::MetalBuffer, usize, &'a gpu::MetalBuffer, usize);
+
+/// The checks that keep [`encode_full_attention_block_batched`]'s K/V
+/// projections writing M adjacent cache slots, then the slots themselves.
+/// Split out (with the stages below) for the opt-in ANE prefill split
+/// (`ane_split.rs`).
+pub(crate) fn full_attention_kv_slots<'a>(
+    arch: &ArchConfig,
+    kv: &'a gpu::KvCacheManager,
+    layer: usize,
+    start_position: usize,
+) -> Result<KvSlots<'a>, RealForwardError> {
+    let kv_dim = (arch.num_full_kv_heads * arch.full_head_dim) as usize;
     // `--kv-bits` is not wired to this M-row GEMM path (`crate::kv_write`'s
     // module doc): it writes K/V straight into the cache via a batched
     // projection and bypasses `kv_write_target`/`encode_kv_commit` entirely.
@@ -68,20 +99,45 @@ pub(crate) fn encode_full_attention_block_batched(
     }
     let (k_buf, k_off) = kv.k_slot(layer, start_position);
     let (v_buf, v_off) = kv.v_slot(layer, start_position);
+    Ok((k_buf, k_off, v_buf, v_off))
+}
 
-    encode_gemm_rows(
-        context,
-        pass,
-        weights,
-        index,
-        &name("q_proj.weight"),
-        2 * q_dim,
-        hidden,
-        (&batched.normed, 0),
-        (&batched.q_packed, 0),
-        batch,
-        batched.steel_gemm,
-    )?;
+/// The mask-1 input projections: q (with its gate, `2 * q_dim` rows) unless
+/// `with_q` is false, then K and V straight into the cache slots.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_full_attention_in_proj_batched(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    weights: &gpu::ResidentGpuWeights,
+    index: &ResidentIndex,
+    arch: &ArchConfig,
+    batched: &BatchedScratch,
+    slots: KvSlots<'_>,
+    prefix: &str,
+    layer: usize,
+    batch: usize,
+    with_q: bool,
+) -> Result<(), RealForwardError> {
+    let hidden = arch.hidden_size as usize;
+    let q_dim = (arch.num_heads * arch.full_head_dim) as usize;
+    let kv_dim = (arch.num_full_kv_heads * arch.full_head_dim) as usize;
+    let name = |suffix: &str| prefixed_layer_tensor(prefix, layer, &format!("self_attn.{suffix}"));
+    let (k_buf, k_off, v_buf, v_off) = slots;
+    if with_q {
+        encode_gemm_rows(
+            context,
+            pass,
+            weights,
+            index,
+            &name("q_proj.weight"),
+            2 * q_dim,
+            hidden,
+            (&batched.normed, 0),
+            (&batched.q_packed, 0),
+            batch,
+            batched.steel_gemm,
+        )?;
+    }
     for (suffix, out) in [
         ("k_proj.weight", (k_buf, k_off as u64)),
         ("v_proj.weight", (v_buf, v_off as u64)),
@@ -100,6 +156,37 @@ pub(crate) fn encode_full_attention_block_batched(
             batched.steel_gemm,
         )?;
     }
+    Ok(())
+}
+
+/// The mask-1 layer between its input projections and `o_proj`: q/gate
+/// split, q/k norms, RoPE, attention and the output gate into
+/// `batched.attn_out`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_full_attention_core_batched(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    weights: &gpu::ResidentGpuWeights,
+    index: &ResidentIndex,
+    arch: &ArchConfig,
+    qwen: &RealQwenState,
+    scratch: &DecodeScratch,
+    batched: &BatchedScratch,
+    slots: KvSlots<'_>,
+    prefix: &str,
+    layer: usize,
+    qk_norms: QkNormConvention,
+    start_position: usize,
+    batch: usize,
+) -> Result<(), RealForwardError> {
+    let gpu_err = RealForwardError::Gpu;
+    let num_heads = arch.num_heads as u32;
+    let num_kv = arch.num_full_kv_heads as u32;
+    let head_dim = arch.full_head_dim as u32;
+    let q_dim = (num_heads * head_dim) as usize;
+    let kv_dim = (num_kv * head_dim) as usize;
+    let name = |suffix: &str| prefixed_layer_tensor(prefix, layer, &format!("self_attn.{suffix}"));
+    let (k_buf, k_off, v_buf, _) = slots;
 
     let q_norm = norm_view(weights, index, &name("q_norm.weight"), head_dim as usize)?;
     let k_norm = norm_view(weights, index, &name("k_norm.weight"), head_dim as usize)?;
@@ -215,7 +302,25 @@ pub(crate) fn encode_full_attention_block_batched(
         )
         .map_err(gpu_err)?;
     }
+    Ok(())
+}
 
+/// The mask-1 layer's `o_proj`, `batched.attn_out` into `batched.o`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_full_attention_o_proj_batched(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    weights: &gpu::ResidentGpuWeights,
+    index: &ResidentIndex,
+    arch: &ArchConfig,
+    batched: &BatchedScratch,
+    prefix: &str,
+    layer: usize,
+    batch: usize,
+) -> Result<(), RealForwardError> {
+    let hidden = arch.hidden_size as usize;
+    let q_dim = (arch.num_heads * arch.full_head_dim) as usize;
+    let name = |suffix: &str| prefixed_layer_tensor(prefix, layer, &format!("self_attn.{suffix}"));
     encode_gemm_rows(
         context,
         pass,
@@ -257,7 +362,32 @@ pub(crate) fn encode_linear_block_batched(
     batch: usize,
     tape_slot: Option<usize>,
 ) -> Result<(), RealForwardError> {
-    let gpu_err = RealForwardError::Gpu;
+    encode_linear_in_proj_batched(
+        context, pass, weights, index, arch, qwen, batched, layer, batch, true,
+    )?;
+    encode_linear_core_batched(
+        context, pass, weights, index, qwen, batched, layer, batch, tape_slot,
+    )?;
+    encode_linear_out_proj_batched(
+        context, pass, weights, index, arch, qwen, batched, layer, batch,
+    )
+}
+
+/// The mask-2 input projections: qkv and z unless `with_qkvz` is false,
+/// then a and b.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_linear_in_proj_batched(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    weights: &gpu::ResidentGpuWeights,
+    index: &ResidentIndex,
+    arch: &ArchConfig,
+    qwen: &RealQwenState,
+    batched: &BatchedScratch,
+    layer: usize,
+    batch: usize,
+    with_qkvz: bool,
+) -> Result<(), RealForwardError> {
     let hidden = arch.hidden_size as usize;
     let shape = qwen.shape;
     let qkv_dim = shape.qkv_dim() as usize;
@@ -269,12 +399,13 @@ pub(crate) fn encode_linear_block_batched(
     // form, so this takes the four-separate-projection branch that already
     // exists for the non-INT4 path. Four batched GEMMs beat one fused GEMV
     // per token at every M this pass runs at.
-    for (suffix, rows, out) in [
+    let all = [
         ("in_proj_qkv.weight", qkv_dim, &batched.gdn_qkv_raw),
         ("in_proj_z.weight", value_dim, &batched.gdn_z),
         ("in_proj_a.weight", v_heads, &batched.gdn_a),
         ("in_proj_b.weight", v_heads, &batched.gdn_b),
-    ] {
+    ];
+    for &(suffix, rows, out) in &all[if with_qkvz { 0 } else { 2 }..] {
         encode_gemm_rows(
             context,
             pass,
@@ -289,6 +420,28 @@ pub(crate) fn encode_linear_block_batched(
             batched.steel_gemm,
         )?;
     }
+    Ok(())
+}
+
+/// The mask-2 layer between its input projections and `out_proj`: the tape
+/// copy, conv, q/k norm, delta rule and gated norm into `batched.gdn_out`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_linear_core_batched(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    weights: &gpu::ResidentGpuWeights,
+    index: &ResidentIndex,
+    qwen: &RealQwenState,
+    batched: &BatchedScratch,
+    layer: usize,
+    batch: usize,
+    tape_slot: Option<usize>,
+) -> Result<(), RealForwardError> {
+    let gpu_err = RealForwardError::Gpu;
+    let shape = qwen.shape;
+    let qkv_dim = shape.qkv_dim() as usize;
+    let v_heads = shape.num_v_heads as usize;
+    let name = |suffix: &str| layer_tensor(layer, &format!("linear_attn.{suffix}"));
 
     // THE TAPE, when this scratch records one: copy the three row inputs
     // the state advance is a function of, per linear-layer ordinal. The
@@ -416,7 +569,25 @@ pub(crate) fn encode_linear_block_batched(
         (&batched.gdn_out, 0),
         batch as u32,
     )
-    .map_err(gpu_err)?;
+    .map_err(gpu_err)
+}
+
+/// The mask-2 layer's `out_proj`, `batched.gdn_out` into `batched.o`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_linear_out_proj_batched(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    weights: &gpu::ResidentGpuWeights,
+    index: &ResidentIndex,
+    arch: &ArchConfig,
+    qwen: &RealQwenState,
+    batched: &BatchedScratch,
+    layer: usize,
+    batch: usize,
+) -> Result<(), RealForwardError> {
+    let hidden = arch.hidden_size as usize;
+    let value_dim = qwen.shape.value_dim() as usize;
+    let name = |suffix: &str| layer_tensor(layer, &format!("linear_attn.{suffix}"));
     encode_gemm_rows(
         context,
         pass,
@@ -561,7 +732,6 @@ pub(crate) fn encode_dense_ffn_batched(
     use_silu: bool,
     batch: usize,
 ) -> Result<(), RealForwardError> {
-    let gpu_err = RealForwardError::Gpu;
     for (suffix, out) in [
         ("mlp.gate_proj.weight", &batched.ffn_gate),
         ("mlp.up_proj.weight", &batched.ffn_up),
@@ -580,7 +750,57 @@ pub(crate) fn encode_dense_ffn_batched(
             batched.steel_gemm,
         )?;
     }
+    encode_dense_ffn_tail_batched(
+        context, pass, weights, index, scratch, batched, prefix, layer, hidden, inter, use_silu,
+        batch,
+    )
+}
 
+/// [`encode_dense_ffn_batched`] after gate and up: `silu_mul` per token,
+/// batched down, then the raw residual add per token. Split out so the ANE
+/// prefill split can put gate and up in their own command buffers.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_dense_ffn_tail_batched(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    weights: &gpu::ResidentGpuWeights,
+    index: &ResidentIndex,
+    scratch: &DecodeScratch,
+    batched: &BatchedScratch,
+    prefix: &str,
+    layer: usize,
+    hidden: usize,
+    inter: usize,
+    use_silu: bool,
+    batch: usize,
+) -> Result<(), RealForwardError> {
+    encode_dense_ffn_act_batched(context, pass, batched, inter, use_silu, batch)?;
+    encode_gemm_rows(
+        context,
+        pass,
+        weights,
+        index,
+        &prefixed_layer_tensor(prefix, layer, "mlp.down_proj.weight"),
+        hidden,
+        inter,
+        (&batched.ffn_act, 0),
+        (&batched.h2, 0),
+        batch,
+        batched.steel_gemm,
+    )?;
+    encode_dense_ffn_residual_batched(context, pass, scratch, batched, hidden, batch)
+}
+
+/// The FFN activation per token: `ffn_act = act(ffn_gate) * ffn_up`.
+pub(crate) fn encode_dense_ffn_act_batched(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    batched: &BatchedScratch,
+    inter: usize,
+    use_silu: bool,
+    batch: usize,
+) -> Result<(), RealForwardError> {
+    let gpu_err = RealForwardError::Gpu;
     let act = if use_silu {
         gpu::encode_silu_mul
     } else {
@@ -598,21 +818,19 @@ pub(crate) fn encode_dense_ffn_batched(
         )
         .map_err(gpu_err)?;
     }
+    Ok(())
+}
 
-    encode_gemm_rows(
-        context,
-        pass,
-        weights,
-        index,
-        &prefixed_layer_tensor(prefix, layer, "mlp.down_proj.weight"),
-        hidden,
-        inter,
-        (&batched.ffn_act, 0),
-        (&batched.h2, 0),
-        batch,
-        batched.steel_gemm,
-    )?;
-
+/// The FFN's raw residual add per token, `batched.h2` into `scratch.x`.
+pub(crate) fn encode_dense_ffn_residual_batched(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    scratch: &DecodeScratch,
+    batched: &BatchedScratch,
+    hidden: usize,
+    batch: usize,
+) -> Result<(), RealForwardError> {
+    let gpu_err = RealForwardError::Gpu;
     for m in 0..batch {
         let row = (m * hidden) as u64 * 2;
         gpu::encode_residual_add(
