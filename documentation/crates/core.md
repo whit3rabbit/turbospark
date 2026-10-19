@@ -36,7 +36,7 @@ under the alias `foundation` so references are not confused with the standard
 library `core` crate in the extern prelude:
 
 ```toml
-foundation = { package = "turbospark-core", path = "../core", version = "0.3.2" }
+foundation = { package = "turbospark-core", path = "../core", version = "0.4.0" }
 ```
 
 Follow the same alias convention if you add a crate.
