@@ -74,3 +74,64 @@ fn perhead_at_hidden_width_is_bit_identical_to_the_whole_vector_norm_per_row() {
         "an all-zero output proves nothing"
     );
 }
+
+/// The centered pair, which the MTP head's batched priming uses: the weight
+/// is an offset from unity, applied as `(1 + w)`, in both kernels.
+#[test]
+fn centered_perhead_at_hidden_width_is_bit_identical_to_the_whole_vector_norm_per_row() {
+    use turbospark_gpu::{encode_rms_norm_bf16w_centered, encode_rms_norm_bf16w_perhead_centered};
+
+    let mut context = MetalContext::new().expect("Metal device available on this machine");
+    let hidden = 5_120usize;
+    let rows = 5usize;
+    let eps = 1e-6f32;
+
+    let x: Vec<u16> = (0..rows * hidden)
+        .map(|i| {
+            let row = (i / hidden) as f32;
+            f16::from_f32((1.0 + 2.0 * row) * 0.29 * ((i as f32) * 0.017).cos()).to_bits()
+        })
+        .collect();
+    let weight: Vec<u16> = (0..hidden)
+        .map(|i| f32_to_bf16_bits(0.6 * ((i as f32) * 0.11).sin()))
+        .collect();
+
+    let x_buf = context.new_buffer_with_data(&bytes(&x));
+    let w_buf = context.new_buffer_with_data(&bytes(&weight));
+    let per_row = context.new_buffer_with_data(&bytes(&vec![0u16; rows * hidden]));
+    let batched = context.new_buffer_with_data(&bytes(&vec![0u16; rows * hidden]));
+
+    let pass = context.begin_pass();
+    for r in 0..rows {
+        let off = (r * hidden * 2) as u64;
+        encode_rms_norm_bf16w_centered(
+            &mut context,
+            &pass,
+            (&x_buf, off),
+            (&w_buf, 0),
+            (&per_row, off),
+            hidden as u32,
+            eps,
+        )
+        .expect("per-row centered norm");
+    }
+    encode_rms_norm_bf16w_perhead_centered(
+        &mut context,
+        &pass,
+        (&x_buf, 0),
+        (&w_buf, 0),
+        (&batched, 0),
+        rows as u32,
+        hidden as u32,
+        eps,
+    )
+    .expect("batched centered norm");
+    pass.commit_and_wait();
+
+    let n = rows * hidden;
+    let a = turbospark_gpu::read_buffer_f16(&per_row, 0, n);
+    let b = turbospark_gpu::read_buffer_f16(&batched, 0, n);
+    let bits = |v: &[f16]| v.iter().map(|h| h.to_bits()).collect::<Vec<u16>>();
+    assert_eq!(bits(&a), bits(&b));
+    assert!(a.iter().any(|h| h.to_f32() != 0.0));
+}
