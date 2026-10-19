@@ -109,6 +109,10 @@ pub(crate) struct RealQwenState {
     /// It is never allocated BESIDE a drafter's copy: the chunked driver
     /// refuses an open drafter by name, so at most one of the two exists.
     pub(crate) batched_prefill: Option<BatchedScratch>,
+    /// The opt-in ANE prefill split's planes, programs and event
+    /// (`ane_split.rs`), loaded on its first micro-batch.
+    #[cfg(feature = "ane-prefill")]
+    pub(crate) ane_split: Option<super::ane_split::AneSplitState>,
     /// The Hadamard-folded weight contract's plan (the Bonsai-2 line), built
     /// only when the manifest carries a `hadamard` section. `None` on every
     /// install written before the contract existed, which makes every
@@ -395,6 +399,8 @@ impl RealQwenState {
             h2: halfs(hidden),
             shared_gate_logit: halfs(1),
             batched_prefill: None,
+            #[cfg(feature = "ane-prefill")]
+            ane_split: None,
             hadamard,
         })
     }
@@ -413,19 +419,27 @@ impl RealQwenState {
     /// batched INT4 GEMM caps a dispatch at its per-thread accumulator
     /// array, and the driver's micro-batch is capped at the same constant,
     /// so a full micro-batch is exactly one dispatch with no sub-batching.
-    /// `steel` sizes the scratch for the Steel micro-batch
-    /// (`QWEN_STEEL_PREFILL_BATCH` rows) and lets its GEMMs take the Steel
-    /// kernel; otherwise it is the 16-row scalar arm's. Fixed at first
-    /// allocation: the choice is the runner's, read once at open.
+    /// `steel` sizes the scratch for the Steel micro-batch (`steel_rows`,
+    /// `QWEN_STEEL_PREFILL_BATCH` unless the ANE prefill split widens it)
+    /// and lets its GEMMs take the Steel kernel; otherwise it is the 16-row
+    /// scalar arm's. The Steel choice is fixed at first allocation: it is
+    /// the runner's, read once at open. A Steel scratch is reallocated only
+    /// when `steel_rows` changes, which the default arm never asks for.
     pub(crate) fn ensure_batched_prefill(
         &mut self,
         context: &mut gpu::MetalContext,
         arch: &ArchConfig,
         steel: bool,
         rows_attention: bool,
+        steel_rows: usize,
     ) -> Result<(), RealForwardError> {
-        if self.batched_prefill.is_none() {
-            self.allocate_batched_prefill(context, arch, steel)?;
+        let resize = self
+            .batched_prefill
+            .as_ref()
+            .is_some_and(|b| b.steel_gemm && b.batch != steel_rows);
+        if self.batched_prefill.is_none() || resize {
+            self.batched_prefill = None;
+            self.allocate_batched_prefill(context, arch, steel, steel_rows)?;
         }
         // Reconciled on every call, unlike the Steel choice, so one runner
         // can A/B it (`qwen38_prefill_arm_probe`). 3.1 MiB of partials at
@@ -457,9 +471,10 @@ impl RealQwenState {
         context: &mut gpu::MetalContext,
         arch: &ArchConfig,
         steel: bool,
+        steel_rows: usize,
     ) -> Result<(), RealForwardError> {
         let rows = if steel {
-            crate::real_forward_types::QWEN_STEEL_PREFILL_BATCH
+            steel_rows
         } else {
             crate::real_forward_types::MAX_PREFILL_BATCH
         };

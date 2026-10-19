@@ -49,6 +49,7 @@ enum SettingsControlCatalog {
         .init(title: "Output Rate Cap", pane: .engine, timing: .modelReload),
         .init(title: "Personality", pane: .engine, timing: .nextTurn),
         .init(title: "Power Profile", pane: .engine, timing: .modelReload),
+        .init(title: "Prefill Mode", pane: .engine, timing: .modelReload),
         .init(title: "Repetition Penalty", pane: .engine, timing: .nextTurn),
         .init(title: "Speculation Mode", pane: .engine, timing: .modelReload),
         .init(title: "Speculative Drafter", pane: .engine, timing: .modelReload),

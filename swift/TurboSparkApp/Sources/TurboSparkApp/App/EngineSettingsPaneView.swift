@@ -31,6 +31,7 @@ struct EngineSettingsPaneView: View {
             guardrailsSection
             speculationSection
             kvBitsSection
+            anePrefillSection
             inProcessServerSection
         }
         .formStyle(.grouped)

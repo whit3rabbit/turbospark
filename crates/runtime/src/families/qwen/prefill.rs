@@ -208,11 +208,16 @@ impl RealForwardRunner {
             let arch = self.arch.clone();
             let steel = self.prefill_steel;
             let rows_attention = self.prefill_rows_attention;
+            // Wider only while the opt-in ANE prefill split is on.
+            #[cfg(feature = "ane-prefill")]
+            let steel_rows = self.ane_prefill_steel_rows(tokens.len());
+            #[cfg(not(feature = "ane-prefill"))]
+            let steel_rows = crate::real_forward_types::QWEN_STEEL_PREFILL_BATCH;
             let context = &mut self.context;
             self.real_qwen
                 .as_mut()
                 .ok_or_else(|| RealForwardError::Unsupported("not a Qwen install".to_string()))?
-                .ensure_batched_prefill(context, &arch, steel, rows_attention)?;
+                .ensure_batched_prefill(context, &arch, steel, rows_attention, steel_rows)?;
         }
         // The batched arm's micro-batch is whatever its scratch was sized
         // for (64 rows with Steel, 16 without); the per-token arm's is 16.
@@ -408,7 +413,7 @@ impl RealForwardRunner {
         result
     }
 
-    fn prefill_micro_batch_qwen_dense_inner(
+    pub(super) fn prefill_micro_batch_qwen_dense_inner(
         &mut self,
         tokens: &[i32],
         start_position: usize,
@@ -600,6 +605,21 @@ impl RealForwardRunner {
             })
             .collect();
 
+        // The opt-in ANE prefill split (`ane_split.rs`) takes the micro-batch
+        // when it applies, or hands the pass back.
+        #[cfg(feature = "ane-prefill")]
+        let pass = match self.try_ane_prefill_micro_batch(
+            pass,
+            tokens,
+            start_position,
+            want_head,
+            batched_gemv,
+            logits,
+        ) {
+            super::ane_split::AneMicroBatch::Ran(result) => return result,
+            super::ane_split::AneMicroBatch::Declined(pass) => pass,
+        };
+
         let (context, weights, index, scratch, kv, qwen, resid_capture, steering) = (
             &mut self.context,
             &self.weights,
@@ -683,6 +703,19 @@ impl RealForwardRunner {
         let t_wait = Instant::now();
         self.phases.final_cb_gpu_nanos += (pass.commit_and_wait_with_gpu_time() * 1e9) as u64;
         self.phases.final_wait_nanos += t_wait.elapsed().as_nanos() as u64;
+        self.finish_qwen_dense_micro_batch(start_position, m, want_head, logits)
+    }
+
+    /// After a dense micro-batch's last command buffer has completed: the KV
+    /// advance, the residual capture, and the logits readback.
+    pub(super) fn finish_qwen_dense_micro_batch(
+        &mut self,
+        start_position: usize,
+        m: usize,
+        want_head: bool,
+        logits: &mut [LogitValue],
+    ) -> Result<(), RealForwardError> {
+        let vocab = self.arch.vocab_size as usize;
         self.kv.advance_by(m);
 
         let skip_head = !want_head;
