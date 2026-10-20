@@ -134,6 +134,15 @@ final class ModelHubFilterTests: XCTestCase {
         XCTAssertEqual(result.map(\.alias), ["mistral7b"])
     }
 
+    /// Audio uses its pinned audio-profile catalog and must not leak text
+    /// entries into the dedicated Audio view.
+    func testAudioTabLeavesTextRowsToTheSeparateAudioCatalog() throws {
+        var filter = discoveryFilter()
+        filter.tab = .audio
+        XCTAssertTrue(ModelHubFilter.Tab.allCases.contains(.audio))
+        XCTAssertTrue(filter.apply(to: try catalog(), installedAliases: [], recommendations: [:]).isEmpty)
+    }
+
     /// Tests that search queries match against alias, name, family, and notes.
     func testSearchMatchesAliasNameFamilyAndNotes() throws {
         let rows = [try entry(alias: "a1", name: "Alpha", family: "gemma4", notes: "streams experts")]
