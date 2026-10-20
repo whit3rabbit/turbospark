@@ -19,6 +19,10 @@ file into a changelog.
 - Read [API workspace](docs/API_WORKSPACE.md) when changing Text, Image, or
   TypeSafe serving. Text and Image share the TurboSpark listener. TypeSafe
   owns a separate loopback OpenKind daemon and Keychain key.
+- Read [Audio workspace](docs/AUDIO_WORKSPACE.md) and
+  [Swift audio and meeting notes architecture](swift/docs/SWIFT_AUDIO_MEETING_NOTES.md)
+  when changing speech transcription, voice cloning, audio capture, speaker
+  intelligence, or meeting notes.
 - Read `docs/DEVELOPMENT.md` before setup or build failures.
 - Read `docs/TESTING.md` before adding or changing tests.
 - Read `docs/BENCHMARKING.md` and `docs/BENCHMARKS.md` before quoting or
@@ -132,6 +136,9 @@ The root references are:
 - Every UI string uses bundled `Text` or `AppStrings.localized` to pass the
   ten localization parity gates. `AppJSONStore` must quarantine corrupt files
   rather than overwriting them, preventing silent data loss.
+- Audio meeting notes summarization is strictly non-destructive: model
+  generation mutates only `item.summary` and must never overwrite or mutate
+  original transcript segments or text.
 
 ## Minimal verification
 

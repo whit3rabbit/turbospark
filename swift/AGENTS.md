@@ -25,6 +25,7 @@ Short seams. Verify each one before release.
 - [Syntext code search](docs/SYNTEXT.md) and
   [conversation recall (Syntext context engine)](docs/SYNTEXT_CONTEXT.md)
 - [Swift localization](docs/SWIFT_LOCALIZATION.md)
+- [Swift audio and meeting notes architecture](docs/SWIFT_AUDIO_MEETING_NOTES.md)
 - [Swift keyboard and accessibility](docs/KEYBOARD_SHORTCUTS.md)
 - [Swift API workspace](docs/SWIFT_API_WORKSPACE.md)
 - [Automatic app updates](docs/AUTO_UPDATE.md)
@@ -177,6 +178,25 @@ staging files changed.
   (`isModelLoaded`, `canLoadModel`, `canUnloadModel`). Unloading is wired into
   `AppModel.canUnloadAnyModel` and the top bar eject button, ensuring audio
   models can be loaded and unloaded consistently with text and image sessions.
+- Audio meeting notes and summary isolation: Post-meeting summary and action
+  item generation (`AudioMeetingNotesAdvisor`, `AudioMeetingNotesView`) strictly
+  mutates `item.summary` and never modifies or overwrites `item.transcripts` or
+  `item.transcriptText`. The raw timestamped transcript remains immutable
+  ground truth.
+- CoreAudio process tap vs ScreenCaptureKit: Meeting audio capture on macOS
+  14.2+ uses native CoreAudio process tapping (`CATapDescription`) with
+  `NSAudioCaptureUsageDescription` to isolate conference apps without
+  triggering Screen Recording prompts or displaying system recording
+  overlays. ScreenCaptureKit is reserved as fallback for older macOS
+  versions or full-system capture.
+- Speaker intelligence and voiceprints: Cross-meeting speaker recognition
+  extracts 64-band log-mel voiceprints using Accelerate vDSP without
+  external neural dependencies. Cosine similarity thresholding (>= 0.78)
+  matches known speakers in `speaker_profiles.json`. Local microphone energy
+  isolation assigns "You" tags deterministically to prevent false re-labeling.
+- Custom vocabulary normalization: Jargon and acronym replacements
+  (`AudioCustomVocabulary`) must enforce regex word boundaries `\b` to prevent
+  destructive substring replacement in transcripts.
 - The Sparkle updater starts only inside a real .app bundle (see
   `SparkleUpdateController`); never bypass that guard for `swift run` builds.
   Update trust is the EdDSA signature, not Apple code signing -- the bundle

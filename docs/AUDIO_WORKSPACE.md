@@ -46,10 +46,26 @@ diarization id (`speakerNames`, `speakerMerges`), never in the segments, which
 keep that id in `speakerID`. A rename therefore reaches every line, every
 transcript revision, and the Text, SRT, WebVTT, and JSON exports, and clearing a
 name or separating a merge restores the default label. JSON exports put the name
-in `speaker` and keep the raw id. The diarizer reports no measure of how alike
-two voices sound, so the sheet offers a plain Merge Into choice, not a
-suggestion. The transcript's Name Speakers... button opens the same sheet later,
-and each line's speaker menu moves only that line to another voice.
+in `speaker` and keep the raw id.
+
+Speaker intelligence assists naming with one-click suggestion chips:
+- **Local speaker ('You')**: Compares RMS energy across microphone and system
+  audio channels during active speech turns to detect when you are speaking.
+- **Cross-meeting recognition**: Extracts 64-band log-mel voiceprint vectors via
+  Accelerate vDSP on clean speech turns and matches them against saved profiles
+  in `speaker_profiles.json` using cosine similarity (threshold >= 0.78),
+  displaying suggested names with match confidence percentages.
+- **Merges**: Offers Merge Into choices, and naming a voice updates the profile
+  store so the voice is recognized in future meetings.
+
+The transcript's Name Speakers... button opens the same sheet later, and each
+line's speaker menu moves only that line to another voice.
+
+Custom vocabulary and jargon terms (`AudioCustomVocabulary`) can be configured
+via the Vocabulary... button in the header and transcript editor. Terms and their
+phonetic or spelling aliases are persisted in `custom_vocabulary.json` and applied
+automatically to live speech and final transcripts using word-boundary safe regex
+replacement (`\b`), preventing substring corruption within larger words.
 
 Installed > Audio lists the same models with the Text and Image lifecycle:
 installed, local folders, installs found on disk without a receipt, installs
@@ -59,11 +75,14 @@ uses a model for which job. Memory figures are the catalog's estimate
 (`resident_memory_bytes`), not a measurement.
 
 Choose a microphone, app audio, or both. Check devices and permissions before
-starting. System audio uses ScreenCaptureKit on macOS 14; microphone audio uses
-AVAudioEngine. TurboSpark playback is excluded and screen frames are not saved.
-Pause removes that interval from the saved timeline. Markers remain available
-for keyboard and VoiceOver navigation. Recording status remains in the top bar
-when switching to another workspace.
+starting. On macOS 14.2+, system and meeting audio use native CoreAudio process
+taps (`CATapDescription`) with `NSAudioCaptureUsageDescription`, avoiding Screen
+Recording permission prompts and the purple menu-bar indicator. On earlier
+versions (macOS 14.0-14.1), it automatically falls back to ScreenCaptureKit.
+Microphone audio uses AVAudioEngine. TurboSpark playback is excluded and screen
+frames are not saved. Pause removes that interval from the saved timeline.
+Markers remain available for keyboard and VoiceOver navigation. Recording status
+remains in the top bar when switching to another workspace.
 
 Capture writes bounded encrypted WAV chunks independently of inference. A slow
 model increases the visible draft backlog instead of stopping recording. A
@@ -84,10 +103,22 @@ revision arrives. Whisper window timing and Qwen whole-clip timing are approxima
 extents, not forced alignment. Subtitles exclude segments with no usable timing.
 Speaker and word metadata appear only when a model supplies them.
 
-With a local chat model loaded, Summarize meeting produces excerpt summaries and
-action items linked to source transcript positions. Summaries remain tied to the
-transcript revision used, so editing a transcript does not silently change an
-existing summary.
+### Notes and Summary
+
+In the audio library inspector, takes offer a segmented view switcher:
+`[ Transcript | Notes & Summary ]`. The Notes & Summary tab provides:
+- **Dedicated model picker**: Select any installed chat model, with
+  `AudioMeetingNotesAdvisor` highlighting lightweight, high-speed models
+  suitable for Apple Silicon (recommending `Qwen 3.5 1.5B` and `Qwen 1.5B`
+  variants with 32k context).
+- **Structured notes**: Generates executive Markdown notes containing Key
+  Decisions, Action Items, and Discussion Summaries attributed to identified
+  speakers.
+- **Interactive jump chips**: Embedded timestamp chips (e.g. `[02:15]`) allow
+  jumping directly to that point in the audio player to verify decisions.
+- **Ground-truth immutability**: Meeting summaries strictly update `item.summary`
+  and never overwrite, edit, or invalidate original transcript text. Summaries
+  remain tied to the specific transcript revision used.
 
 ## Organize and search
 
