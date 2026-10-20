@@ -83,6 +83,9 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked
     private var timeline: AudioCaptureTimeline?
     private var stoppedElapsed: Double = 0
     private var engine: AVAudioEngine?
+    private var systemEngine: AVAudioEngine?
+    private var systemTapID: AudioObjectID?
+    private var systemAggregateID: AudioObjectID?
     private var stream: SCStream?
     private var configurationObserver: NSObjectProtocol?
     private var applicationObserver: NSObjectProtocol?
@@ -113,6 +116,16 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked
     }
 
     static func applications() async throws -> [Application] {
+        if #available(macOS 14.2, *) {
+            let apps = NSWorkspace.shared.runningApplications
+                .filter { $0.activationPolicy == .regular && $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
+                .compactMap { app -> Application? in
+                    guard let name = app.localizedName, !name.isEmpty else { return nil }
+                    return Application(id: app.processIdentifier, name: name)
+                }
+                .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            if !apps.isEmpty { return apps }
+        }
         guard systemAudioAccessAllowed() else { throw CaptureError.systemAudioPermission }
         let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: false)
         return content.applications.filter { $0.processID != ProcessInfo.processInfo.processIdentifier }.map { Application(id: $0.processID, name: $0.applicationName) }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
@@ -139,42 +152,57 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked
     func start(configuration: Configuration) async throws {
         guard let generation = try reserveStart() else { throw CaptureError.alreadyRecording }
         var newStream: SCStream?
+        var newSysTap: (engine: AVAudioEngine, tapID: AudioObjectID, aggID: AudioObjectID)? = nil
         do {
             guard configuration.capturesMicrophone || configuration.systemSource != .none else { throw CaptureError.noSource }
             if configuration.systemSource != .none {
-                guard Self.systemAudioAccessAllowed() else { throw CaptureError.systemAudioPermission }
-                let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: false)
-                guard let display = content.displays.first else { throw CaptureError.unavailable }
-                let filter: SCContentFilter
-                switch configuration.systemSource {
-                case .none: throw CaptureError.noSource
-                case .all:
-                    filter = SCContentFilter(display: display, excludingApplications: content.applications.filter { $0.processID == ProcessInfo.processInfo.processIdentifier }, exceptingWindows: [])
-                case .application(let pid):
-                    guard pid != ProcessInfo.processInfo.processIdentifier, let application = content.applications.first(where: { $0.processID == pid }) else { throw CaptureError.unavailable }
-                    filter = SCContentFilter(display: display, including: [application], exceptingWindows: [])
+                // First try native macOS CoreAudio Process Tap (requires no Screen Recording permission)
+                if #available(macOS 14.2, *), let tap = try? makeSystemAudioTap(source: configuration.systemSource) {
+                    newSysTap = tap
+                } else {
+                    guard Self.systemAudioAccessAllowed() else { throw CaptureError.systemAudioPermission }
+                    let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: false)
+                    guard let display = content.displays.first else { throw CaptureError.unavailable }
+                    let filter: SCContentFilter
+                    switch configuration.systemSource {
+                    case .none: throw CaptureError.noSource
+                    case .all:
+                        filter = SCContentFilter(display: display, excludingApplications: content.applications.filter { $0.processID == ProcessInfo.processInfo.processIdentifier }, exceptingWindows: [])
+                    case .application(let pid):
+                        guard pid != ProcessInfo.processInfo.processIdentifier, let application = content.applications.first(where: { $0.processID == pid }) else { throw CaptureError.unavailable }
+                        filter = SCContentFilter(display: display, including: [application], exceptingWindows: [])
+                    }
+                    let config = SCStreamConfiguration()
+                    config.capturesAudio = true
+                    config.excludesCurrentProcessAudio = true
+                    config.sampleRate = 48_000
+                    config.channelCount = 2
+                    config.width = 2
+                    config.height = 2
+                    config.minimumFrameInterval = CMTime(value: 1, timescale: 1)
+                    config.showsCursor = false
+                    let stream = SCStream(filter: filter, configuration: config, delegate: self)
+                    try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: systemQueue)
+                    newStream = stream
                 }
-                let config = SCStreamConfiguration()
-                config.capturesAudio = true
-                config.excludesCurrentProcessAudio = true
-                config.sampleRate = 48_000
-                config.channelCount = 2
-                config.width = 2
-                config.height = 2
-                config.minimumFrameInterval = CMTime(value: 1, timescale: 1)
-                config.showsCursor = false
-                let stream = SCStream(filter: filter, configuration: config, delegate: self)
-                try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: systemQueue)
-                newStream = stream
             }
             let newEngine = configuration.capturesMicrophone ? try makeMicrophoneEngine(device: configuration.microphoneID) : nil
             persistence.sync { accumulators.removeAll(); writeFailed = false }
-            guard activate(engine: newEngine, stream: newStream, generation: generation, source: configuration.systemSource) else {
+            guard activate(engine: newEngine, systemTap: newSysTap, stream: newStream, generation: generation, source: configuration.systemSource) else {
                 newEngine?.inputNode.removeTap(onBus: 0)
                 newEngine?.stop()
+                if let newSysTap {
+                    newSysTap.engine.inputNode.removeTap(onBus: 0)
+                    newSysTap.engine.stop()
+                    AudioHardwareDestroyAggregateDevice(newSysTap.aggID)
+                    if #available(macOS 14.2, *) {
+                        AudioHardwareDestroyProcessTap(newSysTap.tapID)
+                    }
+                }
                 throw CancellationError()
             }
             try newEngine?.start()
+            try newSysTap?.engine.start()
             if let newStream { try await newStream.startCapture() }
             guard isAccepting else { throw CancellationError() }
         } catch {
@@ -182,6 +210,14 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked
             if let newStream {
                 try? await newStream.stopCapture()
                 clearStream(newStream)
+            }
+            if let newSysTap {
+                newSysTap.engine.inputNode.removeTap(onBus: 0)
+                newSysTap.engine.stop()
+                AudioHardwareDestroyAggregateDevice(newSysTap.aggID)
+                if #available(macOS 14.2, *) {
+                    AudioHardwareDestroyProcessTap(newSysTap.tapID)
+                }
             }
             throw error
         }
@@ -221,6 +257,12 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked
         timeline = nil
         let engine = self.engine
         self.engine = nil
+        let sysEngine = self.systemEngine
+        self.systemEngine = nil
+        let tapID = self.systemTapID
+        self.systemTapID = nil
+        let aggID = self.systemAggregateID
+        self.systemAggregateID = nil
         let observer = configurationObserver
         configurationObserver = nil
         let applicationObserver = self.applicationObserver
@@ -230,6 +272,14 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked
         if let applicationObserver { NSWorkspace.shared.notificationCenter.removeObserver(applicationObserver) }
         engine?.inputNode.removeTap(onBus: 0)
         engine?.stop()
+        sysEngine?.inputNode.removeTap(onBus: 0)
+        sysEngine?.stop()
+        if let aggID { AudioHardwareDestroyAggregateDevice(aggID) }
+        if let tapID {
+            if #available(macOS 14.2, *) {
+                AudioHardwareDestroyProcessTap(tapID)
+            }
+        }
         persistence.sync { flushAll() }
         return stoppedElapsed
     }
@@ -271,10 +321,13 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked
         generation &+= 1
         return generation
     }
-    private func activate(engine: AVAudioEngine?, stream: SCStream?, generation: UInt64, source: SystemSource) -> Bool {
+    private func activate(engine: AVAudioEngine?, systemTap: (engine: AVAudioEngine, tapID: AudioObjectID, aggID: AudioObjectID)?, stream: SCStream?, generation: UInt64, source: SystemSource) -> Bool {
         lock.lock(); defer { lock.unlock() }
         guard starting, self.generation == generation else { return false }
         self.engine = engine
+        self.systemEngine = systemTap?.engine
+        self.systemTapID = systemTap?.tapID
+        self.systemAggregateID = systemTap?.aggID
         self.stream = stream
         timeline = AudioCaptureTimeline(start: Self.now)
         stoppedElapsed = 0
@@ -324,6 +377,110 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked
         }
         engine.prepare()
         return engine
+    }
+
+    @available(macOS 14.2, *)
+    private func makeSystemAudioTap(source: SystemSource) throws -> (engine: AVAudioEngine, tapID: AudioObjectID, aggID: AudioObjectID) {
+        func halProcessObjectID(for pid: pid_t) -> AudioObjectID? {
+            var address = AudioObjectPropertyAddress(
+                mSelector: kAudioHardwarePropertyProcessObjectList,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var size: UInt32 = 0
+            guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size) == noErr else { return nil }
+            let count = Int(size) / MemoryLayout<AudioObjectID>.size
+            var ids = [AudioObjectID](repeating: 0, count: count)
+            guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &ids) == noErr else { return nil }
+            for id in ids {
+                var pidAddress = AudioObjectPropertyAddress(
+                    mSelector: kAudioProcessPropertyPID,
+                    mScope: kAudioObjectPropertyScopeGlobal,
+                    mElement: kAudioObjectPropertyElementMain
+                )
+                var currentPID: pid_t = 0
+                var pidSize = UInt32(MemoryLayout<pid_t>.size)
+                if AudioObjectGetPropertyData(id, &pidAddress, 0, nil, &pidSize, &currentPID) == noErr, currentPID == pid {
+                    return id
+                }
+            }
+            return nil
+        }
+
+        func defaultOutputDeviceUID() -> String? {
+            var address = AudioObjectPropertyAddress(
+                mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var deviceID = AudioObjectID(kAudioObjectUnknown)
+            var size = UInt32(MemoryLayout<AudioObjectID>.size)
+            guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &deviceID) == noErr else { return nil }
+            var uidAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyDeviceUID,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var uid: Unmanaged<CFString>?
+            size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+            guard AudioObjectGetPropertyData(deviceID, &uidAddress, 0, nil, &size, &uid) == noErr, let uid else { return nil }
+            return uid.takeUnretainedValue() as String
+        }
+
+        guard let outputUID = defaultOutputDeviceUID() else { throw CaptureError.unavailable }
+
+        let desc: CATapDescription
+        switch source {
+        case .none:
+            throw CaptureError.noSource
+        case .all:
+            let myPID = ProcessInfo.processInfo.processIdentifier
+            let halPID = halProcessObjectID(for: myPID)
+            let exclude = halPID != nil ? [halPID!] : []
+            desc = CATapDescription(stereoGlobalTapButExcludeProcesses: exclude)
+        case .application(let pid):
+            guard let targetHALID = halProcessObjectID(for: pid) else { throw CaptureError.unavailable }
+            desc = CATapDescription(stereoMixdownOfProcesses: [targetHALID])
+        }
+
+        var tapID = AudioObjectID(kAudioObjectUnknown)
+        let sTap = AudioHardwareCreateProcessTap(desc, &tapID)
+        guard sTap == noErr else { throw CaptureError.unavailable }
+
+        let dict: [String: Any] = [
+            kAudioAggregateDeviceNameKey: "TurboSparkSystemTap",
+            kAudioAggregateDeviceUIDKey: UUID().uuidString,
+            kAudioAggregateDeviceIsPrivateKey: true,
+            kAudioAggregateDeviceTapAutoStartKey: true,
+            kAudioAggregateDeviceMainSubDeviceKey: outputUID,
+            kAudioAggregateDeviceSubDeviceListKey: [[kAudioSubDeviceUIDKey: outputUID]],
+            kAudioAggregateDeviceTapListKey: [[kAudioSubTapUIDKey: desc.uuid.uuidString, kAudioSubTapDriftCompensationKey: true]]
+        ]
+        var aggID = AudioObjectID(kAudioObjectUnknown)
+        let sAgg = AudioHardwareCreateAggregateDevice(dict as CFDictionary, &aggID)
+        guard sAgg == noErr else {
+            AudioHardwareDestroyProcessTap(tapID)
+            throw CaptureError.unavailable
+        }
+
+        let sysEngine = AVAudioEngine()
+        let input = sysEngine.inputNode
+        var dev = aggID
+        let sDev = AudioUnitSetProperty(input.audioUnit!, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &dev, UInt32(MemoryLayout<AudioObjectID>.size))
+        let format = input.outputFormat(forBus: 0)
+        guard sDev == noErr, format.sampleRate > 0, format.channelCount > 0, format.channelCount <= 8,
+              format.commonFormat == .pcmFormatFloat32 else {
+            AudioHardwareDestroyAggregateDevice(aggID)
+            AudioHardwareDestroyProcessTap(tapID)
+            throw CaptureError.invalidFormat
+        }
+
+        input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, time in
+            guard time.isHostTimeValid else { return }
+            self?.enqueue(buffer, hostTime: AVAudioTime.seconds(forHostTime: time.hostTime), source: "system")
+        }
+        sysEngine.prepare()
+        return (sysEngine, tapID, aggID)
     }
 
     private func enqueue(_ buffer: AVAudioPCMBuffer, hostTime: Double, source: String) {

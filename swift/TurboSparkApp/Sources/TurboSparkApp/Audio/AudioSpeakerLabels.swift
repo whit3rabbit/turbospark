@@ -135,10 +135,12 @@ extension AudioWorkspaceController {
             labeled.append((part, AudioSpeakerLabels.turns(transcript, offset: part.start)))
         }
         let turns = labeled.count == 1 ? labeled[0].turns : AudioSpeakerParts.join(labeled)
+        let voiceprints = AudioSpeakerMemory.extractVoiceprints(for: item, turns: turns, store: assets)
         try persistMutation(id) { current in
             guard let index = current.transcripts.firstIndex(where: { $0.id == revision }) else { return }
             current.transcripts[index].segments = AudioSpeakerLabels.assign(current.transcripts[index].segments, words: words, turns: turns)
             current.speakerLabelParts = parts.count > 1 ? parts.count : nil
+            current.speakerVoiceprints = voiceprints.isEmpty ? nil : voiceprints
             current.updatedAt = Date()
         }
     }

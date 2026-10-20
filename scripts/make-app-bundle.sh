@@ -236,6 +236,8 @@ cat > "$contents/Info.plist" <<PLIST
     <string>TurboSpark opens Terminal to run the coding agent you launch from the Server pane.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>TurboSpark records microphone audio for meetings and local transcription when you start recording.</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>TurboSpark captures system and app audio for meeting recordings and local transcription without screen recording.</string>
     <key>NSScreenCaptureUsageDescription</key>
     <string>TurboSpark captures audio from the apps you select for a meeting. Screen frames are not saved.</string>
     <key>NSHighResolutionCapable</key>

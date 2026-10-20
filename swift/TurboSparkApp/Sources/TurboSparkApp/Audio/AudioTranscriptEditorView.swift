@@ -10,6 +10,7 @@ struct AudioTranscriptEditorView: View {
     @State private var savedSegments: [AudioLibrarySegment] = []
     @State private var dirty = false
     @State private var namingSpeakers = false
+    @State private var showingVocabulary = false
 
     /// Names and merges live on the take, so every line, revision and
     /// export shows a rename at once.
@@ -78,6 +79,9 @@ struct AudioTranscriptEditorView: View {
         .sheet(isPresented: $namingSpeakers) {
             AudioSpeakerNamingSheet(controller: controller, item: item, purpose: .edit)
         }
+        .sheet(isPresented: $showingVocabulary) {
+            AudioCustomVocabularySheet()
+        }
     }
 
     /// Opens Name the Speakers on the saved transcript, so it lists the
@@ -89,6 +93,11 @@ struct AudioTranscriptEditorView: View {
             }
             .appAction(.secondary, size: .small)
             .disabled(controller.hasRecordingActivity)
+            Button { showingVocabulary = true } label: {
+                Label { Text(verbatim: "Vocabulary...") } icon: { Image(systemName: "character.book.closed") }
+            }
+            .appAction(.secondary, size: .small)
+            .help(Text(verbatim: "Manage custom vocabulary and jargon"))
             if let parts = item.speakerLabelParts, parts > 1 {
                 Label { Text("Labeled in \(parts) parts", bundle: .module) } icon: { Image(systemName: "checkmark.circle") }
                     .themedFont(.small).foregroundStyle(.appSecondary)

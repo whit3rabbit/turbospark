@@ -17,7 +17,14 @@ extension AudioWorkspaceController {
         request.text = recipe.text; request.voice = recipe.voice; request.speed = recipe.speed
         request.caption = recipe.caption
         request.lyrics = task == .music ? effectiveLyrics(recipe.lyrics) : recipe.lyrics
-        request.durationSeconds = recipe.durationSeconds; request.steps = recipe.steps; request.seed = recipe.seed
+        request.durationSeconds = recipe.durationSeconds
+        request.steps = task == .music ? recipe.effectiveMusicStepsOverride : recipe.steps
+        request.seed = recipe.seed
+        if task == .music {
+            let rate = recipe.music?.frameRate ?? 25.0
+            request.maxFrames = Int((recipe.durationSeconds * rate).rounded())
+            request.contextSize = recipe.music?.contextSize ?? 10_240
+        }
         return request
     }
     /// The request a run sends. A native cloner's run either clones, and
@@ -282,6 +289,10 @@ extension AudioWorkspaceController {
                             if currentTask == .diarization {
                                 for index in segments.indices { segments[index].speaker = segments[index].speaker.map(AudioSpeakerLabels.displayName) }
                             }
+                            let vocabulary = AudioCustomVocabularyStore.load()
+                            if !vocabulary.isEmpty {
+                                segments = AudioCustomVocabulary.apply(vocabulary, to: segments)
+                            }
                             $0.addTranscript(segments, source: .final, language: transcript.language, nativeResult: try? JSONEncoder().encode(transcript))
                         }
                         $0.status = .completed; $0.updatedAt = Date()
@@ -362,6 +373,10 @@ extension AudioWorkspaceController {
             status = AppStrings.localized("Refining saved recording")
         }
         guard valid(token) else { throw CancellationError() }
+        let vocabulary = AudioCustomVocabularyStore.load()
+        if !vocabulary.isEmpty {
+            segments = AudioCustomVocabulary.apply(vocabulary, to: segments)
+        }
         let metadata = try JSONEncoder().encode(native)
         var revision = UUID()
         // Reload inside the locked mutation so edits made during inference survive.
@@ -397,7 +412,7 @@ extension AudioWorkspaceController {
 }
 
 extension AudioWorkspaceController {
-    func summarizeMeeting() {
+    func summarizeMeeting(with targetModel: InstalledModel? = nil) {
         guard !isBusy, !hasRecordingActivity, canSummarizeMeeting, let item = selectedItem, let summaryHandler else { return }
         isBusy = true; error = nil
         let token = epoch
@@ -405,7 +420,7 @@ extension AudioWorkspaceController {
             guard let self else { return }
             defer { if self.valid(token) { self.isBusy = false } }
             do {
-                let summary = try await summaryHandler(item)
+                let summary = try await summaryHandler(item, targetModel)
                 try Task.checkCancellation()
                 guard self.valid(token) else { return }
                 try self.persistMutation(item.id) { $0.summary = summary; $0.updatedAt = Date() }

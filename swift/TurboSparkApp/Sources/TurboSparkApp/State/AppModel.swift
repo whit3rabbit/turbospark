@@ -26,10 +26,21 @@ public final class AppModel: ObservableObject {
         workspace.installHandler = { [weak self] profile, acknowledged in
             self?.enqueueAudioDownload(profile: profile, acknowledged: acknowledged) ?? false
         }
-        workspace.summaryAvailable = { [weak self] in self?.canSummarizeAudio == true }
-        workspace.summaryHandler = { [weak self] item in
+        workspace.availableChatModels = { [weak self] in
+            self?.installed.filter { $0.modality == "text" } ?? []
+        }
+        workspace.selectedChatModel = { [weak self] in
+            self?.selected
+        }
+        workspace.selectChatModel = { [weak self] model in
+            self?.selectModel(model)
+        }
+        workspace.summaryAvailable = { [weak self] in
+            self?.canSummarizeAudio == true || (self?.installed.contains(where: { $0.modality == "text" }) == true)
+        }
+        workspace.summaryHandler = { [weak self] item, targetModel in
             guard let self else { throw CancellationError() }
-            return try await self.summarizeAudioTranscript(item)
+            return try await self.summarizeAudioTranscript(item, targetModel: targetModel)
         }
         return workspace
     }()

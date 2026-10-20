@@ -18,6 +18,7 @@ struct AudioSpeakerNamingSheet: View {
     /// on Apply, so a field never eats the space between two words.
     @State private var roster: AudioSpeakerRoster
     @State private var drafts: [String: String]
+    @State private var suggestions: [String: AudioSpeakerMemory.Suggestion] = [:]
     @FocusState private var focusedKey: String?
 
     init(controller: AudioWorkspaceController, item: AudioLibraryItem, purpose: Purpose) {
@@ -58,7 +59,15 @@ struct AudioSpeakerNamingSheet: View {
         .frame(minWidth: 460, idealWidth: 600 * scale, maxWidth: 820 * scale, minHeight: 360, idealHeight: 560 * scale)
         .background(.appPage)
         .themedFont(.base)
-        .onAppear { focusedKey = summaries.first { $0.mergedInto == nil }?.id }
+        .onAppear {
+            focusedKey = summaries.first { $0.mergedInto == nil }?.id
+            suggestions = AudioSpeakerMemory.suggestions(
+                for: item,
+                segments: segments,
+                profiles: AudioSpeakerProfileStore.load(),
+                store: controller.assets
+            )
+        }
         .onDisappear { if controller.speakerSampleKey != nil { controller.stopReferencePreview() } }
     }
 
@@ -109,7 +118,12 @@ struct AudioSpeakerNamingSheet: View {
                             Text("Merged into \(name(target))", bundle: .module).themedFont(.small).foregroundStyle(.appSecondary)
                         }
                     } else {
-                        nameField(summary.id)
+                        VStack(alignment: .leading, spacing: 6) {
+                            nameField(summary.id)
+                            if let suggestion = suggestions[summary.id], (drafts[summary.id] ?? "").isEmpty {
+                                suggestionChip(for: summary.id, suggestion: suggestion)
+                            }
+                        }
                     }
                     Spacer(minLength: 8)
                     Text(verbatim: audioTime(summary.talkTime))
@@ -130,6 +144,29 @@ struct AudioSpeakerNamingSheet: View {
         }
         .appCardSurface(padding: 12)
         .accessibilityElement(children: .contain)
+    }
+
+    @ViewBuilder private func suggestionChip(for key: String, suggestion: AudioSpeakerMemory.Suggestion) -> some View {
+        Button {
+            drafts[key] = suggestion.name
+        } label: {
+            switch suggestion.reason {
+            case .microphone:
+                Label {
+                    Text(verbatim: "You (Microphone)")
+                } icon: {
+                    Image(systemName: "mic.fill")
+                }
+            case .voiceprintMatch(let profileName):
+                Label {
+                    Text(verbatim: "\(profileName) (\(Int(suggestion.confidence * 100))%)")
+                } icon: {
+                    Image(systemName: "sparkles")
+                }
+            }
+        }
+        .appAction(.secondary, size: .small)
+        .help(Text(verbatim: "Use suggested speaker name."))
     }
 
     private func nameField(_ key: String) -> some View {
@@ -212,6 +249,7 @@ struct AudioSpeakerNamingSheet: View {
     private func apply() {
         var final = roster
         for (key, draft) in drafts { final.rename(key, to: draft) }
+        AudioSpeakerMemory.recordSpeakerNaming(item: item, renamedSpeakers: drafts)
         controller.applySpeakerRoster(final, to: item.id)
         dismiss()
     }

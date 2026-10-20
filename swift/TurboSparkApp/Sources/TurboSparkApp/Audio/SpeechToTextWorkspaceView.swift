@@ -8,6 +8,7 @@ struct SpeechToTextWorkspaceView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var controller: AudioWorkspaceController
     @State private var showingModels = false
+    @State private var showingVocabulary = false
 
     private var mode: SpeechToTextMode { controller.speechToTextMode }
 
@@ -16,7 +17,10 @@ struct SpeechToTextWorkspaceView: View {
             AppAdaptiveHeader {
                 modePicker
             } actions: {
-                modelButton
+                HStack(spacing: 8) {
+                    vocabularyButton
+                    modelButton
+                }
             }
             .padding(.horizontal, 24).padding(.vertical, 12)
             Divider()
@@ -30,6 +34,9 @@ struct SpeechToTextWorkspaceView: View {
         .tsAnimation(TSMotion.pane, value: mode)
         .sheet(item: speakerNaming) { item in
             AudioSpeakerNamingSheet(controller: controller, item: item, purpose: .afterTake)
+        }
+        .sheet(isPresented: $showingVocabulary) {
+            AudioCustomVocabularySheet()
         }
     }
 
@@ -71,6 +78,17 @@ struct SpeechToTextWorkspaceView: View {
         case .anyAudio:
             AudioRecordBar(controller: controller, layout: .capsule)
         }
+    }
+
+    private var vocabularyButton: some View {
+        Button { showingVocabulary.toggle() } label: {
+            Label {
+                Text(verbatim: "Vocabulary")
+            } icon: { Image(systemName: "character.book.closed") }
+            .lineLimit(1)
+        }
+        .appAction(.secondary, size: .small)
+        .help(Text(verbatim: "Custom vocabulary & jargon"))
     }
 
     private var modelButton: some View {
