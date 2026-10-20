@@ -44,13 +44,22 @@ policy.
   path. `TURBOSPARK_BATCHED_GEMV=0` opts out to the byte-identical per-token
   path. See `docs/BATCHED_PREFILL.md`.
 - The ANE+Steel prefill split (`families/qwen/ane_split.rs`) is opt-in twice:
-  cargo feature `ane-prefill` and `TURBOSPARK_ANE_PREFILL`. The staged layer
-  functions it calls (`batched_layers.rs`, `prefill_layers.rs`) must keep the
-  default arm's dispatch order. The default rows of `qwen38_prefill_arm_probe`
-  and the greedy md5 are the check. A split micro-batch redoes on Steel from
-  a GDN snapshot after any failure. Anything new it mutates in place must be
-  undone there too. It widens the micro-batch to 2048 only while no MTP head
-  or DFlash2 drafter is open. See `docs/SPEEDUP_PLAYBOOK.md`.
+  cargo feature `ane-prefill` and `TURBOSPARK_ANE_PREFILL` (or via FFI/Swift
+  `AnePrefillMode`). When set to `Auto`, it activates on Apple Silicon M4+ /
+  A18+ (`hardware_supports_ane_prefill`) for dense Qwen, falling back to
+  Steel with a warning if programs are missing or hardware is older. The
+  staged layer functions it calls (`batched_layers.rs`, `prefill_layers.rs`)
+  must keep the default arm's dispatch order. The default rows of
+  `qwen38_prefill_arm_probe` and the greedy md5 are the check. A split
+  micro-batch redoes on Steel from a GDN snapshot after any failure. Anything
+  new it mutates in place must be undone there too. It widens the micro-batch
+  to 2048 only while no MTP head or DFlash2 drafter is open. See
+  `docs/SPEEDUP_PLAYBOOK.md`.
+- Qwen batched prefill, speculative verify, and MTP priming encode their small
+  per-row operations (q/gate split, q/k norm, RoPE, output gate, FFN
+  activation, residual adds and norms) as a single multi-row dispatch across
+  all rows. Each row computes the same bits.
+  `TURBOSPARK_QWEN_BATCHED_ROW_OPS=0` restores the per-row form.
 - Music 3 zero-tolerance MLX matches are device-bound. The GitHub macOS
   runner's GPU ("Apple Paravirtual device") returns different cos and sin than
   the M4 Max that produced the pinned references, so `music3_rope` moves in the

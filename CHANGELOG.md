@@ -22,8 +22,15 @@ when this file gets updated relative to the version bump and the tag.
   with `TURBOSPARK_ANE_PREFILL=1`, `TURBOSPARK_ANE_PREFILL_DIR` and a prefill
   chunk of 2048, after writing the programs with
   `crates/coreml/tools/gen_ane_prefill_programs.py`. A failed prediction or a
-  non-finite ANE row redoes the micro-batch on Steel. The default build,
-  prefill path and app are unchanged. See `docs/SPEEDUP_PLAYBOOK.md`.
+  non-finite ANE row redoes the micro-batch on Steel. See
+  `docs/SPEEDUP_PLAYBOOK.md`.
+- Swift bindings and macOS app integration for the ANE+Steel prefill split:
+  `TurboSparkCapabilities.chipSupportsAnePrefill` detects Apple Silicon M4+ and
+  A18+ chips; `OpenOptions.anePrefill` and `SessionInfo.anePrefill` expose the
+  mode and active split status over the wire; and Engine Settings adds an
+  ANE+Steel prefill picker with Auto (on by default on M4+ hardware for dense
+  Qwen, graceful fallback to Steel on older chips or missing programs), On, and
+  Off settings across 21 languages.
 
 ### Changed
 - Qwen batched prefill, speculative verify and MTP head priming now encode their

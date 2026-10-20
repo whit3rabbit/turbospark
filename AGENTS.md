@@ -103,6 +103,13 @@ The root references are:
 - Steel is the dense qwen prefill default. Another family needs its own
   real-model quality, memory, and paired performance gates before it takes
   Steel or the GQA decode attention.
+- The ANE+Steel prefill split for dense Qwen is opt-in (`ane-prefill` cargo
+  feature, `TURBOSPARK_ANE_PREFILL`, or Swift runtime settings). Auto mode
+  checks Apple Silicon M4+ / A18+ before activating and gracefully degrades to
+  Steel if programs are missing or on older chips.
+- Qwen batched prefill, speculative verify, and MTP priming encode their small
+  per-row ops (RMSNorm, RoPE, gate/act, residual adds) in a single multi-row
+  dispatch. `TURBOSPARK_QWEN_BATCHED_ROW_OPS=0` restores the per-row form.
 - Read [MLX kernel experiments](docs/MLX_KERNELS.md) before reusing oMLX or
   MLX kernels, and the [speedup playbook](docs/SPEEDUP_PLAYBOOK.md) before
   kernel performance work.

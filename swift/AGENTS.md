@@ -195,6 +195,12 @@ staging files changed.
   Rust audio catalog. A family runs only once `FluidAudioFamily.hasAdapter`
   is true for it. Check a model's inputs before handing it to FluidAudio:
   a mismatch is a `preconditionFailure` that ends the app, not an error.
+- The ANE+Steel prefill split (`AppAnePrefillOption`) defaults to `.auto` in
+  `MacAppSettings`, resolving to split prefill when Apple Silicon M4+
+  (`TurboSparkCapabilities.chipSupportsAnePrefill`) and dense Qwen
+  (`ModelFeatureDescriptor.supportsAnePrefill`) are detected. Missing or
+  incompatible ANE programs fall back gracefully to Steel at runtime rather
+  than failing session open.
 
 ## Checks
 

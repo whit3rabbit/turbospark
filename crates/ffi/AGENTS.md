@@ -16,6 +16,9 @@ The C ABI used by the Swift package and macOS app.
 - Keep the handwritten `turbospark.h` synchronized with the Rust wire
   contract. Rust tests alone do not validate the copied Swift header.
 - Trace enum strings and capability predicates through both Rust and Swift.
+  Hardware detection symbols (`ts_chip_supports_ane_prefill`) and wire options
+  (`OpenOptions.anePrefill`, `SessionInfo.anePrefill`) must be mirrored across
+  `turbospark.h`, `wire.rs`, `open.rs`, `testing.rs`, and `swift/TurboSpark`.
 - `make swift-lib` stages the static library and canonical header before
   SwiftPM tests.
 
