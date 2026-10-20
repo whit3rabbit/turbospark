@@ -90,6 +90,14 @@ struct AudioItemDetailView: View {
     @ObservedObject var controller: AudioWorkspaceController
     let item: AudioLibraryItem
 
+    enum DetailViewTab: String, CaseIterable, Identifiable {
+        case transcript = "Transcript"
+        case notes = "Notes & Summary"
+        var id: String { rawValue }
+    }
+
+    @State private var selectedTab: DetailViewTab = .transcript
+
     private var comparisonItems: [AudioLibraryItem] {
         controller.items.filter { $0.id != item.id && !$0.clips.isEmpty }
     }
@@ -125,8 +133,7 @@ struct AudioItemDetailView: View {
             itemActions
             if !item.markers.isEmpty { markers }
             if item.clips.count > 1 { clips }
-            if !item.transcripts.isEmpty { AudioTranscriptEditorView(controller: controller, item: item) }
-            if item.preferredTranscript != nil { meetingSummary }
+            if !item.transcripts.isEmpty { detailContentSwitcher }
             DisclosureGroup {
                 VStack(alignment: .leading, spacing: 8) {
                     if let modelID = item.recipe.modelID { Text(modelID).textSelection(.enabled) }
@@ -151,28 +158,27 @@ struct AudioItemDetailView: View {
         }
     }
 
-    private var meetingSummary: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if let summary = item.summary {
-                Text("Meeting summary", bundle: .module)
-                    .themedFont(.base, weight: .semibold).accessibilityAddTraits(.isHeader)
-                Text(summary.text).textSelection(.enabled)
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 90), alignment: .leading)], alignment: .leading) {
-                    ForEach(Array(summary.sourceTimes.enumerated()), id: \.offset) { _, time in
-                        Button { controller.seek(to: time) } label: {
-                            Label { Text(audioTime(time)).monospacedDigit() } icon: { Image(systemName: "play.circle") }
-                        }.disabled(item.clips.isEmpty || controller.hasRecordingActivity)
+    private var detailContentSwitcher: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Picker(selection: $selectedTab) {
+                Text(verbatim: "Transcript").tag(DetailViewTab.transcript)
+                HStack(spacing: 4) {
+                    Text(verbatim: "Notes & Summary")
+                    if item.summary != nil {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.appAccent)
                     }
-                }
+                }.tag(DetailViewTab.notes)
+            } label: {
+                Text(verbatim: "Detail View")
             }
-            Button { controller.summarizeMeeting() } label: {
-                Text("Summarize meeting", bundle: .module)
-            }
-            .appAction(.secondary, size: .small)
-            .disabled(!controller.canSummarizeMeeting || controller.isBusy || controller.hasRecordingActivity)
-            if !controller.canSummarizeMeeting && !controller.isBusy {
-                Text("Load a local chat model to summarize this transcript.", bundle: .module)
-                    .themedFont(.small).foregroundStyle(.appSecondary)
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 280)
+
+            if selectedTab == .transcript {
+                AudioTranscriptEditorView(controller: controller, item: item)
+            } else {
+                AudioMeetingNotesView(controller: controller, item: item)
             }
         }
     }

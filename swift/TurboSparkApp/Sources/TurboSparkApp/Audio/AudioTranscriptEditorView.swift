@@ -9,10 +9,19 @@ struct AudioTranscriptEditorView: View {
     @State private var segments: [AudioLibrarySegment] = []
     @State private var savedSegments: [AudioLibrarySegment] = []
     @State private var dirty = false
+    @State private var namingSpeakers = false
+    @State private var showingVocabulary = false
+
+    /// Names and merges live on the take, so every line, revision and
+    /// export shows a rename at once.
+    private var roster: AudioSpeakerRoster { AudioSpeakerRoster(item) }
 
     var body: some View {
+        let roster = self.roster
+        let speakers = roster.roots(in: segments)
         VStack(alignment: .leading, spacing: 12) {
             transcriptHeader
+            if !speakers.isEmpty { speakersBar }
             if item.preferredTranscript?.source == .draft {
                 Label { Text("Draft transcript", bundle: .module) } icon: { Image(systemName: "pencil") }
                     .foregroundStyle(.appSecondary)
@@ -24,12 +33,7 @@ struct AudioTranscriptEditorView: View {
                             Button { controller.seek(to: segment.start) } label: {
                                 Text(audioTime(segment.start)).monospacedDigit()
                             }.disabled(item.clips.isEmpty || controller.hasRecordingActivity)
-                            TextField(text: Binding(
-                                get: { segment.speaker ?? "" },
-                                set: { segment.speaker = $0.isEmpty ? nil : $0; stageEdits() }
-                            )) { Text("Speaker", bundle: .module) }
-                            .textFieldStyle(.roundedBorder)
-                            .accessibilityLabel(Text("Speaker", bundle: .module))
+                            speakerMenu(segment, roster: roster, speakers: speakers)
                             if segment.timing == "clip" || segment.timing == "window" {
                                 Text("Approximate timing", bundle: .module).themedFont(.small).foregroundStyle(.appSecondary)
                             }
@@ -46,8 +50,8 @@ struct AudioTranscriptEditorView: View {
                 }
             }
             .accessibilityRotor(Text("Speakers", bundle: .module)) {
-                ForEach(segments.filter { $0.speaker != nil }) { segment in
-                    AccessibilityRotorEntry((segment.speaker ?? "") + ", " + audioTime(segment.start), id: segment.id)
+                ForEach(segments.filter { AudioSpeakerRoster.key($0) != nil }) { segment in
+                    AccessibilityRotorEntry((roster.label(segment) ?? "") + ", " + audioTime(segment.start), id: segment.id)
                 }
             }
             if let data = item.transcripts.first(where: { $0.id == revisionID })?.nativeResult,
@@ -62,8 +66,75 @@ struct AudioTranscriptEditorView: View {
         .onChange(of: item.preferredTranscript?.id) { _, _ in
             if !dirty || item.preferredTranscript?.segments == segments { load(item) }
         }
+        // Speaker labels land on the revision already shown, after the final
+        // pass saved it, so its id does not change. Take them unless the user
+        // has unsaved edits.
+        .onChange(of: item.transcripts.first(where: { $0.id == revisionID })?.segments) { _, latest in
+            guard !dirty, let latest, latest != savedSegments else { return }
+            savedSegments = latest
+            segments = latest
+        }
         .onChange(of: segments) { _, _ in dirty = segments != savedSegments }
         .onDisappear { flushEdits() }
+        .sheet(isPresented: $namingSpeakers) {
+            AudioSpeakerNamingSheet(controller: controller, item: item, purpose: .edit)
+        }
+        .sheet(isPresented: $showingVocabulary) {
+            AudioCustomVocabularySheet()
+        }
+    }
+
+    /// Opens Name the Speakers on the saved transcript, so it lists the
+    /// voices as the lines show them.
+    private var speakersBar: some View {
+        FlowLayout(spacing: AppMetrics.actionSpacing, lineSpacing: 6) {
+            Button { if flushEdits() { namingSpeakers = true } } label: {
+                Label { Text("Name Speakers...", bundle: .module) } icon: { Image(systemName: "person.2") }
+            }
+            .appAction(.secondary, size: .small)
+            .disabled(controller.hasRecordingActivity)
+            Button { showingVocabulary = true } label: {
+                Label { Text(verbatim: "Vocabulary...") } icon: { Image(systemName: "character.book.closed") }
+            }
+            .appAction(.secondary, size: .small)
+            .help(Text(verbatim: "Manage custom vocabulary and jargon"))
+            if let parts = item.speakerLabelParts, parts > 1 {
+                Label { Text("Labeled in \(parts) parts", bundle: .module) } icon: { Image(systemName: "checkmark.circle") }
+                    .themedFont(.small).foregroundStyle(.appSecondary)
+            }
+        }
+    }
+
+    /// Which voice a line is from. Picking one moves only this line; names
+    /// are given once, in Name the Speakers.
+    private func speakerMenu(_ segment: AudioLibrarySegment, roster: AudioSpeakerRoster, speakers: [String]) -> some View {
+        let current = AudioSpeakerRoster.key(segment).map(roster.root)
+        return Menu {
+            ForEach(speakers, id: \.self) { key in
+                Button { reassign(segment.id, to: key) } label: {
+                    if key == current {
+                        Label { Text(verbatim: roster.name(key)) } icon: { Image(systemName: "checkmark") }
+                    } else {
+                        Text(verbatim: roster.name(key))
+                    }
+                }
+            }
+            if !speakers.isEmpty { Divider() }
+            Button { reassign(segment.id, to: AudioSpeakerRoster.nextID(in: item, also: segments)) } label: { Text("New Speaker", bundle: .module) }
+            Button { reassign(segment.id, to: nil) } label: { Text("No Speaker", bundle: .module) }
+                .disabled(current == nil)
+        } label: {
+            if let label = roster.label(segment) { Text(verbatim: label) } else { Text("No Speaker", bundle: .module) }
+        }
+        .appMenuAction(size: .small)
+        .accessibilityLabel(Text("Speaker", bundle: .module))
+        .accessibilityValue(roster.label(segment).map { Text(verbatim: $0) } ?? Text("No Speaker", bundle: .module))
+    }
+
+    private func reassign(_ id: UUID, to key: String?) {
+        guard let index = segments.firstIndex(where: { $0.id == id }) else { return }
+        segments[index] = AudioSpeakerRoster.assigning(segments[index], to: key)
+        stageEdits()
     }
 
     private var transcriptHeader: some View {

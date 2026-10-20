@@ -83,12 +83,20 @@ final class AudioWorkspaceController: ObservableObject {
     @Published var pendingTranscriptEdits: [UUID: [AudioLibrarySegment]] = [:]
     @Published var preferences = AudioWorkspacePreferences()
     @Published var installedPaths: [String: String] = [:]
+    private var cachedMusicSamplingPath: String?
+    private var cachedMusicSampling: AudioMusicSamplingRecommendation?
 
     let pendingAssetOwner = UUID()
     let lifetime = AudioOperationLifetime()
-    var summaryHandler: ((AudioLibraryItem) async throws -> AudioMeetingSummary)?
+    var summaryHandler: ((AudioLibraryItem, InstalledModel?) async throws -> AudioMeetingSummary)?
     var summaryAvailable: (() -> Bool)?
-    var canSummarizeMeeting: Bool { selectedItem?.preferredTranscript != nil && summaryAvailable?() == true }
+    var availableChatModels: (() -> [InstalledModel])?
+    var selectedChatModel: (() -> InstalledModel?)?
+    var selectChatModel: ((InstalledModel) -> Void)?
+    var canSummarizeMeeting: Bool {
+        selectedItem?.preferredTranscript != nil &&
+            (summaryAvailable?() == true || selectedChatModel?() != nil || !(availableChatModels?().isEmpty ?? true))
+    }
     /// Queues a managed download. The second argument lists the ids of the
     /// profile's acknowledgments the user accepted.
     var installHandler: ((AudioProfile, [String]) -> Bool)?
@@ -187,8 +195,10 @@ final class AudioWorkspaceController: ObservableObject {
             $0.identity.task == task && speechProfileMatchesPage($0) && AudioRuntimeProvider($0) != .unsupported
         }
         if page == .advanced && task == .speechToText { choices.append(Self.localQwenProfile) }
+        if task == .music { choices = Self.preferredMusicProfiles(choices) }
         return choices
     }
+    static let defaultMusicProfileAlias = "minimax-music3-turbo-4bit-8step"
     static let localQwenProfile = AudioProfile(
         identity: AudioProfileIdentity(task: .speechToText, alias: "local-qwen3-asr", repository: "", revision: "", assetFingerprint: ""),
         family: "qwen3_asr", displayName: "Qwen3-ASR (local checkpoint)",
@@ -219,10 +229,45 @@ final class AudioWorkspaceController: ObservableObject {
         case .textToSpeech: return !recipe.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && speechValidationMessage == nil
         case .music:
             return !recipe.caption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                && recipe.durationSeconds.isFinite && recipe.durationSeconds > 0
-                && recipe.durationSeconds <= Double(selectedProfile?.capabilities.maxInputSeconds ?? 360)
-                && (1...30).contains(recipe.steps)
+                && musicValidationMessage == nil
+                && (recipe.effectiveMusicStepsOverride.map { (1...30).contains($0) } ?? true)
         }
+    }
+    var musicMemoryAdvice: MusicMemoryAdvisor.Profile {
+        MusicMemoryAdvisor.evaluate(for: selectedProfile)
+    }
+    var musicSamplingRecommendation: AudioMusicSamplingRecommendation {
+        let installed = selectedProfile.flatMap { installedPaths[$0.identity.alias] }
+        let modelURL = selectedLocalModelURL ?? installed.map { URL(fileURLWithPath: $0) }
+        guard let modelURL else { return .fast }
+        if cachedMusicSamplingPath == modelURL.path, let cachedMusicSampling {
+            return cachedMusicSampling
+        }
+        let scoped = modelURL.startAccessingSecurityScopedResource()
+        defer { if scoped { modelURL.stopAccessingSecurityScopedResource() } }
+        let recommendation = AudioMusicSamplingRecommendation.read(configAt: modelURL)
+        cachedMusicSamplingPath = modelURL.path
+        cachedMusicSampling = recommendation
+        return recommendation
+    }
+    var musicValidationMessage: String? {
+        guard task == .music else { return nil }
+        return MusicMemoryAdvisor.validate(recipe: recipe, profile: selectedProfile)
+    }
+    func setMusicContextToMaxIfSupported() {
+        let advice = musicMemoryAdvice
+        if recipe.music == nil {
+            recipe.music = AudioMusicSettings(
+                contextSize: advice.maxModelContextTokens,
+                maxFrames: advice.maxSupportedFrames,
+                frameRate: advice.frameRate
+            )
+        } else {
+            recipe.music?.contextSize = advice.maxModelContextTokens
+            recipe.music?.maxFrames = advice.maxSupportedFrames
+            recipe.music?.frameRate = advice.frameRate
+        }
+        recipe.durationSeconds = advice.maxSupportedSeconds
     }
     var presets: [AudioPreset] { preferences.presets }
     var playbackDuration: Double { player?.duration ?? selectedItem?.duration ?? 0 }
@@ -317,6 +362,10 @@ final class AudioWorkspaceController: ObservableObject {
             let preferred = Self.preferredSpeechProfiles(availableProfiles)
             recipe.modelID = preferred.first(where: { AudioRuntimeProvider($0).canRun($0) && installedPaths[$0.identity.alias] != nil })?.identity.alias
                 ?? preferred.first?.identity.alias
+        } else if task == .music {
+            // New music workspaces should download the pinned Turbo checkpoint
+            // by default, even when another music profile is already installed.
+            recipe.modelID = Self.preferredMusicProfiles(availableProfiles).first?.identity.alias
         } else {
             // A new speech workspace should start with an executable provider.
             let preferred = task == .textToSpeech
@@ -327,6 +376,13 @@ final class AudioWorkspaceController: ObservableObject {
         }
     }
     static let speechPreference = ["parakeet-ultra-coreml", "parakeet-redux-coreml", "whisper-base"]
+    static func preferredMusicProfiles(_ profiles: [AudioProfile]) -> [AudioProfile] {
+        profiles.enumerated().sorted { left, right in
+            let leftIsDefault = left.element.identity.alias == defaultMusicProfileAlias
+            let rightIsDefault = right.element.identity.alias == defaultMusicProfileAlias
+            return leftIsDefault != rightIsDefault ? leftIsDefault : left.offset < right.offset
+        }.map(\.element)
+    }
     /// Runnable before not runnable, then `speechPreference` order, then catalog order.
     /// Runnable is the provider's verdict: a FluidAudio row's Rust `canRun` is
     /// false by design.
@@ -360,6 +416,23 @@ final class AudioWorkspaceController: ObservableObject {
             recipe.speech = speech
         } else {
             recipe.speech = nil
+        }
+        if task == .music || profile.identity.task == .music {
+            let advice = musicMemoryAdvice
+            if recipe.music == nil {
+                recipe.music = AudioMusicSettings(
+                    contextSize: capabilities.maxContextTokens ?? advice.maxModelContextTokens,
+                    maxFrames: capabilities.maxAudioFrames ?? advice.maxSupportedFrames,
+                    frameRate: Double(capabilities.frameRateHz ?? Int(advice.frameRate))
+                )
+                if advice.canSupportMaxContext && recipe.durationSeconds == 10 {
+                    recipe.durationSeconds = advice.maxSupportedSeconds
+                }
+            } else {
+                if let ctx = capabilities.maxContextTokens { recipe.music?.contextSize = ctx }
+                if let frames = capabilities.maxAudioFrames { recipe.music?.maxFrames = frames }
+                if let rate = capabilities.frameRateHz { recipe.music?.frameRate = Double(rate) }
+            }
         }
         if !capabilities.languages.isEmpty, !capabilities.languages.contains(recipe.language) {
             recipe.language = task == .speechToText ? "auto" : capabilities.languages[0]
@@ -501,6 +574,23 @@ final class AudioWorkspaceController: ObservableObject {
             transcriptSaveTasks.removeValue(forKey: itemID)?.cancel()
             return true
         } catch { pendingTranscriptEdits[itemID] = segments; fail(error); return false }
+    }
+    @discardableResult func saveSummaryText(_ text: String, for itemID: UUID) -> Bool {
+        guard !isShutDown else { return false }
+        do {
+            try persistMutation(itemID) { current in
+                if current.summary != nil {
+                    current.summary?.text = text
+                } else if let rev = current.preferredTranscript?.id {
+                    current.summary = AudioMeetingSummary(text: text, sourceTimes: [], transcriptRevisionID: rev)
+                }
+                current.updatedAt = Date()
+            }
+            return true
+        } catch {
+            fail(error)
+            return false
+        }
     }
     func savePreset(name: String) {
         guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }

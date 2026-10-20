@@ -165,8 +165,11 @@ extension AudioWorkspaceController {
         var current: [AudioStreamWord] = []
         func close() {
             guard let first = current.first, let last = current.last else { return }
+            let rawText = current.map(\.text).joined(separator: " ")
+            let vocabulary = AudioCustomVocabularyStore.load()
+            let normalized = AudioCustomVocabulary.apply(vocabulary, to: rawText)
             segments.append(AudioLibrarySegment(start: first.startSeconds, end: max(first.startSeconds, last.endSeconds),
-                                                text: current.map(\.text).joined(separator: " ")))
+                                                text: normalized))
             current = []
         }
         for word in words {
