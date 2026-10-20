@@ -388,8 +388,8 @@ pub use rms_norm::{
 #[cfg(target_os = "macos")]
 pub use rope::{
     encode_rope_mrope_interleaved, encode_rope_neox_freqs, encode_rope_neox_subdim,
-    encode_rope_proportional_neox, rope_mrope_interleaved, rope_neox_subdim,
-    rope_proportional_neox,
+    encode_rope_neox_subdim_rows, encode_rope_proportional_neox, rope_mrope_interleaved,
+    rope_neox_subdim, rope_proportional_neox,
 };
 #[cfg(target_os = "macos")]
 pub use utility::{

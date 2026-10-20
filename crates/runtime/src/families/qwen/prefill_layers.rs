@@ -7,6 +7,7 @@ use super::attn::{
 };
 use super::batched_layers::{
     encode_dense_ffn_batched, encode_full_attention_block_batched, encode_linear_block_batched,
+    row_batched_ops,
 };
 use super::{dense, RealQwenState, RMS_EPS, TRUNK_PREFIX};
 use crate::real_forward_types::{DecodeScratch, RealForwardError};
@@ -178,27 +179,53 @@ pub(crate) fn encode_qwen_dense_attn_residual_batched(
     m: usize,
 ) -> Result<(), RealForwardError> {
     let gpu_err = RealForwardError::Gpu;
-    for t in 0..m {
-        let x_off = (t * hidden * 2) as u64;
+    if row_batched_ops() {
         // RAW residual add, as in the per-token arm: this family has no sandwich norms.
+        // Elementwise over M contiguous rows, then the per-row norm as M "heads"
+        // of width `hidden`: `rmsnorm_bf16w_perhead` shares `rmsnorm_bf16w`'s
+        // helper, loop and launch width, so each row is the same arithmetic.
         gpu::encode_residual_add(
             context,
             pass,
-            (&scratch.x, x_off),
-            (&batched.o, x_off),
-            hidden as u32,
+            (&scratch.x, 0),
+            (&batched.o, 0),
+            (hidden * m) as u32,
         )
         .map_err(gpu_err)?;
-        gpu::encode_rms_norm_bf16w(
+        gpu::encode_rms_norm_bf16w_perhead(
             context,
             pass,
-            (&scratch.x, x_off),
+            (&scratch.x, 0),
             post_attn_norm,
-            (&batched.moe_x, x_off),
+            (&batched.moe_x, 0),
+            m as u32,
             hidden as u32,
             RMS_EPS,
         )
         .map_err(gpu_err)?;
+    } else {
+        for t in 0..m {
+            let x_off = (t * hidden * 2) as u64;
+            // RAW residual add, as in the per-token arm: this family has no sandwich norms.
+            gpu::encode_residual_add(
+                context,
+                pass,
+                (&scratch.x, x_off),
+                (&batched.o, x_off),
+                hidden as u32,
+            )
+            .map_err(gpu_err)?;
+            gpu::encode_rms_norm_bf16w(
+                context,
+                pass,
+                (&scratch.x, x_off),
+                post_attn_norm,
+                (&batched.moe_x, x_off),
+                hidden as u32,
+                RMS_EPS,
+            )
+            .map_err(gpu_err)?;
+        }
     }
     Ok(())
 }

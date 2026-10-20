@@ -8,6 +8,16 @@ use crate::real_forward_dispatch::encode_gemm_rows;
 use crate::real_forward_types::{DecodeScratch, RealForwardError};
 use crate::real_forward_utils::norm_view;
 
+/// Whether the batched layers run their per-row ops (attention's split, norm,
+/// RoPE and gate, the dense FFN's activation and residual add) as one dispatch
+/// per tensor over all M rows (the default) or as one per row.
+/// Both are bit-identical; `TURBOSPARK_QWEN_BATCHED_ROW_OPS=0` selects the
+/// per-row form. Resolved once, never per layer or per token.
+pub(crate) fn row_batched_ops() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TURBOSPARK_QWEN_BATCHED_ROW_OPS").as_deref() != Ok("0"))
+}
+
 /// Mask-1 layer at M rows.
 ///
 /// `k_proj` and `v_proj` write STRAIGHT into the KV cache, exactly as the
@@ -196,37 +206,96 @@ pub(crate) fn encode_full_attention_core_batched(
         QkNormConvention::Centered => gpu::encode_rms_norm_bf16w_perhead_centered,
     };
     let theta = arch.full_rope_theta as f32;
-    for m in 0..batch {
-        let position = start_position + m;
+    // The M rows sit contiguously (`q_packed`/`q`/`attn_gate` at a row stride
+    // of a whole number of heads, K at `kv_dim` per slot, checked above), and
+    // split, norm and gate are per head or per element, so M rows are just M
+    // times the heads in one dispatch with the same arithmetic per element.
+    // RoPE takes its row's position from the grid. One dispatch per tensor
+    // instead of five per row.
+    let rows = batch as u32;
+    if row_batched_ops() {
         gpu::encode_split_q_gate(
             context,
             pass,
-            (&batched.q_packed, (m * 2 * q_dim) as u64 * 2),
-            (&batched.q, (m * q_dim) as u64 * 2),
-            (&batched.attn_gate, (m * q_dim) as u64 * 2),
-            num_heads,
+            (&batched.q_packed, 0),
+            (&batched.q, 0),
+            (&batched.attn_gate, 0),
+            num_heads * rows,
             head_dim,
         )
         .map_err(gpu_err)?;
-
-        let q_row = (&batched.q, (m * q_dim) as u64 * 2);
-        let k_row = (k_buf, (k_off + m * kv_dim * 2) as u64);
-        for (data, weight, heads) in [(q_row, q_norm, num_heads), (k_row, k_norm, num_kv)] {
-            encode_qk_norm(context, pass, data, weight, data, heads, head_dim, RMS_EPS)
-                .map_err(gpu_err)?;
-        }
-        for (data, heads) in [(q_row, num_heads), (k_row, num_kv)] {
-            gpu::encode_rope_neox_subdim(
+        encode_qk_norm(
+            context,
+            pass,
+            (&batched.q, 0),
+            q_norm,
+            (&batched.q, 0),
+            num_heads * rows,
+            head_dim,
+            RMS_EPS,
+        )
+        .map_err(gpu_err)?;
+        let k_rows = (k_buf, k_off as u64);
+        encode_qk_norm(
+            context,
+            pass,
+            k_rows,
+            k_norm,
+            k_rows,
+            num_kv * rows,
+            head_dim,
+            RMS_EPS,
+        )
+        .map_err(gpu_err)?;
+        for (data, heads) in [((&batched.q, 0), num_heads), (k_rows, num_kv)] {
+            gpu::encode_rope_neox_subdim_rows(
                 context,
                 pass,
                 data,
-                position as u32,
+                start_position as u32,
+                rows,
                 heads,
                 head_dim,
                 qwen.rotary_dim,
                 theta,
             )
             .map_err(gpu_err)?;
+        }
+    } else {
+        // The per-row form, kept one env var away (`TURBOSPARK_QWEN_BATCHED_ROW_OPS=0`)
+        // as the kill switch and the A side of a paired measurement.
+        for m in 0..batch {
+            let position = start_position + m;
+            gpu::encode_split_q_gate(
+                context,
+                pass,
+                (&batched.q_packed, (m * 2 * q_dim) as u64 * 2),
+                (&batched.q, (m * q_dim) as u64 * 2),
+                (&batched.attn_gate, (m * q_dim) as u64 * 2),
+                num_heads,
+                head_dim,
+            )
+            .map_err(gpu_err)?;
+
+            let q_row = (&batched.q, (m * q_dim) as u64 * 2);
+            let k_row = (k_buf, (k_off + m * kv_dim * 2) as u64);
+            for (data, weight, heads) in [(q_row, q_norm, num_heads), (k_row, k_norm, num_kv)] {
+                encode_qk_norm(context, pass, data, weight, data, heads, head_dim, RMS_EPS)
+                    .map_err(gpu_err)?;
+            }
+            for (data, heads) in [(q_row, num_heads), (k_row, num_kv)] {
+                gpu::encode_rope_neox_subdim(
+                    context,
+                    pass,
+                    data,
+                    position as u32,
+                    heads,
+                    head_dim,
+                    qwen.rotary_dim,
+                    theta,
+                )
+                .map_err(gpu_err)?;
+            }
         }
     }
 
@@ -293,14 +362,29 @@ pub(crate) fn encode_full_attention_core_batched(
             )
             .map_err(gpu_err)?;
         }
+    }
+    // Elementwise, so one dispatch over all M rows once every row's attention
+    // output is written (the loop above reuses `scratch.attn`, not `attn_out`).
+    if row_batched_ops() {
         gpu::encode_sigmoid_gate_mul(
             context,
             pass,
-            (&batched.attn_out, (m * q_dim) as u64 * 2),
-            (&batched.attn_gate, (m * q_dim) as u64 * 2),
-            q_dim as u32,
+            (&batched.attn_out, 0),
+            (&batched.attn_gate, 0),
+            (q_dim * batch) as u32,
         )
         .map_err(gpu_err)?;
+    } else {
+        for m in 0..batch {
+            gpu::encode_sigmoid_gate_mul(
+                context,
+                pass,
+                (&batched.attn_out, (m * q_dim) as u64 * 2),
+                (&batched.attn_gate, (m * q_dim) as u64 * 2),
+                q_dim as u32,
+            )
+            .map_err(gpu_err)?;
+        }
     }
     Ok(())
 }
@@ -714,8 +798,8 @@ pub(crate) fn replay_linear_state_batched(
     Ok(())
 }
 
-/// The dense FFN at M rows: batched gate/up, `silu_mul` per token, batched
-/// down, then the raw residual add per token. `prefix` is `TRUNK_PREFIX`,
+/// The dense FFN at M rows: batched gate/up, `silu_mul` over the rows, batched
+/// down, then the raw residual add over the rows. `prefix` is `TRUNK_PREFIX`,
 /// or `MTP_PREFIX` for the head, whose FFN is the trunk's dense width.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_dense_ffn_batched(
@@ -806,17 +890,31 @@ pub(crate) fn encode_dense_ffn_act_batched(
     } else {
         gpu::encode_gelu_mul
     };
-    for m in 0..batch {
-        let row = (m * inter) as u64 * 2;
+    // Elementwise over M contiguous rows, so one dispatch of M * inter is the
+    // same arithmetic per element (`row_batched_ops` selects the per-row form).
+    if row_batched_ops() {
         act(
             context,
             pass,
-            (&batched.ffn_gate, row),
-            (&batched.ffn_up, row),
-            (&batched.ffn_act, row),
-            inter as u32,
+            (&batched.ffn_gate, 0),
+            (&batched.ffn_up, 0),
+            (&batched.ffn_act, 0),
+            (inter * batch) as u32,
         )
         .map_err(gpu_err)?;
+    } else {
+        for m in 0..batch {
+            let row = (m * inter) as u64 * 2;
+            act(
+                context,
+                pass,
+                (&batched.ffn_gate, row),
+                (&batched.ffn_up, row),
+                (&batched.ffn_act, row),
+                inter as u32,
+            )
+            .map_err(gpu_err)?;
+        }
     }
     Ok(())
 }
@@ -831,16 +929,27 @@ pub(crate) fn encode_dense_ffn_residual_batched(
     batch: usize,
 ) -> Result<(), RealForwardError> {
     let gpu_err = RealForwardError::Gpu;
-    for m in 0..batch {
-        let row = (m * hidden) as u64 * 2;
+    if row_batched_ops() {
         gpu::encode_residual_add(
             context,
             pass,
-            (&scratch.x, row),
-            (&batched.h2, row),
-            hidden as u32,
+            (&scratch.x, 0),
+            (&batched.h2, 0),
+            (hidden * batch) as u32,
         )
         .map_err(gpu_err)?;
+    } else {
+        for m in 0..batch {
+            let row = (m * hidden) as u64 * 2;
+            gpu::encode_residual_add(
+                context,
+                pass,
+                (&scratch.x, row),
+                (&batched.h2, row),
+                hidden as u32,
+            )
+            .map_err(gpu_err)?;
+        }
     }
     Ok(())
 }
