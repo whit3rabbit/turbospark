@@ -130,6 +130,61 @@
       }
     },
     {
+      "alias": "minimax-music3-turbo-4bit-8step",
+      "assets": [
+        {
+          "path": "LICENSE",
+          "size": 7373,
+          "sha256": "b21d12df2adae59dad3fcf80c1d81492654c662342f497d9a9770198c9317e58"
+        },
+        {
+          "path": "README.md",
+          "size": 3902,
+          "sha256": "45414e1f365593e089fd86b3a25b2a3faf256ddacb2ccc1740be0bbf3f0c998e"
+        },
+        {
+          "path": "config.json",
+          "size": 1999,
+          "sha256": "ed768eb48ad013bc71f7e765e3ea864315cb5f4e3153f3dd0241bf5246717d48"
+        },
+        {
+          "path": "model.safetensors.index.json",
+          "size": 142575,
+          "sha256": "52b7d128135f6914f7530e75db168dd910eee4fa1e0cc6fc8591ad5ff41744fb"
+        },
+        {
+          "path": "model-turbospark-01.safetensors",
+          "size": 5352618720,
+          "sha256": "e3f16d01e4315126be1e89636df270c8158191c80c94278d331b2b36052ef0b2"
+        },
+        {
+          "path": "model-turbospark-02.safetensors",
+          "size": 7319353204,
+          "sha256": "d424794589b6ffd4d74a119a8e88430143d774649e59f94487efb38dd2c55e5e"
+        },
+        {
+          "path": "scheduler/scheduler_config.json",
+          "size": 483,
+          "sha256": "b544466124aab333da4874417da0168610067e9c9ff95fcb63d749e4bf891d99"
+        },
+        {
+          "path": "tokenizer/chat_template.jinja",
+          "size": 4168,
+          "sha256": "a55ee1b1660128b7098723e0abcd92caa0788061051c62d51cbe87d9cf1974d8"
+        },
+        {
+          "path": "tokenizer/tokenizer.json",
+          "size": 11423801,
+          "sha256": "b1537fa9e59a537276ecbc2e12d0438edff635a1f4a4948e679774b5feb3e610"
+        },
+        {
+          "path": "tokenizer/tokenizer_config.json",
+          "size": 377,
+          "sha256": "1689852cc9c45010de040c8302a8acdc0d2c4c6c740dd7e9dd0a8c704e16eada"
+        }
+      ]
+    },
+    {
       "alias": "minimax-music3-4bit",
       "assets": [
         {

@@ -65,6 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 profile = match value.as_str() {
                     "exact" => audio::music::minimax_music3::FlowProfile::Exact,
                     "fast" => audio::music::minimax_music3::FlowProfile::Fast,
+                    "turbo" => audio::music::minimax_music3::FlowProfile::Turbo,
                     other => return Err(format!("unknown flow profile {other}").into()),
                 }
             }

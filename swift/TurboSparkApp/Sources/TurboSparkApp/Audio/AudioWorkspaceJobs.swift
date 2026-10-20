@@ -192,14 +192,13 @@ extension AudioWorkspaceController {
                 self.status = AppStrings.localized("Loading model")
                 self.speechRun?.enter(.loadingModel)
                 let provider = AudioRuntimeProvider(profile)
-                // FluidAudio runs speech recognition only. Its other families
-                // have no adapter, so routing keeps them out of the picker.
+                // FluidAudio runs speech recognition only. Rows for its other
+                // tasks route as unsupported, which keeps them out of the picker.
                 if case .fluidAudio(let family) = provider, currentTask == .speechToText {
                     guard let selected else { throw AudioWorkspaceError.message(AppStrings.localized("Import or select a recording first.")) }
-                    try await self.transcribeWithFluidAudio(item: selected, into: result.id, profile: profile, family: family, source: .final, token: token)
-                    guard self.valid(token) else { return }
-                    try self.persistMutation(result.id) { $0.status = .completed; $0.updatedAt = Date() }
-                    self.status = AppStrings.localized("Saved in this profile")
+                    let transcription = try await self.transcribeWithFluidAudio(item: selected, into: result.id, profile: profile, family: family, source: .final, token: token)
+                    // Speaker labels are extra here too, as on the Rust path below.
+                    try await self.completeFinalTranscription(item: selected, into: result.id, transcription: transcription, token: token)
                     return
                 }
                 if provider != .rust && provider != .qwenMLX {

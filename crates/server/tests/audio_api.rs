@@ -1344,6 +1344,26 @@ async fn generate_validation() {
             "wrong task",
             serde_json::json!({"model": "stt-test", "prompt": "x"}),
         ),
+        (
+            "max_frames zero",
+            serde_json::json!({"model": m, "prompt": "x", "max_frames": 0}),
+        ),
+        (
+            "max_frames high",
+            serde_json::json!({"model": m, "prompt": "x", "max_frames": 9001}),
+        ),
+        (
+            "context_size zero",
+            serde_json::json!({"model": m, "prompt": "x", "context_size": 0}),
+        ),
+        (
+            "context_size high",
+            serde_json::json!({"model": m, "prompt": "x", "context_size": 10241}),
+        ),
+        (
+            "frames exceed context",
+            serde_json::json!({"model": m, "prompt": "x", "max_frames": 9000, "context_size": 5000}),
+        ),
     ];
     for (name, body) in cases {
         let (status, body) = error_of(post_json(&base, "/v1/audio/generate", body).await).await;

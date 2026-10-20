@@ -71,6 +71,8 @@ enum FluidAudioModelError: LocalizedError, Equatable {
     case vocabulary(String)
     /// The family has no speech recognizer in this build.
     case notSpeech(FluidAudioFamily)
+    /// The family is not a speech detector.
+    case notDetector(FluidAudioFamily)
     /// The window is longer than the recognizer decodes without dropping text.
     case windowTooLong(samples: Int, limit: Int)
 
@@ -81,7 +83,7 @@ enum FluidAudioModelError: LocalizedError, Equatable {
         switch self {
         case .mismatch, .vocabulary:
             return AppStrings.localized("The installed model does not match this app. Delete it and download it again.")
-        case .notSpeech:
+        case .notSpeech, .notDetector:
             return AppStrings.localized("Runtime unavailable")
         case .windowTooLong:
             return nil

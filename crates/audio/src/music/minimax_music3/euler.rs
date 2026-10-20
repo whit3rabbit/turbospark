@@ -112,21 +112,27 @@ pub enum FlowSolver {
 /// unless the caller says otherwise: 30 DiT forwards instead of 60, which
 /// measured about half the DiT time at a correlation of 0.974 against the exact
 /// output on one prompt. It changes the audio and is not an MLX-parity mode.
+/// `Turbo` is the distilled adapter's training trajectory: Euler, both CFG
+/// branches each step, and eight steps. It is selected only by an explicitly
+/// marked TurboSpark Music 3 checkpoint.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum FlowProfile {
     #[default]
     Exact,
     Fast,
+    Turbo,
 }
 
 impl FlowProfile {
     pub const REFERENCE_STEPS: usize = 30;
     pub const FAST_STEPS: usize = 21;
+    pub const TURBO_STEPS: usize = 8;
 
     pub fn solver(self) -> FlowSolver {
         match self {
             Self::Exact => FlowSolver::Euler,
             Self::Fast => FlowSolver::AdamsBashforth2,
+            Self::Turbo => FlowSolver::Euler,
         }
     }
 
@@ -137,6 +143,7 @@ impl FlowProfile {
                 uncond_interval: 3,
                 uncond_warmup: 2,
             },
+            Self::Turbo => FlowGuidance::EXACT,
         }
     }
 
@@ -145,6 +152,7 @@ impl FlowProfile {
         match self {
             Self::Exact => Self::REFERENCE_STEPS,
             Self::Fast => Self::FAST_STEPS,
+            Self::Turbo => Self::TURBO_STEPS,
         }
     }
 }

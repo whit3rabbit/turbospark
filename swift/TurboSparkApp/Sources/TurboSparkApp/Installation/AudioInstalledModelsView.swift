@@ -146,6 +146,12 @@ struct AudioInstalledRow: View {
                     Text(verbatim: entry.name).themedFont(.callout, weight: .semibold).lineLimit(1)
                     if let size = sizeText { Text(verbatim: size).themedFont(.tiny).monospacedDigit().foregroundStyle(.appSecondary) }
                     if let usedBy { usedBy.themedFont(.tiny).foregroundStyle(.appSecondary).lineLimit(2) }
+                    if entry.runtimeUnsupported {
+                        Label { Text("Not usable in this app version", bundle: .module) } icon: {
+                            Image(systemName: "exclamationmark.triangle").accessibilityHidden(true)
+                        }
+                        .themedFont(.tiny).foregroundStyle(.appSecondary).lineLimit(1)
+                    }
                 }
                 Spacer(minLength: 4)
                 AudioModelStateLabel(state: controller.entryState(entry, download: entry.profile.flatMap { model.audioDownload(for: $0) }))

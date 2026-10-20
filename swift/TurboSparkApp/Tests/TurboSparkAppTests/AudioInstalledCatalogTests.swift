@@ -8,11 +8,12 @@ import XCTest
 /// adds local folders, and offers only pinned models this Mac can run.
 @MainActor
 final class AudioInstalledCatalogTests: XCTestCase {
-    private func profile(_ alias: String, task: AudioTask = .speechToText, revision: String = "abcdef0123") -> AudioProfile {
+    private func profile(_ alias: String, task: AudioTask = .speechToText, revision: String = "abcdef0123",
+                         family: String = "whisper", backend: String = "metal") -> AudioProfile {
         AudioProfile(
             identity: AudioProfileIdentity(task: task, alias: alias, repository: "o/\(alias)", revision: revision, assetFingerprint: "f"),
-            family: "whisper", displayName: alias,
-            capabilities: AudioCapabilities(operations: ["transcribe"], backend: "metal", cancellation: "window", canRun: true),
+            family: family, displayName: alias,
+            capabilities: AudioCapabilities(operations: ["transcribe"], backend: backend, cancellation: "window", canRun: backend != "swift_coreml"),
             pcmFormat: AudioPCMFormat(sampleRate: 16_000, channels: 1), readiness: "qualified")
     }
 
@@ -65,5 +66,31 @@ final class AudioInstalledCatalogTests: XCTestCase {
             localModels: ["downloadable"], canRun: { _ in true })
         XCTAssertEqual(entries.count, 2)
         XCTAssertEqual(Set(entries.map(\.id)).count, 2, "a model with a local folder and a download is two rows")
+    }
+
+    /// A row the CLI installed for a Swift-hosted family this build cannot run
+    /// stays under Installed so it can be deleted, says that nothing uses it,
+    /// and is never offered for download.
+    func testInstalledRowsStayListedWhenNoRuntimeCanUseThem() throws {
+        let kokoro = profile("kokoro-82m-coreml", task: .textToSpeech, family: FluidAudioFamily.kokoroANE.rawValue, backend: "swift_coreml")
+        let parakeet = profile("parakeet-ja-coreml", family: FluidAudioFamily.parakeetJa.rawValue, backend: "swift_coreml")
+        XCTAssertEqual(AudioRuntimeProvider(kokoro), .unsupported, "the fixture must be a family without an adapter")
+        XCTAssertEqual(AudioRuntimeProvider(parakeet), .fluidAudio(.parakeetJa))
+        let verdict: (AudioProfile) -> Bool = { AudioRuntimeProvider($0).canRun($0) }
+
+        let installed = [try decode(AudioInstalledRecord.self, record("kokoro-82m-coreml")),
+                         try decode(AudioInstalledRecord.self, record("parakeet-ja-coreml"))]
+        let entries = AudioInstalledCatalog.entries(
+            profiles: [kokoro, parakeet], installed: installed, needsAdoption: [], incompatible: [], otherAudio: [],
+            localModels: [], canRun: verdict)
+        XCTAssertEqual(entries.map(\.group), [.installed, .installed], "an install stays listed whatever its runtime")
+        XCTAssertEqual(entries.first { $0.alias == "kokoro-82m-coreml" }?.runtimeUnsupported, true)
+        XCTAssertEqual(entries.first { $0.alias == "parakeet-ja-coreml" }?.runtimeUnsupported, false)
+
+        let offered = AudioInstalledCatalog.entries(
+            profiles: [kokoro, parakeet], installed: [], needsAdoption: [], incompatible: [], otherAudio: [],
+            localModels: [], canRun: verdict)
+        XCTAssertEqual(offered.map(\.alias), ["parakeet-ja-coreml"], "only a row with a runtime is offered for download")
+        XCTAssertEqual(offered.first?.runtimeUnsupported, false)
     }
 }

@@ -29,7 +29,8 @@ final class AudioRuntimeProviderTests: XCTestCase {
             let provider = AudioRuntimeProvider(p)
             if p.capabilities.backend == "swift_coreml" {
                 let family = try XCTUnwrap(FluidAudioFamily(rawValue: p.family), p.identity.alias)
-                XCTAssertEqual(provider, family.hasAdapter ? .fluidAudio(family) : .unsupported, p.identity.alias)
+                let wired = family.supportedTasks.contains(p.identity.task)
+                XCTAssertEqual(provider, wired ? .fluidAudio(family) : .unsupported, p.identity.alias)
                 continue
             }
             XCTAssertEqual(provider == .qwenMLX, p.family == "qwen3_tts", p.identity.alias)
@@ -38,18 +39,50 @@ final class AudioRuntimeProviderTests: XCTestCase {
         }
     }
 
-    /// A Swift-hosted row reaches a runtime only through a known family whose
-    /// adapter ships in this build. Its Rust `canRun`, false by design, never
+    /// A Swift-hosted row reaches a runtime only through a known family with a
+    /// job for the row's task. Its Rust `canRun`, false by design, never
     /// decides.
     func testSwiftHostedRowsRouteOnlyToAShippedAdapter() {
         XCTAssertEqual(AudioRuntimeProvider(profile("a", family: "other_tts", backend: "swift_mlx")), .unsupported)
         XCTAssertEqual(AudioRuntimeProvider(profile("b", family: "fluidaudio_unknown", backend: "swift_coreml")),
                        .unsupported)
         for family in FluidAudioFamily.allCases {
-            let p = profile(family.rawValue, family: family.rawValue, backend: "swift_coreml")
+            let task = family.supportedTasks.first ?? .textToSpeech
+            let p = profile(family.rawValue, family: family.rawValue, backend: "swift_coreml", task: task)
             let provider = AudioRuntimeProvider(p)
             XCTAssertEqual(provider, family.hasAdapter ? .fluidAudio(family) : .unsupported, family.rawValue)
             XCTAssertEqual(provider.canRun(p), family.hasAdapter, family.rawValue)
+        }
+    }
+
+    /// A family routes only the tasks it has a job for. A row for another
+    /// task is unsupported, so the picker hides it instead of letting
+    /// `beginRun` refuse it after the user pressed Run.
+    func testFluidAudioRoutesOnlyTasksTheFamilySupports() {
+        let ja = FluidAudioFamily.parakeetJa.rawValue
+        XCTAssertEqual(AudioRuntimeProvider(profile("ja-stt", family: ja, backend: "swift_coreml", task: .speechToText)),
+                       .fluidAudio(.parakeetJa))
+        XCTAssertEqual(AudioRuntimeProvider(profile("ja-tts", family: ja, backend: "swift_coreml", task: .textToSpeech)),
+                       .unsupported)
+        XCTAssertEqual(AudioRuntimeProvider(profile("kokoro", family: FluidAudioFamily.kokoroANE.rawValue,
+                                                    backend: "swift_coreml", task: .textToSpeech)), .unsupported)
+        XCTAssertEqual(AudioRuntimeProvider(profile("vad", family: FluidAudioFamily.sileroVAD.rawValue,
+                                                    backend: "swift_coreml", task: .speechDetection)), .unsupported)
+    }
+
+    /// The supported tasks name exactly the jobs `beginRun` runs. Adding a
+    /// task is the deliberate step that puts a family's rows in the picker,
+    /// so it comes with the job and residency that run it, and with this
+    /// test's update.
+    func testSupportedTasksNameOnlyWiredJobs() {
+        for family in FluidAudioFamily.allCases {
+            switch family {
+            case .parakeetJa, .paraformerZh:
+                XCTAssertEqual(family.supportedTasks, [.speechToText], family.rawValue)
+            case .sileroVAD, .kokoroANE, .pocketTTS, .senseVoice:
+                XCTAssertTrue(family.supportedTasks.isEmpty, family.rawValue)
+            }
+            XCTAssertEqual(family.hasAdapter, !family.supportedTasks.isEmpty, family.rawValue)
         }
     }
 

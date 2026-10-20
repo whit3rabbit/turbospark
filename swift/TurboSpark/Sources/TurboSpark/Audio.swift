@@ -56,14 +56,19 @@ public struct AudioCapabilities: Codable, Sendable, Equatable {
     /// False when only this app can run the profile, so the HTTP server
     /// refuses it. Nil in older payloads, which predate app-only profiles.
     public let httpApi: Bool?
+    public let maxContextTokens: Int?
+    public let maxAudioFrames: Int?
+    public let frameRateHz: Int?
     public init(languages: [String] = [], voices: [String] = [], maxInputSeconds: Int? = nil,
                 supportsLyrics: Bool = false, operations: [String], timing: String? = nil,
                 backend: String, cancellation: String, canRun: Bool, unavailableReason: String? = nil,
-                compute: String? = nil, httpApi: Bool? = nil) {
+                compute: String? = nil, httpApi: Bool? = nil,
+                maxContextTokens: Int? = nil, maxAudioFrames: Int? = nil, frameRateHz: Int? = nil) {
         self.languages = languages; self.voices = voices; self.maxInputSeconds = maxInputSeconds
         self.supportsLyrics = supportsLyrics; self.operations = operations; self.timing = timing
         self.backend = backend; self.cancellation = cancellation; self.canRun = canRun
         self.unavailableReason = unavailableReason; self.compute = compute; self.httpApi = httpApi
+        self.maxContextTokens = maxContextTokens; self.maxAudioFrames = maxAudioFrames; self.frameRateHz = frameRateHz
     }
     /// The engine clones a voice from reference audio carried as the job's PCM.
     public var supportsVoiceClone: Bool { operations.contains("voice_clone") }
@@ -271,7 +276,10 @@ public struct AudioRequest: Codable, Sendable, Equatable {
     public var caption = ""
     public var lyrics = ""
     public var durationSeconds: Double? = 10
-    public var steps: Int? = 30
+    public var maxFrames: Int?
+    public var contextSize: Int?
+    /// For Music 3, nil lets checkpoint metadata choose its recommended steps.
+    public var steps: Int?
     public var seed: UInt64? = 0
     public var instruction: String?
     public var referenceText: String?

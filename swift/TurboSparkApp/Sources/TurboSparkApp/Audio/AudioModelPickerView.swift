@@ -9,9 +9,22 @@ struct AudioModelPickerView: View {
     @State private var confirmingDelete = false
     /// A profile whose install terms are on screen awaiting acceptance.
     @State private var acknowledging: AudioProfile?
+    @Environment(\.locale) private var locale
 
     private var download: ModelDownload? {
         controller.selectedProfile.flatMap { model.audioDownload(for: $0) }
+    }
+
+    /// A row names the model and its engine, and a single-language model
+    /// also its language in the UI's own language, so a Japanese or
+    /// Mandarin recognizer is recognizable before it is chosen.
+    private func rowLabel(_ profile: AudioProfile) -> Text {
+        var label = Text(profile.displayName) + Text(verbatim: " - ")
+            + Text(LocalizedStringKey(AudioEngineLabel(profile).title), bundle: .module)
+        if let code = AudioModelLanguage.singleCode(for: profile) {
+            label = label + Text(verbatim: " - " + AudioModelLanguage.name(for: code, locale: locale))
+        }
+        return label
     }
 
     var body: some View {
@@ -27,9 +40,7 @@ struct AudioModelPickerView: View {
             Picker(selection: Binding(get: { controller.recipe.modelID }, set: { controller.selectModel($0) })) {
                 Text("Choose a model", bundle: .module).tag(Optional<String>.none)
                 ForEach(controller.availableProfiles) { profile in
-                    (Text(profile.displayName) + Text(verbatim: " - ")
-                        + Text(LocalizedStringKey(AudioEngineLabel(profile).title), bundle: .module))
-                        .tag(Optional(profile.identity.alias))
+                    rowLabel(profile).tag(Optional(profile.identity.alias))
                 }
             } label: { Text("Audio model", bundle: .module) }
             .labelsHidden().frame(maxWidth: .infinity, alignment: .leading)

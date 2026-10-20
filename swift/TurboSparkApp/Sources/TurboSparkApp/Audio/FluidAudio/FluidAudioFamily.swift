@@ -1,4 +1,5 @@
 import Foundation
+import TurboSpark
 
 /// The FluidAudio families the audio catalog can pin (backend
 /// `swift_coreml`). Raw values are the persisted catalog family strings, so a
@@ -7,7 +8,6 @@ import Foundation
 /// docs/FLUIDAUDIO.md has the pins, layouts and placements behind each case.
 enum FluidAudioFamily: String, CaseIterable, Sendable {
     case sileroVAD = "fluidaudio_silero_vad"
-    case diarizer = "fluidaudio_diarizer"
     case kokoroANE = "fluidaudio_kokoro_ane"
     case pocketTTS = "fluidaudio_pocket_tts"
     case senseVoice = "fluidaudio_sensevoice"
@@ -20,7 +20,7 @@ enum FluidAudioFamily: String, CaseIterable, Sendable {
         switch self {
         case .kokoroANE: return "kokoro-82m-coreml"
         case .pocketTTS: return "Models/pocket-tts"
-        case .sileroVAD, .diarizer, .senseVoice, .paraformerZh, .parakeetJa: return nil
+        case .sileroVAD, .senseVoice, .paraformerZh, .parakeetJa: return nil
         }
     }
 
@@ -28,17 +28,22 @@ enum FluidAudioFamily: String, CaseIterable, Sendable {
     /// targets iOS 15 to 17 programs, so the app's floor holds.
     var minimumMacOSMajor: Int { 14 }
 
-    /// Whether the workspace can run the family end to end: an adapter, its
-    /// jobs, and residency. A family flips only when all three ship, so a
-    /// catalog row never routes to FluidAudio before the code that runs it.
-    var hasAdapter: Bool {
+    /// The tasks the workspace runs end to end for the family: an adapter,
+    /// a job in `beginRun`, and residency. A task is added here only in the
+    /// change that wires all three, so a catalog row never routes to
+    /// FluidAudio before the code that runs it. `AudioRuntimeProviderTests`
+    /// pins these sets.
+    var supportedTasks: Set<AudioTask> {
         switch self {
         case .paraformerZh, .parakeetJa:
-            return true
-        case .sileroVAD, .diarizer, .kokoroANE, .pocketTTS, .senseVoice:
-            return false
+            return [.speechToText]
+        case .sileroVAD, .kokoroANE, .pocketTTS, .senseVoice:
+            return []
         }
     }
+
+    /// Whether any task of the family runs in this build.
+    var hasAdapter: Bool { !supportedTasks.isEmpty }
 
     var isSupportedOnThisMac: Bool {
         ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= minimumMacOSMajor

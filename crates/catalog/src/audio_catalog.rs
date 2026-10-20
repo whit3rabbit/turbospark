@@ -122,6 +122,37 @@ pub struct AudioCapabilities {
     /// the TurboSpark app executes it. The server refuses these aliases.
     #[serde(default = "attachable_by_default")]
     pub http_api: bool,
+    /// Context size (in tokens) supported by the model's AR backbone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_context_tokens: Option<u32>,
+    /// Frame cap of one request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_audio_frames: Option<u32>,
+    /// AR frames per second of audio.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame_rate_hz: Option<u32>,
+}
+
+impl Default for AudioCapabilities {
+    fn default() -> Self {
+        Self {
+            languages: vec![],
+            voices: vec![],
+            max_input_seconds: None,
+            supports_lyrics: false,
+            operations: vec![],
+            timing: None,
+            backend: String::new(),
+            cancellation: String::new(),
+            can_run: false,
+            unavailable_reason: None,
+            compute: None,
+            http_api: true,
+            max_context_tokens: None,
+            max_audio_frames: None,
+            frame_rate_hz: None,
+        }
+    }
 }
 
 fn attachable_by_default() -> bool {
@@ -402,6 +433,37 @@ impl AudioCatalog {
                             voices: vec![],
                             max_input_seconds: Some(360),
                             supports_lyrics: true,
+                            max_context_tokens: Some(10_240),
+                            max_audio_frames: Some(9_000),
+                            frame_rate_hz: Some(25),
+                            ..profile_capabilities("minimax_music3")
+                        },
+                        AudioReadiness::ImplementedUnqualified,
+                        vec![],
+                    )
+                }
+                "minimax-music3-turbo-4bit-8step" => {
+                    if row.source.is_some() || row.frontend.is_some() {
+                        return Err("MiniMax source must come from the music catalog".into());
+                    }
+                    let music = crate::embedded_music_entry(&row.alias)?;
+                    (
+                        AudioTask::Music,
+                        music.model_id,
+                        music.revision,
+                        "minimax_music3".to_string(),
+                        "MiniMax Music 3 Turbo 4-bit (8-step)".to_string(),
+                        music.required_files,
+                        44100,
+                        2,
+                        AudioCapabilities {
+                            languages: vec![],
+                            voices: vec![],
+                            max_input_seconds: Some(360),
+                            supports_lyrics: true,
+                            max_context_tokens: Some(10_240),
+                            max_audio_frames: Some(9_000),
+                            frame_rate_hz: Some(25),
                             ..profile_capabilities("minimax_music3")
                         },
                         AudioReadiness::ImplementedUnqualified,
@@ -1326,6 +1388,7 @@ fn profile_capabilities(family: &str) -> AudioCapabilities {
             unavailable_reason: None,
             compute: None,
             http_api: true,
+            ..Default::default()
         };
     }
     if family == "fish_drama3" {
@@ -1346,6 +1409,7 @@ fn profile_capabilities(family: &str) -> AudioCapabilities {
             unavailable_reason: None,
             compute: None,
             http_api: true,
+            ..Default::default()
         };
     }
     if family == "megatts3" {
@@ -1363,6 +1427,7 @@ fn profile_capabilities(family: &str) -> AudioCapabilities {
             unavailable_reason: None,
             compute: None,
             http_api: true,
+            ..Default::default()
         };
     }
     if family == "parakeet_tdt" {
@@ -1387,6 +1452,7 @@ fn profile_capabilities(family: &str) -> AudioCapabilities {
             // the first crate that sees both, holds the two together.
             compute: Some("gpu".into()),
             http_api: true,
+            ..Default::default()
         };
     }
     // Swift-hosted Core ML: FluidAudio 0.15.5 inside the app. Rust installs
@@ -1397,7 +1463,6 @@ fn profile_capabilities(family: &str) -> AudioCapabilities {
     // Engine and runs on the CPU. Re-measure on a pin bump.
     let fluid = match family {
         "fluidaudio_silero_vad" => Some(("detect_speech", "cpu", "chunk", None)),
-        "fluidaudio_diarizer" => Some(("diarize", "mixed", "job", None)),
         "fluidaudio_kokoro_ane" => Some(("synthesize", "mixed", "sentence", None)),
         "fluidaudio_pocket_tts" => Some(("synthesize", "gpu", "chunk", None)),
         "fluidaudio_sensevoice" | "fluidaudio_paraformer_zh" => {
@@ -1423,6 +1488,7 @@ fn profile_capabilities(family: &str) -> AudioCapabilities {
             ),
             compute: Some(compute.into()),
             http_api: false,
+            ..Default::default()
         };
     }
     if family == "parakeet_unified" {
@@ -1445,6 +1511,7 @@ fn profile_capabilities(family: &str) -> AudioCapabilities {
             // Engine units (`UnifiedOptions::default`), held by a server test.
             compute: Some("ane".into()),
             http_api: true,
+            ..Default::default()
         };
     }
     if family == "pyannote_community1" {
@@ -1467,6 +1534,7 @@ fn profile_capabilities(family: &str) -> AudioCapabilities {
                 .then(|| "Speaker diarization on Core ML requires macOS 15 or newer".into()),
             compute: Some("mixed".into()),
             http_api: true,
+            ..Default::default()
         };
     }
     let (operation,backend,cancellation,can_run,reason,timing) = match family {
@@ -1489,6 +1557,21 @@ fn profile_capabilities(family: &str) -> AudioCapabilities {
         unavailable_reason: reason.map(str::to_string),
         compute: None,
         http_api: true,
+        max_context_tokens: if family == "minimax_music3" {
+            Some(10_240)
+        } else {
+            None
+        },
+        max_audio_frames: if family == "minimax_music3" {
+            Some(9_000)
+        } else {
+            None
+        },
+        frame_rate_hz: if family == "minimax_music3" {
+            Some(25)
+        } else {
+            None
+        },
     }
 }
 
@@ -2590,7 +2673,7 @@ mod tests {
     #[test]
     fn initial_audio_profiles_have_exact_complete_pins_and_wire_metadata() {
         let catalog = AudioCatalog::embedded().unwrap();
-        assert_eq!(catalog.entries().count(), 18);
+        assert_eq!(catalog.entries().count(), 22);
         for (task, alias, repo, revision, rate, channels) in [
             (
                 AudioTask::TextToSpeech,
@@ -2866,6 +2949,93 @@ mod tests {
         assert_eq!(
             g2p.sha256,
             "0f9d70d454ee35d023a9a54552716a8ccf2411c967abc6a857160527046f62a2"
+        );
+    }
+
+    /// The FluidAudio speech-detection and TTS rows: pinned to the commit
+    /// Phase 0 measured, app-only, laid out the way FluidAudio's loaders
+    /// read, and holding no file a license keeps out (the two PocketTTS
+    /// voices that are non-commercial).
+    #[test]
+    fn fluidaudio_vad_and_tts_rows_are_pinned_app_only_and_laid_out() {
+        let catalog = AudioCatalog::embedded().unwrap();
+        for (alias, family, task, repo, revision, files, subdir, compute) in [
+            (
+                "silero-vad-coreml",
+                "fluidaudio_silero_vad",
+                AudioTask::SpeechDetection,
+                "FluidInference/silero-vad-coreml",
+                "b419383c55c110e2c9271fa6ee0ea83d03c70d96",
+                5,
+                None,
+                "cpu",
+            ),
+            (
+                "kokoro-82m-ane-coreml",
+                "fluidaudio_kokoro_ane",
+                AudioTask::TextToSpeech,
+                "FluidInference/kokoro-82m-coreml",
+                "e61d9ee79a01ad4ebf6b3d8bcfe2a03f6b8da105",
+                52,
+                Some("kokoro-82m-coreml"),
+                "mixed",
+            ),
+            (
+                "pocket-tts-coreml",
+                "fluidaudio_pocket_tts",
+                AudioTask::TextToSpeech,
+                "FluidInference/pocket-tts-coreml",
+                "91748676fe3c8b2eb3007b3125253bcd898202c3",
+                46,
+                Some("Models/pocket-tts"),
+                "gpu",
+            ),
+        ] {
+            let p = catalog.get(alias).unwrap();
+            assert_eq!(p.identity.task, task, "{alias}");
+            assert_eq!(p.family, family);
+            assert_eq!(p.identity.repository, repo);
+            assert_eq!(p.identity.revision, revision);
+            assert_eq!(p.assets.len(), files, "{alias}");
+            assert_eq!(p.install_subdir.as_deref(), subdir, "{alias}");
+            assert_eq!(p.capabilities.backend, "swift_coreml");
+            assert_eq!(p.capabilities.compute.as_deref(), Some(compute), "{alias}");
+            assert!(
+                !p.capabilities.can_run && !p.capabilities.http_api,
+                "{alias}"
+            );
+            assert_eq!(p.readiness, AudioReadiness::RuntimePending);
+            assert!(p.acknowledgments.is_empty(), "{alias}");
+            // Compiled programs only, never an .mlpackage source.
+            assert!(p.assets.iter().all(|a| !a.path.contains(".mlpackage/")));
+            assert!(p
+                .assets
+                .iter()
+                .any(|a| a.path.ends_with("/weights/weight.bin")));
+        }
+        // The two non-commercial voices stay out of the pin.
+        let pocket = catalog.get("pocket-tts-coreml").unwrap();
+        for name in ["cosette", "jean"] {
+            assert!(
+                pocket.assets.iter().all(|a| !a.path.contains(name)),
+                "{name}"
+            );
+            assert!(pocket.capabilities.voices.iter().all(|v| v != name));
+        }
+        // FluidAudio's fixed Kokoro layout reads these from the ANE folder.
+        let kokoro = catalog.get("kokoro-82m-ane-coreml").unwrap();
+        for file in ["ANE/af_heart.bin", "ANE/vocab.json", "ANE/LICENSE"] {
+            assert!(kokoro.assets.iter().any(|a| a.path == file), "{file}");
+        }
+        // The diarizer is the pyannote row, which the Rust runner already
+        // executes: there is no second FluidAudio copy of it.
+        assert_eq!(
+            catalog
+                .entries()
+                .filter(|p| p.identity.repository == "FluidInference/speaker-diarization-coreml")
+                .map(|p| p.family.as_str())
+                .collect::<Vec<_>>(),
+            ["pyannote_community1"]
         );
     }
 
@@ -3762,9 +3932,8 @@ mod tests {
             1
         );
     }
-    const FLUID_FAMILIES: [&str; 7] = [
+    const FLUID_FAMILIES: [&str; 6] = [
         "fluidaudio_silero_vad",
-        "fluidaudio_diarizer",
         "fluidaudio_kokoro_ane",
         "fluidaudio_pocket_tts",
         "fluidaudio_sensevoice",
@@ -4093,26 +4262,22 @@ mod tests {
     }
 
     #[test]
-    fn diarization_and_speech_detection_installs_are_listed_as_installed() {
-        for (family, task) in [
-            ("fluidaudio_diarizer", "diarization"),
-            ("fluidaudio_silero_vad", "speech_detection"),
-        ] {
-            let root = Scratch::new();
-            let store = Store::new(root.0.join("store"));
-            let (catalog, identity, receipt) =
-                staged(fluid_catalog(family, task, None), "fluid-test", &root.0);
-            let installed = catalog
-                .publish_verified(&store, &identity, &receipt, &CancelFlag::new())
-                .unwrap();
-            let report = catalog.installed_report(&store);
-            assert!(
-                report.incompatible.is_empty(),
-                "{task}: {:?}",
-                report.incompatible
-            );
-            assert_eq!(report.installed, vec![installed], "{task}");
-        }
+    fn speech_detection_installs_are_listed_as_installed() {
+        let (family, task) = ("fluidaudio_silero_vad", "speech_detection");
+        let root = Scratch::new();
+        let store = Store::new(root.0.join("store"));
+        let (catalog, identity, receipt) =
+            staged(fluid_catalog(family, task, None), "fluid-test", &root.0);
+        let installed = catalog
+            .publish_verified(&store, &identity, &receipt, &CancelFlag::new())
+            .unwrap();
+        let report = catalog.installed_report(&store);
+        assert!(
+            report.incompatible.is_empty(),
+            "{task}: {:?}",
+            report.incompatible
+        );
+        assert_eq!(report.installed, vec![installed], "{task}");
     }
 
     #[test]

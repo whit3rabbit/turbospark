@@ -66,4 +66,23 @@ enum FluidAudioSignatures {
             ],
             outputs: [FluidAudioFeature("logits", f16)])
     }
+
+    /// `silero-vad-coreml@b419383c`: the unified 256 ms export (STFT, encoder
+    /// and decoder in one program). One 4096-sample chunk plus 64 samples of
+    /// context goes in with the LSTM state, and a speech probability and the
+    /// next state come out.
+    enum SileroVad {
+        static let model = FluidAudioModelSignature(
+            file: "silero-vad-unified-256ms-v6.2.1.mlmodelc",
+            inputs: [
+                FluidAudioFeature("audio_input", f32, [[1, 4160]]),
+                FluidAudioFeature("hidden_state", f32, [[1, 128]]),
+                FluidAudioFeature("cell_state", f32, [[1, 128]]),
+            ],
+            outputs: [
+                FluidAudioFeature("vad_output", f32),
+                FluidAudioFeature("new_hidden_state", f32),
+                FluidAudioFeature("new_cell_state", f32),
+            ])
+    }
 }

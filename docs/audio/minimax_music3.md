@@ -19,23 +19,58 @@ MLX itself, which is the only check that covers dense and convolution kernels.
 | Does that hold at product scale? | Yes. 8 s, 200 frames, 30 flow steps: our 16-bit WAV equals MLX's output in 0 of 705,536 samples. A 210-frame request (two chunks, 2 flow steps) matches in all 740,352 samples, with identical codes and hiddens. |
 | Which kernels are diffed against MLX bit for bit? | Dense bf16 (depth projection and heads, rows 1 to 16), 4-bit affine (depth layers rows 1 to 16, the DiT's `proj_in` and `proj_out` rows 16 to 691), and convolutions (condition encoder, vocoder input, residual, 1x1 and transposed convs). 0 differing values. |
 | Are the other profiles (6-bit, 8-bit, MXFP8, MXFP4, NVFP4) verified exact? | **No.** Only the affine 4-bit profile has been compared. The kernels they use are shared, but nothing has been checked. |
-| What does the app, server, FFI and CLI run by default? | `FlowProfile::Fast`, which is not MLX's trajectory by design (see below). |
-| Has anyone listened to the fast profile? | No. Every quality number here is a drift metric on one prompt and one seed. |
+| What does an unmarked checkpoint run by default? | `FlowProfile::Fast`, which is not MLX's trajectory by design (see below). A marked experimental Turbo checkpoint selects its 8-step Euler profile when callers omit steps. |
+| Has the Turbo checkpoint been listened to? | One blind, 15-second vocal comparison at seed 23: 8-step Turbo was judged to sound like the 30-step reference; 8-step control was judged thin, like listening through a tin can. This is encouraging but not a multi-seed or long-form quality gate. |
 
-## Two flow profiles
+## Flow profiles
 
-`Music3Runner` opens in `FlowProfile::Fast`; `Model` (the library) opens in
-`Exact`. A runner can be switched with `set_flow_profile`, and the CLI takes
-`--flow-profile fast|exact`. Everything that compares with MLX or a CPU
+Unmarked checkpoints open in `FlowProfile::Fast`; the marked experimental
+TurboSpark merged-LoRA checkpoint selects `FlowProfile::Turbo`. `Model` (the
+library) opens in `Exact`. A runner can be switched with `set_flow_profile`,
+and the CLI accepts `--flow-profile fast|exact|turbo`. Explicit step counts
+override the profile defaults. Everything that compares with MLX or a CPU
 reference must use `Exact`.
 
-| | Exact | Fast |
-|---|---|---|
-| Solver | Euler | Adams-Bashforth 2 |
-| Unconditional guidance branch | every step | reused, interval 3 after warmup 2 |
-| Steps when a request names none | 30 | 21 |
-| DiT forwards for one chunk | 60 | 30 |
-| Matches MLX | yes (4-bit verified) | no, by design |
+### Experimental 8-step Turbo checkpoint
+
+The published checkpoint merges the rank-64 adapter
+`guillaume127/MiniMax-Music-3-Turbo-FP8/minimax_music3_turbo_lora_8step.safetensors`
+(SHA-256 `9722bb8da08da3912a2b6b8fdb173b9d7d4ce01a68818114a8218cfe25d8545a`)
+into `mlx-community/MiniMax-Music3-4bit` revision
+`c7ea32923b245fe5afc22d740a1936ad2ac590f3`. All 216 adapted target matrices
+are stored as dense FP16; untouched affine INT4 group-64 weights remain packed.
+The merged TurboSpark-compatible MLX safetensors checkpoint is published at
+[`cowWhySo/MiniMax-Music3-TurboSpark-4bit-8step`](https://huggingface.co/cowWhySo/MiniMax-Music3-TurboSpark-4bit-8step),
+revision `604e6c2b670d1be390cb6024dec79f46559ae569` (12.68 GB). Its metadata
+selects the eight-step Euler profile. The adapter-only MLX artifact is also
+published at
+[`cowWhySo/MiniMax-Music3-Turbo-MLX-LoRA`](https://huggingface.co/cowWhySo/MiniMax-Music3-Turbo-MLX-LoRA),
+revision `26c94413b40fbb26ebd034a4d05f027f7429194f`. The Rust audio catalog
+pins the merged repo revision and the Swift app obtains that pin through the
+catalog. New music workspaces select this checkpoint as the default download;
+saved model choices remain selected. The app can download and run the merged
+checkpoint without Python. The standalone adapter repo is for MLX adapter
+workflows, not the app's runtime.
+
+The published model card documents the prior art and merge: the rank-64,
+8-step adapter from `guillaume127/MiniMax-Music-3-Turbo-FP8` is merged into the
+pinned 4-bit MLX base. Adapted projection weights are stored dense FP16 while
+untouched affine INT4 group-64 weights remain packed. The upstream training
+implementation is
+[`Guillaume-127/Minimax-music-3-Turbo-8-steps`](https://github.com/Guillaume-127/Minimax-music-3-Turbo-8-steps).
+
+One blind 15-second vocal comparison at seed 23 judged Turbo similar to the
+30-step reference and the 8-step control noticeably degraded. This is useful
+initial evidence, not a multi-seed, long-form, or release quality gate. The
+checkpoint remains marked experimental in the catalog.
+
+| | Exact | Fast | Turbo |
+|---|---|---|---|
+| Solver | Euler | Adams-Bashforth 2 | Euler |
+| Unconditional guidance branch | every step | reused, interval 3 after warmup 2 | every step |
+| Steps when a request names none | 30 | 21 | 8 |
+| DiT forwards for one chunk | 60 | 30 | 16 |
+| Matches MLX | yes (4-bit verified) | no, by design | no, distilled trajectory |
 
 Measured on one 8 s prompt, scored against the exact 30-step audio
 (`ab_music3_flow.py`, `spectral_distance.py`, single runs, taken before the
@@ -224,7 +259,7 @@ Implemented in `music3_linear_tiled` (the `lanes` accumulators) and
 
 ## Pitfalls checklist
 
-- **`Music3Runner` opens in the Fast profile.** Any parity probe or test that
+- **Unmarked `Music3Runner` checkpoints open in Fast.** Any parity probe or test that
   compares with MLX or a CPU reference must call
   `set_flow_profile(FlowProfile::Exact)`. `music3_bench` and `ab_music3_flow.py`
   default to `exact` for that reason; pass `--flow-profile fast` to measure the
@@ -305,6 +340,8 @@ Implemented in `music3_linear_tiled` (the `lanes` accumulators) and
 - **The other profiles.** 6-bit, 8-bit, MXFP8, MXFP4 and NVFP4 share kernels with
   the verified one but have not been compared with MLX.
 - **Re-time the depth stage and a full song.** See the README performance section.
-- **Listening.** Intelligibility, transients and chunk seams for the Fast profile.
+- **Turbo quality.** The blind vocal comparison is one prompt and seed; validate
+  more voices, genres, seeds, and long-form transitions before removing the
+  experimental marker or making broader quality claims.
 - **Closing the speed gap to MLX** (see above): the vocoder first, then the DiT and
   the AR stage. Any change must keep `scripts/verify-music3.sh --mlx` green.

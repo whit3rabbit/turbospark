@@ -137,7 +137,7 @@ final class AudioSpeakerRosterTests: XCTestCase {
                 AudioLibrarySegment(start: 2, end: 4, text: "Hi", speaker: "Alice"),
                 AudioLibrarySegment(start: 4, end: 5, text: "Bye", speaker: "Speaker 1"),
             ], source: .final)
-            var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(old)) as? [String: Any])
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(old)) as? [String: Any])
             for key in ["speakerNames", "speakerMerges", "speakerLabelParts"] { XCTAssertNil(json[key], key) }
             let transcripts = try XCTUnwrap(json["transcripts"] as? [[String: Any]])
             let segments = try XCTUnwrap(transcripts.first?["segments"] as? [[String: Any]])

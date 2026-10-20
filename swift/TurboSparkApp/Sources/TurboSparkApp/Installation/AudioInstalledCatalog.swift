@@ -38,6 +38,10 @@ struct AudioInstalledEntry: Identifiable, Equatable {
     var name: String { profile?.displayName ?? alias }
     var path: String? { record?.path ?? legacy?.record.path }
     var installBytes: UInt64? { record?.installBytes ?? legacy?.record.installBytes }
+    /// An install no runtime in this build can use, such as a Swift-hosted
+    /// family whose adapter has not shipped (installed from the CLI). The row
+    /// stays listed so the user can delete it, and says why nothing uses it.
+    var runtimeUnsupported: Bool { profile.map { AudioRuntimeProvider($0) == .unsupported } ?? false }
 }
 
 /// Builds the Installed > Audio list. Pure, so tests can drive it with fixtures.

@@ -64,11 +64,15 @@ Tests hold the contract:
 `AudioRuntimeProvider` decides who runs a profile from its catalog backend:
 the Rust session, Qwen3-TTS in Swift MLX, FluidAudio, or nothing. A
 `swift_coreml` row routes to FluidAudio only when its family is a
-`FluidAudioFamily` case with `hasAdapter` true. Every other Swift-hosted row is
-unsupported, and the pickers hide it. `hasAdapter` means the workspace can run
-the family end to end, so it flips in the change that wires the family's jobs
-and residency, not in the one that adds its adapter. Until then the family's
-rows ship in the catalog but no picker offers them.
+`FluidAudioFamily` case whose `supportedTasks` holds the row's task. Every
+other Swift-hosted row is unsupported, and the pickers hide it. A task joins
+`supportedTasks` (which is what makes `hasAdapter` true) in the change that
+wires the family's job and residency, not in the one that adds its adapter.
+Until then a family's rows ship in the catalog and install from the CLI
+(`turbospark-model pull-audio <alias>`). No picker offers such a row and the
+Installed list never offers it for download, but a CLI install still appears
+under Installed, marked "Not usable in this app version", so it can be
+deleted.
 
 `AudioEngineLabel` names the engine beside each model: in the picker rows,
 under the selected model, in Model details and on the Advanced page. For Core
@@ -81,8 +85,7 @@ server refuses also show App only.
 
 | Family | Pin | Install layout | Entry point | Placement |
 |---|---|---|---|---|
-| `fluidaudio_silero_vad` | `silero-vad-coreml@b419383c` | flat | own `MLModel`, then `VadManager(config:vadModel:)` | CPU |
-| `fluidaudio_diarizer` | `speaker-diarization-coreml@7eab74f3` | flat | own MLModels and PLDA psi, then `OfflineDiarizerModels(...)` and `initialize(models:)` | mixed |
+| `fluidaudio_silero_vad` | `silero-vad-coreml@b419383c` | flat | `SileroSpeechDetector` (`FluidAudioVAD.swift`): own `MLModel` loaded for the CPU, then `VadManager(config:vadModel:)` and `segmentSpeech` | CPU |
 | `fluidaudio_kokoro_ane` | `kokoro-82m-coreml@e61d9ee7` (`ANE/`) | `kokoro-82m-coreml` | `KokoroAneManager(variant: .english, directory:)`, phonemes only | mixed |
 | `fluidaudio_pocket_tts` | `pocket-tts-coreml@91748676` (`v2.1/english/`) | `Models/pocket-tts` | `PocketTtsManager(language: .english, directory:, precision: .fp16, placement: .gpu)` | GPU |
 | `fluidaudio_sensevoice` | `sensevoice-small-coreml@74bdbe74` | flat | none: not shipped (see Not done) | Neural Engine |
@@ -129,10 +132,15 @@ the Record page. Live drafts during a recording stay on Rust sessions.
   shared with the Rust session and Qwen3-TTS. Loading verifies every byte of
   the install (Stop cancels it), admits the row's `resident_memory_bytes`
   within the audio memory budget, then builds the adapter off the main actor.
-  The first load compiles for the Neural Engine and takes minutes. Unload,
-  idle unload, model delete and shutdown release it.
+  The first load compiles for the Neural Engine and takes minutes, and the
+  status strip says so while it runs. Unload, idle unload, model delete and
+  shutdown release it.
 - **Verified installs only.** A FluidAudio row offers no local folder, and
   residency refuses one: the signature check stops a trap, not wrong weights.
+- **Speaker labels.** After a FluidAudio transcription, both pages run the
+  same best-effort diarization pass as the Rust session path
+  (`completeFinalTranscription`). A mode with labels on gets them from
+  either engine.
 - **Windows** (`AudioTranscriptionPlan`): Parakeet ja reads 30 s windows that
   overlap by 2 s. Each word is kept by the window that owns its start time,
   with the cut mid-overlap. The workspace's word reconcile splits on spaces,
@@ -160,7 +168,9 @@ the Record page. Live drafts during a recording stay on Rust sessions.
    helpers, which skip the check. Read the manager for silent limits (input
    truncation, token caps) and refuse input past them. Refuse any voice the
    row does not pin.
-4. Flip `hasAdapter` when the family's jobs and residency are wired.
+4. Once the family's job in `beginRun` and its residency are wired, add the
+   task to `supportedTasks`. That is what makes `hasAdapter` true, and
+   `AudioRuntimeProviderTests` pins the sets.
 5. Put the model's terms on the row: an `acknowledgments` entry when they
    carry conditions beyond attribution. `Resources/Licenses/` is for code the
    app links, not weights the user downloads. Add an env-gated real-model
@@ -170,8 +180,14 @@ the Record page. Live drafts during a recording stay on Rust sessions.
 
 ## Not done
 
-- VAD and speaker labels, then TTS. `hasAdapter` is true only for
-  `fluidaudio_parakeet_ja` and `fluidaudio_paraformer_zh`.
+- Speaker labels use the `speaker-diarization-coreml` row, which the Rust
+  runner executes (`pyannote_community1`). There is no FluidAudio diarizer
+  family: it would be the same pin under a second alias.
+- Speech detection has its adapter (`SileroSpeechDetector`, with real-model
+  tests, also run under a network-denied sandbox) but no job or residency in
+  the workspace, so `hasAdapter` is still false for it. Then TTS.
+  `hasAdapter` is true only for `fluidaudio_parakeet_ja` and
+  `fluidaudio_paraformer_zh`.
 - Live drafts while recording do not use FluidAudio models.
 - SenseVoice is not shipped. On this M4 Max both its int8 and fp16 encoders
   gave different text for the same window on repeated runs in one process,

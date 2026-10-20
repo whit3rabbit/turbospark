@@ -686,9 +686,9 @@ impl Music3Runner {
             silu: RefCell::new(None),
         });
         let model = Model::load_converted_with_backend_and_precision(path, backend, precision)?;
-        // The runner serves the app, server, FFI and CLI, so it opens in the
-        // faster profile. The MLX parity gates call `set_flow_profile(Exact)`.
-        model.set_flow_profile(FlowProfile::Fast);
+        // Turbo-trained checkpoints declare the exact 8-step trajectory they
+        // were distilled for. All other models keep the existing fast default.
+        model.set_flow_profile(model.preferred_runner_profile());
         Ok(Self {
             model,
             device,
@@ -706,8 +706,14 @@ impl Music3Runner {
     pub fn config(&self) -> &ModelConfig {
         self.model.config()
     }
-    /// Select the named flow profile. The runner opens in
-    /// [`FlowProfile::Fast`]; [`FlowProfile::Exact`] restores the MLX
+    /// Profile selected by the checkpoint metadata, or the ordinary Fast
+    /// default for unmarked checkpoints.
+    pub fn preferred_runner_profile(&self) -> FlowProfile {
+        self.model.preferred_runner_profile()
+    }
+    /// Select a named flow profile. Unmarked checkpoints open in
+    /// [`FlowProfile::Fast`], while a recognized distilled checkpoint may
+    /// declare another profile. [`FlowProfile::Exact`] restores the MLX
     /// reference trajectory (Euler, both CFG branches, 30 default steps).
     pub fn set_flow_profile(&self, profile: FlowProfile) {
         self.model.set_flow_profile(profile);
