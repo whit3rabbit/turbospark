@@ -117,6 +117,14 @@ under tests ([SYNTEXT.md](SYNTEXT.md)).
 Draft persistence is debounced by 300 ms. SQLCipher compares versioned chat
 payloads and updates only changed rows and their FTS content.
 
+Audio workspace helper stores under `<AppStorageRoot>`:
+- `speaker_profiles.json` (`AudioSpeakerProfileStore`): Cross-meeting learned speaker
+  profiles and 64-band log-mel voiceprint embeddings.
+- `custom_vocabulary.json` (`AudioCustomVocabularyStore`): Domain terminology,
+  acronyms, and phonetic aliases for regex word-boundary transcription normalization
+  and prompt context biasing.
+Both stores route through `AppStorageRoot.directory`, guaranteeing test isolation.
+
 ## `AppStorageRoot` and why the test suite needed one
 
 Found 2026-08-31 from a bug report: a chat titled "T10 chat" reappeared on

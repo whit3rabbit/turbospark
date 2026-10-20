@@ -5,6 +5,8 @@
 For comprehensive model and role documentation, see [TurboSpark Audio Architecture](audio/README.md).
 
 For the macOS product workflows, see [Audio workspace](AUDIO_WORKSPACE.md).
+For the Swift meeting notes, speaker intelligence, and capture architecture,
+see [Swift audio and meeting notes architecture](../swift/docs/SWIFT_AUDIO_MEETING_NOTES.md).
 The [capability audit](AUDIO_WORKSPACE_CAPABILITIES.md) distinguishes portable model
 source from runnable native integrations and qualification.
 
