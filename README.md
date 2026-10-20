@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <a href="https://turbospark.gitbook.io/turbospark/documentation">Documentation</a> | <a href="#install">Install</a> | <a href="#quickstart">Quickstart</a> | <a href="#supported-models">Supported Models</a> | <a href="#memory-and-benchmark-results">Benchmarks</a> | <a href="#image-generation">Image Generation</a> | <a href="#humanize">Humanize</a> | <a href="#audio">Audio</a> | <a href="#decision-models">Decision Models</a> | <a href="#supported-features">Features</a> | <a href="#more-details">More Details</a> | <a href="#license">License</a>
+  <a href="https://turbospark.gitbook.io/turbospark/documentation">Documentation</a> | <a href="#install">Install</a> | <a href="#quickstart">Quickstart</a> | <a href="#supported-models">Supported Models</a> | <a href="#memory-and-benchmark-results">Benchmarks</a> | <a href="#image-generation">Image Generation</a> | <a href="#humanize">Humanize</a> | <a href="#audio">Audio</a> | <a href="#music-generation">Music</a> | <a href="#decision-models">Decision Models</a> | <a href="#supported-features">Features</a> | <a href="#more-details">More Details</a> | <a href="#license">License</a>
 </p>
 
 ** This is a early work in progress. Expect bugs and breaking changes **
@@ -31,7 +31,7 @@ The app provides desktop chat and agent tools. The Rust crates provide the Metal
 Beyond chat, everything below runs on your Mac with no cloud service:
 
 - **[Humanize](#humanize).** Rewrite a draft with a local 12B model, then check the result against your own rules and an automatic audit.
-- **[Audio](#audio).** Speech to text, text to speech, zero-shot voice cloning, and music generation, in the app and over HTTP.
+- **[Audio](#audio) and [Music](#music-generation).** Speech to text, text to speech, voice activity detection, zero-shot voice cloning, and fast 8-step music generation, with native Metal and FluidAudio Core ML / Apple Neural Engine acceleration.
 - **[Decision models](#decision-models).** Typed yes/no, choice, and score answers from small local models through the bundled OpenKind daemon.
 - **[Image generation](#image-generation).** Z-Image Turbo and Qwen-Image 2.1 Turbo through Swift and MLX.
 - **Local API.** OpenAI- and Anthropic-compatible chat endpoints, plus image and audio routes, from the app or `turbospark-server`.
@@ -261,19 +261,30 @@ turbospark humanize humanizer-12b draft.txt --seed 3
 
 ## Audio
 
-TurboSpark transcribes speech, speaks text, clones voices, and generates music on your Mac. The app's Audio workspace covers all four, and `turbospark-server` serves most of them over HTTP.
+TurboSpark transcribes speech, speaks text, detects voice activity, clones voices, and generates music on your Mac. The app's Audio workspace covers all five modalities, and `turbospark-server` serves most of them over HTTP.
 
-The Audio workspace records the microphone, system audio, or both, and shows a live draft transcript while you record. Recordings, transcripts, and generated takes are stored in your encrypted profile.
+The Audio workspace records the microphone, system audio (using native macOS 14.2+ CoreAudio process taps without screen-recording prompts), or both, with real-time live drafting, speaker diarization, cross-meeting speaker recognition, custom vocabulary jargon dictionaries, and structured meeting notes summaries. Recordings, transcripts, and generated takes are stored in your encrypted profile.
+
+### FluidAudio integration
+
+The desktop app integrates [FluidAudio](https://github.com/FluidInference/FluidAudio) Core ML pipelines, running speech and audio tasks on the Apple Neural Engine (ANE) and GPU for low power and high throughput:
+
+- **Kokoro ANE**: High-speed text-to-speech with mixed Neural Engine and GPU placement.
+- **PocketTTS**: GPU-accelerated English text-to-speech.
+- **Parakeet TDT Japanese & Paraformer Mandarin**: Neural Engine-accelerated speech recognition.
+- **Silero VAD**: Low-latency voice activity detection running on the CPU/ANE.
+- **Privacy-first offline contract**: FluidAudio is isolated from remote Hugging Face endpoints at runtime (`ModelHub.offlineMode = true`), ensuring all model assets are verified and installed through TurboSpark's catalog without unvetted network access. See [`docs/FLUIDAUDIO.md`](docs/FLUIDAUDIO.md).
 
 ### Installable audio models
 
 | Task | Catalog models | Runs in |
 | --- | --- | --- |
-| Speech to text | Whisper (tiny, base, and small, including MLX 8-bit and 4-bit builds), Qwen3-ASR 0.6B | app, `turbospark-server` |
-| Text to speech | Kokoro 82M | app, `turbospark-server` |
+| Speech to text | Whisper (tiny, base, and small, including MLX 8-bit and 4-bit builds), Qwen3-ASR 0.6B, Parakeet TDT Japanese (ANE), Paraformer Mandarin (ANE) | app, `turbospark-server` (Whisper, Qwen3) |
+| Voice activity detection | Silero VAD Core ML | app |
+| Text to speech | Kokoro 82M (Metal and ANE Core ML), PocketTTS (Core ML) | app, `turbospark-server` (Kokoro Metal) |
 | Text to speech, voice design, and voice cloning | Qwen3-TTS 0.6B and 1.7B (CustomVoice, VoiceDesign, and Base) | app only, through Swift MLX |
 | Voice cloning | MegaTTS3 | app, `turbospark-clone`, `turbospark-server` |
-| Music | MiniMax Music 3, 4-bit | app, `turbospark-music`, `turbospark-server` |
+| Music | MiniMax Music 3 (4-bit, 6-bit, 8-bit, bf16, mxfp8), MiniMax Music 3 Turbo 8-step LoRA | app, `turbospark-music`, `turbospark-server` |
 
 The app's audio model manager installs these. `crates/audio` also carries ports of more TTS, speech-to-text, speech-to-speech, and codec families that are not in the install catalog yet, including Bark, Dia, MeloTTS, Canary, and Granite Speech. [`crates/audio/MODELS.md`](crates/audio/MODELS.md) records what each one has been verified to do.
 
@@ -295,10 +306,6 @@ turbospark-clone speak \
 - **Metal acceleration**: On macOS, the diffusion transformer and WavVAE decoder run on Metal by default. That measured about 5x faster than the CPU reference path on a short request, and it holds 1.4 to 2.9 GiB more memory. Pass `--cpu` to force the portable CPU path.
 - **Consent required**: Voice cloning requires explicit caller consent (`--consent` in CLI, or user acknowledgment in the app) because the community WavVAE encoder's provenance and license are unverified.
 
-### Music generation
-
-`turbospark-music` generates MiniMax Music 3 tracks from installed profiles or converted weights, accelerated via Metal on macOS. The app's Music tab adds a prompt generator. It builds a description from genre, mood, tempo, instruments, and vocals, and includes a lyrics guide for section tags.
-
 ### Audio over HTTP
 
 `turbospark-server` takes one or more audio models at startup:
@@ -307,7 +314,7 @@ turbospark-clone speak \
 turbospark-server \
   --stt-model whisper-base-en \
   --tts-model ~/models/kokoro-82m \
-  --music-model minimax-music3-4bit \
+  --music-model minimax-music3-turbo-4bit-8step \
   --api-key "$KEY"
 ```
 
@@ -318,6 +325,41 @@ It serves these routes:
 - `POST /v1/audio/generate` for music, with async jobs at `GET /v1/audio/jobs/ID`
 
 Input audio is WAV only, and each model runs one request at a time. Served behavior of real models is smoke-tested, not benchmarked. See [`docs/AUDIO_API.md`](docs/AUDIO_API.md) for every route and limit.
+
+## Music generation
+
+`turbospark-music`, the desktop app's Music Studio, and `turbospark-server` generate full-fidelity music tracks using MiniMax Music 3, accelerated natively on Apple Silicon Metal.
+
+### Metal performance and MLX parity
+
+On macOS, all MiniMax Music 3 kernels (DiT transformer, condition encoder, flow matching Euler step, and vocoder) run on Metal and produce bit-identical waveforms matching reference MLX 0.32.3 end-to-end. Dense bf16 projections, 4-bit affine dequantization, and multi-channel convolutions run natively with 0 differing values. See [`docs/audio/minimax_music3.md`](docs/audio/minimax_music3.md).
+
+### 8-step Turbo LoRA integration
+
+TurboSpark includes support for an experimental 8-step Euler flow checkpoint merging a rank-64 Turbo LoRA adapter into the 4-bit base model. This reduces generation time by over 3x compared to the standard 30-step trajectory while preserving acoustic body and vocal clarity:
+
+- **Merged TurboSpark checkpoint**: Published on Hugging Face at [`cowWhySo/MiniMax-Music3-TurboSpark-4bit-8step`](https://huggingface.co/cowWhySo/MiniMax-Music3-TurboSpark-4bit-8step) (12.68 GB safetensors). Merges `guillaume127/MiniMax-Music-3-Turbo-FP8` adapter weights into `mlx-community/MiniMax-Music3-4bit`. Downloadable in-app or via CLI with zero Python dependencies.
+- **Standalone MLX adapter**: Published on Hugging Face at [`cowWhySo/MiniMax-Music3-Turbo-MLX-LoRA`](https://huggingface.co/cowWhySo/MiniMax-Music3-Turbo-MLX-LoRA) for standalone MLX adapter workflows.
+- **Upstream training**: Based on [Guillaume-127/Minimax-music-3-Turbo-8-steps](https://github.com/Guillaume-127/Minimax-music-3-Turbo-8-steps).
+
+### Generating music
+
+Generate tracks using the CLI:
+
+```sh
+turbospark-music generate \
+  --model minimax-music3-turbo-4bit-8step \
+  --prompt "Upbeat synthwave track with driving bass and energetic lead synth" \
+  --lyrics "[Verse]\nNeon lights in the rain\n[Chorus]\nRunning through the night" \
+  --flow-profile turbo \
+  --output song.wav
+```
+
+- **Flow profiles**:
+  - `--flow-profile turbo`: 8 Euler flow steps (default for the Turbo LoRA checkpoint).
+  - `--flow-profile fast`: 30 Euler flow steps (default for standard checkpoints).
+  - `--flow-profile exact`: Bit-for-bit parity with MLX 0.32.3 reference trajectories.
+- **Desktop Music Studio**: Includes an interactive prompt builder for genre, mood, tempo, instrumentation, vocal style, and structured lyric section tags (`[Verse]`, `[Chorus]`, `[Bridge]`, `[Outro]`).
 
 ## Decision models
 
@@ -346,7 +388,8 @@ The benchmark times are client wall-clock numbers that include local HTTP and Sw
 | Vision | Supported vision checkpoints, with the Qwen GDN and Qwen3-VL towers implemented |
 | Image generation | Z-Image Turbo and Qwen-Image 2.1 Turbo in the app, about 1 to 2 minutes per 1024 x 1024 image on an M4 Max. See [Image generation](#image-generation) |
 | Humanize | Local rewrites with `humanizer-12b`, user rules applied outside the model, and an audit of dropped or invented numbers. See [Humanize](#humanize) |
-| Audio | Whisper and Qwen3-ASR speech to text, Kokoro and Qwen3-TTS speech, MegaTTS3 voice cloning (Metal on macOS), and MiniMax Music 3. See [Audio](#audio) |
+| Audio | Whisper, Qwen3-ASR, and FluidAudio Core ML / ANE speech to text, Kokoro (Metal and ANE) and Qwen3-TTS speech, Silero VAD, MegaTTS3 voice cloning (Metal on macOS), and meeting speaker intelligence. See [Audio](#audio) |
+| Music | MiniMax Music 3 native Metal generation (4-bit, 6-bit, 8-bit, bf16, mxfp8), experimental 8-step Turbo LoRA checkpoint, prompt builder, and HTTP API. See [Music generation](#music-generation) |
 | Decision models | Typed Noul, Choice, and Score answers through the bundled OpenKind daemon. See [Decision models](#decision-models) |
 | Performance controls | Context and load guards, expert-cache sizing, chunked prefill, KV-cache quantization, and eligible speculative decoding |
 | Steering | Directional residual steering for supported model flows, without modifying model weights |
@@ -357,6 +400,9 @@ The benchmark times are client wall-clock numbers that include local HTTP and Sw
 - [Model catalog and installation](docs/MODELS.md)
 - [CLI and server reference](docs/CLI.md)
 - [Audio and speech processing](docs/AUDIO.md) and [Voice cloning and TTS](docs/audio/tts.md)
+- [MiniMax Music 3 Metal acceleration and 8-step Turbo LoRA](docs/audio/minimax_music3.md)
+- [FluidAudio Core ML integration and offline contracts](docs/FLUIDAUDIO.md)
+- [Swift audio and meeting notes architecture](swift/docs/SWIFT_AUDIO_MEETING_NOTES.md)
 - [Audio HTTP API](docs/AUDIO_API.md), [speech to text](docs/SPEECH_TO_TEXT.md), and [Qwen3-TTS in the app](docs/QWEN3_TTS.md)
 - [API workspace and TypeSafe](docs/API_WORKSPACE.md)
 - [macOS UI design guide](DESIGN.md)
