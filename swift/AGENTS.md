@@ -188,6 +188,15 @@ staging files changed.
   Rust audio catalog. A family runs only once `FluidAudioFamily.hasAdapter`
   is true for it. Check a model's inputs before handing it to FluidAudio:
   a mismatch is a `preconditionFailure` that ends the app, not an error.
+- Keep source files modular and focused (aiming under 800 lines). Break out
+  multi-view SwiftUI files into individual view components
+  (`Generation/MessageRowView.swift`, `ActiveStreamingRowView.swift`). Delegate
+  Markdown YAML frontmatter extraction to `MarkdownFrontmatterParser`. Keep
+  database protocol conformances and secondary schemas in companion extensions
+  (`ProfileDatabase+Workflows.swift`, `ProfileDatabase+Assets.swift`,
+  `ProfileRepository.swift`). Separate compiler pipelines into `WorkflowAST.swift`
+  and `WorkflowLexer.swift`. Isolate large embedded browser automation JavaScript
+  payloads into dedicated script extensions (`DOMSnapshotScript.swift`).
 
 ## Checks
 

@@ -169,8 +169,11 @@ design), the shared model downloads, and the install registry.
 | `State/UserProfile.swift` | `UserProfile`, `UserProfileRegistry`, `UserProfileStore` (registry IO, resolution precedence, path math, mutation rules, the reserved-name rule) |
 | `State/AppStorageRoot.swift` | `machineRoot` vs profile-aware `directory` |
 | `State/AppModel+Profiles.swift` | the UI-facing half: create/rename/delete/switch, toasts, relaunch |
-| `State/ProfileVault.swift` | security manifest, vault session, repository, legacy migration |
-| `State/ProfileDatabase.swift` | SQLCipher schema, normalized persistence, FTS, online backup |
+| `State/ProfileVault.swift` | security manifest, vault session, store, key derivation |
+| `State/ProfileRepository.swift` | repository abstraction, record quarantine, legacy migration |
+| `State/ProfileDatabase.swift` | SQLCipher schema, connection lifecycle, migrations, normalization, FTS |
+| `State/ProfileDatabase+Workflows.swift` | workflow saved definitions and execution journal storage |
+| `State/ProfileDatabase+Assets.swift` | audio asset records and in-memory pin tracking |
 | `State/ManagedAssetStore.swift` | chunked encrypted managed assets |
 | `State/EncryptedProfileBackup.swift` | exact encrypted backup and verified restore |
 | `State/OpenProfileExport.swift` | allowlisted streaming plaintext export |

@@ -26,23 +26,23 @@ swift/
     +-- Sources/TurboSparkApp/
     |   +-- App/                     # Entry point (TurboSparkApp.swift, RootView.swift)
     |   +-- Audio/                   # Audio Studio: recording, transcription, TTS, voice cloning, music
-    |   +-- Browser/                 # Built-in browser panes, tabs, and settings
-    |   +-- BrowserAutomation/       # Agent-driven browser automation sessions
+    |   +-- Browser/                 # Built-in browser panes, tabs, and BrowserSettings
+    |   +-- BrowserAutomation/       # Agent-driven browser automation, DOMSnapshotTypes, and DOMSnapshotScript
     |   +-- Chrome/                  # Window chrome, top bar, navigation rail, status bar, fan readout
     |   +-- Components/              # Settings panes (Appearance, MCP, Plugins, Models, Soul Prompt)
     |   +-- Diagnostics/             # Inspector, telemetry, sampling, runner diagnostics, usage dashboard
     |   +-- Files/                   # AttachmentImporter, FilePreviewView, FilesSectionView
-    |   +-- Generation/              # Chat sidebar, message pane, prompt composer, context ring
+    |   +-- Generation/              # Chat sidebar, message row, streaming row, prompt composer, context ring
     |   +-- Humanize/                # Text rewriting, diff calculation, custom rules, and audit
     |   +-- Images/                  # Image generation UI: composer, gallery, styles
-    |   +-- Import/                  # Chrome bookmark importer
+    |   +-- Import/                  # Chrome bookmark importer, MarkdownFrontmatterParser
     |   +-- Installation/            # Model catalog downloader, ModelDetailPaneView, probe
     |   +-- Presentation/            # Markdown rendering, document text extraction (PDF/Word/Excel)
     |   +-- Server/                  # Text/Image server and TypeSafe playground UI
-    |   +-- State/                   # AppModel state coordinator, multi-profile storage, compaction
+    |   +-- State/                   # AppModel coordinator, ProfileDatabase (+Workflows/+Assets), ProfileRepository, vault
     |   +-- Theme/                  # Typography, colors, appearance tokens, dock icon, accessibility
     |   +-- Tools/                   # Agent tools, MCP client, Syntext search, sandbox, command gate
-    |   \-- Workflows/               # Workflow run engine, interpreter, and journal
+    |   \-- Workflows/               # Workflow run engine, WorkflowAST, WorkflowLexer, and journal
     +-- Sources/TurboSparkAppResources/
     |   \-- Resources/               # Bundled prompts, logos, fonts, icons, permission-gate weights, compiled .lproj
     \-- Tests/TurboSparkAppTests/    # 100+ app unit and integration tests
