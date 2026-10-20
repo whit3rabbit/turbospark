@@ -46,7 +46,7 @@ struct AudioInstalledModelsView: View {
             }
         }
         .task {
-            if controller.profiles.isEmpty && !controller.isRefreshingModels { controller.refreshModels() }
+            if (controller.profiles.isEmpty || controller.installedPaths.isEmpty) && !controller.isRefreshingModels { controller.refreshModels() }
         }
     }
 

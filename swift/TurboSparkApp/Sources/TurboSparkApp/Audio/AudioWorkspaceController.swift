@@ -94,7 +94,7 @@ final class AudioWorkspaceController: ObservableObject {
     var installHandler: ((AudioProfile, [String]) -> Bool)?
     let library: AudioLibraryStore
     let assets: ManagedAssetStore
-    let profileID: String?
+    var profileID: String?
     var epoch = UUID()
     var isShutDown = false
     var loading = true
@@ -109,6 +109,10 @@ final class AudioWorkspaceController: ObservableObject {
     var referencePreviewTask: Task<Void, Never>?
     var referencePlayer: AVAudioPlayer?
     @Published var referencePlaying = false
+    /// The Meeting take whose Name the Speakers sheet is due, and the voice
+    /// whose sample plays there, by speaker key (AudioSpeakerLabels.swift).
+    @Published var speakerNamingID: UUID?
+    @Published var speakerSampleKey: String?
     @Published var session: AudioSession?
     @Published var qwenModel: Qwen3TTSModel?
     /// A resident FluidAudio recognizer (AudioWorkspaceFluid.swift). Released
@@ -231,7 +235,14 @@ final class AudioWorkspaceController: ObservableObject {
         }.sorted { $0.favorite == $1.favorite ? $0.createdAt > $1.createdAt : $0.favorite }
     }
     func valid(_ token: UUID) -> Bool {
-        !isShutDown && epoch == token && ProfileVaultStore.shared.session?.profileID == profileID
+        guard !isShutDown, epoch == token else { return false }
+        if profileID == nil, let current = ProfileVaultStore.shared.session?.profileID {
+            profileID = current
+        }
+        if let profileID {
+            return ProfileVaultStore.shared.session?.profileID == profileID
+        }
+        return true
     }
     func tick() {
         if let capture, isRecording { recordingSeconds = capture.currentElapsed() }
@@ -544,14 +555,15 @@ final class AudioWorkspaceController: ObservableObject {
         let token = epoch
         Task { [weak self] in
             let result = await Task.detached { Result { (try AudioCatalog.profiles(), try AudioCatalog.installed(), try AudioCatalog.capabilities()) } }.value
-            guard let self, self.valid(token) else { return }
-            self.isRefreshingModels = false
+            guard let self else { return }
             defer {
+                self.isRefreshingModels = false
                 if self.modelsRefreshPending {
                     self.modelsRefreshPending = false
                     self.refreshModels()
                 }
             }
+            guard !self.isShutDown, self.epoch == token else { return }
             switch result {
             case .success(let (profiles, installed, capabilities)):
                 self.familyCapabilities = capabilities
@@ -595,8 +607,9 @@ final class AudioWorkspaceController: ObservableObject {
         let token = epoch
         Task { [weak self] in
             let result = await Task.detached { Result { try AudioCatalog.install(profile.identity, acknowledged: acknowledged) } }.value
-            guard let self, self.valid(token) else { return }
-            self.isInstalling = false
+            guard let self else { return }
+            defer { self.isInstalling = false }
+            guard self.valid(token) else { return }
             switch result {
             case .success(let record): self.installedPaths[record.alias] = record.path; self.status = AppStrings.localized("Audio model installed")
             case .failure(let error): self.error = error.localizedDescription

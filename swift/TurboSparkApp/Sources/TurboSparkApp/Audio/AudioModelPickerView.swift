@@ -78,6 +78,11 @@ struct AudioModelPickerView: View {
         } message: {
             if let name = controller.selectedProfile?.displayName { Text(name) }
         }
+        .task {
+            if controller.installedPaths.isEmpty || controller.profiles.isEmpty {
+                controller.refreshModels()
+            }
+        }
     }
 
     /// Adopt an install the receipt store does not know yet, delete a managed
@@ -175,6 +180,14 @@ struct AudioModelPickerView: View {
                 .help(Text("Load model into memory slot cache for inference", bundle: .module))
                 .accessibilityLabel(Text("Load Model", bundle: .module))
             }
+        } else if controller.isRefreshingModels && controller.installedPaths[profile.identity.alias] == nil {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Checking model status...", bundle: .module)
+                    .themedFont(.small, weight: .medium)
+                    .foregroundStyle(.appSecondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         } else if let download, !download.status.isTerminal {
             downloadProgress(download)
         } else if !profile.identity.repository.isEmpty {

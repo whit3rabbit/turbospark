@@ -65,6 +65,11 @@ struct AudioWorkspaceView: View {
         .sheet(isPresented: $showingGenerator) {
             MusicPromptGeneratorView(controller: controller, selection: $promptSelection)
         }
+        .task {
+            if controller.installedPaths.isEmpty || controller.profiles.isEmpty {
+                controller.refreshModels()
+            }
+        }
     }
 
     private var navigation: some View {

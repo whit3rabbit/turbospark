@@ -37,8 +37,9 @@ extension AudioWorkspaceController {
         let token = epoch
         Task { [weak self] in
             let result = await Task.detached { Result { try AudioCatalog.adopt(legacy.identity) } }.value
-            guard let self, self.valid(token) else { return }
-            self.isManagingInstall = false
+            guard let self else { return }
+            defer { self.isManagingInstall = false }
+            guard self.valid(token) else { return }
             switch result {
             case .success(let record):
                 self.installedPaths[record.alias] = record.path
@@ -81,8 +82,9 @@ extension AudioWorkspaceController {
                 }
             }.value
             oldAccess?.stopAccessingSecurityScopedResource()
-            guard let self, self.valid(token) else { return }
-            self.isManagingInstall = false
+            guard let self else { return }
+            defer { self.isManagingInstall = false }
+            guard self.valid(token) else { return }
             switch result {
             case .success:
                 self.installedPaths[profile.identity.alias] = nil
