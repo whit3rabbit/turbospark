@@ -11,6 +11,8 @@ public struct FamilyCapabilities: Decodable, Sendable, Equatable {
     /// engine refuses a control vector on a family where this is false, by
     /// name, at open.
     public let steeringSupported: Bool
+    /// Whether the family supports the ANE+Steel prefill split (dense Qwen).
+    public let anePrefillSupported: Bool
 }
 
 /// Capability predicates answered in Rust, so a host does not keep a second
@@ -21,12 +23,17 @@ public enum TurboSparkCapabilities {
     /// if the answer cannot be read the family is reported unknown with every
     /// capability false, which is the safe direction.
     public static func family(_ name: String) -> FamilyCapabilities {
-        let fallback = FamilyCapabilities(family: name, known: false, steeringSupported: false)
+        let fallback = FamilyCapabilities(family: name, known: false, steeringSupported: false, anePrefillSupported: false)
         guard
             let json = try? takeString({ out in name.withCString { ts_family_capabilities_json($0, out) } }),
             let decoded = try? decode(FamilyCapabilities.self, from: json)
         else { return fallback }
         return decoded
+    }
+
+    /// Whether the host chip is an Apple Silicon M4 or newer chip capable of ANE prefill.
+    public static var chipSupportsAnePrefill: Bool {
+        ts_chip_supports_ane_prefill() == 1
     }
 
     /// Whether `kvBits` would be accepted for an install with these

@@ -1310,6 +1310,12 @@ int32_t ts_kv_quant_supported(int64_t full_head_dim, const uint8_t *layer_mask,
 int32_t ts_family_capabilities_json(const char *family, char **out);
 
 /*
+ * Returns 1 if the host chip is an Apple Silicon M4 or newer capable of ANE prefill,
+ * 0 otherwise.
+ */
+int32_t ts_chip_supports_ane_prefill(void);
+
+/*
  * What installing `alias` will cost, as {"downloadBytes","installBytes"}.
  * Call before ts_install to show a determinate bar and a space warning.
  */

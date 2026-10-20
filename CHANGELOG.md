@@ -13,6 +13,18 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+### Added
+- Opt-in ANE+Steel prefill split for the dense qwen family (cargo feature
+  `ane-prefill`, off by default). Each dense projection class is split by
+  output rows between a Core ML program on the Neural Engine and Steel. On
+  Qwen3.8-27B (M4 Max, 2,940-token prompt, 2048-row micro-batches) prefill ran
+  1.35x faster at 0.65x modeled energy with greedy output unchanged. Enable it
+  with `TURBOSPARK_ANE_PREFILL=1`, `TURBOSPARK_ANE_PREFILL_DIR` and a prefill
+  chunk of 2048, after writing the programs with
+  `crates/coreml/tools/gen_ane_prefill_programs.py`. A failed prediction or a
+  non-finite ANE row redoes the micro-batch on Steel. The default build,
+  prefill path and app are unchanged. See `docs/SPEEDUP_PLAYBOOK.md`.
+
 ### Changed
 - Qwen batched prefill, speculative verify and MTP head priming now encode their
   small per-row operations (q/gate split, q/k norm, RoPE, output gate, FFN

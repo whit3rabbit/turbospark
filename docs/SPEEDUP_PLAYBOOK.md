@@ -218,6 +218,101 @@ Measurement and caveats: `docs/BENCHMARKS.md`, the Qwen3.8 section.
   900,000 for all of them). This is derived from two timing samples, not a
   floor measurement, but use it for the next estimate and re-check it.
 
+## Opt-in: the ANE+Steel prefill split
+
+Not a default. Steel alone stays the dense qwen prefill arm. The split is a
+cargo feature (`ane-prefill`, off by default) plus a runtime switch, for
+long prompts on Apple Silicon.
+
+**What it does.** Each dense projection class is split by output rows. A
+Core ML program runs the first rows on the Neural Engine while Steel
+computes the rest straight into the same output. The classes are MLP
+gate/up, MLP down, attention q with its gate, GDN qkv with z, and
+o_proj/out_proj. K/V and GDN a/b stay on the GPU. The code is
+`crates/runtime/src/families/qwen/ane_split.rs` and
+`crates/gpu/src/ane_split.rs`.
+
+**What it bought.** Measured on Qwen3.8-27B on an M4 Max with a 2,940-token
+prompt at a 2048-row micro-batch. Prefill ran 1.347x faster than Steel alone
+at the same width (mean of six interleaved runs, 1.370x median). Modeled energy was
+0.646x (IOReport, not wall power). Greedy output was unchanged in all 47
+runs, and `qwen38_prefill_arm_probe` read 1.512e-5 nats mean KL against
+Steel's 1.547e-5 at the same width.
+
+**How to run it.**
+
+```sh
+uv run --python 3.12 --with coremltools==9.0 --with numpy==2.2.6 \
+    python -I crates/coreml/tools/gen_ane_prefill_programs.py ~/models/ane-prefill/qwen38
+cargo build --release -p turbospark-cli --features ane-prefill
+TURBOSPARK_ANE_PREFILL=1 TURBOSPARK_ANE_PREFILL_DIR=~/models/ane-prefill/qwen38 \
+    target/release/turbospark-check --model <qwen38 install> --prefill-chunk 2048 ...
+```
+
+The generator writes the Core ML programs and a `manifest.json` with the
+shares. A library caller uses `RealForwardRunner::set_ane_prefill` instead
+of the env vars. The split needs micro-batches of at least 512 rows, so a
+prefill chunk of 2048. It steps aside while an MTP head or DFlash2 drafter
+is open, and for image micro-batches.
+
+The programs load on the first split micro-batch, outside the timed prefill
+above. That took about 6 s the first time a new build ran them and about
+0.5 s after that.
+
+Two diagnostics. `TURBOSPARK_ANE_PREFILL=break` keeps every buffer break
+with every row on Steel, which prices the breaks alone.
+`TURBOSPARK_ANE_PREFILL_STATS=1` prints per-class prediction and Steel
+times.
+
+**Failure handling.** Missing or mismatched programs turn the split off with
+one warning, and prefill runs on Steel. Each split micro-batch takes a GDN
+snapshot before it commits. A failed prediction or a non-finite ANE row
+restores it and redoes the micro-batch on Steel.
+
+**What transferred.**
+
+- **Balance each share against the buffer it overlaps.** The prediction runs
+  beside Steel's rows of the same class plus that class's Steel-only work.
+  For GDN that includes a/b on the scalar kernel, about 19 ms per layer at
+  2048 rows. Phase 0's per-matmul 47% left the ANE idle 16 ms per qkv+z
+  point. About 70% balanced it. Fit per shape from in-engine counters: a
+  prediction cost about 1.4 ms plus 2.0 us per ANE row at K = 5120 and
+  2048 tokens. Each share leaves the prediction at about 0.96 of its
+  buffer, so the GPU never waits.
+- **Breaking the command buffer costs nothing on the GPU.** All 256 split
+  points ran 0.998x Steel's speed with bit-identical logits. That is 513
+  buffers, every one encoded before any commit. The queue needs a raised buffer
+  cap, because a default queue blocks the 65th uncommitted buffer forever.
+- **The host handoff is the exposed cost, and it grows under load.** On a
+  quiet host the handoffs cost about 0.3 ms per point. Under host load in
+  Phase 1 they reached 0.9 s per micro-batch. Two of six all-classes runs
+  passed the dirty rule but took 0.6 to 1.0 s longer. Their GPU ran at lower
+  power, and the cause was not isolated. Keep the ANE finishing first. A late
+  prediction stalls the GPU and pays a resume cost too.
+- **Measure in the engine, not per matmul.** Phase 0's per-matmul ratios
+  predicted 1.32x for this prompt and the engine measured 1.35x. The total
+  agreed, but the parts did not. Overlapped a/b beat the model on the
+  2048-row micro-batch (1.39x against 1.32x). The padded 892-row tail lost
+  to it (1.29x against 1.32x).
+
+**Why it is not a default.** One prompt, one chip, modeled energy. The shares
+are per machine, and the 1024-token program's shares were tuned on the
+evaluation prompt. Width 2048 costs about 674 MiB of scratch, plus about 816
+MiB of IOSurface planes (computed, not measured). The app does not link it.
+
+A default would owe the gates in `docs/BATCHED_PREFILL.md`, the memory
+oracle, and wall power. It would also owe a second chip (a base M4 first)
+and programs emitted from Rust instead of from Python.
+
+The measurements are in [MOE_PRIOR_ART.md](MOE_PRIOR_ART.md):
+[Phase 0](MOE_PRIOR_ART.md#phase-0-in-this-engine-core-ml-matmuls-against-steel)
+(per-matmul ratios),
+[the width sweep](MOE_PRIOR_ART.md#micro-batch-width-and-the-prefill-split-end-to-end),
+[Phase 1](MOE_PRIOR_ART.md#phase-1-in-this-engine-the-gateup-split-end-to-end)
+(gate/up alone, 1.153x), and
+[Phase 1 extended](MOE_PRIOR_ART.md#phase-1-extended-every-dense-projection-class-end-to-end)
+(every class).
+
 ## What the audio ports add
 
 Whisper-tiny.en went from 1.65 s for the first Metal port to 160 ms warm

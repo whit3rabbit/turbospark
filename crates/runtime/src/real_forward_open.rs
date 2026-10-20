@@ -351,6 +351,8 @@ impl RealForwardRunner {
             mtp_batched_prime: std::env::var("TURBOSPARK_MTP_BATCHED_PRIME").as_deref() != Ok("0"),
             prefill_rows_attention: std::env::var("TURBOSPARK_PREFILL_ROWS_ATTN").as_deref()
                 != Ok("0"),
+            #[cfg(feature = "ane-prefill")]
+            ane_prefill: crate::families::qwen::AnePrefill::from_env(),
             routed_layouts,
             router_hist,
             ffn_hist,

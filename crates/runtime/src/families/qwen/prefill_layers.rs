@@ -36,21 +36,73 @@ pub(crate) fn encode_qwen_dense_layer_batched_prefill(
     start_position: usize,
     m: usize,
 ) -> Result<(), RealForwardError> {
-    let gpu_err = RealForwardError::Gpu;
+    encode_qwen_dense_layer_batched_pre_ffn(
+        context,
+        pass,
+        weights,
+        index,
+        scratch,
+        kv,
+        qwen,
+        arch,
+        input_norm,
+        post_attn_norm,
+        layer,
+        hidden,
+        start_position,
+        m,
+    )?;
+    let batched = qwen.batched_prefill();
+    // Encodes its own per-row residual add back into `scratch.x`.
+    encode_dense_ffn_batched(
+        context,
+        pass,
+        weights,
+        index,
+        scratch,
+        batched,
+        TRUNK_PREFIX,
+        layer,
+        hidden,
+        inter,
+        use_silu,
+        m,
+    )?;
+    encode_qwen_dense_layer_batched_post_ffn(
+        context,
+        pass,
+        scratch,
+        resid_capture,
+        steering,
+        layer,
+        hidden,
+        m,
+    )
+}
+
+/// The batched dense layer up to the FFN: input norm, the attention or GDN
+/// block, the residual add, and the post-attention norm into
+/// `batched.moe_x`. Split out for the opt-in ANE prefill split.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_qwen_dense_layer_batched_pre_ffn(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    weights: &gpu::ResidentGpuWeights,
+    index: &ResidentIndex,
+    scratch: &DecodeScratch,
+    kv: &mut gpu::KvCacheManager,
+    qwen: &RealQwenState,
+    arch: &ArchConfig,
+    input_norm: (&gpu::MetalBuffer, u64),
+    post_attn_norm: (&gpu::MetalBuffer, u64),
+    layer: usize,
+    hidden: usize,
+    start_position: usize,
+    m: usize,
+) -> Result<(), RealForwardError> {
     let is_linear = arch.layer_is_linear(layer);
     let batched = qwen.batched_prefill();
-    for t in 0..m {
-        gpu::encode_rms_norm_bf16w(
-            context,
-            pass,
-            (&scratch.x, (t * hidden * 2) as u64),
-            input_norm,
-            (&batched.normed, (t * hidden * 2) as u64),
-            hidden as u32,
-            RMS_EPS,
-        )
-        .map_err(gpu_err)?;
-    }
+    encode_qwen_dense_input_norm_batched(context, pass, scratch, batched, input_norm, hidden, m)?;
 
     if is_linear {
         // The recurrence still runs in token order -- it is inside
@@ -79,7 +131,54 @@ pub(crate) fn encode_qwen_dense_layer_batched_prefill(
             m,
         )?;
     }
+    encode_qwen_dense_attn_residual_batched(
+        context,
+        pass,
+        scratch,
+        batched,
+        post_attn_norm,
+        hidden,
+        m,
+    )
+}
 
+/// The input norm per token, `scratch.x` into `batched.normed`.
+pub(crate) fn encode_qwen_dense_input_norm_batched(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    scratch: &DecodeScratch,
+    batched: &super::batched::BatchedScratch,
+    input_norm: (&gpu::MetalBuffer, u64),
+    hidden: usize,
+    m: usize,
+) -> Result<(), RealForwardError> {
+    for t in 0..m {
+        gpu::encode_rms_norm_bf16w(
+            context,
+            pass,
+            (&scratch.x, (t * hidden * 2) as u64),
+            input_norm,
+            (&batched.normed, (t * hidden * 2) as u64),
+            hidden as u32,
+            RMS_EPS,
+        )
+        .map_err(RealForwardError::Gpu)?;
+    }
+    Ok(())
+}
+
+/// The attention residual add and post-attention norm per token, into
+/// `batched.moe_x`.
+pub(crate) fn encode_qwen_dense_attn_residual_batched(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    scratch: &DecodeScratch,
+    batched: &super::batched::BatchedScratch,
+    post_attn_norm: (&gpu::MetalBuffer, u64),
+    hidden: usize,
+    m: usize,
+) -> Result<(), RealForwardError> {
+    let gpu_err = RealForwardError::Gpu;
     if row_batched_ops() {
         // RAW residual add, as in the per-token arm: this family has no sandwich norms.
         // Elementwise over M contiguous rows, then the per-row norm as M "heads"
@@ -128,23 +227,22 @@ pub(crate) fn encode_qwen_dense_layer_batched_prefill(
             .map_err(gpu_err)?;
         }
     }
+    Ok(())
+}
 
-    // Encodes its own per-row residual add back into `scratch.x`.
-    encode_dense_ffn_batched(
-        context,
-        pass,
-        weights,
-        index,
-        scratch,
-        batched,
-        TRUNK_PREFIX,
-        layer,
-        hidden,
-        inter,
-        use_silu,
-        m,
-    )?;
-
+/// The batched dense layer after the FFN: steering and the residual
+/// capture. Split out for the opt-in ANE prefill split.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_qwen_dense_layer_batched_post_ffn(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    scratch: &DecodeScratch,
+    resid_capture: Option<&crate::resid_capture::ResidCapture>,
+    steering: Option<&crate::steering::SteeringState>,
+    layer: usize,
+    hidden: usize,
+    m: usize,
+) -> Result<(), RealForwardError> {
     // ONE M-row steering dispatch rather than m.
     encode_steering(context, pass, scratch, steering, layer, hidden, m, 0)?;
     for t in 0..m {

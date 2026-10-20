@@ -59,6 +59,8 @@ public struct SessionInfo: Decodable, Sendable, Equatable {
     /// Whether this session continues each turn from the previous turn's KV
     /// (the `prefixReuse` open option's resolved value, default true).
     public let prefixReuse: Bool
+    /// What the ANE+Steel prefill split resolved to for this session.
+    public let anePrefill: AnePrefill?
 
     /// The reasoning levels this checkpoint accepts. **BUILD A PICKER FROM
     /// THIS AND FROM NOTHING ELSE.**
@@ -190,5 +192,19 @@ public struct SessionInfo: Decodable, Sendable, Equatable {
         /// at a time with nothing said is the failure this feature exists
         /// to end.
         public let reason: String?
+    }
+
+    /// The session's resolved ANE+Steel prefill split, reported once.
+    public struct AnePrefill: Decodable, Sendable, Equatable {
+        /// True when ANE+Steel split prefill is active for this session.
+        public let active: Bool
+        /// The resolved mode: "split", "off", or "break".
+        public let mode: String
+        /// Whether this model family and host hardware support the split.
+        public let supported: Bool
+        /// Why supported is false or why the split was disabled, or nil when active.
+        public let reason: String?
+        /// The programs directory from which ANE prefill models are loaded, if any.
+        public let programsDir: String?
     }
 }

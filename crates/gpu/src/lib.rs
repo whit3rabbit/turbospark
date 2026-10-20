@@ -37,6 +37,8 @@
 //! kernel descoped), `fused.metal`, and the DSV4 compute kernels (state
 //! manager only).
 
+#[cfg(all(target_os = "macos", feature = "ane-prefill"))]
+pub mod ane_split;
 #[cfg(target_os = "macos")]
 mod attention_decode;
 #[cfg(target_os = "macos")]

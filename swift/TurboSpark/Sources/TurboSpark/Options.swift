@@ -210,6 +210,22 @@ public struct OpenOptions: Encodable, Sendable {
     /// because one engine's cache is shared by every client of that server),
     /// or when measuring a cold prefill.
     public var prefixReuse: Bool?
+    /// ANE+Steel prefill split configuration.
+    public enum AnePrefill: String, Encodable, Sendable {
+        /// Automatic: enabled on Apple Silicon M4+ for dense Qwen.
+        case auto
+        /// Split dense projections between ANE and Steel.
+        case split
+        /// Force Steel only.
+        case off
+        /// Diagnostic mode breaking micro-batches at split points without ANE compute.
+        case breakMode = "break"
+    }
+
+    /// ANE+Steel prefill split mode (`nil` means `.auto`).
+    public var anePrefill: AnePrefill?
+    /// Custom directory for compiled ANE Core ML prefill programs.
+    public var anePrefillDir: String?
 
     /// Creates options for opening a model session.
     public init(
@@ -230,7 +246,9 @@ public struct OpenOptions: Encodable, Sendable {
         steeringGate: Double? = nil,
         visionSidecar: String? = nil,
         kvBits: KvBits? = nil,
-        prefixReuse: Bool? = nil
+        prefixReuse: Bool? = nil,
+        anePrefill: AnePrefill? = nil,
+        anePrefillDir: String? = nil
     ) {
         self.maxContext = maxContext
         self.expertCacheSlots = expertCacheSlots
@@ -250,6 +268,8 @@ public struct OpenOptions: Encodable, Sendable {
         self.visionSidecar = visionSidecar
         self.kvBits = kvBits
         self.prefixReuse = prefixReuse
+        self.anePrefill = anePrefill
+        self.anePrefillDir = anePrefillDir
     }
 }
 

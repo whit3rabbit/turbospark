@@ -278,6 +278,34 @@ public enum AppKvBitsOption: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+/// User-facing option for the ANE+Steel prefill split.
+public enum AppAnePrefillOption: String, CaseIterable, Identifiable, Sendable {
+    /// Automatic: split on Apple Silicon M4+ for dense Qwen, off otherwise. The default.
+    case auto = "auto"
+    /// Force ANE+Steel split prefill.
+    case on = "on"
+    /// Force Steel prefill only.
+    case off = "off"
+
+    public var id: String { rawValue }
+
+    public var menuLabel: String {
+        switch self {
+        case .auto: return "Auto"
+        case .on: return "On"
+        case .off: return "Off"
+        }
+    }
+
+    public var anePrefill: OpenOptions.AnePrefill {
+        switch self {
+        case .auto: return .auto
+        case .on: return .split
+        case .off: return .off
+        }
+    }
+}
+
 /// Activation steering operation modes.
 public enum AppSteeringModeOption: String, CaseIterable, Identifiable, Sendable {
     /// Suppress target activations.
@@ -355,6 +383,10 @@ public struct AppRuntimeOptions: Equatable, Sendable {
     /// `AppKvBitsOption`'s own doc for why that check happens here rather
     /// than being left to the engine's open-time refusal.
     public var kvBits: AppKvBitsOption = .auto
+    /// ANE+Steel prefill split mode.
+    public var anePrefill: AppAnePrefillOption = .auto
+    /// Custom directory for compiled ANE prefill Core ML programs.
+    public var anePrefillDir: String = ""
     /// Maximum tokens per second rate cap (0 for uncapped).
     public var maxTokensPerSec: Double = 0
     /// Filesystem path to steering control vector file.
@@ -380,6 +412,8 @@ public struct AppRuntimeOptions: Equatable, Sendable {
         speculation: AppSpeculationOption = .auto,
         speculativeDrafter: AppSpeculativeDrafterOption = .auto,
         kvBits: AppKvBitsOption = .auto,
+        anePrefill: AppAnePrefillOption = .auto,
+        anePrefillDir: String = "",
         maxTokensPerSec: Double = 0,
         steeringPath: String? = nil,
         steeringMode: AppSteeringModeOption = .ablate,
@@ -396,6 +430,8 @@ public struct AppRuntimeOptions: Equatable, Sendable {
         self.speculation = speculation
         self.speculativeDrafter = speculativeDrafter
         self.kvBits = kvBits
+        self.anePrefill = anePrefill
+        self.anePrefillDir = anePrefillDir
         self.maxTokensPerSec = maxTokensPerSec
         self.steeringPath = steeringPath
         self.steeringMode = steeringMode

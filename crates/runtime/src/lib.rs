@@ -118,6 +118,8 @@ pub use model_io::{
 
 pub use error::RuntimeError;
 #[cfg(target_os = "macos")]
+pub use families::qwen::{chip_is_m4_or_newer, hardware_supports_ane_prefill, AnePrefillMode};
+#[cfg(target_os = "macos")]
 pub use families::qwen::{
     install_has_dflash, install_has_mtp_head, DflashDraftPolicy, DraftPolicies, MtpDraftPolicy,
     DFLASH_BLOCK, DFLASH_SERVING_BLOCK, MOE_SPECULATION_BLOCKER_MARKER,
