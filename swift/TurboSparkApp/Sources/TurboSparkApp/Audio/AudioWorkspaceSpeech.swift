@@ -128,6 +128,7 @@ extension AudioWorkspaceController {
     func stopReferencePreview() {
         referencePreviewTask?.cancel(); referencePreviewTask = nil
         referencePlayer?.stop(); referencePlayer = nil; referencePlaying = false
+        speakerSampleKey = nil
     }
     func previewVoiceReference() {
         if referencePlaying || referencePreviewTask != nil { stopReferencePreview(); return }

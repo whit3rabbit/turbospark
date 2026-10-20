@@ -383,14 +383,18 @@ final class AudioWorkspaceController: ObservableObject {
             return leftIsDefault != rightIsDefault ? leftIsDefault : left.offset < right.offset
         }.map(\.element)
     }
-    /// Runnable before not runnable, then `speechPreference` order, then catalog order.
-    /// Runnable is the provider's verdict: a FluidAudio row's Rust `canRun` is
-    /// false by design.
-    static func preferredSpeechProfiles(_ profiles: [AudioProfile]) -> [AudioProfile] {
+    /// Runnable before not runnable, then the single-language final-pass model
+    /// for the UI's language (`languageCode`, nil for none), then
+    /// `speechPreference` order, then catalog order. Runnable is the provider's
+    /// verdict: a FluidAudio row's Rust `canRun` is false by design.
+    static func preferredSpeechProfiles(_ profiles: [AudioProfile],
+                                        languageCode: String? = AudioModelLanguage.uiLanguageCode) -> [AudioProfile] {
         let rank = { (profile: AudioProfile) in speechPreference.firstIndex(of: profile.identity.alias) ?? speechPreference.count }
         let runs = { (profile: AudioProfile) in AudioRuntimeProvider(profile).canRun(profile) }
+        let dedicated = { (profile: AudioProfile) in AudioModelLanguage.isDedicated(profile, to: languageCode) }
         return profiles.enumerated().sorted { a, b in
             if runs(a.element) != runs(b.element) { return runs(a.element) }
+            if dedicated(a.element) != dedicated(b.element) { return dedicated(a.element) }
             let (left, right) = (rank(a.element), rank(b.element))
             return left != right ? left < right : a.offset < b.offset
         }.map(\.element)

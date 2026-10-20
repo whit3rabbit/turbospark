@@ -48,7 +48,7 @@ extension AudioWorkspaceController {
                 }
             }.value
             guard verified == path else { throw CancellationError() }
-            status = AppStrings.localized("Loading model")
+            status = AppStrings.localized("Compiling for the Neural Engine. The first load can take a few minutes.")
             progress = nil
             // Off the main actor: the first load compiles for the Neural
             // Engine and can take minutes.

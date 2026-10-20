@@ -60,6 +60,21 @@
     ]
   },
   {
+    "alias": "minimax-music3-turbo-4bit-8step",
+    "model_id": "cowWhySo/MiniMax-Music3-TurboSpark-4bit-8step",
+    "revision": "604e6c2b670d1be390cb6024dec79f46559ae569",
+    "quantization": "affine-4bit",
+    "recommended": false,
+    "experimental": true,
+    "turbo": true,
+    "required_files": [
+      "LICENSE", "README.md", "config.json", "model.safetensors.index.json",
+      "model-turbospark-01.safetensors", "model-turbospark-02.safetensors",
+      "scheduler/scheduler_config.json", "tokenizer/chat_template.jinja",
+      "tokenizer/tokenizer.json", "tokenizer/tokenizer_config.json"
+    ]
+  },
+  {
     "alias": "minimax-music3-mxfp8",
     "model_id": "mlx-community/MiniMax-Music3-mxfp8",
     "revision": "d00a12c3c7f80eb66379dd02dd0f30ed0ce2d96e",

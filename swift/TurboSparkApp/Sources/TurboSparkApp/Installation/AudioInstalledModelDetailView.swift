@@ -116,7 +116,9 @@ struct AudioInstalledModelDetailView: View {
                     }
                     .appAction(.secondary)
                     .disabled(!controller.canLoad(profile))
-                    .help(Text("Load model into memory slot cache for inference", bundle: .module))
+                    .help(entry.runtimeUnsupported
+                        ? Text("Not usable in this app version", bundle: .module)
+                        : Text("Load model into memory slot cache for inference", bundle: .module))
                 }
             case .needsAdoption:
                 if let legacy = entry.legacy {
@@ -147,6 +149,10 @@ struct AudioInstalledModelDetailView: View {
             noticeCard(title: Text("Not in the Catalog", bundle: .module),
                        body: Text("The catalog no longer lists this install, so no mode can use it. Remove its folder in Finder if you no longer need it.", bundle: .module),
                        symbol: "questionmark.folder")
+        case .installed where entry.runtimeUnsupported:
+            noticeCard(title: Text("Not usable in this app version", bundle: .module),
+                       body: Text("This app version has no runtime for this model, so no mode can use it. You can delete it to free disk space.", bundle: .module),
+                       symbol: "exclamationmark.triangle.fill")
         case .installed, .local, .available:
             EmptyView()
         }

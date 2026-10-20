@@ -1060,6 +1060,20 @@ fn caption_request_matches_upstream_defaults_and_validation() {
         invalid.steps = Some(steps);
         assert!(invalid.resolve(30).is_err(), "steps {steps}");
     }
+    for frames in [0, MAX_AUDIO_FRAMES + 1] {
+        let mut invalid = request.clone();
+        invalid.max_frames = Some(frames);
+        assert!(invalid.resolve(30).is_err(), "max_frames {frames}");
+    }
+    for ctx in [0, 10_241] {
+        let mut invalid = request.clone();
+        invalid.context_size = Some(ctx);
+        assert!(invalid.resolve(30).is_err(), "context_size {ctx}");
+    }
+    let mut invalid = request.clone();
+    invalid.max_frames = Some(5000);
+    invalid.context_size = Some(4000);
+    assert!(invalid.resolve(30).is_err(), "frames exceed context");
 }
 
 #[test]
@@ -1649,6 +1663,10 @@ fn flow_profile_sets_solver_guidance_and_the_default_step_count() {
     assert_eq!(FlowProfile::Fast.default_steps(), 21);
     // 21 steps with interval 3 / warmup 2 is 21 conditional + 9 unconditional.
     assert_eq!(FlowProfile::Fast.guidance().uncond_forwards(21), 9);
+    assert_eq!(FlowProfile::Turbo.solver(), FlowSolver::Euler);
+    assert_eq!(FlowProfile::Turbo.guidance(), FlowGuidance::EXACT);
+    assert_eq!(FlowProfile::Turbo.default_steps(), 8);
+    assert_eq!(FlowProfile::Turbo.guidance().uncond_forwards(8), 8);
 
     let flow_total = |model: &Model, steps: Option<usize>| -> usize {
         let mut request = progress_request(0.5);
@@ -1670,6 +1688,8 @@ fn flow_profile_sets_solver_guidance_and_the_default_step_count() {
     assert_eq!(flow_total(&model, None), 30);
     model.set_flow_profile(FlowProfile::Fast);
     assert_eq!(flow_total(&model, None), 21);
+    model.set_flow_profile(FlowProfile::Turbo);
+    assert_eq!(flow_total(&model, None), 8);
     // An explicit step count is always honored.
     assert_eq!(flow_total(&model, Some(5)), 5);
     model.set_flow_profile(FlowProfile::Exact);
@@ -1690,6 +1710,33 @@ fn flow_profile_sets_solver_guidance_and_the_default_step_count() {
     model.set_flow_solver(FlowSolver::Euler);
     model.set_flow_guidance(FlowGuidance::EXACT).unwrap();
     assert_eq!(model.run_flow(&hiddens, frames, 4, 7).unwrap(), reference);
+}
+
+#[test]
+fn only_the_declared_int4_euler_turbo_variant_selects_the_turbo_profile() {
+    let config = serde_json::json!({
+        "quantization": {"mode": "affine", "bits": 4, "group_size": 64},
+        "extra": {
+            "turbospark_music3_variant": {
+                "name": "turbo_lora_8step_merged",
+                "flow_steps": 8,
+                "flow_solver": "euler",
+                "flow_guidance": "exact"
+            }
+        }
+    });
+    assert_eq!(runner_profile_from_config(&config), FlowProfile::Turbo);
+
+    let mut wrong_steps = config.clone();
+    wrong_steps["extra"]["turbospark_music3_variant"]["flow_steps"] = 7.into();
+    assert_eq!(runner_profile_from_config(&wrong_steps), FlowProfile::Fast);
+
+    let mut wrong_quantization = config;
+    wrong_quantization["quantization"]["bits"] = 8.into();
+    assert_eq!(
+        runner_profile_from_config(&wrong_quantization),
+        FlowProfile::Fast
+    );
 }
 
 /// Integrate `dx/dt = -x` from 0 to 1 with `n` equal steps through the same

@@ -367,6 +367,8 @@ fn run(engine: Engine, queue: Receiver<Work>) {
                             caption: request.caption,
                             lyrics: request.lyrics,
                             duration_seconds: request.duration_seconds,
+                            max_frames: request.max_frames,
+                            context_size: request.context_size,
                             steps: request.steps,
                             seed: request.seed,
                             ..AudioRequest::default()
@@ -635,6 +637,8 @@ impl AudioProvider for RealAudioProvider {
                 caption: request.caption,
                 lyrics: request.lyrics,
                 duration_seconds: request.duration_seconds,
+                max_frames: request.max_frames,
+                context_size: request.context_size,
                 steps: request.steps,
                 seed: request.seed,
             };

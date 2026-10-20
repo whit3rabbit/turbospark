@@ -57,6 +57,8 @@ pub struct MusicCatalogEntry {
     pub quantization: MusicQuantization,
     pub recommended: bool,
     pub experimental: bool,
+    #[serde(default)]
+    pub turbo: bool,
     pub required_files: Vec<String>,
 }
 
@@ -70,9 +72,9 @@ impl MusicCatalog {
     pub fn embedded() -> Result<Self, String> {
         let entries: Vec<MusicCatalogEntry> = serde_json::from_str(EMBEDDED)
             .map_err(|error| format!("parsing embedded MiniMax Music 3 catalog: {error}"))?;
-        if entries.len() != 7 {
+        if entries.len() != 8 {
             return Err(format!(
-                "MiniMax Music 3 catalog has {} rows; expected all seven profiles",
+                "MiniMax Music 3 catalog has {} rows; expected seven quantizations plus Turbo",
                 entries.len()
             ));
         }
@@ -134,12 +136,15 @@ fn validate_entry(entry: &MusicCatalogEntry) -> Result<(), String> {
     {
         return Err(format!("invalid MiniMax Music 3 alias {:?}", entry.alias));
     }
-    if entry.model_id
-        != format!(
+    let expected_model_id = if entry.turbo {
+        "cowWhySo/MiniMax-Music3-TurboSpark-4bit-8step".to_string()
+    } else {
+        format!(
             "mlx-community/MiniMax-Music3-{}",
             entry.quantization_repo_suffix()
         )
-    {
+    };
+    if entry.model_id != expected_model_id {
         return Err(format!(
             "{} points to an unapproved MiniMax Music 3 repository {}",
             entry.alias, entry.model_id
@@ -151,12 +156,18 @@ fn validate_entry(entry: &MusicCatalogEntry) -> Result<(), String> {
             entry.alias
         ));
     }
-    if entry.experimental
-        != matches!(
+    if entry.turbo && entry.quantization != MusicQuantization::Affine4Bit {
+        return Err(format!(
+            "{} Turbo profile must use affine 4-bit weights",
+            entry.alias
+        ));
+    }
+    let expected_experimental = entry.turbo
+        || matches!(
             entry.quantization,
             MusicQuantization::Mxfp4 | MusicQuantization::Nvfp4
-        )
-    {
+        );
+    if entry.experimental != expected_experimental {
         return Err(format!(
             "{} has an incorrect experimental-profile marker",
             entry.alias
@@ -296,7 +307,11 @@ pub fn install_music(
         status: "unverified".to_string(),
         kind: None,
         modality: ModelModality::Audio,
-        variant: Some(entry.quantization.as_str().to_string()),
+        variant: Some(if entry.turbo {
+            "affine-4bit-turbo-8step".to_string()
+        } else {
+            entry.quantization.as_str().to_string()
+        }),
     };
     if let Err(error) = store.record(&installed) {
         let _ = std::fs::remove_dir_all(&destination);
@@ -382,10 +397,10 @@ mod tests {
     use crate::{VerifiedSourceFile, VerifiedSourceGroup};
 
     #[test]
-    fn bundled_music_profiles_are_exactly_the_seven_approved_pins() {
+    fn bundled_music_profiles_are_the_seven_quantizations_plus_turbo_pin() {
         let catalog = MusicCatalog::embedded().unwrap();
         let entries: Vec<_> = catalog.entries().collect();
-        assert_eq!(entries.len(), 7);
+        assert_eq!(entries.len(), 8);
         assert_eq!(
             entries
                 .iter()
@@ -400,7 +415,11 @@ mod tests {
                 .filter(|entry| entry.experimental)
                 .map(|entry| entry.quantization)
                 .collect::<Vec<_>>(),
-            vec![MusicQuantization::Mxfp4, MusicQuantization::Nvfp4]
+            vec![
+                MusicQuantization::Affine4Bit,
+                MusicQuantization::Mxfp4,
+                MusicQuantization::Nvfp4,
+            ]
         );
         for entry in entries {
             assert_eq!(entry.revision.len(), 40, "{}", entry.alias);

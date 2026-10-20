@@ -1,4 +1,5 @@
 import Foundation
+import TurboSpark
 
 /// The FluidAudio families the audio catalog can pin (backend
 /// `swift_coreml`). Raw values are the persisted catalog family strings, so a
@@ -27,17 +28,22 @@ enum FluidAudioFamily: String, CaseIterable, Sendable {
     /// targets iOS 15 to 17 programs, so the app's floor holds.
     var minimumMacOSMajor: Int { 14 }
 
-    /// Whether the workspace can run the family end to end: an adapter, its
-    /// jobs, and residency. A family flips only when all three ship, so a
-    /// catalog row never routes to FluidAudio before the code that runs it.
-    var hasAdapter: Bool {
+    /// The tasks the workspace runs end to end for the family: an adapter,
+    /// a job in `beginRun`, and residency. A task is added here only in the
+    /// change that wires all three, so a catalog row never routes to
+    /// FluidAudio before the code that runs it. `AudioRuntimeProviderTests`
+    /// pins these sets.
+    var supportedTasks: Set<AudioTask> {
         switch self {
         case .paraformerZh, .parakeetJa:
-            return true
+            return [.speechToText]
         case .sileroVAD, .kokoroANE, .pocketTTS, .senseVoice:
-            return false
+            return []
         }
     }
+
+    /// Whether any task of the family runs in this build.
+    var hasAdapter: Bool { !supportedTasks.isEmpty }
 
     var isSupportedOnThisMac: Bool {
         ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= minimumMacOSMajor

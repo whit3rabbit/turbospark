@@ -11,7 +11,7 @@ enum AudioRuntimeProvider: Equatable, Sendable {
     /// FluidAudio (Core ML) inside the app.
     case fluidAudio(FluidAudioFamily)
     /// A Swift-hosted backend this build cannot run: an unknown family, or a
-    /// FluidAudio family whose adapter has not shipped. Pickers hide these.
+    /// FluidAudio family with no job for the row's task. Pickers hide these.
     case unsupported
 
     init(_ profile: AudioProfile) {
@@ -19,7 +19,10 @@ enum AudioRuntimeProvider: Equatable, Sendable {
         case "swift_mlx":
             self = profile.family == "qwen3_tts" ? .qwenMLX : .unsupported
         case "swift_coreml":
-            if let family = FluidAudioFamily(rawValue: profile.family), family.hasAdapter {
+            // The task gate keeps a row whose job is not wired out of every
+            // picker, so it cannot reach the run-time refusal in `beginRun`.
+            if let family = FluidAudioFamily(rawValue: profile.family),
+               family.supportedTasks.contains(profile.identity.task) {
                 self = .fluidAudio(family)
             } else {
                 self = .unsupported

@@ -122,6 +122,37 @@ pub struct AudioCapabilities {
     /// the TurboSpark app executes it. The server refuses these aliases.
     #[serde(default = "attachable_by_default")]
     pub http_api: bool,
+    /// Context size (in tokens) supported by the model's AR backbone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_context_tokens: Option<u32>,
+    /// Frame cap of one request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_audio_frames: Option<u32>,
+    /// AR frames per second of audio.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame_rate_hz: Option<u32>,
+}
+
+impl Default for AudioCapabilities {
+    fn default() -> Self {
+        Self {
+            languages: vec![],
+            voices: vec![],
+            max_input_seconds: None,
+            supports_lyrics: false,
+            operations: vec![],
+            timing: None,
+            backend: String::new(),
+            cancellation: String::new(),
+            can_run: false,
+            unavailable_reason: None,
+            compute: None,
+            http_api: true,
+            max_context_tokens: None,
+            max_audio_frames: None,
+            frame_rate_hz: None,
+        }
+    }
 }
 
 fn attachable_by_default() -> bool {
@@ -402,6 +433,37 @@ impl AudioCatalog {
                             voices: vec![],
                             max_input_seconds: Some(360),
                             supports_lyrics: true,
+                            max_context_tokens: Some(10_240),
+                            max_audio_frames: Some(9_000),
+                            frame_rate_hz: Some(25),
+                            ..profile_capabilities("minimax_music3")
+                        },
+                        AudioReadiness::ImplementedUnqualified,
+                        vec![],
+                    )
+                }
+                "minimax-music3-turbo-4bit-8step" => {
+                    if row.source.is_some() || row.frontend.is_some() {
+                        return Err("MiniMax source must come from the music catalog".into());
+                    }
+                    let music = crate::embedded_music_entry(&row.alias)?;
+                    (
+                        AudioTask::Music,
+                        music.model_id,
+                        music.revision,
+                        "minimax_music3".to_string(),
+                        "MiniMax Music 3 Turbo 4-bit (8-step)".to_string(),
+                        music.required_files,
+                        44100,
+                        2,
+                        AudioCapabilities {
+                            languages: vec![],
+                            voices: vec![],
+                            max_input_seconds: Some(360),
+                            supports_lyrics: true,
+                            max_context_tokens: Some(10_240),
+                            max_audio_frames: Some(9_000),
+                            frame_rate_hz: Some(25),
                             ..profile_capabilities("minimax_music3")
                         },
                         AudioReadiness::ImplementedUnqualified,
@@ -1326,6 +1388,7 @@ fn profile_capabilities(family: &str) -> AudioCapabilities {
             unavailable_reason: None,
             compute: None,
             http_api: true,
+            ..Default::default()
         };
     }
     if family == "fish_drama3" {
@@ -1346,6 +1409,7 @@ fn profile_capabilities(family: &str) -> AudioCapabilities {
             unavailable_reason: None,
             compute: None,
             http_api: true,
+            ..Default::default()
         };
     }
     if family == "megatts3" {
@@ -1363,6 +1427,7 @@ fn profile_capabilities(family: &str) -> AudioCapabilities {
             unavailable_reason: None,
             compute: None,
             http_api: true,
+            ..Default::default()
         };
     }
     if family == "parakeet_tdt" {
@@ -1387,6 +1452,7 @@ fn profile_capabilities(family: &str) -> AudioCapabilities {
             // the first crate that sees both, holds the two together.
             compute: Some("gpu".into()),
             http_api: true,
+            ..Default::default()
         };
     }
     // Swift-hosted Core ML: FluidAudio 0.15.5 inside the app. Rust installs
@@ -1422,6 +1488,7 @@ fn profile_capabilities(family: &str) -> AudioCapabilities {
             ),
             compute: Some(compute.into()),
             http_api: false,
+            ..Default::default()
         };
     }
     if family == "parakeet_unified" {
@@ -1444,6 +1511,7 @@ fn profile_capabilities(family: &str) -> AudioCapabilities {
             // Engine units (`UnifiedOptions::default`), held by a server test.
             compute: Some("ane".into()),
             http_api: true,
+            ..Default::default()
         };
     }
     if family == "pyannote_community1" {
@@ -1466,6 +1534,7 @@ fn profile_capabilities(family: &str) -> AudioCapabilities {
                 .then(|| "Speaker diarization on Core ML requires macOS 15 or newer".into()),
             compute: Some("mixed".into()),
             http_api: true,
+            ..Default::default()
         };
     }
     let (operation,backend,cancellation,can_run,reason,timing) = match family {
@@ -1488,6 +1557,21 @@ fn profile_capabilities(family: &str) -> AudioCapabilities {
         unavailable_reason: reason.map(str::to_string),
         compute: None,
         http_api: true,
+        max_context_tokens: if family == "minimax_music3" {
+            Some(10_240)
+        } else {
+            None
+        },
+        max_audio_frames: if family == "minimax_music3" {
+            Some(9_000)
+        } else {
+            None
+        },
+        frame_rate_hz: if family == "minimax_music3" {
+            Some(25)
+        } else {
+            None
+        },
     }
 }
 
@@ -2589,7 +2673,7 @@ mod tests {
     #[test]
     fn initial_audio_profiles_have_exact_complete_pins_and_wire_metadata() {
         let catalog = AudioCatalog::embedded().unwrap();
-        assert_eq!(catalog.entries().count(), 21);
+        assert_eq!(catalog.entries().count(), 22);
         for (task, alias, repo, revision, rate, channels) in [
             (
                 AudioTask::TextToSpeech,

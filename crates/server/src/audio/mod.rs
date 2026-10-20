@@ -165,6 +165,8 @@ pub struct GenerateRequest {
     pub caption: String,
     pub lyrics: String,
     pub duration_seconds: Option<f64>,
+    pub max_frames: Option<usize>,
+    pub context_size: Option<usize>,
     pub steps: Option<usize>,
     pub seed: Option<u64>,
 }

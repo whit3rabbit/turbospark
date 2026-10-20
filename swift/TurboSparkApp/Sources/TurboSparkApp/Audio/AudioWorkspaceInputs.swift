@@ -109,21 +109,144 @@ struct AudioMusicInputs: View {
                 }
             }
             if controller.selectedProfile != nil {
-                HStack {
-                    Text("Duration (seconds)", bundle: .module)
-                    TextField(value: $controller.recipe.durationSeconds, format: .number) {
-                        Text("Duration (seconds)", bundle: .module)
-                    }.textFieldStyle(.roundedBorder).frame(maxWidth: 120)
+                let advice = controller.musicMemoryAdvice
+
+                HStack(spacing: 8) {
+                    Image(systemName: "memorychip")
+                        .foregroundStyle(.appAccent)
+                    Text(advice.tierSummary)
+                        .themedFont(.small)
+                        .foregroundStyle(.appSecondary)
+                    Spacer()
+                    if advice.canSupportMaxContext {
+                        Button {
+                            controller.setMusicContextToMaxIfSupported()
+                        } label: {
+                            Text("Set to max (360s)", bundle: .module)
+                        }
+                        .appAction(.secondary, size: .small)
+                        .help(Text("Sets duration to maximum context limit (9,000 frames / 360s) supported by your hardware.", bundle: .module))
+                    }
                 }
+                .padding(8)
+                .appCardSurface()
+
+                if let message = controller.musicValidationMessage {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.yellow)
+                        Text(verbatim: message)
+                            .themedFont(.small)
+                            .foregroundStyle(.appSecondary)
+                    }
+                    .padding(8)
+                    .background(Color.yellow.opacity(0.12))
+                    .cornerRadius(8)
+                }
+
+                HStack(spacing: 16) {
+                    HStack {
+                        Text("Duration (seconds)", bundle: .module)
+                        TextField(value: $controller.recipe.durationSeconds, format: .number) {
+                            Text("Duration (seconds)", bundle: .module)
+                        }
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 100)
+                    }
+                    HStack {
+                        Text("Frames", bundle: .module)
+                        TextField(
+                            value: Binding(
+                                get: { controller.recipe.musicFrames },
+                                set: { newFrames in
+                                    let rate = controller.recipe.music?.frameRate ?? advice.frameRate
+                                    controller.recipe.durationSeconds = Double(newFrames) / rate
+                                }
+                            ),
+                            format: .number
+                        ) {
+                            Text("Frames", bundle: .module)
+                        }
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 100)
+                        Text(verbatim: "@ \(Int(advice.frameRate)) fps")
+                            .themedFont(.small)
+                            .foregroundStyle(.appSecondary)
+                    }
+                }
+
                 DisclosureGroup {
                     VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Text("Context size (tokens)", bundle: .module)
+                            TextField(
+                                value: Binding(
+                                    get: { controller.recipe.music?.contextSize ?? advice.maxModelContextTokens },
+                                    set: { val in
+                                        if controller.recipe.music == nil {
+                                            controller.recipe.music = AudioMusicSettings(contextSize: val)
+                                        } else {
+                                            controller.recipe.music?.contextSize = val
+                                        }
+                                    }
+                                ),
+                                format: .number
+                            ) {
+                                Text("Context size (tokens)", bundle: .module)
+                            }
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 120)
+                            Text(verbatim: "/ \(advice.maxModelContextTokens)")
+                                .themedFont(.small)
+                                .foregroundStyle(.appSecondary)
+                        }
+                        HStack {
+                            Text("Max frames cap", bundle: .module)
+                            TextField(
+                                value: Binding(
+                                    get: { controller.recipe.music?.maxFrames ?? advice.maxSupportedFrames },
+                                    set: { val in
+                                        if controller.recipe.music == nil {
+                                            controller.recipe.music = AudioMusicSettings(maxFrames: val)
+                                        } else {
+                                            controller.recipe.music?.maxFrames = val
+                                        }
+                                    }
+                                ),
+                                format: .number
+                            ) {
+                                Text("Max frames cap", bundle: .module)
+                            }
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 120)
+                            Text(verbatim: "/ \(advice.maxModelFrames)")
+                                .themedFont(.small)
+                                .foregroundStyle(.appSecondary)
+                        }
                         HStack {
                             Text("Seed", bundle: .module)
                             TextField(value: $controller.recipe.seed, format: .number) { Text("Seed", bundle: .module) }
                                 .textFieldStyle(.roundedBorder).frame(maxWidth: 200)
                         }
-                        Stepper(value: $controller.recipe.steps, in: 1...30) {
-                            HStack { Text("Steps", bundle: .module); Text(verbatim: String(controller.recipe.steps)) }
+                        let recommendation = controller.musicSamplingRecommendation
+                        Stepper(value: Binding(
+                            get: { controller.recipe.effectiveMusicStepsOverride ?? recommendation.steps },
+                            set: { controller.recipe.musicStepsOverride = $0 }
+                        ), in: 1...30) {
+                            HStack {
+                                Text(verbatim: recommendation.profile)
+                                Text("Steps", bundle: .module)
+                                Text(verbatim: String(controller.recipe.effectiveMusicStepsOverride ?? recommendation.steps))
+                            }
+                        }
+                        if controller.recipe.effectiveMusicStepsOverride != nil {
+                            Button {
+                                controller.recipe.musicStepsOverride = nil
+                                controller.recipe.steps = 30
+                            } label: {
+                                Text("Use Default", bundle: .module)
+                            }
+                            .appAction(.secondary, size: .small)
                         }
                     }.padding(.top, 8)
                 } label: { Text("Generation settings", bundle: .module) }

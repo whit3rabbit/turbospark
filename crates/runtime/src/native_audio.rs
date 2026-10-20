@@ -52,7 +52,10 @@ pub struct AudioRequest {
     pub top_p: Option<f32>,
     pub top_k: Option<usize>,
     /// Drama 3: an upper bound on one chunk's frames, 1 through 1024.
+    /// Music: frame cap of the request, 1 through 9000.
     pub max_frames: Option<usize>,
+    /// Context size (in tokens) for music models.
+    pub context_size: Option<usize>,
     /// Rate of the reference audio carried as the job's PCM when cloning.
     pub reference_sample_rate: Option<u32>,
     /// The caller states it has the right to use the reference voice.
@@ -80,6 +83,7 @@ impl Default for AudioRequest {
             top_p: None,
             top_k: None,
             max_frames: None,
+            context_size: None,
             reference_sample_rate: None,
             consent: false,
         }
@@ -715,6 +719,8 @@ fn music_request(r: &AudioRequest) -> audio::music::minimax_music3::TextGenerate
         caption: r.caption.clone(),
         lyrics: r.lyrics.clone(),
         duration_seconds: r.duration_seconds,
+        max_frames: r.max_frames,
+        context_size: r.context_size,
         steps: r.steps,
         seed: r.seed,
     }
@@ -1574,9 +1580,12 @@ fn estimate_run_bytes(request: &AudioRequest) -> u64 {
         AudioTask::TextToSpeech => 512 << 20,
         // Conservative duration-scaled reserve until full checkpoint peaks are qualified.
         AudioTask::Diarization => (MAX_INPUT_SAMPLES as u64 * 4).saturating_add(512 << 20),
-        AudioTask::Music => (2u64 << 30).saturating_add(
-            (request.duration_seconds.unwrap_or(60.0).ceil() as u64).saturating_mul(64 << 20),
-        ),
+        AudioTask::Music => {
+            let seconds = request
+                .duration_seconds
+                .unwrap_or_else(|| request.max_frames.map(|f| f as f64 / 25.0).unwrap_or(60.0));
+            (2u64 << 30).saturating_add((seconds.ceil() as u64).saturating_mul(64 << 20))
+        }
     }
 }
 fn admit_memory(additional: u64) -> Result<(), String> {

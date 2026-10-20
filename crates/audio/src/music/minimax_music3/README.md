@@ -556,13 +556,17 @@ the seven tiny native profiles. Every guard was mutation-checked.
 
 ## Default flow profile
 
-`Music3Runner` (the app, server, FFI and `turbospark-music` all use it) opens in
-`FlowProfile::Fast`: Adams-Bashforth 2, the unconditional guidance branch
-reused at interval 3 after a warmup of 2, and 21 steps when a request names no
-count. That is 30 DiT forwards instead of 60. An explicit step count is always
-honored, so a client that sends 30 (the Swift default) gets AB2 with reuse at 30
-steps. `FlowProfile::Exact` restores the reference: Euler, both branches every
-step, 30 steps by default.
+`Music3Runner` opens in the profile declared by a recognized checkpoint, or
+`FlowProfile::Fast` for ordinary checkpoints: Adams-Bashforth 2, the
+unconditional guidance branch reused at interval 3 after a warmup of 2, and 21
+steps when a request names no count. That is 30 DiT forwards instead of 60. An
+explicit step count is always honored. `FlowProfile::Exact` restores the
+reference: Euler, both branches every step, 30 steps by default. The experimental
+TurboSpark merged-LoRA checkpoint declares `FlowProfile::Turbo`: Euler, both
+guidance branches every step, and eight steps by default. The CLI follows this
+checkpoint default when `--steps` and `--flow-profile` are omitted. The Swift
+audio workspace currently supplies an explicit step count, so it does not yet
+follow the checkpoint default.
 
 This default does **not** follow MLX's trajectory. The audio differs from the
 exact output (the measured drift is in the AB2 section: correlation 0.974 and
@@ -570,7 +574,8 @@ exact output (the measured drift is in the AB2 section: correlation 0.974 and
 WAV, one prompt, one seed, no listening test). Everything that compares against
 MLX or a CPU reference pins the exact profile.
 
-- `turbospark-music generate --flow-profile exact` (or `fast`); the
+- `turbospark-music generate --flow-profile exact`, `fast` or `turbo`; with no
+  profile flag the checkpoint default is used. The
   `--flow-uncond-interval`, `--flow-uncond-warmup` and `--flow-solver` flags
   override that part of either profile.
 - `Music3Runner::set_flow_profile(FlowProfile::Exact)` and

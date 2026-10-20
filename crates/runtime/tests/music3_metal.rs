@@ -4,8 +4,8 @@ use audio::music::minimax_music3::{FlowProfile, GenerateRequest, Model, TextGene
 use std::path::PathBuf;
 use turbospark_runtime::Music3Runner;
 
-/// The runner opens in the fast profile; every test here compares against an
-/// MLX or CPU reference, so it pins the exact (reference) profile.
+/// Fixture checkpoints are unmarked and open in Fast; parity tests pin the
+/// exact (reference) profile explicitly.
 fn open_exact_with_precision(
     path: &std::path::Path,
     precision: audio::music::minimax_music3::Music3Precision,
@@ -158,6 +158,38 @@ fn music3_real_checkpoint_generates_stereo_waveform() {
         generated.samples,
         runner.resident_weight_bytes()
     );
+}
+
+#[test]
+#[ignore = "requires the local merged Turbo checkpoint and a Metal device"]
+fn marked_turbo_checkpoint_defaults_to_eight_euler_steps_and_generates() {
+    use audio::music::minimax_music3::{Control, FlowProfile, Progress};
+
+    let path = PathBuf::from(
+        std::env::var_os("TURBOSPARK_MUSIC3_TURBO_INSTALL_DIR")
+            .expect("set TURBOSPARK_MUSIC3_TURBO_INSTALL_DIR to the merged checkpoint"),
+    );
+    let runner = Music3Runner::open(&path).unwrap();
+    assert_eq!(runner.preferred_runner_profile(), FlowProfile::Turbo);
+    let mut request = TextGenerateRequest::new(
+        "Warm intimate vocal, piano and soft strings",
+        "[Verse 1]\nI found a light along the road\nIt led me home through falling snow",
+    );
+    request.duration_seconds = Some(1.0);
+    request.seed = Some(23);
+    let mut flow_steps = None;
+    let (generated, _) = runner
+        .generate_text_with_progress(&request, |event| {
+            if let Progress::FlowStep { total, .. } = event {
+                flow_steps = Some(total);
+            }
+            Control::Continue
+        })
+        .unwrap()
+        .expect("not cancelled");
+    assert_eq!(flow_steps, Some(8));
+    assert!(generated.samples > 0);
+    assert!(generated.waveform.iter().all(|sample| sample.is_finite()));
 }
 
 #[test]
