@@ -13,6 +13,8 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-20
+
 ### Added
 - Metal kernel adaptations and speculative rollback redesign:
   - Bit-exact fused INT4 FFN dispatches behind `TURBOSPARK_QWEN_FUSED_FFN=1`
