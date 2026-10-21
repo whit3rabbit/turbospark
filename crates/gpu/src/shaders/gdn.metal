@@ -45,6 +45,16 @@ constant bool FC_GDN_IN_USE_FC [[function_constant(94)]];
 // this kernel.
 constant bool FC_GDN_GATE_SIGMOID [[function_constant(95)]];
 
+// Lazy verify tape (docs/KAPITSA_KERNELS.md item 1). The batched verify
+// builds the delta kernel as (RECORD=true, WRITE_STATE=false): it keeps the
+// live state at the block start and writes each row's `delta` to
+// `delta_tape`, and the round end folds exactly the accepted rows back in
+// with `gdn_state_fold`. Every pipeline built through the plain unspecialized
+// helper gets (false, true) -- today's behavior, unchanged -- and the lazy
+// pipeline's constants_key carries both bytes.
+constant bool FC_GDN_DELTA_RECORD       [[function_constant(96)]];
+constant bool FC_GDN_DELTA_WRITE_STATE  [[function_constant(97)]];
+
 static inline bool gdn_in_use_fc() {
     return is_function_constant_defined(FC_GDN_IN_USE_FC) && FC_GDN_IN_USE_FC;
 }
@@ -426,7 +436,11 @@ kernel void gdn_delta_step_decode(
 
 // Prefill: identical math with the token loop inside the kernel. q/k/v/a/b
 // advance by their row strides each step; state persists in registers across
-// the whole chunk and is written back once.
+// the whole chunk and is written back once -- unless WRITE_STATE is baked
+// false, which is the lazy verify's build: it records each row's `delta`
+// (the beta-scaled rank-1 coefficient, already reduced, so the fold needs no
+// simd sum) and leaves the live state alone. y is identical in both builds:
+// nothing after the register load reads the state back.
 kernel void gdn_delta_step_prefill(
     device const half*   conv_out [[buffer(0)]],   // [T, C]
     device const half*   a_proj   [[buffer(1)]],   // [T, Hv]
@@ -441,6 +455,7 @@ kernel void gdn_delta_step_prefill(
     constant uint&       valueDim [[buffer(10)]],
     constant uint&       rows     [[buffer(11)]],
     constant uint&       rowStride [[buffer(12)]], // C, conv_out elements/row
+    device float*        delta_tape [[buffer(13)]], // [T, Hv * Dv], RECORD builds
     uint2 tg [[threadgroup_position_in_grid]],
     uint2 tpos [[thread_position_in_threadgroup]]
 ) {
@@ -484,6 +499,11 @@ kernel void gdn_delta_step_prefill(
         kv = simd_sum(kv);
 
         const float delta = (float(v[dv]) - kv) * beta;
+        // Every lane holds the same simd-reduced delta; one writer is enough.
+        if (lane == 0 && is_function_constant_defined(FC_GDN_DELTA_RECORD)
+            && FC_GDN_DELTA_RECORD) {
+            delta_tape[t * Hv * Dv + h * Dv + dv] = delta;
+        }
 
         float out = 0.0f;
         for (uint i = 0; i < nPerLane; ++i) {
@@ -493,6 +513,77 @@ kernel void gdn_delta_step_prefill(
         }
         out = simd_sum(out);
         if (lane == 0) y[t * Hv * Dv + h * Dv + dv] = half(out);
+    }
+
+    if (!is_function_constant_defined(FC_GDN_DELTA_WRITE_STATE)
+        || FC_GDN_DELTA_WRITE_STATE) {
+        for (uint i = 0; i < nPerLane; ++i) {
+            srow[lane * nPerLane + i] = s[i];
+        }
+    }
+}
+
+// Fold `rows` recorded rank-1 updates into the live state, reproducing the
+// lazy verify's discarded register state bit for bit. Per row it runs the
+// same two element-wise passes `gdn_delta_step_prefill` runs -- `s *= g`,
+// then `s = fma(k, delta, s)` -- with `g` recomputed from the taped `a` by
+// the same expression and `k`/`delta` read back as the exact values that
+// pass held (k is captured post-qk-norm; delta is recorded fp32). Nothing in
+// the state update is a cross-lane reduction, so lane order cannot matter.
+// The fold starts from the block-start state the lazy verify never touched,
+// so after `rows` rows it equals what the eager kernel's write-back would
+// have left, which is the property `commit_linear_state_batched` and the
+// retaining-rollback equivalence tests stand on.
+kernel void gdn_state_fold(
+    device const half*   k_tape      [[buffer(0)]],  // [rows, Hk * Dk]
+    device const float*  delta_tape  [[buffer(1)]],  // [rows, Hv * Dv]
+    device const half*   a_tape      [[buffer(2)]],  // [rows, Hv]
+    device const bfloat* A_log       [[buffer(3)]],  // [Hv]
+    device const bfloat* dt_bias     [[buffer(4)]],  // [Hv]
+    device float*        state       [[buffer(5)]],  // [Hv, Dv, Dk]
+    constant uint&       kHeads      [[buffer(6)]],
+    constant uint&       vHeads      [[buffer(7)]],
+    constant uint&       keyDim      [[buffer(8)]],
+    constant uint&       valueDim    [[buffer(9)]],
+    constant uint&       rows        [[buffer(10)]],
+    constant uint&       kStride     [[buffer(11)]], // Hk * Dk elements/row
+    constant uint&       aStride     [[buffer(12)]], // Hv elements/row
+    constant uint&       deltaStride [[buffer(13)]], // Hv * Dv elements/row
+    uint2 tg [[threadgroup_position_in_grid]],
+    uint2 tpos [[thread_position_in_threadgroup]]
+) {
+    const uint Hk = kHeads;
+    const uint Hv = vHeads;
+    const uint Dk = keyDim;
+    const uint Dv = valueDim;
+    const uint h = tg.x;
+    const uint dv = tg.y * 4u + tpos.y;
+    const uint lane = tpos.x;
+    if (h >= Hv || dv >= Dv) return;
+
+    const uint hk = h / (Hv / Hk);
+    const float expA = exp(float(A_log[h]));
+    const float dtb = float(dt_bias[h]);
+
+    const uint nPerLane = Dk / 32u;
+    device float* srow = state + (uint(h) * Dv + dv) * Dk;
+
+    float s[8];
+    for (uint i = 0; i < nPerLane; ++i) {
+        s[i] = srow[lane * nPerLane + i];
+    }
+
+    for (uint t = 0; t < rows; ++t) {
+        const float g = exp(-expA * gdn_softplus(float(a_tape[t * aStride + h]) + dtb));
+        for (uint i = 0; i < nPerLane; ++i) {
+            s[i] *= g;
+        }
+        const float delta = delta_tape[t * deltaStride + h * Dv + dv];
+        device const half* k = k_tape + t * kStride + hk * Dk;
+        for (uint i = 0; i < nPerLane; ++i) {
+            const uint idx = lane * nPerLane + i;
+            s[i] = fma(float(k[idx]), delta, s[i]);
+        }
     }
 
     for (uint i = 0; i < nPerLane; ++i) {

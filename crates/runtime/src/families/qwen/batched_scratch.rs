@@ -79,10 +79,27 @@ pub(crate) struct BatchedScratch {
 /// deliberately not taped: the state advance never reads it (it feeds the
 /// gated norm, whose output feeds the residual, which the next pass
 /// recomputes from embeddings anyway).
+///
+/// With `TURBOSPARK_GDN_LAZY_TAPE` on (the default), the tape is LAZY: the
+/// verify leaves the live state at the block start, and `rank1` carries what
+/// the round-end fold needs instead of a replay -- the post-qk-norm `k`
+/// slice and the per-row fp32 `delta` the verify kernel recorded in
+/// registers. The eager mode (flag `0`) leaves `rank1` absent and replays
+/// over `qkv_raw`/`a`/`b` from a snapshot instead.
 pub(crate) struct BatchedVerifyTape {
     pub(crate) qkv_raw: gpu::MetalBuffer,
     pub(crate) a: gpu::MetalBuffer,
     pub(crate) b: gpu::MetalBuffer,
+    pub(crate) rank1: Option<Rank1Tape>,
+}
+
+/// The lazy tape's rank-1 record, `[linear layer ordinal][row][...]`, k as
+/// FP16 (`Hk * Dk`, the post-norm slice `gdn_delta_step_prefill` consumes)
+/// and delta as FP32 (`Hv * Dv`). `g` is not recorded: the fold recomputes
+/// it from taped `a` with the same expression the delta kernel runs.
+pub(crate) struct Rank1Tape {
+    pub(crate) k: gpu::MetalBuffer,
+    pub(crate) delta: gpu::MetalBuffer,
 }
 
 /// The M-row siblings of the buffers the per-token routed pass
@@ -157,10 +174,23 @@ impl BatchedScratch {
             let linear_layers = (0..arch.num_layers as usize)
                 .filter(|&l| arch.layer_is_linear(l))
                 .count() as u64;
+            // The lazy tape's extra buffers ride the same per-slot stride as
+            // the row tapes: a slot holds `batch` rows of each record.
+            let rank1 = if crate::real_forward_rollback::gdn_lazy_tape() {
+                let k_width = (qwen_shape.num_k_heads * qwen_shape.key_head_dim) as u64;
+                let delta_width = (qwen_shape.num_v_heads * qwen_shape.value_head_dim) as u64;
+                Some(Rank1Tape {
+                    k: context.new_output_buffer(linear_layers * b * k_width * 2),
+                    delta: context.new_output_buffer(linear_layers * b * delta_width * 4),
+                })
+            } else {
+                None
+            };
             Some(BatchedVerifyTape {
                 qkv_raw: halfs(linear_layers * qkv_dim),
                 a: halfs(linear_layers * v_heads),
                 b: halfs(linear_layers * v_heads),
+                rank1,
             })
         } else {
             None

@@ -121,8 +121,28 @@ pub fn encode_dflash_copy_rows(
     hidden: u32,
     dst_stride: u32,
 ) -> Result<(), GpuError> {
+    encode_copy_rows_fp16_strided(context, pass, src, dst, rows, hidden, hidden, dst_stride)
+}
+
+/// [`encode_dflash_copy_rows`] with an explicit SOURCE stride. The GDN lazy
+/// tape's k capture needs it: it copies the post-norm k SLICE out of
+/// `conv_out` rows whose stride is the full qkv width, packing the slice to
+/// its own width in the destination. Same kernel (`copy_strided_rows_fp16`
+/// already takes `src_stride`); the plain wrapper above pins it to the row
+/// width because every dflash capture is row-major over whole rows.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_copy_rows_fp16_strided(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    src: (&metal::Buffer, u64),
+    dst: (&metal::Buffer, u64),
+    rows: u32,
+    width: u32,
+    src_stride: u32,
+    dst_stride: u32,
+) -> Result<(), GpuError> {
     let count = rows
-        .checked_mul(hidden)
+        .checked_mul(width)
         .expect("copy row element count overflows u32");
     let view_bytes = |buffer: &metal::Buffer, offset: u64, stride: u32| {
         let elements = if rows == 0 {
@@ -130,7 +150,7 @@ pub fn encode_dflash_copy_rows(
         } else {
             u64::from(rows - 1)
                 .checked_mul(u64::from(stride))
-                .and_then(|n| n.checked_add(u64::from(hidden)))
+                .and_then(|n| n.checked_add(u64::from(width)))
                 .expect("copy row view length overflows u64")
         };
         let end = elements
@@ -139,7 +159,7 @@ pub fn encode_dflash_copy_rows(
             .expect("copy row byte range overflows u64");
         assert!(end <= buffer.length(), "copy row view exceeds buffer");
     };
-    view_bytes(src.0, src.1, hidden);
+    view_bytes(src.0, src.1, src_stride);
     view_bytes(dst.0, dst.1, dst_stride);
     let pipeline = context.pipeline(
         SOURCE,
@@ -150,13 +170,12 @@ pub fn encode_dflash_copy_rows(
     // AGENTS.md/CLAUDE.md S12: floored at 1, matching rope.rs's own
     // convention, rather than dispatching a zero grid at count == 0.
     let grid = (count as u64).div_ceil(THREADS_PER_GROUP).max(1) * THREADS_PER_GROUP;
-    let src_stride = hidden;
     pass.encode_threads_3d(
         &pipeline,
         &[(src.0, 0, src.1), (dst.0, 1, dst.1)],
         &[
             (u32_bytes(&rows), 2),
-            (u32_bytes(&hidden), 3),
+            (u32_bytes(&width), 3),
             (u32_bytes(&src_stride), 4),
             (u32_bytes(&dst_stride), 5),
         ],

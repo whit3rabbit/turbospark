@@ -335,7 +335,13 @@ impl RealForwardRunner {
             real_mtp: None,
             real_dflash: None,
             batched_tape: None,
+            // Fresh open: zeroed state, the committed boundary of position 0.
+            gdn_state_clean: true,
+            unsnapshotted_checkpoint_alive: false,
+            unsnapshotted_checkpoint_tainted: false,
+            deferred_gdn_snapshot: None,
             batched_tape_row0: None,
+            pending_gdn_fold: None,
             real_llama: None,
             real_deepseek2: None,
             real_gpt_oss: None,

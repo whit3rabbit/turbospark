@@ -490,12 +490,71 @@ fn encode_shared_expert(
     use_silu: bool,
 ) -> Result<(), RealForwardError> {
     let gpu_err = RealForwardError::Gpu;
+    // THE FUSED SHARED EXPERT (TURBOSPARK_QWEN_FUSED_FFN, default on):
+    // gate+up+act in one dispatch, and down with the scalar gate folded into
+    // its store, 6 dispatches -> 3. The logit GEMV moves BEFORE down so the
+    // epilogue reads a logit this pass wrote. Only for INT4 weights; the
+    // shared expert reads moe_x (already hadamard-transformed by the caller
+    // when folded), so no fold check here. Bit-exact either way.
+    let gate_name = layer_tensor(layer, "mlp.shared_expert.gate_proj.weight");
+    let up_name = layer_tensor(layer, "mlp.shared_expert.up_proj.weight");
+    let down_name = layer_tensor(layer, "mlp.shared_expert.down_proj.weight");
+    let fused = crate::families::qwen::fused_ffn()
+        && crate::real_forward_utils::entry(index, &gate_name)
+            .map(|e| e.dtype == 4)
+            .unwrap_or(false)
+        && crate::real_forward_utils::entry(index, &up_name)
+            .map(|e| e.dtype == 4)
+            .unwrap_or(false)
+        && crate::real_forward_utils::entry(index, &down_name)
+            .map(|e| e.dtype == 4)
+            .unwrap_or(false);
+    if fused {
+        let gate_m =
+            crate::real_forward_utils::resident_matrix(weights, index, &gate_name, inter, hidden)?;
+        let up_m =
+            crate::real_forward_utils::resident_matrix(weights, index, &up_name, inter, hidden)?;
+        let down_m =
+            crate::real_forward_utils::resident_matrix(weights, index, &down_name, hidden, inter)?;
+        gpu::encode_gate_up_act_gemv(
+            context,
+            pass,
+            &gate_m,
+            &up_m,
+            (moe_x, x_row),
+            (&scratch.ffn_act, 0),
+            !use_silu,
+        )
+        .map_err(gpu_err)?;
+        encode_gemv_any(
+            context,
+            pass,
+            weights,
+            index,
+            &layer_tensor(layer, "mlp.shared_expert_gate.weight"),
+            1,
+            hidden,
+            (moe_x, x_row),
+            (&qwen.shared_gate_logit, 0),
+        )?;
+        gpu::encode_down_epi_gemv(
+            context,
+            pass,
+            &down_m,
+            (&scratch.ffn_act, 0),
+            (&qwen.h1, 0),
+            (&qwen.shared_gate_logit, 0),
+            gpu::DownEpilogue::SigmoidGate,
+        )
+        .map_err(gpu_err)?;
+        return Ok(());
+    }
     encode_gemv_any(
         context,
         pass,
         weights,
         index,
-        &layer_tensor(layer, "mlp.shared_expert.gate_proj.weight"),
+        &gate_name,
         inter,
         hidden,
         (moe_x, x_row),

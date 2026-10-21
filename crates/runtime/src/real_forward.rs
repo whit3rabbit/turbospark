@@ -182,6 +182,29 @@ pub struct RealForwardRunner {
     /// speculative round replay the accepted prefix's recurrent state over
     /// recorded row inputs instead of re-running a whole forward pass.
     pub(crate) batched_tape: Option<crate::real_forward_rollback::VerifyTape>,
+    /// Whether the live GDN state provably EQUALS the last committed
+    /// boundary: a fold (`RealForwardRunner::commit_pending`, or the one
+    /// inside a lazy retaining rollback), a restore, or a reset just ran and
+    /// no eager advance (`produce`, a prefill) has happened since. Only
+    /// consulted under `TURBOSPARK_GDN_LAZY_TAPE`: a checkpoint taken while
+    /// clean needs NO snapshot, because the state a rollback returns to is
+    /// still sitting in the live buffers -- that is what removes the
+    /// snapshot blit from every speculative round after the first. Any
+    /// eager advance clears it.
+    pub(crate) gdn_state_clean: bool,
+    /// A ROUND checkpoint (`checkpoint_round`) that skipped its snapshot is
+    /// ALIVE while the live state still equals the state it names. An eager
+    /// advance first takes the snapshot it skipped (`deferred_gdn_snapshot`)
+    /// and retires the flag, so the point stays fully general. A fold or a
+    /// restore that moves the state past it TAINTS it instead: a copy at that
+    /// moment would cost the blit the skip exists to save every round, and
+    /// rolling back past a committed round is not something the speculative
+    /// loop does, so rollback refuses loudly rather than restore nothing.
+    pub(crate) unsnapshotted_checkpoint_alive: bool,
+    pub(crate) unsnapshotted_checkpoint_tainted: bool,
+    /// The snapshot an alive round checkpoint skipped, taken when the first
+    /// eager advance arrived (the live state still equalled the point then).
+    pub(crate) deferred_gdn_snapshot: Option<gpu::GdnSnapshot>,
     /// `scratch.x` row 0's bytes from JUST BEFORE `produce_batched`'s own
     /// trailing copy overwrites them with row `batch - 1`'s residual. Only
     /// set alongside `batched_tape`, and only needed because a
@@ -189,6 +212,10 @@ pub struct RealForwardRunner {
     /// to rebuild row 0 from -- row 0 IS the kept row in that case, and the
     /// trailing copy already clobbered it by the time the rollback runs.
     pub(crate) batched_tape_row0: Option<Vec<u8>>,
+    /// An in-flight non-blocking fold pass from commit_pending or lazy
+    /// rollback_retaining, executed asynchronously on the GPU without blocking
+    /// CPU drafting.
+    pub(crate) pending_gdn_fold: Option<gpu::CommittedPass>,
     /// Present for a `llama`-architecture install (ROADMAP Phase M2), which
     /// is Mixtral-style MoE only; a dense one is refused at build.
     pub(crate) real_llama: Option<crate::families::llama::RealLlamaState>,

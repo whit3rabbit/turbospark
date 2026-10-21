@@ -56,7 +56,7 @@ const CONV_THREADS: u64 = 256;
 pub use crate::gdn_shape::GdnShape;
 
 /// Every function constant either shader in [`SOURCE`] declares: INT4's
-/// 20-26 and GDN's 90-95. Metal requires all constants a function reads to
+/// 20-26 and GDN's 90-97. Metal requires all constants a function reads to
 /// be set before a pipeline can be built, and setting the ones it does not
 /// read is harmless -- the same defensive shape the other kernel modules
 /// use. `USE_FC = false` keeps a kernel on its runtime-argument path;
@@ -66,7 +66,10 @@ pub use crate::gdn_shape::GdnShape;
 /// including `gdn_gated_norm`'s own default build -- gets `95 = false`
 /// here, which is what keeps this declaration from moving the two families
 /// that already dispatch that kernel: `FC_GDN_GATE_SIGMOID` reads `false`
-/// for them exactly as it always has.
+/// for them exactly as it always has. `gdn_delta_step_prefill` alone reads
+/// 96/97, whose defaults here (RECORD false, WRITE_STATE true) are the
+/// eager behavior every existing caller keeps; the lazy verify build sets
+/// them through [`delta_prefill_lazy_pipeline`].
 fn gdn_function_constants() -> FunctionConstantValues {
     let values = FunctionConstantValues::new();
     let zero: u32 = 0;
@@ -74,13 +77,15 @@ fn gdn_function_constants() -> FunctionConstantValues {
     for index in [20, 21, 23, 24, 25, 90, 91, 92, 93] {
         values.set_constant_value_at_index((&zero as *const u32).cast(), MTLDataType::UInt, index);
     }
-    for index in [22, 26, 94, 95] {
+    for index in [22, 26, 94, 95, 96] {
         values.set_constant_value_at_index(
             (&use_fc as *const bool).cast(),
             MTLDataType::Bool,
             index,
         );
     }
+    let write_state = true;
+    values.set_constant_value_at_index((&write_state as *const bool).cast(), MTLDataType::Bool, 97);
     values
 }
 
@@ -133,6 +138,28 @@ fn gated_norm_sigmoid_pipeline(
     let sigmoid = true;
     values.set_constant_value_at_index((&sigmoid as *const bool).cast(), MTLDataType::Bool, 95);
     context.pipeline(SOURCE, "gdn_gated_norm", &values, &[sigmoid as u8])
+}
+
+/// `gdn_delta_step_prefill` with (RECORD, WRITE_STATE) baked (true, false):
+/// the lazy verify's build. It leaves the live state at the block start and
+/// writes each row's `delta` to `delta_tape`, for [`encode_gdn_state_fold`]
+/// to fold in at the round end. The KEY carries both bytes -- the eager
+/// build lives in the `b""` bucket, and a shared key across the two would
+/// silently hand the eager caller the state-less variant (crate Gotcha 1).
+fn delta_prefill_lazy_pipeline(
+    context: &mut MetalContext,
+) -> Result<metal::ComputePipelineState, GpuError> {
+    let values = gdn_function_constants();
+    let record = true;
+    let write_state = false;
+    values.set_constant_value_at_index((&record as *const bool).cast(), MTLDataType::Bool, 96);
+    values.set_constant_value_at_index((&write_state as *const bool).cast(), MTLDataType::Bool, 97);
+    context.pipeline(
+        SOURCE,
+        "gdn_delta_step_prefill",
+        &values,
+        &[record as u8, write_state as u8],
+    )
 }
 
 /// Fused `in_proj_qkv` / `_z` / `_a` / `_b` INT4 GEMV: one dispatch over
@@ -448,6 +475,160 @@ pub fn encode_gdn_delta_prefill(
             (dt_bias.0, 4, dt_bias.1),
             (state, 5, 0),
             (y.0, 6, y.1),
+        ],
+        &bytes,
+        (
+            shape.num_v_heads as u64,
+            (shape.value_head_dim / 4) as u64,
+            1,
+        ),
+        DELTA_THREADS,
+    );
+    Ok(())
+}
+
+/// Asserts a tape view of `rows` rows of `row_elems` elements of
+/// `elem_bytes` each fits in `buffer` from `offset`. A slot stride that
+/// drifts from the recording pass's batch is silent recurrent-state
+/// corruption, so the lazy tape's views are checked the way
+/// `encode_copy_rows_fp16_strided` checks its own.
+fn assert_tape_view(
+    what: &str,
+    buffer: &metal::Buffer,
+    offset: u64,
+    rows: u32,
+    row_elems: u32,
+    elem_bytes: u64,
+) {
+    let end = u64::from(rows)
+        .checked_mul(u64::from(row_elems))
+        .and_then(|n| n.checked_mul(elem_bytes))
+        .and_then(|n| n.checked_add(offset))
+        .expect("tape view byte range overflows u64");
+    assert!(
+        end <= buffer.length(),
+        "{what} tape view exceeds its buffer"
+    );
+}
+
+/// The prefill recurrence with (RECORD, WRITE_STATE) baked (true, false):
+/// identical y, no state write-back, per-row `delta` recorded to
+/// `delta_tape`. See [`delta_prefill_lazy_pipeline`] and
+/// [`encode_gdn_state_fold`].
+#[allow(clippy::too_many_arguments)]
+pub fn encode_gdn_delta_prefill_lazy(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    shape: GdnShape,
+    conv_out: (&metal::Buffer, u64),
+    a_proj: (&metal::Buffer, u64),
+    b_proj: (&metal::Buffer, u64),
+    a_log: (&metal::Buffer, u64),
+    dt_bias: (&metal::Buffer, u64),
+    state: &metal::Buffer,
+    y: (&metal::Buffer, u64),
+    delta_tape: (&metal::Buffer, u64),
+    rows: u32,
+) -> Result<(), GpuError> {
+    shape.validate()?;
+    assert_tape_view(
+        "delta",
+        delta_tape.0,
+        delta_tape.1,
+        rows,
+        shape.value_dim(),
+        4,
+    );
+    let p = delta_prefill_lazy_pipeline(context)?;
+    let dims = shape.head_dim_bytes();
+    let row_stride = shape.qkv_dim();
+    let mut bytes: Vec<(&[u8], u64)> = dims.iter().map(|(v, i)| (&v[..], *i)).collect();
+    bytes.push((u32_bytes(&rows), 11));
+    bytes.push((u32_bytes(&row_stride), 12));
+    pass.encode_threadgroups_3d(
+        &p,
+        &[
+            (conv_out.0, 0, conv_out.1),
+            (a_proj.0, 1, a_proj.1),
+            (b_proj.0, 2, b_proj.1),
+            (a_log.0, 3, a_log.1),
+            (dt_bias.0, 4, dt_bias.1),
+            (state, 5, 0),
+            (y.0, 6, y.1),
+            (delta_tape.0, 13, delta_tape.1),
+        ],
+        &bytes,
+        (
+            shape.num_v_heads as u64,
+            (shape.value_head_dim / 4) as u64,
+            1,
+        ),
+        DELTA_THREADS,
+    );
+    Ok(())
+}
+
+/// Applies `rows` recorded rank-1 updates to the live state in place: the
+/// round-end commit of the lazy verify tape, bit-identical to the eager
+/// kernel's register state after the same rows. Same grid as the delta
+/// kernels; the strides are per-row ELEMENT counts of each tape.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_gdn_state_fold(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    shape: GdnShape,
+    k_tape: (&metal::Buffer, u64),
+    delta_tape: (&metal::Buffer, u64),
+    a_tape: (&metal::Buffer, u64),
+    a_log: (&metal::Buffer, u64),
+    dt_bias: (&metal::Buffer, u64),
+    state: &metal::Buffer,
+    rows: u32,
+) -> Result<(), GpuError> {
+    shape.validate()?;
+    let p = pipeline(context, "gdn_state_fold")?;
+    let k_stride = shape.num_k_heads * shape.key_head_dim;
+    let a_stride = shape.num_v_heads;
+    let delta_stride = shape.num_v_heads * shape.value_head_dim;
+    assert_tape_view("fold k", k_tape.0, k_tape.1, rows, k_stride, 2);
+    assert_tape_view(
+        "fold delta",
+        delta_tape.0,
+        delta_tape.1,
+        rows,
+        delta_stride,
+        4,
+    );
+    assert_tape_view("fold a", a_tape.0, a_tape.1, rows, a_stride, 2);
+    let (hkb, hvb, dkb, dvb, rowsb, ksb, asb, dsb) = (
+        shape.num_k_heads.to_le_bytes(),
+        shape.num_v_heads.to_le_bytes(),
+        shape.key_head_dim.to_le_bytes(),
+        shape.value_head_dim.to_le_bytes(),
+        rows.to_le_bytes(),
+        k_stride.to_le_bytes(),
+        a_stride.to_le_bytes(),
+        delta_stride.to_le_bytes(),
+    );
+    let bytes: [(&[u8], u64); 8] = [
+        (&hkb[..], 6),
+        (&hvb[..], 7),
+        (&dkb[..], 8),
+        (&dvb[..], 9),
+        (&rowsb[..], 10),
+        (&ksb[..], 11),
+        (&asb[..], 12),
+        (&dsb[..], 13),
+    ];
+    pass.encode_threadgroups_3d(
+        &p,
+        &[
+            (k_tape.0, 0, k_tape.1),
+            (delta_tape.0, 1, delta_tape.1),
+            (a_tape.0, 2, a_tape.1),
+            (a_log.0, 3, a_log.1),
+            (dt_bias.0, 4, dt_bias.1),
+            (state, 5, 0),
         ],
         &bytes,
         (

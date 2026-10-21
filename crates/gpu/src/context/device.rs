@@ -382,6 +382,36 @@ impl MetalContext {
         )
     }
 
+    /// [`Self::begin_pass_labeled`] on a CONCURRENT compute encoder
+    /// (`MTLDispatchType::Concurrent`): dispatches may overlap unless the
+    /// caller separates them with [`PassEncoder::memory_barrier_with_buffers`].
+    /// The serial contract above is GONE, so this is opt-in per call site and
+    /// every caller owns a dependency audit: writes that a later dispatch
+    /// reads (including IN-PLACE updates and scratch reused across layers)
+    /// must be behind an explicit barrier naming those buffers.
+    ///
+    /// Doc lives here rather than on a flag because nothing switches this at
+    /// runtime: the caller decides per pass. The one wired site is the
+    /// decode path's q/k/v projection triple
+    /// (`TURBOSPARK_METAL_CONCURRENT_PASSES=1`,
+    /// `families/qwen/attn.rs`), whose three GEMVs read the same normed
+    /// input and write disjoint outputs.
+    pub fn begin_pass_concurrent_labeled(&self, label: &'static str) -> PassEncoder {
+        let command_buffer = self.queue.new_command_buffer().to_owned();
+        command_buffer.set_label(label);
+        let encoder = command_buffer
+            .compute_command_encoder_with_dispatch_type(metal::MTLDispatchType::Concurrent)
+            .to_owned();
+        PassEncoder::new(
+            command_buffer,
+            RefCell::new(encoder),
+            // Dispatch profiling requires one encoder per dispatch to sample
+            // counters at encoder boundaries; that scheme is meaningless on a
+            // concurrent encoder, so a concurrent pass profiles as one row.
+            None,
+        )
+    }
+
     /// Allocates a shared Metal GPU buffer initialized with `data` bytes.
     pub fn new_buffer_with_data<T>(&self, data: &[T]) -> metal::Buffer {
         let started = Instant::now();

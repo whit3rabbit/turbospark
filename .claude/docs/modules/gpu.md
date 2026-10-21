@@ -77,6 +77,7 @@ crates/gpu/
 |       +-- dequant_int4.metal      # INT4 dequantization GEMV shader source
 |       +-- dequant_int4_batch.metal# Batched M-row INT4 GEMM shader source
 |       +-- dequant_int4_mma.metal  # INT4 simdgroup_matrix MMA shader source (dead end)
+|       +-- dequant_int4_fused.metal # bit-exact FFN fusions: gate+up+act GEMV, down+epilogue (docs/KAPITSA_KERNELS.md items 4-5)
 |       +-- dequant_int8.metal      # INT8 dequantization GEMV shader source
 |       +-- dequant_iq.metal        # GGUF IQ-codebook GEMV shader source
 |       +-- dequant_iq_lowbit_tables.metal # Sub-3-bit IQ codebook lookup tables

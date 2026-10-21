@@ -62,6 +62,8 @@ mod dequant_2bit_gemv;
 #[cfg(target_os = "macos")]
 mod dequant_int4_batch;
 #[cfg(target_os = "macos")]
+mod dequant_int4_fused;
+#[cfg(target_os = "macos")]
 mod dequant_int4_gemv;
 #[cfg(target_os = "macos")]
 mod dequant_int4_steel;
@@ -209,6 +211,8 @@ pub use dequant_int4_batch::{
     MAX_BATCH_ROWS, MAX_GEMM_ROW_BLOCK, MMA_MAX_BATCH_ROWS,
 };
 #[cfg(target_os = "macos")]
+pub use dequant_int4_fused::{encode_down_epi_gemv, encode_gate_up_act_gemv, DownEpilogue};
+#[cfg(target_os = "macos")]
 pub use dequant_int4_gemv::{
     dequant_int4_gemv, dequant_int4_gemv_resident, encode_dequant_int4_gemv_resident,
     encode_embed_lookup_int4, Int4AffineRowGpu, Int4ResidentMatrix,
@@ -272,7 +276,8 @@ pub use dequant_q8_0_gemv::{
 pub use device_memory::{process_footprint, recommended_max_working_set};
 #[cfg(target_os = "macos")]
 pub use dflash_conv::{
-    encode_dflash_copy_rows, encode_dflash_grouped_conv, DFLASH_GROUP_SIZE, DFLASH_TAPS,
+    encode_copy_rows_fp16_strided, encode_dflash_copy_rows, encode_dflash_grouped_conv,
+    DFLASH_GROUP_SIZE, DFLASH_TAPS,
 };
 #[cfg(target_os = "macos")]
 pub use dispatch_profile::{report as dispatch_profile_report, reset as dispatch_profile_reset};
@@ -281,9 +286,9 @@ pub use dsv4_state::{Dsv4StateManager, LayerCounters};
 #[cfg(target_os = "macos")]
 pub use gdn::{
     encode_gdn_conv_decode, encode_gdn_conv_prefill, encode_gdn_conv_tail_update,
-    encode_gdn_delta_decode, encode_gdn_delta_prefill, encode_gdn_gated_norm,
-    encode_gdn_gated_norm_sigmoid, encode_gdn_in_proj, encode_gdn_qk_norm,
-    encode_gdn_qk_norm_with_rms_epsilon, GdnShape,
+    encode_gdn_delta_decode, encode_gdn_delta_prefill, encode_gdn_delta_prefill_lazy,
+    encode_gdn_gated_norm, encode_gdn_gated_norm_sigmoid, encode_gdn_in_proj, encode_gdn_qk_norm,
+    encode_gdn_qk_norm_with_rms_epsilon, encode_gdn_state_fold, GdnShape,
 };
 #[cfg(target_os = "macos")]
 pub use gdn_state::{GdnSnapshot, GdnStateManager};

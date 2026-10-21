@@ -316,6 +316,11 @@ impl HiddenTrunk {
         let runner = &mut self.runner;
         runner.batched_tape = None;
         runner.batched_tape_row0 = None;
+        // This pass advances the GDN state eagerly, exactly as `produce` does:
+        // the state is no longer a committed boundary a lazy round
+        // checkpoint could skip snapshotting, and any outstanding
+        // snapshot-less round checkpoint gets its deferred snapshot now.
+        runner.note_eager_advance();
         let result = gpu::autorelease_pool(|| {
             runner.prefill_hidden_rows_qwen_moe(&tokens, &host_rows, position, &mut out)
         });

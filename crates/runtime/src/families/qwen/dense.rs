@@ -78,6 +78,69 @@ pub(crate) fn encode_qwen_layer_dense(
         Some(h) if h.is_folded(&gate_name) => (&h.moe_x_h, 0),
         _ => (&qwen.moe_x, 0),
     };
+
+    // THE FUSED TAIL (TURBOSPARK_QWEN_FUSED_FFN, default on): gate+up+act in
+    // one dispatch and the down projection with the residual add folded into
+    // its store, 5 dispatches -> 2. Only for INT4 weights whose gate and down
+    // inputs are not hadamard-folded (a folded input or transform slot has no
+    // fused form and keeps the per-tensor chain below); bit-exact either way,
+    // which the gpu parity tests and the frozen digests pin.
+    let down_name = prefixed_layer_tensor(prefix, layer, "mlp.down_proj.weight");
+    let gate_folded = matches!(qwen.hadamard.as_ref(), Some(h) if h.is_folded(&gate_name));
+    let down_folded = matches!(qwen.hadamard.as_ref(), Some(h) if h.is_folded(&down_name));
+    if crate::families::qwen::fused_ffn()
+        && !gate_folded
+        && !down_folded
+        && crate::real_forward_utils::entry(index, &gate_name)
+            .map(|e| e.dtype == 4)
+            .unwrap_or(false)
+        && crate::real_forward_utils::entry(
+            index,
+            &prefixed_layer_tensor(prefix, layer, "mlp.up_proj.weight"),
+        )
+        .map(|e| e.dtype == 4)
+        .unwrap_or(false)
+        && crate::real_forward_utils::entry(index, &down_name)
+            .map(|e| e.dtype == 4)
+            .unwrap_or(false)
+    {
+        let gate_m =
+            crate::real_forward_utils::resident_matrix(weights, index, &gate_name, inter, hidden)?;
+        let up_m = crate::real_forward_utils::resident_matrix(
+            weights,
+            index,
+            &prefixed_layer_tensor(prefix, layer, "mlp.up_proj.weight"),
+            inter,
+            hidden,
+        )?;
+        let down_m =
+            crate::real_forward_utils::resident_matrix(weights, index, &down_name, hidden, inter)?;
+        gpu::encode_gate_up_act_gemv(
+            context,
+            pass,
+            &gate_m,
+            &up_m,
+            ffn_input,
+            (&scratch.ffn_act, 0),
+            !use_silu,
+        )
+        .map_err(gpu_err)?;
+        // RAW residual add, matching the MoE half and the unfused chain's
+        // epilogue: the FFN output is rounded to half BEFORE it meets the
+        // stream, which is the double round the fused kernel reproduces.
+        gpu::encode_down_epi_gemv(
+            context,
+            pass,
+            &down_m,
+            (&scratch.ffn_act, 0),
+            (residual, x_off),
+            (residual, x_off),
+            gpu::DownEpilogue::Residual,
+        )
+        .map_err(gpu_err)?;
+        return Ok(());
+    }
+
     for (suffix, out) in [
         ("mlp.gate_proj.weight", &scratch.ffn_gate),
         ("mlp.up_proj.weight", &scratch.ffn_up),
@@ -110,7 +173,6 @@ pub(crate) fn encode_qwen_layer_dense(
     )
     .map_err(gpu_err)?;
 
-    let down_name = prefixed_layer_tensor(prefix, layer, "mlp.down_proj.weight");
     let down_input = match qwen.hadamard.as_ref() {
         Some(h) if h.is_folded(&down_name) => {
             h.transform(

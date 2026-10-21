@@ -28,7 +28,7 @@ mod verify_layers;
 pub(crate) use attn::{encode_full_attention_block, QkNormConvention};
 /// Re-exported for `real_forward_rollback`'s retaining rollback, whose
 /// replay half lives beside the verify encoders it mirrors.
-pub(crate) use batched_layers::replay_linear_state_batched;
+pub(crate) use batched_layers::{commit_linear_state_batched, replay_linear_state_batched};
 pub(crate) use batched_scratch::BatchedScratch;
 pub(crate) use dflash::DflashState;
 pub use dflash_state::{install_has_dflash, DflashDraftPolicy, DFLASH_BLOCK, DFLASH_SERVING_BLOCK};
@@ -126,6 +126,21 @@ pub(crate) const MTP_PREFIX: &str = "mtp";
 
 pub(crate) fn layer_tensor(layer: usize, suffix: &str) -> String {
     prefixed_layer_tensor(TRUNK_PREFIX, layer, suffix)
+}
+
+/// `TURBOSPARK_QWEN_FUSED_FFN`, default on, read once. Selects the fused
+/// INT4 FFN kernels (`dequant_int4_fused.metal`, docs/KAPITSA_KERNELS.md
+/// items 4 and 5) for the sequential decode path's dense FFN and shared
+/// expert: gate+up+activation in one dispatch, and the down projection with
+/// its tail (residual add, or the shared expert's scalar gate) folded into
+/// the store epilogue. Bit-identical to the five/six-dispatch chain by
+/// construction (the shader header carries the rounding contract) and by the
+/// gpu-side parity tests; `=Ok("0")` restores the per-tensor dispatch chain
+/// as the A/B arm and kill switch. Non-INT4 tensors and hadamard-folded
+/// layers never take the fused branch regardless of this flag.
+pub(crate) fn fused_ffn() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TURBOSPARK_QWEN_FUSED_FFN").as_deref() != Ok("0"))
 }
 
 /// [`layer_tensor`] under an explicit prefix.

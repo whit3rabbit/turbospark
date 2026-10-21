@@ -444,19 +444,32 @@ pub(crate) fn encode_linear_block_batched(
         1,
     )
     .map_err(gpu_err)?;
-    // The prefill conv reads the tail and does NOT advance it; the decode
-    // sibling does both. Skipping this leaves the layer's history one block
-    // behind, which is fluent and wrong.
-    gpu::encode_gdn_conv_tail_update(
-        context,
-        pass,
-        shape,
-        (qwen.gdn.conv_tail_buffer(layer), 0),
-        (&batched.gdn_qkv_raw, 0),
-        batch as u32,
-        1,
-    )
-    .map_err(gpu_err)?;
+    // THE LAZY SPLIT (TURBOSPARK_GDN_LAZY_TAPE, default on): with a rank-1
+    // tape, the two in-place state writes below are DEFERRED. The conv tail
+    // update does not run here at all -- the round-end fold re-runs it over
+    // exactly the accepted rows -- and the delta kernel runs in its
+    // WRITE_STATE=false build, which leaves the live state at the block
+    // start and records each row's delta instead. y is identical either
+    // way: nothing after the register load reads the state back.
+    let rank1 = batched
+        .verify_tape
+        .as_ref()
+        .and_then(|tape| tape.rank1.as_ref());
+    if rank1.is_none() {
+        // The prefill conv reads the tail and does NOT advance it; the decode
+        // sibling does both. Skipping this leaves the layer's history one block
+        // behind, which is fluent and wrong.
+        gpu::encode_gdn_conv_tail_update(
+            context,
+            pass,
+            shape,
+            (qwen.gdn.conv_tail_buffer(layer), 0),
+            (&batched.gdn_qkv_raw, 0),
+            batch as u32,
+            1,
+        )
+        .map_err(gpu_err)?;
+    }
     gpu::encode_gdn_qk_norm(
         context,
         pass,
@@ -469,20 +482,64 @@ pub(crate) fn encode_linear_block_batched(
     // A_log and dt_bias carry NO `.weight` suffix in the checkpoint.
     let a_log = norm_view(weights, index, &name("A_log"), v_heads)?;
     let dt_bias = norm_view(weights, index, &name("dt_bias"), v_heads)?;
-    gpu::encode_gdn_delta_prefill(
-        context,
-        pass,
-        shape,
-        (&batched.gdn_conv_out, 0),
-        (&batched.gdn_a, 0),
-        (&batched.gdn_b, 0),
-        a_log,
-        dt_bias,
-        qwen.gdn.state_buffer(layer),
-        (&batched.gdn_y, 0),
-        batch as u32,
-    )
-    .map_err(gpu_err)?;
+    if let (Some(_tape_present), Some(rank1)) = (batched.verify_tape.as_ref(), rank1) {
+        let slot = tape_slot.ok_or_else(|| {
+            RealForwardError::Unsupported(
+                "a lazy tape-carrying scratch must be driven with a tape slot".to_string(),
+            )
+        })?;
+        // The post-norm k slice, packed per row out of conv_out (whose row
+        // stride is the full qkv width) into the rank-1 tape. This is the k
+        // the delta kernel below consumes, captured before the scratch moves
+        // on; the fold reads it back as the exact halves this pass used.
+        let k_width = (shape.num_k_heads * shape.key_head_dim) as usize;
+        let k_off = (slot * batch * k_width * 2) as u64;
+        gpu::encode_copy_rows_fp16_strided(
+            context,
+            pass,
+            (
+                &batched.gdn_conv_out,
+                (k_width * 2) as u64, // the k slice starts after q
+            ),
+            (&rank1.k, k_off),
+            batch as u32,
+            k_width as u32,
+            qkv_dim as u32,
+            k_width as u32,
+        )
+        .map_err(gpu_err)?;
+        let delta_off = (slot * batch * shape.value_dim() as usize * 4) as u64;
+        gpu::encode_gdn_delta_prefill_lazy(
+            context,
+            pass,
+            shape,
+            (&batched.gdn_conv_out, 0),
+            (&batched.gdn_a, 0),
+            (&batched.gdn_b, 0),
+            a_log,
+            dt_bias,
+            qwen.gdn.state_buffer(layer),
+            (&batched.gdn_y, 0),
+            (&rank1.delta, delta_off),
+            batch as u32,
+        )
+        .map_err(gpu_err)?;
+    } else {
+        gpu::encode_gdn_delta_prefill(
+            context,
+            pass,
+            shape,
+            (&batched.gdn_conv_out, 0),
+            (&batched.gdn_a, 0),
+            (&batched.gdn_b, 0),
+            a_log,
+            dt_bias,
+            qwen.gdn.state_buffer(layer),
+            (&batched.gdn_y, 0),
+            batch as u32,
+        )
+        .map_err(gpu_err)?;
+    }
 
     let gated_norm = norm_view(
         weights,
@@ -619,6 +676,102 @@ pub(crate) fn replay_linear_state_batched(
             dt_bias,
             qwen.gdn.state_buffer(layer),
             (&batched.gdn_y, 0),
+            rows,
+        )
+        .map_err(gpu_err)?;
+        slot += 1;
+    }
+    Ok(())
+}
+
+/// Commits the first `keep_rows` rows of the LAZY verify tape into the live
+/// recurrent state: the round-end half of `TURBOSPARK_GDN_LAZY_TAPE`. Per
+/// linear layer it runs the same two kernels the eager path's state writes
+/// effectively summarize -- `gdn_conv_tail_update` over the kept taped rows
+/// (the very kernel [`replay_linear_state_batched`] dispatches) and
+/// `gdn_state_fold`, which replays the recorded per-row rank-1 update into
+/// the registers and writes the result once. The live state was never moved
+/// by the verify, so starting from the block start and applying `keep_rows`
+/// updates lands bit for bit where the eager verify's own write-back, or the
+/// eager restore-plus-replay, left it.
+///
+/// `recorded_batch` is the batch the RECORDING pass fed, the same stride
+/// rule [`replay_linear_state_batched`] documents: it is the tape's own row
+/// count, not this scratch's capacity, and reading slots past 0 with the
+/// wrong stride is silent recurrent-state corruption.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn commit_linear_state_batched(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    weights: &gpu::ResidentGpuWeights,
+    index: &ResidentIndex,
+    arch: &ArchConfig,
+    qwen: &RealQwenState,
+    batched: &BatchedScratch,
+    keep_rows: usize,
+    recorded_batch: usize,
+) -> Result<(), RealForwardError> {
+    let gpu_err = RealForwardError::Gpu;
+    let shape = qwen.shape;
+    let qkv_dim = shape.qkv_dim() as usize;
+    let v_heads = shape.num_v_heads as usize;
+    let k_width = (shape.num_k_heads * shape.key_head_dim) as usize;
+    let delta_width = shape.value_dim() as usize;
+    let tape = batched.verify_tape.as_ref().ok_or_else(|| {
+        RealForwardError::Unsupported(
+            "the lazy commit needs a verify tape; this scratch was built with record_tape = false"
+                .to_string(),
+        )
+    })?;
+    let rank1 = tape.rank1.as_ref().ok_or_else(|| {
+        RealForwardError::Unsupported(
+            "the lazy commit needs a rank-1 tape; this scratch was built with \
+             TURBOSPARK_GDN_LAZY_TAPE=0"
+                .to_string(),
+        )
+    })?;
+    let rows = keep_rows as u32;
+    // Byte strides per linear-layer slot, from the batch the recording pass
+    // actually fed (see the stride warning on `replay_linear_state_batched`).
+    let slot_stride_qkv = recorded_batch * qkv_dim * 2;
+    let slot_stride_heads = recorded_batch * v_heads * 2;
+    let slot_stride_k = recorded_batch * k_width * 2;
+    let slot_stride_delta = recorded_batch * delta_width * 4;
+    let mut slot = 0usize;
+    for layer in 0..arch.num_layers as usize {
+        if !arch.layer_is_linear(layer) {
+            continue;
+        }
+        let name = |suffix: &str| layer_tensor(layer, &format!("linear_attn.{suffix}"));
+        let qkv_off = (slot * slot_stride_qkv) as u64;
+        let heads_off = (slot * slot_stride_heads) as u64;
+        let k_off = (slot * slot_stride_k) as u64;
+        let delta_off = (slot * slot_stride_delta) as u64;
+        gpu::encode_gdn_conv_tail_update(
+            context,
+            pass,
+            shape,
+            (qwen.gdn.conv_tail_buffer(layer), 0),
+            (&tape.qkv_raw, qkv_off),
+            rows,
+            // Undilated, matching the verify and replay call sites.
+            1,
+        )
+        .map_err(gpu_err)?;
+        // A_log and dt_bias carry NO `.weight` suffix in the checkpoint,
+        // exactly as the verify and replay paths' comments record.
+        let a_log = norm_view(weights, index, &name("A_log"), v_heads)?;
+        let dt_bias = norm_view(weights, index, &name("dt_bias"), v_heads)?;
+        gpu::encode_gdn_state_fold(
+            context,
+            pass,
+            shape,
+            (&rank1.k, k_off),
+            (&rank1.delta, delta_off),
+            (&tape.a, heads_off),
+            a_log,
+            dt_bias,
+            qwen.gdn.state_buffer(layer),
             rows,
         )
         .map_err(gpu_err)?;

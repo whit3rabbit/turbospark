@@ -528,22 +528,56 @@ fn run_speculative<P: SpeculativeProducer>(
         let mut stopped: Option<StopReason> = None;
         let mut corrected: Option<TokenId> = None;
         stat_rounds += 1;
-        for (i, &proposal) in proposals.iter().enumerate() {
-            if stats {
-                stat_offered[i] += 1;
-            }
-            let row = &batch_logits[i * vocab_size..(i + 1) * vocab_size];
-            if sampled {
-                let p = shaped_distribution(
-                    LogitsView::new(row),
-                    &config.shaping,
-                    &sink.history,
-                    sink.generated as u64,
-                )?;
-                let q = &draft_qs[i];
-                let r = to_unit_interval(derive_step_value(config.shaping.seed(), draw_step));
-                draw_step += 1;
-                if r * q.probability(proposal as u32) <= p.probability(proposal as u32) {
+        let mut evaluate_round = || -> Result<usize, RuntimeError> {
+            for (i, &proposal) in proposals.iter().enumerate() {
+                if stats {
+                    stat_offered[i] += 1;
+                }
+                let row = &batch_logits[i * vocab_size..(i + 1) * vocab_size];
+                if sampled {
+                    let p = shaped_distribution(
+                        LogitsView::new(row),
+                        &config.shaping,
+                        &sink.history,
+                        sink.generated as u64,
+                    )?;
+                    let q = &draft_qs[i];
+                    let r = to_unit_interval(derive_step_value(config.shaping.seed(), draw_step));
+                    draw_step += 1;
+                    if r * q.probability(proposal as u32) <= p.probability(proposal as u32) {
+                        if stats {
+                            stat_matched[i] += 1;
+                        }
+                        accepted += 1;
+                        if let Some(stop) = sink.commit(proposal, cancel, &mut on_progress) {
+                            stopped = Some(stop);
+                            break;
+                        }
+                    } else {
+                        // The correction comes from the residual over THIS
+                        // row's target distribution and the drafter's q for
+                        // this step. The p == q corner underflows the residual
+                        // and falls back to a p draw: exact in the limit, and
+                        // unreachable while q is the drafter's own distribution
+                        // unless the two really are identical (where every
+                        // proposal is accepted and no correction is drawn).
+                        corrected = Some(match residual(&p, q) {
+                            Some(residual_p) => residual_p.draw(config.shaping.seed(), draw_step),
+                            None => p.draw(config.shaping.seed(), draw_step),
+                        } as TokenId);
+                        draw_step += 1;
+                        break;
+                    }
+                } else {
+                    let target = select(
+                        LogitsView::new(row),
+                        &config.shaping,
+                        &sink.history,
+                        sink.generated as u64,
+                    )?;
+                    if target != proposal {
+                        break;
+                    }
                     if stats {
                         stat_matched[i] += 1;
                     }
@@ -552,89 +586,75 @@ fn run_speculative<P: SpeculativeProducer>(
                         stopped = Some(stop);
                         break;
                     }
-                } else {
-                    // The correction comes from the residual over THIS
-                    // row's target distribution and the drafter's q for
-                    // this step. The p == q corner underflows the residual
-                    // and falls back to a p draw: exact in the limit, and
-                    // unreachable while q is the drafter's own distribution
-                    // unless the two really are identical (where every
-                    // proposal is accepted and no correction is drawn).
-                    corrected = Some(match residual(&p, q) {
-                        Some(residual_p) => residual_p.draw(config.shaping.seed(), draw_step),
-                        None => p.draw(config.shaping.seed(), draw_step),
-                    } as TokenId);
-                    draw_step += 1;
-                    break;
-                }
-            } else {
-                let target = select(
-                    LogitsView::new(row),
-                    &config.shaping,
-                    &sink.history,
-                    sink.generated as u64,
-                )?;
-                if target != proposal {
-                    break;
-                }
-                if stats {
-                    stat_matched[i] += 1;
-                }
-                accepted += 1;
-                if let Some(stop) = sink.commit(proposal, cancel, &mut on_progress) {
-                    stopped = Some(stop);
-                    break;
                 }
             }
-        }
-        stat_accepted += accepted;
-        if stats {
-            stat_depth[round_block] += 1;
-        }
-        // A round a stop cut short never saw the rest of its proposals, so
-        // its `accepted` undercounts and would read as a miss.
-        if let Some(a) = adaptive.as_mut() {
-            if !truncated && stopped.is_none() {
-                a.observe(proposals.len(), accepted);
+            stat_accepted += accepted;
+            if stats {
+                stat_depth[round_block] += 1;
             }
-        }
-        // What the engine has absorbed beyond the committed stream. A
-        // committed proposal advanced `history`; a rejected or unreached one
-        // did not, and neither did a proposal that stopped the run.
-        let committed = sink.history.len() - (base + 1);
+            // A round a stop cut short never saw the rest of its proposals, so
+            // its `accepted` undercounts and would read as a miss.
+            if let Some(a) = adaptive.as_mut() {
+                if !truncated && stopped.is_none() {
+                    a.observe(proposals.len(), accepted);
+                }
+            }
+            // What the engine has absorbed beyond the committed stream. A
+            // committed proposal advanced `history`; a rejected or unreached one
+            // did not, and neither did a proposal that stopped the run.
+            let committed = sink.history.len() - (base + 1);
 
-        // -- Rewind, when the verify overshot what was committed.
-        //
-        //    A SEQUENTIAL verify stops at the first rejection and so never
-        //    overshoots; only a batched pass can, which is the asymmetry that
-        //    makes block 2 pay and block 8 lose (`docs/MTP.md`).
-        //
-        //    Two restore shapes. With a TAPE (the real producer on the GDN
-        //    flow), the kept rows' KV stays in place and their recurrent
-        //    state is replayed over the inputs the verify recorded -- a few
-        //    small dispatches, and the verify's own logits for the bonus row
-        //    remain valid, so no forward pass runs. Without one, the whole
-        //    state goes back to the block start -- on the real drafter's
-        //    family that is a copy of the entire gated-DeltaNet snapshot,
-        //    because a recurrent layer cannot be rewound incrementally the
-        //    way a KV cursor can -- and a shortened re-verify replays the
-        //    accepted prefix through the model. The re-verify is the term
-        //    that made throughput track the rollback rate
-        //    (`docs/DFLASH2.md`); the tape removes it.
-        if committed < proposals.len() {
-            stat_rollbacks += 1;
-            if producer.supports_retaining_rollback() {
-                producer
-                    .rollback_retaining(&point, committed + 1)
-                    .map_err(RuntimeError::Producer)?;
-            } else {
-                producer.rollback(&point);
-                let keep = committed + 1;
-                producer
-                    .verify(&feed[..keep], base, &mut batch_logits[..keep * vocab_size])
-                    .map_err(RuntimeError::Producer)?;
+            // -- Rewind, when the verify overshot what was committed.
+            //
+            //    A SEQUENTIAL verify stops at the first rejection and so never
+            //    overshoots; only a batched pass can, which is the asymmetry that
+            //    makes block 2 pay and block 8 lose (`docs/MTP.md`).
+            //
+            //    Two restore shapes. With a TAPE (the real producer on the GDN
+            //    flow), the kept rows' KV stays in place and their recurrent
+            //    state is replayed over the inputs the verify recorded -- a few
+            //    small dispatches, and the verify's own logits for the bonus row
+            //    remain valid, so no forward pass runs. Without one, the whole
+            //    state goes back to the block start -- on the real drafter's
+            //    family that is a copy of the entire gated-DeltaNet snapshot,
+            //    because a recurrent layer cannot be rewound incrementally the
+            //    way a KV cursor can -- and a shortened re-verify replays the
+            //    accepted prefix through the model. The re-verify is the term
+            //    that made throughput track the rollback rate
+            //    (`docs/DFLASH2.md`); the tape removes it.
+            if committed < proposals.len() {
+                stat_rollbacks += 1;
+                if producer.supports_retaining_rollback() {
+                    producer
+                        .rollback_retaining(&point, committed + 1)
+                        .map_err(RuntimeError::Producer)?;
+                } else {
+                    producer.rollback(&point);
+                    let keep = committed + 1;
+                    producer
+                        .verify(&feed[..keep], base, &mut batch_logits[..keep * vocab_size])
+                        .map_err(RuntimeError::Producer)?;
+                }
             }
-        }
+            // THE LAZY COMMIT: with TURBOSPARK_GDN_LAZY_TAPE on (the default),
+            // the verify left the recurrent state at the block start and
+            // recorded rank-1 updates, so every round -- full acceptance
+            // included, which is the case the eager path served for free --
+            // ends by folding exactly the rows it committed. A no-op on the
+            // eager path, and after the partial round's retaining rollback,
+            // which folded its kept rows and cleared the tape.
+            producer
+                .commit_pending(committed + 1)
+                .map_err(RuntimeError::Producer)?;
+            Ok(committed)
+        };
+        let committed = match evaluate_round() {
+            Ok(c) => c,
+            Err(e) => {
+                producer.discard_pending();
+                return Err(e);
+            }
+        };
         position = sink.history.len();
 
         // THE RECORD, the half that lets the NEXT turn reuse: the verify fed

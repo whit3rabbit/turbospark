@@ -239,6 +239,7 @@ Storage preflights should retain at least 20 GiB headroom.
 14. **The dequant loader and `kMmaTile` as levers on the matrix kernel**: `kMmaTile` refuted by arithmetic (`N/B` scaling); loader refuted by measurement (`FC_MMA_SKIP_DEQUANT` still 3x slower than MLX).
 15. **Chunked WY-representation gated DeltaNet prefill, and GDN threadgroup staging**: Flash-linear-attention chunking takes 2x FLOPs of blocked sequential. Threadgroup staging targets only 4.66% of prefill traffic.
 16. **Four-SIMD-group re-tile of `dequant_int4_gemm_mma` (PF-02 Step 7)**: 128-thread re-tile measured 2.10x slower than exact GEMV baseline. Staging `x` still loses inside wide shape, and 4 SIMD groups does not move the matrix path bottleneck (`docs/BATCHED_PREFILL.md`).
+17. **Shift-free nibble masking in the int4 GEMV** (kapitsa item 6): bit-identical by construction (mask factor cancels against x prescaled by 1/16, both powers of two) but measured 1.17-1.60x SLOWER across the qwen38 shapes; the second x load costs more than four shifts per lane per block save. The kernel never left the bench (`crates/gpu/tests/gemv_mask_dequant_bench.rs`, `docs/KAPITSA_KERNELS.md`).
 
 ---
 

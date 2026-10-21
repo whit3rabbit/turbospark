@@ -230,6 +230,42 @@ fn restoring_a_snapshot_replays_bit_identically() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// A snapshot taken while the GDN state is still a committed boundary (a
+/// fresh trunk, or one just restored) must restore after steps like any
+/// other. The lazy-tape snapshot skip once applied to this generic point and
+/// made the restore panic; only the speculative loop's round checkpoint may
+/// skip now.
+#[test]
+fn a_snapshot_taken_on_a_clean_trunk_restores_after_steps() {
+    let (root, trunk, arch) = install();
+    let mut t = open(&trunk, &arch, 64);
+    let hidden = t.hidden_size();
+    let snap = t.snapshot();
+    assert_eq!(snap.position(), 0);
+    let run = |t: &mut HiddenTrunk| -> Vec<u32> {
+        let mut all = Vec::new();
+        let mut h = vec![0.0f32; hidden];
+        for &id in &tokens(6) {
+            t.step(TrunkRow::Token(id), &mut h).unwrap();
+            all.extend(bits(&h));
+        }
+        all
+    };
+    let first = run(&mut t);
+    t.restore(&snap).unwrap();
+    // Restored state is clean again: snapshot once more and go around.
+    let snap2 = t.snapshot();
+    let second = run(&mut t);
+    assert_eq!(first, second, "restoring a clean-state snapshot");
+    t.restore(&snap2).unwrap();
+    assert_eq!(
+        run(&mut t),
+        first,
+        "restoring a snapshot taken after a restore"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn a_reset_invalidates_snapshots_and_starts_clean() {
     let (root, trunk, arch) = install();
