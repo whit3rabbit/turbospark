@@ -41,7 +41,57 @@ place. Ctrl-C stops the walk and removes the partial directory.
 The catalog profile `fish-drama3-4bit` installs through the same walk with a
 receipt in the managed store (`ts_audio_install_with_options`, with the
 `fish_audio_community_license` acknowledgment). The receipt records the size
-and sha256 of every converted file. The macOS app does not list it yet.
+and sha256 of every converted file.
+
+## In the app
+
+The macOS app lists Drama 3 on the Voiceover and Voice Cloning pages (and
+in Advanced). Download asks you to accept the license terms first, then runs
+the same conversion. "Choose local model folder" takes an install from
+`pull-drama3` instead.
+
+On Voiceover, Drama 3 speaks the script in a voice the model picks. It needs
+no reference, no consent, and no transcript. The page shows no voice list
+and no speed slider, since Drama 3 has neither.
+
+Each take draws its own seed on Voiceover and on Voice Cloning (the take
+saves it), so Generate again is a different take. A seed you set is kept.
+When the runtime reports a take that stopped early (below), the app retakes
+it with a new seed, at most twice. If the last take still stopped early, it
+is saved and the page says so. With a seed you set, the app does not retake,
+since that seed gives the same take.
+
+A clone on Voice Cloning needs a reference recording, your confirmation that
+you have the right to use the voice, and the exact words spoken in the
+reference. A reference taken from a transcribed recording fills the
+transcript in. There is no speed control and no quality preset. Cues go
+inline in the script.
+
+Advanced always clones. OmniVoice follows the same split: Voiceover speaks
+without a reference (it keeps its speed slider and language list), and Voice
+Cloning clones.
+
+## Takes that stop early
+
+Some takes speak the first sentence, a turn, or the words before a
+`[pause]`, and then only silence until the frame cap
+(`docs/FISH_DRAMA3_PHASE0.md`, sampling recipe). The default sampler is Fish
+Audio's serving recipe (temperature 1.0, top-p 0.9, top-k 30), which traps
+far fewer takes than mlx-audio's 0.7 and 0.7: 4 of 12 seeds of
+`Welcome back. This is a short voiceover test with no reference voice.`
+went silent under mlx-audio's recipe, against 0 of 12. The runtime reports a
+take that still stopped early as `stopped_early` in the audio job result,
+and a host can retake it with another seed.
+
+Before a take reaches that point, the generation loop already tries to get
+out of a pause it may not leave. It holds a pause's frames back, and if the
+pause reaches 128 frames (5.9 s) it goes back to the pause's start and draws
+again, up to 6 times per chunk. A pause that ends by itself goes out
+unchanged. The cost is timing: a frame inside a pause reaches the codec when
+the pause ends, so a streamed `/v1/audio/speech` response delays each pause
+by its length (56 frames, 2.6 s, at most on the takes measured). On the
+pause-trap gate this took 4 of 24 stopped-early takes to 0
+(`docs/FISH_DRAMA3_PHASE0.md`, Pause guard).
 
 ## Speak
 
@@ -63,8 +113,9 @@ turbospark-speak --model ~/models/fish-drama3-4bit \
   --text "Something new, in that voice." --output cloned.wav
 ```
 
-`--seed` repeats a run. `--temperature`, `--top-p`, `--top-k` and
-`--max-frames` override the reference sampler recipe (0.7, 0.7, 30, 1024).
+`--seed` repeats a run. Without it each run draws its own seed and prints
+it, so running again is a new take. `--temperature`, `--top-p`, `--top-k` and
+`--max-frames` override Fish Audio's sampler recipe (1.0, 0.9, 30, 1024).
 `--max-frames` only shortens a chunk. A text-scaled cap still applies beneath
 it, because some texts run away without one.
 
@@ -78,7 +129,9 @@ curl http://127.0.0.1:8080/v1/audio/speech \
 ```
 
 The model id is the install directory's name. Output is 44.1 kHz mono, `wav`
-or `pcm`, and the rate is in the `x-audio-sample-rate` header.
+or `pcm`, and the rate is in the `x-audio-sample-rate` header. A request
+without `seed` draws a fresh one, so asking again is a new take, and the
+seed a take used is in the `x-turbospark-seed` header.
 
 With a `reference_audio` the request is a clone and needs `consent: true` and
 `reference_text`. `temperature`, `top_p`, `top_k` and `max_frames` are

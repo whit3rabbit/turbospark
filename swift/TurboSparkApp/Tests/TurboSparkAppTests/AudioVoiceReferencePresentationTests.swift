@@ -75,6 +75,9 @@ final class AudioVoiceReferencePresentationTests: XCTestCase {
         XCTAssertEqual(P.stage(forProgress: "Loading speech model"), .loadingModel)
         XCTAssertEqual(P.stage(forProgress: "diffusion"), .generating)
         XCTAssertEqual(P.stage(forProgress: "Generating speech"), .generating)
+        XCTAssertEqual(P.stage(forProgress: "running"), .generating)
+        XCTAssertEqual(P.stage(forProgress: "diffusion_step"), .generating)
+        XCTAssertEqual(P.stage(forProgress: "synthesis"), .generating)
         XCTAssertNil(P.stage(forProgress: "ar"))
         // Qwen3 loads its speech model after preparing the reference.
         var run = P()
@@ -85,6 +88,17 @@ final class AudioVoiceReferencePresentationTests: XCTestCase {
         run.enter(.generating); run.enter(.saving)
         run.enter(.generating)
         XCTAssertEqual(run.stage, .saving, "a late engine event cannot move a run back from saving")
+        XCTAssertEqual(run.state(of: .generating), .done)
+    }
+
+    func testNativeStartBeforeTheEngineReferenceLeavesGenerationPending() {
+        // MegaTTS3: the worker's "running" arrives before the engine's own reference stage.
+        var run = AudioSpeechRunProgress()
+        run.enter(.loadingModel); run.enter(.preparingReference); run.enter(.generating); run.enter(.preparingReference)
+        XCTAssertEqual(run.state(of: .preparingReference), .active)
+        XCTAssertEqual(run.state(of: .generating), .pending, "speech is not done before it exists")
+        XCTAssertEqual(run.state(of: .loadingModel), .done)
+        run.enter(.generating); run.enter(.saving)
         XCTAssertEqual(run.state(of: .generating), .done)
     }
 
@@ -122,6 +136,42 @@ final class AudioVoiceReferencePresentationTests: XCTestCase {
             controller.receiveProgress(AudioProgress(stage: "diffusion", completed: 1, total: 10), runID: runID, token: controller.epoch)
             XCTAssertEqual(controller.speechRun?.stage, .generating)
             controller.isBusy = false
+        }
+    }
+
+    @MainActor func testEngineStageIdsReachTheStatusLocalized() async throws {
+        let defaults = UserDefaults.standard
+        let previousLanguage = defaults.object(forKey: AppLanguage.storageKey)
+        defer {
+            if let previousLanguage { defaults.set(previousLanguage, forKey: AppLanguage.storageKey) }
+            else { defaults.removeObject(forKey: AppLanguage.storageKey) }
+        }
+        try await withController { controller in
+            for language in [AppLanguage.english, .german] {
+                defaults.set(language.rawValue, forKey: AppLanguage.storageKey)
+                let generating = AppStrings.localized("Generating speech", language: language)
+                let processing = AppStrings.localized("Processing", language: language)
+                if language != .english { XCTAssertNotEqual(generating, "Generating speech", "the German table is loaded") }
+                controller.isBusy = true
+                let runID = UUID(); controller.activeRunID = runID
+                controller.speechRun = AudioSpeechRunProgress()
+                controller.speechRun?.enter(.loadingModel); controller.speechRun?.enter(.preparingReference)
+                // Fish Audio Drama 3 sends only this for its whole generation.
+                controller.receiveProgress(AudioProgress(stage: "running", completed: 0), runID: runID, token: controller.epoch)
+                XCTAssertEqual(controller.status, generating)
+                XCTAssertEqual(controller.speechRun?.stage, .generating)
+                XCTAssertNil(controller.progress)
+                controller.receiveProgress(AudioProgress(stage: "diffusion_step", completed: 4, total: 16), runID: runID, token: controller.epoch)
+                XCTAssertEqual(controller.status, generating)
+                XCTAssertEqual(controller.progress, 0.25)
+                controller.receiveProgress(AudioProgress(stage: "vocoder_pass", completed: 1, total: 2), runID: runID, token: controller.epoch)
+                XCTAssertEqual(controller.status, processing, "an unknown id never reaches the strip raw")
+                XCTAssertEqual(controller.speechRun?.stage, .generating, "an unknown id does not move the card")
+                controller.speechRun = nil
+                controller.receiveProgress(AudioProgress(stage: "running", completed: 0), runID: runID, token: controller.epoch)
+                XCTAssertEqual(controller.status, processing, "a start outside a speech run is not speech")
+                controller.isBusy = false
+            }
         }
     }
 

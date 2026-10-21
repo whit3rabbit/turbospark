@@ -15,12 +15,17 @@
 //! A chunk ends at EOS, at a cap scaled to its text ([`TextCap`], not in the
 //! reference), or at `max_frames`. The reference stops only at the last, and
 //! under its recipe about one clip in twenty runs away to it.
+//!
+//! A pause that outlives every healthy one is resampled ([`PauseGuard`], not
+//! in the reference): the loop rolls the backbone and tower back to a point
+//! inside the pause and draws again, holding back the frames it may drop.
 
 use super::chunking::{split_text, spoken_text, validate_text};
 use super::config::Drama3Config;
 use super::prompt::{build_frames, Prompt, Utterance};
 use super::sampling::{self, SamplingParams, DEFAULT_MAX_FRAMES, RAS_WINDOW};
 use super::tower::{CpuTower, Tower, TowerModel};
+use super::voiced;
 use crate::music::minimax_music3::rng::KeySequence;
 use crate::{Result, SpeechError};
 use turbospark_model_io::safetensors::SafetensorsFile;
@@ -97,6 +102,84 @@ impl TextCap {
     }
 }
 
+/// Resamples the tail of a pause the model may never leave (not in the
+/// reference).
+///
+/// In some takes the model pauses where the text asks for it (a sentence
+/// gap, a turn change, a `[pause]`) and never speaks again: EOS stays near 0
+/// and the chunk runs silent to its cap (`docs/FISH_DRAMA3_PHASE0.md`, Pause
+/// trap and Pause guard). The guard reads each drawn main token as voiced or
+/// silent from a table and counts frames since the pause began. Only
+/// `resume_frames` voiced frames in a row end a pause, so a stray voiced code
+/// does not. Once the count passes `hold_after` the loop takes a restore
+/// point and holds every later frame back. If the pause ends, the held frames
+/// go out unchanged. If the count reaches `retry_after`, the loop restores the
+/// backbone and tower to the point, drops the held frames and draws again
+/// with the next keys. After `max_retries` rollbacks in a chunk it releases
+/// what it holds and runs on as without the guard.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PauseGuard {
+    /// Bit `c0 % 64` of word `c0 / 64` is set when semantic code `c0` reads
+    /// as voiced. A code past the table reads as silent.
+    pub voiced: &'static [u64],
+    /// Voiced frames in a row that end a pause.
+    pub resume_frames: usize,
+    /// Frames a pause may run before the loop takes a restore point and
+    /// starts holding frames back. 0 takes the point at the pause's first
+    /// silent frame and holds the whole pause.
+    pub hold_after: usize,
+    /// Frames of pause at which the loop rolls back to the restore point.
+    pub retry_after: usize,
+    /// Rollbacks one chunk may make.
+    pub max_retries: usize,
+}
+
+impl PauseGuard {
+    /// From `fish_drama3_silence_probe` and `fish_drama3_guard_sweep`
+    /// (`docs/FISH_DRAMA3_PHASE0.md`, Pause guard). Healthy pauses counted at
+    /// most 55 frames (50 by decoded RMS) and every trap passed 128, so
+    /// `retry_after` clears every healthy pause. Three voiced frames in a row
+    /// end a pause, since two missed one trap.
+    ///
+    /// `hold_after` is 0: the restore point is the first silent frame of each
+    /// pause. A redraw from deep in a pause rarely recovers, because the head
+    /// has settled into silence (restore points at 64 frames recovered 2 of
+    /// 11 held-out traps, at 0 frames 8 of the 9 it reached). The cost is
+    /// that a frame of any pause reaches the codec only when the pause ends,
+    /// up to 56 frames (2.6 s) late on the healthy takes measured.
+    pub const MEASURED: PauseGuard = PauseGuard {
+        voiced: &voiced::VOICED,
+        resume_frames: 3,
+        hold_after: 0,
+        retry_after: 128,
+        max_retries: 6,
+    };
+
+    /// Whether semantic code `c0` reads as voiced.
+    pub fn is_voiced(&self, c0: i32) -> bool {
+        usize::try_from(c0).is_ok_and(|c| {
+            self.voiced
+                .get(c / 64)
+                .is_some_and(|word| (word >> (c % 64)) & 1 == 1)
+        })
+    }
+
+    fn validate(&self) -> Result<()> {
+        let bad = |why: &str| {
+            Err(SpeechError::Input {
+                why: format!("pause_guard: {why}"),
+            })
+        };
+        if self.resume_frames == 0 {
+            return bad("resume_frames must be at least 1");
+        }
+        if self.retry_after <= self.hold_after {
+            return bad("retry_after must be above hold_after");
+        }
+        Ok(())
+    }
+}
+
 /// What one call generates with.
 #[derive(Clone, Copy, Debug)]
 pub struct GenerateOptions {
@@ -114,16 +197,20 @@ pub struct GenerateOptions {
     /// up) overlap on two threads. The draws are made in the same order, so
     /// the codes are the serial loop's (`overlap_and_serial_frames_agree`).
     pub overlap_tower_tail: bool,
+    /// Resamples a pause the model may never leave. `None` is the
+    /// reference's loop.
+    pub pause_guard: Option<PauseGuard>,
 }
 
 impl Default for GenerateOptions {
     fn default() -> Self {
         GenerateOptions {
-            sampling: SamplingParams::REFERENCE,
+            sampling: SamplingParams::FISH_SERVING,
             max_frames: DEFAULT_MAX_FRAMES,
             text_cap: Some(TextCap::MEASURED),
             seed: 0,
             overlap_tower_tail: true,
+            pause_guard: Some(PauseGuard::MEASURED),
         }
     }
 }
@@ -143,13 +230,22 @@ pub enum ChunkStop {
 /// What the loop reports as it goes.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FrameEvent {
-    /// A generated frame's codes, `num_codebooks` of them.
+    /// A generated frame's codes, `num_codebooks` of them. Final: the loop
+    /// never takes a frame back once it is sent.
     Frame { chunk: usize, codes: Vec<i32> },
-    /// A text chunk finished; `frames` is its count.
+    /// The pause guard generated a frame and holds it back, to send later as
+    /// a `Frame` or to drop in a rollback. It carries no codes. It comes once
+    /// per held frame, so a caller can still stop once per frame.
+    Held { chunk: usize },
+    /// A text chunk finished; `frames` is its count and `limit` the most it
+    /// could take (its text cap or `max_frames`). `retries` counts the pause
+    /// guard's rollbacks in it.
     ChunkEnd {
         chunk: usize,
         frames: usize,
+        limit: usize,
         stop: ChunkStop,
+        retries: usize,
     },
 }
 
@@ -164,9 +260,12 @@ pub enum Flow {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct GenerateStats {
     pub chunks: usize,
+    /// Frames sent as [`FrameEvent::Frame`].
     pub frames: usize,
     pub prompt_rows: usize,
     pub stopped: bool,
+    /// Pause guard rollbacks over every chunk.
+    pub retries: usize,
 }
 
 /// Files of a Drama 3 install, beside `config.json`.
@@ -190,6 +289,79 @@ pub struct Drama3 {
 struct VoicePrefix<S> {
     backbone: S,
     rows: usize,
+}
+
+/// Where the pause guard rolls back to: everything a draw reads, taken
+/// before the frame that passed `hold_after` was fed. The keys are not
+/// restored, so a redraw differs and a seed still fixes the take.
+struct RestorePoint<S> {
+    backbone: S,
+    tower: usize,
+    hidden: Vec<f32>,
+    frame: Vec<i32>,
+    history: Vec<i32>,
+    frames: usize,
+    pause: usize,
+    voiced: usize,
+}
+
+/// The pause guard through one chunk.
+struct Pause<S> {
+    guard: PauseGuard,
+    /// Frames since the pause began; 0 while speaking.
+    frames: usize,
+    /// Voiced frames in a row.
+    voiced: usize,
+    retries: usize,
+    /// Out of retries: the chunk runs on as without the guard.
+    spent: bool,
+    point: Option<RestorePoint<S>>,
+    /// Frames generated after the point and not yet sent.
+    held: Vec<Vec<i32>>,
+}
+
+impl<S> Pause<S> {
+    fn new(guard: PauseGuard) -> Self {
+        Pause {
+            guard,
+            frames: 0,
+            voiced: 0,
+            retries: 0,
+            spent: false,
+            point: None,
+            held: Vec::new(),
+        }
+    }
+
+    /// The pause count and voiced run after one more frame of code `c0`.
+    fn after(&self, c0: i32) -> (usize, usize) {
+        if !self.guard.is_voiced(c0) {
+            return (self.frames + 1, 0);
+        }
+        let voiced = self.voiced + 1;
+        if voiced >= self.guard.resume_frames || self.frames == 0 {
+            (0, voiced)
+        } else {
+            (self.frames + 1, voiced)
+        }
+    }
+}
+
+/// Sends `frames` in order as [`FrameEvent::Frame`], stopping at the first
+/// [`Flow::Stop`].
+fn send(
+    on_event: &mut impl FnMut(FrameEvent) -> Flow,
+    stats: &mut GenerateStats,
+    chunk: usize,
+    frames: impl IntoIterator<Item = Vec<i32>>,
+) -> Flow {
+    for codes in frames {
+        stats.frames += 1;
+        if on_event(FrameEvent::Frame { chunk, codes }) == Flow::Stop {
+            return Flow::Stop;
+        }
+    }
+    Flow::Continue
 }
 
 impl Drama3 {
@@ -324,6 +496,9 @@ impl Drama3 {
                 why: "text_cap.base_frames must be at least 1".into(),
             });
         }
+        if let Some(guard) = &options.pause_guard {
+            guard.validate()?;
+        }
         if backbone.hidden_size() != self.config.hidden_size {
             return Err(SpeechError::Input {
                 why: format!(
@@ -336,6 +511,7 @@ impl Drama3 {
         let candidates = self.config.candidate_ids();
         let band = self.config.semantic_band();
         let eos = self.config.eos_token_id;
+        let acoustic = self.config.acoustic_codebook_size();
         let dim = backbone.hidden_size();
         let mut keys = KeySequence::new(options.seed);
         let mut stats = GenerateStats::default();
@@ -374,9 +550,11 @@ impl Drama3 {
                 .map(|r| r[0])
                 .collect();
             let mut frame = rows[rows.len() - 1].clone();
+            // The chunk's kept frames, sent or held. A rollback shortens it.
             let mut codes_by_frame: Vec<Vec<i32>> = Vec::new();
             let mut eos_seen = false;
-            for _ in 0..limit {
+            let mut pause = options.pause_guard.map(Pause::new);
+            while codes_by_frame.len() < limit {
                 let logits = self.tower.semantic_logits(&hidden)?;
                 let main = sampling::main_token(
                     &logits,
@@ -391,8 +569,58 @@ impl Drama3 {
                     eos_seen = true;
                     break;
                 }
+                // The guard reads the draw before anything is fed, so a
+                // rollback here undoes only frames already held.
+                if let Some(p) = pause.as_mut().filter(|p| !p.spent) {
+                    let (count, voiced) = p.after(main - *band.start());
+                    match &p.point {
+                        Some(point) if count >= p.guard.retry_after => {
+                            if p.retries < p.guard.max_retries {
+                                backbone.restore(&point.backbone)?;
+                                self.tower.truncate(point.tower)?;
+                                hidden.clone_from(&point.hidden);
+                                frame.clone_from(&point.frame);
+                                history_tokens.clone_from(&point.history);
+                                codes_by_frame.truncate(point.frames);
+                                (p.frames, p.voiced) = (point.pause, point.voiced);
+                                p.held.clear();
+                                p.retries += 1;
+                                stats.retries += 1;
+                                continue;
+                            }
+                            // Out of retries: send what is held and run on
+                            // as without the guard.
+                            p.spent = true;
+                            p.point = None;
+                            let held = p.held.drain(..);
+                            if send(&mut on_event, &mut stats, chunk_index, held) == Flow::Stop {
+                                stats.stopped = true;
+                                return Ok(stats);
+                            }
+                        }
+                        None if count == p.guard.hold_after + 1 => {
+                            p.point = Some(RestorePoint {
+                                backbone: backbone.snapshot()?,
+                                tower: self.tower.position(),
+                                hidden: hidden.clone(),
+                                frame: frame.clone(),
+                                history: history_tokens.clone(),
+                                frames: codes_by_frame.len(),
+                                pause: p.frames,
+                                voiced: p.voiced,
+                            });
+                        }
+                        _ => {}
+                    }
+                    (p.frames, p.voiced) = (count, voiced);
+                }
                 let mut sample = |_: usize, head: &[f32]| {
-                    sampling::sample(head, options.sampling, keys.next()) as i32
+                    // Each head scores the semantic book's 4096 codes, but the
+                    // codec's acoustic books hold fewer, and it refuses a code
+                    // past them. The cut comes before top-k and top-p, so the
+                    // mass they take is over the codes that can be decoded.
+                    let codes = &head[..acoustic.min(head.len())];
+                    sampling::sample(codes, options.sampling, keys.next()) as i32
                 };
                 let codes = if options.overlap_tower_tail {
                     let [c0, c1] =
@@ -435,12 +663,28 @@ impl Drama3 {
                 history_tokens.push(main);
                 frame = new_frame;
                 codes_by_frame.push(codes.clone());
-                stats.frames += 1;
-                if on_event(FrameEvent::Frame {
-                    chunk: chunk_index,
-                    codes,
-                }) == Flow::Stop
-                {
+                let flow = match pause.as_mut().filter(|p| p.point.is_some()) {
+                    Some(p) => {
+                        p.held.push(codes);
+                        if p.frames == 0 {
+                            // The pause ended: what was held is the take.
+                            p.point = None;
+                            send(&mut on_event, &mut stats, chunk_index, p.held.drain(..))
+                        } else {
+                            on_event(FrameEvent::Held { chunk: chunk_index })
+                        }
+                    }
+                    None => send(&mut on_event, &mut stats, chunk_index, [codes]),
+                };
+                if flow == Flow::Stop {
+                    stats.stopped = true;
+                    return Ok(stats);
+                }
+            }
+            // EOS or the cap during a held pause: what is held is the take.
+            if let Some(p) = pause.as_mut() {
+                p.point = None;
+                if send(&mut on_event, &mut stats, chunk_index, p.held.drain(..)) == Flow::Stop {
                     stats.stopped = true;
                     return Ok(stats);
                 }
@@ -450,7 +694,9 @@ impl Drama3 {
             if on_event(FrameEvent::ChunkEnd {
                 chunk: chunk_index,
                 frames,
+                limit,
                 stop: if eos_seen { ChunkStop::Eos } else { cut },
+                retries: pause.as_ref().map_or(0, |p| p.retries),
             }) == Flow::Stop
             {
                 stats.stopped = true;
@@ -478,7 +724,7 @@ impl Drama3 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tts::fish_drama3::tower::TowerConfig;
+    use crate::tts::fish_drama3::tower::{TowerConfig, TowerEmbeddings};
     use turbospark_model_io::safetensors::SafetensorsFile;
 
     /// A deterministic stand-in for the trunk: a leaky tanh recurrence over
@@ -489,6 +735,8 @@ mod tests {
         snapshots: usize,
         restores: usize,
         rows_fed: usize,
+        /// Rows it holds: fed rows less the rows a restore dropped.
+        position: usize,
     }
 
     impl FakeBackbone {
@@ -499,6 +747,7 @@ mod tests {
                 snapshots: 0,
                 restores: 0,
                 rows_fed: 0,
+                position: 0,
             }
         }
 
@@ -510,7 +759,7 @@ mod tests {
     }
 
     impl Backbone for FakeBackbone {
-        type Snapshot = Vec<f32>;
+        type Snapshot = (Vec<f32>, usize);
 
         fn hidden_size(&self) -> usize {
             self.dim
@@ -538,26 +787,33 @@ mod tests {
                 *out = *s * 3.0;
             }
             self.rows_fed += 1;
+            self.position += 1;
             Ok(())
         }
 
-        fn snapshot(&mut self) -> Result<Vec<f32>> {
+        fn snapshot(&mut self) -> Result<(Vec<f32>, usize)> {
             self.snapshots += 1;
-            Ok(self.state.clone())
+            Ok((self.state.clone(), self.position))
         }
 
-        fn restore(&mut self, snapshot: &Vec<f32>) -> Result<()> {
+        fn restore(&mut self, snapshot: &(Vec<f32>, usize)) -> Result<()> {
             self.restores += 1;
-            self.state = snapshot.clone();
+            (self.state, self.position) = snapshot.clone();
             Ok(())
         }
 
         fn reset(&mut self) {
             self.state = vec![0.0; self.dim];
+            self.position = 0;
         }
     }
 
     fn drama() -> Drama3 {
+        drama_with(|tower| Box::new(tower))
+    }
+
+    /// The fixture model with its tower wrapped by `wrap`.
+    fn drama_with(wrap: impl FnOnce(CpuTower) -> Box<dyn TowerModel + Send>) -> Drama3 {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/fish_drama3");
         let golden: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(dir.join("tower.json")).unwrap())
@@ -578,7 +834,7 @@ mod tests {
         Drama3 {
             config,
             tokenizer,
-            tower: Box::new(CpuTower::new(tower)),
+            tower: wrap(CpuTower::new(tower)),
         }
     }
 
@@ -593,6 +849,9 @@ mod tests {
         let options = GenerateOptions {
             max_frames,
             seed,
+            // These tests count the loop's own snapshots and restores; the
+            // guard's have their own tests below.
+            pause_guard: None,
             ..GenerateOptions::default()
         };
         d.generate(&mut backbone, &[], text, options, |e| {
@@ -624,6 +883,20 @@ mod tests {
 
     fn tokens(d: &Drama3, words: &str) -> usize {
         d.tokenizer.encode(words, false).unwrap().get_ids().len()
+    }
+
+    /// The product samples with Fish Audio's serving recipe. Under the
+    /// mlx-audio recipe a sentence gap trapped 4 of 12 seeds of one script in
+    /// silence, against 0 of 12 (`docs/FISH_DRAMA3_PHASE0.md`).
+    #[test]
+    fn the_default_samples_with_fish_audios_serving_recipe() {
+        let sampling = GenerateOptions::default().sampling;
+        assert_eq!(sampling, SamplingParams::FISH_SERVING);
+        assert_eq!(
+            (sampling.temperature, sampling.top_k, sampling.top_p),
+            (1.0, 30, 0.9)
+        );
+        assert_ne!(sampling, SamplingParams::REFERENCE);
     }
 
     #[test]
@@ -707,6 +980,10 @@ mod tests {
             },
         );
         assert_eq!(ending(&capped), (limit, ChunkStop::TextCap));
+        assert!(
+            matches!(capped.last(), Some(FrameEvent::ChunkEnd { limit: l, .. }) if *l == limit),
+            "the chunk end reports the cap it ran into"
+        );
         // The cap cuts the same frames short; it does not change them.
         assert_eq!(capped[..limit], free[..limit]);
         // A cap at max_frames leaves max_frames in charge.
@@ -732,7 +1009,11 @@ mod tests {
             let mut d = drama();
             let mut backbone = FakeBackbone::new(d.config.hidden_size);
             let mut events = Vec::new();
+            // The recipe and seed this test was sized for: the fake model
+            // ends early at seed 5 under the default recipe. Draw order does
+            // not depend on the recipe.
             let options = GenerateOptions {
+                sampling: SamplingParams::REFERENCE,
                 max_frames: 12,
                 seed: 5,
                 overlap_tower_tail: overlap,
@@ -775,6 +1056,110 @@ mod tests {
             a.last(),
             Some(FrameEvent::ChunkEnd { chunk: 0, .. })
         ));
+    }
+
+    /// The golden tower with every residual head replaced by a fixed 4096-wide
+    /// row, the width of the real tower's heads. The tower underneath still
+    /// runs, so its cache stays consistent, and gets the code the loop drew.
+    struct WideHeads {
+        inner: CpuTower,
+        row: Vec<f32>,
+    }
+
+    impl TowerModel for WideHeads {
+        fn config(&self) -> &TowerConfig {
+            self.inner.config()
+        }
+
+        fn embeddings(&self) -> &TowerEmbeddings {
+            self.inner.embeddings()
+        }
+
+        fn position(&self) -> usize {
+            self.inner.position()
+        }
+
+        fn truncate(&mut self, position: usize) -> Result<()> {
+            self.inner.truncate(position)
+        }
+
+        fn semantic_logits(&mut self, hidden: &[f32]) -> Result<Vec<f32>> {
+            self.inner.semantic_logits(hidden)
+        }
+
+        fn prefill(&mut self, hidden: &[f32], frames: &[&[i32]], labels: &[&[i32]]) -> Result<()> {
+            self.inner.prefill(hidden, frames, labels)
+        }
+
+        fn begin_residual_codes(
+            &mut self,
+            hidden: &[f32],
+            main: i32,
+            frame: &[i32],
+            sample: &mut dyn FnMut(usize, &[f32]) -> i32,
+        ) -> Result<[i32; 2]> {
+            let row = &self.row;
+            self.inner
+                .begin_residual_codes(hidden, main, frame, &mut |head, _| sample(head, row))
+        }
+
+        fn finish_residual_codes(
+            &mut self,
+            sample: &mut dyn FnMut(usize, &[f32]) -> i32,
+        ) -> Result<Vec<i32>> {
+            let row = &self.row;
+            self.inner
+                .finish_residual_codes(&mut |head, _| sample(head, row))
+        }
+    }
+
+    /// A head that scores a code past the codec's acoustic books highest, as
+    /// the real heads did on a frame that failed the codec with `code 3403
+    /// outside the codebook of 1024`, must not be drawn from.
+    #[test]
+    fn residual_codes_never_pass_the_codecs_acoustic_books() {
+        let probe = drama();
+        let acoustic = probe.config.acoustic_codebook_size();
+        // The Fish S1 DAC's nine acoustic books (`fish_s1_dac` tests pin the
+        // same number). The rows below key off it, so a wrong limit would
+        // otherwise move the test with it.
+        assert_eq!(acoustic, 1024);
+        // Deterministic whatever the key: one candidate holds all the mass
+        // (the crossing rule keeps rank 0 alone), so the draw is the argmax.
+        let mut row = vec![-10.0f32; 4096];
+        row[acoustic - 1] = 5.0; // the best code the codec can decode
+        row[3403] = 15.0; // the code of the failure
+        row[acoustic] = 20.0; // the first code past the book, best of all
+        for overlap_tower_tail in [false, true] {
+            let mut d = drama_with(|inner| {
+                Box::new(WideHeads {
+                    inner,
+                    row: row.clone(),
+                })
+            });
+            let options = GenerateOptions {
+                max_frames: 12,
+                seed: 5,
+                overlap_tower_tail,
+                ..GenerateOptions::default()
+            };
+            let events = run_with(&mut d, "Hallo du. Wie geht es dir heute?", options);
+            let frames: Vec<&Vec<i32>> = events
+                .iter()
+                .filter_map(|e| match e {
+                    FrameEvent::Frame { codes, .. } => Some(codes),
+                    _ => None,
+                })
+                .collect();
+            assert!(frames.len() > 4, "too few frames: {}", frames.len());
+            for codes in frames {
+                assert_eq!(codes.len(), d.config.tower.num_codebooks);
+                assert!(
+                    codes[1..].iter().all(|&c| c == acoustic as i32 - 1),
+                    "overlap {overlap_tower_tail}: {codes:?}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -858,5 +1243,382 @@ mod tests {
                 Flow::Continue
             })
             .is_err());
+    }
+
+    /// Speech frames before the scripted pause.
+    const SPEECH: usize = 6;
+    /// Codes in the fixture's semantic band (32 through 47).
+    const BAND: usize = 16;
+    /// Codes 0..10 read as voiced.
+    const TEST_VOICED: [u64; 1] = [0x3ff];
+    /// A trap code and a return code, both silent, drawn once per attempt.
+    const TRAP: usize = 10;
+    const RETURN: usize = 11;
+
+    fn test_guard() -> PauseGuard {
+        PauseGuard {
+            voiced: &TEST_VOICED,
+            resume_frames: 2,
+            hold_after: 4,
+            retry_after: 12,
+            max_retries: 3,
+        }
+    }
+
+    /// What the scripted tower was handed, by tower position: each
+    /// semantic-head call's hidden state and each frame's previous frame.
+    #[derive(Default)]
+    struct Inputs {
+        hidden: Vec<(usize, Vec<f32>)>,
+        previous: Vec<(usize, Vec<i32>)>,
+    }
+
+    type Seen = std::sync::Arc<std::sync::Mutex<Inputs>>;
+
+    /// The fixture tower with a scripted semantic head that can trap a pause.
+    ///
+    /// The head reads the main codes of the chunk's frames, from the tower's
+    /// own record of them, which `truncate` rewinds as a rollback must:
+    /// [`SPEECH`] voiced frames, then a pause. The draw `hold_after` frames
+    /// into the pause picks [`TRAP`] with weight `trap` or [`RETURN`] with
+    /// 0.40. After a trap the head stays on silent codes for good. After a
+    /// return it gives 3 more silent frames, 5 voiced ones, then EOS. The
+    /// residual codes are the real fixture tower's.
+    struct ScriptedTower {
+        inner: CpuTower,
+        /// `(tower position, main token)` of each generated frame.
+        mains: Vec<(usize, i32)>,
+        trap: f32,
+        seen: Seen,
+    }
+
+    impl ScriptedTower {
+        fn head(&self) -> Vec<f32> {
+            let embeddings = self.inner.embeddings();
+            let codes: Vec<usize> = self
+                .mains
+                .iter()
+                .map(|&(_, m)| embeddings.c0(m) as usize)
+                .collect();
+            let fate = SPEECH + test_guard().hold_after;
+            let mut logits = vec![-30.0f32; BAND + 1];
+            let eos = BAND;
+            let mut favour = |codes: std::ops::Range<usize>| {
+                for c in codes {
+                    logits[c] = 0.0;
+                }
+            };
+            let n = codes.len();
+            if n < SPEECH {
+                favour(0..10);
+            } else if n < fate {
+                favour(12..16);
+            } else if n == fate {
+                logits[TRAP] = self.trap.ln();
+                logits[RETURN] = 0.40f32.ln();
+                logits[12] = 0.15f32.ln();
+            } else if codes[fate] == TRAP {
+                favour(12..16);
+            } else {
+                match n - fate - 1 {
+                    0..=2 => favour(12..16),
+                    3..=7 => favour(0..10),
+                    _ => logits[eos] = 0.0,
+                }
+            }
+            logits
+        }
+    }
+
+    impl TowerModel for ScriptedTower {
+        fn config(&self) -> &TowerConfig {
+            self.inner.config()
+        }
+        fn embeddings(&self) -> &TowerEmbeddings {
+            self.inner.embeddings()
+        }
+        fn position(&self) -> usize {
+            self.inner.position()
+        }
+        fn truncate(&mut self, position: usize) -> Result<()> {
+            self.mains.retain(|&(at, _)| at < position);
+            self.inner.truncate(position)
+        }
+        fn semantic_logits(&mut self, hidden: &[f32]) -> Result<Vec<f32>> {
+            self.seen
+                .lock()
+                .unwrap()
+                .hidden
+                .push((self.inner.position(), hidden.to_vec()));
+            Ok(self.head())
+        }
+        fn prefill(&mut self, hidden: &[f32], frames: &[&[i32]], labels: &[&[i32]]) -> Result<()> {
+            self.inner.prefill(hidden, frames, labels)
+        }
+        fn begin_residual_codes(
+            &mut self,
+            hidden: &[f32],
+            main: i32,
+            frame: &[i32],
+            sample: &mut dyn FnMut(usize, &[f32]) -> i32,
+        ) -> Result<[i32; 2]> {
+            self.mains.push((self.inner.position(), main));
+            self.seen
+                .lock()
+                .unwrap()
+                .previous
+                .push((self.inner.position(), frame.to_vec()));
+            self.inner.begin_residual_codes(hidden, main, frame, sample)
+        }
+        fn finish_residual_codes(
+            &mut self,
+            sample: &mut dyn FnMut(usize, &[f32]) -> i32,
+        ) -> Result<Vec<i32>> {
+            self.inner.finish_residual_codes(sample)
+        }
+    }
+
+    fn scripted(trap: f32) -> (Drama3, Seen) {
+        let seen = Seen::default();
+        let shared = seen.clone();
+        let d = drama_with(move |inner| {
+            Box::new(ScriptedTower {
+                inner,
+                mains: Vec::new(),
+                trap,
+                seen: shared,
+            })
+        });
+        assert_eq!(d.config.semantic_band().count(), BAND);
+        (d, seen)
+    }
+
+    /// What one scripted call sent, held and ended with.
+    struct Scripted {
+        events: Vec<FrameEvent>,
+        backbone: FakeBackbone,
+        stats: GenerateStats,
+        seen: Inputs,
+    }
+
+    impl Scripted {
+        /// The main code of every frame sent.
+        fn sent(&self) -> Vec<i32> {
+            self.events
+                .iter()
+                .filter_map(|e| match e {
+                    FrameEvent::Frame { codes, .. } => Some(codes[0]),
+                    _ => None,
+                })
+                .collect()
+        }
+
+        fn held(&self) -> usize {
+            self.events
+                .iter()
+                .filter(|e| matches!(e, FrameEvent::Held { .. }))
+                .count()
+        }
+
+        fn retries(&self) -> usize {
+            match self.events.last() {
+                Some(FrameEvent::ChunkEnd { retries, .. }) => *retries,
+                other => panic!("the call must end with a chunk end, got {other:?}"),
+            }
+        }
+    }
+
+    fn run_scripted(trap: f32, seed: u64, guard: Option<PauseGuard>, overlap: bool) -> Scripted {
+        let (mut d, seen) = scripted(trap);
+        let mut backbone = FakeBackbone::new(d.config.hidden_size);
+        let mut events = Vec::new();
+        let options = GenerateOptions {
+            max_frames: 60,
+            text_cap: None,
+            seed,
+            overlap_tower_tail: overlap,
+            pause_guard: guard,
+            ..GenerateOptions::default()
+        };
+        let stats = d
+            .generate(&mut backbone, &[], "Hallo du.", options, |e| {
+                events.push(e);
+                Flow::Continue
+            })
+            .unwrap();
+        let seen = std::mem::take(&mut *seen.lock().unwrap());
+        Scripted {
+            events,
+            backbone,
+            stats,
+            seen,
+        }
+    }
+
+    /// The model traps a pause until a redraw, and the guard recovers: the
+    /// same seed without the guard runs silent to its cap.
+    #[test]
+    fn the_pause_guard_redraws_a_trapped_pause_until_speech_returns() {
+        let guard = test_guard();
+        let fate = SPEECH + guard.hold_after;
+        let (seed, off) = (0..64)
+            .map(|seed| (seed, run_scripted(0.45, seed, None, true)))
+            .find(|(seed, off)| {
+                ending(&off.events).1 == ChunkStop::MaxFrames
+                    && run_scripted(0.45, *seed, Some(guard), true).retries() > 0
+                    && ending(&run_scripted(0.45, *seed, Some(guard), true).events).1
+                        == ChunkStop::Eos
+            })
+            .expect("a seed that traps without the guard and recovers with it");
+        assert_eq!(ending(&off.events), (60, ChunkStop::MaxFrames));
+        assert!(off.sent().contains(&(TRAP as i32)));
+        for overlap in [true, false] {
+            let on = run_scripted(0.45, seed, Some(guard), overlap);
+            let retries = on.retries();
+            assert!((1..=guard.max_retries).contains(&retries), "{retries}");
+            // Speech, the pause up to the redrawn frame, the return, 3 silent
+            // frames, 5 voiced ones: nothing of an abandoned attempt.
+            let sent = on.sent();
+            assert_eq!(ending(&on.events), (fate + 9, ChunkStop::Eos));
+            assert_eq!(sent.len(), fate + 9);
+            assert_eq!(sent[..fate], off.sent()[..fate], "frames before the point");
+            assert_eq!(sent[fate], RETURN as i32);
+            assert!(!sent.contains(&(TRAP as i32)), "a dropped frame went out");
+            // Each failed attempt held frames `hold_after + 1` through
+            // `retry_after - 1` of the pause; the last held 5 before speech.
+            let per_attempt = guard.retry_after - guard.hold_after - 1;
+            assert_eq!(on.held(), per_attempt * retries + 5);
+            assert_eq!(on.stats.frames, sent.len());
+            assert_eq!(on.stats.retries, retries);
+            // The backbone went back each time: it holds the prompt and one
+            // row per kept frame, from one restore point.
+            assert_eq!(on.backbone.restores, retries);
+            assert_eq!(on.backbone.snapshots, 2, "the system block and the point");
+            assert_eq!(on.backbone.position, on.stats.prompt_rows + sent.len());
+            // Every redraw read the point's hidden state, and its frame went
+            // to the tower after the point's previous frame.
+            let point = on.seen.hidden[0].0 + fate;
+            let hidden: Vec<&Vec<f32>> = on
+                .seen
+                .hidden
+                .iter()
+                .filter(|(pos, _)| *pos == point)
+                .map(|(_, h)| h)
+                .collect();
+            assert_eq!(hidden.len(), retries + 1);
+            assert!(hidden.iter().all(|h| *h == hidden[0]));
+            let previous: Vec<&Vec<i32>> = on
+                .seen
+                .previous
+                .iter()
+                .filter(|(pos, _)| *pos == point)
+                .map(|(_, f)| f)
+                .collect();
+            assert_eq!(previous.len(), retries + 1);
+            assert!(previous.iter().all(|f| *f == previous[0]));
+        }
+    }
+
+    /// A pause that ends on its own goes out exactly as without the guard,
+    /// though its tail was held.
+    #[test]
+    fn a_pause_that_ends_by_itself_is_sent_unchanged() {
+        let guard = test_guard();
+        let seed = (0..64)
+            .find(|&seed| ending(&run_scripted(0.45, seed, None, true).events).1 == ChunkStop::Eos)
+            .expect("a seed that returns on the first draw");
+        let off = run_scripted(0.45, seed, None, true);
+        let on = run_scripted(0.45, seed, Some(guard), true);
+        let frames = |events: &[FrameEvent]| -> Vec<FrameEvent> {
+            events
+                .iter()
+                .filter(|e| !matches!(e, FrameEvent::Held { .. }))
+                .cloned()
+                .collect()
+        };
+        assert_eq!(frames(&on.events), frames(&off.events));
+        assert_eq!(on.retries(), 0);
+        assert_eq!(on.held(), 5, "the pause's tail was held, then sent");
+        assert_eq!(on.backbone.restores, 0);
+        assert_eq!(on.backbone.state, off.backbone.state);
+    }
+
+    /// Out of retries, the guard sends what it holds and the chunk runs on
+    /// as without it, to its cap.
+    #[test]
+    fn out_of_retries_the_chunk_runs_on_as_without_the_guard() {
+        let guard = test_guard();
+        let on = run_scripted(1.0, 3, Some(guard), true);
+        assert_eq!(on.retries(), guard.max_retries);
+        assert_eq!(ending(&on.events), (60, ChunkStop::MaxFrames));
+        assert_eq!(on.sent().len(), 60, "every kept frame went out");
+        let per_attempt = guard.retry_after - guard.hold_after - 1;
+        assert_eq!(on.held(), per_attempt * (guard.max_retries + 1));
+    }
+
+    #[test]
+    fn a_stop_while_frames_are_held_ends_the_call() {
+        let (mut d, _) = scripted(1.0);
+        let mut backbone = FakeBackbone::new(d.config.hidden_size);
+        let mut events = Vec::new();
+        let options = GenerateOptions {
+            max_frames: 60,
+            text_cap: None,
+            pause_guard: Some(test_guard()),
+            ..GenerateOptions::default()
+        };
+        let stats = d
+            .generate(&mut backbone, &[], "Hallo du.", options, |e| {
+                let held = matches!(e, FrameEvent::Held { .. });
+                events.push(e);
+                if held {
+                    Flow::Stop
+                } else {
+                    Flow::Continue
+                }
+            })
+            .unwrap();
+        assert!(stats.stopped);
+        assert!(matches!(events.last(), Some(FrameEvent::Held { .. })));
+        assert_eq!(stats.frames, SPEECH + test_guard().hold_after);
+    }
+
+    #[test]
+    fn the_pause_guard_refuses_settings_it_cannot_run() {
+        let mut d = drama();
+        let mut backbone = FakeBackbone::new(d.config.hidden_size);
+        for guard in [
+            PauseGuard {
+                resume_frames: 0,
+                ..test_guard()
+            },
+            PauseGuard {
+                retry_after: test_guard().hold_after,
+                ..test_guard()
+            },
+        ] {
+            let options = GenerateOptions {
+                pause_guard: Some(guard),
+                ..Default::default()
+            };
+            assert!(d
+                .generate(&mut backbone, &[], "Hallo.", options, |_| Flow::Continue)
+                .is_err());
+        }
+    }
+
+    #[test]
+    fn the_shipped_voiced_table_is_the_generated_one() {
+        let guard = GenerateOptions::default().pause_guard.unwrap();
+        assert_eq!(guard, PauseGuard::MEASURED);
+        let set: u32 = guard.voiced.iter().map(|w| w.count_ones()).sum();
+        assert_eq!(set, voiced::VOICED_CODES);
+        assert_eq!(guard.voiced.len() * 64, 4096, "one bit per semantic code");
+        assert!(!guard.is_voiced(-1) && !guard.is_voiced(4096));
+        let first = (0..4096).find(|&c| guard.is_voiced(c)).unwrap();
+        assert_eq!(
+            guard.voiced[first as usize / 64] & (1 << (first % 64)),
+            1 << (first % 64)
+        );
     }
 }

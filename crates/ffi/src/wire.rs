@@ -227,6 +227,27 @@ pub struct OpenOptions {
     /// itself defaults it off because one engine's cache is shared by every
     /// client of that server.
     pub prefix_reuse: Option<bool>,
+    /// `auto` | `split` | `off` | `break`. Absent means `auto`, which enables
+    /// the ANE+Steel prefill split on Apple Silicon M4 or newer for dense Qwen.
+    pub ane_prefill: Option<String>,
+    /// Optional directory to load compiled ANE prefill programs from.
+    pub ane_prefill_dir: Option<String>,
+}
+
+/// What a session resolved about the ANE+Steel prefill split, once, at open.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AnePrefillInfo {
+    /// True when ANE+Steel split prefill is active for this session.
+    pub active: bool,
+    /// The resolved mode: `"split"`, `"off"`, or `"break"`.
+    pub mode: String,
+    /// Whether this model family and host hardware support the split.
+    pub supported: bool,
+    /// Why `supported` is false or why the split is inactive, or null when active.
+    pub reason: Option<String>,
+    /// The programs directory from which ANE prefill models are loaded, if any.
+    pub programs_dir: Option<String>,
 }
 
 /// What a session resolved about directional steering, once, at open.
@@ -695,6 +716,8 @@ pub struct SessionInfo {
     /// Whether this session continues turns from the previous turn's KV. The
     /// `prefixReuse` open option's resolved value (default `true`).
     pub prefix_reuse: bool,
+    /// What the ANE+Steel prefill split resolved to for this session.
+    pub ane_prefill: AnePrefillInfo,
 }
 
 /// Arguments to `ts_server_start`. `{}` is valid and means "an OS-assigned

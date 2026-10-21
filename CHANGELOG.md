@@ -14,6 +14,39 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- Metal kernel adaptations and speculative rollback redesign:
+  - Bit-exact fused INT4 FFN dispatches behind `TURBOSPARK_QWEN_FUSED_FFN=1`
+    (fusing gate+up+silu_mul into a single GEMV, and down+epilogue GEMV) for Qwen
+    dense and MoE shared expert decode.
+  - Lazy rank-1 GDN verify tape and state fold under `TURBOSPARK_GDN_LAZY_TAPE=1`,
+    bypassing verify snapshot blits on clean recurrent state.
+  - Speculative rollback redesign: `checkpoint_round` skips snapshots when the
+    trunk is clean, eager advances capture deferred snapshots, and checkpoints
+    remain reusable across rollbacks prior to round commit.
+  - Safe error cleanup hooks (`discard_pending`) on `SpeculativeProducer` and
+    `RealForwardRunner` to rewind uncommitted state on error between verify and
+    commit.
+  - Asynchronous GPU GDN fold commits to avoid blocking CPU drafting on round
+    completion.
+  - Bench prototypes for concurrent compute encoder, int4 nibble masking, and
+    expert-sorted grouped GEMM MoE prefill. See `docs/KAPITSA_KERNELS.md`.
+- Opt-in ANE+Steel prefill split for the dense qwen family (cargo feature
+  `ane-prefill`, off by default). Each dense projection class is split by
+  output rows between a Core ML program on the Neural Engine and Steel. On
+  Qwen3.8-27B (M4 Max, 2,940-token prompt, 2048-row micro-batches) prefill ran
+  1.35x faster at 0.65x modeled energy with greedy output unchanged. Enable it
+  with `TURBOSPARK_ANE_PREFILL=1`, `TURBOSPARK_ANE_PREFILL_DIR` and a prefill
+  chunk of 2048, after writing the programs with
+  `crates/coreml/tools/gen_ane_prefill_programs.py`. A failed prediction or a
+  non-finite ANE row redoes the micro-batch on Steel. See
+  `docs/SPEEDUP_PLAYBOOK.md`.
+- Swift bindings and macOS app integration for the ANE+Steel prefill split:
+  `TurboSparkCapabilities.chipSupportsAnePrefill` detects Apple Silicon M4+ and
+  A18+ chips; `OpenOptions.anePrefill` and `SessionInfo.anePrefill` expose the
+  mode and active split status over the wire; and Engine Settings adds an
+  ANE+Steel prefill picker with Auto (on by default on M4+ hardware for dense
+  Qwen, graceful fallback to Steel on older chips or missing programs), On, and
+  Off settings across 21 languages.
 - Experimental `--speculative adaptive[:MAX]` (MAX 3-15, default 4) for the MTP
   step drafter, also `speculation: "adaptive"` on the C ABI and
   `OpenOptions.Speculation.adaptive(cap:)` in Swift. The round size moves
@@ -36,6 +69,93 @@ when this file gets updated relative to the version bump and the tag.
   resolve audio aliases (delete is the catalog's ownership-checked one), and
   the unified `turbospark` binary forwards `list-audio`, `list-speech` and
   `pull-audio`. Installs land where the app reads them.
+- `swift/TurboSparkApp`: meeting notes and speaker intelligence. Meeting takes
+  get a Notes & Summary tab (segmented detail switcher, timestamp jump chips,
+  model recommendation badges), a persistent custom vocabulary applied with
+  word-boundary-safe normalization, and cross-meeting speaker recognition from
+  a 64-band log-mel voiceprint with one-click name suggestions in the naming
+  sheet. The local speaker is isolated by microphone energy. Summaries write
+  only `item.summary`: transcript segments are never changed. Capture uses the
+  macOS 14.2+ CoreAudio process tap when available and falls back to
+  ScreenCaptureKit. See `swift/docs/SWIFT_AUDIO_MEETING_NOTES.md`.
+- FluidAudio Core ML pipelines in the app (Kokoro ANE, PocketTTS, Parakeet TDT
+  Japanese, Paraformer Mandarin, Silero VAD), run with
+  `ModelHub.offlineMode = true` so assets come only from the TurboSpark
+  catalog. MiniMax Music 3 also gains the experimental 8-step Turbo LoRA
+  checkpoint, which selects the 8-step Euler profile when callers omit steps.
+  One blind 15-second listen at one seed, not a quality gate. See
+  `docs/audio/minimax_music3.md`.
+
+### Changed
+- Qwen batched prefill, speculative verify and MTP head priming now encode their
+  small per-row operations (q/gate split, q/k norm, RoPE, output gate, FFN
+  activation, residual adds and norms) as one dispatch over all rows instead of
+  one per row. Each row computes the same bits. In one paired measurement on
+  Qwen3.8-27B (2,564-token prompt, six interleaved pairs) prefill took 18.85 s
+  against 20.38 s. Verify and priming were checked on synthetic installs only.
+  `TURBOSPARK_QWEN_BATCHED_ROW_OPS=0` restores the per-row form.
+- Refactored Swift app architecture: decomposed large views and isolated
+  specialized components (`MarkdownFrontmatterParser`, `DOMSnapshotScript`,
+  modular generation rows).
+- Audio pickers rescan installed models when they open and show a refreshing
+  indicator, and recommendations appear in model discovery.
+
+### Fixed
+- `swift/TurboSparkApp`: audio model detection could lock out after a failed
+  refresh or install, because `isRefreshingModels` and `isInstalling` were not
+  always reset. Both now reset in `defer`, catalog scans no longer depend on
+  profile ID validation (which dropped models), and a profile created before
+  the launch unlock adopts the active vault session.
+
+## [0.4.0] - 2026-10-18
+
+### Added
+- Tools in Chat. Chat turns now offer the rootless tools (web search and fetch,
+  browser automation, questions, checklists, planning, memory, automation)
+  behind a Tools toggle, on by default: a chip below the composer, an item in
+  the plus menu, and "Enable tools in Chat by default" in General Settings. File
+  edit, search, shell and MCP or custom tools stay Projects-only, so Chat cannot
+  touch the filesystem or run commands.
+- Speech-to-Text is one pane with three modes picked from a pill switcher:
+  Voice Notes (microphone), Meeting (microphone and the app playing the call)
+  and Any Audio (another app's audio or an imported file). Each mode lists its
+  own takes and files them in its own collection. Each mode keeps one model per
+  job (Live Text, Final Transcript, Speakers), shown in a header popover with
+  its state, and Installed gains an Audio view. A mode with no choice of its
+  own keeps the earlier behavior.
+- Name the Speakers. After a Meeting take's final pass labels its speakers, a
+  sheet lists each voice with its talk time and longest line, plays a sample,
+  and lets you name it, merge it into another voice, or separate a merged
+  voice. The transcript's Name Speakers button opens the same sheet later. One
+  name per voice reaches every line, revision and export (Text, SRT, WebVTT and
+  JSON with the name and the raw id), and clearing it restores the default
+  label. Takes saved before this decode as they were. A take longer than the
+  model's 30 minutes is labeled in parts that share 5 minutes, and a later
+  part's voice takes an earlier label only when at least 8 s and 70% of the
+  shared time agree, otherwise it starts a new speaker.
+- Native Frozen E meeting transcription: Nemotron-3 diarization coupled to
+  Multitalker Parakeet in `crates/audio` (`stt/multitalker_asr`,
+  `vad/nemotron_diarization`), on CPU and, opt-in, on Metal. On the reference
+  clip the SegLST equals NeMo Speech 218d0b4's, and the CPU path has bit-exact
+  tiled GEMM and rayon speedups of about 4x. Live use: `LiveFrontend` and
+  `LiveSession` turn PCM into the same log-mel frames as the whole-file call
+  (bit for bit), and `MultitalkerStreamSession` in `crates/runtime` runs it on
+  a worker thread, CPU only. This is the library layer: the FFI and the app do
+  not use it yet. The diarizer Metal path is unqualified, because
+  `nemotron_diar_metal` was intermittent on a loaded host and the cause is not
+  found.
+- `swift/TurboSparkApp`: Fish Audio Drama 3 (`fish-drama3-4bit`) on the
+  Voice Cloning page and in Advanced. The app sends Drama 3's own request
+  (the reference transcript, speed 1.0, no steps, instruction or guidance
+  weights) and asks for the reference's transcript beside consent. The model
+  summary shows "Built with Fish Audio", as its license requires.
+- `swift/TurboSparkApp`: the Voiceover page speaks with Drama 3 and
+  OmniVoice without a reference, in a voice the model picks. The run sends
+  no PCM, consent or transcript. Drama 3 gets speed 1.0, and OmniVoice keeps
+  its speed slider without guidance weights. Voice Cloning and Advanced still
+  clone. A Voiceover take with seed 0 draws its own seed, so Generate again
+  is a new take: the runtime took 0 literally, and Drama 3 repeated a take
+  that went silent after the first sentence on every run.
 - ArkTTS multilingual zero-shot TTS preview family port (`crates/audio/src/tts/arktts/`).
   DualAR transformer architecture plus bundled 44.1 kHz decode-only speech codec:
   pure-attention slow stack on 0.6b and hybrid Mamba-2 + attention Falcon H1
@@ -264,6 +384,33 @@ when this file gets updated relative to the version bump and the tag.
   floor. 2.7.2 also releases `write.lock` explicitly, so a process the app
   spawns on another thread can no longer hold the code index's lock and turn
   an incremental update into a full rebuild.
+- `crates/audio`, `crates/runtime`: Fish Audio Drama 3 resamples a pause the
+  model may never leave (`GenerateOptions::pause_guard`, on by default;
+  `PauseGuard::MEASURED`). In some takes the model pauses at a sentence gap, a
+  turn change or a `[pause]` and stays silent until the chunk's frame cap.
+  The generation loop now reads each drawn main token as voiced or silent
+  from a table (`fish_drama3::voiced`, built by
+  `scripts/fish_drama3_voiced_table.py`), and holds a pause's frames back
+  from its first silent frame. If the pause reaches 128 frames it rolls the
+  trunk and tower back to the pause's start and draws again, up to 6 times per
+  chunk, then runs on as before. A pause that ends by itself goes out
+  unchanged. Frames in a pause reach the codec only when it ends, so a
+  streamed response delays each pause by its length (56 frames, 2.6 s, at
+  most on the takes measured). `FrameEvent` gains `Held` and `ChunkEnd`
+  gains `retries`. `FishDrama3Runner::set_pause_guard(None)` restores the old
+  loop. The pause-trap gate goes from 4 of 24 takes stopped early to 0, and
+  the `[pause]` line's three trapped seeds recover. `docs/FISH_DRAMA3_PHASE0.md`
+  has the measurements.
+- `crates/audio`, `crates/runtime`: Fish Audio Drama 3 samples with Fish
+  Audio's serving recipe by default (temperature 1.0, top-p 0.9, top-k 30,
+  the same RAS; `SamplingParams::FISH_SERVING`), the default of its
+  SGLang-Omni runtime. mlx-audio's 0.7, 0.7 and 30 stay available as
+  `SamplingParams::REFERENCE`. Under it a sentence gap or a turn change
+  trapped 12 of 24 test takes in silence until the chunk's cap, against 4 of
+  24. Requests that set `temperature`, `top_p` or `top_k` are unchanged.
+  `FrameEvent::ChunkEnd` gains `limit`, and `FishDrama3Runner::synthesize`
+  returns a `Drama3Take` (samples emitted, each chunk's frames, limit and
+  stop, the longest silent run) instead of the sample count.
 - `swift/TurboSparkApp`: the project code index moved to
   `~/Library/Caches/TurboSpark/syntext/<digest>.syntext`. The old base64 name
   failed for project paths over about 185 bytes. Existing indexes rebuild
@@ -335,12 +482,39 @@ when this file gets updated relative to the version bump and the tag.
   declining leaves import, transcription and editing usable.
 
 ### Fixed
+- `crates/gpu`, `crates/audio`: the Music 3 LM head window plans its split-K
+  from the full head width. Below M3 a dense bf16 projection of 2 to 15 rows
+  takes the tiled kernel, whose split-K reads the output width, so a window
+  logit could differ from the full head's, and from MLX's, in the last bf16
+  bit, which can flip a sampled code. M3 and later were not affected.
 - `crates/runtime`, `crates/model-io`: a no-copy mapped expert residency is
   refused past Metal's wired budget instead of being opened. Under memory
   pressure the driver unwires layers and an in-order decode then re-wires a
   whole layer on every pass: Fish Audio Drama 3 and MiniCPM-V 4.7 decoded 70
   to 180 times slower mapped than streamed. Asked for by name past the
   budget it is refused with the reason; `auto` resolves down to streamed.
+- `crates/runtime`, `swift/TurboSparkApp`: a Fish Audio Drama 3 take that
+  went silent after its first sentence, turn or `[pause]` was returned as if
+  it were complete, with the rest of the text never spoken. The runner now
+  reports a take whose chunk hit its frame cap without EOS, or that held a
+  silent run of 160 frames (7.4 s), as `stopped_early` in the audio job
+  result (C header, `AudioResult.stoppedEarly` in Swift). The app retakes such
+  a take with a fresh seed at most twice when the seed was left to it, then
+  saves the last take and says it stopped early. A Drama 3 clone on Voice
+  Cloning with seed 0 now draws its own seed, as Voiceover does, so a failing
+  take no longer repeats on every Generate.
+- `crates/server`, `crates/cli`: a Fish Audio Drama 3 request without a seed
+  ran at seed 0, so every request and every `turbospark-speak` run of one
+  text gave the same take, and a take that went silent did so every time.
+  `/v1/audio/speech` now draws a fresh seed for a Drama 3 request that names
+  none and returns the seed in `x-turbospark-seed` (as image generation
+  does). `turbospark-speak` draws one per run and prints it, and warns when
+  the take stopped early. A seed the caller names, 0 included, is kept.
+- `crates/audio`: Fish Audio Drama 3 draws its residual codes from the first
+  1024 entries of each tower head. The heads score 4096 codes, the Fish S1
+  DAC's acoustic books hold 1024, and a draw past them failed the whole
+  request in the codec (`code 3403 outside the codebook of 1024`). The limit
+  comes from the codec geometry, not a literal.
 - `crates/catalog`: `InstalledModel::effective_modality` now derives the `Audio`
   modality from install path, `audio-receipt.json`, or speech metadata if a model
   was recorded with default `text` modality in `installed.json`. `installed_report`

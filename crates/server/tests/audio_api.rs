@@ -852,6 +852,8 @@ async fn speech_wav_pcm_and_chunked_pcm() {
     assert_eq!(r.status(), 200);
     assert_eq!(r.headers()["content-type"], "audio/wav");
     assert_eq!(r.headers()["x-audio-sample-rate"], "24000");
+    // Only Drama 3 draws and names a seed; other families keep theirs.
+    assert!(r.headers().get("x-turbospark-seed").is_none());
     let bytes = r.bytes().await.unwrap();
     let wave = turbospark_audio::wav::read_wav_f32_bytes(&bytes).unwrap();
     assert_eq!(
@@ -1027,9 +1029,16 @@ async fn speech_drama3_reports_44100_and_forwards_the_sampler() {
     .await;
     assert_eq!(r.status(), 200);
     assert_eq!(r.headers()["x-audio-sample-rate"], "44100");
+    // No seed: the route draws one, sends it on, and names it.
+    let named: u64 = r.headers()["x-turbospark-seed"]
+        .to_str()
+        .unwrap()
+        .parse()
+        .unwrap();
     let wave = turbospark_audio::wav::read_wav_f32_bytes(&r.bytes().await.unwrap()).unwrap();
     assert_eq!((wave.sample_rate, wave.channels), (44_100, 1));
     let spoken = fake.spoken.lock().unwrap().pop().unwrap();
+    assert_eq!(spoken.seed, Some(named));
     assert_eq!(spoken.reference_audio, None);
     assert_eq!(
         (
@@ -1041,7 +1050,8 @@ async fn speech_drama3_reports_44100_and_forwards_the_sampler() {
         (None, None, None, None)
     );
 
-    // The chunked PCM response carries the same header.
+    // The chunked PCM response carries the same headers, and a second
+    // request without a seed is a different take.
     let r = post_json(
         &base,
         "/v1/audio/speech",
@@ -1050,6 +1060,25 @@ async fn speech_drama3_reports_44100_and_forwards_the_sampler() {
     .await;
     assert_eq!(r.status(), 200);
     assert_eq!(r.headers()["x-audio-sample-rate"], "44100");
+    let again: u64 = r.headers()["x-turbospark-seed"]
+        .to_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert_ne!(again, named, "two requests without a seed are two takes");
+    let _ = r.bytes().await;
+    assert_eq!(fake.spoken.lock().unwrap().pop().unwrap().seed, Some(again));
+
+    // A seed the caller names is kept, 0 included.
+    let r = post_json(
+        &base,
+        "/v1/audio/speech",
+        serde_json::json!({"model": "drama-test", "input": "Hi.", "seed": 0}),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.headers()["x-turbospark-seed"], "0");
+    assert_eq!(fake.spoken.lock().unwrap().pop().unwrap().seed, Some(0));
 
     // Sampler fields, the seed, a reference with its transcript and consent.
     let reference = "UklGRg==";

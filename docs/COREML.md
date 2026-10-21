@@ -485,6 +485,16 @@ cargo run -p turbospark-catalog --example audio_pin -- \
 It reproduced the Phase 0 pins for Silero VAD exactly. Run the audio network
 guard after adding a row.
 
+## ANE prefill split (opt-in)
+
+The dense qwen prefill can split its projections between the Neural Engine
+and Steel (`turbospark-runtime` feature `ane-prefill`, off by default). It
+uses this crate's IOSurface planes (`SharedF16Plane`, the same feature) and
+`CoreMlModel::predict_shared`. Its programs carry no weights and come from
+`crates/coreml/tools/gen_ane_prefill_programs.py`, pinned like the fixture
+generator. How to run it and what it measured:
+[SPEEDUP_PLAYBOOK.md](SPEEDUP_PLAYBOOK.md#opt-in-the-anesteel-prefill-split).
+
 ## Gotchas
 
 These cost time while building this. Each one is guarded in code or a test

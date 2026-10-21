@@ -168,8 +168,8 @@ pub fn open_drama(
 const FIRST_PIECE_FRAMES: usize = 4;
 const PIECE_FRAMES: usize = 7;
 
-/// Caller overrides of the sampler. `None` keeps the reference recipe
-/// (`SamplingParams::REFERENCE`, 1024 frames).
+/// Caller overrides of the sampler. `None` keeps the product default, Fish
+/// Audio's serving recipe (`SamplingParams::FISH_SERVING`, 1024 frames).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Drama3Sampling {
     pub temperature: Option<f32>,
@@ -188,11 +188,11 @@ impl Drama3Sampling {
     ) -> std::result::Result<audio::tts::fish_drama3::generate::GenerateOptions, String> {
         use audio::tts::fish_drama3::generate::GenerateOptions;
         use audio::tts::fish_drama3::sampling::{SamplingParams, DEFAULT_MAX_FRAMES};
-        let reference = SamplingParams::REFERENCE;
+        let default = GenerateOptions::default().sampling;
         let sampling = SamplingParams {
-            temperature: self.temperature.unwrap_or(reference.temperature),
-            top_k: self.top_k.unwrap_or(reference.top_k),
-            top_p: self.top_p.unwrap_or(reference.top_p),
+            temperature: self.temperature.unwrap_or(default.temperature),
+            top_k: self.top_k.unwrap_or(default.top_k),
+            top_p: self.top_p.unwrap_or(default.top_p),
         };
         sampling.validate().map_err(|e| e.to_string())?;
         let max_frames = self.max_frames.unwrap_or(DEFAULT_MAX_FRAMES);
@@ -227,6 +227,7 @@ pub struct FishDrama3Runner {
     codec: crate::fish_drama3_codec::CodecWorker,
     /// Content hash of the last reference and its encoded utterance.
     voice: Option<(u64, audio::tts::fish_drama3::prompt::Utterance)>,
+    pause_guard: Option<audio::tts::fish_drama3::generate::PauseGuard>,
 }
 
 impl FishDrama3Runner {
@@ -250,7 +251,18 @@ impl FishDrama3Runner {
             backbone: TrunkBackbone::new(trunk),
             codec,
             voice: None,
+            pause_guard: audio::tts::fish_drama3::generate::GenerateOptions::default().pause_guard,
         })
+    }
+
+    /// Whether generation resamples a pause the model may never leave
+    /// (`PauseGuard`, on by default). `None` runs the reference's loop, for an
+    /// A/B against it.
+    pub fn set_pause_guard(
+        &mut self,
+        guard: Option<audio::tts::fish_drama3::generate::PauseGuard>,
+    ) {
+        self.pause_guard = guard;
     }
 
     /// Metal buffers the trunk's context has allocated so far (see
@@ -316,8 +328,9 @@ impl FishDrama3Runner {
     }
 
     /// Speaks `request`, handing PCM to `emit` as it is decoded. `emit`
-    /// returns false to stop, and `stop` is polled once per frame. Returns the
-    /// samples emitted.
+    /// returns false to stop, and `stop` is polled once per frame. Returns
+    /// what the take produced, including whether it likely stopped speaking
+    /// early.
     ///
     /// Generation runs on this thread; the codec runs on a scoped worker fed
     /// frame by frame, so decoding overlaps the next frames' generation.
@@ -326,10 +339,11 @@ impl FishDrama3Runner {
         request: &Drama3Request<'_>,
         stop: &(dyn Fn() -> bool + Sync),
         mut emit: impl FnMut(Vec<f32>) -> bool + Send,
-    ) -> std::result::Result<usize, String> {
+    ) -> std::result::Result<Drama3Take, String> {
         use audio::tts::fish_drama3::generate::{ChunkStop, Flow, FrameEvent};
         // Refused before the reference is encoded, which costs seconds.
-        let options = request.sampling.options(request.seed)?;
+        let mut options = request.sampling.options(request.seed)?;
+        options.pause_guard = self.pause_guard;
         let references = match request.reference {
             Some((samples, rate, transcript)) => vec![self.reference(samples, rate, transcript)?],
             None => Vec::new(),
@@ -338,6 +352,7 @@ impl FishDrama3Runner {
         // its samples are handed to `emit` between frames and after the last.
         let (frames_tx, pcm_rx) = self.codec.stream(FIRST_PIECE_FRAMES, PIECE_FRAMES)?;
         let mut delivery = Delivery::default();
+        let mut chunks = Vec::new();
         let result = self.drama.generate(
             &mut self.backbone,
             &references,
@@ -356,17 +371,31 @@ impl FishDrama3Runner {
                             return Flow::Stop;
                         }
                     }
+                    // A frame the pause guard holds back reaches the codec
+                    // only if the pause ends, so nothing goes out yet. The
+                    // stop flag above is still polled once per frame.
+                    FrameEvent::Held { .. } => {}
                     // A chunk cut short still plays, so it never ends silently.
                     FrameEvent::ChunkEnd {
                         chunk,
                         frames,
+                        limit,
                         stop,
-                    } if stop != ChunkStop::Eos => {
-                        eprintln!(
-                            "fish_drama3: chunk {chunk} stopped without EOS at {frames} frames ({stop:?})"
-                        );
+                        retries,
+                    } => {
+                        if stop != ChunkStop::Eos {
+                            eprintln!(
+                                "fish_drama3: chunk {chunk} stopped without EOS at {frames} frames ({stop:?})"
+                            );
+                        }
+                        chunks.push(ChunkReport {
+                            chunk,
+                            frames,
+                            limit,
+                            stop,
+                            retries,
+                        });
                     }
-                    FrameEvent::ChunkEnd { .. } => {}
                 }
                 Flow::Continue
             },
@@ -384,8 +413,98 @@ impl FishDrama3Runner {
         result.map_err(|e| e.to_string())?;
         match delivery.error {
             Some(e) => Err(e),
-            None => Ok(delivery.emitted),
+            None => Ok(Drama3Take {
+                emitted: delivery.emitted,
+                chunks,
+                longest_silence_frames: delivery.silence.longest(),
+            }),
         }
+    }
+}
+
+/// How one text chunk of a take ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChunkReport {
+    pub chunk: usize,
+    pub frames: usize,
+    /// The most frames the chunk could take (its text cap or `max_frames`).
+    pub limit: usize,
+    pub stop: audio::tts::fish_drama3::generate::ChunkStop,
+    /// Times the pause guard rolled a long pause back and drew again.
+    pub retries: usize,
+}
+
+/// Samples per codec frame (46.4 ms at 44.1 kHz).
+const FRAME_SAMPLES: usize = 2048;
+/// A codec frame is silent under this RMS (dBFS, full scale 1.0), the rule
+/// `docs/FISH_DRAMA3_PHASE0.md` and `fish_drama3_wer` use.
+const SILENT_DBFS: f32 = -45.0;
+/// A silent run this long means the take stopped speaking. Completed takes
+/// paused at most 78 frames between turns (`docs/FISH_DRAMA3_PHASE0.md`), and
+/// a take that went silent after its first sentence ran 359 frames before EOS.
+pub const STUCK_SILENCE_FRAMES: usize = 160;
+
+/// What one [`FishDrama3Runner::synthesize`] call produced.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Drama3Take {
+    /// Samples handed to `emit`.
+    pub emitted: usize,
+    /// Every chunk that finished, in order. A stopped request reports only
+    /// the chunks it finished.
+    pub chunks: Vec<ChunkReport>,
+    /// The longest run of silent codec frames in the emitted audio.
+    pub longest_silence_frames: usize,
+}
+
+impl Drama3Take {
+    /// Whether the take likely stopped speaking before its text ended: a
+    /// chunk ran to its cap without EOS, or the audio held a silence no
+    /// completed take has (the pause trap, `docs/FISH_DRAMA3_PHASE0.md`).
+    /// The words were never generated, so a retake with another seed is the
+    /// remedy.
+    pub fn stopped_early(&self) -> bool {
+        use audio::tts::fish_drama3::generate::ChunkStop;
+        self.chunks.iter().any(|c| c.stop != ChunkStop::Eos)
+            || self.longest_silence_frames >= STUCK_SILENCE_FRAMES
+    }
+}
+
+/// The longest run of silent codec frames in PCM fed in order, frames
+/// counted from the first sample. A final partial frame is measured too.
+#[derive(Clone, Copy, Default)]
+struct SilenceMeter {
+    power: f32,
+    filled: usize,
+    run: usize,
+    longest: usize,
+}
+
+impl SilenceMeter {
+    fn feed(&mut self, pcm: &[f32]) {
+        for v in pcm {
+            self.power += v * v;
+            self.filled += 1;
+            if self.filled == FRAME_SAMPLES {
+                self.close_frame();
+            }
+        }
+    }
+
+    fn close_frame(&mut self) {
+        let floor = 10f32.powf(SILENT_DBFS / 20.0);
+        let rms = (self.power / self.filled as f32).sqrt();
+        self.run = if rms < floor { self.run + 1 } else { 0 };
+        self.longest = self.longest.max(self.run);
+        self.power = 0.0;
+        self.filled = 0;
+    }
+
+    fn longest(&self) -> usize {
+        let mut tail = *self;
+        if tail.filled > 0 {
+            tail.close_frame();
+        }
+        tail.longest
     }
 }
 
@@ -395,6 +514,7 @@ struct Delivery {
     emitted: usize,
     stopped: bool,
     error: Option<String>,
+    silence: SilenceMeter,
 }
 
 impl Delivery {
@@ -410,6 +530,7 @@ impl Delivery {
             Ok(pcm) if pcm.is_empty() => {}
             Ok(pcm) => {
                 self.emitted += pcm.len();
+                self.silence.feed(&pcm);
                 self.stopped = !emit(pcm);
             }
             Err(e) => {
@@ -423,21 +544,23 @@ impl Delivery {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use audio::tts::fish_drama3::generate::{GenerateOptions, TextCap};
+    use audio::tts::fish_drama3::generate::{ChunkStop, GenerateOptions, PauseGuard, TextCap};
     use audio::tts::fish_drama3::sampling::{SamplingParams, DEFAULT_MAX_FRAMES};
 
-    /// No overrides is the options every earlier run used, so unset request
-    /// fields cannot change a seed's codes.
+    /// No overrides is the product default, Fish Audio's serving recipe, the
+    /// same options `GenerateOptions::default` gives the portable loop.
     #[test]
-    fn no_overrides_keep_the_reference_options() {
+    fn no_overrides_keep_the_product_options() {
         let got = Drama3Sampling::default().options(7).unwrap();
         let want = GenerateOptions::default();
-        assert_eq!(got.sampling, SamplingParams::REFERENCE);
+        assert_eq!(got.sampling, SamplingParams::FISH_SERVING);
+        assert_eq!(got.sampling, want.sampling);
         assert_eq!(got.max_frames, DEFAULT_MAX_FRAMES);
         assert_eq!(got.max_frames, want.max_frames);
         assert_eq!(got.seed, 7);
         assert_eq!(got.text_cap, Some(TextCap::MEASURED));
         assert_eq!(got.overlap_tower_tail, want.overlap_tower_tail);
+        assert_eq!(got.pause_guard, Some(PauseGuard::MEASURED));
     }
 
     #[test]
@@ -464,9 +587,9 @@ mod tests {
         assert_eq!(only_k.sampling.top_k, 5);
         assert_eq!(
             only_k.sampling.temperature,
-            SamplingParams::REFERENCE.temperature
+            SamplingParams::FISH_SERVING.temperature
         );
-        assert_eq!(only_k.sampling.top_p, SamplingParams::REFERENCE.top_p);
+        assert_eq!(only_k.sampling.top_p, SamplingParams::FISH_SERVING.top_p);
         assert_eq!(only_k.max_frames, DEFAULT_MAX_FRAMES);
     }
 
@@ -515,5 +638,91 @@ mod tests {
             ..none
         };
         assert!(top.options(0).is_ok());
+    }
+
+    fn chunk(stop: ChunkStop) -> ChunkReport {
+        ChunkReport {
+            chunk: 0,
+            frames: 100,
+            limit: 424,
+            stop,
+            retries: 0,
+        }
+    }
+
+    #[test]
+    fn a_take_stopped_early_when_a_chunk_missed_eos_or_went_silent() {
+        let done = Drama3Take {
+            emitted: 1,
+            chunks: vec![chunk(ChunkStop::Eos), chunk(ChunkStop::Eos)],
+            longest_silence_frames: STUCK_SILENCE_FRAMES - 1,
+        };
+        assert!(!done.stopped_early());
+        for stop in [ChunkStop::TextCap, ChunkStop::MaxFrames] {
+            let mut capped = done.clone();
+            capped.chunks[1] = chunk(stop);
+            assert!(capped.stopped_early(), "{stop:?}");
+        }
+        // EOS after a long silence: the words were still never spoken.
+        let silent = Drama3Take {
+            longest_silence_frames: STUCK_SILENCE_FRAMES,
+            ..done.clone()
+        };
+        assert!(silent.stopped_early());
+        assert!(!Drama3Take::default().stopped_early());
+    }
+
+    fn frames(count: usize, amplitude: f32) -> Vec<f32> {
+        vec![amplitude; count * FRAME_SAMPLES]
+    }
+
+    fn longest(pieces: &[Vec<f32>]) -> usize {
+        let mut meter = SilenceMeter::default();
+        for piece in pieces {
+            meter.feed(piece);
+        }
+        meter.longest()
+    }
+
+    #[test]
+    fn the_meter_finds_the_longest_silent_run_across_pieces() {
+        // -45 dBFS is an RMS of about 0.0056.
+        let mut pcm = frames(3, 0.1);
+        pcm.extend(frames(5, 0.001));
+        pcm.extend(frames(2, 0.1));
+        pcm.extend(frames(7, 0.001));
+        pcm.extend(frames(1, 0.1));
+        assert_eq!(longest(std::slice::from_ref(&pcm)), 7);
+        // Codec pieces do not line up with frames.
+        let pieces: Vec<Vec<f32>> = pcm.chunks(1_000).map(<[f32]>::to_vec).collect();
+        assert_eq!(longest(&pieces), 7);
+        assert_eq!(longest(&[]), 0);
+    }
+
+    /// Every piece handed to the caller is measured, so the take's longest
+    /// silence is the emitted audio's.
+    #[test]
+    fn delivered_pieces_feed_the_silence_meter() {
+        let mut delivery = Delivery::default();
+        let mut heard = 0usize;
+        let mut emit = |pcm: Vec<f32>| {
+            heard += pcm.len();
+            true
+        };
+        delivery.take(Ok(frames(2, 0.1)), &mut emit);
+        delivery.take(Ok(frames(3, 0.001)), &mut emit);
+        delivery.take(Ok(Vec::new()), &mut emit);
+        assert_eq!(delivery.silence.longest(), 3);
+        assert_eq!(delivery.emitted, 5 * FRAME_SAMPLES);
+        assert_eq!(heard, delivery.emitted);
+    }
+
+    #[test]
+    fn the_meter_floor_is_minus_45_dbfs_and_counts_a_partial_last_frame() {
+        assert_eq!(longest(&[frames(2, 0.0050)]), 2);
+        assert_eq!(longest(&[frames(2, 0.0063)]), 0);
+        let mut tail = frames(2, 0.1);
+        tail.extend(vec![0.0; 100]);
+        assert_eq!(longest(&[tail]), 1);
     }
 }

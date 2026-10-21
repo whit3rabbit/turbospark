@@ -43,6 +43,41 @@ policy.
   and Ornith 35B. MiniCPM-V 4.7 (BF16 resident matrices) keeps the per-token
   path. `TURBOSPARK_BATCHED_GEMV=0` opts out to the byte-identical per-token
   path. See `docs/BATCHED_PREFILL.md`.
+- The ANE+Steel prefill split (`families/qwen/ane_split.rs`) is opt-in twice:
+  cargo feature `ane-prefill` and `TURBOSPARK_ANE_PREFILL` (or via FFI/Swift
+  `AnePrefillMode`). When set to `Auto`, it activates on Apple Silicon M4+ /
+  A18+ (`hardware_supports_ane_prefill`) for dense Qwen, falling back to
+  Steel with a warning if programs are missing or hardware is older. The
+  staged layer functions it calls (`batched_layers.rs`, `prefill_layers.rs`)
+  must keep the default arm's dispatch order. The default rows of
+  `qwen38_prefill_arm_probe` and the greedy md5 are the check. A split
+  micro-batch redoes on Steel from a GDN snapshot after any failure. Anything
+  new it mutates in place must be undone there too. It widens the micro-batch
+  to 2048 only while no MTP head or DFlash2 drafter is open. See
+  `docs/SPEEDUP_PLAYBOOK.md`.
+- Qwen batched prefill, speculative verify, and MTP priming encode their small
+  per-row operations (q/gate split, q/k norm, RoPE, output gate, FFN
+  activation, residual adds and norms) as a single multi-row dispatch across
+  all rows. Each row computes the same bits.
+  `TURBOSPARK_QWEN_BATCHED_ROW_OPS=0` restores the per-row form.
+- Music 3 zero-tolerance MLX matches are device-bound. The GitHub macOS
+  runner's GPU ("Apple Paravirtual device") returns different cos and sin than
+  the M4 Max that produced the pinned references, so `music3_rope` moves in the
+  last bit (`fast::` and `precise::` alike) and the `affine4` tiny profile in
+  `tests/music3_metal.rs` flips a bf16 rounding. That comparison runs only on
+  `Apple M4 Max` (or with `TURBOSPARK_MUSIC3_ORACLE_ANY_DEVICE=1`); other GPUs
+  still check reset, finiteness and sizes. Do not widen the tolerance or chase
+  it in the quantized kernels (explicit `fma` changed nothing). Details:
+  `docs/audio/minimax_music3.md`.
+- `TURBOSPARK_QWEN_FUSED_FFN=1` activates fused INT4 FFN dispatches (gate+up+act
+  GEMV and down+epilogue GEMV) for Qwen dense and MoE shared expert decode.
+  Must remain bit-exact with the sequential separate GEMV and activation dispatches.
+- `TURBOSPARK_GDN_LAZY_TAPE=1` records rank-1 conv and delta updates during
+  speculative verify and folds them asynchronously at round commit, bypassing
+  recurrent state snapshots on clean state. `checkpoint_round` snapshots recurrent
+  state only when the trunk was dirtied. Eager advances take deferred snapshots.
+  Checkpoints remain valid across speculative rollbacks prior to commit. On
+  verify failure, `discard_pending` restores clean state. See `docs/KAPITSA_KERNELS.md`.
 
 ## Checks
 

@@ -114,6 +114,13 @@ pub fn session_for_testing_named(
             // would: `off`.
             kv_bits: "off".to_string(),
             prefix_reuse: true,
+            ane_prefill: wire::AnePrefillInfo {
+                active: false,
+                mode: "off".to_string(),
+                supported: false,
+                reason: Some("a scripted session runs no decode flow".to_string()),
+                programs_dir: None,
+            },
             special_tokens: wire::SpecialTokensInfo {
                 bos_id: (tokenizer.bos_id >= 0).then_some(tokenizer.bos_id),
                 eos_id: (tokenizer.eos_id >= 0).then_some(tokenizer.eos_id),

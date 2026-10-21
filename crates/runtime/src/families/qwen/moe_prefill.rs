@@ -165,7 +165,13 @@ impl RealForwardRunner {
                 .real_qwen
                 .as_mut()
                 .ok_or_else(|| RealForwardError::Unsupported("not a Qwen install".to_string()))?;
-            qwen.ensure_batched_prefill(context, &arch, steel, false)?;
+            qwen.ensure_batched_prefill(
+                context,
+                &arch,
+                steel,
+                false,
+                crate::real_forward_types::QWEN_STEEL_PREFILL_BATCH,
+            )?;
             qwen.batched_prefill().batch
         } else {
             MAX_PREFILL_BATCH

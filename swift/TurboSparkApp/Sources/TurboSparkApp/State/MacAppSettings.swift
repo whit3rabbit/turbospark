@@ -84,6 +84,10 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     /// "3.5", or "4"). "auto" (the default) asks for 4-bit only on a
     /// checkpoint that supports it and stays off otherwise.
     public var kvBits: String
+    /// ANE+Steel prefill split mode ("auto", "on", "off").
+    public var anePrefill: String
+    /// Custom directory for compiled ANE Core ML prefill programs.
+    public var anePrefillDir: String
     /// Output generation rate cap in tokens/second (0 = uncapped).
     public var maxTokensPerSec: Double
     /// File path to steering vector tensor file.
@@ -307,6 +311,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         speculation: String = "auto",
         speculativeDrafter: String = "auto",
         kvBits: String = "auto",
+        anePrefill: String = "auto",
+        anePrefillDir: String = "",
         maxTokensPerSec: Double = 0,
         steeringPath: String = "",
         steeringMode: String = "ablate",
@@ -387,6 +393,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.speculation = speculation
         self.speculativeDrafter = speculativeDrafter
         self.kvBits = kvBits
+        self.anePrefill = anePrefill
+        self.anePrefillDir = anePrefillDir
         self.maxTokensPerSec = maxTokensPerSec
         self.steeringPath = steeringPath
         self.steeringMode = steeringMode
@@ -518,6 +526,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.speculation = c.decodeLenient(String.self, forKey: .speculation, fallback: "auto")
         self.speculativeDrafter = c.decodeLenient(String.self, forKey: .speculativeDrafter, fallback: "auto")
         self.kvBits = c.decodeLenient(String.self, forKey: .kvBits, fallback: "auto")
+        self.anePrefill = c.decodeLenient(String.self, forKey: .anePrefill, fallback: "auto")
+        self.anePrefillDir = c.decodeLenient(String.self, forKey: .anePrefillDir, fallback: "")
         self.maxTokensPerSec = c.decodeLenient(Double.self, forKey: .maxTokensPerSec, fallback: 0)
         self.steeringPath = c.decodeLenient(String.self, forKey: .steeringPath, fallback: "")
         self.steeringMode = c.decodeLenient(String.self, forKey: .steeringMode, fallback: "ablate")

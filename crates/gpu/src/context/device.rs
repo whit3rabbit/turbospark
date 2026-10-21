@@ -82,6 +82,15 @@ impl MetalContext {
         precise_math: bool,
         use_precompiled: bool,
     ) -> Self {
+        // The ANE prefill split (feature `ane-prefill`) encodes two command
+        // buffers per split point before committing any, and a default queue
+        // blocks the 65th creation until one completes, which never happens
+        // there.
+        #[cfg(feature = "ane-prefill")]
+        let queue = device.new_command_queue_with_max_command_buffer_count(
+            crate::ane_split::MAX_COMMAND_BUFFERS as u64,
+        );
+        #[cfg(not(feature = "ane-prefill"))]
         let queue = device.new_command_queue();
         let stats = MetalCompilationStats {
             cache_enabled: disk_cache.is_some(),

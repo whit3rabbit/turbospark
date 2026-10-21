@@ -52,10 +52,22 @@ threadgroup shape, or normalization convention on the device.
 - GDN snapshots are GPU blits into pooled private buffers. `snapshot` does
   not wait, so no host write to the live state may land before a later
   command buffer on the same queue has completed.
+- `ane_split.rs` (`GpuAneSplit`) bridges shared ANE output planes to Metal
+  resident buffers. A non-finite value or NaN/Inf conversion flag signals a
+  fallback to the Steel path for that micro-batch.
+- Multi-row RMSNorm (`rmsnorm_bf16w_perhead`) and multi-row RoPE encode
+  contiguous rows as head groups or unified dispatches; each row must compute
+  the identical bits to the sequential single-row execution.
 - Keep tensor normalization conventions attached to the tensor path, not
   inferred from the model family.
 - Validate numerical kernel changes with a real model, sampled output, and an
   independent parity or quality check where available.
+- Fused INT4 FFN kernels (`dequant_int4_fused.metal`):
+  `dequant_int4_gemv_fused_gate_up_act` and `dequant_int4_gemv_fused_down_epilogue`
+  must remain bit-exact to separate GEMV and activation dispatches.
+- GDN lazy tape fold (`gdn_state_fold`): performs register-fused accumulation of
+  rank-1 updates and writes state once at round end. Commit command buffers are
+  dispatched asynchronously on the GPU without blocking CPU drafting.
 
 ## Checks
 

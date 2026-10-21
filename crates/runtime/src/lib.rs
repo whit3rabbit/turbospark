@@ -85,6 +85,10 @@ pub use whisper::{WhisperProgress, WhisperRunner, WhisperSegment, WhisperTranscr
 #[cfg(target_os = "macos")]
 pub mod moonshine;
 #[cfg(target_os = "macos")]
+pub mod multitalker_metal;
+#[cfg(target_os = "macos")]
+pub mod nemotron_diar_metal;
+#[cfg(target_os = "macos")]
 pub mod qwen3_asr;
 #[cfg(target_os = "macos")]
 pub mod qwen3_asr_metal;
@@ -114,6 +118,8 @@ pub use model_io::{
 };
 
 pub use error::RuntimeError;
+#[cfg(target_os = "macos")]
+pub use families::qwen::{chip_is_m4_or_newer, hardware_supports_ane_prefill, AnePrefillMode};
 #[cfg(target_os = "macos")]
 pub use families::qwen::{
     install_has_dflash, install_has_mtp_head, DflashDraftPolicy, DraftPolicies, MtpDraftPolicy,

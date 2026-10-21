@@ -410,6 +410,22 @@ pub unsafe extern "C" fn ts_family_capabilities_json(
     })
 }
 
+/// Returns 1 if the host chip is an Apple Silicon M4 or newer capable of ANE prefill,
+/// 0 otherwise.
+#[no_mangle]
+pub unsafe extern "C" fn ts_chip_supports_ane_prefill() -> c_int {
+    abi::guard_value(0, || {
+        #[cfg(target_os = "macos")]
+        {
+            runtime::hardware_supports_ane_prefill() as c_int
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            0
+        }
+    })
+}
+
 /// The `(downloadBytes, installBytes)` an install of `alias` will cost, as
 /// JSON, so a GUI can warn about space and show a determinate bar before the
 /// walk starts.

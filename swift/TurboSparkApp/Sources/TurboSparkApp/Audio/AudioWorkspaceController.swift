@@ -411,8 +411,9 @@ final class AudioWorkspaceController: ObservableObject {
             speech.mode = Self.speechMode(for: profile)
             recipe.speech = speech
             if !speechSupportsStyle { recipe.speech?.instruction = "" }
-        } else if Self.clonesNatively(profile) {
+        } else if Self.clonesNatively(profile) && page != .voiceover {
             // Keep the reference across model switches; it is the voice.
+            // Voiceover runs the same model without one (`runClonesNatively`).
             var speech = recipe.speech ?? AudioSpeechSettings()
             speech.mode = .clone
             speech.instruction = ""

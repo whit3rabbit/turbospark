@@ -37,6 +37,8 @@
 //! kernel descoped), `fused.metal`, and the DSV4 compute kernels (state
 //! manager only).
 
+#[cfg(all(target_os = "macos", feature = "ane-prefill"))]
+pub mod ane_split;
 #[cfg(target_os = "macos")]
 mod attention_decode;
 #[cfg(target_os = "macos")]
@@ -51,6 +53,8 @@ mod context;
 // non-macOS build they must compile to nothing like their GEMV siblings --
 // leaving the gate off here broke the cross-target check from the day the
 // modules landed (AGENTS.md/CLAUDE.md Gotcha 8: a mod without its gate).
+#[cfg(target_os = "macos")]
+mod conformer_stream;
 #[cfg(target_os = "macos")]
 mod dequant_1bit_gemm_batch;
 #[cfg(target_os = "macos")]
@@ -128,6 +132,8 @@ mod moe_prefill_batch_gguf;
 #[cfg(target_os = "macos")]
 mod moonshine_frontend;
 #[cfg(target_os = "macos")]
+mod nemotron_diar;
+#[cfg(target_os = "macos")]
 mod ple;
 #[cfg(target_os = "macos")]
 mod power_state;
@@ -180,6 +186,15 @@ pub use attention_tq::{
 };
 #[cfg(target_os = "macos")]
 pub use bytes::{half_slice_to_le_bytes, read_f32_buffer, read_f32_buffer_at, read_half_buffer};
+#[cfg(target_os = "macos")]
+pub use conformer_stream::{
+    encode_copy as encode_conformer_copy,
+    encode_depthwise_causal as encode_conformer_depthwise_causal,
+    encode_glu_extend as encode_conformer_glu_extend,
+    encode_relpos_attention as encode_conformer_relpos_attention,
+    encode_silu as encode_conformer_silu, RelPosAttention as ConformerRelPosAttention,
+    MAX_STREAM_HEAD_DIM, MAX_STREAM_KEYS,
+};
 #[cfg(target_os = "macos")]
 pub use context::{
     autorelease_pool, dispatch_one_threadgroup_per_row, dispatch_one_threadgroup_per_row_offsets,
@@ -344,6 +359,8 @@ pub use moonshine_frontend::{
     encode_moonshine_conv1d, encode_moonshine_embed, encode_moonshine_groupnorm,
     encode_moonshine_rope, encode_moonshine_swiglu, encode_moonshine_tanh,
 };
+#[cfg(target_os = "macos")]
+pub use nemotron_diar::encode_rope_neox_rows as encode_nemotron_rope_neox;
 #[cfg(target_os = "macos")]
 pub use ple::encode_ple_gate;
 #[cfg(target_os = "macos")]

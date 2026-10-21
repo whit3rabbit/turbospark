@@ -22,6 +22,10 @@
 //!
 //!   TURBOSPARK_QWEN38_INSTALL_DIR=~/models/qwen38-27b.gturbo \
 //!     cargo test -p turbospark-bench --test qwen38_prefill_arm_probe --release -- --ignored --nocapture
+//!
+//! With `--features ane-prefill` and `TURBOSPARK_ANE_PREFILL_DIR` set, it runs
+//! the opt-in ANE prefill split's arms after the default Steel arm instead of
+//! the per-row one (`ane_prefill_arms`).
 
 use foundation::LogitValue;
 use runtime::{ChunkedPrefillRunner, LogitProducer, RealForwardRunner};
@@ -36,11 +40,20 @@ const LENGTHS: [usize; 6] = [64, 200, 500, 1000, 2000, 3000];
 const MEAN_KL_BOUND: f64 = 1e-3;
 
 fn prefill(runner: &mut RealForwardRunner, ids: &[i32], vocab: usize) -> Vec<f64> {
+    prefill_in_chunks(runner, ids, vocab, CHUNK)
+}
+
+fn prefill_in_chunks(
+    runner: &mut RealForwardRunner,
+    ids: &[i32],
+    vocab: usize,
+    chunk: usize,
+) -> Vec<f64> {
     runner.reset();
     let mut logits = vec![LogitValue::from_f32(0.0); vocab];
     let mut offset = 0;
     while offset < ids.len() {
-        let take = (ids.len() - offset).min(CHUNK);
+        let take = (ids.len() - offset).min(chunk);
         runner
             .prefill_chunk(&ids[offset..offset + take], offset, &mut logits)
             .expect("chunked prefill");
@@ -125,6 +138,10 @@ fn steel_prefill_stays_within_the_distribution_bound() {
         .iter()
         .map(|p| prefill(&mut steel_runner, p, vocab))
         .collect();
+    #[cfg(feature = "ane-prefill")]
+    if ane_prefill_arms(&mut steel_runner, &prompts, &reference, &steel, vocab) {
+        return;
+    }
     steel_runner.set_prefill_rows_attention(false);
     let steel_per_row: Vec<Vec<f64>> = prompts
         .iter()
@@ -141,6 +158,68 @@ fn steel_prefill_stays_within_the_distribution_bound() {
             "{label}: mean KL {mean_kl} nats over the {MEAN_KL_BOUND} bound"
         );
     }
+}
+
+/// With the `ane-prefill` feature and `TURBOSPARK_ANE_PREFILL_DIR` set: the
+/// opt-in ANE prefill split's arms at its 2048-row width, in 2048-token
+/// chunks. `break` runs every row on Steel at that width, so it is the
+/// split's own baseline. The split runs on the 1000-, 2000- and 3000-token
+/// prompts; the shorter ones fall under its 512-row floor and run Steel.
+/// Every arm, the default Steel arm included, is held to the bound. False
+/// (and nothing run) without the directory.
+#[cfg(feature = "ane-prefill")]
+fn ane_prefill_arms(
+    runner: &mut RealForwardRunner,
+    prompts: &[Vec<i32>],
+    reference: &[Vec<f64>],
+    steel: &[Vec<f64>],
+    vocab: usize,
+) -> bool {
+    use runtime::AnePrefillMode;
+    let Some(dir) = std::env::var_os("TURBOSPARK_ANE_PREFILL_DIR") else {
+        return false;
+    };
+    assert!(
+        std::env::var_os("TURBOSPARK_ANE_PREFILL").is_none(),
+        "TURBOSPARK_ANE_PREFILL is set; this probe chooses the arms itself"
+    );
+    let mut arms = Vec::new();
+    for (label, mode) in [
+        (
+            "ane prefill break (width 2048, every row on Steel)",
+            AnePrefillMode::Break,
+        ),
+        ("ane prefill split", AnePrefillMode::Split),
+    ] {
+        runner.set_ane_prefill(mode, Some(dir.clone().into()));
+        let out: Vec<Vec<f64>> = prompts
+            .iter()
+            .map(|p| prefill_in_chunks(runner, p, vocab, 2048))
+            .collect();
+        arms.push((label, out));
+    }
+    runner.set_ane_prefill(AnePrefillMode::Off, None);
+    let mut means = vec![(
+        "steel, multi-row attention",
+        compare("steel, multi-row attention", reference, steel),
+    )];
+    for (label, out) in &arms {
+        means.push((label, compare(label, reference, out)));
+    }
+    let max_d = arms[0]
+        .1
+        .iter()
+        .zip(&arms[1].1)
+        .flat_map(|(a, b)| a.iter().zip(b).map(|(x, y)| (x - y).abs()))
+        .fold(0.0, f64::max);
+    eprintln!("split against break: max |dlogit| {max_d:.6}");
+    for (label, mean_kl) in means {
+        assert!(
+            mean_kl < MEAN_KL_BOUND,
+            "{label}: mean KL {mean_kl} nats over the {MEAN_KL_BOUND} bound"
+        );
+    }
+    true
 }
 
 /// Prints the per-length table for one arm against the reference and

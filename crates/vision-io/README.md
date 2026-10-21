@@ -8,7 +8,7 @@ Downstream workspace crates depend on it under its real package name, no alias:
 
 ```toml
 [dependencies]
-turbospark-vision-io = { path = "../vision-io", version = "0.3.2" }
+turbospark-vision-io = { path = "../vision-io", version = "0.4.0" }
 ```
 
 ## Purpose & Role

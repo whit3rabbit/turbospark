@@ -58,6 +58,7 @@ struct AudioSpeakerNamingSheet: View {
         }
         .frame(minWidth: 460, idealWidth: 600 * scale, maxWidth: 820 * scale, minHeight: 360, idealHeight: 560 * scale)
         .background(.appPage)
+        .themedFont(.base)
         .onAppear {
             focusedKey = summaries.first { $0.mergedInto == nil }?.id
             suggestions = AudioSpeakerMemory.suggestions(

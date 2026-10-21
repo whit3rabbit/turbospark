@@ -39,6 +39,10 @@ They live in `crates/runtime/src/coreml/`, because they need the tokenizer
   `<stem>-<16 hex>.mlmodelc` entries in the cache root the caller passed.
   Callers pass a directory inside the model's install, never a new
   `~/.turbospark` path.
+- The `ane-prefill` cargo feature compiles low-level IOSurface plane sharing
+  (`SharedF16Plane`, `predict_shared`) for weightless Core ML prefill splits.
+  Programs are generated via `tools/gen_ane_prefill_programs.py` and validated
+  against `manifest.json`.
 
 ## Tests
 

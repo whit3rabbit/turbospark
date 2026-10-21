@@ -97,12 +97,19 @@ speakers each. Every chunk sees the first and the previous chunk as history.
 
 ### Sampling recipe
 
-Temperature 0.7, top-p 0.7, top-k 30, at most 1024 frames per chunk. The
-temperature applies before top-p. The cumulative mass runs over the full
-vocabulary. The token that crosses top-p is dropped unless it ranks first.
-Repetition-aware sampling: when a semantic main token repeats one of the last
-16 main tokens, it is replaced by a second draw at temperature 1.0, top-k 30,
-top-p 0.95.
+The reference recipe (mlx-audio, `SamplingParams::REFERENCE`) is temperature
+0.7, top-p 0.7, top-k 30, at most 1024 frames per chunk. The temperature
+applies before top-p. The cumulative mass runs over the full vocabulary. The
+token that crosses top-p is dropped unless it ranks first. Repetition-aware
+sampling: when a semantic main token repeats one of the last 16 main tokens,
+it is replaced by a second draw at temperature 1.0, top-k 30, top-p 0.95.
+
+**Product default since 2026-10-16: Fish Audio's serving recipe**
+(`SamplingParams::FISH_SERVING`): temperature 1.0, top-p 0.9, top-k 30, the
+same RAS and top-p rule. It is the default of Fish Audio's own runtime
+(SGLang-Omni `fishaudio_drama3/speech_request.py` at 28c3e35a). The measured
+reason is under "Pause trap and the recipe" below. Every measurement above
+that heading ran the reference recipe.
 
 **Text-scaled frame cap (not in the reference).** A chunk also stops at
 `64 + 24 * tokens + 22 * speaker_tags + 108 * cues` frames when that is under
@@ -112,9 +119,11 @@ paired-tag markup removed (`chunking::spoken_text`). A paired tag counts as a
 cue. Below about 40 tokens the scaled cap is the tighter one, and longer
 chunks keep the 1024 bound.
 
-`ChunkEnd` reports `TextCap` apart from `Eos` and `MaxFrames`, and
-`FishDrama3Runner` logs every chunk that ends without EOS. `text_cap: None`
-(`text-cap=off` in `fish_drama3_say`) restores the reference's behavior.
+`ChunkEnd` reports `TextCap` apart from `Eos` and `MaxFrames`, with the
+chunk's `limit`. `FishDrama3Runner` logs every chunk that ends without EOS
+and returns a `Drama3Take` whose `stopped_early()` says the take likely
+stopped speaking early (below). `text_cap: None` (`text-cap=off` in
+`fish_drama3_say`) restores the reference's behavior.
 
 Measured 2026-10-15 with the cap off: `fish_drama3_say` on the pinned 4-bit
 install (Metal trunk, tower and codec, 16 streamed slots) ran the
@@ -193,6 +202,404 @@ so the runs were stopped. Until they run, only the prompt is cleared. The
 rest of the loop (trunk numerics, tower, sampling) has no teacher-forced
 parity against mlx-audio yet (see Gates), so the 70 to 80% failure rate is
 not yet attributed to the port or to the model.
+
+**Pause trap and the recipe (2026-10-16).** A per-frame trace of the main
+draw (`fish_drama3_say` with a throwaway probe) shows the mechanism on
+`Welcome back. This is a short voiceover test with no reference voice.` In
+the gap after a sentence the semantic head spreads its mass over a few
+silence tokens (top-1 0.2 to 0.36) with EOS near 0, so the model is pausing,
+not ending. Under top-p 0.7 the first draw keeps one to three of those
+tokens and can never pick speech. The only way back is the RAS retry (T 1.0,
+top-p 0.95), which fires on almost every silent frame. Seed 1 leaves a
+13-frame gap through a retry. Seed 0 never does: 12 voiced frames, then 411
+silent ones to the 424-frame cap. Fish Audio's own runtime samples the main
+draw at T 1.0 and top-p 0.9 with the same RAS, so speech tokens survive the
+first draw too.
+
+Same install and probe, text cap on. A take fails when it ends without EOS or
+holds hundreds of silent frames:
+
+| Text | Reference recipe | Fish Audio's recipe |
+| --- | --- | --- |
+| The voiceover script, seeds 0 to 11 | 4 of 12 | 0 of 12 |
+| Three-turn dialogue, seeds 0 to 5 | 4 of 6 | 1 of 6 |
+| `[laughs] ... [pause] Seriously.`, seeds 0 to 5 | 4 of 6 | 3 of 6 |
+| Total | 12 of 24 | 4 of 24 (Fisher exact, two-sided, about 0.03) |
+
+An explicit `[pause]` still traps half the takes under either recipe, so the
+recipe is not the whole fix there.
+
+Corpus check through `FishDrama3Runner` (`fish_drama3_wer`,
+`crates/audio/testdata/fish_drama3/eval_corpus.txt`: 20 English sentences,
+the voiceover script, two dialogues, two cue lines, numbers, German and a
+249-byte chunk; seeds 0 and 1; Parakeet TDT on the CPU). The Phase 0 corpus
+was kept off the repository and is gone, so this one replaces it:
+
+| Recipe, seed | Reported stopped early | Failed (harness rule) | Mean WER | WER of passing clips | Widest EOS chunk |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Reference, 0 | 4 | 1 | 8.1% | 2.6% | 33% of its limit |
+| Reference, 1 | 4 | 2 | 9.1% | 2.0% | 42% |
+| Fish Audio, 0 | 1 | 0 | 1.9% | 1.6% | 39% |
+| Fish Audio, 1 | 0 | 0 | 0.8% | 0.8% | 42% |
+
+Under the reference recipe even a plain sentence (`The train to the coast
+leaves at seven, ...`) and the 249-byte chunk (to `max_frames`) were
+trapped. The one Fish Audio take reported stopped early is the `[pause]`
+line, which never spoke `Seriously.` The harness's two-halves rule marks
+only three of the nine trapped takes as failed. Every completed chunk used
+at most 42% of its limit, so the `TextCap::MEASURED` constants still hold
+under the new recipe. Fish Audio's recipe became the product default on this
+evidence. The host was loaded by other sessions' builds, which changes
+timing only; a seed fixes the frame counts.
+
+**Stopped early.** `Drama3Take::stopped_early` is true when a chunk ends
+without EOS, or the emitted audio holds a silent run of
+`STUCK_SILENCE_FRAMES` (160 frames, 7.4 s, at -45 dBFS per 2048-sample
+frame). Completed takes pause at most 78 frames, and one trapped take reached
+EOS only after 359 silent frames, which a chunk-stop check alone would miss.
+It reaches the app as `AudioResult.stoppedEarly`, and the app retakes such a
+take with a fresh seed at most twice when the seed was left to it.
+`crates/bench/tests/fish_drama3_pause_trap_gate.rs` holds the 24 takes above,
+through the runner, to a frozen count. It measured 4 of 24, the same takes
+and frame counts as the probe, and the longest silence in a completed take
+was 50 frames. With the default reverted to the reference recipe it measured
+12 of 24 and failed.
+
+## Pause guard (2026-10-17, prototype)
+
+Under Fish Audio's recipe an explicit `[pause]` still traps 3 of 6 takes
+(seeds 0, 2 and 3 of `[laughs] ... [pause] Seriously.`). The guard below
+resamples a pause that outlives every healthy one, inside the generation
+loop, before any of it reaches the codec. It is built
+(`GenerateOptions::pause_guard`, `PauseGuard::MEASURED`). The design came
+first and the prototype measured it: the constants as designed recover too
+few traps, so the default differs from the design in `hold_after` (0, not 64)
+and `max_retries` (6, not 3). "Prototype results" below has the evidence and
+what the change costs. The sections before it are the design as written.
+
+### Measurements behind it
+
+`crates/runtime/examples/fish_drama3_silence_probe.rs` speaks
+`eval_corpus.txt` at seeds 0 and 1 and the gate's 24 takes on the runner's
+path (default options, 8192 rows, 16 streamed slots, Metal tower and codec,
+the codec streamed in 4- then 7-frame pieces). It records each draw's main
+code `c0`, the decoded RMS of its frame, and the semantic head's EOS
+probability and top 30 at temperature 1.0. The run gave 80 takes and 11,722
+frames, 4,689 of them silent (RMS under -45 dBFS). It reproduced the gate's
+4 of 24 and the corpus's one trapped clip (the `[pause]` line at seed 0, the
+same take as gate seed 0).
+
+The host was at load 9 to 20 from other work, which moves timing only. The
+JSONL and the analysis scripts are kept outside the repository with the
+session notes.
+
+- **Silence is many codes.** The takes drew 2,670 distinct codes. A frame's
+  own code predicts its RMS better than a neighbour's does (token-majority
+  purity 0.966, against 0.932 and 0.951 one frame off). But the 94 codes
+  drawn at least 5 times and silent at least 90% of the time cover only 80%
+  of silent frames. In the traps the RMS silence starts about 140 frames
+  before the codes settle on one deep-silence code (3174, drawn 1,233 times,
+  all of them in trapped takes). A counter over a small fixed silent set
+  starts that late.
+- **Voiced codes are the learnable side.** Count a code as voiced when most
+  of its frames were voiced, and every other code (silent-majority or never
+  drawn) as silent. Held out by text (the gate texts are corpus lines 20, 21
+  and 23, so a take's table excludes every take of its text), this calls
+  91.6% of silent frames silent and 21% of voiced frames silent, mostly codes
+  the held-out table never saw. 2,324 of 4,096 codes are voiced-majority over
+  all 80 takes.
+- **A pause counter that tolerates strays.** Add one per silent-classified
+  frame. A voiced frame keeps the count going unless it is the third voiced
+  frame in a row, which resets it to zero. Held out by text, its largest value
+  on healthy takes is 55 (the 249-byte chunk at seed 1). The decoded RMS
+  agrees: the longest healthy silence that speech followed is 50 frames (the
+  `[pause]` itself, gate seed 4). Every trap passes 128: the count starts
+  within 6 frames of the RMS onset in four traps and 27 frames late in the
+  fifth (gate seed 2, whose tail stays diverse), and reaches 64 at frames 138
+  to 199 and 128 at frames 202 to 263.
+- **A trapped pause is not decided at its onset.** Speech mass is the head's
+  top-30 probability on voiced-majority codes (a lower bound: unseen codes
+  count as silent). At offsets 0, 24 and 48 frames into the RMS silence it
+  averages 0.24, 0.08 and 0.05 in the five traps, against 0.18, 0.07 and 0.17
+  in the 41 healthy pauses of 12 frames or more. The trap shows later. In
+  three of the five, the distinct codes per 40 frames fall from 24 to 31 at
+  the onset to 1 by 160 frames in. EOS stays under 0.01 until about 128
+  frames in.
+- **Restore points are cheap.** On the real trunk at row 232,
+  `HiddenTrunk::snapshot` (a pooled blit of the 61 MiB recurrent state, then
+  a wait for idle) took 0.548 ms median and 17.0 ms worst over 40 calls, and
+  `restore` 0.540 ms median and 0.80 ms worst. The tower's `truncate` moves a
+  cursor (Metal) or truncates host vectors (CPU), and its split-prefill and
+  truncate replay is already gated bit for bit.
+
+### The mechanism
+
+In `generate.rs`, behind `GenerateOptions::pause_guard: Option<PauseGuard>`,
+on by default. `None` restores today's loop for parity work and A/B runs.
+
+| Constant | Designed (shipped differs where noted) | Why |
+| --- | ---: | --- |
+| `resume_frames` | 3 | Voiced frames in a row that end a pause. 2 misses one trap held out by text. |
+| `hold_after` (H) | 64 frames (3.0 s). Shipped: 0 | Above every healthy count (55 token, 50 RMS). A pause shorter than this never touches the guard. |
+| `retry_after` (K) | 128 frames (5.9 s) | Twice H. Healthy pauses under the old recipe reached 78 (dialogue, 2026-10-16), still well below. |
+| `max_retries` (N) | 3 per chunk. Shipped: 6 | Bounds the extra work to N x (K - H) frames. Set from the prototype's recovery rate. |
+| voiced table | 4,096-bit const | Voiced-majority codes from a training run disjoint from `eval_corpus.txt` (below). |
+
+Per chunk:
+
+1. Classify each drawn main token with the table and run the counter.
+2. When the counter is about to pass H, take a restore point before the
+   frame is fed: `backbone.snapshot()`, `tower.position()`, the current
+   `hidden`, the previous `frame`, the RAS history, the chunk's frame count
+   and the counter. The draw that triggered it is kept and fed as usual.
+3. Hold every frame after the restore point: no `FrameEvent::Frame` for it.
+   Each held frame sends a new `FrameEvent::Held { chunk }`, so a consumer
+   still polls its stop flag once per frame.
+4. If the pause ends (3 voiced frames in a row), EOS arrives, or the chunk
+   reaches its cap, release the held frames in order and drop the restore
+   point. That output is what the loop without the guard would have emitted.
+5. If the counter reaches K, roll back: `backbone.restore`,
+   `tower.truncate`, restore the copied state, drop the held frames, and
+   draw again. The key sequence just continues, so the redraw differs and a
+   seed still fixes the whole take.
+6. After N rollbacks, release and keep going as today. The chunk then runs to
+   its cap and the take reports stopped early, so the app's retake remains
+   the backstop.
+
+The cap counts frames on the kept path, so a rollback gives frames back.
+`ChunkEnd` and `ChunkReport` gain `retries`. A take where the guard never
+fires draws the same keys, feeds the same rows and emits the same frames as
+the loop without it. The only differences are the counter and, past H, a
+snapshot.
+
+### Settled questions
+
+- **Classifying silence without decoding.** Use the voiced table and the
+  counter above, not a small silent set and not the decoded RMS. The decoded
+  RMS is exact, but the codec decodes 7-frame pieces on its own thread. The
+  restore point would then have to be taken before silence is known. The
+  codec worker would also need a rewind protocol. Its stream state is host
+  memory (a 128-frame attention window and conv carries), so that could be
+  done. The table keeps the guard in the portable
+  loop, and the RMS rule stays the judge of the result (`stopped_early`, the
+  gate).
+- **Where frames are held.** In the loop, not the runner as first proposed.
+  The loop is the only producer of `FrameEvent::Frame`, so a frame it never
+  sends never reaches a codec. `fish_drama3_say`, the runner and
+  `/v1/audio/speech` all get the guard without changes. Holding in the runner
+  would need the loop to tell it which frames to drop.
+- **Snapshot memory.** A restore point exists only after a pause passes H,
+  which no healthy take in the probe did. `GdnStateManager` pools snapshot
+  buffers. The trunk then keeps at most two mirrors (the system block's and
+  the guard's), 61 MiB above today's peak and only during a long pause.
+  `open_bytes` already budgets two snapshots. The memory oracle's text has no
+  such pause, so it would not see the second mirror. The prototype adds one
+  trapped request (the `[pause]` line, seed 0) to the oracle and re-freezes
+  the ceiling if the peak rises.
+- **Streaming latency.** First audio is unchanged. A pause under H streams as
+  today. Past H the stream stalls until the pause ends or rolls back. That is
+  at most K - H = 64 frames (3 s at about real time) per attempt. A listener on a
+  live stream hears that stall as silence, about what the trap would have
+  played. A saved take, the app's (it collects the whole take before playing
+  or retaking it) and a non-streamed `/v1/audio/speech` response drop the
+  abandoned silence. `/v1/audio/speech` has no retake of its own, so for the
+  server the guard is the only recovery. As shipped (H=0) every pause is held
+  until it ends, so a streamed response delays each pause's frames by the
+  pause's length (56 frames, 2.6 s, at most on the healthy takes measured),
+  and an unrecovered attempt holds up to K = 128 frames (5.9 s).
+
+### Open, and what the prototype must show
+
+- **Whether a redraw from H recovers.** (Answered in "Prototype results":
+  it rarely does at H=64, and the onset fallback is the shipped default.)
+  Speech mass 48 frames in is similar
+  in healthy and trapped pauses. That only says a redraw has a chance. The
+  prototype measures recoveries per rollback on the trapped takes. If redraws
+  from H rarely recover, the fallback is a restore point at each pause's
+  onset. That costs a snapshot per pause (median 4 per take, about 2 ms) and
+  holds every pause from its onset, which stalls live streams at every long
+  pause. It needs its own sign-off.
+- **The voiced table's reach.** It comes from voices the model picks with no
+  reference, in English and one German line. A cloned voice or another
+  language draws codes the table has not seen, which count as silent. The
+  3-in-a-row reset tolerates many of them, and a false trigger only redraws
+  from H. The training run adds Chinese, Japanese and one cloned voice. Its
+  corpus is disjoint from `eval_corpus.txt`, so the gate and the WER check
+  stay held out.
+- **Done means:**
+  - A fake-backbone unit test where the model stays silent until a redraw
+    and the guard recovers. The same seed traps with the guard off.
+  - A lower frozen count in `fish_drama3_pause_trap_gate.rs`.
+  - `fish_drama3_wer` at seeds 0 and 1 with no WER change on passing clips.
+    They should be byte-identical, since the guard should not fire on them.
+  - The memory oracle with a trapped request.
+
+### Prototype results (2026-10-17)
+
+Built as designed: the loop holds frames from `hold_after`, rolls back to a
+restore point at `retry_after`, and sends held frames only when the pause
+ends. `crates/runtime/examples/fish_drama3_guard_sweep.rs` speaks sets of
+takes at a list of settings (`hold:retry:retries`) through the runner.
+
+**Mechanism checks.** Six unit tests in `generate.rs` drive a scripted
+semantic head through the fixture tower and a fake backbone:
+
+- A trapped pause recovers after a redraw, the same seed traps with the guard
+  off, and nothing from an abandoned attempt is sent. The backbone and the
+  tower are back at the restore point on every redraw, with the point's hidden
+  state and previous frame.
+- A pause that ends by itself goes out unchanged though its tail was held.
+- Out of retries, the chunk runs on as without the guard.
+- A stop while frames are held ends the call.
+- Bad settings are refused.
+- The shipped table matches its generated count.
+
+Seven mutations were checked by hand and each fails a test: no tower
+truncate, no backbone restore, no hidden restore, no frame-count truncate, no
+previous-frame restore, no RAS-history restore, and no holding.
+
+**Recovery.** The table comes from `voiced_table_corpus.txt`: 126 takes
+(42 lines at seeds 0 to 2, 8 of them in a cloned voice; English, Chinese,
+Japanese, German and Spanish), 14,452 frames, 2,763 of 4,096 codes voiced.
+Applied to the earlier 80 eval takes, which it never saw, it calls 93.0% of
+silent frames silent and 12.5% of voiced ones, and the counter peaks at 55 on
+healthy takes. A trap's counter reaches 64 at frame 138 to 179 and 128 at 202
+to 243.
+
+Eight takes that trap with the guard off: the gate's four (held out of the
+table) and four from the training run (in sample for it). The settings were
+picked on these, so read them as an upper bound.
+
+| hold:retry:retries | Recovered of 8 | Retries |
+| --- | ---: | ---: |
+| 64:128:3 (the design) | 2 | 22 |
+| 64:128:6 | 4 | 40 |
+| 32:128:3 | 5 | 17 |
+| 32:128:6 | 7 | 25 |
+| 16:128:3 | 6 | 12 |
+| 0:128:3 | 6 | 12 |
+| 0:128:6 | 8 | 16 |
+
+Thirty fresh takes no setting was chosen on: the `[pause]` line at seeds 6 to
+17, the dialogue at seeds 6 to 11, and two new texts at seeds 0 to 5. 11 of
+them trap with the guard off.
+
+| Setting | Recovered of the 11 | Healthy takes turned bad |
+| --- | ---: | ---: |
+| 64:128:3 (the design) | 2 | 0 |
+| 32:128:6 | 6 | 0 |
+| 0:128:6 (shipped) | 8 of the first 9 it reached | 0 |
+
+0:128:6 stopped at its 26th take, which is one of the 11. That take spent all
+six retries without recovering and then hit the error below. Two more of the
+11 were not reached.
+
+A redraw from deep in a pause rarely recovers because the head has settled
+into silence: its speech mass averages 0.24 at the onset and about 0.05 from
+48 frames in. Earlier restore points redraw while the choice is still open.
+The design's fallback (a restore point at the pause's onset) is the better
+setting, so H=64 is the wrong default.
+
+**What an early restore point costs.** Only streaming latency: a held frame
+reaches the codec when its pause ends. On the 75 healthy eval takes, with the
+shipped table:
+
+| hold_after | Healthy takes that hold anything | Restore points per take | Held frames per take | Longest single hold |
+| ---: | ---: | ---: | ---: | ---: |
+| 64 | 0 of 75 | 0 | 0 | 0 |
+| 32 | 8 | 0.2 | 1.7 | 24 frames (1.1 s) |
+| 16 | 26 | 0.5 | 6.5 | 40 frames (1.9 s) |
+| 0 | 75 | 9.2 | 61.3 | 56 frames (2.6 s) |
+
+A snapshot takes 0.55 ms and a restore 0.54 ms on the real trunk. The app
+collects a whole take before playing or retaking it, so it feels none of the
+hold. A streamed `/v1/audio/speech` response (`stream=true`) would hear a
+healthy pause arrive late by up to the longest hold.
+
+**Gate.** `fish_drama3_pause_trap_gate` with the shipped table: 4 of 24
+stopped early with the guard off. At the design's settings (64:128:3) it is
+3 of 24. The dialogue take (seed 3) recovers after 3 retries, and the target
+line still traps seeds 0, 2 and 3 (seed 3 reaches EOS at frame 561 after 478
+silent frames, which the silence rule still counts). At the shipped default
+(0:128:6) it is 0 of 24, and the target line's seeds 0, 2 and 3 end by EOS at
+222, 176 and 131 frames after 1, 4 and 1 retries, with longest silences of 76,
+51 and 27 frames. The gate is frozen at 0.
+
+**WER.** `fish_drama3_wer` on the 28-line corpus, guard at 0:128:6 against
+guard off, same host and seeds. This setting holds every pause, so it is the
+strictest check that holding changes nothing.
+
+| Seed | Guard off | Guard 0:128:6 |
+| ---: | --- | --- |
+| 0 | 1 stopped early, mean WER 1.9%, passing clips 1.6% | 0 stopped early, mean WER 1.6%, passing clips 1.6% |
+| 1 | 0 stopped early, mean WER 0.8% | identical: all 28 clips match in frames, WER and transcript |
+
+At seed 0, 27 of 28 clips match in frames and transcript. The `[pause]` line
+goes from 664 frames to the text cap, never speaking "Seriously.", to 222
+frames ending in EOS after one retry, and Parakeet hears the whole line
+(WER 0.0).
+
+**Memory.** The memory oracle gains a request the guard rolls back (the
+`[pause]` line at seed 0). Session peak against the 6,411 MiB ceiling:
+
+| Guard | After the cloned run | After the paused run | Session peak | Retries on the paused request |
+| --- | ---: | ---: | ---: | ---: |
+| 64:128:3 (the design) | 6,291 MiB | 6,361 MiB | 6,364 MiB | 3 |
+| 0:128:6 (shipped) | 6,357 MiB | 6,357 MiB | 6,357 MiB | 1 |
+
+At H=64 only the paused request holds a second recurrent-state mirror, and it
+adds about 70 MiB (6,291 to 6,361). At H=0 every take with a pause holds one,
+so the warm-up and the cloned run already carry it (+66 MiB over the design's
+6,291 after the cloned run). The pool reuses the mirror: a take makes about 9
+restore points, and the warm replay grew the footprint by 0.00 MiB. The
+ceiling holds with 54 MiB spare (0.8%, down from the 5% margin it was frozen
+with). It is unchanged here, and re-freezing it at the 6,357 MiB peak plus 5%
+(6,675 MiB) is a decision for review.
+
+**A hazard the guard may raise.** The tower's nine residual heads have 4,096
+entries but the codec's acoustic books have 1,024, and nothing masks the
+heads. A residual code of 1,024 or more fails the whole request (`code 3403
+outside the codebook of 1024`, raised by the codec). A scan of generated
+frames found 0 of 6,722 with the guard off and 1 of 3,830 at 0:128:6: the
+`Ready?` dialogue at seed 1, frame 403, after all six retries were spent.
+That is the error that stopped the sweep. One frame cannot say whether the
+guard raises the rate (through the extra silent frames it draws, or through
+state after a rollback) or the rate is small either way. Sampling the
+residual heads over the codec's 1,024 codes would remove it. That change is
+separate from the guard and is not made here.
+
+### Alternatives not taken
+
+- **Bias the main draw after a long pause** (raise voiced codes or EOS). No
+  snapshot and no hold, but every long pause then samples from a distribution
+  the model did not produce. The redraw keeps every kept frame a draw from
+  the model's own head.
+- **Roll back without holding.** Simpler, but every rollback leaves K - H
+  frames (3 s) of abandoned silence in the saved audio.
+- **End the chunk after the last retry.** Saves the trap's tail, but a false
+  trigger would then drop words. Running to the cap as today loses nothing.
+
+### Gate by recipe and guard (2026-10-18)
+
+`crates/bench/tests/fish_drama3_pause_trap_gate.rs` on origin/main
+(9a3bf8db) plus the recipe change and the guard, pinned 4-bit install, 16
+streamed slots, M4 Max. It counts takes `Drama3Take::stopped_early` reports,
+selecting the recipe with `TURBOSPARK_DRAMA3_GATE_RECIPE` and the guard with
+`TURBOSPARK_DRAMA3_GATE_GUARD`. Each count is frozen per configuration. No
+request failed in the 96 takes.
+
+| Recipe, guard | Stopped early | Voiceover (12) | Dialogue (6) | Pause cue (6) |
+| --- | ---: | ---: | ---: | ---: |
+| Reference, off (the loop before) | 12 of 24 | 4 | 4 | 4 |
+| Fish Audio, off | 4 of 24 | 0 | 1 | 3 |
+| Reference, on | 2 of 24 | 1 | 0 | 1 |
+| Fish Audio, on (the default) | 0 of 24 | 0 | 0 | 0 |
+
+With both, the guard retried four takes (dialogue seed 3 once, the pause cue
+at seeds 0 and 3 once and at seed 2 four times), and each then ended by EOS.
+The masking of the residual heads to the codec's 1,024 codes
+(`81d7bced`, claude/wizardly-jennings-0c4e66) is not in this tree. No take
+here drew a code past the book, so these counts do not depend on it.
 
 ## Tensor inventory (from the headers)
 

@@ -351,6 +351,10 @@ fn native_job_ownership_pcm_copy_and_cancel() {
             wire["seed"], 0,
             "native defaults must return the resolved seed"
         );
+        assert_eq!(
+            wire["stopped_early"], false,
+            "only a Drama 3 take can report that it stopped speaking early"
+        );
         assert!(!sink.samples.is_empty());
         assert!(sink.samples.iter().all(|v| v.is_finite()));
         assert!(sink.largest <= 32000);

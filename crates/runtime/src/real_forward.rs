@@ -316,6 +316,11 @@ pub struct RealForwardRunner {
     /// of rows, instead of the one-row kernel per row. On unless
     /// `TURBOSPARK_PREFILL_ROWS_ATTN=0`. Prefill only, like Steel.
     pub(crate) prefill_rows_attention: bool,
+    /// The opt-in ANE+Steel prefill split for the dense qwen family
+    /// (`families/qwen/ane_split.rs`), off unless `TURBOSPARK_ANE_PREFILL`
+    /// or [`Self::set_ane_prefill`] asks for it.
+    #[cfg(feature = "ane-prefill")]
+    pub(crate) ane_prefill: crate::families::qwen::AnePrefill,
     /// Which layout each layer's routed expert blobs use, PER PHASE.
     pub(crate) routed_layouts: Vec<RoutedLayerLayout>,
     /// Per-layer expert-selection histogram, `None` unless

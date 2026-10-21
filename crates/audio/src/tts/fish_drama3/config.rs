@@ -9,6 +9,7 @@
 use tokenizers::Tokenizer;
 
 use super::tower::TowerConfig;
+use crate::codec::fish_s1_dac::FishS1DacConfig;
 use crate::{Result, SpeechError};
 
 /// The root `model_type` of a Drama 3 checkpoint.
@@ -105,6 +106,16 @@ impl Drama3Config {
     /// `semantic_start_token_id..=semantic_end_token_id`.
     pub fn semantic_band(&self) -> std::ops::RangeInclusive<i32> {
         self.semantic_start_token_id..=self.semantic_end_token_id
+    }
+
+    /// The codes a residual head may draw: the Fish S1 DAC's acoustic books
+    /// hold this many entries, while every tower head scores `vocab_size`
+    /// (4096, the semantic book's width). The runner decodes with the
+    /// `build_ae()` geometry, as no codec config ships in an install, so that
+    /// is the source. Only book 0, the main token's semantic code, spans the
+    /// whole vocabulary.
+    pub fn acoustic_codebook_size(&self) -> usize {
+        FishS1DacConfig::build_ae().quantizer.codebook_size
     }
 
     /// The tokens a step may emit, in the semantic head's row order: the

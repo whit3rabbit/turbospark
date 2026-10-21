@@ -346,7 +346,23 @@ public struct AudioResult: Codable, Sendable, Equatable {
     public let transcript: AudioTranscript?
     public let pcm: AudioPCM?
     public let seed: UInt64?
-    public init(transcript: AudioTranscript? = nil, pcm: AudioPCM? = nil, seed: UInt64? = nil) { self.transcript = transcript; self.pcm = pcm; self.seed = seed }
+    /// Drama 3: the take likely stopped speaking before its text ended (a
+    /// chunk hit its frame cap, or a silence no completed take has). The
+    /// words were never generated, so another seed is the remedy. False for
+    /// every other model.
+    public let stoppedEarly: Bool
+    public init(transcript: AudioTranscript? = nil, pcm: AudioPCM? = nil, seed: UInt64? = nil, stoppedEarly: Bool = false) {
+        self.transcript = transcript; self.pcm = pcm; self.seed = seed; self.stoppedEarly = stoppedEarly
+    }
+    private enum CodingKeys: String, CodingKey { case transcript, pcm, seed, stoppedEarly }
+    /// A result encoded before `stoppedEarly` existed decodes as not stopped.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        transcript = try c.decodeIfPresent(AudioTranscript.self, forKey: .transcript)
+        pcm = try c.decodeIfPresent(AudioPCM.self, forKey: .pcm)
+        seed = try c.decodeIfPresent(UInt64.self, forKey: .seed)
+        stoppedEarly = try c.decodeIfPresent(Bool.self, forKey: .stoppedEarly) ?? false
+    }
 }
 public struct AudioProgress: Codable, Sendable, Equatable {
     public let stage: String
@@ -369,6 +385,8 @@ private struct AudioWireResult: Decodable {
     let pcmFormat: AudioPCMFormat?
     let sampleCount: Int
     let seed: UInt64?
+    /// Absent from a library older than the field.
+    let stoppedEarly: Bool?
 }
 final class AudioCallbackBox {
     var samples: [Float] = []
@@ -567,7 +585,7 @@ public final class AudioSession: @unchecked Sendable {
         }
         let wire = try audioDecode(AudioWireResult.self, result)
         guard wire.sampleCount == box.samples.count else { throw TurboSparkError(code: .invalidArgument, message: "Native audio output count mismatch") }
-        return AudioResult(transcript: wire.transcript, pcm: wire.pcmFormat.map { AudioPCM(format: $0, samples: box.samples) }, seed: wire.seed)
+        return AudioResult(transcript: wire.transcript, pcm: wire.pcmFormat.map { AudioPCM(format: $0, samples: box.samples) }, seed: wire.seed, stoppedEarly: wire.stoppedEarly ?? false)
     }
 }
 /// The one C callback for audio jobs and cancellable opens: kind 1 is

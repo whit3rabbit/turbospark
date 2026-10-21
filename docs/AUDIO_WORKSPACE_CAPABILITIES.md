@@ -41,6 +41,7 @@ use the same native service without changing their public result shape.
 | [stt/moonshine](../crates/audio/src/stt/moonshine/mod.rs) | `transcribe`, `encode`, `decode` | No native runtime, admission, cancellation and Swift adapter has been qualified for this family |
 | [stt/moss_music](../crates/audio/src/stt/moss_music/mod.rs) | `transcribe` | No native runtime, admission, cancellation and Swift adapter has been qualified for this family |
 | [stt/moss_transcribe_diarize](../crates/audio/src/stt/moss_transcribe_diarize/mod.rs) | `transcribe`, `transcribe_with_options`, `forward` | No native runtime, admission, cancellation and Swift adapter has been qualified for this family |
+| [stt/multitalker_asr](../crates/audio/src/stt/multitalker_asr/mod.rs) | `step`, `run` | No native runtime, admission, cancellation and Swift adapter has been qualified for this family |
 | [stt/nemo](../crates/audio/src/stt/nemo/mod.rs) | No runnable operation | Codec or numerical component requires a task-specific native adapter |
 | [stt/nemotron_asr](../crates/audio/src/stt/nemotron_asr/mod.rs) | `transcribe` | No native runtime, admission, cancellation and Swift adapter has been qualified for this family |
 | [stt/parakeet](../crates/audio/src/stt/parakeet/mod.rs) | `transcribe`, `decode` | No native runtime, admission, cancellation and Swift adapter has been qualified for this family |

@@ -10,7 +10,9 @@ use std::thread::JoinHandle;
 
 pub const MAX_PCM_CHUNK: usize = 32_000;
 pub const MAX_INPUT_SAMPLES: usize = 16_000 * 1800;
+mod multitalker_stream;
 mod stream;
+pub use multitalker_stream::{MultitalkerStreamSession, SpeakerSegment, SpeakerStreamUpdate};
 pub use stream::AudioStreamSession;
 
 /// Parakeet Unified's encoder is a streaming-only export: a batch job would
@@ -140,6 +142,12 @@ pub struct AudioResult {
     pub pcm_format: Option<AudioPcmFormat>,
     pub sample_count: usize,
     pub seed: Option<u64>,
+    /// Drama 3: the take likely stopped speaking before its text ended (a
+    /// chunk ran to its frame cap without EOS, or the audio held a silence no
+    /// completed take has). The words were never generated, so a host can
+    /// retake with another seed. False for every other model.
+    #[serde(default)]
+    pub stopped_early: bool,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AudioProgress {
@@ -912,6 +920,7 @@ impl Engine {
             pcm_format: None,
             sample_count: 0,
             seed: None,
+            stopped_early: false,
         };
         match self {
             Self::Whisper(model) => {
@@ -1316,7 +1325,7 @@ fn synthesize_fish_drama3(
     let mut error = None;
     let mut count = 0usize;
     let stop = || cancel.is_cancelled();
-    runner.synthesize(&request, &stop, |pcm| {
+    let take = runner.synthesize(&request, &stop, |pcm| {
         match emit_pcm(&pcm, cancel, events, &mut count) {
             Ok(()) => true,
             Err(e) => {
@@ -1329,6 +1338,7 @@ fn synthesize_fish_drama3(
         return Err(e);
     }
     cancel.checkpoint()?;
+    result.stopped_early = take.stopped_early();
     result.sample_count = count;
     result.pcm_format = Some(AudioPcmFormat {
         sample_rate: runner.sample_rate(),
