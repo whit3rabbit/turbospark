@@ -148,17 +148,72 @@ recording instead:
   and in `hidden_trunk.rs`
   (`a_snapshot_taken_on_a_clean_trunk_restores_after_steps`). The first was
   mutation-checked: with the deferred snapshot disabled it fails.
-- Real-model paired A/B: PENDING. Blocked on a quiet AC-powered host and a
-  `qwen38-27b-mtp` install; neither was available when this landed. The row
-  stays a placeholder until then, per the no-fabricated-numbers rule.
-  The fold pass is committed asynchronously (`pass.commit()`) so CPU drafting
-  overlaps with GPU state updates without blocking per round. The first round
-  after any eager advance (a prefill, a fresh turn) still pays the blit.
+- `mtp_generation_gate` (speculative greedy output identical to the
+  sequential loop, `qwen38-27b-mtp`, release, lazy tape and fused FFN at
+  their defaults): "lossless at every block" at blocks 2 and 4.
+- Real-model paired A/B, MEASURED 2026-10-20 (below). Not a frozen row.
 
-| Arm | tok/s | ms/round | rollbacks | provenance |
-|-----|-------|----------|-----------|------------|
-| eager (flag 0) | pending | pending | pending | pending |
-| lazy (default) | pending | pending | pending | pending |
+#### Measured: lazy tape and fused FFN, `qwen38-27b-mtp`, 2026-10-20
+
+Apple M4 Max 36 GB, macOS 26.5.2, AC power, release build.
+`turbospark-bench --model ~/models/qwen38-27b-mtp.gturbo --speculative auto
+--shaping greedy` (MTP head, block 2), 4,096 context. One process per run
+because both flags are read once. Arm order rotated each round, a warmup
+round discarded. Median decode tok/s with the min-max spread; ratios are
+against the pre-Kapitsa arm (lazy off, fused off).
+
+Run 1 (all six arms, 5 measured rounds, 1-minute host load 0.34-2.73). The
+binary was built from the working tree before the Kapitsa commit settled
+(`90d74bd6` to `e81cba38`); gpu, runtime and bench sources had no uncommitted
+changes at the later check, but byte-for-byte identity with HEAD was not
+verified. Treat it as corroboration. The sequential-decode rows exist only
+here.
+
+| Arm (lazy, fused) | short-explanation (488 tok) | medium-review (845 tok) |
+|-------------------|-----------------------------|-------------------------|
+| off, off | 31.47 [31.26-31.70] | 33.72 [33.57-34.43] |
+| on, off | 32.49 [32.33-32.76], 1.032x | 33.89 [33.75-35.02], 1.005x |
+| off, on | 31.63 [31.35-31.93], 1.005x | 33.22 [32.62-33.89], 0.985x |
+| on, on (default) | 32.13 [31.65-32.75], 1.021x | 33.58 [33.00-34.26], 0.996x |
+
+Run 2 (confirmatory, built from clean HEAD `e81cba38`, no uncommitted
+changes in gpu, runtime or bench; 3 measured rounds, load 0.51-2.39). This
+is the run of record for the speculative arms.
+
+| Arm (lazy, fused) | short-explanation | medium-review |
+|-------------------|-------------------|---------------|
+| off, off | 31.82 [31.49-31.90] | 33.89 [33.81-34.00] |
+| on, off | 32.68 [31.89-32.75], 1.027x | 34.70 [34.53-34.82], 1.024x |
+| on, on (default) | 32.61 [32.09-32.83], 1.025x | 34.66 [34.62-34.75], 1.023x |
+
+Sequential decode (speculation off, run 1 only; fused FFN):
+
+| fused FFN | short-explanation | medium-review |
+|-----------|-------------------|---------------|
+| off | 21.22 [21.06-21.79] | 21.41 [21.16-21.79] |
+| on | 21.69 [21.47-21.71], 1.022x | 21.70 [21.65-21.78], 1.014x |
+
+Every speculative arm produced the same token count per case (488, 845) and
+peak footprint varied by under 10 MiB (860-868 MiB). The speculation-off arms
+emit 505 and 846 tokens: the two paths decode from slightly different states
+(`docs/BENCHMARKS.md`), so text is never compared across that line, and
+`mtp_generation_gate` is the lossless evidence.
+
+What it says:
+
+- The lazy tape is worth about 2-3% in speculative decode. Run 2 shows it on
+  both cases (1.027x, 1.024x) and run 1 agrees on the short case and is
+  noise on the medium one. The motivation (no snapshot blit, no blocking
+  restore, no replay) holds, but at block 2 on these prompts rollbacks are
+  rare enough that it buys a few percent and no more.
+- The fused FFN does nothing in speculative mode: lazy-on with and without
+  it differ by 0.1-0.2% in run 2, and run 1 straddles 1.0.
+- The fused FFN is worth 1.4-2.2% on plain sequential decode. Small, but
+  consistent in sign and a little above the spread.
+- Not measured: rollback counts and ms/round (the bench prints neither),
+  blocks above 2, the long-synthesis case, a rollback-heavy workload (where
+  the lazy tape should matter most), and the MoE shared-expert fusion (this
+  is a dense install).
 
 ### Round checkpoint and error boundaries
 
@@ -195,9 +250,11 @@ Measured so far: gpu parity bit-identical at every fixture shape for silu
 and gelu, all three epilogues, and the plain store; the synthetic dflash
 and MTP suites (including `the_draft_logits_have_a_frozen_digest` and the
 batched-vs-sequential byte-identity test) pass under all four
-flag combinations with item 1. Real-model paired A/B: PENDING (AC power and
-a quiet host were not available). The dispatch-count deltas are static
-facts: -3 per dense layer, -3 per MoE layer's shared expert.
+flag combinations with item 1. Real-model paired A/B: MEASURED 2026-10-20 on
+the dense `qwen38-27b-mtp` install (tables under item 1's evidence): +1.4% to
++2.2% on sequential decode, no measurable change in speculative mode. The MoE
+shared-expert fusion has no real-model A/B yet. The dispatch-count deltas are
+static facts: -3 per dense layer, -3 per MoE layer's shared expert.
 
 One find worth its own paragraph: Metal's default fast-math ELIDES a
 f32->f16->f32 convert pair it can see through, so `float(half(acc))` in the
