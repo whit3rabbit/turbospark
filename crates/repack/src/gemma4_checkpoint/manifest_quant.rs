@@ -159,6 +159,21 @@ pub fn manifest_quant_for(
             format!("{l0}.mlp.gate_proj"),
             format!("{l0}.experts.switch_glu.gate_proj"),
         ),
+        // `flint`'s layers 0 and 1 are DENSE (`mlp_only_layers`), so the
+        // router, shared-expert and routed probes must name layer 2, the
+        // first MoE layer; every other arm probes layer 0. The attention
+        // probe stays on layer 0, which is a plain `self_attn.q_proj`.
+        // Names carry the canonical `language_model.` prefix because
+        // `canonicalize_flint_header` has already renamed the header.
+        ModelFamily::Flint => {
+            let l2 = "language_model.model.layers.2";
+            (
+                format!("{l0}.self_attn.q_proj"),
+                format!("{l2}.mlp.gate"),
+                format!("{l2}.mlp.shared_expert.gate_proj"),
+                format!("{l2}.mlp.switch_mlp.gate_proj"),
+            )
+        }
         // gpt-oss has no safetensors path at all (it is GGUF-only here), so
         // it never reaches this probe; grouped with the families whose names
         // it shares rather than given an arm that cannot run.

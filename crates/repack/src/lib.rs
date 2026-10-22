@@ -30,6 +30,7 @@ mod hf_checkpoint;
 mod install_verifier;
 mod manifest_peek;
 mod museglimmer_config;
+mod flint_config;
 mod qwen2_config;
 mod qwen36_config;
 mod qwen3vl_config;
@@ -60,7 +61,7 @@ pub use fish_drama3::{
     DRAMA3_SIDE_FILE, DRAMA3_SIDE_PREFIX, DRAMA3_TRUNK_DIR,
 };
 pub use gemma4_checkpoint::{
-    canonicalize_qwen2_header, canonicalize_vision_header, classify_for_family, classify_gemma4,
+    canonicalize_flint_header, canonicalize_qwen2_header, canonicalize_vision_header, classify_for_family, classify_gemma4,
     convert_raw_to_fp16, gemma4_manifest_quant, gguf_mxfp4_row_bytes,
     graft_qwen_gdn_dense_mtp_head, is_supported_affine_shape, manifest_quant, manifest_quant_for,
     mlx_mxfp4_dequant_to_bf16, mlx_mxfp4_reblock_to_gguf, narrow_raw_to_bf16,
@@ -68,7 +69,7 @@ pub use gemma4_checkpoint::{
     parse_gemma4_quantization, parse_prism_hadamard, pass_through_packed,
     pass_through_packed_qwen2, read_vision_entries, vision_arch_for_manifest, vision_should_ingest,
     write_gemma4_install, write_gemma4_install_streamed, write_muse_glimmer_install,
-    write_muse_glimmer_install_streamed, write_ngram_table, write_qwen2_dense_install_streamed,
+    write_muse_glimmer_install_streamed, write_ngram_table, write_flint_install_streamed, write_qwen2_dense_install_streamed,
     write_qwen3_vl_install_streamed, write_qwen4_exp_install_streamed,
     write_qwen_gdn_dense_install, write_qwen_gdn_dense_install_streamed,
     write_qwen_gdn_dense_install_streamed_with_hadamard, write_qwen_gdn_moe_install,
@@ -105,6 +106,7 @@ pub use manifest_peek::peek_manifest_arch;
 pub use museglimmer_config::{
     muse_glimmer_mask, parse_muse_glimmer_config, parse_muse_glimmer_scalars, MuseGlimmerScalars,
 };
+pub use flint_config::{parse_flint_config, parse_flint_quantization};
 pub use qwen2_config::parse_qwen2_config;
 pub use qwen36_config::{
     parse_qwen4_exp_config, parse_qwen_gdn_dense_config, parse_qwen_gdn_moe_config,

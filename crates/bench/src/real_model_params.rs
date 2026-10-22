@@ -85,6 +85,15 @@ pub const fn protocol_parameters(family: ModelFamily) -> ProtocolParameters {
             max_context: 8192,
             max_new: 4096,
         },
+        // `flint`, provisional: its chat template carries a `<think>`
+        // reasoning channel, so the shared 1,024-token budget is expected to
+        // truncate it (the `muse_glimmer` lesson). Freeze only after real
+        // completions are measured on an install.
+        ModelFamily::Flint => ProtocolParameters {
+            family,
+            max_context: 8192,
+            max_new: 4096,
+        },
         // The shared protocol, and what every frozen row in
         // `docs/BENCHMARKS.md` was measured at.
         // `qwen3_5` is here on the TOKENIZER's evidence rather than on a

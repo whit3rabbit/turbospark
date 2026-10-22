@@ -209,6 +209,64 @@ pub fn canonicalize_qwen2_header(
     Ok(())
 }
 
+/// Renames Flint's text-only MLX namespace onto the canonical install
+/// namespace (the `qwen2` rename, reused) and re-labels its U8-packed
+/// quantized weights as the U32-packed form the walk reads.
+///
+/// **`flint-int4` packs its quantized weights as `U8`, not MLX's usual
+/// `U32`**, so `[4096, 1024] U8` is the same bytes as `[4096, 256] U32`. The
+/// affine layout is identical: elements fill each word from the low bits up,
+/// and a little-endian `u32` over four consecutive bytes reproduces exactly
+/// the nibble order a byte-wise low-nibble-first packing writes (INT4: byte
+/// `k` holds elements `2k` low and `2k+1` high; word `w` holds elements
+/// `8w..8w+7` low to high). INT8 is one element per byte in both. So the
+/// change is a header edit only: the dtype label and the last dimension
+/// divided by four, with the byte offsets untouched. A weight is only
+/// re-labelled when its `.scales` companion exists, so an unrelated `U8`
+/// tensor is refused instead of being silently reinterpreted.
+pub fn canonicalize_flint_header(
+    header: &mut SafetensorsHeader,
+) -> Result<(), super::config::Gemma4Error> {
+    canonicalize_qwen2_header(header).map_err(|e| match e {
+        super::config::Gemma4Error::Config(msg) => {
+            super::config::Gemma4Error::Config(msg.replace("Qwen2", "Flint"))
+        }
+        other => other,
+    })?;
+    let packed: Vec<String> = header
+        .tensors
+        .iter()
+        .filter(|(name, info)| name.ends_with(".weight") && info.dtype == "U8")
+        .map(|(name, _)| name.clone())
+        .collect();
+    for name in packed {
+        let base = name.strip_suffix(".weight").unwrap_or(&name);
+        if !header.tensors.contains_key(&format!("{base}.scales")) {
+            return Err(super::config::Gemma4Error::UnsupportedDtype {
+                tensor: name,
+                dtype: "U8 without a .scales companion (not an affine-packed weight)".into(),
+            });
+        }
+        let info = header.tensors.get_mut(&name).expect("name was just listed");
+        let last = *info.shape.last().ok_or_else(|| {
+            super::config::Gemma4Error::ShapeMismatch {
+                tensor: name.clone(),
+                detail: "rank-0 packed weight".into(),
+            }
+        })?;
+        if last % 4 != 0 {
+            return Err(super::config::Gemma4Error::ShapeMismatch {
+                tensor: name.clone(),
+                detail: format!("U8 last dimension {last} is not a multiple of 4"),
+            });
+        }
+        let n = info.shape.len();
+        info.shape[n - 1] = last / 4;
+        info.dtype = "U32".to_string();
+    }
+    Ok(())
+}
+
 /// The prefix a DFlash2 drafter's tensors carry once they reach a walk.
 ///
 /// **The published repository spells its tensors BARE** (`layers.0.*`,
@@ -239,9 +297,13 @@ pub fn routed_marker(family: ModelFamily) -> &'static str {
         // of the things that made most of its expert half free here: the
         // checkpoint's per-expert tensors are
         // `model.layers.N.mlp.switch_mlp.{gate,up,down}_proj.{weight,scales,biases}`.
-        ModelFamily::QwenGdnMoe | ModelFamily::QwenGdnDense | ModelFamily::Qwen4Exp => {
-            ".mlp.switch_mlp."
-        }
+        // `flint` spells its routed container the same way: the stacked
+        // `model.layers.N.mlp.switch_mlp.{gate,up,down}_proj` [256, ...]
+        // planes of the published `flint-int4` header.
+        ModelFamily::QwenGdnMoe
+        | ModelFamily::QwenGdnDense
+        | ModelFamily::Qwen4Exp
+        | ModelFamily::Flint => ".mlp.switch_mlp.",
         // A GGUF-derived Llama or Qwen3-MoE never reaches this classifier
         // (the GGUF walk maps routed tensors by NAME, in `gguf_names.rs`),
         // and neither has a safetensors path. DeepSeek V4 has no repack path

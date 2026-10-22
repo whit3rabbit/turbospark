@@ -219,6 +219,13 @@ const SUPPORTED_HF: &[(&str, ModelFamily)] = &[
     // equality, so the two never collapse.
     ("qwen3_vl", ModelFamily::Qwen3Vl),
     ("qwen3_vl_text", ModelFamily::Qwen3Vl),
+    // The SIXTEENTH family. Read off `RecursiveSI/flint-int4` @
+    // 3b93f9053b530488405ae9fca51d4900d6ce21f0, whose root `model_type` is
+    // `flint` (`architectures: ["FlintForCausalLM"]`). The checkpoint ships
+    // no modeling code, so the layer flow is cross-checked against the open
+    // llama.cpp port instead (`docs/FLINT_PHASE0.md`). No `_text` row: the
+    // config is flat, with no `text_config` wrapper to carry one.
+    ("flint", ModelFamily::Flint),
 ];
 
 /// GGUF architectures this port recognizes and cannot run.

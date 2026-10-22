@@ -106,7 +106,10 @@ fn int8_transcode_targets(family: ModelFamily) -> &'static [&'static str] {
         | ModelFamily::Qwen3Dense
         | ModelFamily::Qwen2Dense
         | ModelFamily::MiniMaxM2
-        | ModelFamily::Qwen3Vl => &[],
+        | ModelFamily::Qwen3Vl
+        // `flint` has no GGUF intake in this port (Q4_1 is not an
+        // executable block type), so the arm is unreachable today.
+        | ModelFamily::Flint => &[],
     }
 }
 

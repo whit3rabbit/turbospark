@@ -285,7 +285,12 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         // `qwen3_vl` refuses for `qwen4_exp`'s reason: GGUFs exist, the
         // converter's tower naming is unparsed, and the MLX path is the
         // intake this port built.
-        ModelFamily::DeepseekV4Flash | ModelFamily::MuseGlimmer | ModelFamily::Qwen3Vl => {
+        // `flint` has no GGUF intake here (Q4_1 is not an executable block
+        // type and the llama.cpp port is unmerged): refuse, never invent.
+        ModelFamily::DeepseekV4Flash
+        | ModelFamily::MuseGlimmer
+        | ModelFamily::Qwen3Vl
+        | ModelFamily::Flint => {
             return Err(GgufConfigError::UnsupportedArchitecture {
                 architecture: architecture.to_string(),
             })

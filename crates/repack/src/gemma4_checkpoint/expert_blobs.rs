@@ -29,7 +29,11 @@ pub fn expert_stride_from_headers(
     }
     let expert_count = arch.num_experts as u64;
     let mut max_blob = 0u64;
-    for layer in 0..arch.num_layers as usize {
+    // Routed blobs exist only from the first MoE layer on: a dense lead
+    // (`flint`'s two `mlp_only_layers`) has none, and writing them is
+    // positional (blob `k` is layer `lead + k`), matching the GGUF walk.
+    // Zero for every other family, so their loop is unchanged.
+    for layer in arch.num_dense_leading_layers as usize..arch.num_layers as usize {
         let bundle = routed.get(&layer).ok_or_else(|| {
             Gemma4Error::MissingTensor(format!("layer {layer} routed-expert bundle"))
         })?;

@@ -114,7 +114,8 @@ pub fn orchestrate_gemma4_checkpoint_sharded(
     let expert_stride = expert_stride_from_headers(shards, arch, quant, &plan.routed)?;
     let mut layers = Vec::new();
     if !plan.routed.is_empty() {
-        for layer in 0..arch.num_layers as usize {
+        // From the first MoE layer: see `expert_stride_from_headers`.
+        for layer in arch.num_dense_leading_layers as usize..arch.num_layers as usize {
             let (blobs, _used) = plan_one_expert_layer(shards, arch, quant, &plan.routed, layer)?;
             layers.push(blobs);
         }
@@ -342,6 +343,13 @@ fn int8_force_targets(family: ModelFamily) -> &'static [&'static str] {
         // INT4 conversions are unchanged. A raw router (Fish Drama 3's
         // trunk ships BF16) used to be written raw and refused at open.
         ModelFamily::QwenGdnMoe => &[".mlp.gate.weight"],
+        // `flint`'s router is an unquantized BF16 [256, 2048] gate, where
+        // every published MLX conversion before it packed the router. The
+        // runtime's router GEMV reads INT8 affine, so it is force-quantized
+        // here exactly as the Qwen 3.6 raw router is. The ranking it
+        // produces is a property to MEASURE against the BF16 original
+        // before any quality claim (docs/FLINT_PHASE0.md).
+        ModelFamily::Flint => &[".mlp.gate.weight"],
         _ => &[],
     }
 }
