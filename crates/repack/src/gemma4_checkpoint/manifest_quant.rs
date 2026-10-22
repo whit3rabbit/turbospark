@@ -210,7 +210,12 @@ pub fn manifest_quant_for(
     // than a probe (`crates/repack` CLAUDE.md Gotcha 6).
     let router_slot = if !has_experts {
         slot(attention_bits)
-    } else if family == ModelFamily::Qwen4Exp {
+    } else if matches!(family, ModelFamily::Qwen4Exp | ModelFamily::Flint) {
+        // `flint` ships its router as an unquantized BF16 gate that the
+        // writer force-quantizes to INT8 (`int8_force_targets`), so the
+        // probe would report the model's 4-bit default for a tensor that
+        // carries no companions and `validate_quant` would refuse the
+        // install. State the width of the bytes written, as `qwen4_exp` does.
         slot(8)
     } else {
         slot(quant.bits_for(&router))

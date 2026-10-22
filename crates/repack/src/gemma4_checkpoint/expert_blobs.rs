@@ -128,7 +128,10 @@ pub fn plan_one_expert_layer(
         .map(|r| base_of(r).map(|b| quant.is_mxfp4(b)))
         .collect::<Result<Vec<_>, _>>()?;
     if mxfp4.iter().all(|&m| m) {
-        return plan_mxfp4_expert_layer(shards, bundle, experts, layer, expert_count);
+        let (mut blobs, used) =
+            plan_mxfp4_expert_layer(shards, bundle, experts, layer, expert_count)?;
+        blobs.layer = layer - arch.num_dense_leading_layers as usize;
+        return Ok((blobs, used));
     }
     if mxfp4.iter().any(|&m| m) {
         return Err(Gemma4Error::UnsupportedDtype {
@@ -253,7 +256,20 @@ pub fn plan_one_expert_layer(
         }
         blob_used += (w_per + s_per + b_per) as u64;
     }
-    Ok((LayerBlobs { layer, experts }, blob_used))
+    // BLOB FILES ARE NUMBERED BY POSITION, NOT BY CHECKPOINT LAYER: the
+    // i-th routed layer is `layer_{i:02}.bin`, and a dense lead
+    // (`flint`'s two `mlp_only_layers`) makes the two differ. `layer` above
+    // stays the checkpoint index because it keys the tensor lookup; only the
+    // blob's label is positional. See `gguf_checkpoint/mod.rs`. Zero lead for
+    // every other family, so this is the identity for them.
+    let position = layer - arch.num_dense_leading_layers as usize;
+    Ok((
+        LayerBlobs {
+            layer: position,
+            experts,
+        },
+        blob_used,
+    ))
 }
 
 /// The MLX mxfp4 sibling of the affine walk above: three sub-tensors per

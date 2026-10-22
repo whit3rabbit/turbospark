@@ -41,6 +41,7 @@ mod resident_writer;
 mod safetensors_header;
 mod synthetic_deepseek2;
 mod synthetic_gguf;
+mod synthetic_flint;
 mod synthetic_llama;
 mod synthetic_model;
 mod synthetic_muse;
@@ -147,6 +148,7 @@ pub use synthetic_model::{
     expert_up_proj_name, gate_proj_name, k_proj_name, o_proj_name, q_proj_name, router_name,
     tiny_gemma4_arch, up_proj_name,
 };
+pub use synthetic_flint::{build_synthetic_flint_install, tiny_flint_arch};
 pub use synthetic_muse::{build_synthetic_muse_glimmer_install, tiny_muse_glimmer_arch};
 pub use synthetic_qwen::{
     build_synthetic_fish_drama3_install, build_synthetic_qwen4_exp_decode_install,
