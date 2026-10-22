@@ -126,14 +126,31 @@ pub fn parse_env(s: &str) -> Result<(String, String), String> {
     Ok((key, v.to_string()))
 }
 
-/// `NAME` or `NAME:KEY=VALUE,KEY=VALUE`, plus open parameters shared by the
-/// command and the common env every arm gets.
+/// `NAME[@SLOTS/RESIDENCY][:KEY=VALUE,KEY=VALUE]`. Open parameters default
+/// to the command's; the common env goes to every arm.
 pub fn parse_arm(
     s: &str,
     open: OpenParams,
     common: &BTreeMap<String, String>,
 ) -> Result<Arm, String> {
-    let (name, rest) = s.split_once(':').unwrap_or((s, ""));
+    let (head, rest) = s.split_once(':').unwrap_or((s, ""));
+    // `NAME@SLOTS/RESIDENCY` overrides the shared open parameters for this
+    // arm, so one interleaved session can compare slot counts and residency.
+    let (name, open) = match head.split_once('@') {
+        None => (head, open),
+        Some((name, o)) => {
+            let (slots, residency) = o
+                .split_once('/')
+                .ok_or_else(|| format!("arm {head:?}: open parameters are SLOTS/RESIDENCY"))?;
+            (
+                name,
+                OpenParams {
+                    slots: parse_slots(slots)?,
+                    residency: parse_residency(residency)?,
+                },
+            )
+        }
+    };
     crate::paths::validate_name(name)?;
     let mut env = common.clone();
     for kv in rest.split(',').filter(|kv| !kv.is_empty()) {
@@ -175,6 +192,23 @@ mod tests {
         assert_eq!(arm.env["TURBOSPARK_PREFILL_STEEL"], "0");
         assert!(parse_arm("x:PATH=/bin", OpenParams::default(), &BTreeMap::new()).is_err());
         assert!(parse_arm("bad name", OpenParams::default(), &BTreeMap::new()).is_err());
+    }
+
+    #[test]
+    fn arms_can_override_open_parameters() {
+        let arm = parse_arm("s32@32/streamed", OpenParams::default(), &BTreeMap::new()).unwrap();
+        assert_eq!(arm.name, "s32");
+        assert_eq!(arm.open.slots, Slots::Fixed(32));
+        assert_eq!(arm.open.residency, Residency::Streamed);
+        let arm = parse_arm(
+            "m@auto/mapped:prefill_steel=0",
+            OpenParams::default(),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        assert_eq!(arm.open.residency, Residency::Mapped);
+        assert_eq!(arm.env["TURBOSPARK_PREFILL_STEEL"], "0");
+        assert!(parse_arm("x@32", OpenParams::default(), &BTreeMap::new()).is_err());
     }
 
     #[test]

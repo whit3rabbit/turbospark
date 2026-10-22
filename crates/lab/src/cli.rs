@@ -18,7 +18,7 @@ const USAGE: &str = "\
 tslab: the evaluator for kernel and method experiments (macOS).
 
   tslab profile --model M [workload] [--slots auto,16,32] [--residency streamed,mapped]
-                [--arm NAME:KEY=V,...]... [--env KEY=V]... [--rounds 3] [--experiment NAME]
+                [--arm NAME[@SLOTS/RESIDENCY][:KEY=V,...]]... [--env KEY=V]... [--rounds 3] [--experiment NAME]
   tslab ab      --model M [workload] --baseline NAME[:KEY=V,...] --candidate NAME[:KEY=V,...]
                 [--null] [--metric prefill_tok_s|decode_tok_s|prefill_s|peak_bytes]
                 [--min-effect 0.02] [--pairs 3] [--max-pairs 6] [--experiment NAME]
