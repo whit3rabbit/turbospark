@@ -1,0 +1,6 @@
+{
+  "repository": "https://github.com/phhusson/llama.cpp",
+  "commit": "abcc7f8fa8920f50bc321ee7e7dcfa31b133a6a0",
+  "path": "ggml/src/ggml-ane/ggml-ane.m",
+  "sha256": "27f5567446f6e482bbd7f77b060ab83080f6832d9d5381f338ac51ff1bc99729"
+}
