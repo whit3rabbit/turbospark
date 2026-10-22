@@ -265,6 +265,17 @@ impl RealForwardRunner {
         hidden_rows: Option<&mut [f16]>,
     ) -> Result<(), RealForwardError> {
         let started = Instant::now();
+        if let Some(hist) = &mut self.router_hist {
+            hist.begin_batch(
+                if hidden_rows.is_some() {
+                    "hidden"
+                } else {
+                    "prefill"
+                },
+                start_position,
+                tokens.len(),
+            );
+        }
         let result = self.prefill_micro_batch_qwen_moe_inner(
             tokens,
             host_rows,
@@ -274,6 +285,9 @@ impl RealForwardRunner {
             logits,
             hidden_rows,
         );
+        if let Some(hist) = &mut self.router_hist {
+            hist.end_batch(result.is_ok());
+        }
         // One forward pass per TOKEN, matching every other phase divisor in
         // this port (`crates/runtime/CLAUDE.md` Gotcha 6).
         self.phases.calls += tokens.len() as u64;

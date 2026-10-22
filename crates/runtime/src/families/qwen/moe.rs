@@ -186,10 +186,19 @@ pub(crate) fn encode_qwen_layer_moe(
             .as_mut()
             .expect("streamer presence checked above");
         let t_io = Instant::now();
+        let io_before = streamer.io_stats().bytes_requested;
         let slots = streamer
             .execute_expert_cache_plan(&plan)
             .map_err(|e| RealForwardError::Unsupported(format!("expert stream: {e}")))?;
         phases.expert_io_nanos += t_io.elapsed().as_nanos() as u64;
+        if let Some(hist) = router_hist.as_mut() {
+            hist.record_io(
+                layer,
+                plan.hits,
+                plan.misses.len(),
+                streamer.io_stats().bytes_requested - io_before,
+            );
+        }
         slots
     };
 
