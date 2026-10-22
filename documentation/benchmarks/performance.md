@@ -45,3 +45,21 @@ Measurements taken on Apple Silicon hardware using macOS `powermetrics` during s
 * **Dense Prefill Phase**: ~32 - 44 Watts (saturates memory bus and GPU cores).
 * **MoE Token Generation**: ~14 - 22 Watts (highly energy efficient due to sparse memory access).
 * **Audio Voice Synthesis**: ~8 - 15 Watts on Metal GPU.
+
+---
+
+## Prefill and Audio Paired A/B Measurements (M4 Max)
+
+These are paired measurements from the 0.4.0 and 0.5.0 release notes: each row compares two arms of the same binary on the same host and prompt. They are not comparable across rows, and each inherits the conditions named in it. The protocols and frozen rows live in the repository's benchmark docs.
+
+| Change | Prompt | Result | Kill switch |
+| --- | --- | --- | --- |
+| ANE+Steel prefill split (dense Qwen, opt-in) | Qwen3.8-27B, 2,940 tokens, 2048-row micro-batches | 1.35x prefill at 0.65x modeled energy, greedy output unchanged | `TURBOSPARK_ANE_PREFILL=0` (default off) |
+| Batched row ops for batched prefill, verify, MTP priming | Qwen3.8-27B, 2,564 tokens, six interleaved pairs | 18.85 s against 20.38 s | `TURBOSPARK_QWEN_BATCHED_ROW_OPS=0` |
+| Chunked MoE prefill (`qwenGdnMoe`) | MiniCPM-V 4.7, 2,940 tokens | 1.21-1.31x (107-120 s against 141-145 s); on by default in `turbospark-check` and `turbospark-server` | `TURBOSPARK_QWEN_MOE_CHUNKED=0` |
+| Batched resident weight reads on INT4 MoE | Qwen 3.6, 2,940 tokens, two pairs on a shared host | 1.42-1.56x (53.7-58.5 s against 83.4-83.9 s) over the per-token chunked arm; top-8 routing near-ties can flip (mean final-position KL 3.9e-3 nats) | `TURBOSPARK_BATCHED_GEMV=0` |
+| Music 3 four-bit tiled linear + staged activations | 8 s track at 30 steps | 124.6 s to 85.6 s (DiT stage 95.3 s to 59.3 s), bit-identical | (kernel default) |
+| Music 3 vocoder command-buffer batching + phase kernel | 8 s track | vocoder ~6.7 s to ~4.0 s to ~2.6 s, bit-identical | (kernel default) |
+| Music 3 fast flow profile (default) | 8 s prompt | about 55 percent of the exact time at 0.974 correlation; restore with `--flow-profile exact` | `--flow-profile exact` |
+
+The Music 3 fast profile changes the audio (it does not follow MLX's trajectory); the two kernel rows above it are bit-identical to the paths they replaced. Verify and MTP-priming batched row ops were checked on synthetic installs only. Adaptive speculative depth (`--speculative adaptive`) measured within noise of the fixed block 2 default and stays opt-in.

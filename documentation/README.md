@@ -11,7 +11,7 @@ Welcome to the official TurboSpark documentation. TurboSpark is a native macOS a
 
 * **Mixture-of-Experts (MoE) Streaming**: Routed expert weights stream directly from SSD through a bounded Metal slot cache, enabling 20B to 35B models (Gemma 4, Qwen 3.6, Swift-1.5) to run with a ~1.5 to 2.1 GiB process memory footprint.
 * **Native Desktop App**: Native SwiftUI interface with multi-session chat, reasoning controls, agent tooling, and encrypted profiles.
-* **Audio Studio**: End-to-end local sound suite: Whisper & Qwen3-ASR speech-to-text, Kokoro TTS, MegaTTS3 zero-shot voice cloning on Metal GPU, and MiniMax Music 3 track generation.
+* **Audio Suite**: End-to-end local sound suite: Whisper, Qwen3-ASR, and Parakeet speech-to-text with speaker naming and meeting notes, Fish Audio Drama 3, OmniVoice, and MegaTTS3 synthesis and voice cloning, and MiniMax Music 3 track generation.
 * **Image Generation**: Fast local diffusion generation with Z-Image Turbo and Qwen-Image 2.1 Turbo via Swift MLX.
 * **Decision Models**: Typed boolean, categorical, and scoring decisions via the bundled OpenKind loopback daemon.
 * **Local HTTP API**: Drop-in OpenAI, Anthropic, and Ollama compatibility with streaming SSE support.
@@ -37,9 +37,9 @@ Welcome to the official TurboSpark documentation. TurboSpark is a native macOS a
 
 ### [Audio Suite](audio/overview.md)
 * [Audio Overview](audio/overview.md): Unified sound processing workspace and encrypted profile storage.
-* [Speech to Text](audio/speech-to-text.md): Whisper transcription and realtime WebSocket streaming.
-* [Text to Speech & Voice Cloning](audio/text-to-speech.md): Kokoro TTS and MegaTTS3 zero-shot voice cloning with consent requirements.
-* [Music Generation](audio/music-generation.md): MiniMax Music 3 track generation, prompt builder, and lyrics tags.
+* [Speech to Text](audio/speech-to-text.md): Whisper, Qwen3-ASR, and Parakeet transcription, speaker naming, meeting notes, and realtime WebSocket streaming.
+* [Text to Speech & Voice Cloning](audio/text-to-speech.md): Fish Audio Drama 3, OmniVoice, MegaTTS3, and Kokoro with consent requirements and the full HTTP request surface.
+* [Music Generation](audio/music-generation.md): MiniMax Music 3 track generation, flow profiles, prompt builder, and lyrics tags.
 
 ### [Decision Models](decision-models/typesafe-decisions.md)
 * [TypeSafe Decision Models](decision-models/typesafe-decisions.md): Strongly typed JSON classifications (Noul, Choice, Score) via OpenKind.

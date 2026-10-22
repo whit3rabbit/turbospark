@@ -34,6 +34,16 @@ provenance). `Catalog::load` merges an optional `$TURBOSPARK_HOME/models.json`
 user override over the embedded table by alias and refuses a schema version
 it does not recognize rather than best-effort parsing it.
 
+The audio catalog's `AudioCatalog::install_acknowledged` is the one install
+path the CLI (`turbospark-model pull-audio`), the FFI, and the app all share:
+it prints a row's license terms, refuses to install until each acknowledgment
+id is accepted (`--accept <ID>`), and lands the verified files in
+`models/audio/<alias>.gturbo` with a receipt. Per-row capabilities on the
+profile say where a row runs (`can_run`, `backend`, `http_api`) and why not
+when it does not. Fish Audio Drama 3 installs by conversion instead of copy
+(`src/drama3_install.rs`): the runtime layout is streamed out of the upstream
+checkpoint by range read, so the 20 GB source is never stored whole.
+
 ## Where it sits
 
 `turbospark-catalog` depends on `core`, `model-io` (sizing policies and the

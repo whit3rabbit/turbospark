@@ -134,6 +134,38 @@ fixed order: `resolve_drafter` asks what the install carries, `draft_policies`
 turns that into the open-time `DraftPolicies`, and `resolve_speculation`
 decides whether a run may draft.
 
+The speculative rollback path (`crates/runtime/src/real_forward_rollback.rs`)
+protects the GDN recurrent state across rejected rounds. A round checkpoint
+skips its snapshot when the trunk is clean, eager advances capture deferred
+snapshots only when needed, and checkpoints stay reusable across rollbacks
+until the round commits. Under the lazy tape
+(`TURBOSPARK_GDN_LAZY_TAPE`, on by default) a verify on clean recurrent state
+records a rank-1 tape instead of blitting a snapshot, and the state fold
+commits asynchronously on the GPU so CPU drafting is not blocked on round
+completion. If an error lands between verify and commit,
+`discard_pending` on `SpeculativeProducer` and `RealForwardRunner` rewinds the
+uncommitted state.
+
+### Qwen kernel switches
+
+The dense and MoE Qwen flows carry default-on kernel selections, each with an
+environment kill switch for A/B work (see the
+[environment variables page](../advanced/environment-variables.md)):
+
+* Fused INT4 FFN dispatches (`TURBOSPARK_QWEN_FUSED_FFN`, on): gate+up+activation
+  in one GEMV and the down projection with its tail folded into the store
+  epilogue, bit-identical to the per-tensor chain. Adopted from the paired A/B
+  recorded in `docs/KAPITSA_KERNELS.md`.
+* One dispatch over all rows for the small per-row ops in batched prefill,
+  speculative verify, and MTP priming (`TURBOSPARK_QWEN_BATCHED_ROW_OPS`, on).
+* Chunked MoE prefill with batched resident weight reads
+  (`TURBOSPARK_QWEN_MOE_CHUNKED`, `TURBOSPARK_BATCHED_GEMV`).
+* The opt-in ANE+Steel prefill split for dense Qwen
+  (`families/qwen/ane_split.rs`, feature `ane-prefill`): each dense projection
+  class is split by output rows between a Core ML program on the Neural Engine
+  and Steel, with a failed prediction or a non-finite ANE row redoing the
+  micro-batch on Steel.
+
 ### coreml and the model runners
 
 `runtime::coreml` (`crates/runtime/src/coreml/`) wraps the Core ML exports:

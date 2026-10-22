@@ -40,6 +40,19 @@ JSON request and result shapes), and the opaque handle types
 | `server.rs` | In-process HTTP server sharing already-open models |
 | `daemon.rs` | Managed background daemon status, start, stop, restart |
 
+Session open options carry the whole performance surface over the wire as
+camelCase JSON. The 0.5.0 additions: `anePrefill` (`auto` | `split` | `off` |
+`break`; absent means `auto`, which activates the ANE+Steel prefill split on
+Apple Silicon M4+ for dense Qwen and degrades to Steel when the programs are
+missing or the chip is older) with `anePrefillDir`, and
+`speculation: "adaptive"` or `"adaptive:CAP"` (the same controller and the
+same spellings `--speculative adaptive[:MAX]` takes in `turbospark-check`;
+blocks and the cap bounds are read from `foundation`, so the front ends
+cannot drift apart).
+`SessionInfo` reports both resolutions: `anePrefill` with `active`, the
+resolved mode, and whether the family and host support the split, and
+`speculation` with why it is off when the caller might have expected it on.
+
 ## Where it sits
 
 `turbospark-ffi` sits on top of nearly the whole workspace. Its unconditional

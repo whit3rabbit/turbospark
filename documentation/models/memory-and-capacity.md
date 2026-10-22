@@ -26,7 +26,16 @@ Instead of holding all experts in RAM:
 * TurboSpark allocates a bounded **Metal Slot Cache** (default: 16 slots per layer).
 * Active experts are loaded into cache slots via asynchronous memory-mapped reads.
 * Experts are processed in router ranking order (reduction order).
-* Unused slots are recycled using an LRU cache policy.
+* Unused slots are recycled with an LFU policy: the least-frequently-used expert leaves its slot.
+
+### Slot Tiers and the `auto` Policy
+
+`--expert-cache-slots` accepts 8, 16, 24, 32, 48, 64, 96, 128, 192, or 256. The default `auto` resolves to 16 on small machines and reaches the larger tiers only when a quarter of free memory covers the slot memory: 192 when free memory is at least 64 GiB and 256 when free memory is at least 128 GiB. On the 512-expert `qwen4exp` install streamed from an external SSD, 192 and 256 raised replayed routing hit rates to 90.5% and 94.4% against 84.1% at 128, while at 128 the page cache already absorbed what extra slots would hold.
+
+Two memory-side knobs refine the policy:
+
+* `TURBOSPARK_EXPERT_CACHE_DECAY=N` (a positive integer) halves every LFU count each N plans, so a workload change is not shadowed by stale favorites. Output is unchanged; only which experts stay resident moves.
+* `TURBOSPARK_EXPERT_RESIDENCY=mapped` reads routed experts straight from the page cache instead of the slot cache. A mapped residency that would exceed Metal's wired budget is refused with the reason rather than opened: under memory pressure the driver unwires layers, and an in-order decode then re-wires a whole layer on every pass, which measured 70 to 180 times slower for Drama 3 and MiniCPM-V. `auto` resolves down to `streamed`.
 
 ### Why Expert Granularity Matters
 

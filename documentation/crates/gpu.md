@@ -18,7 +18,7 @@ the crate compiles to almost nothing so the workspace still builds on Linux CI.
 | Area | Modules | Contents |
 | --- | --- | --- |
 | Device context | `src/context/` | `MetalContext` (device, queue, in-memory pipeline cache), `PassEncoder` and `CommittedPass`, dispatch helpers, buffer read/write helpers, `GpuError`, `autorelease_pool` |
-| Dequant GEMV | `dequant_int4_gemv`, `dequant_int8_gemv`, `dequant_int1_gemv`, `dequant_int2_gemv`, `dequant_iq_gemv`, `dequant_q2_k_gemv` ... `dequant_q8_0_gemv`, `gemv_bf16` | One module per weight format: affine INT4/INT8/INT1/INT2, the GGUF IQ and K-quant families, and BF16, each with a one-shot wrapper, an encoder, a resident-matrix view, and an embedding lookup |
+| Dequant GEMV | `dequant_int4_gemv`, `dequant_int8_gemv`, `dequant_int1_gemv`, `dequant_int2_gemv`, `dequant_iq_gemv`, `dequant_q2_k_gemv` ... `dequant_q8_0_gemv`, `gemv_bf16` | One module per weight format: affine INT4/INT8/INT1/INT2, the GGUF IQ and K-quant families, and BF16, each with a one-shot wrapper, an encoder, a resident-matrix view, and an embedding lookup. The fused INT4 FFN pair (`dequant_int4_fused.metal`) folds gate+up+activation into one GEMV and the down projection with its tail into the store epilogue, bit-identical to the per-tensor chain |
 | Batched GEMM | `dequant_int4_batch`, `dequant_int8_batch`, `dequant_int1_gemm_batch`, `dequant_int2_gemm_batch`, `dequant_int4_steel` | Prefill-shaped batched matrix products, MMA variants, and the Steel tile pipeline (`BatchedScratch::steel_gemm`) |
 | Attention | `attention_decode`, `attention_indexed`, `attention_tq`, `mla` | Two-pass split-KV decode (`attention_decode_gqa_partial` + `attention_decode_combine`), indexed and TurboQuant KV variants, MLA absorbed decode |
 | MoE | `moe_decode`, `moe_gguf/`, `moe_prefill_batch`, `moe_prefill_batch_gguf` | Two-phase routed experts reading expert blobs zero-copy through an argument buffer, per-format phase-1 kernels, the Gemma router GEMV, batched prefill |
@@ -31,6 +31,17 @@ The shaders live in `src/shaders/*.metal` and each dispatch module names its
 source with `include_str!`. `build.rs` extracts those same compositions from
 the source tree and compiles them at build time, so a shader that no longer
 compiles fails the Rust build before anything reaches a device.
+
+The lazy GDN verify tape (default on, `TURBOSPARK_GDN_LAZY_TAPE=0` opts out)
+is a runtime-side behavior that leans on these modules: a verify on clean
+recurrent state records a rank-1 tape in place of a snapshot blit, and folds
+it into the GDN state asynchronously on the GPU, so CPU drafting is not
+blocked on round completion (`crates/runtime/src/real_forward_rollback.rs`).
+Several dispatch-structure ideas adopted from the `nace-ai/kapitsa`
+comparison -- the fused FFN pair above, the lazy tape, and bench prototypes
+for concurrent compute encoders, int4 nibble masking, and expert-sorted
+grouped GEMM prefill -- are recorded with their paired measurements in
+`docs/KAPITSA_KERNELS.md`.
 
 ## Where it sits
 

@@ -7,6 +7,15 @@ icon: robot
 
 TurboSpark includes a native agent runtime enabling local models to interact with your Mac, read documents, execute code, and query external data sources safely.
 
+## Tools in Chat vs Projects
+
+The tool set a model sees depends on the surface:
+
+* **Chat** offers the rootless tools behind a **Tools** toggle (on by default): web search and fetch, browser automation, questions, checklists, planning, memory, and automation. File edit, search, shell, and MCP or custom tools are **not** offered in Chat, so Chat cannot touch the filesystem or run commands.
+* **Projects** offers the full table below, including file access, shell execution, and MCP servers, behind the same permission gates.
+
+The toggle lives as a chip below the composer, an item in the plus menu, and **Enable tools in Chat by default** in General Settings.
+
 ## Built-In Agent Tools
 
 Models running in TurboSpark can invoke several built-in native tools:
@@ -53,3 +62,9 @@ Rather than failing the request and returning an error, TurboSpark's server and 
 4. **Validation & Retry Budget**:
    * If parameters fail required field checks, the engine sends a targeted schema retry prompt to the model with a bounded retry budget (default: 2 retries).
    * This rescues over 85% of near-miss tool calls without requiring user intervention.
+
+---
+
+## Search Guardrails
+
+The Projects file search (`grep_search`), indexed and unindexed, never returns hidden files, `.git/` contents (`.git/config` can hold credentials in remote URLs), `node_modules`, `target`, `.build`, or credential files (`.env*`, `*.pem`, `*.key`, `credentials`, `.npmrc`, `.netrc`). Search is auto-allowed on an opted-in project, so without this guard those files would be readable without a prompt. A search whose `path` argument names a sensitive file is classified high risk and asks.

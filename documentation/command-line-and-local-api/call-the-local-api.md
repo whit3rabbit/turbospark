@@ -137,7 +137,28 @@ curl http://127.0.0.1:8080/v1/images/generations \
 curl http://127.0.0.1:8080/v1/audio/transcriptions \
   -H "Authorization: Bearer test-key" \
   -F file=@audio.wav \
-  -F model=whisper-base-en
+  -F model=whisper-base
 ```
+
+---
+
+## 7. Local Speech Synthesis (curl)
+
+`POST /v1/audio/speech` writes WAV by default. A Drama 3 request without a `seed` draws a fresh one and names it in the `x-turbospark-seed` response header, so every call is a new take; send `"seed": 7` to make a take repeatable.
+
+```sh
+curl -D headers.txt http://127.0.0.1:8080/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer test-key" \
+  -d '{
+    "model": "fish-drama3-4bit",
+    "input": "Local speech, [whispers] generated on this Mac."
+  }' \
+  -o speech.wav
+
+grep -i x-turbospark-seed headers.txt
+```
+
+Cloning (MegaTTS3, OmniVoice, Drama 3) adds `reference_audio` (base64 WAV) and `"consent": true`; Drama 3 also needs `reference_text`. The full request surface, including the Drama 3 sampler fields, is in [Text to Speech and Voice Cloning](../audio/text-to-speech.md).
 
 For the complete API route and schema index, see the [HTTP API Reference](../../api-reference/http.md) and [OpenAPI Specifications](../../api-reference/http/schemas.md).

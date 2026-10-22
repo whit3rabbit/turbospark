@@ -62,14 +62,14 @@ Used by:
 | Role | Path | Families | Representative names |
 |---|---|---|---|
 | Music generation | `src/music/` | 1 | `minimax_music3` (flow-matching DiT) |
-| Speech-to-text | `src/stt/` | 29 | `whisper`, `parakeet`, `moonshine`, `qwen3_asr`, `canary`, `voxtral`, `granite_speech5_ctc`, `sensevoice`, `mms` |
-| Text-to-speech | `src/tts/` | 39 | `kokoro`, `megatts3`, `bark`, `dia`, `omnivoice`, `chatterbox`, `confucius4`, `zonos2` |
+| Speech-to-text | `src/stt/` | 30 | `whisper`, `parakeet`, `multitalker_asr`, `moonshine`, `qwen3_asr`, `canary`, `voxtral`, `granite_speech5_ctc`, `sensevoice`, `mms` |
+| Text-to-speech | `src/tts/` | 39 | `fish_drama3`, `omnivoice`, `kokoro`, `megatts3`, `arktts`, `voxcpm`, `chatterbox`, `irodori_tts`, `bark`, `zonos2` |
 | VAD and diarization | `src/vad/` | 3 | `silero_vad`, `sortformer`, `nemotron_diarization` |
 | Speech-to-speech and enhancement | `src/sts/` | 5 | `deepfilternet`, `mel_roformer`, `mossformer2_se`, `dialogue_sidon`, `sam_audio` |
 | Codecs and vocoders | `src/codec/` | 17 | `encodec`, `descript` (DAC), `mimi`, `snac`, `bigvgan`, `vocos`, `wavvae`, `s3`, `ecapa_tdnn` |
 | Language identification | `src/lid/` | 0 ported | Reserved facade aligned with the mlx-audio `lid` layout; the ECAPA-TDNN backbone is ported under `codec/ecapa_tdnn` |
 
-Two structural notes. Composite TTS families compose the shared codecs instead of re-implementing them: `confucius4` over `bigvgan`, `dia` over `descript` DAC, `echo_tts` over `fish_s1_dac`, `omnivoice` over `higgs_audio`, and `megatts3` over `wavvae`. And zero-shot voice cloning (`megatts3`) requires explicit caller consent (`consent: true`) because the community WavVAE encoder provenance is unverified. The full catalog with port status per family lives in `crates/audio/MODELS.md` and the user-facing pages linked at the end of this document.
+Two structural notes. Composite TTS families compose the shared codecs instead of re-implementing them: `confucius4` over `bigvgan`, `dia` over `descript` DAC, `echo_tts` over `fish_s1_dac`, `omnivoice` over `higgs_audio`, and `megatts3` over `wavvae`. And zero-shot voice cloning (`megatts3`, `omnivoice`, `fish_drama3`) requires explicit caller consent (`consent: true`) because the community encoders' provenance is unverified. The full catalog with port status per family lives in `crates/audio/MODELS.md` and the user-facing pages linked at the end of this document.
 
 ## Examples
 
