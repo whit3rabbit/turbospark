@@ -89,6 +89,8 @@ These variables configure runtime diagnostics, kernel execution seams, and profi
 | `TURBOSPARK_DFLASH_DRAFT` | DFlash2 drafter (`runtime`) | DFlash2 draft block depth (positive integer) or policy (`0` to disable, unset for `auto`). | unset (`auto`) |
 | `TURBOSPARK_ROUTER_HIST` | MoE runtime (`runtime`) | File path to dump per-layer expert selection frequency histogram (JSON) at exit. | unset |
 | `TURBOSPARK_ROUTER_TRACE` | MoE runtime (`runtime`) | Set to collect sequential top-k expert selection trace into histogram output. | unset |
+| `TURBOSPARK_ROUTER_BATCHES` | MoE runtime (`runtime`) | Set to `1` to add per-batch rows (reset epoch, phase, layer, token range, ordered routes, streaming-cache counters) to the `TURBOSPARK_ROUTER_HIST` output. Read with `scripts/moe_route_replay.py`. | unset |
+| `TURBOSPARK_ROUTER_BATCH_LIMIT` | MoE runtime (`runtime`) | Maximum stored selections for `TURBOSPARK_ROUTER_BATCHES`. Past it the output is marked `truncated`. | `1000000` |
 | `TURBOSPARK_PILOT_PROBE` | MoE runtime (`runtime`) | Set to `1` to probe one-layer-ahead router prediction; set to `self` to validate probe self-recall. | unset |
 | `TURBOSPARK_FFN_HIST` | Dense FFN (`runtime`) | File path to dump dense FFN neuron activation frequency histogram (JSON) at exit (museGlimmer). | unset |
 | `TURBOSPARK_VISION_OVERFLOW` | Vision tower (`runtime`) | File path to dump vision attention overflow and peak activation tensors. | unset |

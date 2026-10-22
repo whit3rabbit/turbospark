@@ -5,6 +5,9 @@ use crate::producer::{ChunkedPrefillRunner, LogitProducer, SpeculativeProducer};
 
 impl LogitProducer for RealForwardRunner {
     fn reset(&mut self) {
+        if let Some(hist) = &mut self.router_hist {
+            hist.reset_request();
+        }
         // PARK the live session rather than clobbering it, whenever there is
         // a pool to park it IN and something worth parking. This is the path
         // that actually fixes multi-conversation stomping
@@ -113,8 +116,18 @@ impl LogitProducer for RealForwardRunner {
         self.note_eager_advance();
         self.batched_tape = None;
         self.batched_tape_row0 = None;
+        if let Some(hist) = &mut self.router_hist {
+            hist.begin_batch(
+                if self.skip_head { "prefill" } else { "decode" },
+                position,
+                1,
+            );
+        }
         let result = gpu::autorelease_pool(|| self.produce_inner(token, position, logits))
             .map_err(|e| e.to_string());
+        if let Some(hist) = &mut self.router_hist {
+            hist.end_batch(result.is_ok());
+        }
         // Recorded only on SUCCESS, and after the call: a failed forward may
         // have left the KV half-written, and a record naming a position the
         // pass did not complete is the one lie this whole mechanism exists to
