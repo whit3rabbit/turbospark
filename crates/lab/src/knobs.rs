@@ -18,6 +18,9 @@
 
 use serde::Serialize;
 
+/// The slot counts the runtime accepts (`--expert-cache-slots`).
+pub use foundation::runtime_config::ALLOWED_CACHE_SLOTS as ALLOWED_SLOTS;
+
 /// How the runtime reads the knob. tslab gives every run a fresh process, so
 /// this is information for the reader, not a branch in the harness.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

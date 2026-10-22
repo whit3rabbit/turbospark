@@ -126,7 +126,8 @@ pub fn judge_quality(
             }
         }
         GateClass::DenseKl | GateClass::MoeKl => {
-            if !(mean_kl <= bounds.mean_kl) {
+            // NaN fails closed: a broken arm must not pass by comparing false.
+            if mean_kl.is_nan() || mean_kl > bounds.mean_kl {
                 reasons.push(format!(
                     "mean KL {mean_kl:.3e} over the {:.1e} bound",
                     bounds.mean_kl

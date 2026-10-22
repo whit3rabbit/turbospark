@@ -22,6 +22,7 @@
 //! host so its tests run anywhere. Everything that touches a model, a Metal
 //! device or `pmset` is macOS-only.
 
+pub mod args;
 pub mod atomic;
 pub mod gates;
 pub mod knobs;
@@ -32,15 +33,23 @@ pub mod spec;
 pub mod stats;
 pub mod workload;
 
-// pending: ane
+#[cfg(target_os = "macos")]
+pub mod ane;
+#[cfg(target_os = "macos")]
+pub mod cli;
+#[cfg(target_os = "macos")]
+pub mod experiment;
 #[cfg(target_os = "macos")]
 pub mod host;
-// pending: integrity
-// pending: kernel
-// pending: orchestrate
+#[cfg(target_os = "macos")]
+pub mod kernel;
+#[cfg(target_os = "macos")]
+pub mod orchestrate;
 #[cfg(target_os = "macos")]
 pub mod phases;
 #[cfg(target_os = "macos")]
 pub mod provenance;
-// pending: report
-// pending: worker
+#[cfg(target_os = "macos")]
+pub mod report;
+#[cfg(target_os = "macos")]
+pub mod worker;
