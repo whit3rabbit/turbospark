@@ -112,6 +112,7 @@ pub fn evaluate_config(
         ModelFamily::Qwen3Vl => {
             repack::parse_qwen3_vl_config(config_text).map_err(|e| e.to_string())
         }
+        ModelFamily::Flint => repack::parse_flint_config(config_text).map_err(|e| e.to_string()),
         other => Err(format!(
             "model_type resolves to {}, whose safetensors intake is not wired here; \
              this port installs that family from GGUF instead",

@@ -202,11 +202,18 @@ pub(crate) fn stream_mlx(
         ModelFamily::Qwen3Vl => {
             repack::parse_qwen3_vl_config(&config_text).map_err(|e| e.to_string())
         }
+        ModelFamily::Flint => repack::parse_flint_config(&config_text).map_err(|e| e.to_string()),
         other => Err(format!("{} has no safetensors intake here", other.as_str())),
     }?;
     enable_requested_vision(plan, family, &mut arch, &config_text)?;
-    let quant = repack::parse_gemma4_quantization(&config_text)
-        .map_err(|e| format!("parsing the quantization block: {e}"))?;
+    // Flint declares its INT8 embedding outside `quantization` (in the
+    // producer's `mlx_export` block), so it parses through its own reader.
+    let quant = if family == ModelFamily::Flint {
+        repack::parse_flint_quantization(&config_text)
+    } else {
+        repack::parse_gemma4_quantization(&config_text)
+    }
+    .map_err(|e| format!("parsing the quantization block: {e}"))?;
 
     // Reuse an EXISTING install's trunk bytes rather than re-streaming them:
     // only the head crosses the network here. `--reuse-trunk-from` (the CLI
@@ -287,6 +294,13 @@ pub(crate) fn stream_mlx(
     if family == ModelFamily::Qwen2Dense {
         for header in &mut headers {
             repack::canonicalize_qwen2_header(header).map_err(|e| e.to_string())?;
+        }
+    }
+    // Flint: namespace rename AND the U8-to-U32 re-labelling its packed
+    // weights need before the shared walk can read them.
+    if family == ModelFamily::Flint {
+        for header in &mut headers {
+            repack::canonicalize_flint_header(header).map_err(|e| e.to_string())?;
         }
     }
 
@@ -394,6 +408,9 @@ pub(crate) fn stream_mlx(
         ),
         ModelFamily::Qwen3Vl => {
             repack::write_qwen3_vl_install_streamed(dir, &arch, &model_id, &shards, &quant, report)
+        }
+        ModelFamily::Flint => {
+            repack::write_flint_install_streamed(dir, &arch, &model_id, &shards, &quant, report)
         }
         other => Err(Box::<dyn std::error::Error>::from(format!(
             "{} has no safetensors writer here",
