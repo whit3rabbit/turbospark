@@ -330,6 +330,11 @@ impl MfTokenizer {
                  chat_template.jinja (or tokenizer_config.json's chat_template key)"
                     .to_string(),
             )),
+            ChatDialect::Flint => Err(TokenizerError::UnsupportedForDialect(
+                "Flint has no fallback renderer; the install must carry its own \
+                 chat_template.jinja (or tokenizer_config.json's chat_template key)"
+                    .to_string(),
+            )),
             ChatDialect::Kimi => Err(TokenizerError::UnsupportedForDialect(
                 "the Kimi K2 line has no fallback renderer; the install must carry its own \
                  chat_template.jinja (or tokenizer_config.json's chat_template key)"
@@ -402,6 +407,10 @@ impl MfTokenizer {
             ChatDialect::Glm => format!(
                 "{GLM_SOP_MARK}<|user|>{content}<|assistant|><think>"
             ),
+            // One user turn and the bare generation prompt, read off the
+            // checkpoint's own template: `<|user|>content<|assistant|>`, with
+            // no BOS, no turn terminator and no forced think frame.
+            ChatDialect::Flint => format!("<|user|>{content}<|assistant|>"),
             ChatDialect::Kimi => format!(
                 "{KIMI_IM_USER_MARK}user{KIMI_IM_MIDDLE_MARK}{content}{KIMI_IM_END_MARK}\
                  {KIMI_IM_ASSISTANT_MARK}assistant{KIMI_IM_MIDDLE_MARK}<think>"

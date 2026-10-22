@@ -528,6 +528,48 @@ pub(crate) fn resolve_spark(tokenizer: &Tokenizer) -> Result<Resolved, Tokenizer
 /// special, so they SURVIVE detokenization as literal text, and carrying
 /// ids nothing reads would claim an id-bracket arm this dialect does not
 /// have (the Spark resolver's reason, on a dialect that does parse).
+/// Recursive Flint. `<|begin_of_text|>` is the BOS id but the encoder must
+/// not prepend it: the checkpoint's `add_bos_token` is false and its template
+/// opens directly at the first role marker. `<|end_of_text|>` is EOS, PAD and
+/// the end of turn: a turn has no closing marker, so the model signals it is
+/// done by emitting that or the next role marker, and all four ids of
+/// `generation_config.json` are stops.
+///
+/// The think pair and the tool markup are added-but-not-special text, so
+/// every channel and tool id stays the sentinel and the decoder passes
+/// everything through as content.
+pub(crate) fn resolve_flint(tokenizer: &Tokenizer) -> Result<Resolved, TokenizerError> {
+    use super::resolve::{FLINT_BOS_MARK, FLINT_DEVELOPER_MARK, FLINT_EOS_MARK};
+    let bos = required_id(tokenizer, FLINT_BOS_MARK)?;
+    let eos = required_id(tokenizer, FLINT_EOS_MARK)?;
+    let user = required_id(tokenizer, GLM_USER_MARK)?;
+    let _assistant = required_id(tokenizer, GLM_ASSISTANT_MARK)?;
+    let observation = required_id(tokenizer, GLM_OBSERVATION_MARK)?;
+    let developer = required_id(tokenizer, FLINT_DEVELOPER_MARK)?;
+    Ok(Resolved {
+        bos_id: bos,
+        bos_prefix_id: None,
+        eos_id: eos,
+        pad_id: eos,
+        end_of_turn_id: eos,
+        tool_call_start_id: NO_SUCH_TOKEN_ID,
+        tool_call_end_id: NO_SUCH_TOKEN_ID,
+        tool_response_id: NO_SUCH_TOKEN_ID,
+        tool_response_end_id: NO_SUCH_TOKEN_ID,
+        tool_call_stop_id: observation,
+        channel_start_id: NO_SUCH_TOKEN_ID,
+        channel_end_id: NO_SUCH_TOKEN_ID,
+        message_start_id: NO_SUCH_TOKEN_ID,
+        message_end_id: NO_SUCH_TOKEN_ID,
+        think_start_id: None,
+        think_end_id: None,
+        stop_token_ids: [eos, user, observation, developer].into_iter().collect(),
+        // The checkpoint's `config.json` `vocab_size` (150,144): the padded
+        // lm_head row count, not the tokenizer's 150,019 ids (Gotcha 37).
+        vocab_size: 150_144,
+    })
+}
+
 pub(crate) fn resolve_glm(tokenizer: &Tokenizer) -> Result<Resolved, TokenizerError> {
     let eos = required_id(tokenizer, GLM_ENDOFTEXT_MARK)?;
     let sop = required_id(tokenizer, GLM_SOP_MARK)?;

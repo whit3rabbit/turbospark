@@ -265,7 +265,9 @@ impl<'a> StructuredAssistantDecoder<'a> {
             // V2-era tables carry NO structural markup at all: plain text in,
             // plain text out, exactly the Llama3 arm's contract (all ids are
             // NO_SUCH_TOKEN_ID, nothing can open a span).
-            ChatDialect::DeepseekV2 => {
+            // Flint: its think pair and tool markup are plain text and no
+            // parser is wired, so everything flows through as content.
+            ChatDialect::DeepseekV2 | ChatDialect::Flint => {
                 return Ok(if delta.is_empty() {
                     Vec::new()
                 } else {
