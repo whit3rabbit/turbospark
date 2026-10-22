@@ -344,6 +344,7 @@ impl RealForwardRunner {
             pending_gdn_fold: None,
             real_llama: None,
             real_deepseek2: None,
+            real_flint: None,
             real_gpt_oss: None,
             real_muse: None,
             real_qwen4: None,
@@ -529,15 +530,17 @@ impl RealForwardRunner {
                     "the DeepSeek-V4-Flash family has no decode flow yet".to_string(),
                 ));
             }
-            // Refused BY NAME until `families/flint/` lands: the repack and
-            // manifest side exist, the layer flow does not. A fall-through to
-            // a neighbour's flow would decode fluently and wrongly (sinks,
-            // NoPE, a sigmoid router and a dense lead are each inside the
-            // layer). `docs/FLINT_PHASE0.md`.
+            // Its own flow: sinks, NoPE by layer mask, per-head QK norm, a
+            // sigmoid router, an ungated shared expert and a dense lead are
+            // each inside the layer, so a neighbour's flow would decode
+            // fluently and wrongly. `docs/FLINT_PHASE0.md`.
             model_io::ModelFamily::Flint => {
-                return Err(RealForwardError::Unsupported(
-                    "the Flint family has no decode flow yet".to_string(),
-                ));
+                runner.real_flint = Some(crate::families::flint::RealFlintState::build(
+                    &mut runner.context,
+                    &runner.weights,
+                    &runner.index,
+                    &runner.arch,
+                )?);
             }
             model_io::ModelFamily::Deepseek2 => {
                 runner.real_deepseek2 =

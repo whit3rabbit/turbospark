@@ -1,6 +1,7 @@
 //! Model family execution modules for real and synthetic checkpoints.
 
 pub(crate) mod deepseek2;
+pub(crate) mod flint;
 pub(crate) mod gemma4;
 pub(crate) mod gptoss;
 pub(crate) mod llama;

@@ -618,6 +618,9 @@ mod tests {
         ModelFamily::MiniMaxM2,
         ModelFamily::Qwen2Dense,
         ModelFamily::Qwen3Vl,
+        // Refused deliberately: no mapped arm in the flint dispatch's
+        // mapped residency yet (it is wired, untested, in `moe.rs`).
+        ModelFamily::Flint,
         // Refused deliberately: mapped residency over the compressed MLA
         // cache has no mapped arm in the deepseek2 dispatch, and the family
         // opens fine on the streamed path.
