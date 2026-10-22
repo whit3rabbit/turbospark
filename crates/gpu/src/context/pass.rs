@@ -170,6 +170,27 @@ impl PassEncoder {
             .memory_barrier_with_resources(&resources);
     }
 
+    /// Commit with a short completion notification for a serial submission
+    /// worker. The worker must retain the draining handle and backing memory.
+    /// A failed producer must never authorize Core ML to read stale inputs.
+    pub fn commit_notifying(
+        self,
+    ) -> (CommittedPass, std::sync::mpsc::Receiver<Result<(), String>>) {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let callback = block::ConcreteBlock::new(move |buffer: &metal::CommandBufferRef| {
+            let status = buffer.status();
+            let result = if status == metal::MTLCommandBufferStatus::Completed {
+                Ok(())
+            } else {
+                Err(format!("Metal producer failed: {status:?}"))
+            };
+            let _ = sender.send(result);
+        })
+        .copy();
+        self.command_buffer.add_completed_handler(&callback);
+        (self.commit().waiting_on_drop(), receiver)
+    }
+
     /// Ends encoding, commits, and blocks until the GPU finishes. Shared-
     /// storage outputs are CPU-readable after this returns.
     pub fn commit_and_wait(self) {

@@ -34,7 +34,7 @@ pub use tensor::{element_count, DType, Tensor, TensorData};
 pub use sys::{compile_if_needed, compute_plan, os_version, supports, CoreMlModel, CoreMlState};
 
 #[cfg(all(target_os = "macos", feature = "ane-prefill"))]
-pub use sys::SharedF16Plane;
+pub use sys::{SharedF16Plane, SharedPrediction, SharedPredictionBuffers};
 
 #[cfg(not(target_os = "macos"))]
 pub use stub::{compile_if_needed, compute_plan, os_version, supports, CoreMlModel, CoreMlState};
@@ -79,6 +79,8 @@ impl ComputeUnits {
 pub enum Capability {
     /// `MLModelConfiguration.functionName`, for multifunction packages.
     MultiFunction,
+    /// Completion-handler stateless prediction (macOS 14).
+    AsyncPrediction,
     /// `MLState` and `predictionFromFeatures:usingState:`.
     State,
     /// `compileModelAtURL:completionHandler:` (14.4). The synchronous
@@ -92,6 +94,7 @@ impl Capability {
     pub fn required_macos(self) -> &'static str {
         match self {
             Self::MultiFunction | Self::State => "15.0",
+            Self::AsyncPrediction => "14.0",
             Self::AsyncCompile | Self::ComputePlan => "14.4",
         }
     }
@@ -99,6 +102,7 @@ impl Capability {
     pub fn name(self) -> &'static str {
         match self {
             Self::MultiFunction => "multifunction Core ML models",
+            Self::AsyncPrediction => "asynchronous Core ML prediction",
             Self::State => "stateful Core ML models",
             Self::AsyncCompile => "asynchronous Core ML compilation",
             Self::ComputePlan => "Core ML compute plans",

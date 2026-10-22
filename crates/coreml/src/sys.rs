@@ -58,6 +58,7 @@ fn ns_error(e: &NSError) -> String {
 pub fn supports(cap: Capability) -> bool {
     match cap {
         Capability::MultiFunction | Capability::State => available!(macos = 15.0),
+        Capability::AsyncPrediction => available!(macos = 14.0),
         Capability::AsyncCompile | Capability::ComputePlan => available!(macos = 14.4),
     }
 }
@@ -791,49 +792,136 @@ pub fn compile_if_needed(path: &Path, cache_root: &Path) -> Result<PathBuf> {
     }
     let key = cache_key(path, &os_tag())?;
     let dest = compiled_path_for(path, cache_root, &key);
-    if dest.is_dir() {
-        return Ok(dest);
-    }
-    fs::create_dir_all(cache_root)?;
-    let stem = path
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "model".into());
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let staging = cache_root.join(format!(
-        ".staging-{stem}-{}-{nanos}.mlmodelc",
-        std::process::id()
-    ));
-    let url = NSURL::from_file_path(path)
-        .ok_or_else(|| CoreMlError::Compile(format!("bad path {}", path.display())))?;
+    serialized_cold_compile(
+        || dest.is_dir().then(|| dest.clone()),
+        || {
+            fs::create_dir_all(cache_root)?;
+            let stem = path
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "model".into());
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            let staging = cache_root.join(format!(
+                ".staging-{stem}-{}-{nanos}.mlmodelc",
+                std::process::id()
+            ));
+            let url = NSURL::from_file_path(path)
+                .ok_or_else(|| CoreMlError::Compile(format!("bad path {}", path.display())))?;
 
-    let compiled_tmp = compile_to_temp(&url)?;
-    // The compiler writes to a temporary directory it may clean up, so move
-    // the result into the cache now. A cross-volume install falls back to
-    // a copy.
-    if fs::rename(&compiled_tmp, &staging).is_err() {
-        copy_dir(&compiled_tmp, &staging)
-            .map_err(|e| CoreMlError::Compile(format!("copying compiled model: {e}")))?;
-        let _ = fs::remove_dir_all(&compiled_tmp);
+            let compiled_tmp = compile_to_temp(&url)?;
+            // The compiler writes to a temporary directory it may clean up, so move
+            // the result into the cache now. A cross-volume install falls back to
+            // a copy.
+            if fs::rename(&compiled_tmp, &staging).is_err() {
+                copy_dir(&compiled_tmp, &staging)
+                    .map_err(|e| CoreMlError::Compile(format!("copying compiled model: {e}")))?;
+                let _ = fs::remove_dir_all(&compiled_tmp);
+            }
+            match fs::rename(&staging, &dest) {
+                Ok(()) => {}
+                Err(_) if dest.is_dir() => {
+                    // Another process finished the same compile first.
+                    let _ = fs::remove_dir_all(&staging);
+                }
+                Err(e) => {
+                    let _ = fs::remove_dir_all(&staging);
+                    return Err(CoreMlError::Compile(format!(
+                        "installing compiled model: {e}"
+                    )));
+                }
+            }
+            prune_stale(cache_root, &stem, &dest);
+            Ok(dest.clone())
+        },
+    )
+}
+
+// Core ML may return the same temporary directory to simultaneous
+// compilers of one package, even with different destination cache roots.
+// Keep compilation and publication in one critical section; prediction
+// remains independently serialized per model.
+fn serialized_cold_compile<T>(
+    cached: impl Fn() -> Option<T>,
+    compile: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    if let Some(value) = cached() {
+        return Ok(value);
     }
-    match fs::rename(&staging, &dest) {
-        Ok(()) => {}
-        Err(_) if dest.is_dir() => {
-            // Another process finished the same compile first.
-            let _ = fs::remove_dir_all(&staging);
-        }
-        Err(e) => {
-            let _ = fs::remove_dir_all(&staging);
-            return Err(CoreMlError::Compile(format!(
-                "installing compiled model: {e}"
-            )));
-        }
+    static COMPILE_AND_PUBLISH: Mutex<()> = Mutex::new(());
+    let _compile = COMPILE_AND_PUBLISH
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    if let Some(value) = cached() {
+        return Ok(value);
     }
-    prune_stale(cache_root, &stem, &dest);
-    Ok(dest)
+    compile()
+}
+
+#[cfg(test)]
+mod compile_serialization_tests {
+    use super::*;
+    use std::sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc,
+    };
+    #[test]
+    fn cold_publication_excludes_other_compilers_until_cache_is_ready() {
+        let cached = Arc::new(AtomicBool::new(false));
+        let compiles = Arc::new(AtomicUsize::new(0));
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let first_cache = cached.clone();
+        let first_count = compiles.clone();
+        let first = std::thread::spawn(move || {
+            serialized_cold_compile(
+                || first_cache.load(Ordering::Acquire).then_some(7),
+                || {
+                    first_count.fetch_add(1, Ordering::Relaxed);
+                    started_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                    first_cache.store(true, Ordering::Release);
+                    Ok(7)
+                },
+            )
+        });
+        started_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
+        let (checking_tx, checking_rx) = mpsc::channel();
+        let (compiling_tx, compiling_rx) = mpsc::channel();
+        let second_cache = cached.clone();
+        let second_count = compiles.clone();
+        let second = std::thread::spawn(move || {
+            serialized_cold_compile(
+                || {
+                    let _ = checking_tx.send(());
+                    second_cache.load(Ordering::Acquire).then_some(7)
+                },
+                || {
+                    second_count.fetch_add(1, Ordering::Relaxed);
+                    compiling_tx.send(()).unwrap();
+                    Ok(7)
+                },
+            )
+        });
+        checking_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
+        let premature = compiling_rx
+            .recv_timeout(std::time::Duration::from_millis(100))
+            .is_ok();
+        release_tx.send(()).unwrap();
+        assert_eq!(first.join().unwrap().unwrap(), 7);
+        assert_eq!(second.join().unwrap().unwrap(), 7);
+        assert!(
+            !premature,
+            "second compiler entered before first publication"
+        );
+        assert_eq!(compiles.load(Ordering::Relaxed), 1);
+    }
 }
 
 fn prune_stale(cache_root: &Path, stem: &str, keep: &Path) {
@@ -1041,7 +1129,7 @@ fn device(d: &ProtocolObject<dyn MLComputeDeviceProtocol>) -> ComputeDevice {
 // ---- IOSurface-backed planes (feature `ane-prefill`, off by default) ----
 
 #[cfg(feature = "ane-prefill")]
-pub use shared_plane::SharedF16Plane;
+pub use shared_plane::{SharedF16Plane, SharedPrediction, SharedPredictionBuffers};
 
 #[cfg(feature = "ane-prefill")]
 mod shared_plane {
@@ -1068,7 +1156,10 @@ mod shared_plane {
     use super::{guarded, ns_error, CoreMlModel};
     use crate::error::{CoreMlError, Result};
     use crate::tensor::DType;
-    use crate::{FeatureKind, FeatureSpec};
+    use crate::{Capability, FeatureKind, FeatureSpec};
+    use block2::RcBlock;
+    use objc2_core_ml::{MLModel, MLPredictionOptions};
+    use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
     type CFTypeRef = *const c_void;
 
@@ -1264,6 +1355,23 @@ mod shared_plane {
             self.stride
         }
 
+        /// Copy dense host values into a plane while it is not in flight.
+        pub fn write_f16(&mut self, values: &[half::f16]) -> Result<()> {
+            let tensor = crate::Tensor::new(
+                vec![1, 1, self.rows, self.cols],
+                crate::TensorData::F16(values.to_vec()),
+            )?;
+            super::write_multiarray("shared plane", &self.array, &tensor)
+        }
+
+        /// Copy a completed plane to dense host storage, honoring its strides.
+        pub fn read_f16(&self) -> Result<Vec<half::f16>> {
+            Ok(super::from_multiarray("shared plane", &self.array)?
+                .as_f16()
+                .expect("F16 plane")
+                .to_vec())
+        }
+
         fn as_feature(&self) -> Retained<MLFeatureValue> {
             // SAFETY: wraps a live multi-array.
             unsafe { MLFeatureValue::featureValueWithMultiArray(&self.array) }
@@ -1297,6 +1405,203 @@ mod shared_plane {
                 expected: want.to_vec(),
                 got: Vec::new(),
             }),
+        }
+    }
+
+    /// Ownership of every shared input/output, returned only after completion.
+    /// Moving planes into a ticket prevents safe callers from reusing them
+    /// while Core ML is reading or writing. Metal users must also retire
+    /// their no-copy command buffers before resubmitting these planes.
+    #[derive(Debug, Default)]
+    pub struct SharedPredictionBuffers {
+        pub inputs: Vec<(String, SharedF16Plane)>,
+        pub outputs: Vec<(String, SharedF16Plane)>,
+    }
+
+    type Completion = Arc<(Mutex<Option<Result<()>>>, Condvar)>;
+
+    /// An in-flight prediction. Wait or drop before calling another prediction
+    /// on the same model, including after the callback has completed.
+    /// Drop waits, without a timeout: a timeout
+    /// cannot cancel Core ML or authorize reuse of its output memory.
+    pub struct SharedPrediction<'a> {
+        done: Completion,
+        buffers: Option<SharedPredictionBuffers>,
+        // A forgotten ticket leaks its resources, including a retained model.
+        // Even mem::forget cannot leave the callback using freed planes.
+        _model: Retained<MLModel>,
+        _provider: Retained<MLDictionaryFeatureProvider>,
+        _options: Retained<MLPredictionOptions>,
+        _reservation: MutexGuard<'a, super::SendModel>,
+    }
+
+    impl SharedPrediction<'_> {
+        fn drain(&self) -> Result<()> {
+            let (lock, wake) = &*self.done;
+            let mut result = lock.lock().unwrap_or_else(|p| p.into_inner());
+            while result.is_none() {
+                result = wake.wait(result).unwrap_or_else(|p| p.into_inner());
+            }
+            result.as_ref().expect("completed").clone()
+        }
+
+        /// Wait for completion and recover the planes, including on failure.
+        pub fn wait(mut self) -> (Result<()>, SharedPredictionBuffers) {
+            let result = self.drain();
+            (result, self.buffers.take().expect("ticket owns buffers"))
+        }
+    }
+
+    impl Drop for SharedPrediction<'_> {
+        fn drop(&mut self) {
+            let _ = self.drain();
+        }
+    }
+
+    fn validate_bindings(model: &CoreMlModel, buffers: &SharedPredictionBuffers) -> Result<()> {
+        // Counts alone accept duplicate names while leaving another feature
+        // unbound. Check uniqueness before invoking Objective-C.
+        for (specs, planes) in [
+            (&model.inputs, &buffers.inputs),
+            (&model.outputs, &buffers.outputs),
+        ] {
+            let mut names = std::collections::HashSet::new();
+            if planes.len() != specs.len() {
+                return Err(CoreMlError::MissingFeature(
+                    "bind every shared input and output".into(),
+                ));
+            }
+            for (name, plane) in planes {
+                if !names.insert(name) {
+                    return Err(CoreMlError::MissingFeature(format!(
+                        "duplicate shared feature {name}"
+                    )));
+                }
+                check_plane(specs, name, plane)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_async_output(
+        output: &ProtocolObject<dyn MLFeatureProvider>,
+        expected: &[(String, usize)],
+    ) -> Result<()> {
+        for (name, pointer) in expected {
+            let key = NSString::from_str(name);
+            // SAFETY: callback output is live; only compare array identity.
+            let same = unsafe { output.featureValueForName(&key) }
+                .and_then(|v| unsafe { v.multiArrayValue() })
+                .is_some_and(|a| Retained::as_ptr(&a) as usize == *pointer);
+            if !same {
+                return Err(CoreMlError::Prediction(format!(
+                    "{name}: Core ML did not write into the output backing"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    impl CoreMlModel {
+        /// Submit a stateless prediction using the public completion API.
+        /// Ownership of the planes is transferred until the ticket completes.
+        pub fn predict_shared_async(
+            &self,
+            buffers: SharedPredictionBuffers,
+        ) -> Result<SharedPrediction<'_>> {
+            if !super::supports(Capability::AsyncPrediction) {
+                return Err(Capability::AsyncPrediction.too_old());
+            }
+            if !self.states.is_empty() {
+                return Err(CoreMlError::Prediction(
+                    "shared async prediction is stateless; models with MLState require an explicit state".into()));
+            }
+            validate_bindings(self, &buffers)?;
+            let guard = self.lock();
+            autoreleasepool(|_| {
+                let keys: Vec<_> = buffers
+                    .inputs
+                    .iter()
+                    .map(|(n, _)| NSString::from_str(n))
+                    .collect();
+                let values: Vec<_> = buffers.inputs.iter().map(|(_, p)| p.as_feature()).collect();
+                let key_refs: Vec<_> = keys.iter().map(|k| &**k).collect();
+                let value_refs: Vec<&AnyObject> = values.iter().map(|v| v.as_ref()).collect();
+                let dict = NSDictionary::<NSString, AnyObject>::from_slices(&key_refs, &value_refs);
+                // SAFETY: fixed-shape, unique, validated feature values.
+                let provider = unsafe {
+                    MLDictionaryFeatureProvider::initWithDictionary_error(
+                        MLDictionaryFeatureProvider::alloc(),
+                        &dict,
+                    )
+                }
+                .map_err(|e| CoreMlError::Prediction(ns_error(&e)))?;
+                let out_keys: Vec<_> = buffers
+                    .outputs
+                    .iter()
+                    .map(|(n, _)| NSString::from_str(n))
+                    .collect();
+                let out_key_refs: Vec<_> = out_keys.iter().map(|k| &**k).collect();
+                let out_refs: Vec<&AnyObject> = buffers
+                    .outputs
+                    .iter()
+                    .map(|(_, p)| p.array.as_ref())
+                    .collect();
+                let backings =
+                    NSDictionary::<NSString, AnyObject>::from_slices(&out_key_refs, &out_refs);
+                // SAFETY: validated output names and live arrays, owned by ticket.
+                let options = unsafe { MLPredictionOptions::new() };
+                unsafe {
+                    options.setOutputBackings(&backings);
+                }
+                let expected: Vec<_> = buffers
+                    .outputs
+                    .iter()
+                    .map(|(name, p)| (name.clone(), Retained::as_ptr(&p.array) as usize))
+                    .collect();
+                let done: Completion = Arc::new((Mutex::new(None), Condvar::new()));
+                let completed = done.clone();
+                let callback = RcBlock::new(
+                    move |output: *mut ProtocolObject<dyn MLFeatureProvider>,
+                          error: *mut NSError| {
+                        let result = autoreleasepool(|_| {
+                            // SAFETY: Core ML owns these callback arguments for its duration.
+                            if let Some(error) = unsafe { error.as_ref() } {
+                                return Err(CoreMlError::Prediction(ns_error(error)));
+                            }
+                            let output = unsafe { output.as_ref() }.ok_or_else(|| {
+                                CoreMlError::Prediction(
+                                    "async prediction returned no output".into(),
+                                )
+                            })?;
+                            validate_async_output(output, &expected)
+                        });
+                        let (lock, wake) = &*completed;
+                        *lock.lock().unwrap_or_else(|p| p.into_inner()) = Some(result);
+                        wake.notify_all();
+                    },
+                );
+                let ticket = SharedPrediction {
+                    done,
+                    buffers: Some(buffers),
+                    _model: guard.0.clone(),
+                    _provider: provider,
+                    _options: options,
+                    _reservation: guard,
+                };
+                // SAFETY: macOS availability and bindings checked above. The ticket
+                // retains every argument and serializes all model calls until done.
+                unsafe {
+                    ticket
+                        ._model
+                        .predictionFromFeatures_options_completionHandler(
+                            ProtocolObject::from_ref(&*ticket._provider),
+                            &ticket._options,
+                            &callback,
+                        );
+                }
+                Ok(ticket)
+            })
         }
     }
 
@@ -1378,6 +1683,127 @@ mod shared_plane {
                 }
                 Ok(())
             })
+        }
+    }
+    #[cfg(test)]
+    mod async_tests {
+        use super::*;
+        #[test]
+        fn callback_refuses_a_different_or_missing_output_backing() {
+            autoreleasepool(|_| {
+                let plane = SharedF16Plane::new(2, 32).unwrap();
+                let key = NSString::from_str("y");
+                let value = plane.as_feature();
+                let dict =
+                    NSDictionary::<NSString, AnyObject>::from_slices(&[&*key], &[value.as_ref()]);
+                // SAFETY: a valid output feature provider for the callback validator.
+                let provider = unsafe {
+                    MLDictionaryFeatureProvider::initWithDictionary_error(
+                        MLDictionaryFeatureProvider::alloc(),
+                        &dict,
+                    )
+                }
+                .unwrap();
+                let provider = ProtocolObject::from_ref(&*provider);
+                let actual = Retained::as_ptr(&plane.array) as usize;
+                assert!(validate_async_output(provider, &[("y".into(), actual)]).is_ok());
+                assert!(validate_async_output(provider, &[("y".into(), 0)]).is_err());
+                assert!(validate_async_output(provider, &[("missing".into(), actual)]).is_err());
+            });
+        }
+
+        #[test]
+        #[ignore = "subprocess helper for missing_completion_is_not_treated_as_cancellation"]
+        fn missing_completion_child() {
+            let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("testdata/shared_double.mlpackage");
+            let cache =
+                std::env::temp_dir().join(format!("ane-missing-completion-{}", std::process::id()));
+            let model = CoreMlModel::open(
+                &fixture,
+                &cache,
+                &crate::LoadOptions::new(crate::ComputeUnits::CpuOnly),
+            )
+            .unwrap();
+            let mut ticket = model
+                .predict_shared_async(SharedPredictionBuffers {
+                    inputs: vec![("x".into(), SharedF16Plane::new(2, 32).unwrap())],
+                    outputs: vec![("y".into(), SharedF16Plane::new(2, 32).unwrap())],
+                })
+                .unwrap();
+            // Let the real prediction retire, then simulate a lost completion
+            // notification. Only the child watchdog may end this wait.
+            ticket.drain().unwrap();
+            ticket.done = Arc::new((Mutex::new(None), Condvar::new()));
+            eprintln!("dropping-pending-ticket");
+            drop(ticket);
+            panic!("an absent completion released its backing");
+        }
+
+        #[test]
+        fn missing_completion_is_not_treated_as_cancellation() {
+            use std::io::BufRead;
+            use std::time::Duration;
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "sys::shared_plane::async_tests::missing_completion_child",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .stderr(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::null())
+                .spawn()
+                .unwrap();
+            let stderr = child.stderr.take().unwrap();
+            let (send, recv) = std::sync::mpsc::channel();
+            let reader = std::thread::spawn(move || {
+                for line in std::io::BufReader::new(stderr)
+                    .lines()
+                    .map_while(std::result::Result::ok)
+                {
+                    if line.contains("dropping-pending-ticket") {
+                        let _ = send.send(());
+                        break;
+                    }
+                }
+            });
+            let reached_drop = recv.recv_timeout(Duration::from_secs(10)).is_ok();
+            std::thread::sleep(Duration::from_millis(100));
+            let blocked = child.try_wait().unwrap().is_none();
+            let _ = child.kill();
+            child.wait().unwrap();
+            reader.join().unwrap();
+            assert!(reached_drop, "helper never reached ticket drop");
+            assert!(
+                blocked,
+                "missing callback incorrectly completed ticket drop"
+            );
+        }
+
+        #[test]
+        fn reservation_covers_callback_lifetime_and_ticket_drop() {
+            let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("testdata/shared_double.mlpackage");
+            let cache =
+                std::env::temp_dir().join(format!("ane-reservation-{}", std::process::id()));
+            let model = CoreMlModel::open(
+                &fixture,
+                &cache,
+                &crate::LoadOptions::new(crate::ComputeUnits::CpuOnly),
+            )
+            .unwrap();
+            let buffers = SharedPredictionBuffers {
+                inputs: vec![("x".into(), SharedF16Plane::new(2, 32).unwrap())],
+                outputs: vec![("y".into(), SharedF16Plane::new(2, 32).unwrap())],
+            };
+            let ticket = model.predict_shared_async(buffers).unwrap();
+            assert!(
+                model.model.try_lock().is_err(),
+                "submission released model before ticket drained"
+            );
+            drop(ticket);
+            assert!(model.model.try_lock().is_ok());
         }
     }
 }

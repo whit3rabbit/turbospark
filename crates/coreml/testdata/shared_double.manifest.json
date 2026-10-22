@@ -1,0 +1,6 @@
+{
+  "generator": "crates/coreml/tools/gen_ane_async_fixture.py",
+  "coremltools": "9.0",
+  "numpy": "2.2.6",
+  "sha256_tree": "5f29a7681a0a91868cebc29c50ad41011e87e9a0f00246204d6c06d7da485e51"
+}

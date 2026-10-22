@@ -2352,6 +2352,7 @@ dependencies = [
 name = "turbospark-gpu"
 version = "0.4.0"
 dependencies = [
+ "block",
  "half",
  "libc",
  "metal",
