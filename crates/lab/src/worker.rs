@@ -168,7 +168,40 @@ pub fn prompt_ids(tokenizer: &MfTokenizer, source: &PromptSource) -> Result<Vec<
                 std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
             Ok(tokenizer.encode(&text, false))
         }
+        PromptSource::Corpus(_) => Err("corpus prompts are resolved per workload".into()),
     }
+}
+
+/// Every prompt of a workload as token ids. Corpus prompts are sliced
+/// together so the k-th one gets the probes' k-th offset.
+pub fn workload_ids(
+    tokenizer: &MfTokenizer,
+    prompts: &[PromptSource],
+) -> Result<Vec<Vec<i32>>, String> {
+    let corpus_lengths: Vec<usize> = prompts
+        .iter()
+        .filter_map(|p| match p {
+            PromptSource::Corpus(n) => Some(*n),
+            _ => None,
+        })
+        .collect();
+    let mut corpus_slices = if corpus_lengths.is_empty() {
+        Vec::new()
+    } else {
+        let text = turbospark_bench::quality_corpus::corpus_text(provenance::source_root())?;
+        let ids = tokenizer.encode(&text, false);
+        turbospark_bench::quality_corpus::slices(&ids, &corpus_lengths)?
+    }
+    .into_iter();
+    prompts
+        .iter()
+        .map(|p| match p {
+            PromptSource::Corpus(_) => corpus_slices
+                .next()
+                .ok_or_else(|| "corpus slice count mismatch".to_string()),
+            other => prompt_ids(tokenizer, other),
+        })
+        .collect()
 }
 
 fn f16_bits(logits: &[LogitValue]) -> Vec<u8> {
@@ -298,12 +331,7 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
     }
     let vocab = runner.vocab_size();
     let mut logits = vec![LogitValue::from_f32(0.0); vocab];
-    let all_ids: Vec<Vec<i32>> = req
-        .workload
-        .prompts
-        .iter()
-        .map(|p| prompt_ids(&tokenizer, p))
-        .collect::<Result<_, _>>()?;
+    let all_ids = workload_ids(&tokenizer, &req.workload.prompts)?;
     for (ids, p) in all_ids.iter().zip(&req.workload.prompts) {
         if ids.is_empty() {
             return Err(format!("{p:?} tokenized to nothing"));

@@ -188,8 +188,12 @@ fn profile(mut args: Args) -> Result<(), String> {
 }
 
 /// The latest null calibration for the same workload and metric in this
-/// experiment, as an effect floor.
-fn null_floor(session: &Session, workload: &Workload, metric: Metric) -> Result<f64, String> {
+/// experiment: (effect floor, peak-footprint noise in bytes).
+pub fn null_floor(
+    session: &Session,
+    workload: &Workload,
+    metric: Metric,
+) -> Result<(f64, u64), String> {
     let w = serde_json::to_value(workload).map_err(|e| e.to_string())?;
     let m = serde_json::to_value(metric).map_err(|e| e.to_string())?;
     Ok(session
@@ -198,8 +202,13 @@ fn null_floor(session: &Session, workload: &Workload, metric: Metric) -> Result<
         .iter()
         .rev()
         .find(|r| r["workload"] == w && r["metric"] == m)
-        .and_then(|r| r["floor"].as_f64())
-        .unwrap_or(0.0))
+        .map(|r| {
+            (
+                r["floor"].as_f64().unwrap_or(0.0),
+                r["memory_noise"].as_f64().unwrap_or(0.0) as u64,
+            )
+        })
+        .unwrap_or((0.0, 0)))
 }
 
 fn median_peak(outcomes: &[&Outcome]) -> Option<f64> {
@@ -212,12 +221,12 @@ fn median_peak(outcomes: &[&Outcome]) -> Option<f64> {
 }
 
 /// Peak-footprint comparison between the arms' clean runs.
-pub fn memory_check(pairs: &[(Outcome, Outcome)], requested: Option<u64>) -> Value {
+pub fn memory_check(pairs: &[(Outcome, Outcome)], requested: Option<u64>, noise: u64) -> Value {
     let a: Vec<&Outcome> = pairs.iter().map(|p| &p.0).collect();
     let b: Vec<&Outcome> = pairs.iter().map(|p| &p.1).collect();
     match (median_peak(&a), median_peak(&b)) {
         (Some(pa), Some(pb)) => {
-            let allowance = crate::gates::memory_allowance(pa as u64, requested) as f64;
+            let allowance = crate::gates::memory_allowance(pa as u64, requested, noise) as f64;
             json!({
                 "baseline_peak": pa,
                 "candidate_peak": pb,
@@ -279,8 +288,8 @@ fn ab(mut args: Args) -> Result<(), String> {
     let lab = lab_dir();
     let _lock = MachineLock::acquire(&lab, &format!("tslab ab {experiment}"))?;
     let session = Session::new(&lab, &experiment, &model, rules, timeout)?;
-    let floor = if null {
-        0.0
+    let (floor, memory_noise) = if null {
+        (0.0, 0)
     } else {
         null_floor(&session, &workload, metric)?
     };
@@ -293,9 +302,9 @@ fn ab(mut args: Args) -> Result<(), String> {
         floor * 100.0
     );
     let (verdict, pairs) = run_ab(
-        &session, &baseline, &candidate, &workload, metric, min_effect, min_pairs, max_pairs,
+        &session, &baseline, &candidate, &workload, metric, min_effect, min_pairs, max_pairs, None,
     )?;
-    let memory = memory_check(&pairs, None);
+    let memory = memory_check(&pairs, None, memory_noise);
     let run_ids: Vec<(String, String)> = pairs
         .iter()
         .map(|(a, b)| (a.run_id.clone(), b.run_id.clone()))
@@ -307,6 +316,9 @@ fn ab(mut args: Args) -> Result<(), String> {
     println!("  memory: {memory}");
     if null {
         let floor = stats::null_floor(&verdict.improvements);
+        // Twice the identical arms' peak gap is what this host's peak
+        // reading cannot resolve.
+        let memory_noise = 2.0 * memory["growth"].as_f64().unwrap_or(0.0).abs();
         println!(
             "  null floor for this workload and metric: {:.2}% (2 x MAD); later ab runs in this experiment use it",
             floor * 100.0
@@ -314,7 +326,8 @@ fn ab(mut args: Args) -> Result<(), String> {
         session.ledger.append(
             "null_calibration",
             json!({"workload": workload, "metric": metric, "arm": baseline,
-                   "improvements": verdict.improvements, "floor": floor, "pairs": run_ids}),
+                   "improvements": verdict.improvements, "floor": floor,
+                   "memory_noise": memory_noise, "pairs": run_ids}),
         )?;
     } else {
         session.ledger.append(

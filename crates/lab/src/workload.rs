@@ -21,8 +21,13 @@ pub enum PromptSource {
     Protocol(String),
     /// A `--messages-file`-shaped JSON conversation, chat-templated.
     MessagesFile(PathBuf),
-    /// A raw text file tokenized without a template (corpus slices).
+    /// A raw text file tokenized without a template.
     TextFile(PathBuf),
+    /// A slice of the distribution-probe corpus
+    /// (`turbospark_bench::quality_corpus`) of this many tokens. The k-th
+    /// corpus prompt in a workload takes the probes' k-th offset, so a
+    /// workload of the probe lengths prefills the probes' exact token ids.
+    Corpus(usize),
 }
 
 /// Expert cache slot policy for the open.

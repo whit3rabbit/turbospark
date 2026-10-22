@@ -107,12 +107,20 @@ impl Session {
         Ok(Self {
             ledger: Ledger::open(&exp_dir)?,
             exp_dir,
-            worker: sibling_worker()?,
+            // Checked at spawn: run-experiment swaps in a worker it builds.
+            worker: sibling_worker().unwrap_or_default(),
             rules,
             timeout,
             model: model.to_string(),
             verbose: true,
         })
+    }
+
+    /// Use `worker` instead of the sibling binary: `run-experiment` measures
+    /// a worker built from the experiment's own tree.
+    pub fn with_worker(mut self, worker: PathBuf) -> Self {
+        self.worker = worker;
+        self
     }
 
     /// Spawn one worker for `arm`, watch it, record it.
@@ -124,6 +132,11 @@ impl Session {
         round: usize,
         warmup: bool,
     ) -> Result<Outcome, String> {
+        if !self.worker.is_file() {
+            return Err(sibling_worker()
+                .err()
+                .unwrap_or_else(|| format!("worker {} not found", self.worker.display())));
+        }
         let run_id = new_id();
         let runs = self.exp_dir.join("runs");
         let request_path = runs.join(format!("{run_id}.request.json"));
@@ -321,6 +334,7 @@ pub fn run_ab(
     min_effect: f64,
     min_pairs: usize,
     max_pairs: usize,
+    deadline: Option<Instant>,
 ) -> Result<(VerdictReport, Vec<(Outcome, Outcome)>), String> {
     // Discarded warmup of each arm: Metal shader caches and the page cache.
     for arm in [baseline, candidate] {
@@ -337,6 +351,10 @@ pub fn run_ab(
     let mut clean = Vec::new();
     let mut round = 1;
     while clean.len() < min_pairs && pairs.len() < max_pairs {
+        if deadline.is_some_and(|d| Instant::now() >= d) {
+            eprintln!("  time budget spent after {} pairs", pairs.len());
+            break;
+        }
         let (first, second) = if round % 2 == 1 {
             (baseline, candidate)
         } else {

@@ -70,12 +70,15 @@ impl Args {
     }
 }
 
-/// `protocol:ID`, `messages:PATH` or `text:PATH`.
+/// `protocol:ID`, `messages:PATH`, `text:PATH` or `corpus:N`.
 pub fn parse_prompt(s: &str) -> Result<PromptSource, String> {
     match s.split_once(':') {
         Some(("protocol", id)) => Ok(PromptSource::Protocol(id.to_string())),
         Some(("messages", p)) => Ok(PromptSource::MessagesFile(PathBuf::from(p))),
         Some(("text", p)) => Ok(PromptSource::TextFile(PathBuf::from(p))),
+        Some(("corpus", n)) => Ok(PromptSource::Corpus(
+            n.parse().map_err(|_| format!("corpus length {n:?}"))?,
+        )),
         _ => Err(format!(
             "prompt {s:?}: use protocol:<case>, messages:<path> or text:<path>"
         )),

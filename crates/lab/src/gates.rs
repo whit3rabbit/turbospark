@@ -154,10 +154,12 @@ pub fn judge_quality(
     }
 }
 
-/// Peak footprint growth allowed for the candidate arm: the larger of 64 MiB
-/// and 2% of the reference peak, unless a spec asks for less.
-pub fn memory_allowance(reference_peak: u64, requested: Option<u64>) -> u64 {
-    let default = (64u64 << 20).max(reference_peak / 50);
+/// Peak footprint growth allowed for the candidate arm: the larger of
+/// 64 MiB, 2% of the reference peak, and `noise` (twice the peak spread a
+/// null A-against-A run measured on this host; identical arms were seen
+/// 177 MiB apart on a short Qwen 3.6 prompt). A spec may only lower it.
+pub fn memory_allowance(reference_peak: u64, requested: Option<u64>, noise: u64) -> u64 {
+    let default = (64u64 << 20).max(reference_peak / 50).max(noise);
     requested.map_or(default, |r| r.min(default))
 }
 
@@ -235,9 +237,10 @@ mod tests {
 
     #[test]
     fn memory_allowance_floor_and_tightening() {
-        assert_eq!(memory_allowance(1 << 30, None), 64 << 20);
-        assert_eq!(memory_allowance(10 << 30, None), (10u64 << 30) / 50);
-        assert_eq!(memory_allowance(1 << 30, Some(1 << 20)), 1 << 20);
-        assert_eq!(memory_allowance(1 << 30, Some(1 << 40)), 64 << 20);
+        assert_eq!(memory_allowance(1 << 30, None, 0), 64 << 20);
+        assert_eq!(memory_allowance(10 << 30, None, 0), (10u64 << 30) / 50);
+        assert_eq!(memory_allowance(1 << 30, Some(1 << 20), 0), 1 << 20);
+        assert_eq!(memory_allowance(1 << 30, Some(1 << 40), 0), 64 << 20);
+        assert_eq!(memory_allowance(1 << 30, None, 400 << 20), 400 << 20);
     }
 }
