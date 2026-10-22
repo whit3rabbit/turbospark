@@ -630,6 +630,23 @@ Four things about it are load-bearing:
   under 3 samples, prints a warning. On battery this fires often: the
   long-context case saturates thermally on both installs.
 
+## tslab: profiles, A/B verdicts and kernel curves
+
+`crates/lab` (`tslab`) runs the procedures on this page as one tool instead
+of a script per experiment: per-family prefill and decode phase breakdowns
+(`tslab profile`), interleaved fresh-process A/B with a fixed verdict rule
+and quality and memory gates (`tslab ab`, `tslab gate`), kernel curves at
+the install's own shapes (`tslab kernel`), Core ML placement
+(`tslab ane-plan`), and the autoresearch loop's evaluator
+(`tslab run-experiment`, instructions in `crates/lab/program.md`). Every run
+lands in an append-only ledger under `$TURBOSPARK_LAB_DIR`, dirty runs
+included with their reasons.
+
+It holds a machine-wide lock, `$TURBOSPARK_LAB_DIR/.machine.lock`, for the
+whole measuring session. A Python driver that takes `fcntl.flock` on the
+same file shares the lock, so two measuring sessions on one host wait for
+each other instead of timing each other.
+
 ## Measurement hygiene
 
 Carried over from the Swift protocol, worth repeating:

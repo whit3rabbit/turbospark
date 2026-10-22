@@ -17,6 +17,7 @@ Keep all docs and configuration ASCII (no emojis, no em dashes).
 | Variable | Affected Components | Description | Default |
 | --- | --- | --- | --- |
 | `TURBOSPARK_HOME` | CLI, server, Swift app, catalog | Base directory for downloaded models, catalog entries, and repack staging. Models are stored in `$TURBOSPARK_HOME/models`. | `~/.turbospark` |
+| `TURBOSPARK_LAB_DIR` | `tslab` (`crates/lab`) | Directory for tslab ledgers, run records, frozen specs, trusted evaluator installs (`bin/`) and the machine lock (`.machine.lock`). | `$TURBOSPARK_HOME/lab`, else `~/.turbospark/lab` |
 | `HF_TOKEN` | `turbospark-model` | Bearer token for accessing gated Hugging Face repositories during probing or pulling. | unset |
 | `HUGGING_FACE_HUB_TOKEN` | `turbospark-model` | Alias for `HF_TOKEN`. Checked if `HF_TOKEN` is unset. | unset |
 

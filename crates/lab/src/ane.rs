@@ -80,7 +80,7 @@ pub fn summarize(plan: &ComputePlan) -> Value {
                     None => blockers.push((o.operator.clone(), 1, ane_ok)),
                 }
             }
-            blockers.sort_by(|a, b| b.1.cmp(&a.1));
+            blockers.sort_by_key(|b| std::cmp::Reverse(b.1));
             json!({
                 "function": f,
                 "ops": ops.len(),
