@@ -29,6 +29,7 @@
 
 use foundation::LogitValue;
 use runtime::{ChunkedPrefillRunner, LogitProducer, RealForwardRunner};
+use turbospark_bench::logit_compare;
 use turbospark_bench::real_model::open_model_runner_with_context;
 
 const CHUNK: usize = 128;
@@ -60,20 +61,6 @@ fn prefill_in_chunks(
         offset += take;
     }
     logits.iter().map(|v| v.to_f32() as f64).collect()
-}
-
-fn log_softmax(logits: &[f64]) -> Vec<f64> {
-    let max = logits.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-    let sum: f64 = logits.iter().map(|v| (v - max).exp()).sum();
-    let log_z = max + sum.ln();
-    logits.iter().map(|v| v - log_z).collect()
-}
-
-fn top_k(logits: &[f64], k: usize) -> Vec<usize> {
-    let mut idx: Vec<usize> = (0..logits.len()).collect();
-    idx.sort_by(|&a, &b| logits[b].partial_cmp(&logits[a]).unwrap());
-    idx.truncate(k);
-    idx
 }
 
 #[test]
@@ -230,21 +217,12 @@ fn compare(label: &str, reference: &[Vec<f64>], arm: &[Vec<f64>]) -> f64 {
     eprintln!("{label}");
     eprintln!("tokens   KL(ref||arm)     max|dlogit|   top1   top5 overlap");
     for ((n, r), s) in LENGTHS.iter().zip(reference).zip(arm) {
-        let (lr, ls) = (log_softmax(r), log_softmax(s));
-        let kl: f64 = lr.iter().zip(&ls).map(|(a, b)| a.exp() * (a - b)).sum();
-        let max_d = r
-            .iter()
-            .zip(s)
-            .map(|(a, b)| (a - b).abs())
-            .fold(0.0, f64::max);
-        let (t1r, t1s) = (top_k(r, 1)[0], top_k(s, 1)[0]);
-        let (t5r, t5s) = (top_k(r, 5), top_k(s, 5));
-        let overlap = t5r.iter().filter(|i| t5s.contains(i)).count();
-        top1_agree += usize::from(t1r == t1s);
-        kls.push(kl);
+        let c = logit_compare::compare(r, s);
+        top1_agree += usize::from(c.top1_agree);
+        kls.push(c.kl);
         eprintln!(
-            "{n:>6}   {kl:>14.3e}   {max_d:>11.4}   {:>4}   {overlap}/5",
-            t1r == t1s
+            "{n:>6}   {:>14.3e}   {:>11.4}   {:>4}   {}/5",
+            c.kl, c.max_abs_dlogit, c.top1_agree, c.top5_overlap
         );
     }
     let mean_kl = kls.iter().sum::<f64>() / kls.len() as f64;

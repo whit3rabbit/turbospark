@@ -6,6 +6,11 @@
 /// Benchmarking protocol case definitions and runner logic.
 pub mod protocol;
 
+/// Next-token distribution comparison (KL, top-k) shared by the arm probes
+/// and `tslab`'s quality gate.
+pub mod logit_compare;
+/// The distribution-probe corpus slices the arm probes and `tslab` prefill.
+pub mod quality_corpus;
 /// Host-only replay of tree vs chain speculative verify (KFlash).
 pub mod tree_replay;
 
