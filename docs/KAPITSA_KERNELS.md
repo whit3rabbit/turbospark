@@ -52,6 +52,427 @@ kernel one, and is not covered here.
 | 9 | Fused GDN prep (conv+SiLU+qk-norm+g/beta) | Not adopted: <= 1% decode/verify est., breaks the `(32,4)` delta layout contract | declined |
 | 10 | Host-side FCV/set-bytes dedup in MoE decode | Was already in flight in this tree | not this page |
 | 11 | GPU-side routing + single command buffer per token | Not adopted: `fast::exp` vs f32 `exp` can flip f16 routing weights and break frozen digests; streamed mode cannot use it | declined |
+| 12 | Prompt-lookup (n-gram) draft source from mlx-serve | Standalone drafter declined on a replay (flat or losing on prose, ~1.5x ceiling on copy-heavy, about MTP's 1.44x). Hybrid with MTP unmeasured | Section "Prompt lookup" below |
+| 13 | Adaptive speculation depth in the server | Candidate: the controller exists (`speculative_adaptive.rs`) and only the CLI uses it; constants are unmeasured | not started |
+
+## What makes the headline numbers fast, and what applies here
+
+A later research report compared kapitsa and mlx-serve on Qwen3.8-27B. This
+section keeps the part that survived checking it against this tree. The
+report's sources are the two projects' READMEs and release notes, which were
+not re-read for this page.
+
+Vendor-reported decode speed, Qwen3.8-27B 4-bit, a 512-token coding answer,
+each engine in its own "fastest setup" (kapitsa's README table):
+
+| Engine | M5 Max 128 GB | M4 Pro 48 GB |
+|--------|--------------:|-------------:|
+| kapitsa | 102 tok/s | 63 tok/s |
+| mlx-serve | 130 tok/s | 54 tok/s |
+
+These M5 Max and M4 Pro rows are UNVERIFIED here and not targets. Neither
+chip is the M4 Max 36 GB this repo measures on, drafter type, depth, sampling
+and prompt state are not stated, and kapitsa's own formal M5 Max document
+reports a lower median for the same model (72.9 tok/s sampled, 83.7 greedy,
+run with background GPU contention). Do not quote them next to our rows.
+Kapitsa WAS reproduced on this machine on 2026-10-22, and its claim for the
+27B holds up here: see "Measured: kapitsa on this machine" below. The gap to
+us is real and about 2x on the same prompts, not a table artifact.
+
+The mechanisms, in order of how much of the number they explain:
+
+1. **Speculation is the multiplier.** One verify pass of the target commits
+   several tokens, so the cost per token is roughly `(draft + verify) /
+   accepted-per-verify`. Both engines run an MTP head and a block drafter.
+   Here that is item 1's territory and `docs/MTP.md`: block 2 is the only
+   block that pays, 1.44x measured.
+2. **INT4 bandwidth and in-register dequant.** Batch-one decode streams the
+   weights once per target pass, so 4-bit is a 3-4x cut in bytes against BF16.
+   Our decode GEMV already dequantizes in registers, so there is no
+   materialized FP16 buffer to remove. Profile GB/s per kernel before
+   assuming a gap.
+3. **Specialized Metal per model family.** Kapitsa's own claim. Ours is the
+   shape-baked function-constant kernels and the fused FFN (items 4 and 5).
+4. **Neural Engine prefill** (kapitsa for 27B, ours opt-in in
+   `docs/SPEEDUP_PLAYBOOK.md`). TTFT only, no effect on decode tok/s.
+5. **Prefix reuse and concurrency.** Latency and aggregate throughput, not
+   single-stream decode. Ours: `kv_prefix.rs` and `session_pool.rs`, which
+   refuse a rewind on GDN models and with a drafter installed.
+6. **Prompt lookup (mlx-serve, default on).** A model-free draft source. It
+   has no shipped counterpart here, but it was measured once: see below.
+
+What the report got wrong about this tree: its P1 list (native MTP, a fused
+INT4 decode kernel, a persistent prefix cache) is already built, and its
+"+20-40% from speculation" target is met by the 1.44x above. Its framing of a
+17-19 tok/s TurboSpark baseline is the plain-decode row, not the MTP row.
+
+### Measured: kapitsa on this machine, 2026-10-22
+
+Apple M4 Max (reported by kapitsa as 32-core GPU), 36 GB, macOS 26.6.2, AC
+power, host load 1.2-2.4 at each arm start (swap was 8.7-10.9 GB used and
+rising, a standing condition of this host, not cleared). Kapitsa 0.2.6
+(`76a4970`), Qwen3.8-27B 4-bit from its own pack
+(`lmstudio-community/Qwen3.8-27B-MLX-4bit`, MTP head
+`Youssofal/Qwen3.8-27B-MTPLX-Optimized-Speed`, `incoai/Qwen3.8-27B-DFlash2`).
+TurboSpark: clean HEAD worktree `2c02a5be`, release `turbospark-server`,
+`qwen38-27b-mtp.gturbo` (`mlx-community/Qwen3.8-27B-4bit` trunk). The trunk
+shards are 90-190 bytes apart in size and hash differently; tensor equality was
+not checked, so read this as the same model and quantization scheme.
+
+**Kapitsa's own harness** (`kapitsa bench --model 27b`, 512-token coding
+answers, median of 5): greedy 90.7 tok/s (90.5-91.2), T=0.6 82.7 tok/s
+(79.8-89.0), reading a 4K prompt 417 tok/s, a 16K prompt 403 tok/s, peak
+memory 19.6 GB, no contention flagged. Decoding line in the result: "KFlash
+speculative decoding (DFlash2 lattice, tree verify)".
+
+**One external harness over each engine's HTTP API** (`scripts/bench_api.py`, driven by `scripts/bench_api_drive.sh`, same
+three prompts, temperature 0, 512 max tokens, tokens counted with one
+tokenizer, decode tok/s excludes the first chunk). Median of 3 runs per arm,
+two rounds with the arm order reversed, mean of the two rounds shown (rounds
+agreed within 3%):
+
+| Arm | short-explanation | medium-review | copy-heavy |
+|-----|------------------:|--------------:|-----------:|
+| TurboSpark, speculation off | 22.3 | 22.3 | 22.4 |
+| TurboSpark, MTP block 2 (default) | 34.9 | 37.2 | 47.8 |
+| Kapitsa, MTP head only (`--dflash none`) | 41.5 | 46.2 | 64.1 |
+| Kapitsa, KFlash (DFlash2 tree, default) | 52.6 | 68.4 | 101.3 |
+| KFlash over our MTP | 1.51x | 1.84x | 2.12x |
+| Kapitsa MTP over our MTP | 1.19x | 1.24x | 1.34x |
+
+Both of our speculative arms' text is identical to plain decode on
+medium-review and copy-heavy (same hash), and kapitsa's two modes agree with
+each other on all three, so the speedups are lossless. On short-explanation
+our MTP and plain text differ (487 and 512 tokens), the known
+speculative-start difference in `docs/BENCHMARKS.md`.
+
+Caveats that bound the claim:
+
+- Texts differ between engines (different trunk files, chat template and
+  possibly thinking behavior). The copy-heavy answer was 501 tokens on
+  kapitsa and 187 on ours, so its acceptance is not measured on equal text.
+  The 2.12x on that column is the weakest number here.
+- Time to first token is not comparable: kapitsa reads 0.06 s on every run
+  because the repeated identical prompt hits its prefix cache.
+- Not measured: kapitsa with speculation off, memory under this harness,
+  sampled runs through the API, and long contexts beyond kapitsa's own 4K/16K
+  reads.
+
+**What the gap is made of.** Our own plain decode is 22.3 tok/s, so the
+engines start from the same place per step. Kapitsa's design doc
+(`docs/kflash.md` in its repo, an M4 Pro measurement) gives the reason: on the
+dense 27B a verify pass of 1, 2, 4 and 8 rows takes 74.4, 70.6, 71.6 and 74.3
+ms against 67.3 ms for a plain one-row step. That is `c(8)` of about 1.1.
+Ours is `c(9) = 4.53` (`docs/MTP.md`). With a flat verify cost, a deeper
+block is nearly free, a block drafter proposing 7 tokens pays, and a tree of
+candidates fits in rows that were already paid for. With ours, block 2 is the
+only block that wins, which is why every block-size result on this page
+looked like a dead end. The kernel that makes the verify flat is item 7 below,
+which this page called "a project, not a bench" before the gap was measured.
+That kernel exists in the tree as of this measurement (uncommitted at the time
+of writing, in `docs/INT4_SMALL_M_MMA.md`): 8 rows at 1.25-1.29x one row on
+the qwen38 shapes, against 3.1-3.6x for the shipped GEMM, behind
+`TURBOSPARK_INT4_MMA8=1`. So `c(8)` is no longer the open question. What is
+left, ranked by the arithmetic below:
+
+| # | Lever | State | Why it matters |
+|---|-------|-------|----------------|
+| 1 | Flat verify (MMA8) | Built, opt-in, lossless, block 4 beats the default on code (50.1 vs 43.3 tok/s) and loses 9-12% on prose | Prerequisite for everything below |
+| 2 | Pick the block per request or per round | DECLINED for DFlash2 under the flag: best per-prompt depth beats fixed 7 by 0-1.7% (model below). `AdaptiveDepth` is tuned for the flag-off cost curve and would sit at its floor of 2 | Under a flat verify an extra row costs about 1.3 ms and pays once its survival chance exceeds about 5% |
+| 3 | DFlash2 drafter at depth 7 over the flat verify | MEASURED 2026-10-22 below: 31-37 tok/s, 2.1x its flag-off self, about 55-60% of kapitsa | Confirms the flat verify is what unlocks long blocks |
+| 4 | Tree verify (KFlash) | A replay probe exists in the tree (`kflash_tree_replay_probe.rs`, another session); no kernel | Kapitsa's own doc credits it +6% code, +16% prose over its chain |
+| 5 | Close the one-row gap (1.27x GEMV) | Open in the MMA8 doc | MEASURED below: it is the verify floor, about 13 ms of an 85 ms round |
+| 6 | MTP head quality | RESOLVED: equal. Kapitsa 2.39 committed per cycle on short-explanation, ours 2.38, same depth 4 | The 1.4x gap at equal acceptance is round cost, 57 ms against 86 ms |
+| 7 | DFlash2 drafter pass | Profiled and trimmed ~2 ms (per-row loops batched, selector scan fused), uncommitted in `dflash_draft/` | Only ~2 ms more is in sight; the selector was 1.2 ms, not the suspect |
+| 8 | DFlash2 drafter attention at long context | DONE, uncommitted: one line in `dflash.rs`, draft phase 21.2 to 11.4 ms at 2,940 tokens and 14.5 to 11.0 ms at 426, +3.5% and +11% tok/s | The barrier decode kernel was used by the drafter only; the trunk already used the GQA-shared one |
+
+#### Measured: DFlash2 and the flat verify, 2026-10-22
+
+Setup: the DFlash2 install built from `incoai/Qwen3.8-27B-DFlash2` and the
+`mlx-community` trunk (`~/models/qwen38-27b-dflash2.gturbo`, 15 GB, by
+`crates/repack/tests/dflash2_checkpoint_network.rs`), `turbospark-bench
+--shaping greedy`, one process per run, two rounds with rotated arm order, load
+under 2.5 at each start, M4 Max 36 GB on AC. Flag-off arms: clean HEAD
+`2c02a5be`. Flag-on arms (`TURBOSPARK_INT4_MMA8=1`): HEAD plus a COPY of the
+other session's uncommitted MMA8 changes, taken 2026-10-22 into a scratch
+worktree; that code was not yet committed, so these rows describe that
+snapshot. Decode tok/s, mean of the two rounds (rounds within 3%):
+
+| Case | Arm | Flag off | Flag on | Ratio | ms/round off to on | Committed/round |
+|------|-----|---------:|--------:|------:|-------------------:|----------------:|
+| short | plain | 22.0 | 17.4 | 0.79x | | |
+| short | MTP 2 | 32.5 | 30.5 | 0.94x | 67 to 72 | 2.18 |
+| short | MTP 4 | 18.3 | 29.3 | 1.60x | 130 to 86 | 2.50 |
+| short | DFlash2 2 | 31.8 | 29.6 | 0.93x | 67 to 72 | 2.13 |
+| short | DFlash2 4 | 19.4 | 32.0 | 1.65x | 131 to 79 | 2.53 |
+| short | DFlash2 7 | 14.6 | 31.2 | 2.14x | 177 to 83 | 2.60 |
+| medium | plain | 22.1 | 17.5 | 0.79x | | |
+| medium | MTP 2 | 33.9 | 31.6 | 0.93x | 68 to 73 | 2.30 |
+| medium | MTP 4 | 21.4 | 31.7 | 1.48x | 129 to 87 | 2.75 |
+| medium | DFlash2 2 | 34.4 | 32.7 | 0.95x | 69 to 73 | 2.38 |
+| medium | DFlash2 4 | 22.6 | 36.6 | 1.62x | 131 to 81 | 2.96 |
+| medium | DFlash2 7 | 17.6 | 36.8 | 2.09x | 182 to 87 | 3.20 |
+
+Against kapitsa on the same cases (API harness above): DFlash2 7 with the
+flag is 31.2 against 52.6 (59%) on short and 36.8 against 68.4 (54%) on
+medium. The best flag-on arm is DFlash2 7 on both. The best flag-off arm is
+block 2, which the flag makes 5-7% slower. Losslessness was NOT checked in
+these runs: `turbospark-bench` does not hash output, and the flag changes
+decode numerics (token counts differ between flag states, 543 against 488 on
+short). The MMA8 doc's `mtp_generation_gate` runs are the lossless evidence
+for MTP, and none has been run for DFlash2 under the flag.
+
+Where a round goes (`TURBOSPARK_SPEC_STATS=1` now also prints `ms/round` per
+phase; wall time, so GPU waits are inside the phase that reads back), flag on,
+medium-review:
+
+| Arm | draft | verify | accept | rollback | commit | rewind | bonus |
+|-----|------:|-------:|-------:|---------:|-------:|-------:|------:|
+| DFlash2 2 (3 rows) | 11.1 | 62.4 | 1.0 | 0.06 | 0.08 | 0.00 | 0.49 |
+| DFlash2 7 (8 rows) | 15.2 | 66.5 | 1.7 | 0.14 | 0.01 | 0.00 | 0.49 |
+| MTP 4 (5 rows) | 19.2 | 70.2 | 1.4 | 0.12 | 0.03 | 0.00 | 0.49 |
+
+What it says:
+
+- **Rows are free; the floor is not.** Verify goes from 3 rows to 8 for 4 ms,
+  about 1.3 ms a row. What remains is a floor of about 58 ms, which is the
+  one-row MMA tile (1.27x our 44.8 ms GEMV step). Kapitsa's verify is about
+  1.1x its step. Closing that floor to the GEMV's efficiency is worth about
+  10-13 ms of the 85 ms round, the largest single item left.
+- **Rollback and commit are nothing.** 93% of block-7 rounds roll back, and the
+  rollback plus commit cost 0.15 ms. The lazy GDN tape did its job, and no
+  further work on rollback is justified.
+- **The drafter pass is smaller than it looked.** DFlash2 costs 11 ms at 2 rows
+  and 15 ms at 7. This section first guessed 6-10 ms was recoverable, with the
+  host selector as the suspect. Profiling below shows the selector is 1.2 ms
+  and the recoverable part is about 2 ms. MTP's draft is 19 ms for four head
+  steps and was not examined.
+- **Accept and bonus are 2 ms together.** Not worth touching.
+- **Head quality is not the gap.** Kapitsa's MTP-only arm logged 214 cycles
+  for 512 tokens on short-explanation (`NI_LOG=2`, "spec: 0.42
+  accepted/drafted"), which is 2.39 committed per cycle against our 2.38 at
+  the same depth 4. At equal acceptance its 41.9 tok/s against our 29.3 is a
+  57 ms cycle against 86 ms. Medium-review is not comparable: the texts differ.
+- **Projection from these rows, not a measurement.** If the verify floor drops
+  to 48 ms and the drafter pass to 8 ms, a block-7 round is about 60 ms: 53
+  tok/s on medium and 43 on short. A tree (kapitsa credits +8-17% tokens per
+  pass) would add to that. Kapitsa's 68 and 53 would still need the rest.
+
+The flat verify also has a cost the table shows: plain decode and block 2 get
+5-7% and 21% slower under the flag. It only pays if the engine always
+speculates at depth 4 or more, which is why the per-request block choice
+(lever 2) and the one-row gap (lever 5) are linked. Do not default the flag on
+until those are decided. The in-flight MMA8 wiring is uncommitted in the
+shared tree (`real_forward_dispatch.rs`, the qwen `attn.rs`, `dense.rs`,
+`moe.rs`, `gpu/src/lib.rs`), and the drafter work below touches none of
+those.
+
+#### Measured: the DFlash2 drafter pass, 2026-10-22
+
+Where one draft call goes at block 7, flag on, medium-review, host load 3-5 so
+read the proportions and not the absolute milliseconds (draft phase 13-17 ms
+across runs). Sub-phase timers around the call, then attribution by skipping
+parts of the forward behind a scratch-only env var (the playbook's method;
+quality of the skipped output is irrelevant to timing):
+
+| Part | ms per call | Note |
+|------|------------:|------|
+| Context write (separate pass) | 1.9-2.4 | `fc` fusion plus K/V of the accepted rows |
+| Block forward, whole | 9.7-12.4 | 8 rows, one command buffer |
+| of which lm_head (248,320 x 5,120 INT4) | 2.2 | about 0.7 GB, already at its bandwidth floor |
+| of which per-row norm, RoPE, residual, SiLU loops | 1.1 | about 100 dispatches per layer, 65 of them per-row |
+| of which attention (8 per-row dispatches a layer) | about 1.1 | not changed here |
+| of which layer GEMMs and convs | about 4.6 | floor about 3 ms at the tile's 80% bandwidth |
+| of which pass overhead (commit and wait) | 0.26 | nothing to recover |
+| Host selector (top-16 and codebook walk) | 1.1-1.3 | 0.34 at block 2 |
+
+Changes made, both in `crates/runtime/src/families/qwen/dflash_draft/`, both
+bit-identical by construction:
+
+- The per-row norm, residual add and SiLU loops became single dispatches
+  (`rmsnorm_bf16w_perhead` with `rows` heads of width `hidden`, which
+  `crates/gpu/tests/rms_norm_rows_as_heads.rs` pins bitwise against the
+  whole-vector norm; the elementwise ops over `rows * width`; q/k head norms
+  over `rows * heads`, with k split at the ring's wrap exactly as the
+  projections already are). RoPE stays per row because its position differs.
+- The selector's non-finite refusal and top-16 became one scan over each
+  row (`top_k_finite`), not two. Three unit tests pin it against the old
+  form, including ties and the first non-finite id.
+
+Gates: `the_draft_logits_have_a_frozen_digest` and the other 14 tests in
+`real_forward_qwen35_dflash.rs` pass flag off (15 of 15). With the MMA8 flag on
+and every matrix served only the frozen digest fails, which is that flag's
+documented behavior. Mutation: dropping the last element of the final residual
+add fails the digest test, and the restored code passes. On the real install,
+greedy block 7 on medium-review gives 264 rounds and the same per-position
+acceptance before and after (0.79 0.68 0.64 0.63 0.63 0.72 0.69), so the
+proposals did not change.
+
+A/B, old and new binaries built from the same tree, four interleaved pairs
+with the order alternated, load 1.4-2.5 at each start except one run:
+
+| Case | Draft phase old | new | tok/s old | new |
+|------|----------------:|----:|----------:|----:|
+| medium-review | 16.5 ms | 14.2 ms | 35.5 | 37.7 |
+| short-explanation | 14.0 ms | 12.1 ms | 29.3 | 30.8 |
+
+The draft phase fell in all four medium pairs and in three of four short pairs
+(the fourth had an outlier run at 87 ms verify). About 2 ms of an 85 ms round,
+roughly 2.5%. The tok/s medians moved 4-6%, more than 2 ms explains, so treat
+the host noise as part of that figure and quote the draft-phase delta.
+
+#### Measured: does adaptive depth have headroom? 2026-10-23
+
+A cost model, not a controller. Round time under the flag is a fixed part
+(draft pass, accept, commit) plus about 1.3 ms per verify row beyond three,
+and tokens per round are `1 + sum of cumulative acceptance`. DFlash2 always
+runs its full 8-row forward, so a shorter round saves only verify rows. With
+the measured conditional per-position acceptance at block 7 (flag on):
+
+| Case | Per-position acceptance | Committed at 7 | Best depth | Gain over fixed 7 |
+|------|-------------------------|---------------:|-----------:|------------------:|
+| short-explanation | 0.66 0.65 0.64 0.47 0.42 0.67 0.67 | 2.61 | 5 | 1.7% |
+| medium-review | 0.79 0.68 0.64 0.63 0.63 0.72 0.69 | 3.19 | 7 | 0.0% |
+| long-synthesis | 0.75 0.72 0.67 0.61 0.64 0.64 0.56 | 3.16 | 7 | 0.0% |
+
+The model predicts the measured tok/s at depths 2, 4 and 7 within 2% on both
+cases where all three were run (short 29.0, 31.2, 30.7 against 29.6, 32.0,
+31.2; medium 32.3, 36.1, 37.5 against 32.7, 36.6, 36.8). A row is worth
+including while its cumulative survival times the cost of a token exceeds the
+row's cost, which at about 26-40 ms a token and 1.3 ms a row is a survival of
+3-5%. Code has higher acceptance than any of these, so it only pushes the
+answer toward 7. Verdict: no controller. A fixed block 7 with the flag is
+within 2% of the best per-request choice on every case measured, and the
+existing `AdaptiveDepth` (floor 2, 4 to 8 clean rounds to climb) would do
+worse than fixed 7 here. What the flag changes is the whole premise: flag off,
+block 2 wins and depth matters; flag on, block 7 wins and depth does not.
+
+New finding from the same run, CORRECTED below: the DFlash2 draft phase grew
+with context. This paragraph first reported 29.6 ms at a 2,940-token prompt
+from the bench's first generation pass on a loaded host; the measured second
+pass reads 21.2 ms, against 14.5 ms at 426 tokens. Cause and fix are in the
+next subsection.
+
+#### Measured: GQA-shared attention in the drafter, 2026-10-23
+
+The drafter's `AttentionScratch` was built with the default barrier decode
+kernel, while the trunk's scratch for this family already uses the GQA-shared
+one. The drafter runs `block + 1` one-row attention dispatches per layer over
+a 2,048-token ring, and the barrier kernel's cost grows with that span. The fix
+is `.with_decode_kernel(GqaShared)` on the drafter's scratch in
+`families/qwen/dflash.rs` (the dispatcher already falls back to barrier for a
+shape it does not serve; the drafter's, head_dim 128 with 4 query heads per KV
+head, is served). A/B with `TURBOSPARK_ATTN_DECODE_KERNEL=gqa` against unset
+(an earlier arm that forced `barrier` also slowed the trunk's verify and is not
+the baseline), flag on, DFlash2 block 7, HEAD plus the drafter edits above:
+
+| Prompt | Draft phase before | after | tok/s before | after |
+|--------|-------------------:|------:|-------------:|------:|
+| 426 tokens (medium-review), 3 pairs | 14.2 / 15.5 / 14.5 ms | 11.0 / 11.4 / 11.1 ms | 38.9 / 36.1 / 37.9 | 39.2 / 39.1 / 39.2 |
+| 2,940 tokens (long-synthesis), 1 pair | 21.2 ms | 11.4 ms | 33.8 | 37.6 |
+
+Acceptance was identical in every pair (medium: 264 rounds, 2.20 accepted,
+same per-position curve; long: 202 rounds, 2.16 accepted, same curve), and the
+token counts matched (845 and 639). Verify was unchanged within noise (67-70
+ms), so the saving is all in the drafter. With the change compiled in, with no
+env override, medium reads draft 11.0 ms and 38.8 tok/s.
+
+What this does and does not prove. The kernel is not bit-identical to the
+barrier kernel, so proposals can differ in principle; on both real prompts
+the acceptance statistics matched exactly, which is strong but not a proof of
+identical proposals. The committed text is the target's regardless, since
+verification is unchanged. The synthetic DFlash2 suite (15 of 15, including the
+frozen draft-logits digest) does NOT exercise this change, because its shapes
+fall back to the barrier kernel. One long pair is one pair; the long-context
+gain should be re-measured with more rounds before it is quoted.
+
+What is left in the drafter, in order: the layer GEMMs (4.6 ms against a 3 ms
+floor, mostly the one-row tile gap again, which lever 5 owns), a rows-batched
+attention kernel in place of 8 one-row dispatches per layer (the GQA-shared
+kernel is now in; the multi-row variant is untried and shares chunk boundaries
+across rows), and merging the context write into the forward's command buffer
+(one commit and wait fewer). Together perhaps another 1.5 ms. The drafter is
+not where kapitsa's lead is: the verify floor is.
+
+### Prompt lookup
+
+Prior measurement, so this is not a fresh idea: `accept_length_probe.rs`
+(`docs/SPECULATIVE_DECODING.md`, "Accept length") ran a 3-gram lookup drafter
+on the Qwen 3.6 35B-A3B MoE install, greedy, 300 tokens per arm. It fired on
+10-11% of rounds and accepted 2.46 / 2.76 / 2.76 tokens (bonus included) at
+blocks 4 / 8 / 16, saturating because the matched continuation ends before
+the block does. That refuted lookup as a general free drafter. What it did not
+cover: the dense 27B, the lazy-tape verify that now makes a partial round
+cheaper, and a copy-heavy prompt, which is the only place lookup is expected
+to pay. The new work is scoped to that gap, and "no match means no verify"
+(step 3) is what keeps the 10% firing rate from costing the other 90%.
+
+Plan, nothing measured yet. Prompt-lookup decoding proposes the tokens that
+followed the most recent earlier occurrence of the current n-gram suffix in
+the prompt plus the generated text. It costs no weights and no drafter pass,
+and it pays on copy-heavy output (code edits, quoting, repeated tool
+transcripts) and not on novel prose.
+
+Order of work, each step gating the next:
+
+1. `crates/runtime/src/prompt_lookup.rs`: a pure matcher with unit tests.
+2. `crates/bench/tests/pld_replay_probe.rs`: replay the greedy streams of the
+   protocol cases and count, per position, whether a match exists and how many
+   proposed tokens the stream would have accepted. Weigh that against the
+   `c(M)` break-even in `docs/SPECULATIVE_DECODING.md`. No GPU, no kernels.
+3. Only if the replay beats break-even on a copy-heavy case: a greedy-only
+   `Lookup` drafter. A round with no match must skip the verify and run one
+   sequential step, so novel prose pays nothing. Sampled runs refuse until a
+   point-mass proposal distribution exists (accept when `r <= p(x)`, residual
+   is `p` with `x` zeroed). `draft_qs` is indexed per proposal in the sampled
+   accept loop, so a block-style drafter must not reach it silently.
+
+#### Measured: replay on the dense 27B, 2026-10-21
+
+`crates/bench/tests/pld_replay_probe.rs`, `qwen38-27b.gturbo`, greedy, 512
+tokens per case, host busy (load ~9-10, swap nearly full; irrelevant to
+acceptance, which is read off the reference stream, but it makes this a
+ceiling and not a timing). Cost per round is the interpolated `c(M)` from the
+`docs/MTP.md` break-even column with no rollback term, so the speedups below
+are OPTIMISTIC ceilings. A wrong match is charged for its verify.
+
+| Case | n-gram | draft | fired | accepted/fired | ceiling |
+|------|-------:|------:|------:|---------------:|--------:|
+| short-explanation | 2 | 2 | 8% | 0.32 | 0.970x |
+| short-explanation | 4 | 2 | 0% | 0.50 | 0.999x |
+| medium-review | 2 | 2 | 17% | 0.43 | 0.959x |
+| medium-review | 4 | 2 | 2% | 1.25 | 1.013x |
+| long-synthesis | 2 | 4 | 23% | 0.44 | 0.771x |
+| long-synthesis | 4 | 2 | 4% | 1.06 | 1.012x |
+| copy-heavy (rename in a 25-line function) | 2 | 2 | 96% | 1.59 | 1.504x |
+| copy-heavy | 3 | 2 | 90% | 1.73 | 1.562x |
+| copy-heavy | 4 | 2 | 85% | 1.80 | 1.575x |
+| copy-heavy | 4 | 8 | 74% | 4.34 | 1.449x |
+
+Full grid (n-gram 2/3/4, draft 2/4/8) is in the probe's output. What it says:
+
+- On the three protocol prose cases lookup is flat at best (n-gram 4, draft 2:
+  0.999-1.013x) and loses everywhere a short n-gram fires (0.62-0.97x). Short
+  n-grams match often and are wrong, and a wrong match pays a full verify.
+  "No match, no verify" does not rescue prose: the loss comes from matches
+  that fail, not from missing ones.
+- On a copy-heavy case it reaches 1.33-1.58x, best at a short draft (2) and a
+  long n-gram (4). Longer drafts lose ground because the copied span ends.
+- That is about what MTP block 2 already gives on EVERYTHING (1.44x measured,
+  `docs/MTP.md`). A standalone lookup drafter therefore does not beat the
+  shipped default on either kind of text, and the install it needs a verify
+  scratch from is the MTP install anyway.
+
+Verdict: do not build a standalone `Lookup` drafter. The one open question is
+a HYBRID: when a long n-gram (4+) matches, propose the copied span (draft 4-8
+accepted 3-4 tokens per round on the copy case) instead of the MTP head's two
+tokens, and otherwise fall back to MTP. That needs an MTP replay on the same
+copy-heavy stream to price, because its ceiling over MTP's 1.44x is the only
+number that matters. Not measured.
+
+Gates: greedy output identical to the sequential loop at several draft
+lengths (`mtp_generation_gate` shape), the memory oracle unchanged, and an
+interleaved paired A/B on AC power. A negative result is recorded here.
 
 ## Item 1: the lazy rank-1 GDN verify tape
 

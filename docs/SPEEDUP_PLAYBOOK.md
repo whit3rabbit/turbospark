@@ -535,7 +535,92 @@ bitwise test against the per-row form, not a tolerance.
   first N token ids does not work for this tokenizer, since 98K ids are
   needed to cover 99.9% of a code-and-docs corpus (`docs/MTP_SPECULATIVE.md`).
 
+### Checklist for a new draft source
+
+Written before the prompt-lookup experiment (`docs/KAPITSA_KERNELS.md`, "Prompt
+lookup") so the next drafter is held to it from the start.
+
+1. **Replay before wiring.** Take the greedy stream of the protocol cases and
+   count, offline, what the draft source would have proposed and the target
+   would have accepted. It needs no GPU and decides go or no-go. The MTP and
+   DFlash2 work found per-position acceptance, not single-step acceptance, is
+   the number that predicts speedup (`docs/MTP.md`).
+2. **Price it against `c(M)`.** A round of `k` proposals pays one `k+1`-row
+   verify. Break-even accepted-per-round comes from
+   `docs/SPECULATIVE_DECODING.md`, not from intuition. Block 2 pays, 4 and 8
+   do not, so a long draft needs a very high match quality.
+3. **A round with nothing to propose must cost nothing.** A variable-length
+   source (lookup, n-gram) skips the verify and runs one sequential step. A
+   fixed-block source cannot, which is why DFlash2 reads 0.90x on prose.
+4. **Say how it behaves sampled.** A model-free source has a point-mass
+   proposal: accept when `r <= p(x)`, correct from `p` with `x` zeroed. The
+   accept loop indexes `draft_qs` per proposal, so refuse sampled runs
+   explicitly until that exists.
+5. **Stats before speed.** `TURBOSPARK_SPEC_STATS` prints rounds and accept
+   counts but no milliseconds. Add draft ms and verify ms per round, or a
+   regression cannot be attributed to acceptance versus kernel time.
+6. **Count tokens, not stream chunks.** A speculative round commits several
+   tokens in one event. Decode tok/s is generated tokens over the time from
+   the first to the last token, with TTFT reported separately.
+
+### Checklist for a new or changed kernel
+
+1. Compute GB/s per kernel at the real shape first. A 27B INT4 GEMV is
+   bandwidth-bound by construction, so only a profile showing dispatch or sync
+   time licenses work there.
+2. Count active lanes per output and dispatches per layer. Collapse a loop over
+   rows into one dispatch only when the op is per head or per element.
+3. State the exactness class up front: bit-exact (test with `to_bits()`), or
+   KL-bounded (name the probe and the bound). Decode and verify must stay in
+   the first class.
+4. Force any f32 to f16 round trip that a later stage reads through a
+   `volatile` half; fast-math elides it (`docs/KAPITSA_KERNELS.md`, items 4 and 5).
+5. Put the kill switch behind an env var read once through a `OnceLock`, keep
+   the old path one flag away, and mutation-check the new test.
+6. Time it in the engine on AC power, interleaved, with the reference arm in
+   the same script. A kernel win under 2% needs three or more paired rounds to
+   mean anything on this host.
+7. If the kernel can serve more than one row, plot its cost against rows,
+   not just one point. What made speculation pay elsewhere is a verify
+   whose 8 rows cost about 1.1x one row (`docs/KAPITSA_KERNELS.md`, "What
+   the gap is made of"). A kernel that is fast at one row and linear in
+   rows caps the drafter at block 2. Report the 1-row cost against the GEMV
+   too, because decode pays it on every token if decode shares the kernel.
+8. Say which pass the kernel serves (prefill, decode, verify, drafter) and
+   measure that pass. A prefill kernel can win on a 3K prompt and do nothing
+   for decode tok/s. A verify kernel shows in ms per round
+   (`TURBOSPARK_SPEC_STATS=1`), not in plain decode.
+9. Use the shared harness rather than a new script (`crates/lab`, `tslab`):
+   - `tslab profile` for where the pass's time goes, bucket by bucket.
+   - `tslab kernel` for the cost curve at the install's own shapes.
+   - `tslab ab --null` once per workload, then `tslab ab`, for a verdict
+     against this host's measured noise.
+   - Speculative arms (`NAME~mtp:2`, `~dflash:7`, `~mtp:4a` for adaptive
+     depth) to measure a verify or drafter change where it pays.
+
+   tslab gives each arm a fresh process, so `OnceLock` switches are safe to
+   A/B, and it records dirty runs rather than dropping them.
+10. Measure on a quiet machine, and that includes your own session. A
+    `cargo build` or test run, or an editor's background `cargo check` on
+    your worktree, is enough to mark runs dirty (it did, on 2026-10-22).
+    Finish compiling before you start timing, and do not edit Rust files
+    in a watched worktree while a run is in flight.
+
 ## Next work
+
+### 0. Prompt-lookup draft source
+
+Replayed offline on the 27B (2026-10-21, `pld_replay_probe.rs`): flat or
+losing on the three prose cases, 1.33-1.58x ceiling on a copy-heavy case,
+which MTP block 2 already matches at 1.44x on all text. A standalone drafter is
+declined. The open item is a hybrid that takes a long n-gram match (4+) over
+the MTP head's two tokens, which needs an MTP replay on the copy-heavy stream
+first. An older probe (`accept_length_probe.rs`, MoE install) agreed on prose.
+Results and
+gates are in `docs/KAPITSA_KERNELS.md`, "Prompt lookup". Start with the
+offline replay probe, because novel prose (the protocol's three cases) will
+likely have few matches, and the question is the copy-heavy case: a code edit
+or a quote-back prompt.
 
 ### 1. Give speculative verify the multi-row attention
 
