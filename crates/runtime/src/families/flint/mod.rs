@@ -55,6 +55,39 @@ use crate::steering::encode_steering;
 /// FP16 overflows at 65504; 2000 leaves room to see a value approaching it.
 const DEBUG_REPORT_ABOVE: f32 = 2000.0;
 
+/// Appends one record per MoE layer per token to `path`
+/// (`TURBOSPARK_FLINT_ROUTER_DUMP`): `position: u32`, `layer: u32`, the
+/// post-attention-norm input as `hidden` little-endian f16, then the INT8
+/// router's logits as `num_experts` little-endian f32. It exists to measure the
+/// INT8 router against the checkpoint's BF16 original on REAL hidden states
+/// (`docs/FLINT_PHASE0.md`). Diagnostic only.
+fn dump_router(
+    path: &std::path::Path,
+    position: usize,
+    layer: usize,
+    moe_x: &gpu::MetalBuffer,
+    hidden: usize,
+    logits: &gpu::MetalBuffer,
+    num_experts: usize,
+) {
+    use std::io::Write;
+    let mut x = vec![half::f16::from_f32(0.0); hidden];
+    gpu::read_buffer_f16_into(moe_x, 0, &mut x);
+    let l = gpu::read_f32_buffer_at(logits, 0, num_experts);
+    let mut record = Vec::with_capacity(8 + hidden * 2 + num_experts * 4);
+    record.extend_from_slice(&(position as u32).to_le_bytes());
+    record.extend_from_slice(&(layer as u32).to_le_bytes());
+    for v in &x {
+        record.extend_from_slice(&v.to_bits().to_le_bytes());
+    }
+    for v in &l {
+        record.extend_from_slice(&v.to_le_bytes());
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = f.write_all(&record);
+    }
+}
+
 fn debug_report(position: usize, layer: usize, what: &str, buffer: &gpu::MetalBuffer, n: usize) {
     let mut values = vec![half::f16::from_f32(0.0); n];
     gpu::read_buffer_f16_into(buffer, 0, &mut values);
@@ -144,6 +177,8 @@ impl RealForwardRunner {
         // port needed extra input scaling for the same reason. It adds a
         // readback per layer, so it is off unless asked for.
         let debug = std::env::var_os("TURBOSPARK_FLINT_DEBUG").is_some();
+        let router_dump = std::env::var_os("TURBOSPARK_FLINT_ROUTER_DUMP")
+            .map(std::path::PathBuf::from);
         let rms_eps = state.rms_eps;
         let lead = state.lead;
 
@@ -287,6 +322,18 @@ impl RealForwardRunner {
             let gpu_t = committed.wait_with_gpu_time();
             self.phases.cb1_gpu_nanos += (gpu_t * 1e9) as u64;
             self.phases.gpu_wait_nanos += t_wait.elapsed().as_nanos() as u64;
+
+            if let Some(path) = &router_dump {
+                dump_router(
+                    path,
+                    position,
+                    layer,
+                    &state.moe_x,
+                    hidden,
+                    &state.router_logits_f32,
+                    num_experts,
+                );
+            }
 
             if debug {
                 debug_report(position, layer, "x after attention", &self.scratch.x, hidden);

@@ -41,8 +41,8 @@ not as proof. Read `docs/NEW_MODEL.md` for the bring-up order.
   which `parse_flint_quantization` reads.
 - **Router.** Force-quantized to INT8 at repack (the Qwen 3.6 raw-router
   path), so the existing INT8 router GEMV serves it. The manifest router slot
-  states 8 bits, as `qwen4_exp` does. **The ranking this produces against the
-  BF16 original is unmeasured** (see Open items).
+  states 8 bits, as `qwen4_exp` does. The ranking this produces against the
+  BF16 original is measured below: a near-identity, not an identity.
 - **Dense lead in the HF writer.** Expert blobs exist only for layers
   `lead..num_layers` and are numbered by POSITION (`layer - lead`), matching
   the GGUF walk and the runtime's `L - lead` mapping.
@@ -126,8 +126,28 @@ migrated in place, streamed experts:
    fixed 2^6. Broader prompt coverage (code, other languages, very long
    contexts) has not been measured; run with `TURBOSPARK_FLINT_DEBUG=1` and
    watch for reports near 65,504. The residual stream itself reached 6,244.
-2. **Router quantization.** Measure top-6 agreement between the INT8 router
-   and the BF16 original on real hidden states.
+2. **Router quantization: measured, effect on quality not.** Over 14,711
+   layer-token records from five prompts (English, code, Japanese, a system
+   turn, a multi-turn chat), with the router input and INT8 logits dumped by
+   `TURBOSPARK_FLINT_ROUTER_DUMP=<file>` and compared with a float32 matmul of
+   the original BF16 `mlp.gate.weight` (fetched from the checkpoint) over the
+   same FP16 input:
+   - the top-6 SET is identical in 97.27 percent of records, and the same SET
+     in the same ORDER in 92.58 percent;
+   - in the 402 records whose set differs, the 6th and 7th experts are a
+     near-tie: the logit gap has a median of 0.004 and a maximum of 0.024, so
+     the swapped-in expert carries almost the same weight;
+   - where the sets match, the renormalised routing weights differ by at most
+     0.004; the largest raw logit error is 1.95, which only matters at a
+     selection boundary;
+   - the worst layers are 47, 48, 43, 27 and 40 (3.8 to 7.0 percent set
+     mismatch).
+   About 1.3 of a token's 47 MoE layers run a near-tied neighbour. The
+   reference is float32 over FP16-rounded inputs, not the model's own BF16
+   arithmetic, and no perplexity or task comparison exists, so whether this
+   moves quality is unknown. Removing it means a BF16 router GEMV and a
+   manifest router slot that is not 8-bit, which `validate_quant` refuses
+   today.
 3. **Real-model gates.** Greedy 400-token coherence, sampled coherence ending
    in `EndOfTurn`, the 8-slot against 16-slot digest, memory oracle and quality
    gate have not been run. Nothing in the synthetic suite can show that RoPE is
