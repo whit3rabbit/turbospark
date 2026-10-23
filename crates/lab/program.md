@@ -134,6 +134,39 @@ Fields: `primary_metric` is `prefill_tok_s`, `decode_tok_s`, `prefill_s` or
 `{"messages_file": path}`, `{"text_file": path}` or `{"corpus": tokens}`.
 `quality_bounds` and `memory_allowance_bytes` may only tighten the defaults.
 
+Arms can decode through the speculative loop: `"speculation": {"drafter":
+"mtp", "block": 2}` in the arm (or the workload), or `NAME~mtp:2` on the
+command line (`~dflash:7`, `~mtp:4a` for adaptive depth). Set
+`TURBOSPARK_SPEC_STATS=1` in the arm's env to get committed tokens per round
+and ms per round by phase in the record. For a speculation-only change,
+declare `bit_exact`: the gate then compares generated tokens against the
+baseline arm.
+
+## What tslab does not measure yet
+
+Say so in the hypothesis rather than measure around it:
+
+- **Energy.** The ANE prefill split's case rests partly on modeled energy
+  (IOReport, about 0.65x), and tslab has no energy meter. Use
+  `scripts/power.sh` for joules until one exists.
+- **Multi-turn, concurrent and mixed workloads.** Time to first token on a
+  cached follow-up, aggregate tok/s and p95 inter-token latency over several
+  streams, and decode stalls while another request prefills are all
+  single-stream blind spots here.
+- **Sampled speculation.** Speculative arms run greedy. Exact rejection
+  sampling at temperature above 0 is not exercised.
+- **Prefill and decode split inside a speculative arm.** The speculative
+  loop owns its prefill, so such a record carries one combined phase
+  report, plus wall seconds for each half.
+- **Kernel benches beyond two.** `tslab kernel` covers INT4 matmul and
+  decode attention. The MoE routed pair, the MMA8 verify tile, multi-row
+  prefill attention and a bit-hash corpus over outputs are not ported.
+- **Dispatch-level shares.** `TURBOSPARK_DISPATCH_PROFILE=1` output is
+  kept as text in the record, unparsed, and such runs are never quotable.
+- **ANE arms need an `ane-prefill` worker.** The worker refuses an ANE arm
+  it was not built for, rather than measuring Steel under the label. The
+  split also needs `--chunk 2048`.
+
 ## Reading a verdict
 
 - `WIN`: at least 3 clean pairs, median improvement at or above the effect

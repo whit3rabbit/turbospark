@@ -101,9 +101,43 @@ pub fn quality_gate(session: &Session, spec: &ExperimentSpec) -> Result<QualityR
             .join("runs")
             .join(format!("{}.logits.f16", o.run_id))
     };
-    let (la, lb) = (read_logits(&logits(&a), n)?, read_logits(&logits(&b), n)?);
     let pa = a.record["prompts"].as_array().cloned().unwrap_or_default();
     let pb = b.record["prompts"].as_array().cloned().unwrap_or_default();
+    // A speculative arm runs the runtime's loop, which keeps its prefill
+    // logits to itself. Losslessness is then a question about generated
+    // tokens only, so such arms are judged bit-exact on those.
+    let speculative = spec.baseline.effective_speculation(&workload).is_some()
+        || spec.candidate.effective_speculation(&workload).is_some();
+    if speculative {
+        if spec.exactness != GateClass::BitExact {
+            return Err(
+                "speculative arms are gated on generated tokens; declare \"exactness\": \"bit_exact\""
+                    .into(),
+            );
+        }
+        let mut tokens_equal = true;
+        let prompts = (0..n)
+            .map(|i| {
+                let same = pa[i]["decode_digest"] == pb[i]["decode_digest"];
+                tokens_equal &= same;
+                PromptComparison {
+                    prompt_tokens: pa[i]["prompt_tokens"].as_u64().unwrap_or(0) as usize,
+                    kl: 0.0,
+                    max_abs_dlogit: 0.0,
+                    top1_agree: same,
+                    top5_overlap: 0,
+                    logits_bits_equal: same,
+                }
+            })
+            .collect();
+        return Ok(judge_quality(
+            GateClass::BitExact,
+            GateClass::BitExact.default_bounds(),
+            prompts,
+            tokens_equal,
+        ));
+    }
+    let (la, lb) = (read_logits(&logits(&a), n)?, read_logits(&logits(&b), n)?);
     let mut prompts = Vec::new();
     let mut tokens_equal = true;
     for i in 0..n {

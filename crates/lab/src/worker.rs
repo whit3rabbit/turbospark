@@ -394,6 +394,21 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
             req.arm.name, req.arm.env
         ));
     }
+    // Without the feature the runtime never reads TURBOSPARK_ANE_PREFILL, so
+    // such an arm would measure Steel under an ANE label.
+    if !cfg!(feature = "ane-prefill")
+        && req
+            .arm
+            .env
+            .get("TURBOSPARK_ANE_PREFILL")
+            .is_some_and(|v| !matches!(v.as_str(), "0" | "off" | ""))
+    {
+        return Err(
+            "this tslab-worker was built without the ane-prefill feature; build it with \
+             cargo build --release -p turbospark-lab --features ane-prefill"
+                .into(),
+        );
+    }
     let dir = catalog::resolve_model_arg(&req.model);
     let mut sampler = AppMemorySampler::new();
     sampler.sample();
