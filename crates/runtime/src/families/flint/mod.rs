@@ -51,6 +51,30 @@ use crate::real_forward_utils::norm_view;
 use crate::resid_capture::encode_resid_capture;
 use crate::steering::encode_steering;
 
+/// Values past this are reported by the `TURBOSPARK_FLINT_DEBUG` diagnostic.
+/// FP16 overflows at 65504; 2000 leaves room to see a value approaching it.
+const DEBUG_REPORT_ABOVE: f32 = 2000.0;
+
+fn debug_report(position: usize, layer: usize, what: &str, buffer: &gpu::MetalBuffer, n: usize) {
+    let mut values = vec![half::f16::from_f32(0.0); n];
+    gpu::read_buffer_f16_into(buffer, 0, &mut values);
+    let mut max = 0f32;
+    let mut non_finite = 0usize;
+    for v in &values {
+        let f = v.to_f32();
+        if !f.is_finite() {
+            non_finite += 1;
+        } else if f.abs() > max {
+            max = f.abs();
+        }
+    }
+    if non_finite > 0 || max > DEBUG_REPORT_ABOVE {
+        eprintln!(
+            "flint-debug pos={position} layer={layer} {what}: max_abs={max} non_finite={non_finite}"
+        );
+    }
+}
+
 pub(crate) fn layer_tensor(layer: usize, suffix: &str) -> String {
     format!("language_model.model.layers.{layer}.{suffix}")
 }
@@ -113,6 +137,13 @@ impl RealForwardRunner {
         )?;
 
         let state = self.real_flint.as_ref().expect("flint state present");
+        // Diagnostic only (`TURBOSPARK_FLINT_DEBUG=1`): reports, at each MoE
+        // layer's mid-layer sync, any residual or router value that is
+        // non-finite or past `DEBUG_REPORT_ABOVE`. It exists because FP16
+        // range is Flint's open risk (`docs/FLINT_PHASE0.md`): the llama.cpp
+        // port needed extra input scaling for the same reason. It adds a
+        // readback per layer, so it is off unless asked for.
+        let debug = std::env::var_os("TURBOSPARK_FLINT_DEBUG").is_some();
         let rms_eps = state.rms_eps;
         let lead = state.lead;
 
@@ -257,6 +288,23 @@ impl RealForwardRunner {
             self.phases.cb1_gpu_nanos += (gpu_t * 1e9) as u64;
             self.phases.gpu_wait_nanos += t_wait.elapsed().as_nanos() as u64;
 
+            if debug {
+                debug_report(position, layer, "x after attention", &self.scratch.x, hidden);
+                debug_report(position, layer, "moe_x (post-attn norm)", &state.moe_x, hidden);
+                let logits = gpu::read_f32_buffer_at(&state.router_logits_f32, 0, num_experts);
+                let bad = logits.iter().filter(|v| !v.is_finite()).count();
+                let max = logits
+                    .iter()
+                    .filter(|v| v.is_finite())
+                    .fold(0f32, |m, v| m.max(v.abs()));
+                if bad > 0 || max > DEBUG_REPORT_ABOVE {
+                    eprintln!(
+                        "flint-debug pos={position} layer={layer} router logits: max_abs={max} \
+                         non_finite={bad}"
+                    );
+                }
+            }
+
             pass = self.context.begin_pass_labeled("routed cb");
             moe::encode_flint_layer_moe(
                 &mut self.context,
@@ -301,6 +349,23 @@ impl RealForwardRunner {
                 hidden,
                 0,
             )?;
+            if debug {
+                // Sync the routed pass NOW so its three outputs can be read:
+                // the shared expert, the shared-plus-routed sum, and the
+                // residual after the add. Debug only; it ends the pipelining.
+                pass.commit().wait_with_gpu_time();
+                debug_report(
+                    position,
+                    layer,
+                    "moe_acts (phase 1: silu(gate) * up)",
+                    &self.scratch.moe_acts,
+                    top_k * moe_inter as usize,
+                );
+                debug_report(position, layer, "shared_out", &state.shared_out, hidden);
+                debug_report(position, layer, "h2 (shared + routed)", &state.h2, hidden);
+                debug_report(position, layer, "x after MoE", &self.scratch.x, hidden);
+                pass = self.context.begin_pass_labeled("cb1 (attn+router)");
+            }
         }
 
         if !self.skip_head {

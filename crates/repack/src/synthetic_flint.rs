@@ -242,5 +242,7 @@ pub fn build_synthetic_flint_install(
         .bits_overrides
         .insert("language_model.model.embed_tokens".to_string(), 8);
     write_gemma4_install(dir, &arch, model_id, &header, &source, &quant)?;
+    // The walk applied the up/down rebalance; the real writer records it too.
+    crate::flint_rebalance::record_shift(dir, crate::flint_rebalance::FLINT_SWIGLU_SHIFT)?;
     Ok(arch)
 }

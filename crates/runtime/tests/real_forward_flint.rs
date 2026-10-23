@@ -19,7 +19,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use half::f16;
-use turbospark_repack::build_synthetic_flint_install;
+use turbospark_repack::{build_synthetic_flint_install, rebalance_install_in_place, FLINT_SWIGLU_SHIFT};
 use turbospark_runtime::{LogitProducer, RealForwardRunner};
 
 fn tempdir() -> std::path::PathBuf {
@@ -262,5 +262,86 @@ fn an_install_the_flow_cannot_run_is_refused_by_name() {
     patch_manifest(&dir, "tieWordEmbeddings", serde_json::json!(true));
     let err = refusal(&dir, tied, "a tied flint");
     assert!(err.contains("untied"), "got: {err}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Like [`decode`], but reports non-finite logits instead of panicking, so a
+/// test can assert that an overflow HAPPENS.
+fn decode_checked(
+    dir: &std::path::Path,
+    arch: &model_io::ArchConfig,
+    steps: usize,
+) -> Result<Vec<f32>, usize> {
+    let vocab = arch.vocab_size as usize;
+    let mut runner = RealForwardRunner::open(dir, arch.clone()).expect("a flint install opens");
+    runner.reset();
+    let mut token = 5i32;
+    let mut last = Vec::new();
+    for position in 0..steps {
+        let mut logits = vec![f16::from_f32(0.0); vocab];
+        runner
+            .produce(token, position, &mut logits)
+            .unwrap_or_else(|e| panic!("produce failed at position {position}: {e}"));
+        if logits.iter().any(|v| !v.to_f32().is_finite()) {
+            return Err(position);
+        }
+        token = logits
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.to_f32().total_cmp(&b.1.to_f32()))
+            .map(|(i, _)| i as i32)
+            .unwrap();
+        last = logits.iter().map(|v| v.to_f32()).collect();
+    }
+    Ok(last)
+}
+
+/// THE REBALANCE CHANGES THE STORED ACTIVATION, NOT THE ANSWER. The fixture is
+/// written WITH the transform (the walk applies it to every Flint install);
+/// undoing it in place gives the same model with the large `up` and the small
+/// `down` the checkpoint shipped. Their logits agree to FP16 rounding.
+#[test]
+fn the_rebalance_does_not_change_the_answer() {
+    let (dir, arch) = flint_install();
+    let rebalanced = decode(&dir, &arch, 12);
+    let stats = rebalance_install_in_place(&dir, -FLINT_SWIGLU_SHIFT).expect("undo in place");
+    assert_eq!(stats.left_alone, 0, "no value may be skipped, or the undo is not exact");
+    assert!(stats.resident_tensors > 0 && stats.expert_blobs > 0);
+    let original = decode(&dir, &arch, 12);
+
+    let scale: f32 = original.iter().map(|v| v.abs()).sum();
+    let rel = distance(&rebalanced, &original) / scale;
+    assert!(
+        rel < 0.02,
+        "the rebalance moved the logits by {rel:.4} of their magnitude: it is not an identity"
+    );
+    let argmax = |v: &[f32]| v.iter().enumerate().max_by(|a, b| a.1.total_cmp(b.1)).unwrap().0;
+    assert_eq!(argmax(&rebalanced), argmax(&original), "the top token changed");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// THE FIX IS WHAT KEEPS AN OVERFLOW OUT. Inflating `up` by 2^26 and deflating
+/// `down` by the same is the same model mathematically, but it stores a
+/// `silu(gate) * up` far past FP16's 65,504, which is exactly the failure the
+/// real checkpoint showed (NaN across the whole stream). Undoing the
+/// inflation restores the install BIT FOR BIT, and the logits with it.
+#[test]
+fn an_fp16_overflow_is_reproduced_and_then_removed_by_the_exact_inverse() {
+    let (dir, arch) = flint_install();
+    let baseline = decode_checked(&dir, &arch, 6).expect("the rebalanced install is finite");
+
+    let inflate = 26;
+    rebalance_install_in_place(&dir, -inflate).expect("inflate in place");
+    let overflowed = decode_checked(&dir, &arch, 6);
+    assert!(
+        overflowed.is_err(),
+        "inflating the stored activation by 2^{inflate} must overflow FP16; if it did not, \
+         this test no longer reproduces the real failure"
+    );
+
+    let stats = rebalance_install_in_place(&dir, inflate).expect("deflate in place");
+    assert_eq!(stats.left_alone, 0);
+    let restored = decode_checked(&dir, &arch, 6).expect("restored install is finite");
+    assert_eq!(restored, baseline, "the in-place shift is not exactly invertible");
     std::fs::remove_dir_all(&dir).ok();
 }

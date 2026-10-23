@@ -52,6 +52,61 @@ not as proof. Read `docs/NEW_MODEL.md` for the bring-up order.
 - **Attention scale, norm convention.** `128^-0.5`, plain RMS (no `1 + w`),
   eps 1e-6, q and k normed before RoPE. From the llama.cpp port.
 
+## FP16 range: measured, and fixed by a weight transform
+
+**The open item turned out to be the first real failure.** On the published
+`flint-int4`, the prompt "Write a detailed explanation of how a bill becomes a
+law in the United States." produced `score vector must not contain a
+non-finite entry` at the first token. `TURBOSPARK_FLINT_DEBUG=1` (a per-layer
+range report, off by default) located it:
+
+- the residual stream is large but finite (6,072 at layer 46, 6,244 at layer
+  47, on a token near the start of the prompt);
+- the routed experts' phase-1 product `silu(gate) * up` reaches 16,912, 33,536,
+  37,024 and 58,496 on other layers and tokens, and overflowed to `inf` on two
+  elements at position 2, layer 46;
+- one `inf` in phase 1 makes phase 2's weighted sum NaN in every element, and
+  the next RMS norm turns the stream to NaN. The shared expert's output stayed
+  finite.
+
+With `up` divided by 2^4 the same prompt ran, and the stored product peaked at
+6,056, so the true peak is about 97,000: past FP16's 65,504, so no FP16 engine
+can hold it unscaled. This matches why the llama.cpp port added adaptive
+input scaling.
+
+**Fix: `crates/repack/src/flint_rebalance.rs`.** Every `up_proj` has its scales
+and biases divided by 2^6 and the matching `down_proj`'s multiplied by 2^6
+(dense lead, shared expert and every routed expert; the gate is untouched
+because `silu` is not linear). `up` and `down` are both linear, so the result
+is unchanged, and a BF16 exponent shift is exact and bit-for-bit invertible.
+The walk applies it to every new Flint install and records the net shift in
+`flint_rebalance.json`; an install built before it exists migrates in place
+with `cargo run --release -p turbospark-repack --example flint_rebalance --
+<dir>` (refuses a second application, `--undo` reverses it). An install
+WITHOUT the shift overflows on prompts like the one above.
+
+Why 2^6: the measured peak needs at least 2^1, and 64 leaves about 43x
+headroom for tokens not yet seen. The cost is subnormal precision for stored
+products under about 4e-3, negligible beside the large terms that dominate a
+down-projection's sum. The shift is a fixed constant, not adaptive; a token
+with a product above about 4 million would still overflow.
+
+## Real-model results (2026-10-22, M4 Max 36 GB, not a benchmark)
+
+All on `RecursiveSI/flint-int4@3b93f9053b530488405ae9fca51d4900d6ce21f0`
+migrated in place, streamed experts:
+
+- greedy, chat template applied, "capital of France": coherent, a `<think>`
+  block then "The capital of France is Paris.", `stop=Eos`;
+- greedy, 1,100 new tokens on a long prompt, crossing the 513-token window
+  with the sliding layers' ring (641) wrapped: coherent throughout, stopped at
+  the token budget while the final answer was beginning;
+- the same greedy prompt at 8, 16 and 96 expert-cache slots, and a repeat
+  process: **byte-identical output** (slot order is router rank);
+- peak physical footprint 0.98 GiB at 8 slots, 1.61 GiB at 16, 7.93 GiB at 96,
+  for a 21 GiB model; decode about 19 to 22 tok/s at 8 to 16 slots. A machine
+  that was not confirmed quiet, no AC check, one prompt: indicative only.
+
 ## Not wired (recorded, not half-built)
 
 - Chunked and batched prefill. Prefill runs through the sequential `produce`
@@ -67,11 +122,10 @@ not as proof. Read `docs/NEW_MODEL.md` for the bring-up order.
 
 ## Open items
 
-1. **F16 range.** The llama.cpp port needed adaptive MoE-input scaling
-   (threshold 1/1024) so Q8 activation block sums stay inside F16, at a 10 to
-   30 percent speed cost. This engine keeps FP16 activations. Per-layer maxima
-   of the residual stream, the post-norm MoE input and the expert outputs must
-   be measured on real prompts before any quality claim.
+1. **F16 range.** Fixed for the prompts tried by the rebalance above, with a
+   fixed 2^6. Broader prompt coverage (code, other languages, very long
+   contexts) has not been measured; run with `TURBOSPARK_FLINT_DEBUG=1` and
+   watch for reports near 65,504. The residual stream itself reached 6,244.
 2. **Router quantization.** Measure top-6 agreement between the INT8 router
    and the BF16 original on real hidden states.
 3. **Real-model gates.** Greedy 400-token coherence, sampled coherence ending
@@ -79,10 +133,16 @@ not as proof. Read `docs/NEW_MODEL.md` for the bring-up order.
    gate have not been run. Nothing in the synthetic suite can show that RoPE is
    correctly absent on the full-attention layers, or compare against a
    reference implementation.
-4. **Chat template.** It uses `replace("\x00", "")` and
-   `tojson(ensure_ascii=False)`. Check the minijinja renderer accepts both.
-   Stop tokens are `<|end_of_text|>` (150001), `<|user|>` (150003),
-   `<|observation|>` (150005) and `<|developer|>` (150018).
-5. **Dialect.** Confirm `detect_dialect` does not resolve this checkpoint's
-   GLM-style special tokens to an existing dialect whose resolver then requires
-   a token it lacks.
+4. **Chat template.** It rendered and the model answered in the expected
+   shape, so minijinja accepts `replace("\x00", "")` and
+   `tojson(ensure_ascii=False)`. Not yet exercised: system and developer
+   messages, assistant reasoning, tool calls and tool results.
+5. **Dialect.** Resolved: `ChatDialect::Flint`, probed before GLM (the table
+   carries GLM's `<|assistant|>` and `<|observation|>` and was refused for a
+   missing `<|endoftext|>` before it existed). Stops are `<|end_of_text|>`
+   (150001), `<|user|>` (150003), `<|observation|>` (150005) and
+   `<|developer|>` (150018). `<think>` and the tool markup are plain text, so
+   reasoning arrives as content and no tool parser is wired.
+6. **Sharding without an index.** The repo ships `model-00000..00004` and no
+   `model.safetensors.index.json`; `shard_names` now discovers shards from the
+   file listing when there is no usable index.

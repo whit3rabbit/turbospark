@@ -379,6 +379,22 @@ pub fn read_resident_entries_from_shards(
                     Vec::new(),
                 )
             };
+            let mut entry = entry;
+            // Flint's dense lead and shared expert get the same `up`/`down`
+            // rebalance as its routed experts (`crate::flint_rebalance`).
+            if arch.family == ModelFamily::Flint {
+                if let Some(role) = crate::flint_rebalance::SwigluRole::of_resident(name) {
+                    let delta = role.delta(crate::flint_rebalance::FLINT_SWIGLU_SHIFT);
+                    if let ResidentEntrySpec::Int1(spec)
+                    | ResidentEntrySpec::Int2(spec)
+                    | ResidentEntrySpec::Int4(spec)
+                    | ResidentEntrySpec::Int8(spec) = &mut entry
+                    {
+                        crate::flint_rebalance::shift_bf16_plane(&mut spec.scales, delta);
+                        crate::flint_rebalance::shift_bf16_plane(&mut spec.biases, delta);
+                    }
+                }
+            }
             entries.push(entry);
             lossy_narrowing.extend(companion_loss);
         } else if int8_force_targets(arch.family)

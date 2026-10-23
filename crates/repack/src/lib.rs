@@ -31,6 +31,7 @@ mod install_verifier;
 mod manifest_peek;
 mod museglimmer_config;
 mod flint_config;
+mod flint_rebalance;
 mod qwen2_config;
 mod qwen36_config;
 mod qwen3vl_config;
@@ -108,6 +109,9 @@ pub use museglimmer_config::{
     muse_glimmer_mask, parse_muse_glimmer_config, parse_muse_glimmer_scalars, MuseGlimmerScalars,
 };
 pub use flint_config::{parse_flint_config, parse_flint_quantization};
+pub use flint_rebalance::{
+    rebalance_install_in_place, recorded_shift, RebalanceStats, SwigluRole, FLINT_SWIGLU_SHIFT,
+};
 pub use qwen2_config::parse_qwen2_config;
 pub use qwen36_config::{
     parse_qwen4_exp_config, parse_qwen_gdn_dense_config, parse_qwen_gdn_moe_config,

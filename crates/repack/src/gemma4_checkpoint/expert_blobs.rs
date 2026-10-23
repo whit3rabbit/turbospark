@@ -185,8 +185,23 @@ pub fn plan_one_expert_layer(
         }
 
         let w_bytes = shards.read(name)?;
-        let s_bytes = shards.read(&s_name)?;
-        let b_bytes = shards.read(&b_name)?;
+        let mut s_bytes = shards.read(&s_name)?;
+        let mut b_bytes = shards.read(&b_name)?;
+        // FLINT'S FP16 RANGE FIX: `up` is divided by 2^K and `down` multiplied
+        // by it, so the stored `silu(gate) * up` stays inside FP16 and the
+        // result is unchanged. See `crate::flint_rebalance` for why.
+        if arch.family == model_io::ModelFamily::Flint {
+            let swiglu = match role {
+                "up" => Some(crate::flint_rebalance::SwigluRole::Up),
+                "down" => Some(crate::flint_rebalance::SwigluRole::Down),
+                _ => None,
+            };
+            if let Some(swiglu) = swiglu {
+                let delta = swiglu.delta(crate::flint_rebalance::FLINT_SWIGLU_SHIFT);
+                crate::flint_rebalance::shift_bf16_bytes(&mut s_bytes, delta);
+                crate::flint_rebalance::shift_bf16_bytes(&mut b_bytes, delta);
+            }
+        }
         let per = |total: usize, what: &str| -> Result<usize, Gemma4Error> {
             if total % expert_count != 0 {
                 return Err(Gemma4Error::ShapeMismatch {

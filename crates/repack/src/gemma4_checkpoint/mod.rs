@@ -639,7 +639,10 @@ pub fn write_flint_install_streamed(
             arch.family.as_str()
         ))));
     }
-    write_gemma4_install_streamed(dir, arch, model_id, shards, quant, progress)
+    write_gemma4_install_streamed(dir, arch, model_id, shards, quant, progress)?;
+    // The walk applied `crate::flint_rebalance`'s shift to this install; say so.
+    crate::flint_rebalance::record_shift(dir, crate::flint_rebalance::FLINT_SWIGLU_SHIFT)?;
+    Ok(())
 }
 
 /// Dense `qwen3_vl` install write through the shared MLX checkpoint walk.
