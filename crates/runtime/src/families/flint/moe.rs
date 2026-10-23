@@ -65,6 +65,7 @@ pub(crate) fn encode_swiglu(
     layer: usize,
     hidden: usize,
     inter: usize,
+    x_off: u64,
     out: (&gpu::MetalBuffer, u64),
 ) -> Result<(), RealForwardError> {
     let name = |suffix: &str| layer_tensor(layer, &format!("{prefix}.{suffix}"));
@@ -76,7 +77,7 @@ pub(crate) fn encode_swiglu(
         &name("gate_proj.weight"),
         inter,
         hidden,
-        (&state.moe_x, 0),
+        (&state.moe_x, x_off),
         (&state.ffn_a, 0),
     )?;
     encode_gemv_any(
@@ -87,7 +88,7 @@ pub(crate) fn encode_swiglu(
         &name("up_proj.weight"),
         inter,
         hidden,
-        (&state.moe_x, 0),
+        (&state.moe_x, x_off),
         (&state.ffn_b, 0),
     )?;
     gpu::encode_silu_mul(
@@ -157,6 +158,7 @@ pub(crate) fn encode_flint_layer_moe(
         layer,
         hidden,
         state.shared_inter,
+        x_off,
         (&state.shared_out, 0),
     )?;
 

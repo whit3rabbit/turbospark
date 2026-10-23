@@ -677,10 +677,12 @@ impl RealForwardRunner {
             );
         }
         if self.real_flint.is_some() {
-            return Err(
-                "flint does not support chunked prefill; the sequential path serves it"
-                    .to_string(),
-            );
+            // Always a chunk driver; `TURBOSPARK_FLINT_CHUNKED_PREFILL` picks
+            // the layer-batched one over the per-token loop it replaces.
+            return gpu::autorelease_pool(|| {
+                self.prefill_chunk_real_flint(tokens, start_position, logits)
+            })
+            .map_err(|e| e.to_string());
         }
         Err(format!(
             "chunked prefill is wired for the real Gemma 4 flow, both halves of the \

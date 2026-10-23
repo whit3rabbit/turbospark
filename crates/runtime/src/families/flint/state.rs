@@ -12,6 +12,7 @@ use model_io::{ArchConfig, ModelFamily, ResidentIndex};
 
 use crate::families::flint::layer_tensor;
 use crate::real_forward::RealForwardError;
+use crate::real_forward_types::MAX_PREFILL_BATCH;
 use crate::real_forward_utils::entry;
 
 /// BF16 bit pattern for 1.0.
@@ -27,11 +28,16 @@ pub(crate) struct RealFlintState {
     /// BF16 `[hidden]` of ones: the INT8 router GEMV scales `x[n]` per
     /// element and this architecture has no `router.scale`.
     pub(crate) router_ones: gpu::MetalBuffer,
-    /// FP32 router logits, one `[num_experts]` row. Decode only: there is no
-    /// chunked driver for this family yet, so one row is enough.
+    /// FP32 router logits, one `[num_experts]` row per token of a prefill
+    /// micro-batch (`MAX_PREFILL_BATCH` rows): the chunk driver's per-layer
+    /// command buffer writes all M tokens' router GEMVs before the host reads
+    /// any back. Decode uses row 0.
     pub(crate) router_logits_f32: gpu::MetalBuffer,
-    /// `[hidden]`: the post-attention norm feeding the dense FFN, or the
-    /// router, shared expert and routed experts.
+    /// `[hidden]` per token of a prefill micro-batch: the post-attention norm
+    /// feeding the dense FFN, or the router, shared expert and routed experts.
+    /// Written in the attention half and read in the routed half with a
+    /// commit between them, so it needs a row per token (`crates/runtime`
+    /// Gotcha 14). Decode uses row 0.
     pub(crate) moe_x: gpu::MetalBuffer,
     /// `[hidden]`: shared output plus routed sum, added back to the stream.
     pub(crate) h2: gpu::MetalBuffer,
@@ -226,8 +232,9 @@ impl RealFlintState {
             rotated_pairs: rotated_pairs as u32,
             rms_eps: 1e-6,
             router_ones,
-            router_logits_f32: context.new_output_buffer((num_experts * 4) as u64),
-            moe_x: halfs(hidden),
+            router_logits_f32: context
+                .new_output_buffer((num_experts * 4 * MAX_PREFILL_BATCH) as u64),
+            moe_x: halfs(hidden * MAX_PREFILL_BATCH),
             h2: halfs(hidden),
             shared_out: halfs(hidden),
             ffn_a: halfs(ffn_width),

@@ -37,6 +37,7 @@
 
 mod attn;
 mod moe;
+mod prefill;
 mod state;
 
 pub(crate) use state::RealFlintState;
@@ -253,6 +254,7 @@ impl RealForwardRunner {
                     layer,
                     hidden,
                     state.dense_inter,
+                    0,
                     (&self.scratch.o, 0),
                 )?;
                 gpu::encode_residual_add(

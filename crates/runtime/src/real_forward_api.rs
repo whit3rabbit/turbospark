@@ -78,6 +78,7 @@ impl RealForwardRunner {
             // correctly. Record the ceiling, do not half-wire the driver.
             || self.real_muse.is_some()
             || self.real_gpt_oss.is_some()
+            || self.real_flint.is_some()
             || (self.real_qwen.as_ref().is_some_and(|s| s.dense)
                 && self.real_mtp.is_none()
                 && self.real_dflash.is_none())
