@@ -30,6 +30,8 @@ pub enum ReadAt {
     Open,
     /// A process-wide `OnceLock`: changing it needs a new process.
     ProcessCached,
+    /// Read again on every call (diagnostics).
+    PerCall,
 }
 
 /// What switching the knob may do to output.
@@ -218,6 +220,18 @@ pub const KNOBS: &[Knob] = &[
         families: &["qwen36"],
         quotable: true,
         doc: "docs/ENV.md",
+    },
+    Knob {
+        // Counters and host wall timers around phases the loop already
+        // waits on; it adds no GPU sync, so runs with it stay quotable.
+        name: "spec_stats",
+        env: "TURBOSPARK_SPEC_STATS",
+        values: &["<unset>", "1"],
+        read_at: ReadAt::PerCall,
+        exactness: Exactness::BitExact,
+        families: &["qwen35", "qwen36"],
+        quotable: true,
+        doc: "docs/CLI.md",
     },
     Knob {
         name: "dispatch_profile",

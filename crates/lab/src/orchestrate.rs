@@ -93,6 +93,49 @@ fn summarize_host(samples: &[HostSample]) -> Value {
     })
 }
 
+/// The runtime's `[spec-stats]` stderr lines (`TURBOSPARK_SPEC_STATS=1`) as
+/// data: one entry per speculative call, warm pass included, in order. The
+/// runtime prints them and keeps no accessor, so they are parsed here.
+pub fn parse_spec_stats(stderr: &str) -> Value {
+    let num = |s: &str| s.trim().parse::<f64>().ok();
+    let mut calls: Vec<serde_json::Map<String, Value>> = Vec::new();
+    for line in stderr.lines() {
+        let Some(rest) = line.strip_prefix("[spec-stats] ") else {
+            continue;
+        };
+        if rest.starts_with("rounds=") {
+            let mut m = serde_json::Map::new();
+            for kv in rest.split_whitespace() {
+                if let Some((k, v)) = kv.split_once('=') {
+                    if let Some(x) = num(v) {
+                        m.insert(k.replace('/', "_per_"), json!(x));
+                    }
+                }
+            }
+            calls.push(m);
+        } else if let (Some(cur), Some(curve)) = (
+            calls.last_mut(),
+            rest.strip_prefix("per-position acceptance: "),
+        ) {
+            cur.insert(
+                "per_position_acceptance".into(),
+                json!(curve.split_whitespace().map(num).collect::<Vec<_>>()),
+            );
+        } else if let (Some(cur), Some(ms)) = (calls.last_mut(), rest.strip_prefix("ms/round: ")) {
+            let mut m = serde_json::Map::new();
+            for kv in ms.split_whitespace() {
+                if let Some((k, v)) = kv.split_once('=') {
+                    if let Some(x) = num(v) {
+                        m.insert(k.to_string(), json!(x));
+                    }
+                }
+            }
+            cur.insert("ms_per_round".into(), Value::Object(m));
+        }
+    }
+    json!(calls)
+}
+
 impl Session {
     pub fn new(
         lab: &Path,
@@ -203,10 +246,18 @@ impl Session {
         let wall_s = started.elapsed().as_secs_f64();
         samples.push(monitor.sample(None));
 
-        let record: Value = std::fs::read_to_string(&record_path)
+        let mut record: Value = std::fs::read_to_string(&record_path)
             .ok()
             .and_then(|t| serde_json::from_str(&t).ok())
             .unwrap_or(Value::Null);
+        let spec_stats = std::fs::read_to_string(&stderr_path)
+            .map(|t| parse_spec_stats(&t))
+            .unwrap_or(Value::Null);
+        if spec_stats.as_array().is_some_and(|a| !a.is_empty()) {
+            if let Value::Object(m) = &mut record {
+                m.insert("spec_stats".into(), spec_stats.clone());
+            }
+        }
         let status = if timed_out {
             "timeout".to_string()
         } else if exit.success() {
@@ -250,6 +301,8 @@ impl Session {
                 "totals": record["totals"],
                 "peak_footprint_bytes": record["peak_footprint_bytes"],
                 "exe_sha256": record["provenance"]["exe_sha256"],
+                "speculation": arm.speculation,
+                "spec_stats": spec_stats,
             }),
         )?;
         if self.verbose {
@@ -377,4 +430,26 @@ pub fn run_ab(
         round += 1;
     }
     Ok((stats::decide(&clean, min_effect), pairs))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spec_stats_lines_parse_per_call() {
+        let err = "noise\n[spec-stats] rounds=10 accepted/round=1.40 committed/round=2.40 rollbacks=6\n\
+                   [spec-stats] per-position acceptance: 0.76 0.53 -\n\
+                   [spec-stats] rounds per depth: 2:10\n\
+                   [spec-stats] ms/round: draft=11.10 verify=62.40 accept=1.00 rollback=0.06 commit=0.08 rewind=0.00 bonus=0.49\n\
+                   [spec-stats] rounds=3 accepted/round=1.00 committed/round=2.00 rollbacks=1\n";
+        let v = parse_spec_stats(err);
+        let calls = v.as_array().unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0]["committed_per_round"], 2.4);
+        assert_eq!(calls[0]["rollbacks"], 6.0);
+        assert_eq!(calls[0]["ms_per_round"]["verify"], 62.4);
+        assert_eq!(calls[0]["per_position_acceptance"][2], Value::Null);
+        assert!(calls[1].get("ms_per_round").is_none());
+    }
 }

@@ -126,13 +126,32 @@ pub fn parse_env(s: &str) -> Result<(String, String), String> {
     Ok((key, v.to_string()))
 }
 
-/// `NAME[@SLOTS/RESIDENCY][:KEY=VALUE,KEY=VALUE]`. Open parameters default
+/// `NAME[@SLOTS/RESIDENCY][~DRAFTER:BLOCK[a]][:KEY=VALUE,KEY=VALUE]`. Open parameters default
 /// to the command's; the common env goes to every arm.
 pub fn parse_arm(
     s: &str,
     open: OpenParams,
     common: &BTreeMap<String, String>,
 ) -> Result<Arm, String> {
+    // `~DRAFTER:BLOCK[a]` runs the arm through the speculative loop. It sits
+    // before any `:KEY=V` list and has its own ':', so split it off first.
+    let (main, speculation) = match s.split_once('~') {
+        None => (s.to_string(), None),
+        Some((before, after)) => {
+            let mut it = after.splitn(3, ':');
+            let drafter = it.next().unwrap_or("");
+            let block = it
+                .next()
+                .ok_or_else(|| format!("arm {s:?}: speculation is ~DRAFTER:BLOCK"))?;
+            let sp = parse_speculation(&format!("{drafter}:{block}"))?;
+            let main = match it.next() {
+                Some(env) => format!("{before}:{env}"),
+                None => before.to_string(),
+            };
+            (main, Some(sp))
+        }
+    };
+    let s = main.as_str();
     let (head, rest) = s.split_once(':').unwrap_or((s, ""));
     // `NAME@SLOTS/RESIDENCY` overrides the shared open parameters for this
     // arm, so one interleaved session can compare slot counts and residency.
@@ -161,6 +180,35 @@ pub fn parse_arm(
         name: name.to_string(),
         env,
         open,
+        speculation,
+    })
+}
+
+/// `mtp:2`, `dflash:7`, `auto:4`, with a trailing `a` for adaptive depth
+/// (`mtp:4a`).
+pub fn parse_speculation(s: &str) -> Result<crate::workload::Speculation, String> {
+    use crate::workload::{Drafter, Speculation};
+    let (d, b) = s
+        .split_once(':')
+        .ok_or_else(|| format!("speculation {s:?}: DRAFTER:BLOCK, e.g. mtp:2"))?;
+    let drafter = match d {
+        "auto" => Drafter::Auto,
+        "mtp" => Drafter::Mtp,
+        "dflash" => Drafter::Dflash,
+        _ => return Err(format!("drafter {d:?}: auto, mtp or dflash")),
+    };
+    let (b, adaptive) = match b.strip_suffix('a') {
+        Some(b) => (b, true),
+        None => (b, false),
+    };
+    let block: usize = b.parse().map_err(|_| format!("block {b:?}"))?;
+    if block == 0 {
+        return Err("block must be at least 1".into());
+    }
+    Ok(Speculation {
+        drafter,
+        block,
+        adaptive,
     })
 }
 
@@ -209,6 +257,25 @@ mod tests {
         assert_eq!(arm.open.residency, Residency::Mapped);
         assert_eq!(arm.env["TURBOSPARK_PREFILL_STEEL"], "0");
         assert!(parse_arm("x@32", OpenParams::default(), &BTreeMap::new()).is_err());
+    }
+
+    #[test]
+    fn arms_can_speculate() {
+        let a = parse_arm("mtp2~mtp:2", OpenParams::default(), &BTreeMap::new()).unwrap();
+        assert_eq!(a.name, "mtp2");
+        assert_eq!(a.speculation.as_ref().unwrap().block, 2);
+        let a = parse_arm(
+            "d7@16/streamed~dflash:7a:prefill_steel=0",
+            OpenParams::default(),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        let sp = a.speculation.unwrap();
+        assert!(sp.adaptive && sp.block == 7);
+        assert_eq!(a.open.slots, Slots::Fixed(16));
+        assert_eq!(a.env["TURBOSPARK_PREFILL_STEEL"], "0");
+        assert!(parse_arm("x~mtp:0", OpenParams::default(), &BTreeMap::new()).is_err());
+        assert!(parse_arm("x~eagle:2", OpenParams::default(), &BTreeMap::new()).is_err());
     }
 
     #[test]

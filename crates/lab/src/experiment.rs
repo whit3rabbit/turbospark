@@ -54,6 +54,7 @@ pub fn quality_workload(spec: &ExperimentSpec) -> Workload {
         decode_tokens: QUALITY_DECODE,
         prefill_chunk: spec.workload.prefill_chunk,
         max_context: spec.workload.max_context,
+        speculation: spec.workload.speculation.clone(),
     }
 }
 

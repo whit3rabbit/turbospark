@@ -24,7 +24,7 @@ use turbospark_bench::protocol::PROTOCOL_CASES;
 
 use crate::phases::{self, CacheClass, PhaseReport};
 use crate::provenance::{self, Provenance};
-use crate::workload::{Arm, PromptSource, Residency, Slots, Workload};
+use crate::workload::{Arm, Drafter, PromptSource, Residency, Slots, Speculation, Workload};
 
 pub const EXIT_REFUSED: i32 = 3;
 
@@ -257,6 +257,71 @@ fn prefill(
     Ok(())
 }
 
+/// One prompt through the runtime's speculative loop, greedy, at most
+/// `max_new` tokens. Returns the result and the generated ids in order.
+fn speculative_once(
+    runner: &mut RealForwardRunner,
+    tokenizer: &MfTokenizer,
+    ids: &[i32],
+    sp: &Speculation,
+    max_context: u32,
+    max_new: usize,
+    sampler: &mut AppMemorySampler,
+) -> Result<(runtime::RawDecodeResult, Vec<i32>), String> {
+    let config = runtime::GenerationConfig {
+        // Temperature exactly 0: the speculative loop refuses anything else
+        // as greedy, and acceptance is exact only there.
+        shaping: selection::ShapingConfig::new(0.0, 1, None, 1.0, Some(0))
+            .map_err(|e| e.to_string())?,
+        max_new_tokens: max_new as u32,
+        stop_strings: Vec::new(),
+        extra_stop_tokens: Vec::new(),
+        rate: Default::default(),
+    };
+    let vocab = runner.vocab_size();
+    let mut generated = Vec::with_capacity(max_new);
+    let progress = |event: runtime::RawDecodeProgress| {
+        if let runtime::RawDecodeProgress::Token { index, id, .. } = event {
+            generated.push(id);
+            if index % 8 == 0 {
+                sampler.sample();
+            }
+        }
+    };
+    let result = if sp.adaptive {
+        runtime::run_raw_completion_speculative_adaptive(
+            runner,
+            tokenizer,
+            ids,
+            &config,
+            max_context,
+            vocab,
+            sp.block,
+            runtime::AdaptiveDepth::DEFAULT_FLOOR.min(sp.block),
+            progress,
+        )
+    } else {
+        runtime::run_raw_completion_speculative(
+            runner,
+            tokenizer,
+            ids,
+            &config,
+            max_context,
+            vocab,
+            sp.block,
+            progress,
+        )
+    }
+    .map_err(|e| e.to_string())?;
+    if result.reused_prefix_tokens != 0 {
+        return Err(format!(
+            "the runtime reused {} prompt tokens from a previous turn; a measured prompt must prefill in full",
+            result.reused_prefix_tokens
+        ));
+    }
+    Ok((result, generated))
+}
+
 fn open(
     req: &WorkerRequest,
     dir: &Path,
@@ -274,12 +339,28 @@ fn open(
         Residency::Streamed => runtime::ExpertResidency::Streamed,
         Residency::Mapped => runtime::ExpertResidency::Mapped,
     };
+    let policies = match &req.arm.effective_speculation(&req.workload) {
+        None => runtime::DraftPolicies::off(),
+        Some(sp) => {
+            let asked = match sp.drafter {
+                Drafter::Auto => runtime::SpeculativeDrafter::Auto,
+                Drafter::Mtp => runtime::SpeculativeDrafter::Mtp,
+                Drafter::Dflash => runtime::SpeculativeDrafter::Dflash,
+            };
+            let choice = runtime::resolve_drafter(asked, dir);
+            if let Some(note) = &choice.note {
+                return Err(format!("drafter not enabled: {note}"));
+            }
+            let depth = runtime::Speculation::Block(sp.block as u32);
+            runtime::draft_policies(&choice, depth)
+        }
+    };
     let runner = RealForwardRunner::open_with_residency(
         dir,
         arch,
         req.workload.max_context as usize,
         slots,
-        runtime::DraftPolicies::off(),
+        policies,
         runtime::SteeringPolicy::off(),
         1,
         runtime::KvQuant::Off,
@@ -323,7 +404,13 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
     let open_s = t_open.elapsed().as_secs_f64();
     sampler.sample();
 
-    if req.workload.prefill_chunk.is_some() && !runner.supports_chunked_prefill() {
+    // The speculative loop owns its prefill, so the chunk size does not
+    // apply to it.
+    let speculation = req.arm.effective_speculation(&req.workload);
+    if speculation.is_none()
+        && req.workload.prefill_chunk.is_some()
+        && !runner.supports_chunked_prefill()
+    {
         return Err(format!(
             "{family} install does not support chunked prefill here; use \"prefill_chunk\": null \
              rather than measuring the sequential path under a chunked label"
@@ -349,7 +436,19 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
     // In-process warm pass: absorbs Metal pipeline JIT and first-touch
     // allocation so the first measured prompt does not pay for them.
     let t_warm = Instant::now();
-    {
+    if let Some(sp) = &speculation {
+        let warm: Vec<i32> = all_ids[0].iter().copied().take(64).collect();
+        runner.reset();
+        speculative_once(
+            &mut runner,
+            &tokenizer,
+            &warm,
+            sp,
+            req.workload.max_context,
+            8,
+            &mut sampler,
+        )?;
+    } else {
         let warm: Vec<i32> = all_ids[0].iter().copied().take(64).collect();
         runner.reset();
         prefill(
@@ -369,6 +468,36 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
     let mut prompts = Vec::new();
     let mut logits_out: Vec<u8> = Vec::new();
     for (ids, source) in all_ids.iter().zip(&req.workload.prompts) {
+        if let Some(sp) = &speculation {
+            runner.reset();
+            let p0 = runner.phase_counters();
+            let (result, generated) = speculative_once(
+                &mut runner,
+                &tokenizer,
+                ids,
+                sp,
+                req.workload.max_context,
+                req.workload.decode_tokens,
+                &mut sampler,
+            )?;
+            let p1 = runner.phase_counters();
+            let all = phases::report(&phases::delta(&p0, &p1));
+            let token_bytes: Vec<u8> = generated.iter().flat_map(|t| t.to_le_bytes()).collect();
+            prompts.push(PromptRecord {
+                source: source.clone(),
+                prompt_tokens: result.prompt_tokens,
+                prefill_s: result.prefill_seconds,
+                decode_tokens: result.new_tokens,
+                decode_s: result.decode_seconds,
+                decode_digest: model_io::hash_data(&token_bytes),
+                // The speculative loop does not hand back its prefill logits.
+                prefill_logits_digest: String::new(),
+                cache_class: phases::cache_class(&all),
+                prefill_phases: all,
+                decode_phases: None,
+            });
+            continue;
+        }
         runner.reset();
         let p0 = runner.phase_counters();
         let t0 = Instant::now();

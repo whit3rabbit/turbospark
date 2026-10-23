@@ -67,6 +67,18 @@ pub struct Arm {
     pub env: BTreeMap<String, String>,
     #[serde(default)]
     pub open: OpenParams,
+    /// Decode through the speculative loop with this drafter and depth. An
+    /// arm's setting wins over the workload's, so one session can compare
+    /// plain decode against MTP or DFlash2 at several depths.
+    #[serde(default)]
+    pub speculation: Option<Speculation>,
+}
+
+impl Arm {
+    /// The speculation this arm runs under a given workload.
+    pub fn effective_speculation(&self, w: &Workload) -> Option<Speculation> {
+        self.speculation.clone().or_else(|| w.speculation.clone())
+    }
 }
 
 /// What a worker runs once the model is open.
@@ -84,6 +96,35 @@ pub struct Workload {
     /// KV window at open. Must cover the longest prompt plus `decode_tokens`.
     #[serde(default = "default_context")]
     pub max_context: u32,
+    /// Decode through the speculative loop instead of plain greedy steps.
+    /// The runtime then owns prefill as well (the speculative loop has its
+    /// own), so a speculative record has one combined phase report and no
+    /// prefill/decode split of the counters.
+    #[serde(default)]
+    pub speculation: Option<Speculation>,
+}
+
+/// Which drafter, and how deep.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Speculation {
+    #[serde(default)]
+    pub drafter: Drafter,
+    /// Tokens drafted per round, or the cap when `adaptive`.
+    pub block: usize,
+    /// Let the runtime's `AdaptiveDepth` controller move the depth each
+    /// round between its floor and `block` (step drafters only).
+    #[serde(default)]
+    pub adaptive: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Drafter {
+    /// Whatever drafter the install carries.
+    #[default]
+    Auto,
+    Mtp,
+    Dflash,
 }
 
 fn default_chunk() -> Option<usize> {
@@ -136,9 +177,11 @@ mod tests {
     #[test]
     fn workload_round_trips_with_defaults() {
         let w: Workload = serde_json::from_str(
-            r#"{"prompts":[{"protocol":"long-synthesis"},{"text_file":"/x.txt"}]}"#,
+            r#"{"prompts":[{"protocol":"long-synthesis"},{"text_file":"/x.txt"}],
+                "speculation":{"drafter":"mtp","block":2}}"#,
         )
         .unwrap();
+        assert_eq!(w.speculation.as_ref().unwrap().drafter, Drafter::Mtp);
         assert_eq!(w.prefill_chunk, Some(128));
         assert_eq!(w.max_context, 4096);
         assert_eq!(w.decode_tokens, 0);

@@ -2407,6 +2407,7 @@ dependencies = [
  "turbospark-model-io",
  "turbospark-repack",
  "turbospark-runtime",
+ "turbospark-selection",
  "turbospark-tokenizer",
 ]
 

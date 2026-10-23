@@ -121,6 +121,30 @@ pub fn print_profile(arm_names: &[String], outcomes: &[Outcome]) -> Value {
         if let Some(p) = peak {
             println!("  peak      {:.2} GiB phys_footprint", p.0);
         }
+        // Speculative rounds: the first `[spec-stats]` call per run is the
+        // worker's warm pass, so only the later ones count.
+        let measured_calls = |key: &dyn Fn(&Value) -> Option<f64>| {
+            med(clean.iter().flat_map(|o| {
+                o.record["spec_stats"]
+                    .as_array()
+                    .map(|calls| calls.iter().skip(1).map(key).collect::<Vec<_>>())
+                    .unwrap_or_default()
+            }))
+        };
+        if let Some(c) = measured_calls(&|c| c["committed_per_round"].as_f64()) {
+            let ms = |phase: &str| {
+                measured_calls(&|c| c["ms_per_round"][phase].as_f64())
+                    .map_or("n/a".to_string(), |m| format!("{:.1}", m.0))
+            };
+            println!(
+                "  spec      {:.2} committed/round [{:.2}-{:.2}], ms/round draft {} verify {}",
+                c.0,
+                c.1,
+                c.2,
+                ms("draft"),
+                ms("verify")
+            );
+        }
         let mut arm_json = json!({
             "clean_runs": clean.len(),
             "prefill_tok_s": tok_s.map(|t| t.0),

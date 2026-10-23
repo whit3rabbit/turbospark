@@ -85,6 +85,7 @@ pub fn workload_from(args: &mut Args) -> Result<Workload, String> {
         decode_tokens: args.parsed("--decode", 0usize)?,
         prefill_chunk,
         max_context: args.parsed("--context", 4096u32)?,
+        speculation: None,
     })
 }
 
@@ -152,6 +153,7 @@ fn profile(mut args: Args) -> Result<(), String> {
                     name: format!("s{s}-{r}"),
                     env: common.clone(),
                     open,
+                    speculation: None,
                 });
             }
         }
