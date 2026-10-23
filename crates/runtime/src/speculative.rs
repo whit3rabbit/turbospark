@@ -381,6 +381,10 @@ fn run_speculative<P: SpeculativeProducer>(
     let mut stat_offered = vec![0usize; block];
     let mut stat_matched = vec![0usize; block];
     let mut stat_rollbacks = 0usize;
+    // Wall time per phase of a round, stats runs only: draft, verify,
+    // accept, rollback, commit, rewind, bonus. Every phase that reads back
+    // from the GPU is a sync point, so these are wall times, not GPU times.
+    let mut ph = [std::time::Duration::ZERO; 7];
     // Rounds per proposed depth, so an adaptive run shows where it sat.
     let mut stat_depth = vec![0usize; block + 1];
 
@@ -431,6 +435,7 @@ fn run_speculative<P: SpeculativeProducer>(
         //    the context-KV write for the accepted prefix, its cache cursor
         //    -- happens inside the call, from the capture the previous
         //    verify filled.
+        let t_draft = std::time::Instant::now();
         proposals.clear();
         draft_qs.clear();
         if producer.drafts_block_passes() {
@@ -503,13 +508,16 @@ fn run_speculative<P: SpeculativeProducer>(
         //    proposal. Row `i` predicts the token after `feed[i]`, so row 0
         //    is checked against `proposals[0]`, and the row after the last
         //    accepted proposal carries the free bonus token.
+        ph[0] += t_draft.elapsed();
         feed.clear();
         feed.push(next);
         feed.extend_from_slice(&proposals);
+        let t_verify = std::time::Instant::now();
         let point = producer.checkpoint();
         producer
             .verify(&feed, base, &mut batch_logits[..feed.len() * vocab_size])
             .map_err(RuntimeError::Producer)?;
+        ph[1] += t_verify.elapsed();
 
         // -- Accept. Each accepted proposal is committed through the sink
         // IMMEDIATELY, which is what keeps the shaped distributions exact:
@@ -529,6 +537,7 @@ fn run_speculative<P: SpeculativeProducer>(
         let mut corrected: Option<TokenId> = None;
         stat_rounds += 1;
         let mut evaluate_round = || -> Result<usize, RuntimeError> {
+            let t_accept = std::time::Instant::now();
             for (i, &proposal) in proposals.iter().enumerate() {
                 if stats {
                     stat_offered[i] += 1;
@@ -622,6 +631,8 @@ fn run_speculative<P: SpeculativeProducer>(
             //    accepted prefix through the model. The re-verify is the term
             //    that made throughput track the rollback rate
             //    (`docs/DFLASH2.md`); the tape removes it.
+            ph[2] += t_accept.elapsed();
+            let t_roll = std::time::Instant::now();
             if committed < proposals.len() {
                 stat_rollbacks += 1;
                 if producer.supports_retaining_rollback() {
@@ -643,9 +654,12 @@ fn run_speculative<P: SpeculativeProducer>(
             // ends by folding exactly the rows it committed. A no-op on the
             // eager path, and after the partial round's retaining rollback,
             // which folded its kept rows and cleared the tape.
+            ph[3] += t_roll.elapsed();
+            let t_commit = std::time::Instant::now();
             producer
                 .commit_pending(committed + 1)
                 .map_err(RuntimeError::Producer)?;
+            ph[4] += t_commit.elapsed();
             Ok(committed)
         };
         let committed = match evaluate_round() {
@@ -663,6 +677,7 @@ fn run_speculative<P: SpeculativeProducer>(
         // fallback above. `committed + 1` rows: the confirmed token plus
         // every committed proposal, positions `base .. base + committed +
         // 1` -- the bonus is not fed yet and belongs to the next round.
+        let t_rewind = std::time::Instant::now();
         producer.record_committed(&feed[..committed + 1], base);
 
         // The drafter goes to where the accepted prefix ENDED and continues;
@@ -671,6 +686,7 @@ fn run_speculative<P: SpeculativeProducer>(
         producer
             .rewind_drafter(base + committed)
             .map_err(RuntimeError::Producer)?;
+        ph[5] += t_rewind.elapsed();
 
         if let Some(stop) = stopped {
             reason = stop;
@@ -686,6 +702,7 @@ fn run_speculative<P: SpeculativeProducer>(
         // on a rejection it is the row the correction was already drawn
         // from, and the corrected token IS `next` -- a second draw from it
         // would double-sample one position.
+        let t_bonus = std::time::Instant::now();
         if let Some(token) = corrected {
             next = token;
         } else if sampled {
@@ -705,6 +722,7 @@ fn run_speculative<P: SpeculativeProducer>(
                 sink.generated as u64,
             )?;
         }
+        ph[6] += t_bonus.elapsed();
     }
 
     if stats {
@@ -733,6 +751,18 @@ fn run_speculative<P: SpeculativeProducer>(
             .map(|(d, n)| format!("{d}:{n}"))
             .collect();
         eprintln!("[spec-stats] rounds per depth: {}", depths.join(" "));
+        let per = |d: std::time::Duration| d.as_secs_f64() * 1000.0 / stat_rounds.max(1) as f64;
+        eprintln!(
+            "[spec-stats] ms/round: draft={:.2} verify={:.2} accept={:.2} rollback={:.2} \
+             commit={:.2} rewind={:.2} bonus={:.2}",
+            per(ph[0]),
+            per(ph[1]),
+            per(ph[2]),
+            per(ph[3]),
+            per(ph[4]),
+            per(ph[5]),
+            per(ph[6])
+        );
     }
 
     Ok(RawDecodeResult {
