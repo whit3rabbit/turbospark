@@ -219,11 +219,22 @@ impl DflashState {
             capture_base: 0,
             capture_rows: 0,
             block,
+            // The GQA-shared decode kernel, as the trunk's scratch uses for
+            // this family. The drafter runs `block + 1` one-row attention
+            // dispatches per layer over a 2,048-token ring, and the barrier
+            // kernel's cost grows with that span: the draft phase measured
+            // 21.2 ms at a 2,940-token prompt against 11.4 ms with this
+            // kernel (`docs/KAPITSA_KERNELS.md`, lever 8). It is not
+            // bit-identical to the barrier kernel, which only moves the
+            // PROPOSALS (acceptance was unchanged on the real install);
+            // verification keeps the output lossless. The dispatcher falls
+            // back to the barrier kernel for any shape it does not serve.
             attn: gpu::AttentionScratch::new(
                 context,
                 shape.num_heads as u32,
                 shape.head_dim as u32,
-            ),
+            )
+            .with_decode_kernel(gpu::DecodeAttentionKernel::GqaShared),
             batched,
             x: halfs(h),
             normed: halfs(h),
