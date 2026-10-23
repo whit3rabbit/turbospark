@@ -185,6 +185,7 @@ left, ranked by the arithmetic below:
 | 6 | MTP head quality | RESOLVED: equal. Kapitsa 2.39 committed per cycle on short-explanation, ours 2.38, same depth 4 | The 1.4x gap at equal acceptance is round cost, 57 ms against 86 ms |
 | 7 | DFlash2 drafter pass | Profiled and trimmed ~2 ms (per-row loops batched, selector scan fused), uncommitted in `dflash_draft/` | Only ~2 ms more is in sight; the selector was 1.2 ms, not the suspect |
 | 8 | DFlash2 drafter attention at long context | DONE, uncommitted: one line in `dflash.rs`, draft phase 21.2 to 11.4 ms at 2,940 tokens and 14.5 to 11.0 ms at 426, +3.5% and +11% tok/s | The barrier decode kernel was used by the drafter only; the trunk already used the GQA-shared one |
+| 9 | Small projections in the 8-row verify | MEASURED: tile beats the scalar GEMM 5.6x (a/b) and 2.7x (K/V) per dispatch; real verify 66.3 to 63.8 ms/token in the profile. A threshold change for the tile's owner, not made here | About 3 ms of an 85 ms round; decode must move with it, about 0.7 ms a token derived, not measured |
 
 #### Measured: DFlash2 and the flat verify, 2026-10-22
 
@@ -393,6 +394,82 @@ kernel is now in; the multi-row variant is untried and shares chunk boundaries
 across rows), and merging the context write into the forward's command buffer
 (one commit and wait fewer). Together perhaps another 1.5 ms. The drafter is
 not where kapitsa's lead is: the verify floor is.
+
+#### Measured: where the 8-row verify goes, and the small projections, 2026-10-23
+
+Dispatch profile of one batched verify (DFlash2 block 7, 8 rows, 8-row tile
+flag on, short-explanation, 209 passes). The profiler gives each dispatch its
+own encoder and waits on it, so absolute times are inflated and only the
+ranking is meant:
+
+| Kernel | Dispatches | ms | Share |
+|--------|-----------:|---:|------:|
+| `dequant_int4_mma8_gemm` (the large projections) | 369 | 47.5 | 71.6% |
+| `dequant_int4_gemm_simd` (the small ones, scalar) | 128 | 6.1 | 9.2% |
+| `gdn_delta_step_prefill` | 48 | 4.0 | 6.0% |
+| `dequant_int4_mma8_table` (activation prep) | 369 | 2.0 | 3.0% |
+| `attention_decode_gqa_partial` plus combine | 256 | 2.3 | 3.5% |
+| `rmsnorm_bf16w_perhead` | 161 | 1.7 | 2.5% |
+| `copy_strided_rows_fp16` (aux capture) | 197 | 0.9 | 1.4% |
+| the rest | | 1.8 | 2.8% |
+| total | 1,936 | 66.3 | |
+
+The scalar GEMM's 128 dispatches are the attention K/V projections (1024 x
+5120, 32 of them) and the GDN `in_proj_a`/`in_proj_b` (48 x 5120, 96). The
+tile is routed to projections with at least 4096 output rows only
+(`int4_mma8_takes`), because at ONE row it loses to the GEMV by ratio. Their
+weights total about 95 MB, under 0.3 ms of bandwidth, so the 6.1 ms is launch
+and occupancy latency. Per-dispatch GPU time on the real shapes
+(`crates/gpu/tests/small_n_gemm_bench.rs`, a pool of 64 distinct weight copies
+per shape, median of 5 rounds, in the tree that carries the tile):
+
+| Shape | GEMV, 1 row | 8 GEMVs | Shipped GEMM, 8 rows | Tile, 8 rows |
+|-------|------------:|--------:|---------------------:|-------------:|
+| GDN a/b 48 x 5120 | 3.8 us | 29.9 us | 46.2 us | 8.2 us |
+| attn K/V 1024 x 5120 | 11.9 us | 78.4 us | 48.7 us | 17.9 us |
+| o_proj 5120 x 6144 (reference) | 57.5 us | 369.9 us | 177.7 us | 70.5 us |
+
+At eight rows the tile is 5.6x and 2.7x faster than the shipped GEMM on the
+two small shapes. Over a verify's 96 and 32 dispatches that is 6.0 ms down to
+1.4 ms, a predicted saving of 4.6 ms.
+
+On the real model, `TURBOSPARK_INT4_MMA8_MIN_ROWS=1` (an existing knob, read
+once) serves every projection by the tile in decode and verify alike. Its
+dispatch profile on the same prompt reads the batched verify at **63.8 ms
+against 66.3**, with the scalar GEMM gone from the list. That is 2.5 ms, less
+than the microbench predicts, because the tile's activation-prep dispatches
+rise (369 to 492, 2.0 to 3.0 ms) and its own time on the large shapes does
+too. One unprofiled quiet-host run of the knob read verify 63.3 ms against
+66-68, in line with that. Honest limits:
+
+- The default-threshold arm of this profile pair timed out in a host stall, so
+  its baseline is the earlier default profile of the same prompt, taken at a
+  different time. The accepted counts differ (205 and 209 rounds) because the
+  knob changes decode numerics and so the token stream.
+- The interleaved wall-clock pairs were not usable: swap was 7-8 of 8 GB, one
+  run took 22 minutes, and another session's probe was running. Treat the
+  3 ms as GPU-side, about 3.5% of an 85 ms round.
+- Plain decode under the knob was NOT measured (one of four runs finished, at
+  15.3 tok/s against about 17.4 on a quiet host, which is host noise). The
+  derived cost is the one-row tile against the GEMV on these shapes, about
+  4.4 us x 96 plus about 9 us x 32, which is **about 0.7 ms a token**. That
+  figure is derived, not measured.
+
+The knob must move decode with verify: the speculative stream is only
+bit-identical to sequential decode while both run the same arithmetic on every
+matrix. So this is a change to the default threshold, to be made by whoever
+promotes the tile, with the usual gates (`mtp_generation_gate` lossless at
+several blocks, the quality gate re-frozen, a decode A/B on a quiet host). It
+lives in `real_forward_dispatch.rs`, which carries that session's uncommitted
+wiring, so it is left to them and not edited here. Not promoted as a default
+by this section.
+
+Other items the same profile ranks, in rough order of size: the GDN delta
+kernel (4.0 ms over 48 dispatches), the tile's activation prep (2-3 ms, and
+the same input feeds q/k/v and gate/up so one prep per input would save part
+of it), verify attention (2.3 ms over 8 one-row dispatches a layer, which the
+rows-batched kernel in the playbook's Next work item 1 targets), the per-head
+norms (1.7 ms) and the aux capture copies (0.9 ms).
 
 ### Prompt lookup
 
