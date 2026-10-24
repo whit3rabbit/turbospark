@@ -42,7 +42,11 @@ policy.
   `crates/bench/tests/qwen36_prefill_arm_probe.rs`. The family covers Qwen 3.6
   and Ornith 35B. MiniCPM-V 4.7 (BF16 resident matrices) keeps the per-token
   path. `TURBOSPARK_BATCHED_GEMV=0` opts out to the byte-identical per-token
-  path. See `docs/BATCHED_PREFILL.md`.
+  path. `TURBOSPARK_ROUTED_BATCH=1` (opt-in) also batches the routed half on
+  top of the batched arm, bit-identical to its per-token routed loop. It binds
+  each sub-batch's expert union, not every slot, so it serves more than 32
+  slots, and route slots there are BINDING indices. See
+  `docs/BATCHED_PREFILL.md`.
 - The ANE+Steel prefill split (`families/qwen/ane_split.rs`) is opt-in twice:
   cargo feature `ane-prefill` and `TURBOSPARK_ANE_PREFILL` (or via FFI/Swift
   `AnePrefillMode`). When set to `Auto`, it activates on Apple Silicon M4+ /

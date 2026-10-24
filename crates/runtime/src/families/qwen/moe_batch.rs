@@ -32,6 +32,7 @@
 //! shape on both speculative pages: small blocks are what pay on this
 //! engine.
 
+use std::collections::HashMap;
 use std::time::Instant;
 
 use model_io::ResidentIndex;
@@ -323,6 +324,223 @@ pub(crate) fn encode_qwen_layer_moe_batched(
 
         // The tail: ONE RAW RESIDUAL ADD per token. No norm belongs here
         // (crate Gotcha 11) -- see this module's header.
+        for i in 0..sub_len {
+            let row = ((sub_start + i) * hidden * 2) as u64;
+            gpu::encode_residual_add(
+                context,
+                &pass,
+                (&scratch.x, row),
+                (&routed.batch_y, row),
+                hidden as u32,
+            )
+            .map_err(gpu_err)?;
+        }
+
+        sub_start += sub_len;
+        committed = Some(pass.commit());
+    }
+
+    Ok(committed.expect("batch >= 1 guarantees at least one sub-batch"))
+}
+
+/// One layer's routed half for all `batch` rows of a CHUNKED PREFILL
+/// micro-batch (`TURBOSPARK_ROUTED_BATCH`, `docs/BATCHED_PREFILL.md`).
+///
+/// It is [`encode_qwen_layer_moe_batched`] with two differences, both forced
+/// by where it runs:
+///
+/// - **The shared expert is not encoded here.** The batched arm's `cb1`
+///   (`encode_qwen_moe_cb1_batched`) already wrote every row's GATED
+///   shared-expert output into `batch_h1`, which is what the per-token
+///   routed loop seeds from (`moe::SharedSeed::Precomputed`). Phase 2 seeds
+///   from the same rows, so this is the same function as that loop, and the
+///   batched pair is bit-identical to the decode pair run per token
+///   (`crates/gpu/tests/moe_prefill_batch_parity.rs`).
+/// - **Each sub-batch binds only its own expert union.** The verify pass
+///   binds every cache slot once per layer, so it refuses an install with
+///   more than [`gpu::MAX_PREFILL_EXPERT_BINDINGS`] slots, which would rule
+///   out the CLI's `auto` (96 slots on a 36 GB Mac for Qwen 3.6). Here the
+///   union (at most `cap` experts) is bound in union order and each route
+///   names its BINDING index, not its cache slot. The kernels read the same
+///   blob bytes either way, and the phase-2 reduce runs over ranks, never
+///   bindings, so the remap cannot move a bit. Rebinding the one argument
+///   buffer per sub-batch is safe because the previous sub-batch is waited
+///   out before this one is planned (below), and the caller retires the
+///   previous layer's last routed buffer before calling.
+///
+/// Returns the last committed routed buffer for the caller to retire after
+/// the next layer's router wait, as the per-token loop pipelines its last
+/// token.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_qwen_layer_routed_prefill(
+    context: &mut gpu::MetalContext,
+    scratch: &DecodeScratch,
+    qwen: &RealQwenState,
+    batched: &BatchedScratch,
+    streamers: &mut [Option<streaming::PreadExpertStreamer>],
+    slot_buffers: &[Vec<gpu::MetalBuffer>],
+    mapped: &MappedResidency,
+    moe_offsets: &[gpu::MoeExpertOffsets],
+    routed_layouts: &[RoutedLayerLayout],
+    router_hist: &mut Option<crate::router_hist::RouterHistogram>,
+    phases: &mut PhaseCounters,
+    expert_cache_slots: usize,
+    layer: usize,
+    hidden: usize,
+    moe_inter: u32,
+    num_experts: usize,
+    top_k: usize,
+    use_silu: bool,
+    batch: usize,
+) -> Result<gpu::CommittedPass, RealForwardError> {
+    let gpu_err = RealForwardError::Gpu;
+    let routed = batched.routed.as_ref().ok_or_else(|| {
+        RealForwardError::Unsupported(
+            "TURBOSPARK_ROUTED_BATCH on an install with no routed scratch".to_string(),
+        )
+    })?;
+    let layout = routed_layouts[layer];
+    if layout.phase1 != RoutedBlobLayout::Affine || layout.phase2 != RoutedBlobLayout::Affine {
+        return Err(RealForwardError::Unsupported(format!(
+            "TURBOSPARK_ROUTED_BATCH is wired for INT4-affine routed experts only on the \
+             qwen MoE chunked driver; layer {layer} phase1 {:?} phase2 {:?}",
+            layout.phase1, layout.phase2
+        )));
+    }
+    // Mapped residency has no slot cache to bind from: every expert lives in
+    // its layer's mapping. Refused here, not at open, because
+    // `set_routed_batch_prefill` can flip the seam after open.
+    if mapped.buffers.get(layer).is_some_and(Option::is_some) {
+        return Err(RealForwardError::Unsupported(format!(
+            "TURBOSPARK_ROUTED_BATCH and mapped expert residency cannot be combined: the \
+             batched routed pair binds cache slots and mapped residency has none (layer {layer})"
+        )));
+    }
+    if router_hist
+        .as_ref()
+        .is_some_and(crate::router_hist::RouterHistogram::pilot_enabled)
+    {
+        return Err(RealForwardError::Unsupported(format!(
+            "TURBOSPARK_ROUTED_BATCH and the router pilot probe (TURBOSPARK_PILOT_PROBE) \
+             cannot be combined (layer {layer})"
+        )));
+    }
+
+    // Router readback for the whole micro-batch at once, then host top-k per
+    // row: the same top-k, weights and histogram records the per-token loop
+    // makes, in the same token order.
+    let t_router = Instant::now();
+    let router_logits =
+        gpu::read_f32_buffer_at(&routed.batch_router_logits_f32, 0, batch * num_experts);
+    let mut selected_all = Vec::with_capacity(batch);
+    let mut weights_all = Vec::with_capacity(batch);
+    for t in 0..batch {
+        let row = &router_logits[t * num_experts..(t + 1) * num_experts];
+        let (selected, route_weights) = router_topk_gemma4(row, top_k, &qwen.per_expert_ones);
+        if let Some(hist) = router_hist.as_mut() {
+            hist.record_router_logits(layer, row);
+            hist.record(layer, &selected);
+        }
+        selected_all.push(selected);
+        weights_all.push(route_weights);
+    }
+    phases.router_nanos += t_router.elapsed().as_nanos() as u64;
+
+    let cap = expert_cache_slots.min(gpu::MAX_PREFILL_EXPERT_BINDINGS);
+    let moe_inter_us = moe_inter as usize;
+    let offsets = &moe_offsets[layer];
+    let layer_slots = &slot_buffers[layer];
+    let mut committed: Option<gpu::CommittedPass> = None;
+    let mut sub_start = 0usize;
+    while sub_start < batch {
+        // A `pread` is host work the queue knows nothing about, and the
+        // argument buffer below is host-written: nothing this sub-batch
+        // evicts or rebinds may still be read by the previous one. Its GPU
+        // time is booked like the driver's `retire_routed` books the last
+        // sub-batch's, or `TURBOSPARK_PHASES` would report the routed GPU
+        // busy time of one sub-batch per layer.
+        if let Some(prev) = committed.take() {
+            let t_wait = Instant::now();
+            phases.routed_cb_gpu_nanos += (prev.wait_with_gpu_time() * 1e9) as u64;
+            phases.pipeline_wait_nanos += t_wait.elapsed().as_nanos() as u64;
+        }
+        let sub = next_routed_sub_batch(&selected_all, sub_start, cap, layer, top_k)?;
+        let streamer = streamers[layer].as_mut().ok_or_else(|| {
+            RealForwardError::Unsupported(format!("real Qwen layer {layer} has no expert streamer"))
+        })?;
+        let slot_of = plan_and_stream_union(streamer, phases, &sub.union)?;
+
+        // Bind this sub-batch's union in union order; routes name binding
+        // indices (see this function's doc).
+        let t_bind = Instant::now();
+        let bound: Vec<&gpu::MetalBuffer> =
+            sub.union.iter().map(|e| &layer_slots[slot_of[e]]).collect();
+        let binding_of: HashMap<usize, usize> =
+            sub.union.iter().enumerate().map(|(i, &e)| (e, i)).collect();
+        let bind_refs: Vec<(&gpu::MetalBuffer, u64)> = bound.iter().map(|&b| (b, 0u64)).collect();
+        routed
+            .wide_blobs
+            .bind(context, use_silu, &bind_refs)
+            .map_err(gpu_err)?;
+        phases.bind_nanos += t_bind.elapsed().as_nanos() as u64;
+
+        let (routes, routing16) =
+            encode_routes(&selected_all, &weights_all, &sub, &binding_of, top_k);
+        let sub_len = sub.sub_len;
+        let x_off = (sub_start * hidden * 2) as u64;
+        let acts_off = (sub_start * top_k * moe_inter_us * 2) as u64;
+        let rw_off = (sub_start * top_k * 2) as u64;
+        let routes_off = (sub_start * top_k * gpu::MoePrefillRoute::STRIDE_BYTES) as u64;
+        gpu::write_buffer_bytes(
+            &routed.batch_routing_w,
+            rw_off as usize,
+            &f16_slice_to_le_bytes(&routing16),
+        );
+        gpu::write_buffer_bytes(
+            &routed.batch_routes,
+            routes_off as usize,
+            &gpu::MoePrefillRoute::bytes(&routes),
+        );
+
+        let pass = context.begin_pass_labeled("routed cb (batched prefill)");
+        for &blob in &bound {
+            pass.use_read_buffer(blob);
+        }
+        gpu::encode_moe_prefill_phase1(
+            context,
+            &pass,
+            &routed.wide_blobs,
+            offsets,
+            (&batched.moe_x, x_off),
+            (&routed.batch_acts, acts_off),
+            (&routed.batch_routes, routes_off),
+            hidden as u32,
+            moe_inter,
+            top_k as u32,
+            (sub_len * top_k) as u32,
+            use_silu,
+        )
+        .map_err(gpu_err)?;
+        gpu::encode_moe_prefill_phase2_fused(
+            context,
+            &pass,
+            &routed.wide_blobs,
+            offsets,
+            (&routed.batch_acts, acts_off),
+            (&routed.batch_routing_w, rw_off),
+            (&routed.batch_routes, routes_off),
+            // The SEED: `cb1`'s gated shared-expert rows, as the per-token
+            // loop seeds from them.
+            (&routed.batch_h1, x_off),
+            (&routed.batch_y, x_off),
+            hidden as u32,
+            moe_inter,
+            top_k as u32,
+            sub_len as u32,
+            use_silu,
+        )
+        .map_err(gpu_err)?;
+        // One raw residual add per row, no norm (crate Gotcha 11).
         for i in 0..sub_len {
             let row = ((sub_start + i) * hidden * 2) as u64;
             gpu::encode_residual_add(

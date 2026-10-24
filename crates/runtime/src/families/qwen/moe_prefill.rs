@@ -55,8 +55,16 @@
 //! takes the per-token arm, so Drama 3's rows stay byte-identical to a
 //! sequential `hidden_out` step.
 //!
+//! **THE BATCHED ROUTED HALF** (`moe_batch::encode_qwen_layer_routed_prefill`,
+//! `TURBOSPARK_ROUTED_BATCH=1`, opt-in) replaces that per-token routed loop
+//! on top of the batched arm: one route-list dispatch pair per
+//! union-bounded sub-batch, seeded from the same gated shared-expert rows.
+//! Its kernels are bit-identical to the per-token pair, so it reproduces the
+//! batched arm's bytes. It binds each sub-batch's union rather than every
+//! slot, so it serves any slot count. Without the batched arm, or with
+//! steering or the residual capture on, the seam is refused by name.
+//!
 //! REFUSED BY NAME, never silently served by the per-token loop:
-//! `TURBOSPARK_ROUTED_BATCH` (the routed half is not batched on this family),
 //! a hadamard-folded install (its single-row `moe_x_h` would need a row per
 //! token), an open drafter (the aux capture is not encoded here), and
 //! `TURBOSPARK_QWEN_SHARED_READ_OVERLAP` (its separate shared pass has not
@@ -74,7 +82,7 @@ use super::attn::{
     encode_full_attention_block, encode_linear_block, QkNormConvention, RopePosition,
 };
 use super::moe_prefill_batched::encode_qwen_moe_cb1_batched;
-use super::{layer_tensor, moe, RMS_EPS, TRUNK_PREFIX};
+use super::{layer_tensor, moe, moe_batch, RMS_EPS, TRUNK_PREFIX};
 use crate::moe_prefill_pipeline::routed_pipeline_banks;
 use crate::real_forward::RealForwardRunner;
 use crate::real_forward_dispatch::encode_embed_any;
@@ -131,13 +139,15 @@ impl RealForwardRunner {
                 "the qwen MoE chunked prefill driver cannot serve {reason}; prefill sequentially"
             )));
         }
-        // A seam naming an arm this driver does not have. Serving the
-        // per-token routed loop under it would report the unbatched engine as
-        // the batched one (crate Gotcha 22).
-        if self.routed_batch_prefill {
+        // THE BATCHED ROUTED HALF (`TURBOSPARK_ROUTED_BATCH`, opt-in) runs on
+        // top of the batched arm only: it reads the M-row router logits and
+        // gated shared-expert rows that arm's `cb1` leaves behind. The
+        // per-token rows steering and the residual capture act on are not
+        // re-encoded there, so both are refused by name rather than skipped.
+        if self.routed_batch_prefill && (self.steering.is_some() || self.resid_capture.is_some()) {
             return Err(RealForwardError::Unsupported(
-                "TURBOSPARK_ROUTED_BATCH is not wired for the qwen MoE chunked driver: it \
-                 keeps its routed half as a per-token loop"
+                "TURBOSPARK_ROUTED_BATCH on the qwen MoE chunked driver does not encode \
+                 steering or the residual capture; turn those off or unset the seam"
                     .to_string(),
             ));
         }
@@ -153,6 +163,17 @@ impl RealForwardRunner {
         } else {
             self.batched_gemv_prefill_auto && self.qwen_moe_batched_prefill_refusal()?.is_none()
         };
+        // Serving the per-token routed loop under the routed seam would report
+        // the unbatched engine as the batched one (crate Gotcha 22).
+        if self.routed_batch_prefill && !batched {
+            let why = self
+                .qwen_moe_batched_prefill_refusal()?
+                .unwrap_or_else(|| "TURBOSPARK_BATCHED_GEMV=0 keeps the per-token arm".to_string());
+            return Err(RealForwardError::Unsupported(format!(
+                "TURBOSPARK_ROUTED_BATCH needs the qwen MoE batched arm, which this run does \
+                 not take: {why}"
+            )));
+        }
         let width = if batched {
             // Allocated here, not at open, so a run that never takes this arm
             // never pays for it. Idempotent. No multi-row attention: that
@@ -341,6 +362,12 @@ impl RealForwardRunner {
                     )));
                 }
             }
+        }
+        if self.routed_batch_prefill && !batched {
+            return Err(RealForwardError::Unsupported(format!(
+                "TURBOSPARK_ROUTED_BATCH: the micro-batch at position {start_position} fell back \
+                 to the per-token arm (KV ring wrap), which has no batched routed half"
+            )));
         }
         // A per-token micro-batch is at most `MAX_PREFILL_BATCH` rows wide:
         // `moe_x` and `router_logits_f32` hold no more. The fallback above
@@ -541,6 +568,62 @@ impl RealForwardRunner {
             // starts: token 0 protects no slots, so a survivor from the
             // previous layer could have its slots evicted under it.
             self.retire_routed(&mut pending_routed);
+
+            if self.routed_batch_prefill {
+                // The whole layer's routed half as one route-list dispatch
+                // pair per union-bounded sub-batch, committed here and
+                // retired after the NEXT layer's router wait, as the per-token
+                // loop does with its last token (checked above: batched arm,
+                // no steering, no residual capture).
+                let (
+                    context,
+                    scratch,
+                    qwen,
+                    streamers,
+                    slot_buffers,
+                    mapped,
+                    moe_offsets,
+                    routed_layouts,
+                    router_hist,
+                    phases,
+                ) = (
+                    &mut self.context,
+                    &self.scratch,
+                    self.real_qwen.as_ref().expect("checked above"),
+                    &mut self.streamers,
+                    &self.slot_buffers,
+                    &self.mapped,
+                    &self.moe_offsets,
+                    &self.routed_layouts,
+                    &mut self.router_hist,
+                    &mut self.phases,
+                );
+                pending_routed = Some(moe_batch::encode_qwen_layer_routed_prefill(
+                    context,
+                    scratch,
+                    qwen,
+                    qwen.batched_prefill(),
+                    streamers,
+                    slot_buffers,
+                    mapped,
+                    moe_offsets,
+                    routed_layouts,
+                    router_hist,
+                    phases,
+                    self.expert_cache_slots,
+                    layer,
+                    hidden,
+                    moe_inter,
+                    num_experts,
+                    top_k,
+                    use_silu,
+                    m,
+                )?);
+                pass = self
+                    .context
+                    .begin_pass_labeled("qwen moe chunk cb1 (attn+router)");
+                continue;
+            }
 
             let mut previous_slots: HashSet<usize> = HashSet::new();
             for t in 0..m {

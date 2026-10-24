@@ -13,6 +13,15 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+### Added
+- Opt-in batched routed experts for Qwen MoE chunked prefill
+  (`TURBOSPARK_ROUTED_BATCH=1`, Qwen 3.6 and Ornith 35B). It runs on top of the
+  batched arm and reproduces its output bytes. Each sub-batch binds only its
+  own experts, so it works at any slot count, including `auto`. Measured 1.65x
+  prefill on Qwen 3.6 at `auto` slots on an M4 Max (33.3 s to 20.2 s for a
+  2,940-token prompt) with no change in peak footprint. At 16 slots it is
+  about break-even (2.5%). See `docs/BATCHED_PREFILL.md`.
+
 ## [0.5.0] - 2026-10-20
 
 ### Added
