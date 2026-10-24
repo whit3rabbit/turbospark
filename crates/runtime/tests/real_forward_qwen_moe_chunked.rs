@@ -90,12 +90,17 @@ enum Arm {
     PerToken,
     /// The M-row arm with Steel off, so its GEMMs stay bit-exact.
     Batched,
+    /// The M-row arm plus the batched routed half
+    /// (`TURBOSPARK_ROUTED_BATCH=1`). Its kernels are bit-identical to the
+    /// per-token routed pair, so it is held to the same `==`.
+    RoutedBatch,
 }
 
 /// Every (layout, arm) pair the byte-identity cases run.
-const CASES: [(Layout, Arm); 3] = [
+const CASES: [(Layout, Arm); 4] = [
     (Layout::Affine, Arm::PerToken),
     (Layout::Affine, Arm::Batched),
+    (Layout::Affine, Arm::RoutedBatch),
     (Layout::Mxfp4, Arm::PerToken),
 ];
 
@@ -104,7 +109,8 @@ fn open_arm(tag: &str, layout: Layout, slots: usize, arm: Arm) -> RealForwardRun
     // Before the first chunk: the Steel choice is read when the batched
     // scratch is allocated.
     runner.set_prefill_steel(false);
-    runner.set_batched_gemv_prefill(matches!(arm, Arm::Batched));
+    runner.set_batched_gemv_prefill(matches!(arm, Arm::Batched | Arm::RoutedBatch));
+    runner.set_routed_batch_prefill(matches!(arm, Arm::RoutedBatch));
     runner
 }
 
@@ -291,18 +297,116 @@ fn the_one_bank_fallback_reproduces_the_sequential_logits() {
     }
 }
 
-/// `TURBOSPARK_ROUTED_BATCH` names an arm this driver does not have, so it is
-/// refused by name rather than served by the per-token loop under the
-/// batched label (`crates/runtime/CLAUDE.md` Gotcha 22).
+/// The batched routed half binds each sub-batch's expert UNION, not every
+/// cache slot, so it serves slot counts past the 32-entry argument buffer
+/// (the CLI's `auto` is 96 on a 36 GB Mac). At 48 slots the cache hands out
+/// slot indices past 31, so a route that named its cache slot instead of
+/// its binding index would read the wrong blob, or none. 32 is the boundary
+/// itself. Byte-identity against the sequential path is the bar.
+///
+/// It also proves the batched pass RAN: the per-token loop asks the cache
+/// for `top_k` experts per token per layer, while the batched pass asks
+/// once per distinct expert of each sub-batch, so it must ask for fewer.
+/// Without that check this case could pass on the per-token loop, whose
+/// bytes it reproduces.
 #[test]
-fn the_batched_routed_seam_is_refused_by_name_on_this_family() {
-    let mut runner = open_runner("routed-batch-refused", Layout::Affine, SLOTS);
+fn the_routed_batch_reproduces_the_sequential_logits_past_32_slots() {
+    let prompt = make_prompt(37);
+    for slots in [32usize, 48] {
+        let mut runner = open_arm("routed-wide", Layout::Affine, slots, Arm::RoutedBatch);
+        let expected = sequential_prefill(&mut runner, &prompt);
+        let before = runner.phase_counters().expert_requests;
+        let actual = chunked_prefill(&mut runner, &prompt, prompt.len());
+        let requests = runner.phase_counters().expert_requests - before;
+        assert_eq!(
+            actual, expected,
+            "{slots} slots: the batched routed half changed the logits"
+        );
+        let per_token_requests = (prompt.len() * TOP_K * LAYERS as usize) as u64;
+        assert!(
+            requests < per_token_requests,
+            "{slots} slots: {requests} expert requests is not below the per-token loop's \
+             {per_token_requests}, so the batched routed pass did not run"
+        );
+    }
+}
+
+/// The routed seam rides on the batched arm, so wherever that arm is not
+/// taken the seam is refused by name rather than served by the per-token
+/// loop under the batched label (`crates/runtime/CLAUDE.md` Gotcha 22):
+/// the per-token arm forced on an INT4 install, and the MXFP4 install,
+/// whose BF16 resident matrices the batched arm refuses.
+#[test]
+fn the_routed_batch_seam_is_refused_by_name_without_the_batched_arm() {
+    for (layout, force_per_token) in [(Layout::Affine, true), (Layout::Mxfp4, false)] {
+        let mut runner = open_runner("routed-no-batched", layout, SLOTS);
+        runner.set_prefill_steel(false);
+        if force_per_token {
+            runner.set_batched_gemv_prefill(false);
+        }
+        runner.set_routed_batch_prefill(true);
+        let mut logits = vec![f16::from_f32(0.0); VOCAB as usize];
+        let err = runner
+            .prefill_chunk(&make_prompt(4), 0, &mut logits)
+            .expect_err("the routed seam without the batched arm must be refused");
+        assert!(
+            err.contains("TURBOSPARK_ROUTED_BATCH") && err.contains("batched arm"),
+            "{layout:?}: got {err}"
+        );
+    }
+}
+
+/// Steering edits each row after the routed residual add, which the batched
+/// routed half does not encode, so the combination is refused by name rather
+/// than run unsteered.
+#[test]
+fn the_routed_batch_seam_refuses_steering_by_name() {
+    let dir = temp_dir("routed-steered");
+    let arch = turbospark_repack::build_synthetic_qwen_gdn_moe_install(
+        &dir,
+        VOCAB,
+        LAYERS,
+        EXPERTS,
+        "tiny-qwen36-routed-steered",
+    )
+    .expect("MoE qwen install builds");
+    let hidden = arch.hidden_size as usize;
+    let set = model_io::SteeringSet {
+        layers: (0..LAYERS as usize)
+            .map(|_| Some(model_io::LayerDirection::new(vec![0.25; hidden])))
+            .collect(),
+        hidden,
+        declared_mode: None,
+        declared_arch: None,
+    };
+    let steering = turbospark_runtime::SteeringPolicy::single(
+        set,
+        foundation::SteeringMode::Ablate,
+        1.0,
+        0.0,
+        0.0,
+    );
+    let mut runner = RealForwardRunner::open_with_slot_policy_speculation_and_steering(
+        &dir,
+        arch,
+        MAX_CONTEXT,
+        turbospark_runtime::ExpertCacheSlots::Fixed(SLOTS),
+        turbospark_runtime::DraftPolicies::off(),
+        steering,
+    )
+    .expect("a steered MoE qwen install opens");
+    let _ = std::fs::remove_dir_all(&dir);
+    runner.set_prefill_steel(false);
+    runner.set_batched_gemv_prefill(true);
     runner.set_routed_batch_prefill(true);
     let mut logits = vec![f16::from_f32(0.0); VOCAB as usize];
     let err = runner
         .prefill_chunk(&make_prompt(4), 0, &mut logits)
-        .expect_err("the batched routed seam must be refused on this family");
-    assert!(err.contains("TURBOSPARK_ROUTED_BATCH"), "got {err}");
+        .expect_err("steering under the routed seam must be refused");
+    assert!(
+        err.contains("TURBOSPARK_ROUTED_BATCH") && err.contains("steering"),
+        "got {err}"
+    );
 }
 
 /// The batched arm is served on an INT4 install now (the cases above), so the
