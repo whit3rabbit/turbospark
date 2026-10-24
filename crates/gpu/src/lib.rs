@@ -230,13 +230,13 @@ pub use dequant_int4_batch::{
 #[cfg(target_os = "macos")]
 pub use dequant_int4_fused::{encode_down_epi_gemv, encode_gate_up_act_gemv, DownEpilogue};
 #[cfg(target_os = "macos")]
-pub use dequant_int4_mma8::{
-    encode_dequant_int4_mma8_resident, int4_mma8_k_split, INT4_MMA8_MAX_ROWS,
-};
-#[cfg(target_os = "macos")]
 pub use dequant_int4_gemv::{
     dequant_int4_gemv, dequant_int4_gemv_resident, encode_dequant_int4_gemv_resident,
     encode_embed_lookup_int4, Int4AffineRowGpu, Int4ResidentMatrix,
+};
+#[cfg(target_os = "macos")]
+pub use dequant_int4_mma8::{
+    encode_dequant_int4_mma8_resident, int4_mma8_k_split, INT4_MMA8_MAX_ROWS,
 };
 #[cfg(target_os = "macos")]
 pub use dequant_int4_steel::{encode_dequant_int4_gemm_steel, steel_supports, SteelTile};
