@@ -17,7 +17,8 @@
 //! children, because an MTP head conditions each step on the token it was
 //! fed: a sibling's children would need another head step. That caps the
 //! tree's gain at one token per round. A DFlash2 lattice (path-independent
-//! rows plus pairwise scores) would lift the cap and needs its own builder.
+//! rows plus pairwise scores, `runtime::DflashLattice`) lifts the cap and
+//! has its own builder below.
 
 /// The drafter's top-k at one depth, sorted by probability, highest first.
 #[derive(Clone, Debug, PartialEq)]
@@ -160,12 +161,30 @@ impl ReplayStats {
     }
 }
 
+/// A drafter lattice the replay can score: the accepted proposal count
+/// (bonus excluded) for a tree of `nodes` nodes of the given shape, anchored
+/// at `stream[i]`.
+pub trait ReplayLattice {
+    /// Accepted proposals for one round.
+    fn accepted_by(&self, shape: Shape, nodes: usize, stream: &[i32], i: usize) -> usize;
+}
+
+impl ReplayLattice for Lattice {
+    fn accepted_by(&self, shape: Shape, nodes: usize, stream: &[i32], i: usize) -> usize {
+        match shape {
+            Shape::Chain => accepted(self, &chain_nodes(self, nodes), stream, i),
+            Shape::BestFirst => accepted(self, &best_first_nodes(self, nodes), stream, i),
+            Shape::Oracle => oracle_accepted(self, nodes, stream, i),
+        }
+    }
+}
+
 /// Replays the speculative loop over `stream`, where `lattices[i]` is the
 /// lattice drafted after `stream[i]`. Each arm walks its own anchors: a
 /// round at `i` commits `a + 1` tokens and the next round starts at
 /// `i + a + 1`. Stops when the next anchor has no lattice.
-pub fn replay(
-    lattices: &[Option<Lattice>],
+pub fn replay<L: ReplayLattice>(
+    lattices: &[Option<L>],
     stream: &[i32],
     nodes: usize,
     shape: Shape,
@@ -173,16 +192,171 @@ pub fn replay(
     let mut stats = ReplayStats::default();
     let mut i = 0;
     while let Some(Some(lattice)) = lattices.get(i) {
-        let a = match shape {
-            Shape::Chain => accepted(lattice, &chain_nodes(lattice, nodes), stream, i),
-            Shape::BestFirst => accepted(lattice, &best_first_nodes(lattice, nodes), stream, i),
-            Shape::Oracle => oracle_accepted(lattice, nodes, stream, i),
-        };
+        let a = lattice.accepted_by(shape, nodes, stream, i);
         stats.rounds += 1;
         stats.committed += a + 1;
         i += a + 1;
     }
     stats
+}
+
+// ---------------------------------------------------------------------------
+// DFlash2 lattices (`runtime::DflashLattice`).
+//
+// Unlike the MTP shape above, every node can have children: the drafter's
+// rows are path-independent, and the selector's pair scores give a
+// conditional score for any candidate after any candidate of the row before.
+// So a tree is not capped at one extra token per round here.
+
+/// One node of a DFlash2 tree: candidate `cand` at `depth`, under `parent`
+/// (an index into the same node list, `None` for a child of the anchor).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EdgeNode {
+    /// Depth below the anchor.
+    pub depth: usize,
+    /// Candidate index at that depth.
+    pub cand: usize,
+    /// Parent node index, `None` under the anchor.
+    pub parent: Option<usize>,
+}
+
+/// Conditional probabilities of the depth-`depth` candidates after the
+/// given parent candidate (softmax over that parent's pair scores).
+fn edge_probs(l: &runtime::DflashLattice, depth: usize, parent_cand: Option<usize>) -> Vec<f64> {
+    let k = l.width();
+    let scores: &[f32] = match parent_cand {
+        None => &l.edges[depth][..],
+        Some(p) => &l.edges[depth][p * k..(p + 1) * k],
+    };
+    let m = scores.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b)) as f64;
+    let e: Vec<f64> = scores.iter().map(|&s| (s as f64 - m).exp()).collect();
+    let z: f64 = e.iter().sum();
+    e.into_iter().map(|v| v / z).collect()
+}
+
+/// The selector's greedy chain as tree nodes, `nodes` deep at most.
+pub fn edge_chain_nodes(l: &runtime::DflashLattice, nodes: usize) -> Vec<EdgeNode> {
+    l.greedy_path()
+        .into_iter()
+        .take(nodes)
+        .enumerate()
+        .map(|(depth, cand)| EdgeNode {
+            depth,
+            cand,
+            parent: depth.checked_sub(1),
+        })
+        .collect()
+}
+
+/// KFlash's best-first builder over a DFlash2 lattice: take the frontier
+/// node with the highest path probability, then add all its children.
+/// Parents precede children, so every prefix is the best tree of its size.
+pub fn edge_best_first_nodes(l: &runtime::DflashLattice, nodes: usize) -> Vec<EdgeNode> {
+    let depth_max = l.candidates.len();
+    let mut out: Vec<EdgeNode> = Vec::with_capacity(nodes);
+    let mut frontier: Vec<(f64, EdgeNode)> = Vec::new();
+    if depth_max == 0 {
+        return out;
+    }
+    for (cand, p) in edge_probs(l, 0, None).into_iter().enumerate() {
+        frontier.push((
+            p,
+            EdgeNode {
+                depth: 0,
+                cand,
+                parent: None,
+            },
+        ));
+    }
+    while out.len() < nodes && !frontier.is_empty() {
+        let mut best = 0;
+        for i in 1..frontier.len() {
+            let (s, n) = frontier[i];
+            let (bs, bn) = frontier[best];
+            if s > bs || (s == bs && (n.depth, n.cand) < (bn.depth, bn.cand)) {
+                best = i;
+            }
+        }
+        let (score, node) = frontier.swap_remove(best);
+        let id = out.len();
+        out.push(node);
+        if node.depth + 1 < depth_max {
+            for (cand, p) in edge_probs(l, node.depth + 1, Some(node.cand))
+                .into_iter()
+                .enumerate()
+            {
+                frontier.push((
+                    score * p,
+                    EdgeNode {
+                        depth: node.depth + 1,
+                        cand,
+                        parent: Some(id),
+                    },
+                ));
+            }
+        }
+    }
+    out
+}
+
+/// Accepted proposals for a DFlash2 tree: from the anchor, step into the
+/// child whose token is the reference token, as long as there is one.
+pub fn edge_accepted(
+    l: &runtime::DflashLattice,
+    tree: &[EdgeNode],
+    stream: &[i32],
+    i: usize,
+) -> usize {
+    let mut parent: Option<usize> = None;
+    let mut n = 0;
+    for depth in 0..l.candidates.len() {
+        let Some(&target) = stream.get(i + 1 + depth) else {
+            break;
+        };
+        let hit = tree.iter().position(|node| {
+            node.depth == depth && node.parent == parent && l.candidates[depth][node.cand] == target
+        });
+        match hit {
+            Some(id) => {
+                n += 1;
+                parent = Some(id);
+            }
+            None => break,
+        }
+    }
+    n
+}
+
+/// The most any `nodes`-node tree over this lattice could accept: the run
+/// of leading depths whose reference token is among that depth's
+/// candidates, one node per depth.
+pub fn edge_oracle_accepted(
+    l: &runtime::DflashLattice,
+    nodes: usize,
+    stream: &[i32],
+    i: usize,
+) -> usize {
+    let mut n = 0;
+    for (depth, row) in l.candidates.iter().enumerate() {
+        if n >= nodes {
+            break;
+        }
+        match stream.get(i + 1 + depth) {
+            Some(t) if row.contains(t) => n += 1,
+            _ => break,
+        }
+    }
+    n
+}
+
+impl ReplayLattice for runtime::DflashLattice {
+    fn accepted_by(&self, shape: Shape, nodes: usize, stream: &[i32], i: usize) -> usize {
+        match shape {
+            Shape::Chain => edge_accepted(self, &edge_chain_nodes(self, nodes), stream, i),
+            Shape::BestFirst => edge_accepted(self, &edge_best_first_nodes(self, nodes), stream, i),
+            Shape::Oracle => edge_oracle_accepted(self, nodes, stream, i),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -324,6 +498,71 @@ mod tests {
                 let o = oracle_accepted(&l, nodes, &stream, 0);
                 assert!(o >= accepted(&l, &chain_nodes(&l, nodes), &stream, 0));
                 assert!(o >= accepted(&l, &best_first_nodes(&l, nodes), &stream, 0));
+            }
+        }
+    }
+
+    fn edge_lattice(rows: &[(&[i32], &[f32])]) -> runtime::DflashLattice {
+        runtime::DflashLattice {
+            candidates: rows.iter().map(|(c, _)| c.to_vec()).collect(),
+            edges: rows.iter().map(|(_, e)| e.to_vec()).collect(),
+        }
+    }
+
+    #[test]
+    fn the_dflash_chain_is_the_selectors_greedy_path() {
+        // Depth 0: candidate 1 (token 6) wins from the anchor. Depth 1 after
+        // candidate 1: candidate 0 (token 7) wins.
+        let l = edge_lattice(&[(&[5, 6], &[0.0, 2.0]), (&[7, 8], &[0.0, 9.0, 3.0, 0.0])]);
+        let chain = edge_chain_nodes(&l, 2);
+        assert_eq!(chain.iter().map(|n| n.cand).collect::<Vec<_>>(), vec![1, 0]);
+        assert_eq!(edge_accepted(&l, &chain, &[0, 6, 7], 0), 2);
+    }
+
+    #[test]
+    fn a_dflash_tree_can_go_deep_under_a_runner_up() {
+        // The target writes 5 (the depth-0 runner-up) then 8, which is only
+        // likely AFTER 5. An MTP lattice cannot reach depth 1 under a
+        // sibling; this one can.
+        let l = edge_lattice(&[(&[6, 5], &[1.0, 0.8]), (&[7, 8], &[5.0, 0.0, 0.0, 5.0])]);
+        let stream = [0, 5, 8];
+        assert_eq!(edge_accepted(&l, &edge_chain_nodes(&l, 2), &stream, 0), 0);
+        let tree = edge_best_first_nodes(&l, 4);
+        assert_eq!(edge_accepted(&l, &tree, &stream, 0), 2);
+        assert_eq!(edge_oracle_accepted(&l, 4, &stream, 0), 2);
+    }
+
+    #[test]
+    fn dflash_parents_precede_children_and_prefixes_are_builds() {
+        let l = edge_lattice(&[
+            (&[1, 2, 3], &[0.5, 0.2, 0.1]),
+            (&[4, 5, 6], &[0.3, 0.1, 0.0, 0.2, 0.2, 0.2, 0.0, 0.9, 0.1]),
+            (&[7, 8, 9], &[0.1; 9]),
+        ]);
+        let tree = edge_best_first_nodes(&l, 10);
+        for (k, n) in tree.iter().enumerate() {
+            if let Some(p) = n.parent {
+                assert!(p < k, "{n:?} before its parent");
+                assert_eq!(tree[p].depth + 1, n.depth);
+            }
+        }
+        for n in 1..tree.len() {
+            assert_eq!(edge_best_first_nodes(&l, n), tree[..n]);
+        }
+    }
+
+    #[test]
+    fn the_dflash_oracle_bounds_both_shapes() {
+        let l = edge_lattice(&[
+            (&[1, 2, 3], &[0.5, 0.2, 0.1]),
+            (&[4, 5, 6], &[0.3, 0.1, 0.0, 0.2, 0.2, 0.2, 0.0, 0.9, 0.1]),
+            (&[7, 8, 9], &[0.1; 9]),
+        ]);
+        for stream in [[0, 1, 4, 7], [0, 3, 5, 9], [0, 2, 6, 0], [0, 9, 9, 9]] {
+            for nodes in 1..=8 {
+                let o = edge_oracle_accepted(&l, nodes, &stream, 0);
+                assert!(o >= edge_accepted(&l, &edge_chain_nodes(&l, nodes), &stream, 0));
+                assert!(o >= edge_accepted(&l, &edge_best_first_nodes(&l, nodes), &stream, 0));
             }
         }
     }

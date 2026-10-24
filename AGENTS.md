@@ -218,6 +218,8 @@ and [model gates](.claude/docs/model-gates.md).
   command, and service surfaces.
 - `crates/bench`: measurement harnesses. Read its local pointer and the
   benchmark docs before running or interpreting a gate.
+- `crates/lab`: `tslab`, the evaluator for kernel and method experiments
+  and the autoresearch loop (`crates/lab/program.md`).
 - `swift/TurboSparkApp`: the macOS app, persistence, tools, localization,
   and Swift-facing model controls.
 

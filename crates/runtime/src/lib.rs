@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 mod config;
+mod draft_lattice;
 #[cfg(target_os = "macos")]
 pub mod embedding_probe;
 #[cfg(target_os = "macos")]
@@ -117,10 +118,11 @@ pub use model_io::{
     MAX_SUPPORTED_CONTEXT,
 };
 
+#[cfg(target_os = "macos")]
+pub use draft_lattice::DflashLattice;
 pub use error::RuntimeError;
 #[cfg(target_os = "macos")]
 pub use families::qwen::{chip_is_m4_or_newer, hardware_supports_ane_prefill, AnePrefillMode};
-#[cfg(target_os = "macos")]
 pub use families::qwen::{
     install_has_dflash, install_has_mtp_head, DflashDraftPolicy, DraftPolicies, MtpDraftPolicy,
     DFLASH_BLOCK, DFLASH_SERVING_BLOCK, MOE_SPECULATION_BLOCKER_MARKER,
@@ -166,7 +168,7 @@ pub use speculative::{
     run_raw_completion_speculative_adaptive_cancellable,
     run_raw_completion_speculative_cancellable, DEFAULT_SPECULATION_BLOCK,
 };
-pub use speculative_adaptive::AdaptiveDepth;
+pub use speculative_adaptive::{AdaptiveDepth, AdaptiveParams};
 #[cfg(target_os = "macos")]
 pub use steering::{family_dispatches_steering, SteeringPolicy, SteeringVector, MAX_STEER_ROWS};
 pub use turn_stream::{TurnEvent, TurnSplitter};

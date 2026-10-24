@@ -17,6 +17,7 @@ Keep all docs and configuration ASCII (no emojis, no em dashes).
 | Variable | Affected Components | Description | Default |
 | --- | --- | --- | --- |
 | `TURBOSPARK_HOME` | CLI, server, Swift app, catalog | Base directory for downloaded models, catalog entries, and repack staging. Models are stored in `$TURBOSPARK_HOME/models`. | `~/.turbospark` |
+| `TURBOSPARK_LAB_DIR` | `tslab` (`crates/lab`) | Directory for tslab ledgers, run records, frozen specs, trusted evaluator installs (`bin/`) and the machine lock (`.machine.lock`). | `$TURBOSPARK_HOME/lab`, else `~/.turbospark/lab` |
 | `HF_TOKEN` | `turbospark-model` | Bearer token for accessing gated Hugging Face repositories during probing or pulling. | unset |
 | `HUGGING_FACE_HUB_TOKEN` | `turbospark-model` | Alias for `HF_TOKEN`. Checked if `HF_TOKEN` is unset. | unset |
 
@@ -81,6 +82,7 @@ These variables configure runtime diagnostics, kernel execution seams, and profi
 | `TURBOSPARK_EXPERT_RESIDENCY` | MoE runtime (`runtime`) | Set to `mapped` to read routed experts in place from mmap rather than pinned slot cache. Since the `--expert-residency` flag this is the `auto` arm's fallback: honored when the request left the mode at `auto`, ignored under an explicit `streamed`/`mapped` (`runtime::resolve_expert_residency` is the one resolver). | unset |
 | `TURBOSPARK_VISION_RESIDENCY` | Vision tower (`runtime`) | Set to `mapped` to read vision tower blocks out of mapped memory rather than pinned slots. | unset |
 | `TURBOSPARK_SPEC_STATS` | Speculative decoding (`runtime`) | Set to `1` to log speculative acceptance rate per block position and rollback counts to stderr. | unset |
+| `TURBOSPARK_ADAPTIVE_DEPTH` | Speculative decoding (`runtime`) | Tuning for `--speculative adaptive`: `LOW,MID,HIGH,DROP`, the clean rounds needed to climb from depth 2-3, 4 and 5+, and the missed proposals that drop one step. Read once per process. For A/B and replay (`tslab depth-replay`); an unparseable value warns and keeps the default. | `8,6,4,2` |
 | `TURBOSPARK_MTP_DRAFT` | MTP drafter (`runtime`) | Draft block depth (positive integer) or policy (`0` to disable, unset for `auto`). | unset (`auto`) |
 | `TURBOSPARK_MTP_DUMP` | MTP drafter (`runtime`) | Directory path to dump MTP intermediate hidden states for validation scripts. | unset |
 | `TURBOSPARK_DFLASH_DRAFT` | DFlash2 drafter (`runtime`) | DFlash2 draft block depth (positive integer) or policy (`0` to disable, unset for `auto`). | unset (`auto`) |

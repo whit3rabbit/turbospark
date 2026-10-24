@@ -43,9 +43,8 @@ always quiet, and none is a frozen row.
    compiles, other sessions' probes). The three least dirty rounds read about
    42 to 44 tok/s sequential against 55 to 56 batched. That is not quotable.
    Re-run `flint-chunked-prefill` on a quiet machine (spec and notes are in
-   `~/.turbospark/lab/flint-chunked-prefill/`). The lab itself is still on branch
-   `feat/tslab`, not on `main`. Making the switch the default is a human
-   decision after a clean WIN.
+   `~/.turbospark/lab/flint-chunked-prefill/`). The lab itself is `crates/lab` (`tslab`). Making the switch the default is a
+   human decision after a clean WIN.
 2. **M-row INT4 GEMMs for the projections and shared expert**
    (`TURBOSPARK_BATCHED_GEMV`, Steel). The sequential path's GPU is busy about
    23 ms per token, far above a bandwidth bound, so it looks dispatch-bound. The
@@ -123,13 +122,12 @@ always quiet, and none is a frozen row.
 
 ## Where the work is
 
-- `main` has everything above except the lab. The experiment branch is gone
-  (its driver commit is on `main`, the lab commits are on `feat/tslab`), so
-  re-create the tree for item 1:
+- `main` has everything above, including the lab. The experiment branch is gone
+  (its driver commit is on `main`), so re-create the tree for item 1:
 
   ```sh
   git worktree add .claude/worktrees/lab-flint -b lab/flint main
-  cd .claude/worktrees/lab-flint && git merge --no-ff feat/tslab   # merge-tree predicted clean
+  cd .claude/worktrees/lab-flint
   cargo build --release -p turbospark-lab
   LAB=$HOME/.turbospark/lab; REV=$(git rev-parse --short HEAD)
   mkdir -p $LAB/bin/$REV && cp target/release/tslab target/release/tslab-worker $LAB/bin/$REV/

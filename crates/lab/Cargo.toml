@@ -1,0 +1,42 @@
+[package]
+name = "turbospark-lab"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false  # dev harness: measures local installs on this machine
+description = "Evaluator for kernel and method experiments: per-family phase profiles, gated interleaved A/B with a statistical verdict, shape-derived kernel benches, and an append-only ledger."
+
+# The ANE+Steel prefill split as an A/B arm. Off by default, like the runtime.
+[features]
+ane-prefill = ["runtime/ane-prefill", "turbospark-bench/ane-prefill"]
+
+[[bin]]
+name = "tslab"
+path = "src/bin/tslab.rs"
+
+[[bin]]
+name = "tslab-worker"
+path = "src/bin/tslab_worker.rs"
+
+# The portable half (stats, ledger, spec, knob table) builds everywhere so its
+# tests run on any host; everything that opens a model or a Metal device is
+# macOS-only, like crates/bench.
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libc = "0.2"
+foundation = { package = "turbospark-core", path = "../core", version = "0.5.0" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+runtime = { package = "turbospark-runtime", path = "../runtime", version = "0.5.0" }
+model_io = { package = "turbospark-model-io", path = "../model-io", version = "0.5.0" }
+repack = { package = "turbospark-repack", path = "../repack", version = "0.5.0" }
+selection = { package = "turbospark-selection", path = "../selection", version = "0.5.0" }
+tokenizer = { package = "turbospark-tokenizer", path = "../tokenizer", version = "0.5.0" }
+catalog = { package = "turbospark-catalog", path = "../catalog", version = "0.5.0" }
+gpu = { package = "turbospark-gpu", path = "../gpu", version = "0.5.0" }
+turbospark-coreml = { path = "../coreml", version = "0.5.0" }
+turbospark-bench = { path = "../bench", version = "0.5.0" }
+half = "2"

@@ -195,3 +195,52 @@ fn a_stream_that_misses_every_eighth_round_never_leaves_the_floor() {
     }
     assert_eq!(c.depth(), 2);
 }
+
+#[test]
+fn default_params_are_the_shipped_tuning() {
+    let p = AdaptiveParams::default();
+    for depth in 0..=12 {
+        assert_eq!(
+            p.climb(depth),
+            AdaptiveDepth::climb_threshold(depth),
+            "depth {depth}"
+        );
+    }
+    assert_eq!(p.drop, AdaptiveDepth::drop_pressure(8));
+}
+
+#[test]
+fn params_parse_and_refuse() {
+    assert_eq!(
+        AdaptiveParams::parse("8,6,4,2"),
+        Some(AdaptiveParams::default())
+    );
+    assert_eq!(
+        AdaptiveParams::parse(" 3, 2,1 ,1"),
+        Some(AdaptiveParams {
+            climb_low: 3,
+            climb_mid: 2,
+            climb_high: 1,
+            drop: 1
+        })
+    );
+    for bad in ["", "8,6,4", "8,6,4,2,1", "0,6,4,2", "a,6,4,2", "-1,6,4,2"] {
+        assert_eq!(AdaptiveParams::parse(bad), None, "{bad:?} accepted");
+    }
+}
+
+#[test]
+fn custom_params_change_when_the_controller_climbs() {
+    let quick = AdaptiveParams {
+        climb_low: 2,
+        climb_mid: 2,
+        climb_high: 2,
+        drop: 1,
+    };
+    let mut c = AdaptiveDepth::with_params(2, 8, quick);
+    full_accepts(&mut c, 2);
+    assert_eq!(c.depth(), 3, "a streak of 2 climbs under the quick tuning");
+    // One missed token drops at once with drop = 1.
+    c.observe(3, 2);
+    assert_eq!(c.depth(), 2);
+}

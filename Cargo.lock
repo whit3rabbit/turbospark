@@ -2392,6 +2392,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "turbospark-lab"
+version = "0.5.0"
+dependencies = [
+ "half",
+ "libc",
+ "serde",
+ "serde_json",
+ "turbospark-bench",
+ "turbospark-catalog",
+ "turbospark-core",
+ "turbospark-coreml",
+ "turbospark-gpu",
+ "turbospark-model-io",
+ "turbospark-repack",
+ "turbospark-runtime",
+ "turbospark-selection",
+ "turbospark-tokenizer",
+]
+
+[[package]]
 name = "turbospark-model-io"
 version = "0.5.0"
 dependencies = [
