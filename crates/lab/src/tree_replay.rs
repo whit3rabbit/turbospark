@@ -159,7 +159,7 @@ pub fn tree_replay_cmd(mut args: Args) -> Result<(), String> {
     for (source, prompt) in prompts.iter().zip(&ids) {
         let name = match source {
             PromptSource::Protocol(id) => id.clone(),
-            PromptSource::MessagesFile(p) | PromptSource::TextFile(p) => p
+            PromptSource::MessagesFile(p) | PromptSource::TextFile(p) | PromptSource::Chat(p) => p
                 .file_name()
                 .map_or_else(|| p.display().to_string(), |f| f.to_string_lossy().into()),
             PromptSource::Corpus(n) => format!("corpus:{n}"),

@@ -1,0 +1,13 @@
+{
+  "opening": [
+    {"role": "user", "content": "What problem does the document above solve?"}
+  ],
+  "document": "../../../docs/MTP.md",
+  "document_tokens": 6000,
+  "follow_ups": [
+    "Summarize the main idea in two sentences.",
+    "Which measurement in it would you double-check first, and why?",
+    "List the risks it names, briefly.",
+    "What would you change about the design?"
+  ]
+}

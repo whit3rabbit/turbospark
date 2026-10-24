@@ -79,8 +79,10 @@ pub fn parse_prompt(s: &str) -> Result<PromptSource, String> {
         Some(("corpus", n)) => Ok(PromptSource::Corpus(
             n.parse().map_err(|_| format!("corpus length {n:?}"))?,
         )),
+        Some(("chat", p)) => Ok(PromptSource::Chat(PathBuf::from(p))),
         _ => Err(format!(
-            "prompt {s:?}: use protocol:<case>, messages:<path> or text:<path>"
+            "prompt {s:?}: use protocol:<case>, messages:<path>, text:<path>, corpus:<tokens> \
+             or chat:<path>"
         )),
     }
 }
@@ -308,5 +310,9 @@ mod tests {
             PromptSource::Protocol("long-synthesis".into())
         );
         assert!(parse_prompt("long-synthesis").is_err());
+        assert_eq!(
+            parse_prompt("chat:c.json").unwrap(),
+            PromptSource::Chat("c.json".into())
+        );
     }
 }

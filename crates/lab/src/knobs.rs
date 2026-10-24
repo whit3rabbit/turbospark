@@ -246,6 +246,20 @@ pub const KNOBS: &[Knob] = &[
         doc: "docs/ENV.md",
     },
     Knob {
+        // Only changes how much of a chat follow-up the runtime continues
+        // from instead of prefilling; the turn snapshot gate holds tokens
+        // identical to a full prefill. Measure it with a chat: workload and
+        // the followup_ttft_s metric; on single prompts it never fires.
+        name: "gdn_turn_snapshot",
+        env: "TURBOSPARK_GDN_TURN_SNAPSHOT",
+        values: &["<unset>", "1"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::BitExact,
+        families: &["qwen35"],
+        quotable: true,
+        doc: "docs/ENV.md",
+    },
+    Knob {
         name: "dispatch_profile",
         env: "TURBOSPARK_DISPATCH_PROFILE",
         values: &["<unset>", "1"],
