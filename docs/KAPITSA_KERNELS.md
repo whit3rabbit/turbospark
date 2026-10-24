@@ -1344,7 +1344,10 @@ move with clocks.
   (original plus prescaled copy) cost more than four shifts per lane per
   block save. Nothing to revert: the kernel never left the bench. Recorded
   in ROADMAP's Do Not Revisit list.
-- Item 7 (integer-code 8-row verify GEMM): NOT BUILT, and the in-tree
+- Item 7 (integer-code 8-row verify GEMM): NOT BUILT, now the leading
+  candidate (see "Measured: kapitsa on this machine"; the text below predates
+  that measurement and its "project, not a bench" verdict was about cost, not
+  value). The in-tree
   evidence reframes it. `dequant_int4_mma.metal`'s header records that its
   OWN tile lost at every width because packed INT4 cannot be
   simdgroup-loaded, so every element pays a dequant into threadgroup memory
