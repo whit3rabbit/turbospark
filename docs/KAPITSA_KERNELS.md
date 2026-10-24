@@ -1360,6 +1360,54 @@ What the sweep says:
   rewinding uncommitted KV rows and clearing the lazy tape so subsequent
   trunk passes proceed without poisoning the runner.
 
+### `Dk = 128` baked into the GDN delta kernels, 2026-10-24
+
+ADOPTED, default on, `TURBOSPARK_GDN_DK128=0` opts out. Found while costing
+a tree verify for DFlash2 (branch `lab/ext-round-phases`, e0f5de70,
+`tree_verify_cost_bench.rs`): a bench-only copy of the lazy verify kernel
+with the per-lane state count hard-coded to 4 was 2.78x faster and
+bit-identical. The shipped kernels loop a runtime `nPerLane = Dk / 32` over
+`float s[8]`.
+
+What changed: function constant 98 (`FC_GDN_DK`) makes `Dk` a compile-time
+constant in `gdn_delta_step_decode`, `gdn_delta_step_prefill` (eager and the
+lazy RECORD build) and `gdn_state_fold`. The host bakes it only when
+`key_head_dim == 128`, every shipped qwen GDN checkpoint. Other key dims keep
+the runtime loop. The arithmetic and its order do not change, so the baked
+build is bit-identical. `src/gdn_tests.rs` pins that on Metal for all four
+kernels (y, state, delta tape), checks the `Dk` 64 and 256 fallback, and
+guards that the two builds are separate cache entries. Dropping `Dk` from the
+key made the bit test pass on one pipeline twice, and only that guard failed.
+
+Kernel bench (`gdn::tests::baked_dk128_speed_at_qwen38_shapes`, qwen38
+shapes, arms interleaved in one process, three runs): decode 3.7-3.8x, eager
+prefill 1.9-3.5x, lazy prefill 1.9-3.8x and fold 2.7-6.9x at 8 and 16 rows.
+The host was busy (other sessions' builds, GPU utilization 94-99%), so these
+are ratios, not quotable times.
+
+Model A/B (`tslab run-experiment` plus `confirm`, bit-exact gate passed on
+every spec, M4 Max 36 GB, AC, load under 1, three clean pairs each, workers
+built from branch `lab/gdn-dk128`: e0f5de70 plus this change):
+
+| Spec, install | Workload | Runtime Dk | Baked | Median | Ledger id |
+|---------------|----------|-----------:|------:|-------:|-----------|
+| DFlash2 7, MMA8 on, `qwen38-27b-dflash2` | short, 256 decode | 33.2 tok/s | 34.6 | +4.07% WIN | 1792872140163-38512-21 |
+| same, confirm | medium, 256 decode | 37.6 | 39.8 | +4.95% WIN | 1792873152767-30621-17 |
+| Plain decode, `qwen38-27b` | short, 128 decode | 20.7 | 20.7 | -0.36% NOISE | 1792872315739-96209-21 |
+| Prefill, `qwen38-27b` | long-synthesis | 147.5 tok/s | 155.6 | +5.33% WIN | 1792872593319-9671-21 |
+| same, confirm | corpus 2000 | 156.7 | 165.0 | +5.36% WIN | 1792873269182-50140-17 |
+
+Where the DFlash2 round goes (`TURBOSPARK_SPEC_STATS=1`, short): verify 69.3
+to 66.8 ms, matching the 2.4 ms the tree bench predicted, and draft 10.9 to
+10.1 ms. Committed tokens per round are unchanged (2.71), as a bit-exact
+change requires. Plain decode does run `gdn_delta_step_decode`, so its NOISE
+means that kernel's in-model share is under the 2% floor, despite the 3.8x
+kernel ratio.
+
+The first DFlash2 run-experiment (ledger 1792868671395-16692-5) ran beside
+another session's 27B probe, its quality runs timed out, and tslab recorded a
+`discard`. It measured nothing. Ignore it.
+
 ## Items 4 and 5: bit-exact fused FFN dispatches
 
 ADOPTED behind `TURBOSPARK_QWEN_FUSED_FFN` (default on, `=0` opts out).
