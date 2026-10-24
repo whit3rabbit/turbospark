@@ -35,12 +35,22 @@ const LENGTHS: [usize; 6] = [64, 200, 500, 1000, 2000, 3000];
 /// changes a sampled text's character.
 const MEAN_KL_BOUND: f64 = 1e-3;
 
+/// MEASUREMENT ONLY, NOT FOR COMMIT: `PROBE_CHUNK` overrides the outer
+/// chunk, so a wide micro-batch (`TURBOSPARK_PROBE_QWEN_PREFILL_BATCH`)
+/// actually gets wide chunks.
+fn chunk() -> usize {
+    std::env::var("PROBE_CHUNK")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(CHUNK)
+}
+
 fn prefill(runner: &mut RealForwardRunner, ids: &[i32], vocab: usize) -> Vec<f64> {
     runner.reset();
     let mut logits = vec![LogitValue::from_f32(0.0); vocab];
     let mut offset = 0;
     while offset < ids.len() {
-        let take = (ids.len() - offset).min(CHUNK);
+        let take = (ids.len() - offset).min(chunk());
         runner
             .prefill_chunk(&ids[offset..offset + take], offset, &mut logits)
             .expect("chunked prefill");
@@ -125,6 +135,43 @@ fn steel_prefill_stays_within_the_distribution_bound() {
         .iter()
         .map(|p| prefill(&mut steel_runner, p, vocab))
         .collect();
+    // MEASUREMENT ONLY, NOT FOR COMMIT: with `PROBE_SPLIT_PKGS` set, also
+    // run the ANE split prototype's break-only control and split arms
+    // (feature `ane-split-probe`) and stop there.
+    if let Some(pkgs) = std::env::var_os("PROBE_SPLIT_PKGS") {
+        eprintln!("chunk {}", chunk());
+        std::env::set_var("TURBOSPARK_PROBE_ANE_SPLIT_PKGS", pkgs);
+        let mut arms = Vec::new();
+        for mode in ["break", "ane"] {
+            std::env::set_var("TURBOSPARK_PROBE_ANE_SPLIT", mode);
+            let out: Vec<Vec<f64>> = prompts
+                .iter()
+                .map(|p| prefill(&mut steel_runner, p, vocab))
+                .collect();
+            std::env::remove_var("TURBOSPARK_PROBE_ANE_SPLIT");
+            arms.push((mode, out));
+        }
+        let mut means = vec![(
+            "steel",
+            compare("steel, multi-row attention", &reference, &steel),
+        )];
+        for (mode, out) in &arms {
+            means.push((mode, compare(mode, &reference, out)));
+            let max_d = steel
+                .iter()
+                .zip(out)
+                .flat_map(|(a, b)| a.iter().zip(b).map(|(x, y)| (x - y).abs()))
+                .fold(0.0, f64::max);
+            eprintln!("{mode} against steel at this width: max |dlogit| {max_d:.6}");
+        }
+        for (label, mean_kl) in means {
+            assert!(
+                mean_kl < MEAN_KL_BOUND,
+                "{label}: mean KL {mean_kl} nats over the {MEAN_KL_BOUND} bound"
+            );
+        }
+        return;
+    }
     steel_runner.set_prefill_rows_attention(false);
     let steel_per_row: Vec<Vec<f64>> = prompts
         .iter()

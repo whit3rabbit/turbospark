@@ -2,6 +2,8 @@
 //! BOTH the `qwen36` family and (ROADMAP's 1-bit entry) the dense `qwen3_5`
 //! one, which differ in their FFN half and in nothing else.
 
+#[cfg(feature = "ane-split-probe")]
+mod ane_split;
 mod attn;
 mod batched;
 mod batched_layers;

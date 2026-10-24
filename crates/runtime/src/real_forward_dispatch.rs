@@ -765,6 +765,10 @@ pub(crate) fn encode_gemm_rows(
     batch: usize,
     steel: bool,
 ) -> Result<(), RealForwardError> {
+    // MEASUREMENT ONLY: `steel` is set on the chunked-prefill scratch alone.
+    if steel && crate::real_forward_types::probe_skip("proj") {
+        return Ok(());
+    }
     if steel && batch >= STEEL_MIN_ROWS && entry(index, name)?.dtype == 4 {
         let w = resident_matrix(weights, index, name, rows, cols)?;
         let tile = gpu::SteelTile::M32K32N32;

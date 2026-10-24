@@ -138,6 +138,44 @@ pub(crate) const MAX_PREFILL_BATCH: usize = 16;
 /// all of the gain at a quarter of 128's scratch.
 pub(crate) const QWEN_STEEL_PREFILL_BATCH: usize = 64;
 
+/// MEASUREMENT ONLY, NOT FOR COMMIT: the Steel micro-batch the qwen dense
+/// driver allocates, overridable by `TURBOSPARK_PROBE_QWEN_PREFILL_BATCH`
+/// (32..=4096) so one binary can run interleaved width arms. Unset is
+/// [`QWEN_STEEL_PREFILL_BATCH`]. Read once per process.
+pub(crate) fn qwen_steel_prefill_batch() -> usize {
+    static WIDTH: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *WIDTH.get_or_init(|| {
+        let width = std::env::var("TURBOSPARK_PROBE_QWEN_PREFILL_BATCH")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|w| (32..=4096).contains(w))
+            .unwrap_or(QWEN_STEEL_PREFILL_BATCH);
+        // Echoed so each arm's stderr proves the width it ran at.
+        eprintln!("[probe] qwen steel prefill batch = {width}");
+        width
+    })
+}
+
+/// MEASUREMENT ONLY, NOT FOR COMMIT: `TURBOSPARK_PROBE_SKIP` names op classes
+/// (`proj`, `attn`, `gdn`, comma separated) the Steel chunked-prefill arm
+/// leaves out, so the micro-batch's command-buffer GPU time prices each class
+/// by knockout. Output is garbage while it is set.
+pub(crate) fn probe_skip(class: &str) -> bool {
+    static SKIP: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    SKIP.get_or_init(|| {
+        let skip: Vec<String> = std::env::var("TURBOSPARK_PROBE_SKIP")
+            .unwrap_or_default()
+            .split(',')
+            .map(|c| c.trim().to_string())
+            .filter(|c| !c.is_empty())
+            .collect();
+        eprintln!("[probe] skip = {skip:?}");
+        skip
+    })
+    .iter()
+    .any(|c| c == class)
+}
+
 /// Rows of the shared `x` scratch: the widest micro-batch any driver runs.
 pub(crate) const MAX_PREFILL_ROWS: usize = if QWEN_STEEL_PREFILL_BATCH > MAX_PREFILL_BATCH {
     QWEN_STEEL_PREFILL_BATCH
@@ -253,7 +291,7 @@ impl DecodeScratch {
         // is sized off that width alone even on a mixed-attention model.
         let full_kv_dim = (arch.num_full_kv_heads * arch.full_head_dim) as u64;
         Self {
-            x: halfs(hidden * MAX_PREFILL_ROWS as u64),
+            x: halfs(hidden * MAX_PREFILL_ROWS.max(qwen_steel_prefill_batch()) as u64),
             normed: halfs(hidden),
             q: halfs(qk_dim),
             attn_out: halfs(qk_dim),

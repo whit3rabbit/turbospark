@@ -337,6 +337,26 @@ impl CommittedPass {
     }
 }
 
+#[cfg(feature = "ane-split-probe")]
+impl CommittedPass {
+    /// MEASUREMENT ONLY: blocks until this buffer finishes and returns its
+    /// `(GPUStartTime, GPUEndTime)` in host seconds, so a caller can place
+    /// several buffers on one timeline.
+    #[allow(unexpected_cfgs)]
+    pub fn wait_gpu_start_end(&self) -> (f64, f64) {
+        use metal::objc::{msg_send, sel, sel_impl};
+        self.command_buffer.wait_until_completed();
+        warn_on_command_buffer_error(&self.command_buffer);
+        // SAFETY: documented `CFTimeInterval` accessors on a live,
+        // completed buffer (as in `wait_with_gpu_time`).
+        #[allow(unsafe_code)]
+        unsafe {
+            let cb: &metal::CommandBufferRef = &self.command_buffer;
+            (msg_send![cb, GPUStartTime], msg_send![cb, GPUEndTime])
+        }
+    }
+}
+
 impl Drop for CommittedPass {
     fn drop(&mut self) {
         if self.wait_on_drop {

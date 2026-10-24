@@ -1037,3 +1037,346 @@ fn device(d: &ProtocolObject<dyn MLComputeDeviceProtocol>) -> ComputeDevice {
     let obj: &AnyObject = d.as_ref();
     ComputeDevice::Other(obj.class().name().to_string_lossy().into_owned())
 }
+
+// ---- MEASUREMENT ONLY: IOSurface-backed planes (feature `ane-split-probe`) ----
+
+#[cfg(feature = "ane-split-probe")]
+pub use shared_plane::SharedF16Plane;
+
+#[cfg(feature = "ane-split-probe")]
+mod shared_plane {
+    //! F16 planes that Metal and Core ML both read and write in place, for
+    //! the qwen38 Neural Engine split prototype (`docs/MOE_PRIOR_ART.md`).
+    //! Each plane is an IOSurface wrapped as a `CVPixelBuffer` and an
+    //! `MLMultiArray`; the caller wraps [`SharedF16Plane::base_ptr`] in a
+    //! no-copy Metal buffer and must drop that buffer first. Inputs and
+    //! outputs bound this way are never copied by Core ML, which is what a
+    //! plain `MLMultiArray` would cost per prediction on the Neural Engine.
+
+    use std::ffi::c_void;
+
+    use objc2::encode::{Encoding, RefEncode};
+    use objc2::rc::{autoreleasepool, Retained};
+    use objc2::runtime::{AnyClass, AnyObject, ProtocolObject};
+    use objc2::{msg_send, AllocAnyThread};
+    use objc2_core_ml::{
+        MLDictionaryFeatureProvider, MLFeatureProvider, MLFeatureValue, MLMultiArray,
+    };
+    use objc2_foundation::{NSArray, NSDictionary, NSError, NSNumber, NSString};
+
+    use super::{guarded, ns_error, CoreMlModel};
+    use crate::error::{CoreMlError, Result};
+    use crate::tensor::DType;
+    use crate::{FeatureKind, FeatureSpec};
+
+    type CFTypeRef = *const c_void;
+
+    /// `CVBufferRef`'s pointee, so the message encoding matches
+    /// `^{__CVBuffer=}` (objc2 verifies it under debug assertions).
+    #[repr(C)]
+    struct CvBuffer {
+        _private: [u8; 0],
+    }
+    // SAFETY: the encoding CoreVideo declares for CVBufferRef.
+    unsafe impl RefEncode for CvBuffer {
+        const ENCODING_REF: Encoding = Encoding::Pointer(&Encoding::Struct("__CVBuffer", &[]));
+    }
+
+    #[link(name = "IOSurface", kind = "framework")]
+    extern "C" {
+        static kIOSurfaceWidth: CFTypeRef;
+        static kIOSurfaceHeight: CFTypeRef;
+        static kIOSurfaceBytesPerElement: CFTypeRef;
+        static kIOSurfaceBytesPerRow: CFTypeRef;
+        static kIOSurfacePixelFormat: CFTypeRef;
+        fn IOSurfaceCreate(properties: CFTypeRef) -> *mut c_void;
+        fn IOSurfaceGetBaseAddress(surface: *mut c_void) -> *mut c_void;
+        fn IOSurfaceGetAllocSize(surface: *mut c_void) -> usize;
+        fn IOSurfaceGetBytesPerRow(surface: *mut c_void) -> usize;
+        fn IOSurfaceAlignProperty(property: CFTypeRef, value: usize) -> usize;
+    }
+
+    #[link(name = "CoreVideo", kind = "framework")]
+    extern "C" {
+        fn CVPixelBufferCreateWithIOSurface(
+            allocator: CFTypeRef,
+            surface: *mut c_void,
+            attributes: CFTypeRef,
+            out: *mut *mut CvBuffer,
+        ) -> i32;
+    }
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        fn CFRelease(cf: CFTypeRef);
+    }
+
+    /// `kCVPixelFormatType_OneComponent16Half`, the one format
+    /// `initWithPixelBuffer:shape:` accepts.
+    const ONE_COMPONENT_16_HALF: u32 = u32::from_be_bytes(*b"L00h");
+
+    /// A `[1, 1, rows, cols]` Float16 plane over one IOSurface.
+    pub struct SharedF16Plane {
+        array: Retained<MLMultiArray>,
+        pixel: *mut CvBuffer,
+        surface: *mut c_void,
+        rows: usize,
+        cols: usize,
+        stride: usize,
+    }
+
+    // SAFETY: IOSurface and CVPixelBuffer are thread-safe CoreFoundation
+    // objects, and the multi-array is only read through `&self` by one
+    // prediction at a time (the model's mutex). Not Sync.
+    unsafe impl Send for SharedF16Plane {}
+
+    impl std::fmt::Debug for SharedF16Plane {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("SharedF16Plane")
+                .field("rows", &self.rows)
+                .field("cols", &self.cols)
+                .field("stride", &self.stride)
+                .finish()
+        }
+    }
+
+    fn key(k: CFTypeRef) -> &'static NSString {
+        // SAFETY: the kIOSurface* keys are immortal CFStrings, toll-free
+        // bridged to NSString.
+        unsafe { &*(k as *const NSString) }
+    }
+
+    impl SharedF16Plane {
+        pub fn new(rows: usize, cols: usize) -> Result<Self> {
+            if rows == 0 || cols == 0 {
+                return Err(CoreMlError::Prediction("empty shared plane".into()));
+            }
+            autoreleasepool(|_| {
+                // SAFETY: plain C calls with a valid key and value; the keys
+                // are framework statics.
+                let bpr = unsafe { IOSurfaceAlignProperty(kIOSurfaceBytesPerRow, cols * 2) };
+                let keys = unsafe {
+                    [
+                        key(kIOSurfaceWidth),
+                        key(kIOSurfaceHeight),
+                        key(kIOSurfaceBytesPerElement),
+                        key(kIOSurfaceBytesPerRow),
+                        key(kIOSurfacePixelFormat),
+                    ]
+                };
+                let values = [
+                    NSNumber::numberWithUnsignedInteger(cols),
+                    NSNumber::numberWithUnsignedInteger(rows),
+                    NSNumber::numberWithUnsignedInteger(2),
+                    NSNumber::numberWithUnsignedInteger(bpr),
+                    NSNumber::numberWithUnsignedInteger(ONE_COMPONENT_16_HALF as usize),
+                ];
+                let value_refs: Vec<&NSNumber> = values.iter().map(|v| &**v).collect();
+                let props = NSDictionary::<NSString, NSNumber>::from_slices(&keys, &value_refs);
+                // SAFETY: an NSDictionary is a CFDictionary (toll-free
+                // bridged); IOSurfaceCreate follows the Create rule.
+                let surface = unsafe { IOSurfaceCreate(Retained::as_ptr(&props).cast()) };
+                if surface.is_null() {
+                    return Err(CoreMlError::Prediction(format!(
+                        "IOSurfaceCreate {cols} x {rows} failed"
+                    )));
+                }
+                let mut pixel: *mut CvBuffer = std::ptr::null_mut();
+                // SAFETY: a live surface; the out pointer follows the Create
+                // rule.
+                let rc = unsafe {
+                    CVPixelBufferCreateWithIOSurface(
+                        std::ptr::null(),
+                        surface,
+                        std::ptr::null(),
+                        &mut pixel,
+                    )
+                };
+                if rc != 0 || pixel.is_null() {
+                    // SAFETY: releasing our +1 on the surface.
+                    unsafe { CFRelease(surface) };
+                    return Err(CoreMlError::Prediction(format!(
+                        "CVPixelBufferCreateWithIOSurface returned {rc}"
+                    )));
+                }
+                let shape: Vec<Retained<NSNumber>> = [1, 1, rows, cols]
+                    .iter()
+                    .map(|&d| NSNumber::numberWithInteger(d as isize))
+                    .collect();
+                let shape = NSArray::from_retained_slice(&shape);
+                // SAFETY: initWithPixelBuffer:shape: (macOS 12) with a
+                // OneComponent16Half buffer whose width is the last
+                // dimension and height the product of the others.
+                let array: Option<Retained<MLMultiArray>> =
+                    guarded("MLMultiArray initWithPixelBuffer", || unsafe {
+                        msg_send![MLMultiArray::alloc(), initWithPixelBuffer: pixel, shape: &*shape]
+                    })?;
+                // SAFETY: plain getters on a live surface.
+                let stride = unsafe { IOSurfaceGetBytesPerRow(surface) } / 2;
+                let plane = Self {
+                    array: match array {
+                        Some(a) => a,
+                        None => {
+                            // SAFETY: releasing our +1s.
+                            unsafe {
+                                CFRelease(pixel as CFTypeRef);
+                                CFRelease(surface);
+                            }
+                            return Err(CoreMlError::Prediction(
+                                "MLMultiArray initWithPixelBuffer returned nil".into(),
+                            ));
+                        }
+                    },
+                    pixel,
+                    surface,
+                    rows,
+                    cols,
+                    stride,
+                };
+                Ok(plane)
+            })
+        }
+
+        /// Base of the surface's memory. Page-aligned; valid while `self`
+        /// lives.
+        pub fn base_ptr(&self) -> *const u8 {
+            // SAFETY: a getter on a live surface.
+            unsafe { IOSurfaceGetBaseAddress(self.surface) as *const u8 }
+        }
+
+        /// Bytes allocated behind [`Self::base_ptr`] (page-rounded).
+        pub fn alloc_size(&self) -> usize {
+            // SAFETY: a getter on a live surface.
+            unsafe { IOSurfaceGetAllocSize(self.surface) }
+        }
+
+        pub fn rows(&self) -> usize {
+            self.rows
+        }
+
+        pub fn cols(&self) -> usize {
+            self.cols
+        }
+
+        /// Halfs between the starts of consecutive rows.
+        pub fn stride(&self) -> usize {
+            self.stride
+        }
+
+        fn as_feature(&self) -> Retained<MLFeatureValue> {
+            // SAFETY: wraps a live multi-array.
+            unsafe { MLFeatureValue::featureValueWithMultiArray(&self.array) }
+        }
+    }
+
+    impl Drop for SharedF16Plane {
+        fn drop(&mut self) {
+            // SAFETY: releasing the +1s taken in `new`. The multi-array
+            // keeps its own reference to the pixel buffer until it drops.
+            unsafe {
+                CFRelease(self.pixel as CFTypeRef);
+                CFRelease(self.surface);
+            }
+        }
+    }
+
+    fn check_plane(specs: &[FeatureSpec], name: &str, plane: &SharedF16Plane) -> Result<()> {
+        let spec = specs
+            .iter()
+            .find(|s| s.name == name)
+            .ok_or_else(|| CoreMlError::MissingFeature(name.to_string()))?;
+        let want = [1, 1, plane.rows, plane.cols];
+        match &spec.kind {
+            FeatureKind::MultiArray {
+                dtype: Some(DType::F16),
+                shape: Some(s),
+            } if s.as_slice() == want => Ok(()),
+            other => Err(CoreMlError::Shape {
+                name: format!("{name} ({other:?})"),
+                expected: want.to_vec(),
+                got: Vec::new(),
+            }),
+        }
+    }
+
+    impl CoreMlModel {
+        /// One stateless prediction reading `inputs` and writing `outputs`
+        /// in place (`MLPredictionOptions.outputBackings`). Every declared
+        /// input and output must be bound, and every plane must match its
+        /// feature's fixed F16 shape. Refuses a result Core ML did not
+        /// write into the backing, which would otherwise read as stale data.
+        pub fn predict_shared(
+            &self,
+            inputs: &[(&str, &SharedF16Plane)],
+            outputs: &[(&str, &SharedF16Plane)],
+        ) -> Result<()> {
+            for (name, plane) in inputs {
+                check_plane(&self.inputs, name, plane)?;
+            }
+            for (name, plane) in outputs {
+                check_plane(&self.outputs, name, plane)?;
+            }
+            if inputs.len() != self.inputs.len() || outputs.len() != self.outputs.len() {
+                return Err(CoreMlError::MissingFeature(
+                    "predict_shared binds every input and output".into(),
+                ));
+            }
+            let options_class = AnyClass::get(c"MLPredictionOptions")
+                .ok_or_else(|| CoreMlError::Prediction("no MLPredictionOptions".into()))?;
+            let guard = self.lock();
+            autoreleasepool(|_| {
+                let keys: Vec<Retained<NSString>> =
+                    inputs.iter().map(|(n, _)| NSString::from_str(n)).collect();
+                let values: Vec<Retained<MLFeatureValue>> =
+                    inputs.iter().map(|(_, p)| p.as_feature()).collect();
+                let key_refs: Vec<&NSString> = keys.iter().map(|k| &**k).collect();
+                let value_refs: Vec<&AnyObject> = values.iter().map(|v| v.as_ref()).collect();
+                let dict = NSDictionary::<NSString, AnyObject>::from_slices(&key_refs, &value_refs);
+                // SAFETY: every value is an MLFeatureValue.
+                let provider = guarded("MLDictionaryFeatureProvider init", || unsafe {
+                    MLDictionaryFeatureProvider::initWithDictionary_error(
+                        MLDictionaryFeatureProvider::alloc(),
+                        &dict,
+                    )
+                })?
+                .map_err(|e| CoreMlError::Prediction(ns_error(&e)))?;
+                let provider = ProtocolObject::<dyn MLFeatureProvider>::from_ref(&*provider);
+
+                let out_keys: Vec<Retained<NSString>> =
+                    outputs.iter().map(|(n, _)| NSString::from_str(n)).collect();
+                let out_key_refs: Vec<&NSString> = out_keys.iter().map(|k| &**k).collect();
+                let out_refs: Vec<&AnyObject> =
+                    outputs.iter().map(|(_, p)| p.array.as_ref()).collect();
+                let backings =
+                    NSDictionary::<NSString, AnyObject>::from_slices(&out_key_refs, &out_refs);
+                // SAFETY: `new` on the MLPredictionOptions class, then its
+                // documented outputBackings setter (macOS 11) with a
+                // name -> MLMultiArray dictionary.
+                let options: Retained<AnyObject> = unsafe { msg_send![options_class, new] };
+                let () = unsafe { msg_send![&*options, setOutputBackings: &*backings] };
+                // SAFETY: predictionFromFeatures:options:error: with a
+                // provider and backings that passed the shape checks.
+                let result: std::result::Result<
+                    Retained<ProtocolObject<dyn MLFeatureProvider>>,
+                    Retained<NSError>,
+                > = guarded("MLModel shared prediction", || unsafe {
+                    msg_send![&*guard.0, predictionFromFeatures: provider, options: &*options, error: _]
+                })?;
+                let result = result.map_err(|e| CoreMlError::Prediction(ns_error(&e)))?;
+                for ((name, plane), key) in outputs.iter().zip(&out_keys) {
+                    // SAFETY: featureValueForName: and multiArrayValue on a
+                    // live provider.
+                    let same = unsafe { result.featureValueForName(key) }
+                        .and_then(|v| unsafe { v.multiArrayValue() })
+                        .is_some_and(|a| Retained::as_ptr(&a) == Retained::as_ptr(&plane.array));
+                    if !same {
+                        return Err(CoreMlError::Prediction(format!(
+                            "{name}: Core ML did not write into the output backing"
+                        )));
+                    }
+                }
+                Ok(())
+            })
+        }
+    }
+}

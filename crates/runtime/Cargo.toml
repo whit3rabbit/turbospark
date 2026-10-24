@@ -12,6 +12,11 @@ description = "The raw-completion prefill+decode loop: wires a LogitProducer, th
 name = "turbospark_runtime"
 path = "src/lib.rs"
 
+# MEASUREMENT ONLY: the qwen38 ANE/Steel gate-up split prototype
+# (`families/qwen/ane_split.rs`). Off by default.
+[features]
+ane-split-probe = ["gpu/ane-split-probe", "turbospark-coreml/ane-split-probe"]
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 foundation = { package = "turbospark-core", path = "../core", version = "0.3.2" }

@@ -33,6 +33,9 @@ pub use tensor::{element_count, DType, Tensor, TensorData};
 #[cfg(target_os = "macos")]
 pub use sys::{compile_if_needed, compute_plan, os_version, supports, CoreMlModel, CoreMlState};
 
+#[cfg(all(target_os = "macos", feature = "ane-split-probe"))]
+pub use sys::SharedF16Plane;
+
 #[cfg(not(target_os = "macos"))]
 pub use stub::{compile_if_needed, compute_plan, os_version, supports, CoreMlModel, CoreMlState};
 

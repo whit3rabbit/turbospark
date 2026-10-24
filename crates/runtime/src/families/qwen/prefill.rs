@@ -416,6 +416,7 @@ impl RealForwardRunner {
         batched: bool,
         logits: &mut [LogitValue],
     ) -> Result<(), RealForwardError> {
+        let t_encode = Instant::now();
         let arch = self.arch.clone();
         let hidden = arch.hidden_size as usize;
         let inter = arch.intermediate_size as usize;
@@ -486,6 +487,32 @@ impl RealForwardRunner {
 
         let embed_name = "language_model.model.embed_tokens.weight";
 
+        // MEASUREMENT ONLY: the ANE split prototype (`ane_split.rs`), on the
+        // Steel arm of a text-only micro-batch with a program for its width.
+        #[cfg(feature = "ane-split-probe")]
+        let split = match super::ane_split::mode() {
+            Some(mode)
+                if batched_gemv
+                    && self.prompt_vision.is_none()
+                    && self
+                        .real_qwen
+                        .as_ref()
+                        .is_some_and(|q| q.batched_prefill().steel_gemm)
+                    && super::ane_split::slot_tokens(m).is_some() =>
+            {
+                let context = &mut self.context;
+                let qwen = self.real_qwen.as_mut().expect("checked dense above");
+                super::ane_split::ensure(&mut qwen.ane_split, context, &arch, mode)?;
+                Some(mode)
+            }
+            _ => None,
+        };
+
+        // MEASUREMENT ONLY, NOT FOR COMMIT: brackets the prefill for the
+        // energy driver, after any one-time split program load above.
+        if start_position == 0 {
+            probe_mark("prefill-begin");
+        }
         let pass = self.context.begin_pass_labeled("qwen dense chunk cb");
         // THE IMAGE INJECTION, this family's SECOND embedding call site
         // (`produce.rs`'s is the first). At an image-pad position the tower's
@@ -611,6 +638,40 @@ impl RealForwardRunner {
             self.steering.as_ref(),
         );
 
+        #[cfg(feature = "ane-split-probe")]
+        if let Some(mode) = split {
+            let times = super::ane_split::run_micro_batch(
+                context,
+                pass,
+                weights,
+                index,
+                scratch,
+                kv,
+                qwen,
+                &arch,
+                resid_capture,
+                steering,
+                mode,
+                use_silu,
+                start_position,
+                m,
+                |context, pass| {
+                    if want_head {
+                        super::prefill_layers::encode_qwen_dense_chunk_head(
+                            context, pass, weights, index, scratch, qwen, &arch, embed_name,
+                            hidden, vocab, m,
+                        )
+                    } else {
+                        pass.relabel("qwen split segment (no head)");
+                        Ok(())
+                    }
+                },
+            )?;
+            self.phases.final_cb_gpu_nanos += (times.gpu_busy * 1e9) as u64;
+            self.phases.final_wait_nanos += (times.wall * 1e9) as u64;
+            return self.finish_qwen_dense_micro_batch(start_position, m, want_head, logits);
+        }
+
         for layer in 0..arch.num_layers as usize {
             let input_norm = norm_view(
                 weights,
@@ -681,8 +742,30 @@ impl RealForwardRunner {
             pass.relabel("qwen dense chunk cb (no head)");
         }
         let t_wait = Instant::now();
-        self.phases.final_cb_gpu_nanos += (pass.commit_and_wait_with_gpu_time() * 1e9) as u64;
+        let gpu_seconds = pass.commit_and_wait_with_gpu_time();
+        self.phases.final_cb_gpu_nanos += (gpu_seconds * 1e9) as u64;
         self.phases.final_wait_nanos += t_wait.elapsed().as_nanos() as u64;
+        // MEASUREMENT ONLY, NOT FOR COMMIT: one line per micro-batch.
+        eprintln!(
+            "[probe-mb] start={start_position} m={m} batched={batched_gemv} encode_ms={:.3} \
+             wait_ms={:.3} gpu_ms={:.3}",
+            (t_wait - t_encode).as_secs_f64() * 1e3,
+            t_wait.elapsed().as_secs_f64() * 1e3,
+            gpu_seconds * 1e3
+        );
+        self.finish_qwen_dense_micro_batch(start_position, m, want_head, logits)
+    }
+
+    /// After a dense micro-batch's last command buffer has completed: the KV
+    /// advance, the residual capture, and the logits readback.
+    fn finish_qwen_dense_micro_batch(
+        &mut self,
+        start_position: usize,
+        m: usize,
+        want_head: bool,
+        logits: &mut [LogitValue],
+    ) -> Result<(), RealForwardError> {
+        let vocab = self.arch.vocab_size as usize;
         self.kv.advance_by(m);
 
         let skip_head = !want_head;
@@ -702,6 +785,16 @@ impl RealForwardRunner {
             )));
         }
         gpu::read_buffer_f16_into(&self.scratch.logits, 0, logits);
+        probe_mark("prefill-end");
         Ok(())
     }
+}
+
+/// MEASUREMENT ONLY, NOT FOR COMMIT: a stderr marker the energy driver
+/// samples IOReport at. The last `prefill-end` closes the prompt.
+fn probe_mark(what: &str) {
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |d| d.as_secs_f64());
+    eprintln!("[probe-e] {what} t={t:.6}");
 }

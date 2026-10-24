@@ -109,6 +109,10 @@ pub(crate) struct RealQwenState {
     /// It is never allocated BESIDE a drafter's copy: the chunked driver
     /// refuses an open drafter by name, so at most one of the two exists.
     pub(crate) batched_prefill: Option<BatchedScratch>,
+    /// MEASUREMENT ONLY: the ANE split prototype's planes, programs and
+    /// event (`ane_split.rs`), allocated on its first micro-batch.
+    #[cfg(feature = "ane-split-probe")]
+    pub(crate) ane_split: Option<super::ane_split::AneSplitState>,
     /// The Hadamard-folded weight contract's plan (the Bonsai-2 line), built
     /// only when the manifest carries a `hadamard` section. `None` on every
     /// install written before the contract existed, which makes every
@@ -395,6 +399,8 @@ impl RealQwenState {
             h2: halfs(hidden),
             shared_gate_logit: halfs(1),
             batched_prefill: None,
+            #[cfg(feature = "ane-split-probe")]
+            ane_split: None,
             hadamard,
         })
     }
@@ -459,7 +465,7 @@ impl RealQwenState {
         steel: bool,
     ) -> Result<(), RealForwardError> {
         let rows = if steel {
-            crate::real_forward_types::QWEN_STEEL_PREFILL_BATCH
+            crate::real_forward_types::qwen_steel_prefill_batch()
         } else {
             crate::real_forward_types::MAX_PREFILL_BATCH
         };

@@ -165,7 +165,9 @@ pub(crate) fn encode_full_attention_block_batched(
     let rows_attention = batched.rows_attention.as_ref().filter(|_| {
         batch > 1 && scratch.attn.decode_kernel() == gpu::DecodeAttentionKernel::GqaShared
     });
-    if let Some(rows) = rows_attention {
+    // MEASUREMENT ONLY: knock attention out of the Steel prefill arm.
+    let skip_attn = batched.steel_gemm && crate::real_forward_types::probe_skip("attn");
+    if let Some(rows) = rows_attention.filter(|_| !skip_attn) {
         gpu::encode_attention_decode_gqa_rows(
             context,
             pass,
@@ -186,7 +188,7 @@ pub(crate) fn encode_full_attention_block_batched(
         .map_err(gpu_err)?;
     }
     for m in 0..batch {
-        if rows_attention.is_none() {
+        if rows_attention.is_none() && !skip_attn {
             gpu::encode_attention_decode(
                 context,
                 pass,
@@ -347,32 +349,37 @@ pub(crate) fn encode_linear_block_batched(
         &name("conv1d.weight"),
         qkv_dim * shape.conv_kernel_size as usize,
     )?;
-    gpu::encode_gdn_conv_prefill(
-        context,
-        pass,
-        shape,
-        (qwen.gdn.conv_tail_buffer(layer), 0),
-        (&batched.gdn_qkv_raw, 0),
-        conv_w,
-        (&batched.gdn_conv_out, 0),
-        batch as u32,
-        // Undilated, matching `attn.rs`'s decode-path call.
-        1,
-    )
-    .map_err(gpu_err)?;
-    // The prefill conv reads the tail and does NOT advance it; the decode
-    // sibling does both. Skipping this leaves the layer's history one block
-    // behind, which is fluent and wrong.
-    gpu::encode_gdn_conv_tail_update(
-        context,
-        pass,
-        shape,
-        (qwen.gdn.conv_tail_buffer(layer), 0),
-        (&batched.gdn_qkv_raw, 0),
-        batch as u32,
-        1,
-    )
-    .map_err(gpu_err)?;
+    // MEASUREMENT ONLY: knock the GDN recurrence (conv, tail, delta rule) out
+    // of the Steel prefill arm.
+    let skip_gdn = batched.steel_gemm && crate::real_forward_types::probe_skip("gdn");
+    if !skip_gdn {
+        gpu::encode_gdn_conv_prefill(
+            context,
+            pass,
+            shape,
+            (qwen.gdn.conv_tail_buffer(layer), 0),
+            (&batched.gdn_qkv_raw, 0),
+            conv_w,
+            (&batched.gdn_conv_out, 0),
+            batch as u32,
+            // Undilated, matching `attn.rs`'s decode-path call.
+            1,
+        )
+        .map_err(gpu_err)?;
+        // The prefill conv reads the tail and does NOT advance it; the decode
+        // sibling does both. Skipping this leaves the layer's history one block
+        // behind, which is fluent and wrong.
+        gpu::encode_gdn_conv_tail_update(
+            context,
+            pass,
+            shape,
+            (qwen.gdn.conv_tail_buffer(layer), 0),
+            (&batched.gdn_qkv_raw, 0),
+            batch as u32,
+            1,
+        )
+        .map_err(gpu_err)?;
+    }
     gpu::encode_gdn_qk_norm(
         context,
         pass,
@@ -385,20 +392,22 @@ pub(crate) fn encode_linear_block_batched(
     // A_log and dt_bias carry NO `.weight` suffix in the checkpoint.
     let a_log = norm_view(weights, index, &name("A_log"), v_heads)?;
     let dt_bias = norm_view(weights, index, &name("dt_bias"), v_heads)?;
-    gpu::encode_gdn_delta_prefill(
-        context,
-        pass,
-        shape,
-        (&batched.gdn_conv_out, 0),
-        (&batched.gdn_a, 0),
-        (&batched.gdn_b, 0),
-        a_log,
-        dt_bias,
-        qwen.gdn.state_buffer(layer),
-        (&batched.gdn_y, 0),
-        batch as u32,
-    )
-    .map_err(gpu_err)?;
+    if !skip_gdn {
+        gpu::encode_gdn_delta_prefill(
+            context,
+            pass,
+            shape,
+            (&batched.gdn_conv_out, 0),
+            (&batched.gdn_a, 0),
+            (&batched.gdn_b, 0),
+            a_log,
+            dt_bias,
+            qwen.gdn.state_buffer(layer),
+            (&batched.gdn_y, 0),
+            batch as u32,
+        )
+        .map_err(gpu_err)?;
+    }
 
     let gated_norm = norm_view(
         weights,
@@ -561,7 +570,6 @@ pub(crate) fn encode_dense_ffn_batched(
     use_silu: bool,
     batch: usize,
 ) -> Result<(), RealForwardError> {
-    let gpu_err = RealForwardError::Gpu;
     for (suffix, out) in [
         ("mlp.gate_proj.weight", &batched.ffn_gate),
         ("mlp.up_proj.weight", &batched.ffn_up),
@@ -580,7 +588,31 @@ pub(crate) fn encode_dense_ffn_batched(
             batched.steel_gemm,
         )?;
     }
+    encode_dense_ffn_tail_batched(
+        context, pass, weights, index, scratch, batched, prefix, layer, hidden, inter, use_silu,
+        batch,
+    )
+}
 
+/// [`encode_dense_ffn_batched`] after gate and up: `silu_mul` per token,
+/// batched down, then the raw residual add per token. Split out so the ANE
+/// split prototype can put gate and up in their own command buffers.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_dense_ffn_tail_batched(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    weights: &gpu::ResidentGpuWeights,
+    index: &ResidentIndex,
+    scratch: &DecodeScratch,
+    batched: &BatchedScratch,
+    prefix: &str,
+    layer: usize,
+    hidden: usize,
+    inter: usize,
+    use_silu: bool,
+    batch: usize,
+) -> Result<(), RealForwardError> {
+    let gpu_err = RealForwardError::Gpu;
     let act = if use_silu {
         gpu::encode_silu_mul
     } else {
