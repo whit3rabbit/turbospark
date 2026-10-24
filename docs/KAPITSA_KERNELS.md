@@ -471,6 +471,55 @@ of it), verify attention (2.3 ms over 8 one-row dispatches a layer, which the
 rows-batched kernel in the playbook's Next work item 1 targets), the per-head
 norms (1.7 ms) and the aux capture copies (0.9 ms).
 
+#### Measured: the three remaining ideas, 2026-10-23
+
+**Hybrid prompt lookup with a drafter: declined, with a measurement.** The
+copy-heavy prompt (rename a variable in a 25-line function), served through
+`turbospark-server` with DFlash2 at block 7 and the 8-row tile on, ran at
+**87.3 tok/s** with output byte-identical to the flag-off runs of the same
+prompt (hash `b99aac05c37b`, 187 tokens, one request, so a direction and not a
+rate). Its stats: 24 rounds, **6.83 accepted and 7.83 committed per round**,
+acceptance 1.00 at all seven positions, one rollback. The round ceiling at
+block 7 is 8. The lookup replay (`pld_replay_probe.rs`) reached at most 5.3
+committed per round on the same prompt at its longest draft. A hybrid can only
+add where the drafter falls short, and here it commits 98% of the ceiling, so
+it has nothing to add; the limit is the block, not the draft source. (The same
+server run on short-explanation read 28.6 tok/s at 2.65 committed per round,
+where lookup also finds nothing.) A longer block is a different question:
+kapitsa's own experiment with 16 and 32 row verifies on this model found 6.0
+tokens per cycle at 32 rows costing 3.3x the cycle time of 8 rows, so it does
+not pay either.
+
+**Verify attention, rows-batched kernel: not pursued; the prize is small and
+the constraint is expensive.** Verify attention is 2.3 ms of the 66 ms pass
+(128 `attention_decode_gqa_partial` dispatches plus 128 combines) on a short
+prompt, and it grows only 3-4 ms from a 426-token to a 2,940-token prompt
+(verify 66-68 to 70.3 ms), so even halving it saves 1-2 ms. The rows kernel
+shares chunk boundaries across rows and is not bit-identical to the one-row
+kernel that decode runs, so using it in verify would require decode to use it
+too (a batch of one, 0.89-1.07x the one-row cost) and a re-freeze of every
+digest that family pins. That is a numerics change for 1-2% of a round, in
+files (`families/qwen/attn.rs` and the dispatch layer) that carry another
+session's uncommitted wiring. The playbook's Next work item 1 already records
+the route and a bit-exact variant that measured 1.06-1.22x for about 2% of a
+round; nothing here changes that verdict.
+
+**Sharing the tile's activation prep: small, and in the tile owner's files.**
+The profile counts 369 `dequant_int4_mma8_table` dispatches (2.0 ms,
+3% of the pass). Two shared inputs account for 112 of them: gate and up read the
+same normed input on all 64 layers (64 preps saved), and the GDN qkv and z
+projections read the same input on 48 layers (48 saved). That is 30% of the
+dispatches, about 0.6 ms in the inflating profiler and nearer 0.3-0.5 ms in a
+real pass, around half a percent of a round. The larger form, writing the
+fragment-ordered table directly from the producing norm or SiLU so no prep
+dispatch is needed, would remove all 2.0 ms but changes those producers. Both
+live in `dequant_int4_mma8.rs` and `real_forward_dispatch.rs`, so they are left
+to that work. These two sizings come from the profile's dispatch counts and
+times, not from experiments.
+
+What is left is the verify floor: the 8-row tile's own efficiency (the large
+projections are 71.6% of the pass) and the three small rows above.
+
 ### Prompt lookup
 
 Prior measurement, so this is not a fresh idea: `accept_length_probe.rs`
