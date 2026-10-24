@@ -27,6 +27,8 @@ tslab: the evaluator for kernel and method experiments (macOS).
   tslab confirm --spec SPEC.json [--base REV]
   tslab kernel  --model M [--bench gemv|prefill_gemm|all] [--experiment NAME]
   tslab ane-plan --path PROGRAM.mlpackage|MANIFEST_DIR [--units ane|all|gpu|cpu]
+  tslab chain-capture --model M [--prompt ...]... [--tokens 512] [--depth 8] [--experiment NAME]
+  tslab depth-replay [--experiment NAME] [--costs flag_off,flag_on] [--tokens 512] [--top 10]
   tslab ledger  --experiment NAME [--kind run|verdict|...]
 
 workload: [--prompt protocol:ID|messages:PATH|text:PATH]... [--decode N]
@@ -63,6 +65,8 @@ pub fn main() -> i32 {
         "confirm" => crate::experiment::confirm_cmd(args),
         "kernel" => crate::kernel::kernel_cmd(args).map(|()| 0),
         "ane-plan" => crate::ane::ane_plan_cmd(args).map(|()| 0),
+        "chain-capture" => crate::depth_replay::chain_capture_cmd(args).map(|()| 0),
+        "depth-replay" => crate::depth_replay::depth_replay_cmd(args).map(|()| 0),
         other => Err(format!("unknown command {other:?}\n\n{USAGE}")),
     };
     match result {

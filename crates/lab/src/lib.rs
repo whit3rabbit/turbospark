@@ -38,6 +38,8 @@ pub mod ane;
 #[cfg(target_os = "macos")]
 pub mod cli;
 #[cfg(target_os = "macos")]
+pub mod depth_replay;
+#[cfg(target_os = "macos")]
 pub mod experiment;
 #[cfg(target_os = "macos")]
 pub mod host;

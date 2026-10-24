@@ -185,6 +185,15 @@ Say so in the hypothesis rather than measure around it:
 - **Kernel benches beyond two.** `tslab kernel` covers INT4 matmul and
   decode attention. The MoE routed pair, the MMA8 verify tile, multi-row
   prefill attention and a bit-hash corpus over outputs are not ported.
+- **Phase buckets on dense families.** `PhaseCounters` is filled by the
+  MoE flows. On dense Qwen3.8 every named bucket reads 0, so a profile there
+  gives wall times and spec-stats only. Use `TURBOSPARK_DISPATCH_PROFILE=1`
+  (unquotable) to rank kernels, or attribute by skipping a kernel behind a
+  switch.
+- **Per-round milliseconds on this base.** `ms/round` in `[spec-stats]`
+  comes from uncommitted runtime work. Until it lands, speculative records
+  carry committed tokens per round and per-position acceptance, not draft
+  and verify times.
 - **Dispatch-level shares.** `TURBOSPARK_DISPATCH_PROFILE=1` output is
   kept as text in the record, unparsed, and such runs are never quotable.
 - **ANE arms need an `ane-prefill` worker.** The worker refuses an ANE arm
