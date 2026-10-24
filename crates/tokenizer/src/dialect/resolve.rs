@@ -300,9 +300,9 @@ pub(crate) fn detect_dialect(tokenizer: &Tokenizer) -> ChatDialect {
 }
 
 use super::resolvers::{
-    resolve_chatml, resolve_deepseek, resolve_deepseek_v2, resolve_gemma, resolve_glm,
-    resolve_flint, resolve_harmony, resolve_kimi, resolve_llama3, resolve_mistral, resolve_muse_glimmer,
-    resolve_spark,
+    resolve_chatml, resolve_deepseek, resolve_deepseek_v2, resolve_flint, resolve_gemma,
+    resolve_glm, resolve_harmony, resolve_kimi, resolve_llama3, resolve_mistral,
+    resolve_muse_glimmer, resolve_spark,
 };
 
 pub(crate) fn resolve_dialect(

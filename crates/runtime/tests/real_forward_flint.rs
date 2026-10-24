@@ -19,7 +19,9 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use half::f16;
-use turbospark_repack::{build_synthetic_flint_install, rebalance_install_in_place, FLINT_SWIGLU_SHIFT};
+use turbospark_repack::{
+    build_synthetic_flint_install, rebalance_install_in_place, FLINT_SWIGLU_SHIFT,
+};
 use turbospark_runtime::{LogitProducer, RealForwardRunner};
 
 fn tempdir() -> std::path::PathBuf {
@@ -127,7 +129,10 @@ fn decoding_the_same_install_twice_is_bit_identical() {
     let (dir, arch) = flint_install();
     let a = decode(&dir, &arch, 12);
     let b = decode(&dir, &arch, 12);
-    assert_eq!(a, b, "two fresh runners disagree: generation is not deterministic");
+    assert_eq!(
+        a, b,
+        "two fresh runners disagree: generation is not deterministic"
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -144,17 +149,23 @@ fn every_flint_specific_input_reaches_the_math() {
     let cases: Vec<(&str, Vec<String>, u16)> = vec![
         (
             "the learned attention sinks (softmax_offset)",
-            (0..4).map(|l| layer(l, "self_attn.softmax_offset")).collect(),
+            (0..4)
+                .map(|l| layer(l, "self_attn.softmax_offset"))
+                .collect(),
             BF16_EIGHT,
         ),
         (
             "the per-head q norm",
-            (0..4).map(|l| layer(l, "self_attn.q_norm.weight")).collect(),
+            (0..4)
+                .map(|l| layer(l, "self_attn.q_norm.weight"))
+                .collect(),
             BF16_EIGHT,
         ),
         (
             "the per-head k norm",
-            (0..4).map(|l| layer(l, "self_attn.k_norm.weight")).collect(),
+            (0..4)
+                .map(|l| layer(l, "self_attn.k_norm.weight"))
+                .collect(),
             BF16_EIGHT,
         ),
         (
@@ -203,7 +214,10 @@ fn narrowing_top_k_changes_the_output() {
     one.top_k_experts = 1;
     patch_manifest(&dir, "topKExperts", serde_json::json!(1));
     let after = decode(&dir, &one, 6);
-    assert!(distance(&before, &after) > 0.0, "top_k is not reaching the router");
+    assert!(
+        distance(&before, &after) > 0.0,
+        "top_k is not reaching the router"
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -305,7 +319,10 @@ fn the_rebalance_does_not_change_the_answer() {
     let (dir, arch) = flint_install();
     let rebalanced = decode(&dir, &arch, 12);
     let stats = rebalance_install_in_place(&dir, -FLINT_SWIGLU_SHIFT).expect("undo in place");
-    assert_eq!(stats.left_alone, 0, "no value may be skipped, or the undo is not exact");
+    assert_eq!(
+        stats.left_alone, 0,
+        "no value may be skipped, or the undo is not exact"
+    );
     assert!(stats.resident_tensors > 0 && stats.expert_blobs > 0);
     let original = decode(&dir, &arch, 12);
 
@@ -315,8 +332,18 @@ fn the_rebalance_does_not_change_the_answer() {
         rel < 0.02,
         "the rebalance moved the logits by {rel:.4} of their magnitude: it is not an identity"
     );
-    let argmax = |v: &[f32]| v.iter().enumerate().max_by(|a, b| a.1.total_cmp(b.1)).unwrap().0;
-    assert_eq!(argmax(&rebalanced), argmax(&original), "the top token changed");
+    let argmax = |v: &[f32]| {
+        v.iter()
+            .enumerate()
+            .max_by(|a, b| a.1.total_cmp(b.1))
+            .unwrap()
+            .0
+    };
+    assert_eq!(
+        argmax(&rebalanced),
+        argmax(&original),
+        "the top token changed"
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -342,6 +369,9 @@ fn an_fp16_overflow_is_reproduced_and_then_removed_by_the_exact_inverse() {
     let stats = rebalance_install_in_place(&dir, inflate).expect("deflate in place");
     assert_eq!(stats.left_alone, 0);
     let restored = decode_checked(&dir, &arch, 6).expect("restored install is finite");
-    assert_eq!(restored, baseline, "the in-place shift is not exactly invertible");
+    assert_eq!(
+        restored, baseline,
+        "the in-place shift is not exactly invertible"
+    );
     std::fs::remove_dir_all(&dir).ok();
 }

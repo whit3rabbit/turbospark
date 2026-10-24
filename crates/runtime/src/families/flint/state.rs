@@ -192,7 +192,11 @@ impl RealFlintState {
                 ));
             }
             let ffn: &[&str] = if layer < lead {
-                &["mlp.gate_proj.weight", "mlp.up_proj.weight", "mlp.down_proj.weight"]
+                &[
+                    "mlp.gate_proj.weight",
+                    "mlp.up_proj.weight",
+                    "mlp.down_proj.weight",
+                ]
             } else {
                 &[
                     "mlp.gate.weight",

@@ -171,9 +171,7 @@ pub fn parse_flint_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
         .map(|v| match v.as_str() {
             Some("full_attention") => Ok(1u8),
             Some("sliding_attention") => Ok(0u8),
-            other => Err(Gemma4Error::Config(format!(
-                "unknown layer type {other:?}"
-            ))),
+            other => Err(Gemma4Error::Config(format!("unknown layer type {other:?}"))),
         })
         .collect::<Result<_, _>>()?;
     let full_layers: Vec<i64> = mask
