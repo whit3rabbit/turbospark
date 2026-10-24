@@ -22,7 +22,7 @@ use crate::args::Args;
 use crate::gates::{effective_bounds, judge_quality, GateClass, PromptComparison, QualityResult};
 use crate::integrity;
 use crate::lock::MachineLock;
-use crate::orchestrate::{run_ab, Session};
+use crate::orchestrate::{run_ab, AbRun, Session};
 use crate::paths::lab_dir;
 use crate::spec::ExperimentSpec;
 use crate::stats::Verdict;
@@ -341,8 +341,69 @@ pub fn gate_cmd(mut args: Args) -> Result<(), String> {
 /// The decision values the ledger records.
 pub const KEEP_PENDING_CONFIRM: &str = "keep_pending_confirm";
 pub const DISCARD: &str = "discard";
+/// No evidence either way: too few clean pairs, usually a busy host. NOT a
+/// reason to revert the change; the idea is untested, not refuted.
+pub const INCONCLUSIVE: &str = "inconclusive";
 
-pub fn run_experiment_cmd(mut args: Args) -> Result<(), String> {
+/// Process exit codes of `run-experiment` and `confirm`, so a script can
+/// branch on the outcome. 0 is a keep, 1 is an error that reached no
+/// decision, and 2 is a usage error (`tslab` with no arguments).
+pub const EXIT_DISCARD: i32 = 3;
+pub const EXIT_INCONCLUSIVE: i32 = 4;
+
+/// The exit code for a recorded decision (`keep` is `confirm`'s).
+pub fn exit_code_for(decision: &str) -> i32 {
+    match decision {
+        KEEP_PENDING_CONFIRM | "keep" => 0,
+        DISCARD => EXIT_DISCARD,
+        INCONCLUSIVE => EXIT_INCONCLUSIVE,
+        _ => 1,
+    }
+}
+
+/// What `run-experiment` records once the A/B is done.
+///
+/// `Inconclusive` is its own decision, not a discard: `program.md` tells the
+/// loop to revert on a discard, and reverting a change because the host was
+/// busy throws away work no measurement has judged.
+pub fn decide(
+    trusted: bool,
+    verdict: Verdict,
+    memory_passed: bool,
+    clean_pairs: usize,
+    min_pairs: usize,
+    stopped: Option<&str>,
+) -> (&'static str, String) {
+    if !trusted {
+        return (
+            DISCARD,
+            "evaluator was not the trusted install (--dev-untrusted)".to_string(),
+        );
+    }
+    match verdict {
+        Verdict::Inconclusive => {
+            let mut reason = format!(
+                "only {clean_pairs} clean pair(s), need {min_pairs}; the idea is untested, \
+                 not refuted. Do NOT revert. Fix the condition and re-run"
+            );
+            if let Some(why) = stopped {
+                reason.push_str(&format!(" ({why})"));
+            }
+            (INCONCLUSIVE, reason)
+        }
+        Verdict::Win if !memory_passed => (
+            DISCARD,
+            "peak footprint grew past the allowance".to_string(),
+        ),
+        Verdict::Win => (
+            KEEP_PENDING_CONFIRM,
+            "WIN with gates passed; run tslab confirm".to_string(),
+        ),
+        other => (DISCARD, format!("verdict {other:?}")),
+    }
+}
+
+pub fn run_experiment_cmd(mut args: Args) -> Result<i32, String> {
     let started = Instant::now();
     let (p, _lock) = prepare(&mut args, "run-experiment")?;
     args.finish()?;
@@ -350,7 +411,7 @@ pub fn run_experiment_cmd(mut args: Args) -> Result<(), String> {
     let deadline = started + Duration::from_secs(60 * u64::from(p.spec.time_budget_min));
     let ledger = &p.session.ledger;
 
-    let finish = |decision: &str, reason: String, extra: Value| -> Result<(), String> {
+    let finish = |decision: &str, reason: String, extra: Value| -> Result<i32, String> {
         let mut rec = json!({"spec_sha256": p.sha, "knob_env": knob, "decision": decision,
                              "reason": reason, "trusted": p.trusted,
                              "elapsed_s": started.elapsed().as_secs_f64()});
@@ -359,7 +420,7 @@ pub fn run_experiment_cmd(mut args: Args) -> Result<(), String> {
         }
         let id = ledger.append("experiment", rec)?;
         println!("DECISION: {decision} ({reason}); ledger id {id}");
-        Ok(())
+        Ok(exit_code_for(decision))
     };
 
     let tests = match required_tests(&p.repo, &p.spec.required_tests, &p.session.exp_dir) {
@@ -386,7 +447,11 @@ pub fn run_experiment_cmd(mut args: Args) -> Result<(), String> {
     }
     let (floor, memory_noise) =
         crate::cli::null_floor(&p.session, &p.spec.workload, p.spec.primary_metric)?;
-    let (verdict, pairs) = run_ab(
+    let AbRun {
+        verdict,
+        pairs,
+        stopped,
+    } = run_ab(
         &p.session,
         &p.spec.baseline,
         &p.spec.candidate,
@@ -408,29 +473,20 @@ pub fn run_experiment_cmd(mut args: Args) -> Result<(), String> {
         .map(|(a, b)| (a.run_id.clone(), b.run_id.clone()))
         .collect();
     let extra = json!({"required_tests": tests, "quality": q, "verdict": verdict,
-                       "null_floor": floor, "memory": memory, "pairs": run_ids});
-    let (decision, reason) = if !p.trusted {
-        (
-            DISCARD,
-            "evaluator was not the trusted install (--dev-untrusted)".to_string(),
-        )
-    } else if verdict.verdict != Verdict::Win {
-        (DISCARD, format!("verdict {:?}", verdict.verdict))
-    } else if memory["passed"] != true {
-        (
-            DISCARD,
-            "peak footprint grew past the allowance".to_string(),
-        )
-    } else {
-        (
-            KEEP_PENDING_CONFIRM,
-            "WIN with gates passed; run tslab confirm".to_string(),
-        )
-    };
+                       "null_floor": floor, "memory": memory, "pairs": run_ids,
+                       "stopped": stopped});
+    let (decision, reason) = decide(
+        p.trusted,
+        verdict.verdict,
+        memory["passed"] == true,
+        verdict.improvements.len(),
+        p.spec.min_pairs,
+        stopped.as_deref(),
+    );
     finish(decision, reason, extra)
 }
 
-pub fn confirm_cmd(mut args: Args) -> Result<(), String> {
+pub fn confirm_cmd(mut args: Args) -> Result<i32, String> {
     let (p, _lock) = prepare(&mut args, "confirm")?;
     args.finish()?;
     let ledger = &p.session.ledger;
@@ -457,7 +513,7 @@ pub fn confirm_cmd(mut args: Args) -> Result<(), String> {
         .confirm_workload
         .clone()
         .ok_or("the spec has no confirm_workload")?;
-    let (verdict, _pairs) = run_ab(
+    let AbRun { verdict, .. } = run_ab(
         &p.session,
         &p.spec.baseline,
         &p.spec.candidate,
@@ -478,5 +534,66 @@ pub fn confirm_cmd(mut args: Args) -> Result<(), String> {
         json!({"spec_sha256": p.sha, "verdict": verdict, "decision": decision}),
     )?;
     println!("CONFIRM: {decision}; ledger id {id}");
-    Ok(())
+    Ok(exit_code_for(decision))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn d(verdict: Verdict, memory: bool, stopped: Option<&str>) -> (&'static str, String) {
+        decide(true, verdict, memory, 0, 3, stopped)
+    }
+
+    /// The bug this exists for: `program.md` reverts on a discard, and a busy
+    /// host produced a "discard" for an idea nothing had measured.
+    #[test]
+    fn an_inconclusive_verdict_is_not_a_discard() {
+        let (decision, reason) = d(Verdict::Inconclusive, true, None);
+        assert_eq!(decision, INCONCLUSIVE);
+        assert!(reason.contains("Do NOT revert"), "{reason}");
+        assert!(reason.contains("only 0 clean pair(s), need 3"), "{reason}");
+    }
+
+    #[test]
+    fn an_early_stop_is_named_in_the_inconclusive_reason() {
+        let (decision, reason) = d(Verdict::Inconclusive, true, Some("the host did not go quiet"));
+        assert_eq!(decision, INCONCLUSIVE);
+        assert!(reason.contains("the host did not go quiet"), "{reason}");
+    }
+
+    #[test]
+    fn noise_and_loss_are_discards() {
+        assert_eq!(d(Verdict::Noise, true, None).0, DISCARD);
+        assert_eq!(d(Verdict::Loss, true, None).0, DISCARD);
+    }
+
+    #[test]
+    fn only_a_win_that_passes_memory_is_kept() {
+        assert_eq!(d(Verdict::Win, true, None).0, KEEP_PENDING_CONFIRM);
+        let (decision, reason) = d(Verdict::Win, false, None);
+        assert_eq!(decision, DISCARD);
+        assert!(reason.contains("peak footprint"), "{reason}");
+    }
+
+    /// An untrusted evaluator decides nothing, whatever the numbers say.
+    #[test]
+    fn an_untrusted_evaluator_never_keeps_or_calls_inconclusive() {
+        for v in [Verdict::Win, Verdict::Inconclusive, Verdict::Noise] {
+            assert_eq!(decide(false, v, true, 9, 3, None).0, DISCARD);
+        }
+    }
+
+    #[test]
+    fn each_decision_has_its_own_exit_code() {
+        assert_eq!(exit_code_for(KEEP_PENDING_CONFIRM), 0);
+        assert_eq!(exit_code_for("keep"), 0);
+        assert_eq!(exit_code_for(DISCARD), 3);
+        assert_eq!(exit_code_for(INCONCLUSIVE), 4);
+        assert_eq!(exit_code_for("something else"), 1);
+        // 1 is an error and 2 is usage, so no decision may collide with them.
+        for decision in [KEEP_PENDING_CONFIRM, "keep", DISCARD, INCONCLUSIVE] {
+            assert!(![1, 2].contains(&exit_code_for(decision)), "{decision}");
+        }
+    }
 }

@@ -22,9 +22,9 @@ tslab: the evaluator for kernel and method experiments (macOS).
   tslab ab      --model M [workload] --baseline NAME[:KEY=V,...] --candidate NAME[:KEY=V,...]
                 [--null] [--metric prefill_tok_s|decode_tok_s|prefill_s|peak_bytes]
                 [--min-effect 0.02] [--pairs 3] [--max-pairs 6] [--experiment NAME]
-  tslab gate    --spec SPEC.json
+  tslab gate    --spec SPEC.json [--base REV]      (loads the model: takes minutes)
   tslab run-experiment --spec SPEC.json [--base REV]
-  tslab confirm --spec SPEC.json
+  tslab confirm --spec SPEC.json [--base REV]
   tslab kernel  --model M [--bench gemv|prefill_gemm|all] [--experiment NAME]
   tslab ane-plan --path PROGRAM.mlpackage|MANIFEST_DIR [--units ane|all|gpu|cpu]
   tslab ledger  --experiment NAME [--kind run|verdict|...]
@@ -32,7 +32,13 @@ tslab: the evaluator for kernel and method experiments (macOS).
 workload: [--prompt protocol:ID|messages:PATH|text:PATH]... [--decode N]
           [--chunk N|off] [--context N]
 host:     [--max-foreign-cpu 150] [--max-single-cpu 90] [--allow-battery]
-          [--timeout-min 60]
+          [--timeout-min 60] [--quiet-wait-min 5] [--min-free-gb 10]
+          (--quiet-wait-min 0 measures on a busy host; --min-free-gb 0 skips the disk check)
+
+--base REV: the commit the experiment's diff is checked against (default: main).
+  An experiment tree that merges in the lab itself needs --base <that merge commit>.
+exit codes (run-experiment, confirm): 0 keep, 3 discard, 4 inconclusive (do not revert),
+  1 error, 2 usage.
 
 Results: $TURBOSPARK_LAB_DIR, else $TURBOSPARK_HOME/lab, else ~/.turbospark/lab.
 KEY is a TURBOSPARK_* name or a knob short name (tslab knobs lists them).";
@@ -45,20 +51,22 @@ pub fn main() -> i32 {
     }
     let cmd = argv.remove(0);
     let args = Args::new(argv);
-    let result = match cmd.as_str() {
-        "profile" => profile(args),
-        "ab" => ab(args),
-        "ledger" => ledger(args),
-        "knobs" => knobs_cmd(args),
-        "gate" => crate::experiment::gate_cmd(args),
+    // The two commands that reach a decision return its exit code; every
+    // other command is 0 on success.
+    let result: Result<i32, String> = match cmd.as_str() {
+        "profile" => profile(args).map(|()| 0),
+        "ab" => ab(args).map(|()| 0),
+        "ledger" => ledger(args).map(|()| 0),
+        "knobs" => knobs_cmd(args).map(|()| 0),
+        "gate" => crate::experiment::gate_cmd(args).map(|()| 0),
         "run-experiment" => crate::experiment::run_experiment_cmd(args),
         "confirm" => crate::experiment::confirm_cmd(args),
-        "kernel" => crate::kernel::kernel_cmd(args),
-        "ane-plan" => crate::ane::ane_plan_cmd(args),
+        "kernel" => crate::kernel::kernel_cmd(args).map(|()| 0),
+        "ane-plan" => crate::ane::ane_plan_cmd(args).map(|()| 0),
         other => Err(format!("unknown command {other:?}\n\n{USAGE}")),
     };
     match result {
-        Ok(()) => 0,
+        Ok(code) => code,
         Err(e) => {
             eprintln!("tslab {cmd}: {e}");
             1
@@ -96,6 +104,9 @@ pub fn host_rules_from(args: &mut Args) -> Result<HostRules, String> {
         max_single_cpu_percent: args.parsed("--max-single-cpu", d.max_single_cpu_percent)?,
         sustained_s: d.sustained_s,
         require_ac: !args.flag("--allow-battery"),
+        // Minutes on the command line, seconds in the rule.
+        quiet_wait_s: 60.0 * args.parsed("--quiet-wait-min", d.quiet_wait_s / 60.0)?,
+        min_free_gb: args.parsed("--min-free-gb", d.min_free_gb)?,
     })
 }
 
@@ -303,7 +314,11 @@ fn ab(mut args: Args) -> Result<(), String> {
         min_effect.max(stats::MIN_EFFECT_FLOOR) * 100.0,
         floor * 100.0
     );
-    let (verdict, pairs) = run_ab(
+    let crate::orchestrate::AbRun {
+        verdict,
+        pairs,
+        stopped,
+    } = run_ab(
         &session, &baseline, &candidate, &workload, metric, min_effect, min_pairs, max_pairs, None,
     )?;
     let memory = memory_check(&pairs, None, memory_noise);
@@ -316,6 +331,9 @@ fn ab(mut args: Args) -> Result<(), String> {
         &verdict,
     );
     println!("  memory: {memory}");
+    if let Some(why) = &stopped {
+        println!("  stopped early: {why}");
+    }
     if null {
         let floor = stats::null_floor(&verdict.improvements);
         // Twice the identical arms' peak gap is what this host's peak

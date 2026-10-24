@@ -26,15 +26,23 @@ the AGENTS.md files of every crate you touch.
    binary that grades you cannot contain your changes.
 
    ```sh
-   cargo build --release -p turbospark-lab --bin tslab
+   cargo build --release -p turbospark-lab
    LAB=${TURBOSPARK_LAB_DIR:-${TURBOSPARK_HOME:-$HOME/.turbospark}/lab}
    REV=$(git rev-parse --short HEAD)
-   mkdir -p "$LAB/bin/$REV" && cp target/release/tslab "$LAB/bin/$REV/tslab"
+   mkdir -p "$LAB/bin/$REV"
+   cp target/release/tslab target/release/tslab-worker "$LAB/bin/$REV/"
    TSLAB="$LAB/bin/$REV/tslab"
    ```
 
-   `run-experiment` builds `tslab-worker` from your tree itself, so the
+   Copy BOTH binaries. `profile`, `ab` and `kernel` use the `tslab-worker`
+   beside `tslab` and stop with "worker not found" without it.
+   `run-experiment` builds its own `tslab-worker` from your tree, so the
    candidate code is what gets measured.
+
+   If the lab is not on `main` yet (it lives on a branch you merged in), the
+   integrity check would list every lab file as a touched evaluator input.
+   Pass the commit that holds the lab as the base to `gate`, `run-experiment`
+   and `confirm`: `--base <that merge commit>`.
 
 3. Find where time goes, on AC power with a quiet host:
 
@@ -70,13 +78,29 @@ the AGENTS.md files of every crate you touch.
    `to_bits()` equality for bit-exact work, a reference comparison for
    KL-bounded work. Break the kernel on purpose once and confirm the test
    fails, then restore it. List the test in `required_tests`.
+
+   `required_tests` run with `cargo test --release`, and so should you while
+   iterating: a model-opening test took 1,111 s in the debug profile and under
+   a second in release. A switch read once through a `OnceLock` cannot be
+   flipped inside one test binary, so set it ONCE for the whole file (a
+   `std::sync::Once` that calls `set_var` before any runner is built) and
+   compare against a reference path that needs no switch, such as the
+   sequential loop. Tests that compare two runs of the new path with each other
+   are self-relative and survive a broken kernel: only the comparison against
+   the old path has teeth, which is what the mutation check is for.
 5. **Commit** the iteration on `lab/<tag>` (only your paths), so a discard
    is one revert.
 6. **Evaluate:** `$TSLAB run-experiment --spec <name>.spec.json`. It checks
    the diff, builds the worker, runs the required tests and the quality
    gate, runs the paired A/B under the time budget, checks memory, and
    prints `DECISION:`.
-7. **Act on the decision.**
+7. **Act on the decision.** The exit code says it too: 0 keep, 3 discard,
+   4 inconclusive, 1 error.
+   - `inconclusive`: do NOT revert. Too few clean pairs means nothing judged
+     the idea, usually because the host was busy. Read the `reason` and the
+     "Causes, by runs affected" list `tslab` prints, fix the condition (stop
+     the offenders, free disk, wait), and re-run the same spec. After three
+     inconclusive runs in a row, say so and stop rather than loop.
    - `discard`: `git revert --no-edit HEAD` (your own commit only). Never
      `reset --hard` or `clean`: other sessions share this repository.
    - `keep_pending_confirm`: run `$TSLAB confirm --spec <name>.spec.json`
@@ -177,6 +201,11 @@ Say so in the hypothesis rather than measure around it:
   re-run until it wins: a re-run of the same spec is a new hypothesis only
   if something changed.
 - `INCONCLUSIVE`: too few clean pairs (busy host, refused arm, budget). Fix
-  the condition, not the threshold.
+  the condition, not the threshold. `run-experiment` records it as the
+  decision `inconclusive`, NOT `discard`, so nothing is reverted.
+  Before each pair `tslab` waits up to `--quiet-wait-min` (default 5) for the
+  host to settle, and stops early, naming the offenders, if it does not; it also
+  refuses to start under `--min-free-gb` (default 10) of free disk. Pass `0` to
+  either to turn it off.
 - Dirty runs stay in the ledger with their reasons (`tslab ledger
   --experiment <name> --kind run`).

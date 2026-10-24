@@ -288,6 +288,24 @@ pub struct HostRules {
     /// How long CPU must stay over a threshold to count.
     pub sustained_s: f64,
     pub require_ac: bool,
+    /// How long to wait for the host to go quiet before each pair, seconds.
+    /// 0 measures regardless, which is the old behaviour. A pair started on a
+    /// quiet host can still turn dirty mid-run; this only stops the lab from
+    /// burning a whole pair on a host that was already busy at the start.
+    #[serde(default = "default_quiet_wait_s")]
+    pub quiet_wait_s: f64,
+    /// Refuse to start with less free disk than this on the lab's volume,
+    /// GiB. 0 disables. Release builds are about 5 GB per worktree.
+    #[serde(default = "default_min_free_gb")]
+    pub min_free_gb: f64,
+}
+
+fn default_quiet_wait_s() -> f64 {
+    300.0
+}
+
+fn default_min_free_gb() -> f64 {
+    10.0
 }
 
 impl Default for HostRules {
@@ -297,6 +315,8 @@ impl Default for HostRules {
             max_single_cpu_percent: 90.0,
             sustained_s: 5.0,
             require_ac: true,
+            quiet_wait_s: default_quiet_wait_s(),
+            min_free_gb: default_min_free_gb(),
         }
     }
 }
@@ -362,9 +382,232 @@ pub fn eligibility(samples: &[HostSample], rules: &HostRules) -> (bool, Vec<Stri
     (reasons.is_empty(), reasons.into_iter().collect())
 }
 
+/// What waiting for a quiet host found.
+#[derive(Debug, Clone)]
+pub struct QuietReport {
+    pub quiet: bool,
+    pub waited_s: f64,
+    pub checks: usize,
+    /// Why the last check was not clean. Empty when `quiet`.
+    pub reasons: Vec<String>,
+}
+
+/// Polls `check` until it reports a clean host or `max_wait` has passed.
+///
+/// Generic over its three effects so the loop is testable without a clock:
+/// `check` returns `(clean, reasons)`, `sleep` waits `poll`, and `elapsed`
+/// is the time spent so far. It always checks once, so a `max_wait` of zero
+/// still reports the current state.
+pub fn wait_until_quiet_with(
+    max_wait: std::time::Duration,
+    poll: std::time::Duration,
+    mut check: impl FnMut() -> (bool, Vec<String>),
+    mut sleep: impl FnMut(std::time::Duration),
+    mut elapsed: impl FnMut() -> std::time::Duration,
+) -> QuietReport {
+    let mut checks = 0;
+    loop {
+        let (clean, reasons) = check();
+        checks += 1;
+        let waited = elapsed();
+        if clean {
+            return QuietReport {
+                quiet: true,
+                waited_s: waited.as_secs_f64(),
+                checks,
+                reasons: Vec::new(),
+            };
+        }
+        if waited + poll > max_wait {
+            return QuietReport {
+                quiet: false,
+                waited_s: waited.as_secs_f64(),
+                checks,
+                reasons,
+            };
+        }
+        sleep(poll);
+    }
+}
+
+/// Waits (up to `rules.quiet_wait_s`, and not past `deadline`) for a window
+/// in which the host meets `rules`: the same test a run is graded by, applied
+/// BEFORE the run so a pair is not spent on a host that is already busy.
+pub fn wait_until_quiet(rules: &HostRules, deadline: Option<Instant>) -> QuietReport {
+    let started = Instant::now();
+    let mut max_wait = std::time::Duration::from_secs_f64(rules.quiet_wait_s.max(0.0));
+    if let Some(d) = deadline {
+        max_wait = max_wait.min(d.saturating_duration_since(started));
+    }
+    // One window is long enough for a sustained-CPU episode to be observed:
+    // `sustained_s` of intervals plus the priming sample.
+    let samples_needed = rules.sustained_s.ceil().max(1.0) as usize + 2;
+    wait_until_quiet_with(
+        max_wait,
+        std::time::Duration::from_secs(10),
+        || {
+            let mut monitor = HostMonitor::new();
+            let mut samples = Vec::with_capacity(samples_needed);
+            for i in 0..samples_needed {
+                if i > 0 {
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                }
+                samples.push(monitor.sample(None));
+            }
+            eligibility(&samples, rules)
+        },
+        std::thread::sleep,
+        || started.elapsed(),
+    )
+}
+
+/// Free space for an unprivileged user on the volume holding `path` (or its
+/// nearest existing ancestor, since the lab directory may not exist yet).
+pub fn free_disk_bytes(path: &std::path::Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let mut probe = Some(path);
+    while let Some(p) = probe {
+        if p.exists() {
+            let c = std::ffi::CString::new(p.as_os_str().as_bytes()).ok()?;
+            // SAFETY: `c` is a valid NUL-terminated path and `stats` is a
+            // zeroed out-parameter that `statvfs` fills on success.
+            let mut stats: libc::statvfs = unsafe { std::mem::zeroed() };
+            let rc = unsafe { libc::statvfs(c.as_ptr(), &mut stats) };
+            if rc != 0 {
+                return None;
+            }
+            return Some((stats.f_bavail as u64).saturating_mul(stats.f_frsize as u64));
+        }
+        probe = p.parent();
+    }
+    None
+}
+
+/// The refusal message when `free_bytes` is under `min_gb` GiB, or `None`.
+/// An unreadable free-space figure is not a refusal: the check exists to
+/// stop a build or a run from filling the disk, and cannot say it would.
+pub fn disk_shortfall(free_bytes: Option<u64>, min_gb: f64) -> Option<String> {
+    let free = free_bytes?;
+    if min_gb <= 0.0 {
+        return None;
+    }
+    let free_gb = free as f64 / (1u64 << 30) as f64;
+    (free_gb < min_gb).then(|| {
+        format!(
+            "only {free_gb:.1} GiB free on the lab's volume; need at least {min_gb:.0} GiB \
+             (release builds are about 5 GB per worktree). Free space, or pass --min-free-gb 0"
+        )
+    })
+}
+
+/// Refuses to start when the lab's volume is nearly full.
+pub fn check_free_disk(path: &std::path::Path, min_gb: f64) -> Result<(), String> {
+    match disk_shortfall(free_disk_bytes(path), min_gb) {
+        Some(msg) => Err(msg),
+        None => Ok(()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+    use std::time::Duration;
+
+    /// Drives `wait_until_quiet_with` on a fake clock: `busy_checks` checks
+    /// report a dirty host, every later one a clean host. Returns the report
+    /// and how many times `check` ran.
+    fn wait_on_fake_clock(
+        busy_checks: usize,
+        max_wait_s: u64,
+        poll_s: u64,
+    ) -> (QuietReport, usize) {
+        let clock = Cell::new(Duration::ZERO);
+        let calls = Cell::new(0usize);
+        let report = wait_until_quiet_with(
+            Duration::from_secs(max_wait_s),
+            Duration::from_secs(poll_s),
+            || {
+                calls.set(calls.get() + 1);
+                if calls.get() <= busy_checks {
+                    (false, vec!["mediaanalysisd over 90% for 5s or more".into()])
+                } else {
+                    (true, vec![])
+                }
+            },
+            |d| clock.set(clock.get() + d),
+            || clock.get(),
+        );
+        (report, calls.get())
+    }
+
+    #[test]
+    fn a_quiet_host_returns_on_the_first_check() {
+        let (r, calls) = wait_on_fake_clock(0, 300, 10);
+        assert!(r.quiet);
+        assert_eq!((calls, r.checks), (1, 1));
+        assert_eq!(r.waited_s, 0.0);
+        assert!(r.reasons.is_empty());
+    }
+
+    #[test]
+    fn it_waits_through_busy_checks_until_the_host_goes_quiet() {
+        let (r, calls) = wait_on_fake_clock(3, 300, 10);
+        assert!(r.quiet, "{r:?}");
+        assert_eq!((calls, r.checks), (4, 4));
+        assert_eq!(r.waited_s, 30.0);
+    }
+
+    /// The point of the wait: it must give up, and say WHY, rather than
+    /// loop forever or silently measure on a host that never settled.
+    #[test]
+    fn it_gives_up_at_max_wait_and_reports_the_last_reasons() {
+        let (r, calls) = wait_on_fake_clock(usize::MAX, 25, 10);
+        assert!(!r.quiet);
+        // t=0 and t=10 sleep; at t=20 another poll would pass 25, so it stops.
+        assert_eq!((calls, r.checks), (3, 3));
+        assert_eq!(r.waited_s, 20.0);
+        assert_eq!(r.reasons, vec!["mediaanalysisd over 90% for 5s or more"]);
+    }
+
+    #[test]
+    fn a_zero_wait_still_checks_once() {
+        let (r, calls) = wait_on_fake_clock(usize::MAX, 0, 10);
+        assert!(!r.quiet);
+        assert_eq!((calls, r.checks), (1, 1));
+        assert!(!r.reasons.is_empty());
+    }
+
+    #[test]
+    fn disk_shortfall_refuses_only_when_it_can_tell() {
+        let gib = 1u64 << 30;
+        let msg = disk_shortfall(Some(5 * gib), 10.0).expect("5 GiB is under 10");
+        assert!(msg.contains("5.0 GiB") && msg.contains("--min-free-gb"), "{msg}");
+        assert_eq!(disk_shortfall(Some(20 * gib), 10.0), None);
+        assert_eq!(disk_shortfall(Some(10 * gib), 10.0), None, "exactly enough passes");
+        // An unreadable figure is not a refusal, and 0 disables the check.
+        assert_eq!(disk_shortfall(None, 10.0), None);
+        assert_eq!(disk_shortfall(Some(1), 0.0), None);
+    }
+
+    #[test]
+    fn free_disk_is_readable_for_a_path_that_does_not_exist_yet() {
+        let here = free_disk_bytes(&std::env::temp_dir()).expect("temp dir has a volume");
+        assert!(here > 0);
+        let missing = std::env::temp_dir().join("tslab-no-such-dir").join("deeper");
+        assert!(free_disk_bytes(&missing).is_some());
+        assert!(check_free_disk(&std::env::temp_dir(), 0.0).is_ok());
+    }
+
+    /// Ledger records written before these two rules existed must still load.
+    #[test]
+    fn older_host_rules_records_get_the_new_defaults() {
+        let old = r#"{"max_total_cpu_percent":150.0,"max_single_cpu_percent":90.0,
+                      "sustained_s":5.0,"require_ac":true}"#;
+        let rules: HostRules = serde_json::from_str(old).expect("old record parses");
+        assert_eq!(rules.quiet_wait_s, 300.0);
+        assert_eq!(rules.min_free_gb, 10.0);
+    }
 
     fn quiet(t: f64) -> HostSample {
         HostSample {

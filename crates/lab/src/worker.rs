@@ -427,8 +427,10 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
         && !runner.supports_chunked_prefill()
     {
         return Err(format!(
-            "{family} install does not support chunked prefill here; use \"prefill_chunk\": null \
-             rather than measuring the sequential path under a chunked label"
+            "{family} install does not support chunked prefill here; use `--chunk off` (in a spec: \
+             \"prefill_chunk\": null) rather than measuring the sequential path under a chunked \
+             label. An experiment that adds a chunk driver behind a switch should give the OFF arm \
+             a chunk entry point that runs the old per-token loop, so both arms share the label"
         ));
     }
     let vocab = runner.vocab_size();

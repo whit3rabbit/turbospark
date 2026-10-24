@@ -144,6 +144,10 @@ impl Session {
         rules: HostRules,
         timeout: Duration,
     ) -> Result<Self, String> {
+        // Before anything is built or written: a release worktree is about
+        // 5 GB and a measuring session's records add more, and a full disk
+        // fails in the middle of a run with a message about something else.
+        crate::host::check_free_disk(lab, rules.min_free_gb)?;
         let exp_dir = crate::paths::experiment_dir(lab, experiment)?;
         std::fs::create_dir_all(exp_dir.join("runs"))
             .map_err(|e| format!("{}: {e}", exp_dir.display()))?;
@@ -373,10 +377,42 @@ impl Session {
     }
 }
 
+/// What a paired A/B produced.
+pub struct AbRun {
+    pub verdict: VerdictReport,
+    pub pairs: Vec<(Outcome, Outcome)>,
+    /// Why the run stopped before it had `min_pairs` clean pairs for a reason
+    /// other than the pair budget: the host never went quiet. `None` when it
+    /// ran to its natural end. An early stop is not evidence about the
+    /// candidate, and callers report it as such.
+    pub stopped: Option<String>,
+}
+
+/// How many runs each reason made dirty, most common first. This is what to
+/// fix before re-running: the verdict only says the pairs were dirty.
+pub fn dirty_causes(pairs: &[(Outcome, Outcome)]) -> Vec<(String, usize)> {
+    let mut counts: std::collections::BTreeMap<String, usize> = Default::default();
+    for (a, b) in pairs {
+        for o in [a, b].into_iter().filter(|o| !o.eligible) {
+            for reason in &o.reasons {
+                *counts.entry(reason.clone()).or_default() += 1;
+            }
+        }
+    }
+    let mut v: Vec<(String, usize)> = counts.into_iter().collect();
+    v.sort_by(|x, y| y.1.cmp(&x.1).then_with(|| x.0.cmp(&y.0)));
+    v
+}
+
 /// A paired A/B: `min_pairs` clean pairs, extended up to `max_pairs` only to
 /// replace dirty ones (never to chase significance, which would inflate the
 /// false-win rate). A pair is clean when both runs are eligible and every
 /// prompt has the same page-cache class in both.
+///
+/// Before each pair the host must be quiet (`rules.quiet_wait_s`, 0 to skip):
+/// a pair started on a busy host is a dirty pair that also spends the pair
+/// budget and the time. If the host does not settle in that time the run STOPS
+/// with the offenders named, instead of measuring through the dirt.
 #[allow(clippy::too_many_arguments)]
 pub fn run_ab(
     session: &Session,
@@ -388,7 +424,7 @@ pub fn run_ab(
     min_pairs: usize,
     max_pairs: usize,
     deadline: Option<Instant>,
-) -> Result<(VerdictReport, Vec<(Outcome, Outcome)>), String> {
+) -> Result<AbRun, String> {
     // Discarded warmup of each arm: Metal shader caches and the page cache.
     for arm in [baseline, candidate] {
         let o = session.run_once(arm, workload, Mode::Timing, 0, true)?;
@@ -402,11 +438,32 @@ pub fn run_ab(
     }
     let mut pairs = Vec::new();
     let mut clean = Vec::new();
+    let mut stopped = None;
     let mut round = 1;
     while clean.len() < min_pairs && pairs.len() < max_pairs {
         if deadline.is_some_and(|d| Instant::now() >= d) {
             eprintln!("  time budget spent after {} pairs", pairs.len());
             break;
+        }
+        if session.rules.quiet_wait_s > 0.0 {
+            let quiet = crate::host::wait_until_quiet(&session.rules, deadline);
+            if !quiet.quiet {
+                let why = format!(
+                    "the host did not go quiet within {:.0}s ({} checks) before pair {round}: {}",
+                    quiet.waited_s,
+                    quiet.checks,
+                    quiet.reasons.join("; ")
+                );
+                eprintln!("  {why}");
+                stopped = Some(why);
+                break;
+            }
+            if quiet.checks > 1 {
+                eprintln!(
+                    "  host went quiet after {:.0}s ({} checks); starting pair {round}",
+                    quiet.waited_s, quiet.checks
+                );
+            }
         }
         let (first, second) = if round % 2 == 1 {
             (baseline, candidate)
@@ -429,12 +486,64 @@ pub fn run_ab(
         pairs.push((a, b));
         round += 1;
     }
-    Ok((stats::decide(&clean, min_effect), pairs))
+    let causes = dirty_causes(&pairs);
+    if !causes.is_empty() {
+        let dirty_runs: usize = pairs
+            .iter()
+            .map(|(a, b)| usize::from(!a.eligible) + usize::from(!b.eligible))
+            .sum();
+        eprintln!(
+            "  {dirty_runs} of {} runs were dirty. Causes, by runs affected:",
+            pairs.len() * 2
+        );
+        for (reason, n) in causes.iter().take(6) {
+            eprintln!("    {n:>3}  {reason}");
+        }
+    }
+    Ok(AbRun {
+        verdict: stats::decide(&clean, min_effect),
+        pairs,
+        stopped,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn outcome(eligible: bool, reasons: &[&str]) -> Outcome {
+        Outcome {
+            run_id: "r".into(),
+            arm: "a".into(),
+            round: 1,
+            warmup: false,
+            record: Value::Null,
+            status: "ok".into(),
+            eligible,
+            reasons: reasons.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn dirty_causes_count_runs_by_reason_most_common_first() {
+        let pairs = vec![
+            (
+                outcome(false, &["mediaanalysisd over 90%", "a compile (rustc) was running"]),
+                outcome(false, &["mediaanalysisd over 90%"]),
+            ),
+            (outcome(true, &[]), outcome(false, &["a compile (rustc) was running"])),
+        ];
+        assert_eq!(
+            dirty_causes(&pairs),
+            vec![
+                ("a compile (rustc) was running".to_string(), 2),
+                ("mediaanalysisd over 90%".to_string(), 2),
+            ],
+            "ties break alphabetically, and clean runs contribute nothing"
+        );
+        // A clean run that still carries a stray reason is not counted.
+        assert!(dirty_causes(&[(outcome(true, &["stale"]), outcome(true, &[]))]).is_empty());
+    }
 
     #[test]
     fn spec_stats_lines_parse_per_call() {
