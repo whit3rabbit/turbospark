@@ -161,6 +161,15 @@ extension AudioWorkspaceController {
         setVoiceReference(item)
     }
     func clearVoiceReference() { stopReferencePreview(); speechSettings.reference = nil; speechSettings.referenceText = ""; flushPreferences() }
+    /// Moves one end of the reference region. A transcript of a different
+    /// region is invalid conditioning: OmniVoice speaks a mismatched
+    /// transcript's words in place of the script
+    /// (`crates/audio/src/tts/omnivoice/README.md`, reference transcript A/B).
+    func setVoiceReferenceTrim(_ path: WritableKeyPath<AudioVoiceReference, Double>, to value: Double) {
+        stopReferencePreview()
+        speechSettings.reference?[keyPath: path] = value
+        speechSettings.referenceText = ""
+    }
     func stopReferencePreview() {
         referencePreviewTask?.cancel(); referencePreviewTask = nil
         referencePlayer?.stop(); referencePlayer = nil; referencePlaying = false

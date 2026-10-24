@@ -1525,8 +1525,14 @@ the job's PCM. The request names its rate and carries the user's consent; the
 runtime refuses a cloning request without `consent` or a reference outside 1
 to 30 seconds. MegaTTS3 additionally refuses a `referenceText` or
 `instruction` (it aligns the reference itself); OmniVoice reads `referenceText`
-(the transcript prepended to the script) and `instruction` (a delivery cue in
-the style prefix, at most 512 bytes), and refuses MegaTTS3's `pW`/`tW`.
+(the transcript prepended to the script) and refuses MegaTTS3's `pW`/`tW`. Its
+`instruction` is voice design, not a delivery cue: comma-separated speaker
+attributes (gender, age, pitch, the `whisper` style, an English accent, a
+Chinese dialect) that upstream k2-fsa/OmniVoice documents for speech without
+reference audio, trained on Chinese and English only. The engine trims it,
+refuses more than 512 bytes, and does not check the attributes against
+upstream's list. Upstream does not document it alongside a reference, and the
+app's Voice Cloning page sends none.
 
 ```swift
 var request = AudioRequest(task: .textToSpeech, language: "en")

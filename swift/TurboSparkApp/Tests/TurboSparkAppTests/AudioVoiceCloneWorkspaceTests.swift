@@ -225,6 +225,52 @@ final class AudioVoiceCloneWorkspaceTests: XCTestCase {
         XCTAssertEqual(controller.cloneOptions.steps, CloneQuality.balanced.steps, "quality is the page's, not the take's")
     }
 
+    /// A recorded take of `seconds` of audio with `text` as its transcript.
+    @MainActor private func transcribedTake(_ controller: AudioWorkspaceController, kind: AudioLibraryItem.Kind = .recording,
+                                            text: String?, seconds: Int = 3) throws -> AudioLibraryItem {
+        var take = AudioLibraryItem(title: "Take", kind: kind)
+        take.clips = [try storedClip(controller, samples: Array(repeating: 0.1, count: 24_000 * seconds))]
+        if let text {
+            let segment = AudioLibrarySegment(start: 0, end: Double(seconds), text: text)
+            take.transcripts = [AudioTranscriptRevision(source: .final, segments: [segment])]
+        }
+        return take
+    }
+
+    // A transcript that does not match the reference audio is spoken in
+    // place of the script (the OmniVoice reference transcript A/B), so these
+    // two seams must never leave the previous reference's transcript behind.
+    @MainActor func testChoosingAnotherTakeReplacesTheTranscriptAndNeverKeepsTheOldOne() async throws {
+        let controller = try await makeController()
+        defer { controller.shutdown() }
+        controller.setVoiceReference(try transcribedTake(controller, text: "the first take"))
+        XCTAssertEqual(controller.speechSettings.referenceText, "the first take")
+        controller.setVoiceReference(try transcribedTake(controller, text: "the second take"))
+        XCTAssertEqual(controller.speechSettings.referenceText, "the second take")
+        controller.setVoiceReference(try transcribedTake(controller, text: nil))
+        XCTAssertEqual(controller.speechSettings.referenceText, "", "an untranscribed take sends none, not the last one")
+        var spoken = try transcribedTake(controller, kind: .voiceover, text: nil)
+        spoken.recipe.text = "the script it spoke"
+        controller.setVoiceReference(spoken)
+        XCTAssertEqual(controller.speechSettings.referenceText, "the script it spoke")
+        controller.setVoiceReference(try transcribedTake(controller, text: "more than the region", seconds: 31))
+        XCTAssertEqual(controller.speechSettings.reference?.duration, 30)
+        XCTAssertEqual(controller.speechSettings.referenceText, "", "a transcript of more than the 30 s region is dropped")
+    }
+
+    @MainActor func testMovingEitherEndOfTheRegionClearsTheTranscript() async throws {
+        let controller = try await makeController()
+        defer { controller.shutdown() }
+        let take = try transcribedTake(controller, text: "the whole take", seconds: 10)
+        for path in [\AudioVoiceReference.start, \AudioVoiceReference.duration] {
+            controller.setVoiceReference(take)
+            XCTAssertEqual(controller.speechSettings.referenceText, "the whole take")
+            controller.setVoiceReferenceTrim(path, to: 2)
+            XCTAssertEqual(controller.speechSettings.reference?[keyPath: path], 2)
+            XCTAssertEqual(controller.speechSettings.referenceText, "", "the old transcript covers another region")
+        }
+    }
+
     @MainActor func testReferencePeaksDrawTheTrimmedRegion() async throws {
         let controller = try await makeController()
         defer { controller.shutdown() }

@@ -211,7 +211,7 @@ curl http://127.0.0.1:8080/v1/audio/speech \
   -o speech.wav
 ```
 
-For voice cloning, `reference_audio` is a base64-encoded WAV of the voice to clone. MegaTTS3 requires it (1 to 28 seconds) together with `consent: true`. OmniVoice and Drama 3 clone whenever `reference_audio` is present (consent required). Drama 3 also requires `reference_text` (transcript of the reference) and supports sampler parameters (`temperature`, `top_p`, `top_k`, `max_frames`). OmniVoice accepts `instruction` (delivery style).
+For voice cloning, `reference_audio` is a base64-encoded WAV of the voice to clone. MegaTTS3 requires it (1 to 28 seconds) together with `consent: true`. OmniVoice and Drama 3 clone whenever `reference_audio` is present (consent required). Drama 3 also requires `reference_text` (transcript of the reference) and supports sampler parameters (`temperature`, `top_p`, `top_k`, `max_frames`). OmniVoice accepts `instruction` as voice design (comma-separated speaker attributes, which upstream defines for speech without a reference).
 
 Output: 24 kHz (Kokoro, MegaTTS3, OmniVoice) or 44.1 kHz (Drama 3) mono audio (`wav` or raw `pcm`).
 

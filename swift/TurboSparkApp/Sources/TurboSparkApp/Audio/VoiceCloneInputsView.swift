@@ -17,6 +17,9 @@ struct VoiceCloneInputsView: View {
             if controller.selectedProfileNeedsReferenceTranscript {
                 Qwen3ReferenceTranscriptEditor(controller: controller)
             } else {
+                if controller.selectedProfile?.family == "omnivoice" {
+                    Qwen3ReferenceTranscriptEditor(controller: controller, optional: true)
+                }
                 VoiceCloneQualityControls(controller: controller)
             }
             AudioSpeechValidationLabel(controller: controller)

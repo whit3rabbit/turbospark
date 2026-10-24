@@ -365,6 +365,53 @@ final class LifecycleGuardTests: XCTestCase {
         XCTAssertFalse(appModel.canUnloadAnyModel)
     }
 
+    /// The top bar observes only AppModel, and its eject reads the audio
+    /// controller through `canUnloadAnyModel`. Nothing republished AppModel
+    /// when an audio model loaded, so the eject stayed dimmed and inert until
+    /// a section switch redrew the bar.
+    func testAudioResidencyChangesRepublishTheModelTheTopBarObserves() async {
+        let appModel = AppModel()
+        defer { appModel.stopCronScheduler() }
+        let audio = appModel.audioWorkspace
+        // Init's model-folder scan lands on the main actor later and
+        // republishes on its own. Let it finish before counting.
+        await appModel.modelScanTask?.value
+        await drainMainQueue()
+        var republished = 0
+        let observation = appModel.objectWillChange.sink { republished += 1 }
+        defer { observation.cancel() }
+
+        audio.loadedModelAlias = "qwen3-base"
+        await drainMainQueue()
+        XCTAssertEqual(republished, 1, "Loading an audio model must redraw the top bar's eject.")
+        XCTAssertTrue(appModel.canUnloadAnyModel)
+
+        audio.inputLevel = 0.5
+        audio.playbackTime = 3
+        await drainMainQueue()
+        XCTAssertEqual(republished, 1, "A meter or playback tick must not redraw every AppModel view.")
+
+        audio.isBusy = true
+        await drainMainQueue()
+        XCTAssertEqual(republished, 2, "A busy audio model cannot be ejected, so the eject must dim.")
+        audio.isBusy = false
+        await drainMainQueue()
+        XCTAssertEqual(republished, 3)
+
+        audio.unloadModel()
+        await drainMainQueue()
+        XCTAssertEqual(republished, 4, "Unloading must redraw the top bar's eject.")
+        XCTAssertFalse(appModel.canUnloadAnyModel)
+    }
+
+    /// Runs what is already queued on the main queue, which includes the
+    /// `receive(on:)` hop that forwards the audio controller's flag.
+    private func drainMainQueue() async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+    }
+
     func testCanLoadModelGating() throws {
         let appModel = AppModel()
         appModel.selected = nil

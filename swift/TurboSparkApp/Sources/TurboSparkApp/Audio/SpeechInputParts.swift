@@ -158,13 +158,19 @@ struct Qwen3EmbeddingOnlyToggle: View {
 @MainActor
 struct Qwen3ReferenceTranscriptEditor: View {
     @ObservedObject var controller: AudioWorkspaceController
+    /// OmniVoice clones without a transcript, so its editor says so.
+    var optional = false
+
+    private var title: Text {
+        optional ? Text("Reference transcript (optional)", bundle: .module) : Text("Transcript of reference speech", bundle: .module)
+    }
 
     var body: some View {
-        Text("Transcript of reference speech", bundle: .module).themedFont(.small, weight: .semibold)
+        title.themedFont(.small, weight: .semibold)
         TextEditor(text: controller.speechBinding(\.referenceText))
             .scrollContentBackground(.hidden).frame(height: 90).padding(8)
             .overlay { RoundedRectangle(cornerRadius: 8).stroke(.appBorder) }
-            .accessibilityLabel(Text("Transcript of reference speech", bundle: .module))
+            .accessibilityLabel(title)
     }
 }
 

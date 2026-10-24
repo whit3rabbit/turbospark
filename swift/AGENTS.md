@@ -161,7 +161,11 @@ staging files changed.
   seam that sets the reference (drop, import, inline recording, reuse from a
   take) never sets or copies consent. A voice reference recording captures
   the microphone through local flags and never writes the Record page's
-  capture settings. `AudioVoiceCloneWorkspaceTests` pins all three.
+  capture settings. `AudioVoiceCloneWorkspaceTests` pins all three. The
+  reference transcript follows the region: choosing a take replaces it with
+  that take's own (or none), and any retrim clears it, because OmniVoice
+  speaks a mismatched transcript in place of the script
+  (`crates/audio/src/tts/omnivoice/README.md`). The same tests pin both.
 - The Voice Cloning page only presents models with native Metal or MLX
   acceleration (`clonesNatively`). Portable CPU-only models remain gated to
   the Advanced portable experiment and must not be presented as voice clone
@@ -178,6 +182,10 @@ staging files changed.
   (`isModelLoaded`, `canLoadModel`, `canUnloadModel`). Unloading is wired into
   `AppModel.canUnloadAnyModel` and the top bar eject button, ensuring audio
   models can be loaded and unloaded consistently with text and image sessions.
+  The top bar observes only AppModel, so AppModel republishes when
+  `canUnloadModel` flips (`forwardAudioUnloadChanges`). An AppModel predicate
+  that reads another nested controller needs the same forwarding, or its
+  views stay stale until something else republishes.
 - Audio meeting notes and summary isolation: Post-meeting summary and action
   item generation (`AudioMeetingNotesAdvisor`, `AudioMeetingNotesView`) strictly
   mutates `item.summary` and never modifies or overwrites `item.transcripts` or

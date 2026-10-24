@@ -114,6 +114,7 @@ final class AudioWorkspaceController: ObservableObject {
     var deletionCleanupTask: Task<Void, Never>?
     @Published var opening: AudioModelOpening?
     var qwenSpeechJob: Qwen3TTSSpeechJob?
+    var qwenLoadDependencies = AudioQwenLoadDependencies()
     var referencePreviewTask: Task<Void, Never>?
     var referencePlayer: AVAudioPlayer?
     @Published var referencePlaying = false
@@ -795,7 +796,7 @@ final class AudioWorkspaceController: ObservableObject {
                 throw AudioWorkspaceError.message(AppStrings.localized("This checkpoint exceeds the available audio model memory budget."))
             }
 
-            let opening = AudioModelOpening()
+            let opening = AudioModelOpening(token: qwenLoadDependencies.openToken())
             opening.onProgress = { [weak self, weak opening] fraction in
                 Task { @MainActor in
                     guard let self, let opening, self.valid(token), self.opening === opening else { return }
@@ -805,20 +806,31 @@ final class AudioWorkspaceController: ObservableObject {
             }
             self.opening = opening
 
-            if url == nil, let openToken = opening.token {
-                let verified = try await Task.detached {
-                    try AudioCatalog.verify(profile.identity, token: openToken) { progress in
+            // The verification runs in the opening's place, and so does its
+            // absence for a chosen folder: either way the barrier ends, so a
+            // shutdown drain never waits for an open that never comes.
+            let verifies = url == nil
+            let verify = qwenLoadDependencies.verify
+            let verified = try await Task.detached {
+                try opening.perform { () throws -> String in
+                    guard verifies else { return path }
+                    // A managed install loads only after its bytes verify, and
+                    // a failed token creation leaves nothing to verify with.
+                    // Refusing here, inside perform, still ends the barrier.
+                    guard let openToken = opening.token else { throw CancellationError() }
+                    return try verify(profile.identity, openToken) { progress in
                         guard let total = progress.total, total > 0 else { return }
                         opening.onProgress?(min(1, Double(progress.completed) / Double(total)))
                     }
-                }.value
-                guard verified == path else { throw CancellationError() }
-            }
+                }
+            }.value
+            guard verified == path else { throw CancellationError() }
 
             self.status = AppStrings.localized("Loading model")
+            let load = qwenLoadDependencies.load
             let loaded = try await Task.detached {
                 try Task.checkCancellation()
-                return try await Qwen3TTSModel.fromModelDirectory(directory)
+                return try await load(directory)
             }.value
 
             self.opening = nil
@@ -972,6 +984,17 @@ final class AudioWorkspaceController: ObservableObject {
     }
 }
 
+/// The two slow steps of a resident Qwen3-TTS load and the token that stops
+/// its verification. Tests replace them to hold a load in either step, or to
+/// load without a token.
+struct AudioQwenLoadDependencies {
+    var openToken: @Sendable () -> AudioOpenToken? = { try? AudioOpenToken() }
+    var verify: @Sendable (AudioProfileIdentity, AudioOpenToken, @escaping @Sendable (AudioProgress) -> Void) throws -> String = {
+        try AudioCatalog.verify($0, token: $1, progress: $2)
+    }
+    var load: @Sendable (URL) async throws -> Qwen3TTSModel = { try await Qwen3TTSModel.fromModelDirectory($0) }
+}
+
 enum AudioWorkspaceError: LocalizedError {
     case message(String)
     var errorDescription: String? { if case .message(let text) = self { return text }; return nil }
@@ -986,10 +1009,11 @@ final class AudioModelOpening: @unchecked Sendable {
     private var opened: AudioSession?
     /// Stops the byte verification an open of a managed model starts with. A
     /// multi-gigabyte model used to make Stop and shutdown wait it out.
-    let token = try? AudioOpenToken()
+    let token: AudioOpenToken?
     /// Fraction (0...1) of the verification done, called on the opening thread.
     var onProgress: (@Sendable (Double) -> Void)?
-    init() { finished.enter() }
+    init(token: AudioOpenToken?) { self.token = token; finished.enter() }
+    convenience init() { self.init(token: try? AudioOpenToken()) }
     /// Stops an open in flight. Safe from any thread; does not wait.
     func cancelOpen() { token?.cancel() }
     func open(path: String, task: AudioTask, portable: Bool, experimentalMetal: Bool, expectedFamily: String) throws -> AudioSession {

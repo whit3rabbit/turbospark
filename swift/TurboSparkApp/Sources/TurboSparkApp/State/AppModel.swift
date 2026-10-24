@@ -42,8 +42,14 @@ public final class AppModel: ObservableObject {
             guard let self else { throw CancellationError() }
             return try await self.summarizeAudioTranscript(item, targetModel: targetModel)
         }
+        forwardAudioUnloadChanges(from: workspace)
         return workspace
-    }()
+    }() {
+        // Tests swap in their own controller; it must drive the top bar too.
+        didSet { forwardAudioUnloadChanges(from: audioWorkspace) }
+    }
+    /// See `forwardAudioUnloadChanges(from:)`.
+    var audioUnloadObserver: AnyCancellable?
     lazy var humanizeWorkspace: HumanizeController = {
         let controller = HumanizeController()
         controller.installedPath = { [weak self] in
