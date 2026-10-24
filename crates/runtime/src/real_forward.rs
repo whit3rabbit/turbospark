@@ -205,6 +205,11 @@ pub struct RealForwardRunner {
     /// The snapshot an alive round checkpoint skipped, taken when the first
     /// eager advance arrived (the live state still equalled the point then).
     pub(crate) deferred_gdn_snapshot: Option<gpu::GdnSnapshot>,
+    /// The recurrent state a few tokens before the last prompt's end, kept
+    /// so the next turn can rewind a GDN model to it (`crate::turn_snapshot`,
+    /// `TURBOSPARK_GDN_TURN_SNAPSHOT`). `None` unless that switch is on.
+    /// Describes the LIVE session only: every reset and session swap drops it.
+    pub(crate) turn_snapshot: Option<crate::turn_snapshot::TurnSnapshot>,
     /// `scratch.x` row 0's bytes from JUST BEFORE `produce_batched`'s own
     /// trailing copy overwrites them with row `batch - 1`'s residual. Only
     /// set alongside `batched_tape`, and only needed because a

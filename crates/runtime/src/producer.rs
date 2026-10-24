@@ -59,6 +59,24 @@ pub trait LogitProducer {
         false
     }
 
+    /// Where this prompt's prefill should stop for one pass so the producer
+    /// can keep its state there for the next turn ([`Self::take_turn_snapshot`]),
+    /// given that `reused` leading tokens are already in the state. `None`,
+    /// the default, leaves the prefill's passes exactly as they were. Only a
+    /// producer that cannot rewind on its own needs this: the real runner on
+    /// a gated-DeltaNet model under `TURBOSPARK_GDN_TURN_SNAPSHOT`
+    /// (`crate::turn_snapshot`). An answer is always strictly between
+    /// `reused` and the prompt's length.
+    fn turn_snapshot_position(&self, _prompt_ids: &[TokenId], _reused: usize) -> Option<usize> {
+        None
+    }
+
+    /// Called by the generation loops when the prefill has fed exactly
+    /// `position` tokens, at the position [`Self::turn_snapshot_position`]
+    /// named and before anything past it. A producer that finds its state
+    /// not covering exactly `position` keeps nothing. Default no-op.
+    fn take_turn_snapshot(&mut self, _position: usize) {}
+
     /// Run one token at `position`, writing FP16 logits into `logits`
     /// (length == vocab size).
     fn produce(
