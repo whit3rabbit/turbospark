@@ -613,7 +613,7 @@ Speed claims about a family that speculates, or that batches small row counts,
 have gone wrong on the dense `qwen35` family in ways no parity test sees. Run
 these before writing a number, and say which you skipped. The readings from
 that family are in `docs/KAPITSA_KERNELS.md`; none is a value to reuse, because
-a new family has its own. The lab (`tslab`, branch `feat/tslab`) carries the
+a new family has its own. The lab (`tslab`, `crates/lab`) carries the
 same list with commands in `crates/lab/program.md`, "Checks for a new model or
 family".
 

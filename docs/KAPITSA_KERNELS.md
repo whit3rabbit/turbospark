@@ -55,7 +55,7 @@ the verify kernel items (2 and 7) are worth building.
 | 10 | Host-side FCV/set-bytes dedup in MoE decode | Was already in flight in this tree | not this page |
 | 11 | GPU-side routing + single command buffer per token | Not adopted: `fast::exp` vs f32 `exp` can flip f16 routing weights and break frozen digests; streamed mode cannot use it | declined |
 | 12 | Prompt-lookup (n-gram) draft source from mlx-serve | Standalone drafter declined on a replay (flat or losing on prose, ~1.5x ceiling on copy-heavy, about MTP's 1.44x). Hybrid with MTP unmeasured | Section "Prompt lookup" below |
-| 13 | Adaptive speculation depth in the server | Server routing and a tunable controller on branch `feat/server-adaptive-depth`. MTP replay: flag off, no setting beats fixed block 2 (live check agrees). Flag on, a tuned 2..8 controller is 1.10x fixed 2 (modeled, not yet run live) | Lever 2 below |
+| 13 | Adaptive speculation depth in the server | Server routing (`--speculative adaptive[:N]`) and a tunable controller. MTP replay: flag off, no setting beats fixed block 2 (live check agrees). Flag on, a tuned 2..8 controller is 1.10x fixed 2 (modeled, not yet run live) | Lever 2 below |
 | 14 | KFlash tree verify (best-first candidate tree in the verify rows) | Not adopted for MTP: a replay gives 0.995-1.009x committed/round at block 2, the only block that pays. DFlash2 replay at depth 7, the block it serves over the flat verify: 1.07-1.12x committed/round. The tree's overhead is estimated at about 1% of a round, so the projection is about 1.06-1.11x tok/s. Nothing is built. Rerun with `tslab tree-replay` | Section "KFlash: tree verify" below |
 
 ## What makes the headline numbers fast, and what applies here
@@ -845,7 +845,7 @@ and how tslab measures it (`crates/lab/program.md`). Estimates are marked.
 2. **Choose the block per request, in the server too.** Why: under the
    flag the best block is 4 on code and 2 on prose, so any fixed block loses
    somewhere. `AdaptiveDepth` already moves depth per round in the FFI
-   path. Done on branch `feat/server-adaptive-depth` (not on `main`):
+   path. Done:
    `turbospark-server --speculative adaptive[:N]` runs the adaptive loop, and
    `TURBOSPARK_ADAPTIVE_DEPTH=LOW,MID,HIGH,DROP` overrides the controller's
    climb and drop thresholds (default `8,6,4,2`, the old constants). Output
@@ -1021,7 +1021,7 @@ children, so the one-token cap does not apply. Each round asserts that the
 lattice's greedy path equals the selector's proposals, and each prompt
 asserts that the drafted stream equals plain greedy. Both held.
 
-Branch `lab/ext-round-phases`, HEAD plus these files, default verify (flag
+Measured on the `lab/ext-round-phases` branch (since folded into `main` with the tslab PR), HEAD plus these files, default verify (flag
 off), 512 greedy tokens, depth 7 for DFlash2 and depth 8 top-4 for MTP. The
 host was eligible for both runs. The token count does not depend on the
 verify, so these rows also hold under `TURBOSPARK_INT4_MMA8`.
