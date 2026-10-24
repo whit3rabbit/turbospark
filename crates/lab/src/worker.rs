@@ -64,8 +64,9 @@ pub struct PromptRecord {
     pub prefill_phases: PhaseReport,
     pub decode_phases: Option<PhaseReport>,
     pub cache_class: CacheClass,
-    /// Per turn, for a chat prompt. The fields above then total the chat,
-    /// and `decode_digest` covers every turn's tokens in order.
+    /// Per turn, for a chat prompt. The fields above then total the chat
+    /// (`prompt_tokens` counting only the tokens prefilled, not the reused
+    /// ones), and `decode_digest` covers every turn's tokens in order.
     #[serde(default)]
     pub turns: Option<Vec<TurnRecord>>,
 }
@@ -725,7 +726,13 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
             let token_bytes: Vec<u8> = generated.iter().flat_map(|t| t.to_le_bytes()).collect();
             prompts.push(PromptRecord {
                 source: source.clone(),
-                prompt_tokens: turns.iter().map(|t| t.prompt_tokens).sum(),
+                // Tokens actually PREFILLED, so `prefill_tok_s` stays a
+                // prefill rate: a reused prefix is not work the prefill did.
+                // Each turn keeps its full prompt length and reuse.
+                prompt_tokens: turns
+                    .iter()
+                    .map(|t| t.prompt_tokens - t.reused_tokens)
+                    .sum(),
                 prefill_s: turns.iter().map(|t| t.prefill_s).sum(),
                 decode_tokens: turns.iter().map(|t| t.decode_tokens).sum(),
                 decode_s: turns.iter().map(|t| t.decode_s).sum(),
