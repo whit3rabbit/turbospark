@@ -902,6 +902,22 @@ restarting it. A host that applies its own repair to a reply it read itself
 covers only that path: every HTTP client of this server bypasses it. See
 `docs/FORGE_GUARDRAILS.md` section 0b.
 
+**`ServerOptions.prefixReuse` reaches a posture the session option could
+not.** `Options.prefixReuse` is resolved when the session OPENS, and a bare
+session resolves it to `true` because one owner's session is multi-turn by
+construction. That default is wrong once a server is attached: from that
+moment the KV cache is reachable by every client of the server, is not
+partitioned by API key, and a match against another client's prompt becomes
+observable in response timing. `turbospark-server` defaults the same setting
+OFF for that reason.
+
+So a host that attached a session to a server got reuse ON with no way to
+turn it off, unless it happened to know to open the session with `false`.
+Passing it here applies it to every model attached to this server, including
+ones attached later, and cannot be changed without restarting. Absent leaves
+each session's own open-time decision alone, which is the pre-existing
+behaviour.
+
 **Idle unload.** `ServerOptions.idleUnloadSeconds` (or
 `server.setIdleUnload(after:)` on a running server) detaches a model that has
 served no request for that long, releasing its weights. Nil or 0 keeps every

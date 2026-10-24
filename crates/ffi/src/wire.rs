@@ -754,6 +754,23 @@ pub struct ServerOptions {
     /// SERVED path agree with it -- the setting looked global and reached
     /// only whatever the host itself did with a reply.
     pub guardrails: Option<String>,
+    /// `true` | `false`, or absent to leave the session's own open-time
+    /// decision alone.
+    ///
+    /// **The server's default is `false`, and absent is NOT that default.**
+    /// `ts_session_open` resolves prefix reuse to `true`, because a bare
+    /// session is one owner's and multi-turn by construction. Once a server
+    /// is attached, that is the wrong posture: the KV cache is reachable by
+    /// every client of the server, is not partitioned by API key, and a match
+    /// against another client's prompt becomes observable in response timing.
+    /// `turbospark-server` defaults the same setting OFF for that reason, and
+    /// this is the field that lets an in-process host reach the same posture
+    /// for the session it shares.
+    ///
+    /// Absent leaves the runner as opened, so a host that opts nothing in
+    /// keeps whatever its session decided -- which is the pre-existing
+    /// behavior, deliberately not silently changed here.
+    pub prefix_reuse: Option<bool>,
     /// Optional embedding model (.safetensors directory or alias) to attach at startup.
     pub embedding_model: Option<String>,
     /// Optional Hugging Face mirror endpoint (e.g. https://hf-mirror.com).

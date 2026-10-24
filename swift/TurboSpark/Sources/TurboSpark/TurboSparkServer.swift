@@ -38,6 +38,24 @@ public struct ServerOptions: Encodable, Sendable {
     /// guardrail a host applies to a reply it read itself covers only that
     /// path, and every HTTP client of this server bypasses it.
     public var guardrails: Guardrails?
+    /// Whether a request continues from the previous request's KV cache
+    /// wherever the prompts agree, instead of re-prefilling the transcript.
+    /// `nil` (the default) leaves each attached session's own open-time
+    /// decision alone -- a bare session resolves to on.
+    ///
+    /// **PROCESS-LEVEL, matching `turbospark-server --prefix-reuse`**, which
+    /// defaults OFF and is worth reading before choosing here. Once a server
+    /// is attached, one engine's KV cache is reachable by every client of
+    /// that server and is not partitioned by API key, so reuse can make a
+    /// match against another client's prompt observable through response
+    /// timing. Pass `false` for a server with more than one client; pass
+    /// `true` for a single trusted client, which is the multi-turn shape
+    /// this optimization is for.
+    ///
+    /// Applied to every session attached to this server, including ones
+    /// attached later, so two models cannot end up served under different
+    /// postures.
+    public var prefixReuse: Bool?
     /// Optional embedding model (.safetensors directory or alias) to attach at startup.
     public var embeddingModel: String?
     /// Optional Hugging Face mirror endpoint (e.g. https://hf-mirror.com).
@@ -72,6 +90,7 @@ public struct ServerOptions: Encodable, Sendable {
         captureText: Bool = false,
         apiKey: String? = nil,
         guardrails: Guardrails? = nil,
+        prefixReuse: Bool? = nil,
         embeddingModel: String? = nil,
         hfEndpoint: String? = nil,
         defaultSystem: String? = nil,
@@ -86,6 +105,7 @@ public struct ServerOptions: Encodable, Sendable {
         self.port = port
         self.apiKey = apiKey
         self.guardrails = guardrails
+        self.prefixReuse = prefixReuse
         self.embeddingModel = embeddingModel
         self.hfEndpoint = hfEndpoint
         self.defaultSystem = defaultSystem
