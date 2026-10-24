@@ -94,6 +94,15 @@ pub struct Server {
     /// server cannot end up serving two models under different rules. The
     /// same process-level scope `turbospark-server --guardrails` has.
     guardrails: turbospark_server::GuardrailConfig,
+    /// The prefix-reuse posture this server resolved, applied to every
+    /// session attached to it. `None` leaves each session's own open-time
+    /// decision alone, which is the pre-existing behavior.
+    ///
+    /// Process-level for the same reason `guardrails` is: a per-request field
+    /// would let any client opt its own traffic out of the isolation this
+    /// deployment chose, and the cache being protected is shared by all of
+    /// them.
+    prefix_reuse: Option<bool>,
     default_system: Option<String>,
     default_reasoning: tokenizer::ReasoningEffort,
     started: Instant,
@@ -285,6 +294,7 @@ impl Server {
         capture_text: bool,
         api_key: Option<String>,
         guardrails: turbospark_server::GuardrailConfig,
+        prefix_reuse: Option<bool>,
         default_system: Option<String>,
         default_reasoning: tokenizer::ReasoningEffort,
         load_policy: ServerLoadPolicy,
@@ -466,6 +476,7 @@ impl Server {
             host: resolved.ip().to_string(),
             auth_enabled,
             guardrails,
+            prefix_reuse,
             default_system,
             default_reasoning,
             started: Instant::now(),
@@ -493,6 +504,15 @@ impl Server {
         core: Arc<SessionCore>,
         model_id: String,
     ) -> Result<String, String> {
+        // Applied HERE, at the one place both attach paths converge, so
+        // `ts_server_start`'s session and a later `ts_server_attach_session`
+        // cannot end up under different postures. `ts_server_start` applies
+        // it a moment earlier too, and doing it twice is a no-op on the same
+        // value; what the earlier call buys is that no request served between
+        // the two sees the session's own default.
+        if let Some(enabled) = self.prefix_reuse {
+            core.set_prefix_reuse_for_server(enabled);
+        }
         let model: Arc<dyn turbospark_server::ChatModel> =
             Arc::new(crate::server_model::FfiChatModel::new(
                 Arc::clone(&core),

@@ -879,6 +879,24 @@ int32_t ts_humanize(const TsSession *s, const char *draft,
  *             any client opt its own traffic out of the repair this
  *             deployment chose. Applies to every model attached to this
  *             server, including ones attached later.
+ *   prefixReuse
+ *           bool | null. Whether a request continues from the previous
+ *             request's KV cache wherever the prompts agree, instead of
+ *             re-prefilling the transcript (turbospark-server
+ *             --prefix-reuse). null leaves each attached session's own
+ *             open-time decision alone, and a bare session resolves to ON.
+ *
+ *             PROCESS-LEVEL, for the same reason guardrails is: a
+ *             per-request field would let any client opt its own traffic out
+ *             of the isolation this deployment chose. Once a server is
+ *             attached, one engine's KV cache is reachable by every client
+ *             of that server and is not partitioned by API key, so reuse
+ *             can make a match against ANOTHER client's prompt observable
+ *             through response timing. Pass false for a server with more
+ *             than one client; true is for a single trusted client, which
+ *             is the multi-turn shape the optimization is for. Applies to
+ *             every model attached to this server, including ones attached
+ *             later through ts_server_attach_session.
  *   embeddingModel
  *           string | null. An embedding model (.safetensors directory or
  *             alias) to attach at startup, enabling /v1/embeddings.

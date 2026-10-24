@@ -219,6 +219,11 @@ public struct OpenOptions: Encodable, Sendable {
     /// in-process HTTP server (`turbospark-server` itself defaults reuse off,
     /// because one engine's cache is shared by every client of that server),
     /// or when measuring a cold prefill.
+    ///
+    /// `ServerOptions.prefixReuse` now does that job on its own: a host that
+    /// starts a server can set the posture there instead of having to open
+    /// its session with the right value up front. Setting both is not a
+    /// conflict -- the server's answer wins, applied at attach.
     public var prefixReuse: Bool?
     /// ANE+Steel prefill split configuration.
     public enum AnePrefill: String, Encodable, Sendable {
