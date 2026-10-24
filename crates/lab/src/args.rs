@@ -172,7 +172,19 @@ pub fn parse_arm(
     };
     crate::paths::validate_name(name)?;
     let mut env = common.clone();
-    for kv in rest.split(',').filter(|kv| !kv.is_empty()) {
+    // A segment without '=' continues the previous value, so a value that
+    // itself holds commas (`adaptive_depth=3,1,1,2`) stays one variable.
+    let mut pairs: Vec<String> = Vec::new();
+    for seg in rest.split(',').filter(|seg| !seg.is_empty()) {
+        match pairs.last_mut() {
+            Some(last) if !seg.contains('=') => {
+                last.push(',');
+                last.push_str(seg);
+            }
+            _ => pairs.push(seg.to_string()),
+        }
+    }
+    for kv in &pairs {
         let (k, v) = parse_env(kv)?;
         env.insert(k, v);
     }
@@ -275,6 +287,14 @@ mod tests {
         assert_eq!(a.open.slots, Slots::Fixed(16));
         assert_eq!(a.env["TURBOSPARK_PREFILL_STEEL"], "0");
         assert!(parse_arm("x~mtp:0", OpenParams::default(), &BTreeMap::new()).is_err());
+        let a = parse_arm(
+            "t~mtp:4a:adaptive_depth=3,1,1,2,prefill_steel=0",
+            OpenParams::default(),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        assert_eq!(a.env["TURBOSPARK_ADAPTIVE_DEPTH"], "3,1,1,2");
+        assert_eq!(a.env["TURBOSPARK_PREFILL_STEEL"], "0");
         assert!(parse_arm("x~eagle:2", OpenParams::default(), &BTreeMap::new()).is_err());
     }
 

@@ -234,6 +234,18 @@ pub const KNOBS: &[Knob] = &[
         doc: "docs/CLI.md",
     },
     Knob {
+        // Only changes which depth each round proposes; the speculative loop
+        // stays lossless, so output is identical at any setting.
+        name: "adaptive_depth",
+        env: "TURBOSPARK_ADAPTIVE_DEPTH",
+        values: &["<unset>", "8,6,4,2"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::BitExact,
+        families: &["qwen35"],
+        quotable: true,
+        doc: "docs/ENV.md",
+    },
+    Knob {
         name: "dispatch_profile",
         env: "TURBOSPARK_DISPATCH_PROFILE",
         values: &["<unset>", "1"],
