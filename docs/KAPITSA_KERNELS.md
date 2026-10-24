@@ -56,7 +56,7 @@ the verify kernel items (2 and 7) are worth building.
 | 11 | GPU-side routing + single command buffer per token | Not adopted: `fast::exp` vs f32 `exp` can flip f16 routing weights and break frozen digests; streamed mode cannot use it | declined |
 | 12 | Prompt-lookup (n-gram) draft source from mlx-serve | Standalone drafter declined on a replay (flat or losing on prose, ~1.5x ceiling on copy-heavy, about MTP's 1.44x). Hybrid with MTP unmeasured | Section "Prompt lookup" below |
 | 13 | Adaptive speculation depth in the server | Server routing and a tunable controller on branch `feat/server-adaptive-depth`. MTP replay: flag off, no setting beats fixed block 2 (live check agrees). Flag on, a tuned 2..8 controller is 1.10x fixed 2 (modeled, not yet run live) | Lever 2 below |
-| 14 | KFlash tree verify (best-first candidate tree in the verify rows) | Not adopted for MTP: a replay gives 0.995-1.009x committed/round at block 2, the only block that pays. DFlash2 replay at depth 7, the block it serves over the flat verify: 1.07-1.12x committed/round, which clears the 5% bar. Tree overhead is not costed yet. Rerun with `tslab tree-replay` | Section "KFlash: tree verify" below |
+| 14 | KFlash tree verify (best-first candidate tree in the verify rows) | Not adopted for MTP: a replay gives 0.995-1.009x committed/round at block 2, the only block that pays. DFlash2 replay at depth 7, the block it serves over the flat verify: 1.07-1.12x committed/round. The tree's overhead is estimated at about 1% of a round, so the projection is about 1.06-1.11x tok/s. Nothing is built. Rerun with `tslab tree-replay` | Section "KFlash: tree verify" below |
 
 ## What makes the headline numbers fast, and what applies here
 
@@ -1060,6 +1060,81 @@ above (ancestor-masked verify attention, parent-state GDN rows, per-row RoPE
 positions, KV compaction) plus their overhead on 8 rows. Kapitsa measured
 1-6% on dense models. That cost is not measured here. A 1.07-1.12x count gain
 minus a 1-6% overhead could be anywhere from a small win to break-even.
+
+#### Costing the tree: DFlash2 at depth 7, 2026-10-24
+
+The question: what does each of the four kernel pieces add to a depth-7
+round over the flat verify, and does the 1.07-1.12x count gain survive it?
+The round itself is measured above ("DFlash2 and the flat verify"): about 83-87
+ms, of which the verify is 66.5 ms and the draft is 15.2 ms.
+
+The GDN piece and KV compaction are timed in
+`crates/gpu/tests/tree_verify_cost_bench.rs` (qwen38 shapes, 8 rows, 256 reps
+in one command buffer, best of 5 interleaved rounds, two runs that agree
+within 0.3%). Host load was 5-6 from system daemons, which a GPU-bound
+microbench tolerates; the two runs show it. The bench carries a bench-only
+tree build of the GDN verify kernel, `tv_gdn_tree`, which starts node `t`
+from the register state its parent left. A thread holds only `Dk / 32 = 4`
+floats of state, so all 8 nodes' states fit in registers with no spill and
+no recompute. Two parity tests pin it to the shipped kernel. With chain
+parents its y is bit-identical. On a branching tree, each node's y is
+bit-identical to the shipped kernel run over that node's root path. A
+mutation that ignores the parent array fails the second test.
+
+| GDN arm, 48 layers | ms per round | vs shipped | vs chain4 |
+|--------------------|-------------:|-----------:|----------:|
+| Shipped lazy kernel (chain) | 3.82 | 1.000x | 2.78x |
+| chain4: same math, `Dk = 128` unrolled, chain | 1.37 | 0.360x | 1.000x |
+| Tree build, chain parents | 1.60 | 0.419x | 1.166x |
+| Tree build, branching tree | 1.60 | 0.419x | 1.166x |
+
+The fair cost of the tree is against chain4, because whatever specialization
+the tree build gets, the chain can get too: +0.23 ms a round. The tree's
+shape does not change the cost.
+
+| Piece | Cost per depth-7 round | How it was sized |
+|-------|-----------------------:|------------------|
+| GDN rows from the parent's state | +0.23 ms | Measured above, against chain4 |
+| GDN conv taps along the path, tape fold over path rows | about 0.05 ms | Arithmetic: a gather of under 10 MB over 48 layers |
+| KV compaction | 0.34 ms or less | Measured: 224 single-row copies (7 nodes, K and V, 16 layers). One gather dispatch per buffer would be cheaper |
+| Per-row RoPE positions | about 0 | A position array in place of `start + index` |
+| Ancestor-masked verify attention | under 0.2 ms, not measured | The verify's attention is 8 rows at 0.41-0.46 ms each (`tslab kernel --bench attn_decode`, ctx 512-1024), about 3.5 ms. The mask touches at most 8 of the 500-1,100 keys a row reads. 0.2 ms assumes a masked tail costs as much as 5% of the whole attention |
+| Host tree build | about 0 | It replaces the selector's greedy walk with the same 7 expansions of 16 pair scores. `dflash_lattice` scores all 16 x 16 pairs per depth, which a live build must not do: score children only when a node is expanded |
+| Drafter capture gather for the accepted path | about 0.02 ms | Arithmetic: 7 rows of 5 x 5,120 halves |
+
+Total: about 0.6-0.85 ms, roughly 1% of an 85 ms round. That is at the low
+end of kapitsa's 1-6%, which fits: their tree also pays for a tree-zone
+attention kernel, and here the per-thread GDN state is small enough to
+branch in registers.
+
+Projection, not a measurement: tok/s ratio = committed/round ratio /
+(1 + overhead). With overhead at 1%, the replay's 1.067-1.121x becomes
+about 1.06-1.11x. On the measured flag-on arm that would take
+DFlash2 7 from 31.2 to about 34.6 tok/s on short and from 36.8 to about
+40.3 on medium. Three things can move it:
+
+- The replay drafter is primed from the trunk's real hidden state, a small
+  edge over the live loop (`tree_replay_record.rs`). The chain/tree ratio
+  shares that bias. The absolute numbers do not.
+- The attention mask is the only piece sized by assumption. If it cost 25%
+  of verify attention (0.9 ms), the overhead would be about 1.8% and the
+  projection 1.05-1.10x. The verdict holds either way.
+- Losslessness under the flag has not been checked for DFlash2 (see the
+  flat-verify section). A tree verify inherits that open item.
+
+Verdict: tree verify pays for DFlash2 at depth 7 over the flat verify, by
+this costing. The order to build it, cheapest proof first: the GDN tree
+kernel (prototype and parity tests exist in the bench), the attention mask
+with a row-against-decode parity test, KV and capture gathers, then the
+host tree build in place of the selector walk, and finally a live A/B
+against DFlash2 7 under `TURBOSPARK_INT4_MMA8` with a losslessness check.
+
+Side finding, separate from the tree: chain4 is the shipped GDN verify
+kernel with `Dk = 128` unrolled. It is bit-identical (parity test) and 2.78x
+faster at 8 rows, which would save about 2.4 ms a round (about 2.9% at depth
+7), with or without a tree. The shipped kernel loops a runtime
+`nPerLane` over `float s[8]`. The same specialization likely applies to the
+prefill chunks and the decode step. Not wired, not measured in a model.
 
 Reopen condition: the verdict assumes today's verify cost. The item 7 bench
 prototype (`docs/INT4_SMALL_M_MMA.md`) measured 8 rows at 1.25-1.29x a
