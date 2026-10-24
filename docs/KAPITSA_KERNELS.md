@@ -901,8 +901,41 @@ and how tslab measures it (`crates/lab/program.md`). Estimates are marked.
    at or below the common prefix, then prefill the difference. Gate: the
    reuse rate on a real multi-turn chat, and logits after reuse bit-equal to
    a full prefill of the same ids. Measure: TTFT on a cached follow-up
-   (this is not a decode tok/s lever, and tslab does not yet have a
-   multi-turn workload).
+   (this is not a decode tok/s lever).
+
+   Built on branch `feat/gdn-turn-snapshot` (not on `main`), opt-in as
+   `TURBOSPARK_GDN_TURN_SNAPSHOT=1`. One snapshot, not a pool: the prefill
+   splits 8 tokens before each prompt's end and keeps a full rollback point
+   there, and the next turn restores it when its prompt agrees with the fed
+   ids past it, rewinding the KV and the MTP drafter too. On Qwen3.8's
+   template a client that drops the reasoning diverges 1 token before the
+   previous prompt's end, so the 8-token margin always lands inside the
+   match. Dense qwen only. DFlash2, `qwen4`, MoE, images and session swaps
+   keep the old refusal.
+
+   Gate (`crates/bench/tests/turn_snapshot_gate.rs`, `qwen38-27b-mtp`, MTP
+   block 2, three turns with the reasoning dropped): greedy tokens identical
+   to a full prefill on every turn, reusing 30 and 66 tokens. Switch off,
+   the same gate reuses 0.
+
+   Measured 2026-10-24, M4 Max 36 GB, AC, warm page cache, `qwen38-27b-mtp`
+   MTP block 2, a 6,000-token document (`docs/MTP.md`) and four follow-ups,
+   32 tokens a turn, replies carried back without reasoning
+   (`crates/lab/chats/long-doc.chat.json`):
+
+   | Run | Follow-up TTFT, off | On | Turn 1, on/off |
+   |-----|--------------------:|---:|---------------:|
+   | `turn_snapshot_ttft_probe`, 2 clean interleaved rounds | 43.6-44.1 s | 0.62-0.75 s | 0.98-1.00x |
+   | `tslab ab` (ledger `gdn-turn-snapshot-ttft`, 3 clean pairs) | | -98.5% median, CI [-98.50%, -98.48%] | |
+
+   Each follow-up reused all but the last 30-35 prompt tokens (6,013 of
+   6,045 on turn 2). Generated tokens were identical across arms in every
+   pair. The cost is memory: peak `phys_footprint` +147 MiB (one GDN
+   mirror), which FAILS tslab's 64 MiB memory gate and is not yet counted
+   by `context_policy`, so the switch stays off by default until both are
+   settled. Side finding: the off arm prefills 6,000 tokens at about 139
+   tok/s through the speculative loop's MTP-priming chunked prefill, which
+   is what makes a long follow-up take 44 s without reuse.
 5. **Hybrid lookup plus MTP.** Why: on copy-heavy output a long n-gram
    match proposes 4-8 tokens that are accepted, where the head proposes
    two. Where: a draft source that tries the n-gram first and falls back to
