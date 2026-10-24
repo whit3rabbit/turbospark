@@ -22,6 +22,9 @@ Core ML placement, and the autoresearch loop's `run-experiment`.
 - `src/experiment.rs`, `src/integrity.rs`, `src/spec.rs`: gate,
   run-experiment, confirm, and what an experiment may not touch.
 - `src/kernel/`: microbenches. `src/ane.rs`: compute-plan placement.
+- `src/tree_replay.rs`: the tree-verify acceptance replay. Its lattice
+  recorders and replay math live in `crates/bench` (`tree_replay*.rs`), shared
+  with `kflash_tree_replay_probe.rs`.
 
 ## Rules
 

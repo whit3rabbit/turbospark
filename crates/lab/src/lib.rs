@@ -11,6 +11,8 @@
 //! - `tslab kernel`: microbenches at shapes derived from the install's
 //!   `ArchConfig`, with c(M) fits.
 //! - `tslab ane-plan`: where Core ML would place a program.
+//! - `tslab tree-replay`: whether a tree verify would accept more than the
+//!   chain at equal rows, for an install's MTP or DFlash2 drafter.
 //! - `tslab run-experiment`: the fixed evaluator an autoresearch loop calls
 //!   (`program.md` beside this crate is that loop's instructions).
 //!
@@ -55,5 +57,7 @@ pub mod phases;
 pub mod provenance;
 #[cfg(target_os = "macos")]
 pub mod report;
+#[cfg(target_os = "macos")]
+pub mod tree_replay;
 #[cfg(target_os = "macos")]
 pub mod worker;

@@ -193,6 +193,19 @@ number to copy: a new family has its own.
     speculative throughput, decode at contexts of 16K and beyond, concurrent
     requests, and output quality against the other engine. Say so when a claim
     needs one of them.
+12. **Would a tree verify pay.** `tslab tree-replay --model M --drafter
+    mtp|dflash` decodes greedily, drafts a lattice after every token, and
+    replays the loop for the chain, a best-first tree (kapitsa's KFlash) and
+    a per-round oracle at the same verify rows. It is exact on the count and
+    models no cost, so it only answers whether tree verify is worth costing:
+    a mean tree gain under 5% committed/round at the served block
+    (`--serve-block`, default the block that pays today) says no. A gain at
+    a deeper block counts only once a cheaper verify makes that block pay.
+    Under `TURBOSPARK_INT4_MMA8` DFlash2 serves depth 7, so pass
+    `--serve-block 7` for that question. An MTP head
+    caps the gain at one token per round (siblings are leaves); a DFlash2
+    lattice does not. The result and its reading for qwen38 are in
+    `docs/KAPITSA_KERNELS.md` (KFlash section).
 
 Workloads under `crates/lab/workloads/` are for `--prompt messages:PATH`.
 `copy-heavy.messages.json` is a quote-back task (rename one variable in a short
@@ -253,6 +266,9 @@ Say so in the hypothesis rather than measure around it:
 - **Prefill and decode split inside a speculative arm.** The speculative
   loop owns its prefill, so such a record carries one combined phase
   report, plus wall seconds for each half.
+- **Tree verify cost.** `tslab tree-replay` counts what a tree would
+  accept; no tree kernel exists here, so its overhead (masked attention,
+  per-branch recurrent state, KV compaction) and its c(M) are unmeasured.
 - **Kernel benches beyond two.** `tslab kernel` covers INT4 matmul and
   decode attention. The MoE routed pair, the MMA8 verify tile, multi-row
   prefill attention and a bit-hash corpus over outputs are not ported.

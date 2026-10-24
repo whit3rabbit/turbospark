@@ -24,7 +24,7 @@ use crate::ledger::Ledger;
 use crate::lock::MachineLock;
 use crate::paths::{experiment_dir, lab_dir};
 
-fn parse_list<T: std::str::FromStr>(s: &str, what: &str) -> Result<Vec<T>, String> {
+pub(crate) fn parse_list<T: std::str::FromStr>(s: &str, what: &str) -> Result<Vec<T>, String> {
     s.split(',')
         .map(|v| v.trim().parse().map_err(|_| format!("{what} {v:?}")))
         .collect()

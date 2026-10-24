@@ -82,6 +82,74 @@ impl RealForwardRunner {
     }
 }
 
+impl RealForwardRunner {
+    /// The whole candidate lattice of the LAST draft pass, for tree-verify
+    /// research (`crate::DflashLattice`). Read-only: it rereads the mask
+    /// rows' logits and projections the selector just walked and changes no
+    /// drafter or trunk state. Call it right after `dflash_draft_block` with
+    /// the same anchor; the scores are the selector's own, so the lattice's
+    /// greedy path is the proposals that call returned.
+    pub fn dflash_lattice(
+        &self,
+        anchor: TokenId,
+    ) -> Result<crate::DflashLattice, RealForwardError> {
+        let d = self.real_dflash.as_ref().ok_or_else(|| {
+            RealForwardError::Unsupported(
+                "no DFlash2 state; open the install with a DFlash2 drafter".to_string(),
+            )
+        })?;
+        let (rank, vocab, block) = (d.shape.rank, self.arch.vocab_size as usize, d.block);
+        let pred = codebook_view(
+            &self.weights,
+            &self.index,
+            PREDECESSOR_CODEBOOK,
+            vocab,
+            rank,
+        )?;
+        let succ = codebook_view(&self.weights, &self.index, SUCCESSOR_CODEBOOK, vocab, rank)?;
+        let mut row_logits = vec![LogitValue::from_f32(0.0); vocab];
+        let hproj = read_f16_rows(&d.hproj, block + 1, rank);
+        let mut candidates: Vec<Vec<TokenId>> = Vec::with_capacity(block);
+        let mut edges: Vec<Vec<f32>> = Vec::with_capacity(block);
+        for step in 0..block {
+            let row = step + 1;
+            gpu::read_buffer_f16_into(&d.logits, row * vocab * 2, &mut row_logits);
+            let (cand, unary) = top_k_finite(&row_logits, DFLASH_TOP_K).map_err(|bad| {
+                RealForwardError::Unsupported(format!(
+                    "the DFlash2 draft pass produced a non-finite logit (row {row}, id {bad})"
+                ))
+            })?;
+            let proj = &hproj[row * rank..(row + 1) * rank];
+            let succ_rows: Vec<Vec<f32>> = cand
+                .iter()
+                .map(|&c| read_bf16_row(succ, c))
+                .collect::<Result<_, _>>()?;
+            // The predecessors: the anchor at depth 0, else every candidate
+            // of the depth before.
+            let prevs: Vec<TokenId> = if step == 0 {
+                vec![anchor]
+            } else {
+                candidates[step - 1].clone()
+            };
+            let mut scores = Vec::with_capacity(prevs.len() * cand.len());
+            for &prev in &prevs {
+                let pred_row = read_bf16_row(pred, prev)?;
+                for (c, succ_row) in succ_rows.iter().enumerate() {
+                    // The selector's own expression and summation order.
+                    let mut dot = 0.0f32;
+                    for r in 0..rank {
+                        dot += pred_row[r] * proj[r] * succ_row[r];
+                    }
+                    scores.push(unary[c] + dot);
+                }
+            }
+            candidates.push(cand);
+            edges.push(scores);
+        }
+        Ok(crate::DflashLattice { candidates, edges })
+    }
+}
+
 /// A resident BF16 codebook validated against the model vocabulary and the
 /// selector rank before host gathers can address it by token id.
 #[derive(Clone, Copy)]

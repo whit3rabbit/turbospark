@@ -33,3 +33,5 @@ pub mod real_model_params;
 /// Unwarmed startup and first-request measurements, separate from the frozen protocol.
 #[cfg(target_os = "macos")]
 pub mod startup_probe;
+#[cfg(target_os = "macos")]
+pub mod tree_replay_record;

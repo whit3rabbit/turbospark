@@ -9,25 +9,19 @@
 //! lattices. The count is exact (an accepted path is always the reference
 //! prefix); the tree's own overhead is not modelled.
 //!
-//! One bias, and its direction: here every head row is primed from the
-//! trunk's real hidden state, while the live loop's rows for accepted
-//! proposals come from the head's own residual stream (`mtp.rs`). So the
-//! replay drafter is a little better informed than the live one, and the
-//! chain's committed/round reads HIGH against the live sweep in the doc. The
-//! decision number is the tree/chain RATIO, which both arms share the bias
-//! of.
+//! The recorder and its bias note live in `tree_replay_record.rs`, shared
+//! with `tslab tree-replay`, which runs the same check on any install.
 //!
 //! ```sh
 //! TURBOSPARK_MTP_INSTALL_DIR=~/models/qwen38-27b-mtp.gturbo \
 //!   cargo test -p turbospark-bench --test kflash_tree_replay_probe --release -- --ignored --nocapture
 //! ```
 
-use foundation::LogitValue;
-use runtime::{LogitProducer, RealForwardRunner};
 use tokenizer::{Message, Role};
 use turbospark_bench::protocol::PROTOCOL_CASES;
 use turbospark_bench::real_model::open_model_runner_speculative;
-use turbospark_bench::tree_replay::{replay, DepthCandidates, Lattice, Shape};
+use turbospark_bench::tree_replay::{replay, Shape};
+use turbospark_bench::tree_replay_record::{plain, record_mtp};
 
 /// Head capacity asked for at open; only `DEPTH` steps are drafted.
 const MTP_DEPTH: usize = 16;
@@ -51,109 +45,6 @@ fn break_even(block: usize) -> f64 {
     }
 }
 
-fn argmax(logits: &[LogitValue]) -> i32 {
-    let mut best = 0usize;
-    let mut best_v = f32::NEG_INFINITY;
-    for (i, v) in logits.iter().enumerate() {
-        let f = v.to_f32();
-        if f > best_v {
-            best_v = f;
-            best = i;
-        }
-    }
-    best as i32
-}
-
-/// Top-k by logit with full-vocabulary softmax probabilities.
-fn top_k(logits: &[LogitValue]) -> DepthCandidates {
-    let max = logits
-        .iter()
-        .map(|v| v.to_f32())
-        .fold(f32::NEG_INFINITY, f32::max);
-    assert!(max.is_finite(), "non-finite draft logits");
-    let mut sum = 0.0f64;
-    let mut best: Vec<(f32, i32)> = Vec::with_capacity(TOP_K + 1);
-    for (i, v) in logits.iter().enumerate() {
-        let f = v.to_f32();
-        sum += ((f - max) as f64).exp();
-        if best.len() < TOP_K || f > best[best.len() - 1].0 {
-            let at = best.partition_point(|&(b, _)| b >= f);
-            best.insert(at, (f, i as i32));
-            best.truncate(TOP_K);
-        }
-    }
-    DepthCandidates {
-        tokens: best.iter().map(|&(_, t)| t).collect(),
-        probs: best
-            .iter()
-            .map(|&(f, _)| (((f - max) as f64).exp() / sum) as f32)
-            .collect(),
-    }
-}
-
-/// Plain greedy, no head: the reference stream.
-fn plain(runner: &mut RealForwardRunner, prompt: &[i32], vocab: usize) -> Vec<i32> {
-    let mut logits = vec![LogitValue::from_f32(0.0); vocab];
-    runner.reset();
-    for (i, &t) in prompt.iter().enumerate() {
-        runner.produce(t, i, &mut logits).expect("produce");
-    }
-    let mut out = Vec::with_capacity(GENERATE);
-    let mut next = argmax(&logits);
-    while out.len() < GENERATE {
-        out.push(next);
-        runner
-            .produce(next, prompt.len() + out.len() - 1, &mut logits)
-            .expect("produce");
-        next = argmax(&logits);
-    }
-    out
-}
-
-/// The same greedy decode, drafting a lattice after every committed token.
-/// `lattices[i]` is drafted once `stream[i]` is known and predicts
-/// `stream[i + 1 ..]`.
-fn record(
-    runner: &mut RealForwardRunner,
-    prompt: &[i32],
-    vocab: usize,
-) -> (Vec<i32>, Vec<Option<Lattice>>) {
-    let mut logits = vec![LogitValue::from_f32(0.0); vocab];
-    let mut draft = vec![LogitValue::from_f32(0.0); vocab];
-    runner.reset();
-    for (i, &t) in prompt.iter().enumerate() {
-        runner.produce(t, i, &mut logits).expect("produce");
-        if i + 1 < prompt.len() {
-            runner.mtp_prime_step(prompt[i + 1], i).expect("prime");
-        }
-    }
-    let mut stream = Vec::with_capacity(GENERATE);
-    let mut lattices = Vec::with_capacity(GENERATE);
-    let mut next = argmax(&logits);
-    while stream.len() < GENERATE {
-        stream.push(next);
-        // `next` sits at `base`; the head's row `base - 1` pairs h_{base-1}
-        // with it, which is exactly the priming step, so drafting depth 0
-        // leaves that row correct and the rewind below keeps only it.
-        let base = prompt.len() + stream.len() - 1;
-        let mut depths = Vec::with_capacity(DEPTH);
-        let mut chained = next;
-        for d in 0..DEPTH {
-            runner
-                .mtp_draft_step(chained, base - 1 + d, &mut draft)
-                .expect("draft step");
-            let c = top_k(&draft);
-            chained = c.tokens[0];
-            depths.push(c);
-        }
-        runner.mtp_rewind_to(base).expect("rewind the head");
-        lattices.push(Some(Lattice { depths }));
-        runner.produce(next, base, &mut logits).expect("produce");
-        next = argmax(&logits);
-    }
-    (stream, lattices)
-}
-
 fn render(tokenizer: &tokenizer::MfTokenizer, content: &str) -> Vec<i32> {
     let rendered = tokenizer
         .apply_chat_template(&[Message::new(Role::User, content)])
@@ -173,8 +64,6 @@ fn a_best_first_tree_against_the_chain_at_equal_rows() {
         runtime::DraftPolicies::mtp(runtime::MtpDraftPolicy::Fixed(MTP_DEPTH)),
     )
     .expect("install opens");
-    assert!(runner.mtp_draft_depth() >= DEPTH, "no MTP head deep enough");
-    let vocab = runner.vocab_size();
 
     let mut cases: Vec<(&str, Vec<i32>)> = PROTOCOL_CASES[..2]
         .iter()
@@ -194,8 +83,9 @@ fn a_best_first_tree_against_the_chain_at_equal_rows() {
         "case                block  chain c/rd  tree c/rd  oracle c/rd  tree/chain  chain proj  tree proj"
     );
     for (id, prompt) in &cases {
-        let reference = plain(&mut runner, prompt, vocab);
-        let (stream, lattices) = record(&mut runner, prompt, vocab);
+        let reference = plain(&mut runner, prompt, GENERATE).expect("plain decode");
+        let (stream, lattices) =
+            record_mtp(&mut runner, prompt, GENERATE, DEPTH, TOP_K).expect("record");
         // Drafting must not perturb the trunk: otherwise the lattices were
         // drafted against some other stream.
         assert_eq!(

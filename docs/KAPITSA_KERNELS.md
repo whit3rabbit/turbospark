@@ -56,7 +56,7 @@ the verify kernel items (2 and 7) are worth building.
 | 11 | GPU-side routing + single command buffer per token | Not adopted: `fast::exp` vs f32 `exp` can flip f16 routing weights and break frozen digests; streamed mode cannot use it | declined |
 | 12 | Prompt-lookup (n-gram) draft source from mlx-serve | Standalone drafter declined on a replay (flat or losing on prose, ~1.5x ceiling on copy-heavy, about MTP's 1.44x). Hybrid with MTP unmeasured | Section "Prompt lookup" below |
 | 13 | Adaptive speculation depth in the server | Server routing and a tunable controller on branch `feat/server-adaptive-depth`. MTP replay: flag off, no setting beats fixed block 2 (live check agrees). Flag on, a tuned 2..8 controller is 1.10x fixed 2 (modeled, not yet run live) | Lever 2 below |
-| 14 | KFlash tree verify (best-first candidate tree in the verify rows) | Not adopted for MTP: a replay gives 0.995-1.009x committed/round at block 2, the only block that pays. DFlash2 untested | Section "KFlash: tree verify" below |
+| 14 | KFlash tree verify (best-first candidate tree in the verify rows) | Not adopted for MTP: a replay gives 0.995-1.009x committed/round at block 2, the only block that pays. DFlash2 replay at depth 7, the block it serves over the flat verify: 1.07-1.12x committed/round, which clears the 5% bar. Tree overhead is not costed yet. Rerun with `tslab tree-replay` | Section "KFlash: tree verify" below |
 
 ## What makes the headline numbers fast, and what applies here
 
@@ -183,7 +183,7 @@ left, ranked by the arithmetic below:
 | 1 | Flat verify (MMA8) | Built, opt-in, lossless, block 4 beats the default on code (50.1 vs 43.3 tok/s) and loses 9-12% on prose | Prerequisite for everything below |
 | 2 | Pick the block per request or per round | DECLINED for DFlash2 under the flag: best per-prompt depth beats fixed 7 by 0-1.7% (model below). `AdaptiveDepth` is tuned for the flag-off cost curve and would sit at its floor of 2 | Under a flat verify an extra row costs about 1.3 ms and pays once its survival chance exceeds about 5% |
 | 3 | DFlash2 drafter at depth 7 over the flat verify | MEASURED 2026-10-22 below: 31-37 tok/s, 2.1x its flag-off self, about 55-60% of kapitsa | Confirms the flat verify is what unlocks long blocks |
-| 4 | Tree verify (KFlash) | A replay probe exists in the tree (`kflash_tree_replay_probe.rs`, another session); no kernel | Kapitsa's own doc credits it +6% code, +16% prose over its chain |
+| 4 | Tree verify (KFlash) | Replay only, no kernel. `tslab tree-replay` covers MTP and DFlash2. DFlash2 at depth 7 gains 1.07-1.12x committed/round, below | Kapitsa's own doc credits it +6% code, +16% prose over its chain |
 | 5 | Close the one-row gap (1.27x GEMV) | Open in the MMA8 doc | MEASURED below: it is the verify floor, about 13 ms of an 85 ms round |
 | 6 | MTP head quality | RESOLVED: equal. Kapitsa 2.39 committed per cycle on short-explanation, ours 2.38, same depth 4 | The 1.4x gap at equal acceptance is round cost, 57 ms against 86 ms |
 | 7 | DFlash2 drafter pass | Profiled and trimmed ~2 ms (per-row loops batched, selector scan fused), uncommitted in `dflash_draft/` | Only ~2 ms more is in sight; the selector was 1.2 ms, not the suspect |
@@ -1005,10 +1005,61 @@ What it says:
   oracle row, before tree overhead and the four kernel pieces.
 
 Verdict: not adopted for MTP. Recorded so it is not re-proposed on kapitsa's
-numbers. Open: DFlash2, whose rows are path-independent with pairwise edge
-scores (`dflash_draft/select.rs` computes the top-16 per row and discards
-it), so its tree is not capped at one token per round. That needs a DFlash2
-install and a lattice dump. Not measured.
+numbers. DFlash2 is measured below.
+
+#### Measured: DFlash2 lattice replay, and the check as a lab command, 2026-10-24
+
+The check is now `tslab tree-replay --model M --drafter mtp|dflash`
+(`crates/lab/src/tree_replay.rs`, `crates/lab/program.md` new-family item
+12). It writes a `tree_replay` record to the lab ledger. The recorders live in
+`crates/bench/src/tree_replay_record.rs` and are shared with the probe above.
+For DFlash2, `RealForwardRunner::dflash_lattice` reads back the selector's
+whole lattice after each draft pass (`crates/runtime/src/draft_lattice.rs`):
+the top-16 per depth and every pair score the selector maximizes. The tree
+takes q(c | p) as a softmax over p's 16 pair scores, and any node can have
+children, so the one-token cap does not apply. Each round asserts that the
+lattice's greedy path equals the selector's proposals, and each prompt
+asserts that the drafted stream equals plain greedy. Both held.
+
+Branch `lab/ext-round-phases`, HEAD plus these files, default verify (flag
+off), 512 greedy tokens, depth 7 for DFlash2 and depth 8 top-4 for MTP. The
+host was eligible for both runs. The token count does not depend on the
+verify, so these rows also hold under `TURBOSPARK_INT4_MMA8`.
+
+| Drafter | Prompt | Block | Chain | Tree | Oracle | Tree/chain |
+|---------|--------|------:|------:|-----:|-------:|-----------:|
+| DFlash2 | short-explanation | 2 | 2.116 | 2.142 | 2.829 | 1.013x |
+| DFlash2 | short-explanation | 4 | 2.535 | 2.626 | 3.969 | 1.036x |
+| DFlash2 | short-explanation | 7 | 2.639 | 2.960 | 4.697 | 1.121x |
+| DFlash2 | medium-review | 2 | 2.370 | 2.370 | 2.876 | 1.000x |
+| DFlash2 | medium-review | 4 | 2.893 | 2.943 | 4.414 | 1.017x |
+| DFlash2 | medium-review | 7 | 3.030 | 3.346 | 5.447 | 1.105x |
+| DFlash2 | copy-heavy | 2 | 2.317 | 2.317 | 2.844 | 1.000x |
+| DFlash2 | copy-heavy | 4 | 2.994 | 3.012 | 4.231 | 1.006x |
+| DFlash2 | copy-heavy | 7 | 3.580 | 3.821 | 5.626 | 1.067x |
+| MTP | copy-heavy | 2 / 4 / 8 | 2.960 / 4.267 / 5.953 | same as chain | 2.960 / 4.303 / 6.024 | 1.000x |
+
+The MTP rows for the two protocol prompts reproduce the probe's table above
+to the third decimal, so the command and the probe agree.
+
+What it says:
+
+- At block 2, the flag-off serving block (`DFLASH_SERVING_BLOCK`), the tree
+  gains 0-1.3%. Same verdict as MTP there.
+- At depth 7, the block DFlash2 serves over the flat verify (lever 3 above),
+  the tree gains 6.7-12.1%. That clears the 5% bar on all three prompts,
+  copy-heavy included, where the MTP tree gains nothing at any block.
+- The oracle is 1.57-1.80x the chain at depth 7. Best-first over softmaxed
+  pair scores finds a small part of that, so a better node score (KFlash's
+  per-depth calibration) is a separate lever with more headroom than the
+  tree shape.
+
+Verdict: open for DFlash2 under the flat verify, not built. The count
+clears the bar. The next step is costing the tree: the four kernel pieces
+above (ancestor-masked verify attention, parent-state GDN rows, per-row RoPE
+positions, KV compaction) plus their overhead on 8 rows. Kapitsa measured
+1-6% on dense models. That cost is not measured here. A 1.07-1.12x count gain
+minus a 1-6% overhead could be anywhere from a small win to break-even.
 
 Reopen condition: the verdict assumes today's verify cost. The item 7 bench
 prototype (`docs/INT4_SMALL_M_MMA.md`) measured 8 rows at 1.25-1.29x a
