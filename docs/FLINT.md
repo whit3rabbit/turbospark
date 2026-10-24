@@ -123,7 +123,25 @@ always quiet, and none is a frozen row.
 
 ## Where the work is
 
-- `main` has everything above except the lab. The experiment branch
-  `lab/flint-prefill` (the lab merged with the driver commit) is kept for the
-  re-run in item 1.
+- `main` has everything above except the lab. The experiment branch is gone
+  (its driver commit is on `main`, the lab commits are on `feat/tslab`), so
+  re-create the tree for item 1:
+
+  ```sh
+  git worktree add .claude/worktrees/lab-flint -b lab/flint main
+  cd .claude/worktrees/lab-flint && git merge --no-ff feat/tslab   # merge-tree predicted clean
+  cargo build --release -p turbospark-lab
+  LAB=$HOME/.turbospark/lab; REV=$(git rev-parse --short HEAD)
+  mkdir -p $LAB/bin/$REV && cp target/release/tslab target/release/tslab-worker $LAB/bin/$REV/
+  $LAB/bin/$REV/tslab run-experiment --base $REV \
+      --spec $HOME/.turbospark/lab/flint-chunked-prefill/spec.copy.json
+  ```
+
+  `--base` must be the merge commit, or the integrity check lists the whole lab
+  as touched evaluator files. The spec's `messages_file` points at a scratch
+  directory that may be gone: regenerate it as one user message holding 45 lines
+  `Fact i: the village of Brookmere number i has N houses, a <mill|bakery|school|chapel|market> on <Oak|Elm|Pine|Cedar|Birch> Street, and its mayor in year 1800+i was named <name> <surname>.`
+  followed by a question about village 3 in 1803 (about 1,670 tokens), and edit
+  the path. Check `ps` for other sessions' model processes and system indexing
+  daemons first: they are what made the first run dirty.
 - Install: `~/.turbospark/models/text/flint.gturbo` (already migrated).
