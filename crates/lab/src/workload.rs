@@ -28,6 +28,18 @@ pub enum PromptSource {
     /// corpus prompt in a workload takes the probes' k-th offset, so a
     /// workload of the probe lengths prefills the probes' exact token ids.
     Corpus(usize),
+    /// A multi-turn conversation (`worker::ChatFile`): the opening turn, then
+    /// each follow-up, with the model's replies carried back WITHOUT their
+    /// reasoning, as most OpenAI-style clients send them. Prefix reuse is on
+    /// for the whole chat, so a follow-up's time to first token measures what
+    /// a client waits for. Judged on generated tokens, like a speculative arm.
+    Chat(PathBuf),
+}
+
+impl PromptSource {
+    pub fn is_chat(&self) -> bool {
+        matches!(self, PromptSource::Chat(_))
+    }
 }
 
 /// Expert cache slot policy for the open.
@@ -147,6 +159,10 @@ pub enum Metric {
     PrefillS,
     /// Peak `phys_footprint`, bytes.
     PeakBytes,
+    /// Mean time to first token over every chat turn after the first, in
+    /// seconds: from the generation call to the first token, so it includes
+    /// whatever reuse or restore the turn did. Chat workloads only.
+    FollowupTtftS,
 }
 
 impl Metric {
@@ -154,7 +170,7 @@ impl Metric {
         use crate::stats::Direction::*;
         match self {
             Metric::PrefillTokS | Metric::DecodeTokS => HigherIsBetter,
-            Metric::PrefillS | Metric::PeakBytes => LowerIsBetter,
+            Metric::PrefillS | Metric::PeakBytes | Metric::FollowupTtftS => LowerIsBetter,
         }
     }
 
@@ -166,6 +182,7 @@ impl Metric {
             Metric::DecodeTokS => totals["decode_tok_s"].as_f64(),
             Metric::PrefillS => totals["prefill_s"].as_f64(),
             Metric::PeakBytes => record["peak_footprint_bytes"].as_f64(),
+            Metric::FollowupTtftS => totals["followup_ttft_s"].as_f64(),
         }
     }
 }
