@@ -28,7 +28,11 @@ pub enum KernelWarmup {
     },
     GdnConvDecode,
     GdnQkNorm,
-    GdnDeltaDecode,
+    /// Carries the key dim so warmup builds the same `FC_GDN_DK` bucket the
+    /// decode dispatch will ask for.
+    GdnDeltaDecode {
+        key_dim: u32,
+    },
     GdnGatedNorm,
     RmsNorm,
     RmsNormPerHead,
@@ -195,11 +199,13 @@ impl KernelWarmup {
             GdnInProjection { qkv, z, ab, cols } => {
                 crate::gdn::in_proj_pipeline(context, qkv, z, ab, cols)?;
             }
-            GdnConvDecode | GdnQkNorm | GdnDeltaDecode | GdnGatedNorm => {
+            GdnDeltaDecode { key_dim } => {
+                crate::gdn::delta_decode_pipeline(context, key_dim)?;
+            }
+            GdnConvDecode | GdnQkNorm | GdnGatedNorm => {
                 let name = match self {
                     GdnConvDecode => "gdn_conv_mix_decode",
                     GdnQkNorm => "gdn_qk_norm",
-                    GdnDeltaDecode => "gdn_delta_step_decode",
                     _ => "gdn_gated_norm",
                 };
                 crate::gdn::pipeline(context, name)?;
