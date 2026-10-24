@@ -130,6 +130,77 @@ move to a different bucket.
   is taken, wait. Do not run model processes beside a measurement.
 - **Keep ASCII,** no emojis or em dashes, in code, comments and notes.
 
+## Checks for a new model or family
+
+Collect these in the ledger before any speed or speculation claim about a
+family the lab has not measured. Each was a surprise on the dense `qwen35`
+family, the readings are in `docs/KAPITSA_KERNELS.md`, and none of them is a
+number to copy: a new family has its own.
+
+1. **The verify cost curve, per shape.** `tslab kernel --bench int4_matmul
+   --rows 1,2,4,8,9` at the install's own shapes, and read the M-row pass
+   against the one-row step. If the pass grows with the rows, only the
+   shortest speculative blocks can pay, and comparing drafters is premature:
+   fix the curve first. Routed MoE needs its expert-union cost measured too,
+   because extra rows bring in extra experts.
+2. **The small projections.** The shape list is derived from `ArchConfig`, and
+   a shape missing from it cannot be seen. Check that the short ones are there
+   (attention K/V, the gated-DeltaNet gate projections). A kernel with a
+   row-count threshold can serve the large shapes and leave the small ones on
+   an older, slower kernel, which costs launch latency a bandwidth model never
+   predicts.
+3. **Where a round goes.** Set `TURBOSPARK_SPEC_STATS=1` in the arm and read
+   `ms_per_round` (draft, verify, accept, rollback, commit, rewind, bonus).
+   Different drafters at the same block can cost the same per round, which
+   means the lever is the verify and not the drafter. A rollback that is a
+   small fraction of a round needs no further work.
+4. **Acceptance, per position.** `NAME~dflash:7` or `NAME~mtp:4` arms give
+   committed tokens per round and the per-position curve. Derive the best
+   fixed depth from the curve and the measured round cost before building an
+   adaptive controller. When verify is flat in rows, a row pays once its
+   chance of being reached passes a few percent, and a fixed deep block was
+   within a couple of percent of the best per-request choice.
+5. **Which attention kernel each scratch uses.** The trunk, the MTP head and a
+   block drafter each build their own attention scratch. One can default to
+   the barrier decode kernel while another uses the GQA-shared one, and the
+   cost of the older one grows with the span. Compare the draft phase at a
+   short and at a multi-thousand-token prompt.
+6. **Prefill on the install actually served.** Drafter and head variants of
+   one family can take different prefill drivers (chunked or token by token).
+   Measure prefill tokens per second for the plain, the MTP and the block
+   drafter installs separately, at a short and a long prompt. A decode win on
+   an install whose prefill is an order of magnitude slower is a latency
+   regression for any request with a real prompt.
+7. **Memory per install variant.** Peak footprint for each, and what each
+   drafter's state costs. When comparing against another engine, say how each
+   one counts memory (mapped weights against allocated buffers).
+8. **The exactness class.** Declare it in the spec. A change that must keep
+   decode and verify on one arithmetic has to move both. A switch that is
+   global moves every family: gate the family you changed and name the ones you
+   did not.
+9. **Controls.** Every arm sets its variables itself in a cleared
+   environment. Never use a forced-kernel variable as the baseline, because it
+   also forces the trunk. Null-calibrate. Do not time on a host that is
+   swapping: one stalled run here took 22 minutes, and the lab's host rules
+   exist for that reason.
+10. **Comparing with another engine.** Count tokens with one tokenizer, never
+    stream chunks. Render the prompt the same way and compare the generated
+    lengths first: different chat templates or thinking behavior make the
+    texts differ, and acceptance on different text says little. Keep time to
+    first token apart from decode, and know whether the other engine reuses a
+    prefix across runs.
+11. **What earlier testing did not cover.** Sampled (temperature above zero)
+    speculative throughput, decode at contexts of 16K and beyond, concurrent
+    requests, and output quality against the other engine. Say so when a claim
+    needs one of them.
+
+Workloads under `crates/lab/workloads/` are for `--prompt messages:PATH`.
+`copy-heavy.messages.json` is a quote-back task (rename one variable in a short
+function and return all of it), the shape where lookup drafting was expected to
+pay and where a block drafter commits nearly the whole block. The 8-row tile
+(`TURBOSPARK_INT4_MMA8`) is not on `main` yet, so the kernel bench has no arm
+for it; add one when it lands, next to the scalar GEMM and the Steel tiles.
+
 ## Spec template
 
 ```json

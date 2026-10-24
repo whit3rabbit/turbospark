@@ -7,7 +7,8 @@
 
 use gpu::{
     autorelease_pool, encode_dequant_int4_gemm_resident, encode_dequant_int4_gemm_steel,
-    encode_dequant_int4_gemv_resident, Int4ResidentMatrix, MetalContext, SteelTile, MAX_BATCH_ROWS,
+    encode_dequant_int4_gemv_resident, steel_supports, Int4ResidentMatrix, MetalContext, SteelTile,
+    MAX_BATCH_ROWS,
 };
 use model_io::ArchConfig;
 use serde_json::{json, Value};
@@ -59,6 +60,18 @@ pub fn shapes(arch: &ArchConfig) -> Vec<(usize, usize)> {
         out.push((2 * f, h));
         out.push((h, f));
     }
+    if arch.has_linear_attention_layers() {
+        // The gated-DeltaNet gate projections (`in_proj_a` and `in_proj_b`):
+        // `num_v_heads` rows, so a handful of output rows against the full
+        // hidden width. They are absent from `decode_int4_gemv_shapes`, and
+        // they are exactly the shape where an 8-row verify pays launch and
+        // occupancy latency instead of bandwidth (docs/KAPITSA_KERNELS.md,
+        // lever 9), so a bench that skips them cannot see that cost.
+        out.push((
+            arch.linear_attention.num_v_heads as usize,
+            arch.hidden_size as usize,
+        ));
+    }
     out.retain(|&(r, c)| r > 0 && c > 0 && c % 64 == 0);
     out.sort_unstable();
     out.dedup();
@@ -81,6 +94,27 @@ pub fn run_shape(
             (context.new_buffer_with_data(&data), scales, biases)
         })
         .collect();
+    // A Steel tile needs the row count to fit its tile, and some of the
+    // install's real projections do not (the 48-row gated-DeltaNet gates):
+    // callers of the engine fall back to the scalar GEMM there. The bench
+    // records the arm as unsupported for that shape and times the rest.
+    let supported: Vec<bool> = {
+        let (buffer, scales, biases) = &mats[0];
+        let w = Int4ResidentMatrix {
+            buffer,
+            weights_offset: 0,
+            scales_offset: *scales,
+            biases_offset: *biases,
+            rows,
+            cols,
+        };
+        ARMS.iter()
+            .map(|arm| match arm {
+                Arm::Steel(tile) => steel_supports(&w, *tile),
+                _ => true,
+            })
+            .collect()
+    };
     let max_m = *ms.iter().max().unwrap_or(&1);
     let x = context.new_buffer_with_data(&f16_activations(max_m * cols, 7));
     let y = context.new_output_buffer((max_m * rows * 2) as u64);
@@ -89,6 +123,12 @@ pub fn run_shape(
         let mut samples = vec![Vec::new(); ARMS.len()];
         for rep in 0..=reps {
             for (a, &arm) in ARMS.iter().enumerate() {
+                if !supported[a] {
+                    if rep > 0 {
+                        samples[a].push(f64::NAN);
+                    }
+                    continue;
+                }
                 let t = autorelease_pool(|| -> Result<f64, String> {
                     let pass = context.begin_pass();
                     for (buffer, scales, biases) in &mats {
@@ -164,6 +204,14 @@ pub fn run_shape(
     let mut arms_json = serde_json::Map::new();
     let mut fits = Vec::new();
     for (a, arm) in ARMS.iter().enumerate() {
+        if !supported[a] {
+            fits.push(None);
+            arms_json.insert(
+                arm.label(),
+                json!({"unsupported": "this shape does not fit the tile"}),
+            );
+            continue;
+        }
         let points: Vec<(f64, f64)> = table.iter().map(|(m, t)| (*m as f64, t[a])).collect();
         let fit = fit_affine(&points);
         fits.push(fit);
@@ -223,6 +271,10 @@ pub fn print_shape(rec: &Value) {
     }
     println!("   fit a + b*M (ms)");
     for (name, arm) in &arms {
+        if let Some(why) = arm["unsupported"].as_str() {
+            println!("  {name:<14}{why}");
+            continue;
+        }
         print!("  {name:<14}");
         for p in arm["points"].as_array().into_iter().flatten() {
             print!("{:>8.3}", p["c_of_m"].as_f64().unwrap_or(f64::NAN));
