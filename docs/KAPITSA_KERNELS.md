@@ -188,7 +188,9 @@ left, ranked by the arithmetic below:
 | 6 | MTP head quality | RESOLVED: equal. Kapitsa 2.39 committed per cycle on short-explanation, ours 2.38, same depth 4 | The 1.4x gap at equal acceptance is round cost, 57 ms against 86 ms |
 | 7 | DFlash2 drafter pass | Profiled and trimmed ~2 ms (per-row loops batched, selector scan fused), uncommitted in `dflash_draft/` | Only ~2 ms more is in sight; the selector was 1.2 ms, not the suspect |
 | 8 | DFlash2 drafter attention at long context | DONE, uncommitted: one line in `dflash.rs`, draft phase 21.2 to 11.4 ms at 2,940 tokens and 14.5 to 11.0 ms at 426, +3.5% and +11% tok/s | The barrier decode kernel was used by the drafter only; the trunk already used the GQA-shared one |
-| 9 | Small projections in the 8-row verify | MEASURED: tile beats the scalar GEMM 5.6x (a/b) and 2.7x (K/V) per dispatch; real verify 66.3 to 63.8 ms/token in the profile. A threshold change for the tile's owner, not made here | About 3 ms of an 85 ms round; decode must move with it, about 0.7 ms a token derived, not measured |
+| 9 | Small projections in the 8-row verify | NOT CONFIRMED. Per dispatch the tile is 2.7-5.6x faster than the scalar GEMM and the profile read the verify at 66.3 to 63.8 ms/token, but the clean two-round wall-clock sweep read verify 75.3 and 72.0 ms with the threshold at 1 against 69.8 and 70.5 at its default | Leave the threshold where the tile's owner put it; the disagreement is unexplained |
+| 10 | DFlash2 install prefill | OPEN: token by token at 17-23 tok/s, against 142 on the MTP install and 403-417 for kapitsa | Needs the drafter's auxiliary captures in the chunked driver; user-visible as time to first token |
+| 11 | Which tile mode ships | A DECISION FOR THE TILE'S OWNER: `=verify` speculates as fast as `=1` with no plain-decode or prefill penalty, but its speculative greedy stream parts from sequential decode (561 against 505 tokens) | `=1` is lossless and costs plain decode 21-23%; neither is a free default |
 
 #### Measured: DFlash2 and the flat verify, 2026-10-22
 
@@ -400,6 +402,17 @@ not where kapitsa's lead is: the verify floor is.
 
 #### Measured: where the 8-row verify goes, and the small projections, 2026-10-23
 
+**Correction, same day.** The profile and microbench below are real, but the
+conclusion they were used for (a roughly 3 ms saving from lowering the tile's
+output-row threshold) is NOT supported by the clean wall-clock sweep taken
+afterwards ("Measured: the full sweep on current HEAD", below): with every
+projection on the tile, DFlash2 7 verify read 75.3 and 72.0 ms against 69.8
+and 70.5 at the default threshold. Read the "predicted saving of 4.6 ms",
+"about 3 ms" and "about 0.7 ms a token" statements in this subsection as
+predictions the real model did not confirm. The per-dispatch tables stand as
+what they are.
+
+
 Dispatch profile of one batched verify (DFlash2 block 7, 8 rows, 8-row tile
 flag on, short-explanation, 209 passes). The profiler gives each dispatch its
 own encoder and waits on it, so absolute times are inflated and only the
@@ -522,6 +535,172 @@ times, not from experiments.
 
 What is left is the verify floor: the 8-row tile's own efficiency (the large
 projections are 71.6% of the pass) and the three small rows above.
+
+#### Measured: the full sweep on current HEAD, 2026-10-23
+
+Everything below is one script, 16 arms, short-explanation and medium-review,
+two rounds with the arm order reversed in the second, `turbospark-bench
+--shaping greedy`, one process per run, load under 4.0 at every start (the
+script waits for under 2.5 and then proceeds), 64 of 64 runs completed. The
+host was quiet (swap 3.6 GB, steady). Two binaries: **HEAD** is `2666539a`
+(it carries the drafter changes above and the GDN conv-tap fix `7b37fd36`),
+and **tile** is HEAD plus a COPY of the 8-row kernel owner's uncommitted
+working tree taken that morning (patch `96adbc76e8b4`, kernel sources
+`954ef847140c` and `705eeee0901d`). The tile has three modes by environment:
+`TURBOSPARK_INT4_MMA8=1` (**shared**: decode and verify both run the tile, so
+speculative output stays bit-identical to plain decode), `=verify` (only
+batched calls run the tile and one-row decode keeps the GEMV, so verify and
+decode differ in the last bits), and `TURBOSPARK_INT4_MMA8_MIN_ROWS=1` (serve
+every projection, the lever 9 candidate). MTP arms use `qwen38-27b-mtp`,
+DFlash2 arms `qwen38-27b-dflash2`, plain decode runs on the MTP install.
+
+short-explanation (62-token prompt):
+
+| Arm | tok/s, round 1 / round 2 | committed per round | draft ms | verify ms | tokens | prefill s |
+|-----|-------------------------:|--------------------:|---------:|----------:|-------:|----------:|
+| HEAD, plain decode | 22.1 / 21.8 | - | - | - | 505 | 2.7 |
+| HEAD, MTP 2 (the shipped default) | 33.1 / 32.9 | 2.15 | 8.5 | 55.2 | 561 | 0.4 |
+| HEAD, MTP 4 | 18.2 / 19.1 | 2.40 | 15.5 | 111.4 | 561 | 0.4 |
+| HEAD, DFlash2 4 | 20.0 / 20.3 | 2.57 | 14.6 | 111.4 | 505 | 2.7 |
+| HEAD, DFlash2 7 | 15.2 / 16.1 | 2.71 | 19.8 | 151.8 | 505 | 2.7 |
+| tile shared (=1), plain decode | 16.5 / 17.2 | - | - | - | 533 | 3.5 |
+| tile shared, MTP 4 | 27.7 / 28.3 | 2.38 | 18.0 | 65.4 | 488 | 0.4 |
+| tile shared, DFlash2 4 | 32.1 / 32.7 | 2.53 | 10.2 | 66.4 | 533 | 3.5 |
+| tile shared, DFlash2 7 | 32.4 / 33.4 | 2.72 | 11.0 | 69.8 | 533 | 3.5 |
+| tile verify-only, plain decode | 21.7 / 21.8 | - | - | - | 505 | 2.7 |
+| tile verify-only, MTP 2 | 30.4 / 30.3 | 2.16 | 8.6 | 61.5 | 488 | 0.5 |
+| tile verify-only, MTP 4 | 28.4 / 29.2 | 2.39 | 15.5 | 65.8 | 488 | 0.4 |
+| tile verify-only, DFlash2 4 | 31.1 / 33.2 | 2.49 | 10.1 | 65.7 | 561 | 2.7 |
+| tile verify-only, DFlash2 7 | 32.4 / 30.4 | 2.60 | 11.0 | 69.6 | 561 | 2.9 |
+| tile shared + MIN_ROWS=1, plain decode | 17.3 / 15.8 | - | - | - | 488 | 3.7 |
+| tile shared + MIN_ROWS=1, DFlash2 7 | 29.1 / 29.5 | 2.61 | 11.5 | 75.3 | 488 | 4.1 |
+
+medium-review (426-token prompt):
+
+| Arm | tok/s, round 1 / round 2 | committed per round | draft ms | verify ms | tokens | prefill s |
+|-----|-------------------------:|--------------------:|---------:|----------:|-------:|----------:|
+| HEAD, plain decode | 21.8 / 21.7 | - | - | - | 846 | 18.6 |
+| HEAD, MTP 2 (the shipped default) | 34.2 / 34.8 | 2.30 | 8.5 | 56.8 | 846 | 3.0 |
+| HEAD, MTP 4 | 21.0 / 21.6 | 2.75 | 15.7 | 111.2 | 846 | 2.9 |
+| HEAD, DFlash2 4 | 22.7 / 23.3 | 2.97 | 15.1 | 112.2 | 846 | 18.8 |
+| HEAD, DFlash2 7 | 17.7 / 18.4 | 3.20 | 20.6 | 154.5 | 846 | 18.9 |
+| tile shared (=1), plain decode | 16.9 / 17.5 | - | - | - | 846 | 23.6 |
+| tile shared, MTP 4 | 31.4 / 32.0 | 2.74 | 18.3 | 66.4 | 810 | 2.9 |
+| tile shared, DFlash2 4 | 36.8 / 37.8 | 2.97 | 10.6 | 67.1 | 846 | 24.4 |
+| tile shared, DFlash2 7 | 37.5 / 38.6 | 3.20 | 11.5 | 70.5 | 846 | 24.4 |
+| tile verify-only, plain decode | 21.7 / 21.8 | - | - | - | 846 | 18.6 |
+| tile verify-only, MTP 2 | 32.1 / 32.0 | 2.30 | 8.6 | 61.7 | 810 | 3.0 |
+| tile verify-only, MTP 4 | 32.2 / 32.5 | 2.74 | 15.8 | 67.1 | 810 | 3.0 |
+| tile verify-only, DFlash2 4 | 31.2 / 37.8 | 2.96 | 14.4 | 69.3 | 845 | 21.2 |
+| tile verify-only, DFlash2 7 | 36.2 / 39.7 | 3.20 | 11.6 | 70.3 | 845 | 18.9 |
+| tile shared + MIN_ROWS=1, plain decode | 14.7 / 15.4 | - | - | - | 808 | 24.9 |
+| tile shared + MIN_ROWS=1, DFlash2 7 | 35.1 / 39.0 | 3.18 | 11.5 | 72.0 | 808 | 26.6 |
+
+What it says:
+
+- **The shipped default is strong on prose.** HEAD with MTP block 2 reads 33.0
+  and 34.5 tok/s against 22.0 and 21.8 plain. Without the tile every longer
+  block loses (MTP 4: 18.6 and 21.3; DFlash2 7: 15.7 and 18.1), which is
+  the c(M) problem again, now measured on current HEAD.
+- **The tile turns block 7 from the worst arm into the best.** DFlash2 7
+  reads 32.9 and 38.1 under the shared mode and 31.4 and 37.9 verify-only.
+  Against the shipped default that is 0.95 to 1.0x on short-explanation and
+  +10% on medium-review. The copy-heavy prompt (server, separate run) reads
+  87.3 against 47.8-48.0, 1.8x (separate runs, and the 48 is from the earlier
+  HEAD, so a direction). So the tile plus DFlash2 pays on predictable
+  text and roughly breaks even on unpredictable prose, where only 2.6-2.7
+  tokens commit per round.
+- **The mode matters for plain decode and prefill, not for speculation.**
+  Shared plain decode is 16.8 and 17.2 tok/s against 22.0 and 21.8 (-21% to
+  -23%), and its sequential prefill is 27-31% slower (18.6 to 23.6-24.4 s on
+  medium).
+  Verify-only leaves both unchanged (21.7 and 21.7 tok/s, 18.6 s) and
+  speculates as fast: DFlash2 7 within 1.5 tok/s of shared on both cases.
+- **Verify-only is not lossless against plain decode.** DFlash2 emitted 561
+  tokens against plain decode's 505 on short-explanation (and 845 against
+  846 on medium-review), so the speculative greedy stream parts from the
+  sequential one at a near-tie. The shared mode matches its own plain decode
+  (533 and 533, 846 and 846). The size of the drift is the tile owner's
+  `int4_mma8_drift_probe.rs` question; this sweep only shows it exists and
+  that it buys nothing in speed here. Note the MTP install's own speculative
+  path already differs from plain decode on HEAD (561 tokens against 505 on
+  short-explanation), a known quirk of that install (`docs/BENCHMARKS.md`), so
+  token counts across the MTP arms are not an exactness test.
+- **Lever 9 is not confirmed.** With every projection on the tile
+  (`MIN_ROWS=1`), DFlash2 7 verify reads 75.3 and 72.0 ms against 69.8 and
+  70.5 for the shared mode at its default threshold, plain decode 16.5 and
+  15.1 against 16.8 and 17.2, and sequential prefill is slower again. The
+  microbench (tile 2.7-5.6x faster per dispatch on those shapes) and the
+  dispatch profile (66.3 to 63.8 ms) pointed the other way, and one earlier
+  unprofiled run read 63.3. The two-round A/B is the clean one. Whatever the
+  cause (the extra activation-prep dispatches and the shared prep scratch are
+  the suspects, unexamined), a per-dispatch time is not a round time, and the
+  threshold should stay where the tile's owner put it.
+- **Where that leaves the gap to kapitsa.** Our best arm on this machine is
+  DFlash2 7 under the tile, 32.9 and 38.1 tok/s, against kapitsa's 52.6 and
+  68.4: 63% and 56%. At equal acceptance (MTP head: 2.39 against 2.38) the
+  difference is round cost, about 83 ms against about 52 ms (kapitsa's figure
+  derived by assuming equal acceptance), and the
+  remaining pieces are the verify floor (70 ms for 8 rows against a
+  1.1x-of-a-step 50) and the drafter (11 ms).
+
+#### What the testing so far did not cover, and what it found late
+
+Everything on this page was measured on one family (the dense `qwen35`,
+Qwen3.8-27B 4-bit) on one machine (M4 Max, 36 GB). Beyond that:
+
+**Prefill, which this page did not report until the end.** The decode work
+above says nothing about time to first token, and the logs show a larger gap
+there than in decode:
+
+| Install and driver | Prompt | Prefill | Tokens per second |
+|--------------------|-------:|--------:|------------------:|
+| HEAD plain decode, bench default (sequential driver) | 426 | 18.6 s | 23 |
+| HEAD MTP install, speculative path (chunked driver) | 426 | 3.0 s | 142 |
+| HEAD DFlash2 install, bench (sequential) | 426 | 18.9 s | 23 |
+| DFlash2 install through `turbospark-server`, warm | 62 | 3.83 s | 16 |
+| DFlash2 install through `turbospark-server`, first request (includes model page-in) | 204 | 11.95 s | 17 |
+| tile shared mode, sequential driver | 426 | 23.6-24.4 s | 18 |
+| MTP install, long prompt (playbook, chunked, Steel) | 2,727 | 21-25 s | 110-130 |
+| kapitsa, its own bench | 4,133 | 9.9 s | 417 |
+| kapitsa, its own bench | 16,287 | 40.4 s | 403 |
+
+Kapitsa also reports 0.17 s and 0.21 s for a follow-up turn (a prefix cache and
+an SSD cache), and its time to first token read 0.06 s on every repeated
+prompt in our HTTP runs. The reading: even our best install, the MTP one on
+the chunked Steel path, prefills at roughly 3x slower than kapitsa, and **the
+DFlash2 install prefills token by token at about 17-23 tokens per second, 18x
+to 24x slower**, because the chunked driver does not yet capture the drafter's
+per-layer auxiliary states (an open item in `docs/SPEEDUP_PLAYBOOK.md`, "MTP
+and other drafters"). A DFlash2 decode win on an install whose first token
+takes ten seconds for a 200-token prompt is a latency regression for any agent
+workload. The bench's plain-decode prefill is its sequential harness default
+(`prefill=sequential` in its header), not a measurement of the server's plain
+path, which was not timed here. This is lever 10 in the table above.
+
+**Memory.** The bench's peak footprint reads 658 MiB for the plain install,
+868 for MTP and 896 for DFlash2, against 19.6 GB in kapitsa's own bench. The
+two counts differ (a mapped-weight footprint against allocated buffers
+including four conversation slots), so they are not a like-for-like ratio, but
+they describe different designs and the difference is real on a 36 GB machine.
+
+**Not measured at all:**
+
+- Sampled (temperature above zero) speculative throughput. Kapitsa reads 82.7
+  tok/s sampled against 90.7 greedy (-9%). The engine's loop does exact
+  rejection sampling, but the server's help text still says speculation
+  applies to temperature-0 requests only; one of the two is out of date.
+- Decode at 16K tokens and beyond. Only a 2,940-token prompt was run here.
+- Concurrent requests. Kapitsa runs up to four conversations and reports
+  +15-23% aggregate for three sharing a verify.
+- Output quality against kapitsa. The tile owner's quality gate covers the
+  tile against our own baseline (perplexity 4.9429 under the shared mode).
+- Kapitsa with speculation off, energy and power for either engine.
+- Any family other than the dense `qwen35`. The tile's flag is global and only
+  this family was gated; the verify cost curve for a routed-MoE family is
+  different (extra rows bring in extra experts), and the GQA-shared attention
+  kernel serves head_dim 128 or 256 with at most 8 query heads per KV head.
+  The checklist for those is `docs/NEW_MODEL.md`, "Phase 6b".
 
 ### Prompt lookup
 

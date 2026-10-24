@@ -218,6 +218,39 @@ Measurement and caveats: `docs/BENCHMARKS.md`, the Qwen3.8 section.
   900,000 for all of them). This is derived from two timing samples, not a
   floor measurement, but use it for the next estimate and re-check it.
 
+- **A forced-kernel variable changes more than the thing you meant.**
+  `TURBOSPARK_ATTN_DECODE_KERNEL=barrier` forces every attention scratch,
+  including the trunk's verify, so an arm built with it read a verify of 75 ms
+  against 67 and was not the baseline. The baseline is the variable unset.
+- **The bench generates twice and prints its stats twice.** The first pass
+  warms up and the second is the one the result row reports. On a loaded host
+  the two can differ a lot (a draft phase of 29 against 21 ms), so use the
+  second block. The dispatch profile accumulates across both passes: use the
+  first block, or divide.
+- **A wall-clock A/B on a swapping host is not an A/B.** With 7-8 GB of swap
+  in use one run took 22 minutes for 845 tokens. When the host is in that
+  state use GPU-time sources (the dispatch profile, a per-dispatch microbench)
+  and say that is what the number is.
+- **A shared `CARGO_TARGET_DIR` across worktrees can skip a rebuild.**
+  Workspace crates hash without their absolute path, and a tree whose sources
+  are older than the first tree's outputs counts as fresh: the second build
+  said `Finished` in 0.08 s and produced a byte-identical binary. Touch the
+  changed files and check `strings` for a symbol only that tree has.
+- **Skipping a step to attribute its cost can abort the run.** Skipping an
+  attention dispatch left stale NaNs that the next stage refused. Skip only
+  steps whose output the rest tolerates, and check the run completed before
+  reading a time.
+- **A model-free draft source is cheap to size offline.** The prompt-lookup
+  replay needed one plain generation per case and no verify pass, because
+  greedy acceptance is equality against that stream. Replay before wiring.
+- **A per-dispatch time is not a round time.** A microbench put the 8-row tile
+  2.7-5.6x ahead of the scalar GEMM on two small shapes, and the dispatch
+  profile agreed (a 2.5 ms saving), but a clean two-round wall-clock A/B read
+  the verify 1.5-5.5 ms slower. The profile gives each dispatch its own encoder
+  and waits on it, and a standing microbench pool is not the layer-to-layer
+  cache and dependency state of a real pass. Rank with the profile and
+  microbench, but accept a change on the wall-clock A/B, taken on a quiet host.
+
 ## Opt-in: the ANE+Steel prefill split
 
 Not a default. Steel alone stays the dense qwen prefill arm. The split is a
