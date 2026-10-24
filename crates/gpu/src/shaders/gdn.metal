@@ -242,8 +242,14 @@ kernel void gdn_conv_mix_prefill(
     if (ch >= C || t >= T) return;
 
     const uint history = (K - 1u) * D;
-    float acc = 0.0f;
-    for (uint j = 0; j < K; ++j) {
+    // THE SAME SUMMATION ORDER AS `gdn_conv_mix_decode`: the current row's
+    // tap first as a plain product, then the K-1 earlier taps oldest first.
+    // A verify row runs this kernel where sequential decode ran that one, so
+    // any other association differs in the last f32 bit about once in ten
+    // thousand elements and survives the half rounding; on qwen38 it was the
+    // first decode-vs-verify divergence (tests/gdn_conv_order_parity.rs).
+    float acc = float(qkv[t * C + ch]) * float(conv_w[ch * K + (K - 1u)]);
+    for (uint j = 0; j < K - 1u; ++j) {
         // Input row index in the virtual sequence [tail rows | chunk rows],
         // taps `D` apart (`D=1` collapses to the original stride-1 walk).
         const int src = int(t) + int(j) * int(D) - int(history);

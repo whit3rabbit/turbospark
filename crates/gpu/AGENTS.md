@@ -45,6 +45,14 @@ threadgroup shape, or normalization convention on the device.
   by every row and its summation order differs from the one-row kernel, so
   it is not bit-exact against it: it serves the chunked-prefill scratch only
   (`BatchedScratch::rows_attention`), never decode or speculative verify.
+- A kernel pair that decode and speculative verify both reach for the same
+  op (one-row and multi-row forms) must sum in the SAME order, term by term.
+  `gdn_conv_mix_decode` and `gdn_conv_mix_prefill` once associated their
+  four taps differently, and that one-ulp f32 difference survived half
+  rounding about once in ten thousand elements: it was what made greedy
+  speculation leave sequential decode on the real 27B. Random fixture data
+  rarely reaches a rounding boundary, so pin such a pair at the real width
+  with a full, nonzero state (`tests/gdn_conv_order_parity.rs`).
 - `shaders/dequant_int4_steel.metal` is generated from pinned MLX sources by
   `scripts/vendor_mlx_steel_qmm.py`. Change the script and regenerate, never
   the shader. Steel is not bit-exact against the scalar INT4 kernels, so it

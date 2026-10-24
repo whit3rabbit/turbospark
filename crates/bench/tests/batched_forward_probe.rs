@@ -1,6 +1,17 @@
 #![cfg(target_os = "macos")]
 //! Where does the batched verify stop agreeing with a sequential decode?
 //!
+//! **CORRECTED 2026-10-23: the conclusion below ("the attention reduction",
+//! "nothing here to fix") was wrong.** A layer-capped bisect with per-stage
+//! dumps found the first difference in the GDN causal conv: the decode and
+//! prefill kernels summed their four taps in different orders. Zero tail rows
+//! early in a sequence hid it, which is the "onset at three keys" read below.
+//! Fixed in `gdn_conv_mix_prefill` and pinned by
+//! `crates/gpu/tests/gdn_conv_order_parity.rs`. Every verify row is now
+//! bit-identical to its decode step. The remaining stream divergence comes
+//! from the speculative loop's chunked prefill (`docs/DFLASH2.md`,
+//! losslessness caveat). The history is kept below as written.
+//!
 //! A greedy speculative stream parts from a greedy sequential one at ~154
 //! tokens on the real `qwen3_5` install (`docs/DFLASH2.md`). The cause was
 //! attributed for a while to `dequant_int4_gemm_simd` accumulating

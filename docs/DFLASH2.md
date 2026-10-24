@@ -373,6 +373,36 @@ The honest claim is "identical for the first hundred-odd tokens, then
 divergent at the first near-tie". A caller who needs token-for-token
 reproducibility against a sequential decode should leave speculation off.
 
+**ROOT CAUSE FOUND, 2026-10-23, and it was two things, neither a reduce-order
+floor.** Bisected on `qwen38-27b-mtp` (MTP drafter, the same trunk) with a
+layer cap and per-stage dumps:
+
+1. **A real decode-vs-verify bug in the GDN causal conv.**
+   `gdn_conv_mix_decode` started from the current row's tap and added the
+   three tail taps. `gdn_conv_mix_prefill`, which a verify row runs, started
+   from zero and added the current row's tap last. That is one f32
+   association apart, and it survives the half rounding about once in ten
+   thousand elements. The first divergence was a single `conv_out` element
+   of layer 33. Zero tail rows early in a sequence make the order
+   irrelevant, which is the "onset at three keys" `batched_forward_probe.rs`
+   attributed to attention. The prefill kernel now uses the decode order
+   (`tests/gdn_conv_order_parity.rs`, real width, full tail,
+   mutation-checked). After it, every verify row is bit-identical to the
+   decode step it stands in for (768 of 768 rows over three prompts,
+   teacher-forced).
+2. **The speculative loop's prefill differs from the sequential one.** It
+   primes the drafter through the chunked driver, which uses Steel at 32+
+   rows and is not bit-exact by design (`docs/BENCHMARKS.md`). With the
+   conv fixed and `TURBOSPARK_BATCHED_GEMV=0` on both arms, greedy
+   speculation matches sequential decode for all 256 tokens on all three
+   protocol-shaped prompts at blocks 2 and 4. With either cause left in, the
+   prose prompt departs (166 with the old conv, 154 with chunked prefill).
+
+So the acceptance logic and the verify pass ARE lossless. What still parts
+the default speculative stream from a sequential one is the prefill choice,
+which is a speed trade made on purpose. The DFlash2 arms above were not
+re-run.
+
 **THE MECHANISM IS THE KERNEL, NOT THE BATCH WIDTH**, and the discriminator
 that says so also refuted the first hypothesis. If the batch WIDTH caused
 the divergence, different M would reassociate differently and the divergence
