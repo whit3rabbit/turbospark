@@ -76,6 +76,13 @@ threadgroup shape, or normalization convention on the device.
 - GDN lazy tape fold (`gdn_state_fold`): performs register-fused accumulation of
   rank-1 updates and writes state once at round end. Commit command buffers are
   dispatched asynchronously on the GPU without blocking CPU drafting.
+- GDN delta kernels (decode, eager and lazy prefill, fold) bake the key head
+  dim through `FC_GDN_DK` (constant 98) when it is 128, so the per-lane state
+  loop unrolls. Build them through `gdn::delta_pipeline`, whose key carries
+  (RECORD, WRITE_STATE, Dk), never the plain `gdn::pipeline` helper. The baked
+  and runtime builds must stay bit-identical (`src/gdn_tests.rs`, including
+  its distinct-pipeline guard: a key without Dk passes the bit test
+  vacuously). `TURBOSPARK_GDN_DK128=0` restores the runtime build.
 
 ## Checks
 

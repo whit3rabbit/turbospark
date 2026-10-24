@@ -56,7 +56,7 @@ const CONV_THREADS: u64 = 256;
 pub use crate::gdn_shape::GdnShape;
 
 /// Every function constant either shader in [`SOURCE`] declares: INT4's
-/// 20-26 and GDN's 90-97. Metal requires all constants a function reads to
+/// 20-26 and GDN's 90-98. Metal requires all constants a function reads to
 /// be set before a pipeline can be built, and setting the ones it does not
 /// read is harmless -- the same defensive shape the other kernel modules
 /// use. `USE_FC = false` keeps a kernel on its runtime-argument path;
@@ -69,12 +69,14 @@ pub use crate::gdn_shape::GdnShape;
 /// for them exactly as it always has. `gdn_delta_step_prefill` alone reads
 /// 96/97, whose defaults here (RECORD false, WRITE_STATE true) are the
 /// eager behavior every existing caller keeps; the lazy verify build sets
-/// them through [`delta_prefill_lazy_pipeline`].
+/// them through [`delta_prefill_lazy_pipeline`]. 98 (`FC_GDN_DK`) defaults
+/// to 0, the runtime key dim; the delta kernels bake it through
+/// [`delta_pipeline`].
 fn gdn_function_constants() -> FunctionConstantValues {
     let values = FunctionConstantValues::new();
     let zero: u32 = 0;
     let use_fc = false;
-    for index in [20, 21, 23, 24, 25, 90, 91, 92, 93] {
+    for index in [20, 21, 23, 24, 25, 90, 91, 92, 93, 98] {
         values.set_constant_value_at_index((&zero as *const u32).cast(), MTLDataType::UInt, index);
     }
     for index in [22, 26, 94, 95, 96] {
@@ -140,26 +142,81 @@ fn gated_norm_sigmoid_pipeline(
     context.pipeline(SOURCE, "gdn_gated_norm", &values, &[sigmoid as u8])
 }
 
+/// The one key dim the delta kernels bake (`FC_GDN_DK`): every shipped
+/// qwen GDN checkpoint. Baking it unrolls the per-lane state loops, 2.78x
+/// on the lazy verify kernel at qwen38 shapes (docs/KAPITSA_KERNELS.md).
+/// Any other `key_head_dim` keeps the runtime-loop build.
+const BAKED_KEY_DIM: u32 = 128;
+
+/// `TURBOSPARK_GDN_DK128=0` keeps every delta kernel on the runtime-`Dk`
+/// build, for A/B runs. Read once per process.
+fn key_dim_bake_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("TURBOSPARK_GDN_DK128").as_deref() != Ok("0"))
+}
+
+/// The `FC_GDN_DK` value a dispatch at `key_head_dim` bakes:
+/// [`BAKED_KEY_DIM`] or 0 (runtime `keyDim`).
+fn baked_key_dim(key_head_dim: u32) -> u32 {
+    #[cfg(test)]
+    if tests::FORCE_RUNTIME_KEY_DIM.with(|f| f.get()) {
+        return 0;
+    }
+    if key_head_dim == BAKED_KEY_DIM && key_dim_bake_enabled() {
+        BAKED_KEY_DIM
+    } else {
+        0
+    }
+}
+
+/// A delta kernel (`gdn_delta_step_decode`, `gdn_delta_step_prefill`,
+/// `gdn_state_fold`) with (RECORD, WRITE_STATE) and `FC_GDN_DK` baked. The
+/// KEY carries all three values: the lazy build (true, false) must never
+/// reach an eager caller, and a baked `Dk` must never reach a dispatch at
+/// another `key_head_dim` (crate Gotcha 1). Kernels that do not read 96/97
+/// get the eager defaults, which they ignore.
+pub(crate) fn delta_pipeline(
+    context: &mut MetalContext,
+    name: &'static str,
+    record: bool,
+    write_state: bool,
+    key_dim: u32,
+) -> Result<metal::ComputePipelineState, GpuError> {
+    let values = gdn_function_constants();
+    values.set_constant_value_at_index((&record as *const bool).cast(), MTLDataType::Bool, 96);
+    values.set_constant_value_at_index((&write_state as *const bool).cast(), MTLDataType::Bool, 97);
+    values.set_constant_value_at_index((&key_dim as *const u32).cast(), MTLDataType::UInt, 98);
+    let mut key = [0u8; 6];
+    key[0] = record as u8;
+    key[1] = write_state as u8;
+    key[2..].copy_from_slice(&key_dim.to_le_bytes());
+    context.pipeline(SOURCE, name, &values, &key)
+}
+
+/// `gdn_delta_step_decode` as [`encode_gdn_delta_decode`] builds it for a
+/// checkpoint with `key_dim`, for kernel warmup.
+pub(crate) fn delta_decode_pipeline(
+    context: &mut MetalContext,
+    key_dim: u32,
+) -> Result<metal::ComputePipelineState, GpuError> {
+    delta_pipeline(
+        context,
+        "gdn_delta_step_decode",
+        false,
+        true,
+        baked_key_dim(key_dim),
+    )
+}
+
 /// `gdn_delta_step_prefill` with (RECORD, WRITE_STATE) baked (true, false):
 /// the lazy verify's build. It leaves the live state at the block start and
 /// writes each row's `delta` to `delta_tape`, for [`encode_gdn_state_fold`]
-/// to fold in at the round end. The KEY carries both bytes -- the eager
-/// build lives in the `b""` bucket, and a shared key across the two would
-/// silently hand the eager caller the state-less variant (crate Gotcha 1).
+/// to fold in at the round end.
 fn delta_prefill_lazy_pipeline(
     context: &mut MetalContext,
+    key_dim: u32,
 ) -> Result<metal::ComputePipelineState, GpuError> {
-    let values = gdn_function_constants();
-    let record = true;
-    let write_state = false;
-    values.set_constant_value_at_index((&record as *const bool).cast(), MTLDataType::Bool, 96);
-    values.set_constant_value_at_index((&write_state as *const bool).cast(), MTLDataType::Bool, 97);
-    context.pipeline(
-        SOURCE,
-        "gdn_delta_step_prefill",
-        &values,
-        &[record as u8, write_state as u8],
-    )
+    delta_pipeline(context, "gdn_delta_step_prefill", true, false, key_dim)
 }
 
 /// Fused `in_proj_qkv` / `_z` / `_a` / `_b` INT4 GEMV: one dispatch over
@@ -418,7 +475,13 @@ pub fn encode_gdn_delta_decode(
     y: (&metal::Buffer, u64),
 ) -> Result<(), GpuError> {
     shape.validate()?;
-    let p = pipeline(context, "gdn_delta_step_decode")?;
+    let p = delta_pipeline(
+        context,
+        "gdn_delta_step_decode",
+        false,
+        true,
+        baked_key_dim(shape.key_head_dim),
+    )?;
     let dims = shape.head_dim_bytes();
     pass.encode_threadgroups_3d(
         &p,
@@ -459,7 +522,13 @@ pub fn encode_gdn_delta_prefill(
     rows: u32,
 ) -> Result<(), GpuError> {
     shape.validate()?;
-    let p = pipeline(context, "gdn_delta_step_prefill")?;
+    let p = delta_pipeline(
+        context,
+        "gdn_delta_step_prefill",
+        false,
+        true,
+        baked_key_dim(shape.key_head_dim),
+    )?;
     let dims = shape.head_dim_bytes();
     let row_stride = shape.qkv_dim();
     let mut bytes: Vec<(&[u8], u64)> = dims.iter().map(|(v, i)| (&v[..], *i)).collect();
@@ -539,7 +608,7 @@ pub fn encode_gdn_delta_prefill_lazy(
         shape.value_dim(),
         4,
     );
-    let p = delta_prefill_lazy_pipeline(context)?;
+    let p = delta_prefill_lazy_pipeline(context, baked_key_dim(shape.key_head_dim))?;
     let dims = shape.head_dim_bytes();
     let row_stride = shape.qkv_dim();
     let mut bytes: Vec<(&[u8], u64)> = dims.iter().map(|(v, i)| (&v[..], *i)).collect();
@@ -586,7 +655,13 @@ pub fn encode_gdn_state_fold(
     rows: u32,
 ) -> Result<(), GpuError> {
     shape.validate()?;
-    let p = pipeline(context, "gdn_state_fold")?;
+    let p = delta_pipeline(
+        context,
+        "gdn_state_fold",
+        false,
+        true,
+        baked_key_dim(shape.key_head_dim),
+    )?;
     let k_stride = shape.num_k_heads * shape.key_head_dim;
     let a_stride = shape.num_v_heads;
     let delta_stride = shape.num_v_heads * shape.value_head_dim;
@@ -706,3 +781,7 @@ pub fn encode_gdn_gated_norm_sigmoid(
     );
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "gdn_tests.rs"]
+mod tests;
