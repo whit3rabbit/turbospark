@@ -121,6 +121,43 @@ pub fn print_profile(arm_names: &[String], outcomes: &[Outcome]) -> Value {
         if let Some(p) = peak {
             println!("  peak      {:.2} GiB phys_footprint", p.0);
         }
+        // Chat prompts: time to first token per turn, median over clean runs.
+        if let Some(f) = med(clean
+            .iter()
+            .map(|o| o.record["totals"]["followup_ttft_s"].as_f64()))
+        {
+            println!(
+                "  ttft      {:.3} s follow-up mean [{:.3}-{:.3}]",
+                f.0, f.1, f.2
+            );
+        }
+        let chats: Vec<(usize, usize)> = first
+            .and_then(|o| o.record["prompts"].as_array())
+            .map(|ps| {
+                ps.iter()
+                    .enumerate()
+                    .filter_map(|(i, p)| p["turns"].as_array().map(|t| (i, t.len())))
+                    .collect()
+            })
+            .unwrap_or_default();
+        for (pi, n) in chats {
+            for t in 0..n {
+                let turn = |o: &&Outcome| o.record["prompts"][pi]["turns"][t].clone();
+                let ttft = med(clean.iter().map(|o| turn(o)["ttft_s"].as_f64()));
+                let row = first.map(turn).unwrap_or_default();
+                if let Some(x) = ttft {
+                    println!(
+                        "    chat {pi} turn {}: prompt {} reused {} ttft {:.3} s [{:.3}-{:.3}]",
+                        t + 1,
+                        row["prompt_tokens"],
+                        row["reused_tokens"],
+                        x.0,
+                        x.1,
+                        x.2
+                    );
+                }
+            }
+        }
         // Speculative rounds: the first `[spec-stats]` call per run is the
         // worker's warm pass, so only the later ones count.
         let measured_calls = |key: &dyn Fn(&Value) -> Option<f64>| {
