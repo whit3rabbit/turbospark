@@ -340,6 +340,7 @@ impl RealForwardRunner {
             unsnapshotted_checkpoint_alive: false,
             unsnapshotted_checkpoint_tainted: false,
             deferred_gdn_snapshot: None,
+            turn_snapshot: None,
             batched_tape_row0: None,
             pending_gdn_fold: None,
             real_llama: None,

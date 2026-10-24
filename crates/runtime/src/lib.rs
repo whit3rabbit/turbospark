@@ -60,6 +60,8 @@ mod resid_capture;
 #[cfg(target_os = "macos")]
 mod router_hist;
 #[cfg(target_os = "macos")]
+mod turn_snapshot;
+#[cfg(target_os = "macos")]
 mod session_pool;
 #[cfg(target_os = "macos")]
 mod speculation_policy;
