@@ -166,7 +166,7 @@ pub use speculative::{
     run_raw_completion_speculative_adaptive_cancellable,
     run_raw_completion_speculative_cancellable, DEFAULT_SPECULATION_BLOCK,
 };
-pub use speculative_adaptive::AdaptiveDepth;
+pub use speculative_adaptive::{AdaptiveDepth, AdaptiveParams};
 #[cfg(target_os = "macos")]
 pub use steering::{family_dispatches_steering, SteeringPolicy, SteeringVector, MAX_STEER_ROWS};
 pub use turn_stream::{TurnEvent, TurnSplitter};
