@@ -51,7 +51,13 @@ pub(crate) fn encode_linear_block(
         ("in_proj_a.weight", v_heads, &qwen4.gdn_a),
         ("in_proj_b.weight", v_heads, &qwen4.gdn_b),
     ];
-    if entry(index, &name(in_proj[0].0))?.dtype == 4 {
+    // The fused in-proj is GEMV arithmetic. Under `TURBOSPARK_INT4_MMA8`,
+    // once any of its matrices is a shape the shared tile serves, the
+    // per-tensor arm below takes over so decode meets verify's kernel.
+    let mma8_served = in_proj
+        .iter()
+        .any(|(_, rows, _)| crate::real_forward_dispatch::int4_mma8_takes(*rows, hidden));
+    if entry(index, &name(in_proj[0].0))?.dtype == 4 && !mma8_served {
         let projection = |suffix: &str, rows: usize| {
             resident_matrix(weights, index, &name(suffix), rows, hidden)
         };

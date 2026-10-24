@@ -70,6 +70,8 @@ mod dequant_int4_fused;
 #[cfg(target_os = "macos")]
 mod dequant_int4_gemv;
 #[cfg(target_os = "macos")]
+mod dequant_int4_mma8;
+#[cfg(target_os = "macos")]
 mod dequant_int4_steel;
 #[cfg(target_os = "macos")]
 mod dequant_int8_batch;
@@ -227,6 +229,10 @@ pub use dequant_int4_batch::{
 };
 #[cfg(target_os = "macos")]
 pub use dequant_int4_fused::{encode_down_epi_gemv, encode_gate_up_act_gemv, DownEpilogue};
+#[cfg(target_os = "macos")]
+pub use dequant_int4_mma8::{
+    encode_dequant_int4_mma8_resident, int4_mma8_k_split, INT4_MMA8_MAX_ROWS,
+};
 #[cfg(target_os = "macos")]
 pub use dequant_int4_gemv::{
     dequant_int4_gemv, dequant_int4_gemv_resident, encode_dequant_int4_gemv_resident,

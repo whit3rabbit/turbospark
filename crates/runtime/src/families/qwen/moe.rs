@@ -499,7 +499,12 @@ fn encode_shared_expert(
     let gate_name = layer_tensor(layer, "mlp.shared_expert.gate_proj.weight");
     let up_name = layer_tensor(layer, "mlp.shared_expert.up_proj.weight");
     let down_name = layer_tensor(layer, "mlp.shared_expert.down_proj.weight");
+    // GEMV arithmetic, so it steps aside for a shape the shared tile serves
+    // under `TURBOSPARK_INT4_MMA8` (`real_forward_dispatch::int4_mma8_takes`).
+    let mma8 = crate::real_forward_dispatch::int4_mma8_takes;
     let fused = crate::families::qwen::fused_ffn()
+        && !mma8(inter, hidden)
+        && !mma8(hidden, inter)
         && crate::real_forward_utils::entry(index, &gate_name)
             .map(|e| e.dtype == 4)
             .unwrap_or(false)

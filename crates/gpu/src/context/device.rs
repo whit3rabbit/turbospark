@@ -31,6 +31,11 @@ pub struct MetalContext {
     stats: MetalCompilationStats,
     buffer_allocations: AtomicU64,
     buffer_allocation_ns: AtomicU64,
+    /// The small-M MMA GEMM's activation table and group sums
+    /// (`dequant_int4_mma8.rs`), grown to the widest K seen. One per context
+    /// because one context is one queue: passes on it run in order, so
+    /// successive calls can share the scratch.
+    pub(crate) int4_mma8_scratch: Option<(metal::Buffer, metal::Buffer, usize)>,
 }
 
 /// Every specialization of one cached function, keyed by its caller-supplied
@@ -109,6 +114,7 @@ impl MetalContext {
             stats,
             buffer_allocations: AtomicU64::new(0),
             buffer_allocation_ns: AtomicU64::new(0),
+            int4_mma8_scratch: None,
         }
     }
 
@@ -400,11 +406,14 @@ impl MetalContext {
     /// must be behind an explicit barrier naming those buffers.
     ///
     /// Doc lives here rather than on a flag because nothing switches this at
-    /// runtime: the caller decides per pass. The one wired site is the
-    /// decode path's q/k/v projection triple
-    /// (`TURBOSPARK_METAL_CONCURRENT_PASSES=1`,
-    /// `families/qwen/attn.rs`), whose three GEMVs read the same normed
-    /// input and write disjoint outputs.
+    /// runtime: the caller decides per pass. NO RUNTIME SITE IS WIRED
+    /// (checked 2026-10-23: only `tests/concurrent_pass_semantics.rs` opens
+    /// one, and nothing reads `TURBOSPARK_METAL_CONCURRENT_PASSES`). The
+    /// natural first site is the decode path's q/k/v projection triple,
+    /// whose three GEMVs read the same normed input and write disjoint
+    /// outputs. Audit shared scratch before wiring any site: the small-M INT4
+    /// GEMM keeps one activation table per context (`int4_mma8_scratch`),
+    /// which concurrent dispatches would race on.
     pub fn begin_pass_concurrent_labeled(&self, label: &'static str) -> PassEncoder {
         let command_buffer = self.queue.new_command_buffer().to_owned();
         command_buffer.set_label(label);

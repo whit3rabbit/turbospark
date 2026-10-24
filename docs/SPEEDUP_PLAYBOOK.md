@@ -622,6 +622,27 @@ offline replay probe, because novel prose (the protocol's three cases) will
 likely have few matches, and the question is the copy-heavy case: a code edit
 or a quote-back prompt.
 
+### 0b. Small-M matrix-unit GEMM for verify and other 2-8 row paths
+
+Bench prototype, 2026-10-21 (`docs/INT4_SMALL_M_MMA.md`): an 8-row INT4
+GEMM on `simdgroup_matrix` with register operands, reading the resident
+layout in place, costs 1.25-1.29x a 1-row GEMV at the qwen38 shapes. The
+shipped batched GEMM costs 3.1-3.6x. That verify cost is what limits MTP to
+block 2 and keeps tree verify from paying. The page holds the per-format
+and per-family checklist.
+
+The route that keeps speculation lossless is the
+one item 1 names: run decode through the same tile. A row's bits do not
+depend on the rows beside it, so this works, and the price is the
+1.24-1.27x one-row cost until the kernel is tuned.
+
+Wired opt-in as `TURBOSPARK_INT4_MMA8=1`, shape-routed (4096+ rows), and
+gated lossless on the 27B. On a code prompt block 4 under the flag beats the
+default by 16%. On prose the best arm is still flag-off block 2 (9-12%
+ahead), because plain decode pays 19% for the tile. Choosing the block per
+request (the adaptive depth controller) is what would take the code gain
+without the prose loss.
+
 ### 1. Give speculative verify the multi-row attention
 
 A block-2 verify runs three rows through `encode_full_attention_block_batched`
