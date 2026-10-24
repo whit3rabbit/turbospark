@@ -53,7 +53,7 @@ kernel one, and is not covered here.
 | 10 | Host-side FCV/set-bytes dedup in MoE decode | Was already in flight in this tree | not this page |
 | 11 | GPU-side routing + single command buffer per token | Not adopted: `fast::exp` vs f32 `exp` can flip f16 routing weights and break frozen digests; streamed mode cannot use it | declined |
 | 12 | Prompt-lookup (n-gram) draft source from mlx-serve | Standalone drafter declined on a replay (flat or losing on prose, ~1.5x ceiling on copy-heavy, about MTP's 1.44x). Hybrid with MTP unmeasured | Section "Prompt lookup" below |
-| 13 | Adaptive speculation depth in the server | Candidate: the controller exists (`speculative_adaptive.rs`) and only the CLI uses it; constants are unmeasured | not started |
+| 13 | Adaptive speculation depth in the server | Server routing and a tunable controller on branch `feat/server-adaptive-depth`. MTP replay: flag off, no setting beats fixed block 2 (live check agrees). Flag on, a tuned 2..8 controller is 1.10x fixed 2 (modeled, not yet run live) | Lever 2 below |
 
 ## What makes the headline numbers fast, and what applies here
 
@@ -599,6 +599,149 @@ number that matters. Not measured.
 Gates: greedy output identical to the sequential loop at several draft
 lengths (`mtp_generation_gate` shape), the memory oracle unchanged, and an
 interleaved paired A/B on AC power. A negative result is recorded here.
+
+## The 2026-10-22 kapitsa and mlx-serve report, checked against this tree
+
+A research report on how both engines reach triple-digit decode on
+Qwen3.8-27B was read against the code here. It cites kapitsa's README
+(commit `bfe46a34`), its `docs/benchmarks-m5-max.md`, and mlx-serve's
+`docs/performance.md` (commit `e6a35b14`) and release notes. None of it was
+re-measured for this section.
+
+What it gets right, and what this page already agrees with:
+
+- Speculation is the multiplier, and the cost of a verify pass decides how
+  deep it can go. The "Measured: kapitsa on this machine" section above
+  makes the same point with numbers from this host.
+- 102 tok/s is a headline "fastest setup" row. Kapitsa's own formal M5 Max
+  run reports 72.9 tok/s sampled and 83.7 greedy with GPU contention
+  flagged, and the same table puts mlx-serve at 130 on the M5 Max and below
+  kapitsa (54 against 63) on the M4 Pro. No ordering of the two engines
+  holds across chips.
+- Decode tok/s is generated tokens over the time from the first to the last
+  token, with time to first token reported separately, and never a count of
+  stream chunks. `scripts/bench_api.py` and tslab both measure it that way.
+
+What it gets wrong about this tree, because it read the README only:
+
+- **The TurboSpark baseline.** It quotes 16.8-19.0 tok/s for Qwen3.8-27B.
+  That is the plain-decode README row. The shipped default on
+  `qwen38-27b-mtp` is MTP block 2, measured above at 34.9-47.8 tok/s.
+- **"Add MTP, PLD and prefix caching."** MTP ships (block 2, lossless,
+  exact sampled rejection). Prompt lookup was replayed and declined as a
+  standalone drafter (section above). Prefix reuse exists (`kv_prefix.rs`,
+  `session_pool.rs`) with the GDN limit described below.
+- **"A fused INT4 decode path."** Decode already dequantizes in registers
+  and the dense FFN tail is fused (items 4 and 5). There is no materialized
+  FP16 weight buffer to remove. The open verify-side kernel is the MMA8 tile.
+- **Adaptive depth "CLI only".** This page said so too, and it is wrong:
+  the FFI path the app and its embedded server use calls
+  `run_raw_completion_speculative_adaptive` as well
+  (`crates/ffi/src/server_model.rs`, `crates/ffi/src/generate/mod.rs`). The
+  standalone HTTP server crate (`crates/server`) does not on `main`. Lever 2
+  below adds it.
+
+## How each remaining lever would be implemented here
+
+Ordered by expected single-stream value on Qwen3.8-27B, then by aggregate
+value. Each entry says why it is faster, where it goes, how it is gated,
+and how tslab measures it (`crates/lab/program.md`). Estimates are marked.
+
+1. **Close the one-row tile gap in the MMA8 verify.** Why: the verify floor
+   is about 58 ms of an 85 ms block-7 round, and one row through the tile
+   costs 1.24-1.27x the GEMV. At GEMV efficiency a round is about 72 ms
+   (estimate from the round table above). Where:
+   `shaders/dequant_int4_mma8.metal` and its dispatch in
+   `real_forward_dispatch.rs`. The levers are the ones
+   `docs/INT4_SMALL_M_MMA.md` lists: operand build cost per group, group
+   sums, and occupancy at one row. Gate: bit equality between a one-row
+   decode and the same row inside a verify (decode and verify share the
+   tile), `mtp_generation_gate`, and the drift probe. Measure:
+   `tslab kernel --bench int4_matmul --rows 1,2,4,8,9` for the curve, then
+   `tslab ab` on `qwen38-27b-mtp` with arms `plain`, `mtp2~mtp:2` and
+   `mtp4~mtp:4` under the flag.
+2. **Choose the block per request, in the server too.** Why: under the
+   flag the best block is 4 on code and 2 on prose, so any fixed block loses
+   somewhere. `AdaptiveDepth` already moves depth per round in the FFI
+   path. Done on branch `feat/server-adaptive-depth` (not on `main`):
+   `turbospark-server --speculative adaptive[:N]` runs the adaptive loop, and
+   `TURBOSPARK_ADAPTIVE_DEPTH=LOW,MID,HIGH,DROP` overrides the controller's
+   climb and drop thresholds (default `8,6,4,2`, the old constants). Output
+   is unchanged by any setting: adaptive changes only how many rows a round
+   verifies, and the live arms below decoded identical tokens.
+
+   Tuned offline, not by sweeping live runs. `tslab chain-capture` records,
+   once per prompt, how many of the MTP head's next 8 chained proposals the
+   target accepts at every position. `tslab depth-replay` then walks the
+   speculative loop's round rules over that record for each controller
+   setting (fixed 1-8, and a grid of floor 2, caps 4 and 8, and climb and
+   drop thresholds) and prices each round from the MTP rows of the round
+   table in "DFlash2 and the flat verify" above: 67.5 ms at depth 2 and 129.5
+   at 4 flag off, 72.5 and 86.5 flag on, other depths linear (modeled).
+   Committed tokens per round in the replay match live fixed-block runs
+   within 2%.
+
+   Results on `qwen38-27b-mtp`, four prompts (short, medium, a code edit, a
+   quote-back), 512 tokens each, speedup over fixed block 2 under the same
+   flag:
+
+   | Setting | Flag off, geomean (worst) | Flag on, geomean (worst) |
+   |---------|--------------------------:|-------------------------:|
+   | shipped, 2..4, `8,6,4,2` | 0.96x (0.90x) | 1.04x |
+   | 2..4, `1,1,1,3` | below 1.0 | 1.07x (1.007x) |
+   | 2..8, `3,1,1,2` | below 1.0 | 1.10x (1.007x), above depth 4 modeled |
+
+   Flag off, every adaptive setting loses: a depth-4 round costs 1.9x a
+   depth-2 round, and no prompt accepts enough to pay for it. A live tslab
+   check (ledger `qwen38-depth-confirm`, M4 Max, AC, 3 clean rounds, code and
+   quote-back prompts) agreed on order: fixed 2 37.4 tok/s, shipped 35.3
+   (0.945x, replay 0.92x), `3,1,1,2` at cap 4 33.2 (0.888x, replay 0.87x).
+   Absolute tok/s ran 12% under the replay on that host. Flag on with the
+   tuned 2..8 controller, against today's default (flag off, fixed 2), the
+   replay gives code +16%, quote-back +7%, prose -6%: the one-row tile cost
+   in lever 1 decides whether the flag-on setting is a net win. Not run
+   live: it needs a worker built with the MMA8 tile.
+3. **DFlash2 at depth 7 over the flat verify.** Why: a block drafter
+   proposes 7 tokens for one pass, and the flat verify makes those rows
+   nearly free (31-37 tok/s measured above, 2.1x its flag-off self). Where:
+   nothing new beyond lever 1. What is owed is the lossless gate under the
+   flag, which has not run for DFlash2. Measure: arms `d2~dflash:2` and
+   `d7~dflash:7` on `qwen38-27b-dflash2.gturbo`, with the bit-exact gate on
+   generated tokens against block 2.
+4. **Prefix reuse across turns on GDN models.** Why: an agent turn that
+   appends 500 tokens to 30K of history should prefill 500. Today
+   `try_reuse_prefix` refuses to move a GDN model's cursor backwards, so
+   reuse fires only when the new prompt extends exactly what was fed. A
+   template that re-renders the previous assistant turn (thinking stripped,
+   different whitespace) misses and prefills everything. Where: keep a GDN
+   snapshot at each turn boundary in the existing snapshot pool
+   (`gdn_state.rs`), and let `try_reuse_prefix` restore the newest snapshot
+   at or below the common prefix, then prefill the difference. Gate: the
+   reuse rate on a real multi-turn chat, and logits after reuse bit-equal to
+   a full prefill of the same ids. Measure: TTFT on a cached follow-up
+   (this is not a decode tok/s lever, and tslab does not yet have a
+   multi-turn workload).
+5. **Hybrid lookup plus MTP.** Why: on copy-heavy output a long n-gram
+   match proposes 4-8 tokens that are accepted, where the head proposes
+   two. Where: a draft source that tries the n-gram first and falls back to
+   the head. Price it with the replay before building (section above).
+6. **Shared verification across concurrent requests.** Why: mlx-serve
+   batches different requests' draft rows into one verify pass, which raises
+   aggregate tok/s (its release notes report 185 tok/s over 32 streams on an
+   M4 Max). With the flat verify, rows from several requests cost little more
+   than one. Where: `crates/server` would need a scheduler that groups
+   requests by phase (draft, verify, commit) over one runner with per-request
+   KV and GDN state, which `session_pool.rs` partly provides. Aggregate only:
+   it can slow a single stream. Not started, and the largest of these.
+7. **Interruptible prefill in the server.** Why: a long prompt from one
+   client freezes another client's decode. Chunked prefill already exists,
+   so the change is to yield between chunks to ready decode steps. This
+   improves p95 inter-token latency, not single-stream throughput.
+
+Not for this gap: HTTP or tokenizer tuning (a 27B verify is tens of
+milliseconds), and CUDA-side techniques. KV quantization exists
+(`--kv-bits`, `docs/TRUBOQUANT.md`) and is a memory lever. Its decode speed
+on the 27B at long context has not been measured.
 
 ## Item 1: the lazy rank-1 GDN verify tape
 
