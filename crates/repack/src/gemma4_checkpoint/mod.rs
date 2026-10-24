@@ -26,9 +26,9 @@ mod shards;
 mod vision;
 
 pub use classify::{
-    canonicalize_flint_header, canonicalize_qwen2_header, canonicalize_vision_header, classify_for_family, classify_gemma4,
-    Gemma4Bucket, DFLASH_PREFIX, MTP_PREFIX, VISION_INSTALL_PREFIX, VISION_PREFIX,
-    VISION_SOURCE_PREFIXES,
+    canonicalize_flint_header, canonicalize_qwen2_header, canonicalize_vision_header,
+    classify_for_family, classify_gemma4, Gemma4Bucket, DFLASH_PREFIX, MTP_PREFIX,
+    VISION_INSTALL_PREFIX, VISION_PREFIX, VISION_SOURCE_PREFIXES,
 };
 pub use config::{
     is_supported_affine_shape, parse_gemma4_config, parse_gemma4_quantization, Gemma4Error,

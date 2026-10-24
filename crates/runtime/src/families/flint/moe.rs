@@ -307,7 +307,11 @@ mod tests {
         let sig = |x: f32| 1.0 / (1.0 + (-x).exp());
         let denom = sig(3.0) + sig(2.0) + sig(1.0);
         for (got, want) in w.iter().zip([sig(3.0), sig(2.0), sig(1.0)]) {
-            assert!((got - want / denom).abs() < 1e-6, "{got} vs {}", want / denom);
+            assert!(
+                (got - want / denom).abs() < 1e-6,
+                "{got} vs {}",
+                want / denom
+            );
         }
         assert!((w.iter().sum::<f32>() - 1.0).abs() < 1e-6);
     }

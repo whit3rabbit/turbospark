@@ -84,7 +84,11 @@ fn dump_router(
     for v in &l {
         record.extend_from_slice(&v.to_le_bytes());
     }
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
         let _ = f.write_all(&record);
     }
 }
@@ -178,8 +182,8 @@ impl RealForwardRunner {
         // port needed extra input scaling for the same reason. It adds a
         // readback per layer, so it is off unless asked for.
         let debug = std::env::var_os("TURBOSPARK_FLINT_DEBUG").is_some();
-        let router_dump = std::env::var_os("TURBOSPARK_FLINT_ROUTER_DUMP")
-            .map(std::path::PathBuf::from);
+        let router_dump =
+            std::env::var_os("TURBOSPARK_FLINT_ROUTER_DUMP").map(std::path::PathBuf::from);
         let rms_eps = state.rms_eps;
         let lead = state.lead;
 
@@ -338,8 +342,20 @@ impl RealForwardRunner {
             }
 
             if debug {
-                debug_report(position, layer, "x after attention", &self.scratch.x, hidden);
-                debug_report(position, layer, "moe_x (post-attn norm)", &state.moe_x, hidden);
+                debug_report(
+                    position,
+                    layer,
+                    "x after attention",
+                    &self.scratch.x,
+                    hidden,
+                );
+                debug_report(
+                    position,
+                    layer,
+                    "moe_x (post-attn norm)",
+                    &state.moe_x,
+                    hidden,
+                );
                 let logits = gpu::read_f32_buffer_at(&state.router_logits_f32, 0, num_experts);
                 let bad = logits.iter().filter(|v| !v.is_finite()).count();
                 let max = logits

@@ -1074,7 +1074,10 @@ fn unindexed_shard_names(files: &[String]) -> Vec<String> {
         }
     }
     shards.sort();
-    shards.into_iter().map(|(_, _, name)| name.to_string()).collect()
+    shards
+        .into_iter()
+        .map(|(_, _, name)| name.to_string())
+        .collect()
 }
 
 #[cfg(test)]

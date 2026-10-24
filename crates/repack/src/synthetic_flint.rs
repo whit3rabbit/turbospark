@@ -208,7 +208,12 @@ pub fn build_synthetic_flint_install(
             );
             gate.shape = vec![NUM_EXPERTS as u64, HIDDEN as u64];
             ts.push(gate);
-            ffn(&mut ts, &format!("{p}.mlp.shared_expert"), MOE_INTER, seed + 80);
+            ffn(
+                &mut ts,
+                &format!("{p}.mlp.shared_expert"),
+                MOE_INTER,
+                seed + 80,
+            );
             for (i, role) in ["gate_proj", "up_proj", "down_proj"].iter().enumerate() {
                 let (rows, cols) = if *role == "down_proj" {
                     (HIDDEN, MOE_INTER)
