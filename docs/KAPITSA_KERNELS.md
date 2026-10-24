@@ -10,7 +10,9 @@ with their measured results.
 Scope: kernel and dispatch-structure ideas only. Kapitsa's headline advantage
 over this engine is its DFlash2-style block drafter and batched multi-request
 verify (`Engine::run_batch`), which is a serving-shape difference, not a
-kernel one, and is not covered here.
+kernel one, and is not covered here. Two speculation ideas are the exception,
+prompt lookup and KFlash tree verify, because their results decide whether
+the verify kernel items (2 and 7) are worth building.
 
 ## Pinned sources and license
 
@@ -47,13 +49,14 @@ kernel one, and is not covered here.
 | 4 | Fused MoE decode half (segment trick) | Adopted bit-exact form | Item 4 below |
 | 5 | Fused dense FFN tail | Adopted bit-exact form | Item 5 below |
 | 6 | Shift-free nibble masking in the int4 GEMV | Bench prototype | Item 6 below |
-| 7 | Integer-code 8-row verify GEMM | Bench prototype | Item 7 below |
+| 7 | Integer-code 8-row verify GEMM | Kernel: 8 rows cost 1.25-1.29x a 1-row GEMV (shipped GEMM 3.1-3.6x). Wired opt-in (`TURBOSPARK_INT4_MMA8=1`), lossless. End to end +16% on code (block 4), 9-12% behind the default on prose | Item 7 below, `docs/INT4_SMALL_M_MMA.md` |
 | 8 | Expert-sorted grouped GEMM MoE prefill | Bench prototype | Item 8 below |
 | 9 | Fused GDN prep (conv+SiLU+qk-norm+g/beta) | Not adopted: <= 1% decode/verify est., breaks the `(32,4)` delta layout contract | declined |
 | 10 | Host-side FCV/set-bytes dedup in MoE decode | Was already in flight in this tree | not this page |
 | 11 | GPU-side routing + single command buffer per token | Not adopted: `fast::exp` vs f32 `exp` can flip f16 routing weights and break frozen digests; streamed mode cannot use it | declined |
 | 12 | Prompt-lookup (n-gram) draft source from mlx-serve | Standalone drafter declined on a replay (flat or losing on prose, ~1.5x ceiling on copy-heavy, about MTP's 1.44x). Hybrid with MTP unmeasured | Section "Prompt lookup" below |
 | 13 | Adaptive speculation depth in the server | Server routing and a tunable controller on branch `feat/server-adaptive-depth`. MTP replay: flag off, no setting beats fixed block 2 (live check agrees). Flag on, a tuned 2..8 controller is 1.10x fixed 2 (modeled, not yet run live) | Lever 2 below |
+| 14 | KFlash tree verify (best-first candidate tree in the verify rows) | Not adopted for MTP: a replay gives 0.995-1.009x committed/round at block 2, the only block that pays. DFlash2 untested | Section "KFlash: tree verify" below |
 
 ## What makes the headline numbers fast, and what applies here
 
@@ -743,6 +746,97 @@ milliseconds), and CUDA-side techniques. KV quantization exists
 (`--kv-bits`, `docs/TRUBOQUANT.md`) and is a memory lever. Its decode speed
 on the 27B at long context has not been measured.
 
+## KFlash: tree verify
+
+Source: kapitsa's `docs/kflash.md` and `docs/kflash-map.md`, main as of
+2026-10-21 (their PR 187). KFlash builds a best-first tree from the drafter's
+per-position candidates and verifies it in the 8 rows the chain already uses.
+Each row attends to the cache plus its own ancestors, recurrent layers start
+from the parent row's state, and RoPE uses the row's depth. Acceptance walks
+into the child equal to the target's own token, so output stays exact. They
+report +6% greedy on the 27B (M4 Pro), mostly from short code and prose
+answers, and -5% to +3% on long agent turns.
+
+Why it does not transfer as-is:
+
+- Their extra rows are nearly free. A dense 8-row verify costs 1.1-1.25x a
+  decode on their 8x8 MMA tile, so the tree fills rows already paid for.
+  Ours is a batched GEMV at c(M) 0.41-0.56 per row at M=8
+  (`docs/SPECULATIVE_DECODING.md`). That makes 8 rows cost 3.3-4.5x a
+  decode, and only block 2 pays (the sweep above). Here a tree has to win at
+  the same row count.
+- Four pieces are missing, and each is a new correctness surface:
+  - ancestor-masked verify attention (`encode_attention_decode` takes a
+    span, not a mask)
+  - GDN rows that start from a parent state (`gdn_delta_step_prefill` runs
+    the rows in one register loop)
+  - per-row RoPE positions (`encode_rope_neox_subdim_rows` is start plus row
+    index)
+  - compaction of the accepted path's KV rows (only `rewind_by` exists)
+
+  Folding only the accepted path through the lazy tape is the easy part,
+  because `gdn_state_fold` is elementwise.
+- Their exactness lesson matches ours. The tree-zone attention had to sum a
+  row's keys in an order fixed by position alone, or the MoE router flipped
+  on last-bit differences between tree schedules. A tree verify here inherits
+  the split-KV bit-exactness rule.
+
+#### Measured: tree vs chain at equal rows, MTP replay, 2026-10-21
+
+`crates/bench/tests/kflash_tree_replay_probe.rs`, with the pure sim in
+`crates/bench/src/tree_replay.rs`. `qwen38-27b-mtp.gturbo`, greedy, 512
+tokens per case. At every position the head drafts a fresh depth-8 chain
+and keeps its top-4 per depth. The replay then walks the speculative loop
+twice, once for the chain and once for KFlash's best-first tree, with the
+same number of proposals.
+
+The token count is exact, because an accepted path is always the reference
+prefix. Tree overhead is not modelled, so the tree columns are ceilings. An
+MTP head only drafts under a token it was fed, so siblings are leaves and a
+tree gains at most one token per round. Built in a HEAD worktree with only
+these files. The drafted stream was asserted identical to plain greedy.
+
+| Case | Block | Chain committed/round | Tree | Oracle | Tree/chain |
+|------|------:|----------------------:|-----:|-------:|-----------:|
+| short-explanation | 2 | 2.133 | 2.133 | 2.522 | 1.000x |
+| short-explanation | 4 | 2.393 | 2.522 | 2.943 | 1.054x |
+| short-explanation | 8 | 2.450 | 2.783 | 3.012 | 1.136x |
+| medium-review | 2 | 2.349 | 2.370 | 2.586 | 1.009x |
+| medium-review | 4 | 2.860 | 2.943 | 3.261 | 1.029x |
+| medium-review | 8 | 3.048 | 3.346 | 3.531 | 1.098x |
+| code (merge sorted lists) | 2 | 2.723 | 2.709 | 2.844 | 0.995x |
+| code | 4 | 3.879 | 3.879 | 4.267 | 1.000x |
+| code | 8 | 5.020 | 5.172 | 5.626 | 1.030x |
+
+Oracle is the best tree the lattice allows, not a buildable one. Sanity
+check: the replay chain at block 2 commits 2.13 and 2.35 per round, and the
+live sweep commits 2.16 and 2.30. Every replay head row is primed from the
+real trunk hidden, and that edge over the live drafter is small.
+
+What it says:
+
+- At block 2 the tree gains nothing: 0.995-1.009x. The head's top-1 is
+  confident enough that best-first keeps the chain.
+- The tree helps at long blocks (1.03-1.14x at block 8), but those blocks
+  lose to plain decode (0.54-0.74x projected on prose). Across blocks, the
+  best tree arm beats the best chain arm by at most 1%.
+- Headroom exists. The oracle is 1.04-1.18x the chain at block 2, and the
+  target is the head's depth-0 runner-up on 10-12% of prose positions.
+  KFlash's per-depth calibration is the lever for that. Its ceiling is the
+  oracle row, before tree overhead and the four kernel pieces.
+
+Verdict: not adopted for MTP. Recorded so it is not re-proposed on kapitsa's
+numbers. Open: DFlash2, whose rows are path-independent with pairwise edge
+scores (`dflash_draft/select.rs` computes the top-16 per row and discards
+it), so its tree is not capped at one token per round. That needs a DFlash2
+install and a lattice dump. Not measured.
+
+Reopen condition: the verdict assumes today's verify cost. The item 7 bench
+prototype (`docs/INT4_SMALL_M_MMA.md`) measured 8 rows at 1.25-1.29x a
+1-row GEMV. If that lands in the verify, blocks 4 and 8 stop losing and the
+1.03-1.14x tree gains at those blocks become reachable. Re-run this replay
+and the block sweep then.
+
 ## Item 1: the lazy rank-1 GDN verify tape
 
 Adopted, default on, `TURBOSPARK_GDN_LAZY_TAPE=0` restores the eager path.
@@ -852,7 +946,8 @@ because both flags are read once. Arm order rotated each round, a warmup
 round discarded. Median decode tok/s with the min-max spread; ratios are
 against the pre-Kapitsa arm (lazy off, fused off).
 
-Run 1 (all six arms, 5 measured rounds, 1-minute host load 0.34-2.73). The
+Run 1 (all six arms: the four below plus the two sequential rows further
+down; 5 measured rounds, 1-minute host load 0.34-2.73). The
 binary was built from the working tree before the Kapitsa commit settled
 (`90d74bd6` to `e81cba38`); gpu, runtime and bench sources had no uncommitted
 changes at the later check, but byte-for-byte identity with HEAD was not
@@ -893,17 +988,60 @@ What it says:
 
 - The lazy tape is worth about 2-3% in speculative decode. Run 2 shows it on
   both cases (1.027x, 1.024x) and run 1 agrees on the short case and is
-  noise on the medium one. The motivation (no snapshot blit, no blocking
-  restore, no replay) holds, but at block 2 on these prompts rollbacks are
-  rare enough that it buys a few percent and no more.
+  noise on the medium one. The block sweep below shows rollbacks are NOT
+  rare at block 2 (49-60% of rounds), and that the gain does not grow with
+  the rollback rate: it stays at a few percent whatever the block.
 - The fused FFN does nothing in speculative mode: lazy-on with and without
   it differ by 0.1-0.2% in run 2, and run 1 straddles 1.0.
 - The fused FFN is worth 1.4-2.2% on plain sequential decode. Small, but
   consistent in sign and a little above the spread.
-- Not measured: rollback counts and ms/round (the bench prints neither),
-  blocks above 2, the long-synthesis case, a rollback-heavy workload (where
-  the lazy tape should matter most), and the MoE shared-expert fusion (this
-  is a dense install).
+- Not measured: ms/round, the long-synthesis case, and the MoE shared-expert
+  fusion (this is a dense install). Rollback counts and blocks 4 and 8 are
+  in the sweep below.
+
+#### Measured: MTP block sweep, lazy tape off and on, 2026-10-20 and 21
+
+Same install, flags and machine as above, AC power, `TURBOSPARK_SPEC_STATS=1`
+for the round and rollback counts (the speculative loop already prints
+them; the bench just forwards stderr). `--speculative 2|4|8` against a
+speculation-off reference, fused FFN at its default, 3 measured rounds after
+a discarded warmup, arm order rotated. Binary built from the gpu, runtime and
+bench sources of `e81cba38` (the docs-only commit above it changes none of
+them). The host was NOT quiet for part of this sweep: 1-minute load reached 57
+in the warmup round and 17-46 across round 1 of the short case, from other
+sessions. Rows below drop every run whose end-of-run load exceeded 8 (n shows
+what is left); the rounds and rollback columns are deterministic per arm and
+unaffected. Unfiltered medians agree on every ratio to within 0.015x.
+
+| Case | Block | Rounds | Rollbacks | Accepted/round | Eager tok/s | Lazy tok/s | Lazy/eager | Lazy vs off |
+|------|------:|-------:|----------:|---------------:|------------:|-----------:|-----------:|------------:|
+| short-explanation | 2 | 225 | 134 (60%) | 1.16 | 31.85 | 32.75 | 1.028x | 1.50x |
+| short-explanation | 4 | 205 | 187 (91%) | 1.38 | 18.22 (n=1) | 18.71 | 1.027x | 0.86x |
+| short-explanation | 8 | 196 | 196 (100%) | 1.48 | 12.03 | 12.20 | 1.014x | 0.56x |
+| medium-review | 2 | 367 | 178 (49%) | 1.30 | 34.25 | 34.86 | 1.018x | 1.61x |
+| medium-review | 4 | 307 | 253 (82%) | 1.75 | 21.02 | 21.55 | 1.025x | 0.99x |
+| medium-review | 8 | 292 | 288 (99%) | 1.89 | 13.93 | 14.07 | 1.011x | 0.65x |
+
+Speculation off: 21.82 tok/s (short), 21.71 tok/s (medium). Every arm of a
+case generated the same token count (488 and 845; off 505 and 846), so the
+streams agree across blocks and tape modes.
+
+What the sweep says:
+
+- The original prediction was wrong. The lazy tape was
+  expected to matter most where rollbacks dominate, and it does not: its gain
+  is 1.8-2.8% at block 2 (49-60% rollbacks), 2.5-2.7% at block 4 (82-91%) and
+  1.1-1.4% at block 8 (~100%). Eliminating the blocking restore and the
+  replay is real but small next to whatever else a round costs. What that
+  other cost is was not measured here.
+- Block 2 is the only block that pays. Block 4 is 0.86x (short) to 0.99x
+  (medium) of plain decode, and block 8 is 0.56-0.65x. Acceptance per
+  position falls off quickly (0.76, 0.53, 0.48, 0.47 on the short case), so a
+  longer block mostly adds rows that get thrown away. The lazy tape makes the
+  loss slightly smaller; it does not turn it into a win.
+- This is the same conclusion `docs/MTP.md` reached for the eager path
+  (batching loses at blocks 8 and 15), now with the restore cost mostly
+  removed, which says the restore was not the dominant term.
 
 ### Round checkpoint and error boundaries
 
@@ -971,7 +1109,7 @@ Nothing flips this at runtime, so there is no flag yet. The wiring that
 would use it (the decode path's q/k/v projection triple is the natural
 first site; the audit list is the in-place qk-norm/rope on `batched.q`,
 the `h1`/`h2`/`x` chains, and the batched scratch liveness notes in
-`batched_layers.rs`) waits on the same A/B that item 1's bench waits on:
+`batched_layers.rs`) stays deferred. Item 1's paired A/B is in, and
 our own prior bench measured only 1.07-1.40x for same-weight GEMV
 concurrency, so the win has to be measured before the serial-order audit
 is worth paying for.
@@ -1000,16 +1138,48 @@ move with clocks.
   simdgroup-loaded, so every element pays a dequant into threadgroup memory
   that is independent of B -- and the header explicitly scopes the verdict:
   the shape loses, not matrix hardware, and the missing piece is weights
-  "already in a loadable format". Kapitsa's subnormal-code trick IS that
-  missing piece: codes repacked so the raw bytes ARE half values
-  simdgroup_load can consume. That requires a new weight layout at 2 or
-  more bytes per code (4x the bytes of packed INT4), which trades dequant
-  work for bandwidth -- plausibly a win at M=8 where the batch GEMM's c(M)
-  of 0.41-0.46 says the kernel is not bandwidth-bound, and unmeasured
-  either way. Building it means a new repack format feeding a new kernel;
-  that is a project, not a bench, and it starts from
-  `scripts/mlx_qmm_reference.py`'s shape (stage x, widen the threadgroup)
-  before it borrows kapitsa's encoding.
+  "already in a loadable format".
+
+  CORRECTED 2026-10-21 from kapitsa's `src/kernels/verify8.metal` (main):
+  the earlier reading here (a repack at 2 or more bytes per code) was
+  wrong. `qmm8*` reads the MLX affine layout directly, with no repacked
+  weight image, and that layout is ours (low nibble first, groups of 64,
+  BF16 scale and bias). Three things replace the threadgroup dequant:
+  - MMA operands are built in registers through `thread_elements()`, so
+    nothing goes through `simdgroup_load` or threadgroup memory.
+  - A code becomes an exact half in one or two integer ops: OR'd with
+    `0x6400` it is `1024 + q`, or bare it is the subnormal `q * 2^-24`
+    (their default dense GEMM). The fp32 epilogue per group applies
+    `s * dot + b * sum(x)`, with the group sums of the 8 rows precomputed.
+  - The permutation goes into the ACTIVATIONS. A prep pass writes the 8
+    rows' inputs in fragment order, so one lane's A operand for a whole
+    group is 16 contiguous codes (one 8-byte load).
+
+  So the weights stay 4-bit and in place, and the shape is a port, not a
+  new format. Not exact against our GEMV: the MMA chain sums in another
+  order and the activations are half. Their own timings are not in the
+  repo (`tools/bench_qmm8.cpp` prints them, none are recorded). It is also
+  KFlash's precondition (section above): only a verify whose extra rows
+  are nearly free lets a tree pay at blocks above 2.
+
+  MEASURED 2026-10-21, bench prototype `tests/int4_mma8_reg_bench.rs`, our
+  own reimplementation: 8 rows cost 1.25-1.29x a 1-row GEMV at the qwen38
+  shapes, against 3.1-3.6x for the shipped GEMM. One row through the same
+  tile costs the same (1.24-1.27x), so rows are free and the 25% is kernel
+  efficiency. Subnormal codes match the shipped GEMM's error against f64,
+  with 99.2-100% of outputs bit-equal, and a row's bits do not depend on
+  the rows beside it. Technique, results, exactness route and the
+  per-format checklist: `docs/INT4_SMALL_M_MMA.md`.
+
+  WIRED 2026-10-21 behind `TURBOSPARK_INT4_MMA8=1` (default off) for decode
+  and verify both, so speculation stays lossless (`mtp_generation_gate`
+  passes on the 27B). End to end on the two prose protocol cases, block 4
+  under the flag runs 1.52-1.54x its flag-off self, but the best flag-on arm
+  is still 6-16% behind flag-off block 2: plain decode pays 19-23% for the
+  tile. After routing only matrices of 4096+ rows to the tile, a code
+  prompt runs 16% faster than the default at block 4, while prose stays
+  9-12% behind. Picking the block per request is the open step. Tables in
+  that page.
 - Item 8 (expert-sorted grouped GEMM MoE prefill): MECHANISM POSITIVE,
   not promoted. `tests/moe_grouped_gemm_bench.rs` measures one M-row GEMM
   per expert against one GEMV per route instance, same packed weights,

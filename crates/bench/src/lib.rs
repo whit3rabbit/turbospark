@@ -6,6 +6,9 @@
 /// Benchmarking protocol case definitions and runner logic.
 pub mod protocol;
 
+/// Host-only replay of tree vs chain speculative verify (KFlash).
+pub mod tree_replay;
+
 /// Speaker-attributed meeting scoring (cpWER) for the Frozen E port.
 pub mod meeting;
 
