@@ -56,9 +56,7 @@ use crate::steering::encode_steering;
 /// starts a fresh process per arm for that reason.
 fn chunked_prefill_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| {
-        std::env::var("TURBOSPARK_FLINT_CHUNKED_PREFILL").as_deref() == Ok("1")
-    })
+    *ON.get_or_init(|| std::env::var("TURBOSPARK_FLINT_CHUNKED_PREFILL").as_deref() == Ok("1"))
 }
 
 impl RealForwardRunner {
@@ -140,7 +138,8 @@ impl RealForwardRunner {
         logits: &mut [LogitValue],
     ) -> Result<(), RealForwardError> {
         let started = Instant::now();
-        let result = self.prefill_micro_batch_flint_inner(tokens, start_position, want_head, logits);
+        let result =
+            self.prefill_micro_batch_flint_inner(tokens, start_position, want_head, logits);
         self.phases.calls += tokens.len() as u64;
         self.phases.total_nanos += started.elapsed().as_nanos() as u64;
         result
@@ -162,11 +161,7 @@ impl RealForwardRunner {
         let num_experts = arch.num_experts as usize;
         let gpu_err = RealForwardError::Gpu;
         let m = tokens.len();
-        let lead = self
-            .real_flint
-            .as_ref()
-            .expect("flint state present")
-            .lead;
+        let lead = self.real_flint.as_ref().expect("flint state present").lead;
 
         if start_position != self.kv.position() {
             return Err(RealForwardError::Unsupported(format!(
@@ -189,7 +184,9 @@ impl RealForwardRunner {
         };
 
         let embed_name = "language_model.model.embed_tokens.weight";
-        let mut pass = self.context.begin_pass_labeled("flint chunk cb1 (attn+router)");
+        let mut pass = self
+            .context
+            .begin_pass_labeled("flint chunk cb1 (attn+router)");
         for (t, &token) in tokens.iter().enumerate() {
             encode_embed_any(
                 &mut self.context,
@@ -208,7 +205,14 @@ impl RealForwardRunner {
         let mut pending_routed: Option<gpu::CommittedPass> = None;
         for layer in 0..arch.num_layers as usize {
             for t in 0..m {
-                self.encode_flint_chunk_token(&pass, layer, start_position + t, t, hidden, num_experts)?;
+                self.encode_flint_chunk_token(
+                    &pass,
+                    layer,
+                    start_position + t,
+                    t,
+                    hidden,
+                    num_experts,
+                )?;
             }
             if layer < lead {
                 // A dense layer has no router and no commit: it stays inside
@@ -236,7 +240,9 @@ impl RealForwardRunner {
                 banks,
                 m,
             )?;
-            pass = self.context.begin_pass_labeled("flint chunk cb1 (attn+router)");
+            pass = self
+                .context
+                .begin_pass_labeled("flint chunk cb1 (attn+router)");
         }
         self.retire_routed(&mut pending_routed);
 
@@ -249,7 +255,11 @@ impl RealForwardRunner {
                 "language_model.model.norm.weight",
                 hidden,
             )?;
-            let rms_eps = self.real_flint.as_ref().expect("flint state present").rms_eps;
+            let rms_eps = self
+                .real_flint
+                .as_ref()
+                .expect("flint state present")
+                .rms_eps;
             gpu::encode_rms_norm_bf16w(
                 &mut self.context,
                 &pass,

@@ -11,7 +11,10 @@ use std::path::PathBuf;
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let dir = PathBuf::from(args.next().expect("usage: flint_rebalance <install dir> [--undo]"));
+    let dir = PathBuf::from(
+        args.next()
+            .expect("usage: flint_rebalance <install dir> [--undo]"),
+    );
     let undo = args.next().as_deref() == Some("--undo");
     let have = turbospark_repack::recorded_shift(&dir).expect("reading the marker");
     let steps = if undo {
@@ -27,10 +30,13 @@ fn main() {
         }
         turbospark_repack::FLINT_SWIGLU_SHIFT
     };
-    let stats = turbospark_repack::rebalance_install_in_place(&dir, steps)
-        .expect("rebalancing in place");
+    let stats =
+        turbospark_repack::rebalance_install_in_place(&dir, steps).expect("rebalancing in place");
     println!("shifted by {steps:+} steps: {stats:?}");
     if stats.left_alone != 0 {
-        eprintln!("warning: {} non-zero values were left alone for range", stats.left_alone);
+        eprintln!(
+            "warning: {} non-zero values were left alone for range",
+            stats.left_alone
+        );
     }
 }

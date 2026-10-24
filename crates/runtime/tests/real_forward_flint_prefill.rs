@@ -32,7 +32,9 @@ const VOCAB: usize = 64;
 const PROMPT_LEN: usize = 40;
 
 fn prompt() -> Vec<i32> {
-    (0..PROMPT_LEN).map(|i| ((i * 7 + 3) % VOCAB) as i32).collect()
+    (0..PROMPT_LEN)
+        .map(|i| ((i * 7 + 3) % VOCAB) as i32)
+        .collect()
 }
 
 fn open_runner(tag: &str, slots: usize) -> RealForwardRunner {
@@ -59,7 +61,9 @@ fn sequential_prefill(runner: &mut RealForwardRunner, tokens: &[i32]) -> Vec<u16
     let last = tokens.len() - 1;
     for (position, &token) in tokens.iter().enumerate() {
         if position == last {
-            runner.produce(token, position, &mut logits).expect("produce");
+            runner
+                .produce(token, position, &mut logits)
+                .expect("produce");
         } else {
             runner
                 .produce_prefill(token, position, &mut logits)
@@ -86,12 +90,18 @@ fn chunked_prefill(runner: &mut RealForwardRunner, tokens: &[i32], chunk: usize)
 
 /// Greedy-decodes `steps` tokens from where a prefill left off, returning every
 /// step's logits bits: equal KV state is what makes these equal.
-fn decode_on_top(runner: &mut RealForwardRunner, mut position: usize, steps: usize) -> Vec<Vec<u16>> {
+fn decode_on_top(
+    runner: &mut RealForwardRunner,
+    mut position: usize,
+    steps: usize,
+) -> Vec<Vec<u16>> {
     let mut out = Vec::new();
     let mut token = 5i32;
     for _ in 0..steps {
         let mut logits = vec![f16::from_f32(0.0); VOCAB];
-        runner.produce(token, position, &mut logits).expect("decode");
+        runner
+            .produce(token, position, &mut logits)
+            .expect("decode");
         token = logits
             .iter()
             .enumerate()

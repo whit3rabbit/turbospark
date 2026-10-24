@@ -60,7 +60,8 @@ impl SwigluRole {
     /// (`mlp.shared_expert.{up,down}_proj`), never a routed expert (those live
     /// in `packed_experts/`, not the resident index).
     pub fn of_resident(name: &str) -> Option<Self> {
-        if name.ends_with(".mlp.up_proj.weight") || name.ends_with(".mlp.shared_expert.up_proj.weight")
+        if name.ends_with(".mlp.up_proj.weight")
+            || name.ends_with(".mlp.shared_expert.up_proj.weight")
         {
             Some(SwigluRole::Up)
         } else if name.ends_with(".mlp.down_proj.weight")
@@ -121,9 +122,10 @@ pub fn recorded_shift(dir: &Path) -> Result<i32, String> {
     if !path.exists() {
         return Ok(0);
     }
-    let value: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&path).map_err(|e| format!("reading {MARKER_FILE}: {e}"))?)
-            .map_err(|e| format!("parsing {MARKER_FILE}: {e}"))?;
+    let value: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&path).map_err(|e| format!("reading {MARKER_FILE}: {e}"))?,
+    )
+    .map_err(|e| format!("parsing {MARKER_FILE}: {e}"))?;
     value["netSteps"]
         .as_i64()
         .and_then(|n| i32::try_from(n).ok())
@@ -204,7 +206,9 @@ pub fn rebalance_install_in_place(dir: &Path, steps: i32) -> Result<RebalanceSta
         &std::fs::read(&layout_path).map_err(|e| format!("reading layout.json: {e}"))?,
     )
     .map_err(|e| format!("parsing layout.json: {e}"))?;
-    let layers = layout["layers"].as_array().ok_or("layout.json has no layers")?;
+    let layers = layout["layers"]
+        .as_array()
+        .ok_or("layout.json has no layers")?;
     for layer in layers {
         let file = layer["file"].as_str().ok_or("layer entry has no file")?;
         let path = dir.join("packed_experts").join(file);
@@ -253,7 +257,10 @@ mod tests {
         for v in [1.0f32, -0.0371, 3.4e-4, 123.5, -7.0e-3, 1.0e20, 1.0e-20] {
             let bits = bf16(v);
             let down = shift_bf16_exponent(bits, -6);
-            assert_eq!(f32::from_bits(u32::from(down) << 16), f32::from_bits(u32::from(bits) << 16) / 64.0);
+            assert_eq!(
+                f32::from_bits(u32::from(down) << 16),
+                f32::from_bits(u32::from(bits) << 16) / 64.0
+            );
             assert_eq!(shift_bf16_exponent(down, 6), bits, "{v}");
         }
     }
@@ -284,8 +291,14 @@ mod tests {
     #[test]
     fn only_dense_and_shared_names_are_resident_swiglu_tensors() {
         let n = |s: &str| format!("language_model.model.layers.3.{s}");
-        assert_eq!(SwigluRole::of_resident(&n("mlp.up_proj.weight")), Some(SwigluRole::Up));
-        assert_eq!(SwigluRole::of_resident(&n("mlp.down_proj.weight")), Some(SwigluRole::Down));
+        assert_eq!(
+            SwigluRole::of_resident(&n("mlp.up_proj.weight")),
+            Some(SwigluRole::Up)
+        );
+        assert_eq!(
+            SwigluRole::of_resident(&n("mlp.down_proj.weight")),
+            Some(SwigluRole::Down)
+        );
         assert_eq!(
             SwigluRole::of_resident(&n("mlp.shared_expert.up_proj.weight")),
             Some(SwigluRole::Up)
@@ -296,7 +309,10 @@ mod tests {
         );
         // The gate is untouched: silu is not linear.
         assert_eq!(SwigluRole::of_resident(&n("mlp.gate_proj.weight")), None);
-        assert_eq!(SwigluRole::of_resident(&n("mlp.shared_expert.gate_proj.weight")), None);
+        assert_eq!(
+            SwigluRole::of_resident(&n("mlp.shared_expert.gate_proj.weight")),
+            None
+        );
         assert_eq!(SwigluRole::of_resident(&n("self_attn.o_proj.weight")), None);
         assert_eq!(SwigluRole::of_resident(&n("mlp.gate.weight")), None);
     }

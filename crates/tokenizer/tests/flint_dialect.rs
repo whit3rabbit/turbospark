@@ -58,7 +58,10 @@ fn all_four_generation_config_stops_are_stops() {
         "<|developer|>",
     ] {
         let id = tok.token_to_id(name).expect(name);
-        assert!(tok.stop_token_ids.contains(&id), "{name} must stop generation");
+        assert!(
+            tok.stop_token_ids.contains(&id),
+            "{name} must stop generation"
+        );
     }
     // The assistant marker must NOT stop: it opens the turn being generated.
     let assistant = tok.token_to_id("<|assistant|>").unwrap();

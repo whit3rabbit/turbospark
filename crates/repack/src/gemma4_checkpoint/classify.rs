@@ -248,12 +248,13 @@ pub fn canonicalize_flint_header(
             });
         }
         let info = header.tensors.get_mut(&name).expect("name was just listed");
-        let last = *info.shape.last().ok_or_else(|| {
-            super::config::Gemma4Error::ShapeMismatch {
+        let last = *info
+            .shape
+            .last()
+            .ok_or_else(|| super::config::Gemma4Error::ShapeMismatch {
                 tensor: name.clone(),
                 detail: "rank-0 packed weight".into(),
-            }
-        })?;
+            })?;
         if last % 4 != 0 {
             return Err(super::config::Gemma4Error::ShapeMismatch {
                 tensor: name.clone(),
