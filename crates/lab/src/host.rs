@@ -582,9 +582,16 @@ mod tests {
     fn disk_shortfall_refuses_only_when_it_can_tell() {
         let gib = 1u64 << 30;
         let msg = disk_shortfall(Some(5 * gib), 10.0).expect("5 GiB is under 10");
-        assert!(msg.contains("5.0 GiB") && msg.contains("--min-free-gb"), "{msg}");
+        assert!(
+            msg.contains("5.0 GiB") && msg.contains("--min-free-gb"),
+            "{msg}"
+        );
         assert_eq!(disk_shortfall(Some(20 * gib), 10.0), None);
-        assert_eq!(disk_shortfall(Some(10 * gib), 10.0), None, "exactly enough passes");
+        assert_eq!(
+            disk_shortfall(Some(10 * gib), 10.0),
+            None,
+            "exactly enough passes"
+        );
         // An unreadable figure is not a refusal, and 0 disables the check.
         assert_eq!(disk_shortfall(None, 10.0), None);
         assert_eq!(disk_shortfall(Some(1), 0.0), None);
@@ -594,7 +601,9 @@ mod tests {
     fn free_disk_is_readable_for_a_path_that_does_not_exist_yet() {
         let here = free_disk_bytes(&std::env::temp_dir()).expect("temp dir has a volume");
         assert!(here > 0);
-        let missing = std::env::temp_dir().join("tslab-no-such-dir").join("deeper");
+        let missing = std::env::temp_dir()
+            .join("tslab-no-such-dir")
+            .join("deeper");
         assert!(free_disk_bytes(&missing).is_some());
         assert!(check_free_disk(&std::env::temp_dir(), 0.0).is_ok());
     }

@@ -557,7 +557,11 @@ mod tests {
 
     #[test]
     fn an_early_stop_is_named_in_the_inconclusive_reason() {
-        let (decision, reason) = d(Verdict::Inconclusive, true, Some("the host did not go quiet"));
+        let (decision, reason) = d(
+            Verdict::Inconclusive,
+            true,
+            Some("the host did not go quiet"),
+        );
         assert_eq!(decision, INCONCLUSIVE);
         assert!(reason.contains("the host did not go quiet"), "{reason}");
     }

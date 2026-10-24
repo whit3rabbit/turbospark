@@ -528,10 +528,16 @@ mod tests {
     fn dirty_causes_count_runs_by_reason_most_common_first() {
         let pairs = vec![
             (
-                outcome(false, &["mediaanalysisd over 90%", "a compile (rustc) was running"]),
+                outcome(
+                    false,
+                    &["mediaanalysisd over 90%", "a compile (rustc) was running"],
+                ),
                 outcome(false, &["mediaanalysisd over 90%"]),
             ),
-            (outcome(true, &[]), outcome(false, &["a compile (rustc) was running"])),
+            (
+                outcome(true, &[]),
+                outcome(false, &["a compile (rustc) was running"]),
+            ),
         ];
         assert_eq!(
             dirty_causes(&pairs),
