@@ -341,6 +341,107 @@ pub(crate) fn encode_embed_any(
     }
 }
 
+/// `TURBOSPARK_INT4_MMA8=1`, default OFF, read once. Routes every INT4
+/// projection of at least [`int4_mma8_min_rows`] output rows that reaches
+/// [`encode_gemv_any`] (one row) or [`encode_gemm_any`] (up to 16 rows, in
+/// tiles of 8) through the small-M matrix-unit GEMM
+/// (`docs/INT4_SMALL_M_MMA.md`). That kernel is not
+/// bit-identical to the GEMV, but a row's bits do not depend on the rows
+/// beside it, so decode and speculative verify both running it stay
+/// bit-exact against each other: the "shared arithmetic" route. It changes
+/// decode numerics, so frozen digests do not hold under it. The fused INT4
+/// paths that bypass these dispatchers (the FFN fusions and the GDN in-proj
+/// fusion) step aside whenever one of their matrices is served
+/// ([`int4_mma8_takes`]), so both sides meet the same kernel.
+///
+/// `TURBOSPARK_INT4_MMA8=verify` is the DRIFT-BOUND arm instead: only the
+/// batched dispatcher takes the tile, one-row decode and the fused decode
+/// kernels keep GEMV arithmetic. Verify rows then differ from decode in the
+/// last bits, so speculation is no longer bit-exact against plain decode;
+/// `int4_mma8_drift_probe.rs` measures by how much.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Int4Mma8Mode {
+    Off,
+    /// Decode and verify both run the tile (bit-exact against each other).
+    Shared,
+    /// Only batched calls run the tile (drift-bound).
+    Verify,
+}
+
+pub(crate) fn int4_mma8_mode() -> Int4Mma8Mode {
+    static MODE: std::sync::OnceLock<Int4Mma8Mode> = std::sync::OnceLock::new();
+    *MODE.get_or_init(|| match std::env::var("TURBOSPARK_INT4_MMA8").as_deref() {
+        Ok("1") => Int4Mma8Mode::Shared,
+        Ok("verify") => Int4Mma8Mode::Verify,
+        _ => Int4Mma8Mode::Off,
+    })
+}
+
+pub(crate) fn int4_mma8() -> bool {
+    int4_mma8_mode() == Int4Mma8Mode::Shared
+}
+
+/// The fewest output rows the shared tile serves under
+/// [`int4_mma8`]. Below it the tile loses to the GEMV by 1.8-2.6x (k/v at
+/// 1024 rows, the GDN a/b at 48, `mma8_k_split_sweep`), and it does not need
+/// to serve them: the GEMV and the shipped batched GEMM are already
+/// bit-identical, so a smaller matrix keeps that pair and decode and verify
+/// still agree. A function of the SHAPE only, never of the row count.
+/// `TURBOSPARK_INT4_MMA8_MIN_ROWS` overrides it, read once, for tests: the
+/// synthetic installs are 128 wide, so `1` serves every matrix and a value
+/// between their widths gives a mix of served and unserved ones.
+fn int4_mma8_min_rows() -> usize {
+    static MIN: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *MIN.get_or_init(|| {
+        std::env::var("TURBOSPARK_INT4_MMA8_MIN_ROWS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4096)
+    })
+}
+
+/// Whether an INT4 `rows x cols` projection runs the shared tile: the flag
+/// is on and the shape is one the tile serves. Every INT4 path that can
+/// bypass the dispatchers (the fused FFN and GDN in-proj kernels, which are
+/// GEMV arithmetic) asks this for each of its matrices and steps aside only
+/// when one of them is served.
+pub(crate) fn int4_mma8_takes(rows: usize, _cols: usize) -> bool {
+    int4_mma8() && rows >= int4_mma8_min_rows()
+}
+
+/// [`int4_mma8_takes`] for the BATCHED dispatcher: true in both modes, so
+/// the verify-only arm reaches the tile here and only here.
+fn int4_mma8_takes_batched(rows: usize) -> bool {
+    int4_mma8_mode() != Int4Mma8Mode::Off && rows >= int4_mma8_min_rows()
+}
+
+/// [`gpu::encode_dequant_int4_mma8_resident`] over any `batch`, in tiles of
+/// [`gpu::INT4_MMA8_MAX_ROWS`] rows (token-major x and y).
+fn encode_int4_mma8_rows(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    w: &gpu::Int4ResidentMatrix<'_>,
+    x: (&gpu::MetalBuffer, u64),
+    y: (&gpu::MetalBuffer, u64),
+    batch: usize,
+) -> Result<(), RealForwardError> {
+    let mut done = 0usize;
+    while done < batch {
+        let take = (batch - done).min(gpu::INT4_MMA8_MAX_ROWS);
+        gpu::encode_dequant_int4_mma8_resident(
+            context,
+            pass,
+            w,
+            (x.0, x.1 + (done * w.cols * 2) as u64),
+            (y.0, y.1 + (done * w.rows * 2) as u64),
+            take,
+        )
+        .map_err(RealForwardError::Gpu)?;
+        done += take;
+    }
+    Ok(())
+}
+
 /// Resolves a packed projection by its dtype tag: 4 = INT4-affine,
 /// 5 = INT8-affine, 15 = 1-bit affine, 16 = 2-bit affine (the resident
 /// writer's tags), and encodes the matching offset-bound GEMV.
@@ -379,6 +480,9 @@ pub(crate) fn encode_gemv_any(
         }
         4 => {
             let w = resident_matrix(weights, index, name, rows, cols)?;
+            if int4_mma8_takes(rows, cols) {
+                return encode_int4_mma8_rows(context, pass, &w, x, y, 1);
+            }
             gpu::encode_dequant_int4_gemv_resident(context, pass, &w, x, y)
                 .map_err(RealForwardError::Gpu)
         }
@@ -667,6 +771,9 @@ pub(crate) fn encode_gemm_any(
         // warns; nothing else would.
         4 => {
             let w = resident_matrix(weights, index, name, rows, cols)?;
+            if int4_mma8_takes_batched(rows) {
+                return encode_int4_mma8_rows(context, pass, &w, x, y, batch);
+            }
             gpu::encode_dequant_int4_gemm_resident(context, pass, &w, x, y, batch)
                 .map_err(RealForwardError::Gpu)
         }

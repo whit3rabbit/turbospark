@@ -400,8 +400,9 @@ layer cap and per-stage dumps:
 
 So the acceptance logic and the verify pass ARE lossless. What still parts
 the default speculative stream from a sequential one is the prefill choice,
-which is a speed trade made on purpose. The DFlash2 arms above were not
-re-run.
+which is a speed trade made on purpose. Whether to keep that trade is an
+open policy question (`docs/INT4_SMALL_M_MMA.md`, "Open questions", item
+1). The DFlash2 arms above were not re-run.
 
 **THE MECHANISM IS THE KERNEL, NOT THE BATCH WIDTH**, and the discriminator
 that says so also refuted the first hypothesis. If the batch WIDTH caused

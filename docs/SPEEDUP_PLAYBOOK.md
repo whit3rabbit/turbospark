@@ -218,6 +218,39 @@ Measurement and caveats: `docs/BENCHMARKS.md`, the Qwen3.8 section.
   900,000 for all of them). This is derived from two timing samples, not a
   floor measurement, but use it for the next estimate and re-check it.
 
+- **A forced-kernel variable changes more than the thing you meant.**
+  `TURBOSPARK_ATTN_DECODE_KERNEL=barrier` forces every attention scratch,
+  including the trunk's verify, so an arm built with it read a verify of 75 ms
+  against 67 and was not the baseline. The baseline is the variable unset.
+- **The bench generates twice and prints its stats twice.** The first pass
+  warms up and the second is the one the result row reports. On a loaded host
+  the two can differ a lot (a draft phase of 29 against 21 ms), so use the
+  second block. The dispatch profile accumulates across both passes: use the
+  first block, or divide.
+- **A wall-clock A/B on a swapping host is not an A/B.** With 7-8 GB of swap
+  in use one run took 22 minutes for 845 tokens. When the host is in that
+  state use GPU-time sources (the dispatch profile, a per-dispatch microbench)
+  and say that is what the number is.
+- **A shared `CARGO_TARGET_DIR` across worktrees can skip a rebuild.**
+  Workspace crates hash without their absolute path, and a tree whose sources
+  are older than the first tree's outputs counts as fresh: the second build
+  said `Finished` in 0.08 s and produced a byte-identical binary. Touch the
+  changed files and check `strings` for a symbol only that tree has.
+- **Skipping a step to attribute its cost can abort the run.** Skipping an
+  attention dispatch left stale NaNs that the next stage refused. Skip only
+  steps whose output the rest tolerates, and check the run completed before
+  reading a time.
+- **A model-free draft source is cheap to size offline.** The prompt-lookup
+  replay needed one plain generation per case and no verify pass, because
+  greedy acceptance is equality against that stream. Replay before wiring.
+- **A per-dispatch time is not a round time.** A microbench put the 8-row tile
+  2.7-5.6x ahead of the scalar GEMM on two small shapes, and the dispatch
+  profile agreed (a 2.5 ms saving), but a clean two-round wall-clock A/B read
+  the verify 1.5-5.5 ms slower. The profile gives each dispatch its own encoder
+  and waits on it, and a standing microbench pool is not the layer-to-layer
+  cache and dependency state of a real pass. Rank with the profile and
+  microbench, but accept a change on the wall-clock A/B, taken on a quiet host.
+
 ## Opt-in: the ANE+Steel prefill split
 
 Not a default. Steel alone stays the dense qwen prefill arm. The split is a
@@ -621,6 +654,27 @@ gates are in `docs/KAPITSA_KERNELS.md`, "Prompt lookup". Start with the
 offline replay probe, because novel prose (the protocol's three cases) will
 likely have few matches, and the question is the copy-heavy case: a code edit
 or a quote-back prompt.
+
+### 0b. Small-M matrix-unit GEMM for verify and other 2-8 row paths
+
+Bench prototype, 2026-10-21 (`docs/INT4_SMALL_M_MMA.md`): an 8-row INT4
+GEMM on `simdgroup_matrix` with register operands, reading the resident
+layout in place, costs 1.25-1.29x a 1-row GEMV at the qwen38 shapes. The
+shipped batched GEMM costs 3.1-3.6x. That verify cost is what limits MTP to
+block 2 and keeps tree verify from paying. The page holds the per-format
+and per-family checklist.
+
+The route that keeps speculation lossless is the
+one item 1 names: run decode through the same tile. A row's bits do not
+depend on the rows beside it, so this works, and the price is the
+1.24-1.27x one-row cost until the kernel is tuned.
+
+Wired opt-in as `TURBOSPARK_INT4_MMA8=1`, shape-routed (4096+ rows), and
+gated lossless on the 27B. On a code prompt block 4 under the flag beats the
+default by 16%. On prose the best arm is still flag-off block 2 (9-12%
+ahead), because plain decode pays 19% for the tile. Choosing the block per
+request (the adaptive depth controller) is what would take the code gain
+without the prose loss.
 
 ### 1. Give speculative verify the multi-row attention
 

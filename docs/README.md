@@ -35,6 +35,7 @@ the evidence that supports the claim.
   [`ACTIVATION_SPARSITY.md`](ACTIVATION_SPARSITY.md).
 - Metal, power, and quantization: [`KERNELS.md`](KERNELS.md),
   [`KAPITSA_KERNELS.md`](KAPITSA_KERNELS.md),
+  [`INT4_SMALL_M_MMA.md`](INT4_SMALL_M_MMA.md),
   [`POWER_BASELINE.md`](POWER_BASELINE.md),
   [`TRUBOQUANT.md`](TRUBOQUANT.md), and
   [`OBLITERATION.md`](OBLITERATION.md).

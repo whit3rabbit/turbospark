@@ -88,7 +88,12 @@ pub(crate) fn encode_qwen_layer_dense(
     let down_name = prefixed_layer_tensor(prefix, layer, "mlp.down_proj.weight");
     let gate_folded = matches!(qwen.hadamard.as_ref(), Some(h) if h.is_folded(&gate_name));
     let down_folded = matches!(qwen.hadamard.as_ref(), Some(h) if h.is_folded(&down_name));
+    // The fused kernels are GEMV arithmetic: under `TURBOSPARK_INT4_MMA8` a
+    // served shape must reach the shared tile instead, on both sides.
+    let mma8 = crate::real_forward_dispatch::int4_mma8_takes;
     if crate::families::qwen::fused_ffn()
+        && !mma8(inter, hidden)
+        && !mma8(hidden, inter)
         && !gate_folded
         && !down_folded
         && crate::real_forward_utils::entry(index, &gate_name)
