@@ -652,7 +652,8 @@ Every ledger line, and the one object `--json` prints, carries schema
 `tslab/1` (`tslab schema` prints the JSON Schema). `tslab export` writes
 ledgers as plottable series and `tslab report --html` draws them offline,
 so a new kernel bench is visible without new reader code. The agent-facing
-summary is `crates/lab/skill/SKILL.md`.
+summary is `crates/lab/skill/SKILL.md`. `scripts/package-tslab-skill.sh`
+builds a binary-only skill zip for Macs without a checkout.
 
 It holds a machine-wide lock, `$TURBOSPARK_LAB_DIR/.machine.lock`, for the
 whole measuring session. A Python driver that takes `fcntl.flock` on the

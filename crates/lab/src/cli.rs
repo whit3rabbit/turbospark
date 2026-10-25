@@ -20,6 +20,7 @@ tslab: the evaluator for kernel and method experiments (macOS).
 
   tslab profile --model M [workload] [--slots auto,16,32] [--residency streamed,mapped]
                 [--arm NAME[@SLOTS/RESIDENCY][:KEY=V,...]]... [--env KEY=V]... [--rounds 3] [--experiment NAME]
+                [--dispatch-probe 0,4,8,16 | --standin attn,mlp,gdn]   (L1 / L4: their own arms, need --decode)
   tslab ab      --model M [workload] --baseline NAME[:KEY=V,...] --candidate NAME[:KEY=V,...]
                 [--null] [--metric prefill_tok_s|decode_tok_s|prefill_s|peak_bytes|followup_ttft_s|audio_run_s|rtf]
                 [--min-effect 0.02] [--pairs 3] [--max-pairs 6] [--experiment NAME]
@@ -27,14 +28,14 @@ tslab: the evaluator for kernel and method experiments (macOS).
   tslab run-experiment --spec SPEC.json [--base REV]
   tslab confirm --spec SPEC.json [--base REV]
   tslab kernel  --model M [--bench NAME[,NAME]|all] [--rows 1,2,4,...] [--contexts 512,...]
-                [--case LABEL] [--reps 5] [--hash] [--experiment NAME]
+                [--case LABEL] [--reps 5] [--hash] [--verify-from EXP] [--experiment NAME]
   tslab kernel  --list                             (the registered benches)
   tslab hash-diff --experiment A --against B      (exit 3 when any hashed output changed)
   tslab tree-replay --model M --drafter mtp|dflash [--prompt ...]... [--generate 512]
                 [--depth 8|7] [--blocks 2,4,DEPTH] [--serve-block 2] [--top-k 4] [--slots 16] [--experiment NAME]
   tslab ane-plan --path PROGRAM.mlpackage|MANIFEST_DIR [--units ane|all|gpu|cpu]
   tslab chain-capture --model M [--prompt ...]... [--tokens 512] [--depth 8] [--experiment NAME]
-  tslab depth-replay [--experiment NAME] [--costs flag_off,flag_on] [--tokens 512] [--top 10]
+  tslab depth-replay [--experiment NAME] [--costs flag_off,flag_on,ledger:EXP[@FLAGS][#KV]] [--tokens 512] [--top 10]
   tslab ledger  --experiment NAME [--kind run|verdict|...]
   tslab trace   --model M [workload] [--arm NAME[:KEY=V,...]] [--record-s 10] [--experiment NAME]
                 (Metal System Trace of the arm's measured work; never quotable)
@@ -50,7 +51,7 @@ tslab: the evaluator for kernel and method experiments (macOS).
 
 workload: [--prompt protocol:ID|messages:PATH|text:PATH|corpus:N|chat:PATH]... [--decode N]
           [--chunk N|off] [--context N]
-          or, for an audio install: --audio-job JOB.json (crates/lab/workloads/audio/)
+          or, for an audio install: --audio-job JOB.json (see workloads/audio/)
 host:     [--max-foreign-cpu 150] [--max-single-cpu 90] [--allow-battery]
           [--timeout-min 60] [--quiet-wait-min 5] [--min-free-gb 10]
           (--quiet-wait-min 0 measures on a busy host; --min-free-gb 0 skips the disk check)

@@ -50,7 +50,8 @@ pub struct Plan {
     #[serde(default)]
     pub description: String,
     /// Variables a caller must give with `--var KEY=V` (beyond the built-in
-    /// `model`, `experiment`, `lab`, `lab_src` and `run`).
+    /// `model`, `experiment`, `lab`, `lab_src` (the folder holding
+    /// `workloads/`, see `assets_dir`) and `run`).
     #[serde(default)]
     pub requires: Vec<String>,
     /// Defaults for variables, overridden by `--var`.
@@ -76,6 +77,19 @@ pub struct Step {
     pub when: Vec<String>,
     #[serde(default)]
     pub continue_on_error: bool,
+}
+
+/// Where the lab's data files (`workloads/`) are: the folder above the
+/// running binary when it has them (the packaged skill's `bin/` sits beside
+/// its `workloads/`), else this crate's source directory. A binary copied out
+/// of a build tree keeps working only in the first layout, so the packaged
+/// skill ships the workloads with it.
+pub fn assets_dir() -> std::path::PathBuf {
+    let beside_exe = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent()?.parent().map(|p| p.to_path_buf()))
+        .filter(|root| root.join("workloads").is_dir());
+    beside_exe.unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")))
 }
 
 /// Does a `when` list hold for these tags? `!t` negates, `a|b` is any.
@@ -241,7 +255,7 @@ pub fn workflow_cmd(mut args: Args) -> Result<CmdOutput, String> {
     let mut vars = plan.vars.clone();
     vars.insert("experiment".into(), experiment.clone());
     vars.insert("lab".into(), lab.display().to_string());
-    vars.insert("lab_src".into(), env!("CARGO_MANIFEST_DIR").to_string());
+    vars.insert("lab_src".into(), assets_dir().display().to_string());
     vars.insert("run".into(), run.clone());
     if let Some(m) = &model {
         vars.insert("model".into(), m.clone());
