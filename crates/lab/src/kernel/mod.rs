@@ -20,6 +20,7 @@ pub mod music3_grid;
 pub mod rows_attn;
 pub mod support;
 pub mod verify_ladder;
+pub mod whisper_linear;
 
 pub use crate::fit;
 
@@ -227,6 +228,7 @@ pub fn registry() -> Vec<&'static dyn KernelBench> {
         &moe_routed::MoeRouted,
         &verify_ladder::VerifyLadder,
         &music3_grid::Music3Grid,
+        &whisper_linear::WhisperLinear,
     ]
 }
 
