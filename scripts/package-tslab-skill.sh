@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Builds the portable tslab skill: a zip holding the release tslab and
-# tslab-worker binaries, the skill instructions, the shared references and the
-# lab's workloads, so an agent on another Apple Silicon Mac can measure
-# TurboSpark installs without the source tree. The repository's own skill
-# (crates/lab/skill/SKILL.md) stays the one to use inside a checkout.
+# Zips the tslab skill (crates/lab/skill) with the release tslab and
+# tslab-worker binaries and the lab's workloads, so an agent on another Apple
+# Silicon Mac can measure TurboSpark installs without the source tree. It is
+# the same skill a checkout links: its doctor script picks bin/ when present.
 #
 # The zip unpacks to one `tslab/` folder, which is a skill directory: put it
 # in ~/.claude/skills/ (scripts/install-tslab-skill.sh --zip does that), or
@@ -22,7 +21,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --out) out_dir="$2"; shift 2 ;;
         --no-build) build=0; shift ;;
-        -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
@@ -51,13 +50,12 @@ skill="$stage/tslab"
 rm -rf "$stage"
 mkdir -p "$skill/bin" "$skill/references" "$skill/scripts" "$skill/schema" "$out_dir"
 
-cp crates/lab/skill/portable/SKILL.md "$skill/SKILL.md"
-cp crates/lab/skill/portable/scripts/doctor.sh "$skill/scripts/doctor.sh"
+cp crates/lab/skill/SKILL.md "$skill/SKILL.md"
+cp crates/lab/skill/scripts/doctor.sh "$skill/scripts/doctor.sh"
 chmod +x "$skill/scripts/doctor.sh"
-# The repository-only reference (extending.md) stays out.
-for r in commands output workflows reading-results; do
-    cp "crates/lab/skill/references/$r.md" "$skill/references/$r.md"
-done
+# All references ship, so SKILL.md's links resolve; it marks extending.md
+# as checkout only.
+cp crates/lab/skill/references/*.md "$skill/references/"
 cp target/release/tslab target/release/tslab-worker "$skill/bin/"
 cp crates/lab/schema/tslab-1.schema.json "$skill/schema/"
 cp LICENSE "$skill/LICENSE"

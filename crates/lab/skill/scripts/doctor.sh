@@ -1,10 +1,16 @@
 #!/bin/sh
-# Check that the bundled tslab can run here. Read-only: it reports, it fixes
-# nothing. Exit 0 when every required check passes, 1 otherwise.
+# Check that tslab can run here and say which binary to use. Read-only: it
+# reports, it fixes nothing. Exit 0 when every required check passes, 1
+# otherwise.
+#
+# The skill runs in two places: unpacked from the zip, with bin/tslab beside
+# this script's folder, or as crates/lab/skill in a TurboSpark checkout, where
+# the binary is the checkout's release build.
 set -u
 
-SKILL=$(cd "$(dirname "$0")/.." && pwd)
-BIN="$SKILL/bin"
+# -P resolves the .claude/skills link to the real folder, so a checkout is
+# found from either path.
+SKILL=$(cd "$(dirname "$0")/.." && pwd -P)
 fail=0
 
 ok() { printf '  ok    %s\n' "$1"; }
@@ -19,8 +25,30 @@ else
     bad "needs macOS on Apple Silicon (this is $(uname -s) $(uname -m))"
 fi
 
+ROOT=$(cd "$SKILL/../../.." 2>/dev/null && pwd -P)
+if [ -x "$SKILL/bin/tslab" ] || [ -d "$SKILL/bin" ]; then
+    MODE=zip
+    BIN="$SKILL/bin"
+    WORKLOADS="$SKILL/workloads"
+    ok "bundled binaries (see BUILD.txt for the build)"
+elif [ -f "$ROOT/crates/lab/Cargo.toml" ]; then
+    MODE=checkout
+    BIN="${CARGO_TARGET_DIR:-$ROOT/target}/release"
+    WORKLOADS="$ROOT/crates/lab/workloads"
+    ok "TurboSpark checkout at $ROOT"
+else
+    bad "no bin/ beside the skill and no TurboSpark checkout around it"
+    exit 1
+fi
+
 for b in tslab tslab-worker; do
-    if [ -x "$BIN/$b" ]; then ok "$b present"; else bad "$BIN/$b missing or not executable"; fi
+    if [ -x "$BIN/$b" ]; then
+        ok "$b present"
+    elif [ "$MODE" = checkout ]; then
+        bad "$BIN/$b missing: cargo build --release -p turbospark-lab"
+    else
+        bad "$BIN/$b missing or not executable"
+    fi
 done
 
 # A downloaded zip is quarantined, and Gatekeeper then refuses to run the
@@ -37,7 +65,7 @@ else
     bad "tslab did not run (see: \"$BIN/tslab\" knobs)"
 fi
 
-if [ -d "$SKILL/workloads" ]; then ok "workloads present"; else bad "workloads/ missing beside bin/"; fi
+if [ -d "$WORKLOADS" ]; then ok "workloads at $WORKLOADS"; else bad "workloads missing at $WORKLOADS"; fi
 
 LAB=${TURBOSPARK_LAB_DIR:-${TURBOSPARK_HOME:-$HOME/.turbospark}/lab}
 if mkdir -p "$LAB" 2>/dev/null && [ -w "$LAB" ]; then
@@ -58,4 +86,5 @@ if command -v python3 >/dev/null 2>&1; then ok "python3 (tslab trace)"; else not
 
 if pmset -g batt 2>/dev/null | grep -q "AC Power"; then ok "on AC power"; else note "on battery: runs will be dirty unless --allow-battery"; fi
 
+[ -x "$BIN/tslab" ] && echo "use: TSLAB=$BIN/tslab"
 exit $fail

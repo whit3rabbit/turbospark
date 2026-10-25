@@ -1,9 +1,9 @@
 ---
-name: turbospark-lab
-description: Measure and extend TurboSpark inside its repository with tslab, the kernel and method evaluator in crates/lab. Use when working in the turbospark repo and the task is to profile a model install, bench or A/B a Metal kernel or runtime switch, survey a new model family, trace GPU work, price speculative decoding, measure an audio pipeline, run the program.md autoresearch loop, read or plot tslab ledgers, or add a bench, knob, ledger kind or workflow to tslab.
+name: tslab
+description: Measure TurboSpark model installs on an Apple Silicon Mac with tslab, the kernel and method evaluator from crates/lab, from a TurboSpark checkout or from the bundled binaries in this skill. Use when asked to profile a TurboSpark install, bench or A/B a Metal kernel or runtime switch (TURBOSPARK_* variables), survey a new model family, trace GPU work, price speculative decoding, measure an audio pipeline, run the program.md autoresearch loop, read, export or plot tslab ledgers (~/.turbospark/lab), or add a bench, knob, ledger kind or workflow to tslab.
 ---
 
-# tslab in the TurboSpark repository
+# tslab
 
 `tslab` measures and decides. You pick the command, run it, read its
 envelope, and report what the ledger says with its conditions. You never
@@ -12,14 +12,27 @@ decide a result yourself.
 ## Quick start
 
 ```sh
-cargo build --release -p turbospark-lab        # tslab and tslab-worker, side by side
-TSLAB=target/release/tslab
+SKILL=<this skill's directory>
+"$SKILL/scripts/doctor.sh"                     # finds tslab, checks it can run
+```
+
+Use the `tslab` doctor reports:
+
+- From the zip: `TSLAB="$SKILL/bin/tslab"`. Jobs are in `$SKILL/workloads/`
+  and `$SKILL/chats/`.
+- In a TurboSpark checkout: `cargo build --release -p turbospark-lab`, then
+  `TSLAB=target/release/tslab`. Jobs are in `crates/lab/workloads/` and
+  `crates/lab/chats/`.
+
+```sh
 $TSLAB capabilities --model <install> --json   # what this install supports, and tags
 $TSLAB workflow new-family --model <install> --experiment <name> --dry-run
 ```
 
-`--model` is an install directory or a catalog alias. Results go to
-`$TURBOSPARK_LAB_DIR`, else `$TURBOSPARK_HOME/lab`, else `~/.turbospark/lab`.
+`--model` is an install directory (`*.gturbo`) or a catalog alias from
+`~/.turbospark/models`. Results go to `$TURBOSPARK_LAB_DIR`, else
+`$TURBOSPARK_HOME/lab`, else `~/.turbospark/lab`. Keep `tslab-worker` beside
+`tslab`: every measured run is a fresh worker process.
 
 ## Before you measure
 
@@ -37,8 +50,8 @@ $TSLAB workflow new-family --model <install> --experiment <name> --dry-run
 | Parse `--json`, the ledger, `BenchResult` or exported series | [references/output.md](references/output.md) |
 | Run or write a workflow | [references/workflows.md](references/workflows.md) |
 | Interpret a verdict, a dirty run, or what may be quoted | [references/reading-results.md](references/reading-results.md) |
-| Add a bench, switch, ledger kind, command or workflow | [references/extending.md](references/extending.md) |
-| Iterate on a kernel change against the fixed evaluator | `crates/lab/program.md` |
+| Add a bench, switch, ledger kind, command or workflow (checkout only) | [references/extending.md](references/extending.md) |
+| Iterate on a kernel change against the fixed evaluator (checkout only) | `crates/lab/program.md` |
 
 ## Common tasks
 
@@ -49,8 +62,21 @@ $TSLAB ab --model M --baseline off --candidate on:KNOB=V --experiment E --json
 $TSLAB kernel --model M --bench int4_matmul,attn_decode --hash --experiment E
 $TSLAB profile --model M --decode 64 --rounds 6 --dispatch-probe 0,4,8,16 --experiment E
 $TSLAB trace --model M --prompt protocol:short-explanation --decode 64 --experiment E
+$TSLAB profile --model A --audio-job <workloads>/audio/music-short.json --experiment E
 $TSLAB report --experiment E --html E.html
 ```
+
+`tslab knobs` lists the switches an arm can set (`KNOB=V`).
+
+## What needs a checkout
+
+From the zip these refuse or degrade, so do not plan on them: `gate`,
+`run-experiment` and `confirm` (they diff and build the source), `corpus:N`
+prompts (they read the repository's docs, so use `protocol:` prompts), and
+the git revision in run provenance (each run still records the binary's
+SHA-256, which identifies the build). The zip's binaries measure the build
+they came from (`BUILD.txt`). A result about a newer build needs binaries
+built from it.
 
 ## Rules
 
@@ -64,7 +90,3 @@ $TSLAB report --experiment E --html E.html
 - Readings belong in the topic docs (`docs/MLX_SERVE_KERNELS.md`,
   `docs/KAPITSA_KERNELS.md`, the playbook) with their conditions, never in an
   AGENTS.md.
-
-The binary-only version of this skill, for machines without the source, is
-built by `scripts/package-tslab-skill.sh` from `portable/SKILL.md` and these
-references.

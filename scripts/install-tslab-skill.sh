@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Installs a tslab skill for Claude Code.
+# Installs the tslab skill for Claude Code.
 #
-#   --repo           Link this checkout's repository skill
-#                    (crates/lab/skill, name turbospark-lab) into
-#                    .claude/skills/turbospark-lab. .claude/ is not tracked, so
-#                    each checkout or worktree links it once.
-#   --zip PATH       Unpack a portable skill zip (scripts/package-tslab-skill.sh)
-#                    into DEST/tslab. DEST defaults to ~/.claude/skills.
+#   --repo           Link this checkout's skill (crates/lab/skill) into
+#                    .claude/skills/tslab. .claude/ is not tracked, so each
+#                    checkout or worktree links it once.
+#   --zip PATH       Unpack a skill zip (scripts/package-tslab-skill.sh), which
+#                    carries its own binaries, into DEST/tslab. DEST defaults
+#                    to ~/.claude/skills. Inside a checkout prefer --repo: it
+#                    measures the tree you are editing.
 #   --dest DIR       Where --zip installs.
 #   --force          Replace an existing install.
 #
@@ -27,14 +28,14 @@ while [ $# -gt 0 ]; do
         --zip) mode=zip; zip="$2"; shift 2 ;;
         --dest) dest="$2"; shift 2 ;;
         --force) force=1; shift ;;
-        -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
 
 case "$mode" in
     repo)
-        target="$root/.claude/skills/turbospark-lab"
+        target="$root/.claude/skills/tslab"
         mkdir -p "$root/.claude/skills"
         if [ -e "$target" ] || [ -L "$target" ]; then
             if [ "$force" = 1 ] && [ -L "$target" ]; then
