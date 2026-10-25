@@ -123,7 +123,13 @@ impl<'a> TurnSplitter<'a> {
         let wanted = !tools.is_empty()
             || matches!(
                 tokenizer.dialect,
-                ChatDialect::Harmony | ChatDialect::MuseGlimmer | ChatDialect::MiniMax
+                ChatDialect::Harmony
+                    | ChatDialect::MuseGlimmer
+                    | ChatDialect::MiniMax
+                    // Flint's template has no thinking-off switch and the
+                    // model opens `<think>` itself on every turn, so the
+                    // split runs at every effort.
+                    | ChatDialect::Flint
             )
             // Spark joins the reasoning-on arm on ChatML's grounds: its
             // template FORCES the think frame open in the generation prompt
@@ -344,6 +350,35 @@ mod tests {
             &mut split,
             &mut events,
             &[delta(-1, "reasoning"), delta(end, ""), delta(-1, "answer")],
+        );
+        assert_eq!(
+            events,
+            [
+                TurnEvent::Reasoning("reasoning".into()),
+                TurnEvent::Content("answer".into())
+            ]
+        );
+    }
+
+    #[test]
+    fn flint_splits_its_own_thought_at_every_effort() {
+        // Flint's template has no thinking-off switch and prefills nothing,
+        // so the model's own `<think>` opens the frame even at effort Off.
+        let tok = fixture("FlintTokenizer");
+        assert_eq!(tok.dialect, tokenizer::ChatDialect::Flint);
+        let start = tok.think_start_id.unwrap();
+        let end = tok.think_end_id.unwrap();
+        let mut split = splitter(&tok, &[], ReasoningEffort::Off);
+        let mut events = Vec::new();
+        feed_all(
+            &mut split,
+            &mut events,
+            &[
+                delta(start, "<think>"),
+                delta(-1, "reasoning"),
+                delta(end, "</think>"),
+                delta(-1, "answer"),
+            ],
         );
         assert_eq!(
             events,

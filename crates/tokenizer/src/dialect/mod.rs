@@ -166,9 +166,9 @@ pub enum ChatDialect {
     ///
     /// The think pair and the tool markup (`<think>`, `<tool_call>`,
     /// `<arg_key>`, ...) are added but NOT special, so they survive
-    /// detokenization as literal text. No tool parser is wired: the dialect
-    /// is `Prompted` and routes everything as content, recorded in
-    /// DEVIATIONS.md. Like Harmony and GLM it has no fallback renderer; the
+    /// detokenization as literal text. The decoder still splits the think
+    /// pair by id into the reasoning stream, as GLM's is. No tool parser is
+    /// wired: the dialect is `Prompted` and the tool markup flows as content. Like Harmony and GLM it has no fallback renderer; the
     /// checkpoint's own template decides things a hand-rolled one would guess.
     Flint,
     /// Moonshot's Kimi K2 line (`KimiK25ForConditionalGeneration` / the

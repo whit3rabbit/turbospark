@@ -161,8 +161,9 @@ migrated in place, streamed experts:
    carries GLM's `<|assistant|>` and `<|observation|>` and was refused for a
    missing `<|endoftext|>` before it existed). Stops are `<|end_of_text|>`
    (150001), `<|user|>` (150003), `<|observation|>` (150005) and
-   `<|developer|>` (150018). `<think>` and the tool markup are plain text, so
-   reasoning arrives as content and no tool parser is wired.
+   `<|developer|>` (150018). `<think>` and the tool markup are plain text.
+   The think pair now splits into reasoning by id (see `FLINT.md`); no tool
+   parser is wired.
 6. **Sharding without an index.** The repo ships `model-00000..00004` and no
    `model.safetensors.index.json`; `shard_names` now discovers shards from the
    file listing when there is no usable index.
