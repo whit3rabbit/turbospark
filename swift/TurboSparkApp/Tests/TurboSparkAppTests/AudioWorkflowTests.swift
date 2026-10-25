@@ -16,9 +16,10 @@ final class AudioWorkflowTests: XCTestCase {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let model = root.appendingPathComponent("crates/audio/testdata/minimax_music3/converted_plain")
         controller.profiles = try AudioCatalog.profiles()
+        // A page selects only an installed model, here the checkpoint folder.
+        controller.preferences.localModels[AudioWorkspaceController.defaultMusicProfileAlias] = try model.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
         controller.selectPage(.music)
         let profile = try XCTUnwrap(controller.selectedProfile)
-        controller.preferences.localModels[profile.identity.alias] = try model.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
         controller.recipe.caption = "piano"; controller.recipe.lyrics = "[instrumental]"
         controller.recipe.text = "A retained voiceover draft"
         controller.recipe.durationSeconds = 0.12; controller.recipe.steps = 1; controller.recipe.seed = 7

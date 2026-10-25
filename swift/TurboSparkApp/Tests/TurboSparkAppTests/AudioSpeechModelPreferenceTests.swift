@@ -4,9 +4,9 @@ import XCTest
 
 @testable import TurboSparkApp
 
-/// A fresh Transcribe or Record page preselects the most accurate runnable
-/// transcriber, not the catalog's first row (Whisper Base). An installed
-/// runnable model and a saved choice both win over that preference.
+/// A Transcribe or Record page preselects the most accurate runnable
+/// transcriber that is installed, not the catalog's first row (Whisper Base).
+/// With nothing installed it preselects nothing, and a saved choice wins.
 @MainActor
 final class AudioSpeechModelPreferenceTests: XCTestCase {
     private func controller() throws -> (AudioWorkspaceController, URL) {
@@ -41,10 +41,10 @@ final class AudioSpeechModelPreferenceTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         // Catalog order: Whisper first, as audio_assets.json lists it.
         controller.profiles = [profile("whisper-base"), profile("parakeet-redux-coreml"), profile("parakeet-ultra-coreml")]
-        XCTAssertEqual(select(controller), "parakeet-ultra-coreml", "nothing installed: the most accurate runnable model")
+        XCTAssertNil(select(controller), "nothing installed: nothing to preselect, Discover offers the downloads")
 
         controller.installedPaths["whisper-base"] = "/models/whisper-base"
-        XCTAssertEqual(select(controller), "whisper-base", "an installed runnable model wins over a download")
+        XCTAssertEqual(select(controller), "whisper-base", "only an installed model is a choice")
 
         controller.installedPaths["parakeet-redux-coreml"] = "/models/redux"
         XCTAssertEqual(select(controller), "parakeet-redux-coreml", "among installed models the preference order holds")
@@ -60,7 +60,7 @@ final class AudioSpeechModelPreferenceTests: XCTestCase {
             profile("parakeet-ultra-coreml", canRun: false),
         ]
         controller.installedPaths["parakeet-ultra-coreml"] = "/models/ultra"
-        XCTAssertEqual(select(controller), "whisper-base", "an installed model that cannot run is not preselected")
+        XCTAssertNil(select(controller), "an installed model that cannot run is not preselected, and a download is not a choice")
     }
 
     func testStreamingOnlyModelIsNeverABatchChoice() throws {
@@ -69,6 +69,7 @@ final class AudioSpeechModelPreferenceTests: XCTestCase {
         let live = profile("parakeet-unified-en-coreml", operations: ["stream_transcribe"])
         controller.profiles = [live, profile("whisper-base")]
         controller.installedPaths["parakeet-unified-en-coreml"] = "/models/unified"
+        controller.installedPaths["whisper-base"] = "/models/whisper-base"
         for page in [AudioWorkspacePage.transcribe, .record] {
             controller.page = page
             XCTAssertFalse(controller.availableProfiles.contains(live), "\(page) must not offer a streaming-only model")
@@ -80,6 +81,7 @@ final class AudioSpeechModelPreferenceTests: XCTestCase {
         let (controller, root) = try controller()
         defer { try? FileManager.default.removeItem(at: root) }
         controller.profiles = [profile("whisper-base"), profile("parakeet-ultra-coreml")]
+        controller.installedPaths = ["whisper-base": "/models/whisper-base", "parakeet-ultra-coreml": "/models/ultra"]
         controller.preferences.selectedModels[controller.modelSelectionKey] = "whisper-base"
         XCTAssertEqual(select(controller), "whisper-base", "an existing user's choice is never switched silently")
     }

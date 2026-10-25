@@ -15,6 +15,8 @@ final class AudioVoiceTests: XCTestCase {
         let controller = AudioWorkspaceController(library: AudioLibraryStore(repository: ProfileRepository(store: vault)), assets: ManagedAssetStore(vault: vault))
         defer { controller.shutdown() }
         controller.profiles = try AudioCatalog.profiles()
+        // The model menu lists installed models, and a page selects only one of those.
+        controller.installedPaths = Dictionary(uniqueKeysWithValues: controller.profiles.map { ($0.identity.alias, "/test/\($0.identity.alias)") })
         controller.selectPage(.voiceClone)
         // Two Qwen3-TTS Base profiles clone in Swift MLX; MegaTTS3, both OmniVoice
         // rows and Drama 3 clone natively on Metal, each with its own request shape.

@@ -99,6 +99,16 @@ final class AudioWorkspaceController: ObservableObject {
     /// the original folder when it ends, so a session is never opened from a path for
     /// which this says yes (`residentSession`, the Qwen speech job). Set by the owner.
     var modelMoving: ((String) -> Bool)?
+    /// Why the model with this alias must not be deleted now (it is attached to
+    /// the local server), or nil. The server holds the files open, and text and
+    /// image installs already refuse for the same reason. Set by the owner.
+    var deleteBlockedReason: ((String) -> String?)?
+    /// Told after an install is removed or forgotten, so the owner can refresh
+    /// the Libraries view and drop a server attachment that named it.
+    var onInstalledModelsChanged: ((String) -> Void)?
+    /// The alias of the download in flight, if any. Set by the owner, which
+    /// runs the queue; a download keeps its picker row until it lands.
+    var installingAlias: (() -> String?)?
     var summaryAvailable: (() -> Bool)?
     var availableChatModels: (() -> [InstalledModel])?
     var selectedChatModel: (() -> InstalledModel?)?
@@ -230,6 +240,22 @@ final class AudioWorkspaceController: ObservableObject {
         if page == .advanced && task == .speechToText { choices.append(Self.localQwenProfile) }
         if task == .music { choices = Self.preferredMusicProfiles(choices) }
         return choices
+    }
+    /// What the model menu lists: `availableProfiles` that exist on this Mac. The
+    /// catalog is not a menu of models to pick, it is where Discover downloads from,
+    /// so a deleted model leaves the menu instead of turning into a download button.
+    /// A drive that is away, an install without a receipt, a checkpoint folder, the
+    /// download in flight and a profile with nothing to download (the local Qwen
+    /// checkpoint) stay listed.
+    var pickerProfiles: [AudioProfile] {
+        let downloading = installingAlias?()
+        return availableProfiles.filter { profile in
+            let alias = profile.identity.alias
+            return !installStatus(for: profile).offersDownload
+                || adoptable(alias) != nil
+                || alias == downloading
+                || profile.identity.repository.isEmpty
+        }
     }
     static let defaultMusicProfileAlias = "minimax-music3-turbo-4bit-8step"
     static let localQwenProfile = AudioProfile(
@@ -386,34 +412,35 @@ final class AudioWorkspaceController: ObservableObject {
         normalizeModelOptions()
     }
     func restoreModelSelection() {
-        // Catalog revisions can remove a saved choice. Keep the picker and
-        // run request on the same task, with a usable fallback after refresh.
-        if let id = recipe.modelID, availableProfiles.contains(where: { $0.identity.alias == id }) { return }
-        if let remembered = preferences.selectedModels[modelSelectionKey],
-           availableProfiles.contains(where: { $0.identity.alias == remembered }) {
+        // The choice follows what the menu lists (`pickerProfiles`), not the
+        // catalog. A saved choice that was deleted, or whose drive is gone for good,
+        // must not pin a row in the menu or come back on the next refresh; with no
+        // model installed the choice is empty and the pane points at Discover.
+        let listed = pickerProfiles
+        let isListed = { (alias: String) in listed.contains { $0.identity.alias == alias } }
+        if let id = recipe.modelID, isListed(id) { return }
+        if let remembered = preferences.selectedModels[modelSelectionKey], isListed(remembered) {
             recipe.modelID = remembered
-        } else if page == .transcribe {
+            return
+        }
+        if page == .transcribe,
+           let shared = SpeechToTextModels.resolve(
+               speechToTextMode, .final, profiles: profiles, selected: preferences.selectedModels, isInstalled: isInstalled),
+           isListed(shared.identity.alias) {
             // A mode with no choice of its own starts from the shared one.
-            recipe.modelID = SpeechToTextModels.resolve(
-                speechToTextMode, .final, profiles: profiles, selected: preferences.selectedModels, isInstalled: isInstalled)?.identity.alias
+            recipe.modelID = shared.identity.alias
         } else if task == .speechToText {
             // Catalog order lists Whisper first; the preference order puts the
-            // most accurate runnable transcriber first. An installed runnable
-            // model still wins over a better one that needs a download.
-            let preferred = Self.preferredSpeechProfiles(availableProfiles)
-            recipe.modelID = preferred.first(where: { AudioRuntimeProvider($0).canRun($0) && installedPaths[$0.identity.alias] != nil })?.identity.alias
-                ?? preferred.first?.identity.alias
+            // most accurate runnable transcriber first.
+            // An installed model that cannot run here is never preselected.
+            recipe.modelID = Self.preferredSpeechProfiles(listed).first(where: { AudioRuntimeProvider($0).canRun($0) })?.identity.alias
         } else if task == .music {
-            // New music workspaces should download the pinned Turbo checkpoint
-            // by default, even when another music profile is already installed.
-            recipe.modelID = Self.preferredMusicProfiles(availableProfiles).first?.identity.alias
-        } else {
+            recipe.modelID = Self.preferredMusicProfiles(listed).first?.identity.alias
+        } else if task == .textToSpeech {
             // A new speech workspace should start with an executable provider.
-            let preferred = task == .textToSpeech
-                ? availableProfiles.filter { AudioRuntimeProvider($0).canRun($0) }
-                : availableProfiles
-            recipe.modelID = preferred.first(where: { installedPaths[$0.identity.alias] != nil })?.identity.alias
-                ?? preferred.first?.identity.alias ?? availableProfiles.first?.identity.alias
+            recipe.modelID = listed.first(where: { AudioRuntimeProvider($0).canRun($0) })?.identity.alias
+        } else {
+            recipe.modelID = listed.first?.identity.alias
         }
     }
     static let speechPreference = ["parakeet-ultra-coreml", "parakeet-redux-coreml", "whisper-base"]

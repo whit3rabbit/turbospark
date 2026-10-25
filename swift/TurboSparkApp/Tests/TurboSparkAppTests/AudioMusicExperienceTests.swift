@@ -71,6 +71,8 @@ final class AudioMusicExperienceTests: XCTestCase {
         defer { controller.shutdown() }
         while controller.isRefreshingModels { try await Task.sleep(for: .milliseconds(10)) }
         controller.profiles = try AudioCatalog.profiles()
+        // The model menu lists installed models, and a page selects only one of those.
+        controller.installedPaths = Dictionary(uniqueKeysWithValues: controller.profiles.map { ($0.identity.alias, "/test/\($0.identity.alias)") })
         controller.selectPage(.music)
         try await body(controller, library)
     }

@@ -35,6 +35,11 @@ public final class AppModel: ObservableObject {
             self?.enqueueAudioDownload(profile: profile, acknowledged: acknowledged, library: library) ?? false
         }
         workspace.modelMoving = { [weak self] in self?.isMoving(path: $0) == true }
+        workspace.deleteBlockedReason = { [weak self, weak workspace] alias in
+            self?.audioDeleteBlockedReason(alias: alias, path: workspace?.installedPaths[alias])
+        }
+        workspace.installingAlias = { [weak self] in self?.installingAlias }
+        workspace.onInstalledModelsChanged = { [weak self] _ in self?.audioInstalledModelsDidChange() }
         workspace.defaultInstallLibrary = { [weak self] in
             self?.installDestinations.libraryForInstall(selection: nil)
         }

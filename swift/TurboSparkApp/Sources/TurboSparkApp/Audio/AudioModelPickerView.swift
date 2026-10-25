@@ -72,14 +72,24 @@ struct AudioModelPickerView: View {
                     .appAction(.quiet, size: .small)
                     .disabled(controller.isRefreshingModels)
             }
-            Picker(selection: Binding(get: { controller.recipe.modelID }, set: { controller.selectModel($0) })) {
+            // The menu lists what is on this Mac. A selection that is not listed
+            // reads as no choice, so the picker never shows a blank for an unknown tag.
+            let listed = controller.pickerProfiles
+            Picker(selection: Binding(
+                get: { controller.recipe.modelID.flatMap { id in listed.contains { $0.identity.alias == id } ? id : nil } },
+                set: { controller.selectModel($0) })
+            ) {
                 Text("Choose a model", bundle: .module).tag(Optional<String>.none)
-                ForEach(controller.availableProfiles) { profile in
+                ForEach(listed) { profile in
                     pickerRow(profile).tag(Optional(profile.identity.alias))
                 }
             } label: { Text("Audio model", bundle: .module) }
             .labelsHidden().frame(maxWidth: .infinity, alignment: .leading)
             .disabled(controller.isBusy || controller.hasRecordingActivity)
+
+            if listed.isEmpty && !controller.isRefreshingModels && controller.modelCatalogError == nil {
+                noModelInstalled
+            }
 
             if controller.isRefreshingModels && controller.profiles.isEmpty {
                 ProgressView().controlSize(.small)
@@ -109,7 +119,7 @@ struct AudioModelPickerView: View {
                 }
                 installManagement(profile)
                 modelDetails(profile)
-            } else if !controller.isRefreshingModels && controller.modelCatalogError == nil {
+            } else if !listed.isEmpty && !controller.isRefreshingModels && controller.modelCatalogError == nil {
                 Text("Choose a model", bundle: .module).foregroundStyle(.appSecondary)
             }
         }
@@ -140,6 +150,17 @@ struct AudioModelPickerView: View {
             if controller.installedPaths.isEmpty || controller.profiles.isEmpty {
                 controller.refreshModels()
             }
+        }
+    }
+
+    /// Nothing is installed for this task. Models are downloaded in Discover, so the
+    /// pane says so and opens it.
+    private var noModelInstalled: some View {
+        HStack(spacing: 8) {
+            Text("No model installed", bundle: .module).foregroundStyle(.appSecondary)
+            Spacer()
+            Button { model.openModelHub() } label: { Text("Discover Models", bundle: .module) }
+                .appAction(.secondary, size: .small)
         }
     }
 
