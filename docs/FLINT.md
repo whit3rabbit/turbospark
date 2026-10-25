@@ -235,7 +235,8 @@ The rest of this section was measured on `flint-int4`; the flow is shared.
   daemons first: they are what made the first run dirty.
 - Installs on the bring-up machine: the INT4 build at
   `~/.turbospark/models/text/flint.gturbo` (already migrated), the mixed build
-  at `~/models/flint-mixed-local.gturbo`. From a local `hf download`, the same
-  walk the pull runs is
+  at `~/models/flint-mixed-3-4bit.gturbo` (pulled through the `flint` row with
+  `--out`). From a local `hf download`, the same walk the pull runs, writing a
+  byte-identical install (checked against that pull), is
   `cargo run --release -p turbospark-repack --example flint_local_intake --
   <checkpoint dir> <new install dir> [model id]`.

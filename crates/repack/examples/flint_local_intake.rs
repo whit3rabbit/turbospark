@@ -102,6 +102,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         &quant,
         |stage| eprintln!("[intake] {stage}"),
     )?;
+    // What the catalog pull records after the walk (`stream.rs`), so
+    // `--max-context auto` reads the same trained context from either.
+    if let Some(n) = turbospark_repack::trained_context_meta::from_config_json(&config) {
+        turbospark_repack::trained_context_meta::record(&dst, n)?;
+    }
     eprintln!("installed {model_id} to {}", dst.display());
     Ok(())
 }

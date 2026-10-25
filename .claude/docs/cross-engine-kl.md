@@ -139,7 +139,7 @@ uv run --python 3.12 --with 'mlx-lm==0.31.2' --with numpy \
 # 0.0066 mlx-vlm shape floor (docs/FLINT.md). TURBOSPARK_LOGIT_DUMP_IDS=<file>
 # swaps the corpus for an explicit {"prompt_ids": [...], "ids": [...]} pair,
 # such as the other engine's greedy trajectory.
-TURBOSPARK_FLINT_INSTALL_DIR=~/models/flint-mixed-local.gturbo \
+TURBOSPARK_FLINT_INSTALL_DIR=~/models/flint-mixed-3-4bit.gturbo \
 TURBOSPARK_LOGIT_DUMP_DIR=/tmp/kld/flint-mixed-warm \
   cargo test -p turbospark-bench --test logit_dump --release -- --ignored --nocapture
 uv run --python 3.12 --with 'mlx-vlm==0.7.10' --with numpy \
