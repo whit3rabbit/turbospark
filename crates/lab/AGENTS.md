@@ -8,8 +8,13 @@ loop's `run-experiment`. Text and audio installs of every family.
 ## Read first
 
 - [program.md](program.md): the loop's instructions and the spec format.
-- [skill/SKILL.md](skill/SKILL.md): how an agent drives tslab (the
-  `--json` contract, workflows, what to quote).
+- [skill/SKILL.md](skill/SKILL.md): the `turbospark-lab` skill, how an
+  agent drives tslab (the `--json` contract, workflows, what to quote), with
+  its references in `skill/references/`. `scripts/install-tslab-skill.sh
+  --repo` links it into `.claude/skills/`. `skill/portable/` is the
+  binary-only `tslab` skill that `scripts/package-tslab-skill.sh` zips with
+  release binaries and workloads. A change to a command, flag or record
+  updates the matching reference.
 - [Benchmarking protocol](../../docs/BENCHMARKING.md) and the bench crate's
   [AGENTS.md](../bench/AGENTS.md): the measurement rules this crate encodes.
 

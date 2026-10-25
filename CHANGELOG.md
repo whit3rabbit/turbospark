@@ -14,6 +14,12 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- tslab agent skills: `turbospark-lab` (`crates/lab/skill`, with command,
+  output, workflow, results and extending references) for work inside the
+  repository, and a binary-only `tslab` skill zip built by
+  `scripts/package-tslab-skill.sh` (release binaries, workloads, a read-only
+  `doctor.sh`) for Macs without a checkout. `scripts/install-tslab-skill.sh`
+  installs either. Workflows find their jobs beside the binary when unpacked.
 - `tslab` output contract: every ledger line and the one object `--json`
   prints carry schema `tslab/1` (`tslab schema` prints the JSON Schema), so
   an agent drives the lab without scraping text. `tslab export` writes
