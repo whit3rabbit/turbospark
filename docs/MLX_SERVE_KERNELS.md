@@ -829,10 +829,10 @@ then aggregate. "Have" means the mechanism is already in this tree.
 | 1 | Row-exact small-M matrix-unit GEMM, decode and verify on one arithmetic, gated on a drafter | Converges with playbook item 1 and item 7 (`TURBOSPARK_INT4_MMA8`). Their gating and per-shape probe are the new parts | Engine, lever E1 |
 | 2 | Draft tree verify over the exact kernels (DFlash2 lattice, block 8) | Replay and costing done, not built (`KAPITSA_KERNELS.md`, KFlash). Their shipped result raises the priority | Engine, lever E2 |
 | 3 | GDN tree walk with restart states in registers, per-token state rounding | Prototype exists (`tv_gdn_tree` in `tree_verify_cost_bench.rs`), bit-identical | Engine, with E2 |
-| 4 | Dispatch probe (exact multiplies injected on the chain) | Built: `TURBOSPARK_DISPATCH_PROBE`, `tslab profile --dispatch-probe`. Dense qwen and llama FFNs only. No reading yet | Lab, L1 |
+| 4 | Dispatch probe (exact multiplies injected on the chain) | Built: `TURBOSPARK_DISPATCH_PROBE`, `tslab profile --dispatch-probe`. Dense qwen and llama FFNs only. Read 1.87 us per chained dispatch on `qwen38-27b` (below, L1) | Lab, L1 |
 | 5 | Whole-forward verify-width ladder from the weight inventory | Built: `tslab kernel --bench verify_ladder [--verify-from EXP]`, shapes and counts from the resident index | Lab, L2 |
 | 6 | Engagement lines as A/B evidence | Built: `foundation::engaged!`, checked per run against the knob table and `expect_engaged` | Lab, L3 |
-| 7 | In-situ stand-in ablation with sane values | Built: `TURBOSPARK_STANDIN`, `tslab profile --standin` (residual passes through; dense qwen and llama trunks) | Lab, L4 |
+| 7 | In-situ stand-in ablation with sane values | Built: `TURBOSPARK_STANDIN`, `tslab profile --standin` (residual passes through; dense qwen and llama trunks). Qwen3.8 decode: FFN 61%, GDN 24%, attention 7% (below, L4) | Lab, L4 |
 | 8 | Metal System Trace analyzer | Built: `tslab trace` (attach after warm-up, short window, never quotable) | Lab, L5 |
 | 9 | Rows-per-simdgroup sweep in situ before deepening a multi-row kernel | Built: `rows_attn` bench arms over rows per threadgroup and Q heads per simdgroup | Lab, L6 |
 | 10 | Per-silicon tables (block cap, GEMV geometry) | Single-machine repo today. Record as a rule for any default | Engine, rule |
@@ -973,8 +973,8 @@ records it per run.
 null floor, quality and memory gates, and per-shape kernel curves. These
 are the pieces mlx-serve's gotchas show earning their keep that tslab did
 not have. All seven are now built (decision table rows 4 to 9 and 13d say
-where); the text below is the design they follow. None has a recorded
-reading yet.
+where); the text below is the design they follow. L1 and L4 have a first
+reading on `qwen38-27b`, under their entries. The others have none yet.
 
 **L1. A dispatch probe.** Add `--dispatch-probe N` to `tslab profile`. The
 runtime side is one knob, `TURBOSPARK_DISPATCH_PROBE`, that encodes N exact
@@ -986,6 +986,33 @@ It replaces the 1.6 us figure the playbook derived from two samples, and it
 gives every future fusion estimate a measured price. The probe is pure and
 observable, which is why it beats "run the component twice and read the
 marginal".
+
+*Measured, 2026-10-25* (ledger `qwen38-dispatch-probe-3`): `qwen38-27b.gturbo`,
+M4 Max, AC power, warm page cache, host load at most 2.5, `short-explanation`
+prompt, 64 decode tokens, one warmup round and 6 measured rounds with arm
+order rotated. All 24 measured runs passed the host guard and printed the
+probe's engagement line.
+
+| Probe per layer | Added dispatches per token | Decode ms/token, median | Range over 6 runs |
+|---:|---:|---:|---:|
+| 0 | 0 | 45.46 | 45.18-45.79 |
+| 4 | 256 | 46.07 | 45.92-46.23 |
+| 8 | 512 | 46.60 | 46.34-46.73 |
+| 16 | 1024 | 47.40 | 47.22-47.57 |
+
+The fit over the medians gives **1.87 us per chained dispatch** (largest
+residual 0.2%). Fitted one round at a time, the slope is 1.71-1.96 us,
+median 1.81. Each count's range sits above the one before it, and the
+effect at 16 per layer (about 1.9 ms) is three times the widest range within
+an arm. That agrees with mlx-serve's 1.5 to 1.7 us on an M4 Max and with the
+playbook's two-sample 1.6 us. It is the chained price of an elementwise
+dispatch in the dense decode trunk, an upper bound on what a fusion saves
+(one that shortens the chain), and not a frozen `docs/BENCHMARKS.md` row.
+
+A first run at 2 measured rounds and counts 0, 4 and 8 read 2.26 us
+(`qwen38-dispatch-probe-2`): there the unprobed arm's own two runs differed by
+about 1.7 ms, more than the probe's effect at 8. Use enough rounds that the
+largest count's effect clears the unprobed arm's spread.
 
 **L2. A whole-forward verify-width ladder.** `tslab kernel --bench
 int4_matmul` times each shape alone. Add a `verify_ladder` bench that walks
@@ -1013,6 +1040,24 @@ and read as a 4 ms forward, so use the block's input or a constant of the
 right scale). Add a `TURBOSPARK_STANDIN` knob per block class and a
 `--standin` axis to `tslab profile` that prices each block in situ. It
 sizes a block without the dispatch profiler's per-encoder inflation.
+
+*Measured, 2026-10-25* (ledger `qwen38-standin-2`), same install, host and
+workload as L1, 2 measured rounds per arm. The base arm decoded at 21.0-21.1
+tok/s (47.52 ms per token, median of its host-clean runs).
+
+| Block skipped | Decode tok/s with it skipped | Cost in place, ms/token | Share of a token |
+|---|---:|---:|---:|
+| FFN (dense, 64 layers) | 53.2-53.7 | 28.82 | 61% |
+| Gated-DeltaNet (48 layers) | 27.4-27.8 | 11.27 | 24% |
+| Full attention (16 layers) | 22.4-22.9 | 3.36 | 7% |
+
+The three add to 43.4 of 47.5 ms. The rest, about 4 ms, is the head, the
+norms and the embedding. Each arm's engagement lines confirm what was
+skipped: the attention arm printed no decode-attention line and the FFN arm
+no fused-FFN line. These are two-round readings for ranking blocks, never
+quotable as throughput, and a skipped block also changes what the later
+layers compute, so a share is the block's cost on this path rather than an
+exact decomposition.
 
 **L5. A Metal System Trace command.** `tslab trace` wraps `xcrun xctrace
 record --template "Metal System Trace" --instrument "Metal GPU Counters"`

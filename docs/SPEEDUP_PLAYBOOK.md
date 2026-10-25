@@ -215,8 +215,13 @@ Measurement and caveats: `docs/BENCHMARKS.md`, the Qwen3.8 section.
   measurement gave 2.0%. Dividing the seconds saved by the dispatches removed
   gives about 1.6 us each for back-to-back tiny kernels in one encoder here
   (0.40 s over roughly 246,000 for the attention ops, 1.53 s over roughly
-  900,000 for all of them). This is derived from two timing samples, not a
-  floor measurement, but use it for the next estimate and re-check it.
+  900,000 for all of them). That was derived from two timing samples. The
+  dispatch probe has since measured it: **1.87 us per chained dispatch** in
+  Qwen3.8's dense decode trunk (per-round fits 1.71-1.96 us, ledger
+  `qwen38-dispatch-probe-3`, `docs/MLX_SERVE_KERNELS.md` L1). Use that for
+  the next estimate, and remember it prices a dispatch on the dependency
+  chain: a fusion that removes dispatches the GPU already overlaps saves
+  less.
 
 - **A forced-kernel variable changes more than the thing you meant.**
   `TURBOSPARK_ATTN_DECODE_KERNEL=barrier` forces every attention scratch,
@@ -386,9 +391,12 @@ never does, as with open-jet above, but do not read its code for kernels.
   dispatch commits and waits. Two workloads on different code, so the ratio
   is indicative only, but it says where the cost is: move work into one pass
   with direct-bound buffer chains before tuning any single kernel. The floor
-  is workload-specific, so calibrate before estimating. Qwen3.8 prefill
-  measured about 1.6 us per dispatch removed (see the traps list), against
-  Whisper's 5.4 us.
+  is workload-specific, so calibrate before estimating: `tslab profile
+  --dispatch-probe 0,4,8,16` measures it for a dense qwen or llama install.
+  Qwen3.8's decode trunk reads 1.87 us per chained dispatch (see the traps
+  list), against Whisper's 5.4 us. Its stand-ins (`--standin`) put the same
+  token at 61% FFN, 24% gated-DeltaNet and 7% attention, which is where a
+  decode lever has room.
 - **Attribute by skipping.** Gate one kernel behind an env flag and
   re-measure the pass. It sizes a kernel without the per-dispatch profiler's
   inflation, which only ranks. Pair it with wall versus GPU-busy per pass:
