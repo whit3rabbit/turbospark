@@ -103,7 +103,15 @@ always quiet, and none is a frozen row.
 - The HF writer numbers expert files by POSITION (`layer - 2`), not by
   checkpoint layer, because layers 0 and 1 are dense.
 - `turbospark-check` and `turbospark-model` are separate binaries: rebuild the
-  one you run, or a stale one reports `unknown arch.family "flint"`.
+  one you run, or a stale one reports `unknown arch.family "flint"`. The
+  `turbospark` dispatcher execs a sibling `turbospark-check`, so building only
+  `--bin turbospark` runs whatever older one is on `PATH`.
+- Test through the template: `turbospark run <install> --messages-file m.json`
+  (a JSON array of `{"role", "content"}`) or `--chat`. A bare prompt encodes
+  verbatim with no `<|user|>`/`<|assistant|>`, and Flint then continues the
+  user's text like a base model. Greedy through the template, "What is 17
+  times 23? Answer briefly." gives a short thought on stderr and `391` on
+  stdout, the same answer mlx-vlm reports.
 - A synthetic install is built in the checkpoint's source form
   (`build_synthetic_flint_install`) so tests exercise the rename, the U8 relabel
   and the router force-quantize. Build tests with `--release`: the debug profile
@@ -120,7 +128,7 @@ always quiet, and none is a frozen row.
 | `TURBOSPARK_FLINT_DEBUG=1` | per-MoE-layer report of non-finite or large residual, router, activation and shared values |
 | `TURBOSPARK_FLINT_ROUTER_DUMP=<file>` | appends the post-norm MoE input and the INT8 router logits per layer per token |
 | `TURBOSPARK_PHASES=1` | the phase-bucket table (cb1 wait, expert io, encode) |
-| `TURBOSPARK_RESID_CAPTURE=<file>` | residual stream per layer at the last prompt token (written only on success) |
+| `TURBOSPARK_RESID_CAPTURE=<file>` | residual stream per layer at the last prompt token (written only on success). Refused for Flint today: the capture is gated on `steering::family_dispatches_steering`, which says `false` for Flint although `families/flint/mod.rs` encodes both hooks |
 
 ## Where the work is
 

@@ -175,6 +175,12 @@ sampling, KV, Metal, model intake, FFI, or real-install behavior require the
 additional gates documented in [verification](.claude/docs/verification.md)
 and [model gates](.claude/docs/model-gates.md).
 
+Judge a chat checkpoint only through its template: `--messages-file` or
+`--chat`. `--prompt` and the `turbospark run <model> "text"` shorthand encode
+the text verbatim, so an instruction-tuned model continues the user's message
+and reads as a broken forward pass. The `--messages-file` banner says `chat
+template applied`, and `TURBOSPARK_DEBUG_PROMPT_IDS=1` prints the ids.
+
 ## Change boundaries
 
 - Keep crate-local architecture and gotchas in the nearest crate file. Do not
