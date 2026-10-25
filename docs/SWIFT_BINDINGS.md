@@ -151,7 +151,11 @@ options.steeringScale = 0.5                // default 1.0; 0.0 is identity
 options.steeringLayers = "20:45"           // 0-based inclusive layer range
 options.steeringTarget = 0.0               // for .clamp mode (default 0.0)
 options.steeringGate = 0.0                 // activation threshold >= 0
+options.visionSidecar = "/path/to/tower"   // or nil (default vision tower)
 options.kvBits = .threePointFive           // or .off (default), .two, .three, .four
+options.prefixReuse = true                 // or false (default true)
+options.anePrefill = .auto                 // or .off, .split, .breakMode
+options.anePrefillDir = "/path/to/ane"     // custom compiled Core ML packages
 
 let session = try await TurboSparkSession(modelPath: "gemma4", options: options)
 ```
@@ -235,6 +239,25 @@ Unlike speculation there is no auto-detect: an unsupported family or
 so a caller asking for quantization either gets it or learns why not --
 never a session that quietly measures the wrong footprint.
 
+**`prefixReuse: true` (the default) continues from previous turn KV caches.**
+Whenever consecutive turns share a prompt prefix, the engine reuses the
+cached KV state instead of re-prefilling the transcript from scratch. Set
+`false` when benchmarking cold prefill times or when isolating sessions.
+When attached to a server, `ServerOptions.prefixReuse` overrides this.
+
+**`anePrefill` splits dense prefill between Apple Neural Engine and Metal.**
+On Apple Silicon M4+ / A18+, `.auto` (the default) automatically splits
+dense projection rows between Core ML compiled programs running on the ANE
+and Steel running on Metal shaders. Pass `.off` to force pure Metal Steel
+prefill, `.split` to force ANE splitting, or `.breakMode` for diagnostic
+overhead measurement. Custom compiled programs can be provided via
+`anePrefillDir`.
+
+**`visionSidecar` points to an external vision tower directory.**
+When using modular multi-modal models where vision weights are stored
+separately (`.gturbo-vision`) from the primary text trunk, pass the path
+here. `nil` uses the co-located vision weights inside the model directory.
+
 ### Reading what you actually got
 
 ```swift
@@ -259,6 +282,11 @@ info.toolCalling.reason // why not, naming the dialect
 info.speculation.block  // the RESOLVED block, or nil when off
 info.speculation.drafter// .mtp | .dflash, non-nil exactly when block is
 info.speculation.reason // why it is off, when you might expect otherwise
+info.anePrefill?.active    // true when ANE+Steel split prefill is active
+info.anePrefill?.supported // whether family and chip support ANE prefill
+info.anePrefill?.reason    // why supported is false or why split is inactive
+info.anePrefill?.mode      // "split", "off", or "break"
+info.prefixReuse           // resolved prefix reuse posture (default true)
 info.specialTokens.bosId        // e.g. 1 or nil
 info.specialTokens.eosId        // e.g. 2 or nil
 info.specialTokens.endOfTurnId  // e.g. 151645 or nil
@@ -933,6 +961,20 @@ developer message of their own (`turbospark-server --system`).
 `ServerOptions.defaultReasoning` sets the default reasoning effort (.off, .low,
 .medium, .high, .xhigh) applied when a request omits `reasoning_effort`
 (`turbospark-server --reasoning`).
+
+**On-demand model loading and attachment ceilings.**
+- `ServerOptions.allowRequestModelLoad`: Bool? (default false/nil). When set to `true`,
+  an incoming HTTP request naming an installed model that is not yet attached opens
+  and attaches it on demand. Opening a model is heavyweight and allocates memory,
+  so this is strictly opt-in.
+- `ServerOptions.maxAttachedModels`: Int? (default 8). Cap on concurrently attached
+  models across host-attached and on-demand loaded sessions.
+- `ServerOptions.maxAttachedModelBytes`: UInt64? (default nil, unlimited). Cumulative
+  committed weight and KV memory ceiling across all attached models. Attaching an
+  additional model that would exceed this ceiling is refused.
+- `ServerOptions.sttModels`, `ServerOptions.ttsModels`, `ServerOptions.musicModels`:
+  Arrays of model directory paths or catalog aliases to attach at server startup for
+  speech-to-text, text-to-speech, and music generation routes.
 
 ### Watching it
 
