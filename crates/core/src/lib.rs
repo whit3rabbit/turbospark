@@ -10,6 +10,9 @@
 /// Prefill chunk sizing and automatic chunk size resolution.
 pub mod chunk_sizing;
 
+/// Engagement lines: proof that an opt-in lane ran (`TURBOSPARK_ENGAGEMENT`).
+pub mod engagement;
+
 pub mod humanizer;
 /// Prefill chunking primitives: span planning and commit-state tracking.
 pub mod prefill;

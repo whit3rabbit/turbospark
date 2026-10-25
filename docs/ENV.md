@@ -63,7 +63,11 @@ These variables configure runtime diagnostics, kernel execution seams, and profi
 | --- | --- | --- | --- |
 | `TURBOSPARK_PHASES` | `turbospark-check` | Set to `1` to print forward-pass phase timing breakdowns (GPU wait, router sync, expert pread, bind, logits wait) on stderr. | unset |
 | `TURBOSPARK_DISPATCH_PROFILE` | `turbospark-check`, `turbospark-server`, `turbospark-bench` | Set to `1` to collect per-dispatch GPU kernel timing and ranking inside command buffers. | unset |
+| `TURBOSPARK_DISPATCH_PROBE` | Runtime (qwen and llama dense decode) | Set to N to encode N in-place multiplies by 1.0 on each dense FFN activation, on the chain to the down projection. Bit-exact. `tslab profile --dispatch-probe 0,4,8` fits the price of one chained dispatch from it. Measurement only, never quotable. | unset |
+| `TURBOSPARK_STANDIN` | Runtime (qwen and llama decode trunks) | A comma list of `attn`, `mlp`, `gdn`: skip those blocks and their residual adds, leaving the stream unchanged. Output is wrong by design; `tslab profile --standin` prices each block in place from it. Never quotable. | unset |
+| `TURBOSPARK_ENGAGEMENT` | Runtime, gpu | Set to `1` to print `[engaged] NAME` to stderr the first time each opt-in lane runs (MMA8 tile, Steel prefill, rows attention, decode attention kernels, fused FFN, lazy GDN tape, probe, stand-ins). `tslab` sets it for every run and refuses an arm whose log contradicts its switches. Prints only. | unset |
 | `TURBOSPARK_PREFIX_REUSE` | `turbospark-check --chat` | Set to `quiet` to silence the `[prefix-reuse] N/M` cache reuse line on stderr. | unset |
+| `TURBOSPARK_GDN_TURN_SNAPSHOT` | Runtime (dense qwen only, prefix reuse on) | Set to `1` to keep the recurrent state 8 tokens before each prompt's end, so a next turn whose history re-renders the reply (reasoning dropped) rewinds there instead of prefilling the whole conversation. Holds one GDN mirror (about 147 MiB on Qwen3.8-27B) between turns. See `crates/runtime/src/turn_snapshot.rs`. | unset (off) |
 | `TURBOSPARK_PREFILL_CHUNK` | `turbospark-check`, `turbospark-server` | Override prompt-processing chunk size (e.g. `128`, `256`, `512`). Takes precedence over `--prefill-chunk`. | unset |
 | `TURBOSPARK_CHAT_DATE` | All (chat template rendering) | Override current date/time (`YYYY-MM-DD` or `YYYY-MM-DDTHH:MM:SS`) in templates calling `strftime_now`. Used to freeze prompts in deterministic benchmarks. | system UTC time |
 | `TURBOSPARK_READ_QOS` | Streaming I/O pool | Set to `utility` to drop background routed-expert streaming read QoS on macOS from user-initiated to utility (E-cores). | unset |
@@ -88,6 +92,8 @@ These variables configure runtime diagnostics, kernel execution seams, and profi
 | `TURBOSPARK_DFLASH_DRAFT` | DFlash2 drafter (`runtime`) | DFlash2 draft block depth (positive integer) or policy (`0` to disable, unset for `auto`). | unset (`auto`) |
 | `TURBOSPARK_ROUTER_HIST` | MoE runtime (`runtime`) | File path to dump per-layer expert selection frequency histogram (JSON) at exit. | unset |
 | `TURBOSPARK_ROUTER_TRACE` | MoE runtime (`runtime`) | Set to collect sequential top-k expert selection trace into histogram output. | unset |
+| `TURBOSPARK_ROUTER_BATCHES` | MoE runtime (`runtime`) | Set to `1` to add per-batch rows (reset epoch, phase, layer, token range, ordered routes, streaming-cache counters) to the `TURBOSPARK_ROUTER_HIST` output. Read with `scripts/moe_route_replay.py`. | unset |
+| `TURBOSPARK_ROUTER_BATCH_LIMIT` | MoE runtime (`runtime`) | Maximum stored selections for `TURBOSPARK_ROUTER_BATCHES`. Past it the output is marked `truncated`. | `1000000` |
 | `TURBOSPARK_PILOT_PROBE` | MoE runtime (`runtime`) | Set to `1` to probe one-layer-ahead router prediction; set to `self` to validate probe self-recall. | unset |
 | `TURBOSPARK_FFN_HIST` | Dense FFN (`runtime`) | File path to dump dense FFN neuron activation frequency histogram (JSON) at exit (museGlimmer). | unset |
 | `TURBOSPARK_VISION_OVERFLOW` | Vision tower (`runtime`) | File path to dump vision attention overflow and peak activation tensors. | unset |

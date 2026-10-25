@@ -91,6 +91,7 @@ pub(crate) fn encode_llama_layer_dense(
         inter as u32,
     )
     .map_err(gpu_err)?;
+    crate::lab_hooks::encode_dispatch_probe(context, pass, (&scratch.ffn_act, 0), inter)?;
 
     encode_gemv_any(
         context,

@@ -42,6 +42,12 @@ impl Args {
         Ok(out)
     }
 
+    /// A leading positional argument (`tslab workflow NAME ...`), if the
+    /// first word is not a flag. Take it before any flag.
+    pub fn positional(&mut self) -> Option<String> {
+        (!self.rest.is_empty() && !self.rest[0].starts_with("--")).then(|| self.rest.remove(0))
+    }
+
     pub fn flag(&mut self, flag: &str) -> bool {
         let before = self.rest.len();
         self.rest.retain(|a| a != flag);
@@ -79,8 +85,10 @@ pub fn parse_prompt(s: &str) -> Result<PromptSource, String> {
         Some(("corpus", n)) => Ok(PromptSource::Corpus(
             n.parse().map_err(|_| format!("corpus length {n:?}"))?,
         )),
+        Some(("chat", p)) => Ok(PromptSource::Chat(PathBuf::from(p))),
         _ => Err(format!(
-            "prompt {s:?}: use protocol:<case>, messages:<path> or text:<path>"
+            "prompt {s:?}: use protocol:<case>, messages:<path>, text:<path>, corpus:<tokens> \
+             or chat:<path>"
         )),
     }
 }
@@ -193,6 +201,7 @@ pub fn parse_arm(
         env,
         open,
         speculation,
+        expect_engaged: Vec::new(),
     })
 }
 
@@ -308,5 +317,9 @@ mod tests {
             PromptSource::Protocol("long-synthesis".into())
         );
         assert!(parse_prompt("long-synthesis").is_err());
+        assert_eq!(
+            parse_prompt("chat:c.json").unwrap(),
+            PromptSource::Chat("c.json".into())
+        );
     }
 }

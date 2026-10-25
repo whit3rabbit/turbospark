@@ -322,6 +322,7 @@ pub(crate) fn encode_full_attention_core_batched(
         batch > 1 && scratch.attn.decode_kernel() == gpu::DecodeAttentionKernel::GqaShared
     });
     if let Some(rows) = rows_attention {
+        foundation::engaged!("prefill_rows_attn");
         gpu::encode_attention_decode_gqa_rows(
             context,
             pass,

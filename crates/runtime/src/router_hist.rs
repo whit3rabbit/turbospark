@@ -26,7 +26,10 @@
 /// analysis (`scripts/pilot_ceiling.py`) drops any group that carries it.
 pub(crate) const PILOT_NONE: u32 = u32::MAX;
 
+mod batches;
+
 pub(crate) struct RouterHistogram {
+    batches: Option<batches::BatchCapture>,
     path: std::path::PathBuf,
     /// `counts[layer][expert]`; non-MoE layers never record and stay
     /// all-zero rows, so layer indices line up with the model's.
@@ -105,6 +108,15 @@ impl RouterHistogram {
             _ => None,
         };
         Some(Self {
+            batches: (std::env::var("TURBOSPARK_ROUTER_BATCHES").as_deref() == Ok("1")).then(
+                || {
+                    let cap = std::env::var("TURBOSPARK_ROUTER_BATCH_LIMIT")
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(1_000_000);
+                    batches::BatchCapture::new(cap)
+                },
+            ),
             path: path.into(),
             counts: vec![vec![0; num_experts]; num_layers],
             passes: vec![0; num_layers],
@@ -114,6 +126,30 @@ impl RouterHistogram {
             router_logits,
             top_k,
         })
+    }
+
+    pub(crate) fn begin_batch(&mut self, phase: &'static str, start: usize, count: usize) {
+        if let Some(capture) = &mut self.batches {
+            capture.begin(phase, start, count);
+        }
+    }
+
+    pub(crate) fn end_batch(&mut self, completed: bool) {
+        if let Some(capture) = &mut self.batches {
+            capture.end(completed);
+        }
+    }
+
+    pub(crate) fn reset_request(&mut self) {
+        if let Some(capture) = &mut self.batches {
+            capture.reset();
+        }
+    }
+
+    pub(crate) fn record_io(&mut self, layer: usize, hits: usize, misses: usize, bytes: u64) {
+        if let Some(capture) = &mut self.batches {
+            capture.io(layer, hits, misses, bytes);
+        }
     }
 
     /// See [`Self::pilot_self_test`]. The offset the probe aims at: 0 in
@@ -187,6 +223,13 @@ impl RouterHistogram {
     }
 
     pub(crate) fn record(&mut self, layer: usize, selected: &[usize]) {
+        if let Some(capture) = &mut self.batches {
+            capture.record(
+                layer,
+                self.passes[layer] as usize * selected.len(),
+                selected,
+            );
+        }
         for &expert in selected {
             self.counts[layer][expert] += 1;
         }
@@ -240,6 +283,10 @@ impl RouterHistogram {
             }
             out.push('}');
         }
+        if let Some(capture) = &self.batches {
+            out.push_str(",\"batches\":");
+            out.push_str(&serde_json::to_string(capture).expect("integer capture"));
+        }
         out.push('}');
         out
     }
@@ -286,6 +333,7 @@ mod tests {
 
     fn fixture_with(trace: bool, pilot: bool) -> RouterHistogram {
         RouterHistogram {
+            batches: None,
             path: std::path::PathBuf::new(),
             counts: vec![vec![0; 3]; 2],
             passes: vec![0; 2],

@@ -24,6 +24,7 @@ mod kernel_warmup;
 mod kv_prefix;
 #[cfg(target_os = "macos")]
 mod kv_write;
+mod lab_hooks;
 #[cfg(target_os = "macos")]
 mod moe_prefill_pipeline;
 mod pacing;
@@ -70,6 +71,8 @@ mod startup;
 #[cfg(target_os = "macos")]
 mod steering;
 mod token_sink;
+#[cfg(target_os = "macos")]
+mod turn_snapshot;
 mod turn_stream;
 #[cfg(target_os = "macos")]
 pub mod vision;

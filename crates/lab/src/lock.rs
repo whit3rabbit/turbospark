@@ -10,18 +10,45 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 pub struct MachineLock {
-    _file: File,
+    /// `None` for a nested guard under a workflow's hold (`hold`).
+    _file: Option<File>,
     path: PathBuf,
+    held: bool,
 }
 
+/// The lock path a workflow holds for this process, if any. While it is
+/// set, `acquire` on that path nests instead of taking a second flock,
+/// which the kernel would refuse: a workflow's steps are commands that
+/// each take the lock, run inside one hold.
+static HELD: Mutex<Option<PathBuf>> = Mutex::new(None);
+
 impl MachineLock {
+    /// Take the lock for a workflow: like `acquire`, and every `acquire` of
+    /// the same path in this process nests under it until it drops.
+    pub fn hold(lab: &Path, purpose: &str) -> Result<Self, String> {
+        let mut lock = Self::acquire(lab, purpose)?;
+        if lock._file.is_some() {
+            *HELD.lock().unwrap_or_else(|p| p.into_inner()) = Some(lock.path.clone());
+            lock.held = true;
+        }
+        Ok(lock)
+    }
+
     /// Take `<lab>/.machine.lock` without blocking. On contention the error
     /// names the holder (pid and purpose), which the holder wrote on entry.
     pub fn acquire(lab: &Path, purpose: &str) -> Result<Self, String> {
         std::fs::create_dir_all(lab).map_err(|e| format!("{}: {e}", lab.display()))?;
         let path = lab.join(".machine.lock");
+        if HELD.lock().unwrap_or_else(|p| p.into_inner()).as_deref() == Some(path.as_path()) {
+            return Ok(Self {
+                _file: None,
+                path,
+                held: false,
+            });
+        }
         let mut file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -49,11 +76,23 @@ impl MachineLock {
         let _ = file.seek(SeekFrom::Start(0));
         let _ = file.write_all(note.as_bytes());
         let _ = file.sync_all();
-        Ok(Self { _file: file, path })
+        Ok(Self {
+            _file: Some(file),
+            path,
+            held: false,
+        })
     }
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+}
+
+impl Drop for MachineLock {
+    fn drop(&mut self) {
+        if self.held {
+            *HELD.lock().unwrap_or_else(|p| p.into_inner()) = None;
+        }
     }
 }
 
@@ -70,6 +109,22 @@ mod tests {
         assert!(err.contains("first purpose"), "{err}");
         drop(first);
         MachineLock::acquire(&dir, "third").unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_workflow_hold_nests_its_steps_and_releases() {
+        let dir = std::env::temp_dir().join(format!("tslab-lock-hold-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let hold = MachineLock::hold(&dir, "workflow").unwrap();
+        let step = MachineLock::acquire(&dir, "step").unwrap();
+        drop(step);
+        MachineLock::acquire(&dir, "another step").unwrap();
+        drop(hold);
+        // After the hold, a second taker in this process is refused again.
+        let a = MachineLock::acquire(&dir, "a").unwrap();
+        assert!(MachineLock::acquire(&dir, "b").is_err());
+        drop(a);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

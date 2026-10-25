@@ -21,6 +21,10 @@ pub enum GateClass {
     DenseKl,
     /// Routed-MoE sentinel bound (near-tie expert swaps are expected).
     MoeKl,
+    /// Audio transcription: the transcript text must not change, while the
+    /// logits under it may (a reduction-order change in an encoder kernel).
+    /// Audio workloads only.
+    TextExact,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -32,7 +36,7 @@ pub struct QualityBounds {
 impl GateClass {
     pub fn default_bounds(self) -> QualityBounds {
         match self {
-            GateClass::BitExact => QualityBounds {
+            GateClass::BitExact | GateClass::TextExact => QualityBounds {
                 mean_kl: 0.0,
                 min_top1_fraction: 1.0,
             },
@@ -47,13 +51,33 @@ impl GateClass {
         }
     }
 
-    /// The class a family's KL-bounded changes are held to.
-    pub fn kl_class_for_family(family: &str) -> GateClass {
-        match family {
-            "qwen36" | "gemma4" | "qwen3moe" | "gptOss" | "llama" | "deepseek2" | "minimax_m2"
-            | "qwen4exp" | "flint" => GateClass::MoeKl,
-            _ => GateClass::DenseKl,
+    /// The class a KL-bounded change on an install is held to: the routed
+    /// MoE sentinel when the install routes experts, the dense bound
+    /// otherwise. Decided by the architecture, not the family name: dense
+    /// Llama and Mixtral share a family, and only one of them routes.
+    pub fn kl_class_for(routes_experts: bool) -> GateClass {
+        if routes_experts {
+            GateClass::MoeKl
+        } else {
+            GateClass::DenseKl
         }
+    }
+
+    /// Refuse a spec whose declared class is looser than its install's: the
+    /// MoE sentinel on a dense install would grade a dense change at a
+    /// bound ten times wider than the one it is owed. A stricter class (the
+    /// dense bound on a MoE install, or bit-exact anywhere) is the author's
+    /// call and passes.
+    pub fn check_declared(self, routes_experts: bool) -> Result<(), String> {
+        let owed = GateClass::kl_class_for(routes_experts);
+        if self == GateClass::MoeKl && owed == GateClass::DenseKl {
+            return Err(
+                "the spec declares moe_kl, but this install routes no experts: \
+                 declare dense_kl (or bit_exact)"
+                    .into(),
+            );
+        }
+        Ok(())
     }
 }
 
@@ -125,6 +149,11 @@ pub fn judge_quality(
                 reasons.push("generated tokens differ from the reference".into());
             }
         }
+        GateClass::TextExact => {
+            if !tokens_equal {
+                reasons.push("the transcript differs from the reference".into());
+            }
+        }
         GateClass::DenseKl | GateClass::MoeKl => {
             // NaN fails closed: a broken arm must not pass by comparing false.
             if mean_kl.is_nan() || mean_kl > bounds.mean_kl {
@@ -166,6 +195,31 @@ pub fn memory_allowance(reference_peak: u64, requested: Option<u64>, noise: u64)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn text_exact_judges_the_transcript_not_the_bytes() {
+        let cmp = |bytes: bool, text: bool| PromptComparison {
+            prompt_tokens: 0,
+            kl: 0.0,
+            max_abs_dlogit: 0.0,
+            top1_agree: text,
+            top5_overlap: 0,
+            logits_bits_equal: bytes,
+        };
+        let b = GateClass::TextExact.default_bounds();
+        assert!(judge_quality(GateClass::TextExact, b, vec![cmp(false, true)], true).passed);
+        assert!(!judge_quality(GateClass::TextExact, b, vec![cmp(true, false)], false).passed);
+        assert!(!judge_quality(GateClass::BitExact, b, vec![cmp(false, true)], true).passed);
+    }
+
+    #[test]
+    fn a_dense_install_refuses_the_moe_class_only() {
+        assert!(GateClass::MoeKl.check_declared(false).is_err());
+        assert!(GateClass::MoeKl.check_declared(true).is_ok());
+        assert!(GateClass::DenseKl.check_declared(true).is_ok());
+        assert!(GateClass::BitExact.check_declared(false).is_ok());
+        assert_eq!(GateClass::kl_class_for(true), GateClass::MoeKl);
+    }
 
     fn cmp(kl: f64, top1: bool, bits: bool) -> PromptComparison {
         PromptComparison {

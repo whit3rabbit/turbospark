@@ -1,6 +1,8 @@
 use std::time::Instant;
 
-use foundation::{prefill_chunk_spans, LogitValue, PrefillChunkCommitState, TokenId};
+use foundation::{
+    prefill_chunk_spans, LogitValue, PrefillChunkCommitState, PrefillChunkSpan, TokenId,
+};
 use tokenizer::MfTokenizer;
 
 use crate::config::GenerationConfig;
@@ -10,6 +12,35 @@ use crate::raw_completion::{
     cancelled_during_prefill, check_admission, decode, CancelFlag, RawDecodeProgress,
     RawDecodeResult, NEVER,
 };
+
+/// [`prefill_chunk_spans`] over `token_count` tokens from `start_position`,
+/// with one extra boundary at the absolute position `cut` when it falls
+/// strictly inside the range (`LogitProducer::turn_snapshot_position`).
+/// The spans before the cut are the ones the plain walk would make, so only
+/// the chunk containing the cut is split in two.
+pub(crate) fn prefill_spans_with_cut(
+    token_count: usize,
+    start_position: usize,
+    chunk_tokens: usize,
+    cut: Option<usize>,
+) -> Vec<PrefillChunkSpan> {
+    let end = start_position + token_count;
+    let Some(cut) = cut.filter(|&c| c > start_position && c < end) else {
+        return prefill_chunk_spans(token_count, start_position, chunk_tokens);
+    };
+    let head = cut - start_position;
+    let mut spans = prefill_chunk_spans(head, start_position, chunk_tokens);
+    spans.extend(
+        prefill_chunk_spans(end - cut, cut, chunk_tokens)
+            .into_iter()
+            .map(|s| PrefillChunkSpan {
+                token_offset: s.token_offset + head,
+                completed_count: s.completed_count + head,
+                ..s
+            }),
+    );
+    spans
+}
 
 /// Splits `prompt_ids` into fixed-size chunks and hands each whole chunk to
 /// `producer` in one call, then decodes. `chunk_tokens` should come from one
@@ -83,13 +114,17 @@ pub fn run_raw_completion_chunked_cancellable(
     let prefill_start = Instant::now();
     // Spans start at the reused offset, so the first chunk begins where the
     // previous turn's state ended rather than at 0.
-    let spans = prefill_chunk_spans(prompt_ids.len() - reused, reused, chunk_tokens);
+    let cut = producer.turn_snapshot_position(prompt_ids, reused);
+    let spans = prefill_spans_with_cut(prompt_ids.len() - reused, reused, chunk_tokens, cut);
     history.extend_from_slice(&prompt_ids[..reused]);
     let mut position = reused;
     for (span_index, span) in spans.iter().enumerate() {
         commit_state
             .require_clean("chunked prefill")
             .map_err(|e| RuntimeError::Producer(e.to_string()))?;
+        if cut == Some(span.start_position) {
+            producer.take_turn_snapshot(span.start_position);
+        }
         // `token_offset` is relative to the span walk's own start, which is
         // the reused offset rather than 0.
         let base = reused + span.token_offset;

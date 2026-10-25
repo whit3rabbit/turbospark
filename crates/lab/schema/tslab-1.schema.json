@@ -1,0 +1,229 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tslab/1",
+  "title": "tslab output contract, version 1",
+  "description": "Shapes shared by the tslab ledger (one record per line), the --json envelope, kernel bench results and exported series. Ledger lines without a schema field predate version 1 and read as version 0. Fields not listed are allowed and must be ignored by readers.",
+  "oneOf": [
+    { "$ref": "#/$defs/envelope" },
+    { "$ref": "#/$defs/record" },
+    { "$ref": "#/$defs/series" }
+  ],
+  "$defs": {
+    "kind": {
+      "description": "Ledger record kinds. src/schema.rs KINDS lists the same set with a one-line description each.",
+      "enum": [
+        "run",
+        "profile_summary",
+        "null_calibration",
+        "verdict",
+        "kernel_curve",
+        "hash_diff",
+        "ane_plan",
+        "experiment_start",
+        "gate",
+        "experiment",
+        "confirm",
+        "tree_replay",
+        "chain_capture",
+        "depth_replay",
+        "round_cost",
+        "dispatch_probe",
+        "standin",
+        "trace",
+        "workflow_step",
+        "workflow_run"
+      ]
+    },
+    "envelope": {
+      "description": "The single object tslab --json prints to stdout. Human output goes to stderr.",
+      "type": "object",
+      "required": ["schema", "command", "ok", "exit_code", "records", "result", "warnings"],
+      "properties": {
+        "schema": { "const": "tslab/1" },
+        "command": { "type": "string" },
+        "ok": { "type": "boolean", "description": "false when the command failed; exit_code is then 1" },
+        "exit_code": {
+          "type": "integer",
+          "description": "0 ok or keep, 1 error, 2 usage, 3 discard, 4 inconclusive (do not revert)"
+        },
+        "decision": {
+          "type": "string",
+          "description": "run-experiment and confirm: keep, keep_pending_confirm, discard, inconclusive"
+        },
+        "records": {
+          "type": "array",
+          "description": "Ledger lines this command appended, oldest first",
+          "items": {
+            "type": "object",
+            "required": ["id", "kind", "ledger"],
+            "properties": {
+              "id": { "type": "string" },
+              "kind": { "$ref": "#/$defs/kind" },
+              "ledger": { "type": "string", "description": "path of the ledger.jsonl" }
+            }
+          }
+        },
+        "result": { "description": "Command-specific payload; null on error" },
+        "warnings": { "type": "array", "items": { "type": "string" } },
+        "error": { "type": "string" }
+      }
+    },
+    "record": {
+      "description": "One ledger line. Payload fields depend on kind.",
+      "type": "object",
+      "required": ["id", "kind", "ts_ms"],
+      "properties": {
+        "schema": { "const": "tslab/1" },
+        "id": { "type": "string", "description": "<unix_ms>-<pid>-<n>, time ordered" },
+        "kind": { "$ref": "#/$defs/kind" },
+        "ts_ms": { "type": "integer" },
+        "eligible": { "type": "boolean", "description": "false when the host guard rejected the run; kept, never dropped" },
+        "reasons": { "type": "array", "items": { "type": "string" } },
+        "quotable": { "type": "boolean", "description": "false for runs under a profiler, trace or stand-in" },
+        "result": { "description": "kernel_curve: a bench_result" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "kernel_curve" } } },
+          "then": { "properties": { "result": { "$ref": "#/$defs/bench_result" } } }
+        }
+      ]
+    },
+    "point": {
+      "type": "object",
+      "required": ["x", "ms"],
+      "properties": {
+        "x": { "type": "number" },
+        "ms": { "type": "number", "description": "median GPU milliseconds per sample" },
+        "gb_s": { "type": "number" },
+        "tflops": { "type": "number" },
+        "c_of_m": { "type": "number", "description": "x rows in one pass over x one-row passes" },
+        "out_fnv": { "type": "string", "description": "FNV-1a 64 of the output bytes, 16 hex digits, under --hash" }
+      }
+    },
+    "bench_result": {
+      "description": "What every kernel bench emits (src/bench.rs).",
+      "type": "object",
+      "required": ["bench", "case", "subject", "x", "layout", "arms"],
+      "properties": {
+        "bench": { "type": "string" },
+        "case": { "type": "string", "description": "unique within the bench for one install" },
+        "subject": { "type": "object", "description": "shape parameters and bench constants" },
+        "x": {
+          "type": "object",
+          "required": ["name", "unit", "scale"],
+          "properties": {
+            "name": { "type": "string" },
+            "unit": { "type": "string" },
+            "scale": { "enum": ["log2", "linear"] }
+          }
+        },
+        "layout": { "type": "string", "description": "the synthesized weight or cache layout" },
+        "arms": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["label"],
+            "properties": {
+              "label": { "type": "string" },
+              "points": { "type": "array", "items": { "$ref": "#/$defs/point" } },
+              "fit": {
+                "type": "object",
+                "properties": {
+                  "a": { "type": "number" },
+                  "b": { "type": "number" },
+                  "max_rel_residual": { "type": "number" }
+                }
+              },
+              "unsupported": { "type": "string", "description": "why this arm has no points" }
+            }
+          }
+        },
+        "break_even": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "arm": { "type": "string" },
+              "against": { "type": "string" },
+              "above_x": { "type": ["number", "null"] }
+            }
+          }
+        },
+        "notes": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "series": {
+      "description": "One plottable line or bar group, as tslab export writes it (src/series.rs).",
+      "type": "object",
+      "required": ["schema", "id", "kind", "experiment", "source_kind", "x", "y", "points"],
+      "properties": {
+        "schema": { "const": "tslab/1" },
+        "id": { "type": "string", "description": "stable within one export" },
+        "kind": {
+          "enum": [
+            "kernel_ms",
+            "kernel_c_of_m",
+            "profile_buckets",
+            "profile_totals",
+            "verdict",
+            "dispatch_probe",
+            "verify_ladder",
+            "round_cost",
+            "audio_stages",
+            "trace_shares",
+            "standin"
+          ]
+        },
+        "experiment": { "type": "string" },
+        "source_kind": { "$ref": "#/$defs/kind" },
+        "source_id": { "type": "string" },
+        "source_schema": { "type": "integer", "description": "0 for a pre-schema ledger line, 1 otherwise" },
+        "model": { "type": ["string", "null"] },
+        "family": { "type": ["string", "null"] },
+        "chip": { "type": ["string", "null"] },
+        "rev": { "type": ["string", "null"] },
+        "eligible": { "type": "boolean" },
+        "quotable": { "type": "boolean" },
+        "group": { "type": "string", "description": "series sharing a group belong on one chart" },
+        "label": { "type": "string", "description": "legend label" },
+        "subject": { "type": "object" },
+        "x": {
+          "type": "object",
+          "required": ["name", "unit", "scale"],
+          "properties": {
+            "name": { "type": "string" },
+            "unit": { "type": "string" },
+            "scale": { "enum": ["log2", "linear", "category"] }
+          }
+        },
+        "y": {
+          "type": "object",
+          "required": ["name", "unit"],
+          "properties": { "name": { "type": "string" }, "unit": { "type": "string" } }
+        },
+        "points": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["y"],
+            "properties": {
+              "x": { "type": ["number", "null"] },
+              "label": { "type": "string", "description": "category name when x.scale is category" },
+              "y": { "type": "number" },
+              "lo": { "type": "number" },
+              "hi": { "type": "number" },
+              "n": { "type": "integer" },
+              "dirty": { "type": "boolean" }
+            }
+          }
+        },
+        "refs": {
+          "type": "object",
+          "description": "reference values drawn on the chart, such as an effect floor",
+          "additionalProperties": { "type": "number" }
+        }
+      }
+    }
+  }
+}

@@ -5,6 +5,9 @@ use crate::producer::{ChunkedPrefillRunner, LogitProducer, SpeculativeProducer};
 
 impl LogitProducer for RealForwardRunner {
     fn reset(&mut self) {
+        if let Some(hist) = &mut self.router_hist {
+            hist.reset_request();
+        }
         // PARK the live session rather than clobbering it, whenever there is
         // a pool to park it IN and something worth parking. This is the path
         // that actually fixes multi-conversation stomping
@@ -47,6 +50,7 @@ impl LogitProducer for RealForwardRunner {
         self.unsnapshotted_checkpoint_alive = false;
         self.unsnapshotted_checkpoint_tainted = false;
         self.deferred_gdn_snapshot = None;
+        self.turn_snapshot = None;
         self.kv.reset();
         if let Some(qwen) = self.real_qwen.as_mut() {
             qwen.reset();
@@ -112,8 +116,18 @@ impl LogitProducer for RealForwardRunner {
         self.note_eager_advance();
         self.batched_tape = None;
         self.batched_tape_row0 = None;
+        if let Some(hist) = &mut self.router_hist {
+            hist.begin_batch(
+                if self.skip_head { "prefill" } else { "decode" },
+                position,
+                1,
+            );
+        }
         let result = gpu::autorelease_pool(|| self.produce_inner(token, position, logits))
             .map_err(|e| e.to_string());
+        if let Some(hist) = &mut self.router_hist {
+            hist.end_batch(result.is_ok());
+        }
         // Recorded only on SUCCESS, and after the call: a failed forward may
         // have left the KV half-written, and a record naming a position the
         // pass did not complete is the one lie this whole mechanism exists to
@@ -185,6 +199,20 @@ impl LogitProducer for RealForwardRunner {
         // must still be unconsumed for this to be safe. A bigger lag (a
         // run that ended on plain steps, whose produce-captures cover one
         // row) refuses: the hole would draft over rows nobody wrote.
+        // A GDN model cannot rewind on its own, but a turn snapshot at or
+        // below the match can stand in for the state there
+        // (`crate::turn_snapshot`, off by default). Never after a swap: the
+        // swap dropped this session's point, and the incoming slot has none.
+        // The session-pool guard below still applies first, in its own terms.
+        if back > 0
+            && !swapped
+            && self.real_qwen.is_some()
+            && !(self.session_pool.capacity() > 0 && back > keep)
+        {
+            if let Some(at) = self.try_restore_turn_snapshot(keep) {
+                return at;
+            }
+        }
         if self.real_dflash.is_some() || self.real_mtp.is_some() {
             if back != 0 || swapped {
                 return 0;
@@ -265,6 +293,14 @@ impl LogitProducer for RealForwardRunner {
 
     fn session_slot_evicted(&self) -> bool {
         self.session_slot_evicted
+    }
+
+    fn turn_snapshot_position(&self, prompt_ids: &[TokenId], reused: usize) -> Option<usize> {
+        self.turn_snapshot_cut(prompt_ids, reused)
+    }
+
+    fn take_turn_snapshot(&mut self, position: usize) {
+        self.take_turn_snapshot_at(position);
     }
 }
 
@@ -589,6 +625,9 @@ impl RealForwardRunner {
         self.unsnapshotted_checkpoint_alive = false;
         self.unsnapshotted_checkpoint_tainted = false;
         self.deferred_gdn_snapshot = None;
+        // The point describes the outgoing conversation's state, and the
+        // incoming one carries none: v1 does not park snapshots.
+        self.turn_snapshot = None;
         let kv = std::mem::replace(&mut self.kv, incoming.kv);
         let gdn = self.real_qwen.as_mut().and_then(|qwen| {
             incoming

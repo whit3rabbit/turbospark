@@ -39,4 +39,6 @@ catalog = { package = "turbospark-catalog", path = "../catalog", version = "0.5.
 gpu = { package = "turbospark-gpu", path = "../gpu", version = "0.5.0" }
 turbospark-coreml = { path = "../coreml", version = "0.5.0" }
 turbospark-bench = { path = "../bench", version = "0.5.0" }
+# The audio arm names the runtime's audio request types (worker_audio.rs).
+audio = { package = "turbospark-audio", path = "../audio", version = "0.5.0" }
 half = "2"

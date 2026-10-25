@@ -425,6 +425,7 @@ fn encode_int4_mma8_rows(
     y: (&gpu::MetalBuffer, u64),
     batch: usize,
 ) -> Result<(), RealForwardError> {
+    foundation::engaged!("int4_mma8");
     let mut done = 0usize;
     while done < batch {
         let take = (batch - done).min(gpu::INT4_MMA8_MAX_ROWS);
@@ -876,6 +877,7 @@ pub(crate) fn encode_gemm_rows(
         let w = resident_matrix(weights, index, name, rows, cols)?;
         let tile = gpu::SteelTile::M32K32N32;
         if gpu::steel_supports(&w, tile) {
+            foundation::engaged!("prefill_steel");
             return gpu::encode_dequant_int4_gemm_steel(context, pass, &w, x, y, batch, tile)
                 .map_err(RealForwardError::Gpu);
         }

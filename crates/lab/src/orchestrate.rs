@@ -26,6 +26,11 @@ pub const PASSTHROUGH: &[&str] = &["PATH", "HOME", "TMPDIR", "USER", "LANG", "LC
 /// (models, the lab) rather than change behavior.
 pub const PASSTHROUGH_TURBOSPARK: &[&str] = &["TURBOSPARK_HOME", "TURBOSPARK_LAB_DIR"];
 
+/// Variables the orchestrator itself sets for every run, outside any arm:
+/// engagement lines (`foundation::engaged!`) print only, change no lane, and
+/// the worker's environment check accepts exactly these values.
+pub const ORCHESTRATOR_ENV: &[(&str, &str)] = &[("TURBOSPARK_ENGAGEMENT", "1")];
+
 const SAMPLE_EVERY: Duration = Duration::from_secs(2);
 
 /// The worker binary that sits next to the running `tslab`.
@@ -222,6 +227,9 @@ impl Session {
                 cmd.env(key, v);
             }
         }
+        // Every run prints its engagement lines; an arm whose variables
+        // promise a lane the log does not show is not the arm it claims.
+        cmd.envs(ORCHESTRATOR_ENV.iter().copied());
         cmd.envs(&arm.env);
         let started = Instant::now();
         let mut child = cmd
@@ -254,9 +262,9 @@ impl Session {
             .ok()
             .and_then(|t| serde_json::from_str(&t).ok())
             .unwrap_or(Value::Null);
-        let spec_stats = std::fs::read_to_string(&stderr_path)
-            .map(|t| parse_spec_stats(&t))
-            .unwrap_or(Value::Null);
+        let stderr_text = std::fs::read_to_string(&stderr_path).unwrap_or_default();
+        let spec_stats = parse_spec_stats(&stderr_text);
+        let engaged = knobs::engaged_lines(&stderr_text);
         if spec_stats.as_array().is_some_and(|a| !a.is_empty()) {
             if let Value::Object(m) = &mut record {
                 m.insert("spec_stats".into(), spec_stats.clone());
@@ -281,34 +289,47 @@ impl Session {
                 reasons.push(format!("{env} perturbs timing; run is not quotable"));
             }
         }
+        // Only a run that got far enough to run its lanes can be held to
+        // them: a refused or crashed run already carries its reason.
+        if status == "ok" {
+            for v in knobs::engagement_violations(&arm.env, &arm.expect_engaged, &engaged) {
+                reasons.push(format!("not engaged: {v}"));
+            }
+        }
         let eligible = host_ok && reasons.is_empty();
 
-        self.ledger.append(
-            "run",
-            json!({
-                "run_id": run_id,
-                "arm": arm.name,
-                "arm_env": arm.env,
-                "arm_open": arm.open,
-                "round": round,
-                "warmup": warmup,
-                "mode": mode,
-                "status": status,
-                "exit_code": exit.code(),
-                "wall_s": wall_s,
-                "eligible": eligible,
-                "reasons": reasons,
-                "host": summarize_host(&samples),
-                "record": record_path.display().to_string(),
-                "refusal": record["refusal"],
-                "family": record["family"],
-                "totals": record["totals"],
-                "peak_footprint_bytes": record["peak_footprint_bytes"],
-                "exe_sha256": record["provenance"]["exe_sha256"],
-                "speculation": arm.speculation,
-                "spec_stats": spec_stats,
-            }),
-        )?;
+        let run_payload = json!({
+            "run_id": run_id,
+            "arm": arm.name,
+            "arm_env": arm.env,
+            "arm_open": arm.open,
+            "round": round,
+            "warmup": warmup,
+            "mode": mode,
+            "status": status,
+            "exit_code": exit.code(),
+            "wall_s": wall_s,
+            "eligible": eligible,
+            "reasons": reasons,
+            "host": summarize_host(&samples),
+            "record": record_path.display().to_string(),
+            "refusal": record["refusal"],
+            "family": record["family"],
+            "totals": record["totals"],
+            "audio": record["audio"],
+            "peak_footprint_bytes": record["peak_footprint_bytes"],
+            "exe_sha256": record["provenance"]["exe_sha256"],
+            "speculation": arm.speculation,
+            "spec_stats": spec_stats,
+            "engaged": engaged,
+        });
+        self.ledger.append("run", run_payload.clone())?;
+        // L7: every measured speculative call is also a round-cost reading.
+        let mut with_model = run_payload;
+        with_model["model"] = json!(self.model);
+        for cost in crate::round_cost::from_run(&with_model, &record) {
+            self.ledger.append("round_cost", cost)?;
+        }
         if self.verbose {
             eprintln!(
                 "  round {round}{} {:<16} {status:<8} {}{}",

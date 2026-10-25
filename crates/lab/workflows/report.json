@@ -1,0 +1,10 @@
+{
+  "name": "report",
+  "description": "an experiment's ledger as tslab/1 series (JSON, paths redacted) and an offline HTML page, beside the ledger",
+  "steps": [
+    {"id": "export", "command": "export",
+     "args": {"experiment": "{experiment}", "format": "json", "redact-paths": true, "out": "{lab}/{experiment}/series.json", "force": true}},
+    {"id": "report", "command": "report",
+     "args": {"experiment": "{experiment}", "html": "{lab}/{experiment}/report.html", "force": true}}
+  ]
+}

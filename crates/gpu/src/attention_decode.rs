@@ -957,6 +957,7 @@ pub fn encode_attention_decode(
     if scratch.decode_kernel() == DecodeAttentionKernel::GqaShared
         && attention_decode_gqa_supported(head_dim, num_q_heads, num_kv_heads)
     {
+        foundation::engaged!("attn_decode_gqa");
         let (simdgroups, num_chunks, unroll) = gqa_launch(range, num_kv_heads);
         return encode_attention_decode_gqa(
             context,
@@ -979,6 +980,7 @@ pub fn encode_attention_decode(
             unroll,
         );
     }
+    foundation::engaged!("attn_decode_barrier");
     let num_chunks = chunks_for(range);
     // Ceiling division, so the last chunk is the short one and every
     // earlier chunk is full. Flooring would leave a tail of positions

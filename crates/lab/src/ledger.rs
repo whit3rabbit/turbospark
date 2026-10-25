@@ -10,14 +10,34 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
 use serde_json::{json, Value};
+
+use crate::schema::{RecordRef, SCHEMA};
 
 pub struct Ledger {
     path: PathBuf,
 }
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Every line this process appended, in order, with its full record, for
+/// the `--json` envelope.
+static APPENDED: Mutex<Vec<(RecordRef, Value)>> = Mutex::new(Vec::new());
+
+/// Return lines to the front of the collected list: a caller that took
+/// them to look (a workflow step) hands them back for the envelope.
+pub fn put_back(mut lines: Vec<(RecordRef, Value)>) {
+    let mut g = APPENDED.lock().unwrap_or_else(|p| p.into_inner());
+    lines.append(&mut g);
+    *g = lines;
+}
+
+/// The lines appended since the last call, oldest first.
+pub fn take_appended() -> Vec<(RecordRef, Value)> {
+    std::mem::take(&mut *APPENDED.lock().unwrap_or_else(|p| p.into_inner()))
+}
 
 /// Milliseconds since the Unix epoch.
 pub fn unix_ms() -> u64 {
@@ -51,8 +71,8 @@ impl Ledger {
     }
 
     /// Append one record of `kind` and return its id. `payload` must be an
-    /// object; `id`, `kind` and `ts_ms` are added and win over any payload
-    /// keys of the same name.
+    /// object; `id`, `kind`, `ts_ms` and `schema` are added and win over any
+    /// payload keys of the same name.
     ///
     /// One `write` of the whole line under an exclusive `flock`, then fsync:
     /// two processes appending at once (an orchestrator and a `tslab report`
@@ -65,7 +85,9 @@ impl Ledger {
         map.insert("id".into(), json!(id));
         map.insert("kind".into(), json!(kind));
         map.insert("ts_ms".into(), json!(unix_ms()));
-        let mut line = serde_json::to_string(&Value::Object(map)).map_err(|e| e.to_string())?;
+        map.insert("schema".into(), json!(SCHEMA));
+        let record = Value::Object(map);
+        let mut line = serde_json::to_string(&record).map_err(|e| e.to_string())?;
         line.push('\n');
         let mut f = OpenOptions::new()
             .create(true)
@@ -87,7 +109,16 @@ impl Ledger {
             .map_err(|e| format!("{}: {e}", self.path.display()));
         // SAFETY: as above; unlocking a lock this descriptor holds.
         unsafe { libc::flock(fd, libc::LOCK_UN) };
-        result.map(|_| id)
+        result?;
+        APPENDED.lock().unwrap_or_else(|p| p.into_inner()).push((
+            RecordRef {
+                id: id.clone(),
+                kind: kind.to_string(),
+                ledger: self.path.display().to_string(),
+            },
+            record,
+        ));
+        Ok(id)
     }
 
     /// Every record, in append order. A line that does not parse is an error
@@ -170,6 +201,10 @@ mod tests {
         let rec = &ledger.read_all().unwrap()[0];
         assert_eq!(rec["kind"], "verdict");
         assert_eq!(rec["id"], id.as_str());
+        assert_eq!(rec["schema"], SCHEMA);
+        assert!(take_appended()
+            .iter()
+            .any(|(r, v)| r.id == id && r.kind == "verdict" && v["id"] == id.as_str()));
         assert!(ledger.append("run", json!([1, 2])).is_err());
         std::fs::remove_dir_all(&dir).unwrap();
     }

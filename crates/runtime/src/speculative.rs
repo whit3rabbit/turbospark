@@ -267,13 +267,22 @@ fn run_speculative<P: SpeculativeProducer>(
     // primed after each micro-batch, at the batched trunk's prefill speed
     // rather than one full forward pass (head included) per prompt token.
     let chunked = producer.supports_chunked_drafter_prefill();
+    // Where the producer keeps its state for the next turn, if anywhere
+    // (`LogitProducer::turn_snapshot_position`): both walks stop there for
+    // one call. The drafter is primed through the cut by then, because the
+    // pass that ends at it primes its last row with the known next token.
+    let cut = producer.turn_snapshot_position(prompt_ids, reused);
     if chunked {
-        let spans = foundation::prefill_chunk_spans(
+        let spans = crate::raw_completion_chunked::prefill_spans_with_cut(
             prompt_ids.len() - reused,
             reused,
             foundation::DEFAULT_CHUNK_SIZE as usize,
+            cut,
         );
         for span in &spans {
+            if cut == Some(span.start_position) {
+                producer.take_turn_snapshot(span.start_position);
+            }
             let begin = reused + span.token_offset;
             let end = begin + span.token_count;
             let chunk = &prompt_ids[begin..end];
@@ -309,6 +318,9 @@ fn run_speculative<P: SpeculativeProducer>(
             .enumerate()
             .skip(if chunked { prompt_ids.len() } else { reused })
     {
+        if cut == Some(i) {
+            producer.take_turn_snapshot(i);
+        }
         let last = i + 1 == prompt_ids.len();
         if last || !headless {
             producer

@@ -28,6 +28,9 @@ use crate::workload::{Arm, Drafter, PromptSource, Residency, Slots, Speculation,
 
 pub const EXIT_REFUSED: i32 = 3;
 
+/// Printed to stderr once the warm pass is done and measured work begins.
+pub const MEASURING_MARKER: &str = "[tslab-worker] measuring";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Mode {
@@ -64,6 +67,25 @@ pub struct PromptRecord {
     pub prefill_phases: PhaseReport,
     pub decode_phases: Option<PhaseReport>,
     pub cache_class: CacheClass,
+    /// Per turn, for a chat prompt. The fields above then total the chat
+    /// (`prompt_tokens` counting only the tokens prefilled, not the reused
+    /// ones), and `decode_digest` covers every turn's tokens in order.
+    #[serde(default)]
+    pub turns: Option<Vec<TurnRecord>>,
+}
+
+/// One turn of a chat prompt.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnRecord {
+    pub prompt_tokens: usize,
+    /// Leading prompt tokens the runtime continued from instead of
+    /// prefilling (`RawDecodeResult::reused_prefix_tokens`).
+    pub reused_tokens: usize,
+    /// From the generation call to the first token's callback.
+    pub ttft_s: f64,
+    pub prefill_s: f64,
+    pub decode_tokens: usize,
+    pub decode_s: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,6 +96,10 @@ pub struct Totals {
     pub decode_tokens: usize,
     pub decode_s: f64,
     pub decode_tok_s: Option<f64>,
+    /// Mean time to first token over every chat turn after the first
+    /// (`Metric::FollowupTtftS`). `None` without a chat follow-up.
+    #[serde(default)]
+    pub followup_ttft_s: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,6 +126,10 @@ pub struct RunRecord {
     /// knob was on, which also makes the run unquotable.
     pub dispatch_profile: Option<String>,
     pub provenance: Provenance,
+    /// An audio arm's result (`worker_audio.rs`): run_s, audio_s, rtf,
+    /// stages in ms, output_digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio: Option<serde_json::Value>,
 }
 
 fn refused(req: &WorkerRequest, reason: String) -> RunRecord {
@@ -123,6 +153,7 @@ fn refused(req: &WorkerRequest, reason: String) -> RunRecord {
         faults: None,
         dispatch_profile: None,
         provenance: provenance::collect(),
+        audio: None,
     }
 }
 
@@ -148,21 +179,11 @@ pub fn prompt_ids(tokenizer: &MfTokenizer, source: &PromptSource) -> Result<Vec<
                 std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
             let rows: Vec<serde_json::Value> =
                 serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-            let mut messages = Vec::new();
-            for row in rows {
-                let role = match row["role"].as_str() {
-                    Some("system") => Role::System,
-                    Some("user") => Role::User,
-                    Some("assistant") => Role::Assistant,
-                    other => return Err(format!("{}: unsupported role {other:?}", path.display())),
-                };
-                let content = row["content"]
-                    .as_str()
-                    .ok_or_else(|| format!("{}: content must be a string here", path.display()))?;
-                messages.push(Message::new(role, content));
-            }
-            templated(&messages)
+            templated(&parse_messages(&rows, path)?)
         }
+        // The opening turn, which is what the warm pass and the fit check
+        // see; the follow-ups are rendered as the chat runs.
+        PromptSource::Chat(path) => templated(&ChatFile::load(path, tokenizer)?.opening),
         PromptSource::TextFile(path) => {
             let text =
                 std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -170,6 +191,107 @@ pub fn prompt_ids(tokenizer: &MfTokenizer, source: &PromptSource) -> Result<Vec<
         }
         PromptSource::Corpus(_) => Err("corpus prompts are resolved per workload".into()),
     }
+}
+
+fn parse_messages(rows: &[serde_json::Value], path: &Path) -> Result<Vec<Message>, String> {
+    let mut messages = Vec::new();
+    for row in rows {
+        let role = match row["role"].as_str() {
+            Some("system") => Role::System,
+            Some("user") => Role::User,
+            Some("assistant") => Role::Assistant,
+            other => return Err(format!("{}: unsupported role {other:?}", path.display())),
+        };
+        let content = row["content"]
+            .as_str()
+            .ok_or_else(|| format!("{}: content must be a string here", path.display()))?;
+        messages.push(Message::new(role, content));
+    }
+    Ok(messages)
+}
+
+/// A `chat:` prompt file:
+///
+/// ```json
+/// {"opening": [{"role": "user", "content": "What does it solve?"}],
+///  "document": "../../docs/MTP.md", "document_tokens": 6000,
+///  "follow_ups": ["Summarize it.", "What would you change?"]}
+/// ```
+///
+/// `opening` is a messages-file conversation. `document`, optional and
+/// relative to the chat file, is cut to `document_tokens` (default 6000)
+/// tokens and put before the first user message's content, which is how a
+/// long chat is built without pasting the text into the file.
+#[derive(Debug, Clone)]
+pub struct ChatFile {
+    pub opening: Vec<Message>,
+    pub follow_ups: Vec<String>,
+    /// Whether the model reasons before it replies, so a reply carries a
+    /// `</think>` and the client sends back only what follows it. `false` for a
+    /// template with no thinking channel, where the whole reply is the content.
+    /// The chat file's `"reasoning"` key; absent means `true`.
+    pub reasoning: bool,
+}
+
+impl ChatFile {
+    pub fn load(path: &Path, tokenizer: &MfTokenizer) -> Result<Self, String> {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let v: serde_json::Value =
+            serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+        let rows = v["opening"]
+            .as_array()
+            .ok_or_else(|| format!("{}: \"opening\" must be a message array", path.display()))?;
+        let mut opening = parse_messages(rows, path)?;
+        let follow_ups = v["follow_ups"]
+            .as_array()
+            .ok_or_else(|| format!("{}: \"follow_ups\" must be an array", path.display()))?
+            .iter()
+            .map(|f| {
+                f.as_str()
+                    .map(str::to_string)
+                    .ok_or_else(|| format!("{}: a follow-up must be a string", path.display()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if let Some(doc) = v["document"].as_str() {
+            let doc_path = path.parent().unwrap_or(Path::new(".")).join(doc);
+            let cap = v["document_tokens"].as_u64().unwrap_or(6000) as usize;
+            let doc_text = std::fs::read_to_string(&doc_path)
+                .map_err(|e| format!("{}: {e}", doc_path.display()))?;
+            let ids = tokenizer.encode(&doc_text, false);
+            let cut = tokenizer.decode(&ids[..ids.len().min(cap)], false);
+            let first = opening
+                .iter_mut()
+                .find(|m| m.role == Role::User)
+                .ok_or_else(|| format!("{}: a document needs a user message", path.display()))?;
+            let content = first.content.clone().unwrap_or_default();
+            *first = Message::new(Role::User, format!("{cut}\n\n{content}"));
+        }
+        let reasoning = match v.get("reasoning") {
+            None => true,
+            Some(r) => r.as_bool().ok_or_else(|| {
+                format!("{}: \"reasoning\" must be true or false", path.display())
+            })?,
+        };
+        Ok(Self {
+            opening,
+            follow_ups,
+            reasoning,
+        })
+    }
+}
+
+/// A reply as a client sends it back. With `reasoning` (a thinking template)
+/// the client drops the reasoning: whatever follows the last `</think>`, or
+/// nothing when the turn ended inside it. Without `reasoning` there is no
+/// `</think>` to find and the whole reply is the content; dropping it would
+/// send every assistant turn back empty.
+pub fn visible_content(text: &str, reasoning: bool) -> String {
+    if !reasoning {
+        return text.trim().to_string();
+    }
+    text.rsplit_once("</think>")
+        .map(|(_, after)| after.trim().to_string())
+        .unwrap_or_default()
 }
 
 /// Every prompt of a workload as token ids. Corpus prompts are sliced
@@ -257,6 +379,145 @@ fn prefill(
     Ok(())
 }
 
+fn greedy_config(max_new: usize) -> Result<runtime::GenerationConfig, String> {
+    Ok(runtime::GenerationConfig {
+        // Temperature exactly 0: the speculative loop refuses anything else
+        // as greedy, and acceptance is exact only there.
+        shaping: selection::ShapingConfig::new(0.0, 1, None, 1.0, Some(0))
+            .map_err(|e| e.to_string())?,
+        max_new_tokens: max_new as u32,
+        stop_strings: Vec::new(),
+        extra_stop_tokens: Vec::new(),
+        rate: Default::default(),
+    })
+}
+
+/// A chat prompt as a conversation, through the runtime's own loops (the
+/// speculative one for a speculative arm, else the chunked or sequential
+/// one), greedy, with prefix reuse ON so each follow-up continues from what
+/// the runtime can keep. End-of-turn stops a reply, as it would for a client.
+/// Returns the turns and every generated id in order.
+#[allow(clippy::too_many_arguments)]
+fn chat_once(
+    runner: &mut RealForwardRunner,
+    tokenizer: &MfTokenizer,
+    chat: &ChatFile,
+    sp: Option<&Speculation>,
+    chunk: Option<usize>,
+    max_context: u32,
+    max_new: usize,
+    sampler: &mut AppMemorySampler,
+) -> Result<(Vec<TurnRecord>, Vec<i32>), String> {
+    let config = greedy_config(max_new)?;
+    let vocab = runner.vocab_size();
+    runner.reset();
+    runner.set_prefix_reuse(true);
+    let mut history = chat.opening.clone();
+    let mut turns = Vec::new();
+    let mut all = Vec::new();
+    let outcome = (|| {
+        for turn in 0..=chat.follow_ups.len() {
+            if turn > 0 {
+                history.push(Message::new(Role::User, chat.follow_ups[turn - 1].clone()));
+            }
+            let rendered = tokenizer
+                .apply_chat_template(&history)
+                .map_err(|e| format!("chat template: {e}"))?;
+            let ids = tokenizer.encode(&rendered, false);
+            if ids.len() + max_new + 1 > max_context as usize {
+                return Err(format!(
+                    "chat turn {} is {} tokens; with {max_new} decode steps it does not fit \
+                     max_context {max_context}",
+                    turn + 1,
+                    ids.len()
+                ));
+            }
+            let started = Instant::now();
+            let mut first: Option<f64> = None;
+            let mut generated = Vec::new();
+            let mut text = String::new();
+            let progress = |event: runtime::RawDecodeProgress| match event {
+                runtime::RawDecodeProgress::Token {
+                    id, delta, index, ..
+                } => {
+                    if first.is_none() {
+                        first = Some(started.elapsed().as_secs_f64());
+                    }
+                    generated.push(id);
+                    text.push_str(&delta);
+                    if index % 8 == 0 {
+                        sampler.sample();
+                    }
+                }
+                runtime::RawDecodeProgress::Tail(t) => text.push_str(&t),
+                _ => {}
+            };
+            let result = match (sp, chunk) {
+                (Some(sp), _) if sp.adaptive => runtime::run_raw_completion_speculative_adaptive(
+                    runner,
+                    tokenizer,
+                    &ids,
+                    &config,
+                    max_context,
+                    vocab,
+                    sp.block,
+                    runtime::AdaptiveDepth::DEFAULT_FLOOR.min(sp.block),
+                    progress,
+                ),
+                (Some(sp), _) => runtime::run_raw_completion_speculative(
+                    runner,
+                    tokenizer,
+                    &ids,
+                    &config,
+                    max_context,
+                    vocab,
+                    sp.block,
+                    progress,
+                ),
+                (None, Some(chunk)) => runtime::run_raw_completion_chunked(
+                    runner,
+                    tokenizer,
+                    &ids,
+                    &config,
+                    max_context,
+                    vocab,
+                    chunk,
+                    progress,
+                ),
+                (None, None) => runtime::run_raw_completion(
+                    runner,
+                    tokenizer,
+                    &ids,
+                    &config,
+                    max_context,
+                    vocab,
+                    progress,
+                ),
+            }
+            .map_err(|e| e.to_string())?;
+            turns.push(TurnRecord {
+                prompt_tokens: ids.len(),
+                reused_tokens: result.reused_prefix_tokens,
+                ttft_s: first.ok_or_else(|| format!("chat turn {} produced no token", turn + 1))?,
+                prefill_s: result.prefill_seconds,
+                decode_tokens: result.new_tokens,
+                decode_s: result.decode_seconds,
+            });
+            all.extend_from_slice(&generated);
+            history.push(Message::new(
+                Role::Assistant,
+                visible_content(&text, chat.reasoning),
+            ));
+        }
+        Ok(())
+    })();
+    // Leave the runner as every other prompt expects it: no reuse, nothing
+    // carried into the next prompt.
+    runner.set_prefix_reuse(false);
+    runner.reset();
+    outcome.map(|()| (turns, all))
+}
+
 /// One prompt through the runtime's speculative loop, greedy, at most
 /// `max_new` tokens. Returns the result and the generated ids in order.
 fn speculative_once(
@@ -268,16 +529,7 @@ fn speculative_once(
     max_new: usize,
     sampler: &mut AppMemorySampler,
 ) -> Result<(runtime::RawDecodeResult, Vec<i32>), String> {
-    let config = runtime::GenerationConfig {
-        // Temperature exactly 0: the speculative loop refuses anything else
-        // as greedy, and acceptance is exact only there.
-        shaping: selection::ShapingConfig::new(0.0, 1, None, 1.0, Some(0))
-            .map_err(|e| e.to_string())?,
-        max_new_tokens: max_new as u32,
-        stop_strings: Vec::new(),
-        extra_stop_tokens: Vec::new(),
-        rate: Default::default(),
-    };
+    let config = greedy_config(max_new)?;
     let vocab = runner.vocab_size();
     let mut generated = Vec::with_capacity(max_new);
     let progress = |event: runtime::RawDecodeProgress| {
@@ -370,6 +622,32 @@ fn open(
     Ok((runner, tokenizer, family))
 }
 
+/// The environment the orchestrator built must be the arm's, exactly. A
+/// stray inherited variable would silently make this a different arm.
+/// Location variables pass through for alias resolution, and the
+/// orchestrator's own (`ORCHESTRATOR_ENV`) are accepted at their one value
+/// unless the arm sets them itself.
+pub fn env_matches_arm(
+    mut seen: std::collections::BTreeMap<String, String>,
+    arm: &Arm,
+) -> Result<(), String> {
+    for location in crate::orchestrate::PASSTHROUGH_TURBOSPARK {
+        seen.remove(*location);
+    }
+    for (k, v) in crate::orchestrate::ORCHESTRATOR_ENV {
+        if !arm.env.contains_key(*k) && seen.get(*k).map(String::as_str) == Some(*v) {
+            seen.remove(*k);
+        }
+    }
+    if seen != arm.env {
+        return Err(format!(
+            "worker environment {seen:?} does not match arm {} {:?}",
+            arm.name, arm.env
+        ));
+    }
+    Ok(())
+}
+
 /// Run the request. `Err` is a refusal or clean failure (exit 3); a panic is
 /// a crash.
 pub fn run(req: &WorkerRequest) -> RunRecord {
@@ -384,15 +662,9 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
     // A stray inherited variable would silently make this a different arm.
     // Location variables are passed through for alias resolution and are
     // not knobs.
-    let mut seen = provenance::turbospark_env();
-    for location in crate::orchestrate::PASSTHROUGH_TURBOSPARK {
-        seen.remove(*location);
-    }
-    if seen != req.arm.env {
-        return Err(format!(
-            "worker environment {seen:?} does not match arm {} {:?}",
-            req.arm.name, req.arm.env
-        ));
+    env_matches_arm(provenance::turbospark_env(), &req.arm)?;
+    if let Some(job) = &req.workload.audio {
+        return crate::worker_audio::run(req, job);
     }
     // Without the feature the runtime never reads TURBOSPARK_ANE_PREFILL, so
     // such an arm would measure Steel under an ANE label.
@@ -481,10 +753,50 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
         }
     }
     let warm_s = t_warm.elapsed().as_secs_f64();
+    // `tslab trace` attaches its recorder when it reads this line, so the
+    // trace covers measured work, not the model load or the warm pass.
+    eprintln!("{MEASURING_MARKER}");
 
     let mut prompts = Vec::new();
     let mut logits_out: Vec<u8> = Vec::new();
     for (ids, source) in all_ids.iter().zip(&req.workload.prompts) {
+        if let PromptSource::Chat(path) = source {
+            let chat = ChatFile::load(path, &tokenizer)?;
+            let p0 = runner.phase_counters();
+            let (turns, generated) = chat_once(
+                &mut runner,
+                &tokenizer,
+                &chat,
+                speculation.as_ref(),
+                req.workload.prefill_chunk,
+                req.workload.max_context,
+                req.workload.decode_tokens,
+                &mut sampler,
+            )?;
+            let p1 = runner.phase_counters();
+            let all = phases::report(&phases::delta(&p0, &p1));
+            let token_bytes: Vec<u8> = generated.iter().flat_map(|t| t.to_le_bytes()).collect();
+            prompts.push(PromptRecord {
+                source: source.clone(),
+                // Tokens actually PREFILLED, so `prefill_tok_s` stays a
+                // prefill rate: a reused prefix is not work the prefill did.
+                // Each turn keeps its full prompt length and reuse.
+                prompt_tokens: turns
+                    .iter()
+                    .map(|t| t.prompt_tokens - t.reused_tokens)
+                    .sum(),
+                prefill_s: turns.iter().map(|t| t.prefill_s).sum(),
+                decode_tokens: turns.iter().map(|t| t.decode_tokens).sum(),
+                decode_s: turns.iter().map(|t| t.decode_s).sum(),
+                decode_digest: model_io::hash_data(&token_bytes),
+                prefill_logits_digest: String::new(),
+                cache_class: phases::cache_class(&all),
+                prefill_phases: all,
+                decode_phases: None,
+                turns: Some(turns),
+            });
+            continue;
+        }
         if let Some(sp) = &speculation {
             runner.reset();
             let p0 = runner.phase_counters();
@@ -512,6 +824,7 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
                 cache_class: phases::cache_class(&all),
                 prefill_phases: all,
                 decode_phases: None,
+                turns: None,
             });
             continue;
         }
@@ -563,6 +876,7 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
             prefill_phases,
             decode_phases,
             cache_class,
+            turns: None,
         });
     }
 
@@ -576,6 +890,13 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
     let prefill_s: f64 = prompts.iter().map(|p| p.prefill_s).sum();
     let decode_tokens: usize = prompts.iter().map(|p| p.decode_tokens).sum();
     let decode_s: f64 = prompts.iter().map(|p| p.decode_s).sum();
+    let followups: Vec<f64> = prompts
+        .iter()
+        .filter_map(|p| p.turns.as_ref())
+        .flat_map(|t| t.iter().skip(1).map(|t| t.ttft_s))
+        .collect();
+    let followup_ttft_s =
+        (!followups.is_empty()).then(|| followups.iter().sum::<f64>() / followups.len() as f64);
     let calls = runner.phase_counters().calls;
     let dispatch_profile = (std::env::var("TURBOSPARK_DISPATCH_PROFILE").as_deref() == Ok("1"))
         .then(|| runtime::dispatch_profile_report(calls))
@@ -601,12 +922,14 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
             decode_tokens,
             decode_s,
             decode_tok_s: (decode_tokens > 0).then(|| decode_tokens as f64 / decode_s),
+            followup_ttft_s,
         }),
         prompts,
         peak_footprint_bytes: sampler.peak_bytes(),
         faults: task_fault_counters(),
         dispatch_profile,
         provenance: provenance::collect(),
+        audio: None,
     })
 }
 
@@ -651,4 +974,45 @@ pub fn main_entry() -> i32 {
         return 1;
     }
     code
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn arm(env: &[(&str, &str)]) -> Arm {
+        Arm {
+            name: "a".into(),
+            env: env
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            open: Default::default(),
+            speculation: None,
+            expect_engaged: Vec::new(),
+        }
+    }
+
+    fn seen(env: &[(&str, &str)]) -> BTreeMap<String, String> {
+        env.iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    /// The bug this exists for: the orchestrator's own engagement variable
+    /// made every worker refuse its arm.
+    #[test]
+    fn the_orchestrators_variables_are_not_a_stray() {
+        let base = [("TURBOSPARK_ENGAGEMENT", "1"), ("TURBOSPARK_HOME", "/x")];
+        assert!(env_matches_arm(seen(&base), &arm(&[])).is_ok());
+        let with_knob = [
+            ("TURBOSPARK_ENGAGEMENT", "1"),
+            ("TURBOSPARK_INT4_MMA8", "1"),
+        ];
+        assert!(env_matches_arm(seen(&with_knob), &arm(&[("TURBOSPARK_INT4_MMA8", "1")])).is_ok());
+        // A stray knob, or the variable at another value, still refuses.
+        assert!(env_matches_arm(seen(&with_knob), &arm(&[])).is_err());
+        assert!(env_matches_arm(seen(&[("TURBOSPARK_ENGAGEMENT", "0")]), &arm(&[])).is_err());
+    }
 }

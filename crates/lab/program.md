@@ -9,9 +9,10 @@ Read before the first iteration: `docs/SPEEDUP_PLAYBOOK.md` (how wins were
 found and qualified, the kernel checklist, traps), `docs/KAPITSA_KERNELS.md`
 ("Where we were already ahead" and the decision table: do not re-propose
 what it declines), `docs/MLX_SERVE_KERNELS.md` (its "Negative results"
-list, and the evaluator additions L1 to L7 that this crate does not have
-yet), `docs/BATCHED_PREFILL.md` for prefill drift bounds, and the AGENTS.md
-files of every crate you touch.
+list, and the evaluator additions L1 to L7 this crate now carries),
+`docs/BATCHED_PREFILL.md` for prefill drift bounds, and the AGENTS.md files
+of every crate you touch. `skill/SKILL.md` beside this file is the short
+form for an agent: the `--json` contract and which command answers what.
 
 ## Setup (once per loop)
 
@@ -46,16 +47,32 @@ files of every crate you touch.
    Pass the commit that holds the lab as the base to `gate`, `run-experiment`
    and `confirm`: `--base <that merge commit>`.
 
-3. Find where time goes, on AC power with a quiet host:
+3. Find where time goes, on AC power with a quiet host. Start with what
+   the install supports, then the survey:
+
+   ```sh
+   $TSLAB capabilities --model <install>
+   $TSLAB workflow new-family --model <install> --experiment <tag>-survey
+   ```
+
+   `new-family` runs this page's family checks that apply to the install
+   (profile, hashed kernel curves, null floor, dispatch probe, speculative
+   round costs, verify ladder, tree replay) and writes
+   `<lab>/<tag>-survey/report.html`. Any step also runs alone, for example:
 
    ```sh
    $TSLAB profile --model <install> --prompt protocol:long-synthesis --decode 64 \
        --experiment <tag>-profile
-   $TSLAB kernel --model <install> --experiment <tag>-kernel
+   $TSLAB kernel --model <install> --hash --experiment <tag>-kernel
+   $TSLAB trace --model <install> --prompt protocol:short-explanation --decode 64 \
+       --experiment <tag>-trace
    ```
 
-   The largest prefill or decode bucket, and any kernel far from its
-   bandwidth or compute peak, is where a hypothesis should start.
+   The largest prefill or decode bucket, any kernel far from its bandwidth
+   or compute peak, and any trace with low GPU busy inside decode
+   (launch-bound) is where a hypothesis should start. On a dense family the
+   phase buckets are not filled: price blocks with `profile --standin
+   attn,mlp,gdn` and dispatches with `profile --dispatch-probe 0,4,8`.
 
 4. Calibrate noise for the workload your specs will use. The effect floor
    for later A/Bs in the same experiment comes from this:
@@ -137,7 +154,9 @@ move to a different bucket.
 Collect these in the ledger before any speed or speculation claim about a
 family the lab has not measured. Each was a surprise on the dense `qwen35`
 family, the readings are in `docs/KAPITSA_KERNELS.md`, and none of them is a
-number to copy: a new family has its own.
+number to copy: a new family has its own. `tslab workflow new-family` runs
+the measurable ones and skips, with the reason ledgered, those the install
+cannot run.
 
 1. **The verify cost curve, per shape.** `tslab kernel --bench int4_matmul
    --rows 1,2,4,8,9` at the install's own shapes, and read the M-row pass
@@ -212,9 +231,7 @@ number to copy: a new family has its own.
 Workloads under `crates/lab/workloads/` are for `--prompt messages:PATH`.
 `copy-heavy.messages.json` is a quote-back task (rename one variable in a short
 function and return all of it), the shape where lookup drafting was expected to
-pay and where a block drafter commits nearly the whole block. The 8-row tile
-(`TURBOSPARK_INT4_MMA8`) is not on `main` yet, so the kernel bench has no arm
-for it; add one when it lands, next to the scalar GEMM and the Steel tiles.
+pay and where a block drafter commits nearly the whole block.
 
 ## Spec template
 
@@ -238,11 +255,24 @@ for it; add one when it lands, next to the scalar GEMM and the Steel tiles.
 }
 ```
 
-Fields: `primary_metric` is `prefill_tok_s`, `decode_tok_s`, `prefill_s` or
-`peak_bytes`. Arms may also carry `"open": {"slots": {"fixed": 32},
-"residency": "streamed"}`. Prompts are `{"protocol": id}`,
-`{"messages_file": path}`, `{"text_file": path}` or `{"corpus": tokens}`.
+Fields: `primary_metric` is `prefill_tok_s`, `decode_tok_s`, `prefill_s`,
+`peak_bytes` or `followup_ttft_s` (or, for an audio workload, `audio_run_s`
+or `rtf`). Arms may also carry `"open": {"slots":
+{"fixed": 32}, "residency": "streamed"}`. Prompts are `{"protocol": id}`,
+`{"messages_file": path}`, `{"text_file": path}`, `{"corpus": tokens}` or
+`{"chat": path}`.
 `quality_bounds` and `memory_allowance_bytes` may only tighten the defaults.
+A spec may not declare `moe_kl` on an install that routes no experts.
+
+An arm may list `"expect_engaged": ["my_lane"]`: the run must print
+`[engaged] my_lane` (`foundation::engaged!("my_lane")` where the new lane
+runs) or it is ineligible. Registered knobs need no list; their lines are in
+`knobs.rs`. Use it for the switch under test, so an arm that silently ran
+the old path cannot read as a NOISE verdict.
+
+An audio spec sets `"workload": {"prompts": [], "audio": {"task": "music",
+...}}` (see `workloads/audio/`), declares `bit_exact` (output bytes equal) or
+`text_exact` (transcript equal), and uses an audio metric.
 
 Arms can decode through the speculative loop: `"speculation": {"drafter":
 "mtp", "block": 2}` in the arm (or the workload), or `NAME~mtp:2` on the
@@ -252,6 +282,37 @@ and ms per round by phase in the record. For a speculation-only change,
 declare `bit_exact`: the gate then compares generated tokens against the
 baseline arm.
 
+Chats (`{"chat": path}`, `chat:<path>` on the command line) run a
+conversation: an opening turn, optionally with a long document in front of
+it, then each follow-up, the model's replies carried back without their
+reasoning. Prefix reuse is on for the whole chat, so `followup_ttft_s`
+(mean time to first token after the first turn, restore included) is what
+a client waits for. `crates/lab/chats/long-doc.chat.json` is a 6000-token
+document and four follow-ups. Replies stop at end-of-turn, so a chat's
+decode work can differ between arms that change output; a chat workload is
+judged on generated tokens and must declare `bit_exact`. That gate is
+`gate`, `run-experiment` and `confirm`. `tslab ab` reports `followup_ttft_s`
+but compares no tokens, so an `ab` result on a chat says nothing about
+whether the arms produced the same text.
+
+A reply cut inside the reasoning goes back empty, which is what a client
+that drops reasoning sends. With a small `--decode` on a thinking model most
+replies end there, so the re-rendered reply is empty and the experiment
+prices only the new message. Give `--decode` room to finish the thinking
+when the re-rendered reply is what you are measuring. For a template with no
+thinking channel, set `"reasoning": false` in the chat file (default `true`):
+the whole reply is sent back instead of nothing.
+
+The fit check renders the opening turn only. A later turn that overflows
+`--context` fails mid-run, after the warm pass, with the turn named. The
+knob that targets chats is `gdn_turn_snapshot`:
+
+```sh
+$TSLAB ab --model <install> --prompt chat:crates/lab/chats/long-doc.chat.json \
+    --decode 32 --context 16384 --baseline off~mtp:2 --candidate on~mtp:2:gdn_turn_snapshot=1 \
+    --metric followup_ttft_s --experiment <name>
+```
+
 ## What tslab does not measure yet
 
 Say so in the hypothesis rather than measure around it:
@@ -259,10 +320,11 @@ Say so in the hypothesis rather than measure around it:
 - **Energy.** The ANE prefill split's case rests partly on modeled energy
   (IOReport, about 0.65x), and tslab has no energy meter. Use
   `scripts/power.sh` for joules until one exists.
-- **Multi-turn, concurrent and mixed workloads.** Time to first token on a
-  cached follow-up, aggregate tok/s and p95 inter-token latency over several
-  streams, and decode stalls while another request prefills are all
-  single-stream blind spots here.
+- **Concurrent and mixed workloads.** Aggregate tok/s and p95 inter-token
+  latency over several streams, and decode stalls while another request
+  prefills, are single-stream blind spots here. Chats cover one client's
+  follow-up time to first token, and only with the reasoning dropped from
+  history.
 - **Sampled speculation.** Speculative arms run greedy. Exact rejection
   sampling at temperature above 0 is not exercised.
 - **Prefill and decode split inside a speculative arm.** The speculative
@@ -271,20 +333,26 @@ Say so in the hypothesis rather than measure around it:
 - **Tree verify cost.** `tslab tree-replay` counts what a tree would
   accept; no tree kernel exists here, so its overhead (masked attention,
   per-branch recurrent state, KV compaction) and its c(M) are unmeasured.
-- **Kernel benches beyond two.** `tslab kernel` covers INT4 matmul and
-  decode attention. The MoE routed pair, the MMA8 verify tile, multi-row
-  prefill attention and a bit-hash corpus over outputs are not ported.
+- **Kernels without a bench.** MLA and compressed attention, TurboQuant
+  attention, and GGUF, MXFP4, 1-bit and 2-bit matmuls are not benched;
+  `tslab capabilities` lists what an install's benches skip and why. The
+  `moe_routed` bench models the expert union as uniform routing, an upper
+  end; real routing is skewed.
 - **Phase buckets on dense families.** `PhaseCounters` is filled by the
-  MoE flows. On dense Qwen3.8 every named bucket reads 0, so a profile there
-  gives wall times and spec-stats only. Use `TURBOSPARK_DISPATCH_PROFILE=1`
-  (unquotable) to rank kernels, or attribute by skipping a kernel behind a
-  switch.
-- **Per-round milliseconds on this base.** `ms/round` in `[spec-stats]`
-  comes from uncommitted runtime work. Until it lands, speculative records
-  carry committed tokens per round and per-position acceptance, not draft
-  and verify times.
-- **Dispatch-level shares.** `TURBOSPARK_DISPATCH_PROFILE=1` output is
-  kept as text in the record, unparsed, and such runs are never quotable.
+  MoE flows only. Dense profiles print which buckets read zero. Stand-ins
+  (L4) and the dispatch probe (L1) are wired for dense FFN layers in the
+  qwen and llama decode loops only; other flows print no engagement line,
+  so their arms are refused rather than mismeasured.
+- **Traces.** `tslab trace` attaches for a short window (60 s at most:
+  longer recordings were killed while saving here), and a traced run is
+  never quotable. Shader shares come from samples, so compare shares
+  between traces, not times. `TURBOSPARK_DISPATCH_PROFILE=1` text is still
+  kept unparsed and unquotable.
+- **Audio.** Worker arms run MiniMax Music 3 and Whisper; Kokoro,
+  MegaTTS3, OmniVoice, Moonshine and Qwen3-ASR are kernel-bench only. The
+  Whisper arm and the `whisper_linear` bench have not run against a real
+  Whisper install on this host. Audio has no KL bound: its gates are
+  output identity only.
 - **ANE arms need an `ane-prefill` worker.** The worker refuses an ANE arm
   it was not built for, rather than measuring Steel under the label. The
   split also needs `--chunk 2048`.

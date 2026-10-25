@@ -254,7 +254,15 @@ impl RealForwardRunner {
                 )?;
             }
 
-            if arch.layer_is_linear(layer) {
+            // `TURBOSPARK_STANDIN` (lab_hooks): a skipped block leaves the
+            // stream as it was, so neither the block nor its residual add runs.
+            let skip_mixer = crate::lab_hooks::standin(if arch.layer_is_linear(layer) {
+                crate::lab_hooks::Block::Gdn
+            } else {
+                crate::lab_hooks::Block::Attn
+            });
+            if skip_mixer {
+            } else if arch.layer_is_linear(layer) {
                 encode_linear_block(context, &pass, weights, index, arch, qwen, scratch, layer)?;
             } else {
                 encode_full_attention_block(
@@ -286,14 +294,16 @@ impl RealForwardRunner {
             // `post_attention_layernorm`, a tensor that belongs to the
             // stream below, to the attention output as well. Doing both
             // took the reference-answer perplexity from 6.25 to 255,409.
-            gpu::encode_residual_add(
-                context,
-                &pass,
-                (&scratch.x, 0),
-                (&scratch.o, 0),
-                hidden as u32,
-            )
-            .map_err(gpu_err)?;
+            if !skip_mixer {
+                gpu::encode_residual_add(
+                    context,
+                    &pass,
+                    (&scratch.x, 0),
+                    (&scratch.o, 0),
+                    hidden as u32,
+                )
+                .map_err(gpu_err)?;
+            }
 
             // ONE post-attention norm feeds the router, the shared expert,
             // and the routed experts. Gemma splits this three ways; Qwen
@@ -334,21 +344,26 @@ impl RealForwardRunner {
             // readback the way the router's top-k is, so the pass stays open
             // across the whole token.
             if qwen.dense {
-                dense::encode_qwen_layer_dense(
-                    context,
-                    &pass,
-                    weights,
-                    index,
-                    scratch,
-                    qwen,
-                    &scratch.x,
-                    0,
-                    TRUNK_PREFIX,
-                    layer,
-                    hidden,
-                    inter,
-                    use_silu,
-                )?;
+                // `TURBOSPARK_STANDIN=mlp` (lab_hooks) skips the FFN and its
+                // residual add only: steering, the captures and the
+                // `continue` past the MoE half below still run.
+                if !crate::lab_hooks::standin(crate::lab_hooks::Block::Mlp) {
+                    dense::encode_qwen_layer_dense(
+                        context,
+                        &pass,
+                        weights,
+                        index,
+                        scratch,
+                        qwen,
+                        &scratch.x,
+                        0,
+                        TRUNK_PREFIX,
+                        layer,
+                        hidden,
+                        inter,
+                        use_silu,
+                    )?;
+                }
                 // THE DFLASH2 AUX CAPTURE, at the one point where this
                 // layer's OUTPUT exists: the residual stream after the FFN
                 // join. `docs/DFLASH2.md` pins which boundary "layer 5"

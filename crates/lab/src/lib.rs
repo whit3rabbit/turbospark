@@ -24,15 +24,30 @@
 //! host so its tests run anywhere. Everything that touches a model, a Metal
 //! device or `pmset` is macOS-only.
 
+// The Music 3 corpus (`kernel/music3_grid.rs`) is included by path from
+// crates/gpu/examples, which names the crate `turbospark_gpu`.
+#[cfg(target_os = "macos")]
+extern crate gpu as turbospark_gpu;
+
 pub mod args;
 pub mod atomic;
+pub mod audio_kind;
+pub mod bench;
+pub mod export;
+pub mod fit;
 pub mod gates;
+pub mod inventory;
 pub mod knobs;
 pub mod ledger;
 pub mod lock;
+pub mod out;
 pub mod paths;
+pub mod round_cost;
+pub mod schema;
+pub mod series;
 pub mod spec;
 pub mod stats;
+pub mod viz;
 pub mod workload;
 
 #[cfg(target_os = "macos")]
@@ -43,6 +58,8 @@ pub mod cli;
 pub mod depth_replay;
 #[cfg(target_os = "macos")]
 pub mod experiment;
+#[cfg(target_os = "macos")]
+pub mod families;
 #[cfg(target_os = "macos")]
 pub mod host;
 #[cfg(target_os = "macos")]
@@ -58,6 +75,12 @@ pub mod provenance;
 #[cfg(target_os = "macos")]
 pub mod report;
 #[cfg(target_os = "macos")]
+pub mod trace;
+#[cfg(target_os = "macos")]
 pub mod tree_replay;
 #[cfg(target_os = "macos")]
 pub mod worker;
+#[cfg(target_os = "macos")]
+pub mod worker_audio;
+#[cfg(target_os = "macos")]
+pub mod workflow;
