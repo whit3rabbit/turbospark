@@ -26,7 +26,10 @@
 //! per-layer comparisons with that in mind.
 //!
 //! Only the decode path (`produce.rs`) writes rows. Chunked prefill does not.
-//! Disabled, the cost is one `OnceLock` read per pass.
+//! Disabled, the cost is one `OnceLock` read per pass, plus one extra clock
+//! read per layer in `produce.rs` (three `Instant::now()` calls around
+//! `commit()` and the wait, where there were two). That is not measured, and
+//! it is far below the cost of a layer buffer.
 
 use std::fs::{File, OpenOptions};
 use std::io::Write;
