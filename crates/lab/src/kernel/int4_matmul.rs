@@ -22,9 +22,7 @@ use super::support::{copies_for, f16_activations, int4_blob, median};
 use super::{BenchOpts, Case, KernelBench, Subject};
 use crate::bench::{fnv_hex, ArmCurve, Axis, BenchResult, BreakEven, Point};
 
-/// The layout `support::int4_blob` synthesizes: MLX affine INT4, group 64,
-/// BF16 scales and biases, the resident order.
-pub const LAYOUT: &str = "mlx_affine_int4_g64_bf16";
+pub use crate::bench::INT4_AFFINE_LAYOUT as LAYOUT;
 
 /// The engine serves at most this many rows through the tile per call
 /// sequence (`encode_gemm_any` batches up to 16 rows in tiles of 8), so the

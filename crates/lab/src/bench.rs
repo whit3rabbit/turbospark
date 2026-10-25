@@ -16,6 +16,11 @@ use serde_json::Value;
 
 use crate::fit::Affine;
 
+/// The layout `kernel::support::int4_blob` synthesizes: MLX affine INT4,
+/// group 64, BF16 scales and biases, the resident order. Version-0 int4
+/// records used it too.
+pub const INT4_AFFINE_LAYOUT: &str = "mlx_affine_int4_g64_bf16";
+
 /// The swept variable of a bench.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Axis {

@@ -28,6 +28,7 @@ pub mod args;
 pub mod atomic;
 pub mod audio_kind;
 pub mod bench;
+pub mod export;
 pub mod fit;
 pub mod gates;
 pub mod knobs;
@@ -36,8 +37,10 @@ pub mod lock;
 pub mod out;
 pub mod paths;
 pub mod schema;
+pub mod series;
 pub mod spec;
 pub mod stats;
+pub mod viz;
 pub mod workload;
 
 #[cfg(target_os = "macos")]

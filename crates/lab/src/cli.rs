@@ -37,6 +37,9 @@ tslab: the evaluator for kernel and method experiments (macOS).
   tslab depth-replay [--experiment NAME] [--costs flag_off,flag_on] [--tokens 512] [--top 10]
   tslab ledger  --experiment NAME [--kind run|verdict|...]
   tslab knobs
+  tslab export  --experiment A[,B]|--all [--kind K[,K]] [--format jsonl|json|csv] [--redact-paths]
+                [--out PATH [--force]]            (ledgers as tslab/1 series)
+  tslab report  --experiment A[,B]|--all --html OUT.html [--title T] [--kind K] [--redact-paths] [--force]
   tslab schema                                     (the JSON Schema of everything tslab writes)
 
 workload: [--prompt protocol:ID|messages:PATH|text:PATH]... [--decode N]
@@ -116,6 +119,8 @@ pub fn dispatch(cmd: &str, args: Args) -> Result<CmdOutput, String> {
         "knobs" => knobs_cmd(args),
         "schema" => schema_cmd(args),
         "hash-diff" => hash_diff_cmd(args),
+        "export" => crate::export::export_cmd(args),
+        "report" => crate::export::report_cmd(args),
         "gate" => crate::experiment::gate_cmd(args),
         "run-experiment" => crate::experiment::run_experiment_cmd(args),
         "confirm" => crate::experiment::confirm_cmd(args),
