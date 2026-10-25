@@ -52,9 +52,12 @@ public struct AppSettingsView: View {
 
     /// Settings search matches the title the user actually SEES, which
     /// follows the in-app language, as well as the English source and the
-    /// tab's keywords.
-    static func matches(_ title: String, keywords: [String] = [], query: String) -> Bool {
-        query.isEmpty
+    /// tab's keywords. The query is trimmed: an untrimmed lone space hid
+    /// every tab whose title has no space (Appearance, General) while the
+    /// control results, which already trimmed, showed nothing.
+    static func matches(_ title: String, keywords: [String] = [], query rawQuery: String) -> Bool {
+        let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        return query.isEmpty
             || title.localizedCaseInsensitiveContains(query)
             || AppStrings.localized(String.LocalizationValue(title)).localizedCaseInsensitiveContains(query)
             || keywords.contains { $0.localizedCaseInsensitiveContains(query) }

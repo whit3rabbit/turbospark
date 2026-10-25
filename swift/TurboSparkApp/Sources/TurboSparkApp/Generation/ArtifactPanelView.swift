@@ -20,6 +20,7 @@ enum ArtifactPanelSource: Equatable {
 /// sandbox question to ask.
 @MainActor
 struct ArtifactPanelView: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     let source: ArtifactPanelSource
 
@@ -42,7 +43,7 @@ struct ArtifactPanelView: View {
             }
             content
         }
-        .background(TurboSparkTheme.barBackgroundColor)
+        .background(TurboSparkTheme.barBackgroundColor(isDark: theme.isDark))
         .onExitCommand { close() }
         .sheet(isPresented: $isMaximized) { maximizedSheet }
         .onChange(of: identityKey) { _, _ in resetPerContentState() }
@@ -423,7 +424,7 @@ struct ArtifactPanelView: View {
             content
         }
         .frame(width: 1100, height: 800)
-        .background(TurboSparkTheme.barBackgroundColor)
+        .background(TurboSparkTheme.barBackgroundColor(isDark: theme.isDark))
     }
 
     // MARK: - Actions

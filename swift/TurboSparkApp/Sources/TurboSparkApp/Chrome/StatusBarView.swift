@@ -45,7 +45,7 @@ struct StatusBarView: View {
         .foregroundStyle(.appSecondary)
         .padding(.horizontal, 12)
         .frame(height: AppChromeLayout.statusBarHeight)
-        .background(TurboSparkTheme.barBackgroundColor)
+        .background(TurboSparkTheme.barBackgroundColor(isDark: theme.isDark))
         .overlay(alignment: .top) {
             Rectangle()
                 .fill(.appBorder)
@@ -92,11 +92,11 @@ struct StatusBarView: View {
             HStack(spacing: 4) {
                 Image(systemName: isGraphMode ? "chart.xyaxis.line" : "number")
                     .font(theme.ui(.tiny, weight: .medium))
-                    .foregroundStyle(isGraphMode ? TurboSparkTheme.accentColor : theme.secondaryText)
+                    .foregroundStyle(isGraphMode ? theme.accent : theme.secondaryText)
             }
             .padding(.horizontal, 4)
             .padding(.vertical, 2)
-            .background(isGraphMode ? TurboSparkTheme.accentColor.opacity(0.12) : Color.clear)
+            .background(isGraphMode ? theme.accent.opacity(0.12) : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 4))
         }
         .buttonStyle(.plain)
@@ -142,7 +142,7 @@ struct StatusBarView: View {
             Image(systemName: "text.alignleft")
                 .font(theme.ui(.tiny))
                 .accessibilityHidden(true)
-            MeterBar(fraction: fraction, tint: hint?.urgent == true ? .orange : TurboSparkTheme.accentColor)
+            MeterBar(fraction: fraction, tint: hint?.urgent == true ? .orange : theme.accent)
                 .frame(width: 38)
             (hint?.text
                 ?? Text(verbatim: "\(model.estimatedContextTokens.formatted(.number.notation(.compactName))) / \(model.resolvedContextTokens.formatted(.number.notation(.compactName)))"))
@@ -204,7 +204,7 @@ struct StatusBarView: View {
             if isGraphMode {
                 MiniSparklineView(
                     samples: throughputHistory,
-                    tint: TurboSparkTheme.accentColor
+                    tint: theme.accent
                 )
             }
             Text(verbatim: rateText)

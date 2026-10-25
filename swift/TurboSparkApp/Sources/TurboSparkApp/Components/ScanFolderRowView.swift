@@ -64,11 +64,14 @@ struct ScanFolderRowView: View {
             Spacer()
             trailing
             revealButton
-            AppIconButton("trash", label: Text("Remove this folder from scan list", bundle: .module), role: .destructive) {
+            // Quiet, not destructive: this only drops the path from the scan
+            // list. No file is touched and Add Folder restores it, so a red
+            // trash glyph without a confirmation dialog overstated it
+            // (DESIGN.md section 2, Action hierarchy).
+            AppIconButton("minus.circle", label: Text("Remove this folder from scan list", bundle: .module)) {
                 remove()
             }
             .appAction(.quiet, size: .small)
-            .foregroundStyle(.red)
         }
         .padding(8)
         .background(.appSurface)

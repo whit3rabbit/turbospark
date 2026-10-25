@@ -178,7 +178,7 @@ private struct LoadNoticeView: View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: notice.glyph)
                 .themedFont(.small)
-                .foregroundStyle(notice.kind == .warning ? Color.orange : Color.secondary)
+                .foregroundStyle(notice.kind == .warning ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.appSecondary))
                 .accessibilityHidden(true)
             Text(verbatim: notice.text)
                 .themedFont(.small)

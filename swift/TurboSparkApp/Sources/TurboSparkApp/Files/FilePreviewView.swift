@@ -11,6 +11,7 @@ import SwiftUI
 /// what was actually pulled out of the file.
 @MainActor
 struct FilePreviewView: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     let attachment: AppPromptAttachment
 
@@ -30,7 +31,7 @@ struct FilePreviewView: View {
             Divider()
             footer
         }
-        .background(TurboSparkTheme.barBackgroundColor)
+        .background(TurboSparkTheme.barBackgroundColor(isDark: theme.isDark))
         .sheet(isPresented: $isMaximized) { maximizedSheet }
         .onChange(of: attachment.id) { showsExtractedText = false }
         .onChange(of: attachment.id) { showsFullText = false }
@@ -290,6 +291,6 @@ struct FilePreviewView: View {
             content
         }
         .frame(width: 1100, height: 800)
-        .background(TurboSparkTheme.barBackgroundColor)
+        .background(TurboSparkTheme.barBackgroundColor(isDark: theme.isDark))
     }
 }

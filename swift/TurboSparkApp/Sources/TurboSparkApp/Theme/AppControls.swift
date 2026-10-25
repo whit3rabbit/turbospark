@@ -19,6 +19,18 @@ enum AppMetrics {
     static let cardRadius: CGFloat = 10
     /// Gap between actions in a header row.
     static let actionSpacing: CGFloat = 8
+
+    /// The type role `appAction` and `appMenuAction` give a control's label
+    /// at `size`, or nil to inherit. Small and mini follow AppKit's own
+    /// control fonts (11 and 9pt against a 13pt regular), which sit closest
+    /// to `.small` and `.tiny` on the scale.
+    static func labelFontStep(for size: ControlSize) -> AppFontStep? {
+        switch size {
+        case .mini: return .tiny
+        case .small: return .small
+        default: return nil
+        }
+    }
 }
 
 /// The four action treatments. Pick by CONSEQUENCE, not by looks: one
@@ -42,13 +54,13 @@ extension View {
     func appAction(_ role: AppActionRole, size: ControlSize = .regular) -> some View {
         switch role {
         case .primary:
-            buttonStyle(.borderedProminent).controlSize(size)
+            buttonStyle(.borderedProminent).controlSize(size).appControlLabelFont(size)
         case .secondary:
-            buttonStyle(.bordered).controlSize(size)
+            buttonStyle(.bordered).controlSize(size).appControlLabelFont(size)
         case .quiet:
-            buttonStyle(.borderless).controlSize(size)
+            buttonStyle(.borderless).controlSize(size).appControlLabelFont(size)
         case .destructive:
-            buttonStyle(.bordered).controlSize(size).foregroundStyle(.red)
+            buttonStyle(.bordered).controlSize(size).appControlLabelFont(size).foregroundStyle(.red)
         }
     }
 
@@ -59,7 +71,23 @@ extension View {
         menuStyle(.button)
             .buttonStyle(.bordered)
             .controlSize(size)
+            .appControlLabelFont(size)
             .fixedSize()
+    }
+
+    /// The label font a reduced control size needs. A native button keeps
+    /// its small bezel height but draws its label in the inherited font, and
+    /// every window sets the base UI font, so small row actions drew
+    /// base-size text that overflowed the bezel (Choose Model Folder in the
+    /// inspector). Regular and large keep inheriting. A font set inside the
+    /// label at the call site still wins, being nearer the text.
+    @ViewBuilder
+    fileprivate func appControlLabelFont(_ size: ControlSize) -> some View {
+        if let step = AppMetrics.labelFontStep(for: size) {
+            themedFont(step)
+        } else {
+            self
+        }
     }
 
     /// The shared surface for a multi-line `TextEditor` or code area: the

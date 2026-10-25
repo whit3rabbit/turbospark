@@ -57,6 +57,7 @@ struct CustomModelFoldersSectionView: View {
                 Label { Text("Additional Model Folders", bundle: .module) } icon: { Image(systemName: "folder.badge.plus") }
                     .settingsControl("Additional Model Folders", pane: .models, timing: .action)
                     .themedFont(.base, weight: .semibold)
+                    .accessibilityAddTraits(.isHeader)
             } actions: {
                 Button {
                     addCustomFolder()
