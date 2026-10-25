@@ -103,15 +103,17 @@ pub fn quality_gate(session: &Session, spec: &ExperimentSpec) -> Result<QualityR
     };
     let pa = a.record["prompts"].as_array().cloned().unwrap_or_default();
     let pb = b.record["prompts"].as_array().cloned().unwrap_or_default();
-    // A speculative arm runs the runtime's loop, which keeps its prefill
-    // logits to itself. Losslessness is then a question about generated
-    // tokens only, so such arms are judged bit-exact on those.
+    // A speculative arm, and any chat, runs the runtime's loop, which keeps
+    // its prefill logits to itself. Losslessness is then a question about
+    // generated tokens only, so such workloads are judged bit-exact on those.
     let speculative = spec.baseline.effective_speculation(&workload).is_some()
-        || spec.candidate.effective_speculation(&workload).is_some();
+        || spec.candidate.effective_speculation(&workload).is_some()
+        || workload.prompts.iter().any(PromptSource::is_chat);
     if speculative {
         if spec.exactness != GateClass::BitExact {
             return Err(
-                "speculative arms are gated on generated tokens; declare \"exactness\": \"bit_exact\""
+                "speculative arms and chats are gated on generated tokens; declare \
+                 \"exactness\": \"bit_exact\""
                     .into(),
             );
         }

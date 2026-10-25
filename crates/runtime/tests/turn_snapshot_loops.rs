@@ -3,7 +3,7 @@
 //! prefill stop there for exactly one call, with exactly the cut's tokens
 //! fed, and a producer that names none must see the passes it always saw.
 //! The runner's half (what it keeps and when it restores) needs a real GDN
-//! install and is pinned by `turn_snapshot_real.rs`.
+//! install and is pinned by `crates/bench/tests/turn_snapshot_gate.rs`.
 
 use std::path::PathBuf;
 

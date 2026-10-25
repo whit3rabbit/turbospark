@@ -236,10 +236,11 @@ for it; add one when it lands, next to the scalar GEMM and the Steel tiles.
 }
 ```
 
-Fields: `primary_metric` is `prefill_tok_s`, `decode_tok_s`, `prefill_s` or
-`peak_bytes`. Arms may also carry `"open": {"slots": {"fixed": 32},
-"residency": "streamed"}`. Prompts are `{"protocol": id}`,
-`{"messages_file": path}`, `{"text_file": path}` or `{"corpus": tokens}`.
+Fields: `primary_metric` is `prefill_tok_s`, `decode_tok_s`, `prefill_s`,
+`peak_bytes` or `followup_ttft_s`. Arms may also carry `"open": {"slots":
+{"fixed": 32}, "residency": "streamed"}`. Prompts are `{"protocol": id}`,
+`{"messages_file": path}`, `{"text_file": path}`, `{"corpus": tokens}` or
+`{"chat": path}`.
 `quality_bounds` and `memory_allowance_bytes` may only tighten the defaults.
 
 Arms can decode through the speculative loop: `"speculation": {"drafter":
@@ -250,6 +251,37 @@ and ms per round by phase in the record. For a speculation-only change,
 declare `bit_exact`: the gate then compares generated tokens against the
 baseline arm.
 
+Chats (`{"chat": path}`, `chat:<path>` on the command line) run a
+conversation: an opening turn, optionally with a long document in front of
+it, then each follow-up, the model's replies carried back without their
+reasoning. Prefix reuse is on for the whole chat, so `followup_ttft_s`
+(mean time to first token after the first turn, restore included) is what
+a client waits for. `crates/lab/chats/long-doc.chat.json` is a 6000-token
+document and four follow-ups. Replies stop at end-of-turn, so a chat's
+decode work can differ between arms that change output; a chat workload is
+judged on generated tokens and must declare `bit_exact`. That gate is
+`gate`, `run-experiment` and `confirm`. `tslab ab` reports `followup_ttft_s`
+but compares no tokens, so an `ab` result on a chat says nothing about
+whether the arms produced the same text.
+
+A reply cut inside the reasoning goes back empty, which is what a client
+that drops reasoning sends. With a small `--decode` on a thinking model most
+replies end there, so the re-rendered reply is empty and the experiment
+prices only the new message. Give `--decode` room to finish the thinking
+when the re-rendered reply is what you are measuring. For a template with no
+thinking channel, set `"reasoning": false` in the chat file (default `true`):
+the whole reply is sent back instead of nothing.
+
+The fit check renders the opening turn only. A later turn that overflows
+`--context` fails mid-run, after the warm pass, with the turn named. The
+knob that targets chats is `gdn_turn_snapshot`:
+
+```sh
+$TSLAB ab --model <install> --prompt chat:crates/lab/chats/long-doc.chat.json \
+    --decode 32 --context 16384 --baseline off~mtp:2 --candidate on~mtp:2:gdn_turn_snapshot=1 \
+    --metric followup_ttft_s --experiment <name>
+```
+
 ## What tslab does not measure yet
 
 Say so in the hypothesis rather than measure around it:
@@ -257,10 +289,11 @@ Say so in the hypothesis rather than measure around it:
 - **Energy.** The ANE prefill split's case rests partly on modeled energy
   (IOReport, about 0.65x), and tslab has no energy meter. Use
   `scripts/power.sh` for joules until one exists.
-- **Multi-turn, concurrent and mixed workloads.** Time to first token on a
-  cached follow-up, aggregate tok/s and p95 inter-token latency over several
-  streams, and decode stalls while another request prefills are all
-  single-stream blind spots here.
+- **Concurrent and mixed workloads.** Aggregate tok/s and p95 inter-token
+  latency over several streams, and decode stalls while another request
+  prefills, are single-stream blind spots here. Chats cover one client's
+  follow-up time to first token, and only with the reasoning dropped from
+  history.
 - **Sampled speculation.** Speculative arms run greedy. Exact rejection
   sampling at temperature above 0 is not exercised.
 - **Prefill and decode split inside a speculative arm.** The speculative
