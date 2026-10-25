@@ -47,6 +47,7 @@ impl LogitProducer for RealForwardRunner {
         self.unsnapshotted_checkpoint_alive = false;
         self.unsnapshotted_checkpoint_tainted = false;
         self.deferred_gdn_snapshot = None;
+        self.turn_snapshot = None;
         self.kv.reset();
         if let Some(qwen) = self.real_qwen.as_mut() {
             qwen.reset();
@@ -185,6 +186,20 @@ impl LogitProducer for RealForwardRunner {
         // must still be unconsumed for this to be safe. A bigger lag (a
         // run that ended on plain steps, whose produce-captures cover one
         // row) refuses: the hole would draft over rows nobody wrote.
+        // A GDN model cannot rewind on its own, but a turn snapshot at or
+        // below the match can stand in for the state there
+        // (`crate::turn_snapshot`, off by default). Never after a swap: the
+        // swap dropped this session's point, and the incoming slot has none.
+        // The session-pool guard below still applies first, in its own terms.
+        if back > 0
+            && !swapped
+            && self.real_qwen.is_some()
+            && !(self.session_pool.capacity() > 0 && back > keep)
+        {
+            if let Some(at) = self.try_restore_turn_snapshot(keep) {
+                return at;
+            }
+        }
         if self.real_dflash.is_some() || self.real_mtp.is_some() {
             if back != 0 || swapped {
                 return 0;
@@ -265,6 +280,14 @@ impl LogitProducer for RealForwardRunner {
 
     fn session_slot_evicted(&self) -> bool {
         self.session_slot_evicted
+    }
+
+    fn turn_snapshot_position(&self, prompt_ids: &[TokenId], reused: usize) -> Option<usize> {
+        self.turn_snapshot_cut(prompt_ids, reused)
+    }
+
+    fn take_turn_snapshot(&mut self, position: usize) {
+        self.take_turn_snapshot_at(position);
     }
 }
 
@@ -589,6 +612,9 @@ impl RealForwardRunner {
         self.unsnapshotted_checkpoint_alive = false;
         self.unsnapshotted_checkpoint_tainted = false;
         self.deferred_gdn_snapshot = None;
+        // The point describes the outgoing conversation's state, and the
+        // incoming one carries none: v1 does not park snapshots.
+        self.turn_snapshot = None;
         let kv = std::mem::replace(&mut self.kv, incoming.kv);
         let gdn = self.real_qwen.as_mut().and_then(|qwen| {
             incoming
