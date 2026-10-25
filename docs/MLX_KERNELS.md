@@ -5,6 +5,11 @@ its own Metal kernels. The experiment here tests an adapted upstream kernel
 directly on Metal. It does not change the Swift MLX image pipelines or any
 runtime default. For compile-only preparation, see [MoE startup](MOE_STARTUP.md).
 
+mlx-serve (`ddalcu/mlx-serve`) ships ports of the same oMLX kernels, nearly
+all of them NAX-only, and reaches its M4 Max numbers through host-side verify
+lanes and row-exact kernels instead. That comparison is in
+[MLX_SERVE_KERNELS.md](MLX_SERVE_KERNELS.md).
+
 ## What was already investigated
 
 | Candidate from the oMLX audit | Current evidence and decision |

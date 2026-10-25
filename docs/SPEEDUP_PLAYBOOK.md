@@ -798,3 +798,18 @@ chains, no per-dispatch wait. It needs residual adds, dtype rounding and SiLU
 on the device with the host's arithmetic, then a depth-decoder KV cache, and
 every step must keep the byte-identical WAV check. Detail and the open gates
 are in the Music 3 README.
+
+### 7. What the mlx-serve comparison adds
+
+[MLX_SERVE_KERNELS.md](MLX_SERVE_KERNELS.md) reads `ddalcu/mlx-serve` the
+way this page read open-jet and kapitsa. Its M4 Max Qwen3.8-27B cell moved
+from 70 to 106 tok/s when a DFlash2 draft tree of 8 rows started verifying
+through row-exact matrix-unit kernels whose rows carry the one-row step's
+bits at any width, gated on a drafter being bound. That is item 1 above and
+`docs/INT4_SMALL_M_MMA.md` item 7, shipped by another engine, with the
+gating and the per-shape one-row probe as the parts this tree lacks. The
+page's engine levers (E1 to E6) and evaluator additions (L1 to L7: a
+dispatch probe, a whole-forward verify-width ladder, engagement lines per
+arm, stand-in ablation, a Metal System Trace command, rows per simdgroup as
+a bench axis, a live round-cost table) are listed there with their gates. Its dead ends are recorded
+so they are not re-derived here.
