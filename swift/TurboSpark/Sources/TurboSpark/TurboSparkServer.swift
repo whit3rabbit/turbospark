@@ -76,6 +76,13 @@ public struct ServerOptions: Encodable, Sendable {
     /// until `detach` or `stop`, which is the default. A model with a request
     /// in flight is never detached. See `TurboSparkServer.setIdleUnload`.
     public var idleUnloadSeconds: UInt64?
+    /// Let an HTTP request that names an unattached model open and attach it
+    /// on demand. Absent or `false` (the default) serves only host-attached models.
+    public var allowRequestModelLoad: Bool?
+    /// Ceiling on concurrently attached models (default 8).
+    public var maxAttachedModels: Int?
+    /// Cumulative memory ceiling in bytes across all attached models.
+    public var maxAttachedModelBytes: UInt64?
 
     /// The server's own `on` | `off` spelling, matching the CLI flag. Anything
     /// else is refused by the engine rather than silently defaulted.
@@ -98,7 +105,10 @@ public struct ServerOptions: Encodable, Sendable {
         sttModels: [String] = [],
         ttsModels: [String] = [],
         musicModels: [String] = [],
-        idleUnloadSeconds: UInt64? = nil
+        idleUnloadSeconds: UInt64? = nil,
+        allowRequestModelLoad: Bool? = nil,
+        maxAttachedModels: Int? = nil,
+        maxAttachedModelBytes: UInt64? = nil
     ) {
         self.host = host
         self.captureText = captureText
@@ -114,6 +124,9 @@ public struct ServerOptions: Encodable, Sendable {
         self.ttsModels = ttsModels
         self.musicModels = musicModels
         self.idleUnloadSeconds = idleUnloadSeconds
+        self.allowRequestModelLoad = allowRequestModelLoad
+        self.maxAttachedModels = maxAttachedModels
+        self.maxAttachedModelBytes = maxAttachedModelBytes
     }
 }
 

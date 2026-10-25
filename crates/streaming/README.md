@@ -27,7 +27,7 @@ In Mixture-of-Experts (MoE) models, total parameter counts frequently exceed ava
 ## Key Modules
 
 - `pread_streamer.rs`: `PreadExpertStreamer` for streaming expert weight blobs on demand from the layer's file under `packed_experts/` (per-layer names like `layer_00.bin`; the vision tower streams `packed_vision/blobs.bin` through the same layout).
-- `expert_cache.rs`: `ExpertCache` implementing deterministic LFU and LRU slot eviction algorithms.
+- `expert_cache.rs`: `ExpertCache` implementing deterministic LFU and LRU slot eviction algorithms, plus an opt-in decaying LFU policy (`LfuDecay`, selected by `TURBOSPARK_EXPERT_CACHE_DECAY=<N>`) whose frequency counts halve every `N` plans so a stale hot set stops outranking the current one.
 - `read_pool.rs`: Global pool of parked reader threads (`run_batch`) providing wide parallel I/O for single and batch expert cache misses.
 - `rdadvice.rs`: Platform-gated kernel readahead advice wrapper (macOS `F_RDADVISE` `fcntl`, Linux `posix_fadvise(WILLNEED)`; documented no-op on other operating systems).
 - `mapped_experts.rs`: `MappedExpertLayer`, enabling routed experts to be read directly in place from an `mmap` per layer instead of `pread`-copied into pinned slots.
@@ -45,7 +45,7 @@ cargo test -p turbospark-streaming
 
 ## Tests
 
-- `tests/expert_cache.rs`: Validates cache hit/miss accounting, LRU/LFU eviction order, and capacity limits without requiring large disk files.
+- `tests/expert_cache.rs`: Validates cache hit/miss accounting, LRU/LFU eviction order, decaying-versus-cumulative LFU behavior on a drifting hot set, and capacity limits without requiring large disk files.
 - `tests/mapped_experts.rs`: Verifies memory-mapped in-place expert reading and slice safety.
 - `tests/pread_streamer.rs`: Tests file-backed pread streaming, chunk parallel reads, and readahead advice triggers.
 - `tests/expert_prefetch.rs`: Validates that streamed and mapped bounded prefetch reads touch real ranges without changing slot-cache ownership or residency.

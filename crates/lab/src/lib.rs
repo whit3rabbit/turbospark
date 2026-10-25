@@ -13,6 +13,8 @@
 //! - `tslab ane-plan`: where Core ML would place a program.
 //! - `tslab tree-replay`: whether a tree verify would accept more than the
 //!   chain at equal rows, for an install's MTP or DFlash2 drafter.
+//! - `tslab pinned`: the verified kernel settings pinned from the compared
+//!   engines (`crates/lab/pinned/`), listable and inspectable.
 //! - `tslab run-experiment`: the fixed evaluator an autoresearch loop calls
 //!   (`program.md` beside this crate is that loop's instructions).
 //!
@@ -42,6 +44,7 @@ pub mod ledger;
 pub mod lock;
 pub mod out;
 pub mod paths;
+pub mod pinned;
 pub mod round_cost;
 pub mod schema;
 pub mod series;

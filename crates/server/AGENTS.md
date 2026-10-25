@@ -18,6 +18,12 @@ OpenAI, Anthropic, Ollama-compatible, and scripted server surfaces.
   each wire format.
 - API keys protect configured routes. The server provides no TLS; state that
   boundary in operational docs.
+- KV prefix reuse is a process-level opt-in (`--prefix-reuse on`) and is off
+  by default: the reused cache is shared by every client and is not
+  partitioned by API key or client, so a prefix match against another
+  client's prompt is observable in response timing. `--session-slots` above 1
+  requires it. The in-process FFI host reaches the same posture through
+  `ServerOptions.prefixReuse`.
 - Keep scripted and real backends separate. Scripted tests do not establish
   real model behavior.
 - Tool guardrails buffer tool-bearing requests when a whole-turn verdict is

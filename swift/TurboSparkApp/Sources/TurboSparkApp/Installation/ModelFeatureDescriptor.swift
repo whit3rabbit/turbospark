@@ -208,6 +208,10 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
         "gemma4", "qwen36", "qwen4exp", "qwen3moe", "qwen35moe", "gptoss", "mixtral",
         // deepseek2: 64 experts top-6 plus a fused shared expert.
         "deepseek2",
+        // flint: 256 routed experts top-6 plus one shared expert.
+        "flint",
+        // minimax_m2: routed MoE architecture.
+        "minimax_m2",
     ]
 
     /// True when `lowercasedPath` is a root or lies below one, matched on a path
@@ -426,7 +430,7 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
             sessionInfo?.anePrefill?.supported ?? (TurboSparkCapabilities.family(family).anePrefillSupported && TurboSparkCapabilities.chipSupportsAnePrefill)
 
         let hasLinearAttention = lAlias.contains("qwen36") || lFamily == "qwen36" || lFamily == "qwen4exp"
-        let supportsChunkedPrefill = lAlias.contains("gemma") || lFamily.contains("gemma") || lFamily.contains("llama") || lAlias.contains("mistral") || lFamily == "qwen4exp"
+        let supportsChunkedPrefill = lAlias.contains("gemma") || lFamily.contains("gemma") || lFamily.contains("llama") || lAlias.contains("mistral") || lFamily == "qwen4exp" || lFamily == "flint" || lAlias.contains("flint")
         let supportsReasoning = combined.contains("think") || combined.contains("reason") || combined.contains("harmony") || lAlias.contains("gptoss") || lAlias.contains("museglimmer") || lAlias.contains("deepseek") || lAlias.contains("qwen")
         let supportsToolCalls: Bool? = sessionInfo?.toolCalling.native
         let supportsVision = combined.contains("vision") || combined.contains("vlm") || combined.contains("mrope")

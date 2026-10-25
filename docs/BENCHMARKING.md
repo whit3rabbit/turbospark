@@ -637,10 +637,13 @@ of a script per experiment: per-family prefill and decode phase breakdowns
 (`tslab profile`), interleaved fresh-process A/B with a fixed verdict rule
 and quality and memory gates (`tslab ab`, `tslab gate`), kernel curves at
 the install's own shapes (`tslab kernel`), Core ML placement
-(`tslab ane-plan`), and the autoresearch loop's evaluator
-(`tslab run-experiment`, instructions in `crates/lab/program.md`). Every run
-lands in an append-only ledger under `$TURBOSPARK_LAB_DIR`, dirty runs
-included with their reasons.
+(`tslab ane-plan`), the autoresearch loop's evaluator
+(`tslab run-experiment`, instructions in `crates/lab/program.md`), and the
+pinned kernel settings from the compared engines (`tslab pinned`; the
+`crates/lab/pinned/` reference, whose schema and sweep workflow are
+documented in `crates/lab/pinned/README.md`). Every run lands in an
+append-only ledger under `$TURBOSPARK_LAB_DIR`, dirty runs included with
+their reasons.
 
 It also covers audio installs (`--audio-job`, the `music3_grid` and
 `whisper_linear` benches), Metal System Traces (`tslab trace`), the

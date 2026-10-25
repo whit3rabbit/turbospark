@@ -56,8 +56,8 @@ they share: pooling, L2 and Matryoshka normalization, cosine and ColVision
 - Default suite: tiny random-init models built by the reference, plus
   frontend (tokenizer, image, mel) parity. No install needed.
 - `#[ignore]`d suite: the pinned real checkpoints, resolved from
-  `TURBOSPARK_<FAMILY>_DIR` or `~/models/embeddings/<name>`, skipping when
-  absent. Report max abs diff and min cosine. Do not widen a tolerance
+  `TURBOSPARK_<NAME>_DIR` (per family, or per checkpoint for the arctic
+  models) or `~/models/embeddings/<name>`, skipping when absent. Report max abs diff and min cosine. Do not widen a tolerance
   without a new measurement.
 
 ## Verification

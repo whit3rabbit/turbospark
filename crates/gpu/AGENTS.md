@@ -73,6 +73,14 @@ threadgroup shape, or normalization convention on the device.
 - Fused INT4 FFN kernels (`dequant_int4_fused.metal`):
   `dequant_int4_gemv_fused_gate_up_act` and `dequant_int4_gemv_fused_down_epilogue`
   must remain bit-exact to separate GEMV and activation dispatches.
+- The small-M INT4 matrix-unit GEMM (`dequant_int4_mma8.rs`) serves 1..=8
+  token rows and is opt-in end to end (`TURBOSPARK_INT4_MMA8`, read by the
+  runtime; default off). It is not bit-identical to the INT4 GEMV (another
+  summation order), but a row's bits depend only on its own inputs, never on
+  how many rows share the tile. That holds only while the K split stays a
+  function of the shape alone and the code mode stays subnormal-only, both
+  baked per shape with the N/K/KS function constants always in the pipeline
+  cache key. Read `docs/INT4_SMALL_M_MMA.md` before touching it.
 - GDN lazy tape fold (`gdn_state_fold`): performs register-fused accumulation of
   rank-1 updates and writes state once at round end. Commit command buffers are
   dispatched asynchronously on the GPU without blocking CPU drafting.

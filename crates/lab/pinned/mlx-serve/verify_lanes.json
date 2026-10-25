@@ -1,0 +1,740 @@
+{
+  "schema": "turbospark.lab.pinned/1",
+  "id": "mlx-serve.verify_lanes",
+  "kernel": "the verify lane table (split-K, msg, matmul2d, NAX m16, crossrow)",
+  "kernel_class": "verify_matmul",
+  "repo": "mlx-serve",
+  "summary": "vqmmLaneForTile picks one of five custom verify-width affine quantized-matmul lanes per call from M, K, N and the machine's tile class, and the qmatmul front door tries it after the format engines, the row-exact kernels and lane_qmm, before the prefill dequant GEMM and stock mlx_quantized_matmul. Split-K serves M 2..7 (a threadgroup owns 4 output columns, 2 at M=7; K splits over 2 simdgroups at N >= 4096 else 4; one barrier; fp32 accumulation), the wide msg tile serves M 2..7 at N >= 100000 with 8 simdgroups and no barrier, the matmul2d tile serves M 8..16 on M5 matrix units and M 8..24 as plain shader code on applegpu_g16 under macOS 26.2+, and a 4-bit g64 crossrow lane for M 8..9 ships opt-in-off after a measured 4% loss. M=1 and M past the tile caps stay on stock qmv/qmm_splitk.",
+  "source": {
+    "url": "https://github.com/ddalcu/mlx-serve",
+    "rev": "191da71de32a65f69ebceeb6cb2e91036ab50b30",
+    "rev_date": "2026-10-22",
+    "license": "MIT",
+    "files": [
+      "src/transformer.zig",
+      "src/model.zig",
+      "src/simd_qmm.zig",
+      "docs/gotchas/engine-mlx.md",
+      "benchmarks.md",
+      "LICENSE",
+      "NOTICE"
+    ],
+    "symbols": [
+      "vqmmLaneForTile",
+      "vqmmLaneFor",
+      "verifyQmm",
+      "vqmmKParts",
+      "vqmmBnFor",
+      "vqmmMsgBn",
+      "verifyQmmSource",
+      "verifyQmmMsgSource",
+      "verifyQmmCrossrowSource",
+      "runVerifyQmmMsg",
+      "runVerifyQmmNax",
+      "runVerifyQmmCrossrow",
+      "vqmmTileFrom",
+      "vqmmTileRows",
+      "verifyQmmTile",
+      "mixedPlainShapeEnabled",
+      "mixedNaxShapeEnabled",
+      "naxMinMForBitsFrom",
+      "naxAvailableFrom",
+      "verifyQmmEnabled",
+      "crossrowEnvEnabled",
+      "naxLaneEnvEnabled",
+      "qmatmul",
+      "qmatmulBits",
+      "rowExactQmm",
+      "simdQmmDecode",
+      "simdQmmDecodeMinRows",
+      "qmvBatchLimit"
+    ]
+  },
+  "models": [
+    {
+      "name": "Qwen3.8-27B",
+      "quant": "MLX affine 4-bit, group 64, bf16 scales and biases (pack inventory per their S=16 decomposition: 48 GDN in_proj 5120x16384 plus out 6144x5120, 16 attention q/k/v/o, 64 x gate_up 5120x34816 plus down 17408x5120, lm_head 5120x248320)",
+      "family": "qwen3_5 (dense, GatedDeltaNet trunk)",
+      "machine": "M4 Max 128 GB",
+      "role": "primary (DFlash2 verify lanes, four-stream wide verify, the S=16 marginal decomposition)"
+    },
+    {
+      "name": "Muse-Glimmer 30B",
+      "quant": "MLX affine 4-bit (their doc calls it the 4-bit Muse trunk)",
+      "family": "muse_glimmer",
+      "machine": "M4 Max",
+      "role": "verify-width ladder model (whole-forward S=1..16 ladder, the k_parts and bn A/B shapes)"
+    },
+    {
+      "name": "Qwen3.8-27B 6-bit pack",
+      "quant": "MLX affine 6-bit, group 64",
+      "family": "qwen3_5 (dense)",
+      "machine": "M4 Max (no NAX lane; the pack targets a 36 GB Mac)",
+      "role": "secondary (plain-SIMD 5/6-bit lane A/B; their best quality-per-byte build at 95.0% top-1 against bf16 versus the 4-bit pack's 83.6%)"
+    },
+    {
+      "name": "Qwen3.8-27B 8-bit pack",
+      "quant": "MLX affine 8-bit, group 64",
+      "family": "qwen3_5 (dense)",
+      "machine": "M5 Max",
+      "role": "secondary (NAX m16 tile adoption A/B at forced depth 8; q8's NAX takeover width is M=7)"
+    }
+  ],
+  "settings": [
+    {
+      "name": "lane_m_min",
+      "value": 2,
+      "unit": "rows",
+      "condition": "vqmmLaneForTile declines M < 2 for every lane; one row stays on stock",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:2131"
+    },
+    {
+      "name": "lane_m_max_plain",
+      "value": 7,
+      "unit": "rows",
+      "condition": "split-K and msg lanes; M > 7 takes crossrow (opt-in) or none",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:2136"
+    },
+    {
+      "name": "lane_m_max_tile",
+      "value": 16,
+      "unit": "rows",
+      "condition": "nax tile; the shader tile form raises the cap to 24",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:2130"
+    },
+    {
+      "name": "shader_tile_m_max",
+      "value": 24,
+      "unit": "rows",
+      "condition": "shader (M4-family matmul2d) tile",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:2115",
+      "note": "M 25 and up fall to stock: the tile row height runs 8/16/24 and a 32-row tile exceeds threadgroup memory (comment at src/transformer.zig:2111-2112)"
+    },
+    {
+      "name": "lane_n_floor",
+      "value": 512,
+      "unit": "outputs",
+      "condition": "every custom lane declines N < 512 (tiny-N projections: GDN ba proj, MoE routers)",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:2132",
+      "note": "rationale comment at src/transformer.zig:2094-2096"
+    },
+    {
+      "name": "kernel_node_build_us",
+      "value": 10,
+      "unit": "us",
+      "condition": "per-call kernel-node build, the N >= 512 floor's rationale",
+      "kind": "measured",
+      "source": "src/transformer.zig:2096",
+      "note": "about 50 such calls ride every verify round (same line)"
+    },
+    {
+      "name": "splitk_columns_m2_6",
+      "value": 4,
+      "unit": "output columns per threadgroup",
+      "condition": "M 2..6; the threadgroup streams all M activation rows over its K partition",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:1796",
+      "note": "the threadgroup-owns-4-columns statement is the port header comment at src/transformer.zig:1221; the tile must also divide N, else the lane declines (src/transformer.zig:1797)"
+    },
+    {
+      "name": "splitk_columns_m7",
+      "value": 2,
+      "unit": "output columns per threadgroup",
+      "condition": "M=7, 14 accumulators, one deep-verify width past MTPLX's family",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:1796"
+    },
+    {
+      "name": "splitk_k_parts_wide_n",
+      "value": 2,
+      "unit": "simdgroups per threadgroup (K partitions)",
+      "condition": "N >= 4096",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:1790",
+      "note": "MLX_SERVE_VQMM_KPARTS (1..8) forces a value for the sweep (src/transformer.zig:1782)"
+    },
+    {
+      "name": "splitk_k_parts_narrow_n",
+      "value": 4,
+      "unit": "simdgroups per threadgroup (K partitions)",
+      "condition": "N < 4096; deep occupancy queues and latency hiding under mixed scheduling with attention/GDN kernels",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:1790"
+    },
+    {
+      "name": "splitk_threadgroup_threads",
+      "value": "32 * k_parts",
+      "unit": "threads",
+      "condition": "threadgroup (32*k_parts, 1, 1), grid (32*k_parts, N/bn, 1); each simdgroup owns one K partition",
+      "kind": "derived",
+      "source": "src/transformer.zig:2242",
+      "note": "threadgroup shape at src/transformer.zig:2243; the single threadgroup barrier sits in the generated source at src/transformer.zig:1421 and part 0 reduces the partials"
+    },
+    {
+      "name": "splitk_register_ceiling_accumulators",
+      "value": 24,
+      "unit": "floats per lane",
+      "condition": "bn=4 through M=6, the measured register ceiling; M=8 spills",
+      "kind": "measured",
+      "source": "src/transformer.zig:1757",
+      "note": "M=8 measured a cliff at bn=4: T(7) round 636 ms vs 115 stock, spill/occupancy past 7 live Vec8 row vectors (src/transformer.zig:1759-1760), which is why plain-SIMD eligibility caps at M=7"
+    },
+    {
+      "name": "splitk_codegen_named_scalars",
+      "value": "row loads, weight loads and dequant+FMA chains emitted as named scalars with literal accumulator indices; M baked into the source (one cached kernel per M with distinct Metal host_names), GS and K_PARTS stay template ints",
+      "unit": null,
+      "condition": "every plain-SIMD verify tile",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:1253",
+      "note": "the array-indexed Vec8 v[MROWS] form of the same kernel stack-spills, measured 10x at M=6 (src/transformer.zig:1255)"
+    },
+    {
+      "name": "vqmm_max_acc",
+      "value": 40,
+      "unit": "accumulators (bn * m)",
+      "condition": "forced MLX_SERVE_VQMM_BN arm only; this ceiling is what keeps the 8-column tile reachable under the override",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:1770"
+    },
+    {
+      "name": "vqmm_bn_choices",
+      "value": [2, 4, 8],
+      "unit": "output columns",
+      "condition": "MLX_SERVE_VQMM_BN sweep choices; 0 = per-M default",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:1737"
+    },
+    {
+      "name": "splitk_k_multiple",
+      "value": 64,
+      "unit": "inputs",
+      "condition": "K % 64 == 0 required by the plain-SIMD lanes",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:2143"
+    },
+    {
+      "name": "splitk_n_multiple",
+      "value": 4,
+      "unit": "outputs",
+      "condition": "N % 4 == 0 required by the plain-SIMD lanes",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:2143"
+    },
+    {
+      "name": "msg_n_floor",
+      "value": 100000,
+      "unit": "outputs",
+      "condition": "N >= 100000 routes M 2..7 to the wide msg tile (the lm_head class, where the tiny-tile split-K grid thrashes the scheduler)",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:2144"
+    },
+    {
+      "name": "msg_simdgroups",
+      "value": 8,
+      "unit": "simdgroups per threadgroup",
+      "condition": "their sweep winner; each simdgroup rides full K, no barrier (256-thread grid x, ceil(N / (columns * 8)) y with an in-kernel n0 tail guard)",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:2281",
+      "note": "grid and threadgroup at src/transformer.zig:2306-2307, tail guard at src/transformer.zig:2305; the msg kernel body has no threadgroup_barrier (src/transformer.zig:1470-1502)"
+    },
+    {
+      "name": "msg_columns_m2_6",
+      "value": 4,
+      "unit": "columns per simdgroup",
+      "condition": "M 2..6 (32 columns per threadgroup)",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:1509"
+    },
+    {
+      "name": "msg_columns_m7",
+      "value": 2,
+      "unit": "columns per simdgroup",
+      "condition": "M=7, 14 accumulators, under the 24 ceiling; covers the depth-6 verify lm_head",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:1509"
+    },
+    {
+      "name": "nax_arch_floor",
+      "value": 17,
+      "unit": "GPU generation",
+      "condition": "applegpu_g17 prefix match (device variants report suffixed forms); phone floor is 18",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:2381"
+    },
+    {
+      "name": "nax_os_floor",
+      "value": "26.2",
+      "unit": "macOS version",
+      "condition": "the MetalPerformancePrimitives floor; unparseable components read as 0 and never satisfy it",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:2405"
+    },
+    {
+      "name": "nax_k_multiple",
+      "value": 256,
+      "unit": "inputs",
+      "condition": "K % 256 == 0 for the nax tile (both the M5 units and the shader form)",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:2134"
+    },
+    {
+      "name": "nax_n_multiple",
+      "value": 32,
+      "unit": "outputs",
+      "condition": "N % 32 == 0; the lm_head N=151936 qualifies natively, so no msg variant is needed past M=7",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:2134",
+      "note": "rationale comment at src/transformer.zig:2100-2101"
+    },
+    {
+      "name": "nax_tile_rows",
+      "value": 16,
+      "unit": "rows",
+      "condition": "activations zero-padded to 16 rows, output sliced back to the caller's M",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:2126",
+      "note": "pad and slice at src/transformer.zig:2861-2897; weight streaming dominates so padded rows are nearly free (comment at src/transformer.zig:2900-2901)"
+    },
+    {
+      "name": "nax_tile_geometry",
+      "value": "BN 32, BK 16, 8 simdgroups (256 threads) per threadgroup, each owning K/8 and dequantizing one 32-column B tile into threadgroup memory; matmul2d 16x32x16 multiply_accumulate on execution_simdgroup; the 8 partial C tiles reduce across the threadgroup after the K loop",
+      "unit": null,
+      "condition": "mlxserve_vqmm_nax_m16 kernel, grid (256, N/32)",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:2693",
+      "note": "constants BN/BK/NSG at src/transformer.zig:2693-2699, grid at src/transformer.zig:2930; the BMT template arg carries the tile row height (shader form 8/16/24) at src/transformer.zig:2936"
+    },
+    {
+      "name": "nax_min_m_default",
+      "value": 8,
+      "unit": "rows",
+      "condition": "q4/q6 takeover from the plain lanes; q8 defaults to 7",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:2618",
+      "note": "q8 wins already at M=7 (+6.09% over the plain lane, five thermally-settled counterbalanced pairs); packed q4/q6 still lose there (comment at src/transformer.zig:2615-2617)"
+    },
+    {
+      "name": "shader_tile_gate",
+      "value": "GPU generation 16 (applegpu_g16, non-phone) and macOS >= 26.2",
+      "unit": null,
+      "condition": "vqmmTileFrom picks the shader tile when the M5 probe is unavailable",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:2120"
+    },
+    {
+      "name": "shader_tile_rows",
+      "value": "ceil(M / 8) * 8, i.e. 8, 16 or 24",
+      "unit": "rows",
+      "condition": "the same matmul2d kernel run as plain shader code on the M4 family; a 32-row tile exceeds threadgroup memory and stock qmm is at its own roofline there",
+      "kind": "derived",
+      "source": "src/transformer.zig:2126",
+      "note": "32-row statement at src/transformer.zig:2111-2112"
+    },
+    {
+      "name": "shader_tile_bits",
+      "value": 4,
+      "unit": "bits",
+      "condition": "the shader tile is measured at 4-bit only; other widths stay on stock",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:2185"
+    },
+    {
+      "name": "crossrow_m_range",
+      "value": "8..9",
+      "unit": "rows",
+      "condition": "past the plain-SIMD register cliff; reachable only where the nax/shader tile branch did not already take the call",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:2140"
+    },
+    {
+      "name": "crossrow_k_multiple",
+      "value": 512,
+      "unit": "inputs",
+      "condition": "K % 512 == 0; the k-loop covers exactly 512 inputs per iteration",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:2140"
+    },
+    {
+      "name": "crossrow_n_gate",
+      "value": "N % 8 == 0 and N >= 1024",
+      "unit": null,
+      "condition": "row tiles are unguarded 8s; the host gate keeps out_vec >= 1024",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:2140"
+    },
+    {
+      "name": "crossrow_width",
+      "value": "4-bit, group 64 only",
+      "unit": null,
+      "condition": "masked-nibble dot with /16 /256 /4096-prescaled activations; other widths fall to stock",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:2188",
+      "note": "grid (64 * ceil(M/2), N/8), threadgroup 64, at src/transformer.zig:1702-1703"
+    },
+    {
+      "name": "lane_bits_accepted",
+      "value": [4, 5, 6, 8],
+      "unit": "bits",
+      "condition": "verifyQmm entry; 4-bit always, 5/6 gated by mixed_plain_min_n, 8-bit off by default on the plain lanes",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:2166"
+    },
+    {
+      "name": "lane_group_sizes",
+      "value": [32, 64, 128],
+      "unit": "inputs per group",
+      "condition": "verifyQmm entry; anything else declines",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:2167"
+    },
+    {
+      "name": "packed_geometry_check",
+      "value": "w_cols * 32 == K * bits",
+      "unit": null,
+      "condition": "affine packed geometry sanity on every call",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:2181"
+    },
+    {
+      "name": "mixed_plain_min_n",
+      "value": 2560,
+      "unit": "outputs",
+      "condition": "5/6-bit plain-SIMD adoption floor at gs 64/128; excludes the 1024-wide K/V projections whose forced adoption gives back most of the win",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:2060"
+    },
+    {
+      "name": "mixed_plain_8bit_default",
+      "value": false,
+      "unit": null,
+      "condition": "8-bit plain-SIMD adoption; measured 1.01-1.04x, inside the noise the harness resolves",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:2054",
+      "note": "5-bit carries the kernel arm and parity test but no pack to measure, so it stays off with 8-bit (comment at src/transformer.zig:2041-2043)"
+    },
+    {
+      "name": "mixed_nax_wide_min_n",
+      "value": 5120,
+      "unit": "outputs",
+      "condition": "NAX tile mixed-width gate at gs 64 (q5/q6/q8); the 1024-wide K/V class stays off",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:2011"
+    },
+    {
+      "name": "mixed_nax_5_6bit_alt_gate",
+      "value": "gs 64 or 128, N >= 2560 and M > 8",
+      "unit": null,
+      "condition": "alternative to the wide 5120 gate for 5/6-bit on the NAX tile (Flash Next oQ4e shapes; 8-bit at N 2560 loses 1-4% at M 7-8)",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:2014"
+    },
+    {
+      "name": "stock_qmv_batch_limit",
+      "value": "single-die gen-17: 33 rows at K,N <= 2048, 25 at <= 4096, 13 above; dual-die: 32 / 18 / 12",
+      "unit": "rows",
+      "condition": "in-repo mirror of MLX's get_qmv_batch_limit (quantized.cpp); total rows at or above it stay on stock qmm rather than the joined qmv path",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:44964",
+      "note": "dual-die arm at src/transformer.zig:44964, single-die at 44965, use site at 44952; MLX's own function is not in this repo (see notes)"
+    },
+    {
+      "name": "prefill_dq_gemm_min_rows",
+      "value": 2048,
+      "unit": "rows",
+      "condition": "dequantize + matmul prefill lane floor (stock qmm_t 32x32x32 tile dead zone)",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:43898"
+    },
+    {
+      "name": "simd_qmm_decode_min_rows",
+      "value": 8,
+      "unit": "rows",
+      "condition": "batched decode without a drafter takes simd_qmm from 8 rows where no matmul2d tile exists, 0 where one does; simd_qmm.MAX_ROWS is 16",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:36744",
+      "note": "MAX_ROWS at src/simd_qmm.zig:11; MLX_SERVE_SIMD_QMM_DECODE=N overrides, 0 = off (src/transformer.zig:36743)"
+    },
+    {
+      "name": "env_verify_qmm",
+      "value": "MLX_SERVE_VERIFY_QMM=0",
+      "unit": null,
+      "condition": "family-wide kill switch, default on, read once and cached",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:1970"
+    },
+    {
+      "name": "env_nax_lane",
+      "value": "MLX_SERVE_VERIFY_QMM_NAX=0",
+      "unit": null,
+      "condition": "nax/shader tile kill switch; MLX_SERVE_FORCE_GPU_FAMILY_FALLBACK=1 fakes the units absent (QA rehearsal of the non-M5 path)",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:2573",
+      "note": "force fallback read at src/transformer.zig:2502-2505"
+    },
+    {
+      "name": "env_crossrow_optin",
+      "value": "MLX_SERVE_VERIFY_QMM_CROSSROW=1",
+      "unit": null,
+      "condition": "crossrow ships opt-in-off until its A/B wins",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:1992"
+    },
+    {
+      "name": "env_bn_force",
+      "value": "MLX_SERVE_VQMM_BN",
+      "unit": null,
+      "condition": "forced column tile for A/Bs, 0 = per-M default, validated against vqmm_bn_choices",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:1747"
+    },
+    {
+      "name": "env_kparts_force",
+      "value": "MLX_SERVE_VQMM_KPARTS",
+      "unit": null,
+      "condition": "forced K partition count for the sweep, accepted range 1..8",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:1782"
+    },
+    {
+      "name": "env_nax_min_m",
+      "value": "MLX_SERVE_VERIFY_QMM_NAX_MIN_M",
+      "unit": "rows",
+      "condition": "explicit NAX takeover width, clamped to 2..16, for the M5-day A/B of routing M 5..7 to NAX",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:2630"
+    },
+    {
+      "name": "env_mixed_plain",
+      "value": "MLX_SERVE_VERIFY_QMM_MIXED_PLAIN",
+      "unit": null,
+      "condition": "plain-SIMD mixed-width A/B arms: 0 = forced off, 1 = forced on, otherwise follow the shape gate",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:2067"
+    }
+  ],
+  "gates": [
+    {
+      "condition": "front door Transformer.qmatmul arm order: GGUF kernels first, then sushi row-scaled fp8, then (when a Hadamard rotation registry or ternary pack is bound) qmv_nax2 before qmv2 plus opt-in int8, then rowExactQmm, then qmatmulBits; each custom arm returns null to decline and the caller keeps going",
+      "source": "src/transformer.zig:19311",
+      "note": "gguf at 19312, fp8 at 19313, Hadamard/ternary at 19321-19342, row-exact at 19343-19345, qmatmulBits at 19346"
+    },
+    {
+      "condition": "qmatmulBits affine tail order: lane_qmm.tiledQmm (a weight re-tiled at drafter bind, NAX), then a plain matmul for null-scale bf16 weights, then non-affine mxfp arms, then simdQmmDecode (biases present), then verifyQmm, then qmv_cuda, then prefillDqGemm, then stock mlx_quantized_matmul, which is where every one-row dense decode projection lands",
+      "source": "src/transformer.zig:45061",
+      "note": "lane_qmm at 44981, bf16 at 44986, simdQmmDecode at 45020, prefillDqGemm at 45066, stock at 45070"
+    },
+    {
+      "condition": "rowExactDecode = row_exact_covered and dflash_bound and rowExactArch: only where every projection fits the row kernels and a DFlash drafter is bound; dense qwen3_5 (non-MoE, hadamard_block == 0) or nemotron_h. It replaces the lanes above when it holds; serial and MTP keep the faster stock paths otherwise",
+      "source": "src/model.zig:1225",
+      "note": "rowExactArch at src/model.zig:1235-1238; the pick (lane_qmm on NAX hosts, then simd_qmm, rowqmv fallback) at src/transformer.zig:36692-36697"
+    },
+    {
+      "condition": "vqmmLaneForTile selection order: M outside 2..max_m declines; N < 512 declines; the nax/shader tile wins first (M >= tile_min_m and K % 256 == 0 and N % 32 == 0); then M > 16 declines; then M > 7 takes crossrow when opted in (M <= 9, K % 512, N % 8, N >= 1024) or none; then K % 64 and N % 4 gate; finally N >= 100000 picks msg, else splitk",
+      "source": "src/transformer.zig:2129",
+      "note": "body at src/transformer.zig:2130-2144; tile_min_m is 8 for the shader tile and nax_min_m (default 8, q8 7) otherwise"
+    },
+    {
+      "condition": "verifyQmm entry gates: GPU stream, bits in 4/5/6/8, group size in 32/64/128, scales and biases present, x bfloat16 or float16, packed geometry w_cols * 32 == K * bits",
+      "source": "src/transformer.zig:2161",
+      "note": "bits at 2166, gs at 2167, dtypes at 2170, geometry at 2181"
+    },
+    {
+      "condition": "plain-SIMD mixed widths: mixedPlainShapeEnabled (4-bit true; 5/6-bit at gs 64/128 needs N >= 2560; 8-bit false); MLX_SERVE_VERIFY_QMM_MIXED_PLAIN 0/1 forces the A/B arms",
+      "source": "src/transformer.zig:2052",
+      "note": "env mode parse at src/transformer.zig:2064-2074, application at 2084-2091"
+    },
+    {
+      "condition": "NAX mixed widths: naxMixedBitsEnvEnabled (MLX_SERVE_VERIFY_QMM_NAX_MIXED=0 disables without touching q4 NAX) and mixedNaxShapeEnabled (gs64 N >= 5120 for q5/q6/q8, or gs 64/128 N >= 2560 with M > 8 for q5/q6)",
+      "source": "src/transformer.zig:2191",
+      "note": "shape gate at src/transformer.zig:2009-2015, env at 2585-2594"
+    },
+    {
+      "condition": "NAX availability: not force-fallback, G17-class GPU, macOS >= 26.2; the kernel object is NEVER BUILT, not just never dispatched, where the probe is false (matmul2d pipeline creation can fail off-G17)",
+      "source": "src/transformer.zig:2402",
+      "note": "never-build rule at src/transformer.zig:1243-1245; tile pick cached in verifyQmmTile at 2487-2498"
+    },
+    {
+      "condition": "batched decode without a drafter: simd_qmm serves from 8 rows only where the lane table has no matmul2d tile (simdQmmDecodeMinRows), so it never fights the verify lanes",
+      "source": "src/transformer.zig:36742",
+      "note": "comment at src/transformer.zig:36739-36741"
+    },
+    {
+      "condition": "per-shape adoption rule: a lane that fires on a shape it does not win on is treated as a bug class, and adoption is an A/B per (shape, model), never a width list (the split-K lane on the Gemma 4 E4B drafter at M=5 was a small net loss)",
+      "source": "src/transformer.zig:2093",
+      "note": "the Gemma E4B M=5 case is our doc's wording; the source's per-shape predicates are mixedPlainShapeEnabled, mixedNaxShapeEnabled and the engage-log discipline at src/transformer.zig:2198-2203"
+    }
+  ],
+  "measured": [
+    {
+      "metric": "verify_forward_ms_ladder",
+      "value": [33.0, 35.9, 34.9, 38.5, 42.9, 47.0, 55.7, 84.4, 138.1, 138.4],
+      "model": "Muse-Glimmer 30B 4-bit (their doc: the 4-bit Muse trunk)",
+      "machine": "M4 Max",
+      "conditions": "whole-forward per verify width M = 1,2,3,4,5,6,7,8,10,16 via MLX_SERVE_VERIFY_WIDTH_UBENCH=1, one eval per batch of launches (a per-launch barrier is about 0.14 ms of sync, more than a whole K/V projection), calibrated against the live 35.8 ms serial step; stock lanes past 7 rows",
+      "provenance": "upstream_reported",
+      "source": "docs/gotchas/engine-mlx.md:2189"
+    },
+    {
+      "metric": "verify_forward_ms_ladder",
+      "value": [33.7, 39.4, 49.1, 61.3, 90.9, 89.4],
+      "model": "Qwen3.8-27B 4-bit",
+      "machine": "M4 Max 128 GB",
+      "conditions": "verify-forward ladder at S = 1,4,6,8,12,16, one boot per rung, --no-drafter --no-mtp; measured with an experimental sg8 simdgroup-matrix lane serving M 8..16 that has since been reverted (without it S=8 is 89.6 ms); S=12 costs more than S=16 because a 12-row call wastes four rows of the same two row tiles; the round model emitted / (verify(S) + draft) with draft about 9 ms predicted the live block sweep within 3%",
+      "provenance": "upstream_reported",
+      "source": "docs/gotchas/engine-mlx.md:222"
+    },
+    {
+      "metric": "dflash_live_gain_pct",
+      "value": 34,
+      "model": "Qwen3.8-27B 4-bit",
+      "machine": "M4 Max",
+      "conditions": "split-K lane live on DFlash; about 0 on serial decode",
+      "provenance": "upstream_reported",
+      "source": "docs/gotchas/engine-mlx.md:2219"
+    },
+    {
+      "metric": "k_parts_ab_ms",
+      "value": [42.5, 42.4, 44.5, 49.0],
+      "model": "Muse-Glimmer 30B 4-bit (Muse trunk shapes)",
+      "machine": "M4 Max",
+      "conditions": "whole-forward estimate at M=5 for K_PARTS = 1, 2, 4, 8; shipped 2 is optimal",
+      "provenance": "upstream_reported",
+      "source": "docs/gotchas/engine-mlx.md:2217",
+      "note": "same A/B in the kernel comment at src/transformer.zig:1774-1776"
+    },
+    {
+      "metric": "msg_tile_isolated_speedup",
+      "value": 2.1,
+      "model": "lm_head class (N >= 100000)",
+      "machine": "M4 Max",
+      "conditions": "isolated microbench at M=4 versus stock at huge N; in context at regular N the split-K lane is their winner over the wide tile, and the tile holds 1.18x off the weight-stream floor per their source ledger",
+      "provenance": "upstream_reported",
+      "source": "src/transformer.zig:1442",
+      "note": "in-context statement at src/transformer.zig:1219-1220 and docs/gotchas/engine-mlx.md:198"
+    },
+    {
+      "metric": "plain_lane_speedup_by_pack",
+      "value": "6-bit gs64: code 1.10x, prose 1.22x, agentic 1.17x; 8-bit gs64: 1.03x / 1.04x / 1.01x",
+      "model": "Qwen3.8-27B 6-bit and 8-bit packs",
+      "machine": "M4 Max (no NAX lane, so the plain-SIMD tiles are all the machine has)",
+      "conditions": "MTP on, decode tok/s from the server's own timings, per-prompt medians over two passes with cell order reversed (the first cell of a pass reads about 2% fast); forcing every shape on measured only 1.01-1.05x, and killing the 4-bit lane outright on the same box costs 1.09-1.12x, so the 6-bit lane is worth more than the 4-bit one it was modelled on; 8-bit ships off, 5-bit unmeasured and off",
+      "provenance": "upstream_reported",
+      "source": "src/transformer.zig:2032",
+      "note": "table at src/transformer.zig:2030-2033, force-all at 2045-2047, 4-bit-lane kill at 2035-2037"
+    },
+    {
+      "metric": "nax_q8_depth8_ab_tok_s",
+      "value": "89.81 vs 79.51 (+12.96%)",
+      "model": "Qwen3.8-27B 8-bit/g64",
+      "machine": "M5 Max",
+      "conditions": "forced depth 8, six paired thermally-settled counterbalanced boots, identical 885/888 acceptance, NAX engagement present in every ON log and absent in every OFF log",
+      "provenance": "upstream_reported",
+      "source": "src/transformer.zig:2004",
+      "note": "also docs/gotchas/engine-mlx.md:202"
+    },
+    {
+      "metric": "four_stream_aggregate_tok_s",
+      "value": "N=4 short 71.9 to 109, N=8 105 to 129",
+      "model": "Qwen3.8-27B 4-bit",
+      "machine": "M4 Max",
+      "conditions": "four concurrent streams with the matmul2d shader tile serving rows past 7 (8/16/24-row tiles at 11.2 TFLOP/s; whole-forward qmm 62.6 / 73.3 / 104.3 ms against stock 84.7 / 133 / 134; a 32-row tile exceeds threadgroup memory and stock runs 12.2 TFLOP/s there); Inco Splash measured 94.6 aggregate on the same box; greedy; the whole entry is flagged N=1 upstream and still holds by their re-test",
+      "provenance": "upstream_reported",
+      "source": "docs/gotchas/engine-mlx.md:212"
+    },
+    {
+      "metric": "s16_marginal_qmm_share_pct",
+      "value": 69,
+      "model": "Qwen3.8-27B 4-bit",
+      "machine": "M4 Max 128 GB",
+      "conditions": "S=16 marginal 89.4 - 33.7 = 55.7 ms decomposed with the batched microbench summed over the pack inventory: qmm 35.5 ms at M=1 (the entire serial forward) and 73.8 ms at M=16, 11.1 TFLOP/s, about 70% of the M4 Max fp32 peak; the GDN recurrence is not in the marginal (12.3 ms at T=1, 8.7 at T=16, negative marginal); the remaining 19 ms is attention and glue",
+      "provenance": "upstream_reported",
+      "source": "docs/gotchas/engine-mlx.md:232"
+    },
+    {
+      "metric": "crossrow_ab_tok_s",
+      "value": "47.5 vs 49.4 (T(8) 152 vs 142 ms), a 4% loss",
+      "model": "Qwen3.8-27B (Jundot oQ4e @8K)",
+      "machine": "M4 Max",
+      "conditions": "same-boot forced-depth-8 echo A/B; it won in the origin stack because their host dispatched M independent qmv columns so pairing rows halved weight reads, while here M 8/9 fall to stock mlx_quantized_matmul whose gemm tile already reads each weight once; ships opt-in-off, adoption predicate admits no shape by default",
+      "provenance": "upstream_reported",
+      "source": "docs/gotchas/engine-mlx.md:2736"
+    },
+    {
+      "metric": "wider_bn8_ab",
+      "value": "5-8% slower at every width (M=5: 45.9 vs 43.0 ms whole-forward)",
+      "model": "Muse-Glimmer 30B 4-bit (Muse 4-bit trunk shapes)",
+      "machine": "M4 Max",
+      "conditions": "bn=8 versus bn=4 at M 2..5; the activation-traffic arithmetic predicted a near-halving of the dominant read, but the x rows are 66 KB and never left cache, so the extra accumulators only cost occupancy; kept behind MLX_SERVE_VQMM_BN",
+      "provenance": "upstream_reported",
+      "source": "docs/gotchas/engine-mlx.md:2216",
+      "note": "same disproof in the kernel comment at src/transformer.zig:1762-1769"
+    },
+    {
+      "metric": "m8_plain_lane_cliff_ms",
+      "value": "636 vs 115",
+      "model": "Qwen3.8-27B 4-bit",
+      "machine": "M4 Max",
+      "conditions": "T(7) round with the split-K tile extended to M=8 at bn=4 versus stock; spill/occupancy past 7 live Vec8 row vectors, so plain-SIMD eligibility caps at M=7",
+      "provenance": "upstream_reported",
+      "source": "src/transformer.zig:1759",
+      "note": "also docs/gotchas/engine-mlx.md:198"
+    },
+    {
+      "metric": "named_scalar_spill_factor",
+      "value": 10,
+      "model": "the split-K kernel itself",
+      "machine": "not stated",
+      "conditions": "the array-indexed Vec8 v[MROWS] form of the same kernel at M=6, exactly as the upstream design ledger warned; the shipped form emits named scalars with literal accumulator indices",
+      "provenance": "upstream_reported",
+      "source": "src/transformer.zig:1255",
+      "note": "also docs/gotchas/engine-mlx.md:198"
+    },
+    {
+      "metric": "nax_min_m_sweep_rel_plain",
+      "value": "q4: -19.47 / -12.55 / -0.69%, q6: -18.43 / -15.29 / -8.50%, q8: -15.82 / -1.14 / +6.09%",
+      "model": "Qwen3.8-27B (per-width packs)",
+      "machine": "M5 Max",
+      "conditions": "the standing NAX min-M sweep at M = 5, 6, 7 relative to the plain lane; q4/q6 retain M=8 while q8 defaults to M=7, so one family-wide minimum would regress at least two measured widths",
+      "provenance": "upstream_reported",
+      "source": "docs/gotchas/engine-mlx.md:204"
+    },
+    {
+      "metric": "pack_quality_top1_vs_bf16",
+      "value": "95.0% (6-bit) vs 83.6% (4-bit)",
+      "model": "Qwen3.8-27B 6-bit and 4-bit packs",
+      "machine": "target: a 36 GB Mac",
+      "conditions": "their quality-per-byte comparison; the reason the 6-bit lane was worth building even though it is not the primary pack",
+      "provenance": "upstream_reported",
+      "source": "docs/gotchas/engine-mlx.md:2389"
+    }
+  ],
+  "lab_mapping": [
+    {
+      "setting": "lane_m_min",
+      "maps_to": "tslab kernel --bench int4_matmul --rows N: the bench sweeps (rows, cols) shape pairs and prints c(M) against the one-row GEMV unit (crates/lab/src/kernel/int4_matmul.rs, c_of_m in kernel/fit.rs), which is our counterpart of their per-width verify ladder; the 2..7 plain-lane band and the 8/16/24 tile band are the row ranges a comparison would sweep",
+      "env": null,
+      "note": "our bench has no N axis choice of lm_head-class shapes, so the msg lane's N >= 100000 regime has no tslab surface yet"
+    },
+    {
+      "setting": "splitk_k_parts_wide_n",
+      "maps_to": "none yet: tslab kernel --bench int4_matmul has no K-split axis, so the K_PARTS 1/2/4/8 contract and its one-barrier partial reduction have nothing to sweep",
+      "env": null
+    },
+    {
+      "setting": "lane_m_max_tile",
+      "maps_to": "TURBOSPARK_INT4_MMA8: our 8-row-flat INT4 MMA verify surface (crates/runtime/src/real_forward_dispatch.rs:344, default off, MAX_ROWS 8 at crates/gpu/src/dequant_int4_mma8.rs:20, min-rows override TURBOSPARK_INT4_MMA8_MIN_ROWS), used as the flat-verify arm by crates/lab/src/depth_replay.rs:81; the A/B against this lane table is row-band against row-band",
+      "env": "TURBOSPARK_INT4_MMA8",
+      "note": "not a knobs.rs entry; knobs.rs has no verify-width row. Their NAX q8 takeover at M=7 and the +6.09% at M=7 row are the closest analogue to our MMA8 min-rows question"
+    }
+  ],
+  "docs": [
+    "docs/MLX_SERVE_KERNELS.md#the-verify-lanes-which-are-the-whole-story",
+    "docs/MLX_SERVE_KERNELS.md#the-quantized-linear-front-door"
+  ],
+  "notes": "Doc-vs-source conflicts, sided with the source. (1) Our split-K table row says the 5/6/8-bit forms are shape-gated to N >= 5120; the source's plain-SIMD (split-K/msg) mixed adoption floor is MIXED_PLAIN_MIN_N = 2560 for 5/6-bit at gs 64/128, and 8-bit ships off entirely on the plain lanes (src/transformer.zig:2052-2060). N >= 5120 is the NAX tile's g64 wide gate (mixedNaxShapeEnabled, src/transformer.zig:2011), which our doc's table attached to the wrong lane. (2) Our doc says forcing every shape on measured 1.03 to 1.05x; the source says 1.01-1.05x (src/transformer.zig:2047). (3) Our doc quotes the 27B ladder S=8 = 61.3 ms without the upstream caveat that it was measured with an experimental sg8 lane serving M 8..16 that has since been reverted; without it S=8 is 89.6 ms (docs/gotchas/engine-mlx.md:222), and an earlier all-stock 27B ladder reads S=2..8 = 34.9/36.0/39.5/44.8/49.9/89.6 ms (docs/gotchas/engine-mlx.md:4544). (4) get_qmv_batch_limit lives in MLX's quantized.cpp, not this repo; the (10 on these shapes) crossover figure is their prose repeated in docs/gotchas/engine-mlx.md:2179-2181 and src/transformer.zig:59190-59193, while the in-repo mirror qmvBatchLimit for the joined path reads 33/25/13 single-die and 32/18/12 dual-die on gen-17 (src/transformer.zig:44961-44965) and does not read 10 on the 27B shapes. (5) The upstream doc names the ladder model a 4-bit Muse trunk (docs/gotchas/engine-mlx.md:2172); the Muse-Glimmer 30B name comes from the model sources (src/muse_vision.zig:797), so our doc's model name is an inference from the tree, not their ladder text. Other caveats. The msg tile's 2.1x is isolated at lm-head-class N; the source also records it at 1.18x off the weight-stream floor and names split-K their in-context winner at regular N. The shader tile is the same NAX m16 kernel source compiled as plain shader on gen-16 with the row height as the BMT template arg, so 11.2 TFLOP/s is a shader-code number, not the M5 units. NAX availability needs generation >= 17 (phone floor 18) AND macOS >= 26.2, and the kernel object is never built off the probe. The crossrow lane is reachable only where the tile branch declines and stays opt-in-off after its 4% loss. Activation dtype for every lane is bf16 or fp16 only. benchmarks.md's release rows for Qwen3.8 27B 4-bit dflash (109 tok/s at 26.10.2, 106 at 26.10.3, M4 Max) are release table cells, not lane A/Bs. The NOTICE states mlx-serve as a whole is distributed under the MIT License (LICENSE, Copyright 2026 David Dalcu) with third-party components under their own licenses; the Apache-2.0 file covers the MTPLX/DFlash/NVIDIA portions the lane kernels are attributed to in the source comments. Every measured number here is upstream's own under its conditions; none was re-measured."
+}

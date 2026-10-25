@@ -535,9 +535,12 @@ pub(crate) fn resolve_spark(tokenizer: &Tokenizer) -> Result<Resolved, Tokenizer
 /// done by emitting that or the next role marker, and all four ids of
 /// `generation_config.json` are stops.
 ///
-/// The think pair and the tool markup are added-but-not-special text, so
-/// every channel and tool id stays the sentinel and the decoder passes
-/// everything through as content.
+/// The think pair (150006 / 150007) is added but NOT special, the same as
+/// GLM's, and the decoder splits on its ids either way. The template does not
+/// force the frame open (the generation prompt is bare `<|assistant|>`), so
+/// the model emits `<think>` itself. The tool markup is added-but-not-special
+/// text with no parser, so every tool and channel id stays the sentinel and
+/// it flows as content.
 pub(crate) fn resolve_flint(tokenizer: &Tokenizer) -> Result<Resolved, TokenizerError> {
     use super::resolve::{FLINT_BOS_MARK, FLINT_DEVELOPER_MARK, FLINT_EOS_MARK};
     let bos = required_id(tokenizer, FLINT_BOS_MARK)?;
@@ -546,6 +549,8 @@ pub(crate) fn resolve_flint(tokenizer: &Tokenizer) -> Result<Resolved, Tokenizer
     let _assistant = required_id(tokenizer, GLM_ASSISTANT_MARK)?;
     let observation = required_id(tokenizer, GLM_OBSERVATION_MARK)?;
     let developer = required_id(tokenizer, FLINT_DEVELOPER_MARK)?;
+    let think_start = required_id(tokenizer, "<think>")?;
+    let think_end = required_id(tokenizer, "</think>")?;
     Ok(Resolved {
         bos_id: bos,
         bos_prefix_id: None,
@@ -561,8 +566,8 @@ pub(crate) fn resolve_flint(tokenizer: &Tokenizer) -> Result<Resolved, Tokenizer
         channel_end_id: NO_SUCH_TOKEN_ID,
         message_start_id: NO_SUCH_TOKEN_ID,
         message_end_id: NO_SUCH_TOKEN_ID,
-        think_start_id: None,
-        think_end_id: None,
+        think_start_id: Some(think_start),
+        think_end_id: Some(think_end),
         stop_token_ids: [eos, user, observation, developer].into_iter().collect(),
         // The checkpoint's `config.json` `vocab_size` (150,144): the padded
         // lm_head row count, not the tokenizer's 150,019 ids (Gotcha 37).

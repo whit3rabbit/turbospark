@@ -166,6 +166,10 @@ staging files changed.
   that take's own (or none), and any retrim clears it, because OmniVoice
   speaks a mismatched transcript in place of the script
   (`crates/audio/src/tts/omnivoice/README.md`). The same tests pin both.
+  The OmniVoice and Drama 3 clone requests carry the user's reference
+  transcript, trimmed and omitted when blank, and clear the instruction
+  (`nativeCloneRequest`); MegaTTS3's request sends none, because the engine
+  aligns the reference itself.
 - The Voice Cloning page only presents models with native Metal or MLX
   acceleration (`clonesNatively`). Portable CPU-only models remain gated to
   the Advanced portable experiment and must not be presented as voice clone
@@ -186,6 +190,16 @@ staging files changed.
   `canUnloadModel` flips (`forwardAudioUnloadChanges`). An AppModel predicate
   that reads another nested controller needs the same forwarding, or its
   views stay stale until something else republishes.
+- A Qwen3-TTS load runs its Swift-side work through
+  `AudioModelOpening.perform`, not beside it: an opening enters its stop
+  barrier at init and only `open` or `perform` ends it, and
+  `stopAndDrain` waits on that barrier, so verification run outside
+  `perform` hangs a shutdown forever. A managed install refuses to load
+  without a verification token (`CancellationError`, thrown inside
+  `perform` so the barrier still ends); a chosen folder has no catalog
+  install to verify and loads without one. Byte verification is what keeps
+  a tampered or truncated download from loading.
+  `AudioQwenLoadShutdownTests` pins both the refusal and the drain.
 - Audio meeting notes and summary isolation: Post-meeting summary and action
   item generation (`AudioMeetingNotesAdvisor`, `AudioMeetingNotesView`) strictly
   mutates `item.summary` and never modifies or overwrites `item.transcripts` or

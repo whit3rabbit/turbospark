@@ -50,7 +50,8 @@ Every model family directory contains its implementation code, configuration, we
   `[out, in]` layout; helpers convert the exceptions at load time, not in
   the kernels.
 - MLX-quantized checkpoints are the norm. `quant.rs` dequantizes groupwise
-  affine tensors (2/3/4/5/6/8-bit). A model module must refuse a quant scheme
+  affine tensors (2/3/4/5/6/8-bit) and rowwise-symmetric int8 rows (the
+  OmniVoice conversion). A model module must refuse a quant scheme
   it has not verified rather than silently mis-decode.
 - Every model module ships op-level parity tests against golden tensors
   produced by the pinned Python reference, plus an end-to-end run for
@@ -64,9 +65,20 @@ Every model family directory contains its implementation code, configuration, we
 - Text frontends (G2P, phonemizers) are part of the model module that needs
   them. They follow the reference implementation's behavior, including its
   fallbacks, and pin their behavior with tests.
-- Composite TTS architectures compose shared neural codecs: `confucius4` over
-  `bigvgan`, `dia` over `descript` DAC, `echo_tts` over `fish_s1_dac`,
-  `omnivoice` over `higgs_audio`, and `megatts3` over `wavvae`.
+- Composite TTS architectures compose shared neural codecs instead of private
+  copies, e.g. `confucius4` over `bigvgan`, `dia` over `descript` DAC,
+  `echo_tts` and `fish_drama3` over `fish_s1_dac`, `omnivoice` over
+  `higgs_audio`, `megatts3` over `wavvae`, `chatterbox` over `s3`, and
+  `bark` over `encodec`.
+- OmniVoice voice cloning takes the reference transcript as an optional
+  input and has no ASR fallback for the reference (the port follows
+  mlx-audio; upstream transcribes the reference itself when none is given):
+  `combine_text` prepends the transcript to the script, and `None` leaves
+  the reference audio with no words. A transcript that no longer matches
+  the reference audio is spoken in place of the script, so a stale
+  transcript is far worse than none. The `omnivoice_reference_transcript`
+  A/B gate in the runtime crate measures the difference; the family README
+  records it.
 - Zero-shot voice cloning (MegaTTS3): caller must acknowledge consent up
   front (`consent = true`) due to unverified community WavVAE encoder
   provenance. Diffusion steps default to 16 (Balanced; Fast=8, Best=32). Metal

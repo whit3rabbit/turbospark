@@ -1833,6 +1833,52 @@ bit-exact, so the two arms decode from slightly different states. Neither
 the token count nor the text compares speculation against no speculation.
 `mtp_generation_gate` is the lossless evidence.
 
+**The same install re-measured on the shipped defaults, 2026-10-25.** HEAD
+`762e8f65`, release `turbospark-bench`, `--shaping greedy`, AC, M4 Max 36 GB.
+Defaults only: lazy GDN tape, fused FFN, batched row ops and the GQA-shared
+attention are on, and the Kapitsa small-M INT4 tile (`TURBOSPARK_INT4_MMA8`)
+is OFF, so this is what a user gets without setting anything. Quiet host: the
+1-minute load was 1.4-2.4 at all 12 run starts (the bar is under 2.5), 12 of
+12 runs completed, swap sat at 7.8 GB used (a standing condition of this
+host). One process per run, two rounds with the arm order reversed in round
+2. `spec` is `--speculative auto` (MTP, block 2) and `off` is the same
+install without it. Not a frozen row: greedy shaping, and the bench does not
+hash output (`mtp_generation_gate` is the lossless evidence).
+
+| case | prompt | spec prefill s | spec tok/s, round 1 / 2 | off tok/s, round 1 / 2 | spec over off | committed per round | draft / verify ms |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| short-explanation | 62 | 0.43 / 0.43 | 33.466 / 32.657 | 21.740 / 21.561 | 1.53x | 2.15 | 8.5-8.6 / 54.2-55.8 |
+| medium-review | 426 | 2.85 / 2.90 | 35.692 / 35.322 | 21.370 / 21.511 | 1.66x | 2.30 | 8.5-8.6 / 54.5-55.1 |
+| long-synthesis | 2,940 | 19.35 / 19.31 | 34.963 / 34.264 | 21.376 / 21.497 | 1.61x | 2.30 | 8.6 / 55.6-56.9 |
+| peak `phys_footprint` | | | 867-869 MiB | 658-659 MiB (692 MiB chunked) | | | |
+
+The ratio is the mean of the two rounds on each side. The `off` arm prefills
+sequentially on short-explanation (2.7 s) and medium-review (18.7-18.9 s) and
+with the chunked driver on long-synthesis (`--prefill-chunk auto`, 18.9-19.1
+s), so the `off` prefill column is not comparable with the `spec` one. Decode
+tok/s is a rate, so the ratio holds across the driver difference. Generated
+token counts are 561 (spec) against 505 (off) on short-explanation, the known
+speculative-start difference, and equal on the other two (846, 639).
+
+Against the 2026-10-11 table above, which was taken under load on a build
+from before the Kapitsa adoption of 2026-10-20, so a direction and not a
+paired A/B: `spec` is +15% on short-explanation, +52% on medium-review and
++58% on long-synthesis (33.1, 35.5 and 34.6 against 28.7, 23.4 and 21.9
+tok/s). `off` is +47%, +28% and +20% (21.7, 21.4 and 21.4 against 14.7, 16.8
+and 17.9). The speculative prefill of the 2,940-token prompt fell from
+35.91 s to 19.3 s (152 tok/s). The paired A/B for the lazy tape and fused FFN
+is in [`KAPITSA_KERNELS.md`](KAPITSA_KERNELS.md). These rows agree with the
+quiet-host HEAD sweep of 2026-10-23 in that file (spec 33.1 / 32.9 and 34.2 /
+34.8, off 22.1 / 21.8 and 21.8 / 21.7) to within 3%, so the defaults have not
+moved since, and the long-synthesis row is new.
+
+An earlier run of the same script on 2026-10-24 started while the host was
+loaded (load 2.1-7.8, swap 8.1 GB). Its `spec` arms landed within 7% of the
+rows above, but its `off` arms read 19.4-20.0 tok/s on short-explanation and
+16.5 on medium-review round 1, and one chunked long-synthesis run read 1.13
+tok/s with a 258 s prefill. Those were load artifacts, and this rerun
+replaces them.
+
 ### The eighth checkpoint, and the ternary operating point: `prism-ml/Ternary-Bonsai-27B-mlx-2bit`
 
 Not a parity claim. Swift has no `qwen3_5` support at all, so every number

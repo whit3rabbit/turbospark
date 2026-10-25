@@ -12,6 +12,7 @@ measure, so a convenient approximation is still a broken row.
 - [Model catalog contract](../../docs/MODELS.md)
 - [GTurbo format](../../docs/GTURBO.md)
 - [New model checklist](../../docs/NEW_MODEL.md)
+- [Flint status](../../docs/FLINT.md)
 
 ## Rules
 
@@ -23,6 +24,20 @@ measure, so a convenient approximation is still a broken row.
   must validate the published file list, byte count, and GGUF headers without
   downloading the payload.
 - Keep `download_bytes` as the fingerprint for main-pinned artifacts.
+- Row status is evidence: `verified` has a frozen quality-gate or
+  memory-oracle row, `runs` is installed and generated here without one, and
+  `caveat` runs with a stated disqualification. Never upgrade a status without
+  the evidence behind it.
+- A repo can ship sharded safetensors with no `model.safetensors.index.json`.
+  Shard discovery then reads the repository file listing: a consolidated
+  `model.safetensors` wins, a complete `-of-N` set is accepted in order, and a
+  partial `-of-N` set is refused, because a model with missing layers still
+  opens.
+- The flint intake keeps its own arms in `probe/safetensors.rs` and
+  `stream.rs`: the config parses through `repack::parse_flint_config`, the
+  INT8 embedding comes from `repack::parse_flint_quantization` (it lives in
+  `mlx_export`, not `quantization`), and each shard header is canonicalized
+  before the shared walk. Do not fold these into the generic safetensors path.
 - An existing directory argument wins over an alias. Preserve that CLI
   compatibility.
 

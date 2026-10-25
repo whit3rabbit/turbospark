@@ -52,6 +52,143 @@ when this file gets updated relative to the version bump and the tag.
   prefill on Qwen 3.6 at `auto` slots on an M4 Max (33.3 s to 20.2 s for a
   2,940-token prompt) with no change in peak footprint. At 16 slots it is
   about break-even (2.5%). See `docs/BATCHED_PREFILL.md`.
+- The Flint model family (RecursiveSI/flint-int4, MLX affine INT4 group 64):
+  49 layers with 256 routed experts (top-6) streamed through the expert slot
+  cache, an ungated shared expert, an INT8 sigmoid router, 14 NoPE
+  full-attention layers and 35 sliding-window ones (window 513, learned
+  sinks). Intake and repack build installs from the checkpoint, including
+  repos that ship no `model.safetensors.index.json`; the tokenizer gains
+  `ChatDialect::Flint`; and the catalog gains the `flint` row (status
+  `runs`) with the published byte total. Verified on the real checkpoint:
+  coherent greedy and sampled generation across languages and multi-turn
+  chat, correct retrieval at 1,667 tokens, and byte-identical output at 8,
+  16 and 96 expert-cache slots. Not yet done: no frozen quality gate or
+  memory oracle, and prefill stays sequential unless the opt-in driver below
+  is enabled. See `docs/FLINT.md`.
+- Opt-in layer-batched chunked prefill for Flint behind
+  `TURBOSPARK_FLINT_CHUNKED_PREFILL=1` (default off). One command buffer per
+  layer carries all M tokens' attention, the dense lead's FFN and the INT8
+  router GEMV; the routed half then runs per token, pipelined across two
+  banks so the expert pread for token t+1 overlaps the GPU running token t.
+  Byte-identical to the sequential path, pinned by a new test at four chunk
+  splits and two slot counts. A clean speedup is not established: the
+  measuring lab run was inconclusive on a dirty host (indicative 55-56
+  against 42-44 tok/s, not quotable).
+- Small-M INT4 matrix-unit GEMM behind `TURBOSPARK_INT4_MMA8` (`crates/gpu`,
+  opt-in, default off). An 8-row INT4 GEMM on simdgroup_matrix that reads
+  the resident MLX-affine layout in place, so a row's bits never depend on
+  the rows beside it. `1` runs it on INT4 projections of 4096+ output rows
+  in decode and verify (speculation stays bit-exact against decode; decode
+  numerics change), `verify` restricts it to batched calls. End to end on
+  qwen38-27b-mtp it is about 15% faster on a code prompt (MTP block 4) and
+  9-12% slower on prose. Runbook and gates in `docs/INT4_SMALL_M_MMA.md`.
+- Opt-in GDN turn snapshot for multi-turn prefix reuse behind
+  `TURBOSPARK_GDN_TURN_SNAPSHOT=1` (dense Qwen models). Captures the recurrent
+  state after each turn so multi-turn conversations can reuse long document
+  prefixes without re-prefilling or state drift. Tested with bit-exact gating
+  on multi-turn dialogue with long prefixes.
+- `ServerOptions.prefixReuse` on the C ABI and in Swift, so an in-process
+  host can turn KV prefix reuse off for an attached session. A server's KV
+  cache is reachable by every client and is not partitioned by API key, and
+  `turbospark-server` already defaults it off; this gives the in-process
+  host the same posture. Applied at attach on both paths and in
+  `ts_server_start` before the attach; absent (`null`) leaves the session
+  as opened, so existing hosts are unchanged.
+- Per-batch router capture and route replay tooling for MoE prefill:
+  `TURBOSPARK_ROUTER_BATCHES=1` (bounded by `TURBOSPARK_ROUTER_BATCH_LIMIT`,
+  default 1,000,000) records bounded per-batch router selections, token ranges,
+  ordered routes, and streaming cache counters to `TURBOSPARK_ROUTER_HIST`.
+  Accompanied by `scripts/moe_route_replay.py` to analyze expert use counts,
+  greedy shrinking, and slot capacity limits.
+- `tslab` (`crates/lab`, not published), the evaluator for kernel and method
+  experiments:
+  - Architecture: an append-only run ledger, a one-measuring-session-per-machine
+    lock, paired A/B statistics with a 2% effect floor and WIN/LOSS/NOISE/
+    INCONCLUSIVE verdicts, quality gates held in code (bit-exact digests,
+    dense KL 1e-3, MoE sentinel), a typed registry of the runtime's
+    `TURBOSPARK_*` switches, and profile, ab, gate, run-experiment, confirm
+    and integrity commands, plus kernel timing and Core ML placement probes
+    and speculative arms that parse the runtime's `[spec-stats]` output. The
+    autoresearch loop's instructions are in `crates/lab/program.md`, and
+    `docs/BENCHMARKING.md` documents the tslab section.
+  - Output contract: every ledger line and the one object `--json` prints
+    carry schema `tslab/1` (`tslab schema` prints the JSON Schema), so an
+    agent drives the lab without scraping text. `tslab export` writes ledgers
+    as plottable series (JSONL, JSON, CSV) and `tslab report --html` draws them
+    as one offline page. Kernel benches share one result shape, visible in both
+    with no reader code.
+  - Capabilities, inventory, and workflows: `tslab capabilities` (per-install
+    coverage for all sixteen families and the audio pipelines), `tslab
+    inventory` (weight shapes from the resident index), and `tslab workflow`
+    with built-in plans (`new-family`, `kernel-candidate`, `spec-depth`,
+    `audio-survey`, `report`) that branch on coverage and resume.
+  - Chat workloads and follow-up TTFT: `chat:` workloads run multi-turn
+    conversations through the runtime with prefix reuse enabled, measuring
+    prompt tokens, reused tokens, and follow-up TTFT (`followup_ttft_s`) for
+    multi-turn and turn-snapshot evaluations.
+  - Kernel benches: 8-row MMA tile as an int4 arm, `int8_matmul`, `rows_attn`
+    with layout arms, `moe_routed`, `verify_ladder`, `music3_grid` and
+    `whisper_linear`; attention covers sliding-window layers and sinks.
+    `--hash` records output-bit hashes and `tslab hash-diff` compares two builds.
+  - Evaluator additions from `docs/MLX_SERVE_KERNELS.md`: engagement lines
+    (`TURBOSPARK_ENGAGEMENT`, checked per run), dispatch probe
+    (`TURBOSPARK_DISPATCH_PROBE`), block stand-ins (`TURBOSPARK_STANDIN`),
+    `tslab trace` over Metal System Trace, and speculative round costs in the
+    ledger for `tslab depth-replay`. Off by default and change nothing when
+    unset.
+  - Audio arms in `tslab profile` and `tslab ab` (`--audio-job`, MiniMax
+    Music 3 and Whisper) with stage times, real-time factor, and output-digest
+    gates (`bit_exact`, and `text_exact` for transcripts).
+
+### Changed
+- Gated-DeltaNet key head dimension `Dk = 128` baked into the Metal delta
+  kernels as a compile-time constant (`FC_GDN_DK = 98`), default on. Unrolls
+  the per-lane state loops in `gdn_delta_step_decode`, `gdn_delta_step_prefill`
+  (eager and lazy), and `gdn_state_fold`. Bit-identical to the dynamic-Dk
+  build across all state operations. Measured +4.1% on DFlash2 depth 7 under
+  MMA8 and +5.3% on prefill. Opt-out via `TURBOSPARK_GDN_DK128=0`.
+- The DFlash2 drafter pass is cheaper: the drafter's attention scratch uses
+  the GQA-shared kernel instead of the barrier one (draft phase 21.2 to
+  11.4 ms at a 2,940-token prompt; throughput 33.8 to 37.6 tok/s on the long
+  prompt), per-row ops are batched into one dispatch each, and the selector's
+  non-finite refusal and top-16 fold into one scan of each logits row.
+  Acceptance is unchanged: same rounds, accepted per round and per-position
+  curve.
+- Speculative decoding diagnostics: `TURBOSPARK_SPEC_STATS=1` now logs
+  wall-clock time in ms per round broken down by phase (draft, verify, accept,
+  rollback, commit, rewind, bonus).
+
+### Fixed
+- Core ML model compilation and cache publication now serialize inside a
+  process-wide critical section. Prevents simultaneous cold loads of the same
+  package from racing on Core ML's shared temporary build directory. Warm loads
+  remain lock-free and predictions continue serialized per model.
+- The GDN prefill conv kernel summed its taps in a different order than
+  decode, so about once in 10,000 outputs a speculative verify row was not
+  bit-identical to the decode step it stands in for, which made greedy
+  speculation leave the sequential stream. The prefill kernel now uses
+  decode's order. On qwen38-27b-mtp all 768 teacher-forced verify rows are
+  bit-identical to their decode steps, and greedy speculation matches
+  sequential decode for 256 tokens at blocks 2 and 4.
+- Flint installs carry a fixed 2^6 up/down rebalance that keeps the SwiGLU
+  product inside FP16: `silu(gate) * up` reached about 97,000 against an FP16
+  max of 65,504 and NaN'd the whole stream on a plain English prompt. An
+  install made before the fix migrates in place with
+  `cargo run --release -p turbospark-repack --example flint_rebalance -- <dir>`.
+- `swift/TurboSparkApp` audio:
+  - A shutdown during a Qwen3-TTS load could hang forever: the load's
+    opening never left `AudioModelOpening`'s barrier, so stop-and-drain
+    blocked the main thread. Non-open work now runs and ends the barrier
+    through `perform`, and a watchdog fails a hung drain in tests.
+  - A managed Qwen3-TTS install whose verification token failed to create
+    loaded with no byte verification and no error; it is now refused.
+    A chosen folder still loads without a token.
+  - OmniVoice cloning now sends the reference transcript, which the port
+    otherwise never conditions on (measured on the reference-transcript A/B:
+    0.00% WER with the exact transcript, 0.67% without, 75.67% with a stale
+    one). The Voice Cloning page shows the transcript as optional.
+  - The top bar audio-model eject redraws when a model loads or unloads
+    instead of staying dimmed and inert until a section switch.
 
 ## [0.5.0] - 2026-10-20
 

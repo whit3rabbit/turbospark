@@ -229,7 +229,10 @@ impl<'a> StructuredAssistantDecoder<'a> {
         }
         match self.tokenizer.dialect {
             ChatDialect::ChatMl => return self.consume_chatml(token_id, delta),
-            ChatDialect::MiniMax => {
+            // Flint shares this arm: its think pair is the only markup it
+            // splits, keyed on the ids. Its GLM-style tool markup has no
+            // parser and flows through as content (`Prompted`).
+            ChatDialect::MiniMax | ChatDialect::Flint => {
                 if Some(token_id) == self.tokenizer.think_start_id {
                     self.channel = Channel::Thought;
                 } else if Some(token_id) == self.tokenizer.think_end_id {
@@ -265,9 +268,7 @@ impl<'a> StructuredAssistantDecoder<'a> {
             // V2-era tables carry NO structural markup at all: plain text in,
             // plain text out, exactly the Llama3 arm's contract (all ids are
             // NO_SUCH_TOKEN_ID, nothing can open a span).
-            // Flint: its think pair and tool markup are plain text and no
-            // parser is wired, so everything flows through as content.
-            ChatDialect::DeepseekV2 | ChatDialect::Flint => {
+            ChatDialect::DeepseekV2 => {
                 return Ok(if delta.is_empty() {
                     Vec::new()
                 } else {

@@ -29,6 +29,23 @@ final class OptionsWireTests: XCTestCase {
         XCTAssertEqual(json["idleUnloadSeconds"] as? Int, 600)
     }
 
+    func testServerOptionsOnDemandLoadEncodesAndDefaultsToAbsent() throws {
+        let empty = try keys(ServerOptions())
+        XCTAssertNil(empty["allowRequestModelLoad"])
+        XCTAssertNil(empty["maxAttachedModels"])
+        XCTAssertNil(empty["maxAttachedModelBytes"])
+
+        let configured = try keys(ServerOptions(
+            allowRequestModelLoad: true,
+            maxAttachedModels: 4,
+            maxAttachedModelBytes: 17179869184
+        ))
+        XCTAssertEqual(configured["allowRequestModelLoad"] as? Bool, true)
+        XCTAssertEqual(configured["maxAttachedModels"] as? Int, 4)
+        XCTAssertEqual((configured["maxAttachedModelBytes"] as? NSNumber)?.uint64Value, 17179869184)
+    }
+
+
     func testIdleUnloadReachesTheRunningServer() throws {
         let server = try TurboSparkServer.start(options: ServerOptions(idleUnloadSeconds: 120))
         defer { server.stop() }

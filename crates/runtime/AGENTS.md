@@ -8,6 +8,7 @@ policy.
 - [Detailed module guide](../../.claude/docs/modules/runtime.md)
 - [Load guard](../../docs/LOAD_GUARD.md)
 - [Family checklist](../../docs/NEW_MODEL.md)
+- [Flint family](../../docs/FLINT.md)
 - [Speech to text](../../docs/SPEECH_TO_TEXT.md)
 - [Whisper runner](../../docs/WHISPER.md)
 - [Audio models](../audio/MODELS.md)
@@ -47,6 +48,22 @@ policy.
   each sub-batch's expert union, not every slot, so it serves more than 32
   slots, and route slots there are BINDING indices. See
   `docs/BATCHED_PREFILL.md`.
+- Flint (`ModelFamily::Flint`) has its own flow in `families/flint/`: learned
+  attention sinks, per-head QK norm before RoPE, NoPE by layer mask, an INT8
+  sigmoid router, an ungated shared expert, and a dense lead. No other family's
+  flow has more than two of those, so a neighbour's flow would decode fluently
+  and wrongly. Decode streams the 256 routed experts (top-6) through the expert
+  slot cache; mapped expert residency is refused at open. Prefill runs the
+  sequential produce path by default; `TURBOSPARK_FLINT_CHUNKED_PREFILL=1`
+  (opt-in, read once) runs the layer-batched chunk driver, which repeats the
+  same dispatches in the same order and must stay byte-identical to
+  sequential. A flint prefill chunk refuses `TURBOSPARK_BATCHED_GEMV` and
+  `TURBOSPARK_ROUTED_BATCH` by name. Every flint install is rebalanced at
+  intake by a fixed 2^6 up/down rebalance (`crates/repack/src/flint_rebalance.rs`)
+  that keeps the SwiGLU product inside FP16, and the flow relies on it. FP16
+  range is the family's open risk; `TURBOSPARK_FLINT_DEBUG` and
+  `TURBOSPARK_FLINT_ROUTER_DUMP` are the readback diagnostics. See
+  `docs/FLINT.md` and `docs/FLINT_PHASE0.md`.
 - The ANE+Steel prefill split (`families/qwen/ane_split.rs`) is opt-in twice:
   cargo feature `ane-prefill` and `TURBOSPARK_ANE_PREFILL` (or via FFI/Swift
   `AnePrefillMode`). When set to `Auto`, it activates on Apple Silicon M4+ /
@@ -76,6 +93,13 @@ policy.
 - `TURBOSPARK_QWEN_FUSED_FFN=1` activates fused INT4 FFN dispatches (gate+up+act
   GEMV and down+epilogue GEMV) for Qwen dense and MoE shared expert decode.
   Must remain bit-exact with the sequential separate GEMV and activation dispatches.
+- `TURBOSPARK_INT4_MMA8` (opt-in, experimental, read once) routes INT4
+  projections of at least 4096 output rows through the small-M matrix-unit
+  GEMM: `1` in both decode and verify, `verify` in batched calls only. Decode
+  and verify stay bit-exact against each other, but decode numerics change, so
+  frozen digests do not hold. `TURBOSPARK_INT4_MMA8_MIN_ROWS` overrides the
+  row threshold for tests. Only qwen35 dense is gated. See
+  `docs/INT4_SMALL_M_MMA.md`.
 - `TURBOSPARK_GDN_LAZY_TAPE=1` records rank-1 conv and delta updates during
   speculative verify and folds them asynchronously at round commit, bypassing
   recurrent state snapshots on clean state. `checkpoint_round` snapshots recurrent

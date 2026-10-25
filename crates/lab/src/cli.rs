@@ -43,6 +43,8 @@ tslab: the evaluator for kernel and method experiments (macOS).
                 [--step ID] [--from ID] [--resume RUN] [--dry-run]   (--list, --print NAME)
   tslab capabilities --model M                    (what tslab can measure on this install, and tags)
   tslab inventory --model M                       (the install's weight shapes by dtype)
+  tslab pinned  [--repo kapitsa|omlx|mlx-serve] [--class C] [--id ID] [--dir PATH]
+                (the verified kernel settings pinned from the compared engines)
   tslab knobs
   tslab export  --experiment A[,B]|--all [--kind K[,K]] [--format jsonl|json|csv] [--redact-paths]
                 [--out PATH [--force]]            (ledgers as tslab/1 series)
@@ -122,6 +124,7 @@ pub const COMMANDS: &[&str] = &[
     "ab",
     "ledger",
     "knobs",
+    "pinned",
     "schema",
     "hash-diff",
     "export",
@@ -148,6 +151,7 @@ pub fn dispatch(cmd: &str, args: Args) -> Result<CmdOutput, String> {
         "ab" => unit(ab(args)),
         "ledger" => ledger(args),
         "knobs" => knobs_cmd(args),
+        "pinned" => pinned_cmd(args),
         "schema" => schema_cmd(args),
         "hash-diff" => hash_diff_cmd(args),
         "export" => crate::export::export_cmd(args),
@@ -871,4 +875,56 @@ mod tests {
         assert_eq!(r["points"][2]["added_dispatches"], 512);
         assert!(dispatch_probe_fit(&[0, 4], 64, |_| None).is_err());
     }
+}
+
+/// List or inspect the pinned kernel settings (`crates/lab/pinned/`).
+/// The embedded set is the verified baseline. `--dir` loads a sweep
+/// directory instead, and `--dir` plus `--id` shows one entry from it.
+/// The matched entries are the envelope's `result` under the global `--json`.
+fn pinned_cmd(mut args: Args) -> Result<CmdOutput, String> {
+    let dir = args.take("--dir")?;
+    let repo = args.take("--repo")?;
+    let class = args.take("--class")?;
+    let id = args.take("--id")?;
+    args.finish()?;
+    if let Some(r) = &repo {
+        if !crate::pinned::REPOS.contains(&r.as_str()) {
+            return Err(format!(
+                "repo {r:?} is not one of {:?}",
+                crate::pinned::REPOS
+            ));
+        }
+    }
+    let set = match &dir {
+        Some(d) => crate::pinned::PinnedSet::load_dir(std::path::Path::new(d))?,
+        None => crate::pinned::PinnedSet::embedded()?,
+    };
+    set.validate()?;
+    let mut matches: Vec<_> = set
+        .entries()
+        .iter()
+        .filter(|e| repo.as_deref().is_none_or(|r| e.repo == r))
+        .filter(|e| class.as_deref().is_none_or(|c| e.kernel_class == c))
+        .filter(|e| id.as_deref().is_none_or(|i| e.id == i))
+        .collect();
+    if let Some(want) = &id {
+        if matches.is_empty() {
+            return Err(format!("no pinned entry with id {want:?} in this set"));
+        }
+    }
+    matches.sort_by(|a, b| a.id.cmp(&b.id));
+    for entry in &matches {
+        let model = entry.primary_model();
+        crate::say!(
+            "{:<28} {:<18} {:<10} {:>3} settings  {} {} [{}]",
+            entry.id,
+            entry.kernel_class,
+            entry.source.license,
+            entry.settings.len(),
+            model.name,
+            model.quant,
+            model.machine,
+        );
+    }
+    Ok(CmdOutput::ok(json!({"pinned": matches})))
 }

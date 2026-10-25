@@ -77,8 +77,10 @@ always quiet, and none is a frozen row.
      PR 30928), and no test shows RoPE is correctly absent on the
      full-attention layers.
 6. **Features not wired.**
-   - The `<think>` block arrives as inline content (its markup is plain text),
-     so `--reasoning` does not split it.
+   - Reasoning splits by token id: `<think>` (150006) and `</think>` (150007)
+     are added but not special, and the decoder keys on ids, as GLM's does.
+     The template has no thinking-off switch and does not prefill the open,
+     so the split runs at every reasoning effort.
    - Tool calls are GLM-style `<tool_call>name<arg_key>..` markup with no
      parser (dialect `Prompted`).
    - Steering and speculation: the checkpoint ships no MTP head, and measured

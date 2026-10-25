@@ -1,0 +1,556 @@
+{
+  "schema": "turbospark.lab.pinned/1",
+  "id": "mlx-serve.attn_kv",
+  "kernel": "the decode and prefill attention family around the stock path: dec_attn split-K (MiMo 192/128 global layers), the packed-KV quantized-cache decode (msv_qkv_mpp matmul2d tile and the plain qkvDecKernel), the fused QK-norm+RoPE kernels (hd 128 and hd 256), the msv_attn_p256 head-dim-256 prefill flash kernel, MLX's sdpa_vector grouping split, and the sliding-window trim",
+  "kernel_class": "attention_decode",
+  "repo": "mlx-serve",
+  "summary": "Decode and verify attention: dec_attn.zig serves MiMo's global layers (q/k 192, v 128) with a KV group's query heads times query positions (1 at decode, up to 8 in a verify) as the rows of one MMA tile, split-K over 32-key tiles, engaging at one row only from 8192 keys and held to a 2x-of-stock error bar. Quantized caches read through two packed kernels tried before dense: the matmul2d tensor-op tile (msv_qkv_mpp, 32-token KV pages dequantized into threadgroup tile memory, one thread per padded softmax row, split-KV partials merged) inside the qkvMppWins window, and a plain block kernel capped near 10 KiB of threadgroup memory. msv_attn_p256 is the head-dim-256 prefill flash kernel (64-row query tile, 32-key blocks, 8 simdgroups, exp2 softmax, fp32 carry across budgeted key-axis dispatches) that declines under 16 query rows; widths 2..15 at hd 256 split into groups of min(8, 32/gqa) for MLX's sdpa_vector instead, and sliding-window layers trim every read to the window. A fused QK-norm+RoPE kernel pair (hd 128 decode, hd 256 for 1..32 rows) serves the projection chain with cos/sin rows probed out of stock mlx_fast_rope.",
+  "source": {
+    "url": "https://github.com/ddalcu/mlx-serve",
+    "rev": "191da71de32a65f69ebceeb6cb2e91036ab50b30",
+    "rev_date": "2026-10-22",
+    "license": "MIT",
+    "files": [
+      "src/dec_attn.zig",
+      "src/transformer.zig",
+      "docs/performance.md",
+      "docs/reference.md",
+      "LICENSE"
+    ],
+    "symbols": [
+      "attention",
+      "msv_dec_attn_split",
+      "msv_dec_attn_merge",
+      "qkvAttnDecodeKernel",
+      "qkvAttnVerifyKernel",
+      "qkvAttnMppKernel",
+      "qkvMppWins",
+      "qkvMppSplits",
+      "qkvDecBlockFor",
+      "qkvMergeArrays",
+      "kvAttnFusedEligible",
+      "kvAttnVerifyEligible",
+      "kvAttnFusedMinTk",
+      "fusedSdpa256Impl",
+      "fusedSdpa256Prefill",
+      "fused256DispatchBudget",
+      "fused256KvChunkLen",
+      "causalSplitGroupRows",
+      "splitCausalSdpa",
+      "slidingViewFor",
+      "slidingTailSpan",
+      "fusedQkNormRope",
+      "fusedQkNormRope256",
+      "ropeAngleRow",
+      "ropeAngleRows",
+      "qkNormRopeFusedEnabled",
+      "getAttn256Kernel",
+      "prefillHeadDimFused"
+    ]
+  },
+  "models": [
+    {
+      "name": "MiMo-V2.6-Flash",
+      "quant": "MXFP4 routed experts (E8M0 group-32 scales), FP8 e4m3 parts requantized (8-bit gs 64 or bf16), bf16 router, sinks and norms; global layers 4 KV heads at K 192 / V 128",
+      "family": "mimo_v2",
+      "machine": "M5 Ultra",
+      "role": "primary for dec_attn (global-layer decode and verify attention) and the msv_attn_p256 192/128 sink arm"
+    },
+    {
+      "name": "Qwen3.8-27B",
+      "quant": "MLX affine 4-bit, head dim 256 attention",
+      "family": "qwen3_5 (dense)",
+      "machine": "M4 Max 128 GB",
+      "role": "hd-256 decode/verify attention A/Bs: the sdpa_vector split, the msv_attn_p256 verify misroute, the packed-KV eligibility bug, the kv-quant penalty table"
+    },
+    {
+      "name": "Qwen3.8-Flash-Next",
+      "quant": "mixed-width pack (their qwen4_exp Flash-Next trunk, GDN + MoE, gqa 12 at hd 256)",
+      "family": "qwen4_exp",
+      "machine": "not stated at the kernel comments",
+      "role": "the causalSplitGroupRows sdpa split A/B (gqa 12, min_q_len floor must clear MTP verify depth 8)"
+    },
+    {
+      "name": "Muse-Glimmer 30B",
+      "quant": "MLX affine 4-bit",
+      "family": "muse_glimmer (sliding-window layers)",
+      "machine": "M4 Max",
+      "role": "the sliding-window trim A/B at 16k and 64k context"
+    }
+  ],
+  "settings": [
+    {
+      "name": "dec_attn_max_rows",
+      "value": 8,
+      "unit": "rows",
+      "condition": "query positions one dispatch takes (an MTP verify window); rows 1..8",
+      "kind": "hardcoded",
+      "source": "src/dec_attn.zig:13"
+    },
+    {
+      "name": "dec_attn_min_keys_one_row",
+      "value": 8192,
+      "unit": "keys",
+      "condition": "one query position engages only at or above this many keys; below it MLX's vector kernel keeps the call",
+      "kind": "hardcoded",
+      "source": "src/dec_attn.zig:15",
+      "note": "comment at src/dec_attn.zig:14; the doc calls this 'as fast below that', the source comment is the crossover rationale"
+    },
+    {
+      "name": "dec_attn_target_threadgroups",
+      "value": 128,
+      "unit": "threadgroups",
+      "condition": "grid target across all KV heads; the key-axis split count divides it",
+      "kind": "hardcoded",
+      "source": "src/dec_attn.zig:17"
+    },
+    {
+      "name": "dec_attn_key_tile",
+      "value": 32,
+      "unit": "keys",
+      "condition": "BK: staged K/V tile per loop iteration; splits are BK-aligned",
+      "kind": "hardcoded",
+      "source": "src/dec_attn.zig:18"
+    },
+    {
+      "name": "dec_attn_head_dims",
+      "value": "q/k 192, v 128",
+      "unit": null,
+      "condition": "the only shape family served (MiMo global layers); batch 1, bf16 or f16, hq % hk == 0",
+      "kind": "hardcoded",
+      "source": "src/dec_attn.zig:177",
+      "note": "dtype gate at src/dec_attn.zig:187, batch/group gates at src/dec_attn.zig:176-182"
+    },
+    {
+      "name": "dec_attn_row_multiple",
+      "value": 8,
+      "unit": "rows",
+      "condition": "g * rows must divide 8: RG = G*S/8 row groups per KV head, one MMA tile row per (head, query position)",
+      "kind": "hardcoded",
+      "source": "src/dec_attn.zig:184"
+    },
+    {
+      "name": "dec_attn_simdgroups",
+      "value": 8,
+      "unit": "simdgroups per threadgroup",
+      "condition": "eight per threadgroup while the rows leave room for key slices: ksl = 8/rg when rg < 8, else 1 (threadgroup (32, rg*ksl))",
+      "kind": "hardcoded",
+      "source": "src/dec_attn.zig:194",
+      "note": "comment at src/dec_attn.zig:193; threadgroup shape at src/dec_attn.zig:212"
+    },
+    {
+      "name": "dec_attn_split_count",
+      "value": "max(1, min(128 / hk, ceil(n / 32)))",
+      "unit": "key-axis splits",
+      "condition": "per dispatch; the second dispatch merges the splits' fp32 partials (pacc, pm, pl)",
+      "kind": "derived",
+      "source": "src/dec_attn.zig:195",
+      "note": "TARGET_TGS / hk bounded by whole 32-key tiles; merge kernel at src/dec_attn.zig:133-150"
+    },
+    {
+      "name": "dec_attn_error_bar",
+      "value": "2x of stock + 1e-3 max-abs vs fp32",
+      "unit": null,
+      "condition": "the test tolerance versus MLX's bf16 kernel against an fp32 truth; explicitly not bit equality",
+      "kind": "hardcoded",
+      "source": "src/dec_attn.zig:318"
+    },
+    {
+      "name": "dec_attn_softmax",
+      "value": "exp2 with scale * log2(e) = 1.44269504088896340736, running max initialized -3.0e38",
+      "unit": null,
+      "condition": "both the split and the merge; masked keys take true -INFINITY",
+      "kind": "hardcoded",
+      "source": "src/dec_attn.zig:46",
+      "note": "max init at src/dec_attn.zig:56, merge init at src/dec_attn.zig:137"
+    },
+    {
+      "name": "kv_mpp_page_tokens",
+      "value": 32,
+      "unit": "keys per page",
+      "condition": "QKV_MPP_PAGE: the matmul2d kernel dequantizes one 32-token K (or V) page into threadgroup tile memory per loop step",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:16967",
+      "note": "kernel N = 32 at src/transformer.zig:16976, tile[N * D] at src/transformer.zig:16991"
+    },
+    {
+      "name": "kv_mpp_max_splits",
+      "value": 128,
+      "unit": "splits",
+      "condition": "QKV_MPP_MAX_SPLITS, upper clamp of the split-KV count",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:16968"
+    },
+    {
+      "name": "kv_mpp_pages_per_split",
+      "value": 8,
+      "unit": "pages per split",
+      "condition": "QKV_MPP_PAGES_PER_SPLIT, lower divisor of the split-KV count",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:16969"
+    },
+    {
+      "name": "kv_mpp_split_count",
+      "value": "clamp(ceil(t_k / 32) / 8, 1, 128)",
+      "unit": "splits",
+      "condition": "grid z; partials merged host-side by qkvMergeArrays after the transpose-and-slice",
+      "kind": "derived",
+      "source": "src/transformer.zig:17103",
+      "note": "formula at src/transformer.zig:17103-17104; merge at src/transformer.zig:16556"
+    },
+    {
+      "name": "kv_mpp_bits",
+      "value": [4, 8],
+      "unit": "bits",
+      "condition": "the packed cache widths the matmul2d tile reads (VPW = 32/bits packed values per word)",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:17112"
+    },
+    {
+      "name": "kv_mpp_head_dim",
+      "value": 256,
+      "unit": "head dim",
+      "condition": "dk must be 256 and at most 8 dequant groups per row (DK/GS <= 8)",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:17126"
+    },
+    {
+      "name": "kv_mpp_padded_row_cap",
+      "value": 56,
+      "unit": "rows",
+      "condition": "ceil(gqa * t_q / 8) * 8 must stay at or under 56, or the threadgroup arrays exceed Metal's 32 KiB",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:17133"
+    },
+    {
+      "name": "kv_mpp_threadgroup_threads",
+      "value": 256,
+      "unit": "threads",
+      "condition": "grid (256, h_kv, nsplit), threadgroup (256, 1, 1); qk and pv both run matmul2d on execution_simdgroups<8>",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:17161",
+      "note": "threadgroup at src/transformer.zig:17162; descriptors at src/transformer.zig:17001-17004; softmax phase is one thread per padded row (tid < M)"
+    },
+    {
+      "name": "kv_fused_min_kv",
+      "value": 2048,
+      "unit": "keys",
+      "condition": "per-layer KV floor (KV_ATTN_FUSED_MIN_TK) every fused quant-attention call site reads; short-KV sliding layers keep dense reads",
+      "kind": "measured",
+      "source": "src/transformer.zig:17267",
+      "note": "Laguna's 512-window sliding layers measured -2% fused and gemma4-12B's 1024-window layers ~4 tok/s loss at the old 1024 floor (comment src/transformer.zig:17257-17266); MLX_SERVE_KV_ATTN_MIN_TK overrides, a perf gate not a correctness gate"
+    },
+    {
+      "name": "kv_fused_decode_width",
+      "value": 1,
+      "unit": "rows",
+      "condition": "kvAttnFusedEligible admits t_q == 1 only; verify widths have their own gate after the eligibility bug",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:17294"
+    },
+    {
+      "name": "qkv_verify_max_tq",
+      "value": 8,
+      "unit": "rows",
+      "condition": "QKV_VERIFY_MAX_TQ: the verify kernel's width ceiling (2..8); wider forwards stay dense",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:16607"
+    },
+    {
+      "name": "qkv_dec_block_bytes_max",
+      "value": 10000,
+      "unit": "bytes",
+      "condition": "threadgroup memory cap for the plain decode kernel's kv-block pick; NOT the full 32 KiB budget because residency limits occupancy",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:16199",
+      "note": "comment src/transformer.zig:16192-16195: a 28 KiB footprint leaves one threadgroup per core, measured 1.9 ms vs dense 1.1 at 48/8 32K with 24 KiB score buffers"
+    },
+    {
+      "name": "qkv_dec_block_choices",
+      "value": [512, 256, 128],
+      "unit": "keys",
+      "condition": "candidate kv-block lengths tried in order against the byte cap; null when none fits",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:16196"
+    },
+    {
+      "name": "qkv_dec_threads",
+      "value": 128,
+      "unit": "threads",
+      "condition": "QKV_DEC_NT: threads per threadgroup in the plain (non-matmul2d) decode kernel",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:16185"
+    },
+    {
+      "name": "msv_p256_query_tile_rows",
+      "value": 64,
+      "unit": "rows",
+      "condition": "BQ: query tile rows; grid x is ceil(qL / 64) tiles in threads (nq_tiles * 32)",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:3048",
+      "note": "grid at src/transformer.zig:8217; 8-key ping-pong, V-from-device, K double buffer and 32-row Q tile variants all measured worse (their prefill negative results)"
+    },
+    {
+      "name": "msv_p256_key_block",
+      "value": 32,
+      "unit": "keys",
+      "condition": "BK: key block per loop step; K^T and V tiles share one threadgroup buffer, steel-style",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:3049"
+    },
+    {
+      "name": "msv_p256_threadgroup",
+      "value": "(32, 8, 1): 8 simdgroups, 256 threads, one threadgroup per 64-row query tile per head per batch",
+      "unit": null,
+      "condition": "NT = 256 assumed by the cooperative staging loops; the K/V tile is re-staged per head of a GQA group",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:8218",
+      "note": "comment src/transformer.zig:8213-8215; NT at src/transformer.zig:3053"
+    },
+    {
+      "name": "msv_p256_min_q_len",
+      "value": 16,
+      "unit": "rows",
+      "condition": "FUSED256_MIN_Q_LEN: the kernel declines q_len < 16 (decode and spec-verify forwards belong to MLX's sdpa_vector); slidingViewFor reads the same constant so the trim and the decline cannot drift",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:3450",
+      "note": "decline at src/transformer.zig:8124; the floor comment src/transformer.zig:8118-8123 records decode 48 -> 18 tok/s at 4K when verify widths rode the tile"
+    },
+    {
+      "name": "msv_p256_dispatch_budget",
+      "value": 250000000,
+      "unit": "work units",
+      "condition": "FUSED256_DEFAULT_DISPATCH_BUDGET: causal dispatches split the key axis so batch * hq * ql * chunk stays within budget; chunk is the largest 32-multiple, floored at 32, capped at kL; 0 disables",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:3386",
+      "note": "chunk formula fused256KvChunkLen src/transformer.zig:3406-3416; fp32 m/l/O carry makes the chain bit-identical to one dispatch (comment src/transformer.zig:3376-3384); MLX_SERVE_FUSED_256_BUDGET overrides"
+    },
+    {
+      "name": "msv_p256_softmax",
+      "value": "exp2 (steel convention), scale * log2(e), running max initialized -3.0e38, learned sink seeds m and l when present",
+      "unit": null,
+      "condition": "causal and band arms; masked scores take true -INFINITY so a fully banded row contributes exp2(-inf) = 0",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:3069",
+      "note": "max init at src/transformer.zig:3131, sink seed at src/transformer.zig:3133-3138"
+    },
+    {
+      "name": "msv_p256_fragments",
+      "value": "fp32 fragments on metal::simdgroup_float8x8 (MLX steel BaseMMAFrag<float,8,8> layout), Q register-resident per threadgroup",
+      "unit": null,
+      "condition": "msv_attn_p256 and its header; q/k 256 v 256 or MiMo's 192/128 via BDK/BDV templates",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:3005",
+      "note": "header comment src/transformer.zig:2993-2995, Q staged once to registers at src/transformer.zig:3107-3119"
+    },
+    {
+      "name": "qk_rope256_max_rows",
+      "value": 32,
+      "unit": "rows",
+      "condition": "fusedQkNormRope256 serves seq 1..32 in one dispatch and declines outside",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:40294"
+    },
+    {
+      "name": "qk_rope256_rotary_widths",
+      "value": [32, 64, 128, 256],
+      "unit": "rope dims",
+      "condition": "rd values the shuffle-free staged rotation serves (qwen3.5 partial 64, Gemma 256); bf16 or f16",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:40302",
+      "note": "grid (hq + hk + hv) * seq * 64 threads, threadgroup 64, at src/transformer.zig:40323-40324"
+    },
+    {
+      "name": "qk_rope_hd128_rotary_widths",
+      "value": [0, 32, 64, 128],
+      "unit": "rope dims",
+      "condition": "decode variant (fusedQkNormRope): rd 0 is a NoPE layer whose angles are never read",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:39366"
+    },
+    {
+      "name": "qk_rope_hd128_threadgroup",
+      "value": "(hq + hk) * 32 threads, threadgroup 32: one threadgroup per head, lane l owns elements [4l, 4l+4)",
+      "unit": null,
+      "condition": "hd 128 decode layout, output emitted transposed [1, H, 1, 128]",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:39382",
+      "note": "threadgroup at src/transformer.zig:39383"
+    },
+    {
+      "name": "qk_rope_probe",
+      "value": "cos|sin tables extracted by running stock mlx_fast_rope over a ones|zeros probe (ones in the first half of each row), never re-derived",
+      "unit": null,
+      "condition": "the angle math inside mlx_fast_rope is float regardless of tensor dtype, so the f32 probe reads the same floats out",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:39453",
+      "note": "probe fill and fast_rope call at src/transformer.zig:39453-39459; doc comment src/transformer.zig:39413-39417 and 39429-39432"
+    },
+    {
+      "name": "qk_rope_rms_recipe",
+      "value": "RMS half mirrors rms_single_row (axis 128, one simdgroup, f32 squares in index order, simd_sum, metal::precise::rsqrt); rotation mirrors rope_single_impl in f32 with one T rounding",
+      "unit": null,
+      "condition": "the T(x*inv) rounding inside the weight multiply is the value the separate kernel would have written and the rotation would have read back",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:39281",
+      "note": "recipe comment src/transformer.zig:39257-39262; the hd-256 variant keeps the same precise::rsqrt form (src/transformer.zig:39540); kill switch MLX_SERVE_QK_NORM_ROPE_FUSED=0 (src/transformer.zig:39251)"
+    },
+    {
+      "name": "sdpa_split_group_rows",
+      "value": "min(8, max(1, 32 / gqa))",
+      "unit": "rows",
+      "condition": "rows per group when a dense causal verify block cannot ride MLX's vector kernel whole: engages at hd 256 for q_len 2..15 when not (q_len <= 8 and q_len * gqa <= 32); group [r0, r1) runs causal over keys[0 .. kL-(qL-r1)]",
+      "kind": "derived",
+      "source": "src/transformer.zig:8308",
+      "note": "predicate causalSplitGroupRows src/transformer.zig:8298-8307, 5 at gqa 6 and 2 at gqa 12; kill switch MLX_SERVE_SDPA_SPLIT=0 (src/transformer.zig:8276); K/V stay views, rows independent under the per-row bottom-right mask"
+    },
+    {
+      "name": "sliding_trim_rule",
+      "value": "min(total_kv, window tail span)",
+      "unit": "keys",
+      "condition": "slidingViewFor trims every attention read to the window, prompt chunks and speculative steps included; in-kernel band masking additionally needs head_dim 256 and seq_len >= 16",
+      "kind": "derived",
+      "source": "src/transformer.zig:8701",
+      "note": "span from slidingTailSpan (src/transformer.zig:8634); band gate at src/transformer.zig:8694; a sliding ring always trims (width 1)"
+    }
+  ],
+  "gates": [
+    {
+      "condition": "dec_attn engages: batch 1, q/k width 192 and v width 128, rows 1..8, (g * rows) % 8 == 0, n >= rows, one row only from 8192 keys, bf16/f16; otherwise null and MLX's kernel keeps the call",
+      "source": "src/dec_attn.zig:184",
+      "note": "dims at src/dec_attn.zig:177, one-row crossover at src/dec_attn.zig:185, dtype at src/dec_attn.zig:187"
+    },
+    {
+      "condition": "packed-KV matmul2d window (qkvMppWins): t_q >= 4 needs t_k >= 2048; t_q 2..3 needs t_k >= 8192; t_q 1 needs t_k >= 16384; measured window on M4 Max 24/4 hd-256 kv8 where the per-page fixed cost needs rows or length to amortize",
+      "source": "src/transformer.zig:17096",
+      "note": "tried first in qkvAttnDecodeKernel (src/transformer.zig:16406-16409) and qkvAttnVerifyKernel (src/transformer.zig:16834-16838) unless forced"
+    },
+    {
+      "condition": "matmul2d kernel predicates: tile class present (verifyQmmTile() != .off, M5 units or M4-family shader code), quant triple, bits 4/8, dk 256, causal or unmasked t_q 1, padded rows <= 56",
+      "source": "src/transformer.zig:17110",
+      "note": "bits at src/transformer.zig:17112, width at src/transformer.zig:17116, dk at src/transformer.zig:17126, row cap at src/transformer.zig:17133"
+    },
+    {
+      "condition": "fused quant-attention route (decode): kvAttnFusedEligible = quant triple present and t_q == 1 and env on and per-layer kv >= KV_ATTN_FUSED_MIN_TK (2048 default); one gate every fused call site reads",
+      "source": "src/transformer.zig:17293",
+      "note": "MLX_SERVE_KV_ATTN_FUSED=0 kills the whole fused route; MLX_SERVE_KV_ATTN_MIN_TK overrides the floor (src/transformer.zig:17269-17276)"
+    },
+    {
+      "condition": "fused quant-attention route (verify): kvAttnVerifyEligible = t_q 2..8 and the same triple, env and kv floor; G17 defaults dense, MLX_SERVE_KV_ATTN_VERIFY=1 forces, =0 kills the width class",
+      "source": "src/transformer.zig:17305"
+    },
+    {
+      "condition": "msv_attn_p256 declines q_len < FUSED256_MIN_Q_LEN (16); below the floor MLX's sdpa_vector owns hd 256, and verify widths route through causalSplitGroupRows instead",
+      "source": "src/transformer.zig:8124",
+      "note": "constant at src/transformer.zig:3450; 16 matches oMLX's _MIN_ROUTE_Q_LEN per the comment"
+    },
+    {
+      "condition": "causalSplitGroupRows: head_dim in {64, 96, 128, 256}, 2 <= q_len < 16, engages only when the vector kernel does not fit the whole block (q_len > 8 or q_len * gqa > 32), and the split default is measured at hd 256 only",
+      "source": "src/transformer.zig:8298",
+      "note": "the hd != 256 declines at src/transformer.zig:8303-8306 with the measured-only comment (Qwen3.8-Flash-Next, gqa 12)"
+    },
+    {
+      "condition": "sliding-window in-kernel band: only when fused256Enabled and cfg.head_dim == 256 and seq_len >= FUSED256_MIN_Q_LEN; the trim half applies regardless (a sliding ring always trims)",
+      "source": "src/transformer.zig:8694"
+    },
+    {
+      "condition": "fusedQkNormRope256 window: seq 1..32, rd in {32, 64, 128, 256}, bf16/f16, q and k norms present or both absent, optional v norm only with the normed form",
+      "source": "src/transformer.zig:40294",
+      "note": "rd gate at src/transformer.zig:40302; the decode hd-128 variant additionally requires bf16 (src/transformer.zig:39362)"
+    }
+  ],
+  "measured": [
+    {
+      "metric": "dec_attn_verify_forward_ms",
+      "value": "composed -> dec_attn: 35.9 -> 29.6 at 8k keys, 49.8 -> 33.5 at 32k, 69.1 -> 35.0 at 64k",
+      "model": "MiMo-V2.6-Flash (global layers)",
+      "machine": "M5 Ultra",
+      "conditions": "4-row MTP verify forward time; the reference sentence does not restate the machine but the MiMo section's measurements are the M5 Ultra; one row ties at 8k and gains 0.9 ms at 32k, 1.8 at 64k; the 128-key sliding layers stay on MLX's vector kernel, which wins there",
+      "provenance": "upstream_reported",
+      "source": "docs/reference.md:647"
+    },
+    {
+      "metric": "msv_p256_verify_misroute_decode_tok_s",
+      "value": "48 -> 18",
+      "model": "Qwen3.8-27B",
+      "machine": "not stated at the comment",
+      "conditions": "decode tok/s at 4K ctx when MTP verify widths (seq 1+depth, up to 9 at the NAX depth-8 cap) were dispatched through the 64-row prefill tile instead of staying on sdpa_vector; the reason the 16-row floor exists",
+      "provenance": "upstream_reported",
+      "source": "src/transformer.zig:8120"
+    },
+    {
+      "metric": "kv_verify_width_bug_decode_tok_s",
+      "value": "28 vs 60 on the dense read",
+      "model": "their dense quantized-KV install (model not named at the comment)",
+      "machine": "M4 Max",
+      "conditions": "2026-08-15, 8k+ ctx, deep MTP rounds: verify widths (T_q 2..32) admitted to the fused route fell to the composed qmm chain, 2 packed matmuls x every attention layer per spec round at qmm's M 2..7 dead zone; they read the dense view now",
+      "provenance": "upstream_reported",
+      "source": "src/transformer.zig:47474"
+    },
+    {
+      "metric": "kv_packed_v1_form_slowdown",
+      "value": "5x slower than dense mode",
+      "model": "48/8 GQA shapes at 32K (their Phase 0 uBench)",
+      "machine": "not stated at the comment",
+      "conditions": "packed-KV decode v1, one threadgroup per Q head with a per-row simd_sum online-softmax chain: 48 threadgroups starve the GPU and the per-row reduction+exp chain serializes each simdgroup; replaced by the two-phase block-parallel layout",
+      "provenance": "upstream_reported",
+      "source": "src/transformer.zig:16205"
+    },
+    {
+      "metric": "kv_packed_large_tgm_slowdown",
+      "value": "1.9 ms vs dense 1.1 ms (1.7x)",
+      "model": "48/8 GQA at 32K",
+      "machine": "not stated at the comment",
+      "conditions": "a 28 KiB threadgroup footprint leaves one threadgroup per core and latency hiding collapses (measured with 24 KiB score buffers); the shipped kernel keeps threadgroup memory at or under about 10 KiB (bytes <= 10000)",
+      "provenance": "upstream_reported",
+      "source": "src/transformer.zig:16194"
+    },
+    {
+      "metric": "sliding_trim_decode_tok_s",
+      "value": "8.6 -> 21.0 at 64k (24.7 -> 40.2 at 16k)",
+      "model": "Muse-Glimmer 30B 4-bit",
+      "machine": "M4 Max",
+      "conditions": "sliding-window trim of every attention read (v26.8.6) measured against v26.8.5, median of three runs per point; the gain grows with the conversation and below roughly 8k there is nothing to trim yet",
+      "provenance": "upstream_reported",
+      "source": "docs/performance.md:28"
+    },
+    {
+      "metric": "kv_quant_decode_penalty",
+      "value": "-10% decode at 2-4K ctx; fused packed reads cut the penalty from -47% to -18% at 42K",
+      "model": "not stated in the tuning-table row",
+      "machine": "not stated in the tuning-table row",
+      "conditions": "their --kv-quant tuning table; the same row notes the fused packed reads engage auto from 8K and the cache saving is 2x (8-bit) / 4x (4-bit) KV RAM",
+      "provenance": "upstream_reported",
+      "source": "docs/performance.md:61"
+    }
+  ],
+  "lab_mapping": [
+    {
+      "setting": "dec_attn_min_keys_one_row",
+      "maps_to": "tslab kernel --bench attn_decode: the contexts axis sweeps KV length per full-attention layer and the bench runs the barrier and gqa-shared arms over the arch's (q heads, kv heads, head dim) shape (crates/lab/src/kernel/attn_decode.rs:32); the one-row 8192-key crossover and the split formula are the (keys, splits) axes that bench does not vary yet",
+      "env": null,
+      "note": "their one-row crossover is the closest analogue to our gqa-arm min-rows question"
+    },
+    {
+      "setting": "dec_attn_simdgroups",
+      "maps_to": "TURBOSPARK_ATTN_DECODE_KERNEL (knobs.rs attn_decode_kernel: unset, barrier, gqa): the gqa arm is our GQA-shared decode partial, the design dec_attn adds verify rows to; the arm selector is the A/B lever for a comparison",
+      "env": "TURBOSPARK_ATTN_DECODE_KERNEL"
+    },
+    {
+      "setting": "msv_p256_query_tile_rows",
+      "maps_to": "TURBOSPARK_PREFILL_ROWS_ATTN (knobs.rs prefill_rows_attn): our qwen dense batched prefill attention through the multi-row GQA partial; their 64-row per-head tile vs our multi-row GQA partial is the comparable prefill knob, and their declined 32-row tile bounds the tile-shape sweep",
+      "env": "TURBOSPARK_PREFILL_ROWS_ATTN",
+      "note": "not a tslab bench axis; a live prefill A/B"
+    },
+    {
+      "setting": "kv_fused_min_kv",
+      "maps_to": "none yet: no quantized-KV attention surface exists in our runtime or tslab benches, so the 2048 floor, the qkvMppWins window and the packed-read kernels have nothing to sweep",
+      "env": null
+    }
+  ],
+  "docs": [
+    "docs/MLX_SERVE_KERNELS.md#attention-and-kv-at-decode",
+    "docs/MLX_SERVE_KERNELS.md#negative-results-worth-not-re-deriving-here"
+  ],
+  "notes": "Doc-vs-source checks, sided with the source. (1) Our doc's 'structure after Inco Splash' phrase for the packed-KV kernel has no counterpart in the clone; the kernel's design comments instead cite docs/kv-quant-perf.md (src/transformer.zig:16160, 16207, 17247), which is ABSENT from the tree at this rev, so the Phase 0/1/2 tables behind the fused-quant gate could not be read. (2) Our doc says MLX's fused kernel 'refuses q_len * gqa > 32, so causal verify widths 2 to 15 are split'; the source predicate is the negation of (q_len <= 8 and q_len * gqa <= 32) at hd {64, 96, 128, 256} (src/transformer.zig:8302-8306), so a width 9..15 block splits even when q_len * gqa <= 32, because q_len > 8 leaves MLX's vector kernel at hd 256, and the split default is measured at hd 256 only (Flash-Next gqa 12). (3) Two different floors sit under 'packed-KV eligibility': the fused-route per-layer floor KV_ATTN_FUSED_MIN_TK = 2048 for t_q 1 (src/transformer.zig:17267) versus the matmul2d tile window qkvMppWins (2048 at t_q >= 4, 8192 at 2..3, 16384 at 1, src/transformer.zig:17096-17099). Our doc's 'tried first and declines outside a window' is the tile window; below it the plain decode kernel still serves t_q 1 from the 2048 floor, and upstream's own perf table says packed reads are 'auto from 8K' (docs/performance.md:61), which matches neither constant. (4) Our doc's '1.7x slower' for the large-threadgroup form: the source's measured A/B is 1.9 vs 1.1 ms with 24 KiB score buffers, while the 28 KiB figure is the footprint statement on the same comment; both live at src/transformer.zig:16192-16195. (5) The verify-width eligibility bug our doc attributes to the packed-KV path: the source locates it at kvAttnFusedEligible admitting T_q 2..32 that fell to the composed qmm chain (src/transformer.zig:47470-47479), the same gate our item 4 covers. Other caveats. The dec_attn reference sentence does not restate its machine; the MiMo section's measurements are M5 Ultra, and the 48 -> 18 misroute comment names the 27B but no machine, while the 28-vs-60 A/B names M4 Max. Both custom decode paths are explicitly not bit-identical: dec_attn holds a 2x-of-stock test bar (src/dec_attn.zig:318) and the packed decode is pinned no-worse-than-reference with a different reduction order (src/transformer.zig:16178-16180). kv_mpp_bits accepts 4 and 8 with at most 8 dequant groups per row; the doc's '32-token KV pages' is QKV_MPP_PAGE and the kernel's N = 32. The qk-norm+RoPE fusion our doc describes at head dim 256 serving 1 to 32 rows is fusedQkNormRope256; a separate hd-128 decode variant (one threadgroup per head) serves the same lever at 128. msv_attn_p256's causal arm also yields to MLX's NAX fused kernel where that is preferred (fusedSdpa256Prefill, src/transformer.zig:3477-3481), and the sink arm (fusedSinkAttnPrefill) serves MiMo's 192/128 with no kill switch because no composed score tensor is billed there. The sliding trim numbers are decode; the same table's Laguna XS rows (prompt and decode) are in the clone but belong to a different model family. Every measured number here is upstream's own under its conditions; none was re-measured. License: LICENSE is the MIT License (Copyright 2026 David Dalcu); the repo also ships LICENSE-APACHE-2.0 and a NOTICE for third-party portions, and the budgeted-dispatch design credits oMLX's qwen35_fa256_attention.py as Apache-2.0 in the source comment at src/transformer.zig:3377."
+}

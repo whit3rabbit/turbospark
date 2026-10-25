@@ -2,7 +2,7 @@
 
 CPU reference mathematical kernels and compute strategy marker type (`ComputeStrategy`). These reference implementations serve as the numerical ground truth against which `crates/gpu` Metal kernels and real hardware dispatches are validated for parity.
 
-Downstream workspace crates import this package via the `compute` alias:
+Downstream workspace crates import this package via the `compute` alias (`crates/gpu` depends on the plain package name):
 
 ```toml
 [dependencies]
@@ -38,7 +38,7 @@ compute = { package = "turbospark-compute", path = "../compute" }
 - `quant_gguf_iq_tables.rs` & `quant_gguf_iq_lowbit_tables.rs`: Precomputed IQ codebook lookup tables.
 - `quant_gguf_mxfp4.rs`: GGUF MXFP4 microscopic floating-point quantization reference.
 - `rms_norm.rs`: Reference Root Mean Square Normalization with optional learned weight scaling.
-- `rope.rs`: Rotary positional embeddings (RoPE), proportional NeoX RoPE, and YaRN frequency table generation.
+- `rope.rs`: Rotary positional embeddings (RoPE), proportional NeoX RoPE, interleaved mRoPE (`mrope_component_selector`, `rope_mrope_interleaved`), and YaRN frequency table generation.
 - `sampling.rs`: Logit soft-cap softmax reference (`logit_softcap_softmax`).
 - `steering.rs`: Directional steering operations on residual streams (`Ablate`, `Add`, `Clamp`, `Renorm`).
 - `tolerance.rs`: NaN-sticky relative error metrics (`rel_error`, `bounded_rel_error`, `max_abs_diff`) and tolerance comparisons (`Tolerance`).
@@ -59,6 +59,7 @@ cargo test -p turbospark-compute
 - `tests/kv_quant.rs`: Verifies TurboQuant compression error bounds and Hadamard transforms.
 - `tests/quant_1bit.rs` & `tests/quant_2bit.rs`: Validates 1-bit and 2-bit dequantization and GEMV math.
 - `tests/quant_gguf.rs`, `tests/quant_gguf_iq.rs`, `tests/quant_gguf_mxfp4.rs`, `tests/quant_gguf_q2_0.rs`, `tests/quant_gguf_q4_0.rs`, `tests/quant_gguf_q5_0.rs`: Validates GGUF and IQ codebook unpacking against reference fixtures.
+- `tests/generated/`: Generated oracle fixtures `include!`d by the quantization tests above; regenerate with the generating scripts rather than hand-editing.
 - `tests/encoder_reference.rs`: Validates Post-LN transformer encoder math and CLS pooling.
 - `tests/vision_reference.rs`: Validates vision patch embedding and 2D spatial RoPE.
 - `tests/smoke.rs`: Quick sanity checks across foundational math routines.

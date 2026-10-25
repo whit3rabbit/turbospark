@@ -1,0 +1,387 @@
+{
+  "schema": "turbospark.lab.pinned/1",
+  "id": "mlx-serve.gdn_decode",
+  "kernel": "the GatedDeltaNet decode and verify kernels of src/gdn_decode.zig: K1 msv_gdn_decode_recur (conv, SiLU, q/k norm, gate chain and delta recurrence in one launch, one head over SPLIT=4 threadgroups of 256 threads, each recomputing its head's prework before its slice of the recurrence rows), K2 msv_gdn_decode_normgate_rot (per-head gated RMS norm over one Hadamard block, then the out_proj rotation via signs and an in-threadgroup Walsh-Hadamard transform), K1S msv_gdn_decode_recur_seq (the same per-token prework and recurrence token after token over 1 to 16 rows, with the per-step state capture rollback reads), the fold msv_gdn_decode_recur_seq_fold (recurrence + norm-gate + conv-input concat in one 1024-thread launch per head, 1 to 8 rows), the tree pair msv_gdn_decode_tree_pre + msv_gdn_decode_tree (one simdgroup per (head, row) prework job, then a parents-first walk with one dv row per simdgroup and restart states in registers), and msv_gdn_decode_replay (the commit: the recurrence along the kept path from the round's input state, plus the conv-window copy, in the same launch)",
+  "kernel_class": "gdn",
+  "repo": "mlx-serve",
+  "summary": "Serves the GatedDeltaNet layers' single-token step and the speculative verify rows on Metal. Serial decode is one dispatch (recur, K1 alone) or two (step, K1 + K2) per layer: each head's DV rows split over 4 threadgroups that recompute the conv, SiLU and q/k norm prework for their head because the recompute is cheaper than a barrier, and Hadamard packs get the gated RMS norm plus rotation in K2. Verify runs the same per-token arithmetic over up to 16 rows with the state rounded to its stored dtype after every token, as a chain (recurSeq or the fold, with per-step state capture) or a draft tree (recurTree + replay, restart states in registers, no capture).",
+  "source": {
+    "url": "https://github.com/ddalcu/mlx-serve",
+    "rev": "191da71de32a65f69ebceeb6cb2e91036ab50b30",
+    "rev_date": "2026-10-22",
+    "license": "MIT",
+    "files": [
+      "src/gdn_decode.zig",
+      "src/transformer.zig",
+      "src/model.zig",
+      "src/rht.zig",
+      "docs/gotchas/engine-mlx.md",
+      "benchmarks.md"
+    ],
+    "symbols": [
+      "gateDtype",
+      "seqNt",
+      "inputsFit",
+      "buildConfigs",
+      "buildConfig2",
+      "buildSeqConfig",
+      "seqDtypes",
+      "buildTreeConfigs",
+      "treeTable",
+      "buildFoldConfig",
+      "foldDeclined",
+      "recur",
+      "step",
+      "recurSeq",
+      "recurTree",
+      "replay",
+      "recurSeqFold",
+      "Geometry",
+      "MAX_SEQ",
+      "FOLD_MAX_SEQ",
+      "gdnDecodeRecurEnabled",
+      "gdnVerifyFoldEnabled",
+      "ssmStateDtype",
+      "gdnStateF32Enabled",
+      "kernelBlock"
+    ]
+  },
+  "models": [
+    {
+      "name": "Qwen3.8 Flash-Next 27B",
+      "quant": "mixed 4-8 bit MLX affine; GDN activations bf16 over an f32 recurrent state by default (MLX_SERVE_GDN_STATE_F32=0 restores bf16)",
+      "family": "qwen4_exp (their model_type; inside our dense qwen3_5 span)",
+      "machine": "M4 Max 128 GB",
+      "role": "primary: the -3.9 percent GDN fusion figure was measured on it, and its GDN geometry is Hk 16, Hv 48, dk = dv = 128 (src/transformer.zig:65327)"
+    },
+    {
+      "name": "Qwen3.8-27B",
+      "quant": "MLX affine 4-bit, group 64 (their ddalcu pack)",
+      "family": "dense qwen3_5",
+      "machine": "M4 Max 128 GB",
+      "role": "the 106 tok/s dflash install whose GDN layers take the row-exact arm of these kernels under a DFlash2 drafter"
+    },
+    {
+      "name": "Ternary Bonsai 2 27B",
+      "quant": "2-bit ternary affine; f32 GDN state (src/transformer.zig:56865 names Bonsai 2 for the StT = float instantiation)",
+      "family": "qwen3_5",
+      "machine": "M4 16 GB",
+      "role": "secondary: a no-Hadamard pack, so its verify rows take recurSeq / recurTree / replay"
+    }
+  ],
+  "settings": [
+    {
+      "name": "split_threadgroups_per_head",
+      "value": 4,
+      "unit": "threadgroups",
+      "condition": "K1 and K1S: each head's DV rows split over SPLIT threadgroups; the fold kernel passes template SPLIT 1 (one threadgroup per head)",
+      "kind": "hardcoded",
+      "source": "src/gdn_decode.zig:413",
+      "note": "grid hv * SPLIT * NT threads with NT-sized threadgroups (src/gdn_decode.zig:496-497); hv = threadgroup_position_in_grid.x / SPLIT, part = the remainder (src/gdn_decode.zig:36-37); fold SPLIT at src/gdn_decode.zig:893"
+    },
+    {
+      "name": "k1_threads_per_threadgroup",
+      "value": 256,
+      "unit": "threads",
+      "condition": "K1 serial decode, and K1S off NAX",
+      "kind": "hardcoded",
+      "source": "src/gdn_decode.zig:414",
+      "note": "8 simdgroups; their comment: 4 dv rows per simdgroup"
+    },
+    {
+      "name": "k1_rows_per_simdgroup",
+      "value": 4,
+      "unit": "dv rows",
+      "condition": "K1 at NT 256 and DV 128",
+      "kind": "derived",
+      "source": "src/gdn_decode.zig:32",
+      "note": "R = RB / NSG = (DV / SPLIT) / (NT / 32) = (128 / 4) / 8 = 4; RB at src/gdn_decode.zig:31"
+    },
+    {
+      "name": "seq_threads_nax",
+      "value": 1024,
+      "unit": "threads",
+      "condition": "K1S (recurSeq) and the fold on NAX hosts; other GPUs cap this kernel's threadgroup below 1024 and keep K1's 256",
+      "kind": "derived",
+      "source": "src/gdn_decode.zig:420",
+      "note": "seqNt() reads transformer.zig's naxAvailable(); their comment (src/gdn_decode.zig:415-418): a token's rows then take one reduction pair in sequence, not four, and a row's arithmetic is the same, so the rows are bit-identical either way"
+    },
+    {
+      "name": "seq_rows_per_simdgroup_nax",
+      "value": 1,
+      "unit": "dv rows",
+      "condition": "K1S on NAX (seqNt 1024); 4 off NAX",
+      "kind": "derived",
+      "source": "src/gdn_decode.zig:416",
+      "note": "R = (128 / 4) / (1024 / 32) = 1"
+    },
+    {
+      "name": "fold_threads_per_threadgroup",
+      "value": 1024,
+      "unit": "threads",
+      "condition": "recurSeqFold only: one threadgroup per head; a GPU whose pipeline grants fewer threads declines it cleanly at first dispatch and the caller keeps the unfolded chain",
+      "kind": "hardcoded",
+      "source": "src/gdn_decode.zig:861",
+      "note": "fold_ok latch at src/gdn_decode.zig:945-955; 2048 is named as exceeding every GPU's limit (test-seam comment src/gdn_decode.zig:862)"
+    },
+    {
+      "name": "fold_max_rows",
+      "value": 8,
+      "unit": "rows",
+      "condition": "recurSeqFold only; their comment: the fold keeps a head's y rows in threadgroup memory beside K1S's q/k/v rows, past 8 they pass 32 KB",
+      "kind": "hardcoded",
+      "source": "src/gdn_decode.zig:594"
+    },
+    {
+      "name": "max_verify_rows",
+      "value": 16,
+      "unit": "rows",
+      "condition": "recurSeq and recurTree t_len bound (MAX_SEQ); the state_seq capture has T rows",
+      "kind": "hardcoded",
+      "source": "src/gdn_decode.zig:592"
+    },
+    {
+      "name": "key_head_dim",
+      "value": 128,
+      "unit": "channels",
+      "condition": "every kernel in this file declines other geometries",
+      "kind": "hardcoded",
+      "source": "src/gdn_decode.zig:529",
+      "note": "the recur gate; the multi-token and replay gates repeat dk/dv 128 and hv % hk == 0 without the hv*dv % 1024 clause (src/gdn_decode.zig:621, 816)"
+    },
+    {
+      "name": "value_head_dim",
+      "value": 128,
+      "unit": "channels",
+      "condition": "every kernel in this file declines other geometries",
+      "kind": "hardcoded",
+      "source": "src/gdn_decode.zig:529"
+    },
+    {
+      "name": "state_layout",
+      "value": "[1, Hv, Dv, Dk] row-major, batch 1; lane-addressed as (hv * DV + dv) * DK + lane * 4, 4 channels per lane",
+      "unit": null,
+      "condition": "K1, K1S, the tree walk and replay all index it the same way",
+      "kind": "hardcoded",
+      "source": "src/gdn_decode.zig:492"
+    },
+    {
+      "name": "capture_layout",
+      "value": "[T, 1, Hv, Dv, Dk], row T-1 never written (partial accept reads at most T-2)",
+      "unit": null,
+      "condition": "recurSeq and the fold, the state_seq output rollback slices",
+      "kind": "hardcoded",
+      "source": "src/gdn_decode.zig:606",
+      "note": "comment src/gdn_decode.zig:151-153 and the t + 1 < TL guard at 246; the capture-tail trim story is docs/gotchas/engine-mlx.md:296"
+    },
+    {
+      "name": "state_dtypes",
+      "value": "StT = the activation dtype or float32; every kernel instantiates T (activations), StT (state) and GT (decay gate) as separate template dtypes",
+      "unit": null,
+      "condition": "recurSeq, recurTree, recurSeqFold and replay; K1 the same (src/gdn_decode.zig:535)",
+      "kind": "hardcoded",
+      "source": "src/gdn_decode.zig:627"
+    },
+    {
+      "name": "per_token_state_rounding",
+      "value": "st = float(static_cast<StT>(st)) after every token inside the kernel",
+      "unit": null,
+      "condition": "K1S recurrence (src/gdn_decode.zig:244), the tree walk (src/gdn_decode.zig:378) and replay (src/gdn_decode.zig:408); the serial K1 rounds once at the store (src/gdn_decode.zig:103)",
+      "kind": "hardcoded",
+      "source": "src/gdn_decode.zig:244",
+      "note": "their comment: the next token reads the state serial decoding stored (StT), not the f32; this is what makes a T-row window equal T one-row calls, pinned by the test at src/transformer.zig:65223"
+    },
+    {
+      "name": "gate_dtype_rule",
+      "value": "GT = the state dtype under bf16 activations, else the activation dtype (f16 Hadamard packs keep their measured f16 gate)",
+      "unit": null,
+      "condition": "the decay gate a + dt_bias -> g in every kernel here",
+      "kind": "hardcoded",
+      "source": "src/gdn_decode.zig:26",
+      "note": "their comment (src/gdn_decode.zig:22-24): a bf16 gate near one is exactly 1.0 and that head never forgets"
+    },
+    {
+      "name": "state_f32_default_flash_next",
+      "value": true,
+      "unit": null,
+      "condition": "qwen4_exp (Flash Next): config.ssm_state_f32 = gdnStateF32Enabled(), on unless MLX_SERVE_GDN_STATE_F32=0; Hadamard packs and GLM-5 are f32 state regardless of the flag",
+      "kind": "hardcoded",
+      "source": "src/model.zig:3222",
+      "note": "ssmStateDtype at src/model.zig:1190, the env default at 2152-2160"
+    },
+    {
+      "name": "qk_norm_eps_k1",
+      "value": 1e-06,
+      "unit": null,
+      "condition": "K1 and K1S prework q/k RMS norm: precise::rsqrt(sumsq / DK + 1e-6f)",
+      "kind": "hardcoded",
+      "source": "src/gdn_decode.zig:64",
+      "note": "K2's norm eps is a runtime 0-dim f32 array (cfg.rms_norm_eps), not a constant (src/gdn_decode.zig:120)"
+    },
+    {
+      "name": "conv_taps",
+      "value": 4,
+      "unit": "taps",
+      "condition": "conv width 4: three conv-state rows plus the current qkv row; conv_w holds 4 * C weights",
+      "kind": "hardcoded",
+      "source": "src/gdn_decode.zig:54",
+      "note": "K1 uses taps 0..2 from conv_state plus qkv (src/gdn_decode.zig:54-56); K1S addresses taps t..t+3 across the conv-state and qkv rows (src/gdn_decode.zig:182-186); conv_state is [1, 3, C] (src/gdn_decode.zig:443)"
+    },
+    {
+      "name": "k2_threads_per_threadgroup",
+      "value": 128,
+      "unit": "threads",
+      "condition": "K2 norm-gate + rotation: grid (Hv * Dv / block) * 128 threads",
+      "kind": "hardcoded",
+      "source": "src/gdn_decode.zig:514",
+      "note": "S = 4 simdgroups do the final rotation store, P = J / S with J = block / 32 (src/gdn_decode.zig:109)"
+    },
+    {
+      "name": "hadamard_block_values",
+      "value": [512, 1024, 2048, 4096],
+      "unit": "elements",
+      "condition": "step() only; the block must also divide Hv * Dv and be a multiple of 4 * Dv (= 512)",
+      "kind": "hardcoded",
+      "source": "src/rht.zig:76",
+      "note": "step's checks at src/gdn_decode.zig:566; the 27B Hadamard pack uses 1024, 2B/4B use 512, 9B uses 4096 (docs/gotchas/engine-mlx.md:5704)"
+    },
+    {
+      "name": "k2_rotation_scale",
+      "value": "rsqrt(block)",
+      "unit": null,
+      "condition": "K2 output store, after the threadgroup and simdgroup butterflies",
+      "kind": "derived",
+      "source": "src/gdn_decode.zig:141",
+      "note": "rsqrt(float(J * 32)) with J = block / 32; the rot output is rounded once to T (src/gdn_decode.zig:147)"
+    },
+    {
+      "name": "tree_prework_launch",
+      "value": "grid (32, 2 * HK + HV, TL), threadgroup (32, 1, 1): one simdgroup per (head, row) job, q/k/v columns read in place from the joined projection",
+      "unit": null,
+      "condition": "recurTree's first launch (msv_gdn_decode_tree_pre)",
+      "kind": "hardcoded",
+      "source": "src/gdn_decode.zig:687"
+    },
+    {
+      "name": "tree_walk_launch",
+      "value": "grid (32, DV, HV), threadgroup (32, 4, 1) = 128 threads: one dv row per simdgroup, rows walked parents first",
+      "unit": null,
+      "condition": "recurTree's second launch (msv_gdn_decode_tree); replay uses the same shape (src/gdn_decode.zig:831-832)",
+      "kind": "hardcoded",
+      "source": "src/gdn_decode.zig:693"
+    },
+    {
+      "name": "tree_prework_precision",
+      "value": "float32",
+      "unit": null,
+      "condition": "pq, pk, pv, pg stored f32 between the two tree launches",
+      "kind": "hardcoded",
+      "source": "src/gdn_decode.zig:682",
+      "note": "k [T, Hk, Dk], v [T, Hv, Dv], g and beta packed [T, Hv, 2], all .float32 (src/gdn_decode.zig:682-685)"
+    },
+    {
+      "name": "tree_restart_states",
+      "value": "kept[TL][4] per lane in registers; row t restarts from kept[parent] when parent != t - 1, and kept[t] is stored only when the table's restart flag is set",
+      "unit": null,
+      "condition": "the tree walk only; a chain never restarts (parent is always t - 1)",
+      "kind": "hardcoded",
+      "source": "src/gdn_decode.zig:352",
+      "note": "restart test at src/gdn_decode.zig:367-368, conditional kept store at 379; per-token rounding still applies before the kept store"
+    },
+    {
+      "name": "tree_table_layout",
+      "value": "6 * T int32: parents (-1 = root), then 4 conv-source rows per row (a value under 3 is a conv-state row, 3 + r a window row), then one restart flag per row",
+      "unit": null,
+      "condition": "recurTree's table from treeTable, resolved on the host once instead of per channel",
+      "kind": "hardcoded",
+      "source": "src/gdn_decode.zig:713",
+      "note": "treeTable body at src/gdn_decode.zig:767-792: parents at [0, n), conv rows at [n, n + 4n), restart flags at [5n, 6n)"
+    }
+  ],
+  "gates": [
+    {
+      "condition": "Hadamard-pack serial decode takes gdn_decode.step: rht != null and batch == 1 and seq_len == 1 and projected == null and !skip_output and !spec_capture_ssm and ssm initialized and kernel == 4 and no KDA vector gate or bounded gate and not kda_sigmoid_out_gate",
+      "source": "src/transformer.zig:31529"
+    },
+    {
+      "condition": "Packs without a Hadamard rotation, serial decode takes recur plus the fused norm-gate epilogue: rht == null and batch == 1 and seq_len == 1 and projected == null and !spec_capture_ssm and kernel == 4 and gdnDecodeRecurEnabled()",
+      "source": "src/transformer.zig:31563"
+    },
+    {
+      "condition": "MTP verify rows (spec_capture_ssm) take this file only at rht == null, batch 1, 1 <= seq_len <= 16 and kernel == 4: a chain tries recurSeqFold first (src/transformer.zig:31629), a draft tree takes recurTree (src/transformer.zig:31646), the unfolded chain recurSeq (src/transformer.zig:31675)",
+      "source": "src/transformer.zig:31605"
+    },
+    {
+      "condition": "gdnDecodeRecurEnabled: MLX_SERVE_GDN_DECODE_RECUR=0 disables, and it additionally requires gdnDecodeFusedEnabled (MLX_SERVE_GDN_DECODE_FUSED, same 0-to-disable form); MLX_SERVE_GDN_VERIFY_FOLD=0 keeps the unfolded recurSeq chain",
+      "source": "src/transformer.zig:39742"
+    },
+    {
+      "condition": "recur kernel geometry: dk == 128 and dv == 128 and hv % hk == 0 and hv*dv % 1024 == 0",
+      "source": "src/gdn_decode.zig:529"
+    },
+    {
+      "condition": "multi-token kernels (recurSeq, recurTree, replay) geometry: 1 <= t_len <= 16 and dk == 128 and dv == 128 and hv % hk == 0; the hv*dv % 1024 clause is recur's only",
+      "source": "src/gdn_decode.zig:620"
+    },
+    {
+      "condition": "input dtypes: activations bf16 or f16; a, b, conv_state, conv_w, A_log, dt_bias, q_scale, k_scale all the activation dtype; the state its dtype or float32; per-token rows exactly [1, T, width] and weights/states exactly the indexed element counts (inputsFit)",
+      "source": "src/gdn_decode.zig:622"
+    },
+    {
+      "condition": "step() block gates: rht.kernelBlock(block) and hv*dv % block == 0 and block % (4*dv) == 0",
+      "source": "src/gdn_decode.zig:566"
+    },
+    {
+      "condition": "replay gates: nonempty path and prework bound, dk/dv 128, hv % hk == 0, conv_input [1, rows, C] with 3*C <= 32*Dv*Hv, conv rows in range",
+      "source": "src/gdn_decode.zig:816"
+    },
+    {
+      "condition": "joined in-projection read in place: its dtype matches the activation dtype and a_off, b_off sit at or past C and within the row width",
+      "source": "src/gdn_decode.zig:719"
+    }
+  ],
+  "measured": [
+    {
+      "metric": "forward_ms_pct",
+      "value": -3.9,
+      "model": "Qwen3.8 Flash-Next (qwen4_exp), serial decode, in-situ on the real pack with QWEN4_GDN_CHECK=1",
+      "machine": "not stated (their M4 Max gotcha log)",
+      "conditions": "measures the composed-chain fusion gdnPreworkFused + gdnNormGateFused (MLX_SERVE_GDN_DECODE_FUSED), the sibling of this file's two-dispatch form on the no-Hadamard path: 15.45 -> 14.84 ms/forward, serial 60.0 -> 60.4 tok/s short, 52.7/53.4 -> 53.5/54.2 at 8.5k; 179/180 per-layer checks exact, one k element off by 1 bf16 ulp",
+      "provenance": "upstream_reported",
+      "source": "docs/gotchas/engine-mlx.md:4268"
+    },
+    {
+      "metric": "gdn_recurrence_ubench_ms",
+      "value": "12.3 at T=1, 8.7 at T=16",
+      "model": "Qwen3.8 27B pack inventory (48 GDN in/out projections)",
+      "machine": "M4 Max",
+      "conditions": "MLX_SERVE_GDN_UBENCH attribution ubench of the stock recurrence kernel, not these fused kernels: the S=16 non-qmm marginal is 19 ms, so the recurrence is not in the marginal",
+      "provenance": "upstream_reported",
+      "source": "docs/gotchas/engine-mlx.md:232"
+    }
+  ],
+  "lab_mapping": [
+    {
+      "setting": "per_token_state_rounding",
+      "maps_to": "TURBOSPARK_GDN_LAZY_TAPE (crates/lab/src/knobs.rs knob gdn_lazy_tape, families qwen35 and qwen36, BitExact): our GDN decode path, the arm a baseline comparison against this pinned set would toggle",
+      "env": "TURBOSPARK_GDN_LAZY_TAPE",
+      "note": "the exactness axes a sweep would pair with it are the rounding point (StT per token vs once) and the dispatch split (two-dispatch vs composed chain)"
+    },
+    {
+      "setting": "split_threadgroups_per_head",
+      "maps_to": "docs/KAPITSA_KERNELS.md decision-table item 9 (fused GDN prep, conv+SiLU+qk-norm+g/beta, declined at an estimated <= 1 percent because it breaks the (32,4) delta layout contract): this kernel is the shape that trade took on their side",
+      "env": null,
+      "note": "our doc's GDN section repeats the 3.9 percent figure as the reason to re-estimate with the dispatch probe before reopening"
+    },
+    {
+      "setting": "max_verify_rows",
+      "maps_to": "none yet in tslab: the GDN tree walk prototype lives at crates/gpu/tests/tree_verify_cost_bench.rs (tv_gdn_tree, our doc's decision-table item 3) and tslab has no GDN tree-verify bench surface to sweep",
+      "env": null
+    }
+  ],
+  "docs": [
+    "docs/MLX_SERVE_KERNELS.md#gdn-three-prefill-kernels-and-a-two-dispatch-decode",
+    "docs/MLX_SERVE_KERNELS.md#the-row-exact-kernels-which-make-the-tree-verify-possible"
+  ],
+  "notes": "Doc-vs-source, sided with the source: (1) our doc's GDN-section bullet attributes the per-token prework, the per-step state capture and the T-row-equals-T-one-row property to 'the verify form'; in the source that description is recurSeq (K1S, msv_gdn_decode_recur_seq), the chain form, whose capture is [T, 1, Hv, Dv, Dk] (B = 1). recurTree (K1P + K1TR) writes no per-step capture: it keeps restart states in registers and its rollback replays the kept path from the round's input state via replay, with the conv window copied in the same launch. Our doc's row-exact section describes the tree correctly; the GDN-section bullet conflates the two forms. (2) The dispatch gates split the file in two: step (K1 + K2 with the Hadamard rotation) requires a Hadamard pack (rht != null) and serves only serial seq_len 1; recurSeq, recurTree, replay and the fold require the opposite (rht == null). On Hadamard packs the verify rows stay on the composed chain, so our doc's single continuous story (two-dispatch decode, then the verify form) is really two pack flavors. (3) The 3.9 percent figure: upstream measured it on the composed-chain fusion gdnPreworkFused + gdnNormGateFused in transformer.zig (MLX_SERVE_GDN_DECODE_FUSED), not on this file's two-dispatch form; our doc's 'three fused GDN decode dispatches per layer, 3.9 percent of a Flash Next forward' cites it for the fusion family, and the KAPITSA item 9 comparison should quote it with that scope. (4) License: our doc's pinned section says Apache-2.0; the repo's LICENSE is MIT (LICENSE:1, Copyright 2026 David Dalcu) with LICENSE-APACHE-2.0 and NOTICE covering the incorporated components, and the other mlx-serve entries use MIT. (5) 'Bit-identical to the composed chain' is the file header's own claim (src/gdn_decode.zig:7), pinned by their tests (step/recur parity src/transformer.zig:65203, recurSeq T-row window 65223, the fold parity cases 65322); a reverted sibling variant once diverged by one bf16 ulp on rare beta inputs (docs/gotchas/engine-mlx.md:234), which is why they call that class of claim a sampling result. (6) 'Kept in fp32 on Flash Next by default' verified: qwen4_exp defaults ssm_state_f32 on (src/model.zig:3222, env default at 2152-2160), and Hadamard packs plus GLM-5 are f32 state regardless (src/model.zig:1190); the gate dtype follows the state under bf16 activations for the same near-one reason (src/gdn_decode.zig:22-27). (7) The fold can be declined per GPU at runtime: a pipeline thread limit below 1024 latches fold_ok false at first dispatch and the caller keeps the unfolded chain (src/gdn_decode.zig:945-955), so engagement is machine-dependent. (8) Their K2 once served block 1024 only and mis-rotated 512/4096-block packs on the one-token forward (docs/gotchas/engine-mlx.md:5704); the pinned revision admits 512, 1024, 2048 and 4096 (src/rht.zig:76), and the guard test runs every block bit for bit against the chain (docs/gotchas/engine-mlx.md:5706). (9) Our doc's 1-node-tree conv-row defect and its guard are in the source history (docs/gotchas/engine-mlx.md:5368-5373) with the stride fix visible at src/gdn_decode.zig:322. (10) The tree prework's restart flag trick means a row whose parent is the previous row does not re-store its state: the walk reads parents[t] once per token and kept[] only on real branches (src/gdn_decode.zig:367-368, 379), which our doc's 'restart states in registers' does not spell out. (11) No number in the repo measures this file's kernels directly; both measured figures belong to neighbouring paths (the composed-chain fusion and the stock recurrence ubench) and are labeled as such in their conditions."
+}

@@ -14,14 +14,22 @@ power, steering, and speculative decoding.
 
 ## Directory map
 
-- `src/main.rs`, `src/startup_probe_main.rs`: the `turbospark-bench` and
-  `turbospark-startup-probe` binaries.
+- `src/main.rs`, `src/startup_probe_main.rs`, `src/meeting_eval_main.rs`: the
+  `turbospark-bench`, `turbospark-startup-probe`, and `meeting_eval` binaries.
 - `src/real_model.rs`: shared real-install protocol and model setup.
 - `src/real_model_params.rs`: family-specific context and budget parameters.
-- `tests/`: offline fixtures plus ignored real-install gates.
+- `src/lib.rs`: measurement math shared with `crates/lab` (`tslab`):
+  `logit_compare` (KL and top-k next-token comparison), `quality_corpus`
+  (prefill arm probe corpus slices), `tree_replay` and `tree_replay_record`
+  (host-only tree versus chain speculative replay), and `meeting` (Frozen E
+  cpWER scoring behind `meeting_eval`).
+- `tests/`: offline fixtures plus ignored real-install gates and probes.
 - `prompts/`: frozen protocol and quality reference prompt fixtures.
-- Measurement and analysis helper scripts live in the repository root
-  `scripts/` (`parity.sh`, `power.sh`), not in this crate.
+- `testdata/frozen_e/` and `scripts/`: the committed Frozen E references and
+  frozen counts, the fixture rebuild helpers, and the reference Python scorer.
+- Repository-root `scripts/` also holds measurement helpers this crate does
+  not own (`parity.sh`, `power.sh`, and `bench_api.py` with
+  `bench_api_drive.sh` for decode tok/s over an OpenAI-compatible endpoint).
 
 ## Rules
 
@@ -33,6 +41,15 @@ power, steering, and speculative decoding.
   resident weights, slots, and KV cache contribute to the process footprint.
 - CPU, synthetic, projected, or host-contaminated results do not establish a
   real Metal, quality, or memory claim.
+- The prefill arm probes and `tslab` measure their bounds through the shared
+  math in `src/lib.rs` (`logit_compare`, `quality_corpus`). Do not fork private
+  copies: a bound measured by one must be the bound measured by the other.
+- Probes report, gates assert. An ignored probe needs a real install and
+  prints its table for a reader; only a gate holds a frozen count, digest, or
+  ceiling, and a gate that can fail on machine state is worse than none.
+- The `meeting` scorer must reproduce the frozen Frozen E counts exactly, and
+  agree count for count with `scripts/frozen_e_score.py`, before any native
+  result is compared against them.
 - Preserve frozen vectors, fixtures, and baselines. Re-extraction or a changed
   protocol is a new experiment.
 - Keep benchmark procedures here and in the canonical docs, never in the root

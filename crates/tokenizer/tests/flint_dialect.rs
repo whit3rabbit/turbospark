@@ -76,17 +76,42 @@ fn no_bos_is_prepended() {
     assert_eq!(tok.encode("x", true), tok.encode("x", false));
 }
 
-/// The think pair and tool markup are added but NOT special, so no id-bracket
-/// arm may claim them.
+/// The tool markup has no parser, so no id-bracket arm may claim it. The think
+/// pair is added but NOT special and still resolves: the split keys on ids.
 #[test]
-fn think_and_tool_markup_ids_are_sentinels() {
+fn tool_ids_are_sentinels_and_the_think_pair_resolves() {
     let tok = fixture();
     assert_eq!(tok.tool_call_start_id, NO_SUCH_TOKEN_ID);
     assert_eq!(tok.tool_call_end_id, NO_SUCH_TOKEN_ID);
     assert_eq!(tok.tool_response_id, NO_SUCH_TOKEN_ID);
     assert_eq!(tok.channel_start_id, NO_SUCH_TOKEN_ID);
-    assert_eq!(tok.think_start_id, None);
-    assert_eq!(tok.think_end_id, None);
+    assert_eq!(tok.think_start_id, tok.token_to_id("<think>"));
+    assert_eq!(tok.think_end_id, tok.token_to_id("</think>"));
+    assert!(tok.think_start_id.is_some() && tok.think_end_id.is_some());
+}
+
+/// The reported bug: the thought arrived inline in the reply. The template's
+/// generation prompt is bare `<|assistant|>`, so nothing is prefilled and the
+/// model's own `<think>` opens the frame. Tool markup stays content.
+#[test]
+fn the_think_block_splits_into_reasoning() {
+    use turbospark_tokenizer::{StructuredAssistantDecoder, StructuredAssistantEvent};
+    let tok = fixture();
+    let start = tok.token_to_id("<think>").unwrap();
+    let end = tok.token_to_id("</think>").unwrap();
+    let mut decoder = StructuredAssistantDecoder::new(&tok, Default::default(), String::new, &[]);
+    assert!(decoder.consume(start, "<think>").unwrap().is_empty());
+    assert_eq!(
+        decoder.consume(-1, "plan").unwrap(),
+        [StructuredAssistantEvent::Reasoning("plan".into())]
+    );
+    assert!(decoder.consume(end, "</think>").unwrap().is_empty());
+    let text = "answer <tool_call>f<arg_key>k</arg_key><arg_value>v</arg_value></tool_call>";
+    assert_eq!(
+        decoder.consume(-1, text).unwrap(),
+        [StructuredAssistantEvent::Content(text.into())]
+    );
+    assert!(!decoder.has_tool_calls());
 }
 
 /// A table that is GLM must still be GLM: the Flint probe must not widen to

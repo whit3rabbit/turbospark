@@ -39,15 +39,32 @@ loop's `run-experiment`. Text and audio installs of every family.
 - `src/orchestrate.rs`: fresh-process runs, rotation, the paired A/B.
 - `src/stats.rs`, `src/gates.rs`: the verdict rule and the quality and
   memory bounds. Both are fixed in code on purpose.
+- `src/ledger.rs`, `src/paths.rs`: the append-only JSON-lines ledger every
+  record lands in, and the lab dir (`$TURBOSPARK_LAB_DIR`, else
+  `$TURBOSPARK_HOME/lab`, else `~/.turbospark/lab`).
 - `src/host.rs`, `src/lock.rs`: quiet-host rules and the machine lock.
 - `src/knobs.rs`: the runtime switch table (`tests/knob_registry.rs`).
 - `src/experiment.rs`, `src/integrity.rs`, `src/spec.rs`: gate,
   run-experiment, confirm, and what an experiment may not touch.
+- `src/workload.rs`: prompts, arms, metrics, slots, residency, and
+  speculation: the vocabulary the CLI, spec, and worker share.
 - `src/kernel/`: microbenches behind `KernelBench` (`kernel/mod.rs` holds
   the registry). `src/ane.rs`: compute-plan placement.
+- `src/pinned.rs`, `pinned/`: the pinned kernel references, one JSON per
+  kernel from `nace-ai/kapitsa`, `jundot/omlx`, and `ddalcu/mlx-serve`,
+  each with the repo revision it was read at, the models it serves, and its
+  hardcoded settings traceable to `path:line`. The reader validates every
+  file against `pinned/README.md`, embeds the set into the binary, and
+  `tslab pinned` lists or inspects it; a sweep loads a tweaked copy with
+  `--dir`. `tests` in `src/pinned.rs` fail when a file drifts from the
+  embedded copy or is added without registering it.
 - `src/tree_replay.rs`: the tree-verify acceptance replay. Its lattice
   recorders and replay math live in `crates/bench` (`tree_replay*.rs`), shared
   with `kflash_tree_replay_probe.rs`.
+- `src/depth_replay.rs`: offline tuning for adaptive speculation depth.
+  `chain-capture` records an MTP chain's per-position match length once;
+  `depth-replay` walks the runtime's own controller over that capture and a
+  round-cost table.
 
 ## Rules
 

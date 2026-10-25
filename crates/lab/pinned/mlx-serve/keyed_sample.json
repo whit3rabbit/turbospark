@@ -1,0 +1,284 @@
+{
+  "schema": "turbospark.lab.pinned/1",
+  "id": "mlx-serve.keyed_sample",
+  "kernel": "the keyed Gumbel-max sampler (the msv_keyed_sample Metal kernel plus its host noise twin) and its acceptance use: verify rows, drafts and correction draws keyed by (seed, absolute position, token id)",
+  "kernel_class": "sampling",
+  "repo": "mlx-serve",
+  "summary": "A Metal Gumbel-max sampler whose noise is splitmix64 of the request seed, the token's absolute position and the token id, so every seeded sampled draw on a row-exact install shares the serial step's key and byte-identical output survives the drafter and a prefix-cache hit. Armed with ModelConfig.rowExactDecode plus Metal, it serves temperature/top-k/top-p/min_p sampling; with a DFlash drafter bound and exact MTP acceptance it becomes the accept rule itself, a draft staying only when it equals the verify row's draw. The lossy Typical and TokenV3 acceptance modes live beside it in mtp_acceptance.zig and never take that path.",
+  "source": {
+    "url": "https://github.com/ddalcu/mlx-serve",
+    "rev": "191da71de32a65f69ebceeb6cb2e91036ab50b30",
+    "rev_date": "2026-10-22",
+    "license": "MIT",
+    "files": [
+      "src/keyed_sample.zig",
+      "src/generate.zig",
+      "src/model.zig",
+      "src/transformer.zig",
+      "src/mtp_acceptance.zig",
+      "src/scheduler.zig",
+      "docs/gotchas/engine-mlx.md",
+      "docs/mtp-acceptance-port.md",
+      "docs/benchmarks/qwen38-mtp-port/README.md"
+    ],
+    "symbols": [
+      "mix",
+      "gumbel",
+      "sample",
+      "config",
+      "Params",
+      "sampleTokenLazy",
+      "correctionDraw",
+      "treeNoise",
+      "verifySerialSamples",
+      "mtpCoupledDrafts",
+      "mtpSamplingDraw",
+      "seedKey",
+      "rowExactDecode",
+      "rowExactArch",
+      "mtpAcceptance",
+      "specTreeSupported",
+      "exactPrefix",
+      "typicalPrefix",
+      "tokenV3Prefix"
+    ]
+  },
+  "models": [
+    {
+      "name": "Qwen3.8-27B",
+      "quant": "MLX affine 4-bit, group 64 (the row kernels also take 6 and 8 bits)",
+      "family": "qwen3_5 (dense)",
+      "machine": "M4 Max 128 GB",
+      "role": "primary: the row-exact + DFlash2 install whose sampled verify rows and drafts take the keyed sampler"
+    },
+    {
+      "name": "Qwen3.8 Flash-Next",
+      "quant": "mixed 4/8-bit (ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit), 8-bit KV cache",
+      "family": "qwen3_5 (dense)",
+      "machine": "M5 Max 128 GB",
+      "role": "the lossy acceptance ladder machine (Typical 0.2 and TokenV3 0.95 against exact)"
+    },
+    {
+      "name": "Nemotron-H and Qwen3.5 installs",
+      "quant": "not stated",
+      "family": "nemotron_h, qwen3_5",
+      "machine": "not stated",
+      "role": "the 2026-09-27 drafted-vs-serial and cache-hit replay incident whose fix was keyed_sample plus position_base = full prompt length"
+    }
+  ],
+  "settings": [
+    {
+      "name": "key_composition",
+      "value": "seed, absolute position, token id, mixed by three splitmix64 rounds in that order; the token id enters last and raw",
+      "unit": null,
+      "condition": "every draw, kernel and host twin",
+      "kind": "hardcoded",
+      "source": "src/keyed_sample.zig:18",
+      "note": "kernel tf_uniform at src/keyed_sample.zig:18-23; host twin gumbel at src/keyed_sample.zig:282-288"
+    },
+    {
+      "name": "splitmix64_constants",
+      "value": "multipliers 0xBF58476D1CE4E5B9 and 0x94D049BB133111EB with right shifts 30, 27, 31",
+      "unit": null,
+      "condition": "each mix round",
+      "kind": "hardcoded",
+      "source": "src/keyed_sample.zig:16",
+      "note": "identical host mix at src/keyed_sample.zig:272-279"
+    },
+    {
+      "name": "seed_offset",
+      "value": "0x9E3779B97F4A7C15",
+      "unit": null,
+      "condition": "added to the request seed before the first mix round",
+      "kind": "hardcoded",
+      "source": "src/keyed_sample.zig:19",
+      "note": "the same golden-ratio constant keys the stock non-keyed seeded path's MLX RNG key (src/generate.zig:14188)"
+    },
+    {
+      "name": "position_multiplier",
+      "value": "0xD1B54A32D192ED03",
+      "unit": null,
+      "condition": "the position is truncated to u32, multiplied by this, then xor'd in",
+      "kind": "hardcoded",
+      "source": "src/keyed_sample.zig:20",
+      "note": "host truncate at src/keyed_sample.zig:284; the kernel positions buffer is uint32, so keys wrap past 2^32"
+    },
+    {
+      "name": "uniform_bits",
+      "value": 24,
+      "unit": "bits",
+      "condition": "u = (float(x >> 40) + 0.5) / 2^24, the top 24 bits of the final mix",
+      "kind": "hardcoded",
+      "source": "src/keyed_sample.zig:22"
+    },
+    {
+      "name": "gumbel_score",
+      "value": "v/T - log(-log(u)); ties go to the earlier candidate in the (value desc, id asc) order",
+      "unit": null,
+      "condition": "over the kept candidates after temperature, top_k, top_p and min_p",
+      "kind": "hardcoded",
+      "source": "src/keyed_sample.zig:237",
+      "note": "host twin at src/keyed_sample.zig:287; consumed off-kernel by the DFlash tree lattice noise (src/generate.zig:6587)"
+    },
+    {
+      "name": "candidates_cap",
+      "value": 1024,
+      "unit": "candidates",
+      "condition": "most candidates a row sorts; tokens within the near window of the max are gathered directly, otherwise a radix select finds the C largest",
+      "kind": "hardcoded",
+      "source": "src/keyed_sample.zig:9",
+      "note": "rides the Metal pipeline as template constant C (src/keyed_sample.zig:267)"
+    },
+    {
+      "name": "near_window",
+      "value": 20.0,
+      "unit": "logits / temperature",
+      "condition": "the fast gather takes the widest of 20, 10, 5 whose count fits the candidate cap and holds the rule's candidates; past all three a radix select runs",
+      "kind": "hardcoded",
+      "source": "src/keyed_sample.zig:10",
+      "note": "window rule at src/keyed_sample.zig:79-100, cfg[2] carries NEAR (src/keyed_sample.zig:311)"
+    },
+    {
+      "name": "top_p_window_margin",
+      "value": 0.0001,
+      "unit": "probability mass",
+      "condition": "the fast window must hold (top_p + 1e-4) of the whole-row softmax to be trusted",
+      "kind": "hardcoded",
+      "source": "src/keyed_sample.zig:96"
+    },
+    {
+      "name": "threadgroup_threads",
+      "value": 1024,
+      "unit": "threads",
+      "condition": "one threadgroup per row, 32 simdgroups (NSG = TG / 32)",
+      "kind": "hardcoded",
+      "source": "src/keyed_sample.zig:27",
+      "note": "grid is 1024 * rows with threadgroup 1024 (src/keyed_sample.zig:264-265), part of the per-(rows, vocab) config cache key"
+    },
+    {
+      "name": "max_rows_per_call",
+      "value": 64,
+      "unit": "rows",
+      "condition": "sample() returns error.TooManyRows past 64 rows per dispatch; every shipped call site passes one row",
+      "kind": "hardcoded",
+      "source": "src/keyed_sample.zig:302",
+      "note": "verifySerialSamples slices verify logits per row and samples one row at a time (src/generate.zig:6965-6978); the multi-row form is exercised by tests only at this rev"
+    },
+    {
+      "name": "temperature_floor",
+      "value": 1e-06,
+      "unit": "temperature",
+      "condition": "the host passes 1 / max(temperature, 1e-6) as inv_t; requests under 0.01 take the argmax path before the sampler runs",
+      "kind": "hardcoded",
+      "source": "src/keyed_sample.zig:311",
+      "note": "argmax cutoff at src/generate.zig:13937"
+    },
+    {
+      "name": "position_base_rule",
+      "value": "absolute position of generated token 0 = full prompt length (the lookup prompt when one is supplied), never the uncached suffix; a draw's key position is position_base + draw index",
+      "unit": null,
+      "condition": "every keyed draw",
+      "kind": "hardcoded",
+      "source": "src/generate.zig:2753",
+      "note": "the draw index enters at src/generate.zig:13947; the scheduler passes slot.full_prompt (src/scheduler.zig:8726) so a prefix-cache hit leaves the base unchanged, and the restored-prefix offset rides a separate field (src/scheduler.zig:8728)"
+    },
+    {
+      "name": "verify_row_key_rule",
+      "value": "verify row i keys generated index G + 1 + i (t1 sits at G); a tree row keys G + 1 + depth[i]; the DFlash lattice noise keys position_base + generated + 1 + d per candidate; a correction or bonus draw keys generated + accepted + 2; a coupled MTP draft keys chain.pos0 + i",
+      "unit": null,
+      "condition": "speculative rounds of a seeded keyed request",
+      "kind": "hardcoded",
+      "source": "src/generate.zig:6971",
+      "note": "tree lattice base at src/generate.zig:6585, correction draw at src/generate.zig:5116, coupled draft at src/generate.zig:7613, the one request-local draw-index allocator that keeps any two keyed draws off one key at src/generate.zig:6996-7002"
+    }
+  ],
+  "gates": [
+    {
+      "condition": "the keyed flag is armed once at Generator init: xfm.config.rowExactDecode() and mlx.metalKernelsAvailable() (the sampler is a Metal kernel)",
+      "source": "src/generate.zig:2752"
+    },
+    {
+      "condition": "rowExactDecode = row_exact_covered and dflash_bound and rowExactArch; rowExactArch is nemotron_h, or a qwen3_5 prefix that is not MoE with hadamard_block == 0",
+      "source": "src/model.zig:1225",
+      "note": "rowExactArch at src/model.zig:1237; a DFlash-bound config forces MTP acceptance to .exact (src/model.zig:1231)"
+    },
+    {
+      "condition": "a sampled request (temperature >= 0.01) takes the keyed draw only with a seed; an unseeded sampled request on a keyed install gets a random u64 from the timestamp xor the Transformer pointer, so drafts and verify rows share the serial sampler's keys",
+      "source": "src/generate.zig:13944",
+      "note": "seed assignment at src/generate.zig:2757-2760; greedy argmax below 0.01 at src/generate.zig:13937; the sync sampler's twin at src/generate.zig:15326"
+    },
+    {
+      "condition": "MTP acceptance becomes serial's own draw only when mtp_serial_accept holds: MTP active, rowExactDecode, and the acceptance mode is .exact; under it the draft is the verify row's keyed draw over the head's logits, a draft stays only while it equals the row's draw, and the Leviathan rejection path is skipped",
+      "source": "src/generate.zig:3697",
+      "note": "stochastic flag off at src/generate.zig:9504; verify reads verifySerialSamples instead of verifyArgmax at src/generate.zig:9692; coupled-drafts gate at src/generate.zig:6989"
+    },
+    {
+      "condition": "DFlash rounds split the same way: serial (keyed, temperature > 0.01, seeded) keeps drafts matching the row's key; stochastic requests take Leviathan rejection min(1, p/q) with q from the proposal",
+      "source": "src/generate.zig:5679",
+      "note": "the stochastic arm at src/generate.zig:5680"
+    },
+    {
+      "condition": "DFlash tree rounds additionally require specTreeSupported: rowExactDecode, MoE layers present, no Hadamard rht, GDN recur enabled, Metal kernels available",
+      "source": "src/transformer.zig:21011",
+      "note": "tree-round pick at src/generate.zig:5701; the lattice's Gumbel noise comes from the host twin (src/generate.zig:6583-6590)"
+    },
+    {
+      "condition": "the lossy Typical and TokenV3 acceptance modes are opt-in and mutually exclusive (--mtp-typical d > 0, --mtp-tokenv3 0 <= a <= 1) and never take the keyed serial-draw acceptance, because mtp_serial_accept requires the .exact tag; a lossy mode without batched corrections is a hard error",
+      "source": "src/mtp_acceptance.zig:5",
+      "note": "mode install and lossy log lines at src/generate.zig:2950-2962; default thresholds DEFAULT_TYPICAL_DELTA 0.2 and DEFAULT_TOKENV3_ALPHA 0.95 at src/mtp_acceptance.zig:28-29; prefix fns exactPrefix/typicalPrefix/tokenV3Prefix at src/mtp_acceptance.zig:87/97/107, graphs in src/generate.zig:8229/8241"
+    },
+    {
+      "condition": "rows past 64 in one sample() call return error.TooManyRows",
+      "source": "src/keyed_sample.zig:302"
+    },
+    {
+      "condition": "runtime acceptance gate: per-draft acceptance under 0.50 after 5 attempts (SPEC_GATE_WARMUP overridable in [1, 64]) disables speculation for the rest of the request, sticky",
+      "source": "src/generate.zig:2079",
+      "note": "warmup constant at src/generate.zig:2057; applies to nextPld, nextDrafter and nextDflash (src/generate.zig:2011-2020)"
+    }
+  ],
+  "measured": [
+    {
+      "metric": "mtp_verifier_decode_tok_s",
+      "value": "exact 92.5, Typical 0.2 106.3, TokenV3 0.95 106.5 (short median); 82.4 / 86.7 / 89.9 at the ~16K rung; second pack (MTPLX Optimized-Speed, BF16 KV): 102.0 / 115.5 / 119.3 and 90.9 / 99.8 / 103.1",
+      "model": "Qwen3.8 Flash-Next, mlx-serve mixed pack with 8-bit KV and MTPLX Optimized-Speed with BF16 KV, MTP depth 3, sampled drafts",
+      "machine": "Apple M5 Max",
+      "conditions": "full llmprobe 0.6.7 runs, creative sampling, thinking explicitly off, three timed samples; the two pack columns differ in pack, KV format, sampler filter order and unpaired random streams; quality sanity 76/78/77 of 100 on a seeded JS code eval",
+      "provenance": "upstream_reported",
+      "source": "docs/mtp-acceptance-port.md:44"
+    },
+    {
+      "metric": "decode_gain_pct_vs_exact_control",
+      "value": "+16.2% (1K) rising to +27.0% (1M) for the TokenV3 arm; Typical +16.2% to +20.5%",
+      "model": "Qwen3.8 Flash-Next, ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit, 8-bit KV",
+      "machine": "Apple M5 Max 128 GB",
+      "conditions": "1K-1M rungs; the candidate arms also carry the paired routed gate/up kernel and a request-local sampled-MTP RNG fix, so the record itself warns the gains must not be attributed to the verifier alone; MTP depth 3, sampled drafts, temp 1, top-p 0.95, top-k 20, prefix caching disabled; 1K-64K medians of 3, 128K-1M one request per rung",
+      "provenance": "upstream_reported",
+      "source": "docs/benchmarks/qwen38-mtp-port/README.md:58"
+    }
+  ],
+  "lab_mapping": [
+    {
+      "setting": "key_composition",
+      "maps_to": "docs/MLX_SERVE_KERNELS.md decision row 13c and the note under lever E2: keyed per-position sampling is not built here; our loop does exact rejection sampling (docs/KAPITSA_KERNELS.md, 'Not measured at all' and the README-response section), which preserves the distribution but not the bytes",
+      "env": null,
+      "note": "the portable starting point is the host noise twin keyed_sample.gumbel, pure splitmix64 over (seed, position, id), not a Metal kernel port"
+    },
+    {
+      "setting": "verify_row_key_rule",
+      "maps_to": "none yet: no tslab surface draws tokens; tree_replay.rs and depth_replay.rs price rounds from modeled costs and no arm varies a sampler or holds a draw key constant",
+      "env": null
+    },
+    {
+      "setting": "max_rows_per_call",
+      "maps_to": "none yet: tslab has no multi-row sampler axis; the kernel's 1 to 64 row dispatch, one threadgroup per row, has no bench counterpart",
+      "env": null
+    }
+  ],
+  "docs": [
+    "docs/MLX_SERVE_KERNELS.md#the-row-exact-kernels-which-make-the-tree-verify-possible",
+    "docs/MLX_SERVE_KERNELS.md#the-speculative-round-host-side",
+    "docs/MLX_SERVE_KERNELS.md#decision-table"
+  ],
+  "notes": "Doc-vs-source: our bullet (MLX_SERVE_KERNELS.md:391) says the hash draws 'each verify row and draft'; the source routes EVERY seeded sampled draw through the kernel on a keyed install, serial tokens included (src/generate.zig:13944), and verify rows and drafts merely reuse the serial keys, so the doc understates the coverage. Our '+16 to +27% on their 1K to 1M ladder' for the lossy modes matches the ladder endpoints but the arms were joint (lossy verifier plus paired routed gate/up kernel plus an RNG fix) and the record says not to attribute them to the verifier alone; the isolated verifier-only comparison is the M5 Max table recorded above. The prefix-cache-hit claim is structural in the source (position_base is the full prompt length even on warm reuse) and their incident note pins the guard to 'seeded cold==warm in tests/test_hybrid_reuse_equivalence.sh' (docs/gotchas/engine-mlx.md:5294-5315), a test file this entry did not read. Caveats: the kernel is ported from TensorFold's gpu_sampling.py (MIT, per the file header and NOTICE) and its correctness pin is the test drawing TensorFold's reference tokens (src/keyed_sample.zig:341-376) plus the host-noise-picks-the-token test (378-408); the host gumbel twin must stay bit-identical to the kernel's tf_uniform because the DFlash tree lattice consumes the host twin; key positions wrap past 2^32 since the position enters as u32 on both sides; the noise uses only the top 24 bits of the 64-bit mix; the stock non-keyed seeded path keys MLX's categorical RNG with seed + draw * golden ratio and no position (src/generate.zig:14188), so a non-row-exact install's rejection-sampling corrections share none of these guarantees; the unseeded request seed comes from the wall clock and the Transformer pointer (src/generate.zig:2758), so only an explicitly requested seed replays; no performance number for the sampler itself appears anywhere in the repo at this rev."
+}
