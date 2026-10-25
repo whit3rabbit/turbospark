@@ -37,6 +37,7 @@ pub mod ledger;
 pub mod lock;
 pub mod out;
 pub mod paths;
+pub mod round_cost;
 pub mod schema;
 pub mod series;
 pub mod spec;
@@ -68,6 +69,8 @@ pub mod phases;
 pub mod provenance;
 #[cfg(target_os = "macos")]
 pub mod report;
+#[cfg(target_os = "macos")]
+pub mod trace;
 #[cfg(target_os = "macos")]
 pub mod tree_replay;
 #[cfg(target_os = "macos")]

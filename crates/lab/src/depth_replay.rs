@@ -457,6 +457,41 @@ pub fn chain_capture_cmd(mut args: crate::args::Args) -> Result<(), String> {
     Ok(())
 }
 
+/// Round costs measured in an experiment's speculative runs (L7):
+/// `ledger:EXPERIMENT`, optionally `@FLAGS` (a `round_cost` flags label such
+/// as `TURBOSPARK_INT4_MMA8=1`, default `default`) and `#KV` (one KV
+/// bucket, default all). Measured depths are exact; the rest sit on the
+/// line through them and the source says which.
+pub fn ledger_costs(spec: &str, max_depth: usize) -> Result<CostTable, String> {
+    let rest = spec.trim_start_matches("ledger:");
+    let (rest, kv) = match rest.split_once('#') {
+        Some((r, k)) => (
+            r,
+            Some(k.parse::<u64>().map_err(|_| format!("KV bucket {k:?}"))?),
+        ),
+        None => (rest, None),
+    };
+    let (experiment, flags) = rest.split_once('@').unwrap_or((rest, "default"));
+    let ledger = crate::ledger::Ledger::open(&crate::paths::experiment_dir(
+        &crate::paths::lab_dir(),
+        experiment,
+    )?)?;
+    let records = ledger.of_kind("round_cost")?;
+    let measured = crate::round_cost::by_depth(&records, flags, kv);
+    let ms_per_round = crate::round_cost::fill(&measured, max_depth.max(2))?;
+    Ok(CostTable {
+        name: spec.to_string(),
+        ms_per_round,
+        measured: measured.keys().copied().collect(),
+        source: format!(
+            "round_cost records in {experiment}, flags {flags}{}: depths {:?} measured ({} readings), others on their line (modeled)",
+            kv.map_or(String::new(), |k| format!(", KV bucket {k}")),
+            measured.keys().collect::<Vec<_>>(),
+            measured.values().map(|m| m.1).sum::<usize>()
+        ),
+    })
+}
+
 /// `tslab depth-replay`.
 pub fn depth_replay_cmd(mut args: crate::args::Args) -> Result<(), String> {
     use serde_json::json;
@@ -488,7 +523,12 @@ pub fn depth_replay_cmd(mut args: crate::args::Args) -> Result<(), String> {
         let costs = match name {
             "flag_off" => flag_off(),
             "flag_on" => flag_on(),
-            other => return Err(format!("--costs {other:?}: flag_off or flag_on")),
+            other if other.starts_with("ledger:") => ledger_costs(other, depth)?,
+            other => {
+                return Err(format!(
+                    "--costs {other:?}: flag_off, flag_on or ledger:EXPERIMENT[@FLAGS][#KV_BUCKET]"
+                ))
+            }
         };
         let policies = grid(depth.min(costs.max_depth()));
         // Per policy: tok/s per case, then speedup over fixed 2 per case.

@@ -36,6 +36,8 @@ tslab: the evaluator for kernel and method experiments (macOS).
   tslab chain-capture --model M [--prompt ...]... [--tokens 512] [--depth 8] [--experiment NAME]
   tslab depth-replay [--experiment NAME] [--costs flag_off,flag_on] [--tokens 512] [--top 10]
   tslab ledger  --experiment NAME [--kind run|verdict|...]
+  tslab trace   --model M [workload] [--arm NAME[:KEY=V,...]] [--record-s 10] [--experiment NAME]
+                (Metal System Trace of the arm's measured work; never quotable)
   tslab capabilities --model M                    (what tslab can measure on this install, and tags)
   tslab inventory --model M                       (the install's weight shapes by dtype)
   tslab knobs
@@ -124,6 +126,7 @@ pub fn dispatch(cmd: &str, args: Args) -> Result<CmdOutput, String> {
         "export" => crate::export::export_cmd(args),
         "inventory" => inventory_cmd(args),
         "capabilities" => crate::families::capabilities_cmd(args),
+        "trace" => crate::trace::trace_cmd(args),
         "report" => crate::export::report_cmd(args),
         "gate" => crate::experiment::gate_cmd(args),
         "run-experiment" => crate::experiment::run_experiment_cmd(args),
