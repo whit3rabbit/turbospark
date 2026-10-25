@@ -421,9 +421,10 @@ never does, as with open-jet above, but do not read its code for kernels.
 ### Qualification patterns worth reusing
 
 - **A hash corpus for bit-preserving kernel changes.** `music3_linear_bench`
-  (`crates/gpu/examples/`) prints an FNV-1a hash of output bits over 847
-  linear and 20 convolution configurations (bit widths, groups, row counts,
-  dtypes, ragged tiles, split-K). Diff before and after. Any difference means
+  (`crates/gpu/examples/`) prints an FNV-1a hash of output bits over every
+  configuration in its goldens (`crates/gpu/tests/golden/music3_*.txt`: 1,021
+  linear, 192 DiT and 30 convolution lines today, covering bit widths, groups,
+  row counts, dtypes, ragged tiles and split-K). Diff before and after. Any difference means
   the arithmetic changed. This is cheaper and broader than a handful of
   parity fixtures, and it fits the Steel and GEMV kernels here.
 - **Keep the old code verbatim in the test.** `8f83f998` compared every

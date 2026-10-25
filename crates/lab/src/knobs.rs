@@ -132,6 +132,30 @@ pub const KNOBS: &[Knob] = &[
         doc: "docs/KAPITSA_KERNELS.md",
     },
     Knob {
+        // `1` runs decode and verify on the 8-row tile (bit-exact against
+        // each other, not against the GEMV), `verify` only the batched calls.
+        // It reaches every family through the generic INT4 dispatchers.
+        name: "int4_mma8",
+        env: "TURBOSPARK_INT4_MMA8",
+        values: &["<unset>", "1", "verify"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::KlBounded,
+        families: &[],
+        quotable: true,
+        doc: "docs/INT4_SMALL_M_MMA.md",
+    },
+    Knob {
+        // Which shapes the tile serves under `int4_mma8`; meaningless without it.
+        name: "int4_mma8_min_rows",
+        env: "TURBOSPARK_INT4_MMA8_MIN_ROWS",
+        values: &["<unset>", "1", "1024"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::KlBounded,
+        families: &[],
+        quotable: true,
+        doc: "docs/INT4_SMALL_M_MMA.md",
+    },
+    Knob {
         name: "attn_decode_kernel",
         env: "TURBOSPARK_ATTN_DECODE_KERNEL",
         values: &["<unset>", "barrier", "gqa"],

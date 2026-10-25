@@ -25,7 +25,7 @@ tslab: the evaluator for kernel and method experiments (macOS).
   tslab gate    --spec SPEC.json [--base REV]      (loads the model: takes minutes)
   tslab run-experiment --spec SPEC.json [--base REV]
   tslab confirm --spec SPEC.json [--base REV]
-  tslab kernel  --model M [--bench gemv|prefill_gemm|all] [--experiment NAME]
+  tslab kernel  --model M [--bench int4_matmul|attn_decode|all] [--experiment NAME]
   tslab tree-replay --model M --drafter mtp|dflash [--prompt ...]... [--generate 512]
                 [--depth 8|7] [--blocks 2,4,DEPTH] [--serve-block 2] [--top-k 4] [--slots 16] [--experiment NAME]
   tslab ane-plan --path PROGRAM.mlpackage|MANIFEST_DIR [--units ane|all|gpu|cpu]

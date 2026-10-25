@@ -212,9 +212,7 @@ number to copy: a new family has its own.
 Workloads under `crates/lab/workloads/` are for `--prompt messages:PATH`.
 `copy-heavy.messages.json` is a quote-back task (rename one variable in a short
 function and return all of it), the shape where lookup drafting was expected to
-pay and where a block drafter commits nearly the whole block. The 8-row tile
-(`TURBOSPARK_INT4_MMA8`) is not on `main` yet, so the kernel bench has no arm
-for it; add one when it lands, next to the scalar GEMM and the Steel tiles.
+pay and where a block drafter commits nearly the whole block.
 
 ## Spec template
 
@@ -312,10 +310,6 @@ Say so in the hypothesis rather than measure around it:
   gives wall times and spec-stats only. Use `TURBOSPARK_DISPATCH_PROFILE=1`
   (unquotable) to rank kernels, or attribute by skipping a kernel behind a
   switch.
-- **Per-round milliseconds on this base.** `ms/round` in `[spec-stats]`
-  comes from uncommitted runtime work. Until it lands, speculative records
-  carry committed tokens per round and per-position acceptance, not draft
-  and verify times.
 - **Dispatch-level shares.** `TURBOSPARK_DISPATCH_PROFILE=1` output is
   kept as text in the record, unparsed, and such runs are never quotable.
 - **ANE arms need an `ane-prefill` worker.** The worker refuses an ANE arm
