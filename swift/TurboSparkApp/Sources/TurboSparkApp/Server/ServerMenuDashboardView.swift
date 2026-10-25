@@ -206,11 +206,21 @@ struct ServerMenuDashboardView: View {
     @ViewBuilder
     private var loadModelItems: some View {
         Section {
-            if model.installed.isEmpty {
-                Text("No models installed", bundle: .module)
+            // The loadable list only (requirement 3.3).
+            let loadable = model.loadableModels
+            if loadable.isEmpty {
+                if let statement = model.notConnectedStatement {
+                    Text(verbatim: statement)
+                } else {
+                    Text("No models installed", bundle: .module)
+                }
             }
-            ForEach(model.installed) { installed in
-                Button { model.selectModel(installed) } label: {
+            ForEach(loadable) { installed in
+                Button {
+                    // A menu cannot host the "Load anyway" question: for a
+                    // warned model the main window comes forward to ask.
+                    model.requestLoad(installed, bringWindowForward: true)
+                } label: {
                     if model.session != nil && model.selected?.path == installed.path {
                         Label { Text(verbatim: installed.alias) } icon: { Image(systemName: "checkmark") }
                     } else {
