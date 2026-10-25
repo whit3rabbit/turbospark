@@ -632,8 +632,18 @@ lookup") so the next drafter is held to it from the start.
    - Speculative arms (`NAME~mtp:2`, `~dflash:7`, `~mtp:4a` for adaptive
      depth) to measure a verify or drafter change where it pays.
 
+   - `tslab capabilities` first, and `tslab workflow new-family` for an
+     install the lab has not measured.
+   - `tslab trace` for launch-bound against kernel-bound, and
+     `profile --dispatch-probe 0,4,8` for the price of a chained dispatch
+     before estimating a fusion.
+   - `kernel --hash` on both builds and `hash-diff` for a change that must
+     not move output bits.
+
    tslab gives each arm a fresh process, so `OnceLock` switches are safe to
-   A/B, and it records dirty runs rather than dropping them.
+   A/B, and it records dirty runs rather than dropping them. Give a new
+   switch an engagement line (`foundation::engaged!`) so an arm that did not
+   take it is refused instead of reading as noise.
 10. Measure on a quiet machine, and that includes your own session. A
     `cargo build` or test run, or an editor's background `cargo check` on
     your worktree, is enough to mark runs dirty (it did, on 2026-10-22).

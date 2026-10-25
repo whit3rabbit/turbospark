@@ -14,6 +14,31 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- `tslab` output contract: every ledger line and the one object `--json`
+  prints carry schema `tslab/1` (`tslab schema` prints the JSON Schema), so
+  an agent drives the lab without scraping text. `tslab export` writes
+  ledgers as plottable series (JSONL, JSON, CSV) and `tslab report --html`
+  draws them as one offline page. Kernel benches share one result shape, so
+  a new bench is visible in both with no reader code.
+- `tslab capabilities` (per-install coverage for all sixteen families and
+  the audio pipelines), `tslab inventory` (weight shapes from the resident
+  index), and `tslab workflow` with built-in plans (`new-family`,
+  `kernel-candidate`, `spec-depth`, `audio-survey`, `report`) that branch on
+  coverage and resume.
+- New `tslab kernel` benches: the 8-row MMA tile as an int4 arm, `int8_matmul`,
+  `rows_attn` with layout arms, `moe_routed`, `verify_ladder`, `music3_grid`
+  and `whisper_linear`; attention now covers sliding-window layers and
+  sinks. `--hash` records output-bit hashes and `tslab hash-diff` compares
+  two builds.
+- The evaluator additions from `docs/MLX_SERVE_KERNELS.md`: engagement lines
+  (`TURBOSPARK_ENGAGEMENT`, checked per run), the dispatch probe
+  (`TURBOSPARK_DISPATCH_PROBE`), block stand-ins (`TURBOSPARK_STANDIN`),
+  `tslab trace` over Metal System Trace, and speculative round costs in the
+  ledger for `tslab depth-replay`. The runtime switches are off by default
+  and change nothing when unset.
+- Audio arms in `tslab profile` and `tslab ab` (`--audio-job`, MiniMax
+  Music 3 and Whisper) with stage times, real-time factor and output-digest
+  gates (`bit_exact`, and `text_exact` for transcripts).
 - Opt-in batched routed experts for Qwen MoE chunked prefill
   (`TURBOSPARK_ROUTED_BATCH=1`, Qwen 3.6 and Ornith 35B). It runs on top of the
   batched arm and reproduces its output bytes. Each sub-batch binds only its

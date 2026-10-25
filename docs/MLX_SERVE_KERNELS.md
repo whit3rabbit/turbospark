@@ -829,19 +829,19 @@ then aggregate. "Have" means the mechanism is already in this tree.
 | 1 | Row-exact small-M matrix-unit GEMM, decode and verify on one arithmetic, gated on a drafter | Converges with playbook item 1 and item 7 (`TURBOSPARK_INT4_MMA8`). Their gating and per-shape probe are the new parts | Engine, lever E1 |
 | 2 | Draft tree verify over the exact kernels (DFlash2 lattice, block 8) | Replay and costing done, not built (`KAPITSA_KERNELS.md`, KFlash). Their shipped result raises the priority | Engine, lever E2 |
 | 3 | GDN tree walk with restart states in registers, per-token state rounding | Prototype exists (`tv_gdn_tree` in `tree_verify_cost_bench.rs`), bit-identical | Engine, with E2 |
-| 4 | Dispatch probe (exact multiplies injected on the chain) | Not built. Replaces the two-sample 1.6 us estimate | Lab, L1 |
-| 5 | Whole-forward verify-width ladder from the weight inventory | `tslab kernel` does per-shape curves. The summed ladder and the marginal decomposition are new | Lab, L2 |
-| 6 | Engagement lines as A/B evidence | tslab arms set variables but check no log line | Lab, L3 |
-| 7 | In-situ stand-in ablation with sane values | "Attribute by skipping" hit NaNs here | Lab, L4 |
-| 8 | Metal System Trace analyzer | `TURBOSPARK_DISPATCH_PROFILE` gives each dispatch its own encoder and inflates | Lab, L5 |
-| 9 | Rows-per-simdgroup sweep in situ before deepening a multi-row kernel | Done by hand for the GQA rows kernel. Not a bench axis | Lab, L6 |
+| 4 | Dispatch probe (exact multiplies injected on the chain) | Built: `TURBOSPARK_DISPATCH_PROBE`, `tslab profile --dispatch-probe`. Dense qwen and llama FFNs only. No reading yet | Lab, L1 |
+| 5 | Whole-forward verify-width ladder from the weight inventory | Built: `tslab kernel --bench verify_ladder [--verify-from EXP]`, shapes and counts from the resident index | Lab, L2 |
+| 6 | Engagement lines as A/B evidence | Built: `foundation::engaged!`, checked per run against the knob table and `expect_engaged` | Lab, L3 |
+| 7 | In-situ stand-in ablation with sane values | Built: `TURBOSPARK_STANDIN`, `tslab profile --standin` (residual passes through; dense qwen and llama trunks) | Lab, L4 |
+| 8 | Metal System Trace analyzer | Built: `tslab trace` (attach after warm-up, short window, never quotable) | Lab, L5 |
+| 9 | Rows-per-simdgroup sweep in situ before deepening a multi-row kernel | Built: `rows_attn` bench arms over rows per threadgroup and Q heads per simdgroup | Lab, L6 |
 | 10 | Per-silicon tables (block cap, GEMV geometry) | Single-machine repo today. Record as a rule for any default | Engine, rule |
 | 11 | Fused residual add plus next norm, bit-equal | Not checked here. The Qwen batched layers encode them as separate row-batched dispatches | Engine, E3 |
 | 12 | Joined q/k/v and gate/up at load (decode width), tabulated activations | Pays on small models (55 to 65% of floor). Our 27B target is at the floor like theirs. Low value for qwen38, worth a profile on the small installs | Engine, E4 |
 | 13 | Prefix cache carrying drafter state (MTP history, DFlash context) | Partly: `feat/gdn-turn-snapshot` rewinds the MTP drafter on reuse. DFlash2 context is not carried | Engine, E5 |
 | 13b | Lookup drafts inside an MTP round, gated per round on tokens per cost | Open as `KAPITSA_KERNELS.md` lever 5 ("needs an MTP replay"). Shipped there with a per-round cost gate and exact acceptance | Engine, E6 |
 | 13c | Keyed per-position sampling so a sampled verify row reproduces serial's draw | Not here. Ours is exact rejection sampling, which preserves the distribution but not the bytes | Engine, note under E2 |
-| 13d | Round-cost table measured live per (width, KV bucket) feeding the depth planner | `tslab depth-replay` prices from two modeled costs | Lab, L7 |
+| 13d | Round-cost table measured live per (width, KV bucket) feeding the depth planner | Built: `round_cost` ledger records, `depth-replay --costs ledger:EXP` | Lab, L7 |
 | 13e | Fused QK-norm plus RoPE in one dispatch at head dim 256, bit-identical | Separate row-batched dispatches here. On the chain, so it may pay; their bar was a live paired A/B | Engine, measure first |
 | 13f | Two-dispatch GDN decode (prework recomputed per threadgroup) | Declined here as Kapitsa item 9 at an estimated 1% or less. Their measured 3.9% is on Flash Next, where GDN is a larger share. Re-estimate with the dispatch probe (L1) before reopening | Engine, measure first |
 | 14 | Split-K lane for 2 to 7 rows | Superseded by the matrix-unit route (item 1), which they also moved to | Declined |
@@ -971,8 +971,10 @@ records it per run.
 
 `crates/lab` (`tslab`) measures with fresh processes, interleaved arms, a
 null floor, quality and memory gates, and per-shape kernel curves. These
-six are the pieces mlx-serve's gotchas show earning their keep that tslab
-does not have. Each is small.
+are the pieces mlx-serve's gotchas show earning their keep that tslab did
+not have. All seven are now built (decision table rows 4 to 9 and 13d say
+where); the text below is the design they follow. None has a recorded
+reading yet.
 
 **L1. A dispatch probe.** Add `--dispatch-probe N` to `tslab profile`. The
 runtime side is one knob, `TURBOSPARK_DISPATCH_PROBE`, that encodes N exact
