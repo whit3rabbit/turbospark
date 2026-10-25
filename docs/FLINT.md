@@ -85,6 +85,39 @@ Indicative only (one prompt, a download running alongside, no AC check):
 peak physical footprint 0.90 GiB at 8 slots and 1.40 GiB at 16, against
 0.98 and 1.61 for the INT4 install.
 
+## GQA-shared decode attention (2026-10-25)
+
+Flint's attention scratch takes `DecodeAttentionKernel::GqaShared`
+(`crates/runtime/src/real_forward_types.rs`): one threadgroup per (KV head,
+chunk) serves all 8 Q heads of a group from one K/V read. The tslab
+`attn_decode` bench at this shape, GPU time per token: the 14 full layers
+1.49 ms barrier against 0.40 GQA at 512 positions and 91.3 against 3.6 at 32K,
+and the 35 sliding layers about 2.6 against 0.67 at every context. It is not
+bit-exact, so it was held to the mlx-vlm KL on the mixed build, both arms in
+fresh processes (`TURBOSPARK_ATTN_DECODE_KERNEL=barrier|gqa`):
+
+| Arm | Mean KL vs mlx-vlm (nats) | p99 | Top-1 | Perplexity |
+|---|---|---|---|---|
+| barrier (reproduces the table above) | 0.0070 | 0.067 | 97.0% | 12.818 |
+| GQA | 0.0072 | 0.086 | 96.6% | 12.825 |
+| mlx-vlm against itself | 0.0066 | 0.056 | 96.8% | |
+
+Barrier against GQA directly: mean KL 0.0022 nats (a third of mlx-vlm's own
+floor), top-1 97.9%. Greedy through the template parts on near-synonyms
+("multiplication" against "arithmetic") and lands on the same answers: `391`,
+a correct `merge_intervals`, and the right fact from 1,650 tokens back across
+the wrapped 513-position ring. Peak footprint 6.33 GiB on both arms (the
+scratch is the same size). `crates/gpu/tests/attention_decode_gqa_parity.rs`
+pins this shape with sinks, the window and a wrapped 641-row ring.
+
+**Still open: the paired performance A/B.** Every `tslab ab` attempt
+(`flint-gqa-decode`) was INCONCLUSIVE on a busy host. The one eligible run,
+a warmup on the GQA default, read 43.4 decode tok/s against the barrier
+profile's 30.3 in another experiment: indicative, not a verdict. Rerun
+`tslab ab --baseline barrier:TURBOSPARK_ATTN_DECODE_KERNEL=barrier
+--candidate gqa:TURBOSPARK_ATTN_DECODE_KERNEL=gqa --metric decode_tok_s` on a
+quiet host before quoting a speedup.
+
 ## What works (verified on the real checkpoint)
 
 The rest of this section was measured on `flint-int4`; the flow is shared.

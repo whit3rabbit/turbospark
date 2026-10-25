@@ -303,13 +303,17 @@ impl DecodeScratch {
             // shape (`crates/gpu/tests/qwen38_attention_decode_probe.rs`).
             // `lfm3` (16 Q over 4 KV at head_dim 128) takes it too, after its
             // quality gates re-froze on both installs (`docs/LFM3_PHASE0.md`).
-            // Other families keep the barrier kernel until their own gates
-            // run on it.
+            // Flint (32 Q over 4 KV at head_dim 128, sinks, a 513-position
+            // ring on 35 of 49 layers) runs it too, held to its mlx-vlm KL
+            // in docs/FLINT.md. Other families keep the barrier kernel until
+            // their own gates run on it.
             attn: gpu::AttentionScratch::new(context, arch.num_heads as u32, max_head_dim as u32)
                 .with_decode_kernel(
                     if matches!(
                         arch.family,
-                        model_io::ModelFamily::QwenGdnDense | model_io::ModelFamily::Lfm3
+                        model_io::ModelFamily::QwenGdnDense
+                            | model_io::ModelFamily::Lfm3
+                            | model_io::ModelFamily::Flint
                     ) {
                         gpu::DecodeAttentionKernel::GqaShared
                     } else {
