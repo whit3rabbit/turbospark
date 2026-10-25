@@ -5,6 +5,9 @@
 #![forbid(unsafe_code)]
 
 mod config;
+mod draft_lattice;
+#[cfg(target_os = "macos")]
+pub mod embedding_probe;
 #[cfg(target_os = "macos")]
 pub mod encoder;
 mod error;
@@ -13,6 +16,8 @@ mod expert_layout_validation;
 mod families;
 #[cfg(target_os = "macos")]
 mod ffn_hist;
+#[cfg(target_os = "macos")]
+mod hidden_trunk;
 #[cfg(target_os = "macos")]
 mod kernel_warmup;
 #[cfg(target_os = "macos")]
@@ -59,6 +64,7 @@ mod session_pool;
 #[cfg(target_os = "macos")]
 mod speculation_policy;
 mod speculative;
+mod speculative_adaptive;
 #[cfg(target_os = "macos")]
 mod startup;
 #[cfg(target_os = "macos")]
@@ -79,6 +85,10 @@ pub use qwen3_asr::Qwen3AsrRunner;
 pub use whisper::{WhisperProgress, WhisperRunner, WhisperSegment, WhisperTranscription};
 #[cfg(target_os = "macos")]
 pub mod moonshine;
+#[cfg(target_os = "macos")]
+pub mod multitalker_metal;
+#[cfg(target_os = "macos")]
+pub mod nemotron_diar_metal;
 #[cfg(target_os = "macos")]
 pub mod qwen3_asr;
 #[cfg(target_os = "macos")]
@@ -108,8 +118,11 @@ pub use model_io::{
     MAX_SUPPORTED_CONTEXT,
 };
 
+#[cfg(target_os = "macos")]
+pub use draft_lattice::DflashLattice;
 pub use error::RuntimeError;
 #[cfg(target_os = "macos")]
+pub use families::qwen::{chip_is_m4_or_newer, hardware_supports_ane_prefill, AnePrefillMode};
 pub use families::qwen::{
     install_has_dflash, install_has_mtp_head, DflashDraftPolicy, DraftPolicies, MtpDraftPolicy,
     DFLASH_BLOCK, DFLASH_SERVING_BLOCK, MOE_SPECULATION_BLOCKER_MARKER,
@@ -117,6 +130,8 @@ pub use families::qwen::{
 };
 #[cfg(target_os = "macos")]
 pub use gpu::MetalCompilationStats;
+#[cfg(target_os = "macos")]
+pub use hidden_trunk::{HiddenTrunk, PrefixSnapshot, TrunkRow};
 pub use power::{
     low_power_mode_enabled, memory_cap, memory_pressure, physical_memory, rate_control_for,
     recommended_max_working_set, resolve_profile, stepped_cap, thermal_cap, thermal_level,
@@ -149,9 +164,11 @@ pub use speculation_policy::{
     SpeculationPlan, SpeculativeDrafter,
 };
 pub use speculative::{
-    run_raw_completion_speculative, run_raw_completion_speculative_cancellable,
-    DEFAULT_SPECULATION_BLOCK,
+    run_raw_completion_speculative, run_raw_completion_speculative_adaptive,
+    run_raw_completion_speculative_adaptive_cancellable,
+    run_raw_completion_speculative_cancellable, DEFAULT_SPECULATION_BLOCK,
 };
+pub use speculative_adaptive::{AdaptiveDepth, AdaptiveParams};
 #[cfg(target_os = "macos")]
 pub use steering::{family_dispatches_steering, SteeringPolicy, SteeringVector, MAX_STEER_ROWS};
 pub use turn_stream::{TurnEvent, TurnSplitter};
@@ -161,11 +178,19 @@ pub use turn_stream::{TurnEvent, TurnSplitter};
 pub use foundation::TokenId;
 
 #[cfg(target_os = "macos")]
+pub mod fish_drama3;
+#[cfg(target_os = "macos")]
+pub mod fish_drama3_codec;
+#[cfg(target_os = "macos")]
+pub mod fish_drama3_tower;
+#[cfg(target_os = "macos")]
 pub mod kokoro;
 #[cfg(target_os = "macos")]
 pub mod megatts3;
 #[cfg(target_os = "macos")]
 pub mod music3;
+#[cfg(target_os = "macos")]
+pub mod omnivoice;
 #[cfg(target_os = "macos")]
 pub use kokoro::KokoroRunner;
 pub use music3::{DispatchStat, Music3Runner};

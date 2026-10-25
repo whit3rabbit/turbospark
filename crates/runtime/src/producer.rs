@@ -259,6 +259,26 @@ pub trait SpeculativeProducer: LogitProducer {
     /// Default no-op, for every producer without a real KV cache.
     fn record_committed(&mut self, _tokens: &[TokenId], _pos0: usize) {}
 
+    /// Fold the first `keep_rows` rows of the last verify into the target's
+    /// recurrent state. The round-end half of the LAZY verify tape
+    /// (`TURBOSPARK_GDN_LAZY_TAPE`): a verify that records lazily leaves the
+    /// state at the block start, and EVERY round -- full acceptance
+    /// included -- ends by folding exactly its committed rows. `keep_rows`
+    /// is the confirmed token plus every committed proposal, the same count
+    /// [`Self::rollback_retaining`] takes. A no-op by default and whenever
+    /// there is nothing pending (the eager path never defers; a partial
+    /// round's retaining rollback already folded its kept rows), so the
+    /// caller can invoke it unconditionally after the accept decision.
+    fn commit_pending(&mut self, _keep_rows: usize) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Discard any pending verify tape and rewind any speculative uncommitted
+    /// state to where the verify started. Default no-op for producers that do
+    /// not record a lazy tape. Called when an error occurs during a round
+    /// between `verify` and `commit_pending`.
+    fn discard_pending(&mut self) {}
+
     /// Whether [`Self::rollback_retaining`] can run: the producer records
     /// what each verify consumed and can replay an accepted prefix's
     /// recurrent state over it. `false` by default; a caller that gets

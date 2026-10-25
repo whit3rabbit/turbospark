@@ -17,7 +17,9 @@ struct ServerConnectCardView: View {
     private var snippets: [ServerConnectSnippet] {
         ServerConnectRecipes.snippets(
             baseURL: model.serverInfo?.baseURL?.absoluteString ?? "http://127.0.0.1:<port>",
-            modelID: model.serverInfo?.models.first ?? "",
+            // A chat model: an embedding id would be a wrong default for
+            // a coding agent.
+            modelID: model.serverTextModelIDs.first ?? "",
             apiKey: AppModel.serverAPIKey(from: model.serverAPIKeyInput))
     }
 
@@ -85,7 +87,7 @@ struct ServerConnectCardView: View {
 /// `ServerEndpointCatalog` in step with the router's own route table, so a
 /// row shown here is one the server actually answers. `/v1/embeddings`,
 /// `/api/embeddings` and `/api/embed` answer 503 until an embedding model
-/// is attached under Advanced, which is what that field's help text says.
+/// is attached in the API Embeddings tab.
 private struct ServerEndpointListView: View {
     @State private var family: ServerAPIFamily = .openAI
 

@@ -35,6 +35,7 @@ final class Qwen3TTSSpeechJob: @unchecked Sendable {
 
     static func generate(recipe: AudioRecipe, profile: AudioProfile, bookmark: Data?, installedPath: String?,
                          assets: ManagedAssetStore, lifetime: AudioOperationLifetime, openToken: AudioOpenToken,
+                         existingModel: Qwen3TTSModel? = nil,
                          report: @escaping @Sendable (AudioProgress) -> Void) async throws -> AudioResult {
         try Task.checkCancellation(); try lifetime.check()
         var permit: NativeHeavyWorkPermit?
@@ -94,21 +95,28 @@ final class Qwen3TTSSpeechJob: @unchecked Sendable {
         }
         try checkpoint.validate(text: recipe.text, voice: voice, reference: reference,
                                 referenceText: settings.referenceText, language: recipe.language)
-        report(AudioProgress(stage: "Loading speech model", completed: 0))
-        var model: Qwen3TTSModel?
+        var temporaryModel: Qwen3TTSModel?
         defer {
-            // MLX keeps freed buffers for reuse. A completed clip should release
-            // those buffers before another heavyweight task takes the permit.
-            model = nil
-            MLX.Memory.clearCache()
+            if temporaryModel != nil {
+                temporaryModel = nil
+                MLX.Memory.clearCache()
+            }
         }
-        model = try await Qwen3TTSModel.fromModelDirectory(directory)
+        let model: Qwen3TTSModel
+        if let existingModel {
+            model = existingModel
+        } else {
+            report(AudioProgress(stage: "Loading speech model", completed: 0))
+            let loaded = try await Qwen3TTSModel.fromModelDirectory(directory)
+            temporaryModel = loaded
+            model = loaded
+        }
         try Task.checkCancellation(); try lifetime.check()
         let seed = recipe.seed == 0 ? UInt64.random(in: 1...UInt64.max) : recipe.seed
         MLXRandom.seed(seed)
         var count = 0
         report(AudioProgress(stage: "Generating speech", completed: 0))
-        let samples = try model!.synthesize(text: recipe.text, voice: voice, reference: reference,
+        let samples = try model.synthesize(text: recipe.text, voice: voice, reference: reference,
             referenceText: settings.embeddingOnly ? nil : settings.referenceText, language: recipe.language,
             parameters: GenerateParameters(maxTokens: settings.maxTokens, temperature: settings.temperature), onToken: { _ in
                 count += 1
@@ -136,13 +144,15 @@ extension AudioWorkspaceController {
         if let old { await Task.detached { old.close() }.value }
         access?.stopAccessingSecurityScopedResource()
         try Task.checkCancellation()
+        let model = try await residentQwenSession(for: profile, source: source)
         let job = try Qwen3TTSSpeechJob()
         qwenSpeechJob = job
         defer { if qwenSpeechJob === job { qwenSpeechJob = nil } }
         let assets = self.assets; let lifetime = self.lifetime; let path = installedPaths[profile.identity.alias]
         let worker = try job.start {
             try await Qwen3TTSSpeechJob.generate(recipe: recipe, profile: profile, bookmark: source.localModelBookmark,
-                installedPath: path, assets: assets, lifetime: lifetime, openToken: job.openToken, report: report)
+                installedPath: path, assets: assets, lifetime: lifetime, openToken: job.openToken,
+                existingModel: model, report: report)
         }
         return try await withTaskCancellationHandler { try await worker.value } onCancel: { job.cancel() }
     }

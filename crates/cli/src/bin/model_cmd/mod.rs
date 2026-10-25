@@ -7,8 +7,10 @@
 //! with `turbospark-invocation`, and it is what lets the verdict logic be
 //! tested without a terminal.
 
+mod audio;
 mod auth;
 mod destination;
+mod drama3;
 mod image_source;
 mod library;
 mod progress;
@@ -18,9 +20,6 @@ mod transfer;
 use catalog::{Catalog, Client, InstallKind, InstallPlan, RepoRef, Store, Verdict};
 use destination::Destination;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::thread;
-use std::time::Duration;
 
 use crate::{Error, Options};
 
@@ -28,7 +27,9 @@ use crate::{Error, Options};
 /// move each clear it before they start and stop when it is set.
 static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 
+pub use audio::{list_audio, pull_audio};
 pub use auth::auth;
+pub use drama3::pull_drama3;
 pub use library::library;
 pub use render::human_bytes;
 pub use transfer::move_model;
@@ -44,104 +45,6 @@ pub fn list_speech(store: &Store) {
         render::speech_entry(entry, store);
         println!();
     }
-}
-
-/// The pinned MiniMax Music 3 profiles. Arbitrary Hugging Face repositories
-/// are deliberately not accepted by this modality-specific path.
-pub fn list_audio(store: &Store) {
-    let entries = catalog::embedded_music_entries().expect("embedded MiniMax Music 3 catalog");
-    println!(
-        "  {:<27} {:<12} {:<14} {:<13} REPOSITORY",
-        "ALIAS", "QUANTIZATION", "RECOMMENDED", "STATUS"
-    );
-    for entry in &entries {
-        let installed = if store.resolve_audio(&entry.alias).is_some() {
-            "installed"
-        } else {
-            "available"
-        };
-        let recommendation = if entry.recommended { "yes" } else { "" };
-        let status = if entry.experimental {
-            "experimental"
-        } else {
-            installed
-        };
-        println!(
-            "  {:<27} {:<12} {:<14} {:<13} {}",
-            entry.alias,
-            entry.quantization.as_str(),
-            recommendation,
-            status,
-            entry.model_id
-        );
-    }
-}
-
-/// Installs one curated music profile through the shared authenticated Hub
-/// transport and its verified staging lifecycle, into `--library` or the
-/// default library, settled before any request.
-pub fn pull_audio(
-    catalog: &Catalog,
-    store: &Store,
-    client: &Client,
-    alias: &str,
-    options: &Options,
-) -> Result<(), Error> {
-    let (target, env) =
-        destination::library_target(store, InstallKind::Audio, alias, options.library.as_deref())?;
-    INTERRUPTED.store(false, Ordering::Release);
-    install_sigint_handler();
-    let cancel = catalog::CancelFlag::new();
-    let done = Arc::new(AtomicBool::new(false));
-    let watcher_done = Arc::clone(&done);
-    let watcher_cancel = cancel.clone();
-    let watcher = thread::spawn(move || {
-        while !watcher_done.load(Ordering::Acquire) {
-            if INTERRUPTED.load(Ordering::Acquire) {
-                watcher_cancel.cancel();
-                break;
-            }
-            thread::sleep(Duration::from_millis(20));
-        }
-    });
-    let mut last_path = None::<String>;
-    let mut progress = |state: catalog::HubDownloadProgress| {
-        if state.current_path != last_path {
-            if let Some(path) = &state.current_path {
-                eprintln!("[pull-audio] downloading {path}");
-            }
-            last_path = state.current_path;
-        }
-        if state.completed_files == state.total_files && state.total_files > 0 {
-            eprintln!(
-                "[pull-audio] verified {} file(s), {}",
-                state.completed_files,
-                human_bytes(state.completed_bytes)
-            );
-        }
-    };
-    let result = catalog::install_music_into(
-        client,
-        catalog,
-        store,
-        alias,
-        target.library_id.as_deref(),
-        &env,
-        &mut progress,
-        &cancel,
-    );
-    done.store(true, Ordering::Release);
-    watcher
-        .join()
-        .map_err(|_| Error::Failed("audio pull cancellation watcher failed".to_string()))?;
-    let installed = result.map_err(destination::failure)?;
-    println!(
-        "\ninstalled {} ({}) to {}",
-        installed.alias,
-        human_bytes(installed.install_bytes),
-        installed.path.display()
-    );
-    Ok(())
 }
 
 fn install_sigint_handler() {
@@ -322,13 +225,18 @@ pub fn probe(
 /// Print an install directory, or fail so `$(...)` does not expand to
 /// nothing and silently produce a `--model ''`.
 pub fn path(store: &Store, alias: &str) -> Result<(), Error> {
-    match store.resolve(alias) {
+    // A text alias wins; an audio alias answers when no text install does.
+    match store
+        .resolve(alias)
+        .or_else(|| audio::path_audio(store, alias))
+    {
         Some(path) => {
             println!("{}", path.display());
             Ok(())
         }
         None => Err(Error::Failed(format!(
-            "{alias} is not installed. `turbospark-model pull {alias}` first."
+            "{alias} is not installed. `turbospark-model pull {alias}` (or \
+             `pull-audio {alias}` for an audio model) first."
         ))),
     }
 }
@@ -336,7 +244,8 @@ pub fn path(store: &Store, alias: &str) -> Result<(), Error> {
 /// Delete an install directory.
 pub fn remove(store: &Store, alias: &str, yes: bool) -> Result<(), Error> {
     let Some(path) = store.resolve(alias) else {
-        return Err(Error::Failed(format!("{alias} is not installed")));
+        // Not a text install: an audio alias has its own ownership-checked delete.
+        return audio::remove_audio(store, alias, yes);
     };
     let bytes = catalog::directory_bytes(&path);
     if !yes {

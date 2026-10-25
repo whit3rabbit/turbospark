@@ -22,6 +22,56 @@ public struct OcrReadResult: Decodable, Sendable, Equatable {
     }
 }
 
+/// One pinned OCR model the app can download (`ts_ocr_catalog_json`).
+public struct OcrProfile: Decodable, Sendable, Equatable, Identifiable {
+    public var id: String { alias }
+    public let alias: String
+    public let displayName: String
+    public let family: String
+    public let backend: String
+    public let repository: String
+    public let revision: String
+    public let license: String
+    public let downloadBytes: UInt64
+    /// Set once an install verifies against the current pin. The alias
+    /// itself also opens it (`TurboSparkOcr(modelPath:)`).
+    public let installedPath: String?
+    public let canRun: Bool
+    public let unavailableReason: String?
+
+    enum CodingKeys: String, CodingKey {
+        case alias, family, backend, repository, revision, license
+        case displayName = "display_name"
+        case downloadBytes = "download_bytes"
+        case installedPath = "installed_path"
+        case canRun = "can_run"
+        case unavailableReason = "unavailable_reason"
+    }
+}
+
+/// Pinned OCR models: listing and verified install, with the same rules as
+/// `EmbeddingCatalog`.
+public enum OcrCatalog {
+    public static func profiles() throws -> [OcrProfile] {
+        let json = try takeString { ts_ocr_catalog_json($0) }
+        return try JSONDecoder().decode([OcrProfile].self, from: Data(json.utf8))
+    }
+
+    /// Blocking download and install; call off the main actor. `revision`
+    /// must be the profile's pin. Returns the install path.
+    public static func install(
+        alias: String,
+        revision: String,
+        progress: @escaping @Sendable (AudioDownloadProgress) -> Void = { _ in }
+    ) throws -> String {
+        try runPinnedInstall(progress: progress) { callback, context, out in
+            alias.withCString { a in
+                revision.withCString { r in ts_ocr_install(a, r, callback, context, out) }
+            }
+        }
+    }
+}
+
 /// Document OCR on Core ML (Unlimited OCR, macOS 15+).
 ///
 /// Add one or more pages, then `read` them as one document; every read
@@ -35,7 +85,8 @@ public final class TurboSparkOcr: @unchecked Sendable {
     private let handle: Handle
 
     /// Opens a directory holding the Core ML parts of
-    /// `FluidInference/unlimited-ocr-mlx-coreml`.
+    /// `FluidInference/unlimited-ocr-mlx-coreml`, or a pinned OCR alias
+    /// (`OcrCatalog`), which opens only an install of its current pin.
     public init(modelPath: String) throws {
         let path = NSString(string: modelPath).expandingTildeInPath
         var out: OpaquePointer?

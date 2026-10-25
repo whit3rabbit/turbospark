@@ -24,7 +24,7 @@
 
 pub mod backend;
 pub mod precision;
-pub use euler::FlowGuidance;
+pub use euler::{FlowGuidance, FlowProfile, FlowSolver};
 pub use output_stats::{output_stats, OutputStats};
 pub use precision::Music3Precision;
 pub use progress::{Control, Progress};
@@ -63,7 +63,7 @@ use crate::quant::QuantScheme;
 use crate::Result;
 use crate::SpeechError;
 
-use backend::{ComputeBackend, Weight};
+use backend::ComputeBackend;
 use depth::{DepthDecoder, DepthDims};
 use dit::{DitDims, FlowMatchingTransformer};
 use fusion::{ConditionDims, ConditionEncoder};
@@ -448,6 +448,8 @@ pub struct TextGenerateRequest {
     pub caption: String,
     pub lyrics: String,
     pub duration_seconds: Option<f64>,
+    pub max_frames: Option<usize>,
+    pub context_size: Option<usize>,
     pub steps: Option<usize>,
     pub seed: Option<u64>,
 }
@@ -458,6 +460,8 @@ impl TextGenerateRequest {
             caption: caption.into(),
             lyrics: lyrics.into(),
             duration_seconds: None,
+            max_frames: None,
+            context_size: None,
             steps: None,
             seed: None,
         }
@@ -465,10 +469,10 @@ impl TextGenerateRequest {
 
     /// Check request values without loading a model or tokenizing the prompt.
     pub fn validate(&self) -> Result<()> {
-        self.resolve().map(|_| ())
+        self.resolve(FlowProfile::REFERENCE_STEPS).map(|_| ())
     }
 
-    fn resolve(&self) -> Result<(f64, usize, u64)> {
+    fn resolve(&self, default_steps: usize) -> Result<(f64, usize, u64)> {
         if self.caption.trim().is_empty() {
             return Err(SpeechError::Input {
                 why: "A music description is required".to_string(),
@@ -479,13 +483,48 @@ impl TextGenerateRequest {
                 why: "Lyrics are required; use [instrumental] explicitly".to_string(),
             });
         }
-        let duration = self.duration_seconds.unwrap_or(60.0);
+        if let Some(frames) = self.max_frames {
+            if frames == 0 || frames > MAX_AUDIO_FRAMES {
+                return Err(SpeechError::Input {
+                    why: format!("max_frames must be in 1..={MAX_AUDIO_FRAMES}"),
+                });
+            }
+        }
+        if let Some(ctx) = self.context_size {
+            if ctx == 0 || ctx > 10_240 {
+                return Err(SpeechError::Input {
+                    why: "context_size must be in 1..=10240".to_string(),
+                });
+            }
+            if let Some(frames) = self.max_frames {
+                if frames > ctx {
+                    return Err(SpeechError::Input {
+                        why: format!("max_frames {frames} exceeds context_size {ctx}"),
+                    });
+                }
+            }
+        }
+        let duration = if let Some(frames) = self.max_frames {
+            self.duration_seconds.unwrap_or(frames as f64 / FRAME_RATE)
+        } else {
+            self.duration_seconds.unwrap_or(60.0)
+        };
         if !duration.is_finite() || duration <= 0.0 || duration > 360.0 {
             return Err(SpeechError::Input {
                 why: "duration must be greater than 0 and no more than 360 seconds".to_string(),
             });
         }
-        let steps = self.steps.unwrap_or(30);
+        if let Some(ctx) = self.context_size {
+            let frames = ((duration * FRAME_RATE).trunc() as usize).max(1);
+            if frames > ctx {
+                return Err(SpeechError::Input {
+                    why: format!(
+                        "duration requires {frames} frames, which exceeds context_size {ctx}"
+                    ),
+                });
+            }
+        }
+        let steps = self.steps.unwrap_or(default_steps);
         if !(1..=30).contains(&steps) {
             return Err(SpeechError::Input {
                 why: "steps must be between 1 and 30".to_string(),
@@ -519,6 +558,13 @@ pub struct Model {
     stage: RefCell<StageTimings>,
     // Opt-in flow CFG reuse; `FlowGuidance::EXACT` is the reference path.
     flow_guidance: Cell<FlowGuidance>,
+    // Opt-in flow integrator; `FlowSolver::Euler` is the reference path.
+    flow_solver: Cell<FlowSolver>,
+    // Steps for a request that names none: 30 Exact, 21 Fast, or 8 Turbo.
+    default_steps: Cell<usize>,
+    // The app-facing runner honors this profile only for explicitly marked
+    // converted checkpoints. Direct Model users still open in Exact.
+    preferred_runner_profile: FlowProfile,
 }
 
 /// Chunk windows over `num_frames` AR frames: 200-frame windows hopping
@@ -581,6 +627,13 @@ impl Model {
         &self.config
     }
 
+    /// Profile for the app-facing runner. Converted checkpoints opt into a
+    /// specialized trajectory through explicit metadata; ordinary models
+    /// retain the existing Fast runner default.
+    pub fn preferred_runner_profile(&self) -> FlowProfile {
+        self.preferred_runner_profile
+    }
+
     /// Load a converted MLX tree (`config.json` plus safetensors
     /// shards). Affine-quantized linears dequantize at load; supported
     /// floating-point and MXFP formats are parsed by the same strict loader.
@@ -604,6 +657,7 @@ impl Model {
         let mut model = Model::from_store(&mut store, &config)?;
         store.finish()?;
         model.tokenizer = load_tokenizer(dir)?;
+        model.preferred_runner_profile = runner_profile_from_config(&value);
         Ok(model)
     }
 
@@ -630,6 +684,7 @@ impl Model {
         let mut model = Model::from_store(&mut store, &config)?;
         store.finish()?;
         model.tokenizer = load_tokenizer(dir)?;
+        model.preferred_runner_profile = runner_profile_from_config(&value);
         Ok(model)
     }
 
@@ -733,6 +788,9 @@ impl Model {
             precision: store.precision(),
             stage: RefCell::new(StageTimings::default()),
             flow_guidance: Cell::new(FlowGuidance::EXACT),
+            flow_solver: Cell::new(FlowSolver::Euler),
+            default_steps: Cell::new(FlowProfile::REFERENCE_STEPS),
+            preferred_runner_profile: FlowProfile::Fast,
         })
     }
 
@@ -743,6 +801,23 @@ impl Model {
         guidance.validate()?;
         self.flow_guidance.set(guidance);
         Ok(())
+    }
+
+    /// Select the flow integrator for later requests. The default is
+    /// [`FlowSolver::Euler`]; [`FlowSolver::AdamsBashforth2`] changes the
+    /// trajectory (second order, no extra DiT forward) and is opt-in.
+    pub fn set_flow_solver(&self, solver: FlowSolver) {
+        self.flow_solver.set(solver);
+    }
+
+    /// Apply a named flow profile: its solver, guidance schedule, and the step
+    /// count used when a request names none. A later `set_flow_solver` or
+    /// `set_flow_guidance` overrides that part only. `Model` itself opens in
+    /// [`FlowProfile::Exact`].
+    pub fn set_flow_profile(&self, profile: FlowProfile) {
+        self.flow_guidance.set(profile.guidance());
+        self.flow_solver.set(profile.solver());
+        self.default_steps.set(profile.default_steps());
     }
 
     /// Generate from the public caption-and-lyrics contract using the
@@ -782,8 +857,10 @@ impl Model {
     ) -> Result<Option<(Generation, StageTimings)>> {
         let started = Instant::now();
         *self.stage.borrow_mut() = StageTimings::default();
-        let (duration, steps, seed) = request.resolve()?;
-        let frames = ((duration * self.config.frame_rate).trunc() as usize).max(1);
+        let (duration, steps, seed) = request.resolve(self.default_steps.get())?;
+        let frames = request
+            .max_frames
+            .unwrap_or_else(|| ((duration * self.config.frame_rate).trunc() as usize).max(1));
         let prompt_text = assemble_prompt(&request.caption, &request.lyrics);
         let text_ids = match &self.tokenizer {
             Some(tokenizer) => prompt::encode_official_text(tokenizer, &prompt_text)?,
@@ -801,6 +878,20 @@ impl Model {
                 why: format!(
                     "The assembled prompt has {} tokens; the maximum is {MAX_PROMPT_TOKENS}",
                     text_ids.len()
+                ),
+            });
+        }
+        let context_limit = request
+            .context_size
+            .unwrap_or(self.config.max_position_embeddings);
+        if text_ids.len() + frames > context_limit {
+            return Err(SpeechError::Input {
+                why: format!(
+                    "The assembled prompt has {} tokens and requires {} audio frames; total {} exceeds context limit {}",
+                    text_ids.len(),
+                    frames,
+                    text_ids.len() + frames,
+                    context_limit
                 ),
             });
         }
@@ -976,6 +1067,14 @@ impl Model {
                 why: "prompt exceeds Music 3 token limit".into(),
             });
         }
+        if prompt_len + max_frames > config.max_position_embeddings {
+            return Err(SpeechError::Input {
+                why: format!(
+                    "prompt tokens ({prompt_len}) + frames ({max_frames}) exceeds model context limit ({})",
+                    config.max_position_embeddings
+                ),
+            });
+        }
         // Build the conditional / unconditional pair.
         let mut pair = Vec::with_capacity(2 * prompt_len);
         pair.extend_from_slice(text_ids);
@@ -1037,16 +1136,18 @@ impl Model {
 
             // Depth expansion over both CFG rows.
             let lap = Instant::now();
-            let mut sequence: Vec<f32> = Vec::new();
-            for b in 0..2 {
-                sequence.extend(ops_linear_no_bias(
-                    &last_hidden[b * hidden..(b + 1) * hidden],
-                    &self.depth.projection,
-                    hidden,
-                    hidden,
-                    self.lm.output_dtype(),
-                )?);
-            }
+            // MLX applies the dense projection to both CFG rows in one matmul
+            // (`depth.projection(last_hidden)` on `[2, hidden]`), a different
+            // kernel from two single-row calls, so batch them the same way.
+            let sequence = backend::linear(
+                &last_hidden[..2 * hidden],
+                &self.depth.projection,
+                None,
+                2,
+                hidden,
+                hidden,
+                self.lm.output_dtype(),
+            )?;
             // Reorder the two rows into [2, 1, hidden].
             let semantic_embed = self.lm.embed_ids(
                 &[
@@ -1056,16 +1157,15 @@ impl Model {
                 2,
                 1,
             )?;
-            let mut semantic_projected = Vec::with_capacity(2 * hidden);
-            for b in 0..2 {
-                semantic_projected.extend(ops_linear_no_bias(
-                    &semantic_embed[b * hidden..(b + 1) * hidden],
-                    &self.depth.projection,
-                    hidden,
-                    hidden,
-                    self.lm.dtype(),
-                )?);
-            }
+            let semantic_projected = backend::linear(
+                &semantic_embed[..2 * hidden],
+                &self.depth.projection,
+                None,
+                2,
+                hidden,
+                hidden,
+                self.lm.dtype(),
+            )?;
             let residual = config.num_codebooks - 1;
             let mut codes = vec![semantic_code];
             let mut hidden_parts: Vec<f32> = Vec::with_capacity(residual * hidden);
@@ -1126,13 +1226,19 @@ impl Model {
                     depth_input_dtype = depth_input_dtype
                         .promote(self.depth.projection.output_dtype(self.depth.dtype()));
                     let embed = self.depth.embed_code(code, index - 1);
-                    extra_embeddings.extend(ops_linear_no_bias(
-                        embed,
+                    // Both CFG rows carry the same sampled code; MLX projects the
+                    // `[2, hidden]` pair, so do the same and keep one row.
+                    let pair = [embed, embed].concat();
+                    let projected = backend::linear(
+                        &pair,
                         &self.depth.projection,
+                        None,
+                        2,
                         hidden,
                         hidden,
                         self.depth.dtype(),
-                    )?);
+                    )?;
+                    extra_embeddings.extend_from_slice(&projected[..hidden]);
                 }
             }
 
@@ -1381,6 +1487,7 @@ impl Model {
                 steps,
                 DIT_CFG_SCALE,
                 self.flow_guidance.get(),
+                self.flow_solver.get(),
                 previous_latent.as_deref(),
                 previous_condition.as_deref(),
                 condition_dtype,
@@ -1539,16 +1646,6 @@ fn semantic_guided(config: &ModelConfig, start: usize, width: usize, logits: &[f
 }
 
 /// `x [1, rows] @ w.T` with no bias, `w` stored `[out, in]`.
-fn ops_linear_no_bias(
-    x: &[f32],
-    w: &Weight,
-    inn: usize,
-    out: usize,
-    dtype: precision::DType,
-) -> Result<Vec<f32>> {
-    backend::linear(x, w, None, 1, inn, out, dtype)
-}
-
 /// `[1, target, dim]` row-major -> `[dim, target]` channel-major.
 fn condition_row_major_to_channel(x: &[f32], dim: usize, target: usize) -> Vec<f32> {
     let mut out = vec![0.0f32; dim * target];
@@ -1567,6 +1664,27 @@ fn slice_channel_rows(x: &[f32], dim: usize, len: usize, start: usize, end: usiz
         out.extend_from_slice(&x[c * len + start..c * len + end]);
     }
     out
+}
+
+fn runner_profile_from_config(value: &serde_json::Value) -> FlowProfile {
+    let variant = value.pointer("/extra/turbospark_music3_variant");
+    let quantization = value.get("quantization");
+    let is_turbo = variant.is_some_and(|variant| {
+        variant.get("name").and_then(|v| v.as_str()) == Some("turbo_lora_8step_merged")
+            && variant.get("flow_steps").and_then(|v| v.as_u64())
+                == Some(FlowProfile::TURBO_STEPS as u64)
+            && variant.get("flow_solver").and_then(|v| v.as_str()) == Some("euler")
+            && variant.get("flow_guidance").and_then(|v| v.as_str()) == Some("exact")
+    }) && quantization.is_some_and(|quantization| {
+        quantization.get("mode").and_then(|v| v.as_str()) == Some("affine")
+            && quantization.get("bits").and_then(|v| v.as_u64()) == Some(4)
+            && quantization.get("group_size").and_then(|v| v.as_u64()) == Some(64)
+    });
+    if is_turbo {
+        FlowProfile::Turbo
+    } else {
+        FlowProfile::Fast
+    }
 }
 
 fn parse_quant_scheme(value: &serde_json::Value) -> Result<LinearQuantization> {

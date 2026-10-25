@@ -196,8 +196,8 @@ extension AppModel {
         !generating && imageGenerationTask == nil && !isInstallingImageModel && imageSession != nil
     }
 
-    /// Whether any active model session (text or image) can be unloaded.
+    /// Whether any active model session (text, image, or audio) can be unloaded.
     public var canUnloadAnyModel: Bool {
-        canUnloadModel || canUnloadImageModel
+        canUnloadModel || canUnloadImageModel || audioWorkspace.canUnloadModel
     }
 }

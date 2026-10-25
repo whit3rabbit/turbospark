@@ -96,6 +96,15 @@ pub(crate) const GLM_USER_MARK: &str = "<|user|>";
 pub(crate) const GLM_ASSISTANT_MARK: &str = "<|assistant|>";
 pub(crate) const GLM_OBSERVATION_MARK: &str = "<|observation|>";
 pub(crate) const GLM_SOP_MARK: &str = "<sop>";
+/// Recursive Flint, read off `RecursiveSI/flint-int4`'s `tokenizer.json`
+/// (2026-10-21): `<|begin_of_text|>` 150000 (BOS, not added by the encoder),
+/// `<|end_of_text|>` 150001 (EOS and PAD), `<|user|>` 150003,
+/// `<|assistant|>` 150004, `<|observation|>` 150005, `<|developer|>` 150018,
+/// all special. `<|end_of_text|>` is the witness that separates this table
+/// from GLM's `<|endoftext|>`.
+pub(crate) const FLINT_BOS_MARK: &str = "<|begin_of_text|>";
+pub(crate) const FLINT_EOS_MARK: &str = "<|end_of_text|>";
+pub(crate) const FLINT_DEVELOPER_MARK: &str = "<|developer|>";
 /// Kimi K2. The witness for these names is `moonshotai/Kimi-K2.5`'s
 /// `tokenizer_config.json` (read 2026-09-19; the K2 line ships no
 /// `tokenizer.json` at all -- the whole line is tiktoken): `[EOS]` 163585
@@ -194,6 +203,20 @@ pub(crate) fn detect_dialect(tokenizer: &Tokenizer) -> ChatDialect {
         // `<|Bot|>` in a Gemma-fallback vocab would silently misframe, so it
         // is tested positively rather than left to the fallback.
         ChatDialect::Spark
+    } else if special_token_id(tokenizer, FLINT_BOS_MARK).is_some()
+        && special_token_id(tokenizer, FLINT_EOS_MARK).is_some()
+        && special_token_id(tokenizer, GLM_USER_MARK).is_some()
+        && special_token_id(tokenizer, GLM_ASSISTANT_MARK).is_some()
+        && special_token_id(tokenizer, GLM_OBSERVATION_MARK).is_some()
+        && special_token_id(tokenizer, FLINT_DEVELOPER_MARK).is_some()
+    {
+        // Recursive Flint. TESTED BEFORE GLM, and the order is load-bearing:
+        // this table carries GLM's `<|observation|>` + `<|assistant|>` pair,
+        // so the GLM probe below would claim it and `resolve_glm` would then
+        // die on `<|endoftext|>`. The six markers are EXACTLY the set
+        // `resolve_flint` requires (Gotcha 52), and `<|developer|>` plus
+        // `<|end_of_text|>` are the two no GLM table carries.
+        ChatDialect::Flint
     } else if special_token_id(tokenizer, GLM_OBSERVATION_MARK).is_some()
         && special_token_id(tokenizer, GLM_ASSISTANT_MARK).is_some()
     {
@@ -277,9 +300,9 @@ pub(crate) fn detect_dialect(tokenizer: &Tokenizer) -> ChatDialect {
 }
 
 use super::resolvers::{
-    resolve_chatml, resolve_deepseek, resolve_deepseek_v2, resolve_gemma, resolve_glm,
-    resolve_harmony, resolve_kimi, resolve_llama3, resolve_mistral, resolve_muse_glimmer,
-    resolve_spark,
+    resolve_chatml, resolve_deepseek, resolve_deepseek_v2, resolve_flint, resolve_gemma,
+    resolve_glm, resolve_harmony, resolve_kimi, resolve_llama3, resolve_mistral,
+    resolve_muse_glimmer, resolve_spark,
 };
 
 pub(crate) fn resolve_dialect(
@@ -299,6 +322,7 @@ pub(crate) fn resolve_dialect(
         ChatDialect::Spark => resolve_spark(tokenizer),
         ChatDialect::MiniMax => super::minimax::resolve(tokenizer),
         ChatDialect::Glm => resolve_glm(tokenizer),
+        ChatDialect::Flint => resolve_flint(tokenizer),
         ChatDialect::Kimi => resolve_kimi(tokenizer),
     }
 }

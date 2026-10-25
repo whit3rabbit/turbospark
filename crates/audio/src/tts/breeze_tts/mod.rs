@@ -1046,6 +1046,7 @@ impl DepthDecoder {
                     rope: Some(rope.clone()),
                     window: None,
                     bidirectional: false,
+                    exec: None,
                 },
                 mlp: Mlp {
                     gate_proj: weights.linear_absolute(
@@ -1066,6 +1067,7 @@ impl DepthDecoder {
                         hidden,
                         lm::Bias::None,
                     )?,
+                    exec: None,
                 },
                 input_layernorm: RmsNorm::new(
                     weights
@@ -1301,6 +1303,7 @@ impl AudioBackbone {
                     rope: Some(rope.clone()),
                     window: None,
                     bidirectional: false,
+                    exec: None,
                 },
                 mlp: Mlp {
                     gate_proj: weights.linear_absolute(
@@ -1321,6 +1324,7 @@ impl AudioBackbone {
                         hidden,
                         lm::Bias::None,
                     )?,
+                    exec: None,
                 },
                 input_layernorm: RmsNorm::new(
                     weights

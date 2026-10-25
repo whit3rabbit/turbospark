@@ -40,8 +40,8 @@ struct PromptComposerEditor: View {
     var body: some View {
         Color.clear
             .frame(height: min(max(measuredTextHeight, editorMinHeight), currentMaxHeight))
-            .tsAnimation(.smooth(duration: 0.15), value: measuredTextHeight)
-            .tsAnimation(.smooth(duration: 0.2), value: isExpanded)
+            .tsAnimation(TSMotion.hover, value: measuredTextHeight)
+            .tsAnimation(TSMotion.select, value: isExpanded)
             .background(alignment: .topLeading) {
                 Text(model.promptText.isEmpty ? " " : model.promptText)
                     .font(theme.uiFont)
@@ -182,7 +182,7 @@ struct PromptComposerEditor: View {
             .overlay(alignment: .topTrailing) {
                 if measuredTextHeight > editorMinHeight + 6 || isExpanded {
                     Button {
-                        TSMotion.animate(.smooth(duration: 0.2)) {
+                        TSMotion.animate(TSMotion.select) {
                             isExpanded.toggle()
                         }
                     } label: {

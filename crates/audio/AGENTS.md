@@ -23,12 +23,12 @@ Unified portable audio crate: DSP primitives (waveform, WAV I/O, resampling, FFT
 
 All models and model families reside under their respective role directories:
 - `src/music/<family>/`: Music generation (e.g. `minimax_music3`)
-- `src/stt/<family>/`: Speech-to-text (e.g. `canary`, `fireredasr2`, `fun_asr_nano`, `glmasr`, `granite_speech`, `granite_speech5_ctc`, `higgs_audio_3`, `mega_asr`, `mms`, `moonshine`, `moss_transcribe_diarize`, `nemotron_asr`, `parakeet`, `phonon`, `qwen3_asr`, `qwen3_forced_aligner`, `sensevoice`, `whisper`)
-- `src/tts/<family>/`: Text-to-speech (e.g. `bailingmm`, `bark`, `breeze_tts`, `confucius4`, `dia`, `echo_tts`, `fish_qwen3_omni`, `higgs_audio`, `higgs_audio_v3`, `indextts`, `kitten_tts`, `kokoro`, `kugelaudio`, `llama`, `longcat_audiodit`, `megatts3`, `melotts`, `moss_tts`, `moss_tts_nano`, `omnivoice`, `outetts`, `pocket_tts`, `qwen3`, `rumik_oss`, `sesame`, `soprano`, `spark`, `zonos2`)
+- `src/stt/<family>/`: Speech-to-text (e.g. `canary`, `fireredasr2`, `fun_asr_nano`, `glmasr`, `granite_speech`, `granite_speech5_ctc`, `higgs_audio_3`, `mega_asr`, `mms`, `moonshine`, `moss_transcribe_diarize`, `multitalker_asr`, `nemotron_asr`, `parakeet`, `phonon`, `qwen3_asr`, `qwen3_forced_aligner`, `sensevoice`, `whisper`)
+- `src/tts/<family>/`: Text-to-speech (e.g. `arktts`, `bailingmm`, `bark`, `breeze_tts`, `chatterbox`, `chatterbox_turbo`, `confucius4`, `dia`, `dramabox`, `echo_tts`, `fish_drama3`, `fish_qwen3_omni`, `higgs_audio`, `higgs_audio_v3`, `indextts`, `irodori_tts`, `kitten_tts`, `kokoro`, `kugelaudio`, `llama`, `longcat_audiodit`, `megatts3`, `melotts`, `moss_tts`, `moss_tts_nano`, `omnivoice`, `outetts`, `pocket_tts`, `qwen3`, `rumik_oss`, `sesame`, `soprano`, `spark`, `tada`, `vibevoice`, `voxcpm`, `voxcpm2`, `voxtral_tts`, `zonos2`)
 - `src/vad/<family>/`: Voice activity detection and diarization (e.g. `silero_vad`, `sortformer`, `nemotron_diarization`)
-- `src/sts/<family>/`: Speech-to-speech and enhancement (e.g. `deepfilternet`)
+- `src/sts/<family>/`: Speech-to-speech and enhancement (e.g. `deepfilternet`, `dialogue_sidon`, `mel_roformer`, `mossformer2_se`, `sam_audio`)
 - `src/codec/<family>/`: Neural audio codecs and vocoders (e.g. `bigvgan`, `dacvae`, `descript`, `ecapa_tdnn`, `encodec`, `fish_s1_dac`, `higgs_audio`, `mimi`, `mimo_audio_tokenizer`, `moss_audio_tokenizer`, `nemotron_voicechat`, `s3`, `snac`, `spark_bicodec`, `stepaudio2`, `vocos`, `wavvae`)
-- `src/lid/<family>/`: Spoken language identification (e.g. `ecapa_tdnn`, `wav2vec2_lid`)
+- `src/lid/`: Spoken language identification (target families `ecapa_tdnn`, `wav2vec2_lid` are planned; no family directories yet, see `lid/README.md`)
 
 Every model family directory contains its implementation code, configuration, weight loader, and a comprehensive markdown document (`README.md`) detailing:
 1. Overview & model description
@@ -50,7 +50,7 @@ Every model family directory contains its implementation code, configuration, we
   `[out, in]` layout; helpers convert the exceptions at load time, not in
   the kernels.
 - MLX-quantized checkpoints are the norm. `quant.rs` dequantizes groupwise
-  affine tensors (2/3/4/6/8-bit). A model module must refuse a quant scheme
+  affine tensors (2/3/4/5/6/8-bit). A model module must refuse a quant scheme
   it has not verified rather than silently mis-decode.
 - Every model module ships op-level parity tests against golden tensors
   produced by the pinned Python reference, plus an end-to-end run for

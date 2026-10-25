@@ -78,6 +78,7 @@ impl RealForwardRunner {
             // correctly. Record the ceiling, do not half-wire the driver.
             || self.real_muse.is_some()
             || self.real_gpt_oss.is_some()
+            || self.real_flint.is_some()
             || (self.real_qwen.as_ref().is_some_and(|s| s.dense)
                 && self.real_mtp.is_none()
                 && self.real_dflash.is_none())
@@ -236,6 +237,77 @@ impl RealForwardRunner {
     #[doc(hidden)]
     pub fn set_prefill_rows_attention(&mut self, on: bool) {
         self.prefill_rows_attention = on;
+    }
+
+    /// `TURBOSPARK_ANE_PREFILL` and `TURBOSPARK_ANE_PREFILL_DIR`: the opt-in
+    /// ANE+Steel prefill split for the dense qwen family, reading its Core ML
+    /// programs and `manifest.json` from `programs`
+    /// (`crates/coreml/tools/gen_ane_prefill_programs.py`). Takes effect at
+    /// the next chunk. Programs that are missing or do not match this
+    /// install turn the split off with one warning, and prefill runs on
+    /// Steel. It needs micro-batches of at least 512 rows, so a prefill chunk
+    /// of 2048.
+    #[cfg(feature = "ane-prefill")]
+    pub fn set_ane_prefill(
+        &mut self,
+        mode: crate::AnePrefillMode,
+        programs: Option<std::path::PathBuf>,
+    ) {
+        let resolved_mode = match mode {
+            crate::AnePrefillMode::Auto => {
+                if crate::hardware_supports_ane_prefill()
+                    && self.arch.family == model_io::ModelFamily::QwenGdnDense
+                {
+                    crate::AnePrefillMode::Split
+                } else {
+                    crate::AnePrefillMode::Off
+                }
+            }
+            other => other,
+        };
+        self.ane_prefill = crate::families::qwen::AnePrefill::new(resolved_mode, programs);
+    }
+
+    #[cfg(not(feature = "ane-prefill"))]
+    pub fn set_ane_prefill(
+        &mut self,
+        _mode: crate::AnePrefillMode,
+        _programs: Option<std::path::PathBuf>,
+    ) {
+    }
+
+    /// The current ANE prefill mode configured on this runner.
+    #[cfg(feature = "ane-prefill")]
+    pub fn ane_prefill_mode(&self) -> crate::AnePrefillMode {
+        self.ane_prefill.mode()
+    }
+
+    #[cfg(not(feature = "ane-prefill"))]
+    pub fn ane_prefill_mode(&self) -> crate::AnePrefillMode {
+        crate::AnePrefillMode::Off
+    }
+
+    /// The programs directory used for the ANE prefill split, if any.
+    #[cfg(feature = "ane-prefill")]
+    pub fn ane_prefill_programs(&self) -> Option<&Path> {
+        self.ane_prefill.programs()
+    }
+
+    #[cfg(not(feature = "ane-prefill"))]
+    pub fn ane_prefill_programs(&self) -> Option<&Path> {
+        None
+    }
+
+    /// Whether this runner's architecture and hardware support the ANE prefill split.
+    #[cfg(feature = "ane-prefill")]
+    pub fn ane_prefill_supported(&self) -> bool {
+        crate::hardware_supports_ane_prefill()
+            && self.arch.family == model_io::ModelFamily::QwenGdnDense
+    }
+
+    #[cfg(not(feature = "ane-prefill"))]
+    pub fn ane_prefill_supported(&self) -> bool {
+        false
     }
 
     /// [`RealForwardRunner::open`] with an explicit KV capacity: the

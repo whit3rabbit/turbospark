@@ -580,7 +580,7 @@ async fn main() -> std::process::ExitCode {
     if has_audio {
         eprintln!("  POST /v1/audio/transcriptions  (WAV in; json, verbose_json, text, srt, vtt)");
         eprintln!("  GET  /v1/audio/transcriptions/realtime  (WebSocket, commit per utterance)");
-        eprintln!("  POST /v1/audio/speech       (Kokoro or MegaTTS3 cloning, wav or pcm)");
+        eprintln!("  POST /v1/audio/speech       (Kokoro, MegaTTS3, or OmniVoice TTS/cloning, wav or pcm)");
         eprintln!("  POST /v1/audio/generate     (Music 3, wav; async=true for a job)");
         eprintln!("  GET  /v1/audio/jobs/:id     (and /result; DELETE cancels)");
         eprintln!(

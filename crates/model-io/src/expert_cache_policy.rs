@@ -57,6 +57,36 @@ pub fn auto_residency_prefers_mapped(
     (DEFAULT_CACHE_SLOTS as u64).saturating_mul(bytes_per_slot) > budget
 }
 
+/// Kept back from Metal's recommended working set when deciding whether
+/// mapped residency fits: the rest of this process's GPU memory (KV cache,
+/// scratch, any model sharing the process) and what other processes have
+/// wired. Measured on one machine, a 36 GiB M4 Max: 5.4 GiB wired at idle, and
+/// the driver unwiring layers once a Fish Audio Drama 3 process (19.3 GiB
+/// mapped, about 2.6 GiB more of its own) neared the 28.1 GiB working set
+/// (`docs/EXPERT_RESIDENCY.md`).
+pub const MAPPED_WIRED_RESERVE_BYTES: u64 = 10 * 1024 * 1024 * 1024;
+
+/// Whether mapped residency's mappings fit what the GPU will keep wired.
+///
+/// The GPU wires every no-copy mapping a command buffer binds, in full and
+/// for as long as the process holds it: the whole expert table and the
+/// resident weights, not just the pages a pass reads. Past what the driver
+/// will keep wired it unwires a layer, and the next pass that binds it
+/// re-wires the whole layer from the page cache or the disk. A decode walks
+/// every layer in order, so every pass misses (70 to 180 times slower,
+/// measured). `working_set_bytes` is `MTLDevice.recommendedMaxWorkingSetSize`.
+/// Zero means unknown and never fits, since the reserve alone exceeds it.
+pub fn mapped_residency_fits(
+    working_set_bytes: u64,
+    resident_bytes: u64,
+    table_bytes: u64,
+) -> bool {
+    resident_bytes
+        .saturating_add(table_bytes)
+        .saturating_add(MAPPED_WIRED_RESERVE_BYTES)
+        <= working_set_bytes
+}
+
 /// Routed-expert cache sizing, as it reaches `runtime::RealForwardRunner`.
 ///
 /// The mirror of `turbospark_invocation::ExpertCacheSlots`, spelled again
@@ -201,6 +231,40 @@ mod tests {
     const GEMMA4_BYTES_PER_SLOT: u64 = 30 * 3_355_443;
     const GEMMA4_RESIDENT: u64 = 13 * 1024 * 1024 * 1024;
     const GIB: u64 = 1024 * 1024 * 1024;
+
+    /// Metal's recommended working set on the 36 GiB M4 Max the mapped
+    /// measurements came from (28.08 GiB).
+    const M4_MAX_36_WORKING_SET: u64 = 30_150_000_000;
+
+    #[test]
+    fn mapped_residency_fits_the_installs_it_was_measured_on() {
+        // Fish Audio Drama 3 and MiniCPM-V 4.7: both thrashed mapped.
+        let drama = (2_558_993_664, 18_124_701_696);
+        let minicpm = (4_874_000_000, 17_115_000_000);
+        for (name, (resident, table)) in [("drama3", drama), ("minicpm", minicpm)] {
+            assert!(
+                !mapped_residency_fits(M4_MAX_36_WORKING_SET, resident, table),
+                "{name} decoded 70 to 180 times slower mapped and must not fit"
+            );
+        }
+        // Gemma 4 26B-A4B's 12.3 GB table decoded faster mapped than streamed.
+        // Its resident size is assumed (2 GiB): that install is no longer here.
+        assert!(mapped_residency_fits(
+            M4_MAX_36_WORKING_SET,
+            2 * GIB,
+            12_300_000_000
+        ));
+    }
+
+    #[test]
+    fn mapped_residency_fits_is_inclusive_and_refuses_an_unknown_working_set() {
+        let ws = 28 * GIB;
+        let room = ws - MAPPED_WIRED_RESERVE_BYTES;
+        assert!(mapped_residency_fits(ws, GIB, room - GIB));
+        assert!(!mapped_residency_fits(ws, GIB, room - GIB + 1));
+        assert!(!mapped_residency_fits(0, 0, 1));
+        assert!(!mapped_residency_fits(ws, u64::MAX, u64::MAX));
+    }
 
     #[test]
     fn a_machine_with_headroom_climbs_to_the_top_of_the_allowed_set() {
@@ -406,7 +470,7 @@ mod tests {
                                               // A machine with plenty of headroom over the install: 128 GiB
                                               // physical against 47 GiB resident. (128 - 47 - 4) * 0.25 = 19.25
                                               // GiB budget; 96 slots costs 11.9 GiB and 128 costs 15.9 GiB, both
-                                              // under budget, so `Auto` reaches the allowed ceiling.
+                                              // under budget, and 192 (23.7 GiB) is not, so `Auto` stops at 128.
         assert_eq!(
             auto_slots(128 * GIB, QWEN4_RESIDENT, QWEN4_BYTES_PER_SLOT),
             128
@@ -419,6 +483,33 @@ mod tests {
         assert_eq!(
             auto_slots(40 * GIB, QWEN4_RESIDENT, QWEN4_BYTES_PER_SLOT),
             DEFAULT_CACHE_SLOTS as usize
+        );
+    }
+
+    /// The 512-expert IQ2_XS `qwen4exp` install the 192 and 256 rungs were
+    /// added for: 48 layers x 1,523,712 B is 69.75 MiB per slot, and its
+    /// resident trunk is `model_weights.bin` (4,546,742,016 B; the n-gram
+    /// table is demand-paged and not resident). Three machines, one per
+    /// rung, so dropping either new rung from the set changes an answer.
+    #[test]
+    fn a_512_expert_install_reaches_the_new_rungs_only_where_memory_allows() {
+        const SWIFT_BYTES_PER_SLOT: u64 = 48 * 1_523_712;
+        const SWIFT_RESIDENT: u64 = 4_546_742_016;
+        // (36 - 4.23 - 4) * 0.25 = 6.94 GiB: 96 slots (6.54) fit, 128 (8.72)
+        // do not. This machine's own answer, unchanged by the new rungs.
+        assert_eq!(
+            auto_slots(36 * GIB, SWIFT_RESIDENT, SWIFT_BYTES_PER_SLOT),
+            96
+        );
+        // 13.94 GiB budget: 192 (13.08) fits, 256 (17.44) does not.
+        assert_eq!(
+            auto_slots(64 * GIB, SWIFT_RESIDENT, SWIFT_BYTES_PER_SLOT),
+            192
+        );
+        // 29.94 GiB budget: 256 fits.
+        assert_eq!(
+            auto_slots(128 * GIB, SWIFT_RESIDENT, SWIFT_BYTES_PER_SLOT),
+            256
         );
     }
 }

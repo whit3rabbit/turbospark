@@ -35,11 +35,13 @@ struct AlternateShortcutBridge: View {
                 .disabled(model.isRunning || model.orderedChats.isEmpty)
 
             // unsloth toggleSidebar: Cmd+B.
-            Button { toggleSidebar() } label: { Text(verbatim: "Toggle Chat Sidebar Alternate") }
+            // Mirrors the View menu's Toggle Sidebar disabled state.
+            Button { toggleSidebar() } label: { Text(verbatim: "Toggle Sidebar Alternate") }
                 .keyboardShortcut("b", modifiers: .command)
+                .disabled(!model.activeSection.hasSidebarPanel)
 
             // unsloth switchToChat..switchToExport: Ctrl+1..Ctrl+9 on macOS.
-            // The rail has five sections, so the range stops at five.
+            // The rail has eight sections, so the range stops at eight.
             ForEach(AppModel.AppNavigationSection.allCases) { section in
                 Button(section.title) { model.activeSection = section }
                     .keyboardShortcut(KeyEquivalent(section.shortcutKey), modifiers: .control)

@@ -63,6 +63,7 @@ extension AppModel {
             telemetry = TurboSparkSession.systemTelemetry
             reconcileSelection()
             reconcileImageSelection()
+            audioWorkspace.refreshModels()
 
             let lmPath =
                 enableLMStudioDetection

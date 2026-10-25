@@ -1,8 +1,9 @@
 # Swift API workspace
 
 The sidebar opens **API** on Text. The centered selector moves Text, Image,
-TypeSafe by click, arrow keys, or horizontal swipe. Each mode retains its own
-controls. Console and traffic tools remain available from the workspace.
+Audio, Embeddings, TypeSafe by click, arrow keys, or horizontal swipe. Each
+mode retains its own controls. Console and traffic tools remain available from
+the workspace.
 
 ## Text and Image
 
@@ -17,6 +18,32 @@ renders the PNG in memory, and saves to the gallery only on request.
 resident session and `ImageJobCoordinator`. A queue slot is released on
 success, cancellation, detach, and stop. The Rust endpoint returns base64
 PNG data; the traffic pane must not copy that data into text previews.
+
+## Embeddings
+
+`EmbeddingsAPIPaneView.swift` attaches an embedding model to the TurboSpark
+listener for `/v1/embeddings`, `/api/embeddings` and `/api/embed`. The model
+field (`serverEmbeddingModelInput`, persisted) is its only control; Advanced
+settings no longer has one. `performServerStart` starts the server without
+it and then calls `attachEmbeddingModelToServer` (`AppModel+ServerEmbeddings.swift`),
+so a refused or slow model never fails a start. `EmbeddingsAPITestPanel.swift`
+sends one `POST /v1/embeddings` with the server key.
+
+`TurboSparkServer` holds its lock across the C call, and a first Core ML load
+takes tens of seconds. The attach runs detached, and while
+`serverEmbeddingAttachInFlight` is set the poll and `refreshServerInfo` keep
+the last snapshot and `stopServer` records the stop for the attach to apply.
+Do not call the server from the main thread during an attach.
+
+`Components/EmbeddingModelPicker.swift` is shared with Memory settings. It
+lists every pinned profile (`EmbeddingCatalog`) with its status from Rust:
+Verified only when the profile's named gates ran on that pin. A typed path or
+alias is checked with `EmbeddingCatalog.probe` (`ts_embedding_probe_json`),
+which accepts the Core ML EmbeddingGemma 2 export and CLS-pooled BERT or
+XLM-RoBERTa encoders, labels them Not verified unless they are a verified
+pinned install, and refuses other families with a reason. The server applies
+the same probe on attach. `ServerInfo.embeddingModels` keeps embedding ids
+out of the Text tab's model rows.
 
 ## TypeSafe
 

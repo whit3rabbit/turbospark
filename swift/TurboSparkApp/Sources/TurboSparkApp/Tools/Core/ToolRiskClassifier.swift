@@ -132,8 +132,21 @@ public enum ToolRiskClassifier {
     private static let sensitiveFileNames: Set<String> = [
         ".env", ".env.local", ".env.production", ".env.secret",
         "id_rsa", "id_ed25519", "id_dsa", "id_ecdsa",
-        "credentials", "secrets.json", "secret.json", "private_key.pem", "id_rsa.pub"
+        "credentials", "secrets.json", "secret.json", "private_key.pem", "id_rsa.pub",
+        // Package-manager and network credential stores. Both hold tokens or
+        // passwords in plain text and are written next to ordinary project files.
+        ".npmrc", ".netrc"
     ]
+
+    /// Extensions that mark a private key or certificate bundle.
+    ///
+    /// Matching is by extension because these files have no fixed name
+    /// (`server.pem`, `tls/prod.key`). Two costs are accepted on purpose: a
+    /// public certificate such as `cacert.pem` is hidden too, and `.key` is also
+    /// Apple's Keynote extension, so a Keynote file is hidden from the file tree
+    /// and cannot be attached. Over-blocking a file the user can still open in
+    /// Finder is cheaper than showing a private key to the model.
+    private static let sensitiveFileExtensions: Set<String> = ["pem", "key"]
 
     private static let sensitivePathPrefixes: [String] = [
         "/etc", "/private/etc", "/var/root", "/System", "/Library", "/usr/bin", "/usr/sbin", "/bin", "/sbin"
@@ -233,7 +246,7 @@ public enum ToolRiskClassifier {
         // 1. Always Safe Builtin Tools
         switch lowerName {
         case "list_directory", "list_dir", "ls", "glob", "read_file", "view_file", "cat", "fileread", "read",
-             "search_code", "grep", "search", "skill", "todowrite", "todo_write", "snip", "extract_snippet",
+             "search_code", "grep", "search", "grep_search", "skill", "todowrite", "todo_write", "snip", "extract_snippet",
              "codesearch", "code_search",
              "ctxinspect", "ctx_inspect", "listmcpresources", "list_mcp_resources", "list_resources",
              "readmcpresource", "read_mcp_resource", "read_resource", "tasklist", "task_list", "taskget",
@@ -570,6 +583,10 @@ public enum ToolRiskClassifier {
 
         let fileName = (trimmed as NSString).lastPathComponent.lowercased()
         if sensitiveFileNames.contains(fileName) || fileName.hasPrefix(".env") {
+            return true
+        }
+
+        if sensitiveFileExtensions.contains((fileName as NSString).pathExtension) {
             return true
         }
 

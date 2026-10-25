@@ -41,7 +41,10 @@ final class AudioNavigationTests: XCTestCase {
 
     func testMissingSavedChoiceFallsBackToInstalledModelForThisTask() throws {
         try withController { controller in
-            let speech = try XCTUnwrap(controller.profiles.last { $0.identity.task == .speechToText })
+            // A batch transcriber: the live-only Parakeet Unified is never a Transcribe choice.
+            let speech = try XCTUnwrap(controller.profiles.last {
+                $0.identity.task == .speechToText && $0.capabilities.operations.contains("transcribe")
+            })
             controller.installedPaths[speech.identity.alias] = "/test/installed"
             controller.preferences.selectedModels[AudioTask.speechToText.rawValue] = "removed-pin"
             controller.selectPage(.transcribe)

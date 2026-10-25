@@ -22,6 +22,15 @@ use crate::real_forward_utils::entry;
 /// BF16 bit pattern for 1.0.
 const BF16_ONE: u16 = 0x3F80;
 
+/// What the pilot probe writes: the next layer's post-attention norm of THIS
+/// layer's residual, and the router logits it produces.
+pub(crate) struct PilotBuffers {
+    /// BF16 `[hidden]`.
+    pub(crate) x: gpu::MetalBuffer,
+    /// F32 `[num_experts]`.
+    pub(crate) logits: gpu::MetalBuffer,
+}
+
 /// Per-open Qwen decode state: the recurrent GDN buffers plus every piece
 /// of scratch the per-token flow writes.
 pub(crate) struct RealQwenState {
@@ -56,6 +65,13 @@ pub(crate) struct RealQwenState {
     /// and the selection reduces to softmax-over-the-selected.
     pub(crate) per_expert_ones: Vec<f32>,
     pub(crate) router_logits_f32: gpu::MetalBuffer,
+    /// Scratch for the one-layer-ahead router probe (`TURBOSPARK_PILOT_PROBE`).
+    /// `None` unless the env var was set at open, so a normal run allocates
+    /// and dispatches nothing for it.
+    pub(crate) pilot: Option<PilotBuffers>,
+    /// `TURBOSPARK_QWEN_PREFETCH=<k>`: read the next layer's guessed experts
+    /// early on a worker. An experiment (see `prefetch.rs`).
+    pub(crate) prefetch: Option<super::prefetch::Prefetcher>,
 
     /// `[2 * num_heads * full_head_dim]`: q_proj's packed query/gate rows.
     pub(crate) q_packed: gpu::MetalBuffer,
@@ -93,6 +109,10 @@ pub(crate) struct RealQwenState {
     /// It is never allocated BESIDE a drafter's copy: the chunked driver
     /// refuses an open drafter by name, so at most one of the two exists.
     pub(crate) batched_prefill: Option<BatchedScratch>,
+    /// The opt-in ANE prefill split's planes, programs and event
+    /// (`ane_split.rs`), loaded on its first micro-batch.
+    #[cfg(feature = "ane-prefill")]
+    pub(crate) ane_split: Option<super::ane_split::AneSplitState>,
     /// The Hadamard-folded weight contract's plan (the Bonsai-2 line), built
     /// only when the manifest carries a `hadamard` section. `None` on every
     /// install written before the contract existed, which makes every
@@ -107,6 +127,7 @@ impl RealQwenState {
         index: &ResidentIndex,
         arch: &ArchConfig,
         hadamard: Option<(&model_io::ManifestHadamard, &[u8])>,
+        headless: bool,
     ) -> Result<Self, RealForwardError> {
         let unsupported = |detail: String| Err(RealForwardError::Unsupported(detail));
         // DENSE AND MoE ARE BOTH THIS FLOW. The two are mutually exclusive
@@ -283,12 +304,17 @@ impl RealQwenState {
                 entry(index, &name)?;
             }
         }
-        let head_name = if arch.tie_word_embeddings {
-            "language_model.model.embed_tokens.weight"
-        } else {
-            "language_model.lm_head.weight"
-        };
-        entry(index, head_name)?;
+        // A headless trunk (`model_io::trunk_role`) has no head by design: the
+        // model that owns it applies its own to the final hidden state. Every
+        // other install must carry one. The final norm is required by both.
+        if !headless {
+            let head_name = if arch.tie_word_embeddings {
+                "language_model.model.embed_tokens.weight"
+            } else {
+                "language_model.lm_head.weight"
+            };
+            entry(index, head_name)?;
+        }
         entry(index, "language_model.model.norm.weight")?;
         let _ = weights;
 
@@ -319,6 +345,21 @@ impl RealQwenState {
             )?),
             None => None,
         };
+        // The prefetch experiment reads the same one-layer-ahead guess the
+        // probe makes, so it needs the probe's buffers even with no
+        // histogram.
+        let prefetch = if num_experts > 0 {
+            super::prefetch::width_from_env(arch.top_k_experts.max(0) as usize)
+                .map(|k| super::prefetch::Prefetcher::spawn(k, arch.top_k_experts as usize))
+        } else {
+            None
+        };
+        let pilot = (num_experts > 0
+            && (prefetch.is_some() || std::env::var_os("TURBOSPARK_PILOT_PROBE").is_some()))
+        .then(|| PilotBuffers {
+            x: context.new_output_buffer((hidden.max(1) * 2) as u64),
+            logits: context.new_output_buffer((num_experts * 4) as u64),
+        });
         let halfs = |n: usize| context.new_output_buffer((n.max(1) * 2) as u64);
         Ok(Self {
             gdn: gpu::GdnStateManager::new(context.device(), arch),
@@ -338,6 +379,8 @@ impl RealQwenState {
             // token the last token's routing. Decode uses row 0.
             router_logits_f32: context
                 .new_output_buffer((num_experts.max(1) * MAX_PREFILL_BATCH * 4) as u64),
+            pilot,
+            prefetch,
             q_packed: halfs(2 * q_dim),
             attn_gate: halfs(q_dim),
             gdn_qkv_raw: halfs(qkv_dim),
@@ -356,6 +399,8 @@ impl RealQwenState {
             h2: halfs(hidden),
             shared_gate_logit: halfs(1),
             batched_prefill: None,
+            #[cfg(feature = "ane-prefill")]
+            ane_split: None,
             hadamard,
         })
     }
@@ -374,19 +419,27 @@ impl RealQwenState {
     /// batched INT4 GEMM caps a dispatch at its per-thread accumulator
     /// array, and the driver's micro-batch is capped at the same constant,
     /// so a full micro-batch is exactly one dispatch with no sub-batching.
-    /// `steel` sizes the scratch for the Steel micro-batch
-    /// (`QWEN_STEEL_PREFILL_BATCH` rows) and lets its GEMMs take the Steel
-    /// kernel; otherwise it is the 16-row scalar arm's. Fixed at first
-    /// allocation: the choice is the runner's, read once at open.
+    /// `steel` sizes the scratch for the Steel micro-batch (`steel_rows`,
+    /// `QWEN_STEEL_PREFILL_BATCH` unless the ANE prefill split widens it)
+    /// and lets its GEMMs take the Steel kernel; otherwise it is the 16-row
+    /// scalar arm's. The Steel choice is fixed at first allocation: it is
+    /// the runner's, read once at open. A Steel scratch is reallocated only
+    /// when `steel_rows` changes, which the default arm never asks for.
     pub(crate) fn ensure_batched_prefill(
         &mut self,
         context: &mut gpu::MetalContext,
         arch: &ArchConfig,
         steel: bool,
         rows_attention: bool,
+        steel_rows: usize,
     ) -> Result<(), RealForwardError> {
-        if self.batched_prefill.is_none() {
-            self.allocate_batched_prefill(context, arch, steel)?;
+        let resize = self
+            .batched_prefill
+            .as_ref()
+            .is_some_and(|b| b.steel_gemm && b.batch != steel_rows);
+        if self.batched_prefill.is_none() || resize {
+            self.batched_prefill = None;
+            self.allocate_batched_prefill(context, arch, steel, steel_rows)?;
         }
         // Reconciled on every call, unlike the Steel choice, so one runner
         // can A/B it (`qwen38_prefill_arm_probe`). 3.1 MiB of partials at
@@ -418,9 +471,10 @@ impl RealQwenState {
         context: &mut gpu::MetalContext,
         arch: &ArchConfig,
         steel: bool,
+        steel_rows: usize,
     ) -> Result<(), RealForwardError> {
         let rows = if steel {
-            crate::real_forward_types::QWEN_STEEL_PREFILL_BATCH
+            steel_rows
         } else {
             crate::real_forward_types::MAX_PREFILL_BATCH
         };
@@ -442,7 +496,7 @@ impl RealQwenState {
     /// than a hope.
     pub(crate) fn batched_prefill(&self) -> &BatchedScratch {
         self.batched_prefill.as_ref().expect(
-            "prefill_chunk_real_qwen_dense calls ensure_batched_prefill before any layer runs",
+            "both qwen chunked drivers call ensure_batched_prefill before their batched arm runs",
         )
     }
 

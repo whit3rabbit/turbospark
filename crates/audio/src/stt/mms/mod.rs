@@ -435,6 +435,7 @@ impl Wav2Vec2 {
             )?,
             positional_conv: PositionalConv::load(
                 base,
+                "wav2vec2.encoder.pos_conv_embed.conv",
                 config.hidden_size,
                 config.num_conv_pos_embeddings,
                 config.num_conv_pos_embedding_groups,

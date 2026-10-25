@@ -466,6 +466,7 @@ impl BailingMoeModel {
                     rope: Some(rope.clone()),
                     window: None,
                     bidirectional: false,
+                    exec: None,
                 },
                 mlp,
                 input_layernorm: RmsNorm::new(
@@ -558,6 +559,7 @@ impl BailingMoeModel {
                 dim,
                 bias,
             )?,
+            exec: None,
         })
     }
 

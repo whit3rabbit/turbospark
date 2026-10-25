@@ -16,7 +16,14 @@
 /// existing family's frozen memory-oracle row was measured against `Auto`
 /// topping out at 32 and a wider set only raises that ceiling for an install
 /// whose expert stride is small enough to afford it (AGENTS.md Gotcha 36).
-pub const ALLOWED_CACHE_SLOTS: [u32; 8] = [8, 16, 24, 32, 48, 64, 96, 128];
+///
+/// 192 and 256 were added the same way (2026-10-14) for the 512-expert
+/// `qwen4exp` install streamed from an external SSD: its replayed routing
+/// reaches 90.5% / 94.4% hits there against 84.1% at 128, and at 128 the
+/// page cache already absorbed what extra slots would hold
+/// (`docs/EXPERT_ROUTING.md`, "Disk-bound baseline"). `Auto` only reaches
+/// them where a quarter of the free memory covers them.
+pub const ALLOWED_CACHE_SLOTS: [u32; 10] = [8, 16, 24, 32, 48, 64, 96, 128, 192, 256];
 
 /// The speculative-decoding block sizes a caller may name.
 ///
@@ -34,6 +41,16 @@ pub const ALLOWED_CACHE_SLOTS: [u32; 8] = [8, 16, 24, 32, 48, 64, 96, 128];
 /// [`ALLOWED_CACHE_SLOTS`] above, which both parsers already read for exactly
 /// this purpose.
 pub const ALLOWED_SPECULATION_BLOCKS: std::ops::RangeInclusive<u32> = 1..=15;
+
+/// The cap `--speculative adaptive` takes when none is named. Low on
+/// purpose: the first measurement (`docs/MTP_SPECULATIVE.md`) found nothing
+/// to gain above depth 4 on this engine and a large loss from lingering
+/// there. It also bounds the open-time scratch.
+pub const DEFAULT_ADAPTIVE_CAP: u32 = 4;
+
+/// The smallest adaptive cap that gives the controller room to move. Its
+/// floor is 2, so a cap of 2 would be a fixed block 2 with extra steps.
+pub const MIN_ADAPTIVE_CAP: u32 = 3;
 
 /// Documented default cache-slot count.
 pub const DEFAULT_CACHE_SLOTS: u32 = 16;

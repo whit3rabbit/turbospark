@@ -63,4 +63,74 @@ final class AudioInstallManagementTests: XCTestCase {
         controller.isManagingInstall = true
         XCTAssertFalse(controller.canDeleteSelectedModel, "one install operation at a time")
     }
+
+    func testLoadAndUnloadModelGating() throws {
+        let (controller, root) = try controller()
+        defer { try? FileManager.default.removeItem(at: root) }
+        controller.profiles = [profile(alias: "music-a")]
+        controller.recipe.task = AudioTask.music.rawValue
+        controller.recipe.modelID = "music-a"
+        XCTAssertFalse(controller.canLoadModel, "model is not installed yet")
+        XCTAssertFalse(controller.canUnloadModel, "session is not loaded")
+        XCTAssertFalse(controller.isModelLoaded)
+
+        controller.installedPaths["music-a"] = "/models/music-a"
+        XCTAssertTrue(controller.canLoadModel, "installed model can be loaded")
+        XCTAssertFalse(controller.canUnloadModel)
+
+        controller.isBusy = true
+        XCTAssertFalse(controller.canLoadModel, "cannot load while busy")
+        controller.isBusy = false
+
+        // Unloading becomes available when a session exists
+        // (controller.session is non-nil).
+        XCTAssertFalse(controller.canUnloadModel)
+    }
+
+    func testQwenOrResidentModelLoadAndUnloadGating() throws {
+        let (controller, root) = try controller()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let qwenProfile = AudioProfile(
+            identity: AudioProfileIdentity(
+                task: .textToSpeech, alias: "qwen3-base", repository: "Qwen/Qwen3-TTS-12Hz-1.7B-Base", revision: "main", assetFingerprint: "f"),
+            family: "qwen3_tts", displayName: "Qwen3-TTS Base",
+            capabilities: AudioCapabilities(
+                operations: ["synthesize"], backend: "metal", cancellation: "token", canRun: true),
+            pcmFormat: AudioPCMFormat(sampleRate: 24_000, channels: 1), readiness: "qualified")
+        controller.profiles = [qwenProfile]
+        controller.recipe.task = AudioTask.textToSpeech.rawValue
+        controller.recipe.modelID = "qwen3-base"
+
+        XCTAssertFalse(controller.canLoadModel)
+        XCTAssertFalse(controller.canUnloadModel)
+        XCTAssertFalse(controller.isModelLoaded)
+        XCTAssertFalse(controller.isProfileLoaded(qwenProfile))
+
+        controller.installedPaths["qwen3-base"] = "/models/qwen3-base"
+        XCTAssertTrue(controller.canLoadModel)
+        XCTAssertFalse(controller.canUnloadModel)
+
+        // Simulate model loaded
+        controller.loadedModelAlias = "qwen3-base"
+        XCTAssertTrue(controller.isModelLoaded)
+        XCTAssertTrue(controller.isProfileLoaded(qwenProfile))
+        XCTAssertFalse(controller.canLoadModel)
+        XCTAssertTrue(controller.canUnloadModel)
+
+        // Switching selection to a different model means isModelLoaded is false for the new selection
+        controller.recipe.modelID = "another-model"
+        XCTAssertFalse(controller.isModelLoaded)
+
+        // Switching back allows unloading the selected model
+        controller.recipe.modelID = "qwen3-base"
+        XCTAssertTrue(controller.isModelLoaded)
+        XCTAssertTrue(controller.canUnloadModel)
+
+        // Unloading clears the state
+        controller.unloadModel()
+        XCTAssertFalse(controller.isModelLoaded)
+        XCTAssertFalse(controller.isProfileLoaded(qwenProfile))
+        XCTAssertTrue(controller.canLoadModel)
+        XCTAssertFalse(controller.canUnloadModel)
+    }
 }

@@ -15,21 +15,21 @@ Downstream Swift code links this crate's `staticlib` directly; nothing in this w
 
 ## Key Modules
 
-- `abi.rs`: Status code enums, thread-local error slot, and `guard` safety wrappers.
+- `abi.rs`: Status codes, thread-local error slot, and `guard` safety wrappers.
 - `strings.rs`: Safe borrowing of incoming `const char *` arguments and allocation of owned output strings managed via `ts_string_free`.
 - `wire.rs`: Strongly-typed serialization structures for camelCase JSON request and response payloads.
-- `session.rs`: Opaque `Session` handle managing `SessionCore` and execution engine selection (`Engine::Real` on macOS, `Engine::Scripted` on other platforms).
+- `session.rs`: Opaque `Session` handle managing `SessionCore` and execution engine selection (`Engine::Real` on macOS, `Engine::Scripted` for this crate's own tests).
 - `open.rs`: macOS session loader opening `.gturbo` model directories and configuring `RealForwardRunner`.
 - `generate/`: Complete generation pipeline driving prompt rendering, streaming callbacks, tool call emission, and result summaries.
 - `models/`: Portable catalog browsing, model recommendation, and stream-install surface.
-- `server.rs`, `server_model.rs`, `server_registry.rs`, `server_transport.rs`: In-process HTTP server engine sharing the open `SessionCore` without loading a second model instance.
+- `server.rs`, `server_model.rs`, `server_registry.rs`, `server_transport.rs`, `server_idle.rs`, `server_image.rs`, `server_speech.rs`: In-process HTTP server engine sharing the open `SessionCore` without loading a second model instance.
 - `image_session.rs`: Verified `.image.gturbo` session, serialized native generation, cancellation, and PNG/metadata ownership for Swift hosts.
-- `stt_session.rs`: Opaque speech-to-text session handle (`TsSttModel`, `TsSttStream`) wrapping Whisper runtime, buffering PCM audio, and emitting timestamped transcription segments.
+- `stt_session.rs`: Opaque speech-to-text session handle (`TsSttModel`, `TsSttStream`) wrapping the family-dispatched speech runtime (Whisper, Qwen3 ASR, Parakeet on Core ML), buffering PCM audio, and emitting timestamped transcription segments.
 - `telemetry.rs`: Hardware performance counters, phase durations, and peak physical footprint telemetry.
 - `vision.rs`: Multimodal image data URL parsing and patch token preparation.
 - `testing.rs`: Scripted mock engine harness for deterministic FFI testing.
 - `api/`: C entry points organized by domain:
-  - `core.rs`: Versioning, error string inspection, and memory deallocation.
+  - `core.rs`: Versioning, error string inspection, memory deallocation, and system metrics.
   - `session.rs`: Session open, close, and model info queries.
   - `generate.rs`: Token generation, streaming callbacks, and generation cancellation.
   - `models.rs`: Catalog querying, probe, download, and installation.
@@ -38,6 +38,9 @@ Downstream Swift code links this crate's `staticlib` directly; nothing in this w
   - `embedding.rs`: Text embedding generation via Post-LN encoder models.
   - `image.rs`: Image session open, generation progress, cancellation, and owned PNG buffers.
   - `stt.rs`: Speech-to-text model opening, PCM append streaming, synchronous finish transcription, and cancellation (`ts_stt_*`).
+  - `tokenizer.rs`: Standalone tokenizer handle for count, tokenize, and detokenize queries without the engine (`ts_tokenizer_*`).
+  - `audio.rs`, `audio_stream.rs`: Audio catalog install and verify, worker jobs, and live transcription streams (`ts_audio_*`).
+  - `ocr.rs`: Core ML document OCR sessions that collect pages and read them as one document (`ts_ocr_*`).
 
 ## Development & Test Commands
 
@@ -57,7 +60,8 @@ make swift-test-real MODEL=~/models/gemma4.gturbo
 
 ## Tests
 
-- `tests/c_surface.rs`: Comprehensive integration test exercising every declared `extern "C"` function, verifying pointer safety, error slot clearing, and JSON serialization.
+- `tests/c_surface.rs`: Model-free integration test driving the entry points through the Rust `rlib` face: pointer safety, error slot clearing, JSON serialization, and cancellation observed from a second thread.
+- Domain surface tests beside it: `audio_surface.rs`, `ocr_surface.rs`, `humanize_surface.rs`, `embedding_request.rs`, and the `pinned_coreml_*` network gates.
 
 ## Crate Gotchas
 

@@ -1,8 +1,9 @@
 # API workspace
 
 The API destination opens on Text. The selector moves through Text, Image,
-Audio, and TypeSafe with clicks, left and right keys, or horizontal swipes on the
-selector. Text, Image, and Audio use the same TurboSpark listener and API key.
+Audio, Embeddings, and TypeSafe with clicks, left and right keys, or horizontal
+swipes on the selector. Text, Image, Audio, and Embeddings use the same
+TurboSpark listener and API key.
 TypeSafe starts a separate OpenKind daemon on `127.0.0.1` with its own
 Keychain key.
 
@@ -46,6 +47,36 @@ The Audio tab in the API workspace allows attaching an installed TTS or voice cl
 model (such as Kokoro or Qwen3-TTS), testing `POST /v1/audio/speech` requests with
 optional voice cloning reference audio (`reference_audio`, `reference_text`, `instruction`),
 and playing back synthesized speech directly in the app.
+
+## Embeddings
+
+The Embeddings tab chooses the server's embedding model and attaches it for
+`POST /v1/embeddings` (also `/api/embeddings` and `/api/embed`). The choice is
+saved and attached again after every server start; a model that fails to load
+shows an error and leaves the server running. Advanced settings no longer has
+an embedding field.
+
+The picker lists the pinned catalog profiles (`crates/catalog/src/embedding_models.json`)
+with their tested status, and accepts any other model directory or alias:
+
+- **Verified**: a pinned profile whose named real-model gates ran on that exact
+  revision. Today that is EmbeddingGemma 2 on Core ML (macOS 15+).
+- **Not verified**: a family the runtime implements (the Core ML EmbeddingGemma
+  2 export, or a BERT or XLM-RoBERTa encoder with CLS pooling) at a path no
+  gate covers.
+- **Runtime unavailable**: any other family (GTE, Nomic BERT, a mean-pooled
+  BERT, a speech model), refused with the reason before anything loads. The
+  server applies the same check on attach.
+
+```sh
+curl http://127.0.0.1:54321/v1/embeddings \
+  -H 'content-type: application/json' \
+  -H 'authorization: Bearer <TurboSpark-key>' \
+  -d '{"model":"embeddinggemma-2-coreml","input":"a fox"}'
+```
+
+The first request after attaching a Core ML model can compile it, which takes
+tens of seconds; later loads come from the compile cache inside the install.
 
 ## TypeSafe service
 

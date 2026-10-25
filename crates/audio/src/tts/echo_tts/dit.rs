@@ -299,7 +299,6 @@ pub(crate) fn multiply_kv(
 /// Softmax attention over explicit key/value blocks with the reference
 /// additive masking: masked scores sit at `-1e9` inside the softmax.
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 fn masked_attention(
     q: &[f32],
     k: &[f32],

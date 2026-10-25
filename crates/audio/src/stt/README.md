@@ -22,6 +22,7 @@ The [central inventory](../../MODELS.md#stt) tracks upstream source families, ch
 - **[Mega-ASR](mega_asr/README.md)**: routed robust ASR over the shared Qwen3-ASR backbone: an audio-quality router switches between the base decode path and a LoRA-adapted robust path, with an always-on-robust pre-merged 8-bit profile.
 - **[Qwen3-ForcedAligner](qwen3_forced_aligner/README.md)**: CTC-based forced alignment producing word- and character-level timestamps for English and Chinese.
 - **[Nemotron ASR](nemotron_asr/README.md)**: NVIDIA Nemotron 3.5 ASR architecture with FastConformer encoder and RNN-T decoder.
+- **[Multitalker ASR](multitalker_asr/README.md)**: NVIDIA Multitalker Parakeet, speaker-kernel conditioned cache-aware RNN-T coupled to Nemotron-3 diarization (the Frozen E pipeline).
 - **[Canary](canary/README.md)**: NVIDIA Canary-1B-v2 multilingual ASR and translation with a FastConformer encoder, cross-attention transformer decoder, and prompt-driven language/punctuation control.
 - **[Phonon-1](phonon/README.md)**: Fermion Research English ASR over the Qwen3-ASR backbone with packed five-value (quint5) decoder linears materialized to two 2-bit affine planes at load.
 - **[MOSS-Transcribe-Diarize](moss_transcribe_diarize/README.md)**: timestamped transcription with speaker labels over a whisper encoder, a Linear-SiLU-Linear-LayerNorm VQ adaptor, and the shared Qwen3 decoder with an affine 4-bit backbone.
@@ -43,7 +44,9 @@ The [central inventory](../../MODELS.md#stt) tracks upstream source families, ch
 
 ## Server & Runtime Integration
 
-Whisper and Qwen3-ASR are integrated end-to-end with the native execution engine (`runtime::native_audio::AudioSession`), FFI (`crates/ffi`), server flags (`turbospark serve --stt-model <alias|dir>`), and HTTP endpoints (`POST /v1/audio/transcriptions` and WebSocket `GET /v1/audio/transcriptions/realtime`).
+Whisper, Qwen3-ASR and Parakeet are integrated end-to-end with the native execution engine (`runtime::native_audio::AudioSession`), FFI (`crates/ffi`), server flags (`turbospark serve --stt-model <alias|dir>`), and HTTP endpoints (`POST /v1/audio/transcriptions` and WebSocket `GET /v1/audio/transcriptions/realtime`).
+
+Parakeet runs from Core ML exports on macOS 15+, not from this crate's port: Ultra and Redux through `crates/runtime/src/coreml/parakeet.rs` (Ultra is the app's default batch transcriber), and Parakeet Unified EN as English live text through `ts_audio_stream_*` (`crates/runtime/src/coreml/parakeet_unified.rs`). The [CPU Parakeet port](parakeet/README.md) is the Core ML decoder's parity oracle. See [Core ML models](../../../../docs/COREML.md).
 
 Other model families provide pure-Rust in-crate APIs and standalone runnable examples in `crates/audio/examples/` (e.g. `whistle_transcribe.rs`, `parakeet_transcribe.rs`, `moonshine_transcribe.rs`, `nemotron_transcribe.rs`, `granite5_transcribe.rs`).
 

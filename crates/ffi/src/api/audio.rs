@@ -485,6 +485,44 @@ mod native {
                 return Err(invalid("out must not be null"));
             }
             *out = std::ptr::null_mut();
+            let options: OpenOptions =
+                serde_json::from_str(strings::required(options, "options").map_err(invalid)?)
+                    .map_err(invalid)?;
+            let path = strings::required(path, "path").map_err(invalid)?;
+            verify_open(path, token, callback, userdata)?;
+            let session = AudioSession::open_with_options(
+                path.into(),
+                options.task,
+                options.allow_portable,
+                options.allow_experimental_metal,
+            )
+            .map_err(|e| abi::audio_error(e, false, abi::TS_ERR_OPEN))?;
+            if let Some(expected) = options.expected_family.as_deref() {
+                if session.family() != expected {
+                    return Err(invalid(format!(
+                        "selected audio family {expected} does not match loaded family {}",
+                        session.family()
+                    )));
+                }
+            }
+            *out = Box::into_raw(Box::new(TsAudioSession {
+                session: Arc::new(session),
+            }));
+            Ok(())
+        }
+    }
+
+    /// Verifies a managed install against the pinned catalog before it is
+    /// opened, reporting kind 1 progress through `callback`. Shared by audio
+    /// sessions and streams so neither can load an unverified managed model.
+    /// A path outside the managed store (a local model) is not hashed.
+    pub(crate) unsafe fn verify_open(
+        path: &str,
+        token: Option<&TsAudioOpenToken>,
+        callback: TsAudioCallback,
+        userdata: *mut c_void,
+    ) -> AbiResult<()> {
+        {
             let flag = token.map(|t| t.flag());
             let cancelled = || {
                 flag.as_ref()
@@ -492,10 +530,6 @@ mod native {
                     .unwrap_or(false)
             };
             let cancelled_error = || (abi::TS_ERR_CANCELLED, catalog::VERIFY_CANCELLED.to_string());
-            let options: OpenOptions =
-                serde_json::from_str(strings::required(options, "options").map_err(invalid)?)
-                    .map_err(invalid)?;
-            let path = strings::required(path, "path").map_err(invalid)?;
             let store = catalog::Store::default_store().map_err(invalid)?;
             let model_path = std::path::Path::new(path);
             if cancelled() {
@@ -538,24 +572,6 @@ mod native {
             if cancelled() {
                 return Err(cancelled_error());
             }
-            let session = AudioSession::open_with_options(
-                path.into(),
-                options.task,
-                options.allow_portable,
-                options.allow_experimental_metal,
-            )
-            .map_err(|e| abi::audio_error(e, false, abi::TS_ERR_OPEN))?;
-            if let Some(expected) = options.expected_family.as_deref() {
-                if session.family() != expected {
-                    return Err(invalid(format!(
-                        "selected audio family {expected} does not match loaded family {}",
-                        session.family()
-                    )));
-                }
-            }
-            *out = Box::into_raw(Box::new(TsAudioSession {
-                session: Arc::new(session),
-            }));
             Ok(())
         }
     }
@@ -768,16 +784,51 @@ mod unsupported {
     macro_rules! refused {($name:ident($($arg:ident:$ty:ty),*) $(,$out:ident)?)=>{
  #[no_mangle] pub unsafe extern "C" fn $name($($arg:$ty),*)->c_int {guard_result(||{let _=($($arg),*);$(if !$out.is_null(){*$out=std::ptr::null_mut();})?Err((abi::TS_ERR_UNSUPPORTED,"native audio inference requires macOS".into()))})}
  };}
-    refused!(ts_audio_session_open(path:*const c_char,options:*const c_char,out:*mut *mut TsAudioSession),out);
-    refused!(ts_audio_session_open_cancellable(path:*const c_char,options:*const c_char,token:*const super::TsAudioOpenToken,callback:TsAudioCallback,userdata:*mut c_void,out:*mut *mut TsAudioSession),out);
-    refused!(ts_audio_session_close(handle:*mut TsAudioSession));
-    refused!(ts_audio_session_cancel(handle:*const TsAudioSession));
-    refused!(ts_audio_job_open(handle:*const TsAudioSession,request:*const c_char,out:*mut *mut TsAudioJob),out);
-    refused!(ts_audio_job_append(handle:*const TsAudioJob,pcm:*const f32,count:usize));
-    refused!(ts_audio_job_run(handle:*const TsAudioJob,callback:TsAudioCallback,userdata:*mut c_void,out:*mut *mut c_char),out);
-    refused!(ts_audio_job_status_json(handle:*const TsAudioJob,out:*mut *mut c_char),out);
-    refused!(ts_audio_job_cancel(handle:*const TsAudioJob));
-    refused!(ts_audio_job_close(handle:*mut TsAudioJob));
+    refused!(
+        ts_audio_session_open(
+            path: *const c_char,
+            options: *const c_char,
+            out: *mut *mut TsAudioSession,
+        ),
+        out
+    );
+    refused!(
+        ts_audio_session_open_cancellable(
+            path: *const c_char,
+            options: *const c_char,
+            token: *const super::TsAudioOpenToken,
+            callback: TsAudioCallback,
+            userdata: *mut c_void,
+            out: *mut *mut TsAudioSession,
+        ),
+        out
+    );
+    refused!(ts_audio_session_close(handle: *mut TsAudioSession));
+    refused!(ts_audio_session_cancel(handle: *const TsAudioSession));
+    refused!(
+        ts_audio_job_open(
+            handle: *const TsAudioSession,
+            request: *const c_char,
+            out: *mut *mut TsAudioJob,
+        ),
+        out
+    );
+    refused!(ts_audio_job_append(handle: *const TsAudioJob, pcm: *const f32, count: usize));
+    refused!(
+        ts_audio_job_run(
+            handle: *const TsAudioJob,
+            callback: TsAudioCallback,
+            userdata: *mut c_void,
+            out: *mut *mut c_char,
+        ),
+        out
+    );
+    refused!(
+        ts_audio_job_status_json(handle: *const TsAudioJob, out: *mut *mut c_char),
+        out
+    );
+    refused!(ts_audio_job_cancel(handle: *const TsAudioJob));
+    refused!(ts_audio_job_close(handle: *mut TsAudioJob));
 }
 #[cfg(not(target_os = "macos"))]
 pub use unsupported::*;

@@ -571,11 +571,56 @@ final class LocalizationParityTests: XCTestCase {
         for size in AppTextSize.allCases {
             values.append(("AppTextSize.label", size.label))
         }
+        for tab in APIWorkspaceTab.allCases {
+            values.append(("APIWorkspaceTab.title", tab.title))
+        }
+        for mode in ImagesWorkspaceMode.allCases {
+            values.append(("ImagesWorkspaceMode.title", mode.title))
+        }
+        for kind in InstalledModelKind.allCases {
+            values.append(("InstalledModelKind.title", kind.title))
+        }
+        // Audio model pickers render the engine name and its tooltip as keys.
+        for label in AudioEngineLabel.allCases {
+            values.append(("AudioEngineLabel.title", label.title))
+            values.append(("AudioEngineLabel.tooltip", label.tooltip))
+        }
         for section in KeyboardShortcutCatalog.sections {
             values.append(("KeyboardShortcutSection.title", section.title))
             for row in section.rows {
                 values.append(("KeyboardShortcutRow.label", row.label))
             }
+        }
+        // The Audio library and Record page render these titles as keys.
+        for preset in AudioRecordingPreset.allCases {
+            values.append(("AudioRecordingPreset.titleKey", preset.titleKey))
+        }
+        // The Speech-to-Text pill renders each mode's title as a key.
+        for mode in SpeechToTextMode.allCases {
+            values.append(("SpeechToTextMode.titleKey", mode.titleKey))
+            // The models popover and Installed name each job per mode.
+            for job in SpeechToTextJob.allCases {
+                values.append(("SpeechToTextMode.titleKey(for:)", mode.titleKey(for: job)))
+            }
+        }
+        for job in SpeechToTextJob.allCases {
+            values.append(("SpeechToTextJob.hintKey", job.hintKey))
+        }
+        // Installed > Audio renders each list section header as a key.
+        for group in AudioInstalledEntry.Group.allCases {
+            values.append(("AudioInstalledEntry.Group.titleKey", group.titleKey))
+        }
+        for status in [AudioLibraryItem.Status.draft, .recording, .processing, .completed, .interrupted, .failed] {
+            values.append(("AudioLibraryItem.Status.audioTitle", status.audioTitle))
+        }
+        for filter in AudioLibraryFilter.allCases {
+            values.append(("AudioLibraryFilter.titleKey", filter.titleKey))
+        }
+        for group in AudioDateGroup.allCases {
+            values.append(("AudioDateGroup.titleKey", group.titleKey))
+        }
+        for lane in AudioSearchLane.allCases {
+            values.append(("AudioSearchLane.titleKey", lane.titleKey))
         }
         // The composer's Add menu renders each command summary as a key.
         for command in BuiltInSlashCommand.all {

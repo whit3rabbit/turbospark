@@ -33,6 +33,7 @@ use crate::producer::SpeculativeProducer;
 use crate::raw_completion::{
     CancelFlag, RawDecodeProgress, RawDecodeResult, StopReason, TokenSink, NEVER,
 };
+use crate::speculative_adaptive::AdaptiveDepth;
 
 /// How many tokens a round proposes. Block 2 is the measured optimum on the
 /// one real drafter (`docs/MTP.md`: 1.44x, against 1.03x at 4 and 0.71x at
@@ -90,6 +91,97 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
     max_context: u32,
     vocab_size: usize,
     block: usize,
+    cancel: CancelFlag<'_>,
+    on_progress: impl FnMut(RawDecodeProgress),
+) -> Result<RawDecodeResult, RuntimeError> {
+    run_speculative(
+        producer,
+        tokenizer,
+        prompt_ids,
+        config,
+        max_context,
+        vocab_size,
+        block,
+        None,
+        cancel,
+        on_progress,
+    )
+}
+
+/// [`run_raw_completion_speculative`] with an ADAPTIVE round size: `cap` is
+/// the most a round may propose (the drafter must have been opened at least
+/// that deep) and `floor` the least, with [`AdaptiveDepth`] moving between
+/// them from the acceptance each round saw. Opt-in; the fixed entry points
+/// above are unchanged. See `speculative_adaptive` for why every constant
+/// behind this is unmeasured until the paired gate has run.
+#[allow(clippy::too_many_arguments)]
+pub fn run_raw_completion_speculative_adaptive<P: SpeculativeProducer>(
+    producer: &mut P,
+    tokenizer: &MfTokenizer,
+    prompt_ids: &[TokenId],
+    config: &GenerationConfig,
+    max_context: u32,
+    vocab_size: usize,
+    cap: usize,
+    floor: usize,
+    on_progress: impl FnMut(RawDecodeProgress),
+) -> Result<RawDecodeResult, RuntimeError> {
+    run_raw_completion_speculative_adaptive_cancellable(
+        producer,
+        tokenizer,
+        prompt_ids,
+        config,
+        max_context,
+        vocab_size,
+        cap,
+        floor,
+        NEVER,
+        on_progress,
+    )
+}
+
+/// [`run_raw_completion_speculative_adaptive`], polling `cancel` the way
+/// [`run_raw_completion_speculative_cancellable`] does.
+#[allow(clippy::too_many_arguments)]
+pub fn run_raw_completion_speculative_adaptive_cancellable<P: SpeculativeProducer>(
+    producer: &mut P,
+    tokenizer: &MfTokenizer,
+    prompt_ids: &[TokenId],
+    config: &GenerationConfig,
+    max_context: u32,
+    vocab_size: usize,
+    cap: usize,
+    floor: usize,
+    cancel: CancelFlag<'_>,
+    on_progress: impl FnMut(RawDecodeProgress),
+) -> Result<RawDecodeResult, RuntimeError> {
+    run_speculative(
+        producer,
+        tokenizer,
+        prompt_ids,
+        config,
+        max_context,
+        vocab_size,
+        cap,
+        Some(AdaptiveDepth::new(floor, cap)),
+        cancel,
+        on_progress,
+    )
+}
+
+/// The one loop. `block` is the CAP: with `adaptive` None every round
+/// proposes `block`, which is the loop exactly as it was before the
+/// controller existed.
+#[allow(clippy::too_many_arguments)]
+fn run_speculative<P: SpeculativeProducer>(
+    producer: &mut P,
+    tokenizer: &MfTokenizer,
+    prompt_ids: &[TokenId],
+    config: &GenerationConfig,
+    max_context: u32,
+    vocab_size: usize,
+    block: usize,
+    mut adaptive: Option<AdaptiveDepth>,
     cancel: CancelFlag<'_>,
     mut on_progress: impl FnMut(RawDecodeProgress),
 ) -> Result<RawDecodeResult, RuntimeError> {
@@ -289,6 +381,12 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
     let mut stat_offered = vec![0usize; block];
     let mut stat_matched = vec![0usize; block];
     let mut stat_rollbacks = 0usize;
+    // Wall time per phase of a round, stats runs only: draft, verify,
+    // accept, rollback, commit, rewind, bonus. Every phase that reads back
+    // from the GPU is a sync point, so these are wall times, not GPU times.
+    let mut ph = [std::time::Duration::ZERO; 7];
+    // Rounds per proposed depth, so an adaptive run shows where it sat.
+    let mut stat_depth = vec![0usize; block + 1];
 
     'rounds: loop {
         // `next` was sampled but not yet fed. Committing it first is what
@@ -310,7 +408,11 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
         // which `check_admission` sized for the COMMITTED stream.
         let budget_room = (config.max_new_tokens as usize).saturating_sub(sink.generated);
         let context_room = (max_context as usize).saturating_sub(position);
-        let round_block = block.min(budget_room).min(context_room);
+        let wanted = adaptive.as_ref().map_or(block, |a| a.depth().min(block));
+        let round_block = wanted.min(budget_room).min(context_room);
+        // A round shortened by the budget or the window says nothing about
+        // acceptance, so it must not feed the controller.
+        let truncated = round_block < wanted;
         if round_block == 0 {
             return Err(RuntimeError::Producer(
                 "round_block is 0: no room after admission; invariant violation".to_string(),
@@ -333,6 +435,7 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
         //    the context-KV write for the accepted prefix, its cache cursor
         //    -- happens inside the call, from the capture the previous
         //    verify filled.
+        let t_draft = std::time::Instant::now();
         proposals.clear();
         draft_qs.clear();
         if producer.drafts_block_passes() {
@@ -405,13 +508,16 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
         //    proposal. Row `i` predicts the token after `feed[i]`, so row 0
         //    is checked against `proposals[0]`, and the row after the last
         //    accepted proposal carries the free bonus token.
+        ph[0] += t_draft.elapsed();
         feed.clear();
         feed.push(next);
         feed.extend_from_slice(&proposals);
+        let t_verify = std::time::Instant::now();
         let point = producer.checkpoint();
         producer
             .verify(&feed, base, &mut batch_logits[..feed.len() * vocab_size])
             .map_err(RuntimeError::Producer)?;
+        ph[1] += t_verify.elapsed();
 
         // -- Accept. Each accepted proposal is committed through the sink
         // IMMEDIATELY, which is what keeps the shaped distributions exact:
@@ -430,22 +536,57 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
         let mut stopped: Option<StopReason> = None;
         let mut corrected: Option<TokenId> = None;
         stat_rounds += 1;
-        for (i, &proposal) in proposals.iter().enumerate() {
-            if stats {
-                stat_offered[i] += 1;
-            }
-            let row = &batch_logits[i * vocab_size..(i + 1) * vocab_size];
-            if sampled {
-                let p = shaped_distribution(
-                    LogitsView::new(row),
-                    &config.shaping,
-                    &sink.history,
-                    sink.generated as u64,
-                )?;
-                let q = &draft_qs[i];
-                let r = to_unit_interval(derive_step_value(config.shaping.seed(), draw_step));
-                draw_step += 1;
-                if r * q.probability(proposal as u32) <= p.probability(proposal as u32) {
+        let mut evaluate_round = || -> Result<usize, RuntimeError> {
+            let t_accept = std::time::Instant::now();
+            for (i, &proposal) in proposals.iter().enumerate() {
+                if stats {
+                    stat_offered[i] += 1;
+                }
+                let row = &batch_logits[i * vocab_size..(i + 1) * vocab_size];
+                if sampled {
+                    let p = shaped_distribution(
+                        LogitsView::new(row),
+                        &config.shaping,
+                        &sink.history,
+                        sink.generated as u64,
+                    )?;
+                    let q = &draft_qs[i];
+                    let r = to_unit_interval(derive_step_value(config.shaping.seed(), draw_step));
+                    draw_step += 1;
+                    if r * q.probability(proposal as u32) <= p.probability(proposal as u32) {
+                        if stats {
+                            stat_matched[i] += 1;
+                        }
+                        accepted += 1;
+                        if let Some(stop) = sink.commit(proposal, cancel, &mut on_progress) {
+                            stopped = Some(stop);
+                            break;
+                        }
+                    } else {
+                        // The correction comes from the residual over THIS
+                        // row's target distribution and the drafter's q for
+                        // this step. The p == q corner underflows the residual
+                        // and falls back to a p draw: exact in the limit, and
+                        // unreachable while q is the drafter's own distribution
+                        // unless the two really are identical (where every
+                        // proposal is accepted and no correction is drawn).
+                        corrected = Some(match residual(&p, q) {
+                            Some(residual_p) => residual_p.draw(config.shaping.seed(), draw_step),
+                            None => p.draw(config.shaping.seed(), draw_step),
+                        } as TokenId);
+                        draw_step += 1;
+                        break;
+                    }
+                } else {
+                    let target = select(
+                        LogitsView::new(row),
+                        &config.shaping,
+                        &sink.history,
+                        sink.generated as u64,
+                    )?;
+                    if target != proposal {
+                        break;
+                    }
                     if stats {
                         stat_matched[i] += 1;
                     }
@@ -454,79 +595,80 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
                         stopped = Some(stop);
                         break;
                     }
-                } else {
-                    // The correction comes from the residual over THIS
-                    // row's target distribution and the drafter's q for
-                    // this step. The p == q corner underflows the residual
-                    // and falls back to a p draw: exact in the limit, and
-                    // unreachable while q is the drafter's own distribution
-                    // unless the two really are identical (where every
-                    // proposal is accepted and no correction is drawn).
-                    corrected = Some(match residual(&p, q) {
-                        Some(residual_p) => residual_p.draw(config.shaping.seed(), draw_step),
-                        None => p.draw(config.shaping.seed(), draw_step),
-                    } as TokenId);
-                    draw_step += 1;
-                    break;
-                }
-            } else {
-                let target = select(
-                    LogitsView::new(row),
-                    &config.shaping,
-                    &sink.history,
-                    sink.generated as u64,
-                )?;
-                if target != proposal {
-                    break;
-                }
-                if stats {
-                    stat_matched[i] += 1;
-                }
-                accepted += 1;
-                if let Some(stop) = sink.commit(proposal, cancel, &mut on_progress) {
-                    stopped = Some(stop);
-                    break;
                 }
             }
-        }
-        stat_accepted += accepted;
-        // What the engine has absorbed beyond the committed stream. A
-        // committed proposal advanced `history`; a rejected or unreached one
-        // did not, and neither did a proposal that stopped the run.
-        let committed = sink.history.len() - (base + 1);
+            stat_accepted += accepted;
+            if stats {
+                stat_depth[round_block] += 1;
+            }
+            // A round a stop cut short never saw the rest of its proposals, so
+            // its `accepted` undercounts and would read as a miss.
+            if let Some(a) = adaptive.as_mut() {
+                if !truncated && stopped.is_none() {
+                    a.observe(proposals.len(), accepted);
+                }
+            }
+            // What the engine has absorbed beyond the committed stream. A
+            // committed proposal advanced `history`; a rejected or unreached one
+            // did not, and neither did a proposal that stopped the run.
+            let committed = sink.history.len() - (base + 1);
 
-        // -- Rewind, when the verify overshot what was committed.
-        //
-        //    A SEQUENTIAL verify stops at the first rejection and so never
-        //    overshoots; only a batched pass can, which is the asymmetry that
-        //    makes block 2 pay and block 8 lose (`docs/MTP.md`).
-        //
-        //    Two restore shapes. With a TAPE (the real producer on the GDN
-        //    flow), the kept rows' KV stays in place and their recurrent
-        //    state is replayed over the inputs the verify recorded -- a few
-        //    small dispatches, and the verify's own logits for the bonus row
-        //    remain valid, so no forward pass runs. Without one, the whole
-        //    state goes back to the block start -- on the real drafter's
-        //    family that is a copy of the entire gated-DeltaNet snapshot,
-        //    because a recurrent layer cannot be rewound incrementally the
-        //    way a KV cursor can -- and a shortened re-verify replays the
-        //    accepted prefix through the model. The re-verify is the term
-        //    that made throughput track the rollback rate
-        //    (`docs/DFLASH2.md`); the tape removes it.
-        if committed < proposals.len() {
-            stat_rollbacks += 1;
-            if producer.supports_retaining_rollback() {
-                producer
-                    .rollback_retaining(&point, committed + 1)
-                    .map_err(RuntimeError::Producer)?;
-            } else {
-                producer.rollback(&point);
-                let keep = committed + 1;
-                producer
-                    .verify(&feed[..keep], base, &mut batch_logits[..keep * vocab_size])
-                    .map_err(RuntimeError::Producer)?;
+            // -- Rewind, when the verify overshot what was committed.
+            //
+            //    A SEQUENTIAL verify stops at the first rejection and so never
+            //    overshoots; only a batched pass can, which is the asymmetry that
+            //    makes block 2 pay and block 8 lose (`docs/MTP.md`).
+            //
+            //    Two restore shapes. With a TAPE (the real producer on the GDN
+            //    flow), the kept rows' KV stays in place and their recurrent
+            //    state is replayed over the inputs the verify recorded -- a few
+            //    small dispatches, and the verify's own logits for the bonus row
+            //    remain valid, so no forward pass runs. Without one, the whole
+            //    state goes back to the block start -- on the real drafter's
+            //    family that is a copy of the entire gated-DeltaNet snapshot,
+            //    because a recurrent layer cannot be rewound incrementally the
+            //    way a KV cursor can -- and a shortened re-verify replays the
+            //    accepted prefix through the model. The re-verify is the term
+            //    that made throughput track the rollback rate
+            //    (`docs/DFLASH2.md`); the tape removes it.
+            ph[2] += t_accept.elapsed();
+            let t_roll = std::time::Instant::now();
+            if committed < proposals.len() {
+                stat_rollbacks += 1;
+                if producer.supports_retaining_rollback() {
+                    producer
+                        .rollback_retaining(&point, committed + 1)
+                        .map_err(RuntimeError::Producer)?;
+                } else {
+                    producer.rollback(&point);
+                    let keep = committed + 1;
+                    producer
+                        .verify(&feed[..keep], base, &mut batch_logits[..keep * vocab_size])
+                        .map_err(RuntimeError::Producer)?;
+                }
             }
-        }
+            // THE LAZY COMMIT: with TURBOSPARK_GDN_LAZY_TAPE on (the default),
+            // the verify left the recurrent state at the block start and
+            // recorded rank-1 updates, so every round -- full acceptance
+            // included, which is the case the eager path served for free --
+            // ends by folding exactly the rows it committed. A no-op on the
+            // eager path, and after the partial round's retaining rollback,
+            // which folded its kept rows and cleared the tape.
+            ph[3] += t_roll.elapsed();
+            let t_commit = std::time::Instant::now();
+            producer
+                .commit_pending(committed + 1)
+                .map_err(RuntimeError::Producer)?;
+            ph[4] += t_commit.elapsed();
+            Ok(committed)
+        };
+        let committed = match evaluate_round() {
+            Ok(c) => c,
+            Err(e) => {
+                producer.discard_pending();
+                return Err(e);
+            }
+        };
         position = sink.history.len();
 
         // THE RECORD, the half that lets the NEXT turn reuse: the verify fed
@@ -535,6 +677,7 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
         // fallback above. `committed + 1` rows: the confirmed token plus
         // every committed proposal, positions `base .. base + committed +
         // 1` -- the bonus is not fed yet and belongs to the next round.
+        let t_rewind = std::time::Instant::now();
         producer.record_committed(&feed[..committed + 1], base);
 
         // The drafter goes to where the accepted prefix ENDED and continues;
@@ -543,6 +686,7 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
         producer
             .rewind_drafter(base + committed)
             .map_err(RuntimeError::Producer)?;
+        ph[5] += t_rewind.elapsed();
 
         if let Some(stop) = stopped {
             reason = stop;
@@ -558,6 +702,7 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
         // on a rejection it is the row the correction was already drawn
         // from, and the corrected token IS `next` -- a second draw from it
         // would double-sample one position.
+        let t_bonus = std::time::Instant::now();
         if let Some(token) = corrected {
             next = token;
         } else if sampled {
@@ -577,6 +722,7 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
                 sink.generated as u64,
             )?;
         }
+        ph[6] += t_bonus.elapsed();
     }
 
     if stats {
@@ -598,6 +744,25 @@ pub fn run_raw_completion_speculative_cancellable<P: SpeculativeProducer>(
             })
             .collect();
         eprintln!("[spec-stats] per-position acceptance: {}", curve.join(" "));
+        let depths: Vec<String> = stat_depth
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| **n > 0)
+            .map(|(d, n)| format!("{d}:{n}"))
+            .collect();
+        eprintln!("[spec-stats] rounds per depth: {}", depths.join(" "));
+        let per = |d: std::time::Duration| d.as_secs_f64() * 1000.0 / stat_rounds.max(1) as f64;
+        eprintln!(
+            "[spec-stats] ms/round: draft={:.2} verify={:.2} accept={:.2} rollback={:.2} \
+             commit={:.2} rewind={:.2} bonus={:.2}",
+            per(ph[0]),
+            per(ph[1]),
+            per(ph[2]),
+            per(ph[3]),
+            per(ph[4]),
+            per(ph[5]),
+            per(ph[6])
+        );
     }
 
     Ok(RawDecodeResult {

@@ -563,6 +563,7 @@ impl Transformer {
                 rope: Some(rope.clone()),
                 window: None,
                 bidirectional: false,
+                exec: None,
             };
             let mlp = Mlp {
                 gate_proj: weights.linear(
@@ -583,6 +584,7 @@ impl Transformer {
                     hidden,
                     mlp_bias,
                 )?,
+                exec: None,
             };
             layers.push(Block {
                 attention,

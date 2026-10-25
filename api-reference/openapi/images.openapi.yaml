@@ -1,0 +1,191 @@
+openapi: 3.1.0
+info:
+  title: TurboSpark Images API
+  version: 0.5.0
+  description: |
+    Local image generation endpoints served by `turbospark-server`
+    (`turbospark serve`) for diffusion models (e.g., Z-Image Turbo, Qwen-Image 2.1).
+servers:
+  - url: http://127.0.0.1:8080
+    description: Default local server
+security:
+  - bearer: []
+  - apiKey: []
+paths:
+  /health:
+    get:
+      summary: Server liveness and readiness probe
+      description: Lock-free health check. Returns 200 with status ok and state ready or empty.
+      security: []
+      responses:
+        '200':
+          description: Health check result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /v1/images/generations:
+    post:
+      summary: Generate image from prompt
+      description: |
+        Generates a PNG image from a text prompt using local diffusion models
+        on Apple Silicon. Output is base64-encoded PNG data.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImageGenerateRequest'
+      responses:
+        '200':
+          description: Generated image payload
+          headers:
+            x-turbospark-seed:
+              schema: { type: integer }
+              description: The seed used for generation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageResponse'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Busy' }
+        '500': { $ref: '#/components/responses/Error' }
+
+  /v1/images/edits:
+    post:
+      summary: Image editing (Unsupported)
+      description: Returns 501 Not Implemented.
+      responses:
+        '501': { $ref: '#/components/responses/Error' }
+
+  /v1/models:
+    get:
+      summary: List available image models
+      responses:
+        '200':
+          description: List of models
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  object: { type: string, example: list }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Model'
+
+  /v1/models/{model}:
+    get:
+      summary: Retrieve model details
+      parameters:
+        - name: model
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Model details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Model'
+        '404': { $ref: '#/components/responses/Error' }
+
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+    apiKey:
+      type: apiKey
+      in: header
+      name: x-api-key
+
+  responses:
+    Error:
+      description: Request error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Busy:
+      description: Concurrency limit reached
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status: { type: string, example: ok }
+        state: { type: string, enum: [ready, empty], example: ready }
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            message: { type: string }
+            type: { type: string }
+            param: { type: [string, 'null'] }
+            code: { type: [string, 'null'] }
+
+    Model:
+      type: object
+      properties:
+        id: { type: string }
+        object: { type: string, example: model }
+        created: { type: integer }
+        owned_by: { type: string, example: turbospark }
+
+    ImageGenerateRequest:
+      type: object
+      required: [model, prompt]
+      properties:
+        model:
+          type: string
+          description: The image model alias (e.g., z-image-turbo, qwen-image-2.1-turbo).
+        prompt:
+          type: string
+          description: Text description of the desired image.
+        n:
+          type: integer
+          minimum: 1
+          maximum: 4
+          default: 1
+          description: Number of images to generate.
+        size:
+          type: string
+          default: 1024x1024
+          description: WIDTHxHEIGHT in pixels between 512 and 1024 (multiples of 16).
+        seed:
+          type: integer
+          description: Deterministic seed for generation.
+        response_format:
+          type: string
+          enum: [b64_json]
+          default: b64_json
+        output_format:
+          type: string
+          enum: [png]
+          default: png
+
+    ImageResponse:
+      type: object
+      properties:
+        created: { type: integer }
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              b64_json:
+                type: string
+                description: Base64-encoded PNG image data.

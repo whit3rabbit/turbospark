@@ -25,8 +25,17 @@ let package = Package(
         .package(path: "Vendor/Qwen3TTS"),
         .package(url: "https://github.com/sqlcipher/SQLCipher.swift.git", from: "4.10.0"),
         .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.4.0"),
-        .package(url: "https://github.com/whit3rabbit/syntext", exact: "2.5.0"),
-        .package(url: "https://github.com/sparkle-project/Sparkle.git", from: "2.9.6")
+        // Exact is safe from 2.7.1 on: the tag pins its own xcframework zip.
+        // Tags through v2.7.0 pinned the PREVIOUS release's zip (`v2.5.0`
+        // linked the 2.4.0 binary), so never pin one of those exactly; use
+        // its `swift-vX.Y.Z` commit by revision. See docs/SYNTEXT.md section 6.
+        .package(url: "https://github.com/whit3rabbit/syntext", exact: "2.7.2"),
+        .package(url: "https://github.com/sparkle-project/Sparkle.git", from: "2.9.6"),
+        // Exact on purpose. From v0.15.6 FluidAudio links a Rust staticlib
+        // (NemoTextProcessing): a duplicate _rust_eh_personality and a fourth
+        // compact-unwind personality, which this app's link cannot take.
+        // Read docs/FLUIDAUDIO.md before changing the version.
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.15.5")
     ],
     targets: [
         // The app's resources live in their own target so the lookup can be
@@ -51,7 +60,9 @@ let package = Package(
                 .product(name: "SQLCipher", package: "SQLCipher.swift"),
                 .product(name: "MarkdownUI", package: "swift-markdown-ui"),
                 .product(name: "Syntext", package: "syntext"),
-                .product(name: "Sparkle", package: "Sparkle")
+                .product(name: "SyntextContext", package: "syntext"),
+                .product(name: "Sparkle", package: "Sparkle"),
+                .product(name: "FluidAudio", package: "FluidAudio")
             ],
             exclude: [
                 "Tools/Codemode/README.md"
@@ -114,7 +125,9 @@ let package = Package(
                 "DOMSnapshotFixtures",
                 .product(name: "TurboSpark", package: "TurboSpark"),
                 .product(name: "SQLCipher", package: "SQLCipher.swift"),
-                .product(name: "Syntext", package: "syntext")
+                .product(name: "Syntext", package: "syntext"),
+                .product(name: "SyntextContext", package: "syntext"),
+                .product(name: "FluidAudio", package: "FluidAudio")
             ],
             exclude: [
                 "Fixtures/DOMSnapshotService"

@@ -375,6 +375,21 @@ impl ChatModel for FfiChatModel {
         let mut engine = self.lock_engine()?;
         match (&mut *engine, block) {
             #[cfg(target_os = "macos")]
+            (Engine::Real(runner), Some(cap)) if self.core.speculation_adaptive => {
+                runtime::run_raw_completion_speculative_adaptive_cancellable(
+                    runner.as_mut(),
+                    &self.core.tokenizer,
+                    prompt_ids,
+                    config,
+                    self.core.max_context,
+                    vocab_size,
+                    cap,
+                    runtime::AdaptiveDepth::DEFAULT_FLOOR,
+                    &combined,
+                    on_progress,
+                )
+            }
+            #[cfg(target_os = "macos")]
             (Engine::Real(runner), Some(block)) => run_raw_completion_speculative_cancellable(
                 runner.as_mut(),
                 &self.core.tokenizer,

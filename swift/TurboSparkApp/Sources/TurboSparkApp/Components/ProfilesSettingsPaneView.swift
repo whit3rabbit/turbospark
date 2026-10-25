@@ -299,7 +299,7 @@ struct ProfilesSettingsPaneView: View {
             if vaultCoordinator.isProtected {
                 Toggle(isOn: Binding(
                     get: { vaultCoordinator.quickUnlockEnabled },
-                    set: updateQuickUnlock
+                    set: { updateQuickUnlock($0) }
                 )) {
                     Text("Touch ID or Mac login", bundle: .module)
                 }

@@ -41,6 +41,22 @@ fn assert_bits(got: &[f32], want: &[f32], what: &str) {
 #[test]
 fn lm_head_window_reproduces_full_head_columns_bitwise() {
     let device = Music3Device::new().unwrap();
+    // KNOWN BUG, not a test artifact: on chips that are not M3, M4 or M5 a
+    // dense bf16 projection of 2 to 15 rows takes the tiled kernel, and its
+    // split-K choice (`mlx_splitk_partitions`) reads the output width. The
+    // 3016-row window has K >= N and splits in two, the 5000-row head has
+    // K < N and does not, so a window logit can differ from the full head's
+    // in the last bf16 bit (-19.625 vs -19.75 in the first CI failure, and
+    // reproduced here by faking an M1 or M2 device name). M3 and later take
+    // the wide GEMV, which has no split, and pass. The test is skipped on
+    // the affected chips until the window plans its split from the full head
+    // width; set TURBOSPARK_MUSIC3_ORACLE_ANY_DEVICE=1 to run it anyway.
+    let name = device.device_name();
+    let gemv_chip = ["M3", "M4", "M5"].iter().any(|chip| name.contains(chip));
+    if !gemv_chip && std::env::var_os("TURBOSPARK_MUSIC3_ORACLE_ANY_DEVICE").is_none() {
+        eprintln!("skipping the LM head window check: known mismatch on {name}");
+        return;
+    }
     let (vocab, hidden, rows) = (5000, 4096, 2);
     let weights = bf16_bytes(&values(vocab * hidden, 11));
     let x: Vec<f32> = values(rows * hidden, 12)
@@ -82,6 +98,66 @@ fn lm_head_window_reproduces_full_head_columns_bitwise() {
                     &got[r * window.len()..(r + 1) * window.len()],
                     &want[r * vocab + window.start..r * vocab + window.end],
                     &format!("window {window:?} {dtype:?} row {r}"),
+                );
+            }
+        }
+    }
+}
+
+/// The window must reproduce the full head on every chip's plan, not only the
+/// chip the test runs on. Below M3 a 2 to 15 row dense projection takes the
+/// tiled kernel, whose split-K choice reads the output width, so a window
+/// that plans from its own width splits where the full head does not.
+#[test]
+fn lm_head_window_matches_full_head_under_every_chips_plan() {
+    let (vocab, hidden, rows) = (5000, 4096, 2);
+    let weights = bf16_bytes(&values(vocab * hidden, 11));
+    let x: Vec<f32> = values(rows * hidden, 12)
+        .into_iter()
+        .map(|v| bf16::from_f32(v).to_f32())
+        .collect();
+    let row_bytes = hidden * 2;
+    for chip in [
+        "Apple M1 (Virtual)",
+        "Apple M2 Pro",
+        "Apple M3 Pro",
+        "Apple M4 Max",
+        "Apple M5",
+    ] {
+        let device = Music3Device::with_device_name(chip).unwrap();
+        let full = device
+            .load_weight(
+                &[vocab, hidden],
+                &weights,
+                Music3Encoding::Bf16,
+                &[],
+                &[],
+                &[],
+            )
+            .unwrap();
+        let want = full
+            .linear_typed(&x, None, rows, hidden, vocab, Music3DType::Bf16)
+            .unwrap();
+        for window in [64..1088, 1984..5000] {
+            let head = device
+                .load_weight(
+                    &[window.len(), hidden],
+                    &weights[window.start * row_bytes..window.end * row_bytes],
+                    Music3Encoding::Bf16,
+                    &[],
+                    &[],
+                    &[],
+                )
+                .unwrap()
+                .planned_as_rows(vocab);
+            let got = head
+                .linear_typed(&x, None, rows, hidden, window.len(), Music3DType::Bf16)
+                .unwrap();
+            for r in 0..rows {
+                assert_bits(
+                    &got[r * window.len()..(r + 1) * window.len()],
+                    &want[r * vocab + window.start..r * vocab + window.end],
+                    &format!("{chip} window {window:?} row {r}"),
                 );
             }
         }

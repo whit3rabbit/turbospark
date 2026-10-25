@@ -78,6 +78,8 @@ extension AppModel {
         self.runtimeOptions.speculation = AppSpeculationOption(rawValue: settings.speculation) ?? .auto
         self.runtimeOptions.speculativeDrafter = AppSpeculativeDrafterOption(rawValue: settings.speculativeDrafter) ?? .auto
         self.runtimeOptions.kvBits = AppKvBitsOption(rawValue: settings.kvBits) ?? .auto
+        self.runtimeOptions.anePrefill = AppAnePrefillOption(rawValue: settings.anePrefill) ?? .auto
+        self.runtimeOptions.anePrefillDir = settings.anePrefillDir
         self.runtimeOptions.maxTokensPerSec = settings.maxTokensPerSec
         self.runtimeOptions.steeringPath = settings.steeringPath.isEmpty ? nil : settings.steeringPath
         self.runtimeOptions.steeringMode = AppSteeringModeOption(rawValue: settings.steeringMode) ?? .ablate
@@ -113,8 +115,13 @@ extension AppModel {
         self.memoryAutoCaptureEnabled = settings.memoryAutoCaptureEnabled
         self.syntextIndexingEnabled = settings.syntextIndexingEnabled
         AppToolRegistry.syntextIndexingEnabled = settings.syntextIndexingEnabled
+        self.conversationRecallEnabled = settings.conversationRecallEnabled
+        // A store left by a crash between turning recall off (or protecting
+        // the profile) and the purge that should have followed.
+        ChatRecallStore.shared.purgeIfDisallowed()
         self.compactionKeepRecentTurns = AppChatCompaction.clampKeepRecent(
             settings.compactionKeepRecentTurns)
+        self.chatToolsEnabled = settings.chatToolsEnabled
         self.microcompactEnabled = settings.microcompactEnabled
         self.autoContinuationEnabled = settings.autoContinuationEnabled
         self.nativeToolCallingEnabled = settings.nativeToolCallingEnabled
@@ -234,6 +241,8 @@ extension AppModel {
             speculation: runtimeOptions.speculation.rawValue,
             speculativeDrafter: runtimeOptions.speculativeDrafter.rawValue,
             kvBits: runtimeOptions.kvBits.rawValue,
+            anePrefill: runtimeOptions.anePrefill.rawValue,
+            anePrefillDir: runtimeOptions.anePrefillDir,
             maxTokensPerSec: runtimeOptions.maxTokensPerSec,
             steeringPath: runtimeOptions.steeringPath ?? "",
             steeringMode: runtimeOptions.steeringMode.rawValue,
@@ -259,6 +268,7 @@ extension AppModel {
             evidenceReducer: evidenceReducerEnabled,
             todoBoundaryCompaction: todoBoundaryCompactionEnabled,
             compactionKeepRecentTurns: compactionKeepRecentTurns,
+            chatToolsEnabled: chatToolsEnabled,
             microcompactEnabled: microcompactEnabled,
             autoContinuationEnabled: autoContinuationEnabled,
             nativeToolCallingEnabled: nativeToolCallingEnabled,
@@ -291,6 +301,7 @@ extension AppModel {
             memoryAutoCaptureEnabled: memoryAutoCaptureEnabled,
             agentModeHints: agentModeHints,
             syntextIndexingEnabled: syntextIndexingEnabled,
+            conversationRecallEnabled: conversationRecallEnabled,
             browser: browserSettings
         )
         // The API key follows its own storage: Keychain, written only when
@@ -519,6 +530,10 @@ extension AppModel {
         } else {
             self.worktree = nil
         }
+        // A restored selection is a selection: open (or build) its index now,
+        // in the background, as `selectProject` does. Without this the first
+        // search of a session waited on the open.
+        refreshSyntextActivation(for: project)
     }
 
     /// Persists all project workspaces and active project selection.
@@ -583,6 +598,7 @@ extension AppModel {
         // First, so the engine stops answering requests for a model that is
         // about to be released (`swift/CLAUDE.md` Gotcha 26).
         stopServer()
+        ChatRecallStore.shared.close()
         typeSafeServer?.terminate()
         typeSafeServer = nil
         stopServerPolling()

@@ -115,6 +115,7 @@ struct InstalledModelDetailPaneView: View {
                     installedModel: installedModel,
                     rowModel: rowModel,
                     isCurrentlyLoaded: isCurrentlyLoaded,
+                    canLoadModel: model.canLoadModel,
                     canUnloadModel: model.canUnloadModel,
                     canDeleteModel: model.canDeleteModel,
                     isChanging: model.modelsBeingChanged.contains(installedModel.installId),

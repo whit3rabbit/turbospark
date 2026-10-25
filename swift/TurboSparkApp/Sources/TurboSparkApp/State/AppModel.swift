@@ -35,13 +35,30 @@ public final class AppModel: ObservableObject {
             self?.enqueueAudioDownload(profile: profile, acknowledged: acknowledged, library: library) ?? false
         }
         workspace.modelMoving = { [weak self] in self?.isMoving(path: $0) == true }
-        workspace.summaryAvailable = { [weak self] in self?.canSummarizeAudio == true }
-        workspace.summaryHandler = { [weak self] item in
-            guard let self else { throw CancellationError() }
-            return try await self.summarizeAudioTranscript(item)
+        workspace.availableChatModels = { [weak self] in
+            self?.installed.filter { $0.modality == "text" } ?? []
         }
+        workspace.selectedChatModel = { [weak self] in
+            self?.selected
+        }
+        workspace.selectChatModel = { [weak self] model in
+            self?.selectModel(model)
+        }
+        workspace.summaryAvailable = { [weak self] in
+            self?.canSummarizeAudio == true || (self?.installed.contains(where: { $0.modality == "text" }) == true)
+        }
+        workspace.summaryHandler = { [weak self] item, targetModel in
+            guard let self else { throw CancellationError() }
+            return try await self.summarizeAudioTranscript(item, targetModel: targetModel)
+        }
+        forwardAudioUnloadChanges(from: workspace)
         return workspace
-    }()
+    }() {
+        // Tests swap in their own controller; it must drive the top bar too.
+        didSet { forwardAudioUnloadChanges(from: audioWorkspace) }
+    }
+    /// See `forwardAudioUnloadChanges(from:)`.
+    var audioUnloadObserver: AnyCancellable?
     lazy var humanizeWorkspace: HumanizeController = {
         let controller = HumanizeController()
         // The loadable list, not `installed`: a Humanizer on a drive that is away
@@ -66,6 +83,13 @@ public final class AppModel: ObservableObject {
         return controller
     }()
     @Published public var activeSection: AppNavigationSection = .chat
+    /// Sub-modes listed in a section's panel beside the rail (Gotcha 17).
+    /// Held here rather than in the pane's `@State` because the panel and the
+    /// rail's fallback menu set them while the pane reads them; the pane no
+    /// longer draws its own switcher, so there is one control per choice.
+    @Published var imagesMode: ImagesWorkspaceMode = .create
+    @Published var installedModelKind: InstalledModelKind = .text
+    @Published var apiWorkspaceTab: APIWorkspaceTab = .text
 
     /// Attachment currently shown in the right-hand preview pane, if any.
     ///
@@ -299,6 +323,12 @@ public final class AppModel: ObservableObject {
     @Published public var typeSafeError: String?
     /// Whether `startServer()`/`stopServer()` is in flight.
     @Published public var serverBusy: Bool = false
+    /// Why the last start failed, until the next start begins.
+    ///
+    /// The failure toast fades, and the menu bar panel opened afterwards
+    /// would otherwise show a plain "Stopped" for a server that refused to
+    /// bind, with nothing saying why or what to try.
+    @Published public var serverStartFailure: String?
     /// A stop pressed while a start was still binding (state#28).
     ///
     /// `server` is published only after the awaited bind, so `stopServer()`
@@ -329,8 +359,19 @@ public final class AppModel: ObservableObject {
     @Published public var serverFavorites: [ServerFavorite] = []
     @Published public var serverLive = ServerLiveHistory()
     @Published public var serverPinnedPort: UInt16 = 0
-    /// Optional embedding model (.safetensors directory or alias) attached to the server.
+    /// The embedding model (a pinned alias or a model directory) chosen in
+    /// the API Embeddings tab. Persisted, and attached again after every
+    /// server start.
     @Published public var serverEmbeddingModelInput: String = ""
+    /// An embedding attach is crossing the C ABI. A first Core ML load takes
+    /// tens of seconds and `TurboSparkServer` holds its lock throughout, so
+    /// the poll skips its ticks until it returns rather than block the main
+    /// thread on that lock.
+    @Published public var serverEmbeddingAttachInFlight = false
+    /// A Stop pressed during an embedding attach, applied when it returns.
+    /// Kept apart from `serverStopRequested`, which belongs to the start
+    /// path (state#53).
+    var serverStopAfterEmbeddingAttach = false
     /// Hugging Face mirror endpoint override ($HF_ENDPOINT), e.g. https://hf-mirror.com.
     @Published public var hfEndpointInput: String = ""
     /// What the running server last reported: bound host and port, attached
@@ -403,6 +444,8 @@ public final class AppModel: ObservableObject {
     @Published public var microcompactEnabled: Bool = true
     /// Whether output-limit responses may continue automatically.
     @Published public var autoContinuationEnabled: Bool = true
+    /// Whether tools are offered in conversational Chat mode.
+    @Published public var chatToolsEnabled: Bool = true
     /// Offer tools through the engine's native tool calling when the loaded
     /// checkpoint supports it, instead of describing them in the prompt.
     @Published public var nativeToolCallingEnabled: Bool = true
@@ -439,6 +482,9 @@ public final class AppModel: ObservableObject {
     /// Pinned embedding models the app can download (`EmbeddingCatalog`).
     /// Refreshed when an embedding field appears and after an install.
     @Published public var embeddingProfiles: [EmbeddingProfile] = []
+    /// Family verdicts for typed embedding model inputs, keyed by the
+    /// trimmed input (`refreshEmbeddingProbe`).
+    @Published public var embeddingProbes: [String: EmbeddingProbe] = [:]
     @Published public var memoryAutoCaptureEnabled = false
     var memorySchedulerTimer: Timer?
     var memoryCaptureTask: Task<Void, Never>?
@@ -451,6 +497,12 @@ public final class AppModel: ObservableObject {
     /// indexers can check it without holding an `AppModel`.
     @Published public var syntextIndexingEnabled: Bool = true {
         didSet { AppToolRegistry.syntextIndexingEnabled = syntextIndexingEnabled }
+    }
+    /// Whether long chats recall earlier turns from the conversation store.
+    /// Mirrored into `ChatRecallStore`, which deletes its folder when this
+    /// turns off (the store is a derived, plaintext copy of transcripts).
+    @Published public var conversationRecallEnabled: Bool = true {
+        didSet { ChatRecallStore.shared.setEnabled(conversationRecallEnabled) }
     }
     /// Trailing message rows that stay verbatim after a compaction.
     @Published public var compactionKeepRecentTurns: Int = 2

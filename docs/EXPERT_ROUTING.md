@@ -482,6 +482,10 @@ a one-request +1 point is below run-to-run spread anyway.
 
 ### Standing decision
 
+**Superseded 2026-10-17:** item 1 below ran, and decay cost 17-50% of decode
+at the `auto` slot count on two families. See "Decay as the default: the multi-request pair,
+measured" at the end of this page.
+
 `TURBOSPARK_EXPERT_CACHE_DECAY` is a seam, default off. Flipping the default
 to decay 32 is supported by the hit-rate evidence on Gemma 4 and owes:
 
@@ -491,3 +495,308 @@ to decay 32 is supported by the hit-rate evidence on Gemma 4 and owes:
    `qwen4exp` on an SSD-bound install, before assuming the interval carries
    over. The interval counts plans per layer, so it does not scale with
    layer count, but it may with experts per layer.
+
+## Disk-bound baseline: qwen4exp on an external SSD (2026-10-14)
+
+The measurement the prefetch and cache sections above said was OWED: an
+install whose expert table does not fit in RAM, read from a device rather
+than the page cache.
+
+### Setup
+
+- Install: `qwen4exp-swift-iq2-xs` (48 layers x 512 experts, top-10, expert
+  stride 1,523,712 B), 64 GiB on a Samsung T7 at `/Volumes/T7`: 33 GiB of
+  `packed_experts`, a 27 GiB `ngram_table`, 4.2 GiB `model_weights.bin`.
+- Host: Apple M4 Max, 36 GB, AC, Spotlight disabled on the volume. Binary
+  built from a clean export of `3c0ea885`. Greedy, 200 new tokens, one
+  34-token prompt, 2,048 context.
+- Link: the drive first negotiated USB 2.0 (480 Mb/s) on a charge-only
+  cable and capped random expert reads at 47-61 MB/s (0.24 tok/s decode).
+  With a 10 Gb/s cable, a raw `F_NOCACHE` random-read bench of whole
+  experts read 576 MB/s at one thread and 778-786 MB/s at 16-32 threads;
+  the engine's own pattern (8 threads, 840 KiB chunks) read 617 MB/s.
+- Contamination: other sessions ran `cargo` builds throughout. Each arm
+  records the 1-minute load and whether any `target/*/deps/` process was
+  live at its end; only arms with neither are quoted for time below. Swap
+  sat at 9-12 GB used for the whole capture, which is a property of this
+  host that day and depresses every arm.
+
+### Measurement
+
+Clean arms only (two per slot count, forward and reverse order):
+
+| slots | hit rate | requested MiB/tok | physical MiB/tok | expert io ms/tok | cb1 wait ms/tok | tok/s |
+|---:|---:|---:|---:|---:|---:|---:|
+| 16 | 47.3% | 349.8 | 88-92 | 149-154 | 119-125 | 3.56-3.70 |
+| 32 | 58.3% | 276.7 | 91-103 | 153-169 | 124-127 | 3.40-3.59 |
+| 128 | 83.1% | 111.9 | 92-93 | 150-152 | 138-150 | 3.42-3.47 |
+| 16, `F_NOCACHE` | 47.3% | 349.8 | 349.8 | 585 | 196 | 1.29 |
+
+Every 64-slot arm was contaminated; its hit rate (70.7%) is still valid,
+since the routing is deterministic.
+
+### Reading
+
+- **The slot cache and the page cache are the same RAM counted twice.**
+  From 16 to 128 slots the requested bytes fall 3.1x while the bytes read
+  from the device stay at ~90 MiB/token and throughput stays flat. The page
+  cache was already holding what the extra slots hold. This is the reason
+  Flash-Next bypasses the page cache and sizes one explicit cache instead.
+- **The read path runs at the device's rate.** The `F_NOCACHE` arm moved
+  349.8 MiB/token in 585 ms, ~627 MB/s, the raw bench's figure for the same
+  chunking. There is no software loss to recover inside the current
+  pattern; the bench says whole-expert reads at 16 threads would be ~26%
+  faster on this device.
+  (Measured end to end on 2026-10-17: 5% of expert io, not 26%. See "Read-pool
+  depth on the disk-bound install" at the end of this page.)
+- **A second, cache-independent bucket is as large as expert io.** The
+  layer cb1 wait (attention plus router) is 120-150 ms/token at every slot
+  count, ~40% of the step. The catalog row for this same install records
+  12.2-12.8 tok/s from the internal SSD, ~80 ms for a WHOLE token, so this
+  one bucket alone exceeds an internal-SSD token here. The likely cause is page faults on the mapped trunk and the 27 GiB n-gram
+  table from the external device. This is INFERRED from the bucket's
+  independence of slot count and has not been isolated; Flash-Next's
+  128 MiB `--ple-shelf` targets the same table.
+
+### Replay: what a larger explicit cache would buy
+
+`scripts/pilot_ceiling.py --policies` over four routing traces from this
+install (924 passes as one session, first request excluded). The decay and
+LRU rows reproduce the engine's measured single-request hit rates within a
+point:
+
+| slots | pinned | cumulative LFU | LRU | decay 16 | decay 32 | MiB/tok at decay 16 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 16 | 1.1 GiB | 41.4% | 46.8% | 48.2% | 47.2% | 361.5 |
+| 32 | 2.2 GiB | 49.5% | 59.6% | 59.9% | 58.5% | 279.8 |
+| 64 | 4.5 GiB | 62.5% | 71.3% | 72.0% | 71.1% | 195.4 |
+| 128 | 8.9 GiB | 78.7% | 84.2% | 84.1% | 84.0% | 111.1 |
+| 192 | 13.4 GiB | 88.1% | 90.5% | 90.5% | 90.5% | 66.0 |
+| 256 | 17.9 GiB | 93.6% | 94.4% | 94.4% | 94.4% | 39.2 |
+
+- Cumulative LFU again loses across requests (6-10 points at 16-64 slots),
+  the same finding as the Gemma 4 section above, on a 512-expert model.
+- At 256 slots with `F_NOCACHE`, 39 MiB/token at the measured ~620 MB/s is
+  ~65 ms of expert io against today's ~150 ms. That is a PROJECTION from
+  hit rate and device rate, not a measurement, and it ignores that pinning
+  17.9 GiB takes RAM the page cache currently gives to the trunk and the
+  n-gram table, i.e. the cb1 bucket above may grow.
+
+### What this changes
+
+- `ALLOWED_CACHE_SLOTS` stopped at 128. The replay suggested the payoff
+  was at 192-256 slots AND page-cache bypass together. **That projection
+  was then measured and did not hold on this machine**; see the next
+  section. 192 and 256 were added to the allowed set so the arms could be
+  run at all.
+- The cb1 bucket needs its own instrument before anyone optimizes it:
+  split trunk faults from n-gram-table faults.
+- Decay should default on once a clean multi-request tok/s pair exists;
+  hit rates now support it on two families with different expert counts.
+  (That pair ran on 2026-10-17 and lost at the `auto` slot count; see the
+  last section.)
+
+## Larger explicit cache vs page-cache bypass, measured (2026-10-15)
+
+The Flash-Next shape (one explicit cache plus `F_NOCACHE`) on the same
+install, device and host as the section above.
+
+### Protocol
+
+`turbospark-check --chat` reading four prompts from stdin in ONE process,
+200 new tokens each, so the cache carries across requests. Turn 1 is the
+warmup; the rows below are turns 2-4 from the cumulative phase counters.
+Arms: 128 and 192 slots, each with and without `TURBOSPARK_EXPERT_NOCACHE=1`,
+one forward and one reverse pass, plus a discarded warmup session. Each arm
+waits for other sessions' `target/*/deps/` processes to finish, samples load
+and those processes every 5 s while it runs, and records `vm_stat` swap
+counts. 256 slots (17.4 GiB pinned) was not run: on this host's ~15 GiB of
+free plus inactive memory it can only swap. Binary: `3c0ea885` plus the
+192/256 rungs. Scripts and logs: `/Volumes/T7/turbospark/phase1/`.
+
+### Measurement
+
+| arm | hit rate | tok/s (fwd / rev) | expert io ms/pass | contamination |
+|---|---:|---:|---:|---|
+| 128, page cache | 78.9% | 4.46 / 4.96 | 85-105 | both runs overlapped other builds; fwd swapped 1.8 GiB |
+| 128, `F_NOCACHE` | 78.9% | **2.91** / 2.97 | 168-198 | fwd clean; rev overlapped a build |
+| 192, page cache | 88.4% | **4.28** / 5.30 | 73-78 | fwd clean (155 MiB swapped); rev swapped 3.1 GiB |
+| 192, `F_NOCACHE` | 88.4% | 3.53 / 3.57 | 119-128 | fwd swapped 1.0 GiB; rev overlapped a build |
+
+Output: byte-identical across the bypass arms at each slot count. 128 and
+192 slots produce different text from each other, as
+`crates/bench/src/real_model_open.rs` documents for any slot-count change.
+
+### Reading
+
+- **Page-cache bypass loses on a 36 GB machine, at both sizes**, by 25-35%,
+  in every pair including the clean ones. The OS page cache is a free
+  second tier holding experts the slots evicted; `F_NOCACHE` discards it.
+  Flash-Next's setting assumes a machine where the explicit cache can be
+  sized near the working set (28 GiB on 64 GB). It does not transfer here.
+- **192 slots does not clearly beat 128 with the page cache on.** Hits rise
+  9.5 points and expert io falls ~25%, but tok/s overlaps (4.3-5.3 against
+  4.5-5.0). The extra 4.4 GiB pinned comes out of the page cache that also
+  serves the trunk and the n-gram table, and two 192 runs swapped.
+- **Under bypass, size does pay**: 192 beats 128 by ~21% (3.55 against
+  2.94). That is the Flash-Next regime, and it still ends below the page
+  cache arms.
+- The replay's hit-rate projections were optimistic by 4-6 points on the
+  real 4-turn session (78.9 / 88.4% against 84.1 / 90.5%): a chat session's
+  turns share history, so this is the same workload shape but not the same
+  traces.
+
+### Standing decision
+
+- Keep the page cache in the loop. Do not ship a production `F_NOCACHE`
+  mode for this class of machine; it stays the measurement seam it was.
+- Keep 192 and 256 in `ALLOWED_CACHE_SLOTS`. `Auto` reaches them only on
+  machines with the memory, and a machine with 64 GB or more is exactly
+  where the bypass result could reverse. That reversal is unmeasured.
+- The bucket that did not move with any cache setting is cb1 (95-145
+  ms/pass). It is now the larger lever on this install, and it needs the
+  trunk-versus-n-gram split noted above before anyone optimizes it.
+
+## Decay as the default: the multi-request pair, measured (2026-10-17)
+
+The pair the cache-policy standing decision above owed:
+`TURBOSPARK_EXPERT_CACHE_DECAY=16` against the seam unset (cumulative LFU),
+on a real runner, across requests.
+
+### Protocol
+
+`turbospark-check --chat` reads the four 2026-10-15 prompts (coding,
+general, coding, general) from stdin in ONE process, 200 new tokens each,
+greedy, 2,048 context, with `TURBOSPARK_PHASES=1 TURBOSPARK_EXPERT_DISK_IO=1`.
+Turn 1 is warmup, and the rows are turns 2-4. Each block runs one discarded
+warmup session, then four arms per policy in ABBA then BAAB order. Each arm
+waits for other sessions' `target/*/deps/` processes to finish and samples
+load and `rustc` count every 5 s. It also checks that its startup line names
+the policy its label asks for.
+
+- Installs, both on the external T7 SSD where this machine keeps its MoE
+  installs: `ornith35b` (`qwenGdnMoe`, 40 layers, 256 experts, top-8,
+  18 GB) and the disk-bound `qwen4exp-swift-iq2-xs` (48 layers, 512 experts,
+  top-10, 64 GiB). `auto` resolves to 96 slots on both.
+- Binary: a clean worktree build of `7e8d6675`.
+- Host: Apple M4 Max (32-core GPU), 36 GB, on AC at the end of the run, no
+  thermal warning recorded. Scripts and logs:
+  `/Volumes/T7/turbospark/phase3-decay/`.
+
+### Measurement
+
+Ornith 35B:
+
+| slots | policy | tok/s, 4 runs (mean) | slot hits | requested MiB/token | physical MiB/token | expert io ms/pass |
+|---|---|---|---:|---:|---:|---:|
+| 16 | cumulative LFU | 40.40-43.07 (41.75) | 48.9% | 278.7 | 0.0-0.3 | 5.97 |
+| 16 | decay 16 | 42.28-44.25 (42.98) | 53.4% | 257.6 | 0.0-0.1 | 5.55 |
+| 96 (`auto`) | cumulative LFU | 23.64-25.87 (24.53) | 82.8% | 94.9 | 7.8-11.4 | 13.5 |
+| 96 (`auto`) | decay 16 | 12.30-15.89 (13.28) | 87.5% | 73.8 | 15.4-19.7 | 30.0 |
+
+qwen4exp, 96 slots (`auto`), clean arms only:
+
+| policy | tok/s, 3 runs (mean) | slot hits | requested MiB/token | physical MiB/token | expert io ms/pass |
+|---|---|---:|---:|---:|---:|
+| cumulative LFU | 4.31-4.37 (4.35) | 72.2% | 169.5 | 51.5-51.7 | 85.6 |
+| decay 16 | 3.58-3.67 (3.62) | 80.7% | 124.7 | 70.2-70.4 | 123.6 |
+
+One Ornith decay arm (15.89 tok/s) and one arm of each qwen4exp policy
+overlapped another session's build. The Ornith table includes its one, and
+the three clean Ornith decay arms read 12.30-12.57 (mean 12.40). The
+qwen4exp table leaves both out. Output was byte-identical across all arms at
+each slot count on each install.
+
+### Reading
+
+- **At 16 slots it holds.** Decay is +3.0% on the mean, and every adjacent
+  pair favors it. The page cache held every expert (about 0 MiB/token from
+  the device), so the 7.6% fewer requested bytes were a pure saving.
+- **At 96 slots, decay halves Ornith's decode and costs qwen4exp 17%.**
+  That is the `auto` count on both, and the one a default flip would
+  change. On Ornith, slot hits rise 4.7 points and requested bytes fall
+  22%. But bytes read from the device roughly double, and over USB that
+  costs more than the hits save. On Ornith the layer cb1
+  wait rises with it, from 17 to 32 ms/pass. qwen4exp shows the same shape:
+  hits +8.5 points, requested bytes -26%, device bytes +36%.
+- **The likely mechanism is page-cache aging.** This is inferred, not
+  isolated. An expert served from a slot is never `pread`, so its file pages
+  age out of the page cache while it sits there. Cumulative LFU rarely
+  evicts a long-lived resident. Decay does, and the next miss on that expert
+  is a cold device read. The larger pinned cache also leaves less page cache
+  for an 18 GB install.
+- **Every replay on this page is blind to it.** A replay counts slot hits.
+  A slot miss can be a page-cache copy or a device read. Price the next
+  policy change with physical bytes on the target storage, not hit rate.
+
+### The oracle and pool rows for qwen4exp
+
+`scripts/expert_policy_replay.py` over the four qwen4exp traces from the
+disk-bound section (`/Volumes/T7/turbospark/phase0/traces/`, c1, g1, c3,
+g4 as one session, each prompt skipped). Slot hit rates, all four requests:
+
+| slots | cumulative LFU | LRU | decay 16 | oracle | pool LRU | pool oracle |
+|---:|---:|---:|---:|---:|---:|---:|
+| 16 | 44.5% | 48.4% | 50.4% | 59.0% | 44.0% | 65.6% |
+| 32 | 53.5% | 61.5% | 62.5% | 74.5% | 60.2% | 77.1% |
+| 64 | 66.3% | 74.1% | 75.1% | 85.8% | 74.9% | 87.5% |
+| 128 | 81.7% | 86.8% | 87.0% | 93.4% | 88.6% | 94.6% |
+
+Decay 16 is the best online per-layer arm at every count, and still sits
+6.4 to 12 points under the oracle. One shared pool with LRU (jitllm's pager)
+trails per-layer LRU by 4.4 points at 16 slots and is within 1.8 points from
+32 up, so it buys no hit rate for a larger change. These are hit rates, and
+the A/B above is the reason not to act on a hit rate alone.
+
+### Standing decision
+
+- The default stays cumulative LFU, and `TURBOSPARK_EXPERT_CACHE_DECAY`
+  stays a seam. Slot-hit evidence alone is no longer enough to flip it.
+- A flip owes an arm the 96-slot case cannot lose. One option is the same
+  pair at `auto` on an internal-SSD install, where a cold read costs far
+  less. Another is a policy that does not evict a long resident whose pages
+  have aged out. Neither is measured.
+- The 16-slot gain is real but belongs to a configuration `auto` does not
+  pick on this machine.
+
+## Read-pool depth on the disk-bound install, measured (2026-10-17)
+
+`docs/MOE_PRIOR_ART.md` item 3 asked whether `POOL_THREADS` (8) and
+`MISS_READ_CHUNK_BYTES` (840 KiB), both tuned on warm page-cache copies, are
+wrong when reads come from a device. The raw bench in the disk-bound section
+read whole experts at 778-786 MB/s with 16-32 threads, against 617 MB/s for
+the engine's pattern.
+
+Same harness, install and host as the decay pair above: qwen4exp at `auto`
+(96 slots), cumulative LFU, page cache on, one binary per arm built from
+`095dbd70` with only the two constants changed (manifest in
+`/Volumes/T7/turbospark/phase4-readpool/bin/`). Arms ran ABCD then DCBA after
+a discarded warmup, all eight clean (no other session's build or GPU test
+during any arm).
+
+| arm | threads | chunk | tok/s, 2 runs (mean) | expert io ms/pass | physical MiB/token |
+|---|---:|---|---|---:|---:|
+| A (shipped) | 8 | 840 KiB | 4.14-4.58 (4.36) | 92.5 | 56.8 |
+| B | 16 | 840 KiB | 4.31-4.53 (4.42) | 93.9 | 57.9 |
+| C | 16 | whole expert | 4.45-4.61 (4.53) | 87.4 | 56.6 |
+| D | 32 | whole expert | 4.56-4.58 (4.57) | 87.8 | 56.9 |
+
+Output was byte-identical across all eight arms.
+
+- **More threads alone do nothing** (B). The bound is not the pool: at 72.2%
+  hits and top-10, a layer misses about 2.8 experts per pass, and layers
+  read in turn. So a batch holds about 5.6 chunks at 840 KiB, below 8
+  threads already. This is arithmetic from the hit rate, not a measured
+  queue depth.
+- **Whole-expert reads cut expert io 5%** (C, D), likely from fewer, larger
+  requests. Decode moved +4-5% on the means, inside the shipped arm's own
+  4.14-4.58 spread.
+- **The raw bench's 26% is not reachable this way.** It ran 16-32 reads at
+  once. A layer-at-a-time engine offers about 3, and more depth means
+  reading ahead of the router, which is the prefetch this page has already
+  measured negative.
+
+Decision: the constants stay. Whole-expert reads would also undo streaming
+Gotcha 4: a lone warm miss would read single-threaded, which is the case
+chunking was built for. The `F_NOCACHE` arm after a purge was not run; the
+same per-layer bound applies to it.

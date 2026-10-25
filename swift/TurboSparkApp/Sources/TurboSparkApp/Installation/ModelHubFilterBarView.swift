@@ -32,34 +32,34 @@ struct ModelHubFilterBarView: View {
             .controlSize(.small)
             .labelsHidden()
             .fixedSize()
-            .help(Text(
-                "Recommended: catalog entries that fit this Mac. Discover: the whole catalog. Installed only: catalog entries already on this Mac.",
-                bundle: .module))
+            .help(Text("Catalog view", bundle: .module))
 
-            filterMenu(
-                name: Text("Format & Package", bundle: .module),
-                options: ModelHubFilter.formatOptions(for: catalog),
-                selection: $filter.format)
+            if filter.tab != .audio {
+                filterMenu(
+                    name: Text("Format & Package", bundle: .module),
+                    options: ModelHubFilter.formatOptions(for: catalog),
+                    selection: $filter.format)
 
-            filterMenu(
-                name: Text("Architecture", bundle: .module),
-                options: ModelHubFilter.capabilityOptions(for: catalog),
-                selection: $filter.capability)
+                filterMenu(
+                    name: Text("Architecture", bundle: .module),
+                    options: ModelHubFilter.capabilityOptions(for: catalog),
+                    selection: $filter.capability)
 
-            filterMenu(
-                name: Text("Fits Memory", bundle: .module),
-                options: ModelHubFilter.fitOptions(
-                    for: catalog,
-                    recommendations: recommendations),
-                selection: $filter.fit)
+                filterMenu(
+                    name: Text("Fits Memory", bundle: .module),
+                    options: ModelHubFilter.fitOptions(
+                        for: catalog,
+                        recommendations: recommendations),
+                    selection: $filter.fit)
+            }
 
             ModelFilterMenu(
                 name: Text("Sort By", bundle: .module),
-                value: sortOptionText(filter.sort)
+                value: sortOptionText(filter.sort, audio: filter.tab == .audio)
             ) {
                 Picker(selection: $filter.sort) {
                     ForEach(ModelHubFilter.SortOption.allCases) { option in
-                        sortOptionText(option).tag(option)
+                        sortOptionText(option, audio: filter.tab == .audio).tag(option)
                     }
                 } label: { Text("Sort By", bundle: .module) }
                 .pickerStyle(.inline)
@@ -77,6 +77,12 @@ struct ModelHubFilterBarView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
+        .onChange(of: filter.tab) { _, tab in
+            guard tab == .audio else { return }
+            filter.format = nil
+            filter.capability = nil
+            filter.fit = nil
+        }
     }
 
     /// A dropdown that reads "Format & Package" when inactive and "MLX INT4"
@@ -114,15 +120,16 @@ struct ModelHubFilterBarView: View {
         switch tab {
         case .recommended: return Text("Recommended", bundle: .module)
         case .discover: return Text("Discover", bundle: .module)
+        case .audio: return Text("Audio", bundle: .module)
         case .onDevice: return Text("Installed only", bundle: .module)
         }
     }
 
-    private func sortOptionText(_ option: ModelHubFilter.SortOption) -> Text {
+    private func sortOptionText(_ option: ModelHubFilter.SortOption, audio: Bool = false) -> Text {
         switch option {
         case .recommended: return Text("Recommended", bundle: .module)
         case .name: return Text("Name", bundle: .module)
-        case .size: return Text("Installed size", bundle: .module)
+        case .size: return audio ? Text("Download Size", bundle: .module) : Text("Installed size", bundle: .module)
         }
     }
 }

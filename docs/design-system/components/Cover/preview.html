@@ -1,0 +1,86 @@
+<!-- @dsCard height=288 -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>TurboSpark</title>
+<style>
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--page); color: var(--ink); font-family: var(--font-sans); overflow: hidden; }
+  .cover { position: relative; height: 288px; overflow: hidden; }
+  .art { position: absolute; top: 0; left: 480px; width: 480px; height: 288px; overflow: hidden; }
+  .art svg { display: block; width: 480px; height: 288px; }
+  .slab { fill: var(--night); rx: var(--radius-card); }
+  [data-theme$="dark"] .slab { fill: var(--composer); }
+  .spark-block { fill: var(--accent); rx: var(--radius-chip); }
+  .tint { fill: var(--selection); rx: var(--radius-card); }
+  .star, .spark { fill: var(--accent); }
+  [data-theme="hc-light"] .star, [data-theme="hc-light"] .spark,
+  [data-theme="codex-light"] .star, [data-theme="codex-light"] .spark { fill: var(--page); }
+  .words { position: absolute; left: var(--space-32); bottom: var(--space-32); max-width: 440px; }
+  .name { margin: 0; font-size: 72px; line-height: .95; font-weight: 600; letter-spacing: -0.02em; color: var(--ink); }
+  .tag { margin: var(--space-12) 0 0 2px; font-size: 14px; line-height: 20px; color: var(--ink-secondary); }
+</style>
+</head>
+<body>
+<div class="cover">
+<div class="art" aria-hidden="true">
+<svg viewBox="0 0 480 288" width="480" height="288">
+<!--
+  blocks      night slab 330x280 bled off the top and right (composer in every dark theme, where night sits too close to the ground; stars go to page where the accent is near-black) . accent 80x86 . selection tint 128x112; about 40% of 960x288
+  arrangement one tall slab with two satellites, bottoms on one line space-18 above the edge, space-18 gutter to the slab, space-12 between satellites
+  pattern     a star lattice: "machine facts, precise" plus the night-sky Spark Blue palette, so dots on a space-32 checker inside the slab, three of them sparks at radius-chip / 2
+  scales      pitch space-32, gutters space-18 and space-12, corners radius-card (slab, tint) and radius-chip (accent)
+-->
+<rect class="slab" x="170" y="-10" width="330" height="280" rx="10"/>
+<rect class="spark-block" x="72" y="60" width="80" height="86" rx="8"/>
+<rect class="tint" x="24" y="158" width="128" height="112" rx="10"/>
+<circle class="star" cx="186" cy="22" r="1.5"/>
+<circle class="star" cx="250" cy="22" r="1.5"/>
+<circle class="star" cx="314" cy="22" r="1.5"/>
+<circle class="star" cx="378" cy="22" r="1.5"/>
+<circle class="star" cx="442" cy="22" r="1.5"/>
+<circle class="star" cx="218" cy="54" r="1.5"/>
+<circle class="star" cx="282" cy="54" r="1.5"/>
+<circle class="star" cx="346" cy="54" r="1.5"/>
+<circle class="star" cx="410" cy="54" r="1.5"/>
+<circle class="star" cx="474" cy="54" r="1.5"/>
+<circle class="star" cx="186" cy="86" r="1.5"/>
+<circle class="star" cx="250" cy="86" r="1.5"/>
+<circle class="spark" cx="314" cy="86" r="4"/>
+<circle class="star" cx="378" cy="86" r="1.5"/>
+<circle class="star" cx="442" cy="86" r="1.5"/>
+<circle class="star" cx="218" cy="118" r="1.5"/>
+<circle class="star" cx="282" cy="118" r="1.5"/>
+<circle class="star" cx="346" cy="118" r="1.5"/>
+<circle class="star" cx="410" cy="118" r="1.5"/>
+<circle class="star" cx="474" cy="118" r="1.5"/>
+<circle class="star" cx="186" cy="150" r="1.5"/>
+<circle class="star" cx="250" cy="150" r="1.5"/>
+<circle class="star" cx="314" cy="150" r="1.5"/>
+<circle class="star" cx="378" cy="150" r="1.5"/>
+<circle class="star" cx="442" cy="150" r="1.5"/>
+<circle class="star" cx="218" cy="182" r="1.5"/>
+<circle class="star" cx="282" cy="182" r="1.5"/>
+<circle class="star" cx="346" cy="182" r="1.5"/>
+<circle class="spark" cx="410" cy="182" r="4"/>
+<circle class="star" cx="474" cy="182" r="1.5"/>
+<circle class="star" cx="186" cy="214" r="1.5"/>
+<circle class="spark" cx="250" cy="214" r="4"/>
+<circle class="star" cx="314" cy="214" r="1.5"/>
+<circle class="star" cx="378" cy="214" r="1.5"/>
+<circle class="star" cx="442" cy="214" r="1.5"/>
+<circle class="star" cx="218" cy="246" r="1.5"/>
+<circle class="star" cx="282" cy="246" r="1.5"/>
+<circle class="star" cx="346" cy="246" r="1.5"/>
+<circle class="star" cx="410" cy="246" r="1.5"/>
+<circle class="star" cx="474" cy="246" r="1.5"/>
+</svg>
+</div>
+<div class="words">
+<h1 class="name">TurboSpark</h1>
+<p class="tag">Everything here runs on your Mac. Nothing leaves it.</p>
+</div>
+</div>
+</body>
+</html>

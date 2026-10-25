@@ -29,7 +29,11 @@ pub fn expert_stride_from_headers(
     }
     let expert_count = arch.num_experts as u64;
     let mut max_blob = 0u64;
-    for layer in 0..arch.num_layers as usize {
+    // Routed blobs exist only from the first MoE layer on: a dense lead
+    // (`flint`'s two `mlp_only_layers`) has none, and writing them is
+    // positional (blob `k` is layer `lead + k`), matching the GGUF walk.
+    // Zero for every other family, so their loop is unchanged.
+    for layer in arch.num_dense_leading_layers as usize..arch.num_layers as usize {
         let bundle = routed.get(&layer).ok_or_else(|| {
             Gemma4Error::MissingTensor(format!("layer {layer} routed-expert bundle"))
         })?;
@@ -124,7 +128,10 @@ pub fn plan_one_expert_layer(
         .map(|r| base_of(r).map(|b| quant.is_mxfp4(b)))
         .collect::<Result<Vec<_>, _>>()?;
     if mxfp4.iter().all(|&m| m) {
-        return plan_mxfp4_expert_layer(shards, bundle, experts, layer, expert_count);
+        let (mut blobs, used) =
+            plan_mxfp4_expert_layer(shards, bundle, experts, layer, expert_count)?;
+        blobs.layer = layer - arch.num_dense_leading_layers as usize;
+        return Ok((blobs, used));
     }
     if mxfp4.iter().any(|&m| m) {
         return Err(Gemma4Error::UnsupportedDtype {
@@ -178,8 +185,23 @@ pub fn plan_one_expert_layer(
         }
 
         let w_bytes = shards.read(name)?;
-        let s_bytes = shards.read(&s_name)?;
-        let b_bytes = shards.read(&b_name)?;
+        let mut s_bytes = shards.read(&s_name)?;
+        let mut b_bytes = shards.read(&b_name)?;
+        // FLINT'S FP16 RANGE FIX: `up` is divided by 2^K and `down` multiplied
+        // by it, so the stored `silu(gate) * up` stays inside FP16 and the
+        // result is unchanged. See `crate::flint_rebalance` for why.
+        if arch.family == model_io::ModelFamily::Flint {
+            let swiglu = match role {
+                "up" => Some(crate::flint_rebalance::SwigluRole::Up),
+                "down" => Some(crate::flint_rebalance::SwigluRole::Down),
+                _ => None,
+            };
+            if let Some(swiglu) = swiglu {
+                let delta = swiglu.delta(crate::flint_rebalance::FLINT_SWIGLU_SHIFT);
+                crate::flint_rebalance::shift_bf16_bytes(&mut s_bytes, delta);
+                crate::flint_rebalance::shift_bf16_bytes(&mut b_bytes, delta);
+            }
+        }
         let per = |total: usize, what: &str| -> Result<usize, Gemma4Error> {
             if total % expert_count != 0 {
                 return Err(Gemma4Error::ShapeMismatch {
@@ -249,7 +271,20 @@ pub fn plan_one_expert_layer(
         }
         blob_used += (w_per + s_per + b_per) as u64;
     }
-    Ok((LayerBlobs { layer, experts }, blob_used))
+    // BLOB FILES ARE NUMBERED BY POSITION, NOT BY CHECKPOINT LAYER: the
+    // i-th routed layer is `layer_{i:02}.bin`, and a dense lead
+    // (`flint`'s two `mlp_only_layers`) makes the two differ. `layer` above
+    // stays the checkpoint index because it keys the tensor lookup; only the
+    // blob's label is positional. See `gguf_checkpoint/mod.rs`. Zero lead for
+    // every other family, so this is the identity for them.
+    let position = layer - arch.num_dense_leading_layers as usize;
+    Ok((
+        LayerBlobs {
+            layer: position,
+            experts,
+        },
+        blob_used,
+    ))
 }
 
 /// The MLX mxfp4 sibling of the affine walk above: three sub-tensors per

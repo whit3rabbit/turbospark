@@ -22,7 +22,7 @@ fn main() -> Result<(), String> {
         .next()
         .ok_or("usage: parakeet_coreml_transcribe <model_dir> <wav>")?;
     let wav_path = args.next().ok_or("missing <wav>")?;
-    let opts = ParakeetCoreMlOptions::from_env()?;
+    let opts = ParakeetCoreMlOptions::for_model(Path::new(&model_dir))?;
 
     let started = std::time::Instant::now();
     let model = ParakeetCoreMl::open(Path::new(&model_dir), &opts)?;

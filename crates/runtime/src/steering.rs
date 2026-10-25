@@ -483,6 +483,8 @@ pub fn family_dispatches_steering(family: model_io::ModelFamily) -> bool {
         // the wrong side of it would steer a per-stream mix rather than the
         // stream. Decide it with the flow, not ahead of it.
         F::Qwen4Exp => false,
+        // No flow yet, so no hook; refused at open before this is asked.
+        F::Flint => false,
     }
 }
 

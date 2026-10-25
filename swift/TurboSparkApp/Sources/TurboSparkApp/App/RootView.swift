@@ -5,17 +5,17 @@ import SwiftUI
 // macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
 /// The window shell: icon rail, top bar, working panes, status strip.
 ///
-/// The chrome is banded rather than floating. Sections live in the rail so the
-/// chat sidebar can be hidden without stranding navigation, and every live
+/// The chrome is banded rather than floating. Sections live in the rail so a
+/// section's panel can be hidden without stranding navigation, and every live
 /// metric lives in the bottom strip so nothing next to the model loader
 /// updates once per token.
 @MainActor
 struct RootView: View {
     @ObservedObject var model: AppModel
-    // The storage KEY is unchanged so an existing preference carries over;
-    // only the name is, because the flag stopped meaning "shown" when the
-    // rail and the chat sidebar became one column (`AppSidebarView`). True is
-    // still the roomy state either way.
+    // The storage KEY is unchanged so an existing preference carries over.
+    // The flag is the user's WISH for the panel beside the rail; whether one
+    // is on screen also depends on the section (`isPanelVisible`). True is
+    // still the roomy state.
     @AppStorage("TurboSpark.chatSidebarVisible")
     private var isSidebarExpanded = true
     @AppStorage("TurboSpark.inspectorVisible")
@@ -34,6 +34,21 @@ struct RootView: View {
             hasTranscript: model.hasOutputTranscript)
     }
 
+    /// The one predicate for "a panel is on screen". The sidebar view and the
+    /// window minimum both read it, so the floor cannot reserve a panel's
+    /// width in a rail-only section, or drop it in a section that shows one.
+    private var isPanelVisible: Bool {
+        isSidebarExpanded && model.activeSection.hasSidebarPanel
+    }
+
+    /// Cmd+B, Ctrl+Cmd+S and the top-bar button. A section without a panel
+    /// has nothing to toggle, so the preference is left alone there rather
+    /// than flipped invisibly.
+    private func toggleSidebarPanel() {
+        guard model.activeSection.hasSidebarPanel else { return }
+        isSidebarExpanded.toggle()
+    }
+
     private var effectiveReduceMotion: Bool {
         appearanceManager.shouldReduceMotion(systemReduceMotion: systemReduceMotion)
     }
@@ -41,7 +56,7 @@ struct RootView: View {
     private var minimumWindowSize: CGSize {
         CGSize(
             width: AppChromeLayout.minimumWindowWidth(
-                isSidebarExpanded: isSidebarExpanded,
+                isPanelVisible: isPanelVisible,
                 rightColumn: rightColumnClaimant == .projectSummary ? .none : rightColumnClaimant,
                 isExpandedWorktree: model.interactionMode == .projects
                     && model.worktree?.isExpandedSplitMode == true),
@@ -50,7 +65,8 @@ struct RootView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            AppSidebarView(model: model, isExpanded: isSidebarExpanded)
+            AppSidebarView(
+                model: model, isPanelVisible: isPanelVisible, isPanelPreferred: isSidebarExpanded)
                 .zIndex(10)
 
             Rectangle()
@@ -60,9 +76,10 @@ struct RootView: View {
             VStack(spacing: 0) {
                 TopBarView(
                     model: model,
-                    isChatSidebarVisible: isSidebarExpanded,
+                    isChatSidebarVisible: isPanelVisible,
                     isInspectorVisible: isInspectorVisible,
-                    toggleChatSidebar: { isSidebarExpanded.toggle() },
+                    toggleChatSidebar: toggleSidebarPanel,
+                    showsSidebarToggle: model.activeSection.hasSidebarPanel,
                     toggleInspector: toggleModelSettings,
                     canPinSummary: canPinSummary,
                     isSummaryVisible: rightColumnClaimant == .projectSummary,
@@ -120,10 +137,10 @@ struct RootView: View {
         }
         .overlay {
             // The unsloth-compatible alternate chords (Cmd+Shift+O, Cmd+B,
-            // Ctrl+1..5). Mounted at the window root like the palette above
+            // Ctrl+1..8). Mounted at the window root like the palette above
             // so they work from any section, including while the prompt
             // editor is first responder.
-            AlternateShortcutBridge(model: model, toggleSidebar: { isSidebarExpanded.toggle() })
+            AlternateShortcutBridge(model: model, toggleSidebar: toggleSidebarPanel)
         }
         .sheet(isPresented: Binding(
             get: { !model.pendingMcpApprovals.isEmpty },
@@ -151,7 +168,7 @@ struct RootView: View {
         // through `AppModel.requestLoad`, and no picker carries a dialog.
         .modifier(LoadAnywayConfirmation(model: model))
         .onReceive(NotificationCenter.default.publisher(for: .toggleChatSidebar)) { _ in
-            isSidebarExpanded.toggle()
+            toggleSidebarPanel()
         }
         .onReceive(NotificationCenter.default.publisher(for: .showChatSearch)) { _ in
             isChatSearchPresented.toggle()

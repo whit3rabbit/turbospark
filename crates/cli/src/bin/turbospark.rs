@@ -278,7 +278,8 @@ fn main() -> ExitCode {
         "stop" => handle_stop(),
         "restart" => handle_restart(rest),
         "status" => handle_status(),
-        "list" | "pull" | "info" | "rm" | "probe" | "recommend" | "path" | "auth" => {
+        "list" | "list-audio" | "list-speech" | "pull" | "pull-audio" | "info" | "rm" | "probe"
+        | "recommend" | "path" | "auth" => {
             let mut model_args = vec![command.to_string()];
             model_args.extend_from_slice(rest);
             execute_peer("turbospark-model", &model_args)

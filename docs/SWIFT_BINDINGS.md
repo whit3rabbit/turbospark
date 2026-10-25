@@ -902,6 +902,22 @@ restarting it. A host that applies its own repair to a reply it read itself
 covers only that path: every HTTP client of this server bypasses it. See
 `docs/FORGE_GUARDRAILS.md` section 0b.
 
+**`ServerOptions.prefixReuse` reaches a posture the session option could
+not.** `Options.prefixReuse` is resolved when the session OPENS, and a bare
+session resolves it to `true` because one owner's session is multi-turn by
+construction. That default is wrong once a server is attached: from that
+moment the KV cache is reachable by every client of the server, is not
+partitioned by API key, and a match against another client's prompt becomes
+observable in response timing. `turbospark-server` defaults the same setting
+OFF for that reason.
+
+So a host that attached a session to a server got reuse ON with no way to
+turn it off, unless it happened to know to open the session with `false`.
+Passing it here applies it to every model attached to this server, including
+ones attached later, and cannot be changed without restarting. Absent leaves
+each session's own open-time decision alone, which is the pre-existing
+behaviour.
+
 **Idle unload.** `ServerOptions.idleUnloadSeconds` (or
 `server.setIdleUnload(after:)` on a running server) detaches a model that has
 served no request for that long, releasing its weights. Nil or 0 keeps every
@@ -1620,8 +1636,9 @@ no floor.
 cannot fit the measured headroom; the mode the session actually opened with is
 `sessionInfo.expertResidency`. A misspelling is refused before the install is
 opened. `expertCacheSlots` as a number must be one of 8, 16, 24, 32, 48, 64,
-96, 128 (`foundation::runtime_config::ALLOWED_CACHE_SLOTS`); `"auto"` climbs
-through 8/16/24/32 only.
+96, 128, 192, 256 (`foundation::runtime_config::ALLOWED_CACHE_SLOTS`);
+`"auto"` takes the largest of those a quarter of free memory covers, never
+below 16.
 
 `prefixReuse` (default `true`, which is what every release did) continues each
 turn from the previous turn's KV wherever the new render shares a prefix. Open
@@ -1719,12 +1736,13 @@ exactly three tasks:
 | Task (`AudioTask`) | Family reached today | Notes |
 |---|---|---|
 | `.speechToText` | Whisper | Catalog install (`whisper-base`) or a chosen folder. Qwen3-ASR also opens, from the app's Advanced page, behind an explicit portable or experimental-Metal opt-in and a local folder. |
-| `.textToSpeech` | Kokoro, MegaTTS3 | Kokoro: portable CPU path behind an explicit opt-in at the time of writing; the current backend list is in `crates/audio/MODELS.md`. MegaTTS3 clones a voice: see [Voice cloning](#voice-cloning). |
+| `.textToSpeech` | Kokoro, MegaTTS3, OmniVoice | Kokoro: portable CPU path behind an explicit opt-in at the time of writing; the current backend list is in `crates/audio/MODELS.md`. MegaTTS3 and OmniVoice clone a voice: see [Voice cloning](#voice-cloning). OmniVoice is multilingual (auto voice without a reference) and runs on Metal by default with portable CPU fallback. |
 | `.music` | MiniMax Music 3 | Catalog install covers `minimax-music3-4bit`. |
+| `.diarization` | pyannote community-1 on Core ML | Catalog install `speaker-diarization-coreml`, macOS 15+. Takes 16 kHz mono PCM; the result is a transcript whose segments are speaker turns with empty text and speakers `S1`, `S2`, ... |
 
 `AudioTask` has ten cases because the catalog and capability rows describe
 families the engine has code for but no session entry point yet (VAD,
-diarization, alignment, enhancement, separation, codec, language ID). Opening
+alignment, enhancement, separation, codec, language ID). Opening
 one is refused at `ts_audio_session_open` as an unknown task. **Use
 `AudioTask.isRunnable` (and `AudioTask.runnable`) before offering a control**:
 the app's Clean Up page and the unrunnable Advanced operations are hidden for
@@ -1762,10 +1780,19 @@ result.
 ### Voice cloning
 
 A profile whose `capabilities.supportsVoiceClone` is true (operation
-`voice_clone`; MegaTTS3) clones from reference audio passed as the job's PCM.
-The request names its rate and carries the user's consent; the runtime refuses
-a cloning request without `consent`, a reference outside 1 to 30 seconds, or a
-`referenceText` or `instruction` (the model aligns the reference itself).
+`voice_clone`; MegaTTS3 and OmniVoice) clones from reference audio passed as
+the job's PCM. The request names its rate and carries the user's consent; the
+runtime refuses a cloning request without `consent` or a reference outside 1
+to 30 seconds. MegaTTS3 additionally refuses a `referenceText` or
+`instruction` (it aligns the reference itself); OmniVoice reads `referenceText`
+(the transcript prepended to the script) and refuses MegaTTS3's `pW`/`tW`. Its
+`instruction` is voice design, not a delivery cue: comma-separated speaker
+attributes (gender, age, pitch, the `whisper` style, an English accent, a
+Chinese dialect) that upstream k2-fsa/OmniVoice documents for speech without
+reference audio, trained on Chinese and English only. The engine trims it,
+refuses more than 512 bytes, and does not check the attributes against
+upstream's list. Upstream does not document it alongside a reference, and the
+app's Voice Cloning page sends none.
 
 ```swift
 var request = AudioRequest(task: .textToSpeech, language: "en")
@@ -1775,19 +1802,23 @@ request.consent = true                 // the user has the right to use this voi
 request.steps = 16                     // Balanced (Fast is 8, Best is 32). Send it,
                                        // because an omitted steps is the request type's 30
 request.pW = 1.4; request.tW = 3.0     // intelligibility and similarity weights
-request.speed = 1.0                    // scales durations
+                                       // (MegaTTS3 only; OmniVoice refuses both)
+request.speed = 1.0                    // scales MegaTTS3 durations; divides OmniVoice's
+                                       // estimated length
 let result = try await session.execute(request, pcm: reference24k) { progress in ... }
 ```
 
 Progress stages are `reference` (preparing the voice; skipped when the session
 already prepared this exact reference and seed) and `diffusion` (completed of
-total steps across text chunks). MegaTTS3's declared backend is `metal`, and a
-session opens it on Metal with no opt-in. `allowPortable` lets it fall back to
-the CPU reference path only when Metal cannot open.
+total steps across text chunks). Both MegaTTS3 and OmniVoice declare backend
+`metal`, and a session opens them on Metal with no opt-in required.
+`allowPortable` lets them fall back to the CPU reference path only when Metal
+cannot open.
 
 Some catalog profiles list install terms in `requiredAcknowledgments` (MegaTTS3:
-its encoder's unverified provenance). Show them and pass the accepted ids:
-`AudioCatalog.install(identity, acknowledged: ids)`. The native installer
+its encoder's unverified provenance; OmniVoice: the bundled Higgs tokenizer is
+Boson AI's community-licensed model, not Apache-licensed). Show them and pass
+the accepted ids: `AudioCatalog.install(identity, acknowledged: ids)`. The native installer
 refuses before any download when an id is missing, and `install(identity)`
 passes none.
 
@@ -2015,9 +2046,11 @@ purpose. Each would need new evidence or an explicit decision to change.
 - **A cached audio open verification.** Cancelling and observing it is
   supported (see "Known limits"), but caching a successful result would weaken
   an integrity check and is not offered.
-- **VAD, diarization, Moonshine, enhancement and separation** have Rust model
-  code but no `Engine` variant in `runtime::native_audio`, so there is no
-  session to open (`AudioTask.isRunnable` reports it). They also need catalog
+- **VAD, the CPU diarization families (Sortformer, Nemotron), Moonshine,
+  enhancement and separation** have Rust model code but no `Engine` variant in
+  `runtime::native_audio`, so there is no session to open
+  (`AudioTask.isRunnable` reports it). Diarization itself runs through the
+  Core ML pyannote community-1 export. They also need catalog
   pins (revisions and hashes) that cannot be invented.
 - **Determinate music progress.** `Music3Runner::generate_text_with_progress`
   has the counters, but it does not take the cancellation handle that

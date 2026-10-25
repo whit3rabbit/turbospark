@@ -166,8 +166,12 @@ fn pinned_fixture_where(
         asset.sha256 = format!("{:x}", Sha256::digest(&bytes));
         files.push((asset.path.clone(), bytes));
     }
-    profile.identity.asset_fingerprint =
-        asset_fingerprint(&profile.assets, &profile.frontend).unwrap();
+    profile.identity.asset_fingerprint = asset_fingerprint(
+        &profile.assets,
+        &profile.frontend,
+        profile.install_subdir.as_deref(),
+    )
+    .unwrap();
     let identity = profile.identity.clone();
     (catalog, identity, files)
 }

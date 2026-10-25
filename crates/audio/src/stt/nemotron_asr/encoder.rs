@@ -617,6 +617,460 @@ impl NemotronEncoder {
     }
 }
 
+// =============================================================================
+// Cache-aware streaming (NeMo `ConformerEncoder.cache_aware_stream_step`)
+// =============================================================================
+//
+// One step encodes a chunk of pre-encoded rows against per-layer caches, as
+// NeMo Speech 218d0b4 does for `att_context_style = chunked_limited`:
+// - attention keys and values are `[cache (attn_frames rows) ; chunk]`, where
+//   the cache holds the last `attn_frames` `norm_self_att` outputs and only
+//   its last `attn_len` rows are valid (NeMo masks the rest);
+// - the relative position of chunk query `a` to key `b` is
+//   `attn_frames + a - b`, read from one `linear_pos` table per layer;
+// - the depthwise conv runs on `[cache (kernel - 1 frames) ; GLU output]`
+//   with padded frames zeroed, and keeps the last `kernel - 1` frames;
+// - `attn_len` grows by the chunk's row count, capped at `attn_frames`.
+// The offline path above is unchanged; the streaming methods only add.
+
+/// Streaming state for one stream (NeMo `cache_last_channel`,
+/// `cache_last_time`, `cache_last_channel_len`).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct EncoderStreamCache {
+    /// Per layer `[attn_frames, hidden]`, oldest first.
+    pub(crate) attn: Vec<Vec<f32>>,
+    /// Valid trailing rows of each `attn` cache.
+    pub(crate) attn_len: usize,
+    /// Per layer channel-major `[hidden, kernel - 1]`.
+    pub(crate) conv: Vec<Vec<f32>>,
+}
+
+/// Chunk geometry plus the per-layer relative-position projections, which
+/// are the same for every stream and every step.
+pub(crate) struct StreamGeometry {
+    /// Attention cache length (`att_context_size[0]`).
+    pub(crate) attn_frames: usize,
+    /// Rows per chunk (`att_context_size[1] + 1`).
+    pub(crate) chunk: usize,
+    /// Per layer `linear_pos` of the sinusoid table for relative positions
+    /// `attn_frames + chunk - 1` down to `-(attn_frames + chunk - 1)`.
+    pos: Vec<Vec<f32>>,
+}
+
+/// One Conformer layer's weights, borrowed for a device executor of
+/// [`NemotronEncoder::stream_layers`]. Linear weights are `[out, in]`;
+/// norms are `(weight, bias)`.
+pub struct StreamLayerWeights<'a> {
+    pub norm_ff1: (&'a [f32], Option<&'a [f32]>),
+    pub ff1_in: &'a [f32],
+    pub ff1_out: &'a [f32],
+    pub norm_attn: (&'a [f32], Option<&'a [f32]>),
+    pub q: &'a [f32],
+    pub k: &'a [f32],
+    pub v: &'a [f32],
+    pub out: &'a [f32],
+    /// `linear_pos` of the relative-position table, `[2 * window - 1,
+    /// hidden]` with `window = attn_frames + chunk`.
+    pub pos: &'a [f32],
+    /// `[heads, head_dim]`.
+    pub bias_u: &'a [f32],
+    pub bias_v: &'a [f32],
+    pub norm_conv: (&'a [f32], Option<&'a [f32]>),
+    /// Pointwise conv in, `[2 * hidden, hidden]`.
+    pub pointwise_in: &'a [f32],
+    /// Depthwise conv, `[hidden, kernel]`.
+    pub depthwise: &'a [f32],
+    pub depthwise_bias: Option<&'a [f32]>,
+    pub conv_norm: (&'a [f32], Option<&'a [f32]>),
+    /// Pointwise conv out, `[hidden, hidden]`.
+    pub pointwise_out: &'a [f32],
+    pub norm_ff2: (&'a [f32], Option<&'a [f32]>),
+    pub ff2_in: &'a [f32],
+    pub ff2_out: &'a [f32],
+    pub norm_out: (&'a [f32], Option<&'a [f32]>),
+}
+
+/// The streaming encoder's geometry and weights, borrowed for a device
+/// executor that reproduces `stream_layers`. Every norm uses `eps`.
+pub struct StreamEncoderWeights<'a> {
+    pub hidden: usize,
+    pub heads: usize,
+    pub ff_hidden: usize,
+    pub conv_kernel: usize,
+    pub attn_frames: usize,
+    pub chunk: usize,
+    pub eps: f32,
+    pub layers: Vec<StreamLayerWeights<'a>>,
+}
+
+fn norm_view(norm: &LayerNorm) -> (&[f32], Option<&[f32]>) {
+    (&norm.weight, norm.bias.as_deref())
+}
+
+impl NemotronEncoder {
+    /// The streaming weights for `geometry`, for a device executor.
+    pub(crate) fn stream_weights<'a>(
+        &'a self,
+        geometry: &'a StreamGeometry,
+    ) -> StreamEncoderWeights<'a> {
+        let first = self.layers.first();
+        StreamEncoderWeights {
+            hidden: self.hidden,
+            heads: first.map_or(0, |l| l.heads),
+            ff_hidden: first.map_or(0, |l| l.hidden * l.expansion),
+            conv_kernel: first.map_or(0, |l| l.convolution.kernel),
+            attn_frames: geometry.attn_frames,
+            chunk: geometry.chunk,
+            eps: LN_EPS,
+            layers: self
+                .layers
+                .iter()
+                .zip(&geometry.pos)
+                .map(|(l, pos)| StreamLayerWeights {
+                    norm_ff1: norm_view(&l.norm_ff1),
+                    ff1_in: &l.ff1.input.weight,
+                    ff1_out: &l.ff1.output.weight,
+                    norm_attn: norm_view(&l.norm_attn),
+                    q: &l.attention.q.weight,
+                    k: &l.attention.k.weight,
+                    v: &l.attention.v.weight,
+                    out: &l.attention.out.weight,
+                    pos,
+                    bias_u: &l.attention.bias_u,
+                    bias_v: &l.attention.bias_v,
+                    norm_conv: norm_view(&l.norm_conv),
+                    pointwise_in: &l.convolution.pointwise_in,
+                    depthwise: &l.convolution.depthwise,
+                    depthwise_bias: l.convolution.depthwise_bias.as_deref(),
+                    conv_norm: norm_view(&l.convolution.norm),
+                    pointwise_out: &l.convolution.pointwise_out,
+                    norm_ff2: norm_view(&l.norm_ff2),
+                    ff2_in: &l.ff2.input.weight,
+                    ff2_out: &l.ff2.output.weight,
+                    norm_out: norm_view(&l.norm_out),
+                })
+                .collect(),
+        }
+    }
+
+    /// Streaming geometry for `context = [left, right]` (chunked limited).
+    /// Chunks must align with NeMo's chunk index over `[cache ; chunk]`,
+    /// which holds when the left context is a whole number of chunks.
+    pub(crate) fn stream_geometry(&self, context: [usize; 2]) -> Result<StreamGeometry> {
+        let chunk = context[1] + 1;
+        let attn_frames = context[0];
+        if attn_frames == 0 || attn_frames % chunk != 0 {
+            return Err(SpeechError::Unsupported {
+                why: format!(
+                    "cache-aware streaming needs a left context that is a multiple of the \
+                     chunk ({chunk} rows); got {context:?}"
+                ),
+            });
+        }
+        let window = attn_frames + chunk;
+        let position = relative_position_encoding(window, self.hidden);
+        let pos = self
+            .layers
+            .iter()
+            .map(|layer| layer.attention.pos.forward(&position, 2 * window - 1))
+            .collect();
+        Ok(StreamGeometry {
+            attn_frames,
+            chunk,
+            pos,
+        })
+    }
+
+    /// Zero caches for a new stream (NeMo `get_initial_cache_state`).
+    pub(crate) fn new_stream_cache(&self, geometry: &StreamGeometry) -> EncoderStreamCache {
+        let conv_frames = self
+            .layers
+            .first()
+            .map_or(0, |layer| layer.convolution.kernel - 1);
+        EncoderStreamCache {
+            attn: vec![vec![0.0; geometry.attn_frames * self.hidden]; self.layers.len()],
+            attn_len: 0,
+            conv: vec![vec![0.0; self.hidden * conv_frames]; self.layers.len()],
+        }
+    }
+
+    /// Pre-encodes one chunk of frame-major `[frames, mels]` log-mel and
+    /// drops the first `drop` rows (NeMo `drop_extra_pre_encoded`).
+    /// Returns `(rows, row_count, valid_rows)`, where `valid_rows` follows
+    /// NeMo's causal subsampling length rule (`floor(L / 2) + 1` per stage)
+    /// for `valid_frames` input frames.
+    pub(crate) fn pre_encode(
+        &self,
+        mel: &[f32],
+        frames: usize,
+        valid_frames: usize,
+        drop: usize,
+    ) -> Result<(Vec<f32>, usize, usize)> {
+        let (encoded, rows) = self.subsampling.forward(mel, frames)?;
+        let stages = self.subsampling.stages.len() + 1;
+        let mut valid = valid_frames;
+        for _ in 0..stages {
+            valid = valid / 2 + 1;
+        }
+        if drop > rows {
+            return Err(SpeechError::Audio(format!(
+                "cannot drop {drop} pre-encoded rows from a {rows}-row chunk"
+            )));
+        }
+        let kept = encoded[drop * self.hidden..].to_vec();
+        Ok((
+            kept,
+            rows - drop,
+            valid.saturating_sub(drop).min(rows - drop),
+        ))
+    }
+
+    /// Runs every layer on one chunk of `rows` pre-encoded rows, of which the
+    /// first `valid` are real, updating `cache`. Returns the `[rows, hidden]`
+    /// layer output; rows at or past `valid` are padding.
+    pub(crate) fn stream_layers(
+        &self,
+        geometry: &StreamGeometry,
+        input: &[f32],
+        rows: usize,
+        valid: usize,
+        cache: &mut EncoderStreamCache,
+    ) -> Result<Vec<f32>> {
+        if rows == 0 || rows > geometry.chunk || valid > rows || input.len() != rows * self.hidden {
+            return Err(SpeechError::Audio(format!(
+                "streaming chunk of {rows} rows ({valid} valid) does not fit a {}-row chunk",
+                geometry.chunk
+            )));
+        }
+        let mut x = input.to_vec();
+        for (index, layer) in self.layers.iter().enumerate() {
+            x = layer.forward_cached(
+                &x,
+                rows,
+                valid,
+                &mut cache.attn[index],
+                cache.attn_len,
+                &mut cache.conv[index],
+                &geometry.pos[index],
+                geometry,
+            );
+        }
+        cache.attn_len = (cache.attn_len + rows).min(geometry.attn_frames);
+        Ok(x)
+    }
+}
+
+impl ConformerLayer {
+    #[allow(clippy::too_many_arguments)]
+    fn forward_cached(
+        &self,
+        input: &[f32],
+        rows: usize,
+        valid: usize,
+        attn_cache: &mut Vec<f32>,
+        attn_len: usize,
+        conv_cache: &mut [f32],
+        pos: &[f32],
+        geometry: &StreamGeometry,
+    ) -> Vec<f32> {
+        let mut residual = input.to_vec();
+        let mut normalized = input.to_vec();
+        self.norm_ff1.apply(&mut normalized, rows);
+        let ff1 = self
+            .ff1
+            .forward(&normalized, rows, self.hidden, self.hidden * self.expansion);
+        add_scaled(&mut residual, &ff1, 0.5);
+
+        normalized.clone_from(&residual);
+        self.norm_attn.apply(&mut normalized, rows);
+        let attention = self.attention.forward_cached(
+            &normalized,
+            rows,
+            valid,
+            attn_cache,
+            attn_len,
+            pos,
+            geometry,
+            self.hidden,
+            self.heads,
+        );
+        add_scaled(&mut residual, &attention, 1.0);
+
+        normalized.clone_from(&residual);
+        self.norm_conv.apply(&mut normalized, rows);
+        let convolution = self
+            .convolution
+            .forward_cached(&normalized, rows, valid, conv_cache);
+        add_scaled(&mut residual, &convolution, 1.0);
+
+        normalized.clone_from(&residual);
+        self.norm_ff2.apply(&mut normalized, rows);
+        let ff2 = self
+            .ff2
+            .forward(&normalized, rows, self.hidden, self.hidden * self.expansion);
+        add_scaled(&mut residual, &ff2, 0.5);
+        self.norm_out.apply(&mut residual, rows);
+        residual
+    }
+}
+
+impl RelPosAttention {
+    /// Chunk attention against `[cache ; chunk]`. Queries at or past `valid`
+    /// produce zero rows, as NeMo's fully masked rows do. Replaces `cache`
+    /// with the last `attn_frames` rows of `[cache ; input]`.
+    #[allow(clippy::too_many_arguments)]
+    fn forward_cached(
+        &self,
+        input: &[f32],
+        rows: usize,
+        valid: usize,
+        cache: &mut Vec<f32>,
+        cache_len: usize,
+        pos: &[f32],
+        geometry: &StreamGeometry,
+        hidden: usize,
+        heads: usize,
+    ) -> Vec<f32> {
+        let head_dim = hidden / heads;
+        let attn_frames = geometry.attn_frames;
+        let window = attn_frames + geometry.chunk;
+        let keys = attn_frames + rows;
+        let mut kv_input = Vec::with_capacity(keys * hidden);
+        kv_input.extend_from_slice(cache);
+        kv_input.extend_from_slice(input);
+
+        let q = self.q.forward(input, rows);
+        let k = self.k.forward(&kv_input, keys);
+        let v = self.v.forward(&kv_input, keys);
+        let k_heads = split_heads(&k, keys, heads, head_dim);
+        let v_heads = split_heads(&v, keys, heads, head_dim);
+        let p_heads = split_heads(pos, 2 * window - 1, heads, head_dim);
+        // Valid keys: the trailing `cache_len` cache rows and the valid chunk rows.
+        let first = attn_frames - cache_len.min(attn_frames);
+        let end = attn_frames + valid;
+        let mut attended = vec![0.0; heads * rows * head_dim];
+        let mut scores = Vec::with_capacity(end - first);
+        for head in 0..heads {
+            let k_head = &k_heads[head * keys * head_dim..(head + 1) * keys * head_dim];
+            let v_head = &v_heads[head * keys * head_dim..(head + 1) * keys * head_dim];
+            let p_head = &p_heads
+                [head * (2 * window - 1) * head_dim..(head + 1) * (2 * window - 1) * head_dim];
+            for query in 0..valid {
+                let q_u: Vec<f32> = (0..head_dim)
+                    .map(|dim| {
+                        q[query * hidden + head * head_dim + dim]
+                            + self.bias_u[head * head_dim + dim]
+                    })
+                    .collect();
+                let q_v: Vec<f32> = (0..head_dim)
+                    .map(|dim| {
+                        q[query * hidden + head * head_dim + dim]
+                            + self.bias_v[head * head_dim + dim]
+                    })
+                    .collect();
+                scores.clear();
+                for key in first..end {
+                    // Table row of relative position `attn_frames + query - key`.
+                    let row = window - 1 + key - attn_frames - query;
+                    let key_start = key * head_dim;
+                    let pos_start = row * head_dim;
+                    scores.push(scaled_score(
+                        dot(&q_u, &k_head[key_start..key_start + head_dim]),
+                        dot(&q_v, &p_head[pos_start..pos_start + head_dim]),
+                        head_dim,
+                    ));
+                }
+                ops::softmax_row(&mut scores);
+                let dst = head * rows * head_dim + query * head_dim;
+                for (score, key) in scores.iter().zip(first..end) {
+                    for dim in 0..head_dim {
+                        attended[dst + dim] += score * v_head[key * head_dim + dim];
+                    }
+                }
+            }
+        }
+        let start = kv_input.len() - attn_frames * hidden;
+        cache.clear();
+        cache.extend_from_slice(&kv_input[start..]);
+        let merged = merge_heads(&attended, rows, heads, head_dim);
+        self.out.forward(&merged, rows)
+    }
+}
+
+impl ConformerConvolution {
+    /// Causal conv module on one chunk with its left-context cache. Frames
+    /// at or past `valid` are zeroed before the depthwise conv (NeMo's
+    /// `pad_mask`). Replaces `cache` with the last `kernel - 1` frames of
+    /// `[cache ; GLU output]`.
+    fn forward_cached(
+        &self,
+        input: &[f32],
+        rows: usize,
+        valid: usize,
+        cache: &mut [f32],
+    ) -> Vec<f32> {
+        let channels = self.channels;
+        let context = self.kernel - 1;
+        let channel_major = transpose_time_channels(input, rows, channels);
+        let pointwise = ops::conv1d(
+            &channel_major,
+            &self.pointwise_in,
+            None,
+            channels,
+            channels * 2,
+            1,
+            1,
+            0,
+            1,
+            1,
+        );
+        let width = context + rows;
+        let mut extended = vec![0.0; channels * width];
+        for channel in 0..channels {
+            extended[channel * width..channel * width + context]
+                .copy_from_slice(&cache[channel * context..(channel + 1) * context]);
+            for frame in 0..valid {
+                let a = pointwise[channel * rows + frame];
+                let b = pointwise[(channels + channel) * rows + frame];
+                extended[channel * width + context + frame] = a / (1.0 + (-b).exp());
+            }
+        }
+        for channel in 0..channels {
+            cache[channel * context..(channel + 1) * context]
+                .copy_from_slice(&extended[channel * width + rows..(channel + 1) * width]);
+        }
+        let depthwise = ops::conv1d(
+            &extended,
+            &self.depthwise,
+            self.depthwise_bias.as_deref(),
+            channels,
+            channels,
+            self.kernel,
+            1,
+            0,
+            1,
+            channels,
+        );
+        let mut norm_input = transpose_channels_time(&depthwise, rows, channels);
+        self.norm.apply(&mut norm_input, rows);
+        silu(&mut norm_input);
+        let activated = transpose_time_channels(&norm_input, rows, channels);
+        let pointwise = ops::conv1d(
+            &activated,
+            &self.pointwise_out,
+            None,
+            channels,
+            channels,
+            1,
+            1,
+            0,
+            1,
+            1,
+        );
+        transpose_channels_time(&pointwise, rows, channels)
+    }
+}
+
 fn pad_causal_2d(
     input: &[f32],
     channels: usize,
@@ -676,6 +1130,9 @@ fn rel_shift(input: &[f32], heads: usize, time: usize, pos_len: usize) -> Vec<f3
 #[cfg(test)]
 mod tests {
     use super::{dot, rel_shift, scaled_score, split_heads, Linear, RelPosAttention};
+    use super::{
+        ConformerConvolution, ConformerLayer, Conv2d, FeedForward, NemotronEncoder, Subsampling,
+    };
     use crate::ops;
 
     #[test]
@@ -790,6 +1247,203 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Deterministic xorshift values in `[-scale, scale]`.
+    pub(super) struct Rng(pub(super) u64);
+
+    impl Rng {
+        pub(super) fn vec(&mut self, n: usize, scale: f32) -> Vec<f32> {
+            (0..n)
+                .map(|_| {
+                    self.0 ^= self.0 << 13;
+                    self.0 ^= self.0 >> 7;
+                    self.0 ^= self.0 << 17;
+                    ((self.0 >> 8) % 20001) as f32 / 10000.0 * scale - scale
+                })
+                .collect()
+        }
+
+        fn linear(&mut self, out: usize, input: usize) -> Linear {
+            Linear::new(
+                self.vec(out * input, 1.5 / (input as f32).sqrt()),
+                None,
+                input,
+                out,
+            )
+        }
+
+        fn norm(&mut self, width: usize) -> super::LayerNorm {
+            let weight = self.vec(width, 0.2).iter().map(|w| 1.0 + w).collect();
+            super::LayerNorm::new(weight, Some(self.vec(width, 0.1)), super::LN_EPS)
+        }
+
+        fn conv2d(&mut self, out: usize, input: usize, kernel: usize, groups: usize) -> Conv2d {
+            Conv2d {
+                weight: self.vec(out * (input / groups) * kernel * kernel, 0.5),
+                bias: self.vec(out, 0.1),
+                in_channels: input,
+                out_channels: out,
+                kernel,
+                groups,
+            }
+        }
+    }
+
+    /// Tiny random Nemotron encoder: 16 mels, x8 causal subsampling with 4
+    /// channels, 2 layers of width 8 (2 heads), FF x2, depthwise kernel 3.
+    pub(super) fn tiny_encoder(seed: u64, context: [usize; 2]) -> NemotronEncoder {
+        let (mels, channels, hidden, heads, expansion, kernel) = (16, 4, 8, 2, 2, 3);
+        let mut rng = Rng(seed);
+        let mut freq = mels;
+        for _ in 0..3 {
+            freq = freq / 2 + 1;
+        }
+        let subsampling = Subsampling {
+            first: rng.conv2d(channels, 1, 3, 1),
+            stages: (0..2)
+                .map(|_| {
+                    (
+                        rng.conv2d(channels, channels, 3, channels),
+                        rng.conv2d(channels, channels, 1, 1),
+                    )
+                })
+                .collect(),
+            output: rng.linear(hidden, channels * freq),
+            channels,
+            input_mels: mels,
+        };
+        let layers = (0..2)
+            .map(|_| ConformerLayer {
+                norm_ff1: rng.norm(hidden),
+                ff1: FeedForward {
+                    input: rng.linear(hidden * expansion, hidden),
+                    output: rng.linear(hidden, hidden * expansion),
+                },
+                norm_attn: rng.norm(hidden),
+                attention: RelPosAttention {
+                    q: rng.linear(hidden, hidden),
+                    k: rng.linear(hidden, hidden),
+                    v: rng.linear(hidden, hidden),
+                    out: rng.linear(hidden, hidden),
+                    pos: rng.linear(hidden, hidden),
+                    bias_u: rng.vec(hidden, 0.3),
+                    bias_v: rng.vec(hidden, 0.3),
+                },
+                norm_conv: rng.norm(hidden),
+                convolution: ConformerConvolution {
+                    pointwise_in: rng.vec(2 * hidden * hidden, 0.5),
+                    depthwise: rng.vec(hidden * kernel, 0.5),
+                    depthwise_bias: None,
+                    norm: rng.norm(hidden),
+                    pointwise_out: rng.vec(hidden * hidden, 0.5),
+                    channels: hidden,
+                    kernel,
+                },
+                norm_ff2: rng.norm(hidden),
+                ff2: FeedForward {
+                    input: rng.linear(hidden * expansion, hidden),
+                    output: rng.linear(hidden, hidden * expansion),
+                },
+                norm_out: rng.norm(hidden),
+                hidden,
+                heads,
+                expansion,
+            })
+            .collect();
+        NemotronEncoder {
+            subsampling,
+            layers,
+            hidden,
+            default_context: context,
+        }
+    }
+
+    pub(super) fn fnv1a_bits(values: &[f32]) -> u64 {
+        values.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, v| {
+            v.to_bits()
+                .to_le_bytes()
+                .iter()
+                .fold(h, |h, &b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3))
+        })
+    }
+
+    /// Captured on HEAD c4217879 before the cache-aware streaming methods
+    /// were added: the offline encode of a tiny random encoder must stay
+    /// bit-for-bit unchanged.
+    const OFFLINE_DIGEST: (usize, u64) = (27, 3_183_675_627_888_117_202);
+
+    /// Streaming the layers chunk by chunk through the caches must equal the
+    /// offline chunked-limited forward over the whole sequence: same keys per
+    /// query (cache plus chunk, invalid cache rows excluded), same relative
+    /// positions, and the causal conv seeing the same left frames. Covers a
+    /// rolling cache (7 chunks against an 8-row cache) and a short final chunk.
+    #[test]
+    fn stream_layers_match_offline_chunked_forward() {
+        let context = [8, 3];
+        let encoder = tiny_encoder(0x5151_7a7a_0303_1717, context);
+        let hidden = encoder.hidden;
+        for total in [28usize, 26] {
+            let input = Rng(7).vec(total * hidden, 2.0);
+            let position = super::relative_position_encoding(total, hidden);
+            let mut offline = input.clone();
+            for layer in &encoder.layers {
+                offline = layer.forward(&offline, &position, total, context);
+            }
+
+            let geometry = encoder.stream_geometry(context).unwrap();
+            let mut cache = encoder.new_stream_cache(&geometry);
+            let mut streamed = Vec::new();
+            let mut start = 0;
+            while start < total {
+                let rows = geometry.chunk.min(total - start);
+                let chunk = &input[start * hidden..(start + rows) * hidden];
+                streamed.extend(
+                    encoder
+                        .stream_layers(&geometry, chunk, rows, rows, &mut cache)
+                        .unwrap(),
+                );
+                start += rows;
+            }
+            assert_eq!(cache.attn_len, geometry.attn_frames);
+            for (index, (a, b)) in streamed.iter().zip(&offline).enumerate() {
+                assert!(
+                    (a - b).abs() <= 2e-6 * b.abs().max(1.0),
+                    "total {total}, row {}, dim {}: streamed {a} vs offline {b}",
+                    index / hidden,
+                    index % hidden
+                );
+            }
+        }
+    }
+
+    /// NeMo's causal dw_striding length rule, `floor(L / 2) + 1` per stage,
+    /// minus the dropped rows: a 121-frame Frozen E chunk keeps 14 rows and
+    /// a 26-frame final chunk keeps 3.
+    #[test]
+    fn pre_encode_valid_rows_follow_nemo_lengths() {
+        let encoder = tiny_encoder(3, [8, 3]);
+        for (frames, rows) in [(121usize, 14usize), (26, 3)] {
+            let mel = Rng(frames as u64).vec(frames * 16, 1.0);
+            let (out, got_rows, valid) = encoder.pre_encode(&mel, frames, frames, 2).unwrap();
+            assert_eq!((got_rows, valid), (rows, rows), "{frames} frames");
+            assert_eq!(out.len(), rows * encoder.hidden);
+        }
+        // A short valid length inside a full chunk only shrinks `valid`.
+        let mel = Rng(9).vec(121 * 16, 1.0);
+        let (_, rows, valid) = encoder.pre_encode(&mel, 121, 26, 2).unwrap();
+        assert_eq!((rows, valid), (14, 3));
+    }
+
+    #[test]
+    fn offline_encoder_digest_is_frozen() {
+        let encoder = tiny_encoder(0x9e37_79b9_7f4a_7c15, [8, 3]);
+        let frames = 203;
+        let mel = Rng(42).vec(frames * 16, 3.0);
+        let (encoded, time) = encoder.encode(&mel, frames, 16).unwrap();
+        let got = (time, fnv1a_bits(&encoded));
+        eprintln!("OFFLINE_DIGEST {got:?}");
+        assert_eq!(got, OFFLINE_DIGEST);
     }
 }
 

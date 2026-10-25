@@ -275,11 +275,20 @@ pub enum ModelFamily {
     /// Every layer is mask 5, a kind no earlier family carries. Facts:
     /// `docs/DEEPSEEK2_PHASE0.md`.
     Deepseek2,
+    /// Recursive Flint (`model_type: "flint"`, `FlintForCausalLM`): a
+    /// 40B-A2.5B MoE with two dense leading layers, 47 MoE layers (256
+    /// routed experts, top-6 SIGMOID router renormalised over the selected,
+    /// one ungated shared expert), a 35-sliding (window 513) / 14-full
+    /// attention pattern, per-head QK RMSNorm, one learned attention sink
+    /// per head, and NoPE on exactly the full-attention layers. The two
+    /// dense lead layers are also full-attention layers. Facts:
+    /// `docs/FLINT_PHASE0.md`.
+    Flint,
 }
 
 impl ModelFamily {
     /// Exhaustive list of all 15 model families.
-    pub const ALL: [ModelFamily; 15] = [
+    pub const ALL: [ModelFamily; 16] = [
         ModelFamily::Gemma4,
         ModelFamily::QwenGdnMoe,
         ModelFamily::DeepseekV4Flash,
@@ -295,6 +304,7 @@ impl ModelFamily {
         ModelFamily::Qwen2Dense,
         ModelFamily::Deepseek2,
         ModelFamily::Qwen3Vl,
+        ModelFamily::Flint,
     ];
 
     /// Returns static string identifier for the model family.
@@ -345,6 +355,8 @@ impl ModelFamily {
             // spelling won; there is no GGUF `general.architecture` row for
             // this family (its `gguf_names` arm is `None`).
             ModelFamily::Qwen3Vl => "qwen3_vl",
+            // New, and it matches the HF `model_type` ("flint").
+            ModelFamily::Flint => "flint",
         }
     }
 
@@ -366,6 +378,7 @@ impl ModelFamily {
             "qwen2" => Some(ModelFamily::Qwen2Dense),
             "deepseek2" => Some(ModelFamily::Deepseek2),
             "qwen3_vl" => Some(ModelFamily::Qwen3Vl),
+            "flint" => Some(ModelFamily::Flint),
             _ => None,
         }
     }
@@ -394,9 +407,10 @@ mod tests {
                 ModelFamily::Qwen2Dense => 12,
                 ModelFamily::Deepseek2 => 13,
                 ModelFamily::Qwen3Vl => 14,
+                ModelFamily::Flint => 15,
             };
             assert_eq!(idx, expected_idx);
         }
-        assert_eq!(ModelFamily::ALL.len(), 15);
+        assert_eq!(ModelFamily::ALL.len(), 16);
     }
 }

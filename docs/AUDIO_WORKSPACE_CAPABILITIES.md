@@ -1,6 +1,6 @@
 # Native Audio capability audit
 
-This inventory covers 53 source families, including local Mel-RoFormer,
+This inventory covers 58 families, including local Mel-RoFormer,
 MossFormer2, SAM-Audio, and DialogueSidon additions. A declared portable method
 is not a qualified Metal workflow. `audio_families.json` carries the same discovery
 records returned by `ts_audio_capabilities_json`; pinned installation profiles
@@ -9,16 +9,18 @@ remain in the Audio catalog and require complete immutable asset plans.
 The native worker owns every model and holds the shared text/image/audio permit
 until execution stops. Whisper has per-token cancellation. Music has per-native
 compute-operation cancellation. Kokoro stops between synthesized sentences.
-Qwen's explicit experimental Metal mode stops between prefill/decode rows;
-its audio encoder is still CPU and indivisible. Portable Qwen stops after the
+Parakeet on Core ML stops between 15 s windows. Qwen's explicit experimental
+Metal mode stops between prefill/decode rows; its audio encoder is still CPU
+and indivisible. Portable Qwen stops after the
 current request. No unsupported family is silently routed to Whisper.
 Model opening returns a retryable busy error when another heavy job owns the
 device, because the caller does not yet have a session handle to cancel.
 Loaded sessions queue execution with independently signalable cancellation.
 
 All transcript timing is labeled: Whisper windows and Qwen clips are extents,
-not measured alignment. Qwen language and generated-token log probabilities
-are retained. Absent words, speakers, tags and confidence remain absent.
+not measured alignment. Parakeet sentences and words carry decoder-frame
+times on the 80 ms grid (`timing: "token"`). Qwen language and generated-token
+log probabilities are retained. Absent words, speakers, tags and confidence remain absent.
 Existing STT calls and HTTP task spellings remain compatible; HTTP adapters
 use the same native service without changing their public result shape.
 
@@ -39,9 +41,12 @@ use the same native service without changing their public result shape.
 | [stt/moonshine](../crates/audio/src/stt/moonshine/mod.rs) | `transcribe`, `encode`, `decode` | No native runtime, admission, cancellation and Swift adapter has been qualified for this family |
 | [stt/moss_music](../crates/audio/src/stt/moss_music/mod.rs) | `transcribe` | No native runtime, admission, cancellation and Swift adapter has been qualified for this family |
 | [stt/moss_transcribe_diarize](../crates/audio/src/stt/moss_transcribe_diarize/mod.rs) | `transcribe`, `transcribe_with_options`, `forward` | No native runtime, admission, cancellation and Swift adapter has been qualified for this family |
+| [stt/multitalker_asr](../crates/audio/src/stt/multitalker_asr/mod.rs) | `step`, `run` | No native runtime, admission, cancellation and Swift adapter has been qualified for this family |
 | [stt/nemo](../crates/audio/src/stt/nemo/mod.rs) | No runnable operation | Codec or numerical component requires a task-specific native adapter |
 | [stt/nemotron_asr](../crates/audio/src/stt/nemotron_asr/mod.rs) | `transcribe` | No native runtime, admission, cancellation and Swift adapter has been qualified for this family |
 | [stt/parakeet](../crates/audio/src/stt/parakeet/mod.rs) | `transcribe`, `decode` | No native runtime, admission, cancellation and Swift adapter has been qualified for this family |
+| [stt/parakeet_coreml](../crates/runtime/src/coreml/parakeet.rs) | `transcribe` | Core ML on macOS 15+, family `parakeet_tdt`: catalog rows `parakeet-ultra-coreml` (the app's default batch transcriber) and `parakeet-redux-coreml`; LibriSpeech test-clean subset WER 0.0226 (Ultra) and 0.0275 (Redux) in [Core ML models](COREML.md) |
+| [stt/parakeet_unified_coreml](../crates/runtime/src/coreml/parakeet_unified.rs) | `stream_transcribe` | Core ML on macOS 15+, family `parakeet_unified`, English only: catalog row `parakeet-unified-en-coreml`; live text through `ts_audio_stream_*` only (no heavy-work permit), and batch opens refuse it |
 | [stt/phonon](../crates/audio/src/stt/phonon/mod.rs) | `transcribe`, `transcribe_with_options` | No native runtime, admission, cancellation and Swift adapter has been qualified for this family |
 | [stt/qwen2_audio](../crates/audio/src/stt/qwen2_audio/mod.rs) | `transcribe`, `encode` | No native runtime, admission, cancellation and Swift adapter has been qualified for this family |
 | [stt/qwen3_asr](../crates/audio/src/stt/qwen3_asr/mod.rs) | `transcribe`, `transcribe_with_options`, `transcribe_with_details`, `forward` | Packed Metal text decoder is explicit opt-in; audio encoder remains CPU; portable execution is a separate opt-in |
@@ -55,6 +60,7 @@ use the same native service without changing their public result shape.
 | [tts/kokoro](../crates/audio/src/tts/kokoro/mod.rs) | `synthesize` | Portable synthesis is callable only with explicit diagnostic opt-in; Metal synthesis is not implemented |
 | [Qwen3-TTS](QWEN3_TTS.md) | Swift MLX `synthesize` | Base cloning, CustomVoice, and VoiceDesign in the app; Rust session and HTTP execution remain unavailable |
 | [tts/megatts3](../crates/audio/src/tts/megatts3/README.md) | `synthesize`, `voice_clone` | Native session (Metal by default, portable CPU fallback only with the opt-in) and `POST /v1/audio/speech`; consent required; catalog row `megatts3-f32` (install terms required); 8-speaker WER and speaker-similarity study, no listening test |
+| [tts/omnivoice](../crates/audio/src/tts/omnivoice/README.md) | `synthesize`, `voice_clone` | Native session (Metal by default, portable CPU fallback) and `POST /v1/audio/speech` with optional reference; consent required for cloning; catalog rows `omnivoice-8bit` (default) and `omnivoice-bf16` (install terms required) |
 | [music/minimax_music3](../crates/audio/src/music/minimax_music3/mod.rs) | `generate_text` | Implemented, checkpoint/quality unqualified |
 | [sts/deepfilternet](../crates/audio/src/sts/deepfilternet/mod.rs) | `enhance` | No native runtime, admission, cancellation and Swift adapter has been qualified for this family |
 | [sts/dialogue_sidon](../crates/audio/src/sts/dialogue_sidon/mod.rs) | `extract_features`, `normalize_chunk`, `conditioning`, `sample_latents`, `decode_latents` | Concurrent source in progress; no complete separation entry point, native adapter or checkpoint qualification |

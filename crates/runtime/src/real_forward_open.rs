@@ -10,6 +10,17 @@ use crate::real_forward_layout::{
 };
 use crate::real_forward_types::{DecodeScratch, PhaseCounters, RealForwardError, ROUTED_BANKS};
 
+/// What an open is for. Every public entry point opens [`OpenRole::Chat`];
+/// only `HiddenTrunk::open` opens a [`OpenRole::HeadlessTrunk`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OpenRole {
+    /// An install with its own head, producing logits.
+    Chat,
+    /// A trunk marked headless (`model_io::trunk_role`), producing hidden
+    /// states for the model that owns it.
+    HeadlessTrunk,
+}
+
 impl RealForwardRunner {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn open_inner(
@@ -23,6 +34,35 @@ impl RealForwardRunner {
         session_slots: usize,
         kv_quant: KvQuant,
         residency: model_io::ExpertResidency,
+    ) -> Result<Self, RealForwardError> {
+        Self::open_inner_with_role(
+            dir,
+            expecting,
+            max_context,
+            expert_cache_slots,
+            fp16_ring_capacity_override,
+            speculation,
+            steering,
+            session_slots,
+            kv_quant,
+            residency,
+            OpenRole::Chat,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn open_inner_with_role(
+        dir: &Path,
+        expecting: ArchConfig,
+        max_context: usize,
+        expert_cache_slots: ExpertCacheSlots,
+        fp16_ring_capacity_override: Option<usize>,
+        speculation: crate::families::qwen::DraftPolicies,
+        steering: crate::steering::SteeringPolicy,
+        session_slots: usize,
+        kv_quant: KvQuant,
+        residency: model_io::ExpertResidency,
+        role: OpenRole,
     ) -> Result<Self, RealForwardError> {
         let open_started = std::time::Instant::now();
         let phase_started = open_started;
@@ -40,6 +80,33 @@ impl RealForwardRunner {
                  and call RealForwardRunner::attach_vision_sidecar instead",
                 dir.display()
             )));
+        }
+        // A headless trunk has no LM head: a chat open would fail late on a
+        // missing tensor, or, on a build that ignored the marker and met a
+        // tied manifest, decode with the embedding table as its head. Refused
+        // here, by name, on the marker's presence alone (a corrupt marker
+        // still refuses).
+        let headless = role == OpenRole::HeadlessTrunk;
+        if !headless && model_io::trunk_role::has_marker(dir) {
+            return Err(RealForwardError::Unsupported(format!(
+                "{} is a headless trunk ({}): it has no LM head and is driven by the model \
+                 that owns it, so it cannot be opened as a chat model",
+                dir.display(),
+                model_io::trunk_role::TRUNK_ROLE_FILE
+            )));
+        }
+        if headless {
+            model_io::trunk_role::read(dir).map_err(RealForwardError::Model)?;
+            if expecting.family != model_io::ModelFamily::QwenGdnMoe
+                || expecting.tie_word_embeddings
+            {
+                return Err(RealForwardError::Unsupported(format!(
+                    "a headless trunk must be an untied {} trunk, got {} (tied {})",
+                    model_io::ModelFamily::QwenGdnMoe.as_str(),
+                    expecting.family.as_str(),
+                    expecting.tie_word_embeddings
+                )));
+            }
         }
         if expert_cache_slots == ExpertCacheSlots::Fixed(0) {
             return Err(RealForwardError::Unsupported(
@@ -268,9 +335,16 @@ impl RealForwardRunner {
             real_mtp: None,
             real_dflash: None,
             batched_tape: None,
+            // Fresh open: zeroed state, the committed boundary of position 0.
+            gdn_state_clean: true,
+            unsnapshotted_checkpoint_alive: false,
+            unsnapshotted_checkpoint_tainted: false,
+            deferred_gdn_snapshot: None,
             batched_tape_row0: None,
+            pending_gdn_fold: None,
             real_llama: None,
             real_deepseek2: None,
+            real_flint: None,
             real_gpt_oss: None,
             real_muse: None,
             real_qwen4: None,
@@ -284,6 +358,8 @@ impl RealForwardRunner {
             mtp_batched_prime: std::env::var("TURBOSPARK_MTP_BATCHED_PRIME").as_deref() != Ok("0"),
             prefill_rows_attention: std::env::var("TURBOSPARK_PREFILL_ROWS_ATTN").as_deref()
                 != Ok("0"),
+            #[cfg(feature = "ane-prefill")]
+            ane_prefill: crate::families::qwen::AnePrefill::from_env(),
             routed_layouts,
             router_hist,
             ffn_hist,
@@ -295,6 +371,9 @@ impl RealForwardRunner {
             vision_sidecar_dir: None,
             prompt_vision: None,
             skip_head: false,
+            host_embed: None,
+            hidden_out: false,
+            headless,
             real_spark: None,
         };
         match runner.arch.family {
@@ -331,6 +410,7 @@ impl RealForwardRunner {
                     &runner.index,
                     &runner.arch,
                     hadamard,
+                    headless,
                 )?);
                 // The speculative drafter, and it builds NOTHING unless a
                 // depth was asked for -- so an install that has a head is
@@ -449,6 +529,18 @@ impl RealForwardRunner {
                 return Err(RealForwardError::Unsupported(
                     "the DeepSeek-V4-Flash family has no decode flow yet".to_string(),
                 ));
+            }
+            // Its own flow: sinks, NoPE by layer mask, per-head QK norm, a
+            // sigmoid router, an ungated shared expert and a dense lead are
+            // each inside the layer, so a neighbour's flow would decode
+            // fluently and wrongly. `docs/FLINT_PHASE0.md`.
+            model_io::ModelFamily::Flint => {
+                runner.real_flint = Some(crate::families::flint::RealFlintState::build(
+                    &mut runner.context,
+                    &runner.weights,
+                    &runner.index,
+                    &runner.arch,
+                )?);
             }
             model_io::ModelFamily::Deepseek2 => {
                 runner.real_deepseek2 =

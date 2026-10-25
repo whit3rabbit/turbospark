@@ -74,6 +74,12 @@ pub fn evaluate_config(
         warnings: Vec::new(),
     };
 
+    // Before the registry lookup, so the refusal names what the model is
+    // rather than calling a known checkpoint unknown.
+    if let Some(owner) = repack::headless_tts_trunk_owner(&config) {
+        report.refuse(repack::describe_headless_tts_trunk(owner));
+        return Ok(report);
+    }
     let Some(family) = repack::config_json_family(&config) else {
         report.refuse(format!(
             "config.json declares model_type {:?}, which is not in this port's registry \
@@ -106,6 +112,7 @@ pub fn evaluate_config(
         ModelFamily::Qwen3Vl => {
             repack::parse_qwen3_vl_config(config_text).map_err(|e| e.to_string())
         }
+        ModelFamily::Flint => repack::parse_flint_config(config_text).map_err(|e| e.to_string()),
         other => Err(format!(
             "model_type resolves to {}, whose safetensors intake is not wired here; \
              this port installs that family from GGUF instead",

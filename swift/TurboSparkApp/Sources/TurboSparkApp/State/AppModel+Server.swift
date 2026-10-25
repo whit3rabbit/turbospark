@@ -213,8 +213,15 @@ extension AppModel {
 
     func performServerStart(attachChat: Bool) async {
         defer { serverBusy = false }
+        // Cleared here rather than in `startServer()`: a favorite starts
+        // through this path too, and a stale failure would reappear in the
+        // menu bar after that server is stopped.
+        serverStartFailure = nil
+        // The embedding model is attached after the server is up, not as a
+        // start option: a refused or slow one (a first Core ML load) must
+        // not fail or stall the start.
+        let emb = serverEmbeddingModelInput.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
-            let emb = serverEmbeddingModelInput.trimmingCharacters(in: .whitespacesAndNewlines)
             let ep = hfEndpointInput.trimmingCharacters(in: .whitespacesAndNewlines)
             let sys = defaultSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
             let options = ServerOptions(
@@ -224,7 +231,7 @@ extension AppModel {
                 captureText: serverCaptureText,
                 apiKey: Self.serverAPIKey(from: serverAPIKeyInput),
                 guardrails: Self.serverGuardrails(from: guardrailsMode),
-                embeddingModel: emb.isEmpty ? nil : emb,
+                embeddingModel: nil,
                 hfEndpoint: ep.isEmpty ? nil : ep,
                 defaultSystem: sys.isEmpty ? nil : sys,
                 defaultReasoning: reasoning
@@ -281,6 +288,11 @@ extension AppModel {
                 AppStrings.localized("Server listening on \(address) (\(auth))"),
                 style: .success
             )
+            // Runs after this start's `serverBusy` defer, so the attach's
+            // own busy guard admits it.
+            if !emb.isEmpty {
+                Task { self.attachEmbeddingModelToServer(emb) }
+            }
         } catch {
             // **THE STOP REQUEST IS RESET ON FAILURE TOO** (state#53).
             // It is set by a Stop pressed during the bind and cleared
@@ -289,6 +301,7 @@ extension AppModel {
             // publish point and stopped itself, reporting "Server
             // stopped" for a server the user had just asked for.
             self.serverStopRequested = false
+            self.serverStartFailure = error.localizedDescription
             let msg = AppStrings.localized("Failed to start server: \(error.localizedDescription)")
             self.error = msg
             showToast(msg, style: .error)
@@ -309,6 +322,12 @@ extension AppModel {
             if serverBusy {
                 serverStopRequested = true
             }
+            return
+        }
+        // `server.stop()` would wait on the lock the attach holds, on the
+        // main thread. The attach applies this when it returns.
+        if serverEmbeddingAttachInFlight {
+            serverStopAfterEmbeddingAttach = true
             return
         }
         stopServerPolling()
@@ -343,6 +362,9 @@ extension AppModel {
             serverInfoErrorReported = false
             return
         }
+        // Keep the last snapshot while an embedding attach holds the
+        // server's lock; the attach refreshes when it returns.
+        if serverEmbeddingAttachInFlight { return }
         do {
             serverInfo = try server.info()
             serverInfoErrorReported = false
@@ -368,7 +390,7 @@ extension AppModel {
         let served = Dictionary(
             grouping: serverMetrics.records.compactMap(\.servedModel), by: { $0 }
         ).mapValues(\.count)
-        var rows = (serverInfo?.models ?? []).map { id in
+        var rows = serverTextModelIDs.map { id in
             let attached = serverAttachedSessions[id]
             return ServerModelRow(
                 id: id,
@@ -447,7 +469,9 @@ extension AppModel {
     }
 
     private func pollServerOnce() {
-        guard let server else { return }
+        // Every call below takes the server's lock, which an embedding
+        // attach holds for as long as its model takes to load.
+        guard let server, !serverEmbeddingAttachInFlight else { return }
         handleServerImageEvents(server)
         handleServerSpeechEvents(server)
         ingestServerEvents(server.poll(max: 256))

@@ -12,7 +12,7 @@ This directory contains the Swift packages and native desktop application for Tu
 
 ```
 swift/
-+-- docs/                            # 34 architectural, audit, and reference guides
++-- docs/                            # Architectural, audit, and reference guides
 +-- TurboSpark/                      # SwiftPM library package (macOS 13.0+)
 |   +-- Package.swift
 |   +-- Sources/
@@ -22,22 +22,29 @@ swift/
 |       \-- TurboSparkTests/         # ABI surface and real-install integration tests
 \-- TurboSparkApp/                   # macOS SwiftUI Application (macOS 14.0+)
     +-- Package.swift
-    +-- Localization/                # String catalogs (Localizable.xcstrings) and compiled .lproj
+    +-- Localization/                # String catalogs (Localizable.xcstrings) and Info.plist
     +-- Sources/TurboSparkApp/
     |   +-- App/                     # Entry point (TurboSparkApp.swift, RootView.swift)
-    |   +-- Chrome/                  # Window chrome, top bar, navigation rail, status bar
+    |   +-- Audio/                   # Audio Studio: recording, transcription, TTS, voice cloning, music
+    |   +-- Browser/                 # Built-in browser panes, tabs, and BrowserSettings
+    |   +-- BrowserAutomation/       # Agent-driven browser automation, DOMSnapshotTypes, and DOMSnapshotScript
+    |   +-- Chrome/                  # Window chrome, top bar, navigation rail, status bar, fan readout
     |   +-- Components/              # Settings panes (Appearance, MCP, Plugins, Models, Soul Prompt)
-    |   +-- Diagnostics/             # Inspector, telemetry, runner metrics, status HUD, fan control
+    |   +-- Diagnostics/             # Inspector, telemetry, sampling, runner diagnostics, usage dashboard
     |   +-- Files/                   # AttachmentImporter, FilePreviewView, FilesSectionView
-    |   +-- Generation/              # Chat sidebar, message pane, prompt composer, context ring
+    |   +-- Generation/              # Chat sidebar, message row, streaming row, prompt composer, context ring
     |   +-- Humanize/                # Text rewriting, diff calculation, custom rules, and audit
+    |   +-- Images/                  # Image generation UI: composer, gallery, styles
+    |   +-- Import/                  # Chrome bookmark importer, MarkdownFrontmatterParser
     |   +-- Installation/            # Model catalog downloader, ModelDetailPaneView, probe
     |   +-- Presentation/            # Markdown rendering, document text extraction (PDF/Word/Excel)
-    |   +-- Resources/               # App prompts, bundled logos, command gate weights, soul prompts
     |   +-- Server/                  # Text/Image server and TypeSafe playground UI
-    |   +-- State/                   # AppModel state coordinator, multi-profile storage, compaction
+    |   +-- State/                   # AppModel coordinator, ProfileDatabase (+Workflows/+Assets), ProfileRepository, vault
     |   +-- Theme/                  # Typography, colors, appearance tokens, dock icon, accessibility
-    |   \-- Tools/                   # Agent tools, MCP client, Syntext search, sandbox, command gate
+    |   +-- Tools/                   # Agent tools, MCP client, Syntext search, sandbox, command gate
+    |   \-- Workflows/               # Workflow run engine, WorkflowAST, WorkflowLexer, and journal
+    +-- Sources/TurboSparkAppResources/
+    |   \-- Resources/               # Bundled prompts, logos, fonts, icons, permission-gate weights, compiled .lproj
     \-- Tests/TurboSparkAppTests/    # 100+ app unit and integration tests
 ```
 
@@ -196,7 +203,7 @@ import TurboSpark
 
 // Start the TurboSpark server on loopback
 let server = try TurboSparkServer.start(options: ServerOptions(port: 8080))
-try server.attach(session: session)
+try server.attach(session)
 if let url = server.baseURL {
     print("API server listening at \(url)/v1/chat/completions")
 }
@@ -215,7 +222,7 @@ TypeSafe OpenKind service with a native playground. See
 2. **Model Context Protocol (MCP) Client & Marketplace**:
    Supports both standard stdio and SSE MCP servers with interactive approval policies, schema validation, and tool search progressive disclosure.
 3. **Syntext Indexed Code Search**:
-   High-performance workspace indexing (`SYNTEXT.md`) enabling fast regex, exact, and AST code search with live unsaved file buffer updates.
+   Opt-in per-project indexing (`SYNTEXT.md`) for fast regex and literal code search, kept fresh by agent file writes and bounded git detection. The same library's context engine recalls a long chat's earlier turns (`SYNTEXT_CONTEXT.md`).
 4. **Context Ring & Compaction**:
    Visual context usage indicator displaying exact token consumption with breakdown popovers (system instructions, memory, turns, tools, attachments) and automatic conversation compaction (`SWIFT_COMPACTION.md`).
 5. **Soul Prompts & Project Customization**:
@@ -224,6 +231,8 @@ TypeSafe OpenKind service with a native playground. See
    Long-running `/goal` commands that iterate until completion with stall detection, check-in schedules, and stop evaluation (`SWIFT_GOALS.md`).
 7. **Accessibility & Theming**:
    Full VoiceOver integration, dynamic typography, dark/light themes, and strict macOS Reduce Transparency support.
+8. **Audio Studio**:
+   Recording, transcription, text to speech, music, and a two-column Voice Cloning page: drop, import, record, or pick a reference voice, confirm consent for that exact region, write the script, and follow the run's stages before the take appears in the takes list ([Audio workspace](../docs/AUDIO_WORKSPACE.md)).
 
 ---
 
@@ -243,11 +252,12 @@ Comprehensive documentation lives in `swift/docs/`:
 |---|---|
 | [`swift/docs/SWIFT_TOOLS.md`](docs/SWIFT_TOOLS.md) | Native tool execution, containment, sandboxing, hooks, and MCP client |
 | [`swift/docs/SWIFT_TOOL_CATALOG.md`](docs/SWIFT_TOOL_CATALOG.md) | Reference catalog for all built-in agent tools and parameters |
-| [`swift/docs/SYNTEXT.md`](docs/SYNTEXT.md) | Syntext indexed code search, project indexing, and live buffer sync |
+| [`swift/docs/SYNTEXT.md`](docs/SYNTEXT.md) | Syntext indexed code search, project indexing, the package pin, and freshness |
+| [`swift/docs/SYNTEXT_CONTEXT.md`](docs/SYNTEXT_CONTEXT.md) | Conversation recall on syntext's context engine: memory vs recall, wiring, gates, limitations |
 | [`swift/docs/SWIFT_AGENT_MODE.md`](docs/SWIFT_AGENT_MODE.md) | The `.agentAuto` classifier permission mode and safety gates |
 | [`swift/docs/SWIFT_PLUGINS.md`](docs/SWIFT_PLUGINS.md) | Plugin system manifest, contributions, lifecycle, and marketplace |
 | [`swift/docs/SWIFT_SKILLS.md`](docs/SWIFT_SKILLS.md) | Agent skills architecture, scopes, file layout, and marketplace |
-| [`swift/docs/SWIFT_MEMORY.md`](docs/SWIFT_MEMORY.md) | Auto-memory per-project directory, indexing, and memory tools |
+| [`swift/docs/SWIFT_MEMORY.md`](docs/SWIFT_MEMORY.md) | Approved memory claims: ledger, capture, recall, forget, and how memory differs from conversation recall |
 | [`swift/docs/SWIFT_COMPACTION.md`](docs/SWIFT_COMPACTION.md) | Context compaction thresholds, summarization, and boundary rules |
 | [`swift/docs/SWIFT_GOALS.md`](docs/SWIFT_GOALS.md) | Autonomous `/goal` loop, stall checks, and stop evaluators |
 | [`swift/docs/SWIFT_CONTEXT_RING.md`](docs/SWIFT_CONTEXT_RING.md) | Composer context ring, tint tiers, and breakdown popovers |
@@ -257,6 +267,8 @@ Comprehensive documentation lives in `swift/docs/`:
 | [`swift/docs/SWIFT_PROFILES.md`](docs/SWIFT_PROFILES.md) | User profiles, settings isolation, and profile switching |
 | [`swift/docs/SWIFT_LOCALIZATION.md`](docs/SWIFT_LOCALIZATION.md) | String catalog compilation, lproj structure, and parity gates |
 | [`swift/docs/KEYBOARD_SHORTCUTS.md`](docs/KEYBOARD_SHORTCUTS.md) | Menu commands, keyboard shortcuts, and VoiceOver accessibility |
+| [`DESIGN.md`](../DESIGN.md) | UI design rules and the shared control, surface, progress, and motion vocabulary |
+| [`docs/AUDIO_WORKSPACE.md`](../docs/AUDIO_WORKSPACE.md) | Audio Studio: recording, transcription, speech, voice cloning, and music |
 | [`swift/docs/SWIFT_SETTINGS_AUDIT.md`](docs/SWIFT_SETTINGS_AUDIT.md) | Settings persistence, UI control wiring, and audit checklist |
 | [`swift/docs/SWIFT_STATE_LEDGER.md`](docs/SWIFT_STATE_LEDGER.md) | State defect ledger (`state#N`) documenting state mitigations |
 

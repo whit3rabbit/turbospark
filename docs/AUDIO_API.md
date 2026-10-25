@@ -81,24 +81,57 @@ curl http://127.0.0.1:8080/v1/audio/speech \
 ```
 
 Kokoro (US English, voice `af_heart` only), MegaTTS3 (English voice cloning),
-or attached bridged speech models such as Qwen3-TTS. `input` (alias `text`) is
-at most 4096 characters, `speed` 0.5 to 2.0. Voice cloning fields:
+OmniVoice (multilingual voice cloning and plain speech), Fish Audio Drama 3
+(multi-speaker speech and voice cloning at 44.1 kHz, see
+[`FISH_DRAMA3.md`](FISH_DRAMA3.md)), or attached bridged speech models such as
+Qwen3-TTS. `input` (alias `text`) is at most 4096
+characters, `speed` 0.5 to 2.0. Voice cloning fields:
 - `reference_audio`: base64-encoded WAV of the voice to clone (a `data:` URL
   prefix is accepted). MegaTTS3 requires 1 to 30 seconds and uses at most 28.
+  OmniVoice accepts 1 to 30 seconds of 24 kHz mono and encodes the whole clip.
   A model that cannot clone (Kokoro) refuses it.
-- `consent`: MegaTTS3 requires `true`, the caller's statement that it has the
-  right to use the reference voice.
-- `steps` (1 to 100, default 16, where the app's Fast, Balanced and Best are 8,
-  16 and 32), `seed` (default 0), `p_w` (intelligibility, 0.1 to 5, default 1.4)
-  and `t_w` (similarity, 0.1 to 10, default 3.0): MegaTTS3 options. `speed`
-  scales its durations.
+- `consent`: MegaTTS3 always requires `true`; OmniVoice requires it whenever
+  `reference_audio` is present (without a reference it speaks with the model's
+  auto voice). It is the caller's statement that they have the right to use
+  the reference voice.
+- `steps` (1 to 100): MegaTTS3 defaults to 16 (the app's Fast, Balanced and
+  Best are 8, 16 and 32); OmniVoice defaults to 32 diffusion steps. `seed`
+  defaults to 0 for MegaTTS3 and OmniVoice. Without one, Drama 3 draws a fresh
+  seed per request, so asking again is a new take, and every Drama 3 response
+  names its seed in `x-turbospark-seed`. `p_w` (intelligibility, 0.1 to 5, default 1.4) and `t_w`
+  (similarity, 0.1 to 10, default 3.0) are MegaTTS3 options; OmniVoice
+  refuses both. `speed` scales MegaTTS3's durations and divides OmniVoice's
+  estimated length.
+- Drama 3 speaks without a reference and clones with one (1 to 30 seconds, any
+  sample rate). A reference needs `consent: true` and `reference_text`, the
+  exact words spoken in it. `temperature` (default 1.0), `top_p` (0.9),
+  `top_k` (30) and `max_frames` (1 to 1024, a bound on one chunk) are Drama 3
+  only and every other model refuses them. The defaults are Fish Audio's
+  serving recipe, not mlx-audio's 0.7 and 0.7, which traps far more takes in
+  silence after a sentence or a turn (`docs/FISH_DRAMA3_PHASE0.md`). `steps`, `speed` other than 1.0,
+  `instruction`, `p_w` and `t_w` are refused by name.
 - `reference_text` and `instruction`: Qwen3-TTS only; MegaTTS3 aligns the
-  reference itself and refuses both.
+  reference itself and refuses both. OmniVoice reads `reference_text` (the
+  transcript prepended to the script) and `instruction`, which is voice
+  design, not a delivery cue. Upstream k2-fsa/OmniVoice defines `instruct` as
+  comma-separated speaker attributes, one per category: gender, age, pitch,
+  the `whisper` style, an English accent or a Chinese dialect (for example
+  `female, young adult, high pitch, british accent`), and uses it without
+  reference audio. Voice design is trained on Chinese and English only. The
+  engine trims the text, puts it in the style prefix as given, and refuses
+  more than 512 bytes. It does not check the attributes against upstream's
+  list. Upstream documents `instruct` only for speech without a reference, so
+  a request that sends both `reference_audio` and `instruction` is outside
+  what it describes. The app's Voice Cloning page sends no instruction.
 
-MegaTTS3 runs on the CPU for now: a short sentence takes tens of seconds and a
-long reference makes every step slower. With `stream=true` audio arrives one
-text chunk at a time. A client that disconnects cancels the job at the next
-diffusion step. With `--tts-model ~/models/megatts3` the model id is `megatts3`:
+OmniVoice runs on Metal by default on macOS (with an opt-in portable CPU
+fallback), reporting progress one diffusion step at a time. The app makes
+OmniVoice available directly on the Voice Cloning page. MegaTTS3 also runs on
+Metal by default with portable CPU fallback. With `stream=true` audio arrives
+one text chunk at a time. A client that disconnects cancels the job at the next
+diffusion step. With `--tts-model ~/models/megatts3` the model id is
+`megatts3`:
+
 
 ```sh
 curl http://127.0.0.1:8080/v1/audio/speech \
@@ -108,7 +141,8 @@ curl http://127.0.0.1:8080/v1/audio/speech \
   -o cloned.wav
 ```
 
-Output is 24 kHz mono: `wav` (default) or `pcm` (16-bit little-endian).
+Output is 24 kHz mono (44.1 kHz for Drama 3, reported in the
+`x-audio-sample-rate` header): `wav` (default) or `pcm` (16-bit little-endian).
 OpenAI's default is mp3. This server cannot encode it and refuses by name.
 `stream=true` needs `pcm` and sends one chunk per synthesized segment. A failure
 after the first chunk ends the body early.

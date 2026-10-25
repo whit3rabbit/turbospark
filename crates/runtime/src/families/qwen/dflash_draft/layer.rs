@@ -25,7 +25,6 @@ pub(crate) fn encode_dflash_layer(
     let hidden = s.hidden;
     let q_dim = s.num_heads * s.head_dim;
     let kv_dim = s.num_kv_heads * s.head_dim;
-    let row_bytes = hidden as u64 * 2;
     let base_kernel_elems = 2 * 2 * hidden;
     let gpu_err = RealForwardError::Gpu;
 
@@ -51,19 +50,20 @@ pub(crate) fn encode_dflash_layer(
         &name("mlp_conv.base_kernel"),
         base_kernel_elems,
     )?;
-    for r in 0..rows {
-        let row = r as u64 * row_bytes;
-        gpu::encode_rms_norm_bf16w(
-            context,
-            pass,
-            (&dflash.x, row),
-            input_norm,
-            (&dflash.normed, row),
-            hidden as u32,
-            DFLASH_RESIDUAL_EPS,
-        )
-        .map_err(gpu_err)?;
-    }
+    // ONE dispatch for the block's rows: `rmsnorm_bf16w_perhead` with `rows`
+    // heads of width `hidden` shares the whole-vector kernel's helper, and
+    // `rms_norm_rows_as_heads.rs` pins the pair bitwise at this width.
+    gpu::encode_rms_norm_bf16w_perhead(
+        context,
+        pass,
+        (&dflash.x, 0),
+        input_norm,
+        (&dflash.normed, 0),
+        rows as u32,
+        hidden as u32,
+        DFLASH_RESIDUAL_EPS,
+    )
+    .map_err(gpu_err)?;
 
     // attention_conv.prepare: coefficients from the normed input,
     // side-0 convolution of it, and the sublayer reads the
@@ -146,33 +146,40 @@ pub(crate) fn encode_dflash_layer(
     // and rotated when the first row's attention is encoded. Folded
     // into one loop (which is what a causal block can do) row `r`
     // would read raw projections for every row above it.
+    // The per-head norms are elementwise per head over rows that sit
+    // contiguously with the same stride in and out, so the block is one
+    // dispatch for q and one per ring span for k (a span never crosses the
+    // ring's wrap, which is why the projections above are split the same way).
+    gpu::encode_rms_norm_bf16w_perhead(
+        context,
+        pass,
+        (&dflash.q, 0),
+        q_norm,
+        (&dflash.q, 0),
+        (rows * s.num_heads) as u32,
+        s.head_dim as u32,
+        RMS_EPS,
+    )
+    .map_err(gpu_err)?;
+    for &(row0, count) in kv_spans.iter().filter(|s| s.1 > 0) {
+        let (k_buf, k_off) = dflash.kv.k_slot(layer, base + row0);
+        gpu::encode_rms_norm_bf16w_perhead(
+            context,
+            pass,
+            (k_buf, k_off as u64),
+            k_norm,
+            (k_buf, k_off as u64),
+            (count * s.num_kv_heads) as u32,
+            s.head_dim as u32,
+            RMS_EPS,
+        )
+        .map_err(gpu_err)?;
+    }
     for r in 0..rows {
         let position = base + r;
         let q_row = (r * q_dim) as u64 * 2;
         let (k_buf, k_off) = dflash.kv.k_slot(layer, position);
         let k_row = k_off as u64;
-        gpu::encode_rms_norm_bf16w_perhead(
-            context,
-            pass,
-            (&dflash.q, q_row),
-            q_norm,
-            (&dflash.q, q_row),
-            s.num_heads as u32,
-            s.head_dim as u32,
-            RMS_EPS,
-        )
-        .map_err(gpu_err)?;
-        gpu::encode_rms_norm_bf16w_perhead(
-            context,
-            pass,
-            (k_buf, k_row),
-            k_norm,
-            (k_buf, k_row),
-            s.num_kv_heads as u32,
-            s.head_dim as u32,
-            RMS_EPS,
-        )
-        .map_err(gpu_err)?;
         for (data, heads) in [
             ((&dflash.q, q_row), s.num_heads as u32),
             ((k_buf, k_row), s.num_kv_heads as u32),
@@ -257,27 +264,25 @@ pub(crate) fn encode_dflash_layer(
         RESIDUAL_RESCALE,
     )
     .map_err(gpu_err)?;
-    for r in 0..rows {
-        let row = r as u64 * row_bytes;
-        gpu::encode_residual_add(
-            context,
-            pass,
-            (&dflash.x, row),
-            (&dflash.conv_f, row),
-            hidden as u32,
-        )
-        .map_err(gpu_err)?;
-        gpu::encode_rms_norm_bf16w(
-            context,
-            pass,
-            (&dflash.x, row),
-            post_norm,
-            (&dflash.normed, row),
-            hidden as u32,
-            DFLASH_RESIDUAL_EPS,
-        )
-        .map_err(gpu_err)?;
-    }
+    gpu::encode_residual_add(
+        context,
+        pass,
+        (&dflash.x, 0),
+        (&dflash.conv_f, 0),
+        (rows * hidden) as u32,
+    )
+    .map_err(gpu_err)?;
+    gpu::encode_rms_norm_bf16w_perhead(
+        context,
+        pass,
+        (&dflash.x, 0),
+        post_norm,
+        (&dflash.normed, 0),
+        rows as u32,
+        hidden as u32,
+        DFLASH_RESIDUAL_EPS,
+    )
+    .map_err(gpu_err)?;
 
     // mlp_conv.prepare, the dense FFN, mlp_conv.finish.
     encode_gemm_any(
@@ -327,18 +332,15 @@ pub(crate) fn encode_dflash_layer(
     } else {
         gpu::encode_gelu_mul
     };
-    for r in 0..rows {
-        let row = (r * s.inter) as u64 * 2;
-        act(
-            context,
-            pass,
-            (&dflash.ffn_gate, row),
-            (&dflash.ffn_up, row),
-            (&dflash.ffn_act, row),
-            s.inter as u32,
-        )
-        .map_err(gpu_err)?;
-    }
+    act(
+        context,
+        pass,
+        (&dflash.ffn_gate, 0),
+        (&dflash.ffn_up, 0),
+        (&dflash.ffn_act, 0),
+        (rows * s.inter) as u32,
+    )
+    .map_err(gpu_err)?;
     encode_gemm_any(
         context,
         pass,
@@ -364,16 +366,13 @@ pub(crate) fn encode_dflash_layer(
         RESIDUAL_RESCALE,
     )
     .map_err(gpu_err)?;
-    for r in 0..rows {
-        let row = r as u64 * row_bytes;
-        gpu::encode_residual_add(
-            context,
-            pass,
-            (&dflash.x, row),
-            (&dflash.conv_f, row),
-            hidden as u32,
-        )
-        .map_err(gpu_err)?;
-    }
+    gpu::encode_residual_add(
+        context,
+        pass,
+        (&dflash.x, 0),
+        (&dflash.conv_f, 0),
+        (rows * hidden) as u32,
+    )
+    .map_err(gpu_err)?;
     Ok(())
 }

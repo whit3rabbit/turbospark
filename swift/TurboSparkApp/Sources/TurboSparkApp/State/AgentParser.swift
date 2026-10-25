@@ -285,39 +285,7 @@ public enum AgentParser {
     // MARK: - Frontmatter Extraction Helpers
 
     private static func extractFrontmatterAndBody(from text: String) -> (frontmatter: String?, body: String) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.hasPrefix("---") else {
-            return (nil, text)
-        }
-
-        let lines = text.components(separatedBy: "\n")
-        guard lines.first?.trimmingCharacters(in: .whitespacesAndNewlines) == "---" else {
-            return (nil, text)
-        }
-
-        var frontmatterLines: [String] = []
-        var bodyLines: [String] = []
-        var inFrontmatter = true
-        var foundEnd = false
-
-        for line in lines.dropFirst() {
-            if inFrontmatter {
-                if line.trimmingCharacters(in: .whitespacesAndNewlines) == "---" {
-                    inFrontmatter = false
-                    foundEnd = true
-                } else {
-                    frontmatterLines.append(line)
-                }
-            } else {
-                bodyLines.append(line)
-            }
-        }
-
-        if !foundEnd {
-            return (nil, text)
-        }
-
-        return (frontmatterLines.joined(separator: "\n"), bodyLines.joined(separator: "\n"))
+        MarkdownFrontmatterParser.extractFrontmatterAndBody(from: text)
     }
 
     /// Parses the frontmatter's `key: value` pairs, lists and block scalars.
@@ -414,24 +382,10 @@ public enum AgentParser {
     }
 
     private static func parseListField(_ raw: String?) -> [String]? {
-        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
-            return nil
-        }
-        var cleaned = raw
-        if cleaned.hasPrefix("[") && cleaned.hasSuffix("]") {
-            cleaned = String(cleaned.dropFirst().dropLast())
-        }
-        let items = cleaned.components(separatedBy: ",")
-            .map { stripQuotes($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
-            .filter { !$0.isEmpty }
-        return items.isEmpty ? nil : items
+        MarkdownFrontmatterParser.parseListField(raw)
     }
 
     private static func stripQuotes(_ s: String) -> String {
-        var str = s.trimmingCharacters(in: .whitespacesAndNewlines)
-        if (str.hasPrefix("\"") && str.hasSuffix("\"")) || (str.hasPrefix("'") && str.hasSuffix("'")) {
-            str = String(str.dropFirst().dropLast())
-        }
-        return str
+        MarkdownFrontmatterParser.stripQuotes(s)
     }
 }

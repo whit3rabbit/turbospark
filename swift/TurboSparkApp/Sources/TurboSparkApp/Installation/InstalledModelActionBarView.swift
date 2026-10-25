@@ -31,6 +31,7 @@ struct InstalledModelActionBarView: View {
     let installedModel: InstalledModel
     let rowModel: InstalledModelRowModel
     let isCurrentlyLoaded: Bool
+    var canLoadModel: Bool = true
     let canUnloadModel: Bool
     let canDeleteModel: Bool
     /// A delete or a remove for this row is already running.
@@ -74,6 +75,7 @@ struct InstalledModelActionBarView: View {
                         Label { Text("Load Model", bundle: .module) } icon: { Image(systemName: "bolt.fill") }
                     }
                     .appAction(.secondary)
+                    .disabled(!canLoadModel)
                     .help(Text("Load model into memory slot cache for inference", bundle: .module))
                 } else if plan.loadControl == .loadAnyway {
                     // The one primary action of a warned model: Start Chat waits.

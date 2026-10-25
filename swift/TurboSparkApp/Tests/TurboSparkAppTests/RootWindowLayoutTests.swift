@@ -83,16 +83,54 @@ final class RootWindowLayoutTests: XCTestCase {
     }
 
     func testNativeWindowFloorProtectsRestoredFramesAndTracksVisiblePanes() async throws {
+        // Files is rail-only: the panel preference is on (see `withWindow`)
+        // but no panel is drawn, so the floor is rail + content + inspector.
+        // 52 + 1 + 640 + 320 + 1.
         try await withWindow(size: CGSize(width: 600, height: 360)) { _, window, host in
-            XCTAssertEqual(window.contentMinSize, CGSize(width: 1222, height: 640))
-            XCTAssertGreaterThanOrEqual(host.bounds.width, 1222)
+            XCTAssertEqual(window.contentMinSize, CGSize(width: 1014, height: 640))
+            XCTAssertGreaterThanOrEqual(host.bounds.width, 1014)
             XCTAssertGreaterThanOrEqual(host.bounds.height, 640)
             let expandedSize = window.frame.size
 
             NotificationCenter.default.post(name: .toggleInspector, object: nil)
             try await settle(host)
-            XCTAssertEqual(window.contentMinSize, CGSize(width: 901, height: 640))
+            XCTAssertEqual(window.contentMinSize, CGSize(width: 693, height: 640))
             XCTAssertEqual(window.frame.size, expandedSize, "closing a pane must not shrink the user's window")
+        }
+    }
+
+    func testTheFloorFollowsThePanelOnScreenNotTheRawPreference() async throws {
+        try await withWindow(size: CGSize(width: 600, height: 360)) { model, window, host in
+            NotificationCenter.default.post(name: .toggleInspector, object: nil)
+            try await settle(host)
+
+            // A section with a panel: rail + panel + divider + content.
+            model.activeSection = .audio
+            try await settle(host)
+            XCTAssertEqual(window.contentMinSize, CGSize(width: 953, height: 640))
+
+            // The sections whose modes moved out of their panes into a panel
+            // reserve it too, or the panel squeezes the pane below its floor.
+            for section in [AppModel.AppNavigationSection.modelManager, .server] {
+                model.activeSection = section
+                try await settle(host)
+                XCTAssertEqual(
+                    window.contentMinSize, CGSize(width: 953, height: 640), "\(section)")
+            }
+
+            // Same preference, rail-only section: the panel's 260pt is not
+            // reserved. Gating the floor on the raw preference fails here.
+            model.activeSection = .files
+            try await settle(host)
+            XCTAssertEqual(window.contentMinSize, CGSize(width: 693, height: 640))
+
+            // The toggle has nothing to act on in Files and must not flip the
+            // hidden preference, or Chat would open with its panel gone.
+            NotificationCenter.default.post(name: .toggleChatSidebar, object: nil)
+            try await settle(host)
+            model.activeSection = .chat
+            try await settle(host)
+            XCTAssertEqual(window.contentMinSize, CGSize(width: 953, height: 640))
 
             NotificationCenter.default.post(name: .toggleChatSidebar, object: nil)
             try await settle(host)

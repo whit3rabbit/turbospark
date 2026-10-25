@@ -8,11 +8,15 @@
 //! rope and a KV cache, SwiGLU MLPs, and a tied or untied LM head. Single
 //! batch, matching the reference generation loops the TTS families drive.
 
+use std::rc::Rc;
+
+use crate::backend::ComputeBackend;
 use crate::nn::{Linear, RmsNorm};
 use crate::ops;
 use crate::{Result, SpeechError};
 
 use super::cache::{LayerCaches, LayerKv};
+use super::execution::Execution;
 use super::rope::Rope;
 use super::{Bias, Weights};
 
@@ -103,6 +107,7 @@ pub(crate) struct Attention {
     /// causal mask (`backbone.py`); every autoregressive family leaves
     /// this false.
     pub(crate) bidirectional: bool,
+    pub(crate) exec: Option<Rc<Execution>>,
 }
 
 /// SwiGLU feed-forward shared with the sibling backbone modules.
@@ -110,6 +115,7 @@ pub(crate) struct Mlp {
     pub(crate) gate_proj: Linear,
     pub(crate) up_proj: Linear,
     pub(crate) down_proj: Linear,
+    pub(crate) exec: Option<Rc<Execution>>,
 }
 
 struct Block {
@@ -129,6 +135,7 @@ pub struct Backbone {
     norm: Option<RmsNorm>,
     /// Untied head; a tied head reuses `embed_tokens` as the weight.
     lm_head: Option<Linear>,
+    exec: Option<Rc<Execution>>,
 }
 
 impl Backbone {
@@ -302,11 +309,13 @@ impl Backbone {
                     rope: Some(rope.clone()),
                     window: None,
                     bidirectional: false,
+                    exec: None,
                 },
                 mlp: Mlp {
                     gate_proj,
                     up_proj,
                     down_proj,
+                    exec: None,
                 },
                 input_layernorm,
                 post_attention_layernorm,
@@ -336,6 +345,7 @@ impl Backbone {
             layers,
             norm,
             lm_head,
+            exec: None,
         })
     }
 
@@ -352,6 +362,24 @@ impl Backbone {
     pub fn set_bidirectional(&mut self, bidirectional: bool) {
         for block in &mut self.layers {
             block.attention.bidirectional = bidirectional;
+        }
+    }
+
+    /// Attaches an optional device compute backend. Projections and non-causal
+    /// attention are dispatched to the backend when available, falling back to
+    /// host execution.
+    pub fn with_backend(mut self, backend: Option<Rc<dyn ComputeBackend>>) -> Self {
+        self.set_backend(backend);
+        self
+    }
+
+    /// Updates the device compute backend in place.
+    pub fn set_backend(&mut self, backend: Option<Rc<dyn ComputeBackend>>) {
+        let exec = backend.map(|b| Rc::new(Execution::new(Some(b))));
+        self.exec = exec.clone();
+        for block in &mut self.layers {
+            block.attention.exec = exec.clone();
+            block.mlp.exec = exec.clone();
         }
     }
 
@@ -389,7 +417,10 @@ impl Backbone {
     fn apply_head(&self, projected: &[f32]) -> Result<Vec<f32>> {
         let len = projected.len() / self.config.hidden_size;
         match &self.lm_head {
-            Some(head) => Ok(head.forward(projected, len)),
+            Some(head) => match &self.exec {
+                Some(exec) => Ok(exec.linear(head, projected, len)),
+                None => Ok(head.forward(projected, len)),
+            },
             None if self.embed_tokens.is_empty() => Err(SpeechError::Input {
                 why: "tied head without an embed table".into(),
             }),
@@ -494,9 +525,18 @@ impl Attention {
                 why: format!("{heads} query heads not a multiple of {kv_heads} kv heads"),
             });
         }
-        let q = self.q_proj.forward(x, len);
-        let k = self.k_proj.forward(x, len);
-        let v = self.v_proj.forward(x, len);
+        let (q, k, v) = match &self.exec {
+            Some(exec) => (
+                exec.linear(&self.q_proj, x, len),
+                exec.linear(&self.k_proj, x, len),
+                exec.linear(&self.v_proj, x, len),
+            ),
+            None => (
+                self.q_proj.forward(x, len),
+                self.k_proj.forward(x, len),
+                self.v_proj.forward(x, len),
+            ),
+        };
 
         // [heads, len, dim] head-major views for rope and attention.
         let mut qh = head_major(&q, len, heads, dim);
@@ -511,6 +551,19 @@ impl Attention {
         if let Some(rope) = &self.rope {
             rope.apply(&mut qh, heads, len, offset);
             rope.apply(&mut kh, kv_heads, len, offset);
+        }
+
+        if let Some(exec) = &self.exec {
+            if exec.on_device() && self.bidirectional && cache.is_none() {
+                let pos_q = position_major(&qh, len, heads, dim);
+                let pos_k = position_major(&kh, len, kv_heads, dim);
+                let pos_v = position_major(&vh, len, kv_heads, dim);
+                if let Ok(attn_out) =
+                    exec.attention(&pos_q, &pos_k, &pos_v, len, heads, kv_heads, dim)
+                {
+                    return Ok(exec.linear(&self.o_proj, &attn_out, len));
+                }
+            }
         }
 
         let (keys, values) = match &mut cache {
@@ -595,22 +648,46 @@ impl Attention {
                 joined[dst..dst + dim].copy_from_slice(&out[src..src + dim]);
             }
         }
-        Ok(self.o_proj.forward(&joined, len))
+        Ok(match &self.exec {
+            Some(exec) => exec.linear(&self.o_proj, &joined, len),
+            None => self.o_proj.forward(&joined, len),
+        })
     }
 }
 
 impl Mlp {
     /// SwiGLU feed-forward: `down(silu(gate(x)) * up(x))`.
     pub(crate) fn forward(&self, x: &[f32], len: usize) -> Vec<f32> {
-        let gate = self.gate_proj.forward(x, len);
-        let up = self.up_proj.forward(x, len);
+        let (gate, up) = match &self.exec {
+            Some(exec) => (
+                exec.linear(&self.gate_proj, x, len),
+                exec.linear(&self.up_proj, x, len),
+            ),
+            None => (self.gate_proj.forward(x, len), self.up_proj.forward(x, len)),
+        };
         let fused: Vec<f32> = gate
             .iter()
             .zip(&up)
             .map(|(&g, &u)| g * (1.0 / (1.0 + (-g).exp())) * u)
             .collect();
-        self.down_proj.forward(&fused, len)
+        match &self.exec {
+            Some(exec) => exec.linear(&self.down_proj, &fused, len),
+            None => self.down_proj.forward(&fused, len),
+        }
     }
+}
+
+/// Reinterprets `[heads, len, dim]` as `[len, heads * dim]`.
+pub(crate) fn position_major(x: &[f32], len: usize, heads: usize, dim: usize) -> Vec<f32> {
+    let mut out = vec![0.0f32; len * heads * dim];
+    for t in 0..len {
+        for h in 0..heads {
+            let src = (h * len + t) * dim;
+            let dst = (t * heads + h) * dim;
+            out[dst..dst + dim].copy_from_slice(&x[src..src + dim]);
+        }
+    }
+    out
 }
 
 /// Reinterprets `[len, heads * dim]` as `[heads, len, dim]`.

@@ -78,6 +78,17 @@ extension AppModel {
             case .chat, .files, .modelManager, .modelHub, .server: return false
             }
         }
+        /// Sections that show a contextual panel beside the icon rail (the chat
+        /// list, the Audio pages, the Images, Installed and API modes). Every
+        /// other section is rail-only, and the window minimum must follow this
+        /// rather than the raw sidebar preference, or it reserves an empty
+        /// panel's width there.
+        public var hasSidebarPanel: Bool {
+            switch self {
+            case .chat, .audio, .images, .modelManager, .server: return true
+            case .files, .modelHub, .humanize: return false
+            }
+        }
         /// Whether the Generation menu's Generate/Queue item may run the chat
         /// draft. Only the chat section shows the composer it would send: a
         /// menu item enabled anywhere else ran a draft the user could not see,

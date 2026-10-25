@@ -679,3 +679,93 @@ fn a_block_outside_allowed_range_is_refused() {
         );
     }
 }
+
+/// Adaptive depth is a NAMED request, so it keeps the hard-fail half of the
+/// contract, and the open must size the head at the cap.
+#[test]
+fn adaptive_is_enabled_at_its_cap_and_opens_the_head_at_the_cap() {
+    let plan = resolve_speculation(
+        Speculation::Adaptive(8),
+        SpeculativeDrafter::Mtp,
+        None,
+        true,
+    )
+    .expect("a servable adaptive request");
+    assert_eq!(plan, SpeculationPlan::Enabled { block: 8 });
+    // Sampled runs are served by the step drafter, so adaptive is too.
+    assert!(resolve_speculation(
+        Speculation::Adaptive(8),
+        SpeculativeDrafter::Mtp,
+        None,
+        false
+    )
+    .is_ok());
+
+    let plain = DrafterChoice {
+        drafter: SpeculativeDrafter::Mtp,
+        install_has_mtp_head: Some(true),
+        install_has_dflash: Some(false),
+        note: None,
+    };
+    assert_eq!(
+        super::draft_policies(&plain, Speculation::Adaptive(8)).mtp,
+        crate::families::qwen::MtpDraftPolicy::Fixed(8)
+    );
+}
+
+#[test]
+fn an_unservable_adaptive_request_fails_with_the_reason() {
+    let err = resolve_speculation(
+        Speculation::Adaptive(8),
+        SpeculativeDrafter::Mtp,
+        Some("no head here".to_string()),
+        true,
+    )
+    .expect_err("a named request the install cannot serve must fail");
+    assert!(err.contains("no head here"), "{err}");
+}
+
+#[test]
+fn adaptive_refuses_the_block_drafter_and_a_cap_with_no_room() {
+    let err = resolve_speculation(
+        Speculation::Adaptive(8),
+        SpeculativeDrafter::Dflash,
+        None,
+        true,
+    )
+    .expect_err("the block drafter has no per-round depth to adapt");
+    assert!(err.contains("DFlash2"), "{err}");
+
+    for cap in [1, 2] {
+        let err = resolve_speculation(
+            Speculation::Adaptive(cap),
+            SpeculativeDrafter::Mtp,
+            None,
+            true,
+        )
+        .expect_err("a cap at the floor is a fixed block");
+        assert!(err.contains("fixed block"), "cap {cap}: {err}");
+    }
+    let err = resolve_speculation(
+        Speculation::Adaptive(16),
+        SpeculativeDrafter::Mtp,
+        None,
+        true,
+    )
+    .expect_err("above the verify row cap");
+    assert!(err.contains("outside allowed range"), "{err}");
+}
+
+#[test]
+fn adaptive_on_a_headless_install_does_not_ask_the_open_for_a_head() {
+    let headless = DrafterChoice {
+        drafter: SpeculativeDrafter::Mtp,
+        install_has_mtp_head: Some(false),
+        install_has_dflash: Some(false),
+        note: None,
+    };
+    assert_eq!(
+        super::draft_policies(&headless, Speculation::Adaptive(8)).mtp,
+        crate::families::qwen::MtpDraftPolicy::Off
+    );
+}

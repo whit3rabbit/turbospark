@@ -54,7 +54,9 @@ public struct STTTranscription: Decodable, Sendable, Equatable {
 
 /// A resident speech-to-text model loaded into memory.
 ///
-/// Dispatches across Whisper and Qwen3-ASR families based on model configuration.
+/// Dispatches across Whisper, Qwen3-ASR, and Parakeet TDT (Core ML, macOS 15+) installs:
+/// Parakeet by its Core ML file layout, the others by `config.json`. Parakeet Unified
+/// is streaming only and is refused here; it opens through `ts_audio_stream_open`.
 /// Model closing is gated while any child streams remain open.
 public final class TurboSparkSTTModel: @unchecked Sendable {
     private struct Handle: @unchecked Sendable {

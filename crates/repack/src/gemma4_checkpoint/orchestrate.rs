@@ -114,7 +114,8 @@ pub fn orchestrate_gemma4_checkpoint_sharded(
     let expert_stride = expert_stride_from_headers(shards, arch, quant, &plan.routed)?;
     let mut layers = Vec::new();
     if !plan.routed.is_empty() {
-        for layer in 0..arch.num_layers as usize {
+        // From the first MoE layer: see `expert_stride_from_headers`.
+        for layer in arch.num_dense_leading_layers as usize..arch.num_layers as usize {
             let (blobs, _used) = plan_one_expert_layer(shards, arch, quant, &plan.routed, layer)?;
             layers.push(blobs);
         }
@@ -335,6 +336,20 @@ pub struct ResidentRead {
 fn int8_force_targets(family: ModelFamily) -> &'static [&'static str] {
     match family {
         ModelFamily::Qwen4Exp => &[".mlp.gate.weight", ".mlp.shared_expert_gate.weight"],
+        // The router only. The qwen flow's router kernel is INT8-only
+        // (`encode_qwen_router` refuses any other dtype), while the shared
+        // gate goes through the any-dtype GEMV. A U32-prepacked router never
+        // reaches this arm (the branch above takes it), so the published
+        // INT4 conversions are unchanged. A raw router (Fish Drama 3's
+        // trunk ships BF16) used to be written raw and refused at open.
+        ModelFamily::QwenGdnMoe => &[".mlp.gate.weight"],
+        // `flint`'s router is an unquantized BF16 [256, 2048] gate, where
+        // every published MLX conversion before it packed the router. The
+        // runtime's router GEMV reads INT8 affine, so it is force-quantized
+        // here exactly as the Qwen 3.6 raw router is. The ranking it
+        // produces is a property to MEASURE against the BF16 original
+        // before any quality claim (docs/FLINT_PHASE0.md).
+        ModelFamily::Flint => &[".mlp.gate.weight"],
         _ => &[],
     }
 }
@@ -364,6 +379,22 @@ pub fn read_resident_entries_from_shards(
                     Vec::new(),
                 )
             };
+            let mut entry = entry;
+            // Flint's dense lead and shared expert get the same `up`/`down`
+            // rebalance as its routed experts (`crate::flint_rebalance`).
+            if arch.family == ModelFamily::Flint {
+                if let Some(role) = crate::flint_rebalance::SwigluRole::of_resident(name) {
+                    let delta = role.delta(crate::flint_rebalance::FLINT_SWIGLU_SHIFT);
+                    if let ResidentEntrySpec::Int1(spec)
+                    | ResidentEntrySpec::Int2(spec)
+                    | ResidentEntrySpec::Int4(spec)
+                    | ResidentEntrySpec::Int8(spec) = &mut entry
+                    {
+                        crate::flint_rebalance::shift_bf16_plane(&mut spec.scales, delta);
+                        crate::flint_rebalance::shift_bf16_plane(&mut spec.biases, delta);
+                    }
+                }
+            }
             entries.push(entry);
             lossy_narrowing.extend(companion_loss);
         } else if int8_force_targets(arch.family)

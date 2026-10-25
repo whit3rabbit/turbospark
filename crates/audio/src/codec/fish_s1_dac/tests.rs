@@ -226,3 +226,373 @@ fn decode_zq_validates_lengths() {
     assert!(model.decode_zq(&zq[..zq.len() - 1], frames).is_err());
     assert!(model.decode_zq(&zq, frames + 1).is_err());
 }
+
+/// Which raw-PyTorch spelling [`renamed_fixture`] writes.
+#[derive(Clone, Copy)]
+enum TorchLayout {
+    /// `P.conv.parametrizations.weight.original0/1` with the bias at
+    /// `P.conv.bias`: Drama 3's `codec.safetensors`.
+    ConvHop,
+    /// `P.parametrizations.weight.original0/1` with the bias at `P.bias`.
+    Bare,
+}
+
+/// Rewrites the tiny fixture's conv weight-norm triples into a raw
+/// PyTorch spelling. The quantizer `in_proj`/`out_proj` pairs stay in the
+/// MLX spelling, the same mix Drama 3's export has. Only the header is
+/// renamed, so tensor bytes and offsets are the fixture's own.
+fn renamed_fixture(layout: TorchLayout) -> (PathBuf, usize) {
+    let bytes = std::fs::read(testdata("tiny_weights.safetensors")).expect("fixture");
+    let header_len = u64::from_le_bytes(bytes[..8].try_into().unwrap()) as usize;
+    let header: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_slice(&bytes[8..8 + header_len]).expect("header");
+    let wn_prefixes: std::collections::BTreeSet<String> = header
+        .keys()
+        .filter_map(|n| n.strip_suffix(".weight_v"))
+        .filter(|p| !p.ends_with(".in_proj") && !p.ends_with(".out_proj"))
+        .map(str::to_string)
+        .collect();
+    let hop = match layout {
+        TorchLayout::ConvHop => ".conv",
+        TorchLayout::Bare => "",
+    };
+    let mut renamed = serde_json::Map::new();
+    let mut count = 0;
+    for (name, value) in header {
+        let (prefix, leaf) = name.rsplit_once('.').unwrap_or(("", &name));
+        let new_name = if wn_prefixes.contains(prefix) {
+            match leaf {
+                "weight_g" => format!("{prefix}{hop}.parametrizations.weight.original0"),
+                "weight_v" => format!("{prefix}{hop}.parametrizations.weight.original1"),
+                "bias" => format!("{prefix}{hop}.bias"),
+                _ => name.clone(),
+            }
+        } else {
+            name.clone()
+        };
+        count += usize::from(new_name != name);
+        assert!(
+            renamed.insert(new_name.clone(), value).is_none(),
+            "rename collided on {new_name}"
+        );
+    }
+    let json = serde_json::to_vec(&serde_json::Value::Object(renamed)).unwrap();
+    let mut out = (json.len() as u64).to_le_bytes().to_vec();
+    out.extend_from_slice(&json);
+    out.extend_from_slice(&bytes[8 + header_len..]);
+    let tag = match layout {
+        TorchLayout::ConvHop => "conv_hop",
+        TorchLayout::Bare => "bare",
+    };
+    let path = std::env::temp_dir().join(format!(
+        "fish_s1_dac_{tag}_{}.safetensors",
+        std::process::id()
+    ));
+    std::fs::write(&path, out).unwrap();
+    (path, count)
+}
+
+#[test]
+fn torch_weight_norm_layouts_load_the_same_model() {
+    let legacy = load_tiny();
+    let codes = read_codes("rand_codes.npy");
+    let want: Vec<u32> = legacy
+        .decode(&codes)
+        .unwrap()
+        .iter()
+        .map(|v| v.to_bits())
+        .collect();
+    for layout in [TorchLayout::ConvHop, TorchLayout::Bare] {
+        let (path, renamed) = renamed_fixture(layout);
+        // A rename that touched nothing would pass without exercising
+        // the resolver.
+        assert!(renamed > 0, "fixture rename touched no tensors");
+        let config = FishS1DacConfig::from_json(&read_json("tiny_config.json")).expect("config");
+        let file = SafetensorsFile::open(&path).expect("renamed weights");
+        assert!(!file.tensor_names().any(|n| n == "encoder.block.0.weight_v"));
+        let model = FishS1Dac::load(config, &file).expect("load torch layout");
+        let got: Vec<u32> = model
+            .decode(&codes)
+            .unwrap()
+            .iter()
+            .map(|v| v.to_bits())
+            .collect();
+        assert_eq!(got, want, "decode must be bit-identical across layouts");
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
+/// Random but valid codes, `[books][frames]`: the semantic book draws from
+/// its own size, the acoustic books from theirs.
+fn random_codes(model: &FishS1Dac, frames: usize, seed: u32) -> Vec<Vec<i32>> {
+    let q = &model.config.quantizer;
+    let mut state = seed.wrapping_mul(2_654_435_761).wrapping_add(1);
+    let mut next = |size: usize| {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        (state % size as u32) as i32
+    };
+    (0..model.config.total_books())
+        .map(|b| {
+            let size = if b == 0 {
+                q.semantic_codebook_size
+            } else {
+                q.codebook_size
+            };
+            (0..frames).map(|_| next(size)).collect()
+        })
+        .collect()
+}
+
+fn stream_decode(model: &FishS1Dac, codes: &[Vec<i32>], chunks: &[usize]) -> Vec<f32> {
+    let mut stream = model.stream();
+    let mut out = Vec::new();
+    let mut at = 0;
+    for &n in chunks.iter().cycle() {
+        if at >= codes[0].len() {
+            break;
+        }
+        let end = (at + n).min(codes[0].len());
+        let piece: Vec<Vec<i32>> = codes.iter().map(|b| b[at..end].to_vec()).collect();
+        out.extend(stream.push(&piece).unwrap());
+        at = end;
+    }
+    assert_eq!(stream.position(), codes[0].len());
+    out
+}
+
+/// Streaming decode is the whole-sequence decode, bit for bit, across the
+/// post transformer's window (4 frames here, so 24 frames cross it several
+/// times) and with every conv's carried columns crossing chunk edges (one
+/// frame per chunk crosses all of them every time).
+#[test]
+fn stream_matches_whole_decode() {
+    let model = load_tiny();
+    let codes = random_codes(&model, 24, 7);
+    let whole: Vec<u32> = model
+        .decode(&codes)
+        .unwrap()
+        .iter()
+        .map(|v| v.to_bits())
+        .collect();
+    for chunks in [vec![1], vec![3, 1, 5], vec![7], vec![24]] {
+        let got: Vec<u32> = stream_decode(&model, &codes, &chunks)
+            .iter()
+            .map(|v| v.to_bits())
+            .collect();
+        assert_eq!(got.len(), whole.len());
+        assert_eq!(got, whole, "chunks {chunks:?}");
+    }
+}
+
+/// A device running the crate's own host kernels, so routing through
+/// [`super::DacExec`] (which operations go out, weight layouts, groups,
+/// transposed convs) is checked bit for bit, and counted.
+mod host_device {
+    use crate::backend::{
+        AttentionShape, ComputeBackend, ConvShape, DType, DeviceWeight, WeightData,
+    };
+    use crate::codec::wnconv::snake1d;
+    use crate::{ops, Result, SpeechError};
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    #[derive(Default)]
+    pub(super) struct Counts {
+        pub(super) conv: Cell<usize>,
+        pub(super) grouped: Cell<usize>,
+        pub(super) transposed: Cell<usize>,
+        pub(super) linear: Cell<usize>,
+        pub(super) snake: Cell<usize>,
+        pub(super) uploads: Cell<usize>,
+    }
+
+    fn bump(c: &Cell<usize>) {
+        c.set(c.get() + 1);
+    }
+
+    pub(super) struct HostDevice {
+        pub(super) counts: Rc<Counts>,
+    }
+
+    struct Weight {
+        values: Vec<f32>,
+        shape: Vec<usize>,
+        counts: Rc<Counts>,
+    }
+
+    impl DeviceWeight for Weight {
+        fn linear(
+            &self,
+            x: &[f32],
+            bias: Option<&[f32]>,
+            rows: usize,
+            input: usize,
+            output: usize,
+            _: DType,
+        ) -> Result<Vec<f32>> {
+            assert_eq!(self.shape, [output, input]);
+            bump(&self.counts.linear);
+            Ok(ops::linear(x, &self.values, bias, rows, input, output))
+        }
+        fn embedding(&self, _: &[i32], _: usize) -> Result<Vec<f32>> {
+            Err(SpeechError::Unsupported {
+                why: "unused".into(),
+            })
+        }
+        fn convolution(
+            &self,
+            x: &[f32],
+            b: Option<&[f32]>,
+            s: ConvShape,
+            d: DType,
+        ) -> Result<Vec<f32>> {
+            self.convolution_grouped(x, b, s, 1, d)
+        }
+        fn convolution_grouped(
+            &self,
+            x: &[f32],
+            b: Option<&[f32]>,
+            s: ConvShape,
+            groups: usize,
+            _: DType,
+        ) -> Result<Vec<f32>> {
+            if groups != 1 {
+                bump(&self.counts.grouped);
+            }
+            if s.transpose {
+                assert_eq!(
+                    self.shape,
+                    [s.input_channels, s.output_channels / groups, s.kernel]
+                );
+                bump(&self.counts.transposed);
+                Ok(ops::conv_transpose1d(
+                    x,
+                    &self.values,
+                    b,
+                    s.input_channels,
+                    s.output_channels,
+                    s.kernel,
+                    s.stride,
+                    s.padding,
+                    0,
+                    groups,
+                ))
+            } else {
+                assert_eq!(
+                    self.shape,
+                    [s.output_channels, s.input_channels / groups, s.kernel]
+                );
+                bump(&self.counts.conv);
+                Ok(ops::conv1d(
+                    x,
+                    &self.values,
+                    b,
+                    s.input_channels,
+                    s.output_channels,
+                    s.kernel,
+                    s.stride,
+                    s.padding,
+                    s.dilation,
+                    groups,
+                ))
+            }
+        }
+    }
+
+    impl ComputeBackend for HostDevice {
+        fn load_weight(&self, data: WeightData<'_>) -> Result<Rc<dyn DeviceWeight>> {
+            bump(&self.counts.uploads);
+            let values = data
+                .bytes
+                .chunks_exact(4)
+                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                .collect();
+            Ok(Rc::new(Weight {
+                values,
+                shape: data.shape.to_vec(),
+                counts: self.counts.clone(),
+            }))
+        }
+        fn attention(
+            &self,
+            _: &[f32],
+            _: &[f32],
+            _: &[f32],
+            _: AttentionShape,
+            _: DType,
+        ) -> Result<Vec<f32>> {
+            Err(SpeechError::Unsupported {
+                why: "unused".into(),
+            })
+        }
+        /// The host's guarded Snake, not the trait default, so the
+        /// comparison stays bit for bit.
+        fn snake(
+            &self,
+            x: &[f32],
+            alpha: &[f32],
+            channels: usize,
+            frames: usize,
+            _: DType,
+        ) -> Result<Vec<f32>> {
+            bump(&self.counts.snake);
+            let mut out = x.to_vec();
+            snake1d(&mut out, alpha, channels, frames);
+            Ok(out)
+        }
+    }
+}
+
+/// Decode, streamed decode and encode through a device exec are the host
+/// paths bit for bit, with every conv kind, the pointwise linears and Snake
+/// sent out, and each weight uploaded once.
+#[test]
+fn device_exec_routes_the_heavy_operations() {
+    use std::rc::Rc;
+    let model = load_tiny();
+    let counts = Rc::new(host_device::Counts::default());
+    let exec = super::DacExec::device(Rc::new(host_device::HostDevice {
+        counts: counts.clone(),
+    }));
+    let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+
+    let codes = random_codes(&model, 12, 3);
+    let host = model.decode(&codes).unwrap();
+    assert_eq!(bits(&model.decode_on(&exec, &codes).unwrap()), bits(&host));
+    for (name, count) in [
+        ("conv", &counts.conv),
+        ("grouped", &counts.grouped),
+        ("transposed", &counts.transposed),
+        ("linear", &counts.linear),
+        ("snake", &counts.snake),
+    ] {
+        assert!(count.get() > 0, "decode sent no {name} to the device");
+    }
+    let uploads = counts.uploads.get();
+
+    let mut stream = model.stream_on(&exec);
+    let mut streamed = Vec::new();
+    for piece in [0..5, 5..12] {
+        let chunk: Vec<Vec<i32>> = codes.iter().map(|b| b[piece.clone()].to_vec()).collect();
+        streamed.extend(stream.push(&chunk).unwrap());
+    }
+    assert_eq!(
+        bits(&streamed),
+        bits(&host),
+        "streamed decode on the device"
+    );
+    assert_eq!(
+        counts.uploads.get(),
+        uploads,
+        "decode weights uploaded twice"
+    );
+
+    let samples: Vec<f32> = (0..model.config.frame_length() * 3)
+        .map(|i| (i as f32 * 0.013).sin() * 0.5)
+        .collect();
+    let (want, want_len) = model.encode(&samples).unwrap();
+    let (got, got_len) = model.encode_on(&exec, &samples).unwrap();
+    assert_eq!((got, got_len), (want, want_len), "encode on the device");
+}

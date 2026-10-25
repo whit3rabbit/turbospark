@@ -408,13 +408,10 @@ struct ModelDetailPaneView: View {
                     ?? Text("In progress", bundle: .module))
 
             if let fraction = model.installProgressFraction {
-                ProgressView(value: fraction)
-                    .tint(Color.accentColor)
-                    .accessibilityLabel(Text("Download progress", bundle: .module))
-                    .accessibilityValue(MetricFormat.percent(fraction * 100))
+                AppProgressBar(value: fraction, label: Text("Download progress", bundle: .module),
+                               animated: !model.isInstallPaused)
             } else {
-                ProgressView()
-                    .accessibilityLabel(Text("Download progress", bundle: .module))
+                AppProgressBar(value: nil, label: Text("Download progress", bundle: .module))
             }
 
             HStack {

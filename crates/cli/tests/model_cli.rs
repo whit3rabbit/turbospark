@@ -578,3 +578,74 @@ fn a_pull_whose_alias_another_library_holds_is_refused_even_with_out() {
     assert_eq!(std::fs::read(&record).unwrap(), before);
     std::fs::remove_dir_all(&home).ok();
 }
+
+#[test]
+fn list_audio_names_every_row_where_it_runs_and_the_terms_to_accept() {
+    let (code, out, _) = run(&["list-audio"]);
+    assert_eq!(code, 0);
+    // FluidAudio's Core ML rows install from the CLI but run only in the app.
+    let ja = out
+        .lines()
+        .find(|l| l.contains("parakeet-ja-coreml"))
+        .expect("the Japanese Parakeet row is listed");
+    assert!(ja.contains("app only"), "{ja}");
+    // A row with terms prints the flag that accepts them.
+    let zh = out
+        .lines()
+        .find(|l| l.contains("paraformer-zh-coreml"))
+        .expect("the Paraformer row is listed");
+    assert!(zh.contains("--accept funasr_model_license"), "{zh}");
+    // The pre-existing music rows stay.
+    assert!(out.contains("minimax-music3-4bit"));
+    // And a speech row the old command never listed.
+    assert!(out.contains("speaker-diarization-coreml"));
+}
+
+#[test]
+fn pull_audio_refuses_without_the_terms_before_any_network_work() {
+    let (code, out, err) = run(&["pull-audio", "paraformer-zh-coreml"]);
+    assert_eq!(code, 1, "{err}");
+    // The terms print first, then the refusal names the exact flag.
+    assert!(out.contains("[funasr_model_license]"), "{out}");
+    assert!(err.contains("--accept funasr_model_license"), "{err}");
+}
+
+#[test]
+fn pull_audio_refuses_an_unknown_alias_and_a_flag_on_a_row_with_no_terms() {
+    let (code, _, err) = run(&["pull-audio", "no-such-model"]);
+    assert_eq!(code, 1);
+    assert!(err.contains("no pinned audio profile"), "{err}");
+
+    let (code, _, err) = run(&["pull-audio", "speaker-diarization-coreml", "--accept", "x"]);
+    assert_eq!(code, 1);
+    assert!(err.contains("no terms with id"), "{err}");
+}
+
+#[test]
+fn pull_audio_sends_a_converting_row_to_its_own_command() {
+    let (code, _, err) = run(&[
+        "pull-audio",
+        "fish-drama3-4bit",
+        "--accept",
+        "fish_audio_community_license",
+    ]);
+    assert_eq!(code, 1);
+    assert!(err.contains("pull-drama3"), "{err}");
+}
+
+#[test]
+fn accept_belongs_to_pull_audio_alone() {
+    let (code, _, err) = run(&["list-audio", "--accept", "x"]);
+    assert_eq!(code, 2);
+    assert!(err.contains("--accept does not apply"), "{err}");
+}
+
+#[test]
+fn path_and_rm_name_an_uninstalled_audio_model_without_deleting_anything() {
+    let (code, _, err) = run(&["path", "speaker-diarization-coreml"]);
+    assert_eq!(code, 1);
+    assert!(err.contains("not installed"), "{err}");
+    let (code, _, err) = run(&["rm", "speaker-diarization-coreml", "--yes"]);
+    assert_eq!(code, 1);
+    assert!(err.contains("not installed"), "{err}");
+}

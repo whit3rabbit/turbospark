@@ -26,9 +26,9 @@ mod shards;
 mod vision;
 
 pub use classify::{
-    canonicalize_qwen2_header, canonicalize_vision_header, classify_for_family, classify_gemma4,
-    Gemma4Bucket, DFLASH_PREFIX, MTP_PREFIX, VISION_INSTALL_PREFIX, VISION_PREFIX,
-    VISION_SOURCE_PREFIXES,
+    canonicalize_flint_header, canonicalize_qwen2_header, canonicalize_vision_header,
+    classify_for_family, classify_gemma4, Gemma4Bucket, DFLASH_PREFIX, MTP_PREFIX,
+    VISION_INSTALL_PREFIX, VISION_PREFIX, VISION_SOURCE_PREFIXES,
 };
 pub use config::{
     is_supported_affine_shape, parse_gemma4_config, parse_gemma4_quantization, Gemma4Error,
@@ -332,7 +332,8 @@ fn write_gemma4_install_streamed_in_place(
         arch.num_experts as usize,
     )?;
     writer.set_quant(manifest_quant(quant, arch.family));
-    for layer in 0..arch.num_layers as usize {
+    // From the first MoE layer: see `expert_stride_from_headers`.
+    for layer in arch.num_dense_leading_layers as usize..arch.num_layers as usize {
         let (blobs, used) = plan_one_expert_layer(shards, arch, quant, &plan.routed, layer)?;
         writer.write_layer(&blobs)?;
         progress(&format!(
@@ -617,6 +618,31 @@ pub fn write_qwen2_dense_install_streamed(
         ))));
     }
     write_gemma4_install_streamed(dir, arch, model_id, shards, quant, progress)
+}
+
+/// Flint install write through the shared MLX checkpoint walk.
+///
+/// The caller must have run `canonicalize_flint_header` on every shard
+/// header first (namespace and U8-to-U32 re-labelling), and parsed the quant
+/// with `parse_flint_quantization` so the INT8 embedding is declared.
+pub fn write_flint_install_streamed(
+    dir: &Path,
+    arch: &ArchConfig,
+    model_id: &str,
+    shards: &Gemma4Shards<'_>,
+    quant: &Gemma4Quant,
+    progress: impl FnMut(&str),
+) -> Result<(), Box<dyn std::error::Error>> {
+    if arch.family != ModelFamily::Flint {
+        return Err(Box::new(Gemma4Error::Config(format!(
+            "write_flint_install_streamed needs arch.family = flint, got {}",
+            arch.family.as_str()
+        ))));
+    }
+    write_gemma4_install_streamed(dir, arch, model_id, shards, quant, progress)?;
+    // The walk applied `crate::flint_rebalance`'s shift to this install; say so.
+    crate::flint_rebalance::record_shift(dir, crate::flint_rebalance::FLINT_SWIGLU_SHIFT)?;
+    Ok(())
 }
 
 /// Dense `qwen3_vl` install write through the shared MLX checkpoint walk.

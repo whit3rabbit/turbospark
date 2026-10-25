@@ -1205,6 +1205,47 @@ fn the_server_guardrails_option_is_read_rather_than_ignored() {
     }
 }
 
+/// **THE `prefixReuse` OPTION IS ACCEPTED, AND A WRONG-typed VALUE IS
+/// REFUSED rather than silently dropped.** Same reasoning as the guardrails
+/// test above: acceptance alone cannot tell a wired field from a declared
+/// one, because serde drops an unknown key without complaint and the server
+/// would start happily either way. The refusal is the observable that can
+/// only happen if the key reached the parser at all.
+///
+/// Both spellings matter because the two directions are the two postures:
+/// `false` is the one a multi-client server needs (and the one no host could
+/// previously reach on the in-process path, since `ts_session_open` resolves
+/// to on), and `true` is the single-trusted-client case.
+#[test]
+fn the_server_prefix_reuse_option_is_wired_rather_than_ignored() {
+    let session = endless_session(fixture(), "h", 4);
+
+    for good in [
+        "{}",
+        r#"{"prefixReuse":true}"#,
+        r#"{"prefixReuse":false}"#,
+        r#"{"prefixReuse":null}"#,
+    ] {
+        let server = unsafe { start_server(&session, good) };
+        unsafe { ts_server_stop(server) };
+    }
+
+    // A JSON string here is the shape a host writing `"false"` (the CLI's
+    // spelling) would produce. Accepting it would silently invert the
+    // setting's meaning for exactly the caller this field exists to serve.
+    for bad in [
+        r#"{"prefixReuse":"false"}"#,
+        r#"{"prefixReuse":"on"}"#,
+        r#"{"prefixReuse":1}"#,
+    ] {
+        let opts = c(bad);
+        let mut server: *mut Server = ptr::null_mut();
+        let code = unsafe { ts_server_start(&session, opts.as_ptr(), &mut server) };
+        assert_ne!(code, abi::TS_OK, "{bad} must be refused");
+        assert!(server.is_null(), "a refused start must write no handle");
+    }
+}
+
 /// A real HTTP round trip through the server this session started, proving
 /// `ts_server_start` actually serves requests rather than merely building a
 /// `Router` nothing is listening on.

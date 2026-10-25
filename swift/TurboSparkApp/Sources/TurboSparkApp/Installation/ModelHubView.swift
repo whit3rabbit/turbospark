@@ -90,18 +90,22 @@ struct ModelHubView: View {
 
     // MARK: - List and detail
 
-    private var masterDetailContent: some View {
-        HStack(spacing: 0) {
-            masterList
-                .frame(minWidth: 250, idealWidth: 300, maxWidth: 340)
-                .frame(maxHeight: .infinity)
+    @ViewBuilder private var masterDetailContent: some View {
+        if filter.tab == .audio {
+            AudioDiscoverCatalogView(model: model, controller: model.audioWorkspace, filter: $filter)
+        } else {
+            HStack(spacing: 0) {
+                masterList
+                    .frame(minWidth: 250, idealWidth: 300, maxWidth: 340)
+                    .frame(maxHeight: .infinity)
 
-            Rectangle()
-                .fill(.appBorder)
-                .frame(width: AppChromeLayout.dividerWidth)
+                Rectangle()
+                    .fill(.appBorder)
+                    .frame(width: AppChromeLayout.dividerWidth)
 
-            detailPane
-                .frame(minWidth: 260, maxWidth: .infinity, maxHeight: .infinity)
+                detailPane
+                    .frame(minWidth: 260, maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
     }
 
@@ -206,6 +210,7 @@ struct ModelHubView: View {
         case .onDevice: return "internaldrive"
         case .recommended: return "sparkles"
         case .discover: return "tray"
+        case .audio: return "waveform"
         }
     }
 

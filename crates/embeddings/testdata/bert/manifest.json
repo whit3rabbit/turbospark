@@ -1,0 +1,158 @@
+{
+ "generator": "crates/embeddings/tools/gen_bert_fixtures.py",
+ "packages": {
+  "torch": "2.14.1",
+  "numpy": "2.5.4",
+  "safetensors": "0.8.0",
+  "transformers": "4.57.1",
+  "sentence-transformers": "5.1.2",
+  "tokenizers": "0.22.2"
+ },
+ "reference": "transformers BertModel / XLMRobertaModel (sdpa, f32, CPU) + sentence-transformers",
+ "pins": {
+  "real": {
+   "l_v2": {
+    "repo": "Snowflake/snowflake-arctic-embed-l-v2.0",
+    "revision": "ac6544c8a46e00af67e330e85a9028c66b8cfd9a"
+   },
+   "m_v15": {
+    "repo": "Snowflake/snowflake-arctic-embed-m-v1.5",
+    "revision": "e58a8f756156a1293d763f17e3aae643474e9b8a"
+   },
+   "l": {
+    "repo": "Snowflake/snowflake-arctic-embed-l",
+    "revision": "d8fb21ca8d905d2832ee8b96c894d3298964346b"
+   },
+   "m": {
+    "repo": "Snowflake/snowflake-arctic-embed-m",
+    "revision": "fc74610d18462d218e312aa986ec5c8a75a98152"
+   },
+   "s": {
+    "repo": "Snowflake/snowflake-arctic-embed-s",
+    "revision": "e596f507467533e48a2e17c007f0e1dacc837b33"
+   },
+   "xs": {
+    "repo": "Snowflake/snowflake-arctic-embed-xs",
+    "revision": "d8c86521100d3556476a063fc2342036d45c106f"
+   }
+  },
+  "mlx": {
+   "bf16": {
+    "repo": "mlx-community/snowflake-arctic-embed-l-v2.0-bf16",
+    "revision": "3da10e38e7875d6501adc14665c95b6708646121",
+    "converted_from": "Snowflake/snowflake-arctic-embed-l-v2.0"
+   },
+   "8bit": {
+    "repo": "mlx-community/snowflake-arctic-embed-l-v2.0-8bit",
+    "revision": "98033f618b7503c73aa857bc0656f763a1587e73",
+    "converted_from": "Snowflake/snowflake-arctic-embed-l-v2.0"
+   },
+   "6bit": {
+    "repo": "mlx-community/snowflake-arctic-embed-l-v2.0-6bit",
+    "revision": "c8125c01b2142f0065f2494c123a7df46f9ef08e",
+    "converted_from": "Snowflake/snowflake-arctic-embed-l-v2.0"
+   },
+   "4bit": {
+    "repo": "mlx-community/snowflake-arctic-embed-l-v2.0-4bit",
+    "revision": "430b52bb3dcb9ad2404b1ac2b60f2fdc00f26033",
+    "converted_from": "Snowflake/snowflake-arctic-embed-l-v2.0"
+   }
+  },
+  "tiny": "seeded random init (numpy default_rng(0)), no download"
+ },
+ "files": {
+  "real_cases.json": "9aff5599514e86812614f9cdc3b855d1699d911b401d42aceca4c3cc334a11cb",
+  "real_l_embed.npy": "78a60eb36aca1b8c59e9f850e312d5fc9162378d1f5ecf377d56a2831c65ab69",
+  "real_l_v2_embed.npy": "60fd884d96e25bc5e56e8fd2e63efe448c9a8df685b89e0c7d8a23d6178bca14",
+  "real_l_v2_mrl256.npy": "31515874beeeb2411b5dc676ba8e7f06b05a6f546babe0ef39eea235d46dd608",
+  "real_l_v2_trace_case0.npy": "beda1b60437039e150e09bb15af6840ec20b069f48611fcda162e1bd60d13ebe",
+  "real_m_embed.npy": "c6f1a52f8ab82a8df6d33ae5044ed7754c46606d0f5fcc56f381752da6ca346d",
+  "real_m_v15_embed.npy": "1945c131663624cce95ada4c995cf7a83a0c4406695f2ffa28c5ea194c31fd2d",
+  "real_m_v15_mrl256.npy": "b43056aea6f7391f38486614f3fe86b2454c7039045800f6ca5794b6300d317d",
+  "real_mlx_4bit_embed.npy": "c4e792f81a75027e13554a9ec308563fbb85f6c2564e222f0e589a4285a537a3",
+  "real_mlx_6bit_embed.npy": "48a96df1123fc64ce3ccc06fb16ef13732bf444deb91c352c4c97a8a46840185",
+  "real_mlx_8bit_embed.npy": "674b18e1aa3c3dc5cf9d0a486f8ca492a0294a15314ce938a6d6f00ec76b4ce4",
+  "real_mlx_bf16_embed.npy": "2c03215038117fcd3472496f8c38d148ad2c28087d64e6489527e7938c512e03",
+  "real_s_embed.npy": "506f5fdeb5c2db99a54bffc612031ab378af0a69160bc8c69d28368aabc88075",
+  "real_xs_embed.npy": "42254182d5327e2981f62229c714869a91782c77584c6c9419d20236e2b2f044",
+  "real_xs_trace_case0.npy": "4df5c4308e4a14d447159b6cc58d6a3652bda1ad1ed1391289577b70d541e617",
+  "tiny_bert/1_Pooling/config.json": "0488190cefa987870a822e2697407f39878c6e647db0fa8e08b472026b5c990a",
+  "tiny_bert/config.json": "b78a976b64db93d3dd163cadbbd3943551aa79f04550cc466bd5c90b5e2a188e",
+  "tiny_bert/config_sentence_transformers.json": "3fbe018b553c3380f6746406250f8623e487126b3e204f1980f5d15007f6d247",
+  "tiny_bert/model.safetensors": "1cebd4c607f3e5b89256a19f2fd98d59e6362a320e9176c4bab92a639c5b0bae",
+  "tiny_bert/modules.json": "cebd88583c259d17a9e4e1fa6296a0c7c3dc1ec52e36d5c82d2f68d894efa01e",
+  "tiny_bert/sentence_bert_config.json": "9fc104f0267d7c88e9bef0a6ffb87cf8f23e7fbcad29c778e6fd7ec8ca6454c6",
+  "tiny_bert_embed_0.npy": "67524701596baefdfd3d9bb8ad6c444eae80d61638c89d442cc8fd942af07e5c",
+  "tiny_bert_embed_1.npy": "1c510e20541304a47d7b799c9570fa6ff0d8ddd2cff98ae3b790f2273031c9f8",
+  "tiny_bert_embed_2.npy": "4dd18ef73e82ee350c5ea6100facdffd75cecd34dec47d78c79a768da04cb824",
+  "tiny_bert_embed_3.npy": "bfef05becd9a04c8eb723a9ac629168859d6f9932301190f2c6ba1758b11b5b1",
+  "tiny_bert_embed_4.npy": "40c0ca92bb3bb63b5b2b9311506e91621d6ef3e715ff516b84b9077eed1a6ca1",
+  "tiny_bert_hidden_0.npy": "d6f78704a491b01e7b619c1844bc90cf1ffb3407558ecdc81cc59d7d100c258b",
+  "tiny_bert_hidden_1.npy": "310ec631df4f9e47260ae6320646d266b05091af669207313c7fcdaf63cf1b19",
+  "tiny_bert_hidden_2.npy": "8d65ca9ae1c67f7d66eb139382228fae8f17e9e9b3be6f9806bcf2e2c6a2ed0a",
+  "tiny_bert_hidden_3.npy": "5912fbc65ec0ac9e9f167b0b71b2054bfd93502ad4e5d62027ef46663eb015bf",
+  "tiny_bert_hidden_4.npy": "1d771c0ef0f4b18b3c9080d6acc460797fd0ffc5df3e7adbb83137f37c48798b",
+  "tiny_bf16_embed_0.npy": "1f0b9bab22f7bcf4dba4b566b6c2e7fb914bb02430abe9175dd4738800ed9c22",
+  "tiny_bf16_embed_1.npy": "1620ea34a3c6d9cac7994b3263ce276f44cfca8a160d97feb136dc3915ee3f88",
+  "tiny_bf16_embed_2.npy": "838abb31ac62338d1eb6ca03ea49b2c138615239dff06164e633c5a001146a78",
+  "tiny_bf16_embed_3.npy": "8843c6007f3ebd30fbaa147b584830c33783cce4436f98823c1544dedd621be6",
+  "tiny_bf16_embed_4.npy": "987cbf272ff5fab224fadf91966ff719a3fdcc153e4fa95c266796ccd99a0cf3",
+  "tiny_bf16_hidden_0.npy": "a89c2b39195ddd208116410884c1611a154304f9d2faaece0a631abb396c5419",
+  "tiny_bf16_hidden_1.npy": "2983988811143367dcdb16d7644af8b16ac87f4b479ee22bdcd1be673c88b44f",
+  "tiny_bf16_hidden_2.npy": "7aa5d24502342bf8d1081608cefe7021f677d16976706de7a4233e2a8870fcf8",
+  "tiny_bf16_hidden_3.npy": "b4f887a2ea2c40c9df377f83c56fb3ed37f979f28b1643f33827b60cacce2fe2",
+  "tiny_bf16_hidden_4.npy": "32c8555ce8fe5a87d7501a3cefbd4ac88b8e80e7a48a3baf8a94e17001afb8bd",
+  "tiny_cases.json": "19b57ed79020837b5744d0c2705c02348e2e1aaba379337dd379d614fbb041ad",
+  "tiny_q4_embed_0.npy": "8079d4046855e27afaa33f02b084c63bec2a0ad182e83c40a50ccc858e105860",
+  "tiny_q4_embed_1.npy": "d9a57de51044cba58e98e374996d60771c00d27845116b30f07356a47e7ca94d",
+  "tiny_q4_embed_2.npy": "140944aed8dd1e093fe76ac0190f2f04899719f6a10f08a5bed6c843b0d60e05",
+  "tiny_q4_embed_3.npy": "84d341e95ebd246161a8e3fae0e1bc8119bc77eb9e2e00bbe406c39cbd9eead3",
+  "tiny_q4_embed_4.npy": "58127f6459c5ba3e435a823bcbb5d6c2bcbdb1b26a9764a706d8727bfdc575fa",
+  "tiny_q4_hidden_0.npy": "0a8d5095a5e608e6bc2dc7ad3fa1030d1c3d5786124de4e6884de15c2c830726",
+  "tiny_q4_hidden_1.npy": "dfc648437a79cc6cba27c440e93efebf34444231460a58c95ee9df1df22e8293",
+  "tiny_q4_hidden_2.npy": "4f369e5ec28d5ce0fa8beaac74b8a8b9d034cf1e22a365680f6f3ec697e73d42",
+  "tiny_q4_hidden_3.npy": "9525422aed4f3da34ef7a3a38837bfbb88e6b2b98dd085ea13f8cec3b2d1652f",
+  "tiny_q4_hidden_4.npy": "9dbec7ac821738fac56c67a34ebd2768ade3aacea863d2364d0dbead47dd12c0",
+  "tiny_q6_embed_0.npy": "284daf71bb1563754701afa8e4c4452be8e08a06068cc53bbd8a007c4db79e04",
+  "tiny_q6_embed_1.npy": "19e314910e427da60c6f5ce08517134edad5734c67ca9dc407025fd15e19e657",
+  "tiny_q6_embed_2.npy": "713ea57d22e0f545e1e4d51c4c16cd6203987b9fb6502dd9fe91d211e3a5ce2e",
+  "tiny_q6_embed_3.npy": "2e42d0aaf62f8723b0dc7468accffd9da73a5121344602d2429e527784426a11",
+  "tiny_q6_embed_4.npy": "69f487ad1366fba999055aaeb1958a9017190d5df3317ec422d48ebb898a16cb",
+  "tiny_q6_hidden_0.npy": "7dff975ef94c56a989742c31220417144e5509527d5c2612111464175ffaf669",
+  "tiny_q6_hidden_1.npy": "1ead4c07083cd4db3bb2d798068098cca543784df30682f1340b559a64cc7bdd",
+  "tiny_q6_hidden_2.npy": "199eeb40ba9642b54ce71934d53b9e0a4ad5e71e66e6e260f5d7a478ee7ee2f8",
+  "tiny_q6_hidden_3.npy": "f79639e7ec10b89c889fd6760e496fa3708ffa4626b15bef79c178a9d22934e6",
+  "tiny_q6_hidden_4.npy": "e677d1f0a64e049b9f15425078455daf10bde0910365574e2582dff14c29b839",
+  "tiny_xlmr/1_Pooling/config.json": "0488190cefa987870a822e2697407f39878c6e647db0fa8e08b472026b5c990a",
+  "tiny_xlmr/config.json": "ccc4345e0a2d731bd57a8309ef78fd545de35a74a4845244248e6751441a306b",
+  "tiny_xlmr/config_sentence_transformers.json": "3fbe018b553c3380f6746406250f8623e487126b3e204f1980f5d15007f6d247",
+  "tiny_xlmr/model.safetensors": "de3f42cc9cdc14344d3b06f3fc8e8efb460969af4288440800e82bb8e07f2e7d",
+  "tiny_xlmr/modules.json": "cebd88583c259d17a9e4e1fa6296a0c7c3dc1ec52e36d5c82d2f68d894efa01e",
+  "tiny_xlmr/tokenizer_config.json": "167b3b1d4e8b967dc993e8b740bc608616c9864138df5d99457e1d13cdc8109e",
+  "tiny_xlmr_embed_0.npy": "d34a2309bd9aeeadb049e83a80b33631845843cb744b2d6d78bcacdb0652e53c",
+  "tiny_xlmr_embed_1.npy": "7fb6c49c3439df0a953059f55dd1f33e3c66c1fbf01ee80329b60b61df08cbea",
+  "tiny_xlmr_embed_2.npy": "73b328e2d560e7453cb0cf8f0ecbb21fcfd5158eb74d079c895e618b13f1290c",
+  "tiny_xlmr_embed_3.npy": "9d9acfd188b2ce961719aef3c8c167f346dbf02e4a19efe6c6a8a5ab32961cfb",
+  "tiny_xlmr_embed_4.npy": "050323f709d9f7b819c19e238036b0986697ade9cfa8c961974d2836c6fc94bc",
+  "tiny_xlmr_hidden_0.npy": "8399bbb433040ec8e8e17eb8e8a7b658a3699ce2fb13e7987aaf236a9083f6ba",
+  "tiny_xlmr_hidden_1.npy": "4d36c2c9bb682863d7db47337e6edb9d944f9236ae6b794c2bc48ca4e22f4c17",
+  "tiny_xlmr_hidden_2.npy": "615b4d1a88b7fa2eb496ec058f93c850a66b5fc49de0cd246ff2ed2ccad11183",
+  "tiny_xlmr_hidden_3.npy": "0ca1d80275bc43eba0a538064275ec9811c05814589d53d0ea00c9bf5dcb8ee0",
+  "tiny_xlmr_hidden_4.npy": "209636d87667d6e7eebec5098a9f0f9258e152a019f0ccaff182d85ffbf4aff3",
+  "tiny_xlmr_mlx_bf16/config.json": "ccc4345e0a2d731bd57a8309ef78fd545de35a74a4845244248e6751441a306b",
+  "tiny_xlmr_mlx_bf16/config_sentence_transformers.json": "3fbe018b553c3380f6746406250f8623e487126b3e204f1980f5d15007f6d247",
+  "tiny_xlmr_mlx_bf16/model.safetensors": "2e53658125d71865e89dae10d75662c2268ec5696cd63f4619f39cb9bfd79b8b",
+  "tiny_xlmr_mlx_bf16/modules.json": "cebd88583c259d17a9e4e1fa6296a0c7c3dc1ec52e36d5c82d2f68d894efa01e",
+  "tiny_xlmr_mlx_bf16/tokenizer_config.json": "167b3b1d4e8b967dc993e8b740bc608616c9864138df5d99457e1d13cdc8109e",
+  "tiny_xlmr_mlx_q4/config.json": "4f269b8d5437004bf15481c8cb0d1b23cf31c5fe74deef26bc80f46a82a0581f",
+  "tiny_xlmr_mlx_q4/config_sentence_transformers.json": "3fbe018b553c3380f6746406250f8623e487126b3e204f1980f5d15007f6d247",
+  "tiny_xlmr_mlx_q4/model.safetensors": "0028ce09dfadb07c02b34ea5e9e9dd0ccade3e5790d24215391a70cb250830b5",
+  "tiny_xlmr_mlx_q4/modules.json": "cebd88583c259d17a9e4e1fa6296a0c7c3dc1ec52e36d5c82d2f68d894efa01e",
+  "tiny_xlmr_mlx_q4/tokenizer_config.json": "167b3b1d4e8b967dc993e8b740bc608616c9864138df5d99457e1d13cdc8109e",
+  "tiny_xlmr_mlx_q6/config.json": "e933c7eb6039084dcbec0eb5ac2318f4705634d44c61d1ad7462b827d0420b36",
+  "tiny_xlmr_mlx_q6/config_sentence_transformers.json": "3fbe018b553c3380f6746406250f8623e487126b3e204f1980f5d15007f6d247",
+  "tiny_xlmr_mlx_q6/model.safetensors": "1c6ccafafcf1d36e0a8572489aeeeab9df00c8d8f7cebe1335478aa95cde14d4",
+  "tiny_xlmr_mlx_q6/modules.json": "cebd88583c259d17a9e4e1fa6296a0c7c3dc1ec52e36d5c82d2f68d894efa01e",
+  "tiny_xlmr_mlx_q6/tokenizer_config.json": "167b3b1d4e8b967dc993e8b740bc608616c9864138df5d99457e1d13cdc8109e"
+ }
+}

@@ -12,9 +12,14 @@ use turbospark_coreml::{
 };
 
 fn fixture(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+    let p = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("testdata")
-        .join(name)
+        .join(name);
+    if p.extension().and_then(|e| e.to_str()) == Some("mlpackage") {
+        let weights_dir = p.join("Data").join("com.apple.CoreML").join("weights");
+        let _ = std::fs::create_dir_all(&weights_dir);
+    }
+    p
 }
 
 struct Scratch(PathBuf);

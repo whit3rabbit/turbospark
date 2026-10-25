@@ -96,26 +96,6 @@ struct ServerAdvancedSettingsView: View {
             }
 
             field(
-                Text("Embedding model", bundle: .module),
-                help: Text("Path or alias to an encoder model (e.g. snowflake-arctic-embed-m) to enable /v1/embeddings.", bundle: .module)
-            ) {
-                TextField(
-                    text: $model.serverEmbeddingModelInput,
-                    prompt: Text("snowflake-arctic-embed-m or /path/to/encoder", bundle: .module)
-                ) { Text("Embedding model", bundle: .module) }
-                    .textFieldStyle(.roundedBorder)
-                    .labelsHidden()
-                    .frame(maxWidth: .infinity)
-                    .disabled(isRunning)
-                    .onChange(of: model.serverEmbeddingModelInput) { _, _ in
-                        model.persistSettingsDebounced()
-                    }
-            }
-            // `onChange` above persists the alias Use writes into the field.
-            RecommendedEmbeddingModelRow(
-                model: model, selection: $model.serverEmbeddingModelInput, disabled: isRunning)
-
-            field(
                 Text("HF mirror endpoint", bundle: .module),
                 help: Text("Base URL for Hugging Face downloads ($HF_ENDPOINT), e.g. https://hf-mirror.com for restricted regions.", bundle: .module)
             ) {

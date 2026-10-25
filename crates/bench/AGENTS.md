@@ -14,11 +14,14 @@ power, steering, and speculative decoding.
 
 ## Directory map
 
-- `src/bin/`: benchmark and probe binaries.
+- `src/main.rs`, `src/startup_probe_main.rs`: the `turbospark-bench` and
+  `turbospark-startup-probe` binaries.
 - `src/real_model.rs`: shared real-install protocol and model setup.
 - `src/real_model_params.rs`: family-specific context and budget parameters.
 - `tests/`: offline fixtures plus ignored real-install gates.
-- `scripts/`: measurement and analysis helpers.
+- `prompts/`: frozen protocol and quality reference prompt fixtures.
+- Measurement and analysis helper scripts live in the repository root
+  `scripts/` (`parity.sh`, `power.sh`), not in this crate.
 
 ## Rules
 

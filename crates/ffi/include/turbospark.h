@@ -61,10 +61,13 @@ extern "C" {
 #endif
 
 /* ------------------------------------------------------------------ */
-/* Speech-to-text (whisper).                                           */
+/* Speech-to-text (Whisper, Qwen3-ASR, Parakeet TDT on Core ML).       */
 /*                                                                     */
-/* A resident STT model is opened from a speech install directory      */
-/* (config.json, model.safetensors, tokenizer.json). Streams accept    */
+/* A resident STT model is opened from a speech install directory:     */
+/* Whisper or Qwen3-ASR (config.json, weights, tokenizer), or a        */
+/* Parakeet Core ML export (macOS 15+), recognized by its layout.      */
+/* Parakeet Unified is refused here; live text uses                    */
+/* ts_audio_stream_*. Parakeet reports no language. Streams accept     */
 /* bounded PCM chunks: at most two seconds of base64 f32               */
 /* little-endian 16 kHz mono per append. The stream buffers prior      */
 /* audio internally; callers never resend. On the CPU reference path   */
@@ -267,12 +270,19 @@ void ts_string_free(char *s);
  *                       null ASKS THE OS, so Low Power Mode selects
  *                       efficiency. Name one explicitly when measuring.
  *   maxTokensPerSec   number | null
- *   speculation       "off" | "auto" | number | "<number>" | null
+ *   speculation       "off" | "auto" | number | "<number>" | "adaptive" |
+ *                       "adaptive:<N>" | null
  *                       (default auto). Resolved at OPEN, because that is
  *                       where the drafter's state is allocated. A NAMED
  *                       block that cannot be served fails this call; "auto"
  *                       that cannot be served opens and reports why in
  *                       sessionInfo.speculation.
+ *                       "adaptive" is EXPERIMENTAL and step-drafter (MTP)
+ *                       only: the round size moves between 2 and a cap N
+ *                       (3..15, default 4) with the acceptance each round
+ *                       saw. It is a named request like a number, so it
+ *                       fails this call when it cannot be served, and
+ *                       "auto" never picks it. The head is allocated at N.
  *   speculativeDrafter "auto" | "mtp" | "dflash" | null
  *                       (default auto). "auto" ENABLES an MTP head and only
  *                       REPORTS a DFlash2 one, which is measured rather
@@ -447,7 +457,7 @@ void ts_image_buffer_free(uint8_t *bytes, size_t len);
  *     "steering": { "active", "supported", "reason", "mode", "scale",
  *                   "summary" },
  *     "toolCalling": { "native", "reason" },
- *     "speculation": { "block", "drafter", "reason" },
+ *     "speculation": { "block", "adaptive", "drafter", "reason" },
  *     "vision": { "active", "imageTokenId", "reason", "source",
  *                 "sidecarPath" },
  *     "kvBits",
@@ -502,7 +512,9 @@ void ts_image_buffer_free(uint8_t *bytes, size_t len);
  * does not draft ahead; that null IS the "is it on" test, and drafter
  * ("mtp" | "dflash") is non-null exactly when block is. speculation.reason
  * says why it is off when a caller might have expected otherwise, and is
- * null both when they asked for "off" and when it is on.
+ * null both when they asked for "off" and when it is on. speculation.adaptive
+ * is true when block is the CAP of adaptive depth rather than a fixed round
+ * size, and is always false while block is null.
  *
  * vision.active MEANS "AN IMAGE WOULD BE SERVED", NOT "A TOWER EXISTS", and
  * a host must gate its attach control on it rather than on the family name.
@@ -868,6 +880,24 @@ int32_t ts_humanize(const TsSession *s, const char *draft,
  *             any client opt its own traffic out of the repair this
  *             deployment chose. Applies to every model attached to this
  *             server, including ones attached later.
+ *   prefixReuse
+ *           bool | null. Whether a request continues from the previous
+ *             request's KV cache wherever the prompts agree, instead of
+ *             re-prefilling the transcript (turbospark-server
+ *             --prefix-reuse). null leaves each attached session's own
+ *             open-time decision alone, and a bare session resolves to ON.
+ *
+ *             PROCESS-LEVEL, for the same reason guardrails is: a
+ *             per-request field would let any client opt its own traffic out
+ *             of the isolation this deployment chose. Once a server is
+ *             attached, one engine's KV cache is reachable by every client
+ *             of that server and is not partitioned by API key, so reuse
+ *             can make a match against ANOTHER client's prompt observable
+ *             through response timing. Pass false for a server with more
+ *             than one client; true is for a single trusted client, which
+ *             is the multi-turn shape the optimization is for. Applies to
+ *             every model attached to this server, including ones attached
+ *             later through ts_server_attach_session.
  *   embeddingModel
  *           string | null. An embedding model (.safetensors directory or
  *             alias) to attach at startup, enabling /v1/embeddings.
@@ -1000,6 +1030,9 @@ void ts_server_stop(TsServer *server);
  * continue to detach by the id it attached. "modelId" is the FIRST of them
  * ("" when none), kept for a reader written when a server could serve only
  * one; on a two-model server it is half the truth, so show "models".
+ *
+ * "embeddingModels" is the subset of "models" that serves /v1/embeddings
+ * (they stay in "models", since hosts detach by those ids).
  *
  * "imageModels" and "audioModels" are the attached image and audio model ids,
  * in the same canonical form as "models". "authEnabled" is whether an apiKey
@@ -1593,6 +1626,12 @@ int32_t ts_kv_quant_supported(int64_t full_head_dim, const uint8_t *layer_mask,
 int32_t ts_family_capabilities_json(const char *family, char **out);
 
 /*
+ * Returns 1 if the host chip is an Apple Silicon M4 or newer capable of ANE prefill,
+ * 0 otherwise.
+ */
+int32_t ts_chip_supports_ane_prefill(void);
+
+/*
  * What installing `alias` will cost, as {"downloadBytes","installBytes"}.
  * Call before ts_install to show a determinate bar and a space warning.
  */
@@ -1765,21 +1804,42 @@ int32_t ts_embedding_encode_request_json(const char *model_path,
  * Pinned embedding profiles (crates/catalog/src/embedding_models.json).
  * Writes a JSON array to *out (free with ts_string_free); each row has
  * alias, display_name, family, backend, repository, revision, license,
- * modalities, dimensions, matryoshka_dims, download_bytes, installed_path
- * (null until a verified install exists), can_run and unavailable_reason.
- * An installed alias works anywhere an embedding model path is accepted.
+ * modalities, dimensions, matryoshka_dims, status ("verified", "runs" or
+ * "caveat"), gates (the test targets behind "verified"), download_bytes,
+ * installed_path (null until an install verifies against the CURRENT pin),
+ * install_state ("current", "stale" = older pin or damaged and replaced by a
+ * download, "foreign" = refused by a download, or "absent"),
+ * install_problem (why not, in words), can_run and unavailable_reason. An installed alias works anywhere an embedding model
+ * path is accepted.
  */
 int32_t ts_embedding_catalog_json(char **out);
 
 /*
+ * The verdict for one embedding model argument (a pinned alias or a
+ * directory), without loading it. Writes to *out:
+ *   {"input", "resolved_path", "runnable", "family", "backend",
+ *    "verified", "profile_alias", "refused_because"}
+ * Runnable families: the Core ML EmbeddingGemma 2 export, and BERT or
+ * XLM-RoBERTa encoders (config.json model_type) with CLS pooling. Others are
+ * refused with a reason. "verified" is true only for the verified install of
+ * a catalog profile whose status is "verified". Every embedding open and
+ * server attach applies the same check.
+ */
+int32_t ts_embedding_probe_json(const char *model_path, char **out);
+
+/*
  * Downloads, verifies (size and SHA-256 per file) and installs one pinned
  * embedding profile into models/embeddings/<alias> of the default store.
- * Progress arrives as TS_INSTALL_BYTES; ts_install_cancel stops it with
- * TS_ERR_CANCELLED. Refuses an existing install. Writes
+ * `revision` must be the catalog's current pin for `alias` (the one the host
+ * showed), else TS_ERR_INVALID_ARGUMENT before any work. Refuses an install
+ * that already verifies and a folder TurboSpark did not write; replaces an
+ * older pin of the same alias. Progress arrives as TS_INSTALL_BYTES;
+ * ts_install_cancel stops it with TS_ERR_CANCELLED. Writes
  * {"alias", "path"} to *out.
  */
-int32_t ts_embedding_install(const char *alias, TsInstallCallback callback,
-                             void *userdata, char **out);
+int32_t ts_embedding_install(const char *alias, const char *revision,
+                             TsInstallCallback callback, void *userdata,
+                             char **out);
 
 /*
  * Document OCR on Core ML (Unlimited OCR, macOS 15+).
@@ -1791,9 +1851,27 @@ int32_t ts_embedding_install(const char *alias, TsInstallCallback callback,
  */
 typedef struct TsOcrSession TsOcrSession;
 
+/*
+ * Pinned OCR profiles (crates/catalog/src/ocr_models.json). Writes a JSON
+ * array to *out: alias, display_name, family, backend, repository,
+ * revision, license, download_bytes, installed_path (null until an install
+ * verifies against the current pin), can_run and unavailable_reason.
+ */
+int32_t ts_ocr_catalog_json(char **out);
+
+/*
+ * Downloads, verifies and installs one pinned OCR profile into
+ * models/ocr/<alias> of the default store, under the same revision,
+ * refusal and replacement rules as ts_embedding_install. Writes
+ * {"alias", "path"} to *out.
+ */
+int32_t ts_ocr_install(const char *alias, const char *revision,
+                       TsInstallCallback callback, void *userdata, char **out);
+
 /* Opens a directory holding UnlimitedOcrPageEncoder.mlpackage,
  * UnlimitedOcrDecoder.mlpackage, embeddings.f16, tokenizer.json and
- * config.json. The first open compiles the decoder for this machine. */
+ * config.json, or a pinned OCR alias (resolved only to an install of its
+ * current pin). The first open compiles the decoder for this machine. */
 int32_t ts_ocr_open(const char *model_path, TsOcrSession **out);
 
 /* Closes a session. Not while a read is in flight. NULL is a no-op. */
@@ -1892,8 +1970,10 @@ typedef struct TsAudioJob TsAudioJob;
  * more ts_audio_job_append() of input PCM, then exactly one ts_audio_job_run()
  * (a second run is refused), then ts_audio_job_close(). Transcription input
  * is 16 kHz mono f32. For a voice-cloning text_to_speech model (family
- * "megatts3") the appended PCM is the mono reference voice at the request's
- * reference_sample_rate, 1 to 30 seconds. One append carries at most 32,000
+ * "megatts3" or "fish_drama3") the appended PCM is the mono reference voice
+ * at the request's reference_sample_rate, 1 to 30 seconds. Drama 3 also
+ * speaks without a reference, so appending nothing is valid there. One append
+ * carries at most 32,000
  * samples and the whole job at most 30 minutes. Appends after run has started
  * are refused.
  *
@@ -1902,12 +1982,36 @@ typedef struct TsAudioJob TsAudioJob;
  * runtime has session entry points for) is refused at open as an unknown
  * variant. Request keys: task, language, text, voice, speed, caption, lyrics,
  * duration_seconds, steps, seed, instruction, reference_text, p_w, t_w,
- * reference_sample_rate, consent; an unrecognised key is refused. Voice
+ * temperature, top_p, top_k, max_frames, reference_sample_rate, consent; an
+ * unrecognised key is refused. Voice
  * cloning requires consent: true (the caller has the right to use the
  * reference voice), reference_sample_rate, and English text; p_w (0.1 to 5)
  * and t_w (0.1 to 10) weigh intelligibility and similarity. Send steps (1 to
  * 100) explicitly: an omitted steps means the request type's 30, not the
  * model's default of 16 (8, 16 and 32 are the app's Fast, Balanced and Best).
+ *
+ * FISH AUDIO DRAMA 3 (family "fish_drama3", Metal only, mono 44.1 kHz). Text
+ * is at most 32,768 bytes and may carry inline cues such as [whispers] and
+ * speaker tags <|speaker:0|> to <|speaker:15|>. A reference makes the request
+ * a clone: it then requires consent: true, reference_sample_rate and
+ * reference_text, the exact words spoken in the reference. Without a
+ * reference the model picks its own voice, and reference_text is refused.
+ * speed must be 1.0, and instruction, p_w and t_w are refused.
+ * steps is ignored. The sampler fields default to the reference recipe
+ * (temperature 0.7, top_p 0.7, top_k 30): temperature is finite and not
+ * negative, top_p is above 0 through 1, top_k is at least 1, and max_frames
+ * (1 through 1024, a frame is 46.4 ms) bounds one chunk and can only shorten
+ * it. Every other family refuses these four keys. A fixed seed repeats a run.
+ *
+ * DERIVED INSTALLS. A catalog profile with a "derived" object (Drama 3)
+ * does not copy its files: the install downloads five small pinned files and
+ * converts the upstream shards on this Mac. It needs derived.working_bytes
+ * free (about 25 GiB), takes tens of minutes, and refuses before any
+ * network work when the space is short. Progress arrives as one bar over
+ * upstream bytes and then over the hash of the converted files, with the
+ * stage in the callback's path. Cancelling stops it at the next chunk and
+ * leaves nothing behind. The receipt records each converted file's size and
+ * sha256, and ts_audio_session_open verifies them like any pinned file.
  *
  * CALLBACK. TsAudioCallback is invoked synchronously on the thread calling
  * ts_audio_job_run, and `kind` says what the other arguments hold:
@@ -1922,8 +2026,11 @@ typedef struct TsAudioJob TsAudioJob;
  *
  * ts_audio_job_run's result is {"transcript": {...} | null, "pcm_format":
  * {"sample_rate", "channels"} | null, "sample_count": number, "seed": number
- * | null}. A cancelled or failed run returns non-zero with the reason in
- * ts_last_error.
+ * | null, "stopped_early": bool}. stopped_early is true when a Drama 3 take
+ * likely stopped speaking before its text ended (a chunk hit its frame cap
+ * without EOS, or the audio held a silence no completed take has); a host can
+ * retake with another seed. It is false for every other model. A cancelled or
+ * failed run returns non-zero with the reason in ts_last_error.
  *
  * CANCELLATION. ts_audio_job_cancel and ts_audio_session_cancel never block
  * and are safe from any thread, including during run. ts_audio_job_status_json
@@ -1932,7 +2039,7 @@ typedef struct TsAudioJob TsAudioJob;
  *
  * OPEN COST. ts_audio_session_open of a managed model hashes its files to
  * verify them before loading, with no progress and no cancel. Call it off the
- * main thread.
+ * main thread. A Drama 3 install is about 24 GB, so this takes longest there.
  */
 typedef void (*TsAudioCallback)(void *userdata, int kind, const char *json,
                                size_t json_len, const float *pcm, size_t count);
@@ -1975,7 +2082,7 @@ int ts_audio_install_with_options(const char *identity_json, const char *options
 /* options: task, allow_portable (false), allow_experimental_metal (false),
    optional expected_family. A mismatch refuses the loaded model. MegaTTS3
    opens on Metal; allow_portable lets it fall back to the CPU reference path
-   only when Metal cannot open. */
+   only when Metal cannot open. Drama 3 opens on Metal only. */
 int ts_audio_session_open(const char *path, const char *options_json, TsAudioSession **out);
 /* A cancel request for one ts_audio_session_open_cancellable call. Create it
  * before the open, press Stop from any thread with _cancel (never blocks, a
@@ -2012,6 +2119,41 @@ int ts_audio_job_run(const TsAudioJob *job, TsAudioCallback cb, void *userdata, 
 int ts_audio_job_cancel(const TsAudioJob *job);
 int ts_audio_job_status_json(const TsAudioJob *job, char **out);
 int ts_audio_job_close(TsAudioJob *job);
+
+/* LIVE TRANSCRIPTION STREAMS over a streaming speech install (Parakeet
+ * Unified EN on Core ML, family "parakeet_unified"). Unlike an audio
+ * session, a stream never uses Metal and takes no heavy-work permit, so chat
+ * and image work keep running while it transcribes. Batch opens of the same
+ * install are refused.
+ *
+ * ts_audio_stream_open verifies a managed install exactly as
+ * ts_audio_session_open_cancellable does (`token` and `cb` may be NULL;
+ * options_json may be NULL or {"expected_family":"parakeet_unified"}). The
+ * first load compiles the encoder for the Neural Engine, which can take
+ * minutes and is not interruptible; later loads come from the cache.
+ *
+ * append (1..32000 samples of 16 kHz mono f32) and finish run synchronously
+ * on the calling thread and return JSON in *out (free with ts_string_free):
+ * {"appended_text","closed_words":[{"text","start_seconds","end_seconds"}],
+ *  "open_word","received_seconds","committed_through_seconds","is_final"}.
+ * Joining appended_text across calls gives the transcript; committed text is
+ * never revised. Text trails the audio by the encoder's chunk plus
+ * look-ahead (about 1.1 s) plus compute. A call made while another runs on
+ * the same stream fails with TS_ERR_BUSY. finish commits the tail and
+ * restarts the stream at time zero for a new segment.
+ *
+ * cancel works from any thread and is terminal: the stream refuses further
+ * calls (TS_ERR_CANCELLED for the interrupted one). close is refused while a
+ * call is running; do not start a call concurrently with close. */
+typedef struct TsAudioStream TsAudioStream;
+int ts_audio_stream_open(const char *path, const char *options_json,
+                         const TsAudioOpenToken *token, TsAudioCallback cb,
+                         void *userdata, TsAudioStream **out);
+int ts_audio_stream_append(const TsAudioStream *stream, const float *pcm, size_t count,
+                           char **out);
+int ts_audio_stream_finish(const TsAudioStream *stream, char **out);
+int ts_audio_stream_cancel(const TsAudioStream *stream);
+int ts_audio_stream_close(TsAudioStream *stream);
 
 #ifdef __cplusplus
 }

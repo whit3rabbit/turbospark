@@ -225,3 +225,62 @@ fn prefix_reuse_is_off_only_when_asked_and_defaults_to_on() {
     assert!(absent.prefix_reuse.unwrap_or(true));
     assert!(!off.prefix_reuse.unwrap_or(true));
 }
+
+#[test]
+fn adaptive_spellings_match_the_cli_and_are_bounded() {
+    let default = foundation::runtime_config::DEFAULT_ADAPTIVE_CAP;
+    assert_eq!(
+        speculation(&json("\"adaptive\"")).unwrap(),
+        runtime::Speculation::Adaptive(default)
+    );
+    assert_eq!(
+        speculation(&json("\"adaptive:12\"")).unwrap(),
+        runtime::Speculation::Adaptive(12)
+    );
+    // Case-insensitive like "auto" and "off".
+    assert_eq!(
+        speculation(&json("\"Adaptive:3\"")).unwrap(),
+        runtime::Speculation::Adaptive(3)
+    );
+    // Below the floor's headroom, past the verify row cap, and noise: all
+    // heard about rather than defaulted.
+    for bad in [
+        "\"adaptive:2\"",
+        "\"adaptive:16\"",
+        "\"adaptive:\"",
+        "\"adaptive:x\"",
+        "\"adaptive3\"",
+    ] {
+        assert!(speculation(&json(bad)).is_err(), "{bad} must be refused");
+    }
+    // A bare number is still a FIXED block, not adaptive.
+    assert_eq!(
+        speculation(&json("4")).unwrap(),
+        runtime::Speculation::Block(4)
+    );
+}
+
+#[test]
+fn ane_prefill_mode_defaults_to_auto_and_rejects_typos() {
+    assert_eq!(
+        ane_prefill_mode(None).unwrap(),
+        runtime::AnePrefillMode::Auto
+    );
+    assert_eq!(
+        ane_prefill_mode(Some("auto")).unwrap(),
+        runtime::AnePrefillMode::Auto
+    );
+    assert_eq!(
+        ane_prefill_mode(Some("split")).unwrap(),
+        runtime::AnePrefillMode::Split
+    );
+    assert_eq!(
+        ane_prefill_mode(Some("off")).unwrap(),
+        runtime::AnePrefillMode::Off
+    );
+    assert_eq!(
+        ane_prefill_mode(Some("break")).unwrap(),
+        runtime::AnePrefillMode::Break
+    );
+    assert!(ane_prefill_mode(Some("invalid")).is_err());
+}

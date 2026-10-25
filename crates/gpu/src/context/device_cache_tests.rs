@@ -275,16 +275,19 @@ fn pipeline_cache_concurrent_writers_publish_complete_entries() {
     {
         return;
     }
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
     let workers: Vec<_> = [7, 17]
         .into_iter()
         .map(|value| {
             let path = directory.0.clone();
+            let barrier = barrier.clone();
             std::thread::spawn(move || {
                 autorelease_pool(|| {
                     let mut context = context(Some(&path), false);
                     assert_eq!(run(&mut context, SOURCE, "cache_test", value)[0], value);
                     // Both workers also write the same key concurrently.
                     assert_eq!(run(&mut context, SOURCE, "other_test", 7)[0], 17);
+                    barrier.wait();
                     context.flush_pipeline_cache();
                     assert_eq!(context.compilation_stats().archive_writes, 2);
                     assert_eq!(context.compilation_stats().archive_errors, 0);

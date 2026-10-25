@@ -39,6 +39,7 @@ pub(crate) fn family_capabilities_json(family: &str) -> String {
         "family": family,
         "known": parsed.is_some(),
         "steeringSupported": parsed.map(steering_supported).unwrap_or(false),
+        "anePrefillSupported": parsed.map(|f| f == ModelFamily::QwenGdnDense).unwrap_or(false),
     })
     .to_string()
 }
@@ -82,6 +83,7 @@ mod tests {
             serde_json::from_str(&family_capabilities_json("not-a-family")).unwrap();
         assert_eq!(v["known"], false);
         assert_eq!(v["steeringSupported"], false);
+        assert_eq!(v["anePrefillSupported"], false);
         assert_eq!(v["family"], "not-a-family");
     }
 
@@ -95,6 +97,12 @@ mod tests {
             assert_eq!(
                 v["steeringSupported"],
                 runtime::family_dispatches_steering(family),
+                "{}",
+                family.as_str()
+            );
+            assert_eq!(
+                v["anePrefillSupported"],
+                family == ModelFamily::QwenGdnDense,
                 "{}",
                 family.as_str()
             );

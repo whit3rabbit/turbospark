@@ -13,6 +13,19 @@ use super::*;
 /// One conv case: channel counts, kernel geometry, grouping and length.
 type EightDims = (usize, usize, usize, usize, usize, usize, usize, usize);
 
+/// One conv2d case: channels, input size, kernel, stride, padding, groups.
+type NineDims = (
+    usize,
+    usize,
+    usize,
+    usize,
+    usize,
+    usize,
+    usize,
+    usize,
+    usize,
+);
+
 /// Deterministic xorshift stream; avoids a dev-dependency.
 struct Rng(u64);
 
@@ -299,6 +312,14 @@ fn conv1d_is_bitwise_identical_to_reference() {
         // Large enough to clear the threading threshold.
         (32, 64, 7, 1, 3, 1, 1, 400),
         (64, 64, 3, 1, 1, 1, 1, 600),
+        // Pointwise (the tiled GEMM path): short and odd time spans, odd
+        // channel counts, dilation (a no-op at kernel 1), and threaded
+        // sizes such as the Multitalker conv module's 14-frame chunk.
+        (5, 7, 1, 1, 0, 1, 1, 3),
+        (13, 9, 1, 1, 0, 3, 1, 17),
+        (33, 65, 1, 1, 0, 1, 1, 9),
+        (256, 512, 1, 1, 0, 1, 1, 14),
+        (128, 96, 1, 1, 0, 1, 1, 301),
     ];
     for &(in_ch, out_ch, kernel, stride, padding, dilation, groups, seq) in cases {
         let x = rng.vec(in_ch * seq);
@@ -316,6 +337,100 @@ fn conv1d_is_bitwise_identical_to_reference() {
                 ),
                 &conv1d_reference(
                     &x, &w, b, in_ch, out_ch, kernel, stride, padding, dilation, groups,
+                ),
+            );
+        }
+    }
+}
+
+/// The original single-threaded `conv2d` loop, kept verbatim.
+#[allow(clippy::too_many_arguments)]
+fn conv2d_reference(
+    x: &[f32],
+    w: &[f32],
+    bias: Option<&[f32]>,
+    in_ch: usize,
+    out_ch: usize,
+    h: usize,
+    w_dim: usize,
+    kh: usize,
+    kw: usize,
+    stride: usize,
+    padding: usize,
+    groups: usize,
+) -> Vec<f32> {
+    let out_h = (h + 2 * padding - kh) / stride + 1;
+    let out_w = (w_dim + 2 * padding - kw) / stride + 1;
+    let in_per_g = in_ch / groups;
+    let out_per_g = out_ch / groups;
+    let mut out = vec![0.0f32; out_ch * out_h * out_w];
+    for oc in 0..out_ch {
+        let g = oc / out_per_g;
+        for oh in 0..out_h {
+            for ow in 0..out_w {
+                let mut acc = bias.map_or(0.0, |b| b[oc]);
+                for ic_in_g in 0..in_per_g {
+                    let ic = g * in_per_g + ic_in_g;
+                    let x_ch = &x[ic * h * w_dim..(ic + 1) * h * w_dim];
+                    let w_base = (((oc * in_per_g) + ic_in_g) * kh) * kw;
+                    for kh_i in 0..kh {
+                        let ih = oh * stride + kh_i;
+                        if ih < padding || ih - padding >= h {
+                            continue;
+                        }
+                        let ih = ih - padding;
+                        for kw_i in 0..kw {
+                            let iw = ow * stride + kw_i;
+                            if iw < padding || iw - padding >= w_dim {
+                                continue;
+                            }
+                            acc += x_ch[ih * w_dim + (iw - padding)] * w[w_base + kh_i * kw + kw_i];
+                        }
+                    }
+                }
+                out[oc * out_h * out_w + oh * out_w + ow] = acc;
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn conv2d_is_bitwise_identical_to_reference() {
+    let mut rng = Rng(0x6A09_E667_F3BC_C908);
+    // (in_ch, out_ch, h, w, kh, kw, stride, padding, groups)
+    let cases: &[NineDims] = &[
+        (1, 1, 5, 4, 1, 1, 1, 0, 1),
+        (1, 4, 9, 8, 3, 3, 2, 0, 1),
+        (3, 6, 11, 7, 3, 2, 1, 1, 1),
+        (4, 4, 10, 9, 3, 3, 2, 1, 4),
+        (6, 4, 8, 8, 2, 3, 3, 2, 2),
+        // Pointwise (the tiled GEMM path), including odd position counts.
+        (5, 7, 3, 3, 1, 1, 1, 0, 1),
+        (33, 17, 7, 5, 1, 1, 1, 0, 1),
+        // Multitalker dw_striding shapes: the first conv, a depthwise
+        // conv, and a pointwise conv large enough to clear the threading
+        // threshold.
+        (1, 32, 61, 64, 3, 3, 2, 0, 1),
+        (32, 32, 30, 31, 3, 3, 2, 0, 32),
+        (64, 64, 30, 32, 1, 1, 1, 0, 1),
+    ];
+    for &(in_ch, out_ch, h, w_dim, kh, kw, stride, padding, groups) in cases {
+        let x = rng.vec(in_ch * h * w_dim);
+        let w = rng.vec(out_ch * (in_ch / groups) * kh * kw);
+        let bias = rng.vec(out_ch);
+        for with_bias in [false, true] {
+            let b = with_bias.then_some(&bias[..]);
+            assert_bits_eq(
+                &format!(
+                    "conv2d in={in_ch} out={out_ch} {h}x{w_dim} k={kh}x{kw} s={stride} \
+                     p={padding} g={groups} bias={with_bias}"
+                ),
+                &conv2d(
+                    &x, &w, b, in_ch, out_ch, h, w_dim, kh, kw, stride, padding, groups,
+                ),
+                &conv2d_reference(
+                    &x, &w, b, in_ch, out_ch, h, w_dim, kh, kw, stride, padding, groups,
                 ),
             );
         }
@@ -393,6 +508,10 @@ fn sdpa_is_bitwise_identical_to_reference() {
         (4, 50, 32, 40),
         (8, 130, 64, 64),
         (16, 200, 128, 128),
+        // Threaded with several query tiles per worker, the last one
+        // partial (the diarizer's self-attention is 542 x 542 x 64).
+        (130, 61, 64, 64),
+        (300, 41, 16, 24),
     ] {
         let q = rng.vec(qh * dq);
         let k = rng.vec(kv * dq);
@@ -659,7 +778,7 @@ fn head_split_attention_merge_matches_the_per_head_loop() {
             let mut want = vec![0.0f32; qr.len()];
             for h in 0..heads {
                 let plane = h * seq * head_dim;
-                let o = sdpa(
+                let o = sdpa_reference(
                     &qr[plane..plane + seq * head_dim],
                     &kr[plane..plane + seq * head_dim],
                     &vr[plane..plane + seq * head_dim],
@@ -717,6 +836,18 @@ fn mha_handles_cross_attention_lengths() {
 #[test]
 #[ignore = "timing harness, not a correctness test"]
 fn kernel_bench() {
+    kernel_bench_body();
+}
+
+/// [`kernel_bench`] with the caller itself on a pool worker, so kernel
+/// dispatch takes rayon's in-pool path instead of the cold injection.
+#[test]
+#[ignore = "timing harness, not a correctness test"]
+fn kernel_bench_in_pool() {
+    rayon::scope(|_| kernel_bench_body());
+}
+
+fn kernel_bench_body() {
     use std::time::Instant;
 
     fn median_ms(mut f: impl FnMut()) -> f64 {
@@ -740,6 +871,13 @@ fn kernel_bench() {
         (1, 1024, 4096),
         (1, 1024, 151936),
         (64, 1024, 1024),
+        // Multitalker encoder (one speaker's 14-row chunk) and Nemotron
+        // diarizer (spkcache + FIFO + chunk) shapes.
+        (14, 1024, 4096),
+        (14, 4096, 1024),
+        (542, 512, 1536),
+        (542, 512, 2048),
+        (542, 2048, 512),
     ] {
         let x = rng.vec(m * k);
         let w = rng.vec(n * k);

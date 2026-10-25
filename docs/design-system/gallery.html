@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TurboSpark design system gallery</title>
+<style>
+  body { margin: 0; padding: 16px; font: 13px/1.4 -apple-system, system-ui, sans-serif; background: #6b6f76; color: #fff; }
+  header { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; }
+  h1 { font-size: 16px; margin: 0; }
+  label { display: flex; gap: 6px; align-items: center; }
+  .card { margin: 0 0 16px; }
+  .card h2 { font-size: 12px; font-weight: 600; margin: 0 0 4px; }
+  iframe { display: block; border: 0; border-radius: 6px; background: #fff; max-width: 100%; }
+  .error { padding: 12px; background: #400; border-radius: 6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>TurboSpark design system</h1>
+  <label>Theme
+    <select id="theme">
+      <option value="dark">Spark Blue dark</option>
+      <option value="light">Spark Blue light</option>
+      <option value="codex-dark">Codex dark</option>
+      <option value="codex-light">Codex light</option>
+      <option value="emerald-dark">Emerald dark</option>
+      <option value="emerald-light">Emerald light</option>
+      <option value="hc-dark">High contrast dark</option>
+      <option value="hc-light">High contrast light</option>
+    </select>
+  </label>
+  <label><input type="checkbox" id="rtl"> Right-to-left</label>
+</header>
+<main id="cards"></main>
+<script>
+// Renders each components/<Name>/preview.html with tokens.css and bundle.css
+// injected, the way the published artifact frames them. Needs HTTP: from the
+// repository root run `python3 -m http.server 8000` and open
+// http://localhost:8000/docs/design-system/gallery.html
+// Add a component here when you add its folder.
+const COMPONENTS = ['Cover', 'Button', 'IconButton', 'Chip', 'SearchField', 'EditorSurface', 'Composer',
+  'Card', 'SectionHeader', 'AdaptiveHeader', 'EmptyState', 'ProgressBar', 'StatusDot', 'StatusLabel',
+  'NavigationRail', 'SidebarRow'];
+const cards = document.getElementById('cards');
+const themeSelect = document.getElementById('theme');
+const rtlBox = document.getElementById('rtl');
+let css = '';
+const sources = {};
+
+function render() {
+  const theme = themeSelect.value;
+  cards.textContent = '';
+  for (const name of COMPONENTS) {
+    const src = sources[name];
+    const height = Number((/height=(\d+)/.exec(src) || [0, 120])[1]);
+    const doc = src
+      .replace('<html lang="en">', '<html lang="en" data-theme="' + theme + '"' + (rtlBox.checked ? ' dir="rtl"' : '') + '>')
+      .replace('<head>', '<head><style>' + css + '</style>');
+    const card = document.createElement('section');
+    card.className = 'card';
+    const title = document.createElement('h2');
+    title.textContent = name;
+    const frame = document.createElement('iframe');
+    frame.title = name + ' preview';
+    frame.width = name === 'Cover' ? 960 : 720;
+    frame.height = height + 4;
+    frame.srcdoc = doc;
+    card.append(title, frame);
+    cards.append(card);
+  }
+}
+
+async function load() {
+  try {
+    const text = (path) => fetch(path).then((r) => { if (!r.ok) throw new Error(path + ': ' + r.status); return r.text(); });
+    css = (await text('tokens.css')) + '\n' + (await text('components/bundle.css'));
+    await Promise.all(COMPONENTS.map(async (n) => { sources[n] = await text('components/' + n + '/preview.html'); }));
+    render();
+  } catch (err) {
+    cards.innerHTML = '<p class="error"></p>';
+    cards.firstChild.textContent = 'Could not load the previews (' + err.message + '). Serve the repository over HTTP, as the comment in this file says.';
+  }
+}
+
+themeSelect.addEventListener('change', render);
+rtlBox.addEventListener('change', render);
+load();
+</script>
+</body>
+</html>

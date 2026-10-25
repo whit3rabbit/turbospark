@@ -75,6 +75,23 @@ fn speculation(value: &Option<serde_json::Value>) -> Result<runtime::Speculation
         Some(serde_json::Value::String(s)) if s.eq_ignore_ascii_case("off") => {
             Ok(runtime::Speculation::Off)
         }
+        // Experimental and step-drafter only; the same spellings the CLI
+        // takes. The cap bounds are read from `foundation` like the block's.
+        Some(serde_json::Value::String(s)) if s.eq_ignore_ascii_case("adaptive") => Ok(
+            runtime::Speculation::Adaptive(foundation::runtime_config::DEFAULT_ADAPTIVE_CAP),
+        ),
+        Some(serde_json::Value::String(s))
+            if s.len() > "adaptive:".len() && s[..9].eq_ignore_ascii_case("adaptive:") =>
+        {
+            let min = foundation::runtime_config::MIN_ADAPTIVE_CAP;
+            match s["adaptive:".len()..].parse::<u32>() {
+                Ok(n) if allowed.contains(&n) && n >= min => Ok(runtime::Speculation::Adaptive(n)),
+                _ => Err(format!(
+                    "speculation \"adaptive:N\" needs N in {min}..={}, got {s:?}",
+                    allowed.end()
+                )),
+            }
+        }
         Some(serde_json::Value::String(s)) => match s.parse::<u64>() {
             Ok(n) => block(n),
             Err(_) => Err(format!(
@@ -162,6 +179,15 @@ fn steering_gate(gate: Option<f64>) -> Result<f32, String> {
         Some(g) => Err(format!(
             "steeringGate must be a finite number >= 0, got {g}"
         )),
+    }
+}
+
+/// Maps the wire spelling of `anePrefill`: `auto`, `split`, `off`, `break`.
+pub(crate) fn ane_prefill_mode(value: Option<&str>) -> Result<runtime::AnePrefillMode, String> {
+    match value {
+        None | Some("auto") => Ok(runtime::AnePrefillMode::Auto),
+        Some(s) => runtime::AnePrefillMode::parse(s)
+            .ok_or_else(|| format!("anePrefill must be auto, split, off or break, got {s:?}")),
     }
 }
 
@@ -261,6 +287,7 @@ pub(crate) fn open_with_failure(
         .map(power_profile)
         .transpose()?;
     let kv_quant = kv_bits(&options.kv_bits)?;
+    let requested_ane_mode = ane_prefill_mode(options.ane_prefill.as_deref())?;
 
     if options.steering.is_none()
         && (requested_steering_mode.is_some()
@@ -408,6 +435,13 @@ pub(crate) fn open_with_failure(
     // into a faster one.
     let prefix_reuse = options.prefix_reuse.unwrap_or(true);
     runner.set_prefix_reuse(prefix_reuse);
+    runner.set_ane_prefill(
+        requested_ane_mode,
+        options
+            .ane_prefill_dir
+            .as_deref()
+            .map(std::path::PathBuf::from),
+    );
 
     // Vision memory sidecar (Part A4): attach BEFORE any image is ever
     // processed and before `vision_info` below reads `has_vision_tower` /
@@ -494,6 +528,10 @@ pub(crate) fn open_with_failure(
         runtime::SpeculationPlan::Enabled { block } => Some(*block),
         runtime::SpeculationPlan::Disabled { .. } => None,
     };
+    // Only meaningful with a block: a plan that resolved to Disabled has no
+    // cap to adapt under, and `info` must not report one.
+    let speculation_adaptive =
+        speculation_block.is_some() && matches!(asked, runtime::Speculation::Adaptive(_));
 
     let profile = runtime::resolve_profile(requested_profile);
     let rate = runtime::rate_control_for(profile, options.max_tokens_per_sec);
@@ -553,6 +591,7 @@ pub(crate) fn open_with_failure(
         },
         speculation: SpeculationInfo {
             block: speculation_block,
+            adaptive: speculation_adaptive,
             drafter: speculation_block.map(|_| drafter_name(choice.drafter).to_string()),
             reason: match speculation_plan {
                 runtime::SpeculationPlan::Disabled { reason } => reason,
@@ -568,6 +607,29 @@ pub(crate) fn open_with_failure(
         ),
         kv_bits: kv_quant.label(),
         prefix_reuse,
+        ane_prefill: crate::wire::AnePrefillInfo {
+            active: runner.ane_prefill_mode().is_split(),
+            mode: runner.ane_prefill_mode().as_str().to_string(),
+            supported: runner.ane_prefill_supported(),
+            reason: if !runner.ane_prefill_supported() {
+                if !runtime::hardware_supports_ane_prefill() {
+                    Some("requires Apple Silicon M4 or newer".to_string())
+                } else {
+                    Some("only supported for dense Qwen models".to_string())
+                }
+            } else if !runner.ane_prefill_mode().is_split() {
+                if requested_ane_mode == runtime::AnePrefillMode::Off {
+                    None
+                } else {
+                    Some("prefill programs not found or inactive".to_string())
+                }
+            } else {
+                None
+            },
+            programs_dir: runner
+                .ane_prefill_programs()
+                .map(|p| p.display().to_string()),
+        },
         special_tokens: crate::wire::SpecialTokensInfo {
             bos_id: (tokenizer.bos_id >= 0).then_some(tokenizer.bos_id),
             eos_id: (tokenizer.eos_id >= 0).then_some(tokenizer.eos_id),
@@ -586,6 +648,7 @@ pub(crate) fn open_with_failure(
         max_context: plan.resolved,
         rate,
         speculation_block,
+        speculation_adaptive,
         info,
         load_policy,
         committed_bytes: committed.total(),

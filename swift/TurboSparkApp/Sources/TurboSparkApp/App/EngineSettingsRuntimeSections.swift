@@ -125,6 +125,50 @@ extension EngineSettingsPaneView {
         }
     }
 
+    var anePrefillSection: some View {
+        Section(header: Text("ANE+Steel Prefill Split", bundle: .module)) {
+            Picker(selection: $model.runtimeOptions.anePrefill) {
+                ForEach(AppAnePrefillOption.allCases) { opt in
+                    Text(LocalizedStringKey(opt.menuLabel), bundle: .module).tag(opt)
+                }
+            } label: { Text("Prefill Mode", bundle: .module) }
+            .settingsControl("Prefill Mode", pane: .engine, timing: .modelReload)
+            .pickerStyle(.menu)
+            .onChange(of: model.runtimeOptions.anePrefill) { _, _ in
+                model.persistSettingsDebounced()
+            }
+
+            if let info = model.session?.info {
+                LabeledContent {
+                    Group {
+                        if let ane = info.anePrefill {
+                            if ane.active {
+                                HStack(spacing: 4) {
+                                    Text("Active", bundle: .module)
+                                    Text(verbatim: "(ANE+Steel)")
+                                }
+                            } else if let reason = ane.reason {
+                                Text(verbatim: "Off (\(reason))")
+                            } else {
+                                Text("Off", bundle: .module)
+                            }
+                        } else {
+                            Text("Off", bundle: .module)
+                        }
+                    }
+                    .themedFont(.tiny, systemDesign: .monospaced)
+                    .foregroundStyle(.appSecondary)
+                } label: {
+                    Text("Resolved", bundle: .module)
+                }
+            }
+
+            Text("Splits prompt prefill projections across the Apple Neural Engine and Metal GPU for dense Qwen models on Apple Silicon M4 or newer. Auto enables the split when supported. Takes effect on the next model load.", bundle: .module)
+            .themedFont(.tiny)
+            .foregroundStyle(.appSecondary)
+        }
+    }
+
     var inProcessServerSection: some View {
         Section(header: Text("In-Process Server", bundle: .module)) {
             LabeledContent {

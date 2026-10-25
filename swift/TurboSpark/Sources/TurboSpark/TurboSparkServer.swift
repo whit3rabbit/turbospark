@@ -38,6 +38,24 @@ public struct ServerOptions: Encodable, Sendable {
     /// guardrail a host applies to a reply it read itself covers only that
     /// path, and every HTTP client of this server bypasses it.
     public var guardrails: Guardrails?
+    /// Whether a request continues from the previous request's KV cache
+    /// wherever the prompts agree, instead of re-prefilling the transcript.
+    /// `nil` (the default) leaves each attached session's own open-time
+    /// decision alone -- a bare session resolves to on.
+    ///
+    /// **PROCESS-LEVEL, matching `turbospark-server --prefix-reuse`**, which
+    /// defaults OFF and is worth reading before choosing here. Once a server
+    /// is attached, one engine's KV cache is reachable by every client of
+    /// that server and is not partitioned by API key, so reuse can make a
+    /// match against another client's prompt observable through response
+    /// timing. Pass `false` for a server with more than one client; pass
+    /// `true` for a single trusted client, which is the multi-turn shape
+    /// this optimization is for.
+    ///
+    /// Applied to every session attached to this server, including ones
+    /// attached later, so two models cannot end up served under different
+    /// postures.
+    public var prefixReuse: Bool?
     /// Optional embedding model (.safetensors directory or alias) to attach at startup.
     public var embeddingModel: String?
     /// Optional Hugging Face mirror endpoint (e.g. https://hf-mirror.com).
@@ -72,6 +90,7 @@ public struct ServerOptions: Encodable, Sendable {
         captureText: Bool = false,
         apiKey: String? = nil,
         guardrails: Guardrails? = nil,
+        prefixReuse: Bool? = nil,
         embeddingModel: String? = nil,
         hfEndpoint: String? = nil,
         defaultSystem: String? = nil,
@@ -86,6 +105,7 @@ public struct ServerOptions: Encodable, Sendable {
         self.port = port
         self.apiKey = apiKey
         self.guardrails = guardrails
+        self.prefixReuse = prefixReuse
         self.embeddingModel = embeddingModel
         self.hfEndpoint = hfEndpoint
         self.defaultSystem = defaultSystem
@@ -124,6 +144,9 @@ public struct ServerInfo: Decodable, Sendable, Equatable {
     /// Aliases stay out of this field so a host can use an attach result to
     /// identify and detach exactly one session.
     public let models: [String]
+    /// The ids in `models` that serve `/v1/embeddings`. They stay in
+    /// `models` too, since a host detaches by those ids.
+    public let embeddingModels: [String]
     public let imageModels: [String]
     public let audioModels: [String]
     public let authEnabled: Bool
@@ -133,7 +156,8 @@ public struct ServerInfo: Decodable, Sendable, Equatable {
     /// Spelled out because a hand-written `init(from:)` suppresses the
     /// synthesized one.
     private enum CodingKeys: String, CodingKey {
-        case port, host, modelId, models, imageModels, audioModels, authEnabled, uptimeSeconds, traffic
+        case port, host, modelId, models, embeddingModels, imageModels, audioModels, authEnabled
+        case uptimeSeconds, traffic
     }
 
     /// Decoded tolerantly for the two fields added after this struct
@@ -149,6 +173,7 @@ public struct ServerInfo: Decodable, Sendable, Equatable {
         modelId = try c.decode(String.self, forKey: .modelId)
         models = try c.decodeIfPresent([String].self, forKey: .models)
             ?? (modelId.isEmpty ? [] : [modelId])
+        embeddingModels = try c.decodeIfPresent([String].self, forKey: .embeddingModels) ?? []
         imageModels = try c.decodeIfPresent([String].self, forKey: .imageModels) ?? []
         audioModels = try c.decodeIfPresent([String].self, forKey: .audioModels) ?? []
         authEnabled = try c.decode(Bool.self, forKey: .authEnabled)

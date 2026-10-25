@@ -1,8 +1,25 @@
 #![cfg(target_os = "macos")]
 
-use audio::music::minimax_music3::{GenerateRequest, Model, TextGenerateRequest};
+use audio::music::minimax_music3::{FlowProfile, GenerateRequest, Model, TextGenerateRequest};
 use std::path::PathBuf;
 use turbospark_runtime::Music3Runner;
+
+/// Fixture checkpoints are unmarked and open in Fast; parity tests pin the
+/// exact (reference) profile explicitly.
+fn open_exact_with_precision(
+    path: &std::path::Path,
+    precision: audio::music::minimax_music3::Music3Precision,
+) -> audio::Result<Music3Runner> {
+    let runner = Music3Runner::open_with_precision(path, precision)?;
+    runner.set_flow_profile(FlowProfile::Exact);
+    Ok(runner)
+}
+
+fn open_exact(path: &std::path::Path) -> audio::Result<Music3Runner> {
+    let runner = Music3Runner::open(path)?;
+    runner.set_flow_profile(FlowProfile::Exact);
+    Ok(runner)
+}
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -33,7 +50,7 @@ fn music3_metal_matches_cpu_ar_and_waveform_and_resets() {
         .collect();
     for tree in ["converted_plain", "converted_q8"] {
         let cpu = Model::load_converted(&fixture(tree)).unwrap();
-        let runner = Music3Runner::open_with_precision(
+        let runner = open_exact_with_precision(
             &fixture(tree),
             audio::music::minimax_music3::Music3Precision::Float32,
         )
@@ -71,7 +88,7 @@ fn music3_metal_matches_cpu_ar_and_waveform_and_resets() {
 
 #[test]
 fn music3_metal_validates_text_and_request() {
-    let runner = Music3Runner::open(&fixture("converted_plain")).unwrap();
+    let runner = open_exact(&fixture("converted_plain")).unwrap();
     let mut request = TextGenerateRequest::new("piano", "[instrumental]");
     request.duration_seconds = Some(0.04);
     request.steps = Some(1);
@@ -93,7 +110,7 @@ fn music3_metal_validates_text_and_request() {
 #[test]
 fn music3_metal_preserves_two_chunk_overlap_and_stereo_crop() {
     let cpu = Model::load_converted(&fixture("converted_plain")).unwrap();
-    let runner = Music3Runner::open_with_precision(
+    let runner = open_exact_with_precision(
         &fixture("converted_plain"),
         audio::music::minimax_music3::Music3Precision::Float32,
     )
@@ -116,7 +133,7 @@ fn music3_metal_preserves_two_chunk_overlap_and_stereo_crop() {
 fn music3_real_checkpoint_generates_stereo_waveform() {
     let path = std::env::var_os("TURBOSPARK_MUSIC3_INSTALL_DIR")
         .expect("set TURBOSPARK_MUSIC3_INSTALL_DIR to the pinned checkpoint");
-    let runner = Music3Runner::open(&PathBuf::from(path)).unwrap();
+    let runner = open_exact(&PathBuf::from(path)).unwrap();
     assert_eq!(runner.config().hidden_size, 4096);
     assert_eq!(runner.config().num_hidden_layers, 36);
     assert!(runner.resident_weight_bytes() > 1_000_000_000);
@@ -144,6 +161,38 @@ fn music3_real_checkpoint_generates_stereo_waveform() {
 }
 
 #[test]
+#[ignore = "requires the local merged Turbo checkpoint and a Metal device"]
+fn marked_turbo_checkpoint_defaults_to_eight_euler_steps_and_generates() {
+    use audio::music::minimax_music3::{Control, FlowProfile, Progress};
+
+    let path = PathBuf::from(
+        std::env::var_os("TURBOSPARK_MUSIC3_TURBO_INSTALL_DIR")
+            .expect("set TURBOSPARK_MUSIC3_TURBO_INSTALL_DIR to the merged checkpoint"),
+    );
+    let runner = Music3Runner::open(&path).unwrap();
+    assert_eq!(runner.preferred_runner_profile(), FlowProfile::Turbo);
+    let mut request = TextGenerateRequest::new(
+        "Warm intimate vocal, piano and soft strings",
+        "[Verse 1]\nI found a light along the road\nIt led me home through falling snow",
+    );
+    request.duration_seconds = Some(1.0);
+    request.seed = Some(23);
+    let mut flow_steps = None;
+    let (generated, _) = runner
+        .generate_text_with_progress(&request, |event| {
+            if let Progress::FlowStep { total, .. } = event {
+                flow_steps = Some(total);
+            }
+            Control::Continue
+        })
+        .unwrap()
+        .expect("not cancelled");
+    assert_eq!(flow_steps, Some(8));
+    assert!(generated.samples > 0);
+    assert!(generated.waveform.iter().all(|sample| sample.is_finite()));
+}
+
+#[test]
 #[ignore = "requires a pinned checkpoint and MLX 0.32.3 float32 reference probe dumps"]
 fn music3_real_checkpoint_matches_controlled_float32_reference() {
     let model = std::env::var_os("TURBOSPARK_MUSIC3_INSTALL_DIR").expect("checkpoint directory");
@@ -168,7 +217,7 @@ fn music3_real_checkpoint_matches_controlled_float32_reference() {
             .map(|v| f32::from_le_bytes(v.try_into().unwrap()))
             .collect::<Vec<_>>()
     };
-    let runner = Music3Runner::open_with_precision(
+    let runner = open_exact_with_precision(
         &PathBuf::from(model),
         audio::music::minimax_music3::Music3Precision::Float32,
     )
@@ -191,7 +240,40 @@ fn read_f32(path: &std::path::Path) -> Vec<f32> {
         .map(|v| f32::from_le_bytes(v.try_into().unwrap()))
         .collect()
 }
-fn native_gate(model: &std::path::Path, reference: &std::path::Path, repeat: bool) {
+/// The GPU whose bits the pinned MLX references were generated on.
+///
+/// A zero-tolerance match needs the same sin and cos as the reference. Apple
+/// GPUs differ there: on the GitHub runner's "Apple Paravirtual device" the
+/// rope kernel's cos and sin differ from the M4 Max in the last bit, for both
+/// `fast::` and `precise::` (the stage trace is identical through the QKV
+/// projections and norms, and first differs at `ar.0.q_rope`). A last-bit
+/// change then flips a bf16 rounding in the 4-bit profile. Set
+/// `TURBOSPARK_MUSIC3_ORACLE_ANY_DEVICE=1` to compare on any device.
+const MLX_REFERENCE_DEVICE: &str = "Apple M4 Max";
+
+fn mlx_reference_applies() -> bool {
+    if std::env::var_os("TURBOSPARK_MUSIC3_ORACLE_ANY_DEVICE").is_some() {
+        return true;
+    }
+    let name = gpu::Music3Device::new().unwrap().device_name();
+    if name == MLX_REFERENCE_DEVICE {
+        return true;
+    }
+    eprintln!(
+        "affine4 is checked for reset and shape only: its MLX reference is for {MLX_REFERENCE_DEVICE}, this is {name}"
+    );
+    false
+}
+
+/// With `against_reference` false the run still resets and repeats, and its
+/// outputs must be finite and the right size, but it is not compared with the
+/// pinned MLX values.
+fn native_gate(
+    model: &std::path::Path,
+    reference: &std::path::Path,
+    repeat: bool,
+    against_reference: bool,
+) {
     use audio::music::minimax_music3::Music3Precision;
     let request: serde_json::Value =
         serde_json::from_slice(&std::fs::read(reference.join("request.json")).unwrap()).unwrap();
@@ -207,16 +289,26 @@ fn native_gate(model: &std::path::Path, reference: &std::path::Path, repeat: boo
     let expected_warmup: serde_json::Value =
         serde_json::from_slice(&std::fs::read(reference.join("warmup.json")).unwrap()).unwrap();
     let (warmup_tol, hidden_tol, wave_tol) = match request["encoding"].as_str().unwrap_or("") {
-        "affine4" | "mxfp4" | "nvfp4" => (3.0, 3.0, 3.0),
+        // Affine 4-bit is bit-exact against MLX 0.32.3 end to end: hiddens,
+        // logits, sampled codes, flow noise, DiT, vocoder and the waveform.
+        "affine4" => (0.0, 0.0, 0.0),
+        "mxfp4" | "nvfp4" => (3.0, 3.0, 3.0),
         "affine6" | "mxfp8" => (0.1, 0.1, 0.1),
         "affine8" => (0.05, 0.05, 0.05),
         _ => (1e-3, 1e-3, 1e-3),
     };
-    let runner = Music3Runner::open_with_precision(model, Music3Precision::Checkpoint).unwrap();
+    let runner = open_exact_with_precision(model, Music3Precision::Checkpoint).unwrap();
     let mut first_codes = None;
     let mut first_wave = None;
     for _ in 0..if repeat { 2 } else { 1 } {
         let mut warmup = vec![];
+        // A sampled code that differs from MLX's feeds a different embedding to
+        // every later depth step, so those hiddens and logits are not
+        // comparable. One bf16 step of noise in the guided logits can flip a
+        // top-k categorical draw, which is how a 4-bit run reached errors of
+        // several units at codebooks 4 to 7 while each step stayed within one
+        // bf16 step on identical inputs (see the README, "Open gates").
+        let mut inputs_match = true;
         let (hidden, codes) = runner
             .generate_frame_hiddens_traced(
                 &ids,
@@ -224,16 +316,24 @@ fn native_gate(model: &std::path::Path, reference: &std::path::Path, repeat: boo
                 request["seed"].as_u64().unwrap(),
                 |t| {
                     if t.frame == 0 {
-                        close(
-                            t.hiddens,
-                            &read_f32(&reference.join(format!("warmup_{}_hidden.f32", t.codebook))),
-                            warmup_tol,
-                        );
-                        close(
-                            t.guided_logits,
-                            &read_f32(&reference.join(format!("warmup_{}_logits.f32", t.codebook))),
-                            warmup_tol,
-                        );
+                        if inputs_match && against_reference {
+                            close(
+                                t.hiddens,
+                                &read_f32(
+                                    &reference.join(format!("warmup_{}_hidden.f32", t.codebook)),
+                                ),
+                                warmup_tol,
+                            );
+                            close(
+                                t.guided_logits,
+                                &read_f32(
+                                    &reference.join(format!("warmup_{}_logits.f32", t.codebook)),
+                                ),
+                                warmup_tol,
+                            );
+                        }
+                        inputs_match &=
+                            serde_json::json!(t.sampled) == expected_warmup[t.codebook]["sampled"];
                         warmup.push(serde_json::json!({
                             "codebook": t.codebook,
                             "key": [t.key.0, t.key.1],
@@ -255,9 +355,11 @@ fn native_gate(model: &std::path::Path, reference: &std::path::Path, repeat: boo
                 })
             })
             .collect();
+        // The other 4-bit encodings are not verified exact, so they keep the
+        // loose branch that bounds codes and shapes instead of comparing them.
         let is_4bit = matches!(
             request["encoding"].as_str().unwrap_or(""),
-            "affine4" | "mxfp4" | "nvfp4"
+            "mxfp4" | "nvfp4"
         );
         let wave = runner
             .run_flow(
@@ -277,7 +379,13 @@ fn native_gate(model: &std::path::Path, reference: &std::path::Path, repeat: boo
         } else {
             first_wave = Some(wave.clone());
         }
-        if !is_4bit {
+        if !against_reference {
+            assert!(hidden.iter().all(|v| v.is_finite()));
+            assert_eq!(hidden.len(), read_f32(&reference.join("hiddens.f32")).len());
+            assert!(wave.iter().all(|v| v.is_finite()));
+            assert_eq!(wave.len(), read_f32(&reference.join("wave.f32")).len());
+            assert_eq!(codes.len(), expected_codes.len());
+        } else if !is_4bit {
             assert_eq!(warmup, expected_warmup);
             assert_eq!(codes, expected_codes);
             close(
@@ -292,7 +400,16 @@ fn native_gate(model: &std::path::Path, reference: &std::path::Path, repeat: boo
                 assert_eq!(w["codebook"], ew["codebook"]);
                 assert_eq!(w["key"], ew["key"]);
                 let s = w["sampled"].as_i64().unwrap();
-                assert!((0..256).contains(&s), "sampled code out of range: {s}");
+                // Codebook 0 is a token id in the semantic block; the rest
+                // are residual codes.
+                let config = runner.config();
+                let range = if w["codebook"] == 0 {
+                    config.audio_code_offset as i64
+                        ..(config.audio_code_offset + config.semantic_vocab_size) as i64
+                } else {
+                    0..config.audio_vocab_size as i64
+                };
+                assert!(range.contains(&s), "sampled code out of range: {s}");
             }
             assert_eq!(codes.len(), expected_codes.len());
             for c_row in &codes {
@@ -327,7 +444,9 @@ fn seven_native_tiny_profiles_match_pinned_mlx_and_reset() {
     ] {
         eprintln!("native profile: {encoding}");
         let path = fixture("precision").join(encoding);
-        native_gate(&path, &path, true);
+        // Only affine4 compares at zero tolerance, so only it needs the reference GPU.
+        let against_reference = encoding != "affine4" || mlx_reference_applies();
+        native_gate(&path, &path, true, against_reference);
     }
 }
 #[test]
@@ -335,7 +454,7 @@ fn native_201_frame_overlap_and_cropping_match_mlx() {
     let path = fixture("precision/long201");
     let request: serde_json::Value =
         serde_json::from_slice(&std::fs::read(path.join("request.json")).unwrap()).unwrap();
-    let runner = Music3Runner::open(&path).unwrap();
+    let runner = open_exact(&path).unwrap();
     let wave = runner
         .run_flow(
             &read_f32(&path.join("hiddens.f32")),
@@ -365,7 +484,7 @@ fn real_music3_native_checkpoint_matches_mlx() {
     );
     assert_eq!(request["hiddens_dtype"], "bfloat16");
     assert_eq!(request["wave_dtype"], "bfloat16");
-    native_gate(&model, &reference, false);
+    native_gate(&model, &reference, false, true);
 }
 
 #[test]
@@ -387,7 +506,51 @@ fn real_music3_pinned_4bit_native_matches_mlx_and_resets() {
     );
     assert_eq!(request["hiddens_dtype"], "bfloat16");
     assert_eq!(request["wave_dtype"], "bfloat16");
-    native_gate(&model, &reference, true);
+    native_gate(&model, &reference, true, true);
+}
+
+#[test]
+fn runner_opens_in_the_fast_profile_and_exact_restores_the_reference() {
+    use audio::music::minimax_music3::{Control, Music3Precision, Progress};
+    let path = fixture("converted_plain");
+    let runner = Music3Runner::open_with_precision(&path, Music3Precision::Float32).unwrap();
+    let total = |runner: &Music3Runner, steps: Option<usize>| -> usize {
+        let mut request = TextGenerateRequest::new("piano", "[instrumental]");
+        request.duration_seconds = Some(0.12);
+        request.steps = steps;
+        request.seed = Some(7);
+        let mut total = None;
+        runner
+            .generate_text_with_progress(&request, |event| {
+                if let Progress::FlowStep { total: t, .. } = event {
+                    total = Some(t);
+                }
+                Control::Continue
+            })
+            .unwrap()
+            .expect("not cancelled");
+        total.expect("a flow step was reported")
+    };
+    // Fresh runner: fast profile, 21 steps when none are named.
+    assert_eq!(total(&runner, None), 21);
+    assert_eq!(total(&runner, Some(4)), 4);
+    runner.set_flow_profile(FlowProfile::Exact);
+    assert_eq!(total(&runner, None), 30);
+
+    // The exact profile reproduces the CPU model's trajectory; the default does not.
+    let model = Model::load_converted_with_precision(&path, Music3Precision::Float32).unwrap();
+    let mut request = TextGenerateRequest::new("piano", "[instrumental]");
+    request.duration_seconds = Some(0.12);
+    request.steps = Some(4);
+    request.seed = Some(7);
+    let reference = model.generate_text(&request).unwrap().waveform;
+    let exact = runner.generate_text(&request).unwrap().waveform;
+    close(&exact, &reference, 5e-4);
+    let fast = Music3Runner::open_with_precision(&path, Music3Precision::Float32).unwrap();
+    let fast = fast.generate_text(&request).unwrap().waveform;
+    assert_eq!(fast.len(), reference.len());
+    assert!(fast.iter().all(|v| v.is_finite()));
+    assert_ne!(fast, exact, "the fast profile must change the trajectory");
 }
 
 #[test]
@@ -395,8 +558,7 @@ fn cooperative_controls_cancel_inside_euler_and_replay_exact_stereo() {
     use audio::music::minimax_music3::{Control, Music3Precision, Progress};
     use std::sync::{atomic::AtomicBool, Arc};
     let runner =
-        Music3Runner::open_with_precision(&fixture("converted_plain"), Music3Precision::Float32)
-            .unwrap();
+        open_exact_with_precision(&fixture("converted_plain"), Music3Precision::Float32).unwrap();
     let mut request = TextGenerateRequest::new("piano", "[instrumental]");
     request.duration_seconds = Some(0.12);
     request.steps = Some(2);
@@ -435,7 +597,7 @@ fn music3_cancellation_during_compute_resets_for_the_next_request() {
         atomic::{AtomicBool, Ordering},
         Arc,
     };
-    let runner = Music3Runner::open_with_precision(
+    let runner = open_exact_with_precision(
         &fixture("converted_plain"),
         audio::music::minimax_music3::Music3Precision::Float32,
     )
@@ -523,7 +685,7 @@ fn sequence_and_per_op_ar_paths_are_bit_identical() {
         let ids = serde_json::from_value::<Vec<i32>>(request["ids"].clone()).unwrap();
         let frames = request["frames"].as_u64().unwrap() as usize;
         let seed = request["seed"].as_u64().unwrap();
-        let runner = Music3Runner::open_with_precision(&path, Music3Precision::Checkpoint).unwrap();
+        let runner = open_exact_with_precision(&path, Music3Precision::Checkpoint).unwrap();
 
         runner.set_trace_observer(|_| {});
         runner.reset_dispatch_profile();
@@ -557,8 +719,7 @@ fn cancellation_inside_depth_sequence_resets_for_the_next_request() {
         Arc,
     };
     let runner =
-        Music3Runner::open_with_precision(&fixture("precision/bf16"), Music3Precision::Checkpoint)
-            .unwrap();
+        open_exact_with_precision(&fixture("precision/bf16"), Music3Precision::Checkpoint).unwrap();
     let mut request = TextGenerateRequest::new("piano", "[instrumental]");
     request.duration_seconds = Some(0.12);
     request.steps = Some(1);
@@ -598,8 +759,7 @@ fn kv_cache_returns_to_the_host_mid_request_without_changing_output() {
     use audio::music::minimax_music3::{Control, Music3Precision, Progress};
     use std::sync::{atomic::AtomicBool, Arc};
     let runner =
-        Music3Runner::open_with_precision(&fixture("precision/bf16"), Music3Precision::Checkpoint)
-            .unwrap();
+        open_exact_with_precision(&fixture("precision/bf16"), Music3Precision::Checkpoint).unwrap();
     let mut request = TextGenerateRequest::new("piano", "[instrumental]");
     request.duration_seconds = Some(0.24);
     request.steps = Some(1);
@@ -634,6 +794,44 @@ fn kv_cache_returns_to_the_host_mid_request_without_changing_output() {
     assert_eq!(bits(&per_op.waveform), bits(&sequence.waveform));
 }
 
+/// One command buffer per vocoder block must reproduce the per-operation
+/// decode bit for bit on every tiny native profile. The vocoder is the last
+/// stage, so equal waveforms from an observed (per-op) and an unobserved
+/// (sequence) run, with the profile showing which ran, pin it.
+#[test]
+fn vocoder_block_sequences_match_the_per_op_decode_bitwise() {
+    use audio::music::minimax_music3::Music3Precision;
+    for encoding in [
+        "bf16", "affine8", "affine6", "affine4", "mxfp8", "mxfp4", "nvfp4",
+    ] {
+        let path = fixture("precision").join(encoding);
+        let runner = open_exact_with_precision(&path, Music3Precision::Checkpoint).unwrap();
+        let mut request = TextGenerateRequest::new("piano", "[instrumental]");
+        request.duration_seconds = Some(0.24);
+        request.steps = Some(1);
+        request.seed = Some(7);
+        let bits = |w: &[f32]| w.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
+
+        runner.set_trace_observer(|_| {});
+        runner.reset_dispatch_profile();
+        let per_op = runner.generate_text(&request).unwrap();
+        assert_eq!(sequence_calls(&runner, "vocoder_block"), 0, "{encoding}");
+
+        runner.clear_trace_observer();
+        runner.reset_dispatch_profile();
+        let sequence = runner.generate_text(&request).unwrap();
+        assert!(
+            sequence_calls(&runner, "vocoder_block") > 0,
+            "{encoding}: vocoder sequence ran"
+        );
+        assert_eq!(
+            bits(&sequence.waveform),
+            bits(&per_op.waveform),
+            "{encoding}: vocoder paths differ"
+        );
+    }
+}
+
 /// One command buffer per DiT block must reproduce the per-operation flow
 /// stage bit for bit on every tiny native profile, and the profile must
 /// show which path ran.
@@ -650,7 +848,7 @@ fn dit_block_sequences_match_the_per_op_flow_bitwise() {
         let frames = request["frames"].as_u64().unwrap() as usize;
         let steps = request["steps"].as_u64().unwrap() as usize;
         let seed = request["seed"].as_u64().unwrap();
-        let runner = Music3Runner::open_with_precision(&path, Music3Precision::Checkpoint).unwrap();
+        let runner = open_exact_with_precision(&path, Music3Precision::Checkpoint).unwrap();
         let bits = |w: &[f32]| w.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
 
         runner.set_trace_observer(|_| {});

@@ -12,6 +12,7 @@ The binaries are:
 - `turbospark-image` -- pack a local Diffusers image export or generate one PNG. See [`docs/IMAGE_GENERATION.md`](IMAGE_GENERATION.md).
 - `turbospark-music` -- generate MiniMax Music 3 WAV files from an installed profile or local model directory. Full-size converted profiles use the Metal runner on macOS; tiny fixtures also support the portable CPU reference path.
 - `turbospark-clone` -- clone a voice from a short reference recording and speak new English text with MegaTTS3 (Metal on macOS), from the installed `megatts3-f32` profile (install it in the app) or a local converted model directory. See [`crates/audio/src/tts/megatts3/README.md`](../crates/audio/src/tts/megatts3/README.md).
+- `turbospark-speak` -- speak text with Fish Audio Drama 3 (Metal on macOS, 44.1 kHz), optionally in a cloned voice, from a Drama 3 install directory. See [`docs/FISH_DRAMA3.md`](FISH_DRAMA3.md).
 - `turbospark-server` -- an OpenAI- and Anthropic-compatible HTTP server. See [`crates/server/AGENTS.md`](../crates/server/AGENTS.md).
 - `turbospark-bench` -- throughput and memory benchmark harness. See [`docs/BENCHMARKING.md`](BENCHMARKING.md).
 
@@ -83,7 +84,8 @@ image namespace; they are not text model rows and are not opened by
 ### MiniMax Music 3
 
 List and install one of the seven pinned MiniMax Music 3 profiles with
-`turbospark-model list-audio` and `turbospark-model pull-audio <alias>`.
+`turbospark-model list-audio` and `turbospark-model pull-audio <alias>`
+(the same commands install every other pinned audio model).
 MXFP8 is the recommended profile. MXFP4 and NVFP4 are marked experimental.
 The generation command accepts caption text and exactly one lyrics source:
 
@@ -297,7 +299,7 @@ than one, is a parse error.
 | `--image-batch` | flag | off | run the prompt once per `--image` instead of once with all of them |
 | `--vision-sidecar` | path, or `auto` | none | attach a standalone vision-tower sidecar install to a text-only trunk. `auto` resolves one from the installed store by the trunk's own family and hidden size after the trunk opens: the trunk's own tower wins, zero installed towers runs text-only with the reason on stderr, and two candidate towers REFUSE the open because the revision pin is load-bearing; see [`docs/VISION.md`](VISION.md) |
 | `--rdadvise` | `off\|normal\|aggressive` | `off` | read-ahead hint mode for streamed expert reads (macOS) |
-| `--expert-cache-slots` | `8\|16\|24\|32`, or `auto` | `auto` | routed-expert slot cache size; `auto` never resolves below `16` |
+| `--expert-cache-slots` | `8\|16\|24\|32\|48\|64\|96\|128\|192\|256`, or `auto` | `auto` | routed-expert slot cache size; `auto` takes the largest value a quarter of free memory covers and never resolves below `16` |
 | `--expert-residency` | `auto\|streamed\|mapped` | `auto` | routed-expert storage; `auto` selects mapped only when the minimum streamed cache cannot fit the measured headroom |
 | `--prefill-chunk` | `32\|64\|128\|256\|512\|1024\|2048\|4096`, or `auto` | `128` | prompt-processing chunk size; drives chunked prefill for supported families (Gemma 4, dense Llama/Mistral) and falls back to sequential prefill for others; `TURBOSPARK_PREFILL_CHUNK` environment variable overrides when set |
 | `--power-profile` | `performance\|balanced\|efficiency` | `performance` (or `efficiency` under Low Power Mode) | decode rate governance |
@@ -438,16 +440,17 @@ turbospark-model <command> [flags...]
 | --- | --- | --- | --- |
 | `list` | none | `--filter TEXT` | prints every curated catalog row, marks installed ones, then an `installed:` table of every install with its kind, its library (`This Mac`, a library's name, or `custom location`), and whether it is `available`, `not connected`, or `missing`; `--filter` narrows both |
 | `list-speech` | none | none | prints bundled speech models (Whisper entries and Qwen3-ASR) for Speech-to-Text |
-| `list-audio` | none | none | prints pinned audio models (MiniMax Music 3 profiles and assets) |
+| `list-audio` | none | none | prints every pinned audio model (speech, TTS, diarization, music) with its size, where it runs (`rust`, `app only`, `no runner`), whether it is installed, and the `--accept` ids its terms need |
 | `info` | `<alias>` | none | prints one catalog row in full, including its gate targets |
 | `probe` | `<repo>[@rev]` | `--file NAME.gguf`, `--sidecar-repo REPO[@rev]` | reads a Hugging Face repo's headers only, no download; reports whether this engine would run it |
 | `recommend` | none | `--context N`, `--budget BYTES`, `--load-guard TIER`, `--probe`, `--discover [N]` | ranks models by whether they fit this machine and how much is known about them; `--load-guard` MUST match what the session will open with, since the ranking and the loader's refusal share one memory budget; `--budget` accepts bare bytes or suffixes (`36G`, `36GB`, `36GiB`); `--context` defaults to `4096`; `--probe` reads every curated row's header for exact numbers, `--discover` also ranks the N most-downloaded GGUF repos on Hugging Face (default `20`) through the same probe |
 | `pull` | `<alias>`, or `--repo REPO[@rev] --alias NAME` | `--out DIR`, `--library NAME`, `--file NAME.gguf`, `--sidecar-repo REPO[@rev]`, `--force` | installs a curated model, or any repository the probe accepts; `--out` overrides install destination; `--library` installs into a [model library](#model-libraries) instead (not with `--out`); `--force` installs past a probe refusal |
-| `pull-audio` | `<alias>` | `--library NAME` | installs one pinned MiniMax Music 3 audio profile |
+| `pull-audio` | `<alias>` | `--accept ID` (repeatable), `--library NAME` | installs one pinned audio model into `<root>/models/audio/<alias>.gturbo`, the place the app reads, or into a [model library](#model-libraries) with `--library`. A model with terms prints them and refuses until each id is passed with `--accept`. Rows marked `app only` (FluidAudio Core ML) install here but run only in the TurboSpark app. `fish-drama3-4bit` converts on install: use `pull-drama3` |
 | `pull-image` | `--alias NAME`, or `--repo REPO[@rev]` | `--source DIR`, `--model-id ID`, `--model-revision REV`, `--library NAME` | downloads and installs a pinned image model export |
+| `pull-drama3` | none | `--out DIR`, `--accept-fish-license` | converts Fish Audio Drama 3 into `DIR` from its pinned MLX checkpoint. Needs about 25 GiB free and tens of minutes. See [`docs/FISH_DRAMA3.md`](FISH_DRAMA3.md) |
 | `pull-vision` | `<alias>`, or `--repo REPO[@rev] --alias NAME` | `--file NAME.gguf`, `--library NAME` | installs a curated or custom vision-tower sidecar |
-| `path` | `<alias>` | none | prints the install directory (fails loudly if not installed) |
-| `rm` | `<alias>` | `--yes` / `-y` | deletes an install; without `--yes`, prompts for the alias name to confirm |
+| `path` | `<alias>` | none | prints the install directory, text or audio alias (fails loudly if not installed) |
+| `rm` | `<alias>` | `--yes` / `-y` | deletes a text or audio install; without `--yes`, prompts for the alias name to confirm. Audio rows go through the catalog's ownership-checked delete |
 | `auth` | none | `--clear`, `--status`, `--set` | inspects, saves, or clears Hugging Face credentials in `~/.turbospark/hf_token`; `--set` reads from a non-echoing prompt when interactive, or from stdin when piped |
 | `library list` | none | none | lists This Mac and every model library, with its location, status, and model count |
 | `library add` | `<PATH>` | `--name NAME` | adds a folder on a directly connected drive as a library, or adopts the library already there with its models |
@@ -573,8 +576,8 @@ unimplemented and uses `GET /health` for liveness.
 | Flag | Takes | Default | Meaning |
 | --- | --- | --- | --- |
 | `--model` | path or alias, repeatable | optional | attach one or more generation installs; exact ids and aliases route requests to the matching install. A single model keeps the legacy unknown-name fallback |
-| `--stt-model` | path or alias, repeatable | none | attach one or more Speech-to-Text installs (Whisper or Qwen3-ASR); enables `POST /v1/audio/transcriptions` and WebSocket realtime transcription. With no `--model`, runs an audio-only server |
-| `--tts-model` | path or alias, repeatable | none | attach Text-to-Speech install (Kokoro or MegaTTS3); enables `POST /v1/audio/speech` |
+| `--stt-model` | path or alias, repeatable | none | attach one or more Speech-to-Text installs (Whisper, Qwen3-ASR, or Parakeet Ultra or Redux on Core ML, macOS 15+); enables `POST /v1/audio/transcriptions` and WebSocket realtime transcription. With no `--model`, runs an audio-only server |
+| `--tts-model` | path or alias, repeatable | none | attach Text-to-Speech install (Kokoro, MegaTTS3, OmniVoice, or Fish Audio Drama 3); enables `POST /v1/audio/speech` |
 | `--music-model` | path or alias, repeatable | none | attach MiniMax Music 3 install; enables `POST /v1/audio/generate` (macOS and Metal only) |
 | `--model-dir` | path | none | directory containing `.gturbo` models; enables auto-discovery (omlx compatibility) |
 | `--port` | u16 | `8080` | listen port |
@@ -583,7 +586,7 @@ unimplemented and uses `GET /health` for liveness.
 | `--memory-guard` | `safe\|balanced\|strict\|relaxed\|off` | unset | alias for `--load-guard`; `safe` maps to `balanced` (omlx compatibility) |
 | `--memory-guard-gb` | integer | unset | set custom memory guard ceiling in gigabytes (omlx compatibility) |
 | `--min-auto-context` | non-negative integer | `0` | same as `turbospark-check`'s |
-| `--expert-cache-slots` | `8\|16\|24\|32\|48\|64\|96\|128`, or `auto` | `auto` | same semantics as `turbospark-check`'s; the server (`crates/server/src/args.rs`) and the Swift ABI accept the full set `foundation::ALLOWED_CACHE_SLOTS`, and `auto` climbs through 8/16/24/32 only |
+| `--expert-cache-slots` | `8\|16\|24\|32\|48\|64\|96\|128\|192\|256`, or `auto` | `auto` | same semantics as `turbospark-check`'s; the server (`crates/server/src/args.rs`) and the Swift ABI accept the full set `foundation::ALLOWED_CACHE_SLOTS` |
 | `--pool-size` | positive integer | `1` | how many independent runners to open of `--model`'s ONE install; N > 1 serves N concurrent generations behind one public id, routed to the least-busy member. Each member pays the load guard on its own, so one that does not fit refuses at startup |
 | `--session-slots` | positive integer | `1` | concurrent conversation KV states maintained in pool |
 | `--max-concurrent-requests` | positive integer | `1` | alias for `--session-slots` (omlx compatibility) |
@@ -675,7 +678,7 @@ See [`docs/BENCHMARKING.md`](BENCHMARKING.md) for background and baseline number
 | --- | --- | --- | --- |
 | `--model` | path | required | path to `.gturbo` install directory |
 | `--case` | case ID | all 3 cases | restrict run to one protocol case (`short-explanation`, `medium-review`, `long-synthesis`) |
-| `--expert-cache-slots` | `8\|16\|24\|32` | `16` | routed-expert slot cache size per layer |
+| `--expert-cache-slots` | `8\|16\|24\|32\|48\|64\|96\|128\|192\|256` | `16` | routed-expert slot cache size per layer |
 | `--power-profile` | `performance\|balanced\|efficiency` | `performance` | power governance mode (explicitly defaults to `performance` rather than LPM state) |
 | `--max-tokens-per-sec` | float `> 0` | uncapped | decode rate cap |
 | `--speculative` | `off\|auto`, or block size `> 0` | `off` | speculative decoding (defaults off to preserve sampled protocol numbers) |
@@ -907,7 +910,7 @@ All runtime environment variables use the `TURBOSPARK_*` prefix.
 | `TURBOSPARK_PHASES` | `turbospark-check` | Set to `1` to print forward-pass phase timing breakdowns on stderr | unset |
 | `TURBOSPARK_DISPATCH_PROFILE` | `turbospark-check`, `turbospark-server`, `turbospark-bench` | Set to `1` to collect and print per-dispatch GPU kernel timing and ranking profile (see [`docs/DECODE_BUDGET.md`](DECODE_BUDGET.md)) | unset |
 | `TURBOSPARK_PREFIX_REUSE` | `turbospark-check --chat` | Set to `quiet` to silence the per-turn `[prefix-reuse] N/M` line on stderr. It reports how many prompt tokens continued from the previous turn's KV instead of being re-prefilled; the match rate is a property of the checkpoint's template and tokenizer, and a reuse that never fires differs from a working one only in wall-clock. `--quiet` silences it too | unset |
-| `TURBOSPARK_PILOT_PROBE` | `turbospark-check` | `1` records the one-layer-ahead router prediction beside the actual selection in the `TURBOSPARK_ROUTER_HIST` capture (Gemma only; analysed by `scripts/pilot_ceiling.py`). `self` aims the probe at its own layer instead, where recall MUST read 100% -- the guard that says the instrument works before any finding is believed | unset |
+| `TURBOSPARK_PILOT_PROBE` | `turbospark-check` | `1` records the one-layer-ahead router prediction beside the actual selection in the `TURBOSPARK_ROUTER_HIST` capture (Gemma, and the `QwenGdnMoe` sequential decode path; analysed by `scripts/pilot_ceiling.py`). `self` aims the probe at its own layer instead, where recall MUST read 100% -- the guard that says the instrument works before any finding is believed | unset |
 | `TURBOSPARK_CHAT_DATE` | all (chat template rendering) | Override current date/time (`YYYY-MM-DD` or `YYYY-MM-DDTHH:MM:SS`) in chat templates (e.g. gpt-oss Harmony preamble) | current system UTC time |
 | `TURBOSPARK_PREFILL_CHUNK` | `turbospark-check` | Override prompt-processing chunk size (e.g. `128`, `256`, `512`, `1024`) | unset |
 | `TURBOSPARK_RESID_CAPTURE` | `turbospark-check` | File path to dump residual stream activations (JSON) at prefill-to-decode transition | unset |

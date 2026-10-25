@@ -15,6 +15,11 @@
 //! sits below `physical - reserve` is one where the driver, not the
 //! arithmetic, is the binding constraint.
 //!
+//! The one exception is mapped expert residency (`model_io::mapped_residency_fits`):
+//! the GPU wires every bound no-copy mapping in full, and what it will keep
+//! wired tracks this number, so that guard budgets from it
+//! (`docs/EXPERT_RESIDENCY.md`).
+//!
 //! ## Provenance
 //!
 //! Adapted from `src/vram.rs` of

@@ -393,3 +393,23 @@ fn an_mxfp4_config_with_an_unsupported_override_is_refused() {
         report.verdict
     );
 }
+
+/// Fish Audio Drama 3's real `config.json` (the repack fixture, copied from
+/// `mlx-community/fish-audio-drama-3-4bit` @ cc639e27aba7edb73429d3e3806f471dcd79d316).
+/// Its trunk is a headless `qwen36` that the audio catalog installs, so the
+/// generic text probe must refuse it by name rather than call it unknown or,
+/// worse, offer it as a chat model.
+#[test]
+fn a_headless_tts_trunk_is_refused_by_name() {
+    let config = include_str!("../../repack/tests/fixtures/fish_drama3_4bit_config.json");
+    let report = evaluate_config(config, &repo(), Some(1)).expect("the config parses");
+    match &report.verdict {
+        Verdict::Refused(why) => {
+            assert!(why.contains("fish_drama3"), "{why}");
+            assert!(why.contains("text-to-speech"), "{why}");
+            assert!(!why.contains("not in this port's registry"), "{why}");
+        }
+        other => panic!("Drama 3 should be refused, got {other:?}"),
+    }
+    assert_eq!(report.family, None);
+}

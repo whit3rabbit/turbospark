@@ -66,10 +66,7 @@ struct ModelInstallToastView: View {
             }
 
             if let fraction = model.installProgressFraction, fraction < 1, !model.opening {
-                ProgressView(value: fraction)
-                    .tint(theme.accent)
-                    .accessibilityLabel(Text(title, bundle: .module))
-                    .accessibilityValue(Text(verbatim: MetricFormat.percent(fraction * 100)))
+                AppProgressBar(value: fraction, label: Text(title, bundle: .module))
 
                 HStack(spacing: 8) {
                     if let downloaded = model.installDownloadedBytes,
@@ -91,14 +88,10 @@ struct ModelInstallToastView: View {
                 .monospacedDigit()
                 .foregroundStyle(.appSecondary)
             } else if model.isInstallPaused {
-                ProgressView(value: model.installProgressFraction ?? 0)
-                    .tint(theme.accent)
-                    .accessibilityLabel(Text("Paused", bundle: .module))
+                AppProgressBar(value: model.installProgressFraction ?? 0, label: Text("Paused", bundle: .module),
+                               animated: false)
             } else {
-                ProgressView()
-                    .progressViewStyle(.linear)
-                    .tint(theme.accent)
-                    .accessibilityLabel(Text(title, bundle: .module))
+                AppProgressBar(value: nil, label: Text(title, bundle: .module))
             }
             if let downloaded = model.installDownloadedBytes,
                model.installTotalBytes == nil || model.installTotalBytes == 0 {

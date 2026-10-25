@@ -148,6 +148,29 @@ pub enum ChatDialect {
     /// JSON-encoded -- exactly what the checkpoint's own template renders and
     /// parses with `tojson`.
     Glm,
+    /// Recursive Flint: turns frame as the special tokens `<|system|>` /
+    /// `<|user|>` / `<|assistant|>` / `<|observation|>` / `<|developer|>`,
+    /// with NO closing marker on a turn and a generation prompt that is just
+    /// `<|assistant|>`. The model ends its own turn by emitting `<|end_of_text|>`
+    /// (150001) or the next role marker, so the stop set is
+    /// `generation_config.json`'s four ids: `<|end_of_text|>`, `<|user|>`,
+    /// `<|observation|>` and `<|developer|>`.
+    ///
+    /// **SHARES THREE ROLE MARKERS WITH [`ChatDialect::Glm`] AND IS NOT IT.**
+    /// GLM spells its end of text `<|endoftext|>` and opens with `<sop>`;
+    /// Flint spells it `<|end_of_text|>`, opens with `<|begin_of_text|>` and
+    /// writes neither itself. This table resolved as GLM and then died on the
+    /// missing `<|endoftext|>` before this variant existed (AGENTS.md Gotcha
+    /// 52), so the probe is tested BEFORE GLM and requires exactly what
+    /// `resolve_flint` does.
+    ///
+    /// The think pair and the tool markup (`<think>`, `<tool_call>`,
+    /// `<arg_key>`, ...) are added but NOT special, so they survive
+    /// detokenization as literal text. No tool parser is wired: the dialect
+    /// is `Prompted` and routes everything as content, recorded in
+    /// DEVIATIONS.md. Like Harmony and GLM it has no fallback renderer; the
+    /// checkpoint's own template decides things a hand-rolled one would guess.
+    Flint,
     /// Moonshot's Kimi K2 line (`KimiK25ForConditionalGeneration` / the
     /// DeepSeek-V3-line MLA MoE behind it): turns frame as the special tokens
     /// `<|im_user|>` / `<|im_assistant|>` / `<|im_system|>` with a Kimi-owned
@@ -293,6 +316,11 @@ impl ChatDialect {
             // decoder passes plain content through, where a rescue layer can
             // reach a call the model attempts in prose.
             ChatDialect::DeepseekV2 => ToolCallSupport::Prompted,
+            // The `<tool_call>NAME<arg_key>K</arg_key><arg_value>V</arg_value>`
+            // markup EXISTS (plain text, not special) and no parser has been
+            // checked against Flint's real output, so it flows as content
+            // where a rescue layer can reach it.
+            ChatDialect::Flint => ToolCallSupport::Prompted,
         }
     }
 

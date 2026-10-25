@@ -42,29 +42,46 @@ Code lives in `swift/TurboSparkApp/Sources/TurboSparkApp` (below: `Sources/`).
   family, or point size.
 - **Layouts adapt instead of clipping.** Long translations, the Extra Large
   text size and a narrow window are normal conditions, not edge cases.
+- **Access is asked for, never taken.** The app shows a macOS privacy prompt
+  only after the user chooses to allow access, and declining one permission
+  never blocks a feature that does not need it.
 
 ## 2. The shared control vocabulary
 
 Build from these instead of local variants. They live in
-`Sources/Theme/AppControls.swift`, `Sources/Theme/AppPreferenceOptions.swift`,
-`Sources/Theme/AppStrings.swift` and `Sources/Theme/TurboSparkMotion.swift`.
+`Sources/Theme/AppControls.swift`, `Sources/Theme/AppSurfaces.swift`,
+`Sources/Theme/AppProgressBar.swift`, `Sources/Theme/AppAttention.swift`,
+`Sources/Theme/AppWaveform.swift`, `Sources/Theme/AppPreferenceOptions.swift`,
+`Sources/Theme/AppPillPicker.swift`, `Sources/Theme/AppStrings.swift` and
+`Sources/Theme/TurboSparkMotion.swift`.
 
 | Need | Use |
 | :--- | :--- |
 | An action | `.appAction(.primary / .secondary / .quiet / .destructive, size:)` |
+| The glow under a surface's one primary action | `.appPrimaryGlow(_:)` |
 | Overflow of a crowded header | `Menu { ... } label: { ... }.appMenuAction()` |
 | A pane or workspace header | `AppAdaptiveHeader(leading:actions:compactActions:)` |
 | Search | `AppSearchField(text:prompt:)`, with `focus:` for a field that takes focus |
 | An icon-only action | `AppIconButton(symbol, label: Text(...)) { ... }` |
 | A composer-style toggle chip | `AppChip(Text(...), systemImage:isOn:) { ... }` |
+| Switching one pane between a few modes | `AppPillPicker(selection:items:label:)` with `AppPillItem(value:label:systemImage:liveLabel:)`, two to four short options, inside an `AppAdaptiveHeader` so it reflows to its own row; never wrap it in another `ViewThatFits` |
 | A multi-line editor | `TextEditor(...).appEditorSurface(minHeight:)` |
+| A focus glow on an editor with no native ring | `.appFocusGlow(_:radius:halo:)` |
+| A card | `.appCardSurface(padding:)` |
+| A composer-style surface (prompt box, Humanize cards, script editor) | `.appComposerSurface(focused:halo:)` |
 | A heading in a scrolling pane | `AppSectionHeader(title:subtitle:)` |
 | An empty list or workspace | `AppEmptyState(systemImage:title:message:) { actions }` |
+| Progress, determinate or not | `AppProgressBar(value:label:valueText:size:animated:)`, `animated: false` while paused |
+| A surface that still needs the user (missing input after they tried to go on) | `.appAttention(_:ping:radius:)` with an `AppAttentionNote` inside; bump `ping` only on the user's attempt |
+| A live input level, or a waveform that fills as work completes | `AppLevelWaveform(levels:)`, `AppFillWaveform(fill:rippling:)` |
 | Mode, Text Size, Language pickers | `AppearanceModeOptions()`, `TextSizeOptions()`, `LanguageOptions()` |
 | A localized `String` value | `AppStrings.localized("Key")` |
+| A section's panel beside the icon rail | `SidebarModePanel(title:groupLabel:selection:)`, or `SidebarPanelList` with `SidebarPanelRow` (`Sources/Chrome/SidebarPanelList.swift`) |
 | An animation from an action | `TSMotion.animate(TSMotion.pane) { ... }` |
 | An animation on a value | `.tsAnimation(TSMotion.hover, value:)` |
-| Radii | `AppMetrics.controlRadius` (fields, chips), `AppMetrics.cardRadius` (cards) |
+| A live indicator (recording, active stage) | `.tsPulse(active:)` |
+| A text-holding frame or a width breakpoint | multiply by `AppMetrics.textScale(theme)` |
+| Radii | `AppMetrics.controlRadius` (fields, chips), `AppMetrics.cardRadius` (cards), `AppMetrics.composerRadius` (composer surfaces) |
 
 If the vocabulary lacks something you need twice, add it to the vocabulary in
 the same change, documented here. A second local copy is how the drift starts.
@@ -80,6 +97,37 @@ the same change, documented here. A second local copy is how the drift starts.
   reaches VoiceOver and the dialog, the red label only reaches sighted users.
 - A disabled control says why, in its tooltip or in adjacent text. The chat
   Send button is the reference.
+- When all that is missing is input the user can still give (a checkbox, a
+  script, a reference), do not leave the primary action dead. Keep it
+  pressable and let the press show what is missing: `.appAttention` on each
+  unfinished card, focus on the first, a VoiceOver announcement. Nothing is
+  flagged before the first attempt. Voice Cloning's Generate speech is the
+  reference. A blocker that is the app's own state (installing, no model, a
+  recording) still disables the button, since a press could not help.
+
+### Asking for macOS access
+
+Microphone and screen recording (which ScreenCaptureKit needs even for audio
+only) are macOS privacy grants. A prompt the user did not ask for reads as
+the app taking access, and macOS shows each prompt only once.
+
+- Never request at launch, on appear, on a toggle, or as a side effect.
+  Reading status never prompts, so show it freely. Requesting does, and so
+  does any ScreenCaptureKit content query while access is missing.
+- Only `RecordingPermissions` calls the prompt APIs, from an Allow button the
+  user pressed after seeing what the access is for. The capture layer checks
+  and throws an error that points to the access sheet. It never asks.
+  `RecordingPermissionsTests` scans `Sources/` to hold this.
+- A control that starts a capture goes through
+  `.recordingAccessGate($request, permissions: RecordingPermissions.shared)`:
+  start directly when nothing is missing, otherwise set a
+  `RecordingAccessRequest`. The Record panel and the voice reference card
+  are the references.
+- Each permission row shows status as glyph plus text and offers one next
+  step: Allow while macOS can still prompt, Open System Settings after.
+- Declining is a supported path. Offer to continue with the allowed sources
+  (Record microphone only), keep Not now one click away, and say what still
+  works without access. Import, transcription, and editing need none.
 
 ## 3. Layout
 
@@ -111,6 +159,10 @@ the same change, documented here. A second local copy is how the drift starts.
   menu, and primary action.
 - List and detail splits are adjustable: `HSplitView`, or a list column with
   min, ideal, and max widths. Never a fixed list width.
+- A workspace that switches between one and two columns sets its breakpoint
+  in points times `AppMetrics.textScale(theme)`, and scales its column widths
+  the same way, so Extra Large text falls back to one column instead of
+  squeezing both. Voice Cloning (`VoiceCloneWorkspaceView`) is the reference.
 
 ### Text in layouts
 
@@ -121,7 +173,7 @@ the same change, documented here. A second local copy is how the drift starts.
   `.help`.
 - `TextEditor` has no intrinsic height, and both obvious ways to give it one
   pick the maximum. Measure with a hidden `Text` instead
-  (`PromptComposerView.editor`, Gotcha 18).
+  (`PromptComposerEditor`, `AudioMeasuredTextEditor`, Gotcha 18).
 
 ### Forms and files
 
@@ -178,6 +230,15 @@ the same change, documented here. A second local copy is how the drift starts.
 - A size the scale lacks is a new `AppFontStep` case, documented in its doc
   table, with the pinned expectation in `FontPropagationTests` updated
   (Gotcha 63).
+- The factory base is 14pt UI and 12pt code (`AppFontCatalog.factoryUISize`
+  and `factoryCodeSize`), with Hack as the code family. The doc table and the
+  design system list roles at the 16pt design reference
+  (`AppFontCatalog.defaultUISize`), which `textScale` and `ui(fitting:)`
+  divide by. Never change the reference to move the default: it reflows
+  every frame. Change the `factory*` constants instead.
+- Text Size is Small (0.875), Default, Large, Extra Large. Small is below
+  the reference, so `textScale` clamps at 1 and frames keep their designed
+  size while the text shrinks.
 - Font families come from Appearance settings. A site that must look serif
   or monospaced at the default passes `systemDesign:`.
 
@@ -190,6 +251,14 @@ the same change, documented here. A second local copy is how the drift starts.
   gives.
 - Blur and glass only on floating or navigation chrome where they help
   hierarchy, availability-gated, and opaque under Reduce Transparency.
+- Glows are accent shadows from the vocabulary only: `.appFocusGlow` on an
+  editor with no native focus ring (a `TextField` keeps its system ring) and
+  `.appPrimaryGlow` under the one primary action while it can run. The
+  focus halo is cast by an edge drawn behind the surface, never by a shadow on
+  the view, so text over a see-through surface does not glow. The chat and
+  Humanize composers pass `halo: false` and keep their edge-only focus look.
+  Under Increase Contrast glows become solid rings or nothing, so never rely
+  on a glow alone to show focus or readiness.
 - Corners are continuous (`style: .continuous`) and use `AppMetrics` radii.
 
 ## 5. Accessibility
@@ -225,8 +294,11 @@ the same change, documented here. A second local copy is how the drift starts.
 
 ### Motion and display settings
 
-- Use the `TSMotion` curves (hover, select, press, pane). No inline
-  durations.
+- Use the `TSMotion` curves (hover, select, press, pane, and sweep, breathe
+  and snap for looping indicators). No inline durations.
+- A looping animation is a `phaseAnimator` inside a modifier that is applied
+  only while the state is live (`tsPulse`, `AppProgressBar`), so it stops with
+  that state. Never a `repeatForever` started from `withAnimation`.
 - Animations honor Reduce Motion through `TSMotion.animate`,
   `.tsAnimation(_:value:)` or `TSMotionContext`. A bare `withAnimation` or
   `.animation(_:value:)` animates even when the user turned motion off
@@ -340,7 +412,7 @@ Then look at the change in the running app. A green build proves none of the
 following, and a UI change is not verified until the touched screens have
 been checked against them:
 
-- Default and Extra Large text size.
+- Small, Default, and Extra Large text size.
 - The narrowest window the view allows.
 - Light, dark, and one custom theme.
 - Keyboard only, including sheets and menus.
@@ -355,6 +427,11 @@ result from compilation alone.
 
 ## Related docs
 
+- `docs/design-system/`: tokens for every theme with computed contrast,
+  a guide per vocabulary control, the brand book, and a local preview
+  gallery. Derived from this file and the Swift theme.
+  `python3 docs/design-system/tools/derive_tokens.py --check` fails when it
+  drifts from the shipped presets.
 - `swift/AGENTS.md`: Swift package, build order, and app rules.
 - `swift/docs/SWIFT_LOCALIZATION.md`: the catalog pipeline and its gates.
 - `swift/docs/KEYBOARD_SHORTCUTS.md`: shortcuts, menus, and VoiceOver

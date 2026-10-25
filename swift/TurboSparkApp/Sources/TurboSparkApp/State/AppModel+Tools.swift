@@ -257,6 +257,18 @@ extension AppModel {
         }
 
         guard let project else {
+            if interactionMode == .chat && chatToolsEnabled {
+                let contextBudget: Int? = maxContextTokens > 0 ? maxContextTokens : nil
+                let toolsPrompt = AppToolCatalog.systemPromptAddendum(
+                    for: .general,
+                    projectURL: nil,
+                    contextTokens: contextBudget,
+                    availableAgents: [],
+                    webToolsEnabled: webSearchEnabled,
+                    availableTools: availableTools,
+                    nativeToolCalling: nativeToolCalling)
+                sections.append((.tools, toolsPrompt))
+            }
             return sections
         }
 
@@ -392,7 +404,7 @@ extension AppModel {
     ///   project-scoped custom tool resolvable when its category is
     ///   classified (state#71).
     public func extractToolCalls(from text: String, project: AppProject?) -> [AppToolCall] {
-        guard interactionMode == .projects, project != nil else { return [] }
+        guard (interactionMode == .projects && project != nil) || (interactionMode == .chat && chatToolsEnabled) else { return [] }
         return ToolCallParser.parse(from: text, projectURL: project?.rootDirectoryURL)
     }
 

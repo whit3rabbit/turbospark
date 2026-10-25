@@ -11,17 +11,26 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::Deserialize;
 
-use super::{audio_error, error, timed, unavailable, AudioModelInfo};
+use super::{audio_error, error, timed, unavailable, AudioModelInfo, AudioTask};
 use crate::ServerState;
 
 pub(crate) fn model_json(m: &AudioModelInfo) -> serde_json::Value {
-    serde_json::json!({
+    let mut val = serde_json::json!({
         "id": m.id,
         "object": "model",
         "owned_by": "turbospark",
         "task": m.task.as_str(),
         "capabilities": [m.task.as_str()],
-    })
+    });
+    if m.task == AudioTask::Music {
+        if let Some(obj) = val.as_object_mut() {
+            obj.insert("context_size".to_string(), serde_json::json!(10_240));
+            obj.insert("max_frames".to_string(), serde_json::json!(9_000));
+            obj.insert("frame_rate".to_string(), serde_json::json!(25.0));
+            obj.insert("max_audio_length".to_string(), serde_json::json!(360.0));
+        }
+    }
+    val
 }
 
 pub(crate) async fn list_models(State(state): State<ServerState>) -> Response {

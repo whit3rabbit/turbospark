@@ -1,0 +1,77 @@
+{
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "generator": "crates/audio/tools/gen_chatterbox_turbo_fixtures.py",
+  "seeds": {
+    "t3": 97001,
+    "t3_sampled": 77001,
+    "flow": 97101,
+    "hift": 97201,
+    "campplus": 97301,
+    "ve": 97401,
+    "cond": 97501
+  },
+  "summary": [
+    {
+      "name": "t3",
+      "greedy_tokens": 13,
+      "sampled_tokens": 13
+    },
+    {
+      "name": "flow_seed_margin",
+      "offset": 46,
+      "min_gap": 0.0008378028869628906
+    },
+    {
+      "name": "flow",
+      "mel_frames": 16
+    },
+    {
+      "name": "hift",
+      "wav_len": 7620
+    },
+    {
+      "name": "end_to_end",
+      "speech_tokens": 16
+    },
+    {
+      "name": "campplus",
+      "fbank_frames": 58
+    }
+  ],
+  "files": {
+    "campplus/embedding.npy": "28fa394c86218ea1b6bd7352a03fc02a6ac844520619eca1d8a29fc3348a427b",
+    "campplus/fbank.npy": "ece431b6c91432137fcf8765bbe5da198a8f9b47421e881b00e2eca31395befd",
+    "campplus/traces.json": "0a7b09fdc4c9e5b09a687b8dcfd3f2c76b973b875c53596bdb3bb011ca94e7b5",
+    "campplus/wave.npy": "6628f6a89dc84a6d694a6ae18eb219d20a41698d849bfd1127e7c1412b78ead4",
+    "config.json": "718eba2626a54f7c61ecd9b8f2a20b545088b640bf22a92cd2e4e70874ea038d",
+    "end_to_end/noised_mels.npy": "491cf6f2a58f93ad8d9e3a0b3970eaec9c685b6cb3b3ab11b0e42facd69e7290",
+    "end_to_end/sine_noise.npy": "48576033477e5399805f7cbab6705262d9e83d6cb36f7eff8bf7686e469def9c",
+    "end_to_end/source_noise.npy": "2b13fc2599d8a9fcfc464895b74d0b837c68aaf6e37ac772f0e119f74fa40062",
+    "end_to_end/traces.json": "fc4cc2a6d22cde23cf0288efd589bbac4cd71d7997f117981195df43439b2744",
+    "end_to_end/wav.npy": "cb989431d25963043e91abd6aaaf09ab388fe520060bb8acae0fe09b06cf1665",
+    "end_to_end/z_prompt.npy": "d9c9f1d0bc0c58878c3798bffa13154ec43e3f4dde491fc63fb8bd96bb696dd9",
+    "flow/embedding.npy": "4988d8cc55155a8010efede81905d263967ba44409e440b30a594ca95b761aaa",
+    "flow/flow_mel.npy": "7f6e755dfece5a4e4999b97217469b9fd228fe10a6b23b1189fde31996f968ef",
+    "flow/gen_tokens.npy": "32f063b4d7885761557c75d65c5e0f27a84e470af491f60b031629b73cf6a701",
+    "flow/noised_mels.npy": "c2c496e7f1b94ceaca3e70547689f85a6382eeb2f2a0fa6653b11132c824c46f",
+    "flow/prompt_feat.npy": "fea0d01f446b81f977fd4c0d97823dee26fefb6b029e29edf5e281ca69d51c63",
+    "flow/prompt_tokens.npy": "19861078fd8900522e3dbef738517180c4d96c629ce883f249adb0c0b5e14703",
+    "flow/traces.json": "8e1cdcdd90a0c191d914a579959e03f67c9f9e88f1d1f983f91fce7e295e81b5",
+    "flow/z_prompt.npy": "e8c054c1edc327d58265a9309b513991eb5c49490273dc94b52d0b5254ca8f48",
+    "hift/f0.npy": "e0d6396ef37b07ee139fb24253e5d633fab3a6757b8f32366be5e76e24e58db7",
+    "hift/phase.npy": "3bc264c5fefe37e9da435b9cb01b18678ae9804d8fe9ba79fa7323869a10172e",
+    "hift/sine_noise.npy": "52a88c6f40d5ef87269f9d1baa6dd72d86607795d7d7f33453e411fab4c465c1",
+    "hift/source_noise.npy": "3da2891f7bca6a70812873b8d50a6e29df99a2e40b927b6b53789838ecaea063",
+    "hift/traces.json": "f70733fad9b5ff52873f8bd1bb6fdbce0fa2cac98219cfad244ef497cce36aa3",
+    "hift/wav.npy": "ace8296d440c49c1f60239dd11c4342048c36f6628cf64e9f9ef6d8c17cc193b",
+    "manifest.json": "4b5ffce1be8480fabae23b0f3e2a17bcb9312aee0eceffd3326eb44d6902c311",
+    "model.safetensors": "efa283255dc0fbe9a0c43fd78d86943f2235f3f205cc5d25c40709befd3964b4",
+    "s3_tokenizer.safetensors": "ba490c18e144c34053d434f19415a4940ff0eec415bbd9a6c3fdb4d321514cf3",
+    "s3_tokenizer_config.json": "7e76a56e9e6819f05938b25f2b46129b61a63ab5d819cd567fe0f09293be8e54",
+    "sampling/traces.json": "934e18ea0de69d5cea1d47cfe6c4dbe9708e3635c97e4f31dbc723d1e6f6f631",
+    "t3/greedy_head_calls.npy": "fc46cc594410e0009e9c210b3e4a53aef4eb5b77139254b64bbdfa50bcbad498",
+    "t3/sampled_head_calls.npy": "4e75e2e601429b7bf918d2d475fe0d88f2a5c284dc0c7ef2dc20dc2e94a1d35d",
+    "t3/traces.json": "fc0c540240edf6c7f91edaf8c0a579ddcaa267c044250c3ee1471ac26e02d679"
+  }
+}

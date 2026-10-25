@@ -20,6 +20,9 @@ use super::{
 use crate::ServerState;
 
 const MAX_AUDIO_LENGTH_SECONDS: f64 = 360.0;
+const MAX_AUDIO_FRAMES: usize = 9_000;
+const MAX_CONTEXT_TOKENS: usize = 10_240;
+const MUSIC_FRAME_RATE: f64 = 25.0;
 const MAX_STEPS: usize = 30;
 
 #[derive(Deserialize)]
@@ -29,6 +32,8 @@ struct GenerateInput {
     prompt: String,
     lyrics: Option<String>,
     audio_length: Option<f64>,
+    max_frames: Option<usize>,
+    context_size: Option<usize>,
     num_inference_steps: Option<usize>,
     seed: Option<u64>,
     response_format: Option<String>,
@@ -63,12 +68,56 @@ pub(crate) async fn generate(
                 Some("prompt"),
             );
         }
-        if let Some(len) = input.audio_length {
-            if !len.is_finite() || len <= 0.0 || len > MAX_AUDIO_LENGTH_SECONDS {
+        if let Some(frames) = input.max_frames {
+            if frames == 0 || frames > MAX_AUDIO_FRAMES {
                 return error(
                     StatusCode::BAD_REQUEST,
-                    format!("audio_length must be in (0, {MAX_AUDIO_LENGTH_SECONDS}] seconds"),
-                    Some("audio_length"),
+                    format!("max_frames must be between 1 and {MAX_AUDIO_FRAMES}"),
+                    Some("max_frames"),
+                );
+            }
+        }
+        if let Some(ctx) = input.context_size {
+            if ctx == 0 || ctx > MAX_CONTEXT_TOKENS {
+                return error(
+                    StatusCode::BAD_REQUEST,
+                    format!("context_size must be between 1 and {MAX_CONTEXT_TOKENS}"),
+                    Some("context_size"),
+                );
+            }
+            if let Some(frames) = input.max_frames {
+                if frames > ctx {
+                    return error(
+                        StatusCode::BAD_REQUEST,
+                        format!("max_frames ({frames}) exceeds context_size ({ctx})"),
+                        Some("max_frames"),
+                    );
+                }
+            }
+        }
+        let duration = if let Some(frames) = input.max_frames {
+            input
+                .audio_length
+                .unwrap_or(frames as f64 / MUSIC_FRAME_RATE)
+        } else {
+            input.audio_length.unwrap_or(60.0)
+        };
+        if (input.audio_length.is_some() || input.max_frames.is_none())
+            && (!duration.is_finite() || duration <= 0.0 || duration > MAX_AUDIO_LENGTH_SECONDS)
+        {
+            return error(
+                StatusCode::BAD_REQUEST,
+                format!("audio_length must be in (0, {MAX_AUDIO_LENGTH_SECONDS}] seconds"),
+                Some("audio_length"),
+            );
+        }
+        if let Some(ctx) = input.context_size {
+            let frames = ((duration * MUSIC_FRAME_RATE).trunc() as usize).max(1);
+            if frames > ctx {
+                return error(
+                    StatusCode::BAD_REQUEST,
+                    format!("audio_length requires {frames} frames, exceeding context_size {ctx}"),
+                    Some("context_size"),
                 );
             }
         }
@@ -99,7 +148,9 @@ pub(crate) async fn generate(
                 .lyrics
                 .filter(|l| !l.trim().is_empty())
                 .unwrap_or_else(|| "[instrumental]".to_string()),
-            duration_seconds: input.audio_length,
+            duration_seconds: Some(duration),
+            max_frames: input.max_frames,
+            context_size: input.context_size,
             steps: input.num_inference_steps,
             seed: input.seed,
         };

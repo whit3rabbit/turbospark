@@ -8,6 +8,11 @@
 //!   the CPU oracle, `moondream/parakeet-redux` at the revision pinned in
 //!   `audio::stt::parakeet::PARAKEET_REDUX`.
 //!
+//! The CPU parity checks run only on a Redux export (`base_model` in its
+//! `config.json`). Another export, such as `parakeet-ultra-coreml` at
+//! `95eaa59a39d4394f047a4dc5cce480388a60d1b6`, is held to the long-clip WER
+//! bound and timestamp order only.
+//!
 //! Clips are synthesized with macOS `say` at 16 kHz, so no audio fixture is
 //! committed. A test skips (passes with a note) when a model or `say` is
 //! missing.
@@ -23,6 +28,12 @@ use audio::stt::nemo::AlignedResult;
 use audio::stt::parakeet::ParakeetTdt;
 use audio::wav::read_wav_f32;
 use turbospark_runtime::coreml::{ParakeetCoreMl, ParakeetCoreMlOptions};
+
+fn base_model(dir: &Path) -> Option<String> {
+    let config: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.join("config.json")).ok()?).ok()?;
+    config.get("base_model")?.as_str().map(str::to_owned)
+}
 
 fn model_dir(env: &str, default: &str) -> Option<PathBuf> {
     let p = std::env::var_os(env)
@@ -68,33 +79,9 @@ fn say(dir: &Path, name: &str, text: &str) -> Option<Vec<f32>> {
     Some(w.samples)
 }
 
-fn normalize(s: &str) -> Vec<String> {
-    s.split_whitespace()
-        .map(|w| {
-            w.chars()
-                .filter(|c| c.is_alphanumeric() || *c == '\'')
-                .flat_map(char::to_lowercase)
-                .collect::<String>()
-        })
-        .filter(|w| !w.is_empty())
-        .collect()
-}
-
-/// Word error rate of `hyp` against `reference` (Levenshtein over words).
-fn wer(reference: &str, hyp: &str) -> f64 {
-    let (r, h) = (normalize(reference), normalize(hyp));
-    let mut prev: Vec<usize> = (0..=h.len()).collect();
-    for (i, rw) in r.iter().enumerate() {
-        let mut cur = vec![i + 1; h.len() + 1];
-        for (j, hw) in h.iter().enumerate() {
-            cur[j + 1] = (prev[j] + usize::from(rw != hw))
-                .min(prev[j + 1] + 1)
-                .min(cur[j] + 1);
-        }
-        prev = cur;
-    }
-    prev[h.len()] as f64 / r.len().max(1) as f64
-}
+#[path = "common/wer.rs"]
+mod wer;
+use wer::wer;
 
 fn token_table(r: &AlignedResult) -> Vec<(i32, f32)> {
     r.sentences
@@ -118,8 +105,13 @@ fn short_clips_match_cpu_redux() {
     ) else {
         return;
     };
-    let cpu_dir = model_dir("TURBOSPARK_PARAKEET_REDUX_MODEL", "models/parakeet-redux");
-    let coreml = ParakeetCoreMl::open(&coreml_dir, &ParakeetCoreMlOptions::default()).unwrap();
+    // The CPU oracle is Redux; comparing another export against it would
+    // fail on correct output.
+    let cpu_dir = (base_model(&coreml_dir).as_deref() == Some("moondream/parakeet-redux"))
+        .then(|| model_dir("TURBOSPARK_PARAKEET_REDUX_MODEL", "models/parakeet-redux"))
+        .flatten();
+    let opts = ParakeetCoreMlOptions::for_model(&coreml_dir).unwrap();
+    let coreml = ParakeetCoreMl::open(&coreml_dir, &opts).unwrap();
     let cpu = cpu_dir.map(|d| ParakeetTdt::open(&d).unwrap());
     let dir = scratch();
     for (i, text) in SHORT.iter().enumerate() {
@@ -165,7 +157,8 @@ fn long_clip_merges_windows_without_duplicates() {
     ) else {
         return;
     };
-    let coreml = ParakeetCoreMl::open(&coreml_dir, &ParakeetCoreMlOptions::default()).unwrap();
+    let opts = ParakeetCoreMlOptions::for_model(&coreml_dir).unwrap();
+    let coreml = ParakeetCoreMl::open(&coreml_dir, &opts).unwrap();
     let text = "The history of the lighthouse begins with fires lit on hilltops to guide \
         sailors home. Later, towers were built along dangerous coasts, and keepers \
         tended oil lamps through the night. In the nineteenth century, a French \
@@ -207,7 +200,10 @@ fn long_clip_merges_windows_without_duplicates() {
         starts.windows(2).all(|p| p[0] <= p[1]),
         "timestamps go backwards"
     );
-    if let Some(cpu_dir) = model_dir("TURBOSPARK_PARAKEET_REDUX_MODEL", "models/parakeet-redux") {
+    let cpu_dir = (base_model(&coreml_dir).as_deref() == Some("moondream/parakeet-redux"))
+        .then(|| model_dir("TURBOSPARK_PARAKEET_REDUX_MODEL", "models/parakeet-redux"))
+        .flatten();
+    if let Some(cpu_dir) = cpu_dir {
         let cpu = ParakeetTdt::open(&cpu_dir).unwrap();
         let want = cpu.decode(&pcm, 16_000).unwrap();
         let vs_cpu = wer(&want.text, &got.text);

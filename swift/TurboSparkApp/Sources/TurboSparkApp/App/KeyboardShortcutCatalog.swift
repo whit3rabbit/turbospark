@@ -56,7 +56,7 @@ public enum KeyboardShortcutCatalog {
                 altKeys: "\(control) \(section.shortcutKey)")
         }
         rows.append(KeyboardShortcutRow(
-            label: "Toggle Chat Sidebar",
+            label: "Toggle Sidebar",
             keys: "\(control) \(command) S",
             altKeys: "\(command) B"))
         rows.append(KeyboardShortcutRow(label: "Toggle Inspector", keys: "\(shift) \(command) I"))
@@ -99,7 +99,15 @@ public enum KeyboardShortcutCatalog {
             KeyboardShortcutRow(label: "Stop All", keys: "\(shift) \(command) ."),
         ])
 
+    /// Bound on the Record page's Start button (`AudioRecordingPanel`), not
+    /// in a menu, so the pane is the one place it is listed.
+    public static let audio = KeyboardShortcutSection(
+        title: "Audio",
+        rows: [
+            KeyboardShortcutRow(label: "Start Recording", keys: "\(shift) \(command) R"),
+        ])
+
     public static var sections: [KeyboardShortcutSection] {
-        [navigation, textSize, chat]
+        [navigation, textSize, chat, audio]
     }
 }

@@ -1,0 +1,40 @@
+{
+  "version": "1.0",
+  "truncation": null,
+  "padding": null,
+  "added_tokens": [],
+  "normalizer": null,
+  "pre_tokenizer": {
+    "type": "Whitespace"
+  },
+  "post_processor": null,
+  "decoder": null,
+  "model": {
+    "type": "WordLevel",
+    "vocab": {
+      "<unk>": 0,
+      "<|text_start|>": 1,
+      "<|text_end|>": 2,
+      "<|lang_start|>": 3,
+      "<|lang_end|>": 4,
+      "<|instruct_start|>": 5,
+      "<|instruct_end|>": 6,
+      "<|denoise|>": 7,
+      "[": 8,
+      "]": 9,
+      "laughter": 10,
+      "sigh": 11,
+      "hello": 12,
+      "world": 13,
+      "text": 14,
+      "start": 15,
+      "end": 16,
+      "lang": 17,
+      "en": 18,
+      ".": 19,
+      "a": 20,
+      "b": 21
+    },
+    "unk_token": "<unk>"
+  }
+}

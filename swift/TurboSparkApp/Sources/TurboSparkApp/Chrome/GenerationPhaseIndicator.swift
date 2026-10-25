@@ -47,8 +47,10 @@ struct GenerationPhaseIndicator: View {
     private var statusText: Text? {
         if model.opening { return Text("Loading model", bundle: .module) }
         switch model.phase {
+        // The same words as the transcript's activity line. The counts live
+        // there; "Prefill 0/1" here only said that no count had arrived.
         case .prefill:
-            return Text("Prefill \(model.livePrefillDone)/\(max(model.livePrefillTotal, 1))", bundle: .module)
+            return Text("Reading prompt...", bundle: .module)
         case .decode:
             return Text("Generating", bundle: .module)
         case .idle:

@@ -941,3 +941,41 @@ fn model_dir_auto_discovery() {
 
     std::fs::remove_dir_all(&tmp).ok();
 }
+
+/// `--speculative` takes the CLI's values with the CLI's meaning
+/// (`crates/invocation`'s parser): `adaptive` is a cap of
+/// `DEFAULT_ADAPTIVE_CAP`, and `adaptive:N` needs N from `MIN_ADAPTIVE_CAP`
+/// up within the allowed block range, since a cap at the controller's floor
+/// would be a fixed block with extra steps.
+#[test]
+fn speculative_accepts_the_clis_adaptive_spellings() {
+    let spec =
+        |v: &str| parse(&["--model", "/tmp/m", "--speculative", v]).map(|a| a.unwrap().speculation);
+    assert_eq!(spec("off").unwrap(), runtime::Speculation::Off);
+    assert_eq!(spec("auto").unwrap(), runtime::Speculation::Auto);
+    assert_eq!(spec("2").unwrap(), runtime::Speculation::Block(2));
+    assert_eq!(
+        spec("adaptive").unwrap(),
+        runtime::Speculation::Adaptive(foundation::runtime_config::DEFAULT_ADAPTIVE_CAP)
+    );
+    assert_eq!(
+        spec("adaptive:3").unwrap(),
+        runtime::Speculation::Adaptive(3)
+    );
+    assert_eq!(
+        spec("adaptive:15").unwrap(),
+        runtime::Speculation::Adaptive(15)
+    );
+    for bad in [
+        "adaptive:2",
+        "adaptive:16",
+        "adaptive:",
+        "adaptive:x",
+        "0",
+        "16",
+        "fast",
+    ] {
+        let err = spec(bad).unwrap_err();
+        assert!(err.contains("--speculative"), "{bad}: {err}");
+    }
+}

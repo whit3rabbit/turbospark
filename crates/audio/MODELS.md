@@ -46,7 +46,8 @@ public gates.
 | `stt/canary` | Upstream MLX reference only | Pinned q8 conversion loaded with mlx-audio 0.5.7 and returned the expected transcript on one generated 16 kHz clip | Rust port, stage fixtures, broader quality and product integration remain open |
 | `stt/granite_speech` | Upstream MLX reference only | Pinned three-shard 1B checkpoint loaded after adding optional `jinja2` to the local reference environment; returned the expected phrase on one generated 16 kHz clip | Rust port, stage fixtures, translation modes, broader quality and product integration remain open |
 | `stt/parakeet` | [Family port](src/stt/parakeet/mod.rs) | Pinned MLX and Rust v2, v3, and Redux checkpoints returned the same smoke transcript; v2 stage fixtures from the float32 reference (mel 8.2e-5, encoder 7.5e-6, all 21 decode steps and 19 emitted tokens identical) and matching transcripts on two generated clips | runtime/catalog, FFI, Swift, performance and memory; v3/Redux second-clip re-runs and broader quality remain open |
-| `stt/nemotron_asr` | [Family port](src/stt/nemotron_asr/README.md) | Pinned mlx-audio 0.5.7 and Rust runs returned the exact same transcript on one generated 16 kHz clip; first-block attention and final encoder stage were compared | Offline inference only; cache-aware streaming, checked-in stage fixtures, broader quality, runtime/catalog, FFI, Swift, performance and memory remain open |
+| `stt/nemotron_asr` | [Family port](src/stt/nemotron_asr/README.md) | Pinned mlx-audio 0.5.7 and Rust runs returned the exact same transcript on one generated 16 kHz clip; first-block attention and final encoder stage were compared. Cache-aware streaming layers match the offline chunked-limited forward on synthetic weights (used by `stt/multitalker_asr`) | Nemotron 3.5 streaming transcription itself, checked-in stage fixtures, broader quality, runtime/catalog, FFI, Swift, performance and memory remain open |
+| `stt/multitalker_asr` | [Family port](src/stt/multitalker_asr/README.md) | Against NeMo Speech 218d0b4 on CPU (the Frozen E reference): frontend, speaker kernels, pre-encode and encoder stages within RMS-scaled 1e-4; full 120 s clip identical on every step and SegLST with replayed or live coupled diarization; live pipeline SegLST identical to NeMo on all 12 frozen AMI panel clips (cpWER in the README) | Runtime/catalog, FFI, Swift, Metal or Core ML, live incremental frontend, performance and memory remain open; F32 only |
 | `stt/granite_speech5_ctc` | [Port in progress](src/stt/granite_speech5_ctc/README.md) | Earlier pinned MLX and Rust checkpoints matched; frontend fixture and synthetic batched midpoint/final-logit parity pass | Batched path needs checkpoint rerun; broader quality, runtime/catalog, FFI, Swift, performance and memory gates remain open |
 | `stt/qwen3_asr` | [Port in progress](src/stt/qwen3_asr/mod.rs) | Earlier pinned Rust checkpoint matched the pinned MLX transcript; frontend and selected audio-tower outputs match their fixtures; a synthetic incremental-cache test matches full-prefix decoding | The prior debug run used full-prefix recomputation. The new cache needs pinned-checkpoint rerun, broader quality, runtime/catalog, FFI, Swift, performance and memory gates |
 | `stt/qwen3_forced_aligner` | [Port in progress](src/stt/qwen3_forced_aligner/README.md) | Pinned Rust checkpoint matched all nine MLX word spans within 1 ms on the checked-in WAV | English and Chinese segmentation only; Japanese/Korean segmentation, broader quality, workspace, runtime/catalog, FFI, Swift, performance and memory gates remain open |
@@ -109,6 +110,9 @@ crates/audio/
         README.md
         mod.rs
       nemotron_asr/       # NeMo Nemotron 3.5 ASR
+        README.md
+        mod.rs
+      multitalker_asr/    # NVIDIA Multitalker Parakeet (Frozen E)
         README.md
         mod.rs
     tts/
@@ -253,12 +257,12 @@ falcon_h1/ssm are still upstream-only (spec tasks 80 and 81).
 
 | Source directory | Class | Local task(s) | Identity / profile notes | Current Rust path |
 |---|---|---|---|---|
-| `arktts` | Source | 79 | Default task-qualified family | None |
+| `arktts` | Source | 79 | Default task-qualified family | [Family port](src/tts/arktts/README.md) over the [lm falcon_h1 backbone](src/lm/README.md) for the 0.1b flavor; decode-only codec (encode refused with precomputed reference codes), caller-owned Mistral tokenization with the exact prompt strings exposed, replayed uniform streams for sampled draws; real-checkpoint gate open |
 | `bailingmm` | README | 42 | Ming Omni MoE | [Family port](src/tts/bailingmm/README.md) |
-| `bark` | Source | 65 | Default task-qualified family | [Partial family port](src/tts/bark/README.md); semantic prefill fixture-verified, end-to-end scenario parity blocked by a reference-side fixture reproducibility issue |
+| `bark` | Source | 65 | Default task-qualified family | [Family port](src/tts/bark/README.md); reference Pipeline replay parity end to end at tiny seeded dims (ids and codes exact, prefill logits 8.3e-7 against a 1e-4 gate, waveform 8.9e-7 against a 1e-5 gate); real-checkpoint gate open |
 | `breeze_tts` | Source | 66 | Aliases `breeze`, `breeze-tts` | [Family port](src/tts/breeze_tts/README.md); ends at codebook frames, waveform decode needs the unported Qwen3-TTS speech tokenizer |
-| `chatterbox` | README | 32 | Default task-qualified family | None |
-| `chatterbox_turbo` | Source | 67 | Default task-qualified family | None |
+| `chatterbox` | README | 32 | Default task-qualified family | [Family port](src/tts/chatterbox/README.md) over the [S3 tokenizer codec port](src/codec/s3/README.md) and the [shared lm engine](src/lm/README.md); real-checkpoint gate open |
+| `chatterbox_turbo` | Source | 67 | Default task-qualified family | [Family port](src/tts/chatterbox_turbo/README.md) over the [S3 tokenizer codec port](src/codec/s3/README.md) and the [shared lm engine](src/lm/README.md); real-checkpoint gate open |
 | `confucius4` | Source | 68 | Default task-qualified family | [Family port](src/tts/confucius4/README.md) over the shared [BigVGAN codec port](src/codec/bigvgan/README.md) |
 | `dense` | README | 41 | Ming Omni Dense; rides the bailingmm module per the alias policy | [Family port](src/tts/bailingmm/README.md) |
 | `dia` | README | 31 | Default task-qualified family | [Family port](src/tts/dia/README.md) over the [Descript DAC codec port](src/codec/descript/README.md) |
@@ -280,7 +284,7 @@ falcon_h1/ssm are still upstream-only (spec tasks 80 and 81).
 | `moss_tts_delay` | Alias | 44 | Alias of `tts/moss_tts` | [Family port](src/tts/moss_tts/README.md) (delay-pattern variant) |
 | `moss_tts_local` | Alias | 44 | Alias of `tts/moss_tts` | [Family port](src/tts/moss_tts/README.md) (v1.5 local-transformer variant) |
 | `moss_tts_nano` | README | 33 | Default task-qualified family | [Family port](src/tts/moss_tts_nano/README.md) |
-| `omnivoice` | README | 38 | Default task-qualified family | [Family port](src/tts/omnivoice/README.md) over the shared [lm qwen3 backbone](src/lm/README.md) and the [HiggsAudio codec port](src/codec/higgs_audio/README.md) |
+| `omnivoice` | README | 15 | Real checkpoints gated: exact encode parity vs Python (bf16), deterministic oracle-verified 8-bit generation, RTF about 23 CPU (README) | [Family port](src/tts/omnivoice/README.md) over the shared [lm qwen3 backbone](src/lm/README.md) and the [HiggsAudio codec port](src/codec/higgs_audio/README.md); runtime, catalog, FFI and server adapters landed, Metal offload open |
 | `outetts` | README | 29 | Default task-qualified family | [Family port](src/tts/outetts/README.md) |
 | `pocket_tts` | Source | 74 | Default task-qualified family | [Family port](src/tts/pocket_tts/README.md); ends at the scaled Mimi latents, the pocket Mimi streaming decoder has no Rust port |
 | `qwen3` | Source | 64 | SNAC TTS wrapper over generic Qwen3 backbone | [Family port](src/tts/qwen3/README.md) |
@@ -321,7 +325,8 @@ Forced alignment and audio understanding retain their own capabilities.
 | `moss_music` | [Family port](src/stt/moss_music/README.md) | 23 | Pinned `mlx-community/MOSS-Music-8B-Thinking-4bit` @ `b14123a419b6254b92d9e55b8a5b6f7285e05c70`; frontend and full prompt construction (time markers included) fixture-verified token-exact; checkpoint gate needs >36 GiB (reference transcript recorded in the fixture) | [Family port](src/stt/moss_music/mod.rs) |
 | `moss_transcribe_diarize` | [Family port](src/stt/moss_transcribe_diarize/README.md) | 22 | Pinned `vanch007/mlx-MOSS-Transcribe-Diarize-4bit` @ `d42a296ee807e933ddd7588e2041dbbc84aff85d`; Rust checkpoint run matches the marked output, all 112 prompt ids and 25 greedy ids; single 30 s window | [Family port](src/stt/moss_transcribe_diarize/mod.rs) |
 | `nemo` | [Shared alignment module](src/stt/nemo/mod.rs) | None | Alignment helpers reused by Parakeet; AlignedToken/AlignedSentence/AlignedResult plus sentence grouping and the two chunk-overlap merges, unit-tested against upstream behavior | [Shared alignment module](src/stt/nemo/mod.rs) |
-| `nemotron_asr` | Family port | 10 | Pinned offline RNN-T transcription; cache-aware streaming remains open | [Family port](src/stt/nemotron_asr/README.md) |
+| `nemotron_asr` | Family port | 10 | Pinned offline RNN-T transcription; cache-aware streaming layers and resumable greedy decode added for `multitalker_asr` | [Family port](src/stt/nemotron_asr/README.md) |
+| `multitalker_asr` | Family port | 63 | NVIDIA `multitalker-parakeet-streaming-0.6b-v1` @ `8749fc71fd6e2d88ef230159bbf2aea69b524ee1` (F32 conversion of the `.nemo`) coupled to Nemotron-3 diarization @ `f667ed73`; reference is NeMo Speech 218d0b4, not mlx-audio | [Family port](src/stt/multitalker_asr/README.md) |
 | `parakeet` | README | 9 | v2/v3/Redux profiles; alias `parakeet_tdt` | [TDT v2/v3](src/stt/parakeet/mod.rs) |
 | `phonon` | [Family port](src/stt/phonon/README.md) | 61 | Pinned `FermionResearch/Phonon-1` @ `0428da04625c51b6f069a9829c7060e6b167b92a`; quint5 unpack word-exact, checkpoint transcript byte-identical (13 tokens); consumes the materialized release, refuses raw archives | [Family port](src/stt/phonon/mod.rs) |
 | `qwen2_audio` | [Family port](src/stt/qwen2_audio/README.md) | 21 | Pinned `mlx-community/Qwen2-Audio-7B-Instruct-4bit` @ `c65570002626f41b4dc08b7b54f42f99f3e82e7f`; Rust checkpoint transcript and all 10 greedy ids exact (783 prompt ids, 750 audio positions); offline transcription path only | [Family port](src/stt/qwen2_audio/mod.rs) |

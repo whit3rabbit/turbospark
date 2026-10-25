@@ -32,11 +32,12 @@ runtime = { package = "turbospark-runtime", path = "../runtime" }
 - `real_forward_types.rs`: `RealForwardError`, `PhaseCounters`, `dispatch_profile_report`, and `DecodeScratch`.
 - `real_forward_vision_api.rs` & `vision/`: Vision tower forward pass dispatches and multimodal token injection.
 - `families/`: Dedicated per-architecture forward flows:
+  - `deepseek2/`: DeepSeek V2 multi-head latent attention plus fine-grained MoE with a fused shared expert.
   - `gemma4/`: Gemma 4 attention, MoE routing, and layer norms.
-  - `gptoss/`: Harmony and GPT-OSS architectures.
-  - `llama/`: Llama 3, Mixtral MoE, and related dense models.
+  - `gptoss/`: GPT-OSS architecture, served through the Harmony chat dialect.
+  - `llama/`: Plain-GQA flow shared by Llama 2/3, Mistral, Mixtral MoE, Qwen 2/2.5, Qwen3 dense, Qwen3-MoE, Qwen3-VL, and MiniMax-M2.
   - `museglimmer/`: Muse Glimmer architecture.
-  - `qwen/`: Qwen 3.5, Qwen 3.6 (GDN hybrid), Qwen 3.8, Qwen 2, and Qwen3-MoE.
+  - `qwen/`: Qwen GDN hybrid families: `qwenGdnMoe` (Qwen 3.6) and the dense `qwen35` GDN (checkpoints named 3.5, 3.6, and 3.8).
   - `qwen4/`: `qwen4_exp` QSA indexer and PLE n-gram routing flow.
   - `spark/`: Spark-X2.5-4B fused QKV and headwise gated architecture.
   - `synthetic/`: Synthetic fallback flow for headless unit tests.
@@ -63,7 +64,7 @@ cargo test -p turbospark-runtime --test real_forward_gemma4
 
 ## Tests
 
-This crate contains 59 integration test suites in `tests/`:
+This crate contains 76 integration test suites in `tests/`, including:
 - Model family forward passes: `real_forward_gemma4.rs`, `real_forward_gptoss.rs`, `real_forward_llama.rs`, `real_forward_llama_dense.rs`, `real_forward_minimax.rs`, `real_forward_muse.rs`, `real_forward_qwen.rs`, `real_forward_qwen2.rs`, `real_forward_qwen35.rs`, `real_forward_qwen3moe.rs`, `real_forward_qwen4.rs`, `real_forward_spark.rs`.
 - Chunked prefill & prefix reuse: `chunked_prefill.rs`, `chunked_prefill_refusal.rs`, `prefix_reuse_real.rs`, `real_forward_gemma4_chunked.rs`, `real_forward_qwen35_chunked.rs`.
 - Quantized KV cache forward tests: `real_forward_gemma4_kv_quant.rs`, `real_forward_gptoss_kv_quant.rs`, `real_forward_llama_kv_quant.rs`, `real_forward_qwen35_kv_quant.rs`, `real_forward_spark_kv_quant.rs`.

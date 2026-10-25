@@ -113,6 +113,8 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
     /// explicit width bypasses this and is sent (and refused, if wrong)
     /// unconditionally, the same as any other named request in this app.
     public let supportsKvQuant: Bool
+    /// Whether this model and host hardware support the ANE+Steel prefill split.
+    public let supportsAnePrefill: Bool
     public let hasLinearAttention: Bool
     public let supportsChunkedPrefill: Bool
     public let supportsReasoning: Bool
@@ -420,6 +422,8 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
         // family table below is the estimate.
         let isSteeringReady =
             sessionInfo?.steering.supported ?? TurboSparkCapabilities.family(family).steeringSupported
+        let supportsAnePrefill =
+            sessionInfo?.anePrefill?.supported ?? (TurboSparkCapabilities.family(family).anePrefillSupported && TurboSparkCapabilities.chipSupportsAnePrefill)
 
         let hasLinearAttention = lAlias.contains("qwen36") || lFamily == "qwen36" || lFamily == "qwen4exp"
         let supportsChunkedPrefill = lAlias.contains("gemma") || lFamily.contains("gemma") || lFamily.contains("llama") || lAlias.contains("mistral") || lFamily == "qwen4exp"
@@ -445,6 +449,7 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
             storageSource: source,
             isSteeringReady: isSteeringReady,
             supportsKvQuant: supportsKvQuant,
+            supportsAnePrefill: supportsAnePrefill,
             hasLinearAttention: hasLinearAttention,
             supportsChunkedPrefill: supportsChunkedPrefill,
             supportsReasoning: supportsReasoning,

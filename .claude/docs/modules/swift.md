@@ -50,7 +50,8 @@ swift/
     +-- Package.resolved             # pins swift-markdown-ui
     +-- Sources/TurboSparkApp/
     |   +-- App/                     # @main scene, RootView, AppSettingsView
-    |   +-- Chrome/                  # NavigationRailView, TopBarView,
+    |   +-- Chrome/                  # AppSidebarView, NavigationRailView,
+    |   |                            # ProfileMenuButton, TopBarView,
     |   |                            # StatusBarView, ModelLoaderControl
     |   +-- Files/                   # AttachmentImporter, FilePreviewView,
     |   |                            # FilesSectionView
@@ -80,7 +81,12 @@ swift/
     |   |                            # ToastOverlayView, ErrorBanner
     |   +-- Theme/                   # AppearanceSettings, AppearanceTypes, AppDockIconRenderer,
     |   |                            # TurboSparkTheme, AppChromePresentation,
-    |   |                            # PointerCursorModifier, ThemeCodePreviewView
+    |   |                            # PointerCursorModifier, ThemeCodePreviewView;
+    |   |                            # the DESIGN.md vocabulary: AppControls,
+    |   |                            # AppSurfaces, AppProgressBar, TurboSparkMotion
+    |   +-- Audio/                   # Audio Studio: AudioWorkspaceView, the controller
+    |   |                            # and its extensions; VoiceClone* and
+    |   |                            # VoiceReference* views (Voice Cloning page)
     |   +-- Tools/                   # everything a tool call passes through;
     |   |   |                        # swift/docs/SWIFT_TOOLS.md is the map
     |   |   +-- Registry/            # AppToolRegistry (+Handlers, +Vocabulary),
@@ -401,7 +407,7 @@ keeps resolving.
     directly (not through the actor) and is why Stop is immediate.
 
 17. **THE WINDOW IS FOUR CHROME BANDS AND EACH ONE OWNS ONE QUESTION.**
-    `RootView` is a sidebar (sections, and the chat list when there is one),
+    `RootView` is a sidebar (the section rail, and a section's panel when it has one),
     a top bar (what the machine is doing),
     the working panes, and a status strip (context fill, fans, tok/s,
     tokens, thermal, memory pressure). "Which model, is it loaded" is NOT a
@@ -410,26 +416,35 @@ keeps resolving.
     rather than window-scoped -- so it is absent from the Files, Installed,
     Discover and Server sections by design.
 
-    **THE LEFT COLUMN IS ONE SURFACE IN TWO PRESENTATIONS, NOT TWO BANDS.**
-    A permanent 52pt icon rail used to sit beside a 260pt chat sidebar, which
-    read as two vertical bars stacked together. `AppSidebarView` is the single
-    column since 2026-09-09: expanded it is `SidebarSectionNavView`'s labeled
-    rows over `ChatSidebarView`, collapsed it is `NavigationRailView`
-    unchanged. **The toggle no longer HIDES anything**, and that is the whole
-    design rather than a detail -- the old split existed so sections stayed
-    reachable while the sidebar was hidden, and folding navigation into a
-    hideable sidebar would strand it twice, once on Cmd+B and once in the four
-    sections that never showed a chat list. Collapsing to the rail satisfies
-    the same constraint with one column. Three consequences. The window
-    minimum drops by `navigationRailWidth + dividerWidth` when expanded,
-    because the sidebar's width REPLACES the rail's instead of stacking on it
-    (`minimumWindowWidth` takes `isSidebarExpanded:` and adds one column).
-    `RootView.showsChatSidebar` is gone; `activeSection == .chat` is
-    `AppSidebarView`'s business and must NOT be re-conjoined into the width
-    call, or the window can shrink under its own sidebar in Files and Server.
-    And the profile/settings footer moved OUT of `ChatSidebarView` into
-    `AppSidebarView`, because it has to be present in the sections that have
-    no chat list to hang it off.
+    **THE LEFT BAND IS A RAIL PLUS A CONTEXTUAL PANEL, AND IT IS ONE SURFACE.**
+    History: a permanent 52pt rail beside a 260pt chat sidebar read as two
+    vertical bars, so from 2026-09-09 to 2026-10-15 the band was ONE column in
+    two presentations (labeled section rows over the chat list, or the rail).
+    Those labeled rows cost about 300pt of chat history, so since 2026-10-15
+    `AppSidebarView` is the rail (`NavigationRailView`, always on screen)
+    plus the selected section's panel (`ChatSidebarView` for Chat,
+    `AudioSidebarPanel` for Audio, and the Images, Installed and API modes
+    that used to be in-pane switchers; `AppNavigationSection.hasSidebarPanel`).
+    A mode moved into a panel lives on `AppModel` and the pane drops its own
+    switcher, so there is one control per choice.
+    Three rules keep it from regressing into the old two-bar look. **The
+    panel never repeats the section list**: the rail answers "where", the
+    panel only "what is in it". **One surface**: while a panel is shown the
+    rail takes `sidebarBackgroundColor` and draws a 0.5pt hairline as an
+    overlay. **Navigation never hides**: Cmd+B and Ctrl+Cmd+S hide the
+    PANEL, never the rail, and do nothing (menu item disabled, top-bar toggle
+    hidden) in rail-only sections. Consequences. The window floor is
+    `leftChromeWidth(isPanelVisible:)` = rail + panel when shown, and
+    `isPanelVisible` is `RootView`'s ONE predicate (preference AND
+    `hasSidebarPanel`): gating the floor on the raw preference reserves an
+    empty 260pt in Files, and `RootWindowLayoutTests` holds that. The
+    profile menu (`ProfileMenuButton`) and Settings gear live at the foot of
+    the rail, the only chrome present in every section; the temporary-chat
+    button (`GhostChatButton`) sits beside the chat panel's tabs. Every
+    panel but Chat's lists destinations, so its rail item is a button when
+    the panel will show and falls back to a menu of the same destinations
+    (`AudioDestinationMenu`, `SidebarModeMenu`) when the preference hides
+    it. Without the menu, hiding the panel strands those modes.
 
     **The top bar is THREE GROUPS, and the middle one is `.fixedSize()`.**
     It used to be one left-aligned run, on the reasoning that the phase
@@ -457,8 +472,8 @@ keeps resolving.
     `showsLeadingDivider:`, because with memory and CPU gone it can be first
     in the strip.
 
-    The rail carries six sections (Chat: 1, Images: 2, Files: 3, Installed: 4,
-    Discover: 5, Server: 6); `testEverySectionHasAUniqueTitleAndShortcut`
+    The rail carries eight sections (Chat: 1, Images: 2, Files: 3, Installed: 4,
+    Discover: 5, API: 6, Audio: 7, Humanize: 8); `testEverySectionHasAUniqueTitleAndShortcut`
     guards a missing or duplicated tooltip.
 
     **THE WINDOW DEFAULTS TO THE SCREEN'S FULL VISIBLE FRAME AND REMEMBERS
@@ -950,7 +965,7 @@ Each page carries its own "read this before" list at the top.
 | `swift/docs/SWIFT_SKILLS.md` | skills: architecture, scopes, file layout, marketplace |
 | `swift/docs/SWIFT_CONTEXT_REFERENCES.md` | typed `@` context references (`@diff`, `@staged`, `@git:N`, `@url:`, `@file:`, `@folder:`), resolution, sensitive-path and SSRF gates |
 | `swift/docs/SWIFT_PROFILES.md` | user profiles: registry, Default-user contract, shared vs per-profile storage, save-and-relaunch switching |
-| `swift/docs/SWIFT_MEMORY.md` | auto-memory: the per-project directory, the index, the `memory` tool, the `#` quick-save |
+| `swift/docs/SWIFT_MEMORY.md` | memory claims: the ledger, capture and review, recall, forget, and memory vs conversation recall |
 | `swift/docs/SWIFT_COMPACTION.md` | context compaction: trigger, boundary, summarizer, the ghost rule |
 | `swift/docs/SWIFT_TURN_PIPELINE.md` | the message queue, steer delivery at step boundaries, system reminders |
 | `swift/docs/SWIFT_GOALS.md` | the `/goal` loop: the stop-seam evaluator, deferral + idle check-ins, stall pause, restore rules |
@@ -960,7 +975,8 @@ Each page carries its own "read this before" list at the top.
 | `swift/docs/storage.md` | app JSON stores, the modality-separated engine model store, the retired Move Store and its conversion to a library, provider discovery, `ModelStorageManager`, `AppStorageRoot` test isolation, and which directories tests may write to |
 | `swift/docs/SWIFT_CONTEXT_RING.md` | the composer's context-usage indicator; the system prompt as one builder, three consumers |
 | `swift/docs/SYSTEM_PROMPT.md` | system prompt architecture: section ordering, dynamic capabilities, system reminders, token budgets |
-| `swift/docs/SYNTEXT.md` | Syntext indexed code search, project indexing, grep_search, live file buffer, and dual-staticlib symbol localization |
+| `swift/docs/SYNTEXT.md` | Syntext indexed code search, project indexing, grep_search, the revision pin, and dual-staticlib symbol localization |
+| `swift/docs/SYNTEXT_CONTEXT.md` | conversation recall on syntext's context engine: memory vs recall, the turn wiring, plaintext store gates, limitations |
 | `swift/docs/SWIFT_SINGLETON_AUDIT.md` | singleton audit: lifecycle, concurrency safety, shared vs profile instances |
 | `swift/docs/SWIFT_CHAT_SEARCH.md` | the Cmd+K search dialog: what is searched, ghost exclusion, matching semantics |
 | `swift/docs/SWIFT_MODEL_HUB.md` | install, the model hub's badges and filters, `activeLoadGuard`, selecting/opening/unloading, server multi-model attach |

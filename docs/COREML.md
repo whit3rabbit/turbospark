@@ -1,12 +1,12 @@
 # Core ML models
 
-TurboSpark runs three FluidInference Core ML exports. None of them is a
+TurboSpark runs six FluidInference Core ML exports. None of them is a
 generic format: each is a set of fixed-shape Core ML programs plus host files,
 and each has its own pipeline in `crates/runtime/src/coreml/`. The generic
 runner (load, compile, marshal, state) is `crates/coreml`; read its
 [AGENTS.md](../crates/coreml/AGENTS.md) before changing it.
 
-All three need **macOS 15 or newer** (iOS 18 programs, multifunction packages,
+All of them need **macOS 15 or newer** (iOS 18 programs, multifunction packages,
 or `MLState`). On macOS 14 every entry point refuses with a reason, and the
 audio catalog reports `can_run: false`.
 
@@ -15,14 +15,34 @@ audio catalog reports `can_run: false`.
 | Export | Pinned revision | Pipeline | License |
 |---|---|---|---|
 | [FluidInference/parakeet-redux-coreml](https://huggingface.co/FluidInference/parakeet-redux-coreml/tree/8c5ef97a29cd120dc76b354b3f22b7fec3b486f9) | `8c5ef97a29cd120dc76b354b3f22b7fec3b486f9` | `coreml::parakeet` | CC-BY-4.0 |
+| [FluidInference/parakeet-ultra-coreml](https://huggingface.co/FluidInference/parakeet-ultra-coreml/tree/95eaa59a39d4394f047a4dc5cce480388a60d1b6) | `95eaa59a39d4394f047a4dc5cce480388a60d1b6` | `coreml::parakeet` (same component contract as Redux) | CC-BY-4.0 |
+| [FluidInference/parakeet-unified-en-0.6b-coreml](https://huggingface.co/FluidInference/parakeet-unified-en-0.6b-coreml/tree/d32e972dd4315f1dc3f6be28fb2aab0ab3e80358) (streaming subset only) | `d32e972dd4315f1dc3f6be28fb2aab0ab3e80358` | `coreml::parakeet_unified`, `parakeet_unified_stream` | CC-BY-4.0 |
 | [FluidInference/embeddinggemma-2-coreml](https://huggingface.co/FluidInference/embeddinggemma-2-coreml/tree/3f978ddf92cac9aa07eb2dcf6eb36cf450f3dba4) | `3f978ddf92cac9aa07eb2dcf6eb36cf450f3dba4` | `coreml::embedding_gemma2`, `embedding_gemma2_media` | Apache-2.0 |
+| [FluidInference/speaker-diarization-coreml](https://huggingface.co/FluidInference/speaker-diarization-coreml/tree/7eab74f3463c736418d0eb10296261ae581146c9) (community-1 subset only) | `7eab74f3463c736418d0eb10296261ae581146c9` | `coreml::diarization` | CC-BY-4.0 (that subset) |
 | [FluidInference/unlimited-ocr-mlx-coreml](https://huggingface.co/FluidInference/unlimited-ocr-mlx-coreml/tree/4568571eacd864e0a253c609b3c9d0e00450cebc) (Core ML parts only) | `4568571eacd864e0a253c609b3c9d0e00450cebc` | `coreml::unlimited_ocr` | MIT |
 
-Attribution: the Parakeet export is a Core ML conversion by Fluid Inference of
-`moondream/parakeet-redux`, itself derived from NVIDIA
-`parakeet-tdt-0.6b-v3`, under CC-BY-4.0. EmbeddingGemma 2 is a Google model;
+Attribution: the Parakeet exports are Core ML conversions by Fluid Inference of
+`moondream/parakeet-redux` and `moondream/parakeet-ultra`, both derived from
+NVIDIA `parakeet-tdt-0.6b-v3`, and of NVIDIA `parakeet-unified-en-0.6b`, all
+under CC-BY-4.0. The Unified pin is the decoder, the single-step joint, the
+vocabulary, the configs and one streaming encoder
+(`parakeet_unified_encoder_streaming_70_7_7_int8`), about 609 MB of an 11 GB
+repository. EmbeddingGemma 2 is a Google model;
 the export's card says Apache-2.0, and whether the Gemma terms also apply has
 not been checked. Unlimited OCR is baidu/Unlimited-OCR under MIT.
+
+Speaker diarization pins only the pyannote community-1 set: the
+`Segmentation`, `FBank`, `Embedding` and `PldaRho` programs,
+`plda-parameters.json`, and the repository's `NOTICE.md` and `LICENSE`
+(23 files, 21.6 MB). These are modified Core ML conversions by Fluid
+Inference of `pyannote/speaker-diarization-community-1` (pyannote, CC-BY-4.0),
+whose embedding is WeSpeaker ResNet34 and whose PLDA parameters come from BUT
+Speech@FIT (CC-BY-4.0). The legacy `pyannote_segmentation` and `wespeaker*`
+programs in the same repository fall outside that license scope and are not
+pinned. The repository's `PROVENANCE.md` calls the binaries historically
+reconstructed, not build-attested: the 2025 converter commit was not recorded.
+Every pinned file matched the SHA-256 in its `provenance.json` and the Hub
+LFS digest.
 
 Host-side logic follows FluidInference/FluidUse at
 `d278e17df85e39e8c21bb64a467da81c39576fcd` (Apache-2.0) where the model cards
@@ -41,6 +61,16 @@ fallback. Segments are sentences with word timings (`timing: "token"`).
 Detection is by layout (the four `.mlmodelc` directories plus
 `parakeet_vocab.json`), before any `config.json` read.
 
+**Parakeet Unified (live text).** A stateless chunked-attention encoder: each
+step re-encodes a `[left 70 | chunk 7 | right 7]` window of 80 ms frames
+(6.72 s), the right context is held back until a later step or the final
+flush, and only the RNNT prediction state and last token carry over. The
+log-mel is computed on the host with `audio::nemo_mel` (`per_feature` over the
+window's valid frames). It is streaming only: batch opens refuse it, and the
+app and FFI reach it through `ts_audio_stream_*`. Windowing and the RNNT loop
+follow FluidAudio `StreamingUnifiedAsrManager` at
+`d31145a9476256afbcc7ec4ead33d883795bef78` (Apache-2.0).
+
 **EmbeddingGemma 2.** Text is a task prefix from `config.json`, then `<bos>`,
 the tokens and `<eos>`, gathered from the bf16 table times sqrt(512). It runs
 through the smallest `embed_S` that fits, with `<pad>` rows masked out. Special
@@ -50,6 +80,21 @@ windows with a 160-sample left pad. Images use the Gemma 4 resize (sides a
 multiple of 48 px), 16 px patches and 3 x 3 pooling. Both produce soft tokens
 that go through the text model between their boundary tokens. `pack_256` is not
 used: it needs its own parity gate first.
+
+**Speaker diarization (offline).** The host follows pyannote.audio 4.0.0
+`SpeakerDiarization` with `VBxClustering` (commit
+`a1ed3bb0440d33d18622e1cb6b138431cfaf4f7a`): 10 s windows every 1 s, the
+powerset argmax as three local speakers per frame, an embedding for every
+active local speaker (overlap excluded when more than 1 s of clean speech
+remains), centroid AHC on the normalized embeddings cut at 0.6 like scipy
+`fcluster`, VBx (Fa 0.07, Fb 0.8, 20 iterations) on the PLDA features, and
+constrained assignment per window. The output is the exclusive
+reconstruction, one speaker per frame, as turns between frame centers on the
+16.875 ms grid. Speakers are `S1`, `S2`, ... in order of first appearance.
+The FBank output is re-centered on non-silent frames, as FluidAudio
+`SilenceAwareFbank` does at `2d6c42ca5f3accc0faf9fee9e0fff5b9b2cf6042`.
+It runs as audio task `diarization` and returns a transcript whose segments
+are turns with empty text.
 
 **Unlimited OCR.** Pages are aspect-fit into 1024 x 1024 with a gray-127
 border (PIL `ImageOps.pad`, PIL bicubic) and normalized to [-1, 1]. The prefix
@@ -64,19 +109,32 @@ is `<bos>`, 273 page embeddings per page, then the prompt ids. Prefill runs in
 
 | Model | Default compute units | Override |
 |---|---|---|
-| Parakeet | preprocessor CPU, encoder GPU, decoder and joint CPU | `TURBOSPARK_PARAKEET_COREML_ENCODER_UNITS` |
+| Parakeet | preprocessor CPU, encoder by weight format (Redux GPU, Ultra Neural Engine), decoder and joint CPU | `TURBOSPARK_PARAKEET_COREML_ENCODER_UNITS` |
+| Parakeet Unified | mel on the host, int8 encoder Neural Engine, decoder and joint CPU | `TURBOSPARK_PARAKEET_UNIFIED_ENCODER_UNITS` |
 | EmbeddingGemma 2 | text Neural Engine, audio and vision GPU | `TURBOSPARK_EMBEDDINGGEMMA2_COREML_UNITS` (text) |
 | Unlimited OCR | page encoder GPU (fixed), decoder GPU | none; Neural Engine refused |
+| Speaker diarization | segmentation, FBank and PldaRho CPU, embedding Neural Engine | `TURBOSPARK_DIARIZATION_COREML_EMBEDDING_UNITS` (GPU refused) |
 
 Override values are `cpu`, `cpu_gpu`, `cpu_ane` and `all`.
 
-- **Parakeet:** the Parakeet encoder defaults to the GPU because its first
-  Neural Engine compile takes minutes (the card says about 7) and cannot be
-  cancelled.
+- **Parakeet:** the encoder placement follows `config.json`'s declared
+  `weight_format`. Redux's 2-bit ternary encoder is the one format measured on
+  the GPU, and stays there because its first Neural Engine compile takes
+  minutes (417 s measured) and cannot be cancelled. Every other format, int8
+  included (Ultra, Unified), runs on the Neural Engine, and a GPU override for
+  it is refused unless `TURBOSPARK_COREML_ALLOW_QUANTIZED_GPU=1` (meant only
+  for the subprocess probe). FluidAudio reports int8 encoders aborting the
+  process on the GPU; on this Mac Ultra did not abort but ran at 18x real time
+  against 122x on the Neural Engine.
 - **EmbeddingGemma 2:** text compiles each function for the Neural Engine on
   first use. Measured here: 15 s for `embed_32` at open, 37 s for `embed_128` on
   its first request.
 - **OCR:** the card reports wrong page embeddings on the Neural Engine.
+- **Speaker diarization:** `MLComputePlan` puts the segmentation model's
+  LSTMs, FBank and PldaRho on the CPU whatever is requested, so they load
+  CPU-only. The embedding plans 99.96% of its cost on the Neural Engine. It
+  was never run on the GPU here, so a GPU override is refused unless
+  `TURBOSPARK_COREML_ALLOW_QUANTIZED_GPU=1`.
 
 To see where Core ML will actually run a model, read its compute plan
 (`MLComputePlan`, macOS 14.4+) instead of timing placements:
@@ -107,8 +165,12 @@ Real-model tests are `#[ignore]`d and skip when the model is absent.
 
 ```sh
 cargo test --release -p turbospark-runtime --test coreml_parakeet -- --ignored --nocapture
+TURBOSPARK_PARAKEET_COREML_MODEL=~/models/coreml/parakeet-ultra-coreml \
+  cargo test --release -p turbospark-runtime --test coreml_parakeet -- --ignored --nocapture
+cargo test --release -p turbospark-runtime --test coreml_parakeet_unified -- --ignored --nocapture
 cargo test --release -p turbospark-runtime --test coreml_embeddinggemma2 -- --ignored --nocapture
 cargo test --release -p turbospark-runtime --test coreml_ocr -- --ignored --nocapture
+cargo test --release -p turbospark-runtime --test coreml_diarization -- --ignored --nocapture
 cargo test --release -p turbospark-ffi --test embedding_request --test ocr_surface -- --include-ignored
 ```
 
@@ -124,6 +186,44 @@ Measured on an M4 Max, macOS 26.6 (2026-10-13):
   against the CPU single pass.
 - Before the merge fix, the same clip measured WER 0.232 (tokens past the
   overlap were dropped).
+
+Measured on an M4 Max, macOS 26.6 (2026-10-16), on battery with other
+sessions loading the host (load average 10 to 17). Quality results stand;
+timings are informal and are not benchmark rows.
+
+**Parakeet Ultra (default) against Redux**
+- LibriSpeech test-clean, the first 5 utterances per speaker (200, 4656
+  words), one process per file, normalizer of `tests/common/wer.rs`: corpus
+  WER 0.0226 for Ultra on the Neural Engine, 0.0275 for Redux on the GPU. The
+  card's full-set figures are 0.0213 and 0.0271.
+- `coreml_parakeet` with Ultra: the 37 s clip in three windows at WER 0.020,
+  timestamps monotonic. With Redux the CPU parity still holds (identical ids
+  and frames) after the placement change.
+- Ultra first Neural Engine compile 12.2 s (cache cleared), cached open 123 ms.
+  Core ML's cache is per executable, so each new binary compiles once.
+- `coreml_backend_probe`, 11 s clip: Ultra Neural Engine 122x real time, Ultra
+  CPU 61x, Redux GPU 72x, Ultra int8 on the GPU (probe flag) 18x with no abort.
+
+**Parakeet Unified streaming**
+- `coreml_parakeet_unified`, 20 s `say` clip in 100 ms appends: WER 0.000 with
+  punctuation, identical text for 1 s and 2 s appends, and 0.000 against Ultra
+  batch on the same audio. First Neural Engine compile 14.5 s.
+- Word commit lag (audio received minus word end) median 1.04 s, p95 1.50 s,
+  against the 1.12 s chunk plus look-ahead. Append compute p95 18.8 ms.
+
+**Speaker diarization** (2026-10-16, load average 30 to 47 from other
+sessions, so timings are informal)
+- `coreml_diarization`: a 65.8 s `say` conversation, 10 turns alternating
+  Samantha and Daniel with 0.5 s gaps. Two speakers found, every turn
+  attributed to its voice, DER 0.0126 with no collar (miss 0.0023, false
+  alarm 0.0103, confusion 0) and 0.0004 with a 0.25 s collar. A 40 s one-voice
+  monologue stays one speaker (DER 0). With AHC forced to merge everything the
+  gate fails (one speaker, DER 0.45).
+- 37x to 39x real time on the 65.8 s clip. A probe tiling a 22.6 s two-voice
+  clip: 10 min in 19.1 s, 30 min in 49.6 s. First Neural Engine compile of the
+  embedding 10 s per executable, cached opens about 50 ms.
+- Peak `phys_footprint`: 673 MB (66 s, with the compile), 776 MB (10 min),
+  858 MB (30 min).
 
 **EmbeddingGemma 2**
 - Against a coremltools CPU reference
@@ -270,17 +370,26 @@ tokens:
 |---|---|---|---|
 | Runtime | `ParakeetCoreMl` | `EmbeddingGemma2CoreMl` | `UnlimitedOcrCoreMl` |
 | Server | `--stt-model`, `/v1/audio/transcriptions` | `--embedding-model`, `/v1/embeddings` (text) | none |
-| C ABI | `ts_stt_*`, `ts_audio_*` sessions | `ts_embedding_encode_json`, `ts_embedding_encode_request_json`, `ts_embedding_catalog_json`, `ts_embedding_install` | `ts_ocr_*` |
+| C ABI | `ts_stt_*`, `ts_audio_*` sessions | `ts_embedding_encode_json`, `ts_embedding_encode_request_json`, `ts_embedding_catalog_json`, `ts_embedding_probe_json`, `ts_embedding_install` | `ts_ocr_*`, `ts_ocr_catalog_json`, `ts_ocr_install` |
 | CLI | none | none | `turbospark ocr` |
-| Swift | `TurboSparkSTTModel`, `AudioSession` | `TurboSparkEmbedding.encode(request:)`, `EmbeddingCatalog` | `TurboSparkOcr` |
-| Catalog pin | `parakeet-redux-coreml` in `audio_assets.json` | `embeddinggemma-2-coreml` in `embedding_models.json` | none (explicit path) |
-| App | Audio workspace, Transcribe and Record pages (listed, downloaded and run like any audio profile) | Settings, Memory and Server > Advanced: a Recommended row under the embedding field offers Download, then Use | none |
+| Swift | `TurboSparkSTTModel`, `AudioSession` | `TurboSparkEmbedding.encode(request:)`, `EmbeddingCatalog` | `TurboSparkOcr`, `OcrCatalog` |
+| Catalog pin | `parakeet-redux-coreml` in `audio_assets.json` | `embeddinggemma-2-coreml` in `embedding_models.json`, status `verified` | `unlimited-ocr-coreml` in `ocr_models.json` |
+| App | Audio workspace, Transcribe and Record pages (listed, downloaded and run like any audio profile) | API > Embeddings tab and Settings > Memory: the shared embedding picker lists it as Verified and offers Download, then Use | none (the pin is installable through the C ABI and Swift only) |
+
+Speaker diarization has no column above: runtime `DiarizationCoreMl`; C ABI
+`ts_audio_*` sessions with task `diarization`; Swift `AudioSession` with
+`AudioTask.diarization`; catalog pin `speaker-diarization-coreml` in
+`audio_assets.json`; no server or CLI surface. In the app, the Advanced page's
+Speaker diarization operation downloads and runs it, and once it is installed
+the Record page's final pass labels each segment of a take with the speaker
+whose turns cover most of its words (`AudioSpeakerLabels`).
 
 ### Pinned installs
 
-Both pins list every file by path, size and SHA-256 at an immutable
+All three pins list every file by path, size and SHA-256 at an immutable
 revision, and the transfer checks each one before the install is published
-with one rename.
+with one rename. The install calls take the revision the host showed and
+refuse any other, so a retried download never adopts a different pin.
 
 - **Parakeet** installs as an audio profile to
   `models/audio/parakeet-redux-coreml.gturbo`. Opening it from the app
@@ -290,17 +399,101 @@ with one rename.
   with an `embedding-receipt.json`. It has no registry row, so it never
   shows up in the chat model pickers. `resolve_model_arg` falls back to this
   namespace, so the bare alias works in every embedding field, in
-  `--embedding-model` and in the C ABI.
+  `--embedding-model` and in the C ABI. The alias resolves only to an
+  install that verifies against the CURRENT pin; an older pin's install is
+  reported as stale, and Download replaces it (the old folder moves to a
+  tombstone and comes back if publishing fails). A folder without our
+  receipt is never replaced. The profile's `status` is `verified` because
+  its named gates (`coreml_embeddinggemma2`, `pinned_coreml_installs_network`)
+  ran on this pin; the loader refuses `verified` without gates.
+- **Unlimited OCR** installs to `models/ocr/unlimited-ocr-coreml` with an
+  `ocr-receipt.json`, by the same rules (`crates/catalog/src/pinned_dir.rs`
+  is shared with embeddings). It pins the nine Core ML files, 4.09 GB, and
+  none of `mlx/`. `ts_ocr_open` resolves the alias through
+  `resolve_ocr_arg` only, so an OCR alias never answers for a text or
+  embedding model.
 
-The network gate installs both into a scratch store (`TURBOSPARK_HOME`) and
-runs them:
+The network gates install into a scratch store (`TURBOSPARK_HOME`) and run
+the installs:
 
 ```sh
 cargo test --release -p turbospark-ffi --test pinned_coreml_installs_network -- --ignored --nocapture
+cargo test --release -p turbospark-ffi --test pinned_coreml_ocr_install_network -- --ignored --nocapture
+cargo test --release -p turbospark-catalog --test pinned_dir_catalog_network -- --ignored --nocapture
 ```
 
-It passed on 2026-10-14 after downloading about 1.7 GB. The embedding alias
-encoded at 128 dimensions, and Parakeet transcribed the clip exactly.
+The first passed on 2026-10-14 after downloading about 1.7 GB. The embedding
+alias encoded at 128 dimensions and probed as verified, and Parakeet
+transcribed the clip exactly. The second passed on 2026-10-14 after
+downloading about 4.1 GB: a second install was refused, the alias opened, and
+every line of `testdata/coreml_ocr/page1.png` was in the output. The third
+checks the embedding and OCR pins against the Hub without downloading the
+weights (LFS digests from the API, small files hashed); it passed the same
+day.
+
+## Swift-hosted Core ML (FluidAudio)
+
+Some audio rows run in the app through the FluidAudio Swift package (exact
+0.15.5), not through `crates/coreml`. Rust still pins, downloads, verifies,
+lists and deletes them like any audio profile. The evidence behind every value
+below is [FLUIDAUDIO_PHASE0.md](FLUIDAUDIO_PHASE0.md). Five rows ship:
+`parakeet-ja-coreml`, `paraformer-zh-coreml`, `silero-vad-coreml`,
+`kokoro-82m-ane-coreml` and `pocket-tts-coreml`. The app side is
+[FLUIDAUDIO.md](FLUIDAUDIO.md).
+
+- **Backend `swift_coreml`.** The families are `fluidaudio_silero_vad`,
+  `fluidaudio_kokoro_ane`, `fluidaudio_pocket_tts`, `fluidaudio_sensevoice`,
+  `fluidaudio_paraformer_zh` and `fluidaudio_parakeet_ja`
+  (`profile_capabilities`). The diarizer has no family of its own: the same
+  `speaker-diarization-coreml` pin already runs in Rust as
+  `pyannote_community1`, and the app reaches it through the FFI. `can_run` is false because
+  a Rust session never opens one. The reason text says so, and the generic row
+  path keeps it.
+- **`http_api: false`.** No HTTP server can attach these. The server refuses
+  the alias in `RealAudioProvider::load` and `attach`, before a worker starts.
+  Every other row keeps `http_api: true`, as it behaved before.
+- **`compute`** is where Core ML places the run's dominant compute at the
+  pinned revision, from `coreml_plan`: `ane`, `gpu`, `cpu`, or `mixed`. It is
+  not the units the loader requests. Silero VAD requests the Neural Engine and
+  every op is planned on the CPU. The diarizer and Kokoro split across all
+  three devices.
+- **Re-measure `compute` on a pin bump.** Parakeet's `gpu` matches the
+  runtime's CPU+GPU encoder default, and a server test holds the two together.
+- **`install_subdir`** lays the assets out under one to three plain folder
+  names inside the install, for loaders that read only a fixed layout
+  (Kokoro ANE: `kokoro-82m-coreml`, PocketTTS: `Models/pocket-tts`). Asset
+  paths stay the upstream paths, so the network guard is unchanged. The
+  receipt sits at the install root.
+- **A layout is part of the identity.** The subdirectory joins the asset
+  fingerprint only when set, so existing rows keep theirs. Every folder on the
+  way is checked as a real directory, so a symlink cannot redirect it. Layout
+  rows are never adopted as legacy installs.
+- **No speech receipt.** Swift-hosted speech rows skip
+  `install_speech_receipt`, whose Whisper and Parakeet probe refuses their
+  layouts.
+- **Memory:** three times the compiled `weight.bin` bytes, the row's longest
+  16 kHz PCM input, and 256 MiB. An estimate, not measured in the app.
+
+Rows are generated, never typed. The example resolves the revision to a
+commit, takes LFS digests from the Hub and hashes every other file itself:
+
+```sh
+cargo run -p turbospark-catalog --example audio_pin -- \
+    FluidInference/silero-vad-coreml main silero-vad-unified-256ms-v6.2.1.mlmodelc/
+```
+
+It reproduced the Phase 0 pins for Silero VAD exactly. Run the audio network
+guard after adding a row.
+
+## ANE prefill split (opt-in)
+
+The dense qwen prefill can split its projections between the Neural Engine
+and Steel (`turbospark-runtime` feature `ane-prefill`, off by default). It
+uses this crate's IOSurface planes (`SharedF16Plane`, the same feature) and
+`CoreMlModel::predict_shared`. Its programs carry no weights and come from
+`crates/coreml/tools/gen_ane_prefill_programs.py`, pinned like the fixture
+generator. How to run it and what it measured:
+[SPEEDUP_PLAYBOOK.md](SPEEDUP_PLAYBOOK.md#opt-in-the-anesteel-prefill-split).
 
 ## Gotchas
 
@@ -319,6 +512,15 @@ now; the note is here so the guard is not removed.
   selectors up when called, so `setFunctionName:` or `newState` on macOS 14
   raises instead of failing to build. Everything newer than the macOS 13
   package floor goes through `supports(Capability::...)`.
+- **Placement follows the weight format, not the model name.** Parakeet
+  Redux and Ultra share one component contract, so one runner opens both,
+  but Redux's 2-bit encoder belongs on the GPU and Ultra's int8 encoder on
+  the Neural Engine (18x against 122x real time here). `parakeet.rs` reads
+  `encoders["Encoder.mlmodelc"].weight_format` from `config.json` and refuses
+  a GPU placement for any format not measured there, because FluidAudio
+  reports int8 encoders aborting the process on the GPU. A new export with an
+  unknown format therefore starts on the Neural Engine: measure before adding
+  it to `GPU_VERIFIED_WEIGHT_FORMATS`.
 - **A fixed shape is often not "unspecified".** ML programs describe a fixed
   input as a one-entry enumeration or as ranges with equal bounds. Shape
   checks that only read the unspecified form treat every input as flexible
@@ -373,6 +575,15 @@ now; the note is here so the guard is not removed.
   counts only `*.safetensors`, so a Core ML model gets the 512 MiB floor.
   Parakeet's measured 488 MB peak fits under it. A larger Core ML audio model
   would not, and needs this fixed first.
+- **PldaRho already multiplies by `sqrt(psi)`.** Its output is the PLDA
+  features times `sqrt(psi)` (the graph's last op). FluidAudio passes it to VBx
+  as the features, which scales by `sqrt(psi)` again and builds the
+  per-embedding constant from the scaled vector. pyannote's VBx takes the
+  unscaled features, so the runner divides by `sqrt(psi)` first. The JSON
+  `psi` equals the graph's `sqrt_phi` squared (checked on the pinned files).
+- **Concurrent `say -o` runs fail** with error -54. The diarization gate
+  serializes its `say` calls; before that, one test silently skipped and
+  passed.
 - **`hf download --include` with several patterns** in this shell was read
   as a list of filenames and silently skipped a package. List files
   explicitly, or check sizes after the download.
@@ -382,14 +593,22 @@ now; the note is here so the guard is not removed.
 - **App:** there is no OCR in the app. `DocumentTextExtractor` is
   synchronous with a 30 s limit, and the model loads for several seconds and
   peaks near 8 GB, so wiring it in is a UX and memory decision.
-- **Removing an embedding install:** the app has no delete button for one.
-  Remove `models/embeddings/<alias>` by hand.
-- **Catalog:** OCR has no catalog pin.
+- **Removing an embedding or OCR install:** the app has no delete button
+  for one. Remove `models/embeddings/<alias>` or `models/ocr/<alias>` by
+  hand. A pin bump does not need this: Download replaces the older pin.
 - **Server:** there is no OCR endpoint and no image or audio embeddings.
 - **Memory admission:** the OCR footprint is not admitted through the load
   guard.
 - **`pack_256`:** batching for EmbeddingGemma 2 is unused until it has its own
   parity gate.
+- **Speaker diarization:** no speaker-count hints (pyannote's
+  `num_speakers`, `min_speakers`, `max_speakers`), no overlapped-speech
+  output (turns are exclusive), and no server endpoint. Imported files
+  transcribed on the Transcribe page are not labeled; only a recorded take's
+  final pass is. A segment that spans a speaker change gets one label (the
+  majority of its words); it is not split. A take longer than 30 minutes is
+  left unlabeled. pyannote parity was not measured: no pyannote run was
+  compared, only the synthetic gate.
 - **EmbeddingGemma 300m on Core ML** is benchmarked only. There is no
   runtime pipeline, catalog pin or install for it. The candidate is the
   mlboydaisuke export (see Benchmarks), which needs macOS 26 and holds 128

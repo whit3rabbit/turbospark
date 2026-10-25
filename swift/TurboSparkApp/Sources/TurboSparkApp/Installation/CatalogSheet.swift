@@ -93,9 +93,8 @@ struct CatalogSheet: View {
             }
 
             if let fraction = model.installProgressFraction {
-                ProgressView(value: fraction)
-                    .accessibilityLabel(Text("Download progress", bundle: .module))
-                    .accessibilityValue(MetricFormat.percent(fraction * 100))
+                AppProgressBar(value: fraction, label: Text("Download progress", bundle: .module),
+                               animated: !model.isInstallPaused)
                 HStack {
                     if let downloaded = model.installDownloadedBytes, let total = model.installTotalBytes {
                         Text(verbatim: "\(MetricFormat.storage(downloaded)) / \(MetricFormat.storage(total))")
@@ -106,7 +105,7 @@ struct CatalogSheet: View {
                 .themedFont(.small).monospacedDigit()
                 .foregroundStyle(.appSecondary)
             } else {
-                ProgressView()
+                AppProgressBar(value: nil, label: Text("Download progress", bundle: .module))
             }
         }
         .padding(12)

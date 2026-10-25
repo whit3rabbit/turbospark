@@ -1,0 +1,1 @@
+{"reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9", "wave_seed_offset": 1, "wav_24k_len": 14400, "wav_16k_len": 9600, "mel_len": 30, "s3gen_tokens_raw": 15, "aligned_token_len": 15, "prompt_feat_shape": [30, 80], "t3_cond_prompt_tokens": [5856, 5850, 5850, 5852, 5852, 5852, 5850, 5852, 5852, 5852, 5852, 5852, 5852, 5850, 5850], "speaker_embed_shape": [1, 32]}

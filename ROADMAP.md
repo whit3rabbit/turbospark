@@ -227,7 +227,7 @@ Storage preflights should retain at least 20 GiB headroom.
 2. **Cold mmap as a Replacement for Streaming**: `pread` is strictly superior for cold uncached experts (74.8s vs 2.5s prefill). `mmap` is only used for warm residency (`docs/EXPERT_RESIDENCY.md`).
 3. **RDADVISE as Default**: No stable production benefit.
 4. **Expert Prefetch / Speculation**: Two predictors measured negative. Copied expert IDs hit 7%. PILOT router lookahead hits 70.6% recall but scales total bytes read above demand path (1.03x-1.85x) at high cache hit rates (`docs/EXPERT_ROUTING.md`).
-5. **Expert Pread Tuning**: `MISS_READ_CHUNK_BYTES` (840 KiB) and `POOL_THREADS` (8) are at measured local optima.
+5. **Expert Pread Tuning**: `MISS_READ_CHUNK_BYTES` (840 KiB) and `POOL_THREADS` (8) are at measured local optima. Re-swept disk-bound on qwen4exp from an external SSD (2026-10-17): 16-32 threads and whole-expert reads moved expert io 5% and decode within noise, because a layer's misses, not the pool, bound queue depth (`docs/EXPERT_ROUTING.md`).
 6. **Deferred End-of-Token Wait**: Max theoretical gain 0.25 ms/token (1.4%); bottlenecked by layer dependencies.
 7. **GPU-Side Router Top-K**: Host top-k overhead is 0.13 ms/token; GPU top-k only relocates synchronization.
 8. **Buying Back Hit-CB Overlap in Kernel**: Determinism fix costs <2% throughput; modifying vendored kernel not justified.
@@ -239,6 +239,7 @@ Storage preflights should retain at least 20 GiB headroom.
 14. **The dequant loader and `kMmaTile` as levers on the matrix kernel**: `kMmaTile` refuted by arithmetic (`N/B` scaling); loader refuted by measurement (`FC_MMA_SKIP_DEQUANT` still 3x slower than MLX).
 15. **Chunked WY-representation gated DeltaNet prefill, and GDN threadgroup staging**: Flash-linear-attention chunking takes 2x FLOPs of blocked sequential. Threadgroup staging targets only 4.66% of prefill traffic.
 16. **Four-SIMD-group re-tile of `dequant_int4_gemm_mma` (PF-02 Step 7)**: 128-thread re-tile measured 2.10x slower than exact GEMV baseline. Staging `x` still loses inside wide shape, and 4 SIMD groups does not move the matrix path bottleneck (`docs/BATCHED_PREFILL.md`).
+17. **Shift-free nibble masking in the int4 GEMV** (kapitsa item 6): bit-identical by construction (mask factor cancels against x prescaled by 1/16, both powers of two) but measured 1.17-1.60x SLOWER across the qwen38 shapes; the second x load costs more than four shifts per lane per block save. The kernel never left the bench (`crates/gpu/tests/gemv_mask_dequant_bench.rs`, `docs/KAPITSA_KERNELS.md`).
 
 ---
 

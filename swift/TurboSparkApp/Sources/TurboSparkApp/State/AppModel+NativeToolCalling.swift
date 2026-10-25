@@ -29,11 +29,15 @@ extension AppModel {
     /// text, and off outside Projects mode where no tools are offered at all.
     func nativeToolLane(project: AppProject?) -> Bool {
         guard nativeToolCallingEnabled,
-            let session, session.info.toolCalling.native,
-            interactionMode == .projects,
-            let project, !project.skillStateEnabled
+            let session, session.info.toolCalling.native
         else { return false }
-        return true
+        if interactionMode == .projects, let project, !project.skillStateEnabled {
+            return true
+        }
+        if interactionMode == .chat, chatToolsEnabled {
+            return true
+        }
+        return false
     }
 
     /// The tools a turn in `project` is offered, captured once.
@@ -48,6 +52,7 @@ extension AppModel {
             maximumPixelCount: session.info.vision.maxPixels)
         return AppToolCatalog.captureTurnAvailableTools(
             for: project,
+            chatToolsEnabled: chatToolsEnabled,
             globalMcpServers: globalMcpServers,
             contextTokens: maxContextTokens > 0 ? maxContextTokens : nil,
             webToolsEnabled: webSearchEnabled,

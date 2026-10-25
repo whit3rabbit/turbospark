@@ -188,21 +188,83 @@ public struct EmbeddingProfile: Decodable, Sendable, Equatable, Identifiable {
     public let modalities: [String]
     public let dimensions: Int
     public let matryoshkaDims: [Int]
+    /// `verified`, `runs` or `caveat`. Evidence, not intent: `verified`
+    /// means the tests named in `gates` ran a real install of this pin.
+    public let status: String
+    public let gates: [String]
     public let downloadBytes: UInt64
-    /// Set once a verified install exists. The alias itself also works as
-    /// an embedding model path.
+    /// Set once an install verifies against the current pin. The alias
+    /// itself also works as an embedding model path.
     public let installedPath: String?
+    /// `current`, `stale` (an older pin or damaged; Download replaces it),
+    /// `foreign` (Download refuses it) or `absent`.
+    public let installState: String
+    /// Why there is no verified install, in words.
+    public let installProblem: String?
     public let canRun: Bool
     public let unavailableReason: String?
 
+    public var isVerified: Bool { status == "verified" }
+
     enum CodingKeys: String, CodingKey {
         case alias, family, backend, repository, revision, license, modalities, dimensions
+        case status, gates
         case displayName = "display_name"
         case matryoshkaDims = "matryoshka_dims"
         case downloadBytes = "download_bytes"
         case installedPath = "installed_path"
+        case installState = "install_state"
+        case installProblem = "install_problem"
         case canRun = "can_run"
         case unavailableReason = "unavailable_reason"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        alias = try c.decode(String.self, forKey: .alias)
+        displayName = try c.decode(String.self, forKey: .displayName)
+        family = try c.decode(String.self, forKey: .family)
+        backend = try c.decode(String.self, forKey: .backend)
+        repository = try c.decode(String.self, forKey: .repository)
+        revision = try c.decode(String.self, forKey: .revision)
+        license = try c.decode(String.self, forKey: .license)
+        modalities = try c.decode([String].self, forKey: .modalities)
+        dimensions = try c.decode(Int.self, forKey: .dimensions)
+        matryoshkaDims = try c.decode([Int].self, forKey: .matryoshkaDims)
+        // A row without a status was never shown as tested.
+        status = try c.decodeIfPresent(String.self, forKey: .status) ?? "runs"
+        gates = try c.decodeIfPresent([String].self, forKey: .gates) ?? []
+        downloadBytes = try c.decode(UInt64.self, forKey: .downloadBytes)
+        installedPath = try c.decodeIfPresent(String.self, forKey: .installedPath)
+        installState = try c.decodeIfPresent(String.self, forKey: .installState)
+            ?? (installedPath == nil ? "absent" : "current")
+        installProblem = try c.decodeIfPresent(String.self, forKey: .installProblem)
+        canRun = try c.decode(Bool.self, forKey: .canRun)
+        unavailableReason = try c.decodeIfPresent(String.self, forKey: .unavailableReason)
+    }
+}
+
+/// The verdict for one embedding model argument (`ts_embedding_probe_json`),
+/// computed without loading the model. Every embedding open and server
+/// attach applies the same check.
+public struct EmbeddingProbe: Decodable, Sendable, Equatable {
+    public let input: String
+    public let resolvedPath: String?
+    public let runnable: Bool
+    /// `embeddinggemma2`, `bert`, `xlm-roberta`, or the refused family.
+    public let family: String?
+    /// `coreml` or `encoder`.
+    public let backend: String?
+    /// The verified install of a catalog profile whose status is verified.
+    public let verified: Bool
+    public let profileAlias: String?
+    public let refusedBecause: String?
+
+    enum CodingKeys: String, CodingKey {
+        case input, runnable, family, backend, verified
+        case resolvedPath = "resolved_path"
+        case profileAlias = "profile_alias"
+        case refusedBecause = "refused_because"
     }
 }
 
@@ -213,35 +275,63 @@ public enum EmbeddingCatalog {
         return try JSONDecoder().decode([EmbeddingProfile].self, from: Data(json.utf8))
     }
 
-    /// Blocking download and install; call off the main actor. Cancel with
-    /// `TurboSparkCatalog.cancelInstall()`. Returns the install path.
+    /// The family verdict for a pinned alias or a model directory, without
+    /// loading it. Cheap (a few file reads); safe to call per keystroke
+    /// after a debounce, but off the main actor.
+    public static func probe(_ modelPath: String) throws -> EmbeddingProbe {
+        let path = NSString(string: modelPath).expandingTildeInPath
+        let json = try takeString { out in
+            path.withCString { ts_embedding_probe_json($0, out) }
+        }
+        return try JSONDecoder().decode(EmbeddingProbe.self, from: Data(json.utf8))
+    }
+
+    /// Blocking download and install; call off the main actor. `revision`
+    /// is the pin the caller showed (`EmbeddingProfile.revision`): Rust
+    /// refuses any other, so a retry never adopts a different pin. Cancel
+    /// with `TurboSparkCatalog.cancelInstall()`. Returns the install path.
     public static func install(
         alias: String,
+        revision: String,
         progress: @escaping @Sendable (AudioDownloadProgress) -> Void = { _ in }
     ) throws -> String {
-        let box = EmbeddingDownloadBox(progress)
-        let context = Unmanaged.passUnretained(box).toOpaque()
-        defer { withExtendedLifetime(box) {} }
-        let json = try takeString { out in
+        try runPinnedInstall(progress: progress) { callback, context, out in
             alias.withCString { a in
-                ts_embedding_install(a, { userdata, _, path, length, completed, total in
-                    guard let userdata else { return }
-                    let box = Unmanaged<EmbeddingDownloadBox>.fromOpaque(userdata).takeUnretainedValue()
-                    let name = path.map {
-                        String(decoding: UnsafeBufferPointer(
-                            start: UnsafeRawPointer($0).assumingMemoryBound(to: UInt8.self), count: length),
-                            as: UTF8.self)
-                    }
-                    box.callback(AudioDownloadProgress(path: name, completedBytes: completed, totalBytes: total))
-                }, context, out)
+                revision.withCString { r in ts_embedding_install(a, r, callback, context, out) }
             }
         }
-        struct Installed: Decodable { let path: String }
-        return try JSONDecoder().decode(Installed.self, from: Data(json.utf8)).path
     }
 }
 
-private final class EmbeddingDownloadBox {
+/// Holds a pinned install's Swift progress closure for the C callback.
+final class PinnedDownloadBox {
     let callback: @Sendable (AudioDownloadProgress) -> Void
     init(_ callback: @escaping @Sendable (AudioDownloadProgress) -> Void) { self.callback = callback }
+}
+
+/// Runs one pinned-install C call (`ts_embedding_install`,
+/// `ts_ocr_install`) with byte progress forwarded to `progress`, and returns
+/// the install path from its `{"alias", "path"}` result.
+func runPinnedInstall(
+    progress: @escaping @Sendable (AudioDownloadProgress) -> Void,
+    _ call: (
+        TsInstallCallback, UnsafeMutableRawPointer, UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>
+    ) -> Int32
+) throws -> String {
+    let box = PinnedDownloadBox(progress)
+    let context = Unmanaged.passUnretained(box).toOpaque()
+    defer { withExtendedLifetime(box) {} }
+    let callback: TsInstallCallback = { userdata, _, path, length, completed, total in
+        guard let userdata else { return }
+        let box = Unmanaged<PinnedDownloadBox>.fromOpaque(userdata).takeUnretainedValue()
+        let name = path.map {
+            String(decoding: UnsafeBufferPointer(
+                start: UnsafeRawPointer($0).assumingMemoryBound(to: UInt8.self), count: length),
+                as: UTF8.self)
+        }
+        box.callback(AudioDownloadProgress(path: name, completedBytes: completed, totalBytes: total))
+    }
+    let json = try takeString { out in call(callback, context, out) }
+    struct Installed: Decodable { let path: String }
+    return try JSONDecoder().decode(Installed.self, from: Data(json.utf8)).path
 }

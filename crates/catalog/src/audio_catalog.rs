@@ -3,7 +3,7 @@
 use crate::library::{LibraryRegistry, LocationEnv, SharedMountTable};
 use crate::store::{connected_library, external_library};
 use crate::{
-    install_destination, record_into, CancelFlag, Catalog, Client, DownloadReceipt,
+    drama3_install, install_destination, record_into, CancelFlag, Catalog, Client, DownloadReceipt,
     HubDownloadProgress, InstallKind, InstallTarget, InstalledModel, PinnedArtifactPlan, Store,
     StoreError, VerifiedSourceFile,
 };
@@ -84,6 +84,20 @@ pub struct AudioAcknowledgment {
     pub summary: String,
 }
 
+/// A profile whose install is made by converting its pinned upstream files
+/// instead of copying them. `assets` pins the upstream files kept as they are;
+/// the converter's outputs exist nowhere upstream, so the receipt records
+/// them. Clients show `working_bytes` as the space an install needs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AudioDerived {
+    pub tool: String,
+    pub tool_version: u32,
+    /// Free space the install needs while it runs.
+    pub working_bytes: u64,
+    /// What the finished install occupies.
+    pub install_bytes: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AudioCapabilities {
     pub languages: Vec<String>,
@@ -102,6 +116,51 @@ pub struct AudioCapabilities {
     pub can_run: bool,
     #[serde(default)]
     pub unavailable_reason: Option<String>,
+    /// Where Core ML places the run's dominant compute at the pinned
+    /// revision, measured with `coreml_plan`: `ane`, `gpu`, `cpu`, or `mixed`
+    /// when no one device carries it. `None` off Core ML. The compute units a
+    /// loader requests are not its placement (docs/FLUIDAUDIO_PHASE0.md).
+    #[serde(default)]
+    pub compute: Option<String>,
+    /// False when no HTTP audio server can attach the profile because only
+    /// the TurboSpark app executes it. The server refuses these aliases.
+    #[serde(default = "attachable_by_default")]
+    pub http_api: bool,
+    /// Context size (in tokens) supported by the model's AR backbone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_context_tokens: Option<u32>,
+    /// Frame cap of one request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_audio_frames: Option<u32>,
+    /// AR frames per second of audio.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame_rate_hz: Option<u32>,
+}
+
+impl Default for AudioCapabilities {
+    fn default() -> Self {
+        Self {
+            languages: vec![],
+            voices: vec![],
+            max_input_seconds: None,
+            supports_lyrics: false,
+            operations: vec![],
+            timing: None,
+            backend: String::new(),
+            cancellation: String::new(),
+            can_run: false,
+            unavailable_reason: None,
+            compute: None,
+            http_api: true,
+            max_context_tokens: None,
+            max_audio_frames: None,
+            frame_rate_hz: None,
+        }
+    }
+}
+
+fn attachable_by_default() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -135,6 +194,15 @@ pub struct AudioProfile {
     /// Accepted before download; empty for most profiles.
     #[serde(default)]
     pub acknowledgments: Vec<AudioAcknowledgment>,
+    /// Relative folder the assets live under inside the install, for loaders
+    /// that only read a fixed layout (FluidAudio's Kokoro and PocketTTS).
+    /// Asset paths stay the upstream paths. The receipt sits at the install
+    /// root. Part of the asset fingerprint when set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub install_subdir: Option<String>,
+    /// Set when the install converts upstream files (Drama 3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub derived: Option<AudioDerived>,
 }
 
 #[derive(Debug, Clone)]
@@ -212,6 +280,8 @@ struct ProfileMetadata {
     max_input_seconds: Option<u32>,
     #[serde(default)]
     acknowledgments: Vec<AudioAcknowledgment>,
+    #[serde(default)]
+    install_subdir: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -227,6 +297,20 @@ struct AudioInstallReceipt {
     identity: AudioProfileIdentity,
     family: String,
     files: std::collections::BTreeMap<String, model_io::speech_receipt::FileEntry>,
+    /// The converter's outputs, for a derived profile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    derived: Option<DerivedReceipt>,
+}
+
+/// What a derived install holds that no upstream pin covers: each output's
+/// size and sha256 as the install measured them, and the conversion that
+/// made them.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DerivedReceipt {
+    tool: String,
+    tool_version: u32,
+    outputs: std::collections::BTreeMap<String, model_io::speech_receipt::FileEntry>,
 }
 
 impl AudioTask {
@@ -272,6 +356,15 @@ impl AudioCatalog {
                 return Err(format!("duplicate audio alias {:?}", row.alias));
             }
             validate_assets(&row.assets)?;
+            let install_subdir = row.metadata.as_ref().and_then(|m| m.install_subdir.clone());
+            if let Some(subdir) = &install_subdir {
+                if !safe_install_subdir(subdir) {
+                    return Err(format!(
+                        "{} has an unsafe install_subdir {subdir:?}",
+                        row.alias
+                    ));
+                }
+            }
             let (
                 task,
                 repository,
@@ -361,6 +454,37 @@ impl AudioCatalog {
                             voices: vec![],
                             max_input_seconds: Some(360),
                             supports_lyrics: true,
+                            max_context_tokens: Some(10_240),
+                            max_audio_frames: Some(9_000),
+                            frame_rate_hz: Some(25),
+                            ..profile_capabilities("minimax_music3")
+                        },
+                        AudioReadiness::ImplementedUnqualified,
+                        vec![],
+                    )
+                }
+                "minimax-music3-turbo-4bit-8step" => {
+                    if row.source.is_some() || row.frontend.is_some() {
+                        return Err("MiniMax source must come from the music catalog".into());
+                    }
+                    let music = crate::embedded_music_entry(&row.alias)?;
+                    (
+                        AudioTask::Music,
+                        music.model_id,
+                        music.revision,
+                        "minimax_music3".to_string(),
+                        "MiniMax Music 3 Turbo 4-bit (8-step)".to_string(),
+                        music.required_files,
+                        44100,
+                        2,
+                        AudioCapabilities {
+                            languages: vec![],
+                            voices: vec![],
+                            max_input_seconds: Some(360),
+                            supports_lyrics: true,
+                            max_context_tokens: Some(10_240),
+                            max_audio_frames: Some(9_000),
+                            frame_rate_hz: Some(25),
                             ..profile_capabilities("minimax_music3")
                         },
                         AudioReadiness::ImplementedUnqualified,
@@ -403,7 +527,9 @@ impl AudioCatalog {
                     // New profiles stay closed until a specific runtime adapter is reviewed.
                     if !reviewed {
                         capabilities.can_run = false;
-                        if metadata.family != "qwen3_tts" {
+                        // Swift-hosted families keep their own reason: the
+                        // app runs them even though a Rust session cannot.
+                        if !capabilities.backend.starts_with("swift_") {
                             capabilities.unavailable_reason = Some("This pinned profile has not been integrated and qualified for native execution".into());
                         }
                     }
@@ -438,10 +564,27 @@ impl AudioCatalog {
             if row.assets.len() != required.len() {
                 return Err(format!("{} has an unexpected asset graph", row.alias));
             }
+            // A derived profile reads the upstream shards through its converter, so
+            // they are part of what an install downloads though no asset pins them.
+            let derived = (family == "fish_drama3").then(|| AudioDerived {
+                tool: drama3_install::TOOL.to_string(),
+                tool_version: drama3_install::TOOL_VERSION,
+                working_bytes: drama3_install::WORKING_BYTES,
+                install_bytes: drama3_install::RESULT_BYTES,
+            });
+            if derived.is_some() {
+                drama3_install::Pins::from_assets(&row.assets)?;
+            }
             let download_bytes = row
                 .assets
                 .iter()
                 .try_fold(0u64, |n, a| n.checked_add(a.size))
+                .ok_or("audio download size overflow")?
+                .checked_add(if derived.is_some() {
+                    drama3_install::shard_total_bytes()
+                } else {
+                    0
+                })
                 .ok_or("audio download size overflow")?;
             let weight_bytes = row
                 .assets
@@ -455,10 +598,21 @@ impl AudioCatalog {
                 .filter(|a| a.path.starts_with("g2p/") && a.path.ends_with(".safetensors"))
                 .try_fold(0u64, |n, a| n.checked_add(a.size))
                 .ok_or("audio weight size overflow")?;
+            let compiled_bytes = row
+                .assets
+                .iter()
+                .filter(|a| a.path.ends_with("/weights/weight.bin"))
+                .try_fold(0u64, |n, a| n.checked_add(a.size))
+                .ok_or("audio weight size overflow")?;
+            // Mono f32 at 16 kHz for the longest input a row admits.
+            let pcm_bytes = 16_000u64 * 4 * u64::from(capabilities.max_input_seconds.unwrap_or(0));
             let (resident_memory_bytes,resident_memory_evidence)=match task {
+                _ if capabilities.backend == "swift_coreml" => (compiled_bytes.saturating_mul(3).saturating_add(pcm_bytes).saturating_add(256<<20),"estimate: three times compiled Core ML weights, the row's longest PCM input, and 256 MiB working reserve; not measured in the app"),
                 // f32 weights, the bf16 G2P widened, and a reserve covering the
                 // measured peak footprint of a 28 s reference.
                 AudioTask::TextToSpeech if family == "megatts3" => (weight_bytes.saturating_add(g2p_bytes).saturating_add(19<<29),"measured peak footprint on Metal 8.8 GiB (3 s reference) to 14.3 GiB (27.5 s reference, 13 s of speech), 1.4 to 2.9 GiB above the CPU path; estimate: weights, widened G2P and 9.5 GiB working reserve"),
+                AudioTask::TextToSpeech if family == "fish_drama3" => (8_845_165_754u64,"runtime estimate for the 4-bit install (16 streamed expert slots, two 64 MiB snapshots); measured session peak 6,106 to 6,296 MiB over three readings on an M4 Max, docs/BENCHMARKS.md"),
+                AudioTask::TextToSpeech if family == "omnivoice" => (weight_bytes.saturating_mul(3).saturating_add(2<<30),"measured 3.2 GiB process footprint on one 3 s utterance (file-backed checkpoint pages excluded, 8-bit profile); estimate: three times checkpoint bytes for the f32-widened backbone plus a 2 GiB working reserve"),
                 AudioTask::SpeechToText if family == "parakeet_tdt" => {
                     let compiled = row
                         .assets
@@ -466,7 +620,25 @@ impl AudioCatalog {
                         .filter(|a| a.path.ends_with("/weights/weight.bin"))
                         .try_fold(0u64, |n, a| n.checked_add(a.size))
                         .ok_or("audio weight size overflow")?;
-                    (compiled.saturating_mul(3).saturating_add(16_000*1800*4).saturating_add(256<<20),"measured 488 MB peak footprint on one 2.8 s clip (GPU encoder, M4 Max); estimate: three times compiled weights, 30-minute PCM, and 256 MiB working reserve")
+                    (compiled.saturating_mul(3).saturating_add(16_000*1800*4).saturating_add(256<<20),"estimate: three times compiled weights, 30-minute PCM, and 256 MiB working reserve; Redux measured 488 MB peak footprint on one 2.8 s clip (GPU encoder, M4 Max)")
+                }
+                AudioTask::SpeechToText if family == "parakeet_unified" => {
+                    let compiled = row
+                        .assets
+                        .iter()
+                        .filter(|a| a.path.ends_with("/weights/weight.bin"))
+                        .try_fold(0u64, |n, a| n.checked_add(a.size))
+                        .ok_or("audio weight size overflow")?;
+                    (compiled.saturating_mul(3).saturating_add(256<<20),"estimate: three times compiled weights and 256 MiB working reserve; a live stream keeps about one 7 s window of audio")
+                }
+                AudioTask::Diarization if family == "pyannote_community1" => {
+                    let compiled = row
+                        .assets
+                        .iter()
+                        .filter(|a| a.path.ends_with("/weights/weight.bin"))
+                        .try_fold(0u64, |n, a| n.checked_add(a.size))
+                        .ok_or("audio weight size overflow")?;
+                    (compiled.saturating_mul(3).saturating_add(16_000*1800*4).saturating_add(768<<20),"measured 858 MB peak footprint on a 30-minute input (M4 Max, Neural Engine embedding, compile cached); estimate: three times compiled weights, 30-minute PCM, and 768 MiB working reserve")
                 }
                 AudioTask::SpeechToText => (weight_bytes.saturating_mul(2).saturating_add(16_000*1800*4).saturating_add(256<<20),"estimate: twice checkpoint weights, 30-minute PCM, and 256 MiB working reserve"),
                 AudioTask::TextToSpeech => (weight_bytes.saturating_mul(2).saturating_add(256<<20),"estimate: twice checkpoint weights and 256 MiB voice/working reserve"),
@@ -478,7 +650,11 @@ impl AudioCatalog {
                 alias: row.alias,
                 repository,
                 revision,
-                asset_fingerprint: asset_fingerprint(&row.assets, &row.frontend)?,
+                asset_fingerprint: asset_fingerprint(
+                    &row.assets,
+                    &row.frontend,
+                    install_subdir.as_deref(),
+                )?,
             };
             entries.push(AudioProfile {
                 identity, family, display_name, capabilities,
@@ -486,7 +662,7 @@ impl AudioCatalog {
                 download_bytes, resident_memory_bytes,
                 resident_memory_evidence: resident_memory_evidence.into(), readiness,
                 evidence: vec!["Immutable source asset plan; runtime/reference and measured resident gates remain unqualified".into()],
-                assets: row.assets, frontend: row.frontend, acknowledgments,
+                assets: row.assets, frontend: row.frontend, acknowledgments, install_subdir, derived,
             });
         }
         Ok(Self { entries })
@@ -601,6 +777,19 @@ impl AudioCatalog {
         progress: &mut dyn FnMut(HubDownloadProgress),
         cancel: &CancelFlag,
     ) -> Result<InstalledModel, StoreError> {
+        if let Some(derived) = &self.profile(identity).map_err(StoreError::Io)?.derived {
+            return self.install_derived(
+                client,
+                store,
+                identity,
+                acknowledged,
+                derived,
+                library,
+                env,
+                progress,
+                cancel,
+            );
+        }
         self.install_with(
             store,
             identity,
@@ -703,6 +892,187 @@ impl AudioCatalog {
         }
     }
 
+    /// A derived install: the five root files download whole, the shards stream
+    /// through the converter, and every output is hashed into the receipt
+    /// before the staging directory is renamed into place. Free space is
+    /// checked before any network work, and `cancel` stops the walk at its
+    /// next chunk read.
+    ///
+    /// The destination is settled by [`install_destination`] first, as for a
+    /// pinned transfer. Into a library the converter stages beside the
+    /// install on the library's drive, so publication stays a same-volume
+    /// rename, and a step that failed because the drive went away is
+    /// [`StoreError::LibraryDisconnected`].
+    #[allow(clippy::too_many_arguments)]
+    fn install_derived(
+        &self,
+        client: &Client,
+        store: &Store,
+        identity: &AudioProfileIdentity,
+        acknowledged: &[String],
+        derived: &AudioDerived,
+        library: Option<&str>,
+        env: &LocationEnv,
+        progress: &mut dyn FnMut(HubDownloadProgress),
+        cancel: &CancelFlag,
+    ) -> Result<InstalledModel, StoreError> {
+        let profile = self.profile(identity).map_err(StoreError::Io)?;
+        check_acknowledged(profile, acknowledged).map_err(StoreError::Io)?;
+        cancel
+            .checkpoint()
+            .map_err(|e| StoreError::Io(e.to_string()))?;
+        let target = install_destination(store, library, InstallKind::Audio, &identity.alias, env)?;
+        if target.dir.exists() {
+            return Err(StoreError::Io(
+                "audio install already exists; delete it before downloading again".into(),
+            ));
+        }
+        let into = target.library_id.is_some().then_some((&target, env));
+        let failed = |error: String| match into {
+            Some((target, _)) => {
+                // The root existed when the target was located; the
+                // install folder never did, and would always read as gone.
+                store.install_failure(&target.root, &target.root, &target.library_name, error)
+            }
+            None => StoreError::Io(error),
+        };
+        if into.is_none() {
+            std::fs::create_dir_all(store.root())
+                .map_err(|e| StoreError::Io(format!("creating audio store: {e}")))?;
+        }
+        let pins = drama3_install::Pins::from_assets(&profile.assets).map_err(StoreError::Io)?;
+        let available = model_io::available_bytes(&target.dir).map_err(failed)?;
+        let source = drama3_install::HubSource::new(client.token(), cancel);
+        self.install_derived_from(
+            &source, &pins, available, store, identity, derived, into, progress, cancel,
+        )
+        .map_err(|error| match error {
+            StoreError::Io(error) => failed(error),
+            other => other,
+        })
+    }
+
+    /// [`Self::install_derived`] with the bytes' source, the pins and the free
+    /// space passed in, so the walk runs without a network. `into` is the
+    /// library target and its environment, This Mac for `None`.
+    #[allow(clippy::too_many_arguments)]
+    fn install_derived_from(
+        &self,
+        source: &dyn drama3_install::Source,
+        pins: &drama3_install::Pins,
+        available: u64,
+        store: &Store,
+        identity: &AudioProfileIdentity,
+        derived: &AudioDerived,
+        into: Option<(&InstallTarget, &LocationEnv)>,
+        progress: &mut dyn FnMut(HubDownloadProgress),
+        cancel: &CancelFlag,
+    ) -> Result<InstalledModel, StoreError> {
+        use drama3_install::Progress;
+        if derived.tool != drama3_install::TOOL
+            || derived.tool_version != drama3_install::TOOL_VERSION
+        {
+            return Err(StoreError::Io(format!(
+                "this build cannot make {:?} version {} installs",
+                derived.tool, derived.tool_version
+            )));
+        }
+        let profile = self.profile(identity).map_err(StoreError::Io)?;
+        let owner_id = self.pinned_plan(identity).map_err(StoreError::Io)?.owner_id;
+        let destination = match into {
+            Some((target, _)) => target.dir.clone(),
+            None => store.audio_install_path(&identity.alias),
+        };
+        match into {
+            // The library root was located connected a moment ago. Only its
+            // `audio` folder is made, never the root, so a drive that left in
+            // between fails here instead of rebuilding the root under the
+            // mount point.
+            Some((target, _)) => {
+                let namespace = destination.parent().unwrap_or(&target.root);
+                if !namespace.is_dir() {
+                    std::fs::create_dir(namespace)
+                        .map_err(|e| StoreError::Io(format!("creating audio namespace: {e}")))?;
+                }
+            }
+            None => std::fs::create_dir_all(store.audio_models_dir())
+                .map_err(|e| StoreError::Io(format!("creating audio namespace: {e}")))?,
+        }
+        // One bar for the whole install: the upstream bytes first, then the
+        // hash of everything the converter wrote.
+        let walk_total = pins.total_bytes();
+        let overall_total = walk_total + derived.install_bytes;
+        let mut report = |completed: u64, stage: &str| {
+            progress(HubDownloadProgress {
+                owner_id: owner_id.clone(),
+                completed_files: 0,
+                total_files: 0,
+                current_path: Some(stage.to_string()),
+                completed_bytes: completed.min(overall_total),
+                total_bytes: overall_total,
+            });
+        };
+        let pinned: std::collections::BTreeSet<String> =
+            profile.assets.iter().map(|a| a.path.clone()).collect();
+        drama3_install::install_with(
+            &destination,
+            pins,
+            source,
+            available,
+            cancel,
+            &mut |p: &Progress<'_>| report(p.completed_bytes, p.stage),
+            |staging, sink| {
+                let outputs = drama3_install::hash_outputs(
+                    staging,
+                    &pinned,
+                    RECEIPT_FILENAME,
+                    cancel,
+                    &mut |name, done, _| {
+                        sink(&Progress {
+                            stage: &format!("verifying {name}"),
+                            completed_bytes: walk_total + done.min(derived.install_bytes),
+                            total_bytes: overall_total,
+                        })
+                    },
+                )?;
+                write_derived_receipt(profile, derived, staging, outputs)
+            },
+        )
+        .map_err(StoreError::Io)?;
+        let installed = InstalledModel {
+            alias: identity.alias.clone(),
+            repo: identity.repository.clone(),
+            revision: identity.revision.clone(),
+            path: destination.clone(),
+            family: profile.family.clone(),
+            install_bytes: crate::directory_bytes(&destination),
+            installed_on: crate::install::today(),
+            status: "unverified".into(),
+            kind: None,
+            modality: crate::ModelModality::Audio,
+            variant: None,
+            library: None,
+            relative_path: None,
+        };
+        // A failure here leaves the finished install in place: it is 22 GB
+        // and a later listing picks up an unrecorded install that has a
+        // valid receipt.
+        let recorded = match into {
+            None => store.record(&installed).map(|()| installed),
+            Some((target, env)) => {
+                record_into(store, &installed, target, env).map_err(|e| e.to_string())
+            }
+        };
+        let installed = recorded.map_err(|e| {
+            StoreError::Io(format!(
+                "recording the audio install failed: {e}; the install is at {} and a listing will find it",
+                destination.display()
+            ))
+        })?;
+        report(overall_total, "installed");
+        Ok(installed)
+    }
+
     /// Independently verify the transfer receipt and bytes before a single directory rename.
     /// The caller owns staging, including cleanup after cancellation or failure.
     pub fn publish_verified(
@@ -744,18 +1114,18 @@ impl AudioCatalog {
             Some((target, _)) => target.dir.clone(),
             None => store.audio_install_path(&identity.alias),
         };
-        let source_root = self
+        let (publish_root, mut layout) = self
             .verified_source(profile, identity, &destination, receipt, cancel)
             .map_err(failed)?;
         match into {
             None => {
                 std::fs::create_dir_all(store.audio_models_dir())
                     .map_err(|e| StoreError::Io(format!("creating audio namespace: {e}")))?;
-                std::fs::rename(&source_root, &destination)
+                std::fs::rename(&publish_root, &destination)
                     .map_err(|e| StoreError::Io(format!("publishing audio install: {e}")))?;
             }
             Some((target, _)) => {
-                store.publish_staged(&source_root, &destination, &target.library_name)?
+                store.publish_staged(&publish_root, &destination, &target.library_name)?
             }
         }
         let installed = InstalledModel {
@@ -787,20 +1157,26 @@ impl AudioCatalog {
                 record_into(store, &installed, target, env).map_err(|e| e.to_string())
             }
         };
-        recorded.or_else(|e| {
+        let installed = recorded.or_else(|e| {
             // Restore the caller's complete staging tree when the registry could not publish.
-            std::fs::rename(&destination, &source_root).map_err(|rollback| {
+            std::fs::rename(&destination, &publish_root).map_err(|rollback| {
                 failed(format!(
                     "recording audio install failed: {e}; restoring staging failed: {rollback}"
                 ))
             })?;
             Err(failed(format!("recording audio install failed: {e}")))
-        })
+        })?;
+        if let Some(layout) = layout.as_mut() {
+            layout.published = true;
+        }
+        Ok(installed)
     }
 
-    /// The staged source tree of `receipt`, once the receipt and its bytes
+    /// The tree to publish at `destination`, once `receipt` and its bytes
     /// are exactly `identity`'s pinned graph, with the install receipts
-    /// written into it, ready to publish at `destination`.
+    /// written into it. A row with an `install_subdir` publishes the
+    /// returned layout's root; until the layout is marked published,
+    /// dropping it moves the assets back to `source-0000`.
     fn verified_source(
         &self,
         profile: &AudioProfile,
@@ -808,7 +1184,7 @@ impl AudioCatalog {
         destination: &Path,
         receipt: &DownloadReceipt,
         cancel: &CancelFlag,
-    ) -> Result<PathBuf, String> {
+    ) -> Result<(PathBuf, Option<StagedLayout>), String> {
         let plan = self.pinned_plan(identity)?;
         cancel.checkpoint().map_err(|e| e.to_string())?;
         if destination.exists() {
@@ -862,7 +1238,12 @@ impl AudioCatalog {
             }
         }
         verify_asset_bytes(profile, &source_root, true, Some(cancel))?;
-        if identity.task == AudioTask::SpeechToText {
+        // The speech probe knows the Whisper and Parakeet layouts a Rust
+        // session opens. Swift-hosted rows never reach one, and their Core ML
+        // layouts would fail it, so they get no speech receipt.
+        if identity.task == AudioTask::SpeechToText
+            && !profile.capabilities.backend.starts_with("swift_")
+        {
             crate::install_speech_receipt(
                 &source_root,
                 &profile
@@ -874,9 +1255,20 @@ impl AudioCatalog {
                 Some(identity.revision.clone()),
             )?;
         }
-        write_receipt(profile, &source_root)?;
+        let layout = match &profile.install_subdir {
+            Some(subdir) => Some(StagedLayout::arrange(
+                &receipt.staging_root,
+                &source_root,
+                subdir,
+            )?),
+            None => None,
+        };
+        let publish_root = layout
+            .as_ref()
+            .map_or_else(|| source_root.clone(), |l| l.root.clone());
+        write_receipt(profile, &publish_root)?;
         cancel.checkpoint().map_err(|e| e.to_string())?;
-        Ok(source_root)
+        Ok((publish_root, layout))
     }
 
     /// Writes the receipt of `alias`'s catalog profile, the one adoption
@@ -903,6 +1295,13 @@ impl AudioCatalog {
         if !profile.acknowledgments.is_empty() {
             return Err(format!(
                 "{alias} needs its terms accepted at install; install it from the audio catalog"
+            ));
+        }
+        // That transfer publishes the flat source tree, and a fixed layout or
+        // a converter's outputs exist only through the audio installer.
+        if profile.install_subdir.is_some() || profile.derived.is_some() {
+            return Err(format!(
+                "{alias} installs only through the audio catalog; install it from there"
             ));
         }
         let mismatch = |detail: String| {
@@ -972,8 +1371,8 @@ impl AudioCatalog {
             None => store.audio_install_path(&identity.alias),
             Some(row) => locate_library_install(store, &row, locator)?.path,
         };
-        read_receipt(profile, &path)?;
-        verify_asset_bytes(profile, &path, false, None)?;
+        let receipt = read_receipt(profile, &path)?;
+        verify_install(profile, &path, &receipt, false, None, None)?;
         Ok(path)
     }
 
@@ -1035,13 +1434,9 @@ impl AudioCatalog {
             cancelled,
             on_progress,
         };
-        verify_asset_bytes_observed(
-            self.profile(identity)?,
-            &path,
-            true,
-            None,
-            Some(&mut observer),
-        )?;
+        let profile = self.profile(identity)?;
+        let receipt = read_receipt(profile, &path)?;
+        verify_install(profile, &path, &receipt, true, None, Some(&mut observer))?;
         Ok(path)
     }
 
@@ -1072,7 +1467,9 @@ impl AudioCatalog {
         locator: &Locator,
     ) -> Result<PathBuf, String> {
         let path = self.resolve_located(store, identity, locator)?;
-        verify_asset_bytes(self.profile(identity)?, &path, true, None)?;
+        let profile = self.profile(identity)?;
+        let receipt = read_receipt(profile, &path)?;
+        verify_install(profile, &path, &receipt, true, None, None)?;
         Ok(path)
     }
 
@@ -1161,6 +1558,7 @@ impl AudioCatalog {
             *counts.entry(row.alias.as_str()).or_insert(0usize) += 1;
         }
         for mut row in rows.iter().cloned() {
+            row.modality = crate::ModelModality::Audio;
             row.status = unqualified_status(&row.status);
             let profile = self.get(&row.alias);
             let identity = profile.map(|profile| profile.identity.clone());
@@ -1221,6 +1619,59 @@ impl AudioCatalog {
                     identity,
                     error,
                 }),
+            }
+        }
+        let mut known_aliases: std::collections::BTreeSet<String> =
+            rows.iter().map(|r| r.alias.clone()).collect();
+        for inst in &report.installed {
+            known_aliases.insert(inst.alias.clone());
+        }
+        if let Ok(entries) = std::fs::read_dir(store.audio_models_dir()) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() && path.extension().and_then(|e| e.to_str()) == Some("gturbo") {
+                    if let Some(alias) = path.file_stem().and_then(|s| s.to_str()) {
+                        if !known_aliases.contains(alias)
+                            && !audio_receipt_missing(&path).unwrap_or(true)
+                        {
+                            if let Some(profile) = self.get(alias) {
+                                if read_receipt(profile, &path)
+                                    .and_then(|r| {
+                                        verify_install(profile, &path, &r, false, None, None)
+                                    })
+                                    .is_ok()
+                                {
+                                    let installed = InstalledModel {
+                                        alias: profile.identity.alias.clone(),
+                                        repo: profile.identity.repository.clone(),
+                                        revision: profile.identity.revision.clone(),
+                                        path: path.clone(),
+                                        family: profile.family.clone(),
+                                        install_bytes: crate::directory_bytes(&path),
+                                        installed_on: crate::install::today(),
+                                        status: "unverified".into(),
+                                        kind: if profile.identity.task == AudioTask::SpeechToText {
+                                            Some("speech".into())
+                                        } else {
+                                            None
+                                        },
+                                        modality: crate::ModelModality::Audio,
+                                        variant: if profile.identity.task == AudioTask::Music {
+                                            Some("affine-4bit".into())
+                                        } else {
+                                            None
+                                        },
+                                        library: None,
+                                        relative_path: None,
+                                    };
+                                    let _ = store.record(&installed);
+                                    report.installed.push(installed);
+                                    known_aliases.insert(alias.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
         report
@@ -1325,6 +1776,43 @@ impl AudioCatalog {
         };
         let namespace = install.path.parent().unwrap_or(&install.root);
         delete_through_tombstone(&install.path, namespace, &identity.alias, forget, restore)
+    }
+}
+
+/// A verified staging tree moved under a row's `install_subdir` inside
+/// `<staging>/publish`, so publication stays one rename. Dropped before
+/// `published` is set, it moves the tree back to `source-0000`: the caller
+/// owns a complete staging tree after any failure, layout or not.
+struct StagedLayout {
+    root: PathBuf,
+    assets: PathBuf,
+    source: PathBuf,
+    published: bool,
+}
+
+impl StagedLayout {
+    fn arrange(staging_root: &Path, source: &Path, subdir: &str) -> Result<Self, String> {
+        let root = staging_root.join("publish");
+        std::fs::create_dir(&root).map_err(|e| format!("staging audio layout: {e}"))?;
+        let assets = root.join(subdir);
+        if let Some(parent) = assets.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("staging audio layout: {e}"))?;
+        }
+        std::fs::rename(source, &assets).map_err(|e| format!("staging audio layout: {e}"))?;
+        Ok(Self {
+            root,
+            assets,
+            source: source.to_path_buf(),
+            published: false,
+        })
+    }
+}
+
+impl Drop for StagedLayout {
+    fn drop(&mut self) {
+        if !self.published {
+            let _ = std::fs::rename(&self.assets, &self.source);
+        }
     }
 }
 
@@ -1587,7 +2075,14 @@ fn require_library_audio_dirs(root: &Path, path: &Path) -> Result<(), String> {
 
 /// Families whose generic catalog rows may run: a runtime adapter for them
 /// exists and was reviewed. Every other new row stays closed.
-const REVIEWED_ADAPTERS: &[&str] = &["megatts3", "parakeet_tdt"];
+const REVIEWED_ADAPTERS: &[&str] = &[
+    "fish_drama3",
+    "megatts3",
+    "omnivoice",
+    "parakeet_tdt",
+    "parakeet_unified",
+    "pyannote_community1",
+];
 
 fn check_acknowledged(profile: &AudioProfile, acknowledged: &[String]) -> Result<(), String> {
     let missing: Vec<&str> = profile
@@ -1608,6 +2103,54 @@ fn check_acknowledged(profile: &AudioProfile, acknowledged: &[String]) -> Result
 }
 
 fn profile_capabilities(family: &str) -> AudioCapabilities {
+    if family == "omnivoice" {
+        // The runtime engine is portable f32 CPU only; like Kokoro, the
+        // CPU path needs the explicit portable opt-in until a Metal
+        // offload exists. Cloning is capability-driven (voice_clone) and
+        // requires consent at the runtime boundary.
+        return AudioCapabilities {
+            languages: vec![
+                "en", "zh", "ja", "ko", "de", "fr", "es", "it", "pt", "ru", "ar", "hi", "nl", "pl",
+                "tr", "vi", "th", "id", "uk", "sv", "fa", "cs", "el", "he",
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+            voices: vec![],
+            max_input_seconds: None,
+            supports_lyrics: false,
+            operations: vec!["synthesize".into(), "voice_clone".into()],
+            timing: None,
+            backend: "metal".into(),
+            cancellation: "diffusion_step".into(),
+            can_run: true,
+            unavailable_reason: None,
+            compute: None,
+            http_api: true,
+            ..Default::default()
+        };
+    }
+    if family == "fish_drama3" {
+        // Metal only: the headless trunk, the tower and the codec all run on
+        // the GPU, and there is no portable fallback. It speaks without a
+        // reference too; a reference makes it a clone, which needs consent
+        // and the reference's transcript at the runtime boundary.
+        return AudioCapabilities {
+            languages: vec![],
+            voices: vec![],
+            max_input_seconds: None,
+            supports_lyrics: false,
+            operations: vec!["synthesize".into(), "voice_clone".into()],
+            timing: None,
+            backend: "metal".into(),
+            cancellation: "frame".into(),
+            can_run: true,
+            unavailable_reason: None,
+            compute: None,
+            http_api: true,
+            ..Default::default()
+        };
+    }
     if family == "megatts3" {
         return AudioCapabilities {
             languages: vec![],
@@ -1621,6 +2164,9 @@ fn profile_capabilities(family: &str) -> AudioCapabilities {
             cancellation: "diffusion_step".into(),
             can_run: true,
             unavailable_reason: None,
+            compute: None,
+            http_api: true,
+            ..Default::default()
         };
     }
     if family == "parakeet_tdt" {
@@ -1640,6 +2186,94 @@ fn profile_capabilities(family: &str) -> AudioCapabilities {
             can_run: os_ok,
             unavailable_reason: (!os_ok)
                 .then(|| "Parakeet on Core ML requires macOS 15 or newer".into()),
+            // The runtime loads the encoder, which carries the run, with
+            // CPU+GPU units (`ParakeetCoreMlOptions::default`). A server test,
+            // the first crate that sees both, holds the two together.
+            compute: Some("gpu".into()),
+            http_api: true,
+            ..Default::default()
+        };
+    }
+    // Swift-hosted Core ML: FluidAudio 0.15.5 inside the app. Rust installs
+    // and verifies these rows, the app runs them, and neither the Rust session
+    // API nor an HTTP server can. `compute` is the placement measured with
+    // `coreml_plan` at each pinned revision (docs/FLUIDAUDIO_PHASE0.md),
+    // not the units FluidAudio requests: Silero VAD asks for the Neural
+    // Engine and runs on the CPU. Re-measure on a pin bump.
+    let fluid = match family {
+        "fluidaudio_silero_vad" => Some(("detect_speech", "cpu", "chunk", None)),
+        "fluidaudio_kokoro_ane" => Some(("synthesize", "mixed", "sentence", None)),
+        "fluidaudio_pocket_tts" => Some(("synthesize", "gpu", "chunk", None)),
+        "fluidaudio_sensevoice" | "fluidaudio_paraformer_zh" => {
+            Some(("transcribe", "ane", "window", Some("window")))
+        }
+        "fluidaudio_parakeet_ja" => Some(("transcribe", "ane", "window", Some("token"))),
+        _ => None,
+    };
+    if let Some((operation, compute, cancellation, timing)) = fluid {
+        return AudioCapabilities {
+            languages: vec![],
+            voices: vec![],
+            max_input_seconds: None,
+            supports_lyrics: false,
+            operations: vec![operation.into()],
+            timing: timing.map(str::to_string),
+            backend: "swift_coreml".into(),
+            cancellation: cancellation.into(),
+            can_run: false,
+            unavailable_reason: Some(
+                "Runs only in the TurboSpark app through FluidAudio (Core ML). The Rust session API and the HTTP server do not execute this family."
+                    .into(),
+            ),
+            compute: Some(compute.into()),
+            http_api: false,
+            ..Default::default()
+        };
+    }
+    if family == "parakeet_unified" {
+        // Live transcription only (ts_audio_stream_*): batch opens refuse
+        // it, so "transcribe" is deliberately absent. English only.
+        let os_ok = turbospark_coreml::os_version().0 >= 15;
+        return AudioCapabilities {
+            languages: vec![],
+            voices: vec![],
+            max_input_seconds: None,
+            supports_lyrics: false,
+            operations: vec!["stream_transcribe".into()],
+            timing: Some("token".into()),
+            backend: "coreml".into(),
+            cancellation: "chunk".into(),
+            can_run: os_ok,
+            unavailable_reason: (!os_ok)
+                .then(|| "Parakeet on Core ML requires macOS 15 or newer".into()),
+            // The int8 encoder carries the run and loads with CPU+Neural
+            // Engine units (`UnifiedOptions::default`), held by a server test.
+            compute: Some("ane".into()),
+            http_api: true,
+            ..Default::default()
+        };
+    }
+    if family == "pyannote_community1" {
+        // Offline speaker diarization (who spoke when). The programs declare
+        // macOS 14, but the runtime refuses it: FluidAudio reports Core ML's
+        // CPU path crashing in BNNS during this pipeline there.
+        let os_ok = turbospark_coreml::os_version().0 >= 15;
+        return AudioCapabilities {
+            languages: vec![],
+            voices: vec![],
+            max_input_seconds: None,
+            supports_lyrics: false,
+            operations: vec!["diarize".into()],
+            // Turn boundaries on the segmentation frame grid (16.875 ms).
+            timing: Some("segment".into()),
+            backend: "coreml".into(),
+            cancellation: "window".into(),
+            can_run: os_ok,
+            unavailable_reason: (!os_ok)
+                .then(|| "Speaker diarization on Core ML requires macOS 15 or newer".into()),
+            compute: Some("mixed".into()),
+            http_api: true,
+            ..Default::default()
         };
     }
     let (operation,backend,cancellation,can_run,reason,timing) = match family {
@@ -1660,6 +2294,23 @@ fn profile_capabilities(family: &str) -> AudioCapabilities {
         cancellation: cancellation.into(),
         can_run,
         unavailable_reason: reason.map(str::to_string),
+        compute: None,
+        http_api: true,
+        max_context_tokens: if family == "minimax_music3" {
+            Some(10_240)
+        } else {
+            None
+        },
+        max_audio_frames: if family == "minimax_music3" {
+            Some(9_000)
+        } else {
+            None
+        },
+        frame_rate_hz: if family == "minimax_music3" {
+            Some(25)
+        } else {
+            None
+        },
     }
 }
 
@@ -1745,6 +2396,10 @@ fn profile_record_matches(profile: &AudioProfile, row: &InstalledModel) -> Resul
                     .as_deref()
                     .is_none_or(|variant| variant == "affine-4bit")
         }
+        // Installed only by this catalog, which records neither field.
+        AudioTask::Diarization | AudioTask::SpeechDetection => {
+            row.kind.is_none() && row.variant.is_none()
+        }
         _ => false,
     };
     if !task_matches {
@@ -1764,6 +2419,14 @@ fn audio_receipt_missing(root: &Path) -> Result<bool, String> {
 }
 
 fn validate_legacy_graph(profile: &AudioProfile, root: &Path) -> Result<(), String> {
+    // Rows with a fixed layout postdate receipts: no receiptless install of
+    // one was ever published, so nothing of that shape can be adopted.
+    if profile.install_subdir.is_some() {
+        return Err(format!(
+            "{} installs only through the catalog; delete the folder and download it again",
+            profile.identity.alias
+        ));
+    }
     let mut actual = regular_paths(root)?;
     actual.remove(RECEIPT_FILENAME);
     if profile.identity.task == AudioTask::SpeechToText {
@@ -1798,6 +2461,7 @@ fn new_audio_receipt(profile: &AudioProfile) -> AudioInstallReceipt {
                 )
             })
             .collect(),
+        derived: None,
     }
 }
 
@@ -1949,12 +2613,49 @@ fn validate_frontend(frontend: &AudioFrontendProvenance) -> Result<(), String> {
 fn asset_fingerprint(
     assets: &[AudioAsset],
     frontend: &Option<AudioFrontendProvenance>,
+    install_subdir: Option<&str>,
 ) -> Result<String, String> {
     use sha2::{Digest, Sha256};
     let mut ordered = assets.to_vec();
     ordered.sort_by(|a, b| a.path.cmp(&b.path));
-    let bytes = serde_json::to_vec(&(ordered, frontend)).map_err(|e| e.to_string())?;
+    // The layout joins the hash only when set, so every row without one
+    // keeps the fingerprint saved selections and receipts already carry.
+    let bytes = match install_subdir {
+        None => serde_json::to_vec(&(ordered, frontend)),
+        Some(subdir) => serde_json::to_vec(&(ordered, frontend, subdir)),
+    }
+    .map_err(|e| e.to_string())?;
     Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+/// One to three plain relative folder names, so a row can lay out a fixed
+/// loader directory but never escape the install.
+fn safe_install_subdir(value: &str) -> bool {
+    let parts: Vec<&str> = value.split('/').collect();
+    (1..=3).contains(&parts.len())
+        && parts.iter().all(|part| {
+            !part.is_empty()
+                && *part != "."
+                && *part != ".."
+                && part
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'_' || b == b'-')
+        })
+}
+
+/// Where a profile's assets live inside an install: the install root, or
+/// `install_subdir` under it. Every folder on the way must be a real
+/// directory, so the subdirectory cannot redirect reads through a symlink.
+fn asset_root(profile: &AudioProfile, root: &Path) -> Result<PathBuf, String> {
+    let mut dir = root.to_path_buf();
+    if let Some(subdir) = &profile.install_subdir {
+        require_directory(&dir)?;
+        for part in subdir.split('/') {
+            dir.push(part);
+            require_directory(&dir)?;
+        }
+    }
+    Ok(dir)
 }
 fn require_directory(path: &Path) -> Result<(), String> {
     let meta = std::fs::symlink_metadata(path)
@@ -2021,18 +2722,21 @@ fn verify_asset_bytes(
     hash: bool,
     cancel: Option<&CancelFlag>,
 ) -> Result<(), String> {
-    verify_asset_bytes_observed(profile, root, hash, cancel, None)
+    verify_asset_bytes_observed(profile, root, hash, cancel, None, 0)
 }
 
+/// `extra_total` is bytes a caller verifies after the pinned assets (a derived
+/// install's outputs), so progress counts both as one total.
 fn verify_asset_bytes_observed(
     profile: &AudioProfile,
     root: &Path,
     hash: bool,
     cancel: Option<&CancelFlag>,
     mut observer: Option<&mut VerifyObserver<'_>>,
+    extra_total: u64,
 ) -> Result<(), String> {
     require_directory(root)?;
-    let total: u64 = profile.assets.iter().map(|a| a.size).sum();
+    let total: u64 = profile.assets.iter().map(|a| a.size).sum::<u64>() + extra_total;
     let mut finished_bytes = 0u64;
     for asset in &profile.assets {
         if let Some(cancel) = cancel {
@@ -2043,60 +2747,86 @@ fn verify_asset_bytes_observed(
                 return Err(VERIFY_CANCELLED.to_string());
             }
         }
-        let path = root.join(&asset.path);
-        // Check every ancestor so a nested asset cannot escape through a symlink.
-        let mut parent = path.parent();
-        while let Some(dir) = parent {
-            if dir == root {
-                break;
-            }
-            require_directory(dir)?;
-            parent = dir.parent();
-        }
-        let meta = std::fs::symlink_metadata(&path)
-            .map_err(|e| format!("reading audio asset {}: {e}", asset.path))?;
-        if !meta.is_file() || meta.len() != asset.size {
-            return Err(format!(
-                "audio asset {} is absent, unsafe, or has changed size",
-                asset.path
-            ));
-        }
-        if hash {
-            let digest = match observer.as_deref_mut() {
-                None => Some(model_io::hash_file(&path, 1024 * 1024).map_err(|e| e.to_string())?),
-                Some(observer) => {
-                    let mut reported = 0u64;
-                    let base = finished_bytes;
-                    let name = asset.path.as_str();
-                    let digest = model_io::hash_file_observed(&path, 1024 * 1024, |done| {
-                        if (observer.cancelled)() {
-                            return false;
-                        }
-                        if done - reported >= VERIFY_PROGRESS_STRIDE {
-                            reported = done;
-                            (observer.on_progress)(name, base + done, total);
-                        }
-                        true
-                    })
-                    .map_err(|e| e.to_string())?;
-                    if digest.is_some() {
-                        (observer.on_progress)(name, base + asset.size, total);
-                    }
-                    digest
-                }
-            };
-            match digest {
-                None => return Err(VERIFY_CANCELLED.to_string()),
-                Some(digest) if digest != asset.sha256 => {
-                    return Err(format!(
-                        "audio asset {} SHA-256 does not match its immutable pin",
-                        asset.path
-                    ));
-                }
-                Some(_) => {}
-            }
-        }
+        verify_one_file(
+            root,
+            &asset.path,
+            asset.size,
+            &asset.sha256,
+            "its immutable pin",
+            hash,
+            observer.as_deref_mut(),
+            finished_bytes,
+            total,
+        )?;
         finished_bytes += asset.size;
+    }
+    Ok(())
+}
+
+/// One file under `root`: a regular file of exactly `size` bytes, and with
+/// `hash` also of sha256 `expected`. `source` names what the digest is
+/// compared with, for the error.
+#[allow(clippy::too_many_arguments)]
+fn verify_one_file(
+    root: &Path,
+    name: &str,
+    size: u64,
+    expected: &str,
+    source: &str,
+    hash: bool,
+    mut observer: Option<&mut VerifyObserver<'_>>,
+    finished_bytes: u64,
+    total: u64,
+) -> Result<(), String> {
+    let path = root.join(name);
+    // Check every ancestor so a nested asset cannot escape through a symlink.
+    let mut parent = path.parent();
+    while let Some(dir) = parent {
+        if dir == root {
+            break;
+        }
+        require_directory(dir)?;
+        parent = dir.parent();
+    }
+    let meta =
+        std::fs::symlink_metadata(&path).map_err(|e| format!("reading audio asset {name}: {e}"))?;
+    if !meta.is_file() || meta.len() != size {
+        return Err(format!(
+            "audio asset {name} is absent, unsafe, or has changed size"
+        ));
+    }
+    if hash {
+        let digest = match observer.as_deref_mut() {
+            None => Some(model_io::hash_file(&path, 1024 * 1024).map_err(|e| e.to_string())?),
+            Some(observer) => {
+                let mut reported = 0u64;
+                let base = finished_bytes;
+                let digest = model_io::hash_file_observed(&path, 1024 * 1024, |done| {
+                    if (observer.cancelled)() {
+                        return false;
+                    }
+                    if done - reported >= VERIFY_PROGRESS_STRIDE {
+                        reported = done;
+                        (observer.on_progress)(name, base + done, total);
+                    }
+                    true
+                })
+                .map_err(|e| e.to_string())?;
+                if digest.is_some() {
+                    (observer.on_progress)(name, base + size, total);
+                }
+                digest
+            }
+        };
+        match digest {
+            None => return Err(VERIFY_CANCELLED.to_string()),
+            Some(digest) if digest != expected => {
+                return Err(format!(
+                    "audio asset {name} SHA-256 does not match {source}"
+                ));
+            }
+            Some(_) => {}
+        }
     }
     Ok(())
 }
@@ -2126,7 +2856,114 @@ fn read_receipt(profile: &AudioProfile, root: &Path) -> Result<AudioInstallRecei
             "audio receipt identity or asset graph does not match requested profile".into(),
         );
     }
+    match (&profile.derived, &receipt.derived) {
+        (None, None) => {}
+        (Some(spec), Some(made)) => {
+            if made.tool != spec.tool || made.tool_version != spec.tool_version {
+                return Err(format!(
+                    "audio install was made by {} version {}, this build expects version {}; delete it and install again",
+                    made.tool, made.tool_version, spec.tool_version
+                ));
+            }
+            for required in drama3_install::REQUIRED_OUTPUTS {
+                if !made.outputs.contains_key(required) {
+                    return Err(format!("audio receipt does not record {required}"));
+                }
+            }
+            for (name, entry) in &made.outputs {
+                if !safe_asset_path(name)
+                    || profile.assets.iter().any(|a| &a.path == name)
+                    || name == RECEIPT_FILENAME
+                    || !digest_shape(&entry.sha256)
+                {
+                    return Err(format!("audio receipt has an unsafe output entry {name:?}"));
+                }
+            }
+        }
+        _ => {
+            return Err(
+                "audio receipt and profile disagree about whether the install is derived".into(),
+            )
+        }
+    }
     Ok(receipt)
+}
+
+/// The pinned assets, then a derived profile's recorded outputs. `hash`
+/// compares sha256 as well as size. Progress covers both parts as one count.
+fn verify_install(
+    profile: &AudioProfile,
+    root: &Path,
+    receipt: &AudioInstallReceipt,
+    hash: bool,
+    cancel: Option<&CancelFlag>,
+    mut observer: Option<&mut VerifyObserver<'_>>,
+) -> Result<(), String> {
+    let pinned_total: u64 = profile.assets.iter().map(|a| a.size).sum();
+    let derived_total: u64 = receipt
+        .derived
+        .as_ref()
+        .map_or(0, |d| d.outputs.values().map(|e| e.size).sum());
+    let assets = asset_root(profile, root)?;
+    verify_asset_bytes_observed(
+        profile,
+        &assets,
+        hash,
+        cancel,
+        observer.as_deref_mut(),
+        derived_total,
+    )?;
+    if let Some(made) = &receipt.derived {
+        let mut finished = pinned_total;
+        for (name, entry) in &made.outputs {
+            if let Some(cancel) = cancel {
+                cancel.checkpoint().map_err(|e| e.to_string())?;
+            }
+            if let Some(observer) = observer.as_deref() {
+                if (observer.cancelled)() {
+                    return Err(VERIFY_CANCELLED.to_string());
+                }
+            }
+            verify_one_file(
+                root,
+                name,
+                entry.size,
+                &entry.sha256,
+                "the install's receipt",
+                hash,
+                observer.as_deref_mut(),
+                finished,
+                pinned_total + derived_total,
+            )?;
+            finished += entry.size;
+        }
+    }
+    Ok(())
+}
+
+fn write_derived_receipt(
+    profile: &AudioProfile,
+    derived: &AudioDerived,
+    staging: &Path,
+    outputs: std::collections::BTreeMap<String, model_io::speech_receipt::FileEntry>,
+) -> Result<(), String> {
+    use std::io::Write;
+    let receipt = AudioInstallReceipt {
+        derived: Some(DerivedReceipt {
+            tool: derived.tool.clone(),
+            tool_version: derived.tool_version,
+            outputs,
+        }),
+        ..new_audio_receipt(profile)
+    };
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(staging.join(RECEIPT_FILENAME))
+        .map_err(|e| format!("creating audio receipt: {e}"))?;
+    file.write_all(&serde_json::to_vec_pretty(&receipt).map_err(|e| e.to_string())?)
+        .and_then(|_| file.sync_all())
+        .map_err(|e| format!("writing audio receipt: {e}"))
 }
 
 #[cfg(test)]
@@ -2161,11 +2998,29 @@ mod tests {
     }
 
     fn fixture(root: &Path) -> (AudioCatalog, AudioProfileIdentity, DownloadReceipt) {
-        let mut catalog = AudioCatalog::embedded().unwrap();
+        let catalog = AudioCatalog::embedded().unwrap();
+        let alias = catalog
+            .entries
+            .iter()
+            .find(|p| p.identity.task == AudioTask::TextToSpeech)
+            .unwrap()
+            .identity
+            .alias
+            .clone();
+        staged(catalog, &alias, root)
+    }
+
+    /// A finished transfer for any row: real bytes for every asset, with the
+    /// row's sizes, digests and fingerprint rewritten to match them.
+    fn staged(
+        mut catalog: AudioCatalog,
+        alias: &str,
+        root: &Path,
+    ) -> (AudioCatalog, AudioProfileIdentity, DownloadReceipt) {
         let profile = catalog
             .entries
             .iter_mut()
-            .find(|p| p.identity.task == AudioTask::TextToSpeech)
+            .find(|p| p.identity.alias == alias)
             .unwrap();
         let staging_root = root.join("transfer");
         let source_root = staging_root.join("source-0000");
@@ -2184,8 +3039,12 @@ mod tests {
                 sha256: asset.sha256.clone(),
             });
         }
-        profile.identity.asset_fingerprint =
-            asset_fingerprint(&profile.assets, &profile.frontend).unwrap();
+        profile.identity.asset_fingerprint = asset_fingerprint(
+            &profile.assets,
+            &profile.frontend,
+            profile.install_subdir.as_deref(),
+        )
+        .unwrap();
         let identity = profile.identity.clone();
         let plan = catalog.pinned_plan(&identity).unwrap();
         let receipt = DownloadReceipt {
@@ -2221,8 +3080,12 @@ mod tests {
             fs::create_dir_all(target.parent().unwrap()).unwrap();
             fs::write(target, bytes).unwrap();
         }
-        profile.identity.asset_fingerprint =
-            asset_fingerprint(&profile.assets, &profile.frontend).unwrap();
+        profile.identity.asset_fingerprint = asset_fingerprint(
+            &profile.assets,
+            &profile.frontend,
+            profile.install_subdir.as_deref(),
+        )
+        .unwrap();
         let identity = profile.identity.clone();
         let row = InstalledModel {
             alias: identity.alias.clone(),
@@ -2261,7 +3124,8 @@ mod tests {
             cancelled: &never,
             on_progress: &mut sink,
         };
-        verify_asset_bytes_observed(profile, &row.path, true, None, Some(&mut observer)).unwrap();
+        verify_asset_bytes_observed(profile, &row.path, true, None, Some(&mut observer), 0)
+            .unwrap();
         let total: u64 = profile.assets.iter().map(|a| a.size).sum();
         let last = reports.last().expect("at least one progress report");
         assert_eq!((last.1, last.2), (total, total), "{reports:?}");
@@ -2274,8 +3138,9 @@ mod tests {
             cancelled: &always,
             on_progress: &mut ignore,
         };
-        let err = verify_asset_bytes_observed(profile, &row.path, true, None, Some(&mut observer))
-            .unwrap_err();
+        let err =
+            verify_asset_bytes_observed(profile, &row.path, true, None, Some(&mut observer), 0)
+                .unwrap_err();
         assert_eq!(err, VERIFY_CANCELLED);
 
         // A flipped byte is still refused through the observed path.
@@ -2287,8 +3152,9 @@ mod tests {
             cancelled: &never,
             on_progress: &mut ignore,
         };
-        let err = verify_asset_bytes_observed(profile, &row.path, true, None, Some(&mut observer))
-            .unwrap_err();
+        let err =
+            verify_asset_bytes_observed(profile, &row.path, true, None, Some(&mut observer), 0)
+                .unwrap_err();
         assert!(err.contains("SHA-256 does not match"), "{err}");
     }
 
@@ -2580,8 +3446,24 @@ mod tests {
     #[test]
     fn initial_audio_profiles_have_exact_complete_pins_and_wire_metadata() {
         let catalog = AudioCatalog::embedded().unwrap();
-        assert_eq!(catalog.entries().count(), 10);
+        assert_eq!(catalog.entries().count(), 22);
         for (task, alias, repo, revision, rate, channels) in [
+            (
+                AudioTask::TextToSpeech,
+                "omnivoice-8bit",
+                "mlx-community/OmniVoice-8bit",
+                "b222e4d82e7bc20323be736ef05fcfc50defb71b",
+                24000,
+                1,
+            ),
+            (
+                AudioTask::TextToSpeech,
+                "omnivoice-bf16",
+                "mlx-community/OmniVoice-bfloat16",
+                "6119f7072580cc30c3cbdf496269216b03ad9742",
+                24000,
+                1,
+            ),
             (
                 AudioTask::SpeechToText,
                 "whisper-base",
@@ -2619,6 +3501,30 @@ mod tests {
                 "parakeet-redux-coreml",
                 "FluidInference/parakeet-redux-coreml",
                 "8c5ef97a29cd120dc76b354b3f22b7fec3b486f9",
+                16000,
+                1,
+            ),
+            (
+                AudioTask::SpeechToText,
+                "parakeet-ultra-coreml",
+                "FluidInference/parakeet-ultra-coreml",
+                "95eaa59a39d4394f047a4dc5cce480388a60d1b6",
+                16000,
+                1,
+            ),
+            (
+                AudioTask::SpeechToText,
+                "parakeet-unified-en-coreml",
+                "FluidInference/parakeet-unified-en-0.6b-coreml",
+                "d32e972dd4315f1dc3f6be28fb2aab0ab3e80358",
+                16000,
+                1,
+            ),
+            (
+                AudioTask::Diarization,
+                "speaker-diarization-coreml",
+                "FluidInference/speaker-diarization-coreml",
+                "7eab74f3463c736418d0eb10296261ae581146c9",
                 16000,
                 1,
             ),
@@ -2660,13 +3566,77 @@ mod tests {
         }
         // The Core ML profile runs through the reviewed native adapter, and
         // its memory estimate counts compiled weights, not safetensors.
-        let parakeet = catalog.get("parakeet-redux-coreml").unwrap();
-        assert_eq!(parakeet.family, "parakeet_tdt");
-        assert_eq!(parakeet.capabilities.backend, "coreml");
-        assert_eq!(parakeet.readiness, AudioReadiness::ImplementedUnqualified);
-        assert!(parakeet.resident_memory_bytes > 3 * 200_000_000);
+        // Ultra shares Redux's component contract, so it is the same family
+        // and decode flow; only its int8 encoder is larger.
+        for (alias, encoder_bytes) in [
+            ("parakeet-redux-coreml", 182_389_312u64),
+            ("parakeet-ultra-coreml", 594_211_328),
+        ] {
+            let parakeet = catalog.get(alias).unwrap();
+            assert_eq!(parakeet.family, "parakeet_tdt");
+            assert_eq!(parakeet.capabilities.backend, "coreml");
+            assert_eq!(parakeet.readiness, AudioReadiness::ImplementedUnqualified);
+            assert!(parakeet.resident_memory_bytes > 3 * encoder_bytes);
+            assert_eq!(
+                parakeet.capabilities.can_run,
+                turbospark_coreml::os_version().0 >= 15
+            );
+            assert!(parakeet
+                .capabilities
+                .operations
+                .contains(&"transcribe".to_string()));
+        }
+        // The live model pins one streaming encoder, not the 11 GB repo, and
+        // is never offered as a batch transcriber.
+        let unified = catalog.get("parakeet-unified-en-coreml").unwrap();
+        assert_eq!(unified.family, "parakeet_unified");
+        assert_eq!(unified.capabilities.operations, ["stream_transcribe"]);
+        assert_eq!(unified.capabilities.languages, ["en"]);
+        assert!(unified.download_bytes < 700_000_000);
         assert_eq!(
-            parakeet.capabilities.can_run,
+            unified
+                .assets
+                .iter()
+                .filter(|a| a.path.ends_with(".mlmodelc/model.mil"))
+                .count(),
+            3
+        );
+        assert!(unified.resident_memory_bytes > 3 * 589_979_840);
+        assert_eq!(
+            unified.capabilities.can_run,
+            turbospark_coreml::os_version().0 >= 15
+        );
+        // Only the CC-BY-4.0 community-1 programs, the PLDA psi and the
+        // attribution files; the legacy wespeaker and pyannote_segmentation
+        // programs in the same repository are outside that license scope.
+        let diarization = catalog.get("speaker-diarization-coreml").unwrap();
+        assert_eq!(diarization.family, "pyannote_community1");
+        assert_eq!(diarization.capabilities.operations, ["diarize"]);
+        assert_eq!(diarization.capabilities.backend, "coreml");
+        assert_eq!(diarization.capabilities.max_input_seconds, Some(1800));
+        assert_eq!(
+            diarization.readiness,
+            AudioReadiness::ImplementedUnqualified
+        );
+        assert_eq!(diarization.assets.len(), 23);
+        assert_eq!(diarization.download_bytes, 21_623_423);
+        // Covers the measured 30-minute peak footprint.
+        assert!(diarization.resident_memory_bytes > 858_195_576);
+        for program in ["Segmentation", "FBank", "Embedding", "PldaRho"] {
+            assert!(diarization
+                .assets
+                .iter()
+                .any(|a| a.path == format!("{program}.mlmodelc/weights/weight.bin")));
+        }
+        for file in ["plda-parameters.json", "NOTICE.md", "LICENSE"] {
+            assert!(diarization.assets.iter().any(|a| a.path == file));
+        }
+        assert!(diarization
+            .assets
+            .iter()
+            .all(|a| !a.path.contains("wespeaker") && !a.path.starts_with("pyannote_")));
+        assert_eq!(
+            diarization.capabilities.can_run,
             turbospark_coreml::os_version().0 >= 15
         );
         let music = catalog.get("minimax-music3-4bit").unwrap();
@@ -2755,6 +3725,157 @@ mod tests {
         );
     }
 
+    /// The FluidAudio speech-detection and TTS rows: pinned to the commit
+    /// Phase 0 measured, app-only, laid out the way FluidAudio's loaders
+    /// read, and holding no file a license keeps out (the two PocketTTS
+    /// voices that are non-commercial).
+    #[test]
+    fn fluidaudio_vad_and_tts_rows_are_pinned_app_only_and_laid_out() {
+        let catalog = AudioCatalog::embedded().unwrap();
+        for (alias, family, task, repo, revision, files, subdir, compute) in [
+            (
+                "silero-vad-coreml",
+                "fluidaudio_silero_vad",
+                AudioTask::SpeechDetection,
+                "FluidInference/silero-vad-coreml",
+                "b419383c55c110e2c9271fa6ee0ea83d03c70d96",
+                5,
+                None,
+                "cpu",
+            ),
+            (
+                "kokoro-82m-ane-coreml",
+                "fluidaudio_kokoro_ane",
+                AudioTask::TextToSpeech,
+                "FluidInference/kokoro-82m-coreml",
+                "e61d9ee79a01ad4ebf6b3d8bcfe2a03f6b8da105",
+                52,
+                Some("kokoro-82m-coreml"),
+                "mixed",
+            ),
+            (
+                "pocket-tts-coreml",
+                "fluidaudio_pocket_tts",
+                AudioTask::TextToSpeech,
+                "FluidInference/pocket-tts-coreml",
+                "91748676fe3c8b2eb3007b3125253bcd898202c3",
+                46,
+                Some("Models/pocket-tts"),
+                "gpu",
+            ),
+        ] {
+            let p = catalog.get(alias).unwrap();
+            assert_eq!(p.identity.task, task, "{alias}");
+            assert_eq!(p.family, family);
+            assert_eq!(p.identity.repository, repo);
+            assert_eq!(p.identity.revision, revision);
+            assert_eq!(p.assets.len(), files, "{alias}");
+            assert_eq!(p.install_subdir.as_deref(), subdir, "{alias}");
+            assert_eq!(p.capabilities.backend, "swift_coreml");
+            assert_eq!(p.capabilities.compute.as_deref(), Some(compute), "{alias}");
+            assert!(
+                !p.capabilities.can_run && !p.capabilities.http_api,
+                "{alias}"
+            );
+            assert_eq!(p.readiness, AudioReadiness::RuntimePending);
+            assert!(p.acknowledgments.is_empty(), "{alias}");
+            // Compiled programs only, never an .mlpackage source.
+            assert!(p.assets.iter().all(|a| !a.path.contains(".mlpackage/")));
+            assert!(p
+                .assets
+                .iter()
+                .any(|a| a.path.ends_with("/weights/weight.bin")));
+        }
+        // The two non-commercial voices stay out of the pin.
+        let pocket = catalog.get("pocket-tts-coreml").unwrap();
+        for name in ["cosette", "jean"] {
+            assert!(
+                pocket.assets.iter().all(|a| !a.path.contains(name)),
+                "{name}"
+            );
+            assert!(pocket.capabilities.voices.iter().all(|v| v != name));
+        }
+        // FluidAudio's fixed Kokoro layout reads these from the ANE folder.
+        let kokoro = catalog.get("kokoro-82m-ane-coreml").unwrap();
+        for file in ["ANE/af_heart.bin", "ANE/vocab.json", "ANE/LICENSE"] {
+            assert!(kokoro.assets.iter().any(|a| a.path == file), "{file}");
+        }
+        // The diarizer is the pyannote row, which the Rust runner already
+        // executes: there is no second FluidAudio copy of it.
+        assert_eq!(
+            catalog
+                .entries()
+                .filter(|p| p.identity.repository == "FluidInference/speaker-diarization-coreml")
+                .map(|p| p.family.as_str())
+                .collect::<Vec<_>>(),
+            ["pyannote_community1"]
+        );
+    }
+
+    /// The FluidAudio speech rows: pinned like any row, app-only, with the
+    /// measured placement, and the FunASR terms where they apply.
+    #[test]
+    fn fluidaudio_speech_rows_are_pinned_app_only_and_carry_their_terms() {
+        let catalog = AudioCatalog::embedded().unwrap();
+        for (alias, family, repo, revision, files, ack) in [
+            (
+                "parakeet-ja-coreml",
+                "fluidaudio_parakeet_ja",
+                "FluidInference/parakeet-0.6b-ja-coreml",
+                "2952296ff1da4a6d6a7aec545e226367db80c612",
+                21,
+                None,
+            ),
+            (
+                "paraformer-zh-coreml",
+                "fluidaudio_paraformer_zh",
+                "FluidInference/paraformer-large-zh-coreml",
+                "9b4faaa06e476f38ab4a6e011a4467629df09059",
+                17,
+                Some("funasr_model_license"),
+            ),
+        ] {
+            let p = catalog.get(alias).unwrap();
+            assert_eq!(p.identity.task, AudioTask::SpeechToText, "{alias}");
+            assert_eq!(p.family, family);
+            assert_eq!(p.identity.repository, repo);
+            assert_eq!(p.identity.revision, revision);
+            assert_eq!(p.assets.len(), files, "{alias}");
+            assert_eq!(p.capabilities.backend, "swift_coreml");
+            assert_eq!(p.capabilities.compute.as_deref(), Some("ane"));
+            assert!(
+                !p.capabilities.can_run && !p.capabilities.http_api,
+                "{alias}"
+            );
+            assert!(p
+                .capabilities
+                .unavailable_reason
+                .as_deref()
+                .unwrap()
+                .contains("FluidAudio"));
+            assert_eq!(p.readiness, AudioReadiness::RuntimePending);
+            assert_eq!(p.install_subdir, None);
+            assert!(p.assets.iter().any(|a| a.path == "vocab.json"), "{alias}");
+            // Compiled programs only: Core ML loads the .mlmodelc beside a
+            // package source, so a source would be dead weight in the install.
+            assert!(p.assets.iter().all(|a| !a.path.contains(".mlpackage/")));
+            let ids: Vec<_> = p.acknowledgments.iter().map(|a| a.id.as_str()).collect();
+            assert_eq!(ids, ack.into_iter().collect::<Vec<_>>(), "{alias}");
+            let weights: u64 = p
+                .assets
+                .iter()
+                .filter(|a| a.path.ends_with("/weights/weight.bin"))
+                .map(|a| a.size)
+                .sum();
+            assert!(weights > 0, "{alias}");
+            assert_eq!(
+                p.resident_memory_bytes,
+                weights * 3 + 16_000 * 4 * 1800 + (256 << 20),
+                "{alias}"
+            );
+        }
+    }
+
     #[test]
     fn qwen3_tts_profiles_pin_all_native_swift_components() {
         let catalog = AudioCatalog::embedded().unwrap();
@@ -2816,7 +3937,7 @@ mod tests {
                 .unwrap()
                 .sha256 = "0".repeat(64);
             assert_ne!(
-                asset_fingerprint(&profile.assets, &changed).unwrap(),
+                asset_fingerprint(&profile.assets, &changed, None).unwrap(),
                 profile.identity.asset_fingerprint
             );
             assert!(validate_frontend(changed.as_ref().unwrap()).is_err());
@@ -2867,7 +3988,7 @@ mod tests {
         let mut assets = catalog.get("whisper-base").unwrap().assets.clone();
         assets[0].sha256 = "c".repeat(64);
         assert_ne!(
-            asset_fingerprint(&assets, &None).unwrap(),
+            asset_fingerprint(&assets, &None, None).unwrap(),
             identity.asset_fingerprint
         );
     }
@@ -3015,6 +4136,418 @@ mod tests {
         .unwrap();
         assert!(catalog.resolve(&store, &identity).is_ok());
         assert!(catalog.verify(&store, &identity).is_err());
+    }
+
+    /// The embedded Drama 3 profile with its pins swapped for the fixture's
+    /// bytes, so a derived install runs end to end without a network.
+    fn derived_fixture(
+        root: &Path,
+    ) -> (
+        AudioCatalog,
+        AudioProfileIdentity,
+        Store,
+        drama3_install::test_support::Memory,
+        drama3_install::Pins,
+    ) {
+        let (source, pins) = drama3_install::test_support::fixture();
+        let mut catalog = AudioCatalog::embedded().unwrap();
+        let profile = catalog
+            .entries
+            .iter_mut()
+            .find(|p| p.identity.alias == drama3_install::ALIAS)
+            .unwrap();
+        for asset in &mut profile.assets {
+            let pin = std::iter::once(&pins.config)
+                .chain(&pins.small)
+                .chain([&pins.codec])
+                .find(|p| p.name == asset.path)
+                .unwrap();
+            asset.size = pin.bytes;
+            asset.sha256 = pin.sha256.clone();
+        }
+        profile.identity.asset_fingerprint = asset_fingerprint(
+            &profile.assets,
+            &profile.frontend,
+            profile.install_subdir.as_deref(),
+        )
+        .unwrap();
+        let identity = profile.identity.clone();
+        (
+            catalog,
+            identity,
+            Store::new(root.join("store")),
+            source,
+            pins,
+        )
+    }
+
+    fn derived_install(
+        catalog: &AudioCatalog,
+        identity: &AudioProfileIdentity,
+        store: &Store,
+        source: &drama3_install::test_support::Memory,
+        pins: &drama3_install::Pins,
+        progress: &mut dyn FnMut(HubDownloadProgress),
+        cancel: &CancelFlag,
+    ) -> Result<InstalledModel, String> {
+        let derived = catalog.profile(identity)?.derived.clone().unwrap();
+        catalog
+            .install_derived_from(
+                source,
+                pins,
+                u64::MAX,
+                store,
+                identity,
+                &derived,
+                None,
+                progress,
+                cancel,
+            )
+            .map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn the_drama3_profile_is_a_derived_metal_clone_profile() {
+        let catalog = AudioCatalog::embedded().unwrap();
+        let profile = catalog.get(drama3_install::ALIAS).unwrap();
+        assert_eq!(profile.family, "fish_drama3");
+        assert_eq!(profile.identity.task, AudioTask::TextToSpeech);
+        assert_eq!(profile.identity.repository, drama3_install::REPO);
+        assert_eq!(profile.identity.revision, drama3_install::REVISION);
+        assert_eq!(profile.pcm_format.sample_rate, 44_100);
+        assert_eq!(profile.pcm_format.channels, 1);
+        let derived = profile.derived.as_ref().expect("a derived profile");
+        assert_eq!(derived.tool, drama3_install::TOOL);
+        assert_eq!(derived.working_bytes, drama3_install::WORKING_BYTES);
+        // Only the five root files are pinned; the shards are read by the
+        // converter and counted in the download size.
+        let names: Vec<_> = profile.assets.iter().map(|a| a.path.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "config.json",
+                "LICENSE",
+                "NOTICE",
+                "tokenizer.json",
+                "codec.safetensors"
+            ]
+        );
+        let pinned: u64 = profile.assets.iter().map(|a| a.size).sum();
+        assert_eq!(
+            profile.download_bytes,
+            pinned + drama3_install::shard_total_bytes()
+        );
+        assert_eq!(
+            profile.capabilities.operations,
+            ["synthesize", "voice_clone"]
+        );
+        assert_eq!(profile.capabilities.backend, "metal");
+        assert!(profile.capabilities.can_run);
+        assert_eq!(profile.readiness, AudioReadiness::ImplementedUnqualified);
+        assert_eq!(profile.resident_memory_bytes, 8_845_165_754);
+        // Other profiles are not derived, and say nothing about it on the wire.
+        let other = catalog.get("megatts3-f32").unwrap();
+        assert!(other.derived.is_none());
+        assert!(!serde_json::to_string(other).unwrap().contains("derived"));
+        assert!(serde_json::to_string(profile)
+            .unwrap()
+            .contains("\"derived\""));
+        // The license terms are accepted before any download.
+        let [ack] = profile.acknowledgments.as_slice() else {
+            panic!("expected one acknowledgment");
+        };
+        assert_eq!(ack.id, "fish_audio_community_license");
+        for term in [
+            "USD 500,000",
+            "hosted service",
+            "LICENSE and NOTICE",
+            "Built with Fish Audio",
+            "non-commercial",
+        ] {
+            assert!(ack.summary.contains(term), "the terms omit {term:?}");
+        }
+        assert!(ack.summary.is_ascii());
+        let families = family_capabilities().unwrap();
+        let row = families
+            .iter()
+            .find(|f| f.family == "tts/fish_drama3")
+            .unwrap();
+        assert_eq!(row.operations, ["synthesize", "voice_clone"]);
+        assert!(row.can_run);
+    }
+
+    #[test]
+    fn a_derived_install_is_refused_without_the_license_before_any_work() {
+        let root = Scratch::new();
+        let (catalog, identity, store, _, _) = derived_fixture(&root.0);
+        let err = catalog
+            .install_acknowledged(
+                &Client::new(),
+                &Catalog::embedded().unwrap(),
+                &store,
+                &identity,
+                &[],
+                &mut |_| {},
+                &CancelFlag::new(),
+            )
+            .unwrap_err();
+        assert!(err.contains("fish_audio_community_license"), "{err}");
+        assert!(!store.audio_install_path(&identity.alias).exists());
+        assert!(!store.root().exists(), "nothing was created");
+    }
+
+    #[test]
+    fn a_derived_install_publishes_a_receipt_that_resolves_and_verifies() {
+        let root = Scratch::new();
+        let (catalog, identity, store, source, pins) = derived_fixture(&root.0);
+        let mut reports = Vec::new();
+        let installed = derived_install(
+            &catalog,
+            &identity,
+            &store,
+            &source,
+            &pins,
+            &mut |p| reports.push(p),
+            &CancelFlag::new(),
+        )
+        .unwrap();
+        assert_eq!(installed.path, store.audio_install_path(&identity.alias));
+        assert_eq!(installed.family, "fish_drama3");
+        assert_eq!(installed.status, "unverified");
+        // One monotone bar over a fixed total, ending full.
+        let total = reports[0].total_bytes;
+        let mut last = 0;
+        for r in &reports {
+            assert_eq!(r.total_bytes, total);
+            assert!(r.completed_bytes >= last, "{:?}", r.current_path);
+            last = r.completed_bytes;
+        }
+        assert_eq!(last, total);
+        assert!(reports.iter().any(|r| r
+            .current_path
+            .as_deref()
+            .is_some_and(|p| p.starts_with("verifying "))));
+
+        // The receipt records the pinned files and the converter's outputs.
+        let wire: serde_json::Value =
+            serde_json::from_slice(&fs::read(installed.path.join(RECEIPT_FILENAME)).unwrap())
+                .unwrap();
+        assert_eq!(wire["derived"]["tool"], drama3_install::TOOL);
+        for output in drama3_install::REQUIRED_OUTPUTS {
+            assert!(
+                wire["derived"]["outputs"][output]["sha256"].is_string(),
+                "{output}"
+            );
+        }
+        assert!(wire["derived"]["outputs"]["config.json"].is_null());
+
+        assert_eq!(catalog.resolve(&store, &identity).unwrap(), installed.path);
+        assert_eq!(catalog.verify(&store, &identity).unwrap(), installed.path);
+        // Verification counts the outputs in its progress total.
+        let mut verify_total = 0;
+        let mut verify_last = 0;
+        catalog
+            .verify_observed(&store, &identity, &|| false, &mut |_, done, all| {
+                verify_total = all;
+                verify_last = done;
+            })
+            .unwrap();
+        let outputs: u64 = wire["derived"]["outputs"]
+            .as_object()
+            .unwrap()
+            .values()
+            .map(|e| e["size"].as_u64().unwrap())
+            .sum();
+        let pinned: u64 = catalog
+            .get(&identity.alias)
+            .unwrap()
+            .assets
+            .iter()
+            .map(|a| a.size)
+            .sum();
+        assert_eq!(verify_total, pinned + outputs);
+        assert_eq!(verify_last, verify_total);
+        assert_eq!(catalog.installed(&store).unwrap(), vec![installed.clone()]);
+        // The staging directory is gone, and the install can be deleted.
+        assert!(!drama3_install::staging_dir(&installed.path)
+            .unwrap()
+            .exists());
+        catalog.delete(&store, &identity).unwrap();
+        assert!(!installed.path.exists());
+    }
+
+    #[test]
+    fn a_derived_install_notices_damage_to_what_upstream_does_not_pin() {
+        let root = Scratch::new();
+        let (catalog, identity, store, source, pins) = derived_fixture(&root.0);
+        let installed = derived_install(
+            &catalog,
+            &identity,
+            &store,
+            &source,
+            &pins,
+            &mut |_| {},
+            &CancelFlag::new(),
+        )
+        .unwrap();
+        let side = installed.path.join("tts_side.safetensors");
+        let original = fs::read(&side).unwrap();
+
+        // Same size, different bytes: the cheap check passes, the full one fails.
+        let mut flipped = original.clone();
+        let last = flipped.len() - 1;
+        flipped[last] ^= 0xff;
+        fs::write(&side, &flipped).unwrap();
+        assert!(catalog.resolve(&store, &identity).is_ok());
+        let err = catalog.verify(&store, &identity).unwrap_err();
+        assert!(
+            err.contains("tts_side.safetensors") && err.contains("receipt"),
+            "{err}"
+        );
+
+        // A truncated output fails even the cheap check.
+        fs::write(&side, &original[..original.len() - 1]).unwrap();
+        let err = catalog.resolve(&store, &identity).unwrap_err();
+        assert!(err.contains("changed size"), "{err}");
+
+        // A missing one too, and the damaged install is still deletable.
+        fs::remove_file(&side).unwrap();
+        assert!(catalog.resolve(&store, &identity).is_err());
+        assert!(catalog.installed_report(&store).installed.is_empty());
+        catalog.delete(&store, &identity).unwrap();
+        assert!(!installed.path.exists());
+    }
+
+    #[test]
+    fn a_derived_receipt_must_match_its_profile() {
+        let root = Scratch::new();
+        let (catalog, identity, store, source, pins) = derived_fixture(&root.0);
+        let installed = derived_install(
+            &catalog,
+            &identity,
+            &store,
+            &source,
+            &pins,
+            &mut |_| {},
+            &CancelFlag::new(),
+        )
+        .unwrap();
+        let path = installed.path.join(RECEIPT_FILENAME);
+        let good = fs::read(&path).unwrap();
+        let edit = |change: &dyn Fn(&mut serde_json::Value)| {
+            let mut wire: serde_json::Value = serde_json::from_slice(&good).unwrap();
+            change(&mut wire);
+            fs::write(&path, serde_json::to_vec(&wire).unwrap()).unwrap();
+            catalog.resolve(&store, &identity).unwrap_err()
+        };
+        let err = edit(&|w| {
+            w["derived"]["outputs"]
+                .as_object_mut()
+                .unwrap()
+                .remove("tts_side.safetensors");
+        });
+        assert!(
+            err.contains("does not record tts_side.safetensors"),
+            "{err}"
+        );
+        let err = edit(&|w| w["derived"]["tool_version"] = 99.into());
+        assert!(
+            err.contains("version 99") && err.contains("install again"),
+            "{err}"
+        );
+        let err = edit(&|w| w["derived"]["tool"] = "something_else".into());
+        assert!(err.contains("something_else"), "{err}");
+        // An output named like a pinned file, or outside the install, is unsafe.
+        let entry = serde_json::json!({"size": 1, "sha256": "a".repeat(64)});
+        let err = edit(&|w| w["derived"]["outputs"]["config.json"] = entry.clone());
+        assert!(err.contains("unsafe output entry"), "{err}");
+        let err = edit(&|w| w["derived"]["outputs"]["../escape"] = entry.clone());
+        assert!(err.contains("unsafe output entry"), "{err}");
+        // A derived profile with no derived section is not an intact install.
+        let err = edit(&|w| {
+            w.as_object_mut().unwrap().remove("derived");
+        });
+        assert!(err.contains("disagree"), "{err}");
+        fs::write(&path, &good).unwrap();
+        assert!(catalog.resolve(&store, &identity).is_ok());
+    }
+
+    #[test]
+    fn a_pinned_profile_cannot_carry_a_derived_section() {
+        let root = Scratch::new();
+        let store = Store::new(root.0.join("store"));
+        let (catalog, identity, receipt) = fixture(&root.0);
+        let installed = catalog
+            .publish_verified(&store, &identity, &receipt, &CancelFlag::new())
+            .unwrap();
+        let path = installed.path.join(RECEIPT_FILENAME);
+        let mut wire: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        wire["derived"] = serde_json::json!({
+            "tool": "fish_drama3_intake",
+            "tool_version": 1,
+            "outputs": {},
+        });
+        fs::write(&path, serde_json::to_vec(&wire).unwrap()).unwrap();
+        let err = catalog.resolve(&store, &identity).unwrap_err();
+        assert!(err.contains("disagree"), "{err}");
+    }
+
+    #[test]
+    fn a_cancelled_derived_install_leaves_nothing_in_the_store() {
+        let root = Scratch::new();
+        let (catalog, identity, store, mut source, pins) = derived_fixture(&root.0);
+        let cancel = CancelFlag::new();
+        source.cancel_on_root = Some((2, cancel.clone()));
+        let err = derived_install(
+            &catalog,
+            &identity,
+            &store,
+            &source,
+            &pins,
+            &mut |_| {},
+            &cancel,
+        )
+        .unwrap_err();
+        assert!(err.contains("cancelled"), "{err}");
+        let destination = store.audio_install_path(&identity.alias);
+        assert!(!destination.exists());
+        assert!(!drama3_install::staging_dir(&destination).unwrap().exists());
+        assert!(catalog.installed(&store).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_derived_install_does_not_replace_an_existing_one() {
+        let root = Scratch::new();
+        let (catalog, identity, store, source, pins) = derived_fixture(&root.0);
+        let installed = derived_install(
+            &catalog,
+            &identity,
+            &store,
+            &source,
+            &pins,
+            &mut |_| {},
+            &CancelFlag::new(),
+        )
+        .unwrap();
+        let calls = source.root_calls.load(std::sync::atomic::Ordering::SeqCst);
+        let err = catalog
+            .install_acknowledged(
+                &Client::new(),
+                &Catalog::embedded().unwrap(),
+                &store,
+                &identity,
+                &["fish_audio_community_license".to_string()],
+                &mut |_| {},
+                &CancelFlag::new(),
+            )
+            .unwrap_err();
+        assert!(err.contains("already exists"), "{err}");
+        assert_eq!(
+            source.root_calls.load(std::sync::atomic::Ordering::SeqCst),
+            calls
+        );
+        assert_eq!(catalog.resolve(&store, &identity).unwrap(), installed.path);
     }
 
     #[test]
@@ -3175,6 +4708,354 @@ mod tests {
             1
         );
     }
+    const FLUID_FAMILIES: [&str; 6] = [
+        "fluidaudio_silero_vad",
+        "fluidaudio_kokoro_ane",
+        "fluidaudio_pocket_tts",
+        "fluidaudio_sensevoice",
+        "fluidaudio_paraformer_zh",
+        "fluidaudio_parakeet_ja",
+    ];
+
+    /// One generic row for a Swift-hosted family, with a compiled weight for
+    /// the memory estimate to count.
+    fn fluid_manifest(
+        family: &str,
+        task: &str,
+        install_subdir: Option<&str>,
+        max_input_seconds: Option<u32>,
+    ) -> String {
+        let files = [
+            "Model.mlmodelc/coremldata.bin",
+            "Model.mlmodelc/weights/weight.bin",
+            "vocab.json",
+        ];
+        let assets: Vec<_> = files
+            .iter()
+            .enumerate()
+            .map(|(i, path)| serde_json::json!({"path": path, "size": 1000 * (i + 1), "sha256": format!("{:064x}", i + 1)}))
+            .collect();
+        let mut metadata = serde_json::json!({
+            "task": task, "family": family, "display_name": "Fluid test",
+            "required_files": files, "sample_rate": 16000, "channels": 1,
+            "languages": ["auto"], "voices": [], "max_input_seconds": max_input_seconds
+        });
+        if let Some(subdir) = install_subdir {
+            metadata["install_subdir"] = subdir.into();
+        }
+        serde_json::json!({
+            "schema_version": 1,
+            "profiles": [{
+                "alias": "fluid-test",
+                "assets": assets,
+                "source": {"repository": "FluidInference/test-coreml", "revision": "0".repeat(40)},
+                "metadata": metadata
+            }]
+        })
+        .to_string()
+    }
+
+    fn fluid_catalog(family: &str, task: &str, install_subdir: Option<&str>) -> AudioCatalog {
+        AudioCatalog::from_manifest(&fluid_manifest(family, task, install_subdir, Some(1800)))
+            .unwrap()
+    }
+
+    #[test]
+    fn swift_hosted_families_are_app_only_with_a_measured_placement() {
+        for family in FLUID_FAMILIES {
+            let c = profile_capabilities(family);
+            assert_eq!(c.backend, "swift_coreml", "{family}");
+            assert!(!c.can_run && !c.http_api, "{family}");
+            assert!(
+                c.unavailable_reason
+                    .as_deref()
+                    .is_some_and(|r| r.contains("FluidAudio")),
+                "{family}"
+            );
+            assert!(
+                matches!(c.compute.as_deref(), Some("ane" | "gpu" | "cpu" | "mixed")),
+                "{family}"
+            );
+            assert_eq!(c.operations.len(), 1, "{family}");
+        }
+        // Measured, not requested: Silero VAD asks for the Neural Engine and
+        // Core ML plans every op on the CPU.
+        assert_eq!(
+            profile_capabilities("fluidaudio_silero_vad")
+                .compute
+                .as_deref(),
+            Some("cpu")
+        );
+        // Families without an adapter stay attachable, as they were.
+        assert!(profile_capabilities("spark_tts").http_api);
+        let catalog = AudioCatalog::embedded().unwrap();
+        assert!(catalog
+            .entries()
+            .any(|p| p.capabilities.backend == "swift_coreml"));
+        for p in catalog.entries() {
+            // App-only exactly when the app is the only runtime.
+            assert_eq!(
+                p.capabilities.http_api,
+                p.capabilities.backend != "swift_coreml",
+                "{}",
+                p.identity.alias
+            );
+            // Every Core ML row, Rust or Swift hosted, names its placement.
+            assert_eq!(
+                p.capabilities.compute.is_some(),
+                p.capabilities.backend.ends_with("coreml"),
+                "{}",
+                p.identity.alias
+            );
+        }
+    }
+
+    #[test]
+    fn swift_hosted_rows_keep_their_reason_and_estimate_compiled_weights() {
+        let catalog = AudioCatalog::from_manifest(&fluid_manifest(
+            "fluidaudio_parakeet_ja",
+            "speech_to_text",
+            None,
+            Some(1800),
+        ))
+        .unwrap();
+        let p = catalog.get("fluid-test").unwrap();
+        assert_eq!(p.readiness, AudioReadiness::RuntimePending);
+        assert!(!p.capabilities.can_run);
+        assert!(p
+            .capabilities
+            .unavailable_reason
+            .as_deref()
+            .unwrap()
+            .contains("FluidAudio"));
+        assert_eq!(p.capabilities.languages, ["auto"]);
+        assert_eq!(p.capabilities.timing.as_deref(), Some("token"));
+        // Three times the 2000-byte weight.bin, 30 minutes of 16 kHz f32, and
+        // the reserve. Safetensors-based arms would count zero here.
+        assert_eq!(
+            p.resident_memory_bytes,
+            3 * 2000 + 16_000 * 4 * 1800 + (256 << 20)
+        );
+        assert!(p.resident_memory_evidence.contains("compiled Core ML"));
+        let vad = AudioCatalog::from_manifest(&fluid_manifest(
+            "fluidaudio_silero_vad",
+            "speech_detection",
+            None,
+            None,
+        ))
+        .unwrap();
+        assert_eq!(
+            vad.get("fluid-test").unwrap().resident_memory_bytes,
+            3 * 2000 + (256 << 20)
+        );
+    }
+
+    #[test]
+    fn install_subdir_is_validated_and_joins_the_fingerprint_only_when_set() {
+        for bad in [
+            "",
+            ".",
+            "..",
+            "a/../b",
+            "/abs",
+            "a//b",
+            "a/",
+            "a/b/c/d",
+            "has space",
+            "a\\b",
+        ] {
+            assert!(
+                AudioCatalog::from_manifest(&fluid_manifest(
+                    "fluidaudio_pocket_tts",
+                    "text_to_speech",
+                    Some(bad),
+                    None
+                ))
+                .is_err(),
+                "{bad:?}"
+            );
+        }
+        let flat = fluid_catalog("fluidaudio_pocket_tts", "text_to_speech", None);
+        let nested = fluid_catalog(
+            "fluidaudio_pocket_tts",
+            "text_to_speech",
+            Some("Models/pocket-tts"),
+        );
+        let (flat, nested) = (
+            flat.get("fluid-test").unwrap(),
+            nested.get("fluid-test").unwrap(),
+        );
+        assert_eq!(nested.install_subdir.as_deref(), Some("Models/pocket-tts"));
+        assert_ne!(
+            flat.identity.asset_fingerprint,
+            nested.identity.asset_fingerprint
+        );
+        assert_eq!(
+            serde_json::to_value(nested).unwrap()["install_subdir"],
+            "Models/pocket-tts"
+        );
+        assert!(serde_json::to_value(flat)
+            .unwrap()
+            .get("install_subdir")
+            .is_none());
+    }
+
+    /// Saved selections and every install receipt carry these fingerprints.
+    /// The expected values were computed outside Rust from audio_assets.json
+    /// (compact JSON of the path-sorted assets and the frontend, SHA-256), so
+    /// a change to the hashing of rows without a layout fails here.
+    #[test]
+    fn rows_without_a_layout_keep_their_fingerprints() {
+        let catalog = AudioCatalog::embedded().unwrap();
+        for (alias, fingerprint) in [
+            (
+                "whisper-base",
+                "4422351069947e3a169e63f459b45f0c11603d074a27ca54c27afb0df67307cb",
+            ),
+            (
+                "parakeet-redux-coreml",
+                "ef38a6a0ac299b11ede6fefbf3fb2a0b9c121c99bcbe93c973839475d15d8935",
+            ),
+        ] {
+            assert_eq!(
+                catalog.get(alias).unwrap().identity.asset_fingerprint,
+                fingerprint,
+                "{alias}"
+            );
+        }
+    }
+
+    #[test]
+    fn layout_rows_publish_under_their_subdir_then_resolve_verify_list_and_delete() {
+        let root = Scratch::new();
+        let store = Store::new(root.0.join("store"));
+        let catalog = fluid_catalog(
+            "fluidaudio_pocket_tts",
+            "text_to_speech",
+            Some("Models/pocket-tts"),
+        );
+        let (catalog, identity, receipt) = staged(catalog, "fluid-test", &root.0);
+        let installed = catalog
+            .publish_verified(&store, &identity, &receipt, &CancelFlag::new())
+            .unwrap();
+        let profile = catalog.get(&identity.alias).unwrap();
+        let assets = installed.path.join("Models/pocket-tts");
+        assert!(installed.path.join(RECEIPT_FILENAME).is_file());
+        for asset in &profile.assets {
+            assert!(assets.join(&asset.path).is_file(), "{}", asset.path);
+            assert!(!installed.path.join(&asset.path).exists(), "{}", asset.path);
+        }
+        assert_eq!(catalog.resolve(&store, &identity).unwrap(), installed.path);
+        assert_eq!(catalog.verify(&store, &identity).unwrap(), installed.path);
+        assert_eq!(catalog.installed(&store).unwrap(), vec![installed.clone()]);
+        // A flipped byte under the layout passes the size check only.
+        let victim = assets.join(&profile.assets[0].path);
+        let mut bytes = fs::read(&victim).unwrap();
+        bytes[0] ^= 0xff;
+        fs::write(&victim, &bytes).unwrap();
+        assert!(catalog.resolve(&store, &identity).is_ok());
+        assert!(catalog.verify(&store, &identity).is_err());
+        bytes[0] ^= 0xff;
+        fs::write(&victim, &bytes).unwrap();
+        // No receiptless install of a layout row ever existed to adopt.
+        assert!(catalog
+            .adopt_legacy(&store, &identity, &CancelFlag::new())
+            .is_err());
+        catalog.delete(&store, &identity).unwrap();
+        assert!(!installed.path.exists());
+        assert!(catalog.installed(&store).unwrap().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn layout_rows_refuse_a_symlinked_layout_folder() {
+        let root = Scratch::new();
+        let store = Store::new(root.0.join("store"));
+        let catalog = fluid_catalog(
+            "fluidaudio_pocket_tts",
+            "text_to_speech",
+            Some("Models/pocket-tts"),
+        );
+        let (catalog, identity, receipt) = staged(catalog, "fluid-test", &root.0);
+        let installed = catalog
+            .publish_verified(&store, &identity, &receipt, &CancelFlag::new())
+            .unwrap();
+        // The folder above the asset root, which the per-asset ancestor walk
+        // does not reach.
+        let inner = installed.path.join("Models");
+        let outside = root.0.join("outside");
+        fs::rename(&inner, &outside).unwrap();
+        std::os::unix::fs::symlink(&outside, &inner).unwrap();
+        assert!(catalog.resolve(&store, &identity).is_err());
+        assert!(catalog.verify(&store, &identity).is_err());
+    }
+
+    #[test]
+    fn layout_publication_failure_returns_the_complete_staging_tree() {
+        let root = Scratch::new();
+        let store = Store::new(root.0.join("store"));
+        fs::create_dir_all(store.root().join("installed.json")).unwrap();
+        let catalog = fluid_catalog(
+            "fluidaudio_pocket_tts",
+            "text_to_speech",
+            Some("Models/pocket-tts"),
+        );
+        let (catalog, identity, receipt) = staged(catalog, "fluid-test", &root.0);
+        assert!(catalog
+            .publish_verified(&store, &identity, &receipt, &CancelFlag::new())
+            .is_err());
+        assert!(!store.audio_install_path(&identity.alias).exists());
+        let source = receipt.staging_root.join("source-0000");
+        for asset in &catalog.get(&identity.alias).unwrap().assets {
+            assert!(source.join(&asset.path).is_file(), "{}", asset.path);
+        }
+    }
+
+    /// Swift-hosted speech rows skip the Rust speech probe, which refuses
+    /// their Core ML layout. The same row under a Rust family fails it.
+    #[test]
+    fn swift_hosted_speech_rows_publish_without_the_rust_speech_probe() {
+        let root = Scratch::new();
+        let store = Store::new(root.0.join("store"));
+        let catalog = fluid_catalog("fluidaudio_parakeet_ja", "speech_to_text", None);
+        let (catalog, identity, receipt) = staged(catalog, "fluid-test", &root.0);
+        let installed = catalog
+            .publish_verified(&store, &identity, &receipt, &CancelFlag::new())
+            .unwrap();
+        assert!(!installed
+            .path
+            .join(model_io::speech_receipt::SPEECH_RECEIPT_FILENAME)
+            .exists());
+        assert!(catalog.verify(&store, &identity).is_ok());
+
+        let root = Scratch::new();
+        let store = Store::new(root.0.join("store"));
+        let catalog = fluid_catalog("spark_asr", "speech_to_text", None);
+        let (catalog, identity, receipt) = staged(catalog, "fluid-test", &root.0);
+        assert!(catalog
+            .publish_verified(&store, &identity, &receipt, &CancelFlag::new())
+            .is_err());
+    }
+
+    #[test]
+    fn speech_detection_installs_are_listed_as_installed() {
+        let (family, task) = ("fluidaudio_silero_vad", "speech_detection");
+        let root = Scratch::new();
+        let store = Store::new(root.0.join("store"));
+        let (catalog, identity, receipt) =
+            staged(fluid_catalog(family, task, None), "fluid-test", &root.0);
+        let installed = catalog
+            .publish_verified(&store, &identity, &receipt, &CancelFlag::new())
+            .unwrap();
+        let report = catalog.installed_report(&store);
+        assert!(
+            report.incompatible.is_empty(),
+            "{task}: {:?}",
+            report.incompatible
+        );
+        assert_eq!(report.installed, vec![installed], "{task}");
+    }
+
     #[test]
     fn discovered_components_do_not_become_runnable_profiles() {
         let rows = family_capabilities().unwrap();

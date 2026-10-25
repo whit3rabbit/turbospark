@@ -607,6 +607,57 @@ than whatever you were about to freeze.
 
 ---
 
+## Phase 6b - Before a speed or speculation claim
+
+Speed claims about a family that speculates, or that batches small row counts,
+have gone wrong on the dense `qwen35` family in ways no parity test sees. Run
+these before writing a number, and say which you skipped. The readings from
+that family are in `docs/KAPITSA_KERNELS.md`; none is a value to reuse, because
+a new family has its own. The lab (`tslab`, `crates/lab`) carries the
+same list with commands in `crates/lab/program.md`, "Checks for a new model or
+family".
+
+- [ ] **Verify cost curve, per shape.** Time the M-row batched pass against the
+      one-row step at the install's own shapes, including the small ones. If
+      the pass grows with the rows, only short speculative blocks can pay, and
+      drafter comparisons are premature. Routed MoE also needs its
+      expert-union cost, because extra rows bring in extra experts.
+- [ ] **Small projections.** Attention K/V and the gated-DeltaNet gate
+      projections are a few rows against the full hidden width. A kernel with
+      an output-row threshold can serve the large shapes and leave these on an
+      older kernel whose cost is launch latency.
+- [ ] **Where a round goes.** `TURBOSPARK_SPEC_STATS=1` prints `ms/round` per
+      phase (draft, verify, accept, rollback, commit, rewind, bonus). Check
+      whether the lever is the drafter or the verify before optimizing either.
+- [ ] **Acceptance per position, and the best fixed depth.** Derive it from
+      the measured curve and round cost before building an adaptive depth
+      controller.
+- [ ] **The attention kernel each scratch uses.** The trunk, an MTP head and a
+      block drafter build separate scratches. One can default to the barrier
+      decode kernel while the trunk uses the GQA-shared one, and the older
+      kernel's cost grows with the span. Compare the draft phase at a short
+      and a multi-thousand-token prompt.
+- [ ] **Prefill on every install variant served.** Plain, MTP and block-drafter
+      installs of one family can take different prefill drivers. Measure
+      tokens per second for each. A decode win on an install with an
+      order-of-magnitude slower prefill is a latency regression for any real
+      prompt.
+- [ ] **Memory per variant**, and what a drafter's state costs.
+- [ ] **Exactness class.** A change that keeps decode and verify on one
+      arithmetic has to move both. A global switch moves every family: gate
+      the one you changed and name the ones you did not.
+- [ ] **Controls.** Cleared environment per arm, no forced-kernel variable as
+      the baseline (it forces the trunk too), a null run for noise, and no
+      timing on a swapping host.
+- [ ] **Against another engine:** one tokenizer, tokens and not stream chunks,
+      the same prompt rendering, generated lengths compared first, time to
+      first token kept apart from decode.
+- [ ] **State what was not covered:** sampled speculative throughput, decode at
+      16K and beyond, concurrent requests, output quality against the other
+      engine.
+
+---
+
 ## Phase 7 - Make it reachable from the CLI
 
 Everything up to here is provable with an env var pointing at a directory

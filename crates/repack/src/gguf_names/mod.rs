@@ -189,7 +189,10 @@ pub fn map_gguf_name(name: &str, family: ModelFamily) -> Result<GgufMapping, Ggu
             // converter's tower naming is unparsed here. This port ingests
             // its MLX safetensors, so unmapped until the whole file has a
             // table.
-            ModelFamily::DeepseekV4Flash | ModelFamily::MuseGlimmer | ModelFamily::Qwen3Vl => None,
+            ModelFamily::DeepseekV4Flash
+            | ModelFamily::MuseGlimmer
+            | ModelFamily::Qwen3Vl
+            | ModelFamily::Flint => None,
         }
         .ok_or_else(unmapped);
     }
@@ -264,7 +267,10 @@ pub fn gguf_architecture(family: ModelFamily) -> Option<&'static str> {
         ModelFamily::DeepseekV4Flash
         | ModelFamily::MuseGlimmer
         | ModelFamily::Qwen4Exp
-        | ModelFamily::Qwen3Vl => None,
+        | ModelFamily::Qwen3Vl
+        // llama.cpp's port (ggml-org/llama.cpp#30928) is unmerged and the
+        // published Q4_1 is not an executable block type here.
+        | ModelFamily::Flint => None,
     }
 }
 

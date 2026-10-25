@@ -122,6 +122,16 @@ launch, and nothing in CI started the app.
   `scripts/verify-app-bundle.sh`. Your Xcode may be newer than CI's (a beta
   has been seen), so a local pass is not evidence for the pinned toolchain.
   The `package-macos` matrix is.
+- [ ] If `swift/TurboSparkApp/Package.swift` or `Package.resolved` changed,
+  confirm each binary dependency resolved to the build you meant.
+  `.build/workspace-state.json` lists every downloaded artifact URL. syntext
+  tags through 2.7.0 pin the previous release's xcframework: `exact: "2.5.0"`
+  shipped the 2.4.0 binary with no error. From 2.7.1 an exact pin is safe
+  (`swift/docs/SYNTEXT.md` section 6). A new static library is also a link
+  change: read the link log for duplicate-symbol and "built for newer
+  'macOS' version" lines. `verify-app-bundle.sh` checks each Mach-O's
+  deployment target, but an archive member built above the floor shows up
+  only as an ld warning (syntext 2.7.0's blake3 objects were 14.5).
 
 **Before you tag**
 

@@ -1,0 +1,125 @@
+{
+  "cases": [
+    {
+      "index": 0,
+      "ids": [
+        0,
+        2
+      ]
+    },
+    {
+      "index": 1,
+      "ids": [
+        0,
+        17,
+        2
+      ]
+    },
+    {
+      "index": 2,
+      "ids": [
+        0,
+        5,
+        9,
+        33,
+        71,
+        1,
+        2
+      ]
+    },
+    {
+      "index": 3,
+      "ids": [
+        0,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        2
+      ]
+    },
+    {
+      "index": 4,
+      "ids": [
+        0,
+        90,
+        61,
+        66,
+        86,
+        56,
+        75,
+        80,
+        23,
+        8,
+        30,
+        29,
+        84,
+        87,
+        3,
+        49,
+        79,
+        15,
+        77,
+        14,
+        46,
+        78,
+        31,
+        34,
+        28,
+        69,
+        26,
+        95,
+        44,
+        47,
+        49,
+        57,
+        54,
+        50,
+        95,
+        78,
+        76,
+        68,
+        60,
+        2
+      ]
+    }
+  ],
+  "config": {
+    "vocab_size": 96,
+    "hidden_size": 64,
+    "num_hidden_layers": 3,
+    "num_attention_heads": 4,
+    "intermediate_size": 96,
+    "hidden_act": "gelu",
+    "hidden_dropout_prob": 0.1,
+    "attention_probs_dropout_prob": 0.0,
+    "max_position_embeddings": 64,
+    "type_vocab_size": 1,
+    "layer_norm_type": "layer_norm",
+    "layer_norm_eps": 1e-12,
+    "position_embedding_type": "rope",
+    "rope_theta": 160000,
+    "rope_scaling": null,
+    "pack_qkv": true,
+    "unpad_inputs": false,
+    "use_memory_efficient_attention": false,
+    "logn_attention_scale": false,
+    "logn_attention_clip1": false,
+    "pad_token_id": 1,
+    "matryoshka_dimensions": [
+      16
+    ]
+  },
+  "attn_implementation": "sdpa",
+  "cross_checks": {
+    "eager_vs_sdpa": 2.2649765014648438e-06,
+    "unpad_vs_padded": 0.0
+  }
+}

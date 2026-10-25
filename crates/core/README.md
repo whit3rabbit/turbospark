@@ -1,6 +1,6 @@
 # turbospark-core
 
-Shared primitives, error types, runtime configuration, allowed numeric parameter sets, automatic chunk-size resolution, prefill chunking primitives, and directional steering mode definitions for the turbospark workspace.
+Shared primitives, error types, runtime configuration, allowed numeric parameter sets, automatic chunk-size resolution, prefill chunking primitives, directional steering mode definitions, and the humanizer rewrite prompt and audit primitives for the turbospark workspace.
 
 Downstream workspace crates import this package via the `foundation` alias:
 
@@ -22,15 +22,16 @@ foundation = { package = "turbospark-core", path = "../core" }
 
 - `primitives.rs`: Defines workspace-wide primitive types:
   - `pub type TokenId = i32`: Signed 32-bit token identifier used across tokenizers, KV cache, and runtime dispatch.
-  - `LogitValue = f32`: Raw floating-point logit type.
-  - `LogitsView<'a>`: Non-owning slice view over raw unnormalized logit buffers.
+  - `LogitValue = f16` (backed by the `half` crate): Half-precision (IEEE-754 binary16) logit element.
+  - `LogitsView<'a>`: Non-owning view over a contiguous run of half-precision logits.
 - `runtime_config.rs`: Canonical allowed parameter sets and defaults:
-  - `ALLOWED_CACHE_SLOTS = [8, 16, 24, 32, 48, 64, 96, 128]` (default: 16)
-  - `ALLOWED_CHUNK_SIZES = [32, 64, 128, 256, 512, 1024, 2048, 4096]` (default: 512)
+  - `ALLOWED_CACHE_SLOTS = [8, 16, 24, 32, 48, 64, 96, 128, 192, 256]` (default: 16)
+  - `ALLOWED_CHUNK_SIZES = [32, 64, 128, 256, 512, 1024, 2048, 4096]` (default: 128)
   - Enforces ascending order and valid defaults at compile time via `const` assertions.
-- `chunk_sizing.rs`: Pure 3-state chunk-size resolution algorithm mapping prompt length to the nearest allowed chunk size.
-- `prefill.rs`: Prefill chunking iterator and splitting logic for partitioning long prompt token sequences without heap allocation; defines `MAX_CHUNK_TOKENS = 4096`.
+- `chunk_sizing.rs`: Pure 3-state chunk-size resolution algorithm mapping a known-or-unknown input length to an allowed chunk size: the smallest allowed size that covers it, the largest allowed size when it exceeds the set, or the fixed default when the length is unknown.
+- `prefill.rs`: Prefill chunk span planning (`prefill_chunk_spans`, `PrefillChunkSpan`) and chunked-runner commit-state tracking (`PrefillChunkCommitState`, `PrefillError`) for partitioning long prompt token sequences; defines `MAX_CHUNK_TOKENS = 4096`.
 - `steering.rs`: `SteeringMode` enum (`Ablate`, `Add`, `Clamp`, `Renorm`), the directional steering edit modes shared between CPU reference kernels (`turbospark_compute::steering`) and Metal dispatch (`turbospark_gpu::encode_steer_direction`).
+- `humanizer.rs`: Pure primitives for the humanizer rewrite flow: the byte-exact completion prompt wrapper (`build_humanize_prompt`, fingerprint-checked), the publisher's sampling recipe constants, and the rewrite audit (`audit_rewrite`, `RewriteAudit`).
 
 ## Development & Test Commands
 
@@ -41,8 +42,8 @@ cargo test -p turbospark-core
 
 ## Tests
 
-- `tests/chunk_sizing.rs`: Verifies 3-state chunk-size resolution bounds, rounding, and edge cases.
-- `tests/runtime_config.rs`: Validates allowed set boundaries, default values, and const constraint invariants.
+- `tests/chunk_sizing.rs`: Verifies 3-state chunk-size resolution bounds, the largest-size fallback, and edge cases.
+- `tests/runtime_config.rs`: Validates allowed set boundaries (nonempty, positive, strictly increasing) and the re-exported primitive widths.
 
 ## Crate Gotchas
 

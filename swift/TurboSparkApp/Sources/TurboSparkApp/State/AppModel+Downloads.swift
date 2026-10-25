@@ -111,8 +111,8 @@ extension AppModel {
             startImageModelInstall(alias: alias, library: library)
         case .audio(let identity):
             startAudioModelInstall(identity: identity, library: library)
-        case .embedding(let alias):
-            startEmbeddingModelInstall(alias: alias)
+        case .embedding(let alias, let revision):
+            startEmbeddingModelInstall(alias: alias, revision: revision)
         }
     }
 
@@ -345,8 +345,10 @@ extension AppModel {
             return imageModels.contains { $0.alias == alias }
         case .audio(let identity):
             return audioWorkspace.installedPaths[identity.alias] != nil
-        case .embedding(let alias):
-            return embeddingProfiles.contains { $0.alias == alias && $0.installedPath != nil }
+        case .embedding(let alias, let revision):
+            return embeddingProfiles.contains {
+                $0.alias == alias && $0.installedPath != nil && (revision == nil || $0.revision == revision)
+            }
         }
     }
 
@@ -363,8 +365,8 @@ extension AppModel {
             enqueueModelDownload(.image(alias: alias), library: library)
         case .audio(let identity):
             enqueueModelDownload(.audio(identity: identity), library: library)
-        case .embedding(let alias):
-            enqueueModelDownload(.embedding(alias: alias))
+        case .embedding(let alias, let revision):
+            enqueueModelDownload(.embedding(alias: alias, revision: revision))
         }
     }
 

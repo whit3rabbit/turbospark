@@ -52,6 +52,14 @@ public struct OpenOptions: Encodable, Sendable {
         /// A named block size. The engine accepts 1 through 15; anything
         /// else throws, naming the range.
         case block(UInt32)
+        /// **Experimental.** Draft between a floor of 2 and `cap`, moving
+        /// with the acceptance each round saw. Step drafter (MTP) only, and
+        /// like `.block` it throws from `TurboSparkSession.init` when the
+        /// install cannot serve it. `cap` is 3 through 15; nil takes the
+        /// engine's default (4). The head is allocated at the cap, and
+        /// `SessionInfo.speculation.block` reports the cap with
+        /// `adaptive == true`. `.auto` never picks it.
+        case adaptive(cap: UInt32? = nil)
 
         public func encode(to encoder: Encoder) throws {
             var c = encoder.singleValueContainer()
@@ -59,6 +67,8 @@ public struct OpenOptions: Encodable, Sendable {
             case .auto: try c.encode("auto")
             case .off: try c.encode("off")
             case .block(let n): try c.encode(n)
+            case .adaptive(let cap):
+                try c.encode(cap.map { "adaptive:\($0)" } ?? "adaptive")
             }
         }
     }
@@ -209,7 +219,28 @@ public struct OpenOptions: Encodable, Sendable {
     /// in-process HTTP server (`turbospark-server` itself defaults reuse off,
     /// because one engine's cache is shared by every client of that server),
     /// or when measuring a cold prefill.
+    ///
+    /// `ServerOptions.prefixReuse` now does that job on its own: a host that
+    /// starts a server can set the posture there instead of having to open
+    /// its session with the right value up front. Setting both is not a
+    /// conflict -- the server's answer wins, applied at attach.
     public var prefixReuse: Bool?
+    /// ANE+Steel prefill split configuration.
+    public enum AnePrefill: String, Encodable, Sendable {
+        /// Automatic: enabled on Apple Silicon M4+ for dense Qwen.
+        case auto
+        /// Split dense projections between ANE and Steel.
+        case split
+        /// Force Steel only.
+        case off
+        /// Diagnostic mode breaking micro-batches at split points without ANE compute.
+        case breakMode = "break"
+    }
+
+    /// ANE+Steel prefill split mode (`nil` means `.auto`).
+    public var anePrefill: AnePrefill?
+    /// Custom directory for compiled ANE Core ML prefill programs.
+    public var anePrefillDir: String?
 
     /// Creates options for opening a model session.
     public init(
@@ -230,7 +261,9 @@ public struct OpenOptions: Encodable, Sendable {
         steeringGate: Double? = nil,
         visionSidecar: String? = nil,
         kvBits: KvBits? = nil,
-        prefixReuse: Bool? = nil
+        prefixReuse: Bool? = nil,
+        anePrefill: AnePrefill? = nil,
+        anePrefillDir: String? = nil
     ) {
         self.maxContext = maxContext
         self.expertCacheSlots = expertCacheSlots
@@ -250,6 +283,8 @@ public struct OpenOptions: Encodable, Sendable {
         self.visionSidecar = visionSidecar
         self.kvBits = kvBits
         self.prefixReuse = prefixReuse
+        self.anePrefill = anePrefill
+        self.anePrefillDir = anePrefillDir
     }
 }
 

@@ -1,13 +1,19 @@
 import SwiftUI
 
 /// The run button between the cards, the section's one primary action; a
-/// stop target while a rewrite runs.
+/// stop target while a rewrite runs. Clear Both sits under it, a quiet chip
+/// that empties both cards, so the three clear actions mirror the layout:
+/// Clear Draft on the left, Clear Both between, Clear Rewrite on the right.
 @MainActor
 struct HumanizeRewriteRail: View {
     @ObservedObject var controller: HumanizeController
     let wide: Bool
+    let canClearAll: Bool
+    let onClearAll: () -> Void
 
     @Environment(\.appTheme) private var theme
+
+    private var scale: CGFloat { HumanizeMetrics.textScale(theme) }
 
     var body: some View {
         let busy = controller.isBusy
@@ -16,7 +22,9 @@ struct HumanizeRewriteRail: View {
         layout {
             HumanizeRunButton(
                 busy: busy, ready: ready, prefill: busy ? controller.prefillProgress : nil,
-                arrow: wide ? "arrow.right" : "arrow.down",
+                // "forward", not "right": the draft sits on the right in Arabic
+                // and Hebrew, and only the forward symbol flips with the layout.
+                arrow: wide ? "arrow.forward" : "arrow.down",
                 invite: controller.canRun && controller.rewrite.isEmpty
             ) {
                 if busy { controller.cancel() } else { controller.run() }
@@ -43,22 +51,38 @@ struct HumanizeRewriteRail: View {
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: 96)
+                .frame(maxWidth: (96 * scale).rounded())
                 if let part = controller.partProgress {
                     ModelLoadProgressBar(
                         fraction: Double(part.current - 1) / Double(part.total), tint: theme.accent)
-                        .frame(width: 40)
+                        .frame(width: (40 * scale).rounded())
                     Text(verbatim: "\(part.current)/\(part.total)").font(theme.ui(.micro)).monospacedDigit()
+                        .lineLimit(1)
                 } else {
                     Text(verbatim: busy ? "\u{2318}." : "\u{2318}\u{21A9}").font(theme.ui(.micro))
+                        .lineLimit(1)
                 }
             }
             .foregroundStyle(.appSecondary)
-            .lineLimit(1)
-            .fixedSize()
+            .frame(maxWidth: (96 * scale).rounded())
             .accessibilityHidden(true)
+            // The label first; a translation too long for the rail keeps just
+            // the glyph, with the name as tooltip and VoiceOver label.
+            ViewThatFits(in: .horizontal) {
+                clearAllChip(iconOnly: false)
+                clearAllChip(iconOnly: true)
+            }
+            .frame(maxWidth: wide ? (96 * scale).rounded() : nil)
+            .padding(wide ? Edge.Set.top : Edge.Set.leading, 10)
         }
         .tsAnimation(TSMotion.select, value: busy)
+    }
+
+    private func clearAllChip(iconOnly: Bool) -> some View {
+        AppChip(Text("Clear Both", bundle: .module), systemImage: "eraser.line.dashed", iconOnly: iconOnly,
+                action: onClearAll)
+            .disabled(!canClearAll)
+            .accessibilityIdentifier("humanize.clearAll")
     }
 }
 

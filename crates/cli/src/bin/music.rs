@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use audio::music::minimax_music3::{
-    is_tiny_fixture_dims, FlowGuidance, Generation, Model, Music3Precision, StageTimings,
-    TextGenerateRequest,
+    is_tiny_fixture_dims, FlowGuidance, FlowProfile, FlowSolver, Generation, Model,
+    Music3Precision, StageTimings, TextGenerateRequest,
 };
 use audio::Waveform;
 use catalog::Store;
@@ -18,7 +18,8 @@ USAGE:
         (--lyrics TEXT | --lyrics-file PATH) --output WAV \\
         [--duration SECONDS] [--steps N] [--seed N] [--precision checkpoint|float32] \\
         [--wav-format pcm16|float32] [--timings] \\
-        [--flow-uncond-interval N] [--flow-uncond-warmup N]
+        [--flow-profile fast|exact|turbo] [--flow-uncond-interval N] \\
+        [--flow-uncond-warmup N] [--flow-solver euler|ab2]
 
 The model must be a pinned MiniMax Music 3 profile installed by
 `turbospark-model pull-audio`, or a local converted model directory.
@@ -26,11 +27,16 @@ Lyrics are required. Use `[instrumental]` explicitly for instrumental output.
 --wav-format pcm16 (default) rounds to 16-bit integers; float32 writes the
 generated samples unrounded. --timings prints per-stage wall time and the
 real-time factor to stderr.
---flow-uncond-interval N (default 1, the reference trajectory) re-evaluates the
-flow unconditional guidance branch only every Nth step after
---flow-uncond-warmup steps (default 2) and reuses the last guidance
-correction in between. N=3 cuts DiT time by about 30 percent and changes the
-output; the default output is unchanged.
+With no --flow-profile, the checkpoint's declared profile is used. Ordinary
+checkpoints default to fast. The marked Turbo candidate defaults to 8-step
+Euler with both guidance branches on every step. --flow-profile fast integrates
+the flow with second-order Adams-Bashforth, reuses the unconditional guidance
+branch (interval 3, warmup 2), and runs 21 steps when --steps is not given: 30
+DiT forwards instead of 60, about half the DiT time. It changes the audio and
+does not follow MLX's trajectory. --flow-profile exact restores the reference:
+Euler, both guidance branches every step, 30 steps by default.
+--flow-uncond-interval N, --flow-uncond-warmup N and --flow-solver euler|ab2
+override that part of the chosen profile. An explicit --steps is always used.
 ";
 
 #[derive(Debug, Clone, PartialEq)]
@@ -45,7 +51,10 @@ struct GenerateOptions {
     precision: Music3Precision,
     wav_format: WavFormat,
     timings: bool,
-    flow_guidance: FlowGuidance,
+    flow_profile: Option<FlowProfile>,
+    flow_uncond_interval: Option<usize>,
+    flow_uncond_warmup: Option<usize>,
+    flow_solver: Option<FlowSolver>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,7 +109,10 @@ fn parse_args(args: &[String]) -> Result<GenerateOptions, Error> {
     let mut precision = None;
     let mut wav_format = None;
     let mut timings = false;
-    let mut flow_guidance = FlowGuidance::EXACT;
+    let mut flow_profile = None;
+    let mut uncond_interval = None;
+    let mut uncond_warmup = None;
+    let mut flow_solver = None;
     let mut index = 1usize;
     while index < args.len() {
         let flag = args[index].as_str();
@@ -175,10 +187,35 @@ fn parse_args(args: &[String]) -> Result<GenerateOptions, Error> {
                     Error::Usage(format!("{flag} {text:?} is not a non-negative integer"))
                 })?;
                 if flag == "--flow-uncond-interval" {
-                    flow_guidance.uncond_interval = parsed;
+                    set_once(&mut uncond_interval, parsed, flag)?;
                 } else {
-                    flow_guidance.uncond_warmup = parsed;
+                    set_once(&mut uncond_warmup, parsed, flag)?;
                 }
+            }
+            "--flow-profile" => {
+                let selected = match value()? {
+                    "fast" => FlowProfile::Fast,
+                    "exact" => FlowProfile::Exact,
+                    "turbo" => FlowProfile::Turbo,
+                    other => {
+                        return Err(Error::Usage(format!(
+                            "unknown flow profile {other:?}; expected fast, exact or turbo"
+                        )))
+                    }
+                };
+                set_once(&mut flow_profile, selected, flag)?;
+            }
+            "--flow-solver" => {
+                let selected = match value()? {
+                    "euler" => FlowSolver::Euler,
+                    "ab2" => FlowSolver::AdamsBashforth2,
+                    other => {
+                        return Err(Error::Usage(format!(
+                            "unknown flow solver {other:?}; expected euler or ab2"
+                        )))
+                    }
+                };
+                set_once(&mut flow_solver, selected, flag)?;
             }
             "--output" => set_once(&mut output, PathBuf::from(value()?), flag)?,
             "--help" | "-h" => return Err(Error::Usage(USAGE.to_string())),
@@ -202,6 +239,7 @@ fn parse_args(args: &[String]) -> Result<GenerateOptions, Error> {
         std::fs::read_to_string(&path)
             .map_err(|error| Error::Usage(format!("reading lyrics file {path}: {error}")))?
     };
+    // Explicit flags override the profile's solver and guidance schedule.
     let options = GenerateOptions {
         model: required(model, "--model")?,
         caption: required(caption, "--caption")?,
@@ -213,9 +251,12 @@ fn parse_args(args: &[String]) -> Result<GenerateOptions, Error> {
         precision: precision.unwrap_or(Music3Precision::Checkpoint),
         wav_format: wav_format.unwrap_or(WavFormat::Pcm16),
         timings,
-        flow_guidance,
+        flow_profile,
+        flow_uncond_interval: uncond_interval,
+        flow_uncond_warmup: uncond_warmup,
+        flow_solver,
     };
-    if options.flow_guidance.uncond_interval == 0 {
+    if options.flow_uncond_interval == Some(0) {
         return Err(Error::Usage(
             "--flow-uncond-interval must be at least 1".to_string(),
         ));
@@ -246,6 +287,8 @@ fn text_request(options: &GenerateOptions) -> TextGenerateRequest {
         caption: options.caption.clone(),
         lyrics: options.lyrics.clone(),
         duration_seconds: options.duration,
+        max_frames: None,
+        context_size: None,
         steps: options.steps,
         seed: options.seed,
     }
@@ -288,17 +331,21 @@ fn generate_to_file(store: &Store, options: &GenerateOptions) -> Result<(), Erro
     let (generated, timings) = if is_tiny_fixture(&model_path)? {
         Model::load_converted_with_precision(&model_path, options.precision)
             .and_then(|model| {
-                model.set_flow_guidance(options.flow_guidance)?;
+                let profile = options
+                    .flow_profile
+                    .unwrap_or_else(|| model.preferred_runner_profile());
+                model.set_flow_profile(profile);
+                if let Some(guidance) = guidance_override(options, profile) {
+                    model.set_flow_guidance(guidance)?;
+                }
+                if let Some(solver) = options.flow_solver {
+                    model.set_flow_solver(solver);
+                }
                 model.generate_text_timed(&request)
             })
             .map_err(|error| Error::Failed(error.to_string()))?
     } else {
-        generate_metal(
-            &model_path,
-            &request,
-            options.precision,
-            options.flow_guidance,
-        )?
+        generate_metal(&model_path, &request, options.precision, options)?
     };
     let waveform = Waveform::new(generated.sample_rate, 2, generated.waveform)
         .map_err(|error| Error::Failed(error.to_string()))?;
@@ -355,13 +402,24 @@ fn generate_metal(
     path: &Path,
     request: &TextGenerateRequest,
     precision: Music3Precision,
-    flow_guidance: FlowGuidance,
+    options: &GenerateOptions,
 ) -> Result<(Generation, StageTimings), Error> {
     let runner = runtime::Music3Runner::open_with_precision(path, precision)
         .map_err(|error| Error::Failed(error.to_string()))?;
-    runner
-        .set_flow_guidance(flow_guidance)
-        .map_err(|error| Error::Failed(error.to_string()))?;
+    let profile = options
+        .flow_profile
+        .unwrap_or_else(|| runner.preferred_runner_profile());
+    if options.flow_profile.is_some() {
+        runner.set_flow_profile(profile);
+    }
+    if let Some(guidance) = guidance_override(options, profile) {
+        runner
+            .set_flow_guidance(guidance)
+            .map_err(|error| Error::Failed(error.to_string()))?;
+    }
+    if let Some(solver) = options.flow_solver {
+        runner.set_flow_solver(solver);
+    }
     eprintln!(
         "Music 3 Metal: {:.2} GiB resident weights",
         runner.resident_weight_bytes() as f64 / 1073741824.0
@@ -376,11 +434,23 @@ fn generate_metal(
     _path: &Path,
     _request: &TextGenerateRequest,
     _precision: Music3Precision,
-    _flow_guidance: FlowGuidance,
+    _options: &GenerateOptions,
 ) -> Result<(Generation, StageTimings), Error> {
     Err(Error::Failed(
         "full-size Music 3 generation requires macOS and a Metal device".into(),
     ))
+}
+
+fn guidance_override(options: &GenerateOptions, profile: FlowProfile) -> Option<FlowGuidance> {
+    if options.flow_uncond_interval.is_none() && options.flow_uncond_warmup.is_none() {
+        return None;
+    }
+    let mut guidance = profile.guidance();
+    guidance.uncond_interval = options
+        .flow_uncond_interval
+        .unwrap_or(guidance.uncond_interval);
+    guidance.uncond_warmup = options.flow_uncond_warmup.unwrap_or(guidance.uncond_warmup);
+    Some(guidance)
 }
 
 #[cfg(test)]
@@ -409,20 +479,82 @@ mod tests {
     }
 
     #[test]
-    fn parser_defaults_to_exact_flow_guidance_and_accepts_reuse_flags() {
+    fn parser_leaves_checkpoint_profile_intact_and_accepts_named_overrides() {
         let args = base_args("tiny-model".to_string());
-        assert_eq!(
-            parse_args(&args).unwrap().flow_guidance,
-            FlowGuidance::EXACT
-        );
+        let default = parse_args(&args).unwrap();
+        assert_eq!(default.flow_profile, None);
+        assert_eq!(default.flow_solver, None);
+        assert_eq!(guidance_override(&default, FlowProfile::Fast), None);
+        let mut exact = args.clone();
+        exact.extend(["--flow-profile", "exact"].map(String::from));
+        let exact = parse_args(&exact).unwrap();
+        assert_eq!(exact.flow_profile, Some(FlowProfile::Exact));
+        assert_eq!(exact.flow_solver, None);
+        let mut turbo_args = args.clone();
+        turbo_args.extend(["--flow-profile", "turbo"].map(String::from));
+        let turbo = parse_args(&turbo_args).unwrap();
+        assert_eq!(turbo.flow_profile, Some(FlowProfile::Turbo));
+        assert_eq!(turbo.flow_profile.unwrap().solver(), FlowSolver::Euler);
+        assert_eq!(guidance_override(&turbo, FlowProfile::Turbo), None);
+        for bad in [["--flow-profile", "wrong"], ["--flow-profile", ""]] {
+            let mut invalid = args.clone();
+            invalid.extend(bad.map(String::from));
+            assert!(parse_args(&invalid).is_err(), "{bad:?}");
+        }
+        let mut twice = args.clone();
+        twice.extend(["--flow-profile", "fast", "--flow-profile", "exact"].map(String::from));
+        assert!(parse_args(&twice).is_err());
+    }
+
+    #[test]
+    fn explicit_flow_flags_override_the_profile_in_either_order() {
+        let args = base_args("tiny-model".to_string());
         let mut reuse = args.clone();
-        reuse
-            .extend(["--flow-uncond-interval", "3", "--flow-uncond-warmup", "4"].map(String::from));
-        let parsed = parse_args(&reuse).unwrap().flow_guidance;
-        assert_eq!((parsed.uncond_interval, parsed.uncond_warmup), (3, 4));
+        reuse.extend(["--flow-uncond-interval", "1", "--flow-solver", "euler"].map(String::from));
+        let parsed = parse_args(&reuse).unwrap();
+        assert_eq!(parsed.flow_profile, None);
+        assert_eq!(parsed.flow_solver, Some(FlowSolver::Euler));
+        assert_eq!(
+            (
+                guidance_override(&parsed, FlowProfile::Fast)
+                    .unwrap()
+                    .uncond_interval,
+                guidance_override(&parsed, FlowProfile::Fast)
+                    .unwrap()
+                    .uncond_warmup
+            ),
+            (1, 2)
+        );
+        // An override given before --flow-profile exact still applies on top of it.
+        let mut before = args.clone();
+        before.extend(
+            [
+                "--flow-solver",
+                "ab2",
+                "--flow-uncond-warmup",
+                "4",
+                "--flow-profile",
+                "exact",
+            ]
+            .map(String::from),
+        );
+        let parsed = parse_args(&before).unwrap();
+        assert_eq!(parsed.flow_solver, Some(FlowSolver::AdamsBashforth2));
+        assert_eq!(
+            (
+                guidance_override(&parsed, FlowProfile::Exact)
+                    .unwrap()
+                    .uncond_interval,
+                guidance_override(&parsed, FlowProfile::Exact)
+                    .unwrap()
+                    .uncond_warmup
+            ),
+            (1, 4)
+        );
         for bad in [
             ["--flow-uncond-interval", "0"],
             ["--flow-uncond-warmup", "x"],
+            ["--flow-solver", "rk4"],
         ] {
             let mut invalid = args.clone();
             invalid.extend(bad.map(String::from));

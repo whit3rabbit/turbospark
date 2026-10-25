@@ -19,6 +19,7 @@ struct HumanizeView: View {
     @State private var reviewing = false
     @State private var copied = false
     @State private var confirmingDelete = false
+    @State private var confirmingClearAll = false
     @FocusState private var draftFocused: Bool
 
     /// From the loadable list: a Humanizer on a drive that is away cannot be
@@ -53,6 +54,7 @@ struct HumanizeView: View {
             }
             .padding(20)
         }
+        .background { backdrop }
         .background(.appPage)
         .font(theme.ui(.base))
         .task(id: ContextKey(draft: controller.draft, path: installedModel?.path)) {
@@ -89,21 +91,53 @@ struct HumanizeView: View {
 
     private var workspace: some View {
         GeometryReader { geometry in
-            let wide = geometry.size.width >= 600
-            let rail: CGFloat = wide ? 76 : 68
+            let scale = HumanizeMetrics.textScale(theme)
+            let breakpoint = (640 * scale).rounded()
+            let wide = geometry.size.width >= breakpoint
+            let rail: CGFloat = wide ? (96 * scale).rounded() : (72 * scale).rounded()
             let panel = wide
                 ? CGSize(width: max(0, (geometry.size.width - rail) / 2), height: geometry.size.height)
                 : CGSize(width: geometry.size.width, height: max(0, (geometry.size.height - rail) / 2))
+            // The footers carry three or four chips: below this width the
+            // Clear chips keep only their glyph (the name stays the tooltip
+            // and the VoiceOver label) so a footer reflows instead of clipping.
+            let tight = panel.width < (380 * scale).rounded()
             let layout = wide ? AnyLayout(HStackLayout(spacing: 0)) : AnyLayout(VStackLayout(spacing: 0))
             layout {
-                draftPanel.frame(width: panel.width, height: panel.height)
-                HumanizeRewriteRail(controller: controller, wide: wide)
+                draftPanel(tight: tight).frame(width: panel.width, height: panel.height)
+                    .tsEntrance()
+                HumanizeRewriteRail(controller: controller, wide: wide, canClearAll: canClearAll, onClearAll: clearAll)
                     .frame(width: wide ? rail : geometry.size.width, height: wide ? geometry.size.height : rail)
-                resultPanel.frame(width: panel.width, height: panel.height)
+                    .tsEntrance(delay: 0.02)
+                resultPanel(tight: tight).frame(width: panel.width, height: panel.height)
+                    .tsEntrance(delay: 0.04)
             }
         }
         // Both cards receive exactly the same size, header and footer included.
         .frame(minHeight: 440, maxHeight: .infinity)
+        .confirmationDialog(Text("Clear Both", bundle: .module), isPresented: $confirmingClearAll) {
+            Button(role: .destructive) {
+                performClearAll()
+            } label: { Text("Clear Both", bundle: .module) }
+        } message: {
+            Text("This removes the draft and the rewrite.", bundle: .module)
+        }
+    }
+
+    private var canClearAll: Bool {
+        !controller.isBusy && (!controller.draft.isEmpty || !controller.rewrite.isEmpty)
+    }
+
+    /// A rewrite is the one thing a clear cannot give back (every run is a new
+    /// sample), so it alone asks first. A lone draft is as easy to restore as
+    /// to clear, and goes without a dialog like the Clear Draft chip.
+    private func clearAll() {
+        if controller.rewrite.isEmpty { performClearAll() } else { confirmingClearAll = true }
+    }
+
+    private func performClearAll() {
+        controller.clearAll()
+        reviewing = false
     }
 
     private var showsMarkedDraft: Bool {
@@ -111,7 +145,7 @@ struct HumanizeView: View {
             && controller.draft == controller.sourceDraft
     }
 
-    private var draftPanel: some View {
+    private func draftPanel(tight: Bool) -> some View {
         HumanizeCard(focused: draftFocused && !showsMarkedDraft) {
             panelTitle(number: "01", title: "Draft")
             Spacer(minLength: 8)
@@ -133,7 +167,7 @@ struct HumanizeView: View {
                 ZStack(alignment: .topLeading) {
                     if controller.draft.isEmpty {
                         Text("Paste a draft to rewrite.", bundle: .module)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.appSecondary)
                             .padding(.horizontal, 21).padding(.vertical, 18)
                             .allowsHitTesting(false)
                     }
@@ -156,11 +190,12 @@ struct HumanizeView: View {
                 }
             }
             .disabled(controller.isBusy)
-            AppChip(Text("Clear", bundle: .module), systemImage: "eraser") {
+            AppChip(Text("Clear Draft", bundle: .module), systemImage: "eraser", iconOnly: tight) {
                 controller.draft = ""
                 reviewing = false
             }
             .disabled(controller.draft.isEmpty || controller.isBusy)
+            .accessibilityIdentifier("humanize.clearDraft")
             if showsMarkedDraft {
                 AppChip(Text("Edit", bundle: .module), systemImage: "pencil") {
                     TSMotion.animate(TSMotion.hover) { reviewing = false }
@@ -177,7 +212,7 @@ struct HumanizeView: View {
         }
     }
 
-    private var resultPanel: some View {
+    private func resultPanel(tight: Bool) -> some View {
         HumanizeCard {
             panelTitle(number: "02", title: "Rewrite")
             Spacer(minLength: 8)
@@ -201,7 +236,7 @@ struct HumanizeView: View {
                         Image(systemName: "text.alignleft").themedFont(.title2).accessibilityHidden(true)
                         Text("Your rewrite will appear here.", bundle: .module)
                     }
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.appSecondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             } else {
@@ -239,6 +274,14 @@ struct HumanizeView: View {
                 copied = NSPasteboard.general.setString(controller.rewrite, forType: .string)
             }
             .disabled(controller.rewrite.isEmpty || controller.isBusy)
+            // Last, so it sits at the card's outer edge like Clear Draft does
+            // on the other side of the run button.
+            AppChip(Text("Clear Rewrite", bundle: .module), systemImage: "eraser", iconOnly: tight) {
+                controller.clearRewrite()
+                reviewing = false
+            }
+            .disabled(controller.rewrite.isEmpty || controller.isBusy)
+            .accessibilityIdentifier("humanize.clearRewrite")
         }
         .tsAnimation(TSMotion.hover, value: controller.rewrite.isEmpty)
     }
@@ -370,6 +413,16 @@ struct HumanizeView: View {
         let output: String
         let segments: [HumanizeSegment]
         let busy: Bool
+    }
+
+    /// The welcome hero's wash: a faint accent glow behind the page, matching Voice Cloning.
+    private var backdrop: some View {
+        RadialGradient(
+            colors: [theme.accent.opacity(theme.isDark ? 0.10 : 0.07), .clear],
+            center: UnitPoint(x: 0.5, y: 0.0), startRadius: 0, endRadius: 620)
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 }
 

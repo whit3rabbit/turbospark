@@ -9,6 +9,8 @@ Command-line binaries for [turbospark](https://github.com/whit3rabbit/turbospark
 - `turbospark-image`: Generates native diffusion images via Z-Image-Turbo.
 - `turbospark-music`: Generates music audio via MiniMax Music 3 (autoregressive backbone, flow-matching DiT, and vocoder).
 - `turbospark-clone`: Zero-shot voice cloning and speech synthesis via MegaTTS3.
+- `turbospark-speak`: Speech synthesis with Fish Audio Drama 3, optionally in a cloned voice.
+- `turbospark-ocr`: Document OCR via the Core ML Unlimited OCR export (macOS 15+).
 - `turbospark`: Unified front end over all subcommands, the HTTP server, and external coding agents.
 
 Generation is macOS-only and requires a Metal-capable Apple Silicon device. On other platforms, the binaries parse arguments and validate configuration.
@@ -46,12 +48,12 @@ Catalog discovery, remote Hugging Face inspection, and streaming install:
 ```sh
 turbospark-model list                         # Browse curated catalog
 turbospark-model list-speech                  # Browse bundled speech models (Whisper & Qwen3-ASR)
-turbospark-model list-music                   # Browse bundled music models and assets
+turbospark-model list-audio                   # Browse pinned MiniMax Music 3 profiles
 turbospark-model info gemma4                  # Inspect catalog entry details
 turbospark-model probe Qwen/Qwen3-30B-A3B-GGUF # Probe remote HF repo (reads KB, no download)
 turbospark-model pull gemma4                  # Stream and repack directly into ~/.turbospark/models
-turbospark-model pull whisper-base-en         # Install a speech model into ~/.turbospark/models
-turbospark-model pull-audio minimax-music-0.3 # Install a pinned music profile
+turbospark-model pull-drama3 --out DIR --accept-fish-license # Install Fish Audio Drama 3 (speech)
+turbospark-model pull-audio minimax-music3-mxfp8 # Install a pinned music profile
 turbospark-model recommend --context 8192     # Rank models that fit system memory
 turbospark-model path gemma4                  # Print resolved filesystem path
 turbospark-model rm gemma4                    # Delete local install
@@ -73,7 +75,8 @@ turbospark-check --model gemma4 --messages-file ./messages.json
 turbospark-check --model gemma4 --chat
 
 # Directional steering edit (ablate, add, clamp, renorm)
-turbospark-check --model gemma4 --chat --steer layer=12:mode=renorm:scale=1.5:vector=steering.bin
+turbospark-check --model gemma4 --chat \
+  --steering steering.gguf --steering-mode renorm --steering-scale 1.5
 ```
 
 ### 3. `turbospark-image`
@@ -81,7 +84,7 @@ turbospark-check --model gemma4 --chat --steer layer=12:mode=renorm:scale=1.5:ve
 Native diffusion image generation:
 
 ```sh
-turbospark-image --model ~/models/z-image-turbo \
+turbospark-image generate --model ~/models/z-image-turbo \
   --prompt "A cinematic photo of an astronaut on Mars during sunset" \
   --output mars.png --steps 9
 ```
@@ -91,9 +94,10 @@ turbospark-image --model ~/models/z-image-turbo \
 Native music generation via MiniMax Music 3 (autoregressive backbone, flow-matching DiT, and vocoder):
 
 ```sh
-turbospark-music --model ~/models/minimax-music-0.3 \
-  --prompt "A fast upbeat synthwave track with punchy drums" \
-  --output song.wav --steps 30
+turbospark-music generate --model minimax-music3-mxfp8 \
+  --caption "A fast upbeat synthwave track with punchy drums" \
+  --lyrics "[instrumental]" \
+  --output song.wav
 ```
 
 ### 5. `turbospark-clone`
@@ -108,7 +112,26 @@ turbospark-clone speak \
   --consent --output output.wav
 ```
 
-### 6. `turbospark` (Unified Front End)
+### 6. `turbospark-speak`
+
+Speech synthesis with Fish Audio Drama 3 (44.1 kHz), optionally in a cloned voice. Install the model with `turbospark-model pull-drama3`:
+
+```sh
+turbospark-speak \
+  --model ~/models/drama3 \
+  --text "Hello world." \
+  --output speech.wav
+```
+
+### 7. `turbospark-ocr`
+
+Read page images as one document with the Core ML Unlimited OCR export (macOS 15+):
+
+```sh
+turbospark-ocr --model ~/models/unlimited-ocr page1.png page2.png
+```
+
+### 8. `turbospark` (Unified Front End)
 
 Front end routing commands to peer binaries:
 
@@ -125,9 +148,9 @@ turbospark list / pull / info / probe / auth   # Subcommands routed to turbospar
 turbospark bench                              # Runs turbospark-bench
 ```
 
-The `start <agent>` subcommand connects external coding agents (`claude`, `codex`, `opencode`, `hermes`, `openclaw`, `dsh`) directly to the local server via `ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL`.
+The `start <agent>` subcommand connects external coding agents (`claude`, `codex`, `opencode`, `grok`, `gemini`, `hermes`, `openclaw`, `dsh`) directly to the local server via `ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL`.
 
-Audio serving: `turbospark serve` accepts `--stt-model` (Whisper, Qwen3-ASR), `--tts-model` (Kokoro, MegaTTS3), and `--music-model` (MiniMax Music 3). With no `--model`, the server runs in audio-only mode, serving `/v1/audio/{transcriptions,speech,generate,jobs,models}`.
+Audio serving: `turbospark serve` accepts `--stt-model` (Whisper, Qwen3-ASR, Parakeet on Core ML), `--tts-model` (Kokoro, MegaTTS3, OmniVoice, Drama 3), and `--music-model` (MiniMax Music 3). With no `--model`, the server runs in audio-only mode, serving `/v1/audio/{transcriptions,speech,generate,jobs,models}`.
 
 ---
 
@@ -157,6 +180,8 @@ MoE expert weights stream from NVMe storage on demand. Setting the cache slot co
 - `bin/image.rs`: Entry point for `turbospark-image`.
 - `bin/music.rs`: Entry point for `turbospark-music`.
 - `bin/clone.rs`: Entry point for `turbospark-clone`.
+- `bin/speak.rs`: Entry point for `turbospark-speak`.
+- `bin/ocr.rs`: Entry point for `turbospark-ocr`.
 
 ## Development & Test Commands
 
@@ -165,7 +190,7 @@ MoE expert weights stream from NVMe storage on demand. Setting the cache slot co
 cargo test -p turbospark-cli
 
 # Run real-model generation test (macOS, release mode)
-cargo test -p turbospark-cli --test real_generation --release -- --ignored --nocapture
+cargo test -p turbospark-cli --test real_generation --release -- --nocapture
 ```
 
 ## Tests
@@ -174,7 +199,8 @@ cargo test -p turbospark-cli --test real_generation --release -- --ignored --noc
 - `tests/real_generation.rs`: End-to-end inference tests verifying greedy and sampled generation.
 - `tests/image_cli.rs`: CLI tests for `turbospark-image` argument validation and output paths.
 - `tests/turbospark_cli.rs`: Tests unified front-end command routing.
-- `tests/mference_check.rs`: Backward-compatibility tests for legacy CLI flags.
+- `tests/mference_check.rs`: Black-box tests of `turbospark-check` exit codes and stream routing, including the `--chat` `--image` refusal.
+- `tests/zimage_mlx_install_network.rs`: Opt-in, ignored network gate that installs one pinned Z-Image MLX variant.
 
 ## Crate Gotchas
 

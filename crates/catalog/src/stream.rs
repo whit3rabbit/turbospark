@@ -176,6 +176,9 @@ pub(crate) fn stream_mlx(
         .map_err(|e| format!("config.json is not UTF-8: {e}"))?;
     let config: serde_json::Value =
         serde_json::from_str(&config_text).map_err(|e| format!("parsing config.json: {e}"))?;
+    if let Some(owner) = repack::headless_tts_trunk_owner(&config) {
+        return Err(repack::describe_headless_tts_trunk(owner));
+    }
     let family = repack::config_json_family(&config)
         .ok_or_else(|| "config.json declares no model_type this port recognizes".to_string())?;
 
@@ -199,11 +202,18 @@ pub(crate) fn stream_mlx(
         ModelFamily::Qwen3Vl => {
             repack::parse_qwen3_vl_config(&config_text).map_err(|e| e.to_string())
         }
+        ModelFamily::Flint => repack::parse_flint_config(&config_text).map_err(|e| e.to_string()),
         other => Err(format!("{} has no safetensors intake here", other.as_str())),
     }?;
     enable_requested_vision(plan, family, &mut arch, &config_text)?;
-    let quant = repack::parse_gemma4_quantization(&config_text)
-        .map_err(|e| format!("parsing the quantization block: {e}"))?;
+    // Flint declares its INT8 embedding outside `quantization` (in the
+    // producer's `mlx_export` block), so it parses through its own reader.
+    let quant = if family == ModelFamily::Flint {
+        repack::parse_flint_quantization(&config_text)
+    } else {
+        repack::parse_gemma4_quantization(&config_text)
+    }
+    .map_err(|e| format!("parsing the quantization block: {e}"))?;
 
     // Reuse an EXISTING install's trunk bytes rather than re-streaming them:
     // only the head crosses the network here. `--reuse-trunk-from` (the CLI
@@ -284,6 +294,13 @@ pub(crate) fn stream_mlx(
     if family == ModelFamily::Qwen2Dense {
         for header in &mut headers {
             repack::canonicalize_qwen2_header(header).map_err(|e| e.to_string())?;
+        }
+    }
+    // Flint: namespace rename AND the U8-to-U32 re-labelling its packed
+    // weights need before the shared walk can read them.
+    if family == ModelFamily::Flint {
+        for header in &mut headers {
+            repack::canonicalize_flint_header(header).map_err(|e| e.to_string())?;
         }
     }
 
@@ -391,6 +408,9 @@ pub(crate) fn stream_mlx(
         ),
         ModelFamily::Qwen3Vl => {
             repack::write_qwen3_vl_install_streamed(dir, &arch, &model_id, &shards, &quant, report)
+        }
+        ModelFamily::Flint => {
+            repack::write_flint_install_streamed(dir, &arch, &model_id, &shards, &quant, report)
         }
         other => Err(Box::<dyn std::error::Error>::from(format!(
             "{} has no safetensors writer here",
@@ -990,11 +1010,155 @@ pub(crate) fn shard_names(plan: &InstallPlan, client: &Client) -> Result<Vec<Str
             return Ok(names.into_iter().collect());
         }
     }
+    // No usable index. A consolidated `model.safetensors` in the listing
+    // wins, so a repo that ships one is read exactly as before. Otherwise a
+    // repo may be sharded WITHOUT publishing an index (`RecursiveSI/flint-int4`
+    // ships `model-00000.safetensors` .. `model-00004.safetensors` and no
+    // `model.safetensors.index.json`), and guessing `model.safetensors` for it
+    // 404s at the first header fetch.
+    let files = client.file_list(&plan.weights)?;
+    if !files.iter().any(|f| f == "model.safetensors") {
+        let sharded = unindexed_shard_names(&files);
+        if !sharded.is_empty() {
+            return Ok(sharded);
+        }
+    }
     Ok(vec!["model.safetensors".to_string()])
+}
+
+/// The shards of a repository that publishes them without an index: names of
+/// the form `model-00000.safetensors` or `model-00001-of-00005.safetensors`
+/// at the repository root.
+///
+/// Returns nothing, and so lets the caller fall back, when a name carries an
+/// `-of-N` total and the listing does not hold exactly N distinct shards of
+/// that total: a partial set would install a model with missing layers that
+/// still opens. Without a total (the zero-based form above) the listing is
+/// the only authority, and the repack walk refuses a checkpoint whose tensors
+/// are not all present.
+fn unindexed_shard_names(files: &[String]) -> Vec<String> {
+    let mut shards: Vec<(u64, Option<u64>, &str)> = Vec::new();
+    for name in files {
+        let Some(middle) = name
+            .strip_prefix("model-")
+            .and_then(|rest| rest.strip_suffix(".safetensors"))
+        else {
+            continue;
+        };
+        let (index, total) = match middle.split_once("-of-") {
+            Some((index, total)) => (index, Some(total)),
+            None => (middle, None),
+        };
+        let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+        if !digits(index) || total.is_some_and(|t| !digits(t)) {
+            continue;
+        }
+        let (Ok(index), Ok(total)) = (
+            index.parse::<u64>(),
+            total.map(str::parse::<u64>).transpose(),
+        ) else {
+            continue;
+        };
+        shards.push((index, total, name.as_str()));
+    }
+    if shards.is_empty() {
+        return Vec::new();
+    }
+    // Every name that declares a total must agree on it, and the listing must
+    // hold exactly that many shards.
+    let totals: std::collections::BTreeSet<u64> = shards.iter().filter_map(|s| s.1).collect();
+    if let Some(&total) = totals.iter().next() {
+        if totals.len() != 1 || shards.len() as u64 != total || shards.iter().any(|s| s.1.is_none())
+        {
+            return Vec::new();
+        }
+    }
+    shards.sort();
+    shards
+        .into_iter()
+        .map(|(_, _, name)| name.to_string())
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
+    use super::unindexed_shard_names;
+
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// `RecursiveSI/flint-int4`'s real listing: five zero-based shards, no
+    /// index, plus the sidecars that must not be mistaken for shards.
+    #[test]
+    fn a_zero_based_sharded_repo_without_an_index_lists_its_shards() {
+        let files = names(&[
+            "README.md",
+            "chat_template.jinja",
+            "config.json",
+            "flint-int4.json",
+            "model-00000.safetensors",
+            "model-00001.safetensors",
+            "model-00002.safetensors",
+            "model-00003.safetensors",
+            "model-00004.safetensors",
+            "tokenizer.json",
+        ]);
+        assert_eq!(
+            unindexed_shard_names(&files),
+            names(&[
+                "model-00000.safetensors",
+                "model-00001.safetensors",
+                "model-00002.safetensors",
+                "model-00003.safetensors",
+                "model-00004.safetensors",
+            ])
+        );
+    }
+
+    #[test]
+    fn a_complete_of_n_set_is_accepted_and_ordered() {
+        let files = names(&[
+            "model-00002-of-00002.safetensors",
+            "model-00001-of-00002.safetensors",
+        ]);
+        assert_eq!(
+            unindexed_shard_names(&files),
+            names(&[
+                "model-00001-of-00002.safetensors",
+                "model-00002-of-00002.safetensors"
+            ])
+        );
+    }
+
+    /// A partial `-of-N` set would install a model with missing layers that
+    /// still opens, so it is refused and the caller falls back.
+    #[test]
+    fn an_incomplete_of_n_set_is_refused() {
+        let files = names(&["model-00001-of-00005.safetensors"]);
+        assert!(unindexed_shard_names(&files).is_empty());
+        let mixed = names(&[
+            "model-00001-of-00002.safetensors",
+            "model-00002.safetensors",
+        ]);
+        assert!(unindexed_shard_names(&mixed).is_empty());
+    }
+
+    #[test]
+    fn lookalikes_and_nested_files_are_not_shards() {
+        let files = names(&[
+            "model.safetensors",
+            "model-lora.safetensors",
+            "model-00000.safetensors.index.json",
+            "model-00001.bin",
+            "sub/model-00000.safetensors",
+            "adapter_model-00000.safetensors",
+        ]);
+        // `sub/model-00000.safetensors` is not at the root: its name does not
+        // start with `model-`.
+        assert!(unindexed_shard_names(&files).is_empty());
+    }
+
     #[test]
     fn the_transfer_marker_avoids_every_prose_keyword_the_app_matches() {
         // The Swift stage matcher keys on these substrings; an older app must

@@ -34,7 +34,8 @@ public struct AppSidebarControlPresentation: Equatable, Sendable {
 
 public enum AppChromeLayout {
     public static let primaryMinimumWidth: CGFloat = 640
-    public static let chatSidebarWidth: CGFloat = 260
+    /// Width of the contextual panel beside the rail (chat list, Audio pages).
+    public static let sidebarPanelWidth: CGFloat = 260
     public static let inspectorWidth: CGFloat = 320
     public static let expandedInspectorWidth: CGFloat = 720
     public static let dividerWidth: CGFloat = 1
@@ -44,17 +45,15 @@ public enum AppChromeLayout {
         isExpanded ? expandedInspectorWidth : inspectorWidth
     }
 
-    /// Width of the icon rail, which is the sidebar's COLLAPSED presentation
-    /// rather than a band of its own since the two left columns merged.
+    /// Width of the icon rail, which is on screen in every section and state.
     public static let navigationRailWidth: CGFloat = 52
 
-    /// The single left column's width in each of its two presentations.
-    ///
-    /// There used to be two columns side by side (rail plus chat sidebar) and
-    /// therefore two widths to add up. There is one now, so a caller sizing
-    /// the window asks this rather than summing.
-    public static func sidebarColumnWidth(isExpanded: Bool) -> CGFloat {
-        isExpanded ? chatSidebarWidth : navigationRailWidth
+    /// Total width of the left chrome: the rail, plus the panel when one is
+    /// shown. The hairline between the two is an overlay on the rail, not
+    /// layout width, so a caller sizing the window asks this rather than
+    /// summing the parts itself.
+    public static func leftChromeWidth(isPanelVisible: Bool) -> CGFloat {
+        navigationRailWidth + (isPanelVisible ? sidebarPanelWidth : 0)
     }
     /// Height of the flat top bar carrying the machine telemetry.
     public static let topBarHeight: CGFloat = 44

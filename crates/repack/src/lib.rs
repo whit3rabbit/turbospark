@@ -19,6 +19,9 @@
 
 mod arch_registry;
 pub mod control_vector;
+mod fish_drama3;
+mod flint_config;
+mod flint_rebalance;
 mod gemma4_checkpoint;
 mod gguf_checkpoint;
 mod gguf_config;
@@ -38,6 +41,7 @@ mod resident_reader;
 mod resident_writer;
 mod safetensors_header;
 mod synthetic_deepseek2;
+mod synthetic_flint;
 mod synthetic_gguf;
 mod synthetic_llama;
 mod synthetic_model;
@@ -49,29 +53,39 @@ mod synthetic_tensors;
 mod trained_context;
 
 pub use arch_registry::{
-    config_json_family, describe_gguf_architecture, gguf_arch_support, has_foreign_vision_tower,
-    hf_family_for_model_type, planned_gguf_architectures, refuse_foreign_config, ArchSupport,
-    PlannedArch,
+    config_json_family, describe_gguf_architecture, describe_headless_tts_trunk, gguf_arch_support,
+    has_foreign_vision_tower, headless_tts_trunk_owner, hf_family_for_model_type,
+    planned_gguf_architectures, refuse_foreign_config, ArchSupport, PlannedArch,
+};
+pub use fish_drama3::{
+    canonicalize_drama3_header, check_drama3_norm_shift, drama3_trunk_config,
+    write_drama3_side_safetensors, write_fish_drama3_install_streamed, DRAMA3_MODEL_TYPE,
+    DRAMA3_SIDE_FILE, DRAMA3_SIDE_PREFIX, DRAMA3_TRUNK_DIR,
+};
+pub use flint_config::{parse_flint_config, parse_flint_quantization};
+pub use flint_rebalance::{
+    rebalance_install_in_place, recorded_shift, RebalanceStats, SwigluRole, FLINT_SWIGLU_SHIFT,
 };
 pub use gemma4_checkpoint::{
-    canonicalize_qwen2_header, canonicalize_vision_header, classify_for_family, classify_gemma4,
-    convert_raw_to_fp16, gemma4_manifest_quant, gguf_mxfp4_row_bytes,
-    graft_qwen_gdn_dense_mtp_head, is_supported_affine_shape, manifest_quant, manifest_quant_for,
-    mlx_mxfp4_dequant_to_bf16, mlx_mxfp4_reblock_to_gguf, narrow_raw_to_bf16,
+    canonicalize_flint_header, canonicalize_qwen2_header, canonicalize_vision_header,
+    classify_for_family, classify_gemma4, convert_raw_to_fp16, gemma4_manifest_quant,
+    gguf_mxfp4_row_bytes, graft_qwen_gdn_dense_mtp_head, is_supported_affine_shape, manifest_quant,
+    manifest_quant_for, mlx_mxfp4_dequant_to_bf16, mlx_mxfp4_reblock_to_gguf, narrow_raw_to_bf16,
     orchestrate_gemma4_checkpoint, orchestrate_gemma4_checkpoint_sharded, parse_gemma4_config,
     parse_gemma4_quantization, parse_prism_hadamard, pass_through_packed,
     pass_through_packed_qwen2, read_vision_entries, vision_arch_for_manifest, vision_should_ingest,
-    write_gemma4_install, write_gemma4_install_streamed, write_muse_glimmer_install,
-    write_muse_glimmer_install_streamed, write_ngram_table, write_qwen2_dense_install_streamed,
-    write_qwen3_vl_install_streamed, write_qwen4_exp_install_streamed,
-    write_qwen_gdn_dense_install, write_qwen_gdn_dense_install_streamed,
-    write_qwen_gdn_dense_install_streamed_with_hadamard, write_qwen_gdn_moe_install,
-    write_qwen_gdn_moe_install_streamed, write_vision_sidecar, ConvertedFp16, Gemma4Bucket,
-    Gemma4Error, Gemma4Quant, Gemma4RepackOutput, Gemma4Shards, NarrowedRaw, NgramPlan,
-    NgramTableSpec, NgramTableWriter, PrismHadamard, QuantMode, VisionRead, AFFINE_1BIT_GROUP_SIZE,
-    AFFINE_2BIT_GROUP_SIZE, AFFINE_GROUP_SIZE, DFLASH_PREFIX, GTURBO_PAGE_BYTES, MTP_PREFIX,
-    VISION_BLOCK_ROLES, VISION_DEEPSTACK_MERGER_PREFIX, VISION_DEEPSTACK_MERGER_SUFFIXES,
-    VISION_INSTALL_PREFIX, VISION_PREFIX, VISION_RESIDENT_TENSORS, VISION_SOURCE_PREFIXES,
+    write_flint_install_streamed, write_gemma4_install, write_gemma4_install_streamed,
+    write_muse_glimmer_install, write_muse_glimmer_install_streamed, write_ngram_table,
+    write_qwen2_dense_install_streamed, write_qwen3_vl_install_streamed,
+    write_qwen4_exp_install_streamed, write_qwen_gdn_dense_install,
+    write_qwen_gdn_dense_install_streamed, write_qwen_gdn_dense_install_streamed_with_hadamard,
+    write_qwen_gdn_moe_install, write_qwen_gdn_moe_install_streamed, write_vision_sidecar,
+    ConvertedFp16, Gemma4Bucket, Gemma4Error, Gemma4Quant, Gemma4RepackOutput, Gemma4Shards,
+    NarrowedRaw, NgramPlan, NgramTableSpec, NgramTableWriter, PrismHadamard, QuantMode, VisionRead,
+    AFFINE_1BIT_GROUP_SIZE, AFFINE_2BIT_GROUP_SIZE, AFFINE_GROUP_SIZE, DFLASH_PREFIX,
+    GTURBO_PAGE_BYTES, MTP_PREFIX, VISION_BLOCK_ROLES, VISION_DEEPSTACK_MERGER_PREFIX,
+    VISION_DEEPSTACK_MERGER_SUFFIXES, VISION_INSTALL_PREFIX, VISION_PREFIX,
+    VISION_RESIDENT_TENSORS, VISION_SOURCE_PREFIXES,
 };
 pub use gguf_checkpoint::{
     dtype_tag_for_ggml_type, gguf_manifest_quant, orchestrate_gguf_checkpoint,
@@ -122,6 +136,7 @@ pub use safetensors_header::{
     DEFAULT_MAX_HEADER_BYTES,
 };
 pub use synthetic_deepseek2::{build_synthetic_deepseek2_install, tiny_deepseek2_arch};
+pub use synthetic_flint::{build_synthetic_flint_install, tiny_flint_arch};
 pub use synthetic_gguf::{
     build_synthetic_gemma4_gguf, build_synthetic_gpt_oss_gguf, build_synthetic_qwen2_gguf,
     GgufBuilder, GgufFileAndRanges, QuantMix, SyntheticGgufShape, SyntheticGptOssShape,
@@ -141,7 +156,8 @@ pub use synthetic_model::{
 };
 pub use synthetic_muse::{build_synthetic_muse_glimmer_install, tiny_muse_glimmer_arch};
 pub use synthetic_qwen::{
-    build_synthetic_qwen4_exp_decode_install, build_synthetic_qwen4_exp_decode_install_raw_router,
+    build_synthetic_fish_drama3_install, build_synthetic_qwen4_exp_decode_install,
+    build_synthetic_qwen4_exp_decode_install_raw_router,
     build_synthetic_qwen4_exp_decode_install_with_indexer_budget,
     build_synthetic_qwen4_exp_install, build_synthetic_qwen4_exp_install_streamed,
     build_synthetic_qwen_gdn_dense_install, build_synthetic_qwen_gdn_dense_install_at_bits,
@@ -154,10 +170,12 @@ pub use synthetic_qwen::{
     build_synthetic_qwen_gdn_dense_install_with_vision_streamed,
     build_synthetic_qwen_gdn_moe_install, build_synthetic_qwen_gdn_moe_install_with_mtp,
     build_synthetic_qwen_gdn_moe_mxfp4_install, build_synthetic_vision_sidecar,
-    tiny_qwen4_exp_arch, tiny_qwen4_exp_decode_arch, tiny_qwen_gdn_dense_arch,
-    tiny_qwen_gdn_moe_arch, tiny_vision_config, HC_COUNT, HEAD_DIM, NUM_EXPERTS,
-    QWEN4_DECODE_HIDDEN, QWEN4_DECODE_NGRAM_EOS_TOKEN_ID, QWEN4_DECODE_NUM_HEADS,
-    QWEN4_DECODE_NUM_KV_HEADS, QWEN4_DECODE_NUM_LAYERS, QWEN4_DECODE_PLE_LAYER, TOP_K,
+    synthetic_fish_drama3_checkpoint, tiny_qwen4_exp_arch, tiny_qwen4_exp_decode_arch,
+    tiny_qwen_gdn_dense_arch, tiny_qwen_gdn_moe_arch, tiny_vision_config,
+    write_synthetic_fish_drama3, Drama3NormStorage, SyntheticDrama3, DRAMA3_FIXTURE_LAYERS,
+    HC_COUNT, HEAD_DIM, NUM_EXPERTS, QWEN4_DECODE_HIDDEN, QWEN4_DECODE_NGRAM_EOS_TOKEN_ID,
+    QWEN4_DECODE_NUM_HEADS, QWEN4_DECODE_NUM_KV_HEADS, QWEN4_DECODE_NUM_LAYERS,
+    QWEN4_DECODE_PLE_LAYER, TOP_K,
 };
 pub use synthetic_real::{
     build_synthetic_gemma4_dense_real_install, build_synthetic_gemma4_real_install,

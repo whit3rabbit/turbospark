@@ -1,0 +1,22 @@
+# FluidInference/parakeet-0.6b-ja-coreml@2952296ff1da4a6d6a7aec545e226367db80c612  files=21  bytes=619065246
+86795f3f612cf5bceb5d3ccb62353e7b249ec0d947de2d92f3a493b41c61cfc3           243  Decoderv2.mlmodelc/analytics/coremldata.bin
+aba05a4a882fb8149c0229b0eb36e24269fb9f008e65f302eef37b1f6c982ed3           493  Decoderv2.mlmodelc/coremldata.bin
+345b75575b055563b6adc5a6adb39d3bdd8b5bf06b171fcc8a07229113dfc8c5          3316  Decoderv2.mlmodelc/metadata.json
+dd9367a6dac8128d6cbb22a2bf8c7da48fa15494f04b6a4ef7be091f55bedf73         13106  Decoderv2.mlmodelc/model.mil
+a56d792edf3b88e30466c0b992bb7e316fa743c90f8809c2be9d2ecb8ffbd48e      17051392  Decoderv2.mlmodelc/weights/weight.bin
+64d086974fa873a29bac8face69e71df44f678e8591dc848650fdfbd4110730d           243  Encoder.mlmodelc/analytics/coremldata.bin
+6e24d36005b89f97ab672596f94215883b19008f556ac1874500385994bd885f           507  Encoder.mlmodelc/coremldata.bin
+d06e8b6e3e305b9d15fad119e9b31d05229c00b532655d120c317e990d633511          2930  Encoder.mlmodelc/metadata.json
+151eca4da087e17fa187834f2e15ae84e91a866299f2eecd5f184ff3ee738a3a       1086104  Encoder.mlmodelc/model.mil
+257685d3fdb578c5d6d7f0a5460c778f6104bcf2f264e4ae704b885c69ad6dda     593943616  Encoder.mlmodelc/weights/weight.bin
+7dcee73505a75e1264f5d2c40f3767fe528768c00ed73b3937b354d10b41e779           243  Jointerv2.mlmodelc/analytics/coremldata.bin
+98c853843c56998e061a2749365c0b1e0bfd5b03f2f54465e843f3de83e8c148           521  Jointerv2.mlmodelc/coremldata.bin
+192a4656ca8744e9e27317a9008ebde4b664dbaf46011aec85ae27b9715b9697          3464  Jointerv2.mlmodelc/metadata.json
+0e4fb7f1307d2e8fc15542118856cd34ed589134cbb84f0bcd60387aba6ef17d         11774  Jointerv2.mlmodelc/model.mil
+d6f24519c7c6959e8ec6fb078e8c05d912d292fcb57720c63fdc9291b1db122d       6078924  Jointerv2.mlmodelc/weights/weight.bin
+315309121ac09c8fb7ed9f8dab20a30e440530b527401af5abcf6d0cf959e495           243  Preprocessor.mlmodelc/analytics/coremldata.bin
+de3624dd8335b3b0391be95da73b59577916f3ac7d1c6d30a66fd16369af7cb8           512  Preprocessor.mlmodelc/coremldata.bin
+6c12ff477a63450f41ca2b52451d767a9bfc91d70311788c04265786bab43d3e          2837  Preprocessor.mlmodelc/metadata.json
+cd35cb142ca4db597e99b0cb8d3d68f087e7a9d3e330ce46c8c20d55ab0b1c59         27152  Preprocessor.mlmodelc/model.mil
+6512ba5d1acc3ffe6f322089c0ece5466f93c7ac77c267dd851a1fb517c637f9        807968  Preprocessor.mlmodelc/weights/weight.bin
+9db0aa7ab1f5d2714c20a7880cb452d753da91cb10de88cb289cda4fd473d50a         29658  vocab.json

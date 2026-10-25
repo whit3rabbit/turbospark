@@ -4,15 +4,17 @@
 //! buffer wrapping, which belongs to the `gpu` crate in a later phase).
 //!
 //! Unlike the earlier phases, this crate is allowed a narrow amount of
-//! `unsafe` (confined to the `mmap` call in `resident_buffer`) and platform
-//! assumptions (4 KiB pages), per the workspace's cross-cutting rule that
-//! model I/O and streaming are where that trade-off is made.
+//! `unsafe` (the `mmap` call in `resident_buffer` and the `statvfs` call in
+//! `disk_space`) and platform assumptions (4 KiB pages), per the workspace's
+//! cross-cutting rule that model I/O and streaming are where that trade-off
+//! is made.
 
 mod arch_baselines;
 mod arch_config;
 mod arch_validation;
 mod cgroup;
 mod context_policy;
+mod disk_space;
 pub mod encoder_config;
 mod error;
 mod expert_cache_policy;
@@ -30,14 +32,16 @@ mod sha256;
 pub mod speech_family;
 pub mod speech_receipt;
 mod steering_set;
+pub mod trunk_role;
 mod vision_sidecar;
 pub mod whisper_config;
 
 pub use arch_baselines::{
-    all_known_architectures, deepseek_v2_lite_16b, deepseek_v4_flash_284b_a13b, gemma4_12b_dense,
-    gemma4_26b_a4b, gpt_oss_20b, known_architecture, minimax_m2, mixtral_8x7b, muse_glimmer_30b,
-    muse_glimmer_layer_mask, qwen2_5_7b, qwen3_30b_a3b, qwen3_4b, qwen3_vl_4b, qwen4_exp_125b_a6b,
-    qwen_gdn_dense_27b, qwen_gdn_moe_35b_a3b, spark_layer_mask, spark_x25_4b,
+    all_known_architectures, deepseek_v2_lite_16b, deepseek_v4_flash_284b_a13b, flint_40b_a2_5b,
+    flint_layer_mask, gemma4_12b_dense, gemma4_26b_a4b, gpt_oss_20b, known_architecture,
+    minimax_m2, mixtral_8x7b, muse_glimmer_30b, muse_glimmer_layer_mask, qwen2_5_7b, qwen3_30b_a3b,
+    qwen3_4b, qwen3_vl_4b, qwen4_exp_125b_a6b, qwen_gdn_dense_27b, qwen_gdn_moe_35b_a3b,
+    spark_layer_mask, spark_x25_4b,
 };
 pub use arch_config::{
     ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig, MlaConfig,
@@ -54,11 +58,12 @@ pub use context_policy::{
     ContextPlan, ContextRefused, ContextTooLarge, MaxContext, CONTEXT_BUDGET_FRACTION,
     CONTEXT_GRANULARITY, CONTEXT_RESERVE_BYTES, MAX_SUPPORTED_CONTEXT,
 };
+pub use disk_space::available_bytes;
 pub use encoder_config::{EncoderConfig, EncoderQuantization};
 pub use error::ModelError;
 pub use expert_cache_policy::{
-    auto_residency_prefers_mapped, ExpertCacheSlots, ExpertResidency, ResolvedExpertResidency,
-    HEADROOM_FRACTION, HEADROOM_RESERVE_BYTES,
+    auto_residency_prefers_mapped, mapped_residency_fits, ExpertCacheSlots, ExpertResidency,
+    ResolvedExpertResidency, HEADROOM_FRACTION, HEADROOM_RESERVE_BYTES, MAPPED_WIRED_RESERVE_BYTES,
 };
 pub use install_receipt::{
     load as load_install_receipt, validate as validate_install_receipt,

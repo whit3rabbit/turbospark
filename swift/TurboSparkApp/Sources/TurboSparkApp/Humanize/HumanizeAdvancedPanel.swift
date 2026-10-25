@@ -60,7 +60,7 @@ struct HumanizeAdvancedPanel: View {
                 .fixedSize(horizontal: false, vertical: true)
             ZStack(alignment: .topLeading) {
                 if text.wrappedValue.isEmpty {
-                    Text(verbatim: example).font(theme.ui(.small)).foregroundStyle(.tertiary)
+                    Text(verbatim: example).font(theme.ui(.small)).foregroundStyle(.appSecondary)
                         .padding(.horizontal, 9).padding(.vertical, 8)
                         .allowsHitTesting(false)
                 }
@@ -73,11 +73,13 @@ struct HumanizeAdvancedPanel: View {
             }
             // Grows with the text size so about three lines stay in view.
             .frame(height: (76 * HumanizeMetrics.textScale(theme)).rounded())
-            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(
-                    focusedField == field ? theme.accent.opacity(0.55) : Color.primary.opacity(0.1),
-                    lineWidth: focusedField == field ? 1.25 : 0.75)
+                // The solid accent, not a 55% edge: that edge is under 3:1
+                // against the card in light mode, and focus must be visible.
+                RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous).stroke(
+                    focusedField == field ? AnyShapeStyle(theme.accent) : AnyShapeStyle(.appBorder),
+                    lineWidth: focusedField == field ? 1.5 : 1)
             }
             .tsAnimation(TSMotion.hover, value: focusedField)
         }
@@ -135,7 +137,10 @@ struct HumanizeAdvancedPanel: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(10)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
+                            .stroke(.appBorder, lineWidth: 1))
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }

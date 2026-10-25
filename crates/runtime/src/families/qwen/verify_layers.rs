@@ -2,7 +2,9 @@
 
 use model_io::{ArchConfig, ResidentIndex};
 
-use super::batched_layers::{encode_full_attention_block_batched, encode_linear_block_batched};
+use super::batched_layers::{
+    encode_full_attention_block_batched, encode_linear_block_batched, row_batched_ops,
+};
 use super::moe_batch::encode_qwen_layer_moe_batched;
 use super::{layer_tensor, BatchedScratch, QkNormConvention, RealQwenState, RMS_EPS, TRUNK_PREFIX};
 use crate::real_forward_init::MappedResidency;
@@ -164,17 +166,34 @@ pub(crate) fn encode_qwen_layer_attn_and_norms_batched(
     tape_slot: Option<usize>,
 ) -> Result<(), RealForwardError> {
     let gpu_err = RealForwardError::Gpu;
-    for m in 0..batch {
-        gpu::encode_rms_norm_bf16w(
+    // M rows through one per-head dispatch of M "heads" of width `hidden`:
+    // `rmsnorm_bf16w_perhead` shares `rmsnorm_bf16w`'s helper, loop and launch
+    // width, so each row is the same arithmetic as the sequential norm.
+    if row_batched_ops() {
+        gpu::encode_rms_norm_bf16w_perhead(
             context,
             pass,
-            (&scratch.x, (m * hidden) as u64 * 2),
+            (&scratch.x, 0),
             input_norm,
-            (&batched.normed, (m * hidden) as u64 * 2),
+            (&batched.normed, 0),
+            batch as u32,
             hidden as u32,
             RMS_EPS,
         )
         .map_err(gpu_err)?;
+    } else {
+        for m in 0..batch {
+            gpu::encode_rms_norm_bf16w(
+                context,
+                pass,
+                (&scratch.x, (m * hidden) as u64 * 2),
+                input_norm,
+                (&batched.normed, (m * hidden) as u64 * 2),
+                hidden as u32,
+                RMS_EPS,
+            )
+            .map_err(gpu_err)?;
+        }
     }
 
     if arch.layer_is_linear(layer) {
@@ -200,26 +219,48 @@ pub(crate) fn encode_qwen_layer_attn_and_norms_batched(
         )?;
     }
 
-    for m in 0..batch {
-        let row = (m * hidden) as u64 * 2;
+    if row_batched_ops() {
         gpu::encode_residual_add(
             context,
             pass,
-            (&scratch.x, row),
-            (&batched.o, row),
-            hidden as u32,
+            (&scratch.x, 0),
+            (&batched.o, 0),
+            (hidden * batch) as u32,
         )
         .map_err(gpu_err)?;
-        gpu::encode_rms_norm_bf16w(
+        gpu::encode_rms_norm_bf16w_perhead(
             context,
             pass,
-            (&scratch.x, row),
+            (&scratch.x, 0),
             post_attn,
-            (&batched.moe_x, row),
+            (&batched.moe_x, 0),
+            batch as u32,
             hidden as u32,
             RMS_EPS,
         )
         .map_err(gpu_err)?;
+    } else {
+        for m in 0..batch {
+            let row = (m * hidden) as u64 * 2;
+            gpu::encode_residual_add(
+                context,
+                pass,
+                (&scratch.x, row),
+                (&batched.o, row),
+                hidden as u32,
+            )
+            .map_err(gpu_err)?;
+            gpu::encode_rms_norm_bf16w(
+                context,
+                pass,
+                (&scratch.x, row),
+                post_attn,
+                (&batched.moe_x, row),
+                hidden as u32,
+                RMS_EPS,
+            )
+            .map_err(gpu_err)?;
+        }
     }
     Ok(())
 }
@@ -246,17 +287,31 @@ pub(crate) fn encode_qwen_batched_head(
         "language_model.model.norm.weight",
         hidden,
     )?;
-    for m in 0..batch {
-        gpu::encode_rms_norm_bf16w(
+    if row_batched_ops() {
+        gpu::encode_rms_norm_bf16w_perhead(
             context,
             pass,
-            (&scratch.x, (m * hidden) as u64 * 2),
+            (&scratch.x, 0),
             final_norm,
-            (&batched.normed, (m * hidden) as u64 * 2),
+            (&batched.normed, 0),
+            batch as u32,
             hidden as u32,
             RMS_EPS,
         )
         .map_err(gpu_err)?;
+    } else {
+        for m in 0..batch {
+            gpu::encode_rms_norm_bf16w(
+                context,
+                pass,
+                (&scratch.x, (m * hidden) as u64 * 2),
+                final_norm,
+                (&batched.normed, (m * hidden) as u64 * 2),
+                hidden as u32,
+                RMS_EPS,
+            )
+            .map_err(gpu_err)?;
+        }
     }
     let head_name = if arch.tie_word_embeddings {
         embed_name.to_string()

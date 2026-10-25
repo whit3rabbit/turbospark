@@ -51,6 +51,9 @@ fire.
   quick-save appends the note through `mutateTurnMessages` (sealed, never on
   the row) but still writes the memory FILE -- ghost hides the transcript,
   not the store.
+- **Conversation recall** (`swift/docs/SYNTEXT_CONTEXT.md`): never
+  journaled or recalled. `conversationRecallEligible` refuses `isGhost`, so
+  no ghost turn reaches the plaintext recall store.
 - **Chat search** (`swift/docs/SWIFT_CHAT_SEARCH.md`): excluded by the
   `isGhost` flag, never by an emptiness check, so a ghost row carrying
   messages (a fixture, or a future bug) still produces no search document.

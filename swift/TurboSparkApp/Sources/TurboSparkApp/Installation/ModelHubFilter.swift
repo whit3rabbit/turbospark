@@ -18,6 +18,7 @@ struct ModelHubFilter: Equatable {
     enum Tab: String, CaseIterable, Identifiable {
         case recommended = "Recommended"
         case discover = "Discover"
+        case audio = "Audio"
         case onDevice = "On Device"
         var id: String { rawValue }
     }
@@ -114,6 +115,9 @@ struct ModelHubFilter: Equatable {
         installedAliases: Set<String>,
         recommendations: [String: ModelRecommendation]
     ) -> [CatalogEntry] {
+        // Audio profiles have their own catalog and installer. They are
+        // rendered by AudioDiscoverCatalogView, never treated as text rows.
+        guard tab != .audio else { return [] }
         var list = catalog
 
         if tab == .onDevice {

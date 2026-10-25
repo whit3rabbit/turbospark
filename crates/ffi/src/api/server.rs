@@ -112,6 +112,7 @@ pub unsafe extern "C" fn ts_server_start(
             options.capture_text,
             options.api_key,
             guardrails,
+            options.prefix_reuse,
             default_system,
             default_reasoning,
             load_policy,
@@ -133,6 +134,13 @@ pub unsafe extern "C" fn ts_server_start(
         if !session.is_null() {
             let session =
                 session::borrow(session).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+            // BEFORE the attach, so the model's first served turn already
+            // runs under the posture this server resolved. Attaching first
+            // and applying after would leave a window where a request that
+            // arrives immediately sees the session's own default instead.
+            if let Some(enabled) = options.prefix_reuse {
+                session.core().set_prefix_reuse_for_server(enabled);
+            }
             server
                 .attach(session.core(), model_id_of(session))
                 .map_err(|e| (abi::TS_ERR_OPEN, e))?;

@@ -67,6 +67,11 @@ TurboSpark provides over 30 native tools covering file manipulation, indexed sem
 
 Unlike single-purpose scripting agents, TurboSpark tools run directly in-process within the Swift desktop application, interfacing with the underlying Rust inference engine and macOS system capabilities. Each tool features strict parameter validation, path containment checks (`resolveSecurePath`), write sandboxing (`AppToolSandbox`), and integration with the multi-tier permission engine (`AppToolPermissionEngine`).
 
+TurboSpark enforces two primary tool environments:
+- **Projects Mode**: All tools matching the active project profile are offered, including workspace-rooted file inspection/editing, codebase search, and terminal command execution.
+- **Chat Mode**: When tools are enabled (`chatToolsEnabled == true`, on by default and toggled via the composer `AppChip` button or settings), only **rootless** tools (web search, web fetch, browser automation, interactive questionnaires, planning, checklists, memory, and automation) are advertised and executed. Tools marked `Workspace Rooted: Yes` below are excluded in Chat mode to prevent path traversal or uncontrolled host terminal execution.
+
+
 ---
 
 ## File Operations
@@ -295,10 +300,10 @@ Unlike single-purpose scripting agents, TurboSpark tools run directly in-process
 - **Aliases**: `Grep`, `search_code`
 - **Category**: `.fileRead`
 - **Workspace Rooted**: Yes
-- **Permission Tier**: Safe
-- **Source**: `Tools/File/SyntextCodeSearchTool.swift`, `Tools/File/FileSearchTools.swift`
+- **Permission Tier**: Safe (high when an argument names a sensitive path)
+- **Source**: `Tools/File/SyntextCodeSearchTool.swift`, `Tools/File/FileSearchTools.swift`, `Tools/File/GrepPathPolicy.swift`
 
-**Purpose**: Sub-millisecond indexed text, symbol, and regex searching across the entire workspace using the embedded Syntext engine (see [SYNTEXT.md](SYNTEXT.md)).
+**Purpose**: Indexed regex and literal search across the workspace using the embedded Syntext engine when the project is opted in, and an unindexed scan otherwise (see [SYNTEXT.md](SYNTEXT.md)).
 
 **Parameters**:
 ```json
@@ -307,15 +312,15 @@ Unlike single-purpose scripting agents, TurboSpark tools run directly in-process
   "pattern": "string (alias for query)",
   "path": "string (optional subdirectory to scope search)",
   "case_sensitive": "boolean (default false)",
-  "max_results": "integer (maximum matches returned, default 40, capped at 100)"
+  "max_results": "integer (maximum matches returned, default 50, capped at 500)"
 }
 ```
 
 **Advantage over raw shell grep**:
 - Does not spawn shell subprocesses.
 - Bounded memory and match counts (prevents terminal token flooding).
-- Respects project `.gitignore` and hidden directories automatically.
-- Falls back gracefully to `searchCode` file crawler if Syntext indexing is disabled.
+- Hides hidden files, `.git`, `node_modules`, `target`, `.build`, and credential files (`.env*`, `*.pem`, `*.key`, `credentials`, `.npmrc`, `.netrc`) on both paths (`GrepPathPolicy`).
+- Falls back to the `searchCode` file crawler when indexing is off for the project or the index is still building.
 
 ---
 
@@ -829,9 +834,9 @@ The table below summarizes tool permissions across TurboSpark's four operating m
 ### 1. Syntext Trigram Index vs Ripgrep
 
 TurboSpark replaces raw shell grepping with the embedded Syntext engine:
-- Pre-indexes code tokens, trigrams, and symbols into SQLite and memory buffers.
-- Eliminates process creation overhead and prevents the shell from emitting unbound gigabytes of output into model context.
-- Maintains line number parity and automatic `.gitignore` exclusion.
+- Pre-indexes opted-in projects into Syntext's own memory-mapped segment format (no SQLite).
+- Eliminates process creation overhead, and caps output at 500 matches so the shell cannot flood model context.
+- Keeps ripgrep line-number output, honors `.gitignore` in git repositories, and filters hidden and credential paths in Swift.
 
 ### 2. Multi-Mode File Operations and Snapshot Rollbacks
 

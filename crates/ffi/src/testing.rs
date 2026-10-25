@@ -56,6 +56,7 @@ pub fn session_for_testing_named(
         // decision: this is the absence of a capability, not a caller's
         // choice, which is why the reported `reason` is null too.
         speculation_block: None,
+        speculation_adaptive: false,
         info: wire::SessionInfo {
             model_path: model_path.to_string(),
             family: "<scripted>".to_string(),
@@ -113,6 +114,13 @@ pub fn session_for_testing_named(
             // would: `off`.
             kv_bits: "off".to_string(),
             prefix_reuse: true,
+            ane_prefill: wire::AnePrefillInfo {
+                active: false,
+                mode: "off".to_string(),
+                supported: false,
+                reason: Some("a scripted session runs no decode flow".to_string()),
+                programs_dir: None,
+            },
             special_tokens: wire::SpecialTokensInfo {
                 bos_id: (tokenizer.bos_id >= 0).then_some(tokenizer.bos_id),
                 eos_id: (tokenizer.eos_id >= 0).then_some(tokenizer.eos_id),

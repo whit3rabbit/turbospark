@@ -8,13 +8,15 @@ public struct ModelDownload: Identifiable, Codable, Equatable {
         case repository(repo: String, alias: String, file: String?, sidecarRepo: String?)
         case image(alias: String)
         case audio(identity: AudioProfileIdentity)
-        /// A pinned embedding profile (`EmbeddingCatalog`), by alias.
-        case embedding(alias: String)
+        /// A pinned embedding profile (`EmbeddingCatalog`) at the revision the
+        /// user saw. `revision` is nil only on rows saved before it was
+        /// recorded; those install the current pin.
+        case embedding(alias: String, revision: String?)
 
         var alias: String {
             switch self {
             case .catalog(let alias), .repository(_, let alias, _, _), .image(let alias),
-                 .embedding(let alias):
+                 .embedding(let alias, _):
                 return alias
             case .audio(let identity): return identity.alias
             }
@@ -34,7 +36,10 @@ public struct ModelDownload: Identifiable, Codable, Equatable {
             switch self {
             case .catalog, .repository: return "text:\(normalized)"
             case .image: return "image:\(normalized)"
-            case .embedding: return "embedding:\(normalized)"
+            case .embedding(_, let revision):
+                // Like audio: a retry must not silently adopt a new catalog pin.
+                let fields = [normalized, revision ?? ""]
+                return "embedding:" + fields.map { "\($0.utf8.count):\($0)" }.joined()
             case .audio(let identity):
                 // Pin every identity field so a retry cannot silently adopt a new catalog revision.
                 let fields = [identity.task.rawValue, normalized, identity.repository,

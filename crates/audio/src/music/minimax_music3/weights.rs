@@ -173,6 +173,7 @@ impl WeightStore {
                         scales: &[],
                         offsets: &[],
                         block_scales: &[],
+                        planned_rows: None,
                     })?,
                 })
             }
@@ -211,6 +212,7 @@ impl WeightStore {
                 scales: &[],
                 offsets: &[],
                 block_scales: &[],
+                planned_rows: None,
             })?;
             consumed.insert(name.into());
             return Ok(Weight::Device {
@@ -445,6 +447,7 @@ impl WeightStore {
             scales: &[],
             offsets: &[],
             block_scales: &[],
+            planned_rows: Some(full[0]),
         })?;
         consumed.insert(name);
         Ok(Some(Weight::Device {
@@ -649,6 +652,7 @@ fn device_linear(
         scales: &scales,
         offsets: &offsets,
         block_scales,
+        planned_rows: None,
     })?;
     Ok((
         Weight::Device {
@@ -1050,9 +1054,11 @@ mod device_validation {
             unreachable!()
         }
     }
+    /// One upload: shape, bytes, and the full matrix's rows when a window.
+    type Upload = (Vec<usize>, Vec<u8>, Option<usize>);
     /// Records each upload's shape and bytes; the weight itself is never used.
     #[derive(Default)]
-    struct RecordUpload(std::cell::RefCell<Vec<(Vec<usize>, Vec<u8>)>>);
+    struct RecordUpload(std::cell::RefCell<Vec<Upload>>);
     struct Unused;
     impl DeviceWeight for Unused {
         fn linear(
@@ -1083,7 +1089,7 @@ mod device_validation {
         fn load_weight(&self, data: WeightData<'_>) -> Result<Rc<dyn DeviceWeight>> {
             self.0
                 .borrow_mut()
-                .push((data.shape.to_vec(), data.bytes.to_vec()));
+                .push((data.shape.to_vec(), data.bytes.to_vec(), data.planned_rows));
             Ok(Rc::new(Unused))
         }
         fn attention(
@@ -1126,6 +1132,8 @@ mod device_validation {
         let uploads = backend.0.borrow();
         assert_eq!(uploads.len(), 1);
         assert_eq!(uploads[0].0, vec![128, hidden]);
+        // The window plans its kernel choices from the whole head's rows.
+        assert_eq!(uploads[0].2, Some(vocab));
         let row = hidden * 2;
         assert_eq!(uploads[0].1, full_bytes[192 * row..320 * row]);
         let WeightStore::File { consumed, .. } = &store else {

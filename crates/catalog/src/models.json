@@ -315,6 +315,33 @@
       "notes": "The seventh family and the sixth decode flow: dense 52-layer GQA with a three-sliding/one-full 2048 window, NoPE on the full layers, a separate attention output gate, CENTERED per-layer norms against a PLAIN final one, and a logit softcap behind an output multiplier. It REASONS BEFORE ANSWERING (a to=self message precedes its to=user one), so its protocol runs at 8,192 context and a 2,048 budget rather than the shared 4,096/1,024. A vision-language checkpoint whose text tower alone is ingested; its 815 vision tensors are excluded at repack."
     },
     {
+      "alias": "flint",
+      "name": "Flint 40B-A2.5B (MLX INT4, group 64)",
+      "family": "flint",
+      "source": {
+        "kind": "mlx",
+        "repo": "RecursiveSI/flint-int4",
+        "revision": "3b93f9053b530488405ae9fca51d4900d6ce21f0",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "generation_config.json"
+        ]
+      },
+      "download_bytes": 22568912600,
+      "install_bytes": 23500000000,
+      "status": "runs",
+      "gates": [],
+      "measured": [],
+      "notes": "Recursive Flint: 49 layers (2 dense, 47 MoE), 256 routed experts top-6 plus an ungated shared expert, a sigmoid router, 14 NoPE full-attention layers and 35 sliding ones at window 513, learned attention sinks. Streamed experts: one indicative reading peaked at 1.61 GiB at 16 slots (0.98 at 8) for a 21 GiB install and decoded about 19 to 22 tok/s, on a machine not confirmed quiet. Generated coherently and byte-identically across 8, 16 and 96 expert-cache slots; no memory oracle or quality gate is frozen. The install carries a fixed 2^6 up/down rebalance that keeps the SwiGLU product inside FP16 (docs/FLINT_PHASE0.md); without it a plain English prompt overflows to NaN. The router is force-quantized from BF16 to INT8 (97.3 percent identical top-6, every difference a near-tie). Prefill is sequential: about 36 tok/s, so a 1,667-token prompt takes about 46 s. It reasons in an inline <think> block, which arrives as content. No chunked prefill, tool-call parsing, steering or speculation (the checkpoint ships no MTP head)."
+    },
+    {
       "alias": "ornith35b",
       "name": "Ornith-1.5 35B-A3B (MLX INT4, group 64)",
       "family": "qwen36",

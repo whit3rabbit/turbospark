@@ -1020,7 +1020,17 @@ fn library_changes_installs_and_other_moves_are_refused_while_a_move_runs() {
                 out,
             )
         }),
-        reply(|out| unsafe { ts_embedding_install(alias.as_ptr(), None, ptr::null_mut(), out) }),
+        reply(|out| unsafe {
+            // Refused before the pin is checked, so any revision does.
+            let revision = c("0");
+            ts_embedding_install(
+                alias.as_ptr(),
+                revision.as_ptr(),
+                None,
+                ptr::null_mut(),
+                out,
+            )
+        }),
     ];
     for refused in &installs {
         assert_busy(refused, "model move");

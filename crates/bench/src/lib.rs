@@ -6,6 +6,17 @@
 /// Benchmarking protocol case definitions and runner logic.
 pub mod protocol;
 
+/// Next-token distribution comparison (KL, top-k) shared by the arm probes
+/// and `tslab`'s quality gate.
+pub mod logit_compare;
+/// The distribution-probe corpus slices the arm probes and `tslab` prefill.
+pub mod quality_corpus;
+/// Host-only replay of tree vs chain speculative verify (KFlash).
+pub mod tree_replay;
+
+/// Speaker-attributed meeting scoring (cpWER) for the Frozen E port.
+pub mod meeting;
+
 /// Memory sampling helpers (macOS phys_footprint).
 #[cfg(target_os = "macos")]
 pub mod memory;
@@ -22,3 +33,5 @@ pub mod real_model_params;
 /// Unwarmed startup and first-request measurements, separate from the frozen protocol.
 #[cfg(target_os = "macos")]
 pub mod startup_probe;
+#[cfg(target_os = "macos")]
+pub mod tree_replay_record;

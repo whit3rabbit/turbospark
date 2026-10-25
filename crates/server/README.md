@@ -39,7 +39,7 @@ cargo run -p turbospark-server --bin turbospark-server -- <tokenizer-dir> [port]
 
 ## Key Modules
 
-- `main.rs` & `args.rs`: Binary entry point and command-line flag parser (`--model`, repeatable for distinct installs, `--stt-model`, `--tts-model`, `--music-model`, `--bind`, `--port`, `--pool-size`, `--api-key`, `--max-queue-depth`).
+- `main.rs` & `args.rs`: Binary entry point and command-line flag parser (`--model`, repeatable for distinct installs, `--embedding-model`, `--stt-model`, `--tts-model`, `--music-model`, `--bind`, `--port`, `--pool-size`, `--api-key`).
 - `handler/`: Core handlers for `/v1/chat/completions`, `/v1/models`, and `/health`, and generation orchestration (`plan`, `run_full`, `stream_blocking`).
 - `audio/` & `audio_real.rs`: Dedicated audio worker threads, queues, and handlers for STT (`/v1/audio/transcriptions`, realtime WebSocket), TTS (`/v1/audio/speech`), Music (`/v1/audio/generate`), async jobs (`/v1/audio/jobs`), and model lifecycle (`/v1/audio/models`).
 - `messages.rs`: Handler for Anthropic `/v1/messages` and `/v1/messages/count_tokens`, translating Anthropic messages to/from the OpenAI pipeline.
@@ -48,10 +48,10 @@ cargo run -p turbospark-server --bin turbospark-server -- <tokenizer-dir> [port]
 - `embeddings.rs` & `encoder_model.rs`: `/v1/embeddings` and Ollama embedding routes backed by BERT/XLM-RoBERTa encoder models.
 - `ollama.rs`: Ollama-compatible `/api/*` endpoints with NDJSON streaming.
 - `guardrails.rs` & `guardrails/`: Tool-call rescue parser, schema repair, and validation retry loop.
-- `registry.rs`: Model routing registry, including `PoolRegistry` for round-robin dispatch across multiple loaded model instances.
-- `queue.rs`: Request FIFO generation queue managing concurrent request buffering and queue timeouts.
-- `observe.rs`: Prometheus metrics collector and request latency instrumentation.
-- `vision.rs`: Multimodal image URL decoding, download limits, and vision tensor injection.
+- `registry.rs`: Model routing registry, including `PoolRegistry` for least-busy dispatch (round-robin across idle members) across multiple loaded model instances.
+- `queue.rs`: FIFO generation admission gate that buffers concurrent requests in arrival order while the serialized real backend generates (cancellation-aware; no queue timeout or depth cap).
+- `observe.rs`: Server event instrumentation (request ids, start/finish and generation events with durations) for embedding hosts; the Prometheus `/v1/metrics` endpoint (audio routes only) lives in `audio/metrics.rs`.
+- `vision.rs`: Multimodal image data-URL decoding, per-request image count and size limits, and vision tensor injection (remote image URLs are refused, not downloaded).
 - `bind.rs`: Network interface binding (loopback vs Tailscale tailnet).
 - `auth.rs`: Bearer token and API key validation.
 - `cancel.rs`: Client disconnect cancellation handling via cancellation tokens.
@@ -75,8 +75,9 @@ This crate contains 22 integration test suites in `tests/`:
 - Concurrency and queues: `generation_queue.rs`, `registry.rs`, `cancellation.rs`.
 - Security and transport: `auth.rs`, `streaming_error_framing.rs`.
 - Tool calling and guardrails: `guardrails.rs`, `system_prompt.rs`, `harmony_channels.rs`, `reasoning_channels.rs`.
-- Multimodal and real model tests: `images.rs`, `real_backend.rs`, `observe.rs`.
+- Multimodal and real model tests: `images.rs`, `image_generations.rs`, `real_backend.rs`, `observe.rs`.
 - Audio API: `audio_api.rs`.
+- CLI and OpenAPI contract: `server_cli.rs`, `server_api_contract.rs`.
 
 ## Crate Gotchas
 

@@ -98,7 +98,79 @@ fn failed(e: impl std::fmt::Display) -> AudioError {
     AudioError::Failed(e.to_string())
 }
 
-use runtime::native_audio::MEGATTS3_FAMILY;
+use runtime::native_audio::{FISH_DRAMA3_FAMILY, MEGATTS3_FAMILY, OMNIVOICE_FAMILY};
+
+/// Drama 3 speaks at the Fish codec's 44.1 kHz. The runner only reports its
+/// rate after it opens, and the route needs it before the first chunk, so
+/// it is a constant here (the runtime test pins the codec to match).
+const DRAMA3_SAMPLE_RATE: u32 = 44_100;
+
+/// A Drama 3 request: reference audio is optional (its presence makes the
+/// request a clone, which needs consent and the reference's transcript, both
+/// checked by the engine's validator). The model has no steps, speed,
+/// instruction or guidance weights, so none are forwarded; the route refuses
+/// them by name first. `steps` stays `None` because the request default of
+/// 30 would otherwise leak into an engine that refuses it.
+async fn drama3_request(
+    request: SpeechRequest,
+) -> Result<(runtime::native_audio::AudioRequest, Vec<f32>, u32), AudioError> {
+    let (samples, rate) = match request.reference_audio.clone() {
+        Some(encoded) => {
+            let (samples, rate) = tokio::task::spawn_blocking(move || decode_reference(&encoded))
+                .await
+                .map_err(|_| failed("decoding the reference audio stopped"))??;
+            (samples, Some(rate))
+        }
+        None => (Vec::new(), None),
+    };
+    let native = runtime::native_audio::AudioRequest {
+        task: native_task(AudioTask::TextToSpeech),
+        text: request.text,
+        steps: None,
+        seed: Some(request.seed.unwrap_or(0)),
+        reference_sample_rate: rate,
+        consent: request.consent,
+        reference_text: request.reference_text,
+        temperature: request.temperature,
+        top_p: request.top_p,
+        top_k: request.top_k,
+        max_frames: request.max_frames,
+        ..runtime::native_audio::AudioRequest::default()
+    };
+    Ok((native, samples, DRAMA3_SAMPLE_RATE))
+}
+
+/// An OmniVoice request: reference audio is optional (its presence makes
+/// the request a clone); the engine validates consent and bounds.
+async fn omnivoice_request(
+    request: SpeechRequest,
+) -> Result<(runtime::native_audio::AudioRequest, Vec<f32>, u32), AudioError> {
+    let (samples, rate) = match request.reference_audio.clone() {
+        Some(encoded) => {
+            let (samples, rate) = tokio::task::spawn_blocking(move || decode_reference(&encoded))
+                .await
+                .map_err(|_| failed("decoding the reference audio stopped"))??;
+            (samples, Some(rate))
+        }
+        None => (Vec::new(), None),
+    };
+    let native = runtime::native_audio::AudioRequest {
+        task: native_task(AudioTask::TextToSpeech),
+        text: request.text,
+        speed: request.speed,
+        language: request.language,
+        steps: Some(request.steps.unwrap_or(
+            turbospark_audio::tts::omnivoice::pipeline::GenerateParams::default().steps,
+        )),
+        seed: Some(request.seed.unwrap_or(0)),
+        reference_sample_rate: rate,
+        consent: request.consent,
+        instruction: request.instruction,
+        reference_text: request.reference_text,
+        ..runtime::native_audio::AudioRequest::default()
+    };
+    Ok((native, samples, 24_000))
+}
 
 /// A MegaTTS3 request: the reference voice decoded at its own rate (the
 /// runtime resamples it), the model's step default, and the clone options.
@@ -132,6 +204,45 @@ async fn clone_request(
         samples,
         turbospark_audio::tts::megatts3::SAMPLE_RATE,
     ))
+}
+
+/// The native request, reference PCM and output rate for one speech request,
+/// chosen by the loaded engine's family. Anything not named here is a Kokoro
+/// style voice model: no reference, a named voice, 24 kHz.
+async fn speech_request(
+    family: &str,
+    request: SpeechRequest,
+) -> Result<(runtime::native_audio::AudioRequest, Vec<f32>, u32), AudioError> {
+    if family == MEGATTS3_FAMILY {
+        clone_request(request).await
+    } else if family == OMNIVOICE_FAMILY {
+        omnivoice_request(request).await
+    } else if family == FISH_DRAMA3_FAMILY {
+        drama3_request(request).await
+    } else {
+        if request.reference_audio.is_some() {
+            return Err(AudioError::Invalid(format!(
+                "model {:?} does not clone voices",
+                request.model
+            )));
+        }
+        request
+            .voice
+            .parse::<Voice>()
+            .map_err(|e| AudioError::Invalid(e.to_string()))?;
+        let native = runtime::native_audio::AudioRequest {
+            task: native_task(AudioTask::TextToSpeech),
+            text: request.text,
+            voice: request.voice,
+            speed: request.speed,
+            ..runtime::native_audio::AudioRequest::default()
+        };
+        Ok((
+            native,
+            vec![],
+            turbospark_audio::tts::kokoro::OUTPUT_SAMPLE_RATE,
+        ))
+    }
 }
 
 /// Base64 WAV (an optional `data:...;base64,` prefix is accepted) to mono f32
@@ -256,6 +367,8 @@ fn run(engine: Engine, queue: Receiver<Work>) {
                             caption: request.caption,
                             lyrics: request.lyrics,
                             duration_seconds: request.duration_seconds,
+                            max_frames: request.max_frames,
+                            context_size: request.context_size,
                             steps: request.steps,
                             seed: request.seed,
                             ..AudioRequest::default()
@@ -332,6 +445,29 @@ fn valid_alias(alias: &str) -> bool {
 /// What an installed alias does, from the bundled catalogs. Aliases the
 /// catalogs do not know are refused: a directory's contents are not trusted
 /// to say what runner to start.
+/// Refuses a catalog alias that only the TurboSpark app executes (FluidAudio
+/// on Core ML). No Rust engine opens one, so attaching it here would fail
+/// later with a less useful error.
+fn refuse_app_only(alias: &str) -> Result<(), String> {
+    match catalog::audio_catalog::AudioCatalog::embedded()
+        .ok()
+        .and_then(|c| c.get(alias).cloned())
+    {
+        Some(profile) => app_only_refusal(&profile),
+        None => Ok(()),
+    }
+}
+
+fn app_only_refusal(profile: &catalog::audio_catalog::AudioProfile) -> Result<(), String> {
+    if profile.capabilities.http_api {
+        return Ok(());
+    }
+    Err(format!(
+        "{:?} runs only in the TurboSpark app; the HTTP server cannot attach it",
+        profile.identity.alias
+    ))
+}
+
 fn task_of_alias(alias: &str) -> Option<AudioTask> {
     use catalog::audio_catalog::{AudioCatalog, AudioTask as CatalogTask};
     if let Some(profile) = AudioCatalog::embedded()
@@ -389,6 +525,7 @@ impl RealAudioProvider {
         } else {
             spec.to_string()
         };
+        refuse_app_only(&id)?;
         self.insert(&id, task, dir)
     }
 
@@ -474,32 +611,7 @@ impl AudioProvider for RealAudioProvider {
         Box::pin(async move {
             let worker = self.worker(&request.model, AudioTask::TextToSpeech)?;
             let family = worker.info.family.clone().unwrap_or_default();
-            let (native, samples, sample_rate) = if family == MEGATTS3_FAMILY {
-                clone_request(request).await?
-            } else {
-                if request.reference_audio.is_some() {
-                    return Err(AudioError::Invalid(format!(
-                        "model {:?} does not clone voices",
-                        request.model
-                    )));
-                }
-                request
-                    .voice
-                    .parse::<Voice>()
-                    .map_err(|e| AudioError::Invalid(e.to_string()))?;
-                let native = runtime::native_audio::AudioRequest {
-                    task: native_task(AudioTask::TextToSpeech),
-                    text: request.text,
-                    voice: request.voice,
-                    speed: request.speed,
-                    ..runtime::native_audio::AudioRequest::default()
-                };
-                (
-                    native,
-                    vec![],
-                    turbospark_audio::tts::kokoro::OUTPUT_SAMPLE_RATE,
-                )
-            };
+            let (native, samples, sample_rate) = speech_request(&family, request).await?;
             // Refuse the caller's mistakes as 400 before a minutes-long job queues.
             runtime::native_audio::validate_request(&family, &native, &samples)
                 .map_err(AudioError::Invalid)?;
@@ -525,6 +637,8 @@ impl AudioProvider for RealAudioProvider {
                 caption: request.caption,
                 lyrics: request.lyrics,
                 duration_seconds: request.duration_seconds,
+                max_frames: request.max_frames,
+                context_size: request.context_size,
                 steps: request.steps,
                 seed: request.seed,
             };
@@ -550,6 +664,7 @@ impl AudioProvider for RealAudioProvider {
                     "{alias:?} is not an installed audio model alias"
                 )));
             }
+            refuse_app_only(&alias).map_err(AudioError::Invalid)?;
             let Some(store) = &self.store else {
                 return Err(AudioError::Failed(
                     "there is no model store on this machine".into(),
@@ -630,6 +745,128 @@ mod tests {
         }
     }
 
+    fn drama3_speech(reference: Option<&str>) -> SpeechRequest {
+        SpeechRequest {
+            model: "drama".into(),
+            text: "Hello there.".into(),
+            voice: "af_heart".into(),
+            speed: 1.0,
+            language: None,
+            reference_audio: reference.map(str::to_string),
+            reference_text: None,
+            instruction: None,
+            consent: false,
+            // The route default leaves steps unset; a value here must not
+            // reach the engine.
+            steps: Some(30),
+            seed: None,
+            p_w: None,
+            t_w: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            max_frames: None,
+        }
+    }
+
+    fn reference_wav(rate: u32, seconds: f32) -> String {
+        use base64::Engine;
+        let frames = (rate as f32 * seconds) as usize;
+        let samples = (0..frames).map(|i| (i as f32 * 0.05).sin() * 0.3).collect();
+        let wave = turbospark_audio::Waveform::new(rate, 1, samples).unwrap();
+        base64::engine::general_purpose::STANDARD.encode(turbospark_audio::write_wav_f32(&wave))
+    }
+
+    /// The rate feeds `x-audio-sample-rate` and the WAV header, so a Drama
+    /// model answering at the Kokoro default would play at the wrong speed.
+    #[tokio::test]
+    async fn drama3_requests_report_44100_and_forward_only_what_it_takes() {
+        // Through the dispatch: a Drama model must not fall into the Kokoro
+        // arm, which would report 24 kHz.
+        let (_, _, kokoro_rate) = speech_request("kokoro", drama3_speech(None)).await.unwrap();
+        assert_eq!(kokoro_rate, 24_000);
+        let (_, _, rate) = speech_request(FISH_DRAMA3_FAMILY, drama3_speech(None))
+            .await
+            .unwrap();
+        assert_eq!(rate, 44_100);
+        let mut speech = drama3_speech(None);
+        speech.temperature = Some(0.6);
+        speech.top_p = Some(0.8);
+        speech.top_k = Some(40);
+        speech.max_frames = Some(100);
+        let (native, samples, rate) = drama3_request(speech).await.unwrap();
+        assert_eq!(rate, 44_100);
+        assert!(samples.is_empty());
+        assert_eq!(native.steps, None);
+        assert_eq!(native.seed, Some(0));
+        assert_eq!(
+            (
+                native.temperature,
+                native.top_p,
+                native.top_k,
+                native.max_frames
+            ),
+            (Some(0.6), Some(0.8), Some(40), Some(100))
+        );
+        assert_eq!(native.reference_sample_rate, None);
+        runtime::native_audio::validate_request(FISH_DRAMA3_FAMILY, &native, &samples).unwrap();
+    }
+
+    /// The route's own checks do not decode audio, so the duration, consent
+    /// and transcript rules of a clone are the engine validator's.
+    #[tokio::test]
+    async fn drama3_clone_rules_come_from_the_runtime_validator() {
+        let validate = |native: &runtime::native_audio::AudioRequest, samples: &[f32]| {
+            runtime::native_audio::validate_request(FISH_DRAMA3_FAMILY, native, samples)
+        };
+        let two_seconds = reference_wav(24_000, 2.0);
+        let mut speech = drama3_speech(Some(&two_seconds));
+        speech.consent = true;
+        speech.reference_text = Some("The reference.".into());
+        let (native, samples, rate) = drama3_request(speech.clone()).await.unwrap();
+        // The reference keeps its own rate; the runner resamples it.
+        assert_eq!((rate, native.reference_sample_rate), (44_100, Some(24_000)));
+        validate(&native, &samples).unwrap();
+
+        let mut no_consent = speech.clone();
+        no_consent.consent = false;
+        let (native, samples, _) = drama3_request(no_consent).await.unwrap();
+        assert!(validate(&native, &samples).unwrap_err().contains("consent"));
+
+        let mut no_text = speech.clone();
+        no_text.reference_text = None;
+        let (native, samples, _) = drama3_request(no_text).await.unwrap();
+        assert!(validate(&native, &samples)
+            .unwrap_err()
+            .contains("reference_text"));
+
+        let short = reference_wav(24_000, 0.5);
+        let mut too_short = speech;
+        too_short.reference_audio = Some(short);
+        let (native, samples, _) = drama3_request(too_short).await.unwrap();
+        assert!(validate(&native, &samples)
+            .unwrap_err()
+            .contains("1 through 30 seconds"));
+    }
+
+    /// Every other family would ignore a sampler field, so the shared guard
+    /// refuses it. The route relies on this for the providers it wraps.
+    #[test]
+    fn other_families_refuse_the_drama3_sampler_fields() {
+        let native = runtime::native_audio::AudioRequest {
+            task: native_task(AudioTask::TextToSpeech),
+            text: "hi".into(),
+            top_k: Some(10),
+            ..runtime::native_audio::AudioRequest::default()
+        };
+        for family in ["kokoro", MEGATTS3_FAMILY, OMNIVOICE_FAMILY] {
+            assert!(
+                runtime::native_audio::validate_request(family, &native, &[]).is_err(),
+                "{family}"
+            );
+        }
+    }
+
     /// The HTTP load route reaches `valid_alias` first. A path-shaped name
     /// must never get as far as the store, which would happily open it.
     #[test]
@@ -670,6 +907,68 @@ mod tests {
         );
         assert_eq!(task_of_alias("minimax-music3-4bit"), Some(AudioTask::Music));
         assert_eq!(task_of_alias("not-in-any-catalog"), None);
+    }
+
+    /// A profile only the app runs is refused, by alias, before a worker
+    /// spawns. Every row a Rust engine runs stays attachable.
+    #[test]
+    fn app_only_profiles_are_refused_and_current_rows_are_not() {
+        let catalog = catalog::audio_catalog::AudioCatalog::embedded().unwrap();
+        let mut refused = 0;
+        for profile in catalog.entries() {
+            let app_only = profile.capabilities.backend == "swift_coreml";
+            let alias = &profile.identity.alias;
+            assert_eq!(app_only_refusal(profile).is_err(), app_only, "{alias}");
+            assert_eq!(refuse_app_only(alias).is_err(), app_only, "{alias}");
+            refused += usize::from(app_only);
+        }
+        assert!(
+            refused > 0,
+            "needs a shipped app-only row to test the alias path"
+        );
+        assert!(refuse_app_only("not-in-any-catalog").is_ok());
+        let mut app_only = catalog.get("whisper-base").unwrap().clone();
+        app_only.capabilities.http_api = false;
+        let err = app_only_refusal(&app_only).unwrap_err();
+        assert!(err.contains("runs only in the TurboSpark app"), "{err}");
+    }
+
+    /// The catalog labels Parakeet by where the runtime puts its encoder,
+    /// which carries the run. Changing the default placement must change
+    /// the label with it.
+    #[test]
+    fn parakeet_catalog_placement_matches_the_runtime_encoder_default() {
+        let catalog = catalog::audio_catalog::AudioCatalog::embedded().unwrap();
+        let defaults = [
+            (
+                "parakeet-redux-coreml",
+                format!(
+                    "{:?}",
+                    runtime::coreml::ParakeetCoreMlOptions::default().encoder_units
+                ),
+            ),
+            (
+                "parakeet-unified-en-coreml",
+                format!(
+                    "{:?}",
+                    runtime::coreml::UnifiedOptions::default().encoder_units
+                ),
+            ),
+        ];
+        for (alias, units) in defaults {
+            let profile = catalog.get(alias).unwrap();
+            let expected = match units.as_str() {
+                "CpuAndGpu" => "gpu",
+                "CpuAndNeuralEngine" => "ane",
+                "CpuOnly" => "cpu",
+                other => panic!("set the {alias} catalog compute for encoder units {other}"),
+            };
+            assert_eq!(
+                profile.capabilities.compute.as_deref(),
+                Some(expected),
+                "{alias}"
+            );
+        }
     }
 
     #[test]

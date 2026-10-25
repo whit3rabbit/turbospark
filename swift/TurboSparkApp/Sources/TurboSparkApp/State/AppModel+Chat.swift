@@ -313,6 +313,7 @@ extension AppModel {
         } else {
             ToolObservationStore.shared.delete(chatID: id)
             try? MemoryLedgerStore.shared.invalidateEvidence(chatID: id, messages: [])
+            forgetConversationRecall(chatID: id)
         }
         invalidatePendingTitleGeneration(for: id)
         // A deleted chat's queued drafts are discarded WITH it: the user's
@@ -393,6 +394,7 @@ extension AppModel {
                     }
                 } else {
                     chats[index].messages.removeAll()
+                    forgetConversationRecall(chatID: chats[index].id)
                     chats[index].contextSummary = nil
                     chats[index].compactedMessageCount = 0
                     chats[index].skillState = nil

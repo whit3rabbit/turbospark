@@ -413,6 +413,7 @@ impl Gpt2 {
                 rope: Some(rope.clone()),
                 window: None,
                 bidirectional: false,
+                exec: None,
             };
             let mlp = Mlp {
                 fc_in: weights.linear(

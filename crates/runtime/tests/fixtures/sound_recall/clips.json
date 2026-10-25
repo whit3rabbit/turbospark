@@ -1,0 +1,501 @@
+{
+ "description": "Real recorded sound clips for the sound-lane recall gate (crates/runtime/tests/coreml_sound_recall.rs). Not committed: crates/runtime/tools/fetch_sound_recall_clips.py downloads each url, refuses a file whose SHA-256 differs, and converts the first `seconds` to 16 kHz mono WAV. Licenses and authors were read from each file's Commons page and API metadata on 2026-10-16; the CC BY clips need the attribution string when redistributed.",
+ "clips": [
+  {
+   "name": "dog_1",
+   "class": "dog",
+   "source": "File:Ladrido perro.ogg",
+   "page": "https://commons.wikimedia.org/wiki/File%3ALadrido_perro.ogg",
+   "url": "https://upload.wikimedia.org/wikipedia/commons/f/fd/Ladrido_perro.ogg",
+   "bytes": 77123,
+   "sha1": "0ac194a829fd26d68c8cc47c76754576a419c5c2",
+   "sha256": "6646b8ab52930a967d01ec19158185599b4573d0b00507e7da21df89ebafad53",
+   "license": "CC0",
+   "author": "Edo.pt2",
+   "attribution": "\"Ladrido perro.ogg\" by Edo.pt2, CC0, via Wikimedia Commons",
+   "seconds": 30
+  },
+  {
+   "name": "rooster_1",
+   "class": "rooster",
+   "source": "File:Medium rooster crowing.ogg",
+   "page": "https://commons.wikimedia.org/wiki/File%3AMedium_rooster_crowing.ogg",
+   "url": "https://upload.wikimedia.org/wikipedia/commons/0/0d/Medium_rooster_crowing.ogg",
+   "bytes": 120711,
+   "sha1": "31a18ee41bf2898d310f12004199423d94b9c610",
+   "sha256": "318baa8a707dec66af08b6b7a4ed6b1a418cd792d1b4f52e7bf2cd502ee5befb",
+   "license": "Public domain",
+   "author": "alys",
+   "attribution": "\"Medium rooster crowing.ogg\" by alys, Public domain, via Wikimedia Commons",
+   "seconds": 30
+  },
+  {
+   "name": "rooster_2",
+   "class": "rooster",
+   "source": "File:Small rooster crowing.ogg",
+   "page": "https://commons.wikimedia.org/wiki/File%3ASmall_rooster_crowing.ogg",
+   "url": "https://upload.wikimedia.org/wikipedia/commons/c/c5/Small_rooster_crowing.ogg",
+   "bytes": 114105,
+   "sha1": "45dce68db2933714ddffb2b71816922e2a0640ca",
+   "sha256": "75deb3499d5af6237563629af901911775c4d6a6110fc315132d56239b9d0515",
+   "license": "Public domain",
+   "author": "alys",
+   "attribution": "\"Small rooster crowing.ogg\" by alys, Public domain, via Wikimedia Commons",
+   "seconds": 30
+  },
+  {
+   "name": "cat_1",
+   "class": "cat",
+   "source": "File:Weibliche Britisch Kurzhaar will Futter C1277 MIAUEN.wav",
+   "page": "https://commons.wikimedia.org/wiki/File%3AWeibliche_Britisch_Kurzhaar_will_Futter_C1277_MIAUEN.wav",
+   "url": "https://upload.wikimedia.org/wikipedia/commons/0/08/Weibliche_Britisch_Kurzhaar_will_Futter_C1277_MIAUEN.wav",
+   "bytes": 3272802,
+   "sha1": "58cd3daf1912ef00a80dab829f262d56fd8a9640",
+   "sha256": "368f2554a82ec58e03284387f378cfcb7b3cef7975bca4b22fec921d49e750cb",
+   "license": "CC BY 4.0",
+   "author": "PantheraLeo1359531",
+   "attribution": "\"Weibliche Britisch Kurzhaar will Futter C1277 MIAUEN.wav\" by PantheraLeo1359531, CC BY 4.0, via Wikimedia Commons",
+   "seconds": 30
+  },
+  {
+   "name": "cat_2",
+   "class": "cat",
+   "source": "File:GettingOutImpatient.ogg",
+   "page": "https://commons.wikimedia.org/wiki/File%3AGettingOutImpatient.ogg",
+   "url": "https://upload.wikimedia.org/wikipedia/commons/c/c0/GettingOutImpatient.ogg",
+   "bytes": 32167,
+   "sha1": "e14379ebfc04e35733788a1bbadd7da29327353b",
+   "sha256": "5591a74b3dd34e1444ea1786718de2f6acc580b1e816f028c3bc6165560b2fcc",
+   "license": "Public domain",
+   "author": "Heismark",
+   "attribution": "\"GettingOutImpatient.ogg\" by Heismark, Public domain, via Wikimedia Commons",
+   "seconds": 30
+  },
+  {
+   "name": "bird_1",
+   "class": "bird",
+   "source": "File:Yellowstone sound library - American Robin - 001.mp3",
+   "page": "https://commons.wikimedia.org/wiki/File%3AYellowstone_sound_library_-_American_Robin_-_001.mp3",
+   "url": "https://upload.wikimedia.org/wikipedia/commons/d/d8/Yellowstone_sound_library_-_American_Robin_-_001.mp3",
+   "bytes": 598352,
+   "sha1": "ae10affc52a6ff0353f97bedced42b57dcf81e63",
+   "sha256": "7a2700bbe2233505ccf592e9e06a4b196a0feb4d2d7a4773ed5f2f110696a001",
+   "license": "Public domain",
+   "author": "NPS & MSU Acoustic Atlas/Jennifer Jerrett",
+   "attribution": "\"Yellowstone sound library - American Robin - 001.mp3\" by NPS & MSU Acoustic Atlas/Jennifer Jerrett, Public domain, via Wikimedia Commons",
+   "seconds": 30
+  },
+  {
+   "name": "bird_2",
+   "class": "bird",
+   "source": "File:Birdsong mild sunny day.ogg",
+   "page": "https://commons.wikimedia.org/wiki/File%3ABirdsong_mild_sunny_day.ogg",
+   "url": "https://upload.wikimedia.org/wikipedia/commons/7/75/Birdsong_mild_sunny_day.ogg",
+   "bytes": 1102464,
+   "sha1": "74a21890c35202785007e683c33bb76d98173efa",
+   "sha256": "287b4dc9713a024dc3535ec168a3fd87ddd25b481c881d0343fbdf4f24dd7c5d",
+   "license": "Public domain",
+   "author": "stephan",
+   "attribution": "\"Birdsong mild sunny day.ogg\" by stephan, Public domain, via Wikimedia Commons",
+   "seconds": 30
+  },
+  {
+   "name": "frogs_1",
+   "class": "frogs",
+   "source": "File:Spring Peeper Frogs (Pseudacris crucifer) singing on night of April 21 of 2019 in North Pittston PA.ogg",
+   "page": "https://commons.wikimedia.org/wiki/File%3ASpring_Peeper_Frogs_%28Pseudacris_crucifer%29_singing_on_night_of_April_21_of_2019_in_North_Pittston_PA.ogg",
+   "url": "https://upload.wikimedia.org/wikipedia/commons/0/07/Spring_Peeper_Frogs_%28Pseudacris_crucifer%29_singing_on_night_of_April_21_of_2019_in_North_Pittston_PA.ogg",
+   "bytes": 752368,
+   "sha1": "b87029232ece1764e1966a9d47aca666167d8e0f",
+   "sha256": "9580b1eb15f953ff3746c1849e2c731217461a1249d6e1e2ac91231a3bb37eaf",
+   "license": "CC0",
+   "author": "JohnDziak",
+   "attribution": "\"Spring Peeper Frogs (Pseudacris crucifer) singing on night of April 21 of 2019 in North Pittston PA.ogg\" by JohnDziak, CC0, via Wikimedia Commons",
+   "seconds": 30
+  },
+  {
+   "name": "thunder_1",
+   "class": "thunder",
+   "source": "File:Tonitrus.ogg",
+   "page": "https://commons.wikimedia.org/wiki/File%3ATonitrus.ogg",
+   "url": "https://upload.wikimedia.org/wikipedia/commons/c/c8/Tonitrus.ogg",
+   "bytes": 394881,
+   "sha1": "d65b09e6033649e7f5fad8634a850541d1db815e",
+   "sha256": "75c4d3911eedd1370db6aa30c90aee9e2eee3d18b429862eee6db221bcd0f421",
+   "license": "Public domain",
+   "author": "Mysid",
+   "attribution": "\"Tonitrus.ogg\" by Mysid, Public domain, via Wikimedia Commons",
+   "seconds": 30
+  },
+  {
+   "name": "thunder_2",
+   "class": "thunder",
+   "source": "File:Thunder.ogg",
+   "page": "https://commons.wikimedia.org/wiki/File%3AThunder.ogg",
+   "url": "https://upload.wikimedia.org/wikipedia/commons/9/93/Thunder.ogg",
+   "bytes": 143493,
+   "sha1": "39334542e5041eaf8b95b2752bcab6d1671a0fb1",
+   "sha256": "c66da284f376957f337230533671c004e08364b87b73959f067986cbfa8504dd",
+   "license": "CC BY 3.0",
+   "author": "Bidgee",
+   "attribution": "\"Thunder.ogg\" by Bidgee, CC BY 3.0, via Wikimedia Commons",
+   "seconds": 30
+  },
+  {
+   "name": "waves_1",
+   "class": "waves",
+   "source": "File:Oceanwavescrushing.ogg",
+   "page": "https://commons.wikimedia.org/wiki/File%3AOceanwavescrushing.ogg",
+   "url": "https://upload.wikimedia.org/wikipedia/commons/f/f1/Oceanwavescrushing.ogg",
+   "bytes": 2849514,
+   "sha1": "3a598af423610eefef04c06bed6bcd6be8a28680",
+   "sha256": "2a56648817264b6caa30426baa2245a03041b1febe9faa7b9235d7cc539aa9ca",
+   "license": "CC BY 3.0",
+   "author": "Luftrum",
+   "attribution": "\"Oceanwavescrushing.ogg\" by Luftrum, CC BY 3.0, via Wikimedia Commons",
+   "seconds": 30
+  },
+  {
+   "name": "waves_2",
+   "class": "waves",
+   "source": "File:On a pebble beach.ogg",
+   "page": "https://commons.wikimedia.org/wiki/File%3AOn_a_pebble_beach.ogg",
+   "url": "https://upload.wikimedia.org/wikipedia/commons/7/73/On_a_pebble_beach.ogg",
+   "bytes": 1202713,
+   "sha1": "15549b7ee1d563c53383cdff5f33cc14521d4982",
+   "sha256": "4e506141b9a285d03debdb8e0fbc9c1e30aaa29f82f8b2f368f70d5491a636b6",
+   "license": "Public domain",
+   "author": "earthcalling",
+   "attribution": "\"On a pebble beach.ogg\" by earthcalling, Public domain, via Wikimedia Commons",
+   "seconds": 30
+  },
+  {
+   "name": "bells_1",
+   "class": "bells",
+   "source": "File:Cathedralofthedowns.ogg",
+   "page": "https://commons.wikimedia.org/wiki/File%3ACathedralofthedowns.ogg",
+   "url": "https://upload.wikimedia.org/wikipedia/commons/4/42/Cathedralofthedowns.ogg",
+   "bytes": 680262,
+   "sha1": "a8b451d3546835075f84f86c5165432a990711c5",
+   "sha256": "02acd6593c19242217ed0c471d03f07cbe928d4d49853dc43d19020b14f77ff8",
+   "license": "Public domain",
+   "author": "acclivity",
+   "attribution": "\"Cathedralofthedowns.ogg\" by acclivity, Public domain, via Wikimedia Commons",
+   "seconds": 30
+  },
+  {
+   "name": "bells_2",
+   "class": "bells",
+   "source": "File:SevenumBells.ogg",
+   "page": "https://commons.wikimedia.org/wiki/File%3ASevenumBells.ogg",
+   "url": "https://upload.wikimedia.org/wikipedia/commons/4/44/SevenumBells.ogg",
+   "bytes": 447582,
+   "sha1": "8cc8655d3a7dd1d2e7cef02a083db2b863ec7b8b",
+   "sha256": "48ca57d3d88c3a350495995a0d3eefd5602899e4511783e33d16a9063e7df419",
+   "license": "Public domain",
+   "author": "Geke",
+   "attribution": "\"SevenumBells.ogg\" by Geke, Public domain, via Wikimedia Commons",
+   "seconds": 30
+  },
+  {
+   "name": "applause_1",
+   "class": "applause",
+   "source": "File:Applause-2.ogg",
+   "page": "https://commons.wikimedia.org/wiki/File%3AApplause-2.ogg",
+   "url": "https://upload.wikimedia.org/wikipedia/commons/5/5b/Applause-2.ogg",
+   "bytes": 565552,
+   "sha1": "f541b166bb248f617dcb3dc7f4ef5e44a95df5ed",
+   "sha256": "80b38f8a18726315b2093606b8c46107419dcd294f8008e0aeab7f56ac11ae21",
+   "license": "CC BY 3.0",
+   "author": "RHumphries",
+   "attribution": "\"Applause-2.ogg\" by RHumphries, CC BY 3.0, via Wikimedia Commons",
+   "seconds": 30
+  },
+  {
+   "name": "applause_2",
+   "class": "applause",
+   "source": "File:277021 sandermotions applause-2.wav",
+   "page": "https://commons.wikimedia.org/wiki/File%3A277021_sandermotions_applause-2.wav",
+   "url": "https://upload.wikimedia.org/wikipedia/commons/6/6d/277021_sandermotions_applause-2.wav",
+   "bytes": 1213484,
+   "sha1": "73c1b58ccc6251406346f3f4cbc161dc858c73da",
+   "sha256": "81d52260cee58e0f284a0236c9d4a0e40463df182ea869ee14da70bfa6258b5e",
+   "license": "CC0",
+   "author": "Sandermotions",
+   "attribution": "\"277021 sandermotions applause-2.wav\" by Sandermotions, CC0, via Wikimedia Commons",
+   "seconds": 30
+  },
+  {
+   "name": "siren_1",
+   "class": "siren",
+   "source": "File:American police siren i.ogg",
+   "page": "https://commons.wikimedia.org/wiki/File%3AAmerican_police_siren_i.ogg",
+   "url": "https://upload.wikimedia.org/wikipedia/commons/a/ae/American_police_siren_i.ogg",
+   "bytes": 400043,
+   "sha1": "d295fd8d194d8b13c9b5b55ce5547b04070efef9",
+   "sha256": "03f0bc628c066261778dc4b95d1916cf5df04149c69364b1a0eeed5ad279a82a",
+   "license": "Public domain",
+   "author": "lezer",
+   "attribution": "\"American police siren i.ogg\" by lezer, Public domain, via Wikimedia Commons",
+   "seconds": 30
+  },
+  {
+   "name": "siren_2",
+   "class": "siren",
+   "source": "File:WWS Policecarsiren.ogg",
+   "page": "https://commons.wikimedia.org/wiki/File%3AWWS_Policecarsiren.ogg",
+   "url": "https://upload.wikimedia.org/wikipedia/commons/7/76/WWS_Policecarsiren.ogg",
+   "bytes": 229706,
+   "sha1": "29669b91730c31808302bf5705fe3789ef7397ae",
+   "sha256": "0c13636a627d4b16d65a5734d51b9ea50661567fa6a6575767f9f8bb892e210d",
+   "license": "CC BY 4.0",
+   "author": "Work With Sounds / Konrad Gutkowski",
+   "attribution": "\"WWS Policecarsiren.ogg\" by Work With Sounds / Konrad Gutkowski, CC BY 4.0, via Wikimedia Commons",
+   "seconds": 30
+  },
+  {
+   "name": "typing_1",
+   "class": "typing",
+   "source": "File:Typing fast.ogg",
+   "page": "https://commons.wikimedia.org/wiki/File%3ATyping_fast.ogg",
+   "url": "https://upload.wikimedia.org/wikipedia/commons/4/4f/Typing_fast.ogg",
+   "bytes": 712698,
+   "sha1": "70458fed223819cf0985c877e52f7f897f882747",
+   "sha256": "7aeb5a95a7f3c87bf1b829c533c17242643d4b08f99495e466f5b58744d846a2",
+   "license": "Public domain",
+   "author": "stephan",
+   "attribution": "\"Typing fast.ogg\" by stephan, Public domain, via Wikimedia Commons",
+   "seconds": 30
+  },
+  {
+   "name": "typing_2",
+   "class": "typing",
+   "source": "File:Laptop keyboard.ogg",
+   "page": "https://commons.wikimedia.org/wiki/File%3ALaptop_keyboard.ogg",
+   "url": "https://upload.wikimedia.org/wikipedia/commons/6/67/Laptop_keyboard.ogg",
+   "bytes": 1301682,
+   "sha1": "aeea0229ffdb2420ed02ba2a4e351d10b4c45c29",
+   "sha256": "687c8961b838f75344d99a9762934e1741a390d942a2b4b375d01d0d99cfdd20",
+   "license": "Public domain",
+   "author": "russiandoll",
+   "attribution": "\"Laptop keyboard.ogg\" by russiandoll, Public domain, via Wikimedia Commons",
+   "seconds": 30
+  },
+  {
+   "name": "fire_1",
+   "class": "fire",
+   "source": "File:Dry grass burning in open fireplace.ogg",
+   "page": "https://commons.wikimedia.org/wiki/File%3ADry_grass_burning_in_open_fireplace.ogg",
+   "url": "https://upload.wikimedia.org/wikipedia/commons/d/d8/Dry_grass_burning_in_open_fireplace.ogg",
+   "bytes": 511116,
+   "sha1": "641163a91e9bd87d0f3f4d4b10e75b99f74afcec",
+   "sha256": "0fb9fb4a44fe378ceffb2b80d0cf420e28404e04f5f200b7bc0205eadeebc8d4",
+   "license": "Public domain",
+   "author": "ezwa",
+   "attribution": "\"Dry grass burning in open fireplace.ogg\" by ezwa, Public domain, via Wikimedia Commons",
+   "seconds": 30
+  },
+  {
+   "name": "rain_1",
+   "class": "rain",
+   "source": "File:Rain (1).ogg",
+   "page": "https://commons.wikimedia.org/wiki/File%3ARain_%281%29.ogg",
+   "url": "https://upload.wikimedia.org/wikipedia/commons/0/0e/Rain_%281%29.ogg",
+   "bytes": 585522,
+   "sha1": "893284b4d41ea06c68133e46f12af29b506ea640",
+   "sha256": "31efcbe952a3989a9276774e2d7be61a2dc98fdd785a94d1435fc19cda9a84d1",
+   "license": "Public domain",
+   "author": "ezwa",
+   "attribution": "\"Rain (1).ogg\" by ezwa, Public domain, via Wikimedia Commons",
+   "seconds": 30
+  },
+  {
+   "name": "stream_1",
+   "class": "stream",
+   "source": "File:Shallow small river with stony riverbed.ogg",
+   "page": "https://commons.wikimedia.org/wiki/File%3AShallow_small_river_with_stony_riverbed.ogg",
+   "url": "https://upload.wikimedia.org/wikipedia/commons/2/21/Shallow_small_river_with_stony_riverbed.ogg",
+   "bytes": 483132,
+   "sha1": "edb136ae8c31371f8923ce5ef1df8d068e816097",
+   "sha256": "ee414934684667f85bba98b15c20880e0a981d93cec9582f665b005a99ba49e0",
+   "license": "Public domain",
+   "author": "stephan",
+   "attribution": "\"Shallow small river with stony riverbed.ogg\" by stephan, Public domain, via Wikimedia Commons",
+   "seconds": 30
+  },
+  {
+   "name": "knock_1",
+   "class": "knock",
+   "source": "File:Knocking on wood or door.ogg",
+   "page": "https://commons.wikimedia.org/wiki/File%3AKnocking_on_wood_or_door.ogg",
+   "url": "https://upload.wikimedia.org/wikipedia/commons/1/1c/Knocking_on_wood_or_door.ogg",
+   "bytes": 155680,
+   "sha1": "7fae9ee6914c84f37bdf558643a07efc5f7587b0",
+   "sha256": "f65a210f76fd6e76757ac632585b1bbf9ffeaf35b9c3aa1466eb9dd6c7ca9590",
+   "license": "Public domain",
+   "author": "stephan",
+   "attribution": "\"Knocking on wood or door.ogg\" by stephan, Public domain, via Wikimedia Commons",
+   "seconds": 30
+  },
+  {
+   "name": "helicopter_1",
+   "class": "helicopter",
+   "source": "File:Helicopter over quiet neighbourhood.ogg",
+   "page": "https://commons.wikimedia.org/wiki/File%3AHelicopter_over_quiet_neighbourhood.ogg",
+   "url": "https://upload.wikimedia.org/wikipedia/commons/d/d9/Helicopter_over_quiet_neighbourhood.ogg",
+   "bytes": 285418,
+   "sha1": "1e115d28ad67f54cc3d8e16915af48d658121d08",
+   "sha256": "942c0bc29c9f5e780577c205b74e657422ed972662b52a778c0d152e05e3bbb5",
+   "license": "Public domain",
+   "author": "ezwa",
+   "attribution": "\"Helicopter over quiet neighbourhood.ogg\" by ezwa, Public domain, via Wikimedia Commons",
+   "seconds": 30
+  }
+ ],
+ "queries": [
+  {
+   "text": "a dog barking",
+   "class": "dog"
+  },
+  {
+   "text": "dog bark",
+   "class": "dog"
+  },
+  {
+   "text": "a rooster crowing",
+   "class": "rooster"
+  },
+  {
+   "text": "rooster",
+   "class": "rooster"
+  },
+  {
+   "text": "a cat meowing",
+   "class": "cat"
+  },
+  {
+   "text": "cat meow",
+   "class": "cat"
+  },
+  {
+   "text": "a bird singing",
+   "class": "bird"
+  },
+  {
+   "text": "birdsong",
+   "class": "bird"
+  },
+  {
+   "text": "frogs chirping at night",
+   "class": "frogs"
+  },
+  {
+   "text": "frogs",
+   "class": "frogs"
+  },
+  {
+   "text": "thunder rumbling in a storm",
+   "class": "thunder"
+  },
+  {
+   "text": "thunder",
+   "class": "thunder"
+  },
+  {
+   "text": "ocean waves crashing on the shore",
+   "class": "waves"
+  },
+  {
+   "text": "waves",
+   "class": "waves"
+  },
+  {
+   "text": "church bells ringing",
+   "class": "bells"
+  },
+  {
+   "text": "bells",
+   "class": "bells"
+  },
+  {
+   "text": "an audience applauding",
+   "class": "applause"
+  },
+  {
+   "text": "applause",
+   "class": "applause"
+  },
+  {
+   "text": "a police siren",
+   "class": "siren"
+  },
+  {
+   "text": "siren",
+   "class": "siren"
+  },
+  {
+   "text": "typing on a computer keyboard",
+   "class": "typing"
+  },
+  {
+   "text": "keyboard typing",
+   "class": "typing"
+  },
+  {
+   "text": "a fire crackling",
+   "class": "fire"
+  },
+  {
+   "text": "fire",
+   "class": "fire"
+  },
+  {
+   "text": "rain falling",
+   "class": "rain"
+  },
+  {
+   "text": "rain",
+   "class": "rain"
+  },
+  {
+   "text": "water flowing in a stream",
+   "class": "stream"
+  },
+  {
+   "text": "river",
+   "class": "stream"
+  },
+  {
+   "text": "someone knocking on a door",
+   "class": "knock"
+  },
+  {
+   "text": "knocking",
+   "class": "knock"
+  },
+  {
+   "text": "a helicopter flying overhead",
+   "class": "helicopter"
+  },
+  {
+   "text": "helicopter",
+   "class": "helicopter"
+  },
+  {
+   "text": "a baby crying",
+   "class": null
+  },
+  {
+   "text": "a vacuum cleaner running",
+   "class": null
+  },
+  {
+   "text": "a person playing the piano",
+   "class": null
+  },
+  {
+   "text": "glass shattering",
+   "class": null
+  }
+ ]
+}

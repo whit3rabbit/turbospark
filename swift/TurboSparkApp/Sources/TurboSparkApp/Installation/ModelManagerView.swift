@@ -19,14 +19,6 @@ struct ModelManagerView: View {
     /// Read so the strings built from `AppStrings` follow the language picker.
     @Environment(\.locale) private var locale
 
-    private enum ManagerSection: String, CaseIterable, Identifiable {
-        case text
-        case images
-
-        var id: String { rawValue }
-    }
-
-    @State private var managerSection: ManagerSection = .text
     @State private var searchText = ""
     @State private var architectureFilter: ArchitectureFilter = .all
     @State private var drafterFilter: DrafterFilter = .all
@@ -54,20 +46,27 @@ struct ModelManagerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ModelManagerHeaderView(model: model)
             // A library found on a drive that just connected (task 6.6). Above
-            // both the Text and the Image tab: it concerns the whole store.
+            // every kind: it concerns the whole store.
             if libraryState.pendingOffer != nil {
                 LibraryOfferBanner(model: model, libraryState: libraryState)
                     .padding(.horizontal, 16)
                     .padding(.top, 8)
             }
-            managerSectionPicker
-            Divider()
-            if managerSection == .text {
+            // The kind is chosen in the panel beside the rail
+            // (`InstalledSidebarPanel`). Audio brings its own header: its
+            // counts and Rescan read the audio catalog, not the text store.
+            switch model.installedModelKind {
+            case .text:
+                ModelManagerHeaderView(model: model)
+                Divider()
                 textModelContent
-            } else {
+            case .images:
+                ModelManagerHeaderView(model: model)
+                Divider()
                 ImageModelManagerView(model: model)
+            case .audio:
+                AudioInstalledModelsView(model: model, controller: model.audioWorkspace)
             }
         }
         .task {
@@ -85,38 +84,6 @@ struct ModelManagerView: View {
                 selectedModelPath = followed
             }
         }
-    }
-
-    /// The model-type switch plus the scope line. The picker's label is
-    /// hidden (it is the VoiceOver name only) and the control sizes itself:
-    /// the old 240pt frame squeezed a visible label until it wrapped.
-    /// Audio installs live in the Audio workspace, so the scope line says so
-    /// and offers the way there instead of leaving a third category missing.
-    private var managerSectionPicker: some View {
-        AppAdaptiveHeader {
-            Picker(selection: $managerSection) {
-                Text("Text Models", bundle: .module).tag(ManagerSection.text)
-                Text("Image Models", bundle: .module).tag(ManagerSection.images)
-            } label: {
-                Text("Installed model type", bundle: .module)
-            }
-            .labelsHidden()
-            .pickerStyle(.segmented)
-            .fixedSize()
-        } actions: {
-            Text("Audio models are managed in Audio.", bundle: .module)
-                .themedFont(.small)
-                .foregroundStyle(.appSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Button {
-                model.activeSection = .audio
-            } label: {
-                Label { Text("Open Audio", bundle: .module) } icon: { Image(systemName: "waveform") }
-            }
-            .appAction(.quiet, size: .small)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
     }
 
     private var textModelContent: some View {

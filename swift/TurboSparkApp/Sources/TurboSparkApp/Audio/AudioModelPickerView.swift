@@ -44,9 +44,22 @@ struct AudioModelPickerView: View {
             acknowledging = profile
         }
     }
+    @Environment(\.locale) private var locale
 
     private var download: ModelDownload? {
         controller.selectedProfile.flatMap { model.audioDownload(for: $0) }
+    }
+
+    /// A row names the model and its engine, and a single-language model
+    /// also its language in the UI's own language, so a Japanese or
+    /// Mandarin recognizer is recognizable before it is chosen.
+    private func rowLabel(_ profile: AudioProfile) -> Text {
+        var label = Text(profile.displayName) + Text(verbatim: " - ")
+            + Text(LocalizedStringKey(AudioEngineLabel(profile).title), bundle: .module)
+        if let code = AudioModelLanguage.singleCode(for: profile) {
+            label = label + Text(verbatim: " - " + AudioModelLanguage.name(for: code, locale: locale))
+        }
+        return label
     }
 
     var body: some View {
@@ -123,6 +136,11 @@ struct AudioModelPickerView: View {
         } message: { profile in
             Text(verbatim: downloadDecision(profile).reason ?? "")
         }
+        .task {
+            if controller.installedPaths.isEmpty || controller.profiles.isEmpty {
+                controller.refreshModels()
+            }
+        }
     }
 
     /// A row of the model menu. An install on a drive that is away reads "Not
@@ -133,12 +151,12 @@ struct AudioModelPickerView: View {
             displayName: profile.displayName, status: controller.installStatus(for: profile))
         if let glyph = label.glyph {
             Label {
-                Text(verbatim: label.title)
+                rowLabel(profile) + Text(verbatim: ", ") + Text("Not connected", bundle: .module)
             } icon: {
                 Image(systemName: glyph)
             }
         } else {
-            Text(verbatim: label.title)
+            rowLabel(profile)
         }
     }
 
@@ -194,13 +212,22 @@ struct AudioModelPickerView: View {
                 Text(profile.identity.repository).foregroundStyle(.appSecondary)
                     .textSelection(.enabled).lineLimit(2).truncationMode(.middle)
             }
+            AudioEngineSummary(profile: profile)
+            if profile.family == "fish_drama3" {
+                // The Fish Audio Community License asks a product that uses
+                // the model to show this attribution, in these words.
+                Text(verbatim: "Built with Fish Audio").foregroundStyle(.appSecondary)
+            }
             HStack(spacing: 8) {
                 if controller.selectedLocalModelURL == nil, profile.downloadBytes > 0 {
                     Label { Text(MetricFormat.storage(profile.downloadBytes)) }
                         icon: { Image(systemName: "internaldrive") }
                 }
                 Spacer(minLength: 0)
-                if controller.modelInstalled {
+                if controller.isProfileLoaded(profile) {
+                    Label { Text("Loaded", bundle: .module) } icon: { Image(systemName: "bolt.circle.fill") }
+                        .foregroundStyle(.appAccent)
+                } else if controller.modelInstalled {
                     Label { Text("Installed", bundle: .module) } icon: { Image(systemName: "checkmark.circle") }
                         .foregroundStyle(.appAccent)
                 } else if case .notConnected = controller.installStatus(for: profile) {
@@ -213,7 +240,47 @@ struct AudioModelPickerView: View {
 
     @ViewBuilder
     private func installControls(_ profile: AudioProfile) -> some View {
-        if let download, !download.status.isTerminal {
+        if controller.modelInstalled {
+            if controller.isModelLoading {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Loading model", bundle: .module)
+                        .themedFont(.small, weight: .medium)
+                    Spacer()
+                    Button { controller.cancel() } label: {
+                        Text("Cancel", bundle: .module)
+                    }
+                    .appAction(.quiet, size: .small)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else if controller.isProfileLoaded(profile) {
+                Button { controller.unloadModel() } label: {
+                    Label { Text("Unload", bundle: .module) } icon: { Image(systemName: "eject.fill") }
+                        .frame(maxWidth: .infinity)
+                }
+                .appAction(.secondary, size: .large)
+                .disabled(!controller.canUnloadModel)
+                .help(Text("Eject model and release unified memory", bundle: .module))
+                .accessibilityLabel(Text("Unload Model", bundle: .module))
+            } else {
+                Button { controller.loadModel() } label: {
+                    Label { Text("Load Model", bundle: .module) } icon: { Image(systemName: "bolt.fill") }
+                        .frame(maxWidth: .infinity)
+                }
+                .appAction(.secondary, size: .large)
+                .disabled(!controller.canLoadModel)
+                .help(Text("Load model into memory slot cache for inference", bundle: .module))
+                .accessibilityLabel(Text("Load Model", bundle: .module))
+            }
+        } else if controller.isRefreshingModels && controller.installedPaths[profile.identity.alias] == nil {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Checking model status...", bundle: .module)
+                    .themedFont(.small, weight: .medium)
+                    .foregroundStyle(.appSecondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else if let download, !download.status.isTerminal {
             downloadProgress(download)
         } else if let statement = AudioOfflineInstalls.statement(for: controller.installStatus(for: profile)),
             !controller.modelInstalled
@@ -228,7 +295,7 @@ struct AudioModelPickerView: View {
             }
             .foregroundStyle(.appSecondary)
             .accessibilityElement(children: .combine)
-        } else if !controller.modelInstalled && !profile.identity.repository.isEmpty {
+        } else if !profile.identity.repository.isEmpty {
             if let download, download.status.canRetry {
                 if let failure = download.failure {
                     Text(failure).foregroundStyle(.appSecondary).textSelection(.enabled)
@@ -289,11 +356,14 @@ struct AudioModelPickerView: View {
                     .disabled(controller.isBusy || controller.hasRecordingActivity)
             }
         }
-        Button { controller.chooseModelFolder() } label: {
-            Label { Text("Choose local model folder", bundle: .module) } icon: { Image(systemName: "folder") }
+        // FluidAudio models load only from a verified download.
+        if AudioRuntimeProvider(profile).acceptsLocalFolder {
+            Button { controller.chooseModelFolder() } label: {
+                Label { Text("Choose local model folder", bundle: .module) } icon: { Image(systemName: "folder") }
+            }
+            .appAction(.secondary, size: .small)
+            .disabled(controller.isBusy || controller.hasRecordingActivity)
         }
-        .appAction(.secondary, size: .small)
-        .disabled(controller.isBusy || controller.hasRecordingActivity)
     }
 
     private func downloadProgress(_ download: ModelDownload) -> some View {
@@ -308,11 +378,14 @@ struct AudioModelPickerView: View {
                 }
             }
             if let total = download.totalBytes, total > 0 {
-                ProgressView(value: min(1, Double(download.downloadedBytes) / Double(total)))
+                AppProgressBar(value: min(1, Double(download.downloadedBytes) / Double(total)),
+                               label: Text("Download progress", bundle: .module),
+                               animated: download.status != .paused)
                 Text("\(MetricFormat.storage(download.downloadedBytes)) of \(MetricFormat.storage(total))", bundle: .module)
                     .themedFont(.tiny).foregroundStyle(.appSecondary)
             } else {
-                ProgressView().progressViewStyle(.linear)
+                AppProgressBar(value: nil, label: Text("Download progress", bundle: .module),
+                               animated: download.status != .paused)
             }
             HStack {
                 // The same treatment as the install toast's controls:
@@ -349,7 +422,15 @@ struct AudioModelPickerView: View {
                     }
                 }
                 Text(profile.family).foregroundStyle(.appSecondary)
-                Text(profile.capabilities.backend).foregroundStyle(.appSecondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Engine", bundle: .module).themedFont(.small, weight: .medium)
+                    Text(LocalizedStringKey(AudioEngineLabel(profile).title), bundle: .module)
+                        .foregroundStyle(.appSecondary)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Provider", bundle: .module).themedFont(.small, weight: .medium)
+                    Text(verbatim: AudioEngineLabel.provider(for: profile)).foregroundStyle(.appSecondary)
+                }
                 if let limit = profile.capabilities.maxInputSeconds {
                     HStack {
                         Text("Input limit (seconds)", bundle: .module)
@@ -372,6 +453,10 @@ extension AudioModelPickerView {
             switch term.id {
             case "megatts3_community_encoder":
                 return AppStrings.localized("The voice-cloning encoder in this model is a community re-upload. Its origin and license have not been verified.")
+            case "omnivoice_higgs_tokenizer":
+                return AppStrings.localized("The bundled audio tokenizer is community-licensed, not Apache-licensed: it requires attribution and caps commercial use above 100,000 annual active users.")
+            case "funasr_model_license":
+                return AppStrings.localized("Paraformer is released under Alibaba's FunASR Model Open Source License. You may use, change, and share it if you credit the source and keep the model name. Alibaba can revise the license, and it ends for anyone who disparages the model.")
             default:
                 return term.summary
             }

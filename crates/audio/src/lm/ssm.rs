@@ -178,6 +178,7 @@ mod tests {
     #[test]
     fn vanishing_dt_is_identity_dynamics() {
         let heads = 2;
+        let _ = heads;
         let head_dim = 1;
         let groups = 1;
         let _ = groups;

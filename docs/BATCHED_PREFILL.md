@@ -1851,3 +1851,263 @@ being re-read after another session's 15 GB job pushed them out, and
 compilation is paid once per machine. The threshold was taken back out. Time
 short prompts with a warm page cache, and check `vm.swapusage` before trusting
 a cold number.
+
+## The qwen MoE batched arm, and why its bound is not the dense one (2026-10-15)
+
+`TURBOSPARK_BATCHED_GEMV` reached the MoE half of the qwen family
+(`qwenGdnMoe`: Qwen 3.6, Ornith 35B). The arm reuses the verify pass's M-row
+encoders for the GDN and full-attention blocks
+(`verify_layers::encode_qwen_layer_attn_and_norms_batched`), adds an M-row
+shared expert (`moe::encode_qwen_shared_expert_batched`), and runs the GEMMs
+on Steel at a 64-row micro-batch. The router stays one INT8 GEMV per row, and
+the routed experts stay the per-token pipelined loop, fed from the M-row
+buffers through `moe::MoeRowSources`. The batched routed pair was left alone:
+at 256 experts and top-8, the union cap allows sub-batches of about two
+tokens at 16 slots. Selection mirrors the dense arm. Unset is auto, `=1`
+forces it with by-name refusals, and `=0` keeps the per-token arm, which stays
+byte-identical to sequential. MiniCPM-V 4.7 is refused by the dtype probe
+(BF16 resident matrices) and keeps the per-token arm. Hidden-row prefill
+(Drama 3) always takes the per-token arm.
+
+Measured on the real `qwen36` install, M4 Max, AC, 16 slots, 4,096 context.
+
+**What did not move.** The frozen `qwen36_quality_gate` row reproduced on
+both the pre-change binary and this one: perplexity 6.2536, the same greedy,
+sampled and 8-slot digests. That gate prefills sequentially, so it pins the
+`moe.rs` refactor rather than the batched arm. The memory oracle (also
+sequential) read 1,611 MiB before and 1,609 MiB after, against the 1,700 MiB
+ceiling. A 300-token chat prompt, greedy and sampled at 400 new tokens, was
+stdout md5-identical across the sequential arm (`TURBOSPARK_QWEN_MOE_CHUNKED=0`)
+and the per-token chunked arm on both binaries. That is also the first
+real-install byte-identity check of the 2026-10-14 chunked driver on this
+model.
+
+**What did.** The batched arm's text diverges from the per-token arm's in its
+first sentence ("vulnerabilities, I recommend" against "vulnerabilities and
+financial inefficiencies, I recommend") and stays coherent, reaching the same
+recommendation. `crates/bench/tests/qwen36_prefill_arm_probe.rs`, with
+`qwen38_prefill_arm_probe`'s corpus, lengths and chunking:
+
+| tokens | KL scalar | KL Steel | top-1 scalar / Steel |
+| ---: | ---: | ---: | --- |
+| 64 | 7.06e-3 | 4.32e-3 | agree / agree |
+| 200 | 1.13e-4 | 5.40e-5 | agree / agree |
+| 500 | 2.30e-3 | 4.37e-3 | agree / agree |
+| 1000 | 2.49e-5 | 5.16e-5 | agree / differ |
+| 2000 | 1.65e-3 | 1.12e-3 | agree / agree |
+| 3000 | 4.17e-3 | 1.37e-2 | agree / agree |
+| mean | 2.55e-3 | 3.94e-3 | 6/6 / 5/6 |
+
+That is about 100 times the dense arm's 2.0e-5, and it fails the dense bound
+(1e-3). The scalar arm, whose GEMMs are bit-exact against the GEMVs, fails it
+too, so Steel is not the cause. There is no trend with length.
+
+**The mechanism is routing, and a router trace shows it.** With
+`TURBOSPARK_ROUTER_HIST` and `TURBOSPARK_ROUTER_TRACE=1` on the 300-token
+prompt, sequential and per-token prefill picked the same top-8 experts at all
+12,000 (token, layer) points. The per-token and scalar batched arms picked the
+same experts at every layer for tokens 0 to 14. The first difference is token
+15, layer 6, where only the 8th-ranked expert swaps (196 for 45). With
+`TURBOSPARK_ROUTER_LOGITS_LAYER=6 TURBOSPARK_ROUTER_LOGITS_PASS=15` (wired into
+the qwen MoE flow for this), the two experts sit 4.6e-4 apart in the per-token
+arm's router logits. Between the arms, the logits differ by at most 2.3e-3
+(mean 6.0e-4), on a spread of 4.87. So the M-row blocks' reduction-order
+floor, which the dense family absorbs at 6e-8 to 1.5e-5 nats, swaps an expert
+at a near-tie. The swap changes that token's FFN output and every later
+token's attention and GDN state, and 528 of 12,000 selections differ by the
+end of the prompt. A wiring or shape bug would diverge from token 0, layer 0,
+which the synthetic cases and eight mutation checks also rule out.
+
+**The default stays on, by decision, with a MoE bound.** The probe asserts a
+mean KL under 1e-2 nats and top-1 agreement on at least half the lengths. That
+is a sentinel for wiring regressions (a wrong row or seed gives KL of order 1
+and loses top-1), not a claim that the arm meets the dense bar. Making the
+arm byte-identical would need the M-row GDN path to match the per-token one
+bit for bit: the fused `gdn_in_proj_gemv_simd` against four separate GEMMs,
+and the prefill conv and delta kernels against the decode ones. Steel would
+still differ. That is open.
+
+Prefill, `turbospark-bench --expert-cache-slots 16`, three arms interleaved
+after a discarded warmup round, CPU polled every 10 s. Round 3 is refused:
+`st` and `rustc` from other sessions ran at 600-1,200% CPU through it.
+
+| case | sequential | per-token | batched (Steel) |
+| --- | ---: | ---: | ---: |
+| long-synthesis (2,940 tokens), round 1 | 86.88 s | 83.36 s | 58.53 s |
+| long-synthesis, round 2 | 101.17 s | 83.92 s | 53.67 s |
+| short-explanation (62 tokens), rounds 1-3 | 2.03-2.05 s (one 3.25 s) | 1.95-2.06 s | 1.47-1.66 s |
+
+- On the long prompt the batched arm is 1.42-1.56x the per-token arm and
+  1.48-1.89x sequential, from two usable pairs. Round 2's batched run had one
+  `MTLCompilerService` burst at 340%, and its sequential run read 101 s
+  against 87 s in round 1, so read the range, not a point.
+- The per-token arm is 1.04-1.21x sequential on this model, below
+  MiniCPM's 1.21-1.31x.
+- Peak footprint on the batched arm: 1,484-1,485 MiB on the long case,
+  1,466-1,637 MiB on the short one, under the 1,700 MiB ceiling. The
+  per-token arm read 1,446-1,477 MiB.
+- Not a frozen row: two pairs on a shared host. Re-measure on a quiet host
+  before quoting it in `docs/BENCHMARKS.md`.
+
+**Ornith 35B, checked 2026-10-15/16** on an install pulled to an external
+USB SSD (`TURBOSPARK_HOME=/Volumes/T7/turbospark turbospark-model pull
+ornith35b`). Its frozen `ornith35b_quality_gate` row reproduced (perplexity
+6.2298, frozen digests), and a 300-token chat prompt was stdout
+md5-identical between the sequential and per-token chunked arms, greedy and
+sampled. The probe, run by pointing `TURBOSPARK_QWEN36_INSTALL_DIR` at the
+Ornith install (same family, same encoders), passes but with less room:
+
+| tokens | KL scalar | KL Steel |
+| ---: | ---: | ---: |
+| 64 | 1.86e-2 | 7.08e-3 |
+| 200 | 9.18e-5 | 4.59e-4 |
+| 500 | 1.82e-2 | 2.16e-2 |
+| 1000 | 5.46e-4 | 2.85e-4 |
+| 2000 | 1.12e-4 | 1.87e-4 |
+| 3000 | 1.17e-2 | 1.05e-2 |
+| mean | 8.22e-3 | 6.69e-3 |
+
+Top-1 agreed at all six lengths on both arms. The means sit at 67-82% of the
+1e-2 bound, about twice Qwen 3.6's, so a sibling checkpoint can approach the
+sentinel without a wiring fault. Read a future failure here with a router
+trace before treating it as a bug.
+
+The memory oracle's first run failed its 23.5 tok/s decode floor (16.1, 14.6
+and 3.4 tok/s) while host swap climbed from 12 to 40 GB and another job read
+the same USB disk. Its peak held (1,609 MiB). The rerun, at about 18 GB of
+swap, passed: 1,578 MiB peak against the 1,750 MiB ceiling (the frozen row is
+1,579) and 36.7-40.8 tok/s.
+
+Timing on that disk under that load is not citable. Same binary, same case,
+the per-token arm read 59.9 s in one round and 715 s in another, which is the
+model's pages being evicted and re-read over USB. In the warm rounds a
+2,940-token prompt read 35.2-35.4 s batched, 59.9 s per-token and 66.7-94.3 s
+sequential, and the 62-token case 0.77-0.88 s, 1.34-1.69 s and 1.28-1.30 s.
+`TURBOSPARK_BATCHED_GEMV=0` restores the per-token arm if it regresses.
+MiniCPM's batched arm still needs a BF16 M-row GEMM.
+
+## The qwen MoE routed half, batched (2026-10-23)
+
+`TURBOSPARK_ROUTED_BATCH=1` now runs on the qwen MoE chunked driver
+(`qwenGdnMoe`: Qwen 3.6, Ornith 35B). Until now it was refused by name there,
+because at 16 slots the union cap left sub-batches of about two tokens (the
+section above). It stays opt-in, as on Gemma 4 and gpt-oss.
+
+**Why it was worth doing.** A phase breakdown of the batched arm on the real
+Qwen 3.6 install (2,940-token long-synthesis prompt, three clean runs per arm,
+warm page cache) showed the routed half was the cost, not expert I/O. Mapped
+residency is refused on a 36 GB Mac (the 16.88 GiB expert table exceeds Metal's
+working set), and going from 16 to 96 slots cut requested expert bytes 3.7x but
+prefill only 7.9%: the saved copy time reappeared as `routed cb retire`,
+because the copy was overlapping routed GPU work. At `auto` (96 slots) the
+routed half was about 70% of prefill and the GPU sat idle about half the time.
+
+**What it is.** `moe_batch::encode_qwen_layer_routed_prefill` replaces the
+per-token routed loop on top of the batched arm: one route-list dispatch pair
+(`encode_moe_prefill_phase1`, `encode_moe_prefill_phase2_fused`) per
+union-bounded sub-batch. It is the verify pass's routed half with two changes:
+
+- **No shared expert encoded.** The batched arm's `cb1` already wrote every
+  row's gated shared-expert output into `batch_h1`, which is what the per-token
+  loop seeds phase 2 from (`SharedSeed::Precomputed`). The batched pair seeds
+  from the same rows, and its kernels are bit-identical to the per-token pair
+  (`crates/gpu/tests/moe_prefill_batch_parity.rs`), so the routed batch
+  reproduces the batched arm's bytes.
+- **Each sub-batch binds only its own union.** Every other routed-batch driver
+  (Gemma 4, gpt-oss, the qwen verify pass) binds all cache slots once per layer
+  into the 32-entry argument buffer, so each refuses more than 32 slots. That
+  would rule out the CLI's `auto`, which is 96 here. This driver binds the
+  sub-batch's union (at most `min(slots, 32)` experts) in union order, and each
+  route names its BINDING index, not its cache slot. The kernels read the same
+  bytes, and phase 2 reduces over ranks, so the remap cannot move a bit. The
+  argument buffer is rewritten per sub-batch, which is safe because the
+  previous sub-batch is waited out before the next is planned and the driver
+  retires the previous layer's last routed buffer before the next routed half.
+
+Refused by name: the seam without the batched arm (per-token arm forced, a
+non-INT4 install, or a micro-batch that falls back at a KV wrap), steering and
+the residual capture (their per-row encodes are not repeated here), mapped
+residency, non-affine routed blobs, and the router pilot probe.
+
+**Checks.**
+
+- Synthetic (`crates/runtime/tests/real_forward_qwen_moe_chunked.rs`): the
+  routed arm joins every byte-identity case against the sequential path, plus
+  32 and 48 slots (slot indices past 31) and three by-name refusals. The 48-slot
+  case also asserts fewer expert-cache requests than the per-token loop's
+  `tokens * top_k * layers`, which is the only thing that tells the two arms
+  apart, since their bytes match.
+- Mutations, each applied and each failing: routes naming the cache slot
+  instead of the binding index (5 tests fail), every row seeding from row 0
+  (4 fail, though the 32/48-slot case cannot see it: one sub-batch at offset 0),
+  and the driver skipping the batched pass (only the request-count check fails).
+- Real Qwen 3.6, `auto` slots, 128 new tokens: stdout byte-identical between the
+  batched arm and the routed batch, greedy and seeded-sampled (temperature 0.7).
+
+**Measured, M4 Max 36 GB, AC, 2026-10-23.** `turbospark-check` built from this
+branch, the same long-synthesis prompt, 8 new tokens, greedy, 4,096 context,
+chunk 128, `TURBOSPARK_BATCHED_GEMV=1`, `TURBOSPARK_PHASES=1`. One discarded
+warmup round, three rounds in alternating order. Each run waited for no other
+model process, no `rustc` and load under 3. One batched run overlapped five
+`rustc` processes (47.9 s) and was replaced by a clean fourth. Swap held at
+5.3 GB from other sessions through the run without moving.
+
+| `auto` (96 slots), ms per prompt token | batched arm | + routed batch |
+| --- | ---: | ---: |
+| prefill seconds | 33.26 [33.09-33.38] | **20.21** [20.03-20.30] |
+| gpu wait (layer cb1) | 2.62 | 2.32 |
+| expert io (pread) | 2.61 | 1.52 |
+| routed cb retire | 4.79 | 2.49 |
+| routed bind+upload | 0.50 | 0.16 |
+| router readback+topk | 0.32 | 0.14 |
+| encode + logit readbk | 0.45 | 0.25 |
+| GPU busy, cb1 / routed | 2.51 / 2.83 | 2.17 / 1.65 |
+| expert cache hit rate | 85.0% | 78.1% |
+| peak footprint | 6.91 GiB | 6.91 GiB |
+
+That is **1.65x** on prefill (88 to 145 tokens/s) at the app's default slot
+count, with no footprint change: the routed scratch was already allocated by
+the batched arm. Where it came from:
+
+- Routed GPU busy fell 42% (2.83 to 1.65 ms/token). This is the occupancy and
+  dispatch-count win the section on step 3 predicted, not weight amortization.
+- Expert requests fell because each sub-batch asks for its union once, not
+  `top_k` per token. On the 128-token identity runs that was 981,440 requests
+  against 607,119. The hit rate drops (fewer repeat hits inside a sub-batch
+  remain to count) while copy time still falls 42%.
+- The batched arm's numbers here match the 2026-10-22 phase breakdown on an
+  earlier binary (33.77 s), so this is the routed half changing, not the host.
+
+**At 16 slots (the `auto` floor, what a small Mac resolves to) it is about
+break-even.** Same protocol, three clean runs per arm:
+
+| 16 slots, ms per prompt token | batched arm | + routed batch |
+| --- | ---: | ---: |
+| prefill seconds | 36.51 [36.47-36.55] | 35.60 [35.55-35.67] |
+| expert io (pread) | 5.89 | 4.46 |
+| routed cb retire | 1.96 | 4.30 |
+| gpu wait (layer cb1) | 2.99 | 2.28 |
+| GPU busy, cb1 / routed | 2.87 / 3.19 | 2.17 / 1.85 |
+| expert cache hit rate | 45.0% | 33.7% |
+| peak footprint | 1.57 GiB | 1.58 GiB |
+
+2.5% faster. The kernel still cuts routed GPU busy 42%, but at a union cap of
+16 the copies dominate, and this driver runs each sub-batch's plan and `pread`
+only after the previous sub-batch is waited out, so the copy no longer overlaps
+GPU work: the saving reappears as `routed cb retire`. The per-token loop hides
+the copy behind its two-bank pipeline. Overlapping the next sub-batch's `pread`
+with the current sub-batch's dispatch (a second argument buffer and slots the
+in-flight sub-batch does not hold) is the step that would make small slot
+counts pay. Until then the seam earns its keep at 32 slots and up.
+
+The first attempt at this timing is not quoted: another session's renamed
+benchmark binary (`bench-snap2`, a 27B model) ran through it, which the
+harness's name-based check missed. GPU busy per token doubled and the batched
+arm read 70-118 s. The harness now also counts any non-shell process with
+`--model` in its arguments. Raw runs and the harness:
+`~/models/moe-routed-batch-2026-10-23/` (local, not committed).
+
+**Why it is not the default yet.** It owes the same gates the batched arm's
+default did: `qwen36_prefill_arm_probe` with the seam on (expected identical to
+the batched arm, by the identity above), the memory oracle, Ornith 35B, and a
+second chip. `TURBOSPARK_ROUTED_BATCH` unset keeps the per-token routed loop.

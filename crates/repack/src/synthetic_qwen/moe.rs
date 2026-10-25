@@ -156,8 +156,32 @@ fn build_synthetic_qwen_gdn_moe_install_inner(
     with_mtp: bool,
 ) -> Result<ArchConfig, Box<dyn std::error::Error>> {
     let arch = tiny_qwen_gdn_moe_arch(vocab_size, num_layers, num_experts);
-    let experts = num_experts as usize;
-    let vocab = vocab_size as usize;
+    let (ts, overrides) = trunk_tensors(&arch, with_mtp);
+    let blob = assemble_safetensors(&ts);
+    let source = MemoryRangeSource::new(&blob);
+    let header = parse_header(&blob, crate::safetensors_header::DEFAULT_MAX_HEADER_BYTES)?;
+    let quant = Gemma4Quant {
+        default_bits: 4,
+        group_size: 64,
+        bits_overrides: overrides,
+        ..Default::default()
+    };
+    write_qwen_gdn_moe_install(dir, &arch, model_id, &header, &source, &quant)?;
+    Ok(arch)
+}
+
+/// Every tensor of a tiny Qwen 3.6 MoE checkpoint in its MLX spelling
+/// (`language_model.*`, INT8 router and shared expert, INT4 routed experts),
+/// plus the per-path bit overrides the quantization block would declare.
+/// Shared with the Fish Drama 3 fixture (`super::drama3`), which renames and
+/// re-encodes a few of these into that checkpoint's layout.
+pub(super) fn trunk_tensors(
+    arch: &ArchConfig,
+    with_mtp: bool,
+) -> (Vec<Tensor>, std::collections::HashMap<String, u32>) {
+    let experts = arch.num_experts as usize;
+    let vocab = arch.vocab_size as usize;
+    let num_layers = arch.num_layers;
     let la = &arch.linear_attention;
     let qkv_dim = la.qkv_dim() as usize;
     let value_dim = la.value_dim() as usize;
@@ -329,17 +353,7 @@ fn build_synthetic_qwen_gdn_moe_install_inner(
         ));
     }
 
-    let blob = assemble_safetensors(&ts);
-    let source = MemoryRangeSource::new(&blob);
-    let header = parse_header(&blob, crate::safetensors_header::DEFAULT_MAX_HEADER_BYTES)?;
-    let quant = Gemma4Quant {
-        default_bits: 4,
-        group_size: 64,
-        bits_overrides: overrides,
-        ..Default::default()
-    };
-    write_qwen_gdn_moe_install(dir, &arch, model_id, &header, &source, &quant)?;
-    Ok(arch)
+    (ts, overrides)
 }
 
 fn conv1d_weight(name: &str, channels: usize, taps: usize, seed: u64) -> Tensor {

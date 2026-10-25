@@ -53,7 +53,7 @@ pub unsafe extern "C" fn ts_ocr_open(
             .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
         #[cfg(target_os = "macos")]
         {
-            let dir = catalog::resolve_model_arg(path);
+            let dir = catalog::resolve_ocr_arg(path);
             let model = runtime::coreml::UnlimitedOcrCoreMl::open(
                 &dir,
                 &runtime::coreml::OcrOptions::default(),
@@ -71,6 +71,126 @@ pub unsafe extern "C" fn ts_ocr_open(
             let _ = path;
             unsupported()
         }
+    })
+}
+
+/// Writes the pinned OCR profiles as a JSON array to `*out`:
+/// `[{"alias", "display_name", "family", "backend", "repository",
+///   "revision", "license", "download_bytes", "installed_path", "can_run",
+///   "unavailable_reason"}]`. `installed_path` is null until an install
+/// verifies against the current pin.
+#[no_mangle]
+pub unsafe extern "C" fn ts_ocr_catalog_json(out: *mut *mut c_char) -> c_int {
+    guard_result(|| {
+        if out.is_null() {
+            return Err((abi::TS_ERR_INVALID_ARGUMENT, "out must not be null".into()));
+        }
+        let cat = catalog::OcrCatalog::embedded().map_err(|e| (abi::TS_ERR_JSON, e))?;
+        let store = catalog::Store::default_store().ok();
+        let rows: Vec<serde_json::Value> = cat
+            .profiles()
+            .iter()
+            .map(|p| {
+                let (can_run, reason) = p.availability();
+                serde_json::json!({
+                    "alias": p.alias,
+                    "display_name": p.display_name,
+                    "family": p.family,
+                    "backend": p.backend,
+                    "repository": p.repository,
+                    "revision": p.revision,
+                    "license": p.license,
+                    "download_bytes": p.download_bytes(),
+                    "installed_path": store
+                        .as_ref()
+                        .and_then(|s| cat.installed_path(s, &p.alias)),
+                    "can_run": can_run,
+                    "unavailable_reason": reason,
+                })
+            })
+            .collect();
+        let json = serde_json::to_string(&rows).map_err(|e| (abi::TS_ERR_JSON, e.to_string()))?;
+        strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
+/// Downloads, verifies and installs one pinned OCR profile into the default
+/// store, under the same rules as `ts_embedding_install`: `revision` must be
+/// the catalog's pin, a current install or a foreign folder is refused, and
+/// an older pin of the same alias is replaced. Progress arrives through
+/// `callback` as `TS_INSTALL_BYTES`; `ts_install_cancel` stops it. Writes
+/// `{"alias", "path"}` to `*out`.
+#[no_mangle]
+pub unsafe extern "C" fn ts_ocr_install(
+    alias: *const c_char,
+    revision: *const c_char,
+    callback: crate::TsInstallCallback,
+    userdata: *mut std::ffi::c_void,
+    out: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        if out.is_null() {
+            return Err((abi::TS_ERR_INVALID_ARGUMENT, "out must not be null".into()));
+        }
+        *out = std::ptr::null_mut();
+        let alias =
+            strings::required(alias, "alias").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let revision = strings::required(revision, "revision")
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let cat = catalog::OcrCatalog::embedded().map_err(|e| (abi::TS_ERR_JSON, e))?;
+        let profile = cat.get(alias).ok_or_else(|| {
+            (
+                abi::TS_ERR_INVALID_ARGUMENT,
+                format!("no OCR profile named {alias:?}"),
+            )
+        })?;
+        if profile.revision != revision {
+            return Err((
+                abi::TS_ERR_INVALID_ARGUMENT,
+                format!(
+                    "{alias} is pinned at {}, not {revision}; refresh the model list",
+                    profile.revision
+                ),
+            ));
+        }
+        let active = crate::models::ActiveInstall::register();
+        let store =
+            catalog::Store::default_store().map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let path = cat
+            .install(
+                &catalog::Client::new(),
+                &catalog::Catalog::embedded().map_err(|e| (abi::TS_ERR_JSON, e))?,
+                &store,
+                alias,
+                revision,
+                &mut |progress| {
+                    if let Some(cb) = callback {
+                        let stage = progress
+                            .current_path
+                            .as_deref()
+                            .unwrap_or("OCR download")
+                            .to_string();
+                        cb(
+                            userdata,
+                            crate::TS_INSTALL_BYTES,
+                            stage.as_ptr().cast(),
+                            stage.len(),
+                            progress.completed_bytes,
+                            progress.total_bytes,
+                        );
+                    }
+                },
+                active.cancel_flag(),
+            )
+            .map_err(|e| {
+                if active.cancel_flag().is_cancelled() {
+                    (abi::TS_ERR_CANCELLED, e)
+                } else {
+                    (abi::TS_ERR_OPEN, e)
+                }
+            })?;
+        let json = serde_json::json!({"alias": alias, "path": path}).to_string();
+        strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
     })
 }
 

@@ -58,6 +58,18 @@ impl RealForwardRunner {
                 "token id {token} outside vocab {vocab}"
             )));
         }
+        // A headless trunk has no head to run, so a logits pass on one is a
+        // caller error rather than a missing-tensor failure halfway through.
+        if self.headless && !self.hidden_out {
+            return Err(RealForwardError::Unsupported(
+                "a headless trunk produces hidden states, not logits".to_string(),
+            ));
+        }
+        if self.host_embed.is_some() && self.prompt_vision.is_some() {
+            return Err(RealForwardError::Unsupported(
+                "a host input row and an image injection map cannot drive one pass".to_string(),
+            ));
+        }
 
         let embed_name = "language_model.model.embed_tokens.weight";
 
@@ -87,11 +99,14 @@ impl RealForwardRunner {
         // both halves -- the blit and the mRoPE angle. Change either here and
         // the driver diverges silently; `vision_chunked_synthetic.rs` is what
         // holds the two together, by requiring byte-identity between them.
-        match self
-            .prompt_vision
-            .as_ref()
-            .and_then(|pv| pv.row_for(position))
-        {
+        // THE HOST INPUT ROW (`HiddenTrunk`), the same host write as the image
+        // blit below and sound for the same reason: it lands in shared
+        // storage before `pass` is committed.
+        match self.host_embed.as_deref().or_else(|| {
+            self.prompt_vision
+                .as_ref()
+                .and_then(|pv| pv.row_for(position))
+        }) {
             Some(row) => gpu::write_buffer_bytes(&self.scratch.x, 0, row),
             None => {
                 // A folded embedding stores its rows in the rotated basis
@@ -202,6 +217,10 @@ impl RealForwardRunner {
             &mut self.phases,
         );
 
+        // An error return mid-token can leave a streamer with the worker.
+        if let Some(prefetch) = qwen.prefetch.as_ref() {
+            prefetch.join(streamers);
+        }
         for layer in 0..arch.num_layers as usize {
             let input_norm = norm_view(
                 weights,
@@ -381,9 +400,55 @@ impl RealForwardRunner {
                 0,
             )?;
 
+            // Env-gated and absent from a normal run: `pilot_target` is `None`
+            // unless `TURBOSPARK_PILOT_PROBE` built a histogram with storage.
+            let pilot_target = router_hist.as_ref().and_then(|h| h.pilot_target(layer));
+            // The prefetch experiment wants layer+1's guess, and only when a
+            // streamer holds that layer's slots (mapped residency has none).
+            let next = layer + 1;
+            let prefetch_target = (qwen.prefetch.is_some()
+                && next < arch.num_layers as usize
+                && streamers.get(next).is_some_and(Option::is_some)
+                && !mapped.buffers.get(next).is_some_and(Option::is_some))
+            .then_some(next);
+            let probe_target = pilot_target.or(prefetch_target);
+            if let Some(target) = probe_target {
+                moe::encode_qwen_pilot_probe(
+                    context,
+                    &pass,
+                    weights,
+                    index,
+                    qwen,
+                    (&scratch.x, 0),
+                    target,
+                    hidden,
+                    num_experts,
+                )?;
+            }
+
             let t_wait = Instant::now();
             phases.cb1_gpu_nanos += (pass.commit().wait_with_gpu_time() * 1e9) as u64;
             phases.gpu_wait_nanos += t_wait.elapsed().as_nanos() as u64;
+            if pilot_target.is_some() {
+                if let Some(hist) = router_hist.as_mut() {
+                    moe::record_qwen_pilot(qwen, hist, layer, num_experts, top_k);
+                }
+            }
+            // The worker may still hold THIS layer's streamer from the
+            // previous layer's lookahead. It must be back before this layer
+            // plans, and before the next job goes out (one in flight).
+            if let Some(prefetch) = qwen.prefetch.as_ref() {
+                prefetch.join(streamers);
+            }
+            // Self-test aims the probe at this layer, so its buffer is not
+            // layer+1's guess and must not feed the prefetch.
+            if let (Some(prefetch), Some(target)) = (qwen.prefetch.as_ref(), prefetch_target) {
+                if probe_target == Some(target) {
+                    if let Some(logits) = moe::read_qwen_pilot_logits(qwen, num_experts) {
+                        prefetch.submit(target, streamers, logits);
+                    }
+                }
+            }
 
             pass = context.begin_pass_labeled("routed cb");
             // Token 0, bank 0, nothing protected: the sequential decode path,
@@ -412,6 +477,7 @@ impl RealForwardRunner {
                 top_k,
                 use_silu,
                 &moe::RoutedSlot::sequential(),
+                &moe::MoeRowSources::per_token(qwen),
             )?;
             if let Some(shared) = shared {
                 shared_submissions.push(shared);
@@ -426,7 +492,23 @@ impl RealForwardRunner {
 
         // Final norm + head. No softcap: Qwen has none, and the head must
         // hand `selection::select` raw logits either way.
-        if !self.skip_head {
+        // A `hidden_out` pass runs the final norm and stops: the caller reads
+        // `scratch.normed`, and the head GEMV is skipped (a headless trunk
+        // has none).
+        if self.hidden_out {
+            pass.relabel("final cb (hidden out)");
+            let final_norm = norm_view(weights, index, "language_model.model.norm.weight", hidden)?;
+            gpu::encode_rms_norm_bf16w(
+                context,
+                &pass,
+                (&scratch.x, 0),
+                final_norm,
+                (&scratch.normed, 0),
+                hidden as u32,
+                RMS_EPS,
+            )
+            .map_err(gpu_err)?;
+        } else if !self.skip_head {
             pass.relabel("final cb (head)");
             let final_norm = norm_view(weights, index, "language_model.model.norm.weight", hidden)?;
             gpu::encode_rms_norm_bf16w(
@@ -496,7 +578,7 @@ impl RealForwardRunner {
             capture.record_pass(position, skip_head);
         }
 
-        if self.skip_head {
+        if self.skip_head || self.hidden_out {
             return Ok(());
         }
         if vocab != logits.len() {

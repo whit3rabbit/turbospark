@@ -3,7 +3,9 @@ import TurboSpark
 
 @MainActor
 struct AudioRecordingSetupDependencies {
-    var requestMicrophonePermission: () async -> Bool = { await AudioCapture.requestMicrophonePermission() }
+    /// Checks only and never shows the macOS prompt; callers gate on
+    /// `.recordingAccessGate` first. Name kept for the tests that inject it.
+    var requestMicrophonePermission: () async -> Bool = { AudioCapture.microphoneAccessAllowed() }
     var microphones: () throws -> [AudioCaptureMicrophone] = {
         try AudioCapture.microphones().map { AudioCaptureMicrophone(id: String($0.id), name: $0.name) }
     }
@@ -16,11 +18,12 @@ struct AudioRecordingSetupDependencies {
 }
 
 extension AudioWorkspaceController {
+    // Setup only checks access; no macOS prompt follows (RecordingAccessSheet asks).
     private var microphoneSetupMessage: String {
-        AppStrings.localized("Allow microphone access in the macOS prompt to continue.")
+        AppStrings.localized("Checking microphone access...")
     }
     private var systemSetupMessage: String {
-        AppStrings.localized("Allow screen and system audio recording in System Settings if prompted.")
+        AppStrings.localized("Preparing app and system audio...")
     }
     private var setupCancelledMessage: String {
         AppStrings.localized("Recording setup cancelled. Start again when you are ready.")
@@ -46,6 +49,7 @@ extension AudioWorkspaceController {
         let token = epoch; let attempt = UUID()
         let checksMicrophone = captureMicrophone; let checksSystemAudio = captureSystemAudio
         let dependencies = recordingSetupDependencies
+        captureOrigin = originForNewCapture(asVoiceReference: false)
         recordingSetupAttempt = attempt; error = nil
         showRecordingSetup(checksMicrophone ? microphoneSetupMessage : systemSetupMessage)
         recordingSetupTask = Task { [weak self] in
@@ -80,22 +84,38 @@ extension AudioWorkspaceController {
         status = setupCancelledMessage
     }
 
-    func startRecording() {
+    func startRecording() { startRecording(asVoiceReference: false) }
+    /// A voice reference recording captures the microphone only, through
+    /// local flags so the Record page's source settings stay as the user set
+    /// them, and keeps the current take selected on the Voice Cloning page.
+    func startRecording(asVoiceReference: Bool) {
         guard !hasRecordingActivity, !isShutDown, capture == nil else { return }
-        guard captureMicrophone || captureSystemAudio else {
+        let capturesMicrophone = asVoiceReference || captureMicrophone
+        let capturesSystemAudio = !asVoiceReference && captureSystemAudio
+        guard capturesMicrophone || capturesSystemAudio else {
             error = AudioCapture.CaptureError.noSource.localizedDescription
             return
         }
         stopPlayback(); stopReferencePreview(); error = nil
-        var item = AudioLibraryItem(title: AppStrings.localized("Meeting") + " " + Date().formatted(date: .abbreviated, time: .shortened), kind: .recording)
+        let stamp = Date().formatted(date: .abbreviated, time: .shortened)
+        let preset = asVoiceReference ? nil : activeRecordingPreset
+        captureOrigin = originForNewCapture(asVoiceReference: asVoiceReference)
+        let title = asVoiceReference ? AppStrings.localized("Voice reference \(stamp)") : (preset?.takeTitle ?? AppStrings.localized("Meeting")) + " " + stamp
+        var item = AudioLibraryItem(title: title, kind: .recording)
+        // A preset files its takes into its collection; a custom take is unfiled.
+        if let preset { item.recordingPreset = preset.rawValue; item.collection = collectionName(for: preset) }
         item.status = .draft; item.recipe = recipe; item.recipe.task = AudioTask.speechToText.rawValue
+        // A copied reference would pin the previous voice's audio to this clip.
+        if asVoiceReference { item.recipe.speech = nil }
         if let profile = selectedProfile, profile.identity.task == .speechToText {
             item.modelFamily = profile.family
             item.localModelBookmark = preferences.localModels[profile.identity.alias]
             if item.localModelBookmark == nil { item.modelIdentity = try? JSONEncoder().encode(profile.identity) }
         }
         do { try save(item) } catch { fail(error); return }
-        recordingID = item.id; selectedID = item.id; draftThrough = 0; draftRequestedThrough = 0
+        recordingID = item.id; draftThrough = 0; draftRequestedThrough = 0
+        voiceReferenceRecordingID = asVoiceReference ? item.id : nil
+        if !asVoiceReference { selectedID = item.id }
         nextDraftAttemptAt = .distantPast
         let id = item.id; let token = epoch; let library = self.library; let assets = self.assets; let profileID = self.profileID
         let capture = AudioCapture(onChunk: { [weak self] chunk in
@@ -123,7 +143,9 @@ extension AudioWorkspaceController {
             }
         })
         self.capture = capture
-        let config = AudioCapture.Configuration(microphoneID: microphoneID.flatMap(UInt32.init), capturesMicrophone: captureMicrophone, systemSource: captureSystemAudio ? selectedApplicationID.map(AudioCapture.SystemSource.application) ?? .all : .none)
+        // A voice reference is audio for cloning, not a take to read.
+        if asVoiceReference { live.clear() } else { startLiveText(itemID: id, capture: capture) }
+        let config = AudioCapture.Configuration(microphoneID: microphoneID.flatMap(UInt32.init), capturesMicrophone: capturesMicrophone, systemSource: capturesSystemAudio ? selectedApplicationID.map(AudioCapture.SystemSource.application) ?? .all : .none)
         let attempt = UUID(); let dependencies = recordingSetupDependencies
         recordingSetupAttempt = attempt
         recordingSeconds = 0; isPaused = false; inputLevel = 0
@@ -149,7 +171,8 @@ extension AudioWorkspaceController {
                 guard self.isCurrentRecordingSetup(attempt, token: token), self.capture === capture, self.recordingID == id else { _ = await capture.stop(); return }
                 _ = capture.stopAcceptingAndDrain()
                 Task { _ = await capture.stop() }
-                self.isRecording = false; self.capture = nil; self.recordingID = nil
+                self.live.transcriber?.stopAndDrain(); self.live.clear()
+                self.isRecording = false; self.capture = nil; self.recordingID = nil; self.voiceReferenceRecordingID = nil
                 self.update(id) { $0.status = .interrupted; $0.failure = error.localizedDescription }
                 self.error = error.localizedDescription; self.status = error.localizedDescription
             }
@@ -190,11 +213,17 @@ extension AudioWorkspaceController {
                 }
                 $0.status = interrupted ? .interrupted : .completed; $0.failure = failure; $0.updatedAt = Date()
             }
-            if liveTranscription && !interrupted { pendingRefinementIDs.append(id) }
+            queueRefinement(id, refine: liveTranscription && !interrupted && id != voiceReferenceRecordingID)
         }
+        // Decided after the update above, which can still mark the take
+        // interrupted when no audio arrived.
+        let attachID = (id != nil && id == voiceReferenceRecordingID && !interrupted) ? id : nil
+        voiceReferenceRecordingID = nil
         if let failure { status = failure }
         Task { _ = await capture.stop() }
         guard valid(token) else { return }
+        // Before the next draft job can mark the workspace busy.
+        if let attachID { attachRecordedVoiceReference(attachID) }
         if isBusy { if isDraftJob { cancel() } } else { startNextDraft() }
     }
     func startNextDraft() {
@@ -204,7 +233,8 @@ extension AudioWorkspaceController {
             refineRecording(id)
             return
         }
-        guard isRecording, liveTranscription, draftRequestedThrough - draftThrough >= 15,
+        // Streaming live text replaces drafts while it runs.
+        guard isRecording, liveTranscription, !live.isStreaming, draftRequestedThrough - draftThrough >= 15,
               let id = recordingID, let item = items.first(where: { $0.id == id }),
               let profile = profiles.first(where: { $0.identity.alias == item.recipe.modelID && $0.identity.task == .speechToText }),
               profile.capabilities.canRun,
@@ -254,9 +284,11 @@ extension AudioWorkspaceController {
         }
     }
     func refineRecording(_ id: UUID) {
+        // The provider's verdict, not the Rust one: a FluidAudio row's Rust
+        // `canRun` is false by design.
         guard let item = items.first(where: { $0.id == id }), !item.clips.isEmpty,
               let profile = profiles.first(where: { $0.identity.alias == item.recipe.modelID && $0.identity.task == .speechToText }),
-              profile.capabilities.canRun,
+              AudioRuntimeProvider(profile).canRun(profile),
               installedPaths[profile.identity.alias] != nil || preferences.localModels[profile.identity.alias] != nil else { return }
         let token = epoch
         isBusy = true
@@ -268,11 +300,24 @@ extension AudioWorkspaceController {
             defer { if self.valid(token) { self.isBusy = false; self.progress = nil; self.scheduleUnload() } }
             do {
                 guard admitted else { throw CancellationError() }
-                let session = try await self.residentSession(for: profile, source: item)
-                try await self.transcribe(item: item, into: id, session: session, request: Self.request(from: item.recipe, task: .speechToText), source: .final, token: token)
+                let transcription: Transcription
+                if case .fluidAudio(let family) = AudioRuntimeProvider(profile) {
+                    transcription = try await self.transcribeWithFluidAudio(item: item, into: id, profile: profile, family: family, source: .final, token: token)
+                } else {
+                    let session = try await self.residentSession(for: profile, source: item)
+                    transcription = try await self.transcribe(item: item, into: id, session: session, request: Self.request(from: item.recipe, task: .speechToText), source: .final, token: token)
+                }
+                guard self.valid(token) else { return }
+                // Speaker labels are extra: the transcript is already saved,
+                // so a failure here leaves it unlabeled instead of failing it.
+                let labelFailure = try await self.labelSpeakersBestEffort(item: item, into: id, revision: transcription.revision, words: transcription.words, token: token)
                 guard self.valid(token) else { return }
                 self.publish(try self.library.update(id) { $0.status = .completed; $0.updatedAt = Date() })
+                if let labelFailure { self.status = AppStrings.localized("Transcript saved. Speakers could not be labeled: \(labelFailure)") }
+                else if self.offersSpeakerNaming(id, revision: transcription.revision) { self.speakerNamingID = id }
                 self.transcriptBacklog = 0
+                // The final transcript is in: embed it for meaning search.
+                self.librarySearch.scheduleIndexing(self)
             } catch {
                 guard self.valid(token) else { return }
                 if !Task.isCancelled && Self.isDeviceBusy(error) {

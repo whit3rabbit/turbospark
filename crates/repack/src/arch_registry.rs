@@ -219,6 +219,13 @@ const SUPPORTED_HF: &[(&str, ModelFamily)] = &[
     // equality, so the two never collapse.
     ("qwen3_vl", ModelFamily::Qwen3Vl),
     ("qwen3_vl_text", ModelFamily::Qwen3Vl),
+    // The SIXTEENTH family. Read off `RecursiveSI/flint-int4` @
+    // 3b93f9053b530488405ae9fca51d4900d6ce21f0, whose root `model_type` is
+    // `flint` (`architectures: ["FlintForCausalLM"]`). The checkpoint ships
+    // no modeling code, so the layer flow is cross-checked against the open
+    // llama.cpp port instead (`docs/FLINT_PHASE0.md`). No `_text` row: the
+    // config is flat, with no `text_config` wrapper to carry one.
+    ("flint", ModelFamily::Flint),
 ];
 
 /// GGUF architectures this port recognizes and cannot run.
@@ -334,6 +341,41 @@ pub fn has_foreign_vision_tower(root: &serde_json::Value) -> bool {
     root.get("model_type")
         .and_then(|v| v.as_str())
         .is_some_and(|m| FOREIGN_VISION_WRAPPERS.contains(&m))
+}
+
+/// Root `model_type`s whose checkpoint carries a language-model trunk that
+/// another model drives, with no LM head of its own.
+///
+/// Recognition only, and kept OUT of [`SUPPORTED_HF`] on purpose: a row
+/// there would let the generic text intake build a chat install from the
+/// trunk, which has no head and must never be offered as a chat model. Each
+/// owner has its own intake (`fish_drama3`: `crate::fish_drama3`), and the
+/// generic intake refuses these by name through
+/// [`headless_tts_trunk_owner`].
+///
+/// - `fish_drama3`: read off `mlx-community/fish-audio-drama-3-4bit`
+///   @ cc639e27aba7edb73429d3e3806f471dcd79d316 (`text_config.model_type`
+///   `fish_omni_text`, a `QwenGdnMoe` trunk under `backbone.model.`).
+const HEADLESS_TTS_TRUNKS: &[(&str, ModelFamily)] = &[("fish_drama3", ModelFamily::QwenGdnMoe)];
+
+/// The root `model_type` when `config.json` names a model in
+/// [`HEADLESS_TTS_TRUNKS`], for a refusal that names it.
+pub fn headless_tts_trunk_owner(root: &serde_json::Value) -> Option<&'static str> {
+    let model_type = root.get("model_type").and_then(|v| v.as_str())?;
+    HEADLESS_TTS_TRUNKS
+        .iter()
+        .find(|(owner, _)| *owner == model_type)
+        .map(|(owner, _)| *owner)
+}
+
+/// The refusal the generic text intake gives a [`HEADLESS_TTS_TRUNKS`]
+/// checkpoint: what it is, and where it installs instead.
+pub fn describe_headless_tts_trunk(owner: &str) -> String {
+    format!(
+        "config.json model_type {owner:?} is a text-to-speech model whose language trunk has \
+         no head of its own; it installs through the audio catalog, not as a chat model \
+         (docs/FISH_DRAMA3_PHASE0.md)"
+    )
 }
 
 /// Guards a family-specific `config.json` parser against being handed

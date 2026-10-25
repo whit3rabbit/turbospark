@@ -183,10 +183,8 @@ struct ActiveInstallCard: View {
             }
 
             if let fraction = model.installProgressFraction {
-                ProgressView(value: fraction)
-                    .tint(TurboSparkTheme.accentColor)
-                    .accessibilityLabel(Text("Download progress", bundle: .module))
-                    .accessibilityValue(Text(verbatim: MetricFormat.percent(fraction * 100)))
+                AppProgressBar(value: fraction, label: Text("Download progress", bundle: .module),
+                               animated: !model.isInstallPaused)
 
                 HStack {
                     if let downloaded = model.installDownloadedBytes, let total = model.installTotalBytes {

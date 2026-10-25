@@ -135,6 +135,7 @@ extension AppModel {
             persistChats()
             try? MemoryLedgerStore.shared.invalidateEvidence(
                 chatID: chatID, messages: chats[index].messages)
+            scheduleConversationRecallReconcile(chatID: chatID)
         }
     }
 
@@ -161,6 +162,7 @@ extension AppModel {
             chats[index].recoveryAnchor = anchor
             chats[index].updatedAt = Date()
             persistChats()
+            scheduleConversationRecallReconcile(chatID: chatID)
         }
     }
 

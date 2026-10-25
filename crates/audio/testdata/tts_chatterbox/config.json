@@ -1,0 +1,94 @@
+{
+  "model_type": "chatterbox",
+  "multilingual": false,
+  "text_preprocessing": "legacy",
+  "s3_sr": 16000,
+  "s3gen_sr": 24000,
+  "sample_rate": 24000,
+  "enc_cond_len": 96000,
+  "dec_cond_len": 240000,
+  "t3_config": {
+    "text_tokens_dict_size": 704,
+    "start_text_token": 255,
+    "stop_text_token": 0,
+    "max_text_tokens": 64,
+    "speech_tokens_dict_size": 8194,
+    "start_speech_token": 6561,
+    "stop_speech_token": 6562,
+    "max_speech_tokens": 64,
+    "input_pos_emb": "learned",
+    "speech_cond_prompt_len": 150,
+    "encoder_type": "voice_encoder",
+    "speaker_embed_size": 256,
+    "use_perceiver_resampler": true,
+    "emotion_adv": true,
+    "llama_config": {
+      "model_type": "llama",
+      "vocab_size": 64,
+      "hidden_size": 32,
+      "num_hidden_layers": 2,
+      "intermediate_size": 64,
+      "num_attention_heads": 4,
+      "num_key_value_heads": 2,
+      "head_dim": 8,
+      "max_position_embeddings": 512,
+      "rms_norm_eps": 1e-05,
+      "rope_theta": 500000.0,
+      "rope_scaling": {
+        "factor": 8.0,
+        "high_freq_factor": 4.0,
+        "low_freq_factor": 1.0,
+        "original_max_position_embeddings": 8192,
+        "rope_type": "llama3"
+      },
+      "attention_bias": false,
+      "mlp_bias": false,
+      "tie_word_embeddings": false
+    }
+  },
+  "flow_config": {
+    "input_size": 48,
+    "output_size": 80,
+    "spk_embed_dim": 48,
+    "vocab_size": 6561,
+    "attention_heads": 4,
+    "linear_units": 96,
+    "num_blocks": 2,
+    "num_up_blocks": 2,
+    "upsample_stride": 2,
+    "pre_lookahead_len": 3,
+    "n_timesteps": 10,
+    "inference_cfg_rate": 0.7,
+    "decoder_channels": 64,
+    "decoder_n_blocks": 2,
+    "decoder_num_mid_blocks": 2,
+    "decoder_num_heads": 4,
+    "decoder_head_dim": 32
+  },
+  "hift_config": {
+    "base_channels": 64,
+    "in_channels": 80,
+    "f0_channels": 64
+  },
+  "campplus_config": {
+    "feat_dim": 80,
+    "embedding_size": 48,
+    "fcm_channels": 32,
+    "init_channels": 16,
+    "growth_rate": 8,
+    "bn_size": 4,
+    "num_layers": [
+      12,
+      24,
+      16
+    ]
+  },
+  "ve_config": {
+    "num_mels": 40,
+    "sample_rate": 16000,
+    "speaker_embed_size": 32,
+    "ve_hidden_size": 32,
+    "ve_partial_frames": 160,
+    "ve_final_relu": true
+  }
+}

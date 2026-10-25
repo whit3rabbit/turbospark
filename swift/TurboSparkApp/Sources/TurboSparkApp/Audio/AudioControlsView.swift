@@ -121,7 +121,9 @@ struct AudioActionLabelStyle: LabelStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         if compact {
-            configuration.icon
+            // One width for every icon-only row action, so Play, Save As and
+            // Delete line up instead of each taking its glyph's width.
+            configuration.icon.frame(width: 18)
         } else {
             Label(title: { configuration.title }, icon: { configuration.icon })
         }
@@ -174,7 +176,9 @@ struct AudioRecordingBadge: View {
 
     var body: some View {
         if controller.hasRecordingActivity {
-            Button { openWorkspace(); controller.selectPage(.record) } label: {
+            // Opens the page that started the capture: Voice Cloning for a
+            // voice reference, the Speech-to-Text mode, or Record.
+            Button { openWorkspace(); controller.openActiveCapture() } label: {
                 HStack(spacing: 6) {
                     if controller.recordingSetupStatus != nil {
                         Image(systemName: "hourglass")
@@ -213,9 +217,10 @@ struct AudioWorkspaceStatusView: View {
                 HStack(spacing: 12) {
                     if controller.isBusy || controller.isInstalling || controller.recordingSetupStatus != nil {
                         if let progress = controller.progress {
-                            ProgressView(value: max(0, min(1, progress))).frame(width: 180)
-                                .accessibilityLabel(Text(verbatim: controller.status))
-                                .accessibilityValue(Text(verbatim: controller.generationProgress?.counter ?? "\(Int(progress * 100))%"))
+                            AppProgressBar(value: progress, label: Text(verbatim: controller.status),
+                                           valueText: controller.generationProgress?.counter.map { Text(verbatim: $0) },
+                                           size: .compact)
+                                .frame(minWidth: 120, idealWidth: 180, maxWidth: 240)
                         } else {
                             ProgressView().controlSize(.small)
                         }

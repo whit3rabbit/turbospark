@@ -50,6 +50,10 @@ pub struct RealChatModel {
     /// Resolved as though the request were deterministic, because the second
     /// input is not knowable at open: see [`Self::run_completion`].
     speculation: runtime::SpeculationPlan,
+    /// `--speculative adaptive[:N]`: the plan's block is the CAP and
+    /// `AdaptiveDepth` picks each round's depth between its floor and it,
+    /// as the CLI and the FFI path do.
+    adaptive_depth: bool,
     /// Which drafter [`Self::speculation`] would drive, for the startup line.
     drafter: runtime::SpeculativeDrafter,
     /// Tool-call guardrails, resolved once at open like the rate cap.
@@ -460,6 +464,7 @@ impl RealChatModel {
             resolved_expert_residency,
             model_id,
             rate,
+            adaptive_depth: matches!(speculation, runtime::Speculation::Adaptive(_)),
             speculation: plan,
             drafter: choice.drafter,
             guardrails,
@@ -568,7 +573,15 @@ impl RealChatModel {
                     }
                     _ => "mtp head (step drafter, any temperature)",
                 };
-                format!("speculative decoding: on, {which}, block {block}")
+                if self.adaptive_depth {
+                    format!(
+                        "speculative decoding: on, {which}, adaptive depth {}..{block} \
+                         (experimental)",
+                        runtime::AdaptiveDepth::DEFAULT_FLOOR
+                    )
+                } else {
+                    format!("speculative decoding: on, {which}, block {block}")
+                }
             }
             runtime::SpeculationPlan::Disabled { reason: Some(why) } => {
                 format!("speculative decoding: off ({why})")
@@ -755,6 +768,20 @@ impl ChatModel for RealChatModel {
         // `SpeculativeProducer` has an associated type and cannot be reached
         // through the `&mut dyn LogitProducer` `with_producer` lends.
         let mut runner = self.locked_runner();
+        if self.adaptive_depth {
+            return runtime::run_raw_completion_speculative_adaptive_cancellable(
+                &mut *runner,
+                &self.tokenizer,
+                prompt_ids,
+                config,
+                self.context.resolved,
+                self.vocab_size,
+                block,
+                runtime::AdaptiveDepth::DEFAULT_FLOOR,
+                cancel,
+                &mut *on_progress,
+            );
+        }
         run_raw_completion_speculative_cancellable(
             &mut *runner,
             &self.tokenizer,
