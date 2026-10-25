@@ -31,6 +31,8 @@ final class LoadPathSourceScanTests: XCTestCase {
     /// Files that may read `installed`, how many reads each holds, and why none
     /// of them starts a load or offers a model to load.
     static let allowList: [String: (reads: Int, reason: String)] = [
+        "State/AppModel+MenuBar.swift": (
+            1, "The menu bar dashboard's name for a model the server already serves; it loads nothing"),
         "Server/ServerFavorite.swift": (
             2,
             "Names the rows a favorite saves (the ones the server serves now) and merges the scanned rows "
@@ -60,7 +62,7 @@ final class LoadPathSourceScanTests: XCTestCase {
     /// selection restoration.
     static let loadablePaths = [
         "Chrome/ModelLoaderControl.swift", "Generation/PromptContextPills.swift",
-        "Diagnostics/InspectorOptionsSection.swift", "Server/ServerMenuBarView.swift",
+        "Diagnostics/InspectorOptionsSection.swift", "Server/ServerMenuDashboardView.swift",
         "Humanize/HumanizeView.swift", "State/AppModel.swift", "State/AppModel+Server.swift",
         "State/AppModel+SlashParity.swift", "State/AppModel+ModelDiscovery.swift",
         "State/AppModel+Gating.swift",

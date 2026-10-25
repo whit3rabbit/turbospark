@@ -45,7 +45,7 @@ final class ModelDownloadLibraryTests: XCTestCase {
     }
 
     func testOnlyEmbeddingRequestsAreHomeOnly() {
-        XCTAssertTrue(ModelDownload.Request.embedding(alias: "e").installsOnlyOnThisMac)
+        XCTAssertTrue(ModelDownload.Request.embedding(alias: "e", revision: nil).installsOnlyOnThisMac)
         XCTAssertFalse(ModelDownload.Request.catalog(alias: "q").installsOnlyOnThisMac)
         XCTAssertFalse(ModelDownload.Request.repository(repo: "o/r", alias: "q", file: nil, sidecarRepo: nil)
             .installsOnlyOnThisMac)

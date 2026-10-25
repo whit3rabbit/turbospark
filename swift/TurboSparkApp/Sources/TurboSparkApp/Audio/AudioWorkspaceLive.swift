@@ -87,7 +87,7 @@ extension AudioWorkspaceController {
 
     func installLiveTextModel() {
         guard let profile = liveTextProfile, !profile.identity.repository.isEmpty else { return }
-        if let installHandler { _ = installHandler(profile, []) }
+        if let installHandler { _ = installHandler(profile, [], defaultInstallLibrary?()) }
     }
 
     /// Starts streaming live text for a take, when it applies. Called before

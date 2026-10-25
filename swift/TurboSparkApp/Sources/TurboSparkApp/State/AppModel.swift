@@ -35,17 +35,21 @@ public final class AppModel: ObservableObject {
             self?.enqueueAudioDownload(profile: profile, acknowledged: acknowledged, library: library) ?? false
         }
         workspace.modelMoving = { [weak self] in self?.isMoving(path: $0) == true }
+        workspace.defaultInstallLibrary = { [weak self] in
+            self?.installDestinations.libraryForInstall(selection: nil)
+        }
+        // Only models that can load now (requirement 3.3), through the gate.
         workspace.availableChatModels = { [weak self] in
-            self?.installed.filter { $0.modality == "text" } ?? []
+            self?.loadableModels.filter { $0.modality == "text" } ?? []
         }
         workspace.selectedChatModel = { [weak self] in
             self?.selected
         }
         workspace.selectChatModel = { [weak self] model in
-            self?.selectModel(model)
+            self?.requestLoad(model)
         }
         workspace.summaryAvailable = { [weak self] in
-            self?.canSummarizeAudio == true || (self?.installed.contains(where: { $0.modality == "text" }) == true)
+            self?.canSummarizeAudio == true || (self?.loadableModels.contains(where: { $0.modality == "text" }) == true)
         }
         workspace.summaryHandler = { [weak self] item, targetModel in
             guard let self else { throw CancellationError() }

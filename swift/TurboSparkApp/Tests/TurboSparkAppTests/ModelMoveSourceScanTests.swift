@@ -133,9 +133,10 @@ final class ModelMoveSourceScanTests: XCTestCase {
     // MARK: The menu-bar window
 
     func testTheMenuBarWindowLoadsOnlyThroughTheGate() throws {
-        let text = try code("Server/ServerMenuBarView.swift")
+        // The model list lives in the menu bar dashboard since main's redesign.
+        let text = try code("Server/ServerMenuDashboardView.swift")
         XCTAssertTrue(
-            text.contains("model.requestLoad(installedModel, bringWindowForward: true)"),
+            text.contains("model.requestLoad(installed, bringWindowForward: true)"),
             "a load from the menu-bar window asks the choke point")
         for direct in ["beginChatLoad", ".open(", "openSession", "selectModel(", "TurboSparkSession("] {
             XCTAssertFalse(text.contains(direct), "the menu-bar window loads around the gate with \(direct)")

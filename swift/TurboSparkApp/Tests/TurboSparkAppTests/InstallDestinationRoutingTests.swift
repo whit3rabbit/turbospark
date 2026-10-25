@@ -232,9 +232,9 @@ final class InstallDestinationRoutingTests: LibraryStateTestCase {
         var started: [ModelDownload.Request] = []
         model.modelDownloadStartOverride = { started.append($0) }
 
-        XCTAssertTrue(model.enqueueModelDownload(.embedding(alias: "embedder"), library: t7.id))
+        XCTAssertTrue(model.enqueueModelDownload(.embedding(alias: "embedder", revision: nil), library: t7.id))
 
-        XCTAssertEqual(started, [.embedding(alias: "embedder")])
+        XCTAssertEqual(started, [.embedding(alias: "embedder", revision: nil)])
         XCTAssertNil(model.modelDownloads.first?.library, "embedding and OCR models install only into This Mac")
         XCTAssertEqual(service.installCalls, [], "and the embedding path never touches the library seam")
     }
@@ -243,7 +243,7 @@ final class InstallDestinationRoutingTests: LibraryStateTestCase {
         let sources = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/TurboSparkApp")
-        for file in ["State/AppModel+Embeddings.swift", "Components/RecommendedEmbeddingModelRow.swift"] {
+        for file in ["State/AppModel+Embeddings.swift", "Components/EmbeddingModelPicker.swift"] {
             let code = MoveStoreRetirementTests.codeWithoutComments(
                 try String(contentsOf: sources.appendingPathComponent(file), encoding: .utf8))
             XCTAssertFalse(code.contains("library:"), "\(file) must not pass a destination")

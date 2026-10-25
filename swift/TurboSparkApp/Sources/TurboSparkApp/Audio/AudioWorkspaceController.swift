@@ -111,6 +111,9 @@ final class AudioWorkspaceController: ObservableObject {
     /// profile's acknowledgments the user accepted; the third is the library it
     /// goes into (nil is This Mac).
     var installHandler: ((AudioProfile, [String], String?) -> Bool)?
+    /// The default library for downloads, nil for This Mac (requirement 2.2), for
+    /// installs that offer no destination menu. Set by the owner.
+    var defaultInstallLibrary: (() -> String?)?
     /// How the catalog is read: the live engine, or a test's answer. It runs off
     /// the main actor.
     let catalogReader: @Sendable () throws -> AudioCatalogSnapshot
