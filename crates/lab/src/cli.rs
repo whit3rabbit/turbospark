@@ -33,7 +33,7 @@ tslab: the evaluator for kernel and method experiments (macOS).
   tslab hash-diff --experiment A --against B      (exit 3 when any hashed output changed)
   tslab project --knob NAME|--bench B --default ARM --mode ARM
                 --curves EXP | --default-from A --mode-from B      (kernel_curve experiments)
-                [--x 1] [--shapes LABEL,...] [--min-rows N] [--dispatches N --us-per-dispatch X | --probe-from EXP]
+                [--x 1] [--shapes LABEL,...] [--min-rows N] [--counts LABEL=N,...] [--scale S] [--dispatches N --us-per-dispatch X | --probe-from EXP]
                 --base-ms X | --base-from EXP[:ARM] [--base-metric decode_tok_s|prefill_tok_s]
                 | --round-from EXP --width W [--flags L] [--kv N] [--phase verify]
                 [--floor-from EXP] [--share-from EXP --block gdn|mlp|attn] [--experiment NAME]

@@ -61,6 +61,7 @@ gets you numbers from a busy host, which is all they then are.
 | `rows_attn` | Multi-row prefill attention against the per-row loop, with layout arms, one case per context |
 | `moe_routed` | Routed-expert pair: M decode pairs against one route-list pair (union modeled as uniform routing) |
 | `verify_ladder` | Whole-model GEMM cost per verify width; `--verify-from EXP` adds the measured non-GEMM marginal |
+| `qkv_concurrent` | The attention q/k/v triple in a serial pass against a concurrent compute encoder (shared input, no barrier); `c(M)` is each arm's time over the serial arm's |
 | `gdn_delta` | Gated-DeltaNet delta kernels (decode, eager and lazy prefill, state fold) at the install's geometry. One build per process: put `TURBOSPARK_GDN_DK128=0` on the `tslab` process for the runtime-Dk build |
 | `music3_grid` | Music 3 corpus: output hashes against goldens, per-config timing |
 | `whisper_linear` | Whisper encoder GEMM, decoder GEMV, GEMM at one row |
@@ -92,7 +93,10 @@ Base: `--base-ms X`, `--base-from EXP[:ARM]` (a `profile_summary`, decode or
 EXP` for the host's null floor, `--share-from EXP --block gdn|mlp|attn` to
 read the benched kernels against a stand-in block. `--min-rows N` leaves
 shapes under the mode's routing threshold on the default (the 8-row tile
-serves 4096 rows and up), and `--shapes` prices only the named cases. Read `coverage` first: a
+serves 4096 rows and up), and `--shapes` prices only the named cases. `--counts LABEL=N,...` overrides a
+case's recorded per-forward count (a routed expert shape that collides with a
+shared expert's in the resident index records the shared one), and `--scale S`
+multiplies every count (layers, or routes per row group). Read `coverage` first: a
 projection that explains 40% of the base says nothing about the other 60%,
 and the 8-row tile's lever 9 was exactly that.
 

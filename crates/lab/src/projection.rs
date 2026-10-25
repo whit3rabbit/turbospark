@@ -65,6 +65,12 @@ pub struct Params {
     /// tile's routing threshold): left on the default, so it costs nothing
     /// extra and stays inside the base.
     pub min_rows: Option<usize>,
+    /// Per-case count overrides (`LABEL=N`), for a shape whose recorded count
+    /// is another tensor's (a routed expert shape that collides with a shared
+    /// expert's in the resident index).
+    pub counts: BTreeMap<String, u64>,
+    /// Multiplies every count: layers, or routes per row group.
+    pub scale: f64,
     pub base: Base,
     /// Dispatches the mode adds (positive) or removes (negative) per base unit.
     pub dispatches: i64,
@@ -78,7 +84,8 @@ pub struct Params {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CaseRow {
     pub case: String,
-    pub count: u64,
+    /// The count the case was priced at, after any override and scale.
+    pub count: f64,
     pub default_ms: f64,
     pub mode_ms: f64,
     /// `count * (mode_ms - default_ms)`.
@@ -176,7 +183,8 @@ pub fn project(
                 continue;
             }
         }
-        let count = d.subject.get("count").and_then(Value::as_u64).unwrap_or(0);
+        let recorded = d.subject.get("count").and_then(Value::as_u64).unwrap_or(0);
+        let count = p.counts.get(&d.case).copied().unwrap_or(recorded);
         if count == 0 {
             skipped.push(skip(
                 "no per-forward count (a config fallback has none): not priced".into(),
@@ -190,10 +198,10 @@ pub fn project(
         match (arm_ms(d, &p.default_arm, p.x), arm_ms(m, &p.mode_arm, p.x)) {
             (Ok(dm), Ok(mm)) => cases.push(CaseRow {
                 case: d.case.clone(),
-                count,
+                count: count as f64 * p.scale,
                 default_ms: dm,
                 mode_ms: mm,
-                delta_ms: count as f64 * (mm - dm),
+                delta_ms: count as f64 * p.scale * (mm - dm),
             }),
             (Err(e), _) | (_, Err(e)) => skipped.push(skip(e)),
         }
@@ -214,7 +222,7 @@ pub fn project(
         ));
     }
     let kernel_delta_ms: f64 = cases.iter().map(|c| c.delta_ms).sum();
-    let benched_default_ms: f64 = cases.iter().map(|c| c.count as f64 * c.default_ms).sum();
+    let benched_default_ms: f64 = cases.iter().map(|c| c.count * c.default_ms).sum();
     let dispatch_delta_ms =
         match (p.dispatches, p.us_per_dispatch) {
             (0, _) => 0.0,
@@ -547,6 +555,26 @@ pub fn project_cmd(mut args: Args) -> Result<CmdOutput, String> {
     let shapes = args
         .take("--shapes")?
         .map(|s| s.split(',').map(|v| v.trim().to_string()).collect());
+    let counts: BTreeMap<String, u64> = args
+        .take("--counts")?
+        .map(|s| {
+            s.split(',')
+                .map(|kv| {
+                    let (k, v) = kv
+                        .split_once('=')
+                        .ok_or(format!("--counts LABEL=N,... not {kv:?}"))?;
+                    Ok((
+                        k.trim().to_string(),
+                        v.trim()
+                            .parse::<u64>()
+                            .map_err(|_| format!("--counts {kv:?}"))?,
+                    ))
+                })
+                .collect::<Result<_, String>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let scale: f64 = args.parsed("--scale", 1.0)?;
     let min_rows: Option<usize> = args
         .take("--min-rows")?
         .map(|v| v.parse())
@@ -666,6 +694,8 @@ pub fn project_cmd(mut args: Args) -> Result<CmdOutput, String> {
         mode_arm,
         shapes,
         min_rows,
+        counts,
+        scale,
         base,
         dispatches,
         us_per_dispatch: us,
@@ -937,6 +967,8 @@ mod tests {
             mode_arm: "tile".into(),
             shapes: None,
             min_rows: None,
+            counts: BTreeMap::new(),
+            scale: 1.0,
             base: Base {
                 ms: base_ms,
                 source: "test".into(),
@@ -1046,6 +1078,32 @@ mod tests {
         // 4 x 0.25 ms for the served shape; the small one adds nothing.
         assert!((routed.kernel_delta_ms - 1.0).abs() < 1e-9, "{routed:?}");
         assert!(all.kernel_delta_ms > routed.kernel_delta_ms);
+    }
+
+    #[test]
+    fn a_count_override_and_a_scale_reprice_a_case() {
+        // A routed shape that collides with a shared expert's carries the
+        // shared expert's count (94). Override it to the routed 6, then scale
+        // by 47 layers over 4 rows per group.
+        let r = vec![result(
+            "g",
+            94,
+            &[("gemv", &[(4.0, 0.4)]), ("gemm", &[(4.0, 0.1)])],
+        )];
+        let mut p = params(100.0);
+        p.x = 4;
+        p.default_arm = "gemv".into();
+        p.mode_arm = "gemm".into();
+        let plain = project(&p, &r, &r).unwrap();
+        assert!((plain.kernel_delta_ms + 94.0 * 0.3).abs() < 1e-9);
+        p.counts.insert("g".into(), 6);
+        p.scale = 47.0 / 4.0;
+        let priced = project(&p, &r, &r).unwrap();
+        assert!((priced.cases[0].count - 6.0 * 47.0 / 4.0).abs() < 1e-9);
+        assert!(
+            (priced.kernel_delta_ms + 6.0 * 47.0 / 4.0 * 0.3).abs() < 1e-9,
+            "{priced:?}"
+        );
     }
 
     #[test]

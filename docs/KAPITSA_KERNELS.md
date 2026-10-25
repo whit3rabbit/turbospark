@@ -704,8 +704,11 @@ bench) and the first lever 9 projection was +21%, a 17.8-point miss
 (`km-l9-proj`). The bench now repeats the copy sweep until a pass holds at
 least 64 dispatches, and the same shape reads about 42 us scalar and 8 us for
 the tile. That is the fix to the bench, not a lever 9 result. One-row
-`gemv_per_row` on those shapes still reads above its 8-row-per-dispatch share,
-a floor the bench has not explained.
+`gemv_per_row` on those shapes still reads about 3x its per-dispatch share in an
+8-GEMV pass. A separate output buffer per weight copy was tried to rule out
+output-ordering between dispatches and did not move it (14.9 us a one-row GEMV
+on the 48-row shape against about 5.5 us each inside the 8-GEMV pass), so the
+cause is still unexplained and that change was reverted.
 
 **Lever 9 under a trace.** The first two `tslab trace` windows landed in the
 sequential prefill and said nothing. Rerun on a short prompt with 768 decode
@@ -726,8 +729,8 @@ today is priced. The rest names what is missing, and none is built.
 | Candidate | Projection | What is missing |
 |-----------|-----------|-----------------|
 | Drafter-gated tile (mlx-serve E1: tile only when a drafter is bound) | Removes the plain-decode loss the tile projects (0.831x, `km-proj`) on a headless install, keeps the code gain | No bench arm separates "drafter bound" from the flag; the routing lives in `real_forward_dispatch.rs`, the tile owner's file |
-| Concurrent q/k/v encoder (item 2) | Not priced | No bench arm for concurrent dispatch; the 1.07-1.40x figure is from a same-weight GEMV bench outside the lab |
-| Expert-sorted grouped GEMM MoE prefill (item 8) | Not priced | The mechanism ratio (0.44-0.80) is from `moe_grouped_gemm_bench.rs`, outside the lab, and the `moe_routed` bench times decode pairs, not per-expert prefill GEMMs |
+| Concurrent q/k/v encoder (item 2) | +0.4% on a decode token, UNDER THE FLOOR (`km-proj-qkv`, new `qkv_concurrent` bench: the triple takes 0.896 of its serial time, 0.19 ms across 16 layers of 45.5 ms, output bits identical) | Nothing to build as a standalone mode; it would have to cover far more dispatches than the one triple per layer to clear 2% |
+| Expert-sorted grouped GEMM MoE prefill (item 8) | +4.0% to +4.1% of a Flint prefill token against one GEMV per route, at 4 and 16 rows per expert (`km-proj-moe`; kernels cover 6% of a 40 ms token at 24.9 tok/s) | The base is dominated by something the bench does not time (likely expert I/O), the engine's batched MoE prefill paths may already capture part of it, and the drift bound in `BATCHED_PREFILL.md` still applies. Measure the routed share of a prefill token before building |
 | Hybrid prompt lookup plus MTP | Not priced | Needs an MTP replay on the copy-heavy stream; copy-heavy already gains +17% live from the adaptive controller above, which is the figure a hybrid has to beat |
 
 #### Re-measured on the shipped defaults, 2026-10-25

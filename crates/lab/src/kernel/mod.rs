@@ -18,6 +18,7 @@ pub mod int4_matmul;
 pub mod int8_matmul;
 pub mod moe_routed;
 pub mod music3_grid;
+pub mod qkv_concurrent;
 pub mod rows_attn;
 pub mod support;
 pub mod verify_ladder;
@@ -228,6 +229,7 @@ pub fn registry() -> Vec<&'static dyn KernelBench> {
         &gdn_delta::GdnDelta,
         &rows_attn::RowsAttn,
         &moe_routed::MoeRouted,
+        &qkv_concurrent::QkvConcurrent,
         &verify_ladder::VerifyLadder,
         &music3_grid::Music3Grid,
         &whisper_linear::WhisperLinear,
@@ -244,6 +246,7 @@ pub fn arm_labels(bench: &str) -> Option<Vec<String>> {
         "int8_matmul" => Some(int8_matmul::ARMS.iter().map(|a| a.to_string()).collect()),
         "attn_decode" => Some(attn_decode::ARMS.iter().map(|a| a.to_string()).collect()),
         "gdn_delta" => Some(gdn_delta::ARMS.iter().map(|a| a.to_string()).collect()),
+        "qkv_concurrent" => Some(qkv_concurrent::ARMS.iter().map(|a| a.to_string()).collect()),
         _ => None,
     }
 }
