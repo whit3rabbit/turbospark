@@ -169,8 +169,16 @@ pub fn print_result(r: &BenchResult) {
         .iter()
         .filter(|a| !a.points.is_empty())
         .all(|a| a.points.iter().all(|p| p.c_of_m.is_some()));
+    let w = r
+        .arms
+        .iter()
+        .map(|a| a.label.len())
+        .max()
+        .unwrap_or(0)
+        .max(14)
+        + 2;
     crate::say_part!(
-        "  {:<16}",
+        "  {:<w$}",
         format!("{} at {} =", if use_c { "c(M)" } else { "ms" }, r.x.name)
     );
     for x in &xs {
@@ -179,10 +187,10 @@ pub fn print_result(r: &BenchResult) {
     crate::say!("   fit a + b*x (ms)");
     for a in &r.arms {
         if let Some(why) = &a.unsupported {
-            crate::say!("  {:<16}{why}", a.label);
+            crate::say!("  {:<w$}{why}", a.label);
             continue;
         }
-        crate::say_part!("  {:<16}", a.label);
+        crate::say_part!("  {:<w$}", a.label);
         for x in &xs {
             match a.points.iter().find(|p| p.x == *x) {
                 Some(p) => {

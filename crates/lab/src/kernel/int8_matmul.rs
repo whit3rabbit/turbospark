@@ -33,7 +33,7 @@ impl KernelBench for Int8Matmul {
         "INT8 projections at the install's shapes (routers, shared gates): per-row GEMV against the batched GEMM over M"
     }
 
-    fn cases(&self, subject: &Subject) -> Result<Vec<Case>, String> {
+    fn cases(&self, subject: &Subject, _opts: &BenchOpts) -> Result<Vec<Case>, String> {
         let arch = subject.arch()?;
         let (shapes, source) =
             super::matmul_shapes(subject, crate::inventory::DTYPE_INT8_AFFINE, || {

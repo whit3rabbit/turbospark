@@ -15,7 +15,10 @@
 pub mod attn_decode;
 pub mod int4_matmul;
 pub mod int8_matmul;
+pub mod moe_routed;
+pub mod rows_attn;
 pub mod support;
+pub mod verify_ladder;
 
 pub use crate::fit;
 
@@ -169,6 +172,7 @@ pub struct Case {
     pub params: Value,
 }
 
+#[derive(Debug, Clone)]
 pub struct BenchOpts {
     /// The M (row) sweep for row-shaped benches.
     pub rows: Vec<usize>,
@@ -178,6 +182,22 @@ pub struct BenchOpts {
     pub reps: usize,
     /// Record the FNV-1a of each point's output bits.
     pub hash: bool,
+    /// `verify_ladder`: an experiment whose speculative runs supply measured
+    /// verify ms per round.
+    pub verify_from: Option<String>,
+}
+
+impl Default for BenchOpts {
+    /// The command line's defaults.
+    fn default() -> Self {
+        Self {
+            rows: vec![1, 2, 4, 8, 16, 32, 64, 128, 256, 512],
+            contexts: vec![512, 2048, 8192, 16384, 32768],
+            reps: 5,
+            hash: false,
+            verify_from: None,
+        }
+    }
 }
 
 pub trait KernelBench: Sync {
@@ -186,7 +206,7 @@ pub trait KernelBench: Sync {
     fn describe(&self) -> &'static str;
     /// The cases this bench runs on `subject`, or why it cannot run there.
     /// An `Err` is a coverage answer ("no MLA kernel"), not a failure.
-    fn cases(&self, subject: &Subject) -> Result<Vec<Case>, String>;
+    fn cases(&self, subject: &Subject, opts: &BenchOpts) -> Result<Vec<Case>, String>;
     fn run(
         &self,
         context: &mut gpu::MetalContext,
@@ -202,6 +222,9 @@ pub fn registry() -> Vec<&'static dyn KernelBench> {
         &int4_matmul::Int4Matmul,
         &int8_matmul::Int8Matmul,
         &attn_decode::AttnDecode,
+        &rows_attn::RowsAttn,
+        &moe_routed::MoeRouted,
+        &verify_ladder::VerifyLadder,
     ]
 }
 
@@ -213,7 +236,12 @@ pub fn by_name(name: &str) -> Option<&'static dyn KernelBench> {
 pub fn coverage(subject: &Subject) -> Vec<(String, Result<usize, String>)> {
     registry()
         .into_iter()
-        .map(|b| (b.name().to_string(), b.cases(subject).map(|c| c.len())))
+        .map(|b| {
+            (
+                b.name().to_string(),
+                b.cases(subject, &BenchOpts::default()).map(|c| c.len()),
+            )
+        })
         .collect()
 }
 
@@ -244,6 +272,7 @@ pub fn kernel_cmd(mut args: Args) -> Result<(), String> {
     )?;
     let reps: usize = args.parsed("--reps", 5)?;
     let hash = args.flag("--hash");
+    let verify_from = args.take("--verify-from")?;
     // `--shape RxC` predates `--case`; both select one case label.
     let only_case = match (args.take("--case")?, args.take("--shape")?) {
         (Some(c), _) | (None, Some(c)) => Some(c),
@@ -272,6 +301,7 @@ pub fn kernel_cmd(mut args: Args) -> Result<(), String> {
         contexts,
         reps,
         hash,
+        verify_from,
     };
 
     let subject = Subject::open(&model)?;
@@ -304,7 +334,7 @@ pub fn kernel_cmd(mut args: Args) -> Result<(), String> {
 
     let mut ran = 0;
     for b in benches {
-        let cases = match b.cases(&subject) {
+        let cases = match b.cases(&subject, &opts) {
             Ok(c) => c,
             Err(why) => {
                 crate::say!("{}: not run on {}: {why}", b.name(), subject.family);

@@ -40,7 +40,7 @@ impl KernelBench for Int4Matmul {
         "INT4 projections at the install's shapes: per-row GEMV, scalar GEMM, Steel tiles, MMA8 tile over M"
     }
 
-    fn cases(&self, subject: &Subject) -> Result<Vec<Case>, String> {
+    fn cases(&self, subject: &Subject, _opts: &BenchOpts) -> Result<Vec<Case>, String> {
         let arch = subject.arch()?;
         let (mut shapes, source) =
             super::matmul_shapes(subject, crate::inventory::DTYPE_INT4_AFFINE, || {

@@ -107,7 +107,7 @@ impl KernelBench for AttnDecode {
         "decode attention per variant (full, sliding, sinks): barrier against GQA-shared over context"
     }
 
-    fn cases(&self, subject: &Subject) -> Result<Vec<Case>, String> {
+    fn cases(&self, subject: &Subject, _opts: &BenchOpts) -> Result<Vec<Case>, String> {
         let arch = subject.arch()?;
         let cases: Vec<Case> = shapes(arch)
             .into_iter()
