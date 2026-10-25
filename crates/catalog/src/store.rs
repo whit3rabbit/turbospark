@@ -201,20 +201,35 @@ impl ModelModality {
 
 impl InstalledModel {
     /// Interprets rows written before `modality` existed or where modality defaulted/mismatched.
+    ///
+    /// Only a This Mac row recorded as text is read from where it sits, and
+    /// only from its namespace folder (`<root>/audio/<alias>`,
+    /// `<root>/image/<alias>`). A library's rows were written with their
+    /// modality and keep it: their path names the drive's mount point at
+    /// install time, any folder on the way may be called `audio` or `image`,
+    /// and a receipt probe there would change [`Self::install_id`] whenever
+    /// the drive is unplugged.
     pub fn effective_modality(&self) -> ModelModality {
-        if self.modality == ModelModality::Audio
-            || self.kind.as_deref() == Some("speech")
-            || self.path.components().any(|c| c.as_os_str() == "audio")
+        if self.kind.as_deref() == Some("image") {
+            return ModelModality::Image;
+        }
+        let in_library = self
+            .library
+            .as_deref()
+            .is_some_and(|id| id != crate::library::INTERNAL_LIBRARY_ID);
+        if self.modality != ModelModality::Text || in_library {
+            return self.modality;
+        }
+        let namespace = self.path.parent().and_then(|dir| dir.file_name());
+        if self.kind.as_deref() == Some("speech")
+            || namespace.is_some_and(|name| name == "audio")
             || self.path.join("audio-receipt.json").is_file()
         {
             ModelModality::Audio
-        } else if self.kind.as_deref() == Some("image")
-            || self.modality == ModelModality::Image
-            || self.path.components().any(|c| c.as_os_str() == "image")
-        {
+        } else if namespace.is_some_and(|name| name == "image") {
             ModelModality::Image
         } else {
-            self.modality
+            ModelModality::Text
         }
     }
 
@@ -2026,6 +2041,66 @@ pub fn directory_bytes(dir: &Path) -> u64 {
 mod tests {
     use super::*;
     use crate::library::{system_mount_reads, MountSource, LIBRARIES_FILE};
+
+    /// A This Mac row recorded as text is read from its namespace folder, and
+    /// a library row keeps the modality it was written with, whatever the
+    /// folders on its path are called.
+    #[test]
+    fn effective_modality_reads_only_this_macs_namespace_folder() {
+        let row = |path: &str, library: Option<&str>| InstalledModel {
+            alias: "m".to_string(),
+            repo: "owner/name".to_string(),
+            revision: "main".to_string(),
+            path: PathBuf::from(path),
+            family: "qwen3".to_string(),
+            install_bytes: 1,
+            installed_on: "2026-10-25".to_string(),
+            status: "runs".to_string(),
+            kind: None,
+            modality: ModelModality::Text,
+            variant: None,
+            library: library.map(str::to_string),
+            relative_path: None,
+        };
+        let library = Some("0f6c2a3e-1b7d-4c55-9e0a-7d2f1c3b4a59");
+        let home = "/nonexistent-ts-home/models";
+        assert_eq!(
+            row(&format!("{home}/audio/m.gturbo"), None).effective_modality(),
+            ModelModality::Audio
+        );
+        assert_eq!(
+            row(&format!("{home}/image/m"), None).effective_modality(),
+            ModelModality::Image
+        );
+        assert_eq!(
+            row(&format!("{home}/text/m.gturbo"), None).effective_modality(),
+            ModelModality::Text
+        );
+        // A folder called audio or image above the namespace is not one.
+        assert_eq!(
+            row("/Volumes/Media/audio/TurboSpark/text/m.gturbo", None).effective_modality(),
+            ModelModality::Text
+        );
+        for path in [
+            "/Volumes/Media/audio/TurboSpark/text/m.gturbo",
+            "/Volumes/T7/TurboSpark/audio",
+            "/Volumes/image/TurboSpark/text/m.gturbo",
+            // The same place a This Mac row is read as audio from.
+            "/Volumes/T7/TurboSpark/audio/m.gturbo",
+            "/Volumes/T7/TurboSpark/image/m",
+        ] {
+            assert_eq!(
+                row(path, library).effective_modality(),
+                ModelModality::Text,
+                "{path}"
+            );
+        }
+        let audio = InstalledModel {
+            modality: ModelModality::Audio,
+            ..row("/Volumes/T7/TurboSpark/text/m.gturbo", library)
+        };
+        assert_eq!(audio.effective_modality(), ModelModality::Audio);
+    }
 
     /// A listing locates every library through one mount table, so N
     /// offline libraries spawn `/sbin/mount` once rather than N times. Lives

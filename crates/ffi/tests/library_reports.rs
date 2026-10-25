@@ -713,9 +713,15 @@ fn audio_install(root: &Path, profile: &AudioProfile) {
     let folder = root
         .join("audio")
         .join(format!("{}.gturbo", profile.identity.alias));
+    // A row with a fixed layout keeps its assets under `install_subdir`, the
+    // receipt at the install's top.
+    let assets = match &profile.install_subdir {
+        Some(subdir) => folder.join(subdir),
+        None => folder.clone(),
+    };
     let mut files = serde_json::Map::new();
     for asset in &profile.assets {
-        let path = folder.join(&asset.path);
+        let path = assets.join(&asset.path);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::File::create(&path)
             .unwrap()

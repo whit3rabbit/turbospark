@@ -2043,8 +2043,8 @@ fn check_library_row(
                 .into(),
         );
     }
-    read_receipt(profile, &row.path)?;
-    verify_asset_bytes(profile, &row.path, false, None)
+    let receipt = read_receipt(profile, &row.path)?;
+    verify_install(profile, &row.path, &receipt, false, None, None)
 }
 
 /// The managed folder of the library row `row` in its library at the
