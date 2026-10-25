@@ -63,7 +63,9 @@ the verify kernel items (2 and 7) are worth building.
 A later research report compared kapitsa and mlx-serve on Qwen3.8-27B. This
 section keeps the part that survived checking it against this tree. The
 report's sources are the two projects' READMEs and release notes, which were
-not re-read for this page.
+not re-read for this page. mlx-serve's source, kernels, and measured gotchas
+were read on 24 October 2026 for [MLX_SERVE_KERNELS.md](MLX_SERVE_KERNELS.md),
+which supersedes this section's mlx-serve claims where they differ.
 
 Vendor-reported decode speed, Qwen3.8-27B 4-bit, a 512-token coding answer,
 each engine in its own "fastest setup" (kapitsa's README table):

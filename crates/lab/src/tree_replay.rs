@@ -153,7 +153,7 @@ pub fn tree_replay_cmd(mut args: Args) -> Result<(), String> {
         ledger.path().display()
     );
 
-    println!("\nprompt              block  chain c/rd  tree c/rd  oracle c/rd  tree/chain");
+    crate::say!("\nprompt              block  chain c/rd  tree c/rd  oracle c/rd  tree/chain");
     let mut per_prompt = Vec::new();
     let mut serve_gains = Vec::new();
     for (source, prompt) in prompts.iter().zip(&ids) {
@@ -194,7 +194,7 @@ pub fn tree_replay_cmd(mut args: Args) -> Result<(), String> {
             if block == serve_block {
                 serve_gains.push(gain);
             }
-            println!(
+            crate::say!(
                 "{name:<18}  {block:>5}  {c:>10.3}  {t:>9.3}  {o:>11.3}  {:>9.3}x",
                 t / c
             );
@@ -214,11 +214,11 @@ pub fn tree_replay_cmd(mut args: Args) -> Result<(), String> {
     let after = monitor.sample(None);
     let (eligible, reasons) = eligibility(&[before, after], &rules);
     if !eligible {
-        println!("  DIRTY: {}", reasons.join("; "));
+        crate::say!("  DIRTY: {}", reasons.join("; "));
     }
     let serve_gain = serve_gains.iter().sum::<f64>() / serve_gains.len().max(1) as f64;
     let worth = serve_gain >= MIN_TREE_GAIN;
-    println!(
+    crate::say!(
         "\n'c/rd' is committed tokens per verify round (accepted + bonus), at equal verify rows.\n\
          Mean tree gain at the served block {serve_block}: {:.1}% against a {:.0}% bar: {}.\n\
          Deeper blocks only count if a cheaper verify makes them pay (--serve-block).\n\

@@ -42,6 +42,12 @@ impl Args {
         Ok(out)
     }
 
+    /// A leading positional argument (`tslab workflow NAME ...`), if the
+    /// first word is not a flag. Take it before any flag.
+    pub fn positional(&mut self) -> Option<String> {
+        (!self.rest.is_empty() && !self.rest[0].starts_with("--")).then(|| self.rest.remove(0))
+    }
+
     pub fn flag(&mut self, flag: &str) -> bool {
         let before = self.rest.len();
         self.rest.retain(|a| a != flag);
@@ -195,6 +201,7 @@ pub fn parse_arm(
         env,
         open,
         speculation,
+        expect_engaged: Vec::new(),
     })
 }
 

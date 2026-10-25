@@ -642,6 +642,18 @@ the install's own shapes (`tslab kernel`), Core ML placement
 lands in an append-only ledger under `$TURBOSPARK_LAB_DIR`, dirty runs
 included with their reasons.
 
+It also covers audio installs (`--audio-job`, the `music3_grid` and
+`whisper_linear` benches), Metal System Traces (`tslab trace`), the
+dispatch probe and block stand-ins, and resumable sequences of all of these
+(`tslab workflow`, with `new-family` running this page's checks for a family
+not yet measured). `tslab capabilities` says what an install supports.
+
+Every ledger line, and the one object `--json` prints, carries schema
+`tslab/1` (`tslab schema` prints the JSON Schema). `tslab export` writes
+ledgers as plottable series and `tslab report --html` draws them offline,
+so a new kernel bench is visible without new reader code. The agent-facing
+summary is `crates/lab/skill/SKILL.md`.
+
 It holds a machine-wide lock, `$TURBOSPARK_LAB_DIR/.machine.lock`, for the
 whole measuring session. A Python driver that takes `fcntl.flock` on the
 same file shares the lock, so two measuring sessions on one host wait for

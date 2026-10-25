@@ -28,6 +28,9 @@ use crate::workload::{Arm, Drafter, PromptSource, Residency, Slots, Speculation,
 
 pub const EXIT_REFUSED: i32 = 3;
 
+/// Printed to stderr once the warm pass is done and measured work begins.
+pub const MEASURING_MARKER: &str = "[tslab-worker] measuring";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Mode {
@@ -123,6 +126,10 @@ pub struct RunRecord {
     /// knob was on, which also makes the run unquotable.
     pub dispatch_profile: Option<String>,
     pub provenance: Provenance,
+    /// An audio arm's result (`worker_audio.rs`): run_s, audio_s, rtf,
+    /// stages in ms, output_digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio: Option<serde_json::Value>,
 }
 
 fn refused(req: &WorkerRequest, reason: String) -> RunRecord {
@@ -146,6 +153,7 @@ fn refused(req: &WorkerRequest, reason: String) -> RunRecord {
         faults: None,
         dispatch_profile: None,
         provenance: provenance::collect(),
+        audio: None,
     }
 }
 
@@ -614,6 +622,32 @@ fn open(
     Ok((runner, tokenizer, family))
 }
 
+/// The environment the orchestrator built must be the arm's, exactly. A
+/// stray inherited variable would silently make this a different arm.
+/// Location variables pass through for alias resolution, and the
+/// orchestrator's own (`ORCHESTRATOR_ENV`) are accepted at their one value
+/// unless the arm sets them itself.
+pub fn env_matches_arm(
+    mut seen: std::collections::BTreeMap<String, String>,
+    arm: &Arm,
+) -> Result<(), String> {
+    for location in crate::orchestrate::PASSTHROUGH_TURBOSPARK {
+        seen.remove(*location);
+    }
+    for (k, v) in crate::orchestrate::ORCHESTRATOR_ENV {
+        if !arm.env.contains_key(*k) && seen.get(*k).map(String::as_str) == Some(*v) {
+            seen.remove(*k);
+        }
+    }
+    if seen != arm.env {
+        return Err(format!(
+            "worker environment {seen:?} does not match arm {} {:?}",
+            arm.name, arm.env
+        ));
+    }
+    Ok(())
+}
+
 /// Run the request. `Err` is a refusal or clean failure (exit 3); a panic is
 /// a crash.
 pub fn run(req: &WorkerRequest) -> RunRecord {
@@ -628,15 +662,9 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
     // A stray inherited variable would silently make this a different arm.
     // Location variables are passed through for alias resolution and are
     // not knobs.
-    let mut seen = provenance::turbospark_env();
-    for location in crate::orchestrate::PASSTHROUGH_TURBOSPARK {
-        seen.remove(*location);
-    }
-    if seen != req.arm.env {
-        return Err(format!(
-            "worker environment {seen:?} does not match arm {} {:?}",
-            req.arm.name, req.arm.env
-        ));
+    env_matches_arm(provenance::turbospark_env(), &req.arm)?;
+    if let Some(job) = &req.workload.audio {
+        return crate::worker_audio::run(req, job);
     }
     // Without the feature the runtime never reads TURBOSPARK_ANE_PREFILL, so
     // such an arm would measure Steel under an ANE label.
@@ -725,6 +753,9 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
         }
     }
     let warm_s = t_warm.elapsed().as_secs_f64();
+    // `tslab trace` attaches its recorder when it reads this line, so the
+    // trace covers measured work, not the model load or the warm pass.
+    eprintln!("{MEASURING_MARKER}");
 
     let mut prompts = Vec::new();
     let mut logits_out: Vec<u8> = Vec::new();
@@ -898,6 +929,7 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
         faults: task_fault_counters(),
         dispatch_profile,
         provenance: provenance::collect(),
+        audio: None,
     })
 }
 
@@ -942,4 +974,45 @@ pub fn main_entry() -> i32 {
         return 1;
     }
     code
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn arm(env: &[(&str, &str)]) -> Arm {
+        Arm {
+            name: "a".into(),
+            env: env
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            open: Default::default(),
+            speculation: None,
+            expect_engaged: Vec::new(),
+        }
+    }
+
+    fn seen(env: &[(&str, &str)]) -> BTreeMap<String, String> {
+        env.iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    /// The bug this exists for: the orchestrator's own engagement variable
+    /// made every worker refuse its arm.
+    #[test]
+    fn the_orchestrators_variables_are_not_a_stray() {
+        let base = [("TURBOSPARK_ENGAGEMENT", "1"), ("TURBOSPARK_HOME", "/x")];
+        assert!(env_matches_arm(seen(&base), &arm(&[])).is_ok());
+        let with_knob = [
+            ("TURBOSPARK_ENGAGEMENT", "1"),
+            ("TURBOSPARK_INT4_MMA8", "1"),
+        ];
+        assert!(env_matches_arm(seen(&with_knob), &arm(&[("TURBOSPARK_INT4_MMA8", "1")])).is_ok());
+        // A stray knob, or the variable at another value, still refuses.
+        assert!(env_matches_arm(seen(&with_knob), &arm(&[])).is_err());
+        assert!(env_matches_arm(seen(&[("TURBOSPARK_ENGAGEMENT", "0")]), &arm(&[])).is_err());
+    }
 }

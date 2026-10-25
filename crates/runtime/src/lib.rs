@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 mod config;
+mod lab_hooks;
 mod draft_lattice;
 #[cfg(target_os = "macos")]
 pub mod embedding_probe;

@@ -215,8 +215,13 @@ Measurement and caveats: `docs/BENCHMARKS.md`, the Qwen3.8 section.
   measurement gave 2.0%. Dividing the seconds saved by the dispatches removed
   gives about 1.6 us each for back-to-back tiny kernels in one encoder here
   (0.40 s over roughly 246,000 for the attention ops, 1.53 s over roughly
-  900,000 for all of them). This is derived from two timing samples, not a
-  floor measurement, but use it for the next estimate and re-check it.
+  900,000 for all of them). That was derived from two timing samples. The
+  dispatch probe has since measured it: **1.87 us per chained dispatch** in
+  Qwen3.8's dense decode trunk (per-round fits 1.71-1.96 us, ledger
+  `qwen38-dispatch-probe-3`, `docs/MLX_SERVE_KERNELS.md` L1). Use that for
+  the next estimate, and remember it prices a dispatch on the dependency
+  chain: a fusion that removes dispatches the GPU already overlaps saves
+  less.
 
 - **A forced-kernel variable changes more than the thing you meant.**
   `TURBOSPARK_ATTN_DECODE_KERNEL=barrier` forces every attention scratch,
@@ -439,9 +444,12 @@ never does, as with open-jet above, but do not read its code for kernels.
   dispatch commits and waits. Two workloads on different code, so the ratio
   is indicative only, but it says where the cost is: move work into one pass
   with direct-bound buffer chains before tuning any single kernel. The floor
-  is workload-specific, so calibrate before estimating. Qwen3.8 prefill
-  measured about 1.6 us per dispatch removed (see the traps list), against
-  Whisper's 5.4 us.
+  is workload-specific, so calibrate before estimating: `tslab profile
+  --dispatch-probe 0,4,8,16` measures it for a dense qwen or llama install.
+  Qwen3.8's decode trunk reads 1.87 us per chained dispatch (see the traps
+  list), against Whisper's 5.4 us. Its stand-ins (`--standin`) put the same
+  token at 61% FFN, 24% gated-DeltaNet and 7% attention, which is where a
+  decode lever has room.
 - **Attribute by skipping.** Gate one kernel behind an env flag and
   re-measure the pass. It sizes a kernel without the per-dispatch profiler's
   inflation, which only ranks. Pair it with wall versus GPU-busy per pass:
@@ -474,9 +482,10 @@ never does, as with open-jet above, but do not read its code for kernels.
 ### Qualification patterns worth reusing
 
 - **A hash corpus for bit-preserving kernel changes.** `music3_linear_bench`
-  (`crates/gpu/examples/`) prints an FNV-1a hash of output bits over 847
-  linear and 20 convolution configurations (bit widths, groups, row counts,
-  dtypes, ragged tiles, split-K). Diff before and after. Any difference means
+  (`crates/gpu/examples/`) prints an FNV-1a hash of output bits over every
+  configuration in its goldens (`crates/gpu/tests/golden/music3_*.txt`: 1,021
+  linear, 192 DiT and 30 convolution lines today, covering bit widths, groups,
+  row counts, dtypes, ragged tiles and split-K). Diff before and after. Any difference means
   the arithmetic changed. This is cheaper and broader than a handful of
   parity fixtures, and it fits the Steel and GEMV kernels here.
 - **Keep the old code verbatim in the test.** `8f83f998` compared every
@@ -684,8 +693,18 @@ lookup") so the next drafter is held to it from the start.
    - Speculative arms (`NAME~mtp:2`, `~dflash:7`, `~mtp:4a` for adaptive
      depth) to measure a verify or drafter change where it pays.
 
+   - `tslab capabilities` first, and `tslab workflow new-family` for an
+     install the lab has not measured.
+   - `tslab trace` for launch-bound against kernel-bound, and
+     `profile --dispatch-probe 0,4,8` for the price of a chained dispatch
+     before estimating a fusion.
+   - `kernel --hash` on both builds and `hash-diff` for a change that must
+     not move output bits.
+
    tslab gives each arm a fresh process, so `OnceLock` switches are safe to
-   A/B, and it records dirty runs rather than dropping them.
+   A/B, and it records dirty runs rather than dropping them. Give a new
+   switch an engagement line (`foundation::engaged!`) so an arm that did not
+   take it is refused instead of reading as noise.
 10. Measure on a quiet machine, and that includes your own session. A
     `cargo build` or test run, or an editor's background `cargo check` on
     your worktree, is enough to mark runs dirty (it did, on 2026-10-22).
@@ -851,3 +870,18 @@ chains, no per-dispatch wait. It needs residual adds, dtype rounding and SiLU
 on the device with the host's arithmetic, then a depth-decoder KV cache, and
 every step must keep the byte-identical WAV check. Detail and the open gates
 are in the Music 3 README.
+
+### 7. What the mlx-serve comparison adds
+
+[MLX_SERVE_KERNELS.md](MLX_SERVE_KERNELS.md) reads `ddalcu/mlx-serve` the
+way this page read open-jet and kapitsa. Its M4 Max Qwen3.8-27B cell moved
+from 70 to 106 tok/s when a DFlash2 draft tree of 8 rows started verifying
+through row-exact matrix-unit kernels whose rows carry the one-row step's
+bits at any width, gated on a drafter being bound. That is item 1 above and
+`docs/INT4_SMALL_M_MMA.md` item 7, shipped by another engine, with the
+gating and the per-shape one-row probe as the parts this tree lacks. The
+page's engine levers (E1 to E6) and evaluator additions (L1 to L7: a
+dispatch probe, a whole-forward verify-width ladder, engagement lines per
+arm, stand-in ablation, a Metal System Trace command, rows per simdgroup as
+a bench axis, a live round-cost table) are listed there with their gates. Its dead ends are recorded
+so they are not re-derived here.

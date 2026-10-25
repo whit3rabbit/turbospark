@@ -70,18 +70,18 @@ pub fn print_profile(arm_names: &[String], outcomes: &[Outcome]) -> Value {
             .filter(|o| &o.arm == name && !o.warmup)
             .collect();
         let clean: Vec<&Outcome> = all.iter().copied().filter(|o| o.eligible).collect();
-        println!();
+        crate::say!();
         let refused = outcomes
             .iter()
             .find(|o| &o.arm == name && o.status == "refused")
             .and_then(|o| o.record["refusal"].as_str().map(str::to_string));
         if let Some(r) = refused {
-            println!("{name}: REFUSED: {r}");
+            crate::say!("{name}: REFUSED: {r}");
             summary.insert(name.clone(), json!({"refused": r}));
             continue;
         }
         let first = clean.first().or(all.first());
-        println!(
+        crate::say!(
             "{name}: {} clean of {} measured runs; slots {} residency {}",
             clean.len(),
             all.len(),
@@ -90,7 +90,7 @@ pub fn print_profile(arm_names: &[String], outcomes: &[Outcome]) -> Value {
         );
         if clean.is_empty() {
             for o in &all {
-                println!("  dirty run {}: {}", o.run_id, o.reasons.join("; "));
+                crate::say!("  dirty run {}: {}", o.run_id, o.reasons.join("; "));
             }
             summary.insert(name.clone(), json!({"clean_runs": 0}));
             continue;
@@ -110,25 +110,70 @@ pub fn print_profile(arm_names: &[String], outcomes: &[Outcome]) -> Value {
                 .map(|b| b / (1u64 << 30) as f64)
         }));
         if let (Some(t), Some(s)) = (tok_s, pre_s) {
-            println!(
+            crate::say!(
                 "  prefill   {:.1} tok/s [{:.1}-{:.1}]   {:.2} s [{:.2}-{:.2}]",
-                t.0, t.1, t.2, s.0, s.1, s.2
+                t.0,
+                t.1,
+                t.2,
+                s.0,
+                s.1,
+                s.2
             );
         }
         if let Some(d) = dec {
-            println!("  decode    {:.2} tok/s [{:.2}-{:.2}]", d.0, d.1, d.2);
+            crate::say!("  decode    {:.2} tok/s [{:.2}-{:.2}]", d.0, d.1, d.2);
+        }
+        // Audio arms: wall time, real-time factor, and per-stage medians.
+        let audio_run = med(clean.iter().map(|o| o.record["audio"]["run_s"].as_f64()));
+        let rtf = med(clean.iter().map(|o| o.record["audio"]["rtf"].as_f64()));
+        let mut audio_stages = serde_json::Map::new();
+        if let (Some(r), Some(f)) = (audio_run, rtf) {
+            crate::say!(
+                "  audio     {:.2} s [{:.2}-{:.2}], RTF {:.3} [{:.3}-{:.3}]",
+                r.0,
+                r.1,
+                r.2,
+                f.0,
+                f.1,
+                f.2
+            );
+            let names: Vec<String> = clean[0].record["audio"]["stages"]
+                .as_object()
+                .map(|m| m.keys().cloned().collect())
+                .unwrap_or_default();
+            for n in names {
+                if let Some(s) = med(clean
+                    .iter()
+                    .map(|o| o.record["audio"]["stages"][&n].as_f64()))
+                {
+                    crate::say!("    {n:<24} {:>10.1} ms", s.0);
+                    audio_stages.insert(n, json!(s.0));
+                }
+            }
+            let digests: std::collections::BTreeSet<&str> = clean
+                .iter()
+                .filter_map(|o| o.record["audio"]["output_digest"].as_str())
+                .collect();
+            if digests.len() > 1 {
+                crate::say!(
+                    "    output differs between runs of this arm ({} digests)",
+                    digests.len()
+                );
+            }
         }
         if let Some(p) = peak {
-            println!("  peak      {:.2} GiB phys_footprint", p.0);
+            crate::say!("  peak      {:.2} GiB phys_footprint", p.0);
         }
         // Chat prompts: time to first token per turn, median over clean runs.
         if let Some(f) = med(clean
             .iter()
             .map(|o| o.record["totals"]["followup_ttft_s"].as_f64()))
         {
-            println!(
+            crate::say!(
                 "  ttft      {:.3} s follow-up mean [{:.3}-{:.3}]",
-                f.0, f.1, f.2
+                f.0,
+                f.1,
+                f.2
             );
         }
         let chats: Vec<(usize, usize)> = first
@@ -146,7 +191,7 @@ pub fn print_profile(arm_names: &[String], outcomes: &[Outcome]) -> Value {
                 let ttft = med(clean.iter().map(|o| turn(o)["ttft_s"].as_f64()));
                 let row = first.map(turn).unwrap_or_default();
                 if let Some(x) = ttft {
-                    println!(
+                    crate::say!(
                         "    chat {pi} turn {}: prompt {} reused {} ttft {:.3} s [{:.3}-{:.3}]",
                         t + 1,
                         row["prompt_tokens"],
@@ -173,7 +218,7 @@ pub fn print_profile(arm_names: &[String], outcomes: &[Outcome]) -> Value {
                 measured_calls(&|c| c["ms_per_round"][phase].as_f64())
                     .map_or("n/a".to_string(), |m| format!("{:.1}", m.0))
             };
-            println!(
+            crate::say!(
                 "  spec      {:.2} committed/round [{:.2}-{:.2}], ms/round draft {} verify {}",
                 c.0,
                 c.1,
@@ -189,6 +234,11 @@ pub fn print_profile(arm_names: &[String], outcomes: &[Outcome]) -> Value {
             "decode_tok_s": dec.map(|t| t.0),
             "peak_gib": peak.map(|t| t.0),
         });
+        if let (Some(r), Some(f)) = (audio_run, rtf) {
+            arm_json["audio_run_s"] = json!(r.0);
+            arm_json["rtf"] = json!(f.0);
+            arm_json["audio_stages"] = Value::Object(audio_stages);
+        }
         for phase in ["prefill_phases", "decode_phases"] {
             let aggs: Vec<Value> = clean
                 .iter()
@@ -197,27 +247,40 @@ pub fn print_profile(arm_names: &[String], outcomes: &[Outcome]) -> Value {
             if aggs.is_empty() {
                 continue;
             }
-            println!(
+            crate::say!(
                 "  {} (median ms/token over runs):",
                 phase.trim_end_matches("_phases")
             );
             let mut phase_json = serde_json::Map::new();
+            let mut zero = Vec::new();
             for b in BUCKET_NAMES {
                 let m = med(aggs.iter().map(|a| a["ms_per_token"][b].as_f64()));
                 if let Some((m, lo, hi)) = m {
+                    phase_json.insert(b.to_string(), json!(m));
+                    // Dense flows fill only the final wait and the
+                    // remainder; a column of zeros reads as a measurement.
+                    if hi == 0.0 {
+                        zero.push(b);
+                        continue;
+                    }
                     let total = med(aggs.iter().map(|a| a["total_ms_per_token"].as_f64()))
                         .map_or(1.0, |t| t.0);
-                    println!(
+                    crate::say!(
                         "    {b:<24} {m:>8.3}  [{lo:.3}-{hi:.3}]  {:>5.1}%",
                         100.0 * m / total
                     );
-                    phase_json.insert(b.to_string(), json!(m));
                 }
+            }
+            if !zero.is_empty() {
+                crate::say!(
+                    "    0 in every run, not filled by this flow or idle: {}",
+                    zero.join(", ")
+                );
             }
             let busy_cb1 = med(aggs.iter().map(|a| a["gpu_busy"]["cb1"].as_f64()));
             let busy_routed = med(aggs.iter().map(|a| a["gpu_busy"]["routed"].as_f64()));
             if let (Some(c), Some(r)) = (busy_cb1, busy_routed) {
-                println!("    gpu busy: cb1 {:.3}, routed {:.3} ms/token", c.0, r.0);
+                crate::say!("    gpu busy: cb1 {:.3}, routed {:.3} ms/token", c.0, r.0);
             }
             if let Some(h) = med(aggs.iter().map(|a| a["expert_hit_rate"].as_f64())) {
                 let rq = med(aggs
@@ -226,7 +289,7 @@ pub fn print_profile(arm_names: &[String], outcomes: &[Outcome]) -> Value {
                 let ph = med(aggs
                     .iter()
                     .map(|a| a["expert_mib_per_token"]["physical"].as_f64()));
-                println!(
+                crate::say!(
                     "    experts: hit {:.1}%, requested {:.1} MiB/token, physical {}",
                     h.0 * 100.0,
                     rq.map_or(0.0, |v| v.0),
@@ -244,8 +307,8 @@ pub fn print_profile(arm_names: &[String], outcomes: &[Outcome]) -> Value {
 }
 
 pub fn print_verdict(label: &str, v: &VerdictReport) {
-    println!();
-    println!(
+    crate::say!();
+    crate::say!(
         "{label}: {:?} on {} clean pairs; median {:+.2}%, 95% CI [{:+.2}%, {:+.2}%], {} better / {} worse, effect floor {:.2}%",
         v.verdict,
         v.pairs,
@@ -257,6 +320,6 @@ pub fn print_verdict(label: &str, v: &VerdictReport) {
         v.min_effect * 100.0
     );
     for r in &v.reasons {
-        println!("  {r}");
+        crate::say!("  {r}");
     }
 }

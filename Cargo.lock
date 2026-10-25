@@ -2399,6 +2399,7 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+ "turbospark-audio",
  "turbospark-bench",
  "turbospark-catalog",
  "turbospark-core",

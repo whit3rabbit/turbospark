@@ -524,6 +524,7 @@ fn encode_shared_expert(
             .map(|e| e.dtype == 4)
             .unwrap_or(false);
     if fused {
+        foundation::engaged!("qwen_fused_ffn");
         let gate_m =
             crate::real_forward_utils::resident_matrix(weights, index, &gate_name, inter, hidden)?;
         let up_m =

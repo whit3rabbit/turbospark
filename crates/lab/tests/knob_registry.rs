@@ -63,3 +63,32 @@ fn every_knob_is_documented_where_its_row_says() {
         );
     }
 }
+
+#[test]
+fn every_engagement_line_is_printed_somewhere() {
+    let root = repo_root();
+    let mut files = Vec::new();
+    for crate_dir in std::fs::read_dir(root.join("crates")).unwrap().flatten() {
+        if crate_dir.file_name() == "lab" {
+            continue;
+        }
+        rust_sources(&crate_dir.path().join("src"), &mut files);
+    }
+    let sources: String = files
+        .iter()
+        .filter_map(|f| std::fs::read_to_string(f).ok())
+        .collect();
+    let mut lines: Vec<&str> = KNOBS
+        .iter()
+        .flat_map(|k| k.engagement.iter().map(|e| e.line))
+        .collect();
+    // The stand-in's lines are per block, checked by name in knobs.rs.
+    lines.extend(["standin_attn", "standin_mlp", "standin_gdn"]);
+    for line in lines {
+        let call = format!("engaged!(\"{line}\")");
+        assert!(
+            sources.contains(&call),
+            "no `{call}` in crates/*/src: the lab would refuse every arm that sets its knob"
+        );
+    }
+}

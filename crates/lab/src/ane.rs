@@ -129,10 +129,10 @@ pub fn ane_plan_cmd(mut args: Args) -> Result<(), String> {
         let compiled = compile_if_needed(&program, &cache).map_err(|e| e.to_string())?;
         let plan = compute_plan(&compiled, &LoadOptions::new(units)).map_err(|e| e.to_string())?;
         let summary = summarize(&plan);
-        println!("{} (units {})", program.display(), units.as_str());
+        crate::say!("{} (units {})", program.display(), units.as_str());
         for f in summary.as_array().into_iter().flatten() {
             let s = &f["cost_share"];
-            println!(
+            crate::say!(
                 "  {:<24} {:>5} ops   cost on ane {:>5.1}%  gpu {:>5.1}%  cpu {:>5.1}%",
                 f["function"].as_str().unwrap_or("?"),
                 f["ops"],
@@ -141,7 +141,7 @@ pub fn ane_plan_cmd(mut args: Args) -> Result<(), String> {
                 (s["cpu"].as_f64().unwrap_or(0.0) * 100.0 + 0.0)
             );
             for b in f["off_ane"].as_array().into_iter().flatten() {
-                println!(
+                crate::say!(
                     "    off the ANE: {} x {} ({})",
                     b["count"],
                     b["operator"].as_str().unwrap_or("?"),

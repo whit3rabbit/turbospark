@@ -134,6 +134,18 @@ impl ExperimentSpec {
         if self.exactness != GateClass::BitExact {
             effective_bounds(self.exactness, self.quality_bounds)?;
         }
+        let audio = self.workload.audio.is_some();
+        if self.exactness == GateClass::TextExact && !audio {
+            return Err("text_exact gates an audio transcript; a text spec declares bit_exact, dense_kl or moe_kl".into());
+        }
+        if audio
+            && !matches!(
+                self.primary_metric,
+                Metric::AudioRunS | Metric::Rtf | Metric::PeakBytes
+            )
+        {
+            return Err("an audio spec's primary_metric is audio_run_s, rtf or peak_bytes".into());
+        }
         Ok(())
     }
 

@@ -66,6 +66,36 @@ pub struct Knob {
     pub quotable: bool,
     /// A repository doc that describes the knob (checked by the registry test).
     pub doc: &'static str,
+    /// What the run's stderr must (or must not) say when the arm sets the
+    /// knob, under `TURBOSPARK_ENGAGEMENT=1` (`foundation::engaged!`). Empty:
+    /// the lane prints nothing the lab checks.
+    pub engagement: &'static [Engagement],
+}
+
+/// One engagement expectation: when an arm sets the knob to `value` (`*`
+/// for any value but unset), the `[engaged] line` must appear (`present`)
+/// or must not (`!present`, for switches that turn a default lane off).
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct Engagement {
+    pub value: &'static str,
+    pub line: &'static str,
+    pub present: bool,
+}
+
+const fn on(value: &'static str, line: &'static str) -> Engagement {
+    Engagement {
+        value,
+        line,
+        present: true,
+    }
+}
+
+const fn off(value: &'static str, line: &'static str) -> Engagement {
+    Engagement {
+        value,
+        line,
+        present: false,
+    }
 }
 
 pub const KNOBS: &[Knob] = &[
@@ -80,6 +110,7 @@ pub const KNOBS: &[Knob] = &[
         ],
         quotable: true,
         doc: "docs/ENV.md",
+        engagement: &[],
     },
     Knob {
         name: "prefill_steel",
@@ -90,6 +121,7 @@ pub const KNOBS: &[Knob] = &[
         families: &["qwen35", "qwen36"],
         quotable: true,
         doc: "docs/BATCHED_PREFILL.md",
+        engagement: &[off("0", "prefill_steel")],
     },
     Knob {
         name: "prefill_rows_attn",
@@ -100,6 +132,7 @@ pub const KNOBS: &[Knob] = &[
         families: &["qwen35"],
         quotable: true,
         doc: "docs/SPEEDUP_PLAYBOOK.md",
+        engagement: &[off("0", "prefill_rows_attn")],
     },
     Knob {
         name: "qwen_batched_row_ops",
@@ -110,6 +143,7 @@ pub const KNOBS: &[Knob] = &[
         families: &["qwen35", "qwen36"],
         quotable: true,
         doc: "docs/SPEEDUP_PLAYBOOK.md",
+        engagement: &[],
     },
     Knob {
         name: "qwen_fused_ffn",
@@ -120,6 +154,7 @@ pub const KNOBS: &[Knob] = &[
         families: &["qwen35", "qwen36"],
         quotable: true,
         doc: "docs/KAPITSA_KERNELS.md",
+        engagement: &[off("0", "qwen_fused_ffn")],
     },
     Knob {
         name: "gdn_lazy_tape",
@@ -130,6 +165,33 @@ pub const KNOBS: &[Knob] = &[
         families: &["qwen35", "qwen36"],
         quotable: true,
         doc: "docs/KAPITSA_KERNELS.md",
+        engagement: &[off("0", "gdn_lazy_tape")],
+    },
+    Knob {
+        // `1` runs decode and verify on the 8-row tile (bit-exact against
+        // each other, not against the GEMV), `verify` only the batched calls.
+        // It reaches every family through the generic INT4 dispatchers.
+        name: "int4_mma8",
+        env: "TURBOSPARK_INT4_MMA8",
+        values: &["<unset>", "1", "verify"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::KlBounded,
+        families: &[],
+        quotable: true,
+        doc: "docs/INT4_SMALL_M_MMA.md",
+        engagement: &[on("*", "int4_mma8")],
+    },
+    Knob {
+        // Which shapes the tile serves under `int4_mma8`; meaningless without it.
+        name: "int4_mma8_min_rows",
+        env: "TURBOSPARK_INT4_MMA8_MIN_ROWS",
+        values: &["<unset>", "1", "1024"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::KlBounded,
+        families: &[],
+        quotable: true,
+        doc: "docs/INT4_SMALL_M_MMA.md",
+        engagement: &[],
     },
     Knob {
         name: "attn_decode_kernel",
@@ -140,6 +202,11 @@ pub const KNOBS: &[Knob] = &[
         families: &[],
         quotable: true,
         doc: "docs/SPEEDUP_PLAYBOOK.md",
+        engagement: &[
+            on("barrier", "attn_decode_barrier"),
+            off("barrier", "attn_decode_gqa"),
+            on("gqa", "attn_decode_gqa"),
+        ],
     },
     Knob {
         name: "routed_batch",
@@ -150,6 +217,7 @@ pub const KNOBS: &[Knob] = &[
         families: &["gemma4", "gptOss", "qwen3moe", "llama"],
         quotable: true,
         doc: "docs/ENV.md",
+        engagement: &[],
     },
     Knob {
         name: "routed_pipeline",
@@ -160,6 +228,7 @@ pub const KNOBS: &[Knob] = &[
         families: &[],
         quotable: true,
         doc: "docs/ENV.md",
+        engagement: &[],
     },
     Knob {
         name: "shared_cb",
@@ -170,6 +239,7 @@ pub const KNOBS: &[Knob] = &[
         families: &["gemma4"],
         quotable: true,
         doc: "docs/ENV.md",
+        engagement: &[],
     },
     Knob {
         name: "mtp_batched_prime",
@@ -180,6 +250,7 @@ pub const KNOBS: &[Knob] = &[
         families: &["qwen35"],
         quotable: true,
         doc: "docs/MTP.md",
+        engagement: &[],
     },
     Knob {
         name: "qwen_moe_chunked",
@@ -190,6 +261,7 @@ pub const KNOBS: &[Knob] = &[
         families: &["qwen36"],
         quotable: true,
         doc: "docs/ENV.md",
+        engagement: &[],
     },
     Knob {
         name: "expert_cache_decay",
@@ -200,6 +272,7 @@ pub const KNOBS: &[Knob] = &[
         families: &[],
         quotable: true,
         doc: "docs/ENV.md",
+        engagement: &[],
     },
     Knob {
         name: "ane_prefill",
@@ -210,6 +283,7 @@ pub const KNOBS: &[Knob] = &[
         families: &["qwen35"],
         quotable: true,
         doc: "docs/SPEEDUP_PLAYBOOK.md",
+        engagement: &[],
     },
     Knob {
         name: "metal_kernel_warmup",
@@ -220,6 +294,7 @@ pub const KNOBS: &[Knob] = &[
         families: &["qwen36"],
         quotable: true,
         doc: "docs/ENV.md",
+        engagement: &[],
     },
     Knob {
         // Counters and host wall timers around phases the loop already
@@ -232,6 +307,7 @@ pub const KNOBS: &[Knob] = &[
         families: &["qwen35", "qwen36"],
         quotable: true,
         doc: "docs/CLI.md",
+        engagement: &[],
     },
     Knob {
         // Only changes which depth each round proposes; the speculative loop
@@ -244,6 +320,7 @@ pub const KNOBS: &[Knob] = &[
         families: &["qwen35"],
         quotable: true,
         doc: "docs/ENV.md",
+        engagement: &[],
     },
     Knob {
         // Only changes how much of a chat follow-up the runtime continues
@@ -258,6 +335,59 @@ pub const KNOBS: &[Knob] = &[
         families: &["qwen35"],
         quotable: true,
         doc: "docs/ENV.md",
+        engagement: &[],
+    },
+    Knob {
+        // L1: N exact multiplies by 1.0 on each dense FFN's chain. Bit-exact,
+        // but the runs exist to be slower: fit the slope, never quote one.
+        name: "dispatch_probe",
+        env: "TURBOSPARK_DISPATCH_PROBE",
+        values: &["<unset>", "4", "8"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::BitExact,
+        families: &["qwen35", "llama", "qwen3", "qwen2", "qwen3_vl"],
+        quotable: false,
+        doc: "docs/MLX_SERVE_KERNELS.md",
+        engagement: &[on("*", "dispatch_probe")],
+    },
+    Knob {
+        // L4: skip blocks in the decode trunk, a comma list of attn, mlp, gdn.
+        // Output is wrong by design; the lines are checked per block.
+        name: "standin",
+        env: "TURBOSPARK_STANDIN",
+        values: &["<unset>", "attn", "mlp", "gdn"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::NotComparable,
+        families: &["qwen35", "llama", "qwen3", "qwen2", "qwen3_vl"],
+        quotable: false,
+        doc: "docs/MLX_SERVE_KERNELS.md",
+        engagement: &[],
+    },
+    Knob {
+        // Audio: Whisper opens on Metal unless this says cpu. A CPU arm
+        // measures another implementation, so compare within one value.
+        name: "whisper_device",
+        env: "TURBOSPARK_WHISPER_DEVICE",
+        values: &["<unset>", "cpu"],
+        read_at: ReadAt::Open,
+        exactness: Exactness::NotComparable,
+        families: &["whisper"],
+        quotable: true,
+        doc: "docs/ENV.md",
+        engagement: &[],
+    },
+    Knob {
+        // Audio: Moonshine's device. CPU is its default until its Metal peak
+        // qualifies (docs/SPEEDUP_PLAYBOOK.md, item 3).
+        name: "moonshine_device",
+        env: "TURBOSPARK_MOONSHINE_DEVICE",
+        values: &["<unset>", "metal", "cpu"],
+        read_at: ReadAt::Open,
+        exactness: Exactness::NotComparable,
+        families: &["moonshine"],
+        quotable: true,
+        doc: "crates/audio/src/stt/moonshine/README.md",
+        engagement: &[],
     },
     Knob {
         name: "dispatch_profile",
@@ -268,6 +398,7 @@ pub const KNOBS: &[Knob] = &[
         families: &[],
         quotable: false,
         doc: "docs/ENV.md",
+        engagement: &[],
     },
     Knob {
         name: "expert_disk_io",
@@ -278,6 +409,7 @@ pub const KNOBS: &[Knob] = &[
         families: &[],
         quotable: false,
         doc: "docs/ENV.md",
+        engagement: &[],
     },
 ];
 
@@ -287,6 +419,63 @@ pub fn by_name(name: &str) -> Option<&'static Knob> {
 
 pub fn by_env(env: &str) -> Option<&'static Knob> {
     KNOBS.iter().find(|k| k.env == env)
+}
+
+/// The engagement lines a run printed (`[engaged] NAME`, without prefix).
+pub fn engaged_lines(stderr: &str) -> Vec<String> {
+    let mut out: Vec<String> = stderr
+        .lines()
+        .filter_map(|l| l.strip_prefix("[engaged] "))
+        .map(|l| l.trim().to_string())
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// What the arm's environment promises against what the run printed. Each
+/// violation names the variable, its value and the line. `extra` are lines
+/// a spec's arm requires for a new switch the table does not know yet.
+pub fn engagement_violations(
+    env: &std::collections::BTreeMap<String, String>,
+    extra: &[String],
+    lines: &[String],
+) -> Vec<String> {
+    let has = |l: &str| lines.iter().any(|x| x == l);
+    let mut out = Vec::new();
+    for (k, v) in env {
+        if k == "TURBOSPARK_STANDIN" {
+            for b in v.split(',').map(str::trim).filter(|b| !b.is_empty()) {
+                let line = format!("standin_{b}");
+                if !has(&line) {
+                    out.push(format!("{k}={v}: no [engaged] {line}"));
+                }
+            }
+            continue;
+        }
+        let Some(knob) = by_env(k) else { continue };
+        for e in knob.engagement {
+            if e.value != "*" && e.value != v {
+                continue;
+            }
+            match (e.present, has(e.line)) {
+                (true, false) => out.push(format!("{k}={v}: no [engaged] {}", e.line)),
+                (false, true) => out.push(format!(
+                    "{k}={v}: [engaged] {} printed, the switch did not take",
+                    e.line
+                )),
+                _ => {}
+            }
+        }
+    }
+    for line in extra {
+        if !has(line) {
+            out.push(format!(
+                "arm requires [engaged] {line}, which the run did not print"
+            ));
+        }
+    }
+    out
 }
 
 /// Variables that make a run unquotable when set (to anything).
@@ -310,5 +499,36 @@ mod tests {
         assert_eq!(envs.len(), KNOBS.len());
         assert!(KNOBS.iter().all(|k| k.env.starts_with("TURBOSPARK_")));
         assert!(KNOBS.iter().all(|k| k.values.first() == Some(&"<unset>")));
+    }
+
+    #[test]
+    fn engagement_is_checked_both_ways() {
+        let env =
+            |k: &str, v: &str| std::collections::BTreeMap::from([(k.to_string(), v.to_string())]);
+        let lines = engaged_lines("x\n[engaged] int4_mma8\n[engaged] attn_decode_gqa\n");
+        assert_eq!(lines, ["attn_decode_gqa", "int4_mma8"]);
+        assert!(engagement_violations(&env("TURBOSPARK_INT4_MMA8", "1"), &[], &lines).is_empty());
+        // A forced barrier that still ran the GQA kernel did not take.
+        let v = engagement_violations(
+            &env("TURBOSPARK_ATTN_DECODE_KERNEL", "barrier"),
+            &[],
+            &lines,
+        );
+        assert_eq!(v.len(), 2, "{v:?}");
+        // A kill switch whose lane still ran.
+        let v = engagement_violations(
+            &env("TURBOSPARK_PREFILL_STEEL", "0"),
+            &[],
+            &["prefill_steel".into()],
+        );
+        assert_eq!(v.len(), 1);
+        let v = engagement_violations(
+            &env("TURBOSPARK_STANDIN", "attn,mlp"),
+            &[],
+            &["standin_attn".into()],
+        );
+        assert_eq!(v, ["TURBOSPARK_STANDIN=attn,mlp: no [engaged] standin_mlp"]);
+        let v = engagement_violations(&Default::default(), &["new_lane".into()], &lines);
+        assert_eq!(v.len(), 1);
     }
 }
