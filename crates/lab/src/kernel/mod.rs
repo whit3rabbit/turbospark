@@ -16,6 +16,7 @@ pub mod attn_decode;
 pub mod int4_matmul;
 pub mod int8_matmul;
 pub mod moe_routed;
+pub mod music3_grid;
 pub mod rows_attn;
 pub mod support;
 pub mod verify_ladder;
@@ -225,6 +226,7 @@ pub fn registry() -> Vec<&'static dyn KernelBench> {
         &rows_attn::RowsAttn,
         &moe_routed::MoeRouted,
         &verify_ladder::VerifyLadder,
+        &music3_grid::Music3Grid,
     ]
 }
 

@@ -304,13 +304,18 @@ fn profile_series(c: &Ctx, out: &mut Vec<Series>) {
     let Some(summary) = c.rec["summary"].as_object() else {
         return;
     };
-    for metric in ["prefill_tok_s", "decode_tok_s"] {
+    for (metric, unit) in [
+        ("prefill_tok_s", "tok/s"),
+        ("decode_tok_s", "tok/s"),
+        ("audio_run_s", "s"),
+        ("rtf", "ratio"),
+    ] {
         let mut s = c.series(
             "profile_totals",
             metric,
             metric,
             axis("arm", "", "category"),
-            axis(metric, "tok/s", "linear"),
+            axis(metric, unit, "linear"),
         );
         for (arm, v) in summary {
             if let Some(y) = v[metric].as_f64() {
@@ -492,33 +497,29 @@ fn trace_series(c: &Ctx, out: &mut Vec<Series>) {
     }
 }
 
-/// Audio stage times from an audio run: one bar group per run.
+/// Audio stage medians per arm, from a profile summary.
 fn audio_series(c: &Ctx, out: &mut Vec<Series>) {
-    let audio = &c.rec["record"]["audio"];
-    let Some(stages) = audio["stages"].as_object() else {
+    let Some(summary) = c.rec["summary"].as_object() else {
         return;
     };
-    if c.rec["warmup"] == true {
-        return;
-    }
-    let arm = c.rec["arm"].as_str().unwrap_or("?");
-    let mut s = c.series(
-        "audio_stages",
-        &format!("audio stages {arm}"),
-        &format!("{arm} round {}", c.rec["round"]),
-        axis("stage", "", "category"),
-        axis("ms", "ms", "linear"),
-    );
-    s.points = stages
-        .iter()
-        .filter_map(|(k, v)| {
-            let mut p = SPoint::cat(k, v.as_f64()?);
-            p.dirty = !s_eligible(c.rec);
-            Some(p)
-        })
-        .collect();
-    if !s.points.is_empty() {
-        out.push(s);
+    for (arm, v) in summary {
+        let Some(stages) = v["audio_stages"].as_object() else {
+            continue;
+        };
+        let mut s = c.series(
+            "audio_stages",
+            "audio stages",
+            arm,
+            axis("stage", "", "category"),
+            axis("ms", "ms", "linear"),
+        );
+        s.points = stages
+            .iter()
+            .filter_map(|(k, ms)| Some(SPoint::cat(k, ms.as_f64()?)))
+            .collect();
+        if !s.points.is_empty() {
+            out.push(s);
+        }
     }
 }
 
@@ -537,13 +538,15 @@ pub fn from_record(rec: &Value, experiment: &str, paths: Paths) -> Vec<Series> {
     let mut out = Vec::new();
     match rec["kind"].as_str().unwrap_or("") {
         "kernel_curve" => kernel_series(&c, &mut out),
-        "profile_summary" => profile_series(&c, &mut out),
+        "profile_summary" => {
+            profile_series(&c, &mut out);
+            audio_series(&c, &mut out);
+        }
         "verdict" | "experiment" | "confirm" | "null_calibration" => verdict_series(&c, &mut out),
         "dispatch_probe" => dispatch_probe_series(&c, &mut out),
         "round_cost" => round_cost_series(&c, &mut out),
         "standin" => standin_series(&c, &mut out),
         "trace" => trace_series(&c, &mut out),
-        "run" => audio_series(&c, &mut out),
         _ => {}
     }
     // A record the host guard rejected stays visible, marked.

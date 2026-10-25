@@ -364,6 +364,32 @@ pub const KNOBS: &[Knob] = &[
         engagement: &[],
     },
     Knob {
+        // Audio: Whisper opens on Metal unless this says cpu. A CPU arm
+        // measures another implementation, so compare within one value.
+        name: "whisper_device",
+        env: "TURBOSPARK_WHISPER_DEVICE",
+        values: &["<unset>", "cpu"],
+        read_at: ReadAt::Open,
+        exactness: Exactness::NotComparable,
+        families: &["whisper"],
+        quotable: true,
+        doc: "docs/ENV.md",
+        engagement: &[],
+    },
+    Knob {
+        // Audio: Moonshine's device. CPU is its default until its Metal peak
+        // qualifies (docs/SPEEDUP_PLAYBOOK.md, item 3).
+        name: "moonshine_device",
+        env: "TURBOSPARK_MOONSHINE_DEVICE",
+        values: &["<unset>", "metal", "cpu"],
+        read_at: ReadAt::Open,
+        exactness: Exactness::NotComparable,
+        families: &["moonshine"],
+        quotable: true,
+        doc: "crates/audio/src/stt/moonshine/README.md",
+        engagement: &[],
+    },
+    Knob {
         name: "dispatch_profile",
         env: "TURBOSPARK_DISPATCH_PROFILE",
         values: &["<unset>", "1"],

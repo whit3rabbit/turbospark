@@ -21,7 +21,7 @@ tslab: the evaluator for kernel and method experiments (macOS).
   tslab profile --model M [workload] [--slots auto,16,32] [--residency streamed,mapped]
                 [--arm NAME[@SLOTS/RESIDENCY][:KEY=V,...]]... [--env KEY=V]... [--rounds 3] [--experiment NAME]
   tslab ab      --model M [workload] --baseline NAME[:KEY=V,...] --candidate NAME[:KEY=V,...]
-                [--null] [--metric prefill_tok_s|decode_tok_s|prefill_s|peak_bytes]
+                [--null] [--metric prefill_tok_s|decode_tok_s|prefill_s|peak_bytes|followup_ttft_s|audio_run_s|rtf]
                 [--min-effect 0.02] [--pairs 3] [--max-pairs 6] [--experiment NAME]
   tslab gate    --spec SPEC.json [--base REV]      (loads the model: takes minutes)
   tslab run-experiment --spec SPEC.json [--base REV]
@@ -46,8 +46,9 @@ tslab: the evaluator for kernel and method experiments (macOS).
   tslab report  --experiment A[,B]|--all --html OUT.html [--title T] [--kind K] [--redact-paths] [--force]
   tslab schema                                     (the JSON Schema of everything tslab writes)
 
-workload: [--prompt protocol:ID|messages:PATH|text:PATH]... [--decode N]
+workload: [--prompt protocol:ID|messages:PATH|text:PATH|corpus:N|chat:PATH]... [--decode N]
           [--chunk N|off] [--context N]
+          or, for an audio install: --audio-job JOB.json (crates/lab/workloads/audio/)
 host:     [--max-foreign-cpu 150] [--max-single-cpu 90] [--allow-battery]
           [--timeout-min 60] [--quiet-wait-min 5] [--min-free-gb 10]
           (--quiet-wait-min 0 measures on a busy host; --min-free-gb 0 skips the disk check)
@@ -165,7 +166,20 @@ pub fn workload_from(args: &mut Args) -> Result<Workload, String> {
         .iter()
         .map(|p| parse_prompt(p))
         .collect::<Result<_, _>>()?;
-    if prompts.is_empty() {
+    // `--audio-job PATH`: an audio install's job as JSON (`AudioJob`, see
+    // crates/lab/workloads/audio/). It replaces the text prompts.
+    let audio = match args.take("--audio-job")? {
+        Some(path) => {
+            let text =
+                std::fs::read_to_string(&path).map_err(|e| format!("--audio-job {path}: {e}"))?;
+            Some(serde_json::from_str(&text).map_err(|e| format!("--audio-job {path}: {e}"))?)
+        }
+        None => None,
+    };
+    if audio.is_some() && !prompts.is_empty() {
+        return Err("--audio-job replaces --prompt: give one or the other".into());
+    }
+    if prompts.is_empty() && audio.is_none() {
         prompts.push(PromptSource::Protocol("long-synthesis".into()));
     }
     let prefill_chunk = match args.take("--chunk")?.as_deref() {
@@ -179,6 +193,7 @@ pub fn workload_from(args: &mut Args) -> Result<Workload, String> {
         prefill_chunk,
         max_context: args.parsed("--context", 4096u32)?,
         speculation: None,
+        audio,
     })
 }
 

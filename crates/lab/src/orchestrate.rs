@@ -316,6 +316,7 @@ impl Session {
             "refusal": record["refusal"],
             "family": record["family"],
             "totals": record["totals"],
+            "audio": record["audio"],
             "peak_footprint_bytes": record["peak_footprint_bytes"],
             "exe_sha256": record["provenance"]["exe_sha256"],
             "speculation": arm.speculation,

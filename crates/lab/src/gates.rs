@@ -21,6 +21,10 @@ pub enum GateClass {
     DenseKl,
     /// Routed-MoE sentinel bound (near-tie expert swaps are expected).
     MoeKl,
+    /// Audio transcription: the transcript text must not change, while the
+    /// logits under it may (a reduction-order change in an encoder kernel).
+    /// Audio workloads only.
+    TextExact,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -32,7 +36,7 @@ pub struct QualityBounds {
 impl GateClass {
     pub fn default_bounds(self) -> QualityBounds {
         match self {
-            GateClass::BitExact => QualityBounds {
+            GateClass::BitExact | GateClass::TextExact => QualityBounds {
                 mean_kl: 0.0,
                 min_top1_fraction: 1.0,
             },
@@ -145,6 +149,11 @@ pub fn judge_quality(
                 reasons.push("generated tokens differ from the reference".into());
             }
         }
+        GateClass::TextExact => {
+            if !tokens_equal {
+                reasons.push("the transcript differs from the reference".into());
+            }
+        }
         GateClass::DenseKl | GateClass::MoeKl => {
             // NaN fails closed: a broken arm must not pass by comparing false.
             if mean_kl.is_nan() || mean_kl > bounds.mean_kl {
@@ -186,6 +195,22 @@ pub fn memory_allowance(reference_peak: u64, requested: Option<u64>, noise: u64)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn text_exact_judges_the_transcript_not_the_bytes() {
+        let cmp = |bytes: bool, text: bool| PromptComparison {
+            prompt_tokens: 0,
+            kl: 0.0,
+            max_abs_dlogit: 0.0,
+            top1_agree: text,
+            top5_overlap: 0,
+            logits_bits_equal: bytes,
+        };
+        let b = GateClass::TextExact.default_bounds();
+        assert!(judge_quality(GateClass::TextExact, b, vec![cmp(false, true)], true).passed);
+        assert!(!judge_quality(GateClass::TextExact, b, vec![cmp(true, false)], false).passed);
+        assert!(!judge_quality(GateClass::BitExact, b, vec![cmp(false, true)], true).passed);
+    }
 
     #[test]
     fn a_dense_install_refuses_the_moe_class_only() {

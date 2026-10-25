@@ -126,6 +126,10 @@ pub struct RunRecord {
     /// knob was on, which also makes the run unquotable.
     pub dispatch_profile: Option<String>,
     pub provenance: Provenance,
+    /// An audio arm's result (`worker_audio.rs`): run_s, audio_s, rtf,
+    /// stages in ms, output_digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio: Option<serde_json::Value>,
 }
 
 fn refused(req: &WorkerRequest, reason: String) -> RunRecord {
@@ -149,6 +153,7 @@ fn refused(req: &WorkerRequest, reason: String) -> RunRecord {
         faults: None,
         dispatch_profile: None,
         provenance: provenance::collect(),
+        audio: None,
     }
 }
 
@@ -658,6 +663,9 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
     // Location variables are passed through for alias resolution and are
     // not knobs.
     env_matches_arm(provenance::turbospark_env(), &req.arm)?;
+    if let Some(job) = &req.workload.audio {
+        return crate::worker_audio::run(req, job);
+    }
     // Without the feature the runtime never reads TURBOSPARK_ANE_PREFILL, so
     // such an arm would measure Steel under an ANE label.
     if !cfg!(feature = "ane-prefill")
@@ -921,6 +929,7 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
         faults: task_fault_counters(),
         dispatch_profile,
         provenance: provenance::collect(),
+        audio: None,
     })
 }
 

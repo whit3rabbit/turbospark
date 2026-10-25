@@ -72,7 +72,7 @@ impl AudioKind {
 
 /// Pipelines `tslab-worker` can open and run as an audio arm. The rest are
 /// covered by kernel benches only, and coverage says so.
-pub const WORKER_KINDS: &[AudioKind] = &[];
+pub const WORKER_KINDS: &[AudioKind] = &[AudioKind::Music3, AudioKind::Whisper];
 
 pub fn runs_in_worker(k: AudioKind) -> bool {
     WORKER_KINDS.contains(&k)

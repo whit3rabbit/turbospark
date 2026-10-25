@@ -123,6 +123,44 @@ pub fn print_profile(arm_names: &[String], outcomes: &[Outcome]) -> Value {
         if let Some(d) = dec {
             crate::say!("  decode    {:.2} tok/s [{:.2}-{:.2}]", d.0, d.1, d.2);
         }
+        // Audio arms: wall time, real-time factor, and per-stage medians.
+        let audio_run = med(clean.iter().map(|o| o.record["audio"]["run_s"].as_f64()));
+        let rtf = med(clean.iter().map(|o| o.record["audio"]["rtf"].as_f64()));
+        let mut audio_stages = serde_json::Map::new();
+        if let (Some(r), Some(f)) = (audio_run, rtf) {
+            crate::say!(
+                "  audio     {:.2} s [{:.2}-{:.2}], RTF {:.3} [{:.3}-{:.3}]",
+                r.0,
+                r.1,
+                r.2,
+                f.0,
+                f.1,
+                f.2
+            );
+            let names: Vec<String> = clean[0].record["audio"]["stages"]
+                .as_object()
+                .map(|m| m.keys().cloned().collect())
+                .unwrap_or_default();
+            for n in names {
+                if let Some(s) = med(clean
+                    .iter()
+                    .map(|o| o.record["audio"]["stages"][&n].as_f64()))
+                {
+                    crate::say!("    {n:<24} {:>10.1} ms", s.0);
+                    audio_stages.insert(n, json!(s.0));
+                }
+            }
+            let digests: std::collections::BTreeSet<&str> = clean
+                .iter()
+                .filter_map(|o| o.record["audio"]["output_digest"].as_str())
+                .collect();
+            if digests.len() > 1 {
+                crate::say!(
+                    "    output differs between runs of this arm ({} digests)",
+                    digests.len()
+                );
+            }
+        }
         if let Some(p) = peak {
             crate::say!("  peak      {:.2} GiB phys_footprint", p.0);
         }
@@ -196,6 +234,11 @@ pub fn print_profile(arm_names: &[String], outcomes: &[Outcome]) -> Value {
             "decode_tok_s": dec.map(|t| t.0),
             "peak_gib": peak.map(|t| t.0),
         });
+        if let (Some(r), Some(f)) = (audio_run, rtf) {
+            arm_json["audio_run_s"] = json!(r.0);
+            arm_json["rtf"] = json!(f.0);
+            arm_json["audio_stages"] = Value::Object(audio_stages);
+        }
         for phase in ["prefill_phases", "decode_phases"] {
             let aggs: Vec<Value> = clean
                 .iter()

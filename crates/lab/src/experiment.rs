@@ -56,6 +56,7 @@ pub fn quality_workload(spec: &ExperimentSpec) -> Workload {
         prefill_chunk: spec.workload.prefill_chunk,
         max_context: spec.workload.max_context,
         speculation: spec.workload.speculation.clone(),
+        audio: None,
     }
 }
 
@@ -82,6 +83,9 @@ fn read_logits(path: &Path, vocab_rows: usize) -> Result<Vec<Vec<f64>>, String> 
 /// Baseline and candidate prefill the probe corpus once each; the candidate
 /// is held to the spec's exactness class against the baseline.
 pub fn quality_gate(session: &Session, spec: &ExperimentSpec) -> Result<QualityResult, String> {
+    if spec.workload.audio.is_some() {
+        return audio_quality_gate(session, spec);
+    }
     let workload = quality_workload(spec);
     let n = workload.prompts.len();
     let a = session.run_once(&spec.baseline, &workload, Mode::Quality, 0, false)?;
@@ -160,6 +164,51 @@ pub fn quality_gate(session: &Session, spec: &ExperimentSpec) -> Result<QualityR
         class => effective_bounds(class, spec.quality_bounds)?,
     };
     Ok(judge_quality(spec.exactness, bounds, prompts, tokens_equal))
+}
+
+/// An audio spec runs its job once per arm and compares outputs: the
+/// waveform or transcript bytes for `bit_exact`, the transcript text for
+/// `text_exact`. No other class has an audio bound yet, so none is accepted.
+fn audio_quality_gate(session: &Session, spec: &ExperimentSpec) -> Result<QualityResult, String> {
+    if !matches!(spec.exactness, GateClass::BitExact | GateClass::TextExact) {
+        return Err(
+            "an audio spec declares bit_exact or text_exact; no KL bound exists for audio".into(),
+        );
+    }
+    let a = session.run_once(&spec.baseline, &spec.workload, Mode::Timing, 0, false)?;
+    let b = session.run_once(&spec.candidate, &spec.workload, Mode::Timing, 0, false)?;
+    for o in [&a, &b] {
+        if o.status != "ok" {
+            return Err(format!(
+                "audio quality run for {} was {}: {}",
+                o.arm,
+                o.status,
+                o.record["refusal"].as_str().unwrap_or("(see its stderr)")
+            ));
+        }
+    }
+    let (da, db) = (&a.record["audio"], &b.record["audio"]);
+    let bytes_equal = da["output_digest"].is_string() && da["output_digest"] == db["output_digest"];
+    // A music job has no text: its "text" is its bytes.
+    let text_equal = if da["text_digest"].is_string() {
+        da["text_digest"] == db["text_digest"]
+    } else {
+        bytes_equal
+    };
+    let cmp = PromptComparison {
+        prompt_tokens: 0,
+        kl: 0.0,
+        max_abs_dlogit: 0.0,
+        top1_agree: text_equal,
+        top5_overlap: 0,
+        logits_bits_equal: bytes_equal,
+    };
+    Ok(judge_quality(
+        spec.exactness,
+        spec.exactness.default_bounds(),
+        vec![cmp],
+        text_equal,
+    ))
 }
 
 /// Run each `cargo test` argument string in `repo`. Each must pass AND run

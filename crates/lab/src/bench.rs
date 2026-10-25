@@ -154,6 +154,22 @@ pub fn print_result(r: &BenchResult) {
         subject.join(" "),
         r.layout
     );
+    // A hash corpus has no timing: say how many points it hashed instead
+    // of a table of zeros.
+    let hashed_only = r
+        .arms
+        .iter()
+        .flat_map(|a| &a.points)
+        .all(|p| p.ms == 0.0 && p.out_fnv.is_some());
+    if hashed_only && r.arms.iter().any(|a| !a.points.is_empty()) {
+        for a in &r.arms {
+            crate::say!("  {}: {} output hashes", a.label, a.points.len());
+        }
+        for n in &r.notes {
+            crate::say!("  note: {n}");
+        }
+        return;
+    }
     let xs: Vec<f64> = {
         let mut v: Vec<f64> = r
             .arms
