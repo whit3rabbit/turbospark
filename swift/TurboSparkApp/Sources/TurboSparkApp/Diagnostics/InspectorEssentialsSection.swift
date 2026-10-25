@@ -60,7 +60,7 @@ private struct ThinkingLevelControl: View {
                         .foregroundStyle(.appSecondary)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
-                        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 4))
+                        .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
                         .help(Text("These levels were read from the loaded checkpoint's chat template at open, not from a per-family table.", bundle: .module))
                 }
             }
@@ -107,7 +107,7 @@ private struct ThinkingLevelControl: View {
         HStack(alignment: .firstTextBaseline, spacing: 7) {
             Image(systemName: model.session == nil ? "arrow.down.circle" : "minus.circle")
                 .themedFont(.small)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.appSecondary)
                 .accessibilityHidden(true)
             Group {
                 if model.session == nil {

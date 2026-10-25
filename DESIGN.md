@@ -69,7 +69,8 @@ Build from these instead of local variants. They live in
 | A focus glow on an editor with no native ring | `.appFocusGlow(_:radius:halo:)` |
 | A card | `.appCardSurface(padding:)` |
 | A composer-style surface (prompt box, Humanize cards, script editor) | `.appComposerSurface(focused:halo:)` |
-| A heading in a scrolling pane | `AppSectionHeader(title:subtitle:)` |
+| A heading in a scrolling pane | `AppSectionHeader(title:subtitle:)`; a heading built from a `Label` or `Text` instead (icon headings, `AppAdaptiveHeader` leading content) adds `.accessibilityAddTraits(.isHeader)` itself |
+| A filesystem path in a row | `SettingsPathText(path, size:)` (code font, selectable, middle truncation, full path in `.help`) |
 | An empty list or workspace | `AppEmptyState(systemImage:title:message:) { actions }` |
 | Progress, determinate or not | `AppProgressBar(value:label:valueText:size:animated:)`, `animated: false` while paused |
 | A surface that still needs the user (missing input after they tried to go on) | `.appAttention(_:ping:radius:)` with an `AppAttentionNote` inside; bump `ping` only on the user's attempt |
@@ -92,9 +93,20 @@ the same change, documented here. A second local copy is how the drift starts.
   rest are secondary, quiet (in-row or repeated actions), or destructive.
 - Header actions use `.regular`. Actions inside rows, cards, and inspectors
   use `.small`. Do not mix sizes within one row.
+- `.appAction` and `.appMenuAction` give a `.small` control the `.small`
+  label font and a `.mini` control `.tiny` (`AppMetrics.labelFontStep`).
+  A native button keeps its small bezel but draws the inherited base font,
+  which overflowed it. A font set on the button or its container no longer
+  reaches the label. A site that truly needs another size sets it inside
+  the label, which still wins.
 - Destructive actions use `Button(role: .destructive)` and go through a
   `confirmationDialog` with a localized title, message, and button. The role
   reaches VoiceOver and the dialog, the red label only reaches sighted users.
+- Destructive means data is lost. Removing an entry from a list the user can
+  rebuild (a scan folder, an exclusion) deletes nothing: it is a quiet action
+  with a neutral glyph (`minus.circle`), not a red trash can. A destructive
+  role with no confirmation dialog is always a defect: either the action is
+  not destructive, or the dialog is missing.
 - A disabled control says why, in its tooltip or in adjacent text. The chat
   Send button is the reference.
 - When all that is missing is input the user can still give (a checkbox, a
@@ -143,15 +155,27 @@ the app taking access, and macOS shows each prompt only once.
   `SettingsWindowFrame`, because the Settings scene ignores ideal sizes.
 - Each Settings pane is shown under a shell that ALREADY renders the pane
   title. A pane never repeats its own title. It starts with a one-line
-  purpose and its actions. Insets come from `SettingsLayout`.
+  purpose (`.themedFont(.small)`, `.appSecondary`, as Files & Permissions
+  and Models & Storage do) and its actions. Insets come from
+  `SettingsLayout`.
+- The same holds one level down: a control directly under a section header
+  that names it keeps its real label for VoiceOver and hides it with
+  `.labelsHidden()` (the inspector's Model picker under "Model").
+- A pane whose sections share a card treatment defines it once (Models &
+  Storage: `modelsSettingsCard()`) and EVERY section uses it, including a
+  card that lives in its own file. An inline copy drifted to its own padding
+  within one release.
 
 ### Headers and rows
 
 - A header never truncates. Use `AppAdaptiveHeader`: one row, then actions
   under the leading content, then a compact set that keeps the primary action
-  visible and folds the rest into a labeled menu.
+  visible and folds the rest into a labeled menu. This includes a section
+  header whose only action is a toggle: a bare `HStack` with a `Spacer`
+  truncates the title under German and Extra Large text.
 - No fixed `.frame(width:)` on a picker, search field, or label in a header or
-  form row. Use `minWidth`/`idealWidth`/`maxWidth`. A fixed width is what
+  form row, nor on a glyph sized with `.themedFont` (it grows with Text
+  Size). Use `minWidth`/`idealWidth`/`maxWidth`. A fixed width is what
   wrapped "Installed model type" into several lines and clipped the Agents
   scope picker.
 - Extension-style panes (MCP, Skills, Agents, Plugins, Hooks) share one
@@ -207,10 +231,22 @@ the app taking access, and macOS shows each prompt only once.
 - Never use system colors on a themed surface (`Color(nsColor:
   .separatorColor)`, `.controlBackgroundColor` and friends). They ignore the
   palette, which is how a dark-navy theme drew neutral gray boxes
-  (Gotcha 62).
+  (Gotcha 62). The SwiftUI spellings count too: `Color.accentColor`,
+  `Color.secondary`, `.secondary`, `.tertiary` and `Color.primary.opacity`
+  ignore a custom theme's accent and text colors. Use `.appAccent`,
+  `.appSecondary` and `.appSurface`. In a ternary that mixes two styles, wrap
+  each side in `AnyShapeStyle`.
 - `TurboSparkTheme`'s static accessors are for non-view code only.
   `NSApp.effectiveAppearance` does not move with `.preferredColorScheme`, so
-  a static read in a view draws the wrong mode (Gotcha 36).
+  a static read in a view draws the wrong mode (Gotcha 36). In a view, call
+  the mode-explicit form with the environment's mode
+  (`TurboSparkTheme.barBackgroundColor(isDark: theme.isDark)`) or use the
+  resolved theme (`theme.accent`), never the bare property
+  (`TurboSparkTheme.barBackgroundColor`, `TurboSparkTheme.accentColor`).
+- `DesignTokenRatchetTests` counts the spellings above, and hard-coded
+  `.appBorder.opacity(...)` borders, outside `Theme/`. The counts may only
+  go down: fix a site and lower its baseline in the same change, never raise
+  one.
 - Every scene injects the theme, locale, and layout direction itself:
   `Window`, `Settings`, and `MenuBarExtra` each call `.appThemed()` and set
   `\.locale` and `\.layoutDirection`. A new scene must too, or it renders the

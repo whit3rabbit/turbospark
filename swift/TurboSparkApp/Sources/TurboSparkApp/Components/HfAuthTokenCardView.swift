@@ -39,13 +39,9 @@ public struct HfAuthTokenCardView: View {
             Divider().padding(.vertical, 2)
             HfMirrorEndpointRowView(model: model)
         }
-        .padding(16)
-        .background(.appPage)
-        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
-                .stroke(.appBorder.opacity(0.4), lineWidth: 1)
-        )
+        // The same card as every other Models & Storage section, instead
+        // of an inline copy that had already drifted to its own padding.
+        .modelsSettingsCard()
         .onAppear(perform: loadSavedToken)
     }
 
@@ -57,6 +53,7 @@ public struct HfAuthTokenCardView: View {
                     Text("Hugging Face API Token", bundle: .module)
                         .settingsControl("Hugging Face API Token", pane: .models, timing: .action)
                         .font(theme.ui(.base, weight: .semibold))
+                        .accessibilityAddTraits(.isHeader)
                     if savedToken != nil {
                         Text("Configured", bundle: .module)
                             .font(theme.ui(.tiny, weight: .medium))

@@ -16,6 +16,7 @@ struct ExcludedScanPathsSectionView: View {
         VStack(alignment: .leading, spacing: 12) {
             Label { Text("Excluded from scan", bundle: .module) } icon: { Image(systemName: "eye.slash") }
                 .themedFont(.base, weight: .semibold)
+                .accessibilityAddTraits(.isHeader)
 
             VStack(alignment: .leading, spacing: 10) {
                 if orgStore.excludedScanPaths.isEmpty {
