@@ -280,9 +280,7 @@ pub fn parse_flint_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
 pub fn parse_flint_quantization(json: &str) -> Result<Gemma4Quant, Gemma4Error> {
     let routed = |name: &str| name.contains(ROUTED_MARKER);
     let mut quant =
-        crate::gemma4_checkpoint::parse_quantization_admitting(json, |name, bits, gs| {
-            routed(name) && bits == 3 && gs == crate::gemma4_checkpoint::AFFINE_GROUP_SIZE
-        })?;
+        crate::gemma4_checkpoint::parse_quantization_admitting(json, flint_admits_affine_shape)?;
     let root: serde_json::Value =
         serde_json::from_str(json).map_err(|e| Gemma4Error::Config(e.to_string()))?;
     let export = root
@@ -359,6 +357,15 @@ pub fn parse_flint_quantization(json: &str) -> Result<Gemma4Quant, Gemma4Error> 
         )));
     }
     Ok(quant)
+}
+
+/// The affine shapes Flint admits beyond `is_supported_affine_shape`: 3-bit
+/// at group 64, on routed expert tensors only (the `moe_*_int3` pair). Shared
+/// with the catalog's probe so the two gates cannot disagree.
+pub fn flint_admits_affine_shape(name: &str, bits: u32, group_size: u32) -> bool {
+    name.contains(ROUTED_MARKER)
+        && bits == 3
+        && group_size == crate::gemma4_checkpoint::AFFINE_GROUP_SIZE
 }
 
 /// Where a Flint checkpoint's routed experts live, which is the only place

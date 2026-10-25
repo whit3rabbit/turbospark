@@ -1,6 +1,6 @@
 #![cfg(target_os = "macos")]
 //! Parity for the MLX affine INT3 routed pair (`moe_phase1_gate_up_act_int3`
-//! + `moe_phase2_down_reduce_int3`) against a CPU dequant reference, read
+//! and `moe_phase2_down_reduce_int3`) against a CPU dequant reference, read
 //! through a real `RoutedBlobs` argument buffer the way the runtime binds it.
 //!
 //! The packing is MLX's (`mx.quantize(..., bits=3)`): a little-endian
@@ -204,7 +204,7 @@ fn check_pair(d: usize, f: usize, top_k: usize, seed: u64, pad: usize) {
         .collect();
     let x_buf = context.new_buffer_with_data(&le16(x16.iter().map(|v| v.to_bits())));
     let res_buf = context.new_buffer_with_data(&le16(residual16.iter().map(|v| v.to_bits())));
-    let mut routing = vec![f16::ZERO; turbospark_gpu::MAX_STREAMED_EXPERTS];
+    let mut routing = [f16::ZERO; turbospark_gpu::MAX_STREAMED_EXPERTS];
     routing[..top_k].copy_from_slice(&weights16);
     let rw_buf = context.new_buffer_with_data(&le16(routing.iter().map(|v| v.to_bits())));
     let acts_buf = context.new_output_buffer((top_k * f * 2) as u64);

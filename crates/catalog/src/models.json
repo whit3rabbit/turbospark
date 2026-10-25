@@ -316,6 +316,33 @@
     },
     {
       "alias": "flint",
+      "name": "Flint 40B-A2.5B (MLX, 3-bit routed experts, 4-bit core)",
+      "family": "flint",
+      "source": {
+        "kind": "mlx",
+        "repo": "mlx-community/flint-mixed-3-4bit",
+        "revision": "b1c305855ae7c3464813815be4dbd544b22c36aa",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "generation_config.json"
+        ]
+      },
+      "download_bytes": 17837740282,
+      "install_bytes": 18600000000,
+      "status": "runs",
+      "gates": [],
+      "measured": [],
+      "notes": "The default Flint build: a community requantization of Recursive's trained INT4 (flint-int4) with only the routed experts cut to MLX 3-bit (group 64, per-group MSE clip search); attention, the shared expert, the dense lead and lm_head keep the trained INT4 codes and the embedding stays INT8. The publisher reports 86.2 percent next-token agreement and KL 0.343 against the INT4. Same flow as flint-int4 (sigmoid router force-quantized to INT8, the fixed 2^6 SwiGLU rebalance, streamed experts); the routed experts run through the INT3 routed pair. Against mlx-vlm 0.7.10 on the same bytes it sits at mlx-vlm's own cached-versus-batched floor (0.0070 against 0.0066 mean nats, 97.0 percent top-1, over 529 teacher-forced positions). One indicative reading peaked at 1.40 GiB at 16 slots (0.90 at 8) for a 16.6 GiB install, with greedy output identical at 8, 16 and 96 slots. No memory oracle or quality gate is frozen. See docs/FLINT.md."
+    },
+    {
+      "alias": "flint-int4",
       "name": "Flint 40B-A2.5B (MLX INT4, group 64)",
       "family": "flint",
       "source": {

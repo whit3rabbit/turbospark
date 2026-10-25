@@ -131,4 +131,17 @@ TURBOSPARK_LOGIT_DUMP_DIR=/tmp/kld/ternary-warm \
   cargo test -p turbospark-bench --test logit_dump --release -- --ignored --nocapture
 uv run --python 3.12 --with 'mlx-lm==0.31.2' --with numpy \
   scripts/kld_mlx_affine.py /tmp/kld/ternary-warm ternary-2bit
+
+# Flint, the default `mlx-community/flint-mixed-3-4bit` build, against
+# mlx-vlm 0.7.10 (mlx-lm has no released Flint module). The reference reads
+# a LOCAL copy of the pinned revision (hf download ... --revision b1c30585),
+# checked before it runs. Reads 0.0070 mean nats at 97.0% top-1 against a
+# 0.0066 mlx-vlm shape floor (docs/FLINT.md). TURBOSPARK_LOGIT_DUMP_IDS=<file>
+# swaps the corpus for an explicit {"prompt_ids": [...], "ids": [...]} pair,
+# such as the other engine's greedy trajectory.
+TURBOSPARK_FLINT_INSTALL_DIR=~/models/flint-mixed-local.gturbo \
+TURBOSPARK_LOGIT_DUMP_DIR=/tmp/kld/flint-mixed-warm \
+  cargo test -p turbospark-bench --test logit_dump --release -- --ignored --nocapture
+uv run --python 3.12 --with 'mlx-vlm==0.7.10' --with numpy \
+  scripts/kld_flint_mlx_vlm.py /tmp/kld/flint-mixed-warm ~/models/flint-mixed-3-4bit
 ```

@@ -159,6 +159,12 @@ fn resolve_target() -> Option<DumpTarget> {
         // and the transposed q absorption have no self-referential gate that
         // can see them.
         .or_else(|| plain("TURBOSPARK_DSV2_INSTALL_DIR"))
+        // Flint, a plain arm: its template ends at `<|assistant|>` and the
+        // model then writes (reasoning included) with no structured slot
+        // (Gotcha 13) and no clock (Gotcha 14). Its reference is mlx-vlm on
+        // the same MLX bytes (`scripts/kld_flint_mlx_vlm.py`); mlx-lm has no
+        // released Flint module.
+        .or_else(|| plain("TURBOSPARK_FLINT_INSTALL_DIR"))
         .or_else(|| {
             env_dir("TURBOSPARK_GPTOSS_INSTALL_DIR").map(|install| DumpTarget {
                 install,
@@ -180,6 +186,7 @@ fn dump_reference_logits() {
              TURBOSPARK_QWEN3MOE_INSTALL_DIR, \
              TURBOSPARK_QWEN35_INSTALL_DIR, TURBOSPARK_TERNARY_INSTALL_DIR, \
              TURBOSPARK_ORNITH9B_INSTALL_DIR, TURBOSPARK_ORNITH35B_INSTALL_DIR, \
+             TURBOSPARK_FLINT_INSTALL_DIR, \
              or \
              TURBOSPARK_GPTOSS_INSTALL_DIR) and \
              TURBOSPARK_LOGIT_DUMP_DIR; skipping."
@@ -218,8 +225,27 @@ fn dump(install: &Path, out: &Path, assistant_prefix: &str, max_context: u32) {
         );
         prompt_ids.extend(&prefix_ids);
     }
-    let answer_ids = tokenizer.encode(quality_common::REFERENCE_ANSWER, false);
+    let mut answer_ids = tokenizer.encode(quality_common::REFERENCE_ANSWER, false);
     assert!(!answer_ids.is_empty(), "the reference answer must tokenize");
+    // `TURBOSPARK_LOGIT_DUMP_IDS=<file>` replaces the corpus with an explicit
+    // `{"prompt_ids": [...], "ids": [...]}` pair, typically another engine's
+    // greedy trajectory, so agreement can be read along the path THAT engine
+    // took. Ids, never text, for the module doc's reason.
+    if let Some(path) = std::env::var_os("TURBOSPARK_LOGIT_DUMP_IDS") {
+        let text = std::fs::read_to_string(&path).expect("read the id file");
+        let v: serde_json::Value = serde_json::from_str(&text).expect("parse the id file");
+        let list = |key: &str| -> Vec<i32> {
+            v[key]
+                .as_array()
+                .unwrap_or_else(|| panic!("id file has no {key} array"))
+                .iter()
+                .map(|x| x.as_i64().expect("integer id") as i32)
+                .collect()
+        };
+        prompt_ids = list("prompt_ids");
+        answer_ids = list("ids");
+        assert!(!prompt_ids.is_empty() && !answer_ids.is_empty());
+    }
     let mut ids = prompt_ids.to_vec();
     ids.extend(&answer_ids);
     assert!(
