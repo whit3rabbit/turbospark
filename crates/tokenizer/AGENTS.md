@@ -24,6 +24,16 @@ contracts.
   IDs, and assistant prefixes. Prompt rendering is part of model behavior.
 - Keep parser shims structurally scoped and delete them when the upstream
   parser supports the syntax directly.
+- A dialect that thinks needs the reasoning split in four places: the
+  resolver's `think_start_id`/`think_end_id`, an id-keyed
+  `StructuredAssistantDecoder::consume` arm, and the dialect unions in
+  `runtime::turn_stream::TurnSplitter::new` and
+  `server::responses::map::may_produce_reasoning`. Only the decoder arm is
+  compiler-enforced. Miss any other and the think block reaches the reply as
+  text. An added-but-not-special think pair
+  (GLM, Flint) still splits: the decoder keys on ids, so resolve the ids
+  rather than leaving the sentinel. A template with no thinking-off switch
+  (Flint) belongs in the always-split arm of both unions.
 
 ## Checks
 
