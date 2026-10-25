@@ -12,6 +12,7 @@
 //! apply, because a GPU microbench is as sensitive to a neighbour as a model
 //! run is. Env knobs do not reach a bench: it calls the kernels directly.
 
+pub mod ane_handoff;
 pub mod ane_matmul;
 pub mod attn_decode;
 pub mod gdn_delta;
@@ -193,6 +194,12 @@ pub struct BenchOpts {
     /// `ane_matmul`: the directory of Core ML sweep programs
     /// (`gen_ane_sweep_programs.py`), `--programs`.
     pub ane_programs: Option<PathBuf>,
+    /// `ane_handoff`: the ANE prefill program directory (else the runtime's
+    /// search list).
+    pub ane_dir: Option<PathBuf>,
+    /// `ane_handoff`: spinner threads for the contended points (0: quiet
+    /// points only).
+    pub contend: usize,
 }
 
 impl Default for BenchOpts {
@@ -205,6 +212,8 @@ impl Default for BenchOpts {
             hash: false,
             verify_from: None,
             ane_programs: None,
+            ane_dir: None,
+            contend: 0,
         }
     }
 }
@@ -239,6 +248,7 @@ pub fn registry() -> Vec<&'static dyn KernelBench> {
         &music3_grid::Music3Grid,
         &whisper_linear::WhisperLinear,
         &ane_matmul::AneMatmul,
+        &ane_handoff::AneHandoff,
     ]
 }
 
@@ -303,6 +313,8 @@ pub fn kernel_cmd(mut args: Args) -> Result<(), String> {
     let hash = args.flag("--hash");
     let verify_from = args.take("--verify-from")?;
     let ane_programs = args.take("--programs")?.map(PathBuf::from);
+    let ane_dir = args.take("--ane-dir")?.map(PathBuf::from);
+    let contend: usize = args.parsed("--contend", 0)?;
     // `--shape RxC` predates `--case`; both select one case label.
     let only_case = match (args.take("--case")?, args.take("--shape")?) {
         (Some(c), _) | (None, Some(c)) => Some(c),
@@ -333,6 +345,8 @@ pub fn kernel_cmd(mut args: Args) -> Result<(), String> {
         hash,
         verify_from,
         ane_programs,
+        ane_dir,
+        contend,
     };
 
     let subject = Subject::open(&model)?;

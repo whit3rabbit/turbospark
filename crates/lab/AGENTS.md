@@ -77,7 +77,9 @@ loop's `run-experiment`. Text and audio installs of every family.
   the registry). `src/ane.rs`: compute-plan placement. `kernel/ane_matmul.rs`
   (feature `ane-prefill`): Steel against the Neural Engine per shape, with
   the row split, placement and joules, over programs from
-  `crates/coreml/tools/gen_ane_sweep_programs.py`.
+  `crates/coreml/tools/gen_ane_sweep_programs.py`. `kernel/ane_handoff.rs`
+  (feature `ane-prefill`): one split point's host handoff, `wait` against
+  `poll`, quiet and under `--contend N`.
 - `src/energy.rs`: the IOReport energy meter (modeled, whole machine). The
   worker, the kernel command and the ANE bench read it; `report.rs` prints
   it; it is never a wall-power claim.

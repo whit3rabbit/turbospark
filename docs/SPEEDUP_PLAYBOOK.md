@@ -393,7 +393,13 @@ them reached the runtime except the router batch capture below.
 Reopen the expert idea only once the GPU routed path makes MoE prefill
 compute bound, and then as one multi-expert Core ML call rather than one
 call per expert. Reopen async or events only if a controlled-contention
-run shows handoff tails dominating.
+run shows handoff tails dominating. That run is
+`tslab kernel --bench ane_handoff --contend N` (a build with
+`--features ane-prefill`): one split point's `wake + resume` for each of the
+install's programs, with `waitUntilCompleted` against a host poll of a
+GPU-signaled event, quiet and under N spinner threads. Its spinners load
+the CPU only. A tail that comes from GPU or memory contention needs a
+different control.
 
 **How to re-test (tslab, 2026-10-27).** Each reopen condition is a ledgered
 reading now, so another chip, model or OS re-asks the question without a

@@ -90,6 +90,7 @@ thresholds in its notes.
 | `gdn_delta` | Gated-DeltaNet delta kernels (decode, eager and lazy prefill, state fold) at the install's geometry. One build per process: put `TURBOSPARK_GDN_DK128=0` on the `tslab` process for the runtime-Dk build |
 | `music3_grid` | Music 3 corpus: output hashes against goldens, per-config timing |
 | `whisper_linear` | Whisper encoder GEMM, decoder GEMV, GEMM at one row |
+| `ane_handoff` | Host handoff of one ANE prefill split point, `wait` against `poll`, quiet and under `--contend N` self-made CPU load. Needs a build with `--features ane-prefill`, a dense qwen install and its program set (`--ane-dir`, else the runtime's search list) |
 
 `--hash` stores each point's output-bit hash and the hash of the first output
 row alone, and prints an exactness hint per arm: `bit-equal` or `DIFFERS`
