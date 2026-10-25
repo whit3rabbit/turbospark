@@ -149,6 +149,35 @@ move to a different bucket.
   is taken, wait. Do not run model processes beside a measurement.
 - **Keep ASCII,** no emojis or em dashes, in code, comments and notes.
 
+## Pinned settings from the compared engines
+
+`crates/lab/pinned/` holds a verified, embedded reference for each kernel
+the engines this repository compares against ships (`nace-ai/kapitsa`,
+`jundot/omlx`, `ddalcu/mlx-serve`): the repo and 40-hex revision each entry
+was read at, the models it serves, its hardcoded settings traceable to a
+`path:line`, its dispatch gates, and the numbers the engine itself reports
+(provenance `upstream_reported`, always with conditions). `tslab pinned`
+lists the set (`--repo`, `--class`, `--id`, `--json`) and loads a directory
+variant (`--dir`); the schema, field rules, and sweep workflow are in
+`crates/lab/pinned/README.md`.
+
+Use it at the hypothesis and spec stages:
+
+- When an idea mirrors an upstream mechanism, take the setting values, the
+  gates that route to it, and its cost curves from the pinned entry, not
+  from memory or a half-remembered topic doc. The entry's `notes` already
+  record where those docs and the source disagree.
+- Each entry's `lab_mapping` says where a setting meets our surfaces: a
+  `TURBOSPARK_*` knob, a `tslab kernel` bench axis, the workload's
+  `speculation.block` field, or `none yet`. `none yet` means the axis has
+  to be built before the sweep can run, which is part of the hypothesis's
+  cost.
+- To sweep against an upstream baseline: copy the entry's JSON, change only
+  what the sweep varies, and load it with `tslab pinned --dir DIR` (or
+  `PinnedSet::load_dir` in code). A same-id copy replaces the embedded
+  baseline for that process, so the tweaked file keeps the original id and
+  every reader rule still applies.
+
 ## Checks for a new model or family
 
 Collect these in the ledger before any speed or speculation claim about a

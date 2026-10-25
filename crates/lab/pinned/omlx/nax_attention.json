@@ -1,0 +1,443 @@
+{
+  "schema": "turbospark.lab.pinned/1",
+  "id": "omlx.nax_attention",
+  "kernel": "the NAX (M5 tensor unit) prefill flash attention with a separate value head dim: MLX's steel_attention_nax kernel body (attention_nax_bdv) JIT-compiled per variant through mx.fast.metal_kernel, one threadgroup of four simdgroups covering BQ query rows x 32 keys per step with 16x16 fragments, an fp32 online softmax in the exp2 domain with per-head sinks as initial state, bottom-right aligned causal or bool masks, and key-range passes that hand the fp32 O/max/sum row state to the next dispatch",
+  "kernel_class": "attention_prefill",
+  "repo": "omlx",
+  "summary": "Serves MiMo-V2 prefill attention on M5-class (NAX) hosts, where MLX 0.32.3 has no fused kernel for the 192 query/key / 128 value head-dim pair and its unfused fallback materialises the score matrix. Full-attention layers call it through mixed_head_dim_sdpa; sliding-window layers call it per 128-query block over block+window key spans through the caller-side blocked sliding-window path, consuming the strided key windows in place. Long contexts run as several 8192-key dispatches that resume the fp32 online-softmax state exactly, so split output is bit-identical to one dispatch.",
+  "source": {
+    "url": "https://github.com/jundot/omlx",
+    "rev": "78fa08bc1aef7290c93c83bb70811547763ebf33",
+    "rev_date": "2026-10-25",
+    "license": "Apache-2.0",
+    "files": [
+      "omlx/utils/nax_attention.py",
+      "omlx/utils/fast_attention.py",
+      "omlx/custom_kernels/nax.py",
+      "omlx/custom_kernels/nax_tiles.py",
+      "omlx/custom_kernels/quant_matmul/fast.py",
+      "omlx/patches/mimo_v2/mimo_v2_model.py",
+      "tests/test_mimo_v2_patch.py",
+      "tests/test_nax.py",
+      "pyproject.toml",
+      "LICENSE"
+    ],
+    "symbols": [
+      "SUPPORTED_HEAD_DIMS",
+      "AttnParams",
+      "ExpSubOp",
+      "attention_nax_bdv",
+      "_kernel",
+      "_nax_available",
+      "_pass_edges",
+      "_run",
+      "_run_edges",
+      "_reference",
+      "_self_check_passed",
+      "_passes_check_passed",
+      "uses_key_passes",
+      "nax_mixed_head_dim_attention",
+      "mixed_head_dim_sdpa",
+      "blocked_sliding_window_attention",
+      "window_query_padding",
+      "_window_block_mask",
+      "_nax_available_fallback",
+      "_stock_mlx_has_nax",
+      "is_nax_available"
+    ]
+  },
+  "models": [
+    {
+      "name": "MiMo-V2 / MiMo-V2-Flash",
+      "quant": "bf16 activations, sinks and attention path; the checkpoint's MoE experts are MXFP4 (group 32, e8m0 scales) with fp8-dequantized dense parts, but the kernel only consumes bf16 or fp16 q/k/v",
+      "family": "mimo_v2 (the mlx-lm patch, registered as both mimo_v2 and mimo_v2_flash)",
+      "machine": "M5-class (NAX) hosts: macOS 26.2 or later, applegpu_g17 or later",
+      "role": "primary"
+    }
+  ],
+  "settings": [
+    {
+      "name": "supported_head_dims",
+      "value": "(192, 128)",
+      "unit": null,
+      "condition": "query/key head dim 192, value head dim 128; the only pair in SUPPORTED_HEAD_DIMS, any other pair returns None and the caller keeps its route",
+      "kind": "hardcoded",
+      "source": "omlx/utils/nax_attention.py:64"
+    },
+    {
+      "name": "query_tile_rows",
+      "value": 64,
+      "unit": "rows",
+      "condition": "one head-dim simdgroup (wn 1): BQ = WM * 16, four 16-row groups per threadgroup; the wn 2 head-dim-split kernel takes 32 (BQ = 16 * WM / WN)",
+      "kind": "derived",
+      "source": "omlx/utils/nax_attention.py:66"
+    },
+    {
+      "name": "key_block_size",
+      "value": 32,
+      "unit": "keys",
+      "condition": "always (BK; each key block streams 32 keys per threadgroup step, two 16-key fragments)",
+      "kind": "hardcoded",
+      "source": "omlx/utils/nax_attention.py:67"
+    },
+    {
+      "name": "row_simdgroups",
+      "value": 4,
+      "unit": "simdgroups",
+      "condition": "always (WM); wn 1: four 16-row groups, wn 2: two 16-row groups each split over two head-dim simdgroups",
+      "kind": "hardcoded",
+      "source": "omlx/utils/nax_attention.py:68"
+    },
+    {
+      "name": "threads_per_threadgroup",
+      "value": 128,
+      "unit": "threads",
+      "condition": "always (32 * WM); grid (NQ * 128, H, B) with threadgroup (128, 1, 1), one threadgroup per query tile per head per batch",
+      "kind": "hardcoded",
+      "source": "omlx/utils/nax_attention.py:69"
+    },
+    {
+      "name": "fragment_shape",
+      "value": "16x16 tensor-op fragments, 8 elements per lane (2 rows x 4 columns, row jump 8)",
+      "unit": null,
+      "condition": "always (kFragRows = kFragCols = 16, kElemsPerFrag = 256 / 32 = 8, in the nax_tiles.py port of MLX's steel nax.h)",
+      "kind": "hardcoded",
+      "source": "omlx/custom_kernels/nax_tiles.py:111"
+    },
+    {
+      "name": "score_tile_fragments",
+      "value": "1 x 2 (TQ x TK): 16 query rows x 32 keys per key block, two 16x16 output fragments accumulated per Q @ K.T fragment call",
+      "unit": null,
+      "condition": "always (TK = BK / 16 = 2)",
+      "kind": "derived",
+      "source": "omlx/utils/nax_attention.py:252"
+    },
+    {
+      "name": "output_tile_fragments",
+      "value": "1 x TDV; TDV = BDV / 16 / WN = 8 at value head dim 128 wn 1 (16 rows x 128 value dims), 4 at wn 2",
+      "unit": null,
+      "condition": "always; P @ V accumulates output fragments in pairs (TDV must be even)",
+      "kind": "derived",
+      "source": "omlx/utils/nax_attention.py:250"
+    },
+    {
+      "name": "accumulator_dtype",
+      "value": "fp32 scores, fp32 O accumulator, fp32 running max and sum; stores round once to the activation dtype",
+      "unit": null,
+      "condition": "always (AccumType = float in the generated instantiation)",
+      "kind": "hardcoded",
+      "source": "omlx/utils/nax_attention.py:700"
+    },
+    {
+      "name": "softmax_exp",
+      "value": "fast::exp2(x - y) (ExpSubOp); the rescale factor between key blocks is fast::exp2(max_score - new_max)",
+      "unit": null,
+      "condition": "always (the whole softmax runs in the exp2 domain)",
+      "kind": "hardcoded",
+      "source": "omlx/utils/nax_attention.py:138"
+    },
+    {
+      "name": "scale_log2e_folding",
+      "value": "the attention scale is pre-multiplied by log2(e) = 1.44269504089 into one uniform multiplier applied to the raw scores",
+      "unit": null,
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "omlx/utils/nax_attention.py:235"
+    },
+    {
+      "name": "sinks_init",
+      "value": "the per-head sink bias enters as initial softmax state: max_score = M_LOG2E_F * sink[h], sum_score = 1",
+      "unit": null,
+      "condition": "has_sinks (sinks [H]; MiMo's attention_sink_bias per layer kind)",
+      "kind": "hardcoded",
+      "source": "omlx/utils/nax_attention.py:298"
+    },
+    {
+      "name": "additive_mask_scale",
+      "value": "a float mask adds M_LOG2E_F * mask to the exp2-domain score; a bool mask writes -inf (Limits::finite_min)",
+      "unit": null,
+      "condition": "has_mask (the generated kernel handles bool or float MaskType; the Python gate only admits bool)",
+      "kind": "hardcoded",
+      "source": "omlx/utils/nax_attention.py:516"
+    },
+    {
+      "name": "causal_alignment",
+      "value": "bottom-right aligned: qL_off = kL - qL, so query row r attends to keys up to r + (kL - qL), matching MLX's causal mask",
+      "unit": null,
+      "condition": "mask == \"causal\"",
+      "kind": "hardcoded",
+      "source": "omlx/utils/nax_attention.py:852"
+    },
+    {
+      "name": "causal_block_bounds",
+      "value": "per query tile: kb_lim = min(NK, ceil((tile end + qL_off) / BK)) and kb_min_causal = floor(tile start / BK); the elementwise r < c mask runs only for kb >= kb_min_causal, earlier blocks are fully visible",
+      "unit": null,
+      "condition": "do_causal (this block bound is the kernel's causal work skip)",
+      "kind": "derived",
+      "source": "omlx/utils/nax_attention.py:318"
+    },
+    {
+      "name": "row_max_reduction",
+      "value": "all of a row's score fragments reduced first, then simd_shuffle_xor 1 and 8 across lanes (max is exact, so the grouping is free)",
+      "unit": null,
+      "condition": "every key block, before the exp2 rescale",
+      "kind": "hardcoded",
+      "source": "omlx/utils/nax_attention.py:580"
+    },
+    {
+      "name": "pass_keys",
+      "value": 8192,
+      "unit": "keys per dispatch",
+      "condition": "key-range passes; 0 would mean one dispatch. Grids of a wave or two (query tails under ~512 rows at 64 heads) keep one dispatch because their threadgroups stay in step anyway",
+      "kind": "hardcoded",
+      "source": "omlx/utils/nax_attention.py:78"
+    },
+    {
+      "name": "pass_min_threadgroups",
+      "value": 512,
+      "unit": "threadgroups",
+      "condition": "B * H * ceil(qL / 64) below 512 keeps one dispatch",
+      "kind": "hardcoded",
+      "source": "omlx/utils/nax_attention.py:79"
+    },
+    {
+      "name": "pass_count",
+      "value": "n_pass = max(1, min(NK, round(NK * BK / pass_keys))), pass edges at (i * NK) / n_pass key blocks",
+      "unit": null,
+      "condition": "only when the call clears pass_min_threadgroups and pass_keys > 0",
+      "kind": "derived",
+      "source": "omlx/utils/nax_attention.py:784"
+    },
+    {
+      "name": "pass_state_row",
+      "value": "fp32 online-softmax row state of BDV + 2 = 130 floats per query row (O accumulator 128, running max, running sum), rows indexed [B, H, NQ * BQ]; the max and sum columns are written by lane sn 0 of d_part 0 only",
+      "unit": null,
+      "condition": "key-range passes: non-first passes load it from Sin, non-last passes store it to Sout instead of normalising (bit-identical to one dispatch)",
+      "kind": "derived",
+      "source": "omlx/utils/nax_attention.py:283"
+    },
+    {
+      "name": "pass_state_bytes",
+      "value": "B * H * NQ * BQ * (DV + 2) fp32 per call, about 3 GB at 128k keys, 8192 queries and 64 heads",
+      "unit": "bytes",
+      "condition": "passes in flight each hold their state until their command buffer ends",
+      "kind": "derived",
+      "source": "omlx/utils/nax_attention.py:832"
+    },
+    {
+      "name": "dsplit_mode",
+      "value": 1,
+      "unit": null,
+      "condition": "0 = never, 1 = for calls that run in key-range passes, 2 = always; WN = 2 splits the query/key and value dims over simdgroup pairs (MLX's attention_nax_dsplit scheme)",
+      "kind": "hardcoded",
+      "source": "omlx/utils/nax_attention.py:85"
+    },
+    {
+      "name": "dsplit_selection",
+      "value": "wn = 2 when mode == 2, or mode == 1 and the call has key-range passes (more than two pass edges); else wn = 1",
+      "unit": null,
+      "condition": "per call",
+      "kind": "derived",
+      "source": "omlx/utils/nax_attention.py:800"
+    },
+    {
+      "name": "dsplit_scratch_bytes",
+      "value": "WN 2: WM * 2 * 16 * 32 = 2048 fp32 (8192 bytes) of threadgroup exchange so the two simdgroups of a pair add their partial scores; WN 1: a 1-float placeholder",
+      "unit": "bytes",
+      "condition": "the wn 2 kernel only; the wn 1 kernel uses no threadgroup scratch",
+      "kind": "derived",
+      "source": "omlx/utils/nax_attention.py:696"
+    },
+    {
+      "name": "pv_barrier_quirk",
+      "value": "at BDV 128 with WN 1, an extra simdgroup barrier sits inside the P @ V loop at output fragment pair id == 4",
+      "unit": null,
+      "condition": "always for the (128 value dim, wn 1) variant (MLX's schedule, kept verbatim)",
+      "kind": "hardcoded",
+      "source": "omlx/utils/nax_attention.py:615"
+    },
+    {
+      "name": "output_layout",
+      "value": "[B, qL, H, DV] rows written directly, returned transposed as the [B, H, qL, DV] view implied by MLX's SDPA layout, so the caller's swapaxes and reshape stay views",
+      "unit": null,
+      "condition": "always (the last pass only)",
+      "kind": "hardcoded",
+      "source": "omlx/utils/nax_attention.py:881"
+    },
+    {
+      "name": "stride_reads",
+      "value": "ensure_row_contiguous False: Q/K/V are read through their own strides (KV-cache slices, transposed projections, the blocked sliding-window key windows in place); only the head dim must be contiguous",
+      "unit": null,
+      "condition": "always (no contiguity copies)",
+      "kind": "hardcoded",
+      "source": "omlx/utils/nax_attention.py:764"
+    },
+    {
+      "name": "kernel_variant_identity",
+      "value": "one mx.fast.metal_kernel per (dtype, BD, BDV, align_Q, align_K, has_mask, do_causal, has_sinks, FIRST, LAST, WN) variant, named omlx_nax_attention_v2_bd<bd>_bdv<bdv>_wn<wn>_<flag tag>, lru_cached per process",
+      "unit": null,
+      "condition": "the MLX function constants (alignment, mask, causal, sinks) are template arguments of the generated source, so every combination is its own kernel",
+      "kind": "hardcoded",
+      "source": "omlx/utils/nax_attention.py:759"
+    },
+    {
+      "name": "self_check_tolerance",
+      "value": "max abs error < 2e-2 against an fp32 causal reference on q (1, 4, 100, 192), k (1, 2, 300, 192), v (1, 2, 300, 128) with unaligned query and key tails",
+      "unit": null,
+      "condition": "one small case per process before first use; any exception or over-tolerance error disables the route for the process",
+      "kind": "hardcoded",
+      "source": "omlx/utils/nax_attention.py:914"
+    },
+    {
+      "name": "passes_bitexact_check",
+      "value": "the multi-pass output must equal the one-dispatch output bit for bit and stay within 2e-2 of fp32",
+      "unit": null,
+      "condition": "first use of key-range passes per head-dim split; failure keeps long contexts on one dispatch",
+      "kind": "hardcoded",
+      "source": "omlx/utils/nax_attention.py:946"
+    },
+    {
+      "name": "sliding_window_query_block",
+      "value": 128,
+      "unit": "queries",
+      "condition": "blocked_sliding_window_attention block size (the same 128 is the padding hint window_query_padding offers callers)",
+      "kind": "hardcoded",
+      "source": "omlx/utils/fast_attention.py:244"
+    },
+    {
+      "name": "sliding_window_key_span",
+      "value": "block + window keys per query block, read as strided views of one contiguous KV copy (as_strided, stride block * D per block), so no per-block gather or reshape copy",
+      "unit": null,
+      "condition": "the blocked sliding-window caller; the kernel itself just consumes the strided windows and the per-block band mask",
+      "kind": "derived",
+      "source": "omlx/utils/fast_attention.py:300"
+    }
+  ],
+  "gates": [
+    {
+      "condition": "NAX hardware, macOS half of the gate: macOS 26.2 or later (the Python fallback mirror of mlx metal::is_nax_available; the native extension answers instead when present)",
+      "source": "omlx/custom_kernels/quant_matmul/fast.py:123"
+    },
+    {
+      "condition": "NAX hardware, architecture half: applegpu_g17 or later; a trailing p suffix (g17p) requires g18 or later",
+      "source": "omlx/custom_kernels/quant_matmul/fast.py:130"
+    },
+    {
+      "condition": "is_nax_available = NAX hardware AND the installed mlx wheel's metallib carries the NAX kernels (the bytes 'affine_qmm_t_nax' in mlx.metallib); the JIT attention route checks this and is disabled when either half fails",
+      "source": "omlx/custom_kernels/quant_matmul/fast.py:182"
+    },
+    {
+      "condition": "mixed-dims route gate (mixed_head_dim_sdpa): qk_dim > v_dim, qL > 8, NAX available, qk_dim in (64, 72, 80, 96, 128, 192, 256), mask None or a string or a bool array; the JIT kernel is tried first when MLX's native fused kernel cannot take the pair or the call would run key-range passes",
+      "source": "omlx/utils/fast_attention.py:117"
+    },
+    {
+      "condition": "kernel dispatch gate (nax_mixed_head_dim_attention): 4-D inputs, (qk_dim, v_dim) == (192, 128), k_dim == qk_dim, bf16 or fp16 with all three dtypes equal, k/v shapes consistent with q, Hk > 0, H % Hk == 0, qL > 8, kL > 0; anything else returns None and the caller keeps its existing route",
+      "source": "omlx/utils/nax_attention.py:993"
+    },
+    {
+      "condition": "mask: None, the string 'causal', or a bool array broadcastable to (B, H, qL, kL); additive float masks are rejected",
+      "source": "omlx/utils/nax_attention.py:1007"
+    },
+    {
+      "condition": "sinks: a 1-D [H] array or None",
+      "source": "omlx/utils/nax_attention.py:1022"
+    },
+    {
+      "condition": "one-time self-check per process before first use (causal, unaligned tails, against fp32); a failure or over-tolerance error disables the route for the process",
+      "source": "omlx/utils/nax_attention.py:1024"
+    },
+    {
+      "condition": "first use of key-range passes per head-dim split: several dispatches must equal one dispatch bit for bit and match fp32 within 2e-2, else the edges collapse to one dispatch and wn to 1",
+      "source": "omlx/utils/nax_attention.py:801"
+    },
+    {
+      "condition": "blocked sliding-window gate: B == 1, window > 0, prefix >= 0, L >= 2 * block (256), Lq equal to L or L padded to a whole block, keys and values the same length; mask 'causal' or a bool [..., L, S]",
+      "source": "omlx/utils/fast_attention.py:275"
+    },
+    {
+      "condition": "model-side prefill fast path (MiMo): L > 8 and the cache is not a quantized (bits) cache; sliding-window layers call blocked_sliding_window_attention with window = sliding_window_size and their sink bias, full layers mixed_head_dim_sdpa; a None result falls back to the masked full computation",
+      "source": "omlx/patches/mimo_v2/mimo_v2_model.py:181"
+    }
+  ],
+  "measured": [
+    {
+      "metric": "pass_stream_tflops",
+      "value": "~85 vs ~103",
+      "model": "not model-specific (a comment about KV-head streaming)",
+      "machine": "M5-class (NAX) host, chip not named",
+      "conditions": "one dispatch over 1M keys runs at about 85 TFLOPS against about 103 TFLOPS with 8192-key passes at 64k context; the comment states why key-range passes exist (one long dispatch lets threadgroups drift apart until each re-streams its KV head from DRAM, per-slice dispatches keep the shared K/V on chip)",
+      "provenance": "upstream_reported",
+      "source": "omlx/utils/nax_attention.py:75"
+    },
+    {
+      "metric": "dsplit_gain_pct",
+      "value": "3-4%",
+      "model": "not model-specific",
+      "machine": "M5-class (NAX) host, chip not named",
+      "conditions": "the head-dim split (WN 2) versus the single-simdgroup kernel on calls that run in key-range passes (long contexts); it changes only the fp32 summation order of Q @ K.T",
+      "provenance": "upstream_reported",
+      "source": "omlx/utils/nax_attention.py:83"
+    },
+    {
+      "metric": "dsplit_bf16_output_diff_frac",
+      "value": "~0.5%",
+      "model": "not model-specific",
+      "machine": "M5-class (NAX) host, chip not named",
+      "conditions": "elements whose last bf16 bit differs from the one-simdgroup kernel (the dsplit pair adds two 96-dim fp32 partial dot products)",
+      "provenance": "upstream_reported",
+      "source": "omlx/utils/nax_attention.py:35"
+    },
+    {
+      "metric": "pass_state_memory_gb",
+      "value": "~3 GB",
+      "model": "not model-specific",
+      "machine": "M5-class (NAX) host, chip not named",
+      "conditions": "fp32 online-softmax row state held by passes in flight until their command buffer ends, at 128k keys, 8192 queries, 64 heads",
+      "provenance": "upstream_reported",
+      "source": "omlx/utils/nax_attention.py:831"
+    },
+    {
+      "metric": "swa_full_matrix_waste_pct",
+      "value": "~97% (and ~4 GB of scores per layer)",
+      "model": "not model-specific",
+      "machine": "not named (the comparison motivates the blocked path on any GPU)",
+      "conditions": "MLX's array-mask sliding-window path at a 128-token window and 4K context: every query scores every key and the window only masks the result; the blocked path skips those key blocks",
+      "provenance": "upstream_reported",
+      "source": "omlx/utils/fast_attention.py:10"
+    },
+    {
+      "metric": "pad_to_192_penalty",
+      "value": "~3x slower",
+      "model": "mixed head-dim prefill on NAX GPUs",
+      "machine": "M5-class (NAX) host, chip not named",
+      "conditions": "padding V to the 192 query head dim lands on MLX's classic (non-NAX) kernel versus zero-padding Q/K/V to 256 for the NAX head-dim-split kernel; the comment is in mixed_head_dim_sdpa's route description",
+      "provenance": "upstream_reported",
+      "source": "omlx/utils/fast_attention.py:108"
+    }
+  ],
+  "lab_mapping": [
+    {
+      "setting": "query_tile_rows",
+      "maps_to": "knobs.rs prefill_rows_attn (TURBOSPARK_PREFILL_ROWS_ATTN), our rows-per-prefill-attention-dispatch lever (qwen35, exactness KlBounded); ours toggles between batched row ops and per-row dispatch, theirs is a fixed 64-row (32-row dsplit) tensor-unit tile with 16-row fragment groups",
+      "env": "TURBOSPARK_PREFILL_ROWS_ATTN",
+      "note": "the natural first axis to sweep against this baseline when an M5-class host reaches the bench (our decision table defers all NAX kernels to that day)"
+    },
+    {
+      "setting": "pass_keys",
+      "maps_to": "none yet: the lab's kernel benches are attn_decode and int4_matmul only (crates/lab/src/kernel/mod.rs), there is no prefill attention bench and no key-range split axis",
+      "env": null,
+      "note": "the fp32 O/max/sum carry between key-range dispatches is the prefill analogue of the split-KV decode partials recorded in kapitsa.attn; a prefill arm would need that state plumbing first"
+    },
+    {
+      "setting": "sliding_window_query_block",
+      "maps_to": "none yet: crates/window-fit decides the conversation window, but there is no blocked sliding-window kernel or bench axis here",
+      "env": null,
+      "note": "omlx's block skip is caller-side (a blocked band mask plus strided key windows), not a kernel feature, so porting it is a host-side change like our window-fit"
+    }
+  ],
+  "docs": [
+    "docs/MLX_SERVE_KERNELS.md#what-src-kernels-is-file-by-file",
+    "docs/MLX_SERVE_KERNELS.md#decision-table"
+  ],
+  "notes": "Doc row (MLX_SERVE_KERNELS.md:145) versus source: the mechanism list (causal, sliding window with block skip, sinks, key-range passes with an fp32 carry) matches, with one ownership correction - the sliding-window block skip is not in the kernel. The kernel takes a bool mask; the block skip lives in the caller (blocked_sliding_window_attention, fast_attention.py), which tiles queries into 128-row blocks over block+window key spans and passes the per-block band mask; the kernel docstring only says the strided key windows of the blocked path are consumed in place. 'q/k 192 or 128': at this rev omlx validates only (192, 128) (SUPPORTED_HEAD_DIMS, nax_attention.py:64). A 128/128 sliding layer is not served by this JIT kernel; it runs MLX's own fused SDPA (head dim 128 is one of MLX's native NAX widths, 64/96/128/256/512 per the module docstring) under the block mask. The 'or 128' and 'Flint sliding layers' describe the mlx-serve port's extension: omlx has no Flint code on this path (Flint is imported from mlx_vlm at runtime, oq.py:4520, and nothing in omlx calls blocked_sliding_window_attention except the MiMo patch), so the only model served at this rev is MiMo-V2. Doc origin 'oMLX, from MLX steel_attention_nax.h' matches: the file header names mlx/backend/metal/kernels/steel/attn/kernels/steel_attention_nax.h (Apple, MIT) and states only the value head dim is separated, the kernel body is MLX's. The doc counts mlx-serve's port at 640 .metal lines; the omlx origin is a 1,026-line Python module whose Metal source is string literals compiled at runtime through mx.fast.metal_kernel plus the shared 852-line nax_tiles.py header (omlx's own port of MLX's steel attn/gemm nax.h), so there is no .metal file to pin in omlx. The hardware gate is stricter than our doc's one-line probe description: besides macOS 26.2+ and applegpu_g17+ (g17p needs g18+), omlx also requires the installed mlx wheel's metallib to contain the NAX kernels (the affine_qmm_t_nax needle), because a macOS < 26.2-built wheel stays on classic kernels on M5 hardware. Exactness claims, all canary-checked per process rather than assumed: single-dispatch output is bit-identical to MLX's native 192/128 kernel on builds that carry it (docstring, nax_attention.py:24); key-range passes reproduce one dispatch bit for bit because the fp32 row state resumes exactly, checked on first use; the dsplit (WN 2) variant differs in the last bf16 bit of ~0.5% of outputs and is therefore enabled by default only for pass calls. Every performance number is a code comment with no harness, no absolute times and no named chip; the kernel is coupled to the installed mlx build (pinned mlx==0.32.4 in pyproject) because it compiles through mx.fast.metal_kernel against that wheel. Coverage: this entry covers the JIT NAX prefill attention and its MiMo caller-side routing (mixed head dims, blocked sliding window); the QSA sparse and MLA NAX attention kernels are separate entries, and the classic-path decode SDPA is not covered."
+}

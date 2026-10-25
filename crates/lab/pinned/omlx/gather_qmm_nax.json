@@ -1,0 +1,466 @@
+{
+  "schema": "turbospark.lab.pinned/1",
+  "id": "omlx.gather_qmm_nax",
+  "kernel": "the M5 NAX sorted gather_qmm stack: the omlx_gqmm_tile_scan pre-pass that cuts each expert's run of sorted rows into single-expert tile descriptors, the seg and db tensor-unit matmuls (gather_seg, gather_db) over TileLoader-dequantized 64-wide weight tiles, the pair_row gate/up SwiGLU epilogue (plain, GLM-5.3 clamped, and row-mapped forms) and the mx.gather_qmm wrapper (m5_gather_qmm) that dispatches to them",
+  "kernel_class": "moe",
+  "repo": "omlx",
+  "summary": "Replaces mlx's sorted MoE gather_qmm on M5-class (NAX) hosts: a one-threadgroup scan pre-pass turns the sorted expert index into (row_start, expert, rows) tiles of 64, 96 or 128 rows, and a matmul kernel computes one single-expert BM x 64 output tile per threadgroup with 32x32 simdgroup blocks of 16x16 tensor-op fragments, in a seg (mlx-style two-barrier dequant) or db (double-buffered, one barrier per K step) schedule. An epilogue variant fuses silu(gate) * up (or GLM-5.3's clamped form) into the gate/up matmul, and a row-mapped form reads token rows in place instead of a replicated copy; the plan table picks schedule, tile height, K step and grid layout from mean rows per expert and K, and every instantiation runs a bit-exactness canary before use.",
+  "source": {
+    "url": "https://github.com/jundot/omlx",
+    "rev": "78fa08bc1aef7290c93c83bb70811547763ebf33",
+    "rev_date": "2026-10-25",
+    "license": "Apache-2.0",
+    "files": [
+      "omlx/patches/m5_gather_qmm_nax.py",
+      "omlx/patches/m5_gather_qmm.py",
+      "omlx/patches/moe_routes.py",
+      "omlx/patches/qwen35_moe_gate_up.py",
+      "omlx/custom_kernels/nax.py",
+      "omlx/custom_kernels/quant_matmul/fast.py",
+      "omlx/utils/model_loading.py",
+      "omlx/scheduler.py",
+      "tests/test_m5_gather_qmm_nax.py",
+      "tests/test_m5_gather_qmm.py",
+      "docs/custom-kernels.md",
+      "pyproject.toml",
+      "LICENSE"
+    ],
+    "symbols": [
+      "omlx_gqmm_tile_scan",
+      "Geo",
+      "AffineQ",
+      "Mxfp4Q",
+      "TileLoader",
+      "sub_step",
+      "sub_step_map",
+      "load_a_map",
+      "map_rows",
+      "pair_row",
+      "act",
+      "store_act",
+      "gather_seg",
+      "gather_db",
+      "tile_of",
+      "supports",
+      "_plan",
+      "_launch",
+      "sorted_gather_qmm",
+      "sorted_gather_qmm_swiglu",
+      "reference_activation",
+      "_self_test",
+      "_nax_rows_ok",
+      "fused_gate_up_activation",
+      "is_nax_available",
+      "_nax_available_fallback",
+      "sort_routes"
+    ]
+  },
+  "models": [
+    {
+      "name": "Qwen3.8 / Qwen3.5-3.6 MoE",
+      "quant": "MLX affine 4-bit, group 64 (32 and 128 also gated in), scales and biases in the activation dtype (bf16)",
+      "family": "qwen3_5 / qwen3_6 / qwen3_8 MoE (mlx-lm SwitchGLU)",
+      "machine": "M5-class (NAX) hosts; the plan table was measured on an M5 Ultra",
+      "role": "primary"
+    },
+    {
+      "name": "GLM-5.3 (glm5_next)",
+      "quant": "MLX affine 4-bit, group 64, bf16; clamped SwiGLU epilogue (gate clipped above, up clipped both sides)",
+      "family": "glm5_next via the DeepSeek V4 SwitchGLU path",
+      "machine": "M5-class (NAX) hosts",
+      "role": "primary"
+    },
+    {
+      "name": "MiMo-V2.6",
+      "quant": "MXFP4, group 32, uint8 e8m0 scales, bf16 activations",
+      "family": "mimo_v2 (GLM DSA SwitchGLU)",
+      "machine": "M5-class (NAX) hosts",
+      "role": "primary"
+    },
+    {
+      "name": "DeepSeek V4",
+      "quant": "MLX affine 4-bit or 8-bit, group 64",
+      "family": "deepseek_v4 SwitchGLU",
+      "machine": "M5-class (NAX) hosts",
+      "role": "secondary"
+    }
+  ],
+  "settings": [
+    {
+      "name": "output_tile_width_bn",
+      "value": 64,
+      "unit": "columns",
+      "condition": "always (the Metal source assumes it; kBN in the kernel header)",
+      "kind": "hardcoded",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:109"
+    },
+    {
+      "name": "column_simdgroups",
+      "value": 2,
+      "unit": "simdgroups",
+      "condition": "always (kWN; each column simdgroup owns a 32x32 block of the BM x 64 tile)",
+      "kind": "hardcoded",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:110"
+    },
+    {
+      "name": "tile_rows_choices",
+      "value": [64, 96, 128],
+      "unit": "rows",
+      "condition": "one per plan; multiples of 32 (one row simdgroup per 32 rows), partial tiles only at the end of an expert's run",
+      "kind": "hardcoded",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:111"
+    },
+    {
+      "name": "simdgroup_block_shape",
+      "value": "32x32 output per simdgroup with 32-deep K sub-steps (kSM 32, kSN 32, kSK 32)",
+      "unit": null,
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:290"
+    },
+    {
+      "name": "fragment_shape",
+      "value": "16x16 tensor-op fragments, 2x2 per simdgroup block (kTM, kTN, kTK each 2), issued by tile_matmad_nax / BaseNAXFrag::mma in the same K order as mlx",
+      "unit": null,
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:293"
+    },
+    {
+      "name": "threads_per_threadgroup",
+      "value": "2 * BM: 128 at BM 64, 192 at 96, 256 at 128 (threadgroup (32, 2, BM/32); kThreads = BM/32 * 2 * 32)",
+      "unit": "threads",
+      "condition": "always for the matmul kernel",
+      "kind": "derived",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:1457"
+    },
+    {
+      "name": "weight_loader_threads",
+      "value": "kLT: the thread count when it is a power of two, else the largest of 256, 128, 64 below it (96-row tiles: 128 of 192 threads load)",
+      "unit": "threads",
+      "condition": "weight-tile dequant split of the kBN x BK tile",
+      "kind": "derived",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:308"
+    },
+    {
+      "name": "weight_loader_split",
+      "value": "each loader thread owns one weight row and kVPT = 64 * BK / kLT consecutive values, split into kNG chunks that each lie in one quantization group",
+      "unit": null,
+      "condition": "always",
+      "kind": "derived",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:311"
+    },
+    {
+      "name": "scan_launch",
+      "value": "one threadgroup of 1024 threads (grid (1024,1,1), threadgroup (1024,1,1)) finds every expert's run bounds over the rows and prefix-scans the per-expert tile counts",
+      "unit": null,
+      "condition": "always (the tile pre-pass runs before every matmul dispatch)",
+      "kind": "hardcoded",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:1419"
+    },
+    {
+      "name": "scan_max_experts",
+      "value": 2048,
+      "unit": "experts",
+      "condition": "MAXE template constant; the scan's per-expert run bounds live in threadgroup memory, so E above 2048 is unsupported",
+      "kind": "hardcoded",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:115"
+    },
+    {
+      "name": "scan_rows_per_thread_per_step",
+      "value": 4,
+      "unit": "rows",
+      "condition": "each scan thread walks 4 consecutive sorted rows per step against their neighbours",
+      "kind": "hardcoded",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:207"
+    },
+    {
+      "name": "tile_descriptor",
+      "value": "uint4 (row_start, expert, rows, 0), at most BM rows of one expert, expert-major (the tile order of mlx's segmented gather_qmm)",
+      "unit": null,
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:256"
+    },
+    {
+      "name": "max_tiles_bound",
+      "value": "ceil(M / BM) + min(E, M)",
+      "unit": "tiles",
+      "condition": "scan output allocation; also the guard that bounds unsorted input",
+      "kind": "derived",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:1414"
+    },
+    {
+      "name": "plan_table",
+      "value": "the _plan decision table (schedule, BM, BK, grid layout, pad) from mean rows per expert and K: K % 64 != 0 or N % 64 != 0 -> seg 64-row tiles, bk 64, plain layout; per_expert < 36 or (K < 1024 and per_expert < 120) -> db 64-row tiles, bk 64, plain layout; K < 1024 -> seg 96-row tiles, bk 128, tile-on-x; per_expert < 48 -> db 64-row tiles, bk 64, tile-on-x; per_expert < 96 -> db 96-row tiles, bk 64, tile-on-x; else -> seg 128-row tiles, bk 128, tile-on-x with 8192 pad bytes",
+      "unit": null,
+      "condition": "always (called on every supported call; a db plan forced onto a ragged shape is replaced by seg)",
+      "kind": "measured",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:1308",
+      "note": "gains of the aligned-K branches over their baselines are in the _plan docstring (lines 1296-1304) and in this entry's measured array; measured on M5 Ultra at the Qwen3.8, GLM-5.3 and MiMo-V2.6 expert shapes"
+    },
+    {
+      "name": "tile_on_x_layout_group",
+      "value": 32,
+      "unit": "row tiles per grid-x group",
+      "condition": "GX = 32 for the aligned plans from 36 rows per expert on (tile index on grid x in groups of 32, (group, column) on y, so every threadgroup of a row tile shares one x coordinate); 0 keeps mlx's (column, tile) grid, which ragged K or N keeps",
+      "kind": "hardcoded",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:118"
+    },
+    {
+      "name": "top_plan_pad_bytes",
+      "value": 8192,
+      "unit": "bytes",
+      "condition": "the 96+ rows per expert seg plan adds 8 KB of extra threadgroup memory (fewer resident threadgroups)",
+      "kind": "hardcoded",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:1319"
+    },
+    {
+      "name": "weight_tile_threadgroup_stride",
+      "value": "BKP = BK + 16/sizeof(WT) (72 halfs at BK 64 bf16); the db schedule double-buffers two 64 x BKP tiles, seg holds one",
+      "unit": null,
+      "condition": "threadgroup weight-tile row stride and buffer size (SCHED == 1 ? 2 : 1) * 64 * BKP + PAD/sizeof(WT) elements",
+      "kind": "derived",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:409"
+    },
+    {
+      "name": "dequant_affine",
+      "value": "w = fp32 scale * q + bias rounded once to the activation dtype, exactly as mlx's dequantize()",
+      "unit": null,
+      "condition": "affine 4/8-bit weights",
+      "kind": "hardcoded",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:340"
+    },
+    {
+      "name": "dequant_mxfp4",
+      "value": "e2m1 code times the e8m0 group scale, dequantized to bfloat (mlx fp QuantizedBlockLoader Wtype)",
+      "unit": null,
+      "condition": "mxfp4 weights",
+      "kind": "hardcoded",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:366"
+    },
+    {
+      "name": "accumulator_dtype",
+      "value": "fp32 (NAXTile<float, 2, 2>); every store rounds once to the activation dtype",
+      "unit": null,
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:737"
+    },
+    {
+      "name": "partial_tile_handling",
+      "value": "seg skips the 16-row activation fragments of a partial tile that hold no rows; db clamps rows past the tile to its last row and never stores them",
+      "unit": null,
+      "condition": "tiles whose rows do not fill BM",
+      "kind": "hardcoded",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:523"
+    },
+    {
+      "name": "k_tail_handling",
+      "value": "a K tail (K % BK, a multiple of 32) runs only its valid 32-deep sub-steps; fetch_tail never reads weight bytes or group scales at or past the row (mlx's own NAX kernel reads them, which can be NaN at the end of the last expert)",
+      "unit": null,
+      "condition": "K % BK != 0",
+      "kind": "hardcoded",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:447"
+    },
+    {
+      "name": "epilogue_pair_row_map",
+      "value": "gate/up weight rows paired in the loader: pair_row(r) = ((r>>4)&1)*half_n + ((r>>5)<<4) + (r&15), so 16-row blocks alternate the gate and up rows of the same 16 output columns and each lane holds the fp32 gate and up accumulators of the same output element",
+      "unit": null,
+      "condition": "the fused gate/up epilogue (sorted_gather_qmm_swiglu); w holds [E, 2n, K] gate rows then up rows per expert",
+      "kind": "hardcoded",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:377"
+    },
+    {
+      "name": "epilogue_activation",
+      "value": "EPI 1: Multiply(Multiply(g, Sigmoid(g)), u) with MLX's own elementwise functors applied to the projections rounded to the activation dtype; EPI 2: GLM-5.3's clamped form first (gate = minimum(gate, limit), up = minimum(maximum(up, -limit), limit)); writes only [M, n], removing the [M, 2n] write and read and the separate elementwise pass",
+      "unit": null,
+      "condition": "sorted_gather_qmm_swiglu; limit is None for EPI 1, finite for EPI 2",
+      "kind": "hardcoded",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:1051"
+    },
+    {
+      "name": "row_map_reads",
+      "value": "the mapped forms take the token rows [T, 1, K] and a uint32 [M] sorted row -> token row map (sort_routes' order // top_k) and address each lane's activation rows through it, so the replicated [M, 1, K] copy is never computed; epilogue only",
+      "unit": null,
+      "condition": "sorted_gather_qmm_swiglu with row_map; plain sorted_gather_qmm returns None for a row map",
+      "kind": "hardcoded",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:1404"
+    },
+    {
+      "name": "self_test_canary",
+      "value": "every kernel instantiation runs a one-time canary before first use: empty experts, runs spanning several tiles and partial tiles of every size class (70, 0, 5, 33, 64, 17, 140, 11 rows); K % 64 == 0 must be bit-identical to mlx's sorted kernel, ragged K must match an fp32 dequantized reference within max_err <= ref_max / 64",
+      "unit": null,
+      "condition": "verify=True (the default); a failed or unevaluable verdict keeps the stock path",
+      "kind": "hardcoded",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:1549"
+    },
+    {
+      "name": "mimo_nax_prefill_floor",
+      "value": 8192,
+      "unit": "tokens",
+      "condition": "MiMo hybrid MoE prefill chunk (and, with the prefix cache on, paged-cache block) floor on NAX hosts with at least 128 GB, so gather_qmm tiles fill at skewed top-8 routing; other large hosts keep 4096",
+      "kind": "hardcoded",
+      "source": "omlx/scheduler.py:3091"
+    }
+  ],
+  "gates": [
+    {
+      "condition": "NAX hardware: macOS 26.2 or later and architecture applegpu_g17 or later (a trailing 'p' suffix requires g18+); the native extension mirrors mlx metal::is_nax_available(), else the Python fallback parses platform.mac_ver() and mx.device_info()",
+      "source": "omlx/custom_kernels/quant_matmul/fast.py:123"
+    },
+    {
+      "condition": "the installed mlx wheel must ship the NAX kernels: the bytes 'affine_qmm_t_nax' must appear in mlx.metallib (a macOS < 26.2-built wheel on M5 hardware stays on classic kernels); is_nax_available = hardware AND this check",
+      "source": "omlx/custom_kernels/quant_matmul/fast.py:182"
+    },
+    {
+      "condition": "wrapper dispatch: a sorted_indices=True mx.gather_qmm call on a NAX host (checked once per process by _on_nax_host); the patch is installed model-independently at model load",
+      "source": "omlx/patches/m5_gather_qmm.py:203"
+    },
+    {
+      "condition": "rows gate, the same gate as mlx's own choice of the sorted rhs kernel: M >= 16 rows and M // E >= 4; fewer rows per expert run the per-row qmv kernel, which is correct and cheaper there",
+      "source": "omlx/patches/m5_gather_qmm.py:157"
+    },
+    {
+      "condition": "global_scale must be absent; the NAX kernels take no global scale and such calls keep MLX's kernel",
+      "source": "omlx/patches/m5_gather_qmm.py:200"
+    },
+    {
+      "condition": "activation dtype bf16 or fp16, x of shape [M, 1, K] with a flat sorted uint32 index of length M, transpose=True rhs-only gather (no lhs_indices)",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:1338"
+    },
+    {
+      "condition": "M >= 8 (fewer than 8 indices would be bound as a constant buffer)",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:1354"
+    },
+    {
+      "condition": "experts E in 1..2048, N % 32 == 0, K % 32 == 0, w uint32 [E, N, K * bits / 32], scales shaped (E, N, K // group_size)",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:1360"
+    },
+    {
+      "condition": "affine mode: bits 4 or 8, group_size 32, 64 or 128, biases present, K % group_size == 0, scales and biases in the activation dtype and of equal shape",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:1363"
+    },
+    {
+      "condition": "mxfp4 mode: bits 4, group_size 32, no biases, uint8 scales",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:1372"
+    },
+    {
+      "condition": "row map: uint32 [M], token rows * K < 2**32 elements (32-bit element offsets); and the row map is served only with the activation epilogue",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:1350"
+    },
+    {
+      "condition": "index contract: each expert's rows must be one contiguous run of the sorted index (every caller sorts globally); an expert split over two runs leaves rows unwritten - the scan's max_tiles guard only bounds unsorted input",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:87"
+    },
+    {
+      "condition": "swiglu epilogue additionally needs N % 64 == 0 (2n % 64: every 64-column tile pairs 32 gate with 32 up columns) and a finite clip limit",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:1805"
+    },
+    {
+      "condition": "db schedule requires K % 64 == 0, N % 64 == 0 and bk 64; a db plan on a ragged shape is forced to seg before the canary",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:1750"
+    },
+    {
+      "condition": "per-instantiation canary self-test before first use; a failed verdict disables that configuration for the process and the caller keeps the stock path",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:1755"
+    }
+  ],
+  "measured": [
+    {
+      "metric": "prefill_gain_pct_tile_on_x_layout",
+      "value": "3-28%",
+      "model": "Qwen3.8 / GLM-5.3 / MiMo-V2.6 expert shapes",
+      "machine": "M5 Ultra",
+      "conditions": "tile-on-x layout vs the plain (column, tile) layout from 36 rows per expert, real routing profiles; the gain tracked how few x coordinates a row tile's threadgroups span (activation reuse across its columns); below 36 rows per expert weight streaming dominates and the plain layout stays faster",
+      "provenance": "upstream_reported",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:37"
+    },
+    {
+      "metric": "plan_branch_gain_pct_36_47_rows",
+      "value": "+10%",
+      "model": "Qwen3.8 / GLM-5.3 / MiMo-V2.6 expert shapes",
+      "machine": "M5 Ultra",
+      "conditions": "36-47 mean rows per expert at K >= 1024: 64-row db tiles in the tile-on-x layout vs the plain layout",
+      "provenance": "upstream_reported",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:1299"
+    },
+    {
+      "metric": "plan_branch_gain_pct_48_95_rows",
+      "value": "+3-26%",
+      "model": "Qwen3.8 / GLM-5.3 / MiMo-V2.6 expert shapes",
+      "machine": "M5 Ultra",
+      "conditions": "48-95 mean rows per expert: 96-row db tiles, tile-on-x layout",
+      "provenance": "upstream_reported",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:1300"
+    },
+    {
+      "metric": "plan_branch_gain_pct_96_plus_rows",
+      "value": "+5-29%",
+      "model": "Qwen3.8 / GLM-5.3 / MiMo-V2.6 expert shapes",
+      "machine": "M5 Ultra",
+      "conditions": "96+ mean rows per expert at K >= 1024: 128-row seg tiles with 128-deep K steps and 8 KB of extra threadgroup memory (fewer resident threadgroups), tile-on-x layout",
+      "provenance": "upstream_reported",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:1303"
+    },
+    {
+      "metric": "plan_branch_gain_pct_short_k",
+      "value": "+5%",
+      "model": "Qwen3.8 / GLM-5.3 / MiMo-V2.6 expert shapes",
+      "machine": "M5 Ultra",
+      "conditions": "K < 1024 from 120 mean rows per expert: 96-row seg tiles with 128-deep K steps",
+      "provenance": "upstream_reported",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:1304"
+    },
+    {
+      "metric": "vs_mlx_0_3_2_3_sorted_tiles",
+      "value": "faster (no number given)",
+      "model": "MoE prefill",
+      "machine": "M5 Max",
+      "conditions": "the module docstring's top-level claim: its own segmented tile scheduling is faster than mlx 0.32.3's single-expert tile scheduling for MoE prefill; the plan table itself was measured on an M5 Ultra",
+      "provenance": "upstream_reported",
+      "source": "omlx/patches/m5_gather_qmm_nax.py:17"
+    },
+    {
+      "metric": "moe_prefill_gain_pct_chunk_fill",
+      "value": "~+34%",
+      "model": "MiMo hybrid MoE",
+      "machine": "M3 Ultra",
+      "conditions": "2048-token prefill chunk vs 512 (skewed top-8 routing leaves ~10 rows per expert at a 512-token chunk, so the gather_qmm BM tiles mostly compute padding); scheduler comment about the block-size choice, not the kernel's internals; the NAX-host floor variant is 8192 tokens",
+      "provenance": "upstream_reported",
+      "source": "omlx/scheduler.py:3150"
+    }
+  ],
+  "lab_mapping": [
+    {
+      "setting": "plan_table",
+      "maps_to": "docs/KAPITSA_KERNELS.md decision-table item 8 (expert-sorted grouped GEMM MoE prefill; tests/moe_grouped_gemm_bench.rs prototype, mechanism-positive not promoted) and the tslab kernel --bench int4_matmul M axis for the same rows-per-expert curve; this table is the M5-class re-read target our decision table defers",
+      "env": null,
+      "note": "our Item 8 has no NAX hardware on the bench; the plan table's rows/expert thresholds are the first thing to re-read when one is"
+    },
+    {
+      "setting": "epilogue_activation",
+      "maps_to": "our fused row-op dispatch (knobs.rs qwen_fused_ffn); we fuse the small per-row ops (RMSNorm, RoPE, gate/act, residual) into one multi-row dispatch, not the gate/up activation into the GEMM epilogue",
+      "env": "TURBOSPARK_QWEN_FUSED_FFN",
+      "note": "omlx's epilogue is canary-checked bit-identical to the unfused path per instantiation; our batched row ops carry their own drift bound"
+    },
+    {
+      "setting": "mimo_nax_prefill_floor",
+      "maps_to": "our qwen36 chunked MoE prefill switch (knobs.rs qwen_moe_chunked): the same make-chunks-fill-the-MoE-tiles lever on the host side",
+      "env": "TURBOSPARK_QWEN_MOE_CHUNKED",
+      "note": "knobs.rs qwen_moe_chunked, exactness BitExact; omlx's floor is a scheduler constant, not a flag"
+    },
+    {
+      "setting": "tile_on_x_layout_group",
+      "maps_to": "none yet: the lab has no grid-layout or threadgroup-memory pad axis, and no NAX-class host to measure one on",
+      "env": null,
+      "note": "GX and the 8 KB pad are the two knobs with no counterpart in tslab"
+    }
+  ],
+  "docs": [
+    "docs/MLX_SERVE_KERNELS.md#what-src-kernels-is-file-by-file",
+    "docs/MLX_SERVE_KERNELS.md#decision-table",
+    "docs/KAPITSA_KERNELS.md#items-6-7-8-bench-prototypes"
+  ],
+  "notes": "Doc-vs-source: nothing our docs claim about this kernel contradicts the source. Our doc's file row (MLX_SERVE_KERNELS.md:144) names mlx-serve's port copies (gather_qmm_nax_header.metal, gather_qmm_nax.metal, _mapped*, _scan, 1,242 lines); the omlx origin at this rev is one Python module (omlx/patches/m5_gather_qmm_nax.py, 1,831 lines) whose Metal source is string literals compiled at runtime through mx.fast.metal_kernel, so there is no .metal file to pin in omlx itself. The row's description (expert-sorted tiles, a scan kernel building tile descriptors, a mapped form with a fused gate and up epilogue) and its NAX hardware column match the source exactly. The hardware gate is stricter than our doc's one-line probe description (MLX_SERVE_KERNELS.md:137-139): besides macOS 26.2+ and applegpu_g17+ (a g17p suffix requires g18+), omlx also requires the installed mlx wheel's metallib to contain the NAX kernels (the affine_qmm_t_nax needle), because a macOS < 26.2-built wheel on M5 hardware stays on classic kernels. Caveats the repo records: the kernel is bit-identical to mlx's sorted kernel only 'wherever that kernel is correct' - ragged K (K % 64 != 0) is checked against an fp32 dequantized reference instead, because mlx's NAX tail reads weights and scales past the expert's K extent (issue #2267), the defect this module replaces; the wrapper's fallback for a defective host drops sorted_indices onto the unsorted path. The mapped and epilogue forms are gated per instantiation by canaries against the unfused path, not assumed. All plan numbers are relative gains in source comments measured on one machine (M5 Ultra; the docstring's top-level claim names an M5 Max) with no absolute times anywhere in the repo for this kernel; the scheduler's +34% MiMo figure is about chunk size filling these tiles and was measured on an M3 Ultra, which is not a NAX host. The kernel builds on the installed mlx package's steel/gemm/nax.h tile primitives read from its include directory at runtime (mlx pinned to 0.32.4 in pyproject), so its constants are coupled to the mlx build and missing headers disable the kernel. Coverage: this entry covers the NAX sorted gather path and its wrapper; m5_gather_qmm_a8 (routed A8, opt-in per model) and the non-NAX decode-side kernels are separate."
+}

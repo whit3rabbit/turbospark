@@ -1,0 +1,303 @@
+{
+  "schema": "turbospark.lab.pinned/1",
+  "id": "mlx-serve.row_attn",
+  "kernel": "the row-exact decode attention pair (msv_row_attn_partial, msv_row_attn_merge), TensorFold row_attention.py port",
+  "kernel_class": "attention_decode",
+  "repo": "mlx-serve",
+  "summary": "Serves decode-width attention for windows of 1 to 16 query rows on a trunk with ModelConfig.rowExactDecode set (dense qwen3_5 or nemotron_h, a DFlash drafter bound), serial steps included. One threadgroup per (kv head, window row, 128-key chunk); a chunk's keys interleave over 4 simdgroups, each running an online softmax in ascending position, the simdgroups merged in order in the partial kernel and the chunks merged, with one final normalize, in the merge kernel. Each row carries a depth and a path so a tree node attends to the cache plus its own ancestors; the chain default makes a row's keys independent of what else rides in the window.",
+  "source": {
+    "url": "https://github.com/ddalcu/mlx-serve",
+    "rev": "191da71de32a65f69ebceeb6cb2e91036ab50b30",
+    "rev_date": "2026-10-22",
+    "license": "MIT",
+    "files": [
+      "src/row_attn.zig",
+      "src/transformer.zig",
+      "src/model.zig",
+      "src/server.zig",
+      "src/lane_attn.zig",
+      "benchmarks.md",
+      "docs/models.md"
+    ],
+    "symbols": [
+      "PARTIAL",
+      "MERGE",
+      "MAX_ROWS",
+      "Tree",
+      "fits",
+      "sdpa",
+      "rowExactDecode",
+      "rowExactArch",
+      "firstRowExactMiss",
+      "resolveKvAttnFused",
+      "rowByRowSdpa"
+    ]
+  },
+  "models": [
+    {
+      "name": "Qwen3.8-27B",
+      "quant": "MLX affine 4-bit projections; the attention kernel itself is quant-agnostic and reads a dense bf16 cache",
+      "family": "qwen3_5 (dense)",
+      "machine": "M4 Max 128 GB",
+      "role": "primary; the kernel's own test pins its shape, 24 query heads over 4 kv heads, head dim 256 (src/row_attn.zig:262-266)"
+    },
+    {
+      "name": "Nemotron-3-Nano-4B",
+      "quant": "not stated for attention at this rev; the row-exact gate is quant-agnostic on the attention side, while every projection must pass firstRowExactMiss",
+      "family": "nemotron_h",
+      "machine": "not stated",
+      "role": "gate-covered family (rowExactArch returns true for model_type nemotron_h, src/model.zig:1236); no nemotron decode cell in benchmarks.md"
+    }
+  ],
+  "settings": [
+    {
+      "name": "chunk_keys",
+      "value": 128,
+      "unit": "keys per chunk",
+      "condition": "every launch; CK is a kernel template arg",
+      "kind": "hardcoded",
+      "source": "src/row_attn.zig:12",
+      "note": "chunks are counted from position 0 over the whole cache view, nch = ceil(L / CK) at src/row_attn.zig:156; a row reads only up to its own last key k1 = min(c * CK + CK, P + depth[w] + 1) at src/row_attn.zig:37"
+    },
+    {
+      "name": "split_simdgroups",
+      "value": 4,
+      "unit": "simdgroups per chunk",
+      "condition": "every launch; SPLIT is a kernel template arg",
+      "kind": "hardcoded",
+      "source": "src/row_attn.zig:13",
+      "note": "keys interleave stride 4: key position pos goes to simdgroup pos % SPLIT, since pos = k0 + s + j * SPLIT with base stepping by SPLIT * BLK (src/row_attn.zig:44 and 49)"
+    },
+    {
+      "name": "block_keys_per_update",
+      "value": 4,
+      "unit": "keys per simdgroup per online-softmax update",
+      "condition": "every launch; BLK is a kernel template arg",
+      "kind": "hardcoded",
+      "source": "src/row_attn.zig:14",
+      "note": "one threadgroup loop iteration covers SPLIT * BLK = 16 consecutive positions across the 4 simdgroups (src/row_attn.zig:44); the block max over the 4 scores rescales the running state once per block (src/row_attn.zig:59-62)"
+    },
+    {
+      "name": "rows_served",
+      "value": [1, 16],
+      "unit": "rows",
+      "condition": "q shape axis 2 (the window W); also requires ks[2] >= qs[2]",
+      "kind": "hardcoded",
+      "source": "src/row_attn.zig:136",
+      "note": "MAX_ROWS = 16 at src/row_attn.zig:15; with tree == null the host builds the chain, depth[r] = r and path[r][i] = i, max_depth = w - 1 (src/row_attn.zig:161-173)"
+    },
+    {
+      "name": "head_dim_lane_slice",
+      "value": "DPL = D / 32 head-dim elements per lane, D = q head dim (compile-time template arg)",
+      "unit": null,
+      "condition": "every launch",
+      "kind": "derived",
+      "source": "src/row_attn.zig:28",
+      "note": "each of the 32 lanes owns D/32 of q, k, v and the accumulator; the test shape is head dim 256, so DPL 8"
+    },
+    {
+      "name": "head_dim_constraints",
+      "value": "q head dim a multiple of 32, and the k head dim equals the q head dim",
+      "unit": null,
+      "condition": "fits check",
+      "kind": "hardcoded",
+      "source": "src/row_attn.zig:134",
+      "note": "no upper head-dim bound in fits; threadgroup memory so[G * SPLIT][D] fp32 grows with both g and D. Caveat: fits checks V only for dtype (src/row_attn.zig:130), while the kernel reads V with the same D/32 lane geometry, so callers must pass v at the K head dim; every call site does"
+    },
+    {
+      "name": "gqa_grouping",
+      "value": "whole kv-head groups per threadgroup: g = H / HKV must divide exactly, one query head per (g, split) simdgroup pair, qh = h * G + g",
+      "unit": null,
+      "condition": "fits check and partial kernel",
+      "kind": "hardcoded",
+      "source": "src/row_attn.zig:134",
+      "note": "exact division at src/row_attn.zig:135, query-head index at PARTIAL src/row_attn.zig:29"
+    },
+    {
+      "name": "threadgroup_threads",
+      "value": "32 * g * SPLIT threads (g * SPLIT simdgroups of 32 lanes) for the partial kernel",
+      "unit": "threads",
+      "condition": "partial kernel launch",
+      "kind": "derived",
+      "source": "src/row_attn.zig:194",
+      "note": "threadgroup set to the same value at src/row_attn.zig:195; grid x equals the threadgroup, so one threadgroup runs per (kv head, window row, chunk)"
+    },
+    {
+      "name": "threadgroup_cap",
+      "value": 1024,
+      "unit": "threads",
+      "condition": "fits rejects shapes with g * SPLIT * 32 above 1024",
+      "kind": "hardcoded",
+      "source": "src/row_attn.zig:136"
+    },
+    {
+      "name": "grid_shape",
+      "value": "partial grid (32 * g * SPLIT, nch, hkv * w): one threadgroup per (kv head, window row, 128-key chunk), h = z / W and w = z % W",
+      "unit": null,
+      "condition": "partial kernel",
+      "kind": "derived",
+      "source": "src/row_attn.zig:194",
+      "note": "chunk index from grid y at PARTIAL src/row_attn.zig:25, head/row decomposition at src/row_attn.zig:27"
+    },
+    {
+      "name": "chunk_count",
+      "value": "nch = ceil(L / CK) computed over the whole cache view length L",
+      "unit": "chunks",
+      "condition": "every launch",
+      "kind": "derived",
+      "source": "src/row_attn.zig:156",
+      "note": "so grid width grows with cache length even when a row's extent is short; a row's per-chunk tail caps at its own last key (src/row_attn.zig:37) and chunks with no keys for the row contribute zero through the l > 0 guard (src/row_attn.zig:82)"
+    },
+    {
+      "name": "window_base",
+      "value": "P = L - W, the first window position in the cache view",
+      "unit": "keys",
+      "condition": "every launch; L = ks[2], W = qs[2]",
+      "kind": "derived",
+      "source": "src/row_attn.zig:155",
+      "note": "passed to the kernel as dims[0] in the dims vector [P, W, NCH, MAXD + 1] (src/row_attn.zig:179)"
+    },
+    {
+      "name": "key_resolution",
+      "value": "pos < P ? pos : P + path[w * MAXD + (pos - P)]; the row's last key is P + depth[w]",
+      "unit": null,
+      "condition": "every key of every row; tree inputs are depth [W] int32, path [W, MAXD] int32, max_depth = MAXD - 1",
+      "kind": "hardcoded",
+      "source": "src/row_attn.zig:50",
+      "note": "row extent at src/row_attn.zig:35; Tree struct at src/row_attn.zig:141; the chain default (tree == null) makes row r attend to the cache plus window rows 0..r (src/row_attn.zig:163-173), and rows[j] = -1 past k1 is skipped (src/row_attn.zig:63-64)"
+    },
+    {
+      "name": "softmax_form",
+      "value": "online softmax per simdgroup in ascending position: block max over the 4 stride-4 scores, rescale the running (m, l, o) by exp(m - mn), then accumulate exp(sc - mn) per key, all state fp32; score = simd_sum(q dot k) * scale[0] with the scale applied after the lane reduction",
+      "unit": null,
+      "condition": "partial kernel inner loop",
+      "kind": "hardcoded",
+      "source": "src/row_attn.zig:59",
+      "note": "score scaling at src/row_attn.zig:56, per-key accumulate at 63-69, running max update at 70; scale is a float32 scalar input (src/row_attn.zig:182)"
+    },
+    {
+      "name": "merge_order",
+      "value": "simdgroups merged in order t = 0..SPLIT-1 in the s == 0 lane after a barrier, then chunks merged in order c = 0..NCH-1 in the separate merge kernel, with the single final normalize OUT = bfloat(acc / lsum)",
+      "unit": null,
+      "condition": "partial kernel then merge kernel",
+      "kind": "hardcoded",
+      "source": "src/row_attn.zig:81",
+      "note": "simdgroup merge at src/row_attn.zig:76-88, chunk merge at 101-108, normalize and bf16 store at 109; empty partials contribute zero through e = l > 0 ? exp(m - mx) : 0 at 82 and 105"
+    },
+    {
+      "name": "partial_outputs",
+      "value": "partial writes unnormalized fp32 partials PM [slots], PL [slots], PO [slots, D] with slots = h * w * nch; merge writes bf16 OUT [1, h, w, d]",
+      "unit": null,
+      "condition": "every launch",
+      "kind": "hardcoded",
+      "source": "src/row_attn.zig:190",
+      "note": "fp32 output args at src/row_attn.zig:191-193, bf16 merge output at 210; the partial is created with row_contig false and the merge with row_contig true (src/row_attn.zig:158-159); kernel names msv_row_attn_partial and msv_row_attn_merge"
+    },
+    {
+      "name": "merge_threadgroup",
+      "value": "32 threads (one simdgroup) per (query head, window row), grid (32, h, w)",
+      "unit": null,
+      "condition": "merge kernel",
+      "kind": "derived",
+      "source": "src/row_attn.zig:211",
+      "note": "threadgroup set at src/row_attn.zig:212; each lane owns D/32 outputs of the normalized row"
+    },
+    {
+      "name": "input_handling",
+      "value": "q, k, v bfloat16; depth and path int32; scale float32; q made contiguous before the call, k and v stay strided cache views [1, HKV, L, D] indexed through their strides, never copied",
+      "unit": null,
+      "condition": "every launch",
+      "kind": "hardcoded",
+      "source": "src/row_attn.zig:130",
+      "note": "bf16 check at 130, q contiguity at src/row_attn.zig:186, K/V stride indexing at PARTIAL src/row_attn.zig:30-31 with the never-copied comment at src/row_attn.zig:17"
+    }
+  ],
+  "gates": [
+    {
+      "condition": "dispatch site: rowExactDecode() and seq_len <= row_attn.MAX_ROWS (16) and batch == 1, with lane_attn.sdpa tried first on NAX hosts and row_attn.sdpa otherwise; the packed-KV and verify arms earlier in the chain never preempt because resolveKvAttnFused returns false whenever rowExactDecode holds",
+      "source": "src/transformer.zig:29753",
+      "note": "lane_attn-first or at src/transformer.zig:29754-29755; packed-KV disable at src/server.zig:570; lane_attn is the M5 tensor-unit variant sharing row_attn's MAX_ROWS and Tree (src/lane_attn.zig:15-16)"
+    },
+    {
+      "condition": "rowExactDecode = row_exact_covered and dflash_bound and rowExactArch: every decode-width projection fits the row kernels AND a DFlash drafter is bound; serial decode and MTP rounds without a drafter keep the faster stock paths",
+      "source": "src/model.zig:1225"
+    },
+    {
+      "condition": "rowExactArch: model_type nemotron_h, or a qwen3_5 prefix that is dense (not MoE) with hadamard_block == 0 (no Hadamard rotation pack)",
+      "source": "src/model.zig:1237"
+    },
+    {
+      "condition": "row_exact_covered is set at load only when rowExactArch holds and firstRowExactMiss finds no non-vision, non-MTP weight outside the row kernels (affine quant mode and rowqmv.fits per weight); a miss logs '[row-exact] ... outside the row kernels' and verify rows stay non-byte-exact",
+      "source": "src/transformer.zig:18381",
+      "note": "firstRowExactMiss body at src/transformer.zig:45229"
+    },
+    {
+      "condition": "fits, inside the kernel: GPU stream, bf16 q/k/v, 4-D batch 1, q head dim % 32 == 0, k head dim == q head dim, H % HKV == 0, g * SPLIT * 32 <= 1024, 1 <= W <= 16, L >= W",
+      "source": "src/row_attn.zig:136",
+      "note": "dtype at src/row_attn.zig:130, batch at 133, head dims at 134, stream check at src/row_attn.zig:147"
+    },
+    {
+      "condition": "a draft tree (ctx.tree != null) reaching this dispatch with no row-exact kernel is a hard refusal: error.SpecTreeUnsupported",
+      "source": "src/transformer.zig:29758"
+    },
+    {
+      "condition": "fallbacks when the row-exact branch declines: rowByRowSdpa (the window replayed as one-row steps) for rowExactDecode widths past the kernel's fits, the prefill kernels for any seq_len > 1, stock MLX sdpa for one row",
+      "source": "src/transformer.zig:29760",
+      "note": "prefill arms at src/transformer.zig:29762-29772, stock decode sdpa at 29775; rowByRowSdpa at src/transformer.zig:36702"
+    }
+  ],
+  "measured": [
+    {
+      "metric": "decode_tok_s",
+      "value": 92,
+      "model": "Qwen3.8 27B 4-bit (ddalcu)",
+      "machine": "Apple M4 Max 128 GB",
+      "conditions": "./tests/bench.sh decode tok/s via llmprobe --bench-only (warmup discarded, median of 3, its own code-completion prompt), ReleaseFast at the fastest config, dflash mode engaged (a DFlash drafter bound, so the row-exact path including row_attn serves every row); v26.10.1 column, the first release with the row-exact kernels; whole-engine number, not the kernel in isolation",
+      "provenance": "upstream_reported",
+      "source": "benchmarks.md:16"
+    },
+    {
+      "metric": "decode_tok_s",
+      "value": 109,
+      "model": "Qwen3.8 27B 4-bit (ddalcu)",
+      "machine": "Apple M4 Max 128 GB",
+      "conditions": "same protocol as the 92 entry; v26.10.2 column",
+      "provenance": "upstream_reported",
+      "source": "benchmarks.md:16"
+    },
+    {
+      "metric": "decode_tok_s",
+      "value": 106,
+      "model": "Qwen3.8 27B 4-bit (ddalcu)",
+      "machine": "Apple M4 Max 128 GB",
+      "conditions": "same protocol as the 92 entry; v26.10.3 column, the pinned revision",
+      "provenance": "upstream_reported",
+      "source": "benchmarks.md:16"
+    }
+  ],
+  "lab_mapping": [
+    {
+      "setting": "rows_served",
+      "maps_to": "tslab kernel --bench attn_decode: the bench drives one decode row through the production dispatcher over context-length points (crates/lab/src/kernel/attn_decode.rs:73), so only the one-row arm of the comparison is reachable; the 1..16 window-row axis of row_attn has no tslab axis yet",
+      "env": null,
+      "note": "our kernels there are barrier and gqa, not a row-exact window kernel; head shape comes from ArchConfig (attn_decode.rs:20-30)"
+    },
+    {
+      "setting": "chunk_keys",
+      "maps_to": "none yet: no tslab bench exposes a key-chunk, simdgroup-interleave, or merge-order axis for decode attention",
+      "env": null
+    },
+    {
+      "setting": "grid_shape",
+      "maps_to": "docs/MLX_SERVE_KERNELS.md decision table row 2 (engine lever E2): draft tree verify over the exact kernels, DFlash2 lattice at block 8; row_attn is the attention half of that contract, and TURBOSPARK_ATTN_DECODE_KERNEL selects our one-row decode kernel (barrier or gqa)",
+      "env": "TURBOSPARK_ATTN_DECODE_KERNEL",
+      "note": "crates/lab/src/knobs.rs:134-143: values <unset>, barrier, gqa, exactness KlBounded, doc docs/SPEEDUP_PLAYBOOK.md"
+    }
+  ],
+  "docs": [
+    "docs/MLX_SERVE_KERNELS.md#the-row-exact-kernels-which-make-the-tree-verify-possible",
+    "docs/MLX_SERVE_KERNELS.md#attention-and-kv-at-decode",
+    "docs/MLX_SERVE_KERNELS.md#decision-table"
+  ],
+  "notes": "License: our doc's Pinned source and license section (docs/MLX_SERVE_KERNELS.md:22) says Apache-2.0, but the repo's LICENSE at this rev is MIT for mlx-serve's own code, with LICENSE-APACHE-2.0 shipped for incorporated third-party components (NOTICE); this entry sides with the source, license MIT. The rest of our doc's row_attn bullet verifies against the source: chunk 128, 4 simdgroups, one threadgroup per (kv head, window row, chunk) (grid at src/row_attn.zig:194), keys interleaved stride 4, per-simdgroup online softmax in ascending position, in-order simdgroup then chunk merges, depth/path tree inputs, 1 to 16 rows. One refinement our doc does not spell out: the simdgroup merge runs in the s == 0 lane of the partial kernel and the chunk merge is a separate kernel that also holds the only normalization (src/row_attn.zig:76-88, 101-109). The doc's 'what rides in the window changes nothing a row computes' is backed by their two tests, every window row equals the one-row step at its position and a tree node equals the one-row step over its own path's keys (src/row_attn.zig:260, 333); the cross-check against MLX's sdpa is numeric, max abs diff under 2e-2 (src/row_attn.zig:329), not bit equality. Caveats our doc does not mention: chunk count is ceil over the whole cache view, so the grid grows with L even for short rows (src/row_attn.zig:156); fits never checks V's head dim, only its dtype (src/row_attn.zig:130), while the kernel reads V with the K head dim's lane geometry; on NAX hosts lane_attn is tried before row_attn (src/transformer.zig:29754), so row_attn is the M4-class form of the contract. The three measured numbers are whole-engine decode with the drafter bound, not the attention kernel in isolation, and the M5 Ultra 242 tok/s cell runs lane_attn, not this kernel."
+}

@@ -1,0 +1,458 @@
+{
+  "schema": "turbospark.lab.pinned/1",
+  "id": "kapitsa.moe",
+  "kernel": "the routed MoE kernels: the GPU router top-k (moe_topk, moe_topk_rows, moe_topk_rows8, moe_topk256), the decode slot GEMVs (moe_gate_up*, moe_down2*), the expert bucket kernels (moe_bucket2, moe_bucket3), the grouped prefill GEMMs (qmm_moe_gu/dn, qrm_gu/dn, qmm2) and the Q2_0 routed-expert kernels (moe_q20_*, qmms_moe_*_q20, qrm_*_q20)",
+  "kernel_class": "moe",
+  "repo": "kapitsa",
+  "summary": "Kapitsa's routed MoE stack for the Qwen3.5/3.6 MoE family: a GPU softmax top-k router with the shared-expert sigmoid gate, decode gate/up and down GEMVs dispatched over top_k + 1 slots in router rank order with fp32 slot-order combines, and expert-sorted grouped prefill GEMMs over bucketed (expert, begin, end) tiles in four forms: 8-row short-prefill tiles (T <= 128), 16-row original-path tiles, 16/32/64-row threadgroup-dequant tiles (NI_MOE_FUSED), 32/16-row in-register qrm tiles, plus M5 tensor-unit tiles at 64 rows. A parallel Q2_0 (2-bit) kernel family serves Flash-Next's streamed experts through an arena slot table.",
+  "source": {
+    "url": "https://github.com/nace-ai/kapitsa",
+    "rev": "14d1b03f306032f20426375651c8181a9105857d",
+    "rev_date": "2026-10-25",
+    "license": "Apache-2.0",
+    "files": [
+      "src/kernels/qmm_moe.metal",
+      "src/kernels/qmm_moe3.metal",
+      "src/kernels/moe.metal",
+      "src/kernels/zq2moe.metal",
+      "src/kernels/common.h",
+      "src/model/qwen35.cpp",
+      "src/model/moe_q20.cpp",
+      "docs/kflash.md",
+      "README.md"
+    ],
+    "symbols": [
+      "qmm_moe_gu_b4_m16_n32",
+      "qmm_moe_gu_b4_m32_n32",
+      "qmm_moe_gu_b4_m64_n32",
+      "qmm_moe_dn_b4_m16_n64",
+      "qmm_moe_dn_b4_m32_n64",
+      "qmm_moe_dn_b4_m64_n64",
+      "qmm2_b4_m32_n64",
+      "qmm2_b4_m64_n64",
+      "moe_bucket2",
+      "moe_bucket3",
+      "qrm_gu_k32_m32_n64",
+      "qrm_gu_k32_m16_n64",
+      "qrm_gu_k64_m32_n64",
+      "qrm_gu_k64_m16_n64",
+      "qrm_dn_k32_m32_n128",
+      "qrm_dn_k32_m16_n128",
+      "qrm_dn_k64_m32_n128",
+      "qrm_dn_k64_m16_n128",
+      "moe_topk",
+      "moe_topk_rows",
+      "moe_topk_rows8",
+      "moe_topk256",
+      "moe_gate_up",
+      "moe_gate_up2",
+      "moe_gate_up3_r2",
+      "moe_gate_up3_r4",
+      "moe_down",
+      "moe_down2",
+      "moe_down2_w",
+      "moe_bucket",
+      "swiglu_half",
+      "moe_combine",
+      "moe_q20_gate_up",
+      "moe_q20_gate_up_slot",
+      "moe_q20_unique",
+      "moe_q20v_gate_up",
+      "moe_q20v_gate_up_slot",
+      "moe_q20_down",
+      "moe_q20_down_slot",
+      "qmms_moe_gu_q20",
+      "qmms_moe_dn_q20",
+      "qmms_moe_gu_q20_slot",
+      "qmms_moe_dn_q20_slot",
+      "qrm_gu_q20_m32_n64",
+      "qrm_gu_q20_m32_n64_slot",
+      "qrm_dn_q20_m32_n128",
+      "qrm_dn_q20_m32_n128_slot"
+    ]
+  },
+  "models": [
+    {
+      "name": "Qwen3.6-35B-A3B",
+      "quant": "MLX affine 4-bit, group 64, MoE 3B active (256 experts, top-k 8, expert D 2048, I 512; 22.1 GB pack)",
+      "family": "qwen36 MoE",
+      "machine": "M4 Pro 48 GB in the README table and the tuning comments; the form A/Bs also name M5 Pro and a 32-core M1 Max",
+      "role": "primary"
+    },
+    {
+      "name": "Qwen3.8-Flash-Next 180B-A7B",
+      "quant": "4-bit trunk with Q2_0 (2-bit, 2.25 bits per weight) routed experts on 48 GB Macs; wide experts (k + 1) x I = 11 x 640; 105.9 GB in the 4-bit pack",
+      "family": "qwen3_8 MoE (Flash-Next)",
+      "machine": "M5 Pro 48 GB (SSD-streamed benchmark in docs/benchmarks.md); unspecified in the kernel comments",
+      "role": "secondary"
+    }
+  ],
+  "settings": [
+    {
+      "name": "router_topk_ranking_order",
+      "value": "softmax over all E logits (max-subtracted precise::exp) then k rounds of masked argmax; idx[r] is the r-th best expert in ranking order; a tie resolves to the lowest expert index (simd_min over candidate ids)",
+      "unit": null,
+      "condition": "always (moe_topk, moe_topk_rows, moe_topk_rows8 and route_topk inside moe_gate_up2)",
+      "kind": "hardcoded",
+      "source": "src/kernels/moe.metal:37"
+    },
+    {
+      "name": "topk_expert_cap",
+      "value": 512,
+      "unit": "experts",
+      "condition": "TopkParams: E a multiple of 32 and <= 512 (16 logits per lane); the bucket and unique kernels size their threadgroup counters 512",
+      "kind": "hardcoded",
+      "source": "src/kernels/moe.metal:7"
+    },
+    {
+      "name": "topk256_fast_exp",
+      "value": true,
+      "unit": null,
+      "condition": "decode top-k when experts == 256 and top_k <= 8 (moe_topk256, the shipped kernel on the 35B): the only MoE top-k form using fast::exp; the other forms use precise::exp",
+      "kind": "hardcoded",
+      "source": "src/kernels/moe.metal:558"
+    },
+    {
+      "name": "router_weight_norm",
+      "value": "norm_topk_prob from the model config (default true): the top-k weights renormalize by their selected sum; the shared-expert weight is sigmoid(shared logit) and is never renormalized",
+      "unit": null,
+      "condition": "always",
+      "kind": "derived",
+      "source": "src/model/qwen35.cpp:574"
+    },
+    {
+      "name": "decode_slots_per_token",
+      "value": "top_k + 1 (9 on the 35B: k routed slots in router rank order plus the shared expert as slot k)",
+      "unit": "slots",
+      "condition": "always on the fused decode path (grid y = top_k + 1)",
+      "kind": "derived",
+      "source": "src/model/qwen35.cpp:2164"
+    },
+    {
+      "name": "decode_rows_per_simdgroup",
+      "value": 4,
+      "unit": "rows",
+      "condition": "moe_gate_up gate/up rows per simdgroup (VPL 16 values per lane, group size 64)",
+      "kind": "hardcoded",
+      "source": "src/kernels/moe.metal:84"
+    },
+    {
+      "name": "q20_rows_per_simdgroup",
+      "value": 4,
+      "unit": "rows",
+      "condition": "all zq2moe decode and verify instances (VPL 16 values per lane)",
+      "kind": "measured",
+      "source": "src/kernels/zq2moe.metal:82",
+      "note": "fn_q2_bench tune on the M4 Pro, interleaved, 21 rounds: a decode call 93.2 us against 105.9 with ROWS 2, outputs bit for bit equal; VPL 32 or 64 slower"
+    },
+    {
+      "name": "decode_down2_threadgroup_staging",
+      "value": "(k + 1) * max(I, SI) floats of h staged in threadgroup memory: 4608 for moe_down2 (9 x 512) and 7168 for moe_down2_w (wide experts: Flash-Next 11 x 640)",
+      "unit": "floats",
+      "condition": "decode and verify down; moe_wide() picks moe_down2_w above 4608 and (k + 1) * max(I, SI) > 7168 is fatal at load",
+      "kind": "hardcoded",
+      "source": "src/kernels/moe.metal:542"
+    },
+    {
+      "name": "grouped_prefill_k_step",
+      "value": 32,
+      "unit": "inputs",
+      "condition": "qmm_moe grouped tiles (Q2_BK, threadgroup row stride 40 halfs = 80 B); qrm takes BK 32, or 64 on the 35B shapes on a 32-core M1 Max (NI_MOE_QMR_K)",
+      "kind": "hardcoded",
+      "source": "src/kernels/qmm_moe.metal:32"
+    },
+    {
+      "name": "grouped_prefill_tile_rows",
+      "value": "16, 32 or 64 for qmm_moe_gu_b4_m{BM}_n32 (gate/up, BN 32) and qmm_moe_dn_b4_m{BM}_n64 (down, BN 64); row fragments past the tile's last row are skipped through one uniform branch per K step",
+      "unit": "rows",
+      "condition": "NI_MOE_FUSED=1 qmm_moe form",
+      "kind": "hardcoded",
+      "source": "src/kernels/qmm_moe.metal:227"
+    },
+    {
+      "name": "grouped_prefill_threads",
+      "value": 128,
+      "unit": "threads",
+      "condition": "qmm_moe and qrm grouped tiles: 4 simdgroups in a 2x2 layout (qmm_moe) or 4 simdgroups along N (qrm)",
+      "kind": "hardcoded",
+      "source": "src/kernels/qmm_moe.metal:149"
+    },
+    {
+      "name": "qrm_tile_rows",
+      "value": "32 default or 16 (NI_MOE_QMR): tiles of at most 8*FB rows; the whole K loop is specialized per live 8-row fragment count",
+      "unit": "rows",
+      "condition": "fused prefill when the qrm shape gate holds and NI_MOE_QMR != 0 (the default 32)",
+      "kind": "hardcoded",
+      "source": "src/kernels/qmm_moe3.metal:222"
+    },
+    {
+      "name": "fused_prefill_tile_rows_default",
+      "value": 64,
+      "unit": "rows",
+      "condition": "fused path when no qrm/qtm/generic form applies (NI_MOE_BM; must be 16, 32 or 64)",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35.cpp:2870"
+    },
+    {
+      "name": "original_path_tile_rows",
+      "value": 16,
+      "unit": "rows",
+      "condition": "the non-fused original path (NI_BM override); per its comment, 32-row tiles hit a 2-3 TFLOP/s pathology on M4 Pro and 64-row tiles waste more rows in partial tiles",
+      "kind": "measured",
+      "source": "src/model/qwen35.cpp:2807",
+      "note": "the same 2-3 TFLOP/s anomaly is attributed to 2304-4352 B/thread accumulator spill at m32 tiles in src/kernels/qmm_moe.metal:10"
+    },
+    {
+      "name": "short_prefill_tile_rows",
+      "value": 8,
+      "unit": "rows",
+      "condition": "MoE prefill at T <= NI_SHORTPF_MOE_MAX: tiles of at most 8 sorted pair rows (qmms_moe* forms; the zq2moe q20s form for Q2_0); experts of 1-2 rows can take FMA matvecs (NI_SHORTPF_MOE_FMA)",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35.cpp:2577"
+    },
+    {
+      "name": "short_prefill_max_rows",
+      "value": 128,
+      "unit": "rows",
+      "condition": "NI_SHORTPF_MOE_MAX (clamped 0..128): T above this leaves the small-prefill path",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35.cpp:229"
+    },
+    {
+      "name": "bucket_kernel_shape",
+      "value": "one threadgroup of 1024 threads builds all tiles: per-expert atomic counts in a threadgroup array of 512, then tiles of (expert, begin, end) with at most BM rows each, expert-major ascending, shared tiles last; moe_bucket3 derives identical tiles from parallel prefix sums",
+      "unit": null,
+      "condition": "always for the grouped and small prefill forms (dispatch 1 x 1 x 1024)",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35.cpp:2596"
+    },
+    {
+      "name": "bucket3_default",
+      "value": true,
+      "unit": null,
+      "condition": "NI_MOE_BUCKET3 default on: moe_bucket3 replaces moe_bucket2's thread-0 loop over the experts; identical tiles bit for bit",
+      "kind": "measured",
+      "source": "src/model/qwen35.cpp:193",
+      "note": "53-94 us per layer, about 1% of a short prefill (src/kernels/qmm_moe.metal:331)"
+    },
+    {
+      "name": "combine_order",
+      "value": "per token a fp32 sum over slots s = 0..k-1 ascending in router rank order plus the shared slot k last, added to the residual in one float4 op; moe_down, moe_down2 and moe_q20_down accumulate the same slots in the same order",
+      "unit": null,
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "src/kernels/moe.metal:335"
+    },
+    {
+      "name": "prefill_dequant_form",
+      "value": "4-bit: each thread dequantizes 8 weights per K step as half(sc * q + b) into threadgroup memory (qmm_moe), or the qrm form dequantizes straight into MMA fragment registers at about 2.5 instructions per weight with W never touching threadgroup memory; Q2_0: (code - 1) d exact in one half FMA via 0x6400 (small-T) or 0x3400-scaled-by-4096 (qrm) code packing",
+      "unit": null,
+      "condition": "grouped prefill forms",
+      "kind": "hardcoded",
+      "source": "src/kernels/qmm_moe.metal:110",
+      "note": "qrm form: src/kernels/qmm_moe3.metal:6; Q2_0 forms: src/kernels/zq2moe.metal:259-264 and 463; the two 4-bit forms agree to rounding (qmm_moe3.metal:18-20)"
+    },
+    {
+      "name": "decode_dequant_form",
+      "value": "4-bit decode matvecs keep activations fp32 and apply the bf16 scale and bias per 64-group in fp32 (group size 64, 16 values per lane); Q2_0 decode masks the 2-bit codes in place against x pre-scaled by 4^-j and applies d * (sum - xsum) per 64-group",
+      "unit": null,
+      "condition": "decode and verify",
+      "kind": "hardcoded",
+      "source": "src/kernels/zq2moe.metal:56"
+    },
+    {
+      "name": "q20_weight_layout",
+      "value": "Q2_0 (ggml type 42): blocks of 64 weights, an fp16 d and 16 bytes of 2-bit codes LSB first, weight = (code - 1) d, 2.25 bits per weight; each expert matrix is two planes (codes [N][K/16] uint32, d [N][K/64] half), either stacked over the experts or one 16 KiB page of an arena read through a per-layer slot table (slot word chunk << 28 | page)",
+      "unit": null,
+      "condition": "Q2_0 routed experts (Flash-Next on 48 GB Macs)",
+      "kind": "hardcoded",
+      "source": "src/kernels/zq2moe.metal:4"
+    },
+    {
+      "name": "q20_unique_order",
+      "value": "a verify's distinct experts are enumerated in first-occurrence order over pairs (row-major, slot-minor), each with a bitmask of the rows that chose it and each such row's slot id; the combine still reads slots in rank order",
+      "unit": null,
+      "condition": "Q2_0 verify of R <= 8 rows (moe_q20_unique)",
+      "kind": "hardcoded",
+      "source": "src/kernels/zq2moe.metal:142"
+    },
+    {
+      "name": "m5_tensor_tiles",
+      "value": "the M5-family tensor-unit tiles qmtm_gu_m64_n64 / qmtm_dn_m64_n64 on 64-row tiles replace the qrm simdgroup tiles where the dense tensor path is on and the model keeps 35B-like shapes",
+      "unit": null,
+      "condition": "NI_MOE_QTM default on there; only passes above 128 rows reach it (a chunk's tail rows stay on the short-prefill path)",
+      "kind": "measured",
+      "source": "src/model/qwen35.cpp:108",
+      "note": "the tile sums K in another association order: about 1.1e-3 mean KL on the 35B, 1.3x the 8.1e-4 the shipped qrm path already moves; accepted 2026-10-22 for a 1.25x 4K prefill (2,272 to 1,702 ms, interleaved A/B on the M5 Pro) (src/model/qwen35.cpp:125 and 129)"
+    }
+  ],
+  "gates": [
+    {
+      "condition": "decode takes the fused slot kernels only when all six expert and shared matrices are 4-bit; otherwise enc_moe_rows runs the per-row form (the verify path at one row)",
+      "source": "src/model/qwen35.cpp:2134"
+    },
+    {
+      "condition": "decode top-k kernel: experts == 256 and top_k <= 8 take moe_topk256, otherwise moe_topk",
+      "source": "src/model/qwen35.cpp:2142"
+    },
+    {
+      "condition": "prefill form order: IQ expert formats take the IQ path; T <= NI_SHORTPF_MOE_MAX (128) and shape-compatible takes the 8-row small-prefill path",
+      "source": "src/model/qwen35.cpp:2798"
+    },
+    {
+      "condition": "next: NI_MOE_FUSED (default 2) or non-4-bit experts takes the fused grouped GEMM; a layer that fails the fused fits gate logs once and falls to the original bucket path at 16-row tiles, and non-4-bit experts with no path at all is fatal",
+      "source": "src/model/qwen35.cpp:2799"
+    },
+    {
+      "condition": "qrm shape gate: group size 64 on gate, up and down, K % 64 == 0 on both projections, gate/up N % 64 == 0 and down N % 128 == 0",
+      "source": "src/model/qwen35.cpp:2867"
+    },
+    {
+      "condition": "fused fits gate: 4-bit weights, gs % 32 == 0, K % 32 == 0, N % BN == 0 per kernel, gate and up identical in shape and gs, Dn.K == G.N, Dn.N == hidden, bm in 16/32/64; failure logs and returns false",
+      "source": "src/model/qwen35.cpp:2880"
+    },
+    {
+      "condition": "small-prefill fits gate: 4-bit group 64 (group 32 also when the FMA or exact forms are on), K % 64 == 0, N % 8 == 0, (N / 8) % 4 == 0, matching gate/up shapes, Dn.K == G.N",
+      "source": "src/model/qwen35.cpp:2571"
+    },
+    {
+      "condition": "Q2_0 shape gate: hidden % 128 == 0, expert width % 64 == 0, hidden <= 4096 (threadgroup x staging), (k + 1) * max(I, SI) <= 7168, top-k 1..16, experts <= 512, shared expert width % 16 == 0",
+      "source": "src/model/moe_q20.cpp:104"
+    },
+    {
+      "condition": "load-time decode caps: expert sizes must be multiples of 64 (fatal), (k + 1) * max(I, SI) > 7168 is fatal, and moe_wide() is true above 4608",
+      "source": "src/model/qwen35.cpp:898"
+    },
+    {
+      "condition": "Q2_0 verify row cap: R in 1..=8 and R * k <= 128, fatal otherwise",
+      "source": "src/model/moe_q20.cpp:133"
+    },
+    {
+      "condition": "Q2_0 prefill tile rows must be 8, 32 or 64 (small, qrm or qtm form), fatal otherwise",
+      "source": "src/model/moe_q20.cpp:182"
+    },
+    {
+      "condition": "prefill top-k rows: E == 256 and k <= 16 take moe_topk_rows8 (bitwise equal to moe_topk_rows, NI_TOPK8 default on), else moe_topk_rows",
+      "source": "src/model/qwen35.cpp:2536"
+    },
+    {
+      "condition": "M5 tensor-tile gate: 4-bit group-64 experts keeping the 35B's shapes (K % 64 == 0, gate/up N % 64 == 0, down N % 64 == 0), the dense tensor path on, and only passes above 128 rows",
+      "source": "src/model/qwen35.cpp:2864"
+    }
+  ],
+  "measured": [
+    {
+      "metric": "prefill_delta_pct",
+      "value": "-5.9% at 4K, -5% at 16K; logits KL 2e-5",
+      "model": "Qwen3.6-35B-A3B 4-bit",
+      "machine": "unspecified",
+      "conditions": "qrm expert GEMMs (32-row in-register tiles) against the qmm_moe threadgroup-dequant form, source comment; NI_MOE_QMR is the default",
+      "provenance": "upstream_reported",
+      "source": "src/model/qwen35.cpp:94"
+    },
+    {
+      "metric": "prefill_tok_s",
+      "value": "785 -> 862",
+      "model": "Qwen3.6-35B-A3B 4-bit",
+      "machine": "unspecified",
+      "conditions": "4K prefill, source comment; the comment pairs the figure with mode 2 (shared expert on the dense path) and is ambiguous about which arm is which",
+      "provenance": "upstream_reported",
+      "source": "src/model/qwen35.cpp:85"
+    },
+    {
+      "metric": "prefill_ms",
+      "value": "4K 2,135 -> 1,574; 16K 10,810 -> 8,570",
+      "model": "Qwen3.6-35B-A3B 4-bit",
+      "machine": "M5 Pro 48 GB",
+      "conditions": "the M5 tensor tiles (NI_MOE_QTM) against the qrm path on 64-row tiles; the acceptance A/B reads 2,272 -> 1,702 ms (1.25x), interleaved",
+      "provenance": "upstream_reported",
+      "source": "src/model/qwen35.cpp:108"
+    },
+    {
+      "metric": "bucket_gpu_us",
+      "value": "53-94 per layer",
+      "model": "Qwen3.6-35B-A3B 4-bit",
+      "machine": "unspecified",
+      "conditions": "moe_bucket3's parallel prefix sums replacing moe_bucket2's thread-0 expert loop, about 1% of a short prefill, source comment",
+      "provenance": "upstream_reported",
+      "source": "src/kernels/qmm_moe.metal:331"
+    },
+    {
+      "metric": "cached_turn_ms",
+      "value": "-5.5",
+      "model": "Qwen3.6-35B-A3B 4-bit",
+      "machine": "unspecified",
+      "conditions": "a 35B cached turn (4K history + 53 tokens) with short-prefill experts of at most 2 rows as FMA matvecs, source comment",
+      "provenance": "upstream_reported",
+      "source": "src/model/qwen35.cpp:2554"
+    },
+    {
+      "metric": "q20_decode_us",
+      "value": "93.2 vs 105.9 (ROWS 4 vs 2)",
+      "model": "Qwen3.8-Flash-Next Q2_0 expert shapes",
+      "machine": "M4 Pro 48 GB",
+      "conditions": "fn_q2_bench tune, interleaved, 21 rounds; outputs bit for bit equal; VPL 32 or 64 slower",
+      "provenance": "upstream_reported",
+      "source": "src/kernels/zq2moe.metal:82"
+    },
+    {
+      "metric": "tile_spill_bytes",
+      "value": "2304 per thread at m32_n64 and 4352 at m32_n128",
+      "model": "Qwen3.6-35B-A3B 4-bit shapes",
+      "machine": "M4 Pro 48 GB",
+      "conditions": "compiler stats of the qmm_moe pipeline: the rolled 32-row store loop spills accumulators to stack, the 2-3 TFLOP/s tile anomaly; m16/m64 tiles do not spill",
+      "provenance": "upstream_reported",
+      "source": "src/kernels/qmm_moe.metal:10"
+    },
+    {
+      "metric": "decode_tok_s",
+      "value": "161 (M4 Pro), 325 (M5 Max), with 1168 and 4702 prefill tok/s",
+      "model": "Qwen3.6-35B-A3B 4-bit",
+      "machine": "M4 Pro 48 GB and M5 Max 128 GB",
+      "conditions": "kapitsa's README table, KFlash decode column; prefill a 4K-token prompt, decode a 512-token answer at T 0.6; run dates and flags in docs/benchmarks.md (not re-read here)",
+      "provenance": "upstream_reported",
+      "source": "README.md:126"
+    },
+    {
+      "metric": "decode_tok_s",
+      "value": "106 (M5 Max), with 1165 prefill tok/s",
+      "model": "Qwen3.8-Flash-Next 180B-A7B 4-bit",
+      "machine": "M5 Max 128 GB",
+      "conditions": "kapitsa's README table, KFlash column, same 4K prefill / 512-token answer protocol",
+      "provenance": "upstream_reported",
+      "source": "README.md:86"
+    }
+  ],
+  "lab_mapping": [
+    {
+      "setting": "grouped_prefill_tile_rows",
+      "maps_to": "tslab kernel --bench int4_matmul M axis (routed-expert shapes are added for MoE installs); no grouped-GEMM tile axis or combine kernel in the lab yet",
+      "env": null,
+      "note": "the 16 vs 32 vs 64 row choice and the m32 spill anomaly are the axes a grouped-GEMM lab bench would sweep"
+    },
+    {
+      "setting": "fused_prefill_tile_rows_default",
+      "maps_to": "our routed-expert batched dispatch switch; kapitsa has no runtime flag for the grouped-vs-per-route form split, its gates are shape and quantization derived",
+      "env": "TURBOSPARK_ROUTED_BATCH",
+      "note": "knobs.rs routed_batch, exactness KlBounded"
+    },
+    {
+      "setting": "short_prefill_max_rows",
+      "maps_to": "our qwen36 chunked MoE prefill switch; kapitsa's counterpart is the T <= 128 small-prefill form split (bit-exact by construction)",
+      "env": "TURBOSPARK_QWEN_MOE_CHUNKED",
+      "note": "knobs.rs qwen_moe_chunked, exactness BitExact"
+    },
+    {
+      "setting": "q20_weight_layout",
+      "maps_to": "expert residency is our nearest surface; kapitsa's Q2_0 arena slot table (16 KiB pages, per-layer slot words) has no lab axis",
+      "env": "TURBOSPARK_EXPERT_CACHE_DECAY",
+      "note": "knobs.rs expert_cache_decay, exactness NotComparable"
+    }
+  ],
+  "docs": [
+    "docs/KAPITSA_KERNELS.md#decision-table",
+    "docs/KAPITSA_KERNELS.md#items-6-7-8-bench-prototypes",
+    "docs/KAPITSA_KERNELS.md#what-makes-the-headline-numbers-fast-and-what-applies-here"
+  ],
+  "notes": "Slot-order invariant: kapitsa's decode dispatches the top_k + 1 slots in router ranking order (grid y, qwen35.cpp:2164) and every per-token combine sums slots ascending in rank order with the shared expert last (moe.metal:335, moe.metal:144, zq2moe.metal:238), which matches our AGENTS.md rule that slot order is reduction order. Its grouped prefill does NOT dispatch experts in ranking order: pairs are bucketed expert-major ascending (moe_bucket/bucket2/bucket3; 'same tile order: expert-major, rows ascending; shared tiles last', qmm_moe.metal:332) and the down GEMM scatters back by pair id, so the per-token reduction order is restored only at moe_combine. That is exactly the combine-order and reduction-drift surface our Item 8 prototype left unbuilt. Coverage: the 8-row verify MoE tiles (moe8_plan, moe8e, moe8s2, moe8_combine_x8) belong to kapitsa.verify8; this entry covers the routed MoE kernels proper. Doc-vs-source: nothing our KAPITSA_KERNELS.md claims about these kernels contradicts the source; the doc does not describe the bucket or combine structure at all, and Item 8's mechanism (reading each expert's weights once for all its routes) is what moe_bucket plus the grouped GEMMs implement. Our doc's item 11 concern (fast::exp flipping f16 routing weights) does not transfer directly: the only fast::exp in kapitsa's routing is moe_topk256 (moe.metal:558), its routing weights stay fp32 through the combine, and the general top-k kernels use precise::exp. Source-internal gaps recorded: moe.metal:124 says the decode down kernel needs expert intermediate sizes a multiple of 512, while the load-time check only enforces multiples of 64 (qwen35.cpp:896), so the kernels are stricter than the loader; the 35B expert count (256) and top-k (8) come from docs/kflash.md:74 and the moe_topk256 gate, since the config values are read from the model's config.json at load (qwen35.cpp:568-574) and are not hardcoded. The original path's qmm_moe_b4_m* kernels live in src/kernels/qmm.metal, which was not read for this entry; their gate is cited from the host. The README's table cells state their conditions only in the legend (4K prefill, 512-token answer at T 0.6); per-run dates and flags live in docs/benchmarks.md, which was not re-read. Timing numbers in source comments rarely name a machine or run count; treat them as indicative."
+}

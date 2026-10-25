@@ -1,0 +1,921 @@
+{
+  "schema": "turbospark.lab.pinned/1",
+  "id": "mlx-serve.spec_round",
+  "kernel": "the host-side speculative round: DFlash/MTP block caps, the round-cost table, the depth planners (EV + width chooser), prompt-lookup drafting, tree-round copy, and the acceptance rules",
+  "kernel_class": "drafter",
+  "repo": "mlx-serve",
+  "summary": "The host round around the verify kernels, not a kernel itself: a drafter chain (or lookup or tree) plus a 1+m-row verify runs once per host touch, and a measured (verify width, KV bucket) round-cost table plus a piecewise fitted surface drive an expected-tokens-per-cost depth plan capped per silicon. Acceptance is exact by default (greedy argmax run; Leviathan rejection when sampled; keyed Gumbel-max under a row-exact trunk with a DFlash drafter, which makes drafted output byte-identical to serial), with opt-in lossy Typical/TokenV3 modes. Lookup rounds are gated per round on measured tokens per cost and never feed the EV acceptance state or the width grid.",
+  "source": {
+    "url": "https://github.com/ddalcu/mlx-serve",
+    "rev": "191da71de32a65f69ebceeb6cb2e91036ab50b30",
+    "rev_date": "2026-10-22",
+    "license": "MIT",
+    "files": [
+      "src/dflash.zig",
+      "src/dflash_policy.zig",
+      "src/mtp_lookup.zig",
+      "src/mtp_depth_bounds.zig",
+      "src/round_cost.zig",
+      "src/mtp.zig",
+      "src/mtp_acceptance.zig",
+      "src/keyed_sample.zig",
+      "src/generate.zig"
+    ],
+    "symbols": [
+      "blockCapForMachine",
+      "resolveBlockSize",
+      "TREE_BLOCK_CAP",
+      "adaptiveDepthCapForMachine",
+      "mtpDepthCapResolved",
+      "mtpEvPlanSrc",
+      "mtpEvExpectedTokens",
+      "mtpEvObserve",
+      "mtpNextDepth",
+      "mtpDepthDecision",
+      "round_cost.Table.observe",
+      "round_cost.Table.observeSerial",
+      "round_cost.Table.observeLookup",
+      "foldInto",
+      "stepImplausible",
+      "selfSpike",
+      "trialPeriod",
+      "WidthChooser.choose",
+      "mtp_lookup.Index.match",
+      "mtp_lookup.gate",
+      "mtp_lookup.emaStep",
+      "mtp_lookup.driftStep",
+      "dflash_policy.chooseRows",
+      "dflash_policy.Calibration",
+      "dflash_policy.Drafting",
+      "dflash_policy.CopyStats",
+      "mtp_acceptance.parse",
+      "typicalThreshold",
+      "verifySerialSamplesAt",
+      "mtpGreedyPrefix",
+      "keyed_sample.gumbel",
+      "mtpLookupDrafts",
+      "mtpLookupObserve",
+      "mtpRoundAcceptObserve"
+    ]
+  },
+  "models": [
+    {
+      "name": "Qwen3.8-27B",
+      "quant": "MLX 4-bit (the doc table pairing); iQ-3.8bpw for the M1 Pro row",
+      "family": "qwen35",
+      "machine": "M4 Max 128 GB; M1 Pro for the depth-cap row",
+      "role": "primary"
+    },
+    {
+      "name": "Muse-Glimmer 30B",
+      "quant": "MLX affine 4-bit (source says Muse 4-bit on applegpu_g16s), 8-bit default assistant requant",
+      "family": "unknown (drafter sidecar pairing; family not stated in source)",
+      "machine": "M4 Max (applegpu_g16s)",
+      "role": "block-cap sweep and draft-head A/B"
+    },
+    {
+      "name": "Qwen3.6-27B",
+      "quant": "4-bit, GDN trunk",
+      "family": "qwen36",
+      "machine": "M4 Max",
+      "role": "EV round-cost fit and the legacy depth-controller thresholds"
+    },
+    {
+      "name": "Qwen3.8-Flash-Next (mixed 4-8bit pack)",
+      "quant": "mixed 4/8-bit, KV8",
+      "family": "qwen35",
+      "machine": "Apple M5 Max 128 GiB",
+      "role": "lossy acceptance ladder (1K to 1M) and NAX cost surfaces"
+    },
+    {
+      "name": "Qwen3.5-9B-MTPLX",
+      "quant": "6-bit",
+      "family": "qwen35",
+      "machine": "base M4 16 GB",
+      "role": "base-M4 cold-start depth-cap row"
+    },
+    {
+      "name": "GLM-5.3-Flash",
+      "quant": "sparse MoE target (verify rows not free)",
+      "family": "glm53",
+      "machine": "M5 Ultra at 1k context",
+      "role": "sparse-target round policy verify ladder"
+    }
+  ],
+  "settings": [
+    {
+      "name": "no_wide_lane_block_cap",
+      "value": 5,
+      "unit": "drafts per round",
+      "condition": "machines without the NAX m16 verify lane; measured on the M4 row, default guess elsewhere",
+      "kind": "measured",
+      "source": "src/dflash.zig:525",
+      "note": "M4 sweep (Muse 4-bit, applegpu_g16s, 160-token generations, serial 28.2 tok/s same boot): block 16 0.92x, 8 1.16x, 7 1.43x, 6 1.79x, 5 1.97x, 4 1.81x, 3 1.77x serial (src/dflash.zig:518-521)"
+    },
+    {
+      "name": "tree_block_cap",
+      "value": 8,
+      "unit": "drafts per round",
+      "condition": "DFlash2 draft-tree rounds (selector + specTreeSupported)",
+      "kind": "hardcoded",
+      "source": "src/dflash.zig:526",
+      "note": "tree wins on the 27B were all measured at block 8 (src/dflash.zig:550-551)"
+    },
+    {
+      "name": "tree_nax_block",
+      "value": 16,
+      "unit": "lattice rows",
+      "condition": "tree lattice span on the tensor units",
+      "kind": "hardcoded",
+      "source": "src/dflash.zig:528"
+    },
+    {
+      "name": "block_cap_m3_ultra",
+      "value": 8,
+      "unit": "drafts per round",
+      "condition": "chip brand contains M3 Ultra",
+      "kind": "measured",
+      "source": "src/dflash.zig:554",
+      "note": "from oMLX PR #2850: block-8 DFlash2 1.33-1.43x over serial at T=0.7 on the Qwen3.8-27B + incoai drafter pairing"
+    },
+    {
+      "name": "resolve_block_floor",
+      "value": 2,
+      "unit": "drafts per round",
+      "condition": "any resolved block (1 draft + t1)",
+      "kind": "hardcoded",
+      "source": "src/dflash.zig:576",
+      "note": "explicit --draft-block-size clamps DOWN against the config only, never raises it"
+    },
+    {
+      "name": "dflash_tree_rows",
+      "value": 16,
+      "unit": "verify rows",
+      "condition": "tree round: the pending token plus up to 15 nodes",
+      "kind": "hardcoded",
+      "source": "src/generate.zig:6574"
+    },
+    {
+      "name": "dflash_copy_match",
+      "value": 24,
+      "unit": "matching context tokens",
+      "condition": "a tree-round copied continuation replaces the assistant draft when the context backs all tree nodes",
+      "kind": "hardcoded",
+      "source": "src/generate.zig:6577",
+      "note": "TensorFold's confident bar; shorter backing lost more rounds than it won at 4k-16k"
+    },
+    {
+      "name": "dflash_copy_window",
+      "value": 65536,
+      "unit": "tokens",
+      "condition": "committed-token tail the copy lookup scans each round",
+      "kind": "hardcoded",
+      "source": "src/generate.zig:6579"
+    },
+    {
+      "name": "verify_pipeline_layers",
+      "value": 4,
+      "unit": "layers",
+      "condition": "verify forward goes to the GPU every this many layers while the rest of the graph builds",
+      "kind": "hardcoded",
+      "source": "src/generate.zig:6572",
+      "note": "27B tree rounds 52.8 -> 50.3 ms"
+    },
+    {
+      "name": "mtp_default_depth",
+      "value": 3,
+      "unit": "drafts per round",
+      "condition": "fixed-depth fallback when the adaptive controller is off",
+      "kind": "hardcoded",
+      "source": "src/mtp.zig:56"
+    },
+    {
+      "name": "mtp_max_depth",
+      "value": 8,
+      "unit": "drafts per round",
+      "condition": "hard bound on any MTP depth decision",
+      "kind": "hardcoded",
+      "source": "src/mtp.zig:57"
+    },
+    {
+      "name": "mtp_adaptive_default_cap",
+      "value": 6,
+      "unit": "drafts per round",
+      "condition": "EV controller, generic cost surface, no explicit --mtp-max-depth; keeps verify at seq 7, the split-K ceiling on M1-M4",
+      "kind": "hardcoded",
+      "source": "src/generate.zig:10282"
+    },
+    {
+      "name": "mtp_adaptive_nax_cap",
+      "value": 8,
+      "unit": "drafts per round",
+      "condition": "calibrated NAX cost profiles g17_nax_q8_gs32/q4_gs32/q6_gs64/q8_gs64/oq4e_q4_gs64",
+      "kind": "hardcoded",
+      "source": "src/generate.zig:10283",
+      "note": "the dense 27B q4/gs64 surface and the qwen4 surfaces keep 6 on M5 (src/generate.zig:10787-10793)"
+    },
+    {
+      "name": "depth_cap_m1_pro",
+      "value": 4,
+      "unit": "drafts per round",
+      "condition": "chip brand contains M1 Pro (cold-start row; the measured table may plan above it on trusted widths)",
+      "kind": "measured",
+      "source": "src/mtp.zig:83",
+      "note": "Qwen3.8-27B iQ-3.8bpw forced-depth sweep 2026-08-20: 13.01 tok/s at depth 4 vs 10.78/9.63 at 5/6"
+    },
+    {
+      "name": "depth_cap_m4_base",
+      "value": 4,
+      "unit": "drafts per round",
+      "condition": "base M4 only (Pro/Max/Ultra excluded); cold-start row",
+      "kind": "measured",
+      "source": "src/mtp.zig:97",
+      "note": "Qwen3.5-9B-MTPLX 6-bit 16 GB, saturated echo median of 5: depth 3 47.44, 4 55.50, 5 47.50, 6 47.28 tok/s; 5+ pays the extension sync every round for ~1 token"
+    },
+    {
+      "name": "depth_cap_m5_base",
+      "value": 4,
+      "unit": "drafts per round",
+      "condition": "base M5 only (Pro/Max/Ultra excluded); cold-start row",
+      "kind": "measured",
+      "source": "src/mtp.zig:103"
+    },
+    {
+      "name": "mtp_ev_prior",
+      "value": 0.85,
+      "unit": "probability",
+      "condition": "per-index acceptance prior for unobserved deep positions",
+      "kind": "hardcoded",
+      "source": "src/generate.zig:10309",
+      "note": "deliberately above the measured ~0.77 average; break-even conditional acceptance on a ramp position is ~0.78, so a realistic prior never gives extension its first trial"
+    },
+    {
+      "name": "mtp_ev_ema_beta",
+      "value": 0.15,
+      "unit": "per round",
+      "condition": "conditional per-index acceptance EMA step",
+      "kind": "hardcoded",
+      "source": "src/generate.zig:10299"
+    },
+    {
+      "name": "mtp_ev_warmup_rounds",
+      "value": 10,
+      "unit": "rounds",
+      "condition": "legacy windowed controller runs while the EV EMAs fill",
+      "kind": "hardcoded",
+      "source": "src/generate.zig:10295"
+    },
+    {
+      "name": "mtp_ev_tau_min",
+      "value": 0.05,
+      "unit": "probability",
+      "condition": "clamp band low for the extension confidence threshold tau",
+      "kind": "hardcoded",
+      "source": "src/generate.zig:10311"
+    },
+    {
+      "name": "mtp_ev_tau_max",
+      "value": 0.95,
+      "unit": "probability",
+      "condition": "clamp band high for tau; doubles as the exploration valve on razor-thin horizons",
+      "kind": "hardcoded",
+      "source": "src/generate.zig:10312"
+    },
+    {
+      "name": "mtp_ev_explore_min_r",
+      "value": 1.1,
+      "unit": "tokens per round-cost",
+      "condition": "base-round EV below which the extension horizon collapses (cold EMAs)",
+      "kind": "hardcoded",
+      "source": "src/generate.zig:10319"
+    },
+    {
+      "name": "mtp_cliff_tolerance",
+      "value": 0.05,
+      "unit": "fraction",
+      "condition": "cost-per-position excess over the running best that calls a width past the cliff (boot probe)",
+      "kind": "hardcoded",
+      "source": "src/generate.zig:10289"
+    },
+    {
+      "name": "mtp_ev_table_min_marginal",
+      "value": 0.02,
+      "unit": "floor cost units",
+      "condition": "smallest marginal the measured table may report (a wider round reading cheaper is noise)",
+      "kind": "hardcoded",
+      "source": "src/generate.zig:10869"
+    },
+    {
+      "name": "mtp_accept_max_kv",
+      "value": 8192,
+      "unit": "KV tokens",
+      "condition": "single-chunk .accept depth policy serves KV below this; legacy confidence-gated planner above",
+      "kind": "hardcoded",
+      "source": "src/generate.zig:10959"
+    },
+    {
+      "name": "mtp_depth_window",
+      "value": 16,
+      "unit": "rounds",
+      "condition": "legacy controller moving window; also the homogeneous window the sticky-disable floor requires",
+      "kind": "hardcoded",
+      "source": "src/generate.zig:10058"
+    },
+    {
+      "name": "mtp_depth_switch_warmup",
+      "value": 5,
+      "unit": "rounds",
+      "condition": "rounds before the legacy controller re-evaluates after a switch",
+      "kind": "hardcoded",
+      "source": "src/generate.zig:10059"
+    },
+    {
+      "name": "mtp_demote_below",
+      "value": 0.4,
+      "unit": "per-draft probability",
+      "condition": "legacy controller, depth > 1",
+      "kind": "hardcoded",
+      "source": "src/generate.zig:10066"
+    },
+    {
+      "name": "mtp_promote_above",
+      "value": 0.6,
+      "unit": "per-draft probability",
+      "condition": "legacy controller, below configured depth",
+      "kind": "hardcoded",
+      "source": "src/generate.zig:10067"
+    },
+    {
+      "name": "mtp_disable_below",
+      "value": 0.2,
+      "unit": "per-draft probability",
+      "condition": "depth 1, sticky disable for the request",
+      "kind": "hardcoded",
+      "source": "src/generate.zig:10075",
+      "note": "measured depth-1 breakeven is p ~ 0.15 (44 vs 38.4 ms at 8K on the 27B); at p = 0.45 speculation is +27% over AR"
+    },
+    {
+      "name": "mtp_promote_cooldown",
+      "value": 32,
+      "unit": "rounds",
+      "condition": "promotion blocked after a demotion",
+      "kind": "hardcoded",
+      "source": "src/generate.zig:10076"
+    },
+    {
+      "name": "round_cost_max_width",
+      "value": 16,
+      "unit": "verify width (drafts + 1)",
+      "condition": "table covers MTP depth <= 8 and a DFlash block up to 16; index 0 is serial",
+      "kind": "hardcoded",
+      "source": "src/round_cost.zig:28"
+    },
+    {
+      "name": "round_cost_buckets",
+      "value": 9,
+      "unit": "KV buckets",
+      "condition": "long layout (qwen4); other arches keep the 6-bucket legacy grid via store version",
+      "kind": "hardcoded",
+      "source": "src/round_cost.zig:30"
+    },
+    {
+      "name": "round_cost_bucket_edges",
+      "value": [2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144],
+      "unit": "KV tokens",
+      "condition": "bucket boundaries; legacy folds everything past 32k into its last bucket",
+      "kind": "hardcoded",
+      "source": "src/round_cost.zig:31"
+    },
+    {
+      "name": "round_cost_ema_beta",
+      "value": 0.1,
+      "unit": "per sample",
+      "condition": "EMA weight once a cell has MIN_SAMPLES; the first samples are a running mean",
+      "kind": "hardcoded",
+      "source": "src/round_cost.zig:71"
+    },
+    {
+      "name": "round_cost_reseed_gap",
+      "value": 64,
+      "unit": "offered rounds",
+      "condition": "a cell unsampled this long takes its next sample at the reseed weight",
+      "kind": "hardcoded",
+      "source": "src/round_cost.zig:77"
+    },
+    {
+      "name": "round_cost_reseed_weight",
+      "value": 0.5,
+      "unit": "per sample",
+      "condition": "EMA weight for a stale cell's next sample",
+      "kind": "hardcoded",
+      "source": "src/round_cost.zig:78"
+    },
+    {
+      "name": "round_cost_min_widths",
+      "value": 1,
+      "unit": "measured widths",
+      "condition": "measured widths a bucket needs before the table replaces the prior",
+      "kind": "hardcoded",
+      "source": "src/round_cost.zig:84",
+      "note": "two were required first and the bucket never got there; one trusted width anchors the prior's scale"
+    },
+    {
+      "name": "round_cost_min_samples",
+      "value": 3,
+      "unit": "samples",
+      "condition": "samples a cell needs before it counts as measured",
+      "kind": "hardcoded",
+      "source": "src/round_cost.zig:89"
+    },
+    {
+      "name": "round_cost_max_serial_probes",
+      "value": 3,
+      "unit": "probes per bucket per process",
+      "condition": "serial probes a bucket may attempt before giving up",
+      "kind": "hardcoded",
+      "source": "src/round_cost.zig:91"
+    },
+    {
+      "name": "round_cost_clearly_worse",
+      "value": 0.2,
+      "unit": "fraction",
+      "condition": "a width whose FIRST sample reads this much worse per token than a trusted reference is settled as worse",
+      "kind": "hardcoded",
+      "source": "src/round_cost.zig:97",
+      "note": "M1 Pro 27B: w5 read 94.7 ms/tok against w4's 71.2 on sample 1 and never moved; at 3-samples-to-trust that cost -7.1%"
+    },
+    {
+      "name": "round_cost_implausible_step",
+      "value": 1.5,
+      "unit": "x narrower cell per step",
+      "condition": "width-w round cannot cost more than this times the width-(w-1) round, exponentiated over the gap",
+      "kind": "hardcoded",
+      "source": "src/round_cost.zig:131",
+      "note": "measured steps run under 1.25x; anything past the bound carried foreign work between round ends"
+    },
+    {
+      "name": "round_cost_implausible_wider",
+      "value": 1.25,
+      "unit": "x wider cell",
+      "condition": "persisted-sweep mirror bound: a stored narrower cell past this multiple of its nearest trusted wider cell is dropped",
+      "kind": "hardcoded",
+      "source": "src/round_cost.zig:136",
+      "note": "healthy tables reach 1.08x on the M4 Max; a poisoned width-1 cell reads 1.6x to 2.1x"
+    },
+    {
+      "name": "round_cost_self_spike",
+      "value": 3.0,
+      "unit": "x cell's own value",
+      "condition": "a fresh sample past this multiple of a mature cell (still inside the reseed window) is the machine, not the round",
+      "kind": "hardcoded",
+      "source": "src/round_cost.zig:139",
+      "note": "another process on the GPU (#369); a stale cell reseeds instead of dropping"
+    },
+    {
+      "name": "explore_period",
+      "value": 16,
+      "unit": "rounds between trial blocks",
+      "condition": "warm table; twice the regime gate because a block is 3 rounds",
+      "kind": "hardcoded",
+      "source": "src/round_cost.zig:587"
+    },
+    {
+      "name": "explore_period_cold",
+      "value": 8,
+      "unit": "rounds between trial blocks",
+      "condition": "while the trial's target is still untrusted (paid once per chip/model/quant/OS)",
+      "kind": "hardcoded",
+      "source": "src/round_cost.zig:592"
+    },
+    {
+      "name": "explore_drag",
+      "value": 0.005,
+      "unit": "fraction of throughput",
+      "condition": "the per-request trial cost the period is sized to",
+      "kind": "hardcoded",
+      "source": "src/round_cost.zig:597",
+      "note": "a known cliff re-trial measured 4.3% per request on a 22-round request at the old period"
+    },
+    {
+      "name": "explore_period_max",
+      "value": 256,
+      "unit": "rounds",
+      "condition": "trial period cap",
+      "kind": "hardcoded",
+      "source": "src/round_cost.zig:598"
+    },
+    {
+      "name": "explore_block",
+      "value": 3,
+      "unit": "rounds",
+      "condition": "consecutive trial rounds: the transition, the round after it, the measurement",
+      "kind": "hardcoded",
+      "source": "src/round_cost.zig:599"
+    },
+    {
+      "name": "width_switch_margin",
+      "value": 0.05,
+      "unit": "fraction",
+      "condition": "a challenger width must beat the standing width by this much to take over",
+      "kind": "hardcoded",
+      "source": "src/round_cost.zig:675"
+    },
+    {
+      "name": "width_chooser_prior",
+      "value": 0.8,
+      "unit": "probability",
+      "condition": "conditional per-position acceptance prior in the block-drafter width chooser",
+      "kind": "hardcoded",
+      "source": "src/round_cost.zig:690"
+    },
+    {
+      "name": "round_cost_store_version",
+      "value": 3,
+      "unit": null,
+      "condition": "persisted table format; v3 split the top bucket and a stale version is a quiet cold table",
+      "kind": "hardcoded",
+      "source": "src/round_cost.zig:839"
+    },
+    {
+      "name": "lookup_ngram",
+      "value": 4,
+      "unit": "tokens",
+      "condition": "n-gram length the lookup index keys on (last 3 committed tokens plus t1)",
+      "kind": "hardcoded",
+      "source": "src/mtp_lookup.zig:8"
+    },
+    {
+      "name": "lookup_min_suffix",
+      "value": 8,
+      "unit": "tokens",
+      "condition": "shorter context matches land too few drafts to pay for their verify",
+      "kind": "hardcoded",
+      "source": "src/mtp_lookup.zig:10"
+    },
+    {
+      "name": "lookup_max_draft",
+      "value": 7,
+      "unit": "drafts",
+      "condition": "ordinary lookup; keeps the verify at S <= 8, inside the fused paths",
+      "kind": "hardcoded",
+      "source": "src/mtp_lookup.zig:12"
+    },
+    {
+      "name": "lookup_max_draft_strong",
+      "value": 14,
+      "unit": "drafts",
+      "condition": "after a strong suffix agreement",
+      "kind": "hardcoded",
+      "source": "src/mtp_lookup.zig:14",
+      "note": "S=16 verifies disproportionately slower than S=15"
+    },
+    {
+      "name": "lookup_strong_suffix",
+      "value": 16,
+      "unit": "tokens",
+      "condition": "suffix agreement that lifts the cap to 14",
+      "kind": "hardcoded",
+      "source": "src/mtp_lookup.zig:17",
+      "note": "a 16-token agreement already marks a quoted span; waiting for 32 spent the quote's first rounds at the short cap"
+    },
+    {
+      "name": "lookup_suffix_cap",
+      "value": 64,
+      "unit": "tokens",
+      "condition": "agreement walk stops here",
+      "kind": "hardcoded",
+      "source": "src/mtp_lookup.zig:18"
+    },
+    {
+      "name": "lookup_candidates",
+      "value": 8,
+      "unit": "occurrences",
+      "condition": "earlier n-gram occurrences matchBest compares; the one agreeing furthest back wins",
+      "kind": "hardcoded",
+      "source": "src/mtp_lookup.zig:20"
+    },
+    {
+      "name": "lookup_mtp_draft_cost",
+      "value": 0.75,
+      "unit": "verify-cost units per draft",
+      "condition": "per-draft MTP head cost in the fitted gate; lookup drafts are free",
+      "kind": "hardcoded",
+      "source": "src/mtp_lookup.zig:22"
+    },
+    {
+      "name": "lookup_verify_cost_fit",
+      "value": "11.4 + 2.6*(r-1) for r <= 8; 37.0 + 1.8*(r-9) beyond",
+      "unit": "verify-cost units",
+      "condition": "relative verify cost over r rows, fitted on an M5 Ultra; used only where the table has no measurement",
+      "kind": "derived",
+      "source": "src/mtp_lookup.zig:29"
+    },
+    {
+      "name": "lookup_ema_step",
+      "value": 0.3,
+      "unit": "per round",
+      "condition": "new-sample weight of the landed-drafts-per-round EMA (0.7 keep)",
+      "kind": "hardcoded",
+      "source": "src/mtp_lookup.zig:48"
+    },
+    {
+      "name": "lookup_drift_step",
+      "value": 0.02,
+      "unit": "per MTP round",
+      "condition": "pulls the lookup EMA back toward its prior (7) on MTP rounds so lookups get retried",
+      "kind": "hardcoded",
+      "source": "src/mtp_lookup.zig:53"
+    },
+    {
+      "name": "runtime_gate_warmup",
+      "value": 5,
+      "unit": "attempts",
+      "condition": "attempts before the runtime acceptance gate considers disabling (env SPEC_GATE_WARMUP, clamped 1..64)",
+      "kind": "hardcoded",
+      "source": "src/generate.zig:2057"
+    },
+    {
+      "name": "runtime_gate_min_per_draft_rate",
+      "value": 0.5,
+      "unit": "per-draft probability",
+      "condition": "below this after warmup, speculation is disabled for the rest of the request (sticky)",
+      "kind": "hardcoded",
+      "source": "src/generate.zig:2079",
+      "note": "per-draft form replaced a 0.30 per-round threshold that mapped to ~10% per-draft; creative content regresses at 22-47% per-draft while heavy echo sits at 84-97%"
+    },
+    {
+      "name": "typical_default_delta",
+      "value": 0.2,
+      "unit": "threshold",
+      "condition": "opt-in --mtp-typical default; accept iff p(x) > min(eps, delta*exp(-H(p))), eps = 1",
+      "kind": "hardcoded",
+      "source": "src/mtp_acceptance.zig:26"
+    },
+    {
+      "name": "tokenv3_default_alpha",
+      "value": 0.95,
+      "unit": "threshold",
+      "condition": "opt-in --mtp-tokenv3 default; Top = {v: p(v) >= max(p)*(1-alpha)}",
+      "kind": "hardcoded",
+      "source": "src/mtp_acceptance.zig:27"
+    },
+    {
+      "name": "policy_max_rows",
+      "value": 16,
+      "unit": "verify rows",
+      "condition": "sparse-target round policy (GLM-5.3-Flash class): t1 plus up to 15 drafts",
+      "kind": "hardcoded",
+      "source": "src/dflash_policy.zig:12"
+    },
+    {
+      "name": "policy_prior_plain_ms",
+      "value": 17.7,
+      "unit": "ms",
+      "condition": "one verify row on the GLM-5.3-Flash M5 Ultra 1k-context ladder before anything is measured; the ladder scales to the measured plain step",
+      "kind": "measured",
+      "source": "src/dflash_policy.zig:41",
+      "note": "ladder by rows at scale 1.0: 1 17.7, 2 25.5, 3 29.6, 4 33.6, 5 36.8, 6 42.4, 7 44.8, 8 47.9, 9 51.1, 12 60.5, 16 69.1 ms (src/dflash_policy.zig:19)"
+    },
+    {
+      "name": "policy_row_tie",
+      "value": 0.02,
+      "unit": "fraction",
+      "condition": "a row count within this of the best tokens-per-ms loses to the cheaper one",
+      "kind": "hardcoded",
+      "source": "src/dflash_policy.zig:54"
+    },
+    {
+      "name": "policy_drafting_backoff_max",
+      "value": 32,
+      "unit": "plain rounds",
+      "condition": "longest stretch of plain rounds between draft probes when drafting stops paying; each losing probe doubles the wait",
+      "kind": "hardcoded",
+      "source": "src/dflash_policy.zig:160"
+    },
+    {
+      "name": "keyed_candidates",
+      "value": 1024,
+      "unit": "tokens",
+      "condition": "most candidates a keyed-sampler row sorts; tokens within 20 logits/T of the max are gathered directly",
+      "kind": "hardcoded",
+      "source": "src/keyed_sample.zig:9"
+    }
+  ],
+  "gates": [
+    {
+      "condition": "Tree round: selector present and enabled, no Markov drafter, request greedy or keyed-serial, tree supported, no sparse-target policy",
+      "source": "src/generate.zig:5701"
+    },
+    {
+      "condition": "Tree-round copy: the context backs a continuation matching all tree nodes with >= 24 matching tokens, so the round verifies it as the chain with no assistant forward",
+      "source": "src/generate.zig:5712"
+    },
+    {
+      "condition": "Lookup gate: n-gram match with suffix >= 8 and lookup tokens-per-cost beats the MTP chain's; cap 7, or 14 when the suffix >= 16",
+      "source": "src/mtp_lookup.zig:170"
+    },
+    {
+      "condition": "Lookup rounds always take exact acceptance: a copied point-mass draft under a lossy rule makes copying the context certain and the output loops",
+      "source": "src/generate.zig:7096"
+    },
+    {
+      "condition": "A lookup round never feeds the EV acceptance EMAs or the grouped planner, and neither does the MTP round after one (times_round false for both)",
+      "source": "src/generate.zig:9486"
+    },
+    {
+      "condition": "updateMtpEvRound and mtpPlannerObserve run only when the round was not a lookup round",
+      "source": "src/generate.zig:9915"
+    },
+    {
+      "condition": "Lookup rounds price only the table's separate lookup row (observeLookup), never the width grid",
+      "source": "src/generate.zig:7130"
+    },
+    {
+      "condition": "Byte-exact serial acceptance on: request keyed (row-exact config + Metal kernels available), temperature > 0.01, seed set",
+      "source": "src/generate.zig:5679"
+    },
+    {
+      "condition": "mtp_serial_accept on: MTP active and config is row-exact and acceptance mode is exact",
+      "source": "src/generate.zig:3697"
+    },
+    {
+      "condition": "Greedy acceptance: longest run of verify argmax equalities against the drafts",
+      "source": "src/generate.zig:8842"
+    },
+    {
+      "condition": "Sampled acceptance: Leviathan ratio min(1, p/q); greedy-forced drafts keep the one-hot rule min(1, target_p)",
+      "source": "src/generate.zig:9768"
+    },
+    {
+      "condition": "Keyed verify rows: under mtp_serial_accept each row is sampled with the serial sampler's key at its own position instead of argmax; drafts survive only when they equal that draw",
+      "source": "src/generate.zig:9692"
+    },
+    {
+      "condition": "Runtime acceptance gate: per-draft rate below 0.50 after 5 attempts disables speculation for the rest of the request; never re-enabled within a request",
+      "source": "src/generate.zig:2014"
+    },
+    {
+      "condition": "EV base depth: m_lo = argmax over single-chunk depths of expected tokens / round cost, with the standing base held unless a challenger beats it by SWITCH_MARGIN",
+      "source": "src/generate.zig:11016"
+    },
+    {
+      "condition": "EV extension: extend while the conditional chain product exceeds best_r * marginal cost; tau = clamp(best_r * t_sum / s_sum, 0.05, 0.95)",
+      "source": "src/generate.zig:11035"
+    },
+    {
+      "condition": "Base-depth climb damped: the planner is capped at last round's m_lo + 1 (m_lo_max); demotions are never damped",
+      "source": "src/generate.zig:10844"
+    },
+    {
+      "condition": "Trusted-width climb: the per-silicon cap row is a cold-start cap; the plan may exceed it only up to the widest TRUSTED width the table holds (never onto the prior's guess), and the width trial may reach one past that",
+      "source": "src/generate.zig:12345"
+    },
+    {
+      "condition": "Depth cap by cost profile: generic -> per-silicon row (default 6), calibrated NAX surfaces -> 8, dense 27B q4/gs64 and qwen4 surfaces -> 6",
+      "source": "src/generate.zig:10786"
+    },
+    {
+      "condition": "Round-cost feed: solo rounds only, no width transition, bad samples and self-spikes and step-implausible rounds dropped",
+      "source": "src/round_cost.zig:209"
+    },
+    {
+      "condition": "Table replaces the prior once a bucket has MIN_WIDTHS = 1 trusted width; lookup row and serial row never reach the width grid",
+      "source": "src/round_cost.zig:465"
+    },
+    {
+      "condition": "Block drafter width chooser: argmax over widths 0..max of measured tokens per ms, serial (0) a candidate like any other but never trialled; the one unmeasured candidate is widest+1 priced from the acceptance chain and the last measured slope",
+      "source": "src/round_cost.zig:741"
+    },
+    {
+      "condition": "Serial fallback for a block drafter: serial wins only where a serial round was measured and beats the chain rate by SWITCH_MARGIN",
+      "source": "src/generate.zig:10997"
+    },
+    {
+      "condition": "Depth policy switch: single-chunk .accept planner serves KV < 8192; the legacy confidence-gated planner takes over at or above it",
+      "source": "src/generate.zig:10962"
+    },
+    {
+      "condition": "Tree block cap: blockCapForMachine returns 8 for any tree round regardless of chip",
+      "source": "src/dflash.zig:553"
+    },
+    {
+      "condition": "Wide verify lane: NAX m16 tile present and enabled keeps the checkpoint's configured block instead of the no-lane cap",
+      "source": "src/dflash.zig:581"
+    }
+  ],
+  "measured": [
+    {
+      "metric": "speedup_vs_serial",
+      "value": 1.97,
+      "model": "Muse-Glimmer 30B 4-bit",
+      "machine": "M4 Max (applegpu_g16s)",
+      "conditions": "DFlash block sweep, 160-token generations, serial reference 28.2 tok/s in the same boot; full ladder: block 16 0.92x, 8 1.16x, 7 1.43x, 6 1.79x, 5 1.97x, 4 1.81x, 3 1.77x",
+      "provenance": "upstream_reported",
+      "source": "src/dflash.zig:518-521"
+    },
+    {
+      "metric": "decode_tok_s and accepted_per_round",
+      "value": 57.8,
+      "model": "Muse-Glimmer 30B 4-bit at resolved block 5",
+      "machine": "M4 Max",
+      "conditions": "draft-head A/B, 160-token generations, same serial reference: trunk head 57.8 tok/s / 2.37 accepted per round vs 3-bit draft head 55.4 / 2.19; the lever is defaulted off at block 5",
+      "provenance": "upstream_reported",
+      "source": "src/dflash.zig:596-599"
+    },
+    {
+      "metric": "decode_tok_s",
+      "value": 13.01,
+      "model": "Qwen3.8-27B iQ-3.8bpw",
+      "machine": "M1 Pro",
+      "conditions": "forced-depth sweep 2026-08-20: 13.01 at depth 4 vs 10.78/9.63 at 5/6 (the verify width 6 cliff); auto at cap 6 measured 10.64 against --no-mtp's 10.57",
+      "provenance": "upstream_reported",
+      "source": "src/mtp.zig:69-71"
+    },
+    {
+      "metric": "decode_tok_s",
+      "value": 55.5,
+      "model": "Qwen3.5-9B-MTPLX 6-bit",
+      "machine": "base M4 16 GB",
+      "conditions": "saturated echo, median of 5, by forced depth: 3 47.44, 4 55.50, 5 47.50, 6 47.28; depth 4 is the only width where the cap binds, so no extension sync is paid",
+      "provenance": "upstream_reported",
+      "source": "src/mtp.zig:84-87"
+    },
+    {
+      "metric": "round_ms",
+      "value": 42.0,
+      "model": "Qwen3.6-27B GDN",
+      "machine": "M4 Max",
+      "conditions": "EV cost surface fit, MLX_SERVE_MTP_TRACE 2026-07-13, saturated fixed depths after the deferred-append round shape: T(1) 42.0, T(3) 62.6, T(6) 111.6, T(7) 114.9 ms; piecewise ~10.3 ms/pos to seq 4, ~16.3 ms/pos for 4-6, position 7 +3.3 ms; ~90% qmm row-count cost, GDN recurrence < 1 ms/round",
+      "provenance": "upstream_reported",
+      "source": "src/generate.zig:10324-10331"
+    },
+    {
+      "metric": "decode_gain_pct",
+      "value": 16.2,
+      "model": "Qwen3.8-Flash-Next mixed 4-8bit, KV8",
+      "machine": "Apple M5 Max 128 GiB",
+      "conditions": "Typical 0.2 plus the paired routed gate/up kernel over the exact control, 1K rung of the 1K-1M ladder; the ladder spans +16.2% (1K, Typical) to +27.0% (1M, TokenV3); 128K-1M points are one request per arm",
+      "provenance": "upstream_reported",
+      "source": "docs/benchmarks/qwen38-mtp-port/README.md:46-58"
+    },
+    {
+      "metric": "decode_tok_s",
+      "value": 106.5,
+      "model": "Qwen3.8-Flash-Next mixed pack, KV8",
+      "machine": "Apple M5 Max",
+      "conditions": "llmprobe creative, thinking off, three timed samples, sampled drafts, MTP depth 3, short median: exact 92.5, Typical 0.2 106.3, TokenV3 0.95 106.5; opposite pack (MTPLX BF16 KV): 102.0 / 115.5 / 119.3",
+      "provenance": "upstream_reported",
+      "source": "docs/mtp-acceptance-port.md:38-46"
+    },
+    {
+      "metric": "ms_per_tok",
+      "value": 94.7,
+      "model": "Qwen3.8-27B",
+      "machine": "M1 Pro",
+      "conditions": "CLEARLY_WORSE motivation: w5 read 94.7 ms/tok against trusted w4's 71.2 on its first sample and never moved; at 3-samples-to-trust the bucket cost -7.1%",
+      "provenance": "upstream_reported",
+      "source": "src/round_cost.zig:95-96"
+    },
+    {
+      "metric": "verify_ms_by_rows",
+      "value": 17.7,
+      "model": "GLM-5.3-Flash (sparse MoE, every extra row routes to more experts)",
+      "machine": "M5 Ultra at 1k context",
+      "conditions": "verify ladder by rows, linear between: 1 17.7, 2 25.5, 3 29.6, 4 33.6, 5 36.8, 6 42.4, 7 44.8, 8 47.9, 9 51.1, 12 60.5, 16 69.1 ms",
+      "provenance": "upstream_reported",
+      "source": "src/dflash_policy.zig:19"
+    }
+  ],
+  "lab_mapping": [
+    {
+      "setting": "no_wide_lane_block_cap, tree_block_cap, resolve_block_floor",
+      "maps_to": "workload speculation.block (Speculation.block, crates/lab/src/workload.rs:111) and tslab tree-replay --serve-block (crates/lab/src/tree_replay.rs:106)",
+      "env": null,
+      "note": "our block axis sweeps the same drafts-plus-anchor verify width the caps bound; the M4 sweep rows are the baseline a block sweep replays against"
+    },
+    {
+      "setting": "mtp_adaptive_default_cap, mtp_adaptive_nax_cap, depth_cap rows, mtp_ev_prior",
+      "maps_to": "workload Speculation.adaptive and the TURBOSPARK_ADAPTIVE_DEPTH knob (crates/lab/src/knobs.rs:240), plus our AdaptiveDepth controller's cap",
+      "env": "TURBOSPARK_ADAPTIVE_DEPTH",
+      "note": "our knob only changes which depth each round proposes and stays lossless, like their EV plan; their per-silicon cap rows are the shape our machine cap would take"
+    },
+    {
+      "setting": "round_cost_ema_beta and the drop rules, explore schedule, width_switch_margin",
+      "maps_to": "tslab depth-replay (crates/lab/src/depth_replay.rs)",
+      "env": null,
+      "note": "their table is the live-measured cousin of our two modeled costs (67.5 and 129.5 ms); depth-replay's fixed-block arms can be read as their trial blocks"
+    },
+    {
+      "setting": "lookup_ngram, lookup_min_suffix, lookup caps, dflash_copy_match",
+      "maps_to": "none yet",
+      "env": null,
+      "note": "our tree-replay prices trees, not lookup or copied continuations; the tokens-per-cost gate is what our Kapitsa lever 5 replay would replace with a replay-priced table"
+    }
+  ],
+  "docs": [
+    "docs/MLX_SERVE_KERNELS.md#the-speculative-round-host-side",
+    "docs/MLX_SERVE_KERNELS.md#the-draft-block-is-a-machine-property",
+    "docs/MLX_SERVE_KERNELS.md#decision-table (rows 13, 13b, 13d)"
+  ],
+  "notes": "Doc-vs-source checks, sided with the source. (1) Our doc says a lookup round never feeds the EV or cost state; the source is narrower: a lookup round skips the EV acceptance EMAs, the grouped planner, and the width grid, and the MTP round after it is dropped too, but it DOES price the table's separate lookup row via observeLookup (src/generate.zig:7130). (2) Our doc's 8 on NAX is exact only for the five calibrated NAX quant surfaces; the dense 27B q4/gs64 surface and both qwen4 surfaces keep 6 on M5 because their measured marginals never pay past depth 6 (src/generate.zig:10787-10793). (3) Our doc's 6 off NAX is the generic-surface default; M1 Pro, base M4, and base M5 carry measured cold-start rows of 4, and an explicit --mtp-max-depth overrides all rows. (4) The doc's per-draft acceptance gate at 50% after 5 rounds matches RUNTIME_GATE_MIN_PER_DRAFT_RATE and RUNTIME_GATE_WARMUP; note the EV controller replaces that gate's demote path post-warmup and keeps only a sticky depth-1 floor at 0.20 over a homogeneous 16-round window. (5) The M4 block-sweep source comment names the chip only as applegpu_g16s and the model as Muse 4-bit; Muse-Glimmer 30B and M4 Max are our naming. (6) Doc claims with no line at this rev, kept out of measured: the 1.63x to 2.04x Flash Next cross-request seed ratio, the 11 of 19 agent runs cut by the lookup loop guard, the 0.03 ms emit gap, and the block-5 round profile (verify 50.2 ms, assistant 6.2, head 2.9, append 0.9, accept 0.2, gap 0.01). (7) The lookup gate's verifyCost fit was fitted on an M5 Ultra and only prices rounds where the table has no measurement yet; its numbers are not machine-portable. (8) Lookup caps are additionally held to an explicit --mtp-max-depth via depth_bounds.lookupCap (src/mtp_depth_bounds.zig:61). (9) dflash_policy.zig is the sparse-target (GLM-5.3-Flash class) round policy where a verify row is not free; on the dense 27B the row cost is flat and the WidthChooser / EV plan run instead."
+}

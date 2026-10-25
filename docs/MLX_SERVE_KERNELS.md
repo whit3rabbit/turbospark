@@ -19,7 +19,9 @@ TurboSpark rows quoted for scale are the ones already measured on this host in
 
 - `ddalcu/mlx-serve` at `191da71de32a65f69ebceeb6cb2e91036ab50b30` (tag
   v26.10.3, committed 22 October 2026), cloned shallow on 24 October 2026.
-  Apache-2.0, with a NOTICE that lists what it incorporates.
+  Its LICENSE is MIT; `LICENSE-APACHE-2.0` covers the incorporated
+  third-party parts that its NOTICE lists. (An earlier draft of this line
+  called the whole repository Apache-2.0.)
 - Read: `src/kernels/*.metal` (20 files, 5,315 lines), `src/transformer.zig`
   (the verify lane table and NAX gates), `src/simd_qmm.zig`, `src/rowqmv.zig`,
   `src/row_attn.zig`, `src/lane_qmm.zig`, `src/dflash.zig` (block caps),
