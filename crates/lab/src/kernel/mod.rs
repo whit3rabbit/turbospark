@@ -1,24 +1,29 @@
 //! `tslab kernel`: microbenches at the install's own shapes.
 //!
-//! Each bench takes its shapes from the `ArchConfig` in the install's
-//! manifest, so the same command answers "which arm wins at which M" for any
-//! family without editing constants. Results go to the ledger as
-//! `kernel_curve` records with per-point times, c(M), achieved TFLOPS and
-//! GB/s, and affine fits with break-even M.
+//! Each bench takes its shapes from the install (the `ArchConfig` in a text
+//! install's manifest, the `config.json` of an audio one), so the same
+//! command answers "which arm wins at which M" for any family without
+//! editing constants. A bench implements [`KernelBench`] and returns a
+//! [`BenchResult`]; this module ledgers it as `kernel_curve`, prints it, and
+//! puts it in the `--json` envelope, so a new bench needs no reader code.
 //!
 //! Benches run in this process (no worker): they touch no model weights, and
 //! one Metal context serves every arm. The machine lock and host guard still
 //! apply, because a GPU microbench is as sensitive to a neighbour as a model
-//! run is.
+//! run is. Env knobs do not reach a bench: it calls the kernels directly.
 
 pub mod attn_decode;
-pub mod fit;
 pub mod int4_matmul;
 pub mod support;
 
-use serde_json::json;
+pub use crate::fit;
+
+use std::path::PathBuf;
+
+use serde_json::{json, Value};
 
 use crate::args::Args;
+use crate::bench::{print_result, BenchResult};
 use crate::host::{eligibility, HostMonitor};
 use crate::ledger::Ledger;
 use crate::lock::MachineLock;
@@ -30,13 +35,119 @@ pub(crate) fn parse_list<T: std::str::FromStr>(s: &str, what: &str) -> Result<Ve
         .collect()
 }
 
+/// What a bench measures against: the install it was pointed at.
+pub struct Subject {
+    pub dir: PathBuf,
+    /// `ModelFamily::as_str` for a text install, `config.json` `model_type`
+    /// for an audio one.
+    pub family: String,
+    pub arch: Option<model_io::ArchConfig>,
+    /// An audio install's parsed `config.json`.
+    pub audio_config: Option<Value>,
+}
+
+impl Subject {
+    pub fn open(model: &str) -> Result<Self, String> {
+        let dir = catalog::resolve_model_arg(model);
+        if dir.join("manifest.json").is_file() {
+            let arch = repack::peek_manifest_arch(&dir)?;
+            return Ok(Self {
+                family: arch.family.as_str().to_string(),
+                arch: Some(arch),
+                audio_config: None,
+                dir,
+            });
+        }
+        let config = dir.join("config.json");
+        let text = std::fs::read_to_string(&config).map_err(|e| {
+            format!(
+                "{}: neither a text install (manifest.json) nor an audio one (config.json): {e}",
+                dir.display()
+            )
+        })?;
+        let cfg: Value =
+            serde_json::from_str(&text).map_err(|e| format!("{}: {e}", config.display()))?;
+        Ok(Self {
+            family: crate::audio_kind::model_type(&cfg).unwrap_or_else(|| "unknown_audio".into()),
+            arch: None,
+            audio_config: Some(cfg),
+            dir,
+        })
+    }
+
+    pub fn arch(&self) -> Result<&model_io::ArchConfig, String> {
+        self.arch
+            .as_ref()
+            .ok_or_else(|| format!("{} is not a text install", self.family))
+    }
+}
+
+/// One case a bench runs: a label unique within the bench for this install,
+/// and the bench's own parameters for it.
+#[derive(Debug, Clone)]
+pub struct Case {
+    pub label: String,
+    pub params: Value,
+}
+
+pub struct BenchOpts {
+    /// The M (row) sweep for row-shaped benches.
+    pub rows: Vec<usize>,
+    /// The KV-length sweep for attention benches.
+    pub contexts: Vec<u32>,
+    /// Measured repetitions after the discarded first one.
+    pub reps: usize,
+    /// Record the FNV-1a of each point's output bits.
+    pub hash: bool,
+}
+
+pub trait KernelBench: Sync {
+    fn name(&self) -> &'static str;
+    /// One line for `tslab kernel --list`.
+    fn describe(&self) -> &'static str;
+    /// The cases this bench runs on `subject`, or why it cannot run there.
+    /// An `Err` is a coverage answer ("no MLA kernel"), not a failure.
+    fn cases(&self, subject: &Subject) -> Result<Vec<Case>, String>;
+    fn run(
+        &self,
+        context: &mut gpu::MetalContext,
+        subject: &Subject,
+        case: &Case,
+        opts: &BenchOpts,
+    ) -> Result<BenchResult, String>;
+}
+
+/// Every bench, in the order `--bench all` runs them.
+pub fn registry() -> Vec<&'static dyn KernelBench> {
+    vec![&int4_matmul::Int4Matmul, &attn_decode::AttnDecode]
+}
+
+pub fn by_name(name: &str) -> Option<&'static dyn KernelBench> {
+    registry().into_iter().find(|b| b.name() == name)
+}
+
+/// Which benches apply to `subject`, and why the others do not.
+pub fn coverage(subject: &Subject) -> Vec<(String, Result<usize, String>)> {
+    registry()
+        .into_iter()
+        .map(|b| (b.name().to_string(), b.cases(subject).map(|c| c.len())))
+        .collect()
+}
+
 pub fn kernel_cmd(mut args: Args) -> Result<(), String> {
+    if args.flag("--list") {
+        args.finish()?;
+        for b in registry() {
+            crate::say!("{:<16} {}", b.name(), b.describe());
+        }
+        return Ok(());
+    }
     let model = args.required("--model")?;
     let experiment = args
         .take("--experiment")?
         .unwrap_or_else(|| "kernel".into());
     let bench = args.take("--bench")?.unwrap_or_else(|| "all".into());
-    let ms: Vec<usize> = parse_list(
+    let rows: Vec<usize> = parse_list(
         &args
             .take("--rows")?
             .unwrap_or_else(|| "1,2,4,8,16,32,64,128,256,512".into()),
@@ -49,20 +160,38 @@ pub fn kernel_cmd(mut args: Args) -> Result<(), String> {
         "context",
     )?;
     let reps: usize = args.parsed("--reps", 5)?;
-    let only_shape = args.take("--shape")?;
+    let hash = args.flag("--hash");
+    // `--shape RxC` predates `--case`; both select one case label.
+    let only_case = match (args.take("--case")?, args.take("--shape")?) {
+        (Some(c), _) | (None, Some(c)) => Some(c),
+        (None, None) => None,
+    };
     let rules = crate::cli::host_rules_from(&mut args)?;
     args.finish()?;
-    if !matches!(bench.as_str(), "all" | "int4_matmul" | "attn_decode") {
-        return Err(format!(
-            "--bench {bench:?}: int4_matmul, attn_decode or all"
-        ));
-    }
-    if ms.contains(&0) || reps == 0 {
+    if rows.contains(&0) || reps == 0 {
         return Err("rows and reps must be positive".into());
     }
+    let benches: Vec<&dyn KernelBench> = if bench == "all" {
+        registry()
+    } else {
+        bench
+            .split(',')
+            .map(|n| {
+                by_name(n).ok_or_else(|| {
+                    let names: Vec<_> = registry().iter().map(|b| b.name()).collect();
+                    format!("--bench {n:?}: one of {} or all", names.join(", "))
+                })
+            })
+            .collect::<Result<_, _>>()?
+    };
+    let opts = BenchOpts {
+        rows,
+        contexts,
+        reps,
+        hash,
+    };
 
-    let dir = catalog::resolve_model_arg(&model);
-    let arch = repack::peek_manifest_arch(&dir)?;
+    let subject = Subject::open(&model)?;
     let lab = lab_dir();
     let _lock = MachineLock::acquire(&lab, &format!("tslab kernel {experiment}"))?;
     let ledger = Ledger::open(&experiment_dir(&lab, &experiment)?)?;
@@ -71,49 +200,51 @@ pub fn kernel_cmd(mut args: Args) -> Result<(), String> {
     let mut monitor = HostMonitor::new();
     eprintln!(
         "tslab kernel: {} ({}), ledger {}",
-        dir.display(),
-        arch.family.as_str(),
+        subject.dir.display(),
+        subject.family,
         ledger.path().display()
     );
 
-    let record = |bench_rec: serde_json::Value, samples: Vec<crate::host::HostSample>| {
+    let record = |result: &BenchResult, samples: Vec<crate::host::HostSample>| {
         let (eligible, reasons) = eligibility(&samples, &rules);
         if !eligible {
-            println!("  DIRTY: {}", reasons.join("; "));
+            crate::say!("  DIRTY: {}", reasons.join("; "));
         }
         ledger.append(
             "kernel_curve",
-            json!({"model": dir.display().to_string(), "family": arch.family.as_str(),
-                   "eligible": eligible, "reasons": reasons, "result": bench_rec,
+            json!({"model": subject.dir.display().to_string(), "family": subject.family,
+                   "bench": result.bench, "case": result.case, "hashed": opts.hash,
+                   "eligible": eligible, "reasons": reasons, "result": result,
                    "provenance": provenance}),
         )
     };
 
-    if bench == "all" || bench == "int4_matmul" {
-        for (rows, cols) in int4_matmul::shapes(&arch) {
-            if only_shape
-                .as_deref()
-                .is_some_and(|s| s != format!("{rows}x{cols}"))
-            {
+    let mut ran = 0;
+    for b in benches {
+        let cases = match b.cases(&subject) {
+            Ok(c) => c,
+            Err(why) => {
+                crate::say!("{}: not run on {}: {why}", b.name(), subject.family);
+                continue;
+            }
+        };
+        for case in cases {
+            if only_case.as_deref().is_some_and(|c| c != case.label) {
                 continue;
             }
             let before = monitor.sample(None);
-            let rec = int4_matmul::run_shape(&mut context, rows, cols, &ms, reps)?;
+            let result = b.run(&mut context, &subject, &case, &opts)?;
             let after = monitor.sample(None);
-            int4_matmul::print_shape(&rec);
-            record(rec, vec![before, after])?;
+            print_result(&result);
+            record(&result, vec![before, after])?;
+            ran += 1;
         }
     }
-    if bench == "all" || bench == "attn_decode" {
-        let before = monitor.sample(None);
-        match attn_decode::run(&mut context, &arch, &contexts, reps)? {
-            Some(rec) => {
-                let after = monitor.sample(None);
-                attn_decode::print(&rec);
-                record(rec, vec![before, after])?;
-            }
-            None => println!("attention decode: no plain full-attention layers to drive"),
-        }
+    if ran == 0 {
+        return Err(format!(
+            "no bench case ran on {} (see the reasons above, or check --case)",
+            subject.family
+        ));
     }
     Ok(())
 }

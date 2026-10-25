@@ -507,24 +507,24 @@ pub fn depth_replay_cmd(mut args: crate::args::Args) -> Result<(), String> {
             let worst = speedups.iter().copied().fold(f64::INFINITY, f64::min);
             rows.push((*p, geo, worst, sims, speedups));
         }
-        println!(
+        crate::say!(
             "\ncosts {} ({}); {} cases, {tokens} tokens each",
             costs.name,
             costs.source,
             captures.len()
         );
-        print!("  {:<46} {:>7} {:>7}", "policy", "geo", "worst");
+        crate::say_part!("  {:<46} {:>7} {:>7}", "policy", "geo", "worst");
         for c in &captures {
-            print!(" {:>18}", c.case.chars().take(18).collect::<String>());
+            crate::say_part!(" {:>18}", c.case.chars().take(18).collect::<String>());
         }
-        println!();
+        crate::say!();
         let print_row = |r: &(Policy, f64, f64, Vec<SimResult>, Vec<f64>)| {
-            print!("  {:<46} {:>6.3}x {:>6.3}x", r.0.label(), r.1, r.2);
+            crate::say_part!("  {:<46} {:>6.3}x {:>6.3}x", r.0.label(), r.1, r.2);
             for (s, sp) in r.3.iter().zip(&r.4) {
-                print!(" {:>7.1} t/s {:>5.2}c", s.tok_s, s.committed_per_round);
+                crate::say_part!(" {:>7.1} t/s {:>5.2}c", s.tok_s, s.committed_per_round);
                 let _ = sp;
             }
-            println!();
+            crate::say!();
         };
         for r in rows.iter().filter(|r| matches!(r.0, Policy::Fixed(_))) {
             print_row(r);
@@ -549,7 +549,7 @@ pub fn depth_replay_cmd(mut args: crate::args::Args) -> Result<(), String> {
                 _ => false,
             })
             .collect();
-        println!("  -- shipped tuning:");
+        crate::say!("  -- shipped tuning:");
         for r in &shipped {
             print_row(r);
         }
@@ -559,7 +559,7 @@ pub fn depth_replay_cmd(mut args: crate::args::Args) -> Result<(), String> {
             .filter(|r| matches!(r.0, Policy::Adaptive { .. }) && r.2 >= 0.99)
             .collect();
         safe.sort_by(|a, b| b.1.total_cmp(&a.1));
-        println!("  -- best adaptive, worst case at least 0.99x of fixed 2:");
+        crate::say!("  -- best adaptive, worst case at least 0.99x of fixed 2:");
         for r in safe.iter().take(top) {
             print_row(r);
         }

@@ -26,11 +26,16 @@
 
 pub mod args;
 pub mod atomic;
+pub mod audio_kind;
+pub mod bench;
+pub mod fit;
 pub mod gates;
 pub mod knobs;
 pub mod ledger;
 pub mod lock;
+pub mod out;
 pub mod paths;
+pub mod schema;
 pub mod spec;
 pub mod stats;
 pub mod workload;

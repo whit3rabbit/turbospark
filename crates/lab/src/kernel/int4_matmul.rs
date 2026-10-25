@@ -1,20 +1,78 @@
 //! INT4 affine matmul at the install's own shapes: M one-row GEMVs against
-//! the scalar batched GEMM and both Steel tiles, over a sweep of M.
+//! the scalar batched GEMM, both Steel tiles and the 8-row MMA tile, over a
+//! sweep of M.
 //!
 //! The port of `crates/gpu/tests/qwen38_int4_prefill_gemm_probe.rs` with the
 //! shapes taken from `ArchConfig` instead of Qwen3.8's constants, and the
 //! one-row GEMV added as the unit that c(M) is measured against.
 
+use std::collections::BTreeMap;
+
 use gpu::{
     autorelease_pool, encode_dequant_int4_gemm_resident, encode_dequant_int4_gemm_steel,
-    encode_dequant_int4_gemv_resident, steel_supports, Int4ResidentMatrix, MetalContext, SteelTile,
+    encode_dequant_int4_gemv_resident, encode_dequant_int4_mma8_resident, read_buffer_bytes,
+    steel_supports, Int4ResidentMatrix, MetalContext, SteelTile, INT4_MMA8_MAX_ROWS,
     MAX_BATCH_ROWS,
 };
 use model_io::ArchConfig;
-use serde_json::{json, Value};
+use serde_json::json;
 
 use super::fit::{break_even, c_of_m, fit_affine};
 use super::support::{copies_for, f16_activations, int4_blob, median};
+use super::{BenchOpts, Case, KernelBench, Subject};
+use crate::bench::{fnv_hex, ArmCurve, Axis, BenchResult, BreakEven, Point};
+
+/// The layout `support::int4_blob` synthesizes: MLX affine INT4, group 64,
+/// BF16 scales and biases, the resident order.
+pub const LAYOUT: &str = "mlx_affine_int4_g64_bf16";
+
+/// The engine serves at most this many rows through the tile per call
+/// sequence (`encode_gemm_any` batches up to 16 rows in tiles of 8), so the
+/// bench does not time the tile at M where nothing would route to it.
+const MMA8_BENCH_MAX_M: usize = 2 * INT4_MMA8_MAX_ROWS;
+
+pub struct Int4Matmul;
+
+impl KernelBench for Int4Matmul {
+    fn name(&self) -> &'static str {
+        "int4_matmul"
+    }
+
+    fn describe(&self) -> &'static str {
+        "INT4 projections at the install's shapes: per-row GEMV, scalar GEMM, Steel tiles, MMA8 tile over M"
+    }
+
+    fn cases(&self, subject: &Subject) -> Result<Vec<Case>, String> {
+        let arch = subject.arch()?;
+        let shapes = shapes(arch);
+        if shapes.is_empty() {
+            return Err("no INT4 projection shapes with a width divisible by 64".into());
+        }
+        Ok(shapes
+            .into_iter()
+            .map(|(rows, cols)| Case {
+                label: format!("{rows}x{cols}"),
+                params: json!({"rows": rows, "cols": cols}),
+            })
+            .collect())
+    }
+
+    fn run(
+        &self,
+        context: &mut MetalContext,
+        _subject: &Subject,
+        case: &Case,
+        opts: &BenchOpts,
+    ) -> Result<BenchResult, String> {
+        let dim = |k: &str| {
+            case.params[k]
+                .as_u64()
+                .map(|v| v as usize)
+                .ok_or_else(|| format!("int4_matmul case {} lacks {k}", case.label))
+        };
+        run_shape(context, &case.label, dim("rows")?, dim("cols")?, opts)
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Arm {
@@ -23,6 +81,8 @@ pub enum Arm {
     /// The scalar batched GEMM, `MAX_BATCH_ROWS` rows per dispatch.
     Scalar,
     Steel(SteelTile),
+    /// The small-M matrix-unit tile (`TURBOSPARK_INT4_MMA8`), 8 rows a call.
+    Mma8,
 }
 
 impl Arm {
@@ -32,15 +92,17 @@ impl Arm {
             Arm::Scalar => "scalar_gemm".into(),
             Arm::Steel(SteelTile::M32K32N32) => "steel_m32".into(),
             Arm::Steel(SteelTile::M64K32N64) => "steel_m64".into(),
+            Arm::Mma8 => "mma8".into(),
         }
     }
 }
 
-pub const ARMS: [Arm; 4] = [
+pub const ARMS: [Arm; 5] = [
     Arm::GemvPerRow,
     Arm::Scalar,
     Arm::Steel(SteelTile::M32K32N32),
     Arm::Steel(SteelTile::M64K32N64),
+    Arm::Mma8,
 ];
 
 /// (rows, cols) pairs this install's INT4 projections run at, deduplicated,
@@ -78,14 +140,15 @@ pub fn shapes(arch: &ArchConfig) -> Vec<(usize, usize)> {
     out
 }
 
-/// Time every arm at every M for one shape. Returns the ledger record.
+/// Time every arm at every M for one shape.
 pub fn run_shape(
     context: &mut MetalContext,
+    label: &str,
     rows: usize,
     cols: usize,
-    ms: &[usize],
-    reps: usize,
-) -> Result<Value, String> {
+    opts: &BenchOpts,
+) -> Result<BenchResult, String> {
+    let (ms, reps) = (&opts.rows[..], opts.reps);
     let weight_bytes = rows * cols / 2 + rows * cols / 64 * 4;
     let copies = copies_for(weight_bytes, 256 << 20);
     let mats: Vec<_> = (0..copies)
@@ -118,15 +181,18 @@ pub fn run_shape(
     let max_m = *ms.iter().max().unwrap_or(&1);
     let x = context.new_buffer_with_data(&f16_activations(max_m * cols, 7));
     let y = context.new_output_buffer((max_m * rows * 2) as u64);
-    let mut table = Vec::new();
+    // Whether an arm has a point at M: the tile only where the engine would
+    // route to it.
+    let runs_at =
+        |a: usize, m: usize| supported[a] && (ARMS[a] != Arm::Mma8 || m <= MMA8_BENCH_MAX_M);
+    // (m, per-arm median ms, per-arm output hash)
+    let mut table: Vec<(usize, Vec<f64>, Vec<Option<String>>)> = Vec::new();
     for &m in ms {
         let mut samples = vec![Vec::new(); ARMS.len()];
+        let mut hashes = vec![None; ARMS.len()];
         for rep in 0..=reps {
             for (a, &arm) in ARMS.iter().enumerate() {
-                if !supported[a] {
-                    if rep > 0 {
-                        samples[a].push(f64::NAN);
-                    }
+                if !runs_at(a, m) {
                     continue;
                 }
                 let t = autorelease_pool(|| -> Result<f64, String> {
@@ -140,157 +206,167 @@ pub fn run_shape(
                             rows,
                             cols,
                         };
-                        match arm {
-                            Arm::GemvPerRow => {
-                                for r in 0..m {
-                                    encode_dequant_int4_gemv_resident(
-                                        context,
-                                        &pass,
-                                        &w,
-                                        (&x, (r * cols * 2) as u64),
-                                        (&y, (r * rows * 2) as u64),
-                                    )
-                                    .map_err(|e| e.to_string())?;
-                                }
-                            }
-                            Arm::Scalar => {
-                                let mut done = 0;
-                                while done < m {
-                                    let take = (m - done).min(MAX_BATCH_ROWS);
-                                    encode_dequant_int4_gemm_resident(
-                                        context,
-                                        &pass,
-                                        &w,
-                                        (&x, (done * cols * 2) as u64),
-                                        (&y, (done * rows * 2) as u64),
-                                        take,
-                                    )
-                                    .map_err(|e| e.to_string())?;
-                                    done += take;
-                                }
-                            }
-                            Arm::Steel(tile) => {
-                                encode_dequant_int4_gemm_steel(
-                                    context,
-                                    &pass,
-                                    &w,
-                                    (&x, 0),
-                                    (&y, 0),
-                                    m,
-                                    tile,
-                                )
-                                .map_err(|e| e.to_string())?;
-                            }
-                        }
+                        encode_arm(context, &pass, arm, &w, &x, &y, m)?;
                     }
                     Ok(pass.commit_and_wait_with_gpu_time())
                 })?;
                 if rep > 0 {
                     samples[a].push(t * 1e3 / copies as f64);
                 }
+                // The output of the last copy after the last repetition:
+                // every copy runs the same seeded weights family, so the
+                // bytes are a function of the arm's arithmetic alone.
+                if opts.hash && rep == reps {
+                    hashes[a] = Some(fnv_hex(&read_buffer_bytes(&y, 0, m * rows * 2)));
+                }
             }
         }
-        let medians: Vec<f64> = samples.iter_mut().map(|s| median(s)).collect();
-        table.push((m, medians));
+        let medians: Vec<f64> = samples
+            .iter_mut()
+            .map(|s| if s.is_empty() { f64::NAN } else { median(s) })
+            .collect();
+        table.push((m, medians, hashes));
     }
 
     // One-row GEMV time is the c(M) unit.
     let one_row = table
         .iter()
-        .find(|(m, _)| *m == 1)
-        .map(|(_, t)| t[0])
+        .find(|(m, _, _)| *m == 1)
+        .map(|(_, t, _)| t[0])
         .unwrap_or(table[0].1[0] / table[0].0 as f64);
     let flops = |m: usize| 2.0 * m as f64 * rows as f64 * cols as f64;
-    let mut arms_json = serde_json::Map::new();
-    let mut fits = Vec::new();
+    let mut arms = Vec::new();
     for (a, arm) in ARMS.iter().enumerate() {
         if !supported[a] {
-            fits.push(None);
-            arms_json.insert(
-                arm.label(),
-                json!({"unsupported": "this shape does not fit the tile"}),
-            );
+            arms.push(ArmCurve::unsupported(
+                &arm.label(),
+                "this shape does not fit the tile",
+            ));
             continue;
         }
-        let points: Vec<(f64, f64)> = table.iter().map(|(m, t)| (*m as f64, t[a])).collect();
-        let fit = fit_affine(&points);
-        fits.push(fit);
-        arms_json.insert(
-            arm.label(),
-            json!({
-                "points": table.iter().map(|(m, t)| json!({
-                    "m": m,
-                    "ms": t[a],
-                    "c_of_m": c_of_m(t[a], one_row, *m),
-                    "tflops": flops(*m) / (t[a] * 1e-3) / 1e12,
-                    "weight_gb_s": weight_bytes as f64 / (t[a] * 1e-3) / 1e9,
-                })).collect::<Vec<_>>(),
-                "fit": fit,
-            }),
-        );
+        let points: Vec<Point> = table
+            .iter()
+            .filter(|(m, _, _)| runs_at(a, *m))
+            .map(|(m, t, h)| Point {
+                x: *m as f64,
+                ms: t[a],
+                gb_s: Some(weight_bytes as f64 / (t[a] * 1e-3) / 1e9),
+                tflops: Some(flops(*m) / (t[a] * 1e-3) / 1e12),
+                c_of_m: Some(c_of_m(t[a], one_row, *m)),
+                out_fnv: h[a].clone(),
+            })
+            .collect();
+        let fit = fit_affine(&points.iter().map(|p| (p.x, p.ms)).collect::<Vec<_>>());
+        arms.push(ArmCurve {
+            label: arm.label(),
+            points,
+            fit,
+            unsupported: None,
+        });
     }
-    let crossings: Vec<Value> = ARMS
+    let reference = arms[0].fit;
+    let break_even_rows: Vec<BreakEven> = arms
         .iter()
-        .enumerate()
         .skip(1)
-        .filter_map(|(a, arm)| {
-            let (r, c) = (fits[0]?, fits[a]?);
-            Some(json!({"arm": arm.label(), "beats_gemv_per_row_above_m": break_even(&r, &c)}))
+        .filter_map(|c| {
+            Some(BreakEven {
+                arm: c.label.clone(),
+                against: arms[0].label.clone(),
+                above_x: break_even(&reference?, &c.fit?),
+            })
         })
         .collect();
-    Ok(json!({
-        "bench": "int4_matmul",
-        "rows": rows,
-        "cols": cols,
-        "weight_bytes": weight_bytes,
-        "copies": copies,
-        "one_row_gemv_ms": one_row,
-        "arms": arms_json,
-        "break_even": crossings,
-    }))
+    let mut subject = BTreeMap::new();
+    subject.insert("rows".into(), json!(rows));
+    subject.insert("cols".into(), json!(cols));
+    subject.insert("weight_bytes".into(), json!(weight_bytes));
+    subject.insert("copies".into(), json!(copies));
+    subject.insert("one_row_gemv_ms".into(), json!(one_row));
+    let mut notes = Vec::new();
+    if ms.iter().any(|&m| m > MMA8_BENCH_MAX_M) {
+        notes.push(format!(
+            "mma8 is timed only up to M = {MMA8_BENCH_MAX_M}, the rows the engine routes to it"
+        ));
+    }
+    Ok(BenchResult {
+        bench: "int4_matmul".into(),
+        case: label.to_string(),
+        subject,
+        x: Axis::new("m", "rows", "log2"),
+        layout: LAYOUT.into(),
+        arms,
+        break_even: break_even_rows,
+        notes,
+    })
 }
 
-pub fn print_shape(rec: &Value) {
-    println!(
-        "int4 {} x {} ({:.1} MB), one-row GEMV {:.4} ms",
-        rec["rows"],
-        rec["cols"],
-        rec["weight_bytes"].as_f64().unwrap_or(0.0) / 1e6,
-        rec["one_row_gemv_ms"].as_f64().unwrap_or(f64::NAN)
-    );
-    let arms = rec["arms"].as_object().cloned().unwrap_or_default();
-    let ms: Vec<u64> = arms
-        .values()
-        .next()
-        .and_then(|a| a["points"].as_array())
-        .map(|ps| ps.iter().filter_map(|p| p["m"].as_u64()).collect())
-        .unwrap_or_default();
-    print!("  {:<14}", "c(M) at M =");
-    for m in &ms {
-        print!("{m:>8}");
-    }
-    println!("   fit a + b*M (ms)");
-    for (name, arm) in &arms {
-        if let Some(why) = arm["unsupported"].as_str() {
-            println!("  {name:<14}{why}");
-            continue;
+/// Encode M rows of one arm for one weight copy.
+fn encode_arm(
+    context: &mut MetalContext,
+    pass: &gpu::PassEncoder,
+    arm: Arm,
+    w: &Int4ResidentMatrix<'_>,
+    x: &gpu::MetalBuffer,
+    y: &gpu::MetalBuffer,
+    m: usize,
+) -> Result<(), String> {
+    let (rows, cols) = (w.rows, w.cols);
+    let e = |r: Result<(), gpu::GpuError>| r.map_err(|e| e.to_string());
+    match arm {
+        Arm::GemvPerRow => {
+            for r in 0..m {
+                e(encode_dequant_int4_gemv_resident(
+                    context,
+                    pass,
+                    w,
+                    (x, (r * cols * 2) as u64),
+                    (y, (r * rows * 2) as u64),
+                ))?;
+            }
         }
-        print!("  {name:<14}");
-        for p in arm["points"].as_array().into_iter().flatten() {
-            print!("{:>8.3}", p["c_of_m"].as_f64().unwrap_or(f64::NAN));
+        Arm::Scalar | Arm::Mma8 => {
+            let step = if arm == Arm::Scalar {
+                MAX_BATCH_ROWS
+            } else {
+                INT4_MMA8_MAX_ROWS
+            };
+            let mut done = 0;
+            while done < m {
+                let take = (m - done).min(step);
+                let (xo, yo) = ((done * cols * 2) as u64, (done * rows * 2) as u64);
+                if arm == Arm::Scalar {
+                    e(encode_dequant_int4_gemm_resident(
+                        context,
+                        pass,
+                        w,
+                        (x, xo),
+                        (y, yo),
+                        take,
+                    ))?;
+                } else {
+                    e(encode_dequant_int4_mma8_resident(
+                        context,
+                        pass,
+                        w,
+                        (x, xo),
+                        (y, yo),
+                        take,
+                    ))?;
+                }
+                done += take;
+            }
         }
-        if let (Some(a), Some(b)) = (arm["fit"]["a"].as_f64(), arm["fit"]["b"].as_f64()) {
-            print!("   {a:.4} + {b:.4}M");
+        Arm::Steel(tile) => {
+            e(encode_dequant_int4_gemm_steel(
+                context,
+                pass,
+                w,
+                (x, 0),
+                (y, 0),
+                m,
+                tile,
+            ))?;
         }
-        println!();
     }
-    for c in rec["break_even"].as_array().into_iter().flatten() {
-        println!(
-            "  {} beats per-row GEMV above M = {}",
-            c["arm"].as_str().unwrap_or("?"),
-            c["beats_gemv_per_row_above_m"]
-                .as_f64()
-                .map_or("never".to_string(), |m| format!("{m:.1}"))
-        );
-    }
+    Ok(())
 }

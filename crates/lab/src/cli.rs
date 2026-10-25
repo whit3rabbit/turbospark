@@ -11,6 +11,7 @@ use crate::lock::MachineLock;
 use crate::orchestrate::{run_ab, Outcome, Session};
 use crate::paths::lab_dir;
 use crate::report;
+use crate::schema::{CmdOutput, Envelope, RecordRef};
 use crate::stats;
 use crate::workload::{Arm, Metric, OpenParams, PromptSource, Workload};
 
@@ -25,13 +26,18 @@ tslab: the evaluator for kernel and method experiments (macOS).
   tslab gate    --spec SPEC.json [--base REV]      (loads the model: takes minutes)
   tslab run-experiment --spec SPEC.json [--base REV]
   tslab confirm --spec SPEC.json [--base REV]
-  tslab kernel  --model M [--bench int4_matmul|attn_decode|all] [--experiment NAME]
+  tslab kernel  --model M [--bench NAME[,NAME]|all] [--rows 1,2,4,...] [--contexts 512,...]
+                [--case LABEL] [--reps 5] [--hash] [--experiment NAME]
+  tslab kernel  --list                             (the registered benches)
+  tslab hash-diff --experiment A --against B      (exit 3 when any hashed output changed)
   tslab tree-replay --model M --drafter mtp|dflash [--prompt ...]... [--generate 512]
                 [--depth 8|7] [--blocks 2,4,DEPTH] [--serve-block 2] [--top-k 4] [--slots 16] [--experiment NAME]
   tslab ane-plan --path PROGRAM.mlpackage|MANIFEST_DIR [--units ane|all|gpu|cpu]
   tslab chain-capture --model M [--prompt ...]... [--tokens 512] [--depth 8] [--experiment NAME]
   tslab depth-replay [--experiment NAME] [--costs flag_off,flag_on] [--tokens 512] [--top 10]
   tslab ledger  --experiment NAME [--kind run|verdict|...]
+  tslab knobs
+  tslab schema                                     (the JSON Schema of everything tslab writes)
 
 workload: [--prompt protocol:ID|messages:PATH|text:PATH]... [--decode N]
           [--chunk N|off] [--context N]
@@ -43,42 +49,102 @@ host:     [--max-foreign-cpu 150] [--max-single-cpu 90] [--allow-battery]
   An experiment tree that merges in the lab itself needs --base <that merge commit>.
 exit codes (run-experiment, confirm): 0 keep, 3 discard, 4 inconclusive (do not revert),
   1 error, 2 usage.
+--json (any command, anywhere on the line): stdout is exactly one tslab/1 envelope
+  {schema, command, ok, exit_code, decision?, records, result, warnings, error?};
+  tables and progress go to stderr.
 
 Results: $TURBOSPARK_LAB_DIR, else $TURBOSPARK_HOME/lab, else ~/.turbospark/lab.
 KEY is a TURBOSPARK_* name or a knob short name (tslab knobs lists them).";
 
 pub fn main() -> i32 {
     let mut argv: Vec<String> = std::env::args().skip(1).collect();
+    // `--json` is global: it may sit anywhere on the line.
+    let json_out = {
+        let before = argv.len();
+        argv.retain(|a| a != "--json");
+        argv.len() != before
+    };
+    crate::out::set_json(json_out);
     if argv.is_empty() || argv[0] == "--help" || argv[0] == "-h" {
-        println!("{USAGE}");
+        crate::say!("{USAGE}");
         return if argv.is_empty() { 2 } else { 0 };
     }
     let cmd = argv.remove(0);
-    let args = Args::new(argv);
-    // The two commands that reach a decision return its exit code; every
-    // other command is 0 on success.
-    let result: Result<i32, String> = match cmd.as_str() {
-        "profile" => profile(args).map(|()| 0),
-        "ab" => ab(args).map(|()| 0),
-        "ledger" => ledger(args).map(|()| 0),
-        "knobs" => knobs_cmd(args).map(|()| 0),
-        "gate" => crate::experiment::gate_cmd(args).map(|()| 0),
-        "run-experiment" => crate::experiment::run_experiment_cmd(args),
-        "confirm" => crate::experiment::confirm_cmd(args),
-        "kernel" => crate::kernel::kernel_cmd(args).map(|()| 0),
-        "ane-plan" => crate::ane::ane_plan_cmd(args).map(|()| 0),
-        "chain-capture" => crate::depth_replay::chain_capture_cmd(args).map(|()| 0),
-        "depth-replay" => crate::depth_replay::depth_replay_cmd(args).map(|()| 0),
-        "tree-replay" => crate::tree_replay::tree_replay_cmd(args).map(|()| 0),
-        other => Err(format!("unknown command {other:?}\n\n{USAGE}")),
-    };
-    match result {
-        Ok(code) => code,
+    let result = dispatch(&cmd, Args::new(argv));
+    finish(&cmd, result, json_out)
+}
+
+/// Print the outcome and return the exit code. Under `--json` stdout gets
+/// exactly one envelope; otherwise an error goes to stderr as before.
+pub fn finish(cmd: &str, result: Result<CmdOutput, String>, json_out: bool) -> i32 {
+    let appended = crate::ledger::take_appended();
+    let result = result.map(|mut out| {
+        if out.result.is_null() {
+            out.result = summarize_appended(&appended);
+        }
+        out
+    });
+    let code = match &result {
+        Ok(out) => out.code,
         Err(e) => {
             eprintln!("tslab {cmd}: {e}");
             1
         }
+    };
+    if json_out {
+        let refs = appended.into_iter().map(|(r, _)| r).collect();
+        let envelope = Envelope::new(cmd, &result, refs);
+        match serde_json::to_string(&envelope) {
+            Ok(line) => println!("{line}"),
+            Err(e) => {
+                eprintln!("tslab {cmd}: envelope: {e}");
+                return 1;
+            }
+        }
     }
+    code
+}
+
+/// Run one command in this process. `tslab workflow` calls this for each
+/// step, so a step and the same command typed alone are one code path.
+pub fn dispatch(cmd: &str, args: Args) -> Result<CmdOutput, String> {
+    let unit = |r: Result<(), String>| r.map(|()| CmdOutput::ok(Value::Null));
+    match cmd {
+        "profile" => unit(profile(args)),
+        "ab" => unit(ab(args)),
+        "ledger" => ledger(args),
+        "knobs" => knobs_cmd(args),
+        "schema" => schema_cmd(args),
+        "hash-diff" => hash_diff_cmd(args),
+        "gate" => crate::experiment::gate_cmd(args),
+        "run-experiment" => crate::experiment::run_experiment_cmd(args),
+        "confirm" => crate::experiment::confirm_cmd(args),
+        "kernel" => unit(crate::kernel::kernel_cmd(args)),
+        "ane-plan" => unit(crate::ane::ane_plan_cmd(args)),
+        "chain-capture" => unit(crate::depth_replay::chain_capture_cmd(args)),
+        "depth-replay" => unit(crate::depth_replay::depth_replay_cmd(args)),
+        "tree-replay" => unit(crate::tree_replay::tree_replay_cmd(args)),
+        other => Err(format!("unknown command {other:?}\n\n{USAGE}")),
+    }
+}
+
+/// The default envelope payload: what the command appended, by kind. A run
+/// record carries the worker's whole record and host samples, so only its
+/// headline fields are repeated here; the ledger has the rest by id.
+fn summarize_appended(appended: &[(RecordRef, Value)]) -> Value {
+    let mut by_kind: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+    for (r, rec) in appended {
+        let v = if r.kind == "run" {
+            json!({"id": rec["id"], "arm": rec["arm"], "round": rec["round"],
+                   "warmup": rec["warmup"], "status": rec["status"],
+                   "eligible": rec["eligible"], "reasons": rec["reasons"],
+                   "totals": rec["totals"], "wall_s": rec["wall_s"]})
+        } else {
+            rec.clone()
+        };
+        by_kind.entry(r.kind.clone()).or_default().push(v);
+    }
+    json!({ "by_kind": by_kind })
 }
 
 pub fn workload_from(args: &mut Args) -> Result<Workload, String> {
@@ -337,16 +403,16 @@ fn ab(mut args: Args) -> Result<(), String> {
         &format!("{} vs {}", baseline.name, candidate.name),
         &verdict,
     );
-    println!("  memory: {memory}");
+    crate::say!("  memory: {memory}");
     if let Some(why) = &stopped {
-        println!("  stopped early: {why}");
+        crate::say!("  stopped early: {why}");
     }
     if null {
         let floor = stats::null_floor(&verdict.improvements);
         // Twice the identical arms' peak gap is what this host's peak
         // reading cannot resolve.
         let memory_noise = 2.0 * memory["growth"].as_f64().unwrap_or(0.0).abs();
-        println!(
+        crate::say!(
             "  null floor for this workload and metric: {:.2}% (2 x MAD); later ab runs in this experiment use it",
             floor * 100.0
         );
@@ -367,12 +433,13 @@ fn ab(mut args: Args) -> Result<(), String> {
     Ok(())
 }
 
-fn ledger(mut args: Args) -> Result<(), String> {
+fn ledger(mut args: Args) -> Result<CmdOutput, String> {
     let experiment = args.required("--experiment")?;
     let kind = args.take("--kind")?;
     args.finish()?;
     let dir = crate::paths::experiment_dir(&lab_dir(), &experiment)?;
     let ledger = crate::ledger::Ledger::open(&dir)?;
+    let mut out = Vec::new();
     for rec in ledger.read_all()? {
         if kind.as_deref().is_some_and(|k| rec["kind"] != k) {
             continue;
@@ -398,21 +465,41 @@ fn ledger(mut args: Args) -> Result<(), String> {
                 rec["verdict"]["verdict"],
                 rec["verdict"]["median"]
             ),
+            Some("kernel_curve") => format!(
+                "{} {} eligible={}",
+                rec["result"]["bench"].as_str().unwrap_or("?"),
+                rec["result"]["case"]
+                    .as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| format!(
+                        "{}x{}",
+                        rec["result"]["rows"], rec["result"]["cols"]
+                    )),
+                rec["eligible"]
+            ),
+            Some("experiment" | "confirm") => format!(
+                "{} {}",
+                rec["decision"].as_str().unwrap_or("?"),
+                rec["reason"].as_str().unwrap_or("")
+            ),
             _ => String::new(),
         };
-        println!(
+        crate::say!(
             "{} {:<16} {brief}",
             rec["id"].as_str().unwrap_or("?"),
             rec["kind"].as_str().unwrap_or("?")
         );
+        out.push(rec);
     }
-    Ok(())
+    Ok(CmdOutput::ok(
+        json!({"experiment": experiment, "records": out}),
+    ))
 }
 
-fn knobs_cmd(args: Args) -> Result<(), String> {
+fn knobs_cmd(args: Args) -> Result<CmdOutput, String> {
     args.finish()?;
     for k in crate::knobs::KNOBS {
-        println!(
+        crate::say!(
             "{:<22} {:<34} {:<26} {:?}/{:?}{}",
             k.name,
             k.env,
@@ -422,5 +509,83 @@ fn knobs_cmd(args: Args) -> Result<(), String> {
             if k.quotable { "" } else { " (unquotable)" }
         );
     }
-    Ok(())
+    Ok(CmdOutput::ok(json!({"knobs": crate::knobs::KNOBS})))
+}
+
+/// `tslab schema`: the JSON Schema of everything tslab writes.
+fn schema_cmd(args: Args) -> Result<CmdOutput, String> {
+    args.finish()?;
+    let doc: Value = serde_json::from_str(crate::schema::SCHEMA_DOC).map_err(|e| e.to_string())?;
+    if !crate::out::json_mode() {
+        crate::say!("{}", crate::schema::SCHEMA_DOC.trim_end());
+    }
+    Ok(CmdOutput::ok(json!({
+        "schema": crate::schema::SCHEMA,
+        "kinds": crate::schema::KINDS.iter().map(|(k, d)| json!({"kind": k, "holds": d})).collect::<Vec<_>>(),
+        "document": doc,
+    })))
+}
+
+/// The bench results of one experiment's eligible-or-not `kernel_curve`
+/// records that carry the version-1 shape (older ones have no hashes).
+pub fn bench_results(experiment: &str) -> Result<Vec<crate::bench::BenchResult>, String> {
+    let dir = crate::paths::experiment_dir(&lab_dir(), experiment)?;
+    Ok(crate::ledger::Ledger::open(&dir)?
+        .of_kind("kernel_curve")?
+        .into_iter()
+        .filter_map(|r| serde_json::from_value(r["result"].clone()).ok())
+        .collect())
+}
+
+/// `tslab hash-diff`: did any kernel's output bits change between two
+/// hashed `tslab kernel --hash` runs (two builds, or two arms' env)?
+fn hash_diff_cmd(mut args: Args) -> Result<CmdOutput, String> {
+    let before = args.required("--experiment")?;
+    let after = args.required("--against")?;
+    args.finish()?;
+    let (a, b) = (bench_results(&before)?, bench_results(&after)?);
+    // A case that ran more than once in one experiment: the latest wins.
+    let latest = |v: Vec<crate::bench::BenchResult>| {
+        let mut m: BTreeMap<(String, String), crate::bench::BenchResult> = BTreeMap::new();
+        for r in v {
+            m.insert((r.bench.clone(), r.case.clone()), r);
+        }
+        m.into_values().collect::<Vec<_>>()
+    };
+    let (a, b) = (latest(a), latest(b));
+    let (changes, compared, unmatched) = crate::bench::hash_diff(&a, &b);
+    if compared == 0 {
+        return Err(format!(
+            "no hashed points in common between {before} and {after}; run both with tslab kernel --hash"
+        ));
+    }
+    for c in &changes {
+        crate::say!(
+            "CHANGED {} {} {} x={}: {} -> {}",
+            c.bench,
+            c.case,
+            c.arm,
+            c.x,
+            c.before,
+            c.after
+        );
+    }
+    crate::say!(
+        "{} of {compared} hashed points changed ({unmatched} only in {after})",
+        changes.len()
+    );
+    let rec = json!({"experiment": before, "against": after, "compared": compared,
+                     "unmatched": unmatched, "changes": changes,
+                     "identical": changes.is_empty()});
+    let lab = lab_dir();
+    crate::ledger::Ledger::open(&crate::paths::experiment_dir(&lab, &after)?)?
+        .append("hash_diff", rec.clone())?;
+    // Exit 3, like a discard: a script gating a bit-exact change branches
+    // on it without parsing.
+    let code = if changes.is_empty() {
+        0
+    } else {
+        crate::experiment::EXIT_DISCARD
+    };
+    Ok(CmdOutput::with_code(code, rec))
 }

@@ -24,6 +24,7 @@ use crate::integrity;
 use crate::lock::MachineLock;
 use crate::orchestrate::{run_ab, AbRun, Session};
 use crate::paths::lab_dir;
+use crate::schema::CmdOutput;
 use crate::spec::ExperimentSpec;
 use crate::stats::Verdict;
 use crate::worker::Mode;
@@ -309,7 +310,7 @@ fn prepare(args: &mut Args, purpose: &str) -> Result<(Prepared, MachineLock), St
 }
 
 fn print_quality(q: &QualityResult) {
-    println!(
+    crate::say!(
         "quality ({:?}): {}  mean KL {:.3e}, top-1 {:.2}, bits equal {}, tokens equal {}",
         q.class,
         if q.passed { "PASS" } else { "FAIL" },
@@ -319,24 +320,24 @@ fn print_quality(q: &QualityResult) {
         q.tokens_equal
     );
     for r in &q.reasons {
-        println!("  {r}");
+        crate::say!("  {r}");
     }
 }
 
-pub fn gate_cmd(mut args: Args) -> Result<(), String> {
+pub fn gate_cmd(mut args: Args) -> Result<CmdOutput, String> {
     let (p, _lock) = prepare(&mut args, "gate")?;
     args.finish()?;
     let tests = required_tests(&p.repo, &p.spec.required_tests, &p.session.exp_dir)?;
     let q = quality_gate(&p.session, &p.spec)?;
     print_quality(&q);
-    p.session.ledger.append(
-        "gate",
-        json!({"spec_sha256": p.sha, "required_tests": tests, "quality": q}),
-    )?;
+    let rec = json!({"spec_sha256": p.sha, "required_tests": tests, "quality": q});
+    p.session.ledger.append("gate", rec.clone())?;
     if q.passed {
-        Ok(())
+        Ok(CmdOutput::ok(rec))
     } else {
-        Err("quality gate failed".into())
+        // Exit 1 as before, but keep the gate's reasons in the envelope.
+        eprintln!("tslab gate: quality gate failed");
+        Ok(CmdOutput::with_code(1, rec))
     }
 }
 
@@ -405,7 +406,7 @@ pub fn decide(
     }
 }
 
-pub fn run_experiment_cmd(mut args: Args) -> Result<i32, String> {
+pub fn run_experiment_cmd(mut args: Args) -> Result<CmdOutput, String> {
     let started = Instant::now();
     let (p, _lock) = prepare(&mut args, "run-experiment")?;
     args.finish()?;
@@ -413,16 +414,16 @@ pub fn run_experiment_cmd(mut args: Args) -> Result<i32, String> {
     let deadline = started + Duration::from_secs(60 * u64::from(p.spec.time_budget_min));
     let ledger = &p.session.ledger;
 
-    let finish = |decision: &str, reason: String, extra: Value| -> Result<i32, String> {
+    let finish = |decision: &str, reason: String, extra: Value| -> Result<CmdOutput, String> {
         let mut rec = json!({"spec_sha256": p.sha, "knob_env": knob, "decision": decision,
                              "reason": reason, "trusted": p.trusted,
                              "elapsed_s": started.elapsed().as_secs_f64()});
         if let (Value::Object(m), Value::Object(e)) = (&mut rec, extra) {
             m.extend(e);
         }
-        let id = ledger.append("experiment", rec)?;
-        println!("DECISION: {decision} ({reason}); ledger id {id}");
-        Ok(exit_code_for(decision))
+        let id = ledger.append("experiment", rec.clone())?;
+        crate::say!("DECISION: {decision} ({reason}); ledger id {id}");
+        Ok(CmdOutput::with_code(exit_code_for(decision), rec))
     };
 
     let tests = match required_tests(&p.repo, &p.spec.required_tests, &p.session.exp_dir) {
@@ -469,7 +470,7 @@ pub fn run_experiment_cmd(mut args: Args) -> Result<i32, String> {
         &verdict,
     );
     let memory = crate::cli::memory_check(&pairs, p.spec.memory_allowance_bytes, memory_noise);
-    println!("  memory: {memory}");
+    crate::say!("  memory: {memory}");
     let run_ids: Vec<(String, String)> = pairs
         .iter()
         .map(|(a, b)| (a.run_id.clone(), b.run_id.clone()))
@@ -488,7 +489,7 @@ pub fn run_experiment_cmd(mut args: Args) -> Result<i32, String> {
     finish(decision, reason, extra)
 }
 
-pub fn confirm_cmd(mut args: Args) -> Result<i32, String> {
+pub fn confirm_cmd(mut args: Args) -> Result<CmdOutput, String> {
     let (p, _lock) = prepare(&mut args, "confirm")?;
     args.finish()?;
     let ledger = &p.session.ledger;
@@ -531,12 +532,10 @@ pub fn confirm_cmd(mut args: Args) -> Result<i32, String> {
     // negative median there means the gain was specific to the main prompts.
     let confirmed = p.trusted && verdict.verdict != Verdict::Loss && verdict.median > 0.0;
     let decision = if confirmed { "keep" } else { DISCARD };
-    let id = ledger.append(
-        "confirm",
-        json!({"spec_sha256": p.sha, "verdict": verdict, "decision": decision}),
-    )?;
-    println!("CONFIRM: {decision}; ledger id {id}");
-    Ok(exit_code_for(decision))
+    let rec = json!({"spec_sha256": p.sha, "verdict": verdict, "decision": decision});
+    let id = ledger.append("confirm", rec.clone())?;
+    crate::say!("CONFIRM: {decision}; ledger id {id}");
+    Ok(CmdOutput::with_code(exit_code_for(decision), rec))
 }
 
 #[cfg(test)]
