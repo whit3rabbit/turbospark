@@ -38,6 +38,8 @@ tslab: the evaluator for kernel and method experiments (macOS).
   tslab ledger  --experiment NAME [--kind run|verdict|...]
   tslab trace   --model M [workload] [--arm NAME[:KEY=V,...]] [--record-s 10] [--experiment NAME]
                 (Metal System Trace of the arm's measured work; never quotable)
+  tslab workflow NAME|--plan PLAN.json [--model M] [--experiment E] [--var KEY=V]...
+                [--step ID] [--from ID] [--resume RUN] [--dry-run]   (--list, --print NAME)
   tslab capabilities --model M                    (what tslab can measure on this install, and tags)
   tslab inventory --model M                       (the install's weight shapes by dtype)
   tslab knobs
@@ -113,6 +115,29 @@ pub fn finish(cmd: &str, result: Result<CmdOutput, String>, json_out: bool) -> i
     code
 }
 
+/// Every command `dispatch` knows, which a workflow step may name.
+pub const COMMANDS: &[&str] = &[
+    "profile",
+    "ab",
+    "ledger",
+    "knobs",
+    "schema",
+    "hash-diff",
+    "export",
+    "report",
+    "inventory",
+    "capabilities",
+    "trace",
+    "gate",
+    "run-experiment",
+    "confirm",
+    "kernel",
+    "ane-plan",
+    "chain-capture",
+    "depth-replay",
+    "tree-replay",
+];
+
 /// Run one command in this process. `tslab workflow` calls this for each
 /// step, so a step and the same command typed alone are one code path.
 pub fn dispatch(cmd: &str, args: Args) -> Result<CmdOutput, String> {
@@ -128,6 +153,7 @@ pub fn dispatch(cmd: &str, args: Args) -> Result<CmdOutput, String> {
         "inventory" => inventory_cmd(args),
         "capabilities" => crate::families::capabilities_cmd(args),
         "trace" => crate::trace::trace_cmd(args),
+        "workflow" => crate::workflow::workflow_cmd(args),
         "report" => crate::export::report_cmd(args),
         "gate" => crate::experiment::gate_cmd(args),
         "run-experiment" => crate::experiment::run_experiment_cmd(args),

@@ -82,3 +82,5 @@ pub mod tree_replay;
 pub mod worker;
 #[cfg(target_os = "macos")]
 pub mod worker_audio;
+#[cfg(target_os = "macos")]
+pub mod workflow;

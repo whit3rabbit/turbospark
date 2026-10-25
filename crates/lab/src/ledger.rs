@@ -26,6 +26,14 @@ static COUNTER: AtomicU64 = AtomicU64::new(0);
 /// the `--json` envelope.
 static APPENDED: Mutex<Vec<(RecordRef, Value)>> = Mutex::new(Vec::new());
 
+/// Return lines to the front of the collected list: a caller that took
+/// them to look (a workflow step) hands them back for the envelope.
+pub fn put_back(mut lines: Vec<(RecordRef, Value)>) {
+    let mut g = APPENDED.lock().unwrap_or_else(|p| p.into_inner());
+    lines.append(&mut g);
+    *g = lines;
+}
+
 /// The lines appended since the last call, oldest first.
 pub fn take_appended() -> Vec<(RecordRef, Value)> {
     std::mem::take(&mut *APPENDED.lock().unwrap_or_else(|p| p.into_inner()))

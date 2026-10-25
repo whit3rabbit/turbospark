@@ -1,0 +1,33 @@
+{
+  "name": "new-family",
+  "description": "program.md's checks for a family the lab has not measured: coverage, inventory, profile, hashed kernels, null floor, dispatch probe, speculative round costs, verify ladder, tree replay, report",
+  "vars": {"prompt": "protocol:long-synthesis", "decode": "64"},
+  "steps": [
+    {"id": "capabilities", "command": "capabilities", "args": {"model": "{model}"}},
+    {"id": "inventory", "command": "inventory", "args": {"model": "{model}"}, "when": ["text"]},
+    {"id": "profile", "command": "profile", "when": ["text", "runs", "chunked_prefill"],
+     "args": {"model": "{model}", "experiment": "{experiment}", "prompt": "{prompt}", "decode": "{decode}", "rounds": 3}},
+    {"id": "profile_sequential", "command": "profile", "when": ["text", "runs", "!chunked_prefill"],
+     "args": {"model": "{model}", "experiment": "{experiment}", "prompt": "{prompt}", "decode": "{decode}", "rounds": 3, "chunk": "off"}},
+    {"id": "kernels", "command": "kernel", "when": ["text"], "continue_on_error": true,
+     "args": {"model": "{model}", "experiment": "{experiment}", "bench": "int4_matmul,int8_matmul,attn_decode,rows_attn,moe_routed", "hash": true, "rows": "1,2,4,8,9,16,32,64"}},
+    {"id": "null", "command": "ab", "when": ["text", "runs", "chunked_prefill"], "continue_on_error": true,
+     "args": {"model": "{model}", "experiment": "{experiment}", "prompt": "{prompt}", "decode": "{decode}", "null": true}},
+    {"id": "dispatch_probe", "command": "profile", "when": ["probe"], "continue_on_error": true,
+     "args": {"model": "{model}", "experiment": "{experiment}", "prompt": "protocol:short-explanation", "decode": "{decode}", "dispatch-probe": "0,4,8", "rounds": 2}},
+    {"id": "spec_rounds_mtp", "command": "profile", "when": ["mtp"], "continue_on_error": true,
+     "args": {"model": "{model}", "experiment": "{experiment}", "prompt": "{prompt}", "decode": "128", "rounds": 2,
+              "arm": ["mtp2~mtp:2:spec_stats=1", "mtp4~mtp:4:spec_stats=1"]}},
+    {"id": "spec_rounds_dflash", "command": "profile", "when": ["dflash"], "continue_on_error": true,
+     "args": {"model": "{model}", "experiment": "{experiment}", "prompt": "{prompt}", "decode": "128", "rounds": 2,
+              "arm": ["d2~dflash:2:spec_stats=1", "d7~dflash:7:spec_stats=1"]}},
+    {"id": "verify_ladder", "command": "kernel", "when": ["bench:verify_ladder"], "continue_on_error": true,
+     "args": {"model": "{model}", "experiment": "{experiment}", "bench": "verify_ladder", "rows": "1,2,3,4,5,8,9", "verify-from": "{experiment}"}},
+    {"id": "tree_replay_mtp", "command": "tree-replay", "when": ["mtp"], "continue_on_error": true,
+     "args": {"model": "{model}", "experiment": "{experiment}", "drafter": "mtp"}},
+    {"id": "tree_replay_dflash", "command": "tree-replay", "when": ["dflash"], "continue_on_error": true,
+     "args": {"model": "{model}", "experiment": "{experiment}", "drafter": "dflash", "depth": 7, "serve-block": 7}},
+    {"id": "report", "command": "report",
+     "args": {"experiment": "{experiment}", "html": "{lab}/{experiment}/report.html", "force": true}}
+  ]
+}

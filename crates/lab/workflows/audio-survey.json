@@ -1,0 +1,16 @@
+{
+  "name": "audio-survey",
+  "description": "an audio install: coverage, hashed audio kernel benches, a profile of its job with stage times, and a null floor",
+  "vars": {"job": "{lab_src}/workloads/audio/music-short.json"},
+  "steps": [
+    {"id": "capabilities", "command": "capabilities", "args": {"model": "{model}"}},
+    {"id": "kernels", "command": "kernel", "when": ["audio"], "continue_on_error": true,
+     "args": {"model": "{model}", "experiment": "{experiment}", "bench": "all", "hash": true}},
+    {"id": "profile", "command": "profile", "when": ["audio", "runs"],
+     "args": {"model": "{model}", "experiment": "{experiment}", "audio-job": "{job}", "rounds": 3}},
+    {"id": "null", "command": "ab", "when": ["audio", "runs"], "continue_on_error": true,
+     "args": {"model": "{model}", "experiment": "{experiment}", "audio-job": "{job}", "null": true, "metric": "audio_run_s"}},
+    {"id": "report", "command": "report",
+     "args": {"experiment": "{experiment}", "html": "{lab}/{experiment}/report.html", "force": true}}
+  ]
+}
