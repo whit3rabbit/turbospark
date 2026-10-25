@@ -9,6 +9,41 @@ struct AudioModelPickerView: View {
     @State private var confirmingDelete = false
     /// A profile whose install terms are on screen awaiting acceptance.
     @State private var acknowledging: AudioProfile?
+    /// A profile whose low-space confirmation is on screen (requirement 2.3).
+    @State private var confirmingLowSpace: AudioProfile?
+    /// The library the user picked for the download. Nil follows the default
+    /// (requirement 2.2). Per install: not remembered across launches.
+    @State private var destination: String?
+
+    /// The `library:` the download takes for the menu's choice: nil for This Mac.
+    private var chosenLibrary: String? {
+        model.installDestinations.libraryForInstall(selection: destination)
+    }
+
+    /// What the gate says about downloading `profile` into the chosen library:
+    /// that library's room against the profile's size, and the connect statement
+    /// when the library is not there. Audio had no free-space check before.
+    private func downloadDecision(_ profile: AudioProfile) -> ModelInstallDecision {
+        model.audioInstallDecision(for: profile, library: chosenLibrary)
+    }
+
+    /// The download button: the gate first, then the terms the profile asks for,
+    /// then the install. The acknowledgement flow is unchanged.
+    private func requestDownload(_ profile: AudioProfile) {
+        switch downloadDecision(profile) {
+        case .blocked: return
+        case .confirm: confirmingLowSpace = profile
+        case .allowed: continueDownload(profile)
+        }
+    }
+
+    private func continueDownload(_ profile: AudioProfile) {
+        if profile.requiredAcknowledgments.isEmpty {
+            controller.installSelectedModel(library: chosenLibrary)
+        } else {
+            acknowledging = profile
+        }
+    }
     @Environment(\.locale) private var locale
 
     private var download: ModelDownload? {
@@ -40,7 +75,7 @@ struct AudioModelPickerView: View {
             Picker(selection: Binding(get: { controller.recipe.modelID }, set: { controller.selectModel($0) })) {
                 Text("Choose a model", bundle: .module).tag(Optional<String>.none)
                 ForEach(controller.availableProfiles) { profile in
-                    rowLabel(profile).tag(Optional(profile.identity.alias))
+                    pickerRow(profile).tag(Optional(profile.identity.alias))
                 }
             } label: { Text("Audio model", bundle: .module) }
             .labelsHidden().frame(maxWidth: .infinity, alignment: .leading)
@@ -89,10 +124,39 @@ struct AudioModelPickerView: View {
         } message: {
             if let name = controller.selectedProfile?.displayName { Text(name) }
         }
+        .modelMoveSheet(model: model, kinds: [.audio])
+        .alert(
+            Text("Install anyway?", bundle: .module),
+            isPresented: Binding(
+                get: { confirmingLowSpace != nil }, set: { if !$0 { confirmingLowSpace = nil } }),
+            presenting: confirmingLowSpace
+        ) { profile in
+            Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
+            Button { continueDownload(profile) } label: { Text("Install", bundle: .module) }
+        } message: { profile in
+            Text(verbatim: downloadDecision(profile).reason ?? "")
+        }
         .task {
             if controller.installedPaths.isEmpty || controller.profiles.isEmpty {
                 controller.refreshModels()
             }
+        }
+    }
+
+    /// A row of the model menu. An install on a drive that is away reads "Not
+    /// connected" with a glyph; it is neither incompatible nor missing.
+    @ViewBuilder
+    private func pickerRow(_ profile: AudioProfile) -> some View {
+        let label = AudioOfflineInstalls.pickerLabel(
+            displayName: profile.displayName, status: controller.installStatus(for: profile))
+        if let glyph = label.glyph {
+            Label {
+                rowLabel(profile) + Text(verbatim: ", ") + Text("Not connected", bundle: .module)
+            } icon: {
+                Image(systemName: glyph)
+            }
+        } else {
+            rowLabel(profile)
         }
     }
 
@@ -108,6 +172,15 @@ struct AudioModelPickerView: View {
             }
             .appAction(.primary, size: .large)
             .disabled(controller.isManagingInstall || controller.isBusy)
+        }
+        // An installed model with a receipt can move to another library (task 6.11).
+        // The sheet says why it cannot while the model is resident or served.
+        if let subject = controller.moveSubject(for: profile) {
+            Button { model.presentMoveSheet(for: subject) } label: {
+                Label { Text("Move to...", bundle: .module) } icon: { Image(systemName: "arrow.left.arrow.right.circle") }
+            }
+            .appAction(.secondary, size: .small)
+            .disabled(controller.isManagingInstall || model.modelsBeingChanged.contains(subject.installId))
         }
         if controller.canDeleteSelectedModel {
             Button(role: .destructive) { confirmingDelete = true } label: {
@@ -157,6 +230,9 @@ struct AudioModelPickerView: View {
                 } else if controller.modelInstalled {
                     Label { Text("Installed", bundle: .module) } icon: { Image(systemName: "checkmark.circle") }
                         .foregroundStyle(.appAccent)
+                } else if case .notConnected = controller.installStatus(for: profile) {
+                    // A shape and a word: the state survives color blindness.
+                    Label { Text("Not connected", bundle: .module) } icon: { Image(systemName: LibraryRowStatus.notConnected.glyph) }
                 }
             }.themedFont(.tiny).foregroundStyle(.appSecondary)
         }
@@ -206,6 +282,19 @@ struct AudioModelPickerView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         } else if let download, !download.status.isTerminal {
             downloadProgress(download)
+        } else if let statement = AudioOfflineInstalls.statement(for: controller.installStatus(for: profile)),
+            !controller.modelInstalled
+        {
+            // Installed on a drive that is away: the download button is replaced
+            // by this statement, because a download would be refused as
+            // `alias_elsewhere` (task 6.10).
+            Label {
+                Text(verbatim: statement).fixedSize(horizontal: false, vertical: true)
+            } icon: {
+                Image(systemName: LibraryRowStatus.notConnected.glyph)
+            }
+            .foregroundStyle(.appSecondary)
+            .accessibilityElement(children: .combine)
         } else if !profile.identity.repository.isEmpty {
             if let download, download.status.canRetry {
                 if let failure = download.failure {
@@ -219,19 +308,36 @@ struct AudioModelPickerView: View {
                 .appAction(.primary, size: .large)
                 .disabled(!model.canRetryModelDownload(download))
             } else {
+                // Where the model goes: only when there is a choice (requirement
+                // 2.1), and the gate below counts that library's room.
+                InstallDestinationPicker(model: model, selection: $destination)
+                let decision = downloadDecision(profile)
+                if let reason = decision.reason {
+                    Label(
+                        reason,
+                        systemImage: decision.isBlocked ? "xmark.octagon.fill" : "exclamationmark.triangle.fill"
+                    )
+                    .themedFont(.small)
+                    .foregroundStyle(decision.isBlocked ? Color.red : Color.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
                 Button {
-                    if profile.requiredAcknowledgments.isEmpty { controller.installSelectedModel() }
-                    else { acknowledging = profile }
+                    requestDownload(profile)
                 } label: {
                     Label { Text("Download model", bundle: .module) } icon: { Image(systemName: "arrow.down.circle") }
                         .frame(maxWidth: .infinity)
                 }
                 .appAction(.primary, size: .large)
-                .disabled(!model.canQueueModelDownload(.audio(identity: profile.identity)) || controller.isBusy)
+                .disabled(
+                    !model.canQueueModelDownload(.audio(identity: profile.identity)) || controller.isBusy
+                        || decision.isBlocked)
                 .alert(Text("Before downloading", bundle: .module),
                        isPresented: Binding(get: { acknowledging != nil }, set: { if !$0 { acknowledging = nil } }),
                        presenting: acknowledging) { terms in
-                    Button { controller.installSelectedModel(acknowledged: terms.requiredAcknowledgments.map(\.id)) } label: {
+                    Button {
+                        controller.installSelectedModel(
+                            acknowledged: terms.requiredAcknowledgments.map(\.id), library: chosenLibrary)
+                    } label: {
                         Text("Accept and download", bundle: .module)
                     }
                     Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }

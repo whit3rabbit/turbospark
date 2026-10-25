@@ -18,9 +18,9 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use catalog::{AudioCatalog, AudioProfile, Catalog, Client, Store};
+use catalog::{AudioCatalog, AudioProfile, Catalog, Client, InstallKind, Store};
 
-use super::{human_bytes, install_audio_sigint_handler, progress, AUDIO_PULL_INTERRUPTED};
+use super::{destination, human_bytes, install_sigint_handler, progress, INTERRUPTED};
 use crate::{Error, Options};
 
 /// What the listing says about where a row runs.
@@ -89,7 +89,8 @@ pub fn list_audio(store: &Store) -> Result<(), Error> {
 }
 
 /// Installs one pinned audio profile through the shared authenticated Hub
-/// transport and its verified staging lifecycle. `accepted` lists the
+/// transport and its verified staging lifecycle, into `--library` or the
+/// default library, settled before any request. `accepted` lists the
 /// acknowledgment ids the caller passed with `--accept`.
 pub fn pull_audio(
     catalog: &Catalog,
@@ -148,16 +149,18 @@ pub fn pull_audio(
             "{alias} has no terms with id {stray:?}"
         )));
     }
+    let (target, env) =
+        destination::library_target(store, InstallKind::Audio, alias, options.library.as_deref())?;
 
-    AUDIO_PULL_INTERRUPTED.store(false, Ordering::Release);
-    install_audio_sigint_handler();
+    INTERRUPTED.store(false, Ordering::Release);
+    install_sigint_handler();
     let cancel = catalog::CancelFlag::new();
     let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let watcher_done = Arc::clone(&done);
     let watcher_cancel = cancel.clone();
     let watcher = thread::spawn(move || {
         while !watcher_done.load(Ordering::Acquire) {
-            if AUDIO_PULL_INTERRUPTED.load(Ordering::Acquire) {
+            if INTERRUPTED.load(Ordering::Acquire) {
                 watcher_cancel.cancel();
                 break;
             }
@@ -182,22 +185,33 @@ pub fn pull_audio(
     };
     // Music keeps its own promote step; every other row takes the shared one.
     let result = match profile.filter(|p| p.family != "minimax_music3") {
-        Some(profile) => audio.install_acknowledged(
+        Some(profile) => audio.install_acknowledged_into(
             client,
             catalog,
             store,
             &profile.identity,
             &options.accept,
+            target.library_id.as_deref(),
+            &env,
             &mut progress,
             &cancel,
         ),
-        None => catalog::install_music(client, catalog, store, alias, &mut progress, &cancel),
+        None => catalog::install_music_into(
+            client,
+            catalog,
+            store,
+            alias,
+            target.library_id.as_deref(),
+            &env,
+            &mut progress,
+            &cancel,
+        ),
     };
     done.store(true, Ordering::Release);
     watcher
         .join()
         .map_err(|_| Error::Failed("audio pull cancellation watcher failed".to_string()))?;
-    let installed = result.map_err(Error::Failed)?;
+    let installed = result.map_err(destination::failure)?;
     println!(
         "\ninstalled {} ({}) to {}",
         installed.alias,

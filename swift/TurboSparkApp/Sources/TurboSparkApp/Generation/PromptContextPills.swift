@@ -9,10 +9,16 @@ struct PromptModelSelectorPill: View {
     var body: some View {
         Menu {
             Section(header: Text("Installed Models", bundle: .module)) {
-                if model.installed.isEmpty {
-                    Text("No models installed", bundle: .module)
+                // The loadable list only (requirement 3.3).
+                let loadable = model.loadableModels
+                if loadable.isEmpty {
+                    if let statement = model.notConnectedStatement {
+                        Text(verbatim: statement)
+                    } else {
+                        Text("No models installed", bundle: .module)
+                    }
                 } else {
-                    ForEach(model.installed) { installed in
+                    ForEach(loadable) { installed in
                         Button {
                             model.selectModel(installed)
                         } label: {

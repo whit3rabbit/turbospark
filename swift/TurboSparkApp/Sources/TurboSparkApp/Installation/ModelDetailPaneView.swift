@@ -13,6 +13,9 @@ struct ModelDetailPaneView: View {
     let recommendation: ModelRecommendation?
     @State private var showingDeleteConfirm = false
     @State private var showsInstallConfirm = false
+    /// The library the user picked for this install. Nil follows the default
+    /// (requirement 2.2). Per install: it is not remembered across launches.
+    @State private var destination: String?
 
     /// What this machine says about installing this row.
     ///
@@ -20,14 +23,33 @@ struct ModelDetailPaneView: View {
     /// free disk are the two questions left. `ModelProbeSheet` adds the probe
     /// arm for an arbitrary repository.
     private var installDecision: ModelInstallDecision {
-        ModelInstallGate.decide(
-            probeRunnable: nil,
-            refusedBecause: nil,
+        model.installGateDecision(
             verdict: recommendation?.verdict,
             installBytes: recommendation?.installBytes ?? entry.installBytes,
             downloadBytes: entry.downloadBytes,
-            freeDiskBytes: ModelInstallGate.freeSpaceOnModelStore(),
-            unmountedStoreVolume: ModelInstallGate.unmountedStoreVolume())
+            library: chosenLibrary)
+    }
+
+    /// The `library:` the install takes for the menu's choice: nil for This Mac.
+    /// A choice never made follows the default library, or This Mac when that
+    /// drive is away.
+    private var chosenLibrary: String? {
+        model.installDestinations.libraryForInstall(selection: destination)
+    }
+
+    /// Whether the model is installed nowhere, usable, or on a drive that is away.
+    /// The hub reads `model.installed`, which holds available rows only, so an
+    /// install on an away drive looked absent and the pane offered a download
+    /// that `alias_elsewhere` would refuse.
+    private var hubState: HubInstallState {
+        HubInstallState.resolve(
+            alias: entry.alias, isInstalled: isInstalled, rows: model.libraryState.allInstalled)
+    }
+
+    /// The Download & Install button, and the menu that goes with it, are on
+    /// screen.
+    private var offersInstall: Bool {
+        !isDownloadingThis && !isActive && hubState.offersDownload
     }
 
     private var visuals: ModelFamilyVisuals {
@@ -246,10 +268,31 @@ struct ModelDetailPaneView: View {
                 actionButtons
             }
 
+            // Where the model will be installed: only when there is a choice
+            // (requirement 2.1), and only while the download is on offer.
+            if offersInstall {
+                InstallDestinationPicker(model: model, selection: $destination)
+            }
+
+            // A model installed on a drive that is away is not offered for
+            // download: the statement says where it is, with a glyph as well as
+            // the words.
+            if let statement = hubState.statement(), !isInstalled {
+                Label {
+                    Text(verbatim: statement)
+                } icon: {
+                    Image(systemName: hubState.glyph)
+                }
+                .themedFont(.small)
+                .foregroundStyle(.appSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityElement(children: .combine)
+            }
+
             // The cause sits BESIDE the control, in the card's vertical
             // stack rather than the button row. A disabled button whose
             // reason lives only in a tooltip reads as a broken button.
-            if let reason = installDecision.reason, !isInstalled {
+            if let reason = installDecision.reason, !isInstalled, hubState.offersDownload {
                 Label(
                     reason,
                     systemImage: installDecision.isBlocked
@@ -309,12 +352,16 @@ struct ModelDetailPaneView: View {
                 }
                 .appAction(.destructive)
                 .disabled(!model.canDeleteModel)
+            } else if case .installedOffline = hubState {
+                // The statement under the card names the drive. There is
+                // nothing to download: the install exists, on a drive to connect.
+                EmptyView()
             } else {
                 Button {
                     if case .confirm = installDecision {
                         showsInstallConfirm = true
                     } else {
-                        model.installModel(alias: entry.alias)
+                        model.installModel(alias: entry.alias, library: chosenLibrary)
                     }
                 } label: {
                     Label { Text("Download & Install", bundle: .module) } icon: { Image(systemName: "arrow.down.circle.fill") }
@@ -326,7 +373,7 @@ struct ModelDetailPaneView: View {
                 .accessibilityHint(Text("Downloads and installs \(entry.alias)", bundle: .module))
                 .alert(Text("Install anyway?", bundle: .module), isPresented: $showsInstallConfirm) {
                     Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
-                    Button { model.installModel(alias: entry.alias) } label: { Text("Install", bundle: .module) }
+                    Button { model.installModel(alias: entry.alias, library: chosenLibrary) } label: { Text("Install", bundle: .module) }
                 } message: {
                     Text(installDecision.reason ?? "")
                 }

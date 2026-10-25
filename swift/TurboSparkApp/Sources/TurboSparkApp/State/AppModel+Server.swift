@@ -342,6 +342,7 @@ extension AppModel {
         self.server = nil
         self.serverInfo = nil
         self.serverAttachedSessions = [:]
+        self.serverAudioModelPaths = [:]
         self.serverStartedGuardrails = nil
         showToast(AppStrings.localized("Server Stopped"), style: .info)
     }
@@ -422,10 +423,11 @@ extension AppModel {
     }
 
     /// Installed models that are NOT already being served, which is what the
-    /// pane's Load Model list offers.
+    /// pane's Load Model list offers. Only models that can be opened: a model on
+    /// a drive that is away is not offered (requirement 3.3).
     public var serverAttachableModels: [InstalledModel] {
         let attached = Set(serverInfo?.models ?? [])
-        return installed.filter { !attached.contains(Self.servedModelID(for: $0)) }
+        return loadableModels.filter { !attached.contains(Self.servedModelID(for: $0)) }
     }
 
     /// The id a server serves this install under: its directory's own file

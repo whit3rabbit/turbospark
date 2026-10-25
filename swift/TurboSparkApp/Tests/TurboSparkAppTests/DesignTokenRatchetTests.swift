@@ -38,8 +38,10 @@ final class DesignTokenRatchetTests: XCTestCase {
             fix: "use .appAccent or theme.accent"),
         Rule(
             name: "system secondary style",
-            pattern: #"Color\.secondary|Color\.primary\.opacity|\(\.secondary\)|\(\.tertiary\)"#,
-            baseline: 344,
+            // `.appAction(.secondary)` is a button role, not a color, so it is
+            // not counted.
+            pattern: #"Color\.secondary|Color\.primary\.opacity|(?<!appAction)\(\.secondary\)|\(\.tertiary\)"#,
+            baseline: 265,
             fix: "use .appSecondary or .appSurface"),
     ]
 

@@ -8,10 +8,20 @@ struct ImageModelManagerView: View {
     @ObservedObject var model: AppModel
 
     @State private var imageToDelete: ImageInstalledModel?
+    /// The library the user picked for the downloads on this page. Nil follows
+    /// the default (requirement 2.2). Per install: not remembered across launches.
+    @State private var destination: String?
+
+    /// The `library:` the installs take for the menu's choice: nil for This Mac.
+    private var chosenLibrary: String? {
+        model.installDestinations.libraryForInstall(selection: destination)
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
+                // Where a download goes: only when there is a choice (2.1).
+                InstallDestinationPicker(model: model, selection: $destination)
                 recommendationCard
                 installedSection
                 curatedSection
@@ -180,6 +190,18 @@ struct ImageModelManagerView: View {
             // additional model folder is dropped from the list and its files
             // stay where they are, the same rule the text models follow.
             let managed = model.isManagedImageModel(image)
+            // Only an install the engine lists can be moved (task 6.11); the sheet
+            // is hosted by the Installed Models list around this page.
+            if let subject = MoveSubject.make(image: image, isManaged: managed) {
+                Button {
+                    model.presentMoveSheet(for: subject)
+                } label: {
+                    Label { Text("Move to...", bundle: .module) } icon: { Image(systemName: "arrow.left.arrow.right.circle") }
+                }
+                .appAction(.secondary, size: .small)
+                .disabled(model.modelsBeingChanged.contains(subject.installId))
+                .accessibilityValue(Text(verbatim: UntrustedText.display(image.alias)))
+            }
             Button(role: .destructive) {
                 imageToDelete = image
             } label: {
@@ -260,7 +282,7 @@ struct ImageModelManagerView: View {
                 .disabled(true)
             } else {
                 Button {
-                    model.installImageModel(source)
+                    model.installImageModel(source, library: chosenLibrary)
                 } label: {
                     Label {
                         Text("Download", bundle: .module)
@@ -285,6 +307,9 @@ struct ImageModelManagerView: View {
 struct ImageModelRecommendationSheet: View {
     @ObservedObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
+    /// The library the user picked for the download. Nil follows the default
+    /// (requirement 2.2). Per install: not remembered across launches.
+    @State private var destination: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -310,6 +335,9 @@ struct ImageModelRecommendationSheet: View {
             .foregroundStyle(.appSecondary)
             .fixedSize(horizontal: false, vertical: true)
 
+            // Where the download goes: only when there is a choice (2.1).
+            InstallDestinationPicker(model: model, selection: $destination)
+
             ForEach(model.recommendedImageModelSources) { source in
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
@@ -317,7 +345,9 @@ struct ImageModelRecommendationSheet: View {
                             .themedFont(.base, weight: .medium)
                         Spacer()
                         Button {
-                            model.installImageModel(source)
+                            model.installImageModel(
+                                source,
+                                library: model.installDestinations.libraryForInstall(selection: destination))
                         } label: {
                             Text("Download", bundle: .module)
                         }

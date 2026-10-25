@@ -5,6 +5,9 @@ import TurboSpark
 struct ModelRecommendationRow: View {
     let recommendation: ModelRecommendation
     @ObservedObject var model: AppModel
+    /// The library the install goes into (nil is This Mac). The list above the
+    /// rows owns the menu that chose it.
+    var library: String? = nil
 
     private var isMoE: Bool {
         ModelRecommendationRow.isMoEModel(recommendation)
@@ -93,7 +96,7 @@ struct ModelRecommendationRow: View {
 
             // Install Button
             Button {
-                model.installModel(alias: recommendation.alias)
+                model.installModel(alias: recommendation.alias, library: library)
             } label: {
                 Label { Text("Install & Start", bundle: .module) } icon: { Image(systemName: "arrow.down.circle.fill") }
             }

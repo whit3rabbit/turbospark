@@ -267,37 +267,20 @@ final class ModelFitAndInstallGateTests: XCTestCase {
         XCTAssertEqual(d, .confirm(d.reason ?? ""))
     }
 
-    // MARK: - A store on an external volume
+    // MARK: - A destination that is not connected
 
-    /// Only a root under `/Volumes/<name>` whose volume is gone counts. The
-    /// walk-up in `freeSpaceOnModelStore` used to land on `/Volumes` and
-    /// report the boot disk's free space as the drive's.
-    func testAStoreOnAnUnmountedVolumeNamesTheVolume() {
-        let mounted: Set<String> = ["/Volumes/Studio SSD"]
-        let exists: (String) -> Bool = { mounted.contains($0) }
-        XCTAssertEqual(
-            ModelInstallGate.unmountedStoreVolume(root: "/Volumes/T7/turbospark", pathExists: exists),
-            "T7")
-        XCTAssertEqual(
-            ModelInstallGate.unmountedStoreVolume(
-                root: "/Volumes/Studio SSD/../T7/models", pathExists: exists),
-            "T7", "the path is standardized before the volume is read")
-        XCTAssertNil(
-            ModelInstallGate.unmountedStoreVolume(
-                root: "/Volumes/Studio SSD/turbospark", pathExists: exists))
-        XCTAssertNil(
-            ModelInstallGate.unmountedStoreVolume(root: "/Users/me/.turbospark", pathExists: exists))
-        XCTAssertNil(ModelInstallGate.unmountedStoreVolume(root: "/Volumes", pathExists: exists))
-    }
-
-    /// An offline store blocks with the drive's name instead of passing on a
-    /// free-space number that belongs to another disk. A probe refusal still
+    /// An offline destination blocks with the drive's name instead of passing on
+    /// a free-space number that belongs to another disk. A probe refusal still
     /// outranks it: connecting a drive does not give a model a decode flow.
-    func testAnUnmountedStoreVolumeBlocksAndNamesTheDrive() throws {
+    ///
+    /// (This replaced the Move Store case, which read a retired store root and
+    /// is gone with the feature. The per-destination cases are in
+    /// `InstallDestinationGateTests`.)
+    func testAnUnconnectedDestinationBlocksAndNamesTheDrive() throws {
         let d = ModelInstallGate.decide(
             probeRunnable: true, refusedBecause: nil, verdict: .tight,
             installBytes: 18_000_000_000, freeDiskBytes: 20_000_000_000,
-            unmountedStoreVolume: "T7")
+            destinationName: "T7", unconnectedDestination: "T7")
         XCTAssertTrue(d.isBlocked)
         let reason = try XCTUnwrap(d.reason)
         XCTAssertTrue(reason.contains("T7"), "got \(reason)")
@@ -306,7 +289,7 @@ final class ModelFitAndInstallGateTests: XCTestCase {
         let why = "no decode flow here"
         let refused = ModelInstallGate.decide(
             probeRunnable: false, refusedBecause: why, verdict: nil,
-            installBytes: nil, freeDiskBytes: nil, unmountedStoreVolume: "T7")
+            installBytes: nil, freeDiskBytes: nil, destinationName: "T7", unconnectedDestination: "T7")
         XCTAssertEqual(refused.reason, why)
     }
 }

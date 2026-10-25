@@ -13,27 +13,34 @@ extension AppModel {
     // `internal` rather than `private`: exercised directly by
     // ModelIdentityTests via `@testable import`.
     /// Returns whether a load was actually started.
+    ///
+    /// **THROUGH THE CHOKE POINT** (task 6.7). A warned model asks first
+    /// (`requestLoad`) and a model that is not there is refused, so this returns
+    /// false for both: nothing started.
     @discardableResult
     public func selectModel(_ model: InstalledModel) -> Bool {
-        // Keyed on path (state#14): two distinct rows can share an alias
-        // when one is a scanned LM Studio/Custom entry, so alias equality
-        // here could read "already selected" for a DIFFERENT model on disk
-        // and silently refuse to switch to it.
-        // **"ALREADY SELECTED" IS NOT "ALREADY LOADED"** (state#84). This
-        // returned whenever the paths matched, session or no session -- so
-        // after an unload, or after an open that FAILED, both "Load Model"
-        // and "Load & Chat" were dead for the very model the user was
-        // looking at, with nothing on screen to say why. The refusal is for
-        // a redundant re-open, which needs a live session to be redundant.
-        guard !generating, !opening,
-            !(loadedModelPath == model.path)
-        else { return false }
+        requestLoad(model, purpose: .chat(switchToChat: false)) == .started
+    }
+
+    /// The load itself, once the gate has said yes.
+    ///
+    /// Keyed on path (state#14): two distinct rows can share an alias
+    /// when one is a scanned LM Studio/Custom entry, so alias equality
+    /// here could read "already selected" for a DIFFERENT model on disk
+    /// and silently refuse to switch to it.
+    /// **"ALREADY SELECTED" IS NOT "ALREADY LOADED"** (state#84). This
+    /// returned whenever the paths matched, session or no session -- so
+    /// after an unload, or after an open that FAILED, both "Load Model"
+    /// and "Load & Chat" were dead for the very model the user was
+    /// looking at, with nothing on screen to say why. The refusal is for
+    /// a redundant re-open, which needs a live session to be redundant
+    /// (`requestLoad` makes it against what the session was opened with).
+    func beginChatLoad(_ model: InstalledModel) {
         selected = model
         modelPathText = model.path
         Task {
             await open(model)
         }
-        return true
     }
 
     public func openModelHub() {
@@ -44,10 +51,9 @@ extension AppModel {
         // Compared against what the session was OPENED with, not `selected`:
         // an install that finishes mid-turn selects the new row while the
         // old model stays loaded, and "already selected" then skipped the load.
-        if loadedModelPath != model.path {
-            selectModel(model)
-        }
-        activeSection = .chat
+        // The Chat pane opens once the load has started, or at once for the model
+        // already in memory; a warned model keeps the pane until it is answered.
+        requestLoad(model, purpose: .chat(switchToChat: true))
     }
 
     /// Re-reads machine telemetry (thermal state, memory pressure, Low Power
@@ -263,16 +269,22 @@ extension AppModel {
         return options
     }
 
-    /// **PATH FIRST, ALIAS AS THE LEGACY FALLBACK** (state#96). `setReasoning`
-    /// writes the path now, and reading the alias first would let an entry
-    /// written before that change shadow the fresh one for as long as the
-    /// alias entry exists -- which is forever, since nothing rewrites it.
+    /// **INSTALL ID FIRST, THEN THE LEGACY PATH, THEN THE ALIAS** (task 5.5,
+    /// requirement 8.1; state#96 had made it path then alias). The level lives
+    /// in `ModelOrganizationStore` under the model's `install_id`, so it is
+    /// still found after the model moves or its drive reconnects under another
+    /// name. `modelReasoningDefaults` is the legacy table: the first path or
+    /// alias entry found there is copied to the install id (unless the id
+    /// already has a level, which wins) and removed from the table here. The
+    /// alias stays last because an alias entry shadows a fresher path entry for
+    /// as long as it exists, and nothing rewrites it.
     public func restoreReasoningPreference(for model: InstalledModel) {
-        if let saved = modelReasoningDefaults[model.path],
-            let level = GenerateOptions.Reasoning(rawValue: saved) {
-            self.reasoning = level
-        } else if let saved = modelReasoningDefaults[model.alias],
-            let level = GenerateOptions.Reasoning(rawValue: saved) {
+        let legacyBefore = modelReasoningDefaults
+        let saved = ModelOrganizationStore.shared.reasoningDefault(
+            for: model, migratingLegacyFrom: &modelReasoningDefaults)
+        // The retired legacy key reaches disk with the next settings save.
+        if modelReasoningDefaults != legacyBefore { persistSettingsDebounced() }
+        if let saved, let level = GenerateOptions.Reasoning(rawValue: saved) {
             self.reasoning = level
         }
     }
@@ -284,6 +296,12 @@ extension AppModel {
         // up naming different models -- the pane says one thing and the turn
         // runs another, with no error anywhere.
         guard !generating, !opening else { return }
+        // **THE NET UNDER EVERY LOAD PATH** (task 6.7, requirement 3.3): a model
+        // whose drive is away or whose folder is gone is never opened, whatever
+        // asked, including the paths that cannot ask a question (the load after
+        // an install, a reload). The interactive paths were refused earlier by
+        // `requestLoad`; this one says why in a toast and never in `error`.
+        guard canOpenNow(model) else { return }
         if let steeringReason = steeringOpenBlockReason(for: model) {
             let message = AppStrings.localized(
                 "Cannot load \(model.alias) with steering enabled: \(steeringReason)")
@@ -291,6 +309,7 @@ extension AppModel {
             showToast(message, style: .error, duration: 8.0)
             return
         }
+        loadObserver?(model)
         opening = true
         defer { opening = false }
         await openSession(model)
@@ -299,7 +318,7 @@ extension AppModel {
     /// The load itself, shared by `open(_:)` and `setModelURL(_:)` so the
     /// steering check, reasoning clamp, server re-attach and estimate refresh
     /// cannot drift apart again. The caller owns `opening`.
-    private func openSession(_ model: InstalledModel) async {
+    func openSession(_ model: InstalledModel) async {
         error = nil
         // **DETACHED RATHER THAN MERELY DROPPED, and detached rather than
         // stopping the whole server.** `session = nil` alone leaves the OLD
@@ -352,11 +371,11 @@ extension AppModel {
         }
     }
 
+    /// Loads the selected model: the Load button and the Model menu's Load Chat
+    /// Model. Through the choke point, so a warned model asks first.
     public func loadModel() {
         guard let selected else { return }
-        Task {
-            await open(selected)
-        }
+        requestLoad(selected, purpose: .chat(switchToChat: false))
     }
 
     public func reloadModel() {
@@ -425,6 +444,15 @@ extension AppModel {
             }
             ?? InstalledModel(
                 alias: url.lastPathComponent, repo: "", path: path, family: "")
+        // A folder inside a library on a slow drive asks like any other load;
+        // a folder nobody installed (no registry row) has no library to advise
+        // on and loads at once.
+        requestLoad(row, purpose: .chosenFolder)
+    }
+
+    /// Opens the folder the user chose, once the gate has said yes.
+    func beginOpeningFolder(_ row: InstalledModel) {
+        let path = URL(fileURLWithPath: row.path).standardizedFileURL.path
         if let steeringReason = steeringOpenBlockReason(for: row) {
             let message = AppStrings.localized(
                 "Cannot load \(row.alias) with steering enabled: \(steeringReason)")
@@ -432,6 +460,7 @@ extension AppModel {
             showToast(message, style: .error, duration: 8.0)
             return
         }
+        loadObserver?(row)
         // Set synchronously: the loading indicator keys off it, and it must
         // be true the moment this returns (state#11).
         opening = true
@@ -446,7 +475,27 @@ extension AppModel {
         }
     }
 
+    /// Deletes `model` from disk, or removes a scanned row from the list.
+    ///
+    /// **EVERY ENGINE ROW IS DELETED BY THE ENGINE, THROUGH ITS INSTALL ID, OFF
+    /// THE MAIN ACTOR** (task 6.4, BINDING from the 4.6 review). The old code
+    /// fell back to `FileManager.removeItem(model.path)` after any error from
+    /// the engine's alias delete, which for a library row deleted the recorded
+    /// path of a drive that was away (or another drive mounted there), followed
+    /// links planted on the drive, bypassed the engine's `busy` refusal and left
+    /// the registry and the library marker listing a model that was gone. That
+    /// fallback does not exist any more: the app never removes a path it
+    /// recorded for a row the engine owns. A row only a scan found keeps today's
+    /// rule below.
     public func deleteModel(_ model: InstalledModel) {
+        _ = startModelDelete(model)
+    }
+
+    /// `deleteModel`, returning the work it started so a test can wait for it.
+    /// Nil when it was refused, finished at once (a scanned row) or is already
+    /// running for this row.
+    @discardableResult
+    func startModelDelete(_ model: InstalledModel) -> Task<Void, Never>? {
         // **THE BYTES BEING DELETED MAY BE MAPPED RIGHT NOW** (state#43).
         // This had no `!generating` guard, and `unloadModel()` returns
         // SILENTLY while a turn is running -- so `selected` was nilled anyway
@@ -456,7 +505,7 @@ extension AppModel {
             showToast(
                 AppStrings.localized("Cannot delete '\(model.alias)' while a turn is running. Stop it first."),
                 style: .warning)
-            return
+            return nil
         }
         // **AND AN OPEN IN FLIGHT IS THE SAME HAZARD ONE STEP EARLIER**
         // (state#73). `ts_session_open` runs on the binding's private queue
@@ -470,7 +519,7 @@ extension AppModel {
             showToast(
                 AppStrings.localized("Cannot delete '\(model.alias)' while a model is loading. Wait for it to finish."),
                 style: .warning)
-            return
+            return nil
         }
         // And a SERVED model has a second holder the Chat pane cannot see
         // (`swift/CLAUDE.md` Gotcha 26): the server keeps it resident and
@@ -480,49 +529,39 @@ extension AppModel {
             showToast(
                 AppStrings.localized("'\(model.alias)' is attached to the running server. Detach it there first."),
                 style: .warning)
-            return
+            return nil
         }
         // Humanize owns a separate mapping that the Chat session cannot see.
         // Keep this guard here so deletion from Installed Models is safe too.
-        if humanizeWorkspace.usesModel(at: model.path) {
+        // It is released with the chat model, after the delete has succeeded.
+        let humanizeHoldsIt = humanizeWorkspace.usesModel(at: model.path)
+        if humanizeHoldsIt {
             guard !humanizeWorkspace.isBusy else {
                 showToast(AppStrings.localized("Stop Humanize before deleting its model."), style: .warning)
-                return
+                return nil
             }
-            humanizeWorkspace.unload()
-        }
-        // **MATCHED ON PATH ALONE** (state#14): `alias` is not unique once a
-        // scanned row exists, so an `alias ||` arm unloads the session of a
-        // DIFFERENT model that happens to share the name.
-        if selected?.path == model.path {
-            unloadModel()
-            selected = nil
         }
 
-        // Only a model this app actually installed through `TurboSparkCatalog`
-        // may have its file bytes removed. A row that only ever came from
-        // scanning LM Studio's library or a user's custom folder
-        // (`refreshModels()`'s LM Studio/Custom merge) is not in the
-        // catalog's own install list; deleting it used to fall through to an
-        // unconditional `removeItem` on whatever path the scan found, which
-        // destroys files the app never wrote and only discovered by walking
-        // a directory it was pointed at -- the opposite of the "without
-        // copying any bytes" promise that scan makes.
-        let catalogInstalled: [InstalledModel]
-        do {
-            catalogInstalled = try TurboSparkCatalog.installed()
-        } catch {
-            // Refusing beats guessing: an unreadable list cannot distinguish
-            // "this app installed it" from "it was only scanned", and the two
-            // answers differ by whether bytes get removed.
-            self.error =
-                "Could not read the installed-model list, so '\(model.alias)' was not deleted: "
-                + error.localizedDescription
-            return
-        }
-        let isCatalogTracked = Self.isCatalogTracked(model: model, in: catalogInstalled)
-
-        guard isCatalogTracked else {
+        // **A ROW ONLY A SCAN FOUND IS NEVER THE ENGINE'S, AND ITS FILES ARE
+        // NEVER THE APP'S TO DELETE.** A row that came from scanning LM Studio's
+        // library or a user's custom folder (`refreshModels()`'s merge) carries
+        // the placeholder identity the app's scanners build
+        // (`ModelIdentityKey.isPlaceholder`). Deleting it used to fall through to
+        // an unconditional `removeItem` on whatever path the scan found, which
+        // destroys files the app never wrote and only discovered by walking a
+        // directory it was pointed at -- the opposite of the "without copying
+        // any bytes" promise that scan makes. It leaves the list and stays out
+        // of the next scan; nothing is deleted, so nothing can fail, and the
+        // model can be released at once.
+        guard !ModelIdentityKey.isPlaceholder(model) else {
+            if humanizeHoldsIt { humanizeWorkspace.unload() }
+            // **MATCHED ON PATH ALONE** (state#14): `alias` is not unique once
+            // a scanned row exists, so an `alias ||` arm unloads the session of
+            // a DIFFERENT model that happens to share the name.
+            if selected?.path == model.path {
+                unloadModel()
+                selected = nil
+            }
             // **EXCLUDED, NOT FORGOTTEN** (state#88). This dropped the row's
             // notes, tags and favorite and left the bytes alone -- and the
             // next scan walked the same directory and put the row straight
@@ -535,49 +574,129 @@ extension AppModel {
                 AppStrings.localized(
                     "Removed '\(model.alias)' from TurboSpark. The file was left on disk at \(model.path); restore it under Settings > Models."),
                 style: .info, duration: 5.0)
-            return
+            return nil
         }
 
-        var deleted = false
-        var lastError: Error?
-
-        // 1. Try TurboSparkCatalog delete
-        do {
-            try TurboSparkCatalog.delete(model.alias)
-            deleted = true
-        } catch {
-            lastError = error
+        // A model whose drive is away has nothing to delete: the engine would
+        // refuse (`not_connected`) and the recorded path may now be another
+        // drive. The row offers no removal until the drive is connected.
+        guard model.availability != .notConnected else {
+            showToast(
+                ModelDeleteText.notConnected(alias: model.alias, libraryName: model.connectName ?? model.libraryName),
+                style: .warning)
+            return nil
         }
+        guard !modelsBeingChanged.contains(model.installId) else { return nil }
+        modelsBeingChanged.insert(model.installId)
 
-        // 2. If catalog delete failed or model is an external file, try direct filesystem removal
-        if !deleted {
-            let expanded = ModelStorageManager.expandPath(model.path)
-            if FileManager.default.fileExists(atPath: expanded) {
-                do {
-                    try FileManager.default.removeItem(atPath: expanded)
-                    deleted = true
-                    lastError = nil
-                } catch {
-                    lastError = error
-                }
+        // **THE ENGINE CALL IS OFF THE MAIN ACTOR AND THE SESSION STAYS.** It
+        // can read the mount table, remove many gigabytes and write
+        // `installed.json`, and it answers `busy` while an install or a move
+        // runs. A refused delete changes nothing, so the loaded model, the
+        // selection and the notes stay as they were until the engine has said
+        // yes.
+        let service = libraryState.service
+        let installId = model.installId
+        return Task { [weak self] in
+            let outcome = await Task.detached(priority: .userInitiated) {
+                Result { try service.deleteInstall(installId: installId) }
+            }.value
+            await self?.finishModelDelete(model, outcome: outcome)
+        }
+    }
+
+    /// What follows an answer from the engine's delete.
+    private func finishModelDelete(_ model: InstalledModel, outcome: Result<Void, Error>) async {
+        modelsBeingChanged.remove(model.installId)
+        switch outcome {
+        case .failure(let error):
+            // A warning toast, not `error`: a refusal is an answer to what the
+            // user asked, and an unplugged drive is never an availability
+            // banner (requirement 3.4).
+            showToast(
+                ModelDeleteText.failure(
+                    error, alias: model.alias, libraryName: model.connectName ?? model.libraryName),
+                style: .warning)
+            // `busy` changed nothing. Any other answer may mean the lists are
+            // out of date (`unknown_install`: someone else removed it).
+            if (error as? TurboSparkError)?.libraryFault?.code != .busy {
+                await libraryState.refresh()
             }
-        }
-
-        ModelOrganizationStore.shared.removeMetadata(for: model.alias, path: model.path)
-        // The remembered reasoning level goes with it (state#96). Nothing
-        // pruned this, so `settings.json` accumulated an entry per model ever
-        // deleted -- and once the key is the PATH, a later install at the
-        // same path silently inherits a level its own user never chose.
-        modelReasoningDefaults.removeValue(forKey: model.path)
-        persistSettings()
-        refreshModels()
-
-        if deleted {
+        case .success:
+            if humanizeWorkspace.usesModel(at: model.path) { humanizeWorkspace.unload() }
+            // **MATCHED ON PATH ALONE** (state#14), and a model that cannot be
+            // unloaded because a turn started during the delete stays selected:
+            // `selected` nil beside a live session is the state#43 mismatch.
+            if selected?.path == model.path {
+                unloadModel()
+                if session == nil { selected = nil }
+            }
+            // The remembered reasoning level is part of the same record (task
+            // 5.5), so it goes with the notes and tags. A legacy path entry that
+            // was never read is pruned too: nothing used to prune it, so
+            // `settings.json` accumulated an entry per model ever deleted, and a
+            // later install at the same path silently inherited a level its own
+            // user never chose (state#96).
+            ModelOrganizationStore.shared.removeMetadata(for: model)
+            modelReasoningDefaults.removeValue(forKey: model.path)
+            persistSettings()
+            refreshModels()
+            await libraryState.refresh()
             showToast(AppStrings.localized("Deleted model '\(model.alias)'"), style: .info)
-        } else if let err = lastError {
-            let msg = AppStrings.localized("Failed to delete model: \(err.localizedDescription)")
-            self.error = msg
-            showToast(msg, style: .error)
+        }
+    }
+
+    // MARK: - Remove from list
+
+    /// Stops listing a model the engine knows, without touching a file: what a
+    /// model whose folder is missing offers besides Delete (requirement 3.7). A
+    /// model on a drive that is away offers it no longer, because the engine
+    /// forgets a row only with its library connected.
+    public func removeModelFromList(_ model: InstalledModel) {
+        _ = startRemoveFromList(model)
+    }
+
+    /// `removeModelFromList`, returning the work it started so a test can wait.
+    ///
+    /// The engine's forget needs the model's library connected and writable (its
+    /// marker must stop listing the model too), so for a drive that is away it
+    /// answers `not_connected`; the toast says so and the row stays.
+    @discardableResult
+    func startRemoveFromList(_ model: InstalledModel) -> Task<Void, Never>? {
+        // A row a scan found has no registry entry: its "remove" is Delete.
+        guard !ModelIdentityKey.isPlaceholder(model) else { return nil }
+        guard !modelsBeingChanged.contains(model.installId) else { return nil }
+        modelsBeingChanged.insert(model.installId)
+
+        let service = libraryState.service
+        let installId = model.installId
+        return Task { [weak self] in
+            let outcome = await Task.detached(priority: .userInitiated) {
+                Result { try service.forget(installId: installId) }
+            }.value
+            await self?.finishRemoveFromList(model, outcome: outcome)
+        }
+    }
+
+    private func finishRemoveFromList(_ model: InstalledModel, outcome: Result<Void, Error>) async {
+        modelsBeingChanged.remove(model.installId)
+        switch outcome {
+        case .failure(let error):
+            showToast(
+                ModelDeleteText.failure(
+                    error, alias: model.alias, libraryName: model.connectName ?? model.libraryName),
+                style: .warning)
+            if (error as? TurboSparkError)?.libraryFault?.code != .busy {
+                await libraryState.refresh()
+            }
+        case .success:
+            // Its notes and tags stay: the files may still be on the drive, and
+            // a library added again brings the model back under the same id.
+            if selected?.path == model.path, loadedModelPath != model.path {
+                selected = nil
+            }
+            await libraryState.refresh()
+            showToast(ModelDeleteText.removedFromList(alias: model.alias), style: .info)
         }
     }
 }

@@ -70,6 +70,13 @@ extension AppModel {
             showToast(AppStrings.localized("Image generation is unavailable in a temporary chat."), style: .warning)
             return
         }
+        // Before the prompt is written into the chat: a model that is being moved
+        // cannot render, and the refusal should not leave a message with no answer.
+        // `sharedImageSession` refuses as well, for every other way in.
+        if let selected = selectedImageModel, isMoving(path: selected.path) {
+            announceModelBeingMoved()
+            return
+        }
         guard canStartImageGeneration else { return }
         let seedText = imageSeedText.trimmingCharacters(in: .whitespacesAndNewlines)
         let seed: UInt64

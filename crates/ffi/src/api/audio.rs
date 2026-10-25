@@ -1,12 +1,51 @@
 //! Additive audio catalog and worker/job ABI. Callback buffers are borrowed.
+use super::libraries::{
+    clean, coded, parse_options, refuse_while_busy, refuse_while_moving, require_listed,
+    store_fault, MESSAGE_LIMIT,
+};
 use crate::abi::{self, guard_result};
 use crate::strings;
 use catalog::audio_catalog::{AudioCatalog, AudioProfileIdentity};
+use catalog::library::{Availability, LocationEnv, INTERNAL_LIBRARY_ID};
+use catalog::{ModelModality, Store, StoreError};
 use std::os::raw::{c_char, c_int, c_void};
 
 type AbiResult<T> = Result<T, (c_int, String)>;
 fn invalid(e: impl ToString) -> (c_int, String) {
     (abi::TS_ERR_INVALID_ARGUMENT, e.to_string())
+}
+/// The default store and the live location environment, which locates the
+/// libraries audio rows are in. Building it spawns nothing: the mount table
+/// is read only when a library has to be searched for.
+fn located() -> AbiResult<(Store, LocationEnv)> {
+    let store = Store::default_store().map_err(invalid)?;
+    let env = LocationEnv::system(store.root()).map_err(invalid)?;
+    Ok((store, env))
+}
+/// The name of the library to connect when the audio install `alias` is in a
+/// library that is not connected. Asked of the registry rather than read out
+/// of an error sentence, which a drive's own text could imitate.
+fn offline_library(store: &Store, env: &LocationEnv, alias: &str) -> Option<String> {
+    store
+        .installed_with_availability(env)
+        .into_iter()
+        .find_map(|entry| {
+            let in_library = entry
+                .row
+                .library
+                .as_deref()
+                .is_some_and(|id| id != INTERNAL_LIBRARY_ID);
+            match entry.availability {
+                Availability::NotConnected { library }
+                    if in_library
+                        && entry.row.alias == alias
+                        && entry.row.effective_modality() == ModelModality::Audio =>
+                {
+                    Some(library)
+                }
+                _ => None,
+            }
+        })
 }
 /// Classifies a failed audio install. The install's own cancel flag decides,
 /// not the message: the audio downloader words its cancellation several ways
@@ -18,6 +57,15 @@ fn install_failure(message: String, cancelled: bool) -> (c_int, String) {
         (abi::TS_ERR_CANCELLED, message)
     } else {
         invalid(message)
+    }
+}
+/// [`install_failure`] for an install into a library (4.3). The four errors
+/// about a library carry their stable code ahead of the sentence, however the
+/// cancel flag stands: they say what went wrong, and a cancel does not.
+fn store_install_failure(error: StoreError, cancelled: bool) -> (c_int, String) {
+    match error {
+        StoreError::Io(message) => install_failure(message, cancelled),
+        coded => store_fault(&coded),
     }
 }
 unsafe fn identity(json: *const c_char) -> AbiResult<AudioProfileIdentity> {
@@ -95,18 +143,34 @@ pub unsafe extern "C" fn ts_audio_catalog_json(out: *mut *mut c_char) -> c_int {
         )
     })
 }
+/// The installed audio models, in the buckets of `AudioInstalledReport`. A
+/// model in a library is reported at the folder it has now, under wherever
+/// the library is connected, and one whose library is not connected is in
+/// `not_connected` with the library's name, never in `incompatible` (3.1,
+/// 3.4). A library's name is raw here, as in every JSON this crate writes:
+/// the app truncates it for display.
 #[no_mangle]
 pub unsafe extern "C" fn ts_audio_installed_json(out: *mut *mut c_char) -> c_int {
     guard_result(|| {
         clear_output(out)?;
+        let (store, env) = located()?;
+        // An older writer drops `library` and `relative_path` from the rows it
+        // rewrites. The audio report does not restore them, so such a row
+        // would be called an install at a foreign path. The installed listing
+        // does restore them (and records that), so it runs first.
+        let _ = store.installed_with_availability(&env);
         output(
             &AudioCatalog::embedded()
                 .map_err(invalid)?
-                .installed_report(&catalog::Store::default_store().map_err(invalid)?),
+                .installed_report_with(&store, &env),
             out,
         )
     })
 }
+/// The folder of an audio install, after the quick check of its receipt and
+/// file sizes (`ts_audio_verify` hashes the bytes). An install in a library
+/// that is not connected is refused as `not_connected: <sentence naming the
+/// library>`.
 #[no_mangle]
 pub unsafe extern "C" fn ts_audio_resolve(
     identity_json: *const c_char,
@@ -115,13 +179,21 @@ pub unsafe extern "C" fn ts_audio_resolve(
     guard_result(|| {
         clear_output(out)?;
         let identity = identity(identity_json)?;
+        let (store, env) = located()?;
         let path = AudioCatalog::embedded()
             .map_err(invalid)?
-            .resolve(
-                &catalog::Store::default_store().map_err(invalid)?,
-                &identity,
-            )
-            .map_err(invalid)?;
+            .resolve_with(&store, &identity, &env)
+            .map_err(
+                |message| match offline_library(&store, &env, &identity.alias) {
+                    Some(library) => coded(
+                        "not_connected",
+                        &StoreError::NotConnected { library }.to_string(),
+                    ),
+                    // These sentences can carry a library's name or a path on a
+                    // drive anyone could have written.
+                    None => invalid(clean(&message, MESSAGE_LIMIT)),
+                },
+            )?;
         strings::emit(&path.to_string_lossy(), out).map_err(invalid)
     })
 }
@@ -162,14 +234,18 @@ pub unsafe extern "C" fn ts_audio_verify(
         strings::emit(&path.to_string_lossy(), out).map_err(invalid)
     })
 }
+/// Deletes an audio install. Refused as `busy` while an install or a model
+/// move runs, like every call that writes the registry (4.6).
 #[no_mangle]
 pub unsafe extern "C" fn ts_audio_delete(identity_json: *const c_char) -> c_int {
     guard_result(|| {
+        let identity = identity(identity_json)?;
+        refuse_while_busy("delete an audio model")?;
         AudioCatalog::embedded()
             .map_err(invalid)?
             .delete(
                 &catalog::Store::default_store().map_err(invalid)?,
-                &identity(identity_json)?,
+                &identity,
             )
             .map_err(invalid)
     })
@@ -177,19 +253,24 @@ pub unsafe extern "C" fn ts_audio_delete(identity_json: *const c_char) -> c_int 
 /// Removes an owned install that has no receipt (one `ts_audio_installed_json`
 /// reports under `needsAdoption`), even when its payload could not pass
 /// adoption. A receipt-backed install is refused here and goes through
-/// `ts_audio_delete`; neither path ever promotes damaged bytes.
+/// `ts_audio_delete`; neither path ever promotes damaged bytes. Refused as
+/// `busy` while an install or a model move runs.
 #[no_mangle]
 pub unsafe extern "C" fn ts_audio_delete_legacy(identity_json: *const c_char) -> c_int {
     guard_result(|| {
+        let identity = identity(identity_json)?;
+        refuse_while_busy("delete an audio model")?;
         AudioCatalog::embedded()
             .map_err(invalid)?
             .delete_legacy(
                 &catalog::Store::default_store().map_err(invalid)?,
-                &identity(identity_json)?,
+                &identity,
             )
             .map_err(invalid)
     })
 }
+/// Adopts a legacy install into This Mac's registry. Refused as `busy` while
+/// an install or a model move runs, because it writes the registry.
 #[no_mangle]
 pub unsafe extern "C" fn ts_audio_adopt(
     identity_json: *const c_char,
@@ -197,11 +278,13 @@ pub unsafe extern "C" fn ts_audio_adopt(
 ) -> c_int {
     guard_result(|| {
         clear_output(out)?;
+        let identity = identity(identity_json)?;
+        refuse_while_busy("adopt an audio model")?;
         let row = AudioCatalog::embedded()
             .map_err(invalid)?
             .adopt_legacy(
                 &catalog::Store::default_store().map_err(invalid)?,
-                &identity(identity_json)?,
+                &identity,
                 &catalog::CancelFlag::new(),
             )
             .map_err(invalid)?;
@@ -218,20 +301,24 @@ pub unsafe extern "C" fn ts_audio_install(
     userdata: *mut c_void,
     out: *mut *mut c_char,
 ) -> c_int {
-    guard_result(|| install(identity_json, &[], callback, userdata, out))
+    guard_result(|| install(identity_json, &[], None, callback, userdata, out))
 }
 
 /// Install options. `acknowledged` lists the ids of the profile's
-/// acknowledgments the user accepted; every one must be present.
+/// acknowledgments the user accepted; every one must be present. `library`
+/// is the id of the library to install into, as `ts_libraries_json` lists it
+/// ("internal", an absent key and `null` are This Mac).
 #[derive(serde::Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 struct InstallOptions {
     #[serde(default)]
     acknowledged: Vec<String>,
+    #[serde(default)]
+    library: Option<String>,
 }
 
-/// [`ts_audio_install`] with `options_json` (`{"acknowledged": [id, ...]}`;
-/// NULL or empty means none).
+/// [`ts_audio_install`] with `options_json` (`{"acknowledged": [id, ...],
+/// "library": id}`; NULL or empty means none).
 #[no_mangle]
 pub unsafe extern "C" fn ts_audio_install_with_options(
     identity_json: *const c_char,
@@ -244,12 +331,13 @@ pub unsafe extern "C" fn ts_audio_install_with_options(
         clear_output(out)?;
         let options: InstallOptions =
             match strings::optional(options_json, "options").map_err(invalid)? {
-                Some(json) => serde_json::from_str(json).map_err(invalid)?,
+                Some(json) => parse_options(json)?,
                 None => InstallOptions::default(),
             };
         install(
             identity_json,
             &options.acknowledged,
+            options.library.as_deref(),
             callback,
             userdata,
             out,
@@ -257,9 +345,16 @@ pub unsafe extern "C" fn ts_audio_install_with_options(
     })
 }
 
+/// Installs into `library`, This Mac for `None`. Where it lands is settled
+/// before the first request, so a library that is not connected, one a newer
+/// TurboSpark wrote, or an alias another library holds fails before any
+/// transfer starts. The answer is the row recorded, with the library keys the
+/// installed listing adds to its rows (4.2): `library`, `library_name` and
+/// `install_id`.
 unsafe fn install(
     identity_json: *const c_char,
     acknowledged: &[String],
+    library: Option<&str>,
     callback: crate::TsInstallCallback,
     userdata: *mut c_void,
     out: *mut *mut c_char,
@@ -268,16 +363,21 @@ unsafe fn install(
         return Err(invalid("out must not be null"));
     }
     *out = std::ptr::null_mut();
+    refuse_while_moving()?;
     let active = crate::models::ActiveInstall::register();
     let identity = identity(identity_json)?;
+    require_listed(library)?;
+    let (store, env) = located()?;
     let row = AudioCatalog::embedded()
         .map_err(invalid)?
-        .install_acknowledged(
+        .install_acknowledged_into(
             &catalog::Client::new(),
             &catalog::Catalog::embedded().map_err(invalid)?,
-            &catalog::Store::default_store().map_err(invalid)?,
+            &store,
             &identity,
             acknowledged,
+            library,
+            &env,
             &mut |progress| {
                 if let Some(cb) = callback {
                     let stage = progress
@@ -297,8 +397,12 @@ unsafe fn install(
             },
             active.cancel_flag(),
         )
-        .map_err(|e| install_failure(e, active.cancel_flag().is_cancelled()))?;
-    output(&row, out)
+        .map_err(|e| store_install_failure(e, active.cancel_flag().is_cancelled()))?;
+    let name = crate::models::library_name_of(&store, &row);
+    output(
+        &crate::models::installed_value(&row, &name).map_err(invalid)?,
+        out,
+    )
 }
 
 #[cfg(target_os = "macos")]
@@ -804,6 +908,48 @@ mod install_cancel_tests {
         assert_eq!(
             install_failure("disk full".into(), false).0,
             abi::TS_ERR_INVALID_ARGUMENT
+        );
+    }
+
+    /// Into a library, the four errors about the library keep their code
+    /// ahead of the sentence, whether or not the install was cancelled, and a
+    /// plain failure is classified as before.
+    #[test]
+    fn a_library_install_failure_keeps_its_code_and_the_rest_is_unchanged() {
+        for cancelled in [false, true] {
+            for (error, code) in [
+                (
+                    StoreError::NotConnected {
+                        library: "T7".into(),
+                    },
+                    "not_connected",
+                ),
+                (
+                    StoreError::LibraryDisconnected {
+                        library: "T7".into(),
+                    },
+                    "library_disconnected",
+                ),
+                (
+                    StoreError::LibraryReadOnly {
+                        library: "T7".into(),
+                    },
+                    "library_read_only",
+                ),
+                (StoreError::HomeOnly, "home_only"),
+            ] {
+                let (status, message) = store_install_failure(error, cancelled);
+                assert_eq!(status, abi::TS_ERR_INVALID_ARGUMENT, "{code}");
+                assert!(message.starts_with(&format!("{code}: ")), "{message}");
+            }
+        }
+        assert_eq!(
+            store_install_failure(StoreError::Io("cancelled by the caller".into()), true).0,
+            abi::TS_ERR_CANCELLED
+        );
+        assert_eq!(
+            store_install_failure(StoreError::Io("disk full".into()), false),
+            (abi::TS_ERR_INVALID_ARGUMENT, "disk full".to_string())
         );
     }
 

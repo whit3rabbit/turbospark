@@ -972,7 +972,7 @@ Each page carries its own "read this before" list at the top.
 | `swift/docs/SWIFT_MESSAGE_EDITING.md` | message retry, edit and branch |
 | `swift/docs/SWIFT_PASTE_HANDLING.md` | large pastes: the 4,000-char chip conversion, suppression of programmatic draft writes, the head+tail transcript gate, over-window truncation |
 | `swift/docs/SWIFT_GHOST_MODE.md` | temporary (ghost) chats: the two layers, the three rules that must not break |
-| `swift/docs/storage.md` | app JSON stores, the configurable modality-separated engine model store, move wizard, provider discovery, `ModelStorageManager`, `AppStorageRoot` test isolation, and which directories tests may write to |
+| `swift/docs/storage.md` | app JSON stores, the modality-separated engine model store, the retired Move Store and its conversion to a library, provider discovery, `ModelStorageManager`, `AppStorageRoot` test isolation, and which directories tests may write to |
 | `swift/docs/SWIFT_CONTEXT_RING.md` | the composer's context-usage indicator; the system prompt as one builder, three consumers |
 | `swift/docs/SYSTEM_PROMPT.md` | system prompt architecture: section ordering, dynamic capabilities, system reminders, token budgets |
 | `swift/docs/SYNTEXT.md` | Syntext indexed code search, project indexing, grep_search, the revision pin, and dual-staticlib symbol localization |

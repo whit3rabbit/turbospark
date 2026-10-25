@@ -70,6 +70,10 @@ private final class ForegroundAppDelegate: NSObject, NSApplicationDelegate {
             // outlives the process (FanController's header).
             FanController.shared.restoreOnQuitIfNeeded()
             AppShutdownCoordinator.shared.onTerminate?()
+            // The only place the volume monitor stops: removing its
+            // workspace observers earlier makes the next unmount of any
+            // volume on the machine wait about ten seconds.
+            LibraryVolumeMonitor.stopAtTermination()
             // A protected profile's decrypted attachment cache lives under
             // ~/Library/Caches; without this it survives Cmd-Q (and is only
             // purged at the next launch's vault open). No-op when the vault

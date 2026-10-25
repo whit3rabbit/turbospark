@@ -1191,6 +1191,58 @@ fn a_published_receipt_discards_only_its_own_range_cache() {
     assert_eq!(fixture.join().unwrap().len(), 3);
 }
 
+/// An install into a library stages on the library's drive, so publication
+/// is a same-volume rename, while the range cache stays in the home. Staging
+/// and cache parents can therefore differ, and nothing of the cache may land
+/// under staging.
+#[test]
+fn a_separate_cache_parent_keeps_the_range_cache_out_of_staging() {
+    let _endpoint_lock = ENDPOINT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (endpoint, fixture) = fixture_server(vec![
+        FixtureResponse::Json(retry_metadata()),
+        FixtureResponse::Body(b"done".to_vec()),
+        FixtureResponse::Body(b"next".to_vec()),
+    ]);
+    let _reset = set_endpoint(endpoint);
+    let client = Client::with_token(Some("hf_split_cache_fixture".into()));
+    let hub = hub_for(&client);
+    let staging = TempRoot::new("split-staging");
+    let home = TempRoot::new("split-home");
+
+    let receipt = hub
+        .download_pinned_artifacts_into(
+            &retry_plan(),
+            &staging.0,
+            &home.0,
+            &mut |_| {},
+            &CancelFlag::new(),
+        )
+        .expect("both pinned files transfer");
+
+    assert_eq!(
+        receipt.staging_root.parent(),
+        Some(std::fs::canonicalize(&staging.0).unwrap().as_path())
+    );
+    assert_eq!(
+        std::fs::read(&receipt.sources[0].files[0].staged_path).unwrap(),
+        b"done"
+    );
+    let pinned = home.0.join(".download-cache").join("pinned");
+    assert_eq!(receipt.download_cache.len(), 2, "one tree per cached file");
+    for dir in &receipt.download_cache {
+        assert!(dir.starts_with(&pinned), "{}", dir.display());
+        assert!(dir.is_dir());
+    }
+    assert_eq!(cached_ranges(&home.0).len(), 2);
+    assert!(
+        !staging.0.join(".download-cache").exists(),
+        "the range cache landed beside staging"
+    );
+    assert_eq!(fixture.join().unwrap().len(), 3);
+}
+
 #[test]
 fn changed_remote_validator_and_source_pin_cannot_reuse_previous_ranges() {
     let _endpoint_lock = ENDPOINT_LOCK

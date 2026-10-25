@@ -164,6 +164,9 @@ struct RootView: View {
             })) {
                 ProjectToolApprovalSheet(model: model)
         }
+        // The one "Load anyway" question: every interactive load reaches it
+        // through `AppModel.requestLoad`, and no picker carries a dialog.
+        .modifier(LoadAnywayConfirmation(model: model))
         .onReceive(NotificationCenter.default.publisher(for: .toggleChatSidebar)) { _ in
             toggleSidebarPanel()
         }
@@ -203,6 +206,9 @@ struct RootView: View {
             AppShutdownCoordinator.shared.onTerminate = { [weak model] in
                 model?.shutdown()
             }
+            // Not in `AppModel.init`: a model built in a test must not
+            // register with the workspace.
+            model?.startLibraryMonitoring()
         }
         .onChange(of: model.hasOutputTranscript, initial: true) { _, hasTranscript in
             if hasTranscript, model.activeSection == .chat { isInspectorVisible = false }

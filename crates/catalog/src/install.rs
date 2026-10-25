@@ -21,6 +21,7 @@
 //! floating revisions never use the cache. The cache is removed only after
 //! the published install passes its normal verification.
 
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use model_io::ArchConfig;
@@ -29,9 +30,10 @@ use tokenizer::{Message, MfTokenizer, Role};
 use crate::entry::{CatalogEntry, EntryKind, SourceKind};
 use crate::hf::{Client, RepoRef};
 use crate::hub::{HubGgufVariant, VariantInstallability};
+use crate::library::LocationEnv;
 use crate::probe::{probe, ProbeReport, Verdict};
 use crate::quant::{group_variants, ShardSetStatus};
-use crate::store::{directory_bytes, InstalledModel, ModelModality, Store};
+use crate::store::{directory_bytes, InstalledModel, ModelModality, Store, StoreError};
 
 /// The sidecar files a vision-tower-only install fetches, in the order
 /// `install()` writes them: `config.json` decides the family and the
@@ -455,6 +457,8 @@ fn install_with_selected_files(
         kind: None,
         modality: ModelModality::Text,
         variant: selected_variant.map(|variant| variant.label.to_string()),
+        library: None,
+        relative_path: None,
     };
     Ok(Installed { model, arch })
 }
@@ -516,6 +520,8 @@ fn install_vision_only(
         kind: Some(EntryKind::VisionTower.as_str().to_string()),
         modality: ModelModality::Text,
         variant: None,
+        library: None,
+        relative_path: None,
     };
     Ok(Installed { model, arch })
 }
@@ -730,6 +736,254 @@ fn vision_tower_stub_report(plan: &InstallPlan) -> ProbeReport {
 /// Record an install in `store`.
 pub fn record(store: &Store, installed: &Installed) -> Result<(), String> {
     store.record(&installed.model)
+}
+
+/// What an install is, which decides the folder it lands in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallKind {
+    /// `<root>/text/<alias>.gturbo`.
+    Text,
+    /// A vision-tower sidecar, `<root>/text/<alias>.gturbo-vision`: a text
+    /// model accessory in the text namespace.
+    VisionTower,
+    /// `<root>/image/<alias>.gturbo`.
+    Image,
+    /// Audio models, music included, `<root>/audio/<alias>.gturbo`.
+    Audio,
+}
+
+impl InstallKind {
+    /// The registry modality, which with the alias keys a row.
+    pub fn modality(self) -> ModelModality {
+        match self {
+            Self::Text | Self::VisionTower => ModelModality::Text,
+            Self::Image => ModelModality::Image,
+            Self::Audio => ModelModality::Audio,
+        }
+    }
+
+    fn path_in(self, root: &Path, alias: &str) -> Result<PathBuf, StoreError> {
+        match self {
+            Self::Text => Store::install_path_in(root, alias),
+            Self::VisionTower => Store::vision_install_path_in(root, alias),
+            Self::Image => Store::image_install_path_in(root, alias),
+            Self::Audio => Store::audio_install_path_in(root, alias),
+        }
+    }
+}
+
+/// Where an install lands, worked out by [`install_destination`] before
+/// anything is downloaded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstallTarget {
+    /// The library's id, `None` for This Mac.
+    pub library_id: Option<String>,
+    /// The library's name, for errors: "This Mac", or the name of a library
+    /// adopted from an untrusted marker, which display must escape.
+    pub library_name: String,
+    /// This Mac's `<home>/models`, or the canonical root of the library.
+    pub root: PathBuf,
+    /// The install folder, under `root`.
+    pub dir: PathBuf,
+    /// `dir` relative to `root`, which a library's row records.
+    pub relative_path: PathBuf,
+}
+
+/// Where an install of `alias` as `kind` into `library` (This Mac for
+/// `None` or [`crate::library::INTERNAL_LIBRARY_ID`]) lands. Installers
+/// call it before anything is downloaded, so these all fail up front:
+///
+/// - a library that is not connected ([`StoreError::NotConnected`]) or that
+///   a newer TurboSpark wrote ([`StoreError::LibraryReadOnly`]);
+/// - an alias that could name a folder outside the library;
+/// - an alias another library already holds with the same modality
+///   ([`StoreError::Io`] naming it), since alias plus modality stays unique
+///   across libraries and the install must be moved instead. Reinstalling
+///   into the same library is allowed;
+/// - in a library, a modality folder or install folder that is a link or
+///   not a folder, since the walk writes through it.
+///
+/// For This Mac the folder is exactly today's, `Store::install_path` and
+/// its siblings. Nothing is created.
+pub fn install_destination(
+    store: &Store,
+    library: Option<&str>,
+    kind: InstallKind,
+    alias: &str,
+    env: &LocationEnv,
+) -> Result<InstallTarget, StoreError> {
+    let (root, record) = store.library_for_install(library, env)?;
+    let dir = kind.path_in(&root, alias)?;
+    let library_id = (!record.is_internal()).then_some(record.id);
+    if let Some(place) = store.alias_elsewhere(alias, kind.modality(), library_id.as_deref(), env) {
+        return Err(StoreError::AliasElsewhere {
+            alias: alias.to_string(),
+            place,
+        });
+    }
+    // Not followed: a text walk writes straight into `dir`, so a link a
+    // drive's owner put in its place would land the install outside the
+    // library. This Mac's folders are the user's own and stay as they were.
+    if library_id.is_some() {
+        let modality_dir = dir.parent().unwrap_or(&root);
+        for path in [modality_dir, dir.as_path()] {
+            match fs::symlink_metadata(path) {
+                Ok(found) if !found.file_type().is_dir() => {
+                    return Err(StoreError::Io(format!(
+                        "{} is not a plain folder",
+                        path.display()
+                    )));
+                }
+                _ => {}
+            }
+        }
+    }
+    let relative_path = dir
+        .strip_prefix(&root)
+        .map(Path::to_path_buf)
+        .map_err(|_| StoreError::Io(format!("{} is not in its library", dir.display())))?;
+    Ok(InstallTarget {
+        library_id,
+        library_name: record.name,
+        root,
+        dir,
+        relative_path,
+    })
+}
+
+/// Records `model`, installed into `target`, and returns the row recorded.
+/// In a library the row gets the library and its relative path, and goes
+/// into the library's marker too ([`Store::record_in_library`], with the
+/// same `env` given to [`install_destination`]). A This Mac row is recorded
+/// exactly as [`record`] records it.
+///
+/// A library row whose `path` is not `target.dir` is refused with nothing
+/// written: the walk resolves its folder as it goes, so a link swapped in
+/// under the library meanwhile shows up here rather than in the registry.
+pub fn record_into(
+    store: &Store,
+    model: &InstalledModel,
+    target: &InstallTarget,
+    env: &LocationEnv,
+) -> Result<InstalledModel, StoreError> {
+    let mut row = model.clone();
+    if let Some(id) = &target.library_id {
+        if row.path != target.dir {
+            return Err(StoreError::Io(format!(
+                "the install at {} is not where the library {:?} expects it, {}",
+                row.path.display(),
+                target.library_name,
+                target.dir.display()
+            )));
+        }
+        row.library = Some(id.clone());
+        row.relative_path = Some(target.relative_path.clone());
+    }
+    store.record_in_library(std::slice::from_ref(&row), env)?;
+    Ok(row)
+}
+
+/// Walks `plan` into `target`, a destination [`install_destination`]
+/// settled before any download, and records it there with
+/// [`record_into`]: the one text and vision-tower install step the CLI and
+/// the native interface share. The returned model is the row recorded.
+///
+/// The walk writes in place, with no staging rename. Into a library, the
+/// modality and install folders are made one level at a time first, so a
+/// library whose drive went away since `target` was settled is never rebuilt
+/// on the disk under its mount point by the walk's own `create_dir_all`.
+/// Failures are classified by [`Store::install_failure`] against the library
+/// ROOT, since `target.dir` may never have existed: a vanished root is
+/// [`StoreError::LibraryDisconnected`] and nothing is recorded. A cancelled
+/// walk is [`StoreError::Io`] carrying [`INSTALL_CANCELLED`].
+///
+/// Into This Mac it is [`install_with_byte_progress`] then [`record`], as
+/// before libraries: the same folder, the same walk, and the same row.
+#[allow(clippy::too_many_arguments)]
+pub fn install_text_into(
+    plan: &InstallPlan,
+    target: &InstallTarget,
+    client: &Client,
+    progress: impl FnMut(&str),
+    byte_progress: Option<ByteProgressCallback>,
+    cancel: Option<&CancelFlag>,
+    store: &Store,
+    env: &LocationEnv,
+) -> Result<Installed, StoreError> {
+    let failed = |error: String| {
+        store.install_failure(&target.root, &target.root, &target.library_name, error)
+    };
+    if target.library_id.is_some() {
+        let modality_dir = target.dir.parent().unwrap_or(&target.root);
+        for dir in [modality_dir, target.dir.as_path()] {
+            match fs::create_dir(dir) {
+                Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => {
+                    return Err(failed(format!("creating {}: {e}", dir.display())));
+                }
+                _ => {}
+            }
+        }
+        // The walk writes through whatever is already in the install folder,
+        // and a folder left by an earlier install, or put there by anyone who
+        // can write the drive, may hold a link to a file or folder elsewhere.
+        // So a folder holding anything but plain files and folders is
+        // cleared first. `remove_dir_all` unlinks a link rather than
+        // following it. A folder of plain leftovers is kept, so a retry
+        // still resumes.
+        if !holds_only_plain_entries(&target.dir) {
+            fs::remove_dir_all(&target.dir)
+                .and_then(|()| fs::create_dir(&target.dir))
+                .map_err(|e| failed(format!("clearing {}: {e}", target.dir.display())))?;
+        }
+    }
+    let installed =
+        install_with_byte_progress(plan, &target.dir, client, progress, byte_progress, cancel)
+            .map_err(failed)?;
+    let model = record_into(store, &installed.model, target, env)?;
+    Ok(Installed {
+        model,
+        arch: installed.arch,
+    })
+}
+
+/// Whether `dir`, an install folder on a drive anyone could have written,
+/// holds only plain files and folders: nothing that is a link, a device, a
+/// socket, a pipe, or a file with another name in the same drive (a hard
+/// link would be written through just as a symbolic one is). Nothing is
+/// followed. A folder too large or too deep for an install counts as not
+/// plain, so a hostile drive cannot make the sweep walk for long.
+fn holds_only_plain_entries(dir: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    const MAX_ENTRIES: usize = 100_000;
+    const MAX_DEPTH: usize = 32;
+    let mut seen = 0usize;
+    let mut stack = vec![(dir.to_path_buf(), 0usize)];
+    while let Some((at, depth)) = stack.pop() {
+        if depth > MAX_DEPTH {
+            return false;
+        }
+        let Ok(entries) = fs::read_dir(&at) else {
+            return false;
+        };
+        for entry in entries {
+            seen += 1;
+            if seen > MAX_ENTRIES {
+                return false;
+            }
+            // `DirEntry::metadata` does not traverse a link.
+            let Ok(found) = entry.and_then(|entry| Ok((entry.path(), entry.metadata()?))) else {
+                return false;
+            };
+            let (path, meta) = found;
+            let kind = meta.file_type();
+            if kind.is_dir() {
+                stack.push((path, depth + 1));
+            } else if !(kind.is_file() && meta.nlink() == 1) {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// `YYYY-MM-DD` in UTC, from the system clock.

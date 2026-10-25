@@ -427,7 +427,7 @@ final class DataIntegrityPersistenceTests: XCTestCase {
         XCTAssertEqual(String(decoding: data, as: UTF8.self), "THE ATTACHED ONE")
     }
 
-    // MARK: - model store root is machine level, relocation guards
+    // MARK: - model store root is machine level
 
     func testStoreRootIsSharedAcrossProfilesAndMigratesTheProfileValue() throws {
         try? FileManager.default.removeItem(at: ModelStoreRootRecord.url)
@@ -437,16 +437,6 @@ final class DataIntegrityPersistenceTests: XCTestCase {
         // Another profile with an empty (or stale) setting sees the same root.
         XCTAssertEqual(ModelStoreRootRecord.resolve(profileValue: ""), "/Volumes/Ext/TS")
         XCTAssertEqual(ModelStoreRootRecord.resolve(profileValue: "/old/place"), "/Volumes/Ext/TS")
-    }
-
-    @MainActor
-    func testRelocationIsRefusedWhileADownloadIsQueued() {
-        let model = AppModel()
-        model.stopCronScheduler()
-        XCTAssertTrue(model.canRelocateModelStore)
-        model.modelDownloads = [ModelDownload(
-            request: ModelDownload.Request.catalog(alias: "x"), status: .queued)]
-        XCTAssertFalse(model.canRelocateModelStore)
     }
 
     // MARK: - asset reconciliation respects ghost chats and re-imports

@@ -505,6 +505,80 @@ fn help_does_not_advertise_token_arguments() {
     assert!(!stdout.contains("auth [TOKEN]"), "{stdout}");
 }
 
+/// Alias plus modality stays unique across libraries, `--out` included: a
+/// pull whose alias another library holds is refused before any network
+/// request, rather than recording a row over that library's. The Hub
+/// endpoint is a closed local port, so a pull that got past the check fails
+/// on the network instead, with another message.
+#[test]
+fn a_pull_whose_alias_another_library_holds_is_refused_even_with_out() {
+    let home = std::env::temp_dir().join(format!(
+        "turbospark-model-cli-alias-elsewhere-{}",
+        std::process::id()
+    ));
+    std::fs::remove_dir_all(&home).ok();
+    std::fs::create_dir_all(&home).unwrap();
+    let library = "0f6c2a3e-1b7d-4c55-9e0a-7d2f1c3b4a59";
+    let row = |alias: &str, folder: &str, kind: Option<&str>| {
+        serde_json::json!({
+            "alias": alias,
+            "repo": "owner/name",
+            "revision": "main",
+            "path": format!("/Volumes/T7/TurboSpark/text/{folder}"),
+            "family": "qwen3",
+            "install_bytes": 1,
+            "installed_on": "2026-10-15",
+            "status": "runs",
+            "kind": kind,
+            "modality": "text",
+            "library": library,
+            "relative_path": format!("text/{folder}"),
+        })
+    };
+    let record = home.join("installed.json");
+    let rows = serde_json::json!([
+        row("tinyllama", "tinyllama.gturbo", None),
+        row(
+            "qwen38-vision-tower",
+            "qwen38-vision-tower.gturbo-vision",
+            Some("vision-tower")
+        ),
+    ]);
+    std::fs::write(&record, serde_json::to_vec_pretty(&rows).unwrap()).unwrap();
+    let before = std::fs::read(&record).unwrap();
+    let out = home.join("out");
+
+    for (command, alias) in [
+        ("pull", "tinyllama"),
+        ("pull-vision", "qwen38-vision-tower"),
+    ] {
+        let with_out = ["--out", out.to_str().unwrap()];
+        for extra in [&with_out[..], &[]] {
+            let output = bin()
+                .env("TURBOSPARK_HOME", &home)
+                .env("HF_ENDPOINT", "http://127.0.0.1:9")
+                .arg(command)
+                .arg(alias)
+                .args(extra)
+                .output()
+                .expect("the binary runs");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert_eq!(
+                output.status.code(),
+                Some(1),
+                "{command} {extra:?}: {stderr}"
+            );
+            assert!(
+                stderr.contains("already installed in"),
+                "{command} {extra:?}: {stderr}"
+            );
+            assert!(!out.exists(), "{command} {extra:?} created --out");
+        }
+    }
+    assert_eq!(std::fs::read(&record).unwrap(), before);
+    std::fs::remove_dir_all(&home).ok();
+}
+
 #[test]
 fn list_audio_names_every_row_where_it_runs_and_the_terms_to_accept() {
     let (code, out, _) = run(&["list-audio"]);

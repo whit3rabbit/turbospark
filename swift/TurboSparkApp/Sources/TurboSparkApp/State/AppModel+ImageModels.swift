@@ -113,7 +113,10 @@ extension AppModel {
 
     /// Downloads a supported MLX source through the catalog install ABI.
     /// The source is packed and verified before it becomes selectable.
-    public func installImageModel(_ source: ImageCatalogEntry) {
+    ///
+    /// `library` is where the model goes (nil is This Mac). It rides on the queued
+    /// row, and the engine settles it before the first request.
+    public func installImageModel(_ source: ImageCatalogEntry, library: String? = nil) {
         guard Self.testedImageModelAliases.contains(source.alias),
               Self.supportsMLXImageModel(modelID: source.modelID) else {
             showToast(
@@ -127,10 +130,10 @@ extension AppModel {
             }
             return
         }
-        enqueueModelDownload(.image(alias: source.alias))
+        enqueueModelDownload(.image(alias: source.alias), library: library)
     }
 
-    func startImageModelInstall(alias: String) {
+    func startImageModelInstall(alias: String, library: String? = nil) {
         Self.modelInstallOwner = self
         isInstallingImageModel = true
         installingAlias = alias
@@ -150,7 +153,9 @@ extension AppModel {
                 self.startNextModelDownloadIfPossible()
             }
             do {
-                for try await event in TurboSparkCatalog.installImage(alias) {
+                for try await event in self.libraryState.service.installImage(
+                    alias: alias, library: Self.destinationLibrary(library))
+                {
                     if self.modelDownloadsShuttingDown {
                         TurboSparkCatalog.cancelInstall()
                         continue
@@ -158,7 +163,7 @@ extension AppModel {
                     if self.isCancellingModelInstall {
                         if case .finished = event {
                             self.setModelDownloadStatus(.completed)
-                            self.refreshModels()
+                            self.refreshAfterInstallSuccess()
                         } else {
                             TurboSparkCatalog.cancelInstall()
                         }
@@ -177,7 +182,8 @@ extension AppModel {
                         }
                     case let .finished(model):
                         self.setModelDownloadStatus(.completed)
-                        self.refreshModels()
+                        // Listed under the library it went into (requirement 2.6).
+                        self.refreshAfterInstallSuccess()
                         self.selectImageModel(model)
                         self.showToast(
                             AppStrings.localized("Installed image model '\(model.alias)'."),
@@ -191,10 +197,20 @@ extension AppModel {
                 }
             } catch {
                 if !self.modelDownloadsShuttingDown && !self.isCancellingModelInstall {
-                    self.setModelDownloadStatus(.failed, failure: error.localizedDescription)
-                    self.showToast(
-                        AppStrings.localized("Image model install failed: \(error.localizedDescription)"),
-                        style: .error, duration: 6.0)
+                    if let sentence = self.libraryInstallFailureSentence(
+                        error, alias: alias, library: library, modality: "image")
+                    {
+                        // A drive that is away or was lost: its own sentence and a
+                        // warning, never the app's error (requirement 2.4).
+                        self.presentLibraryInstallFailure(sentence)
+                    } else {
+                        self.setModelDownloadStatus(.failed, failure: error.localizedDescription)
+                        self.showToast(
+                            AppStrings.localized("Image model install failed: \(error.localizedDescription)"),
+                            style: .error, duration: 6.0)
+                    }
+                    // No partial model stays on screen.
+                    self.refreshAfterInstallFailure()
                 }
             }
             guard !self.modelDownloadsShuttingDown else { return }
@@ -229,19 +245,31 @@ extension AppModel {
     /// manifest and resolves the path, so the app never removes an arbitrary
     /// folder selected by a user.
     public func deleteImageModel(_ image: ImageInstalledModel) {
+        _ = startImageModelDelete(image)
+    }
+
+    /// `deleteImageModel`, returning the work it started so a test can wait.
+    ///
+    /// **THE ENGINE OWNS A ROW THAT CARRIES AN INSTALL ID** (task 6.4): it is
+    /// deleted by that id, off the main actor, and the image session is kept
+    /// until the engine has said yes (a `busy` answer changes nothing). A folder
+    /// found by a scan has no id and is only excluded from the list.
+    @discardableResult
+    func startImageModelDelete(_ image: ImageInstalledModel) -> Task<Void, Never>? {
         guard !isInstallingImageModel, !generating,
-              serverImageAttachedModel?.path != image.path else { return }
-        let wasSelected = imageModelPath == image.path
-        if imageSessionPath == image.path {
-            imageSession?.cancel()
-            imageSession = nil
-            imageSessionPath = nil
-        }
+              serverImageAttachedModel?.path != image.path else { return nil }
+        let managedByPath = isManagedImageModel(image)
         // A model found in an additional folder is excluded, not deleted: the
         // next scan would find it again, and the bytes are not ours to remove.
         // The same rule the text models follow. Restore is under Settings >
         // Models, in the list of excluded paths.
-        guard isManagedImageModel(image) else {
+        guard image.installId != nil || managedByPath else {
+            let wasSelected = imageModelPath == image.path
+            if imageSessionPath == image.path {
+                imageSession?.cancel()
+                imageSession = nil
+                imageSessionPath = nil
+            }
             ModelOrganizationStore.shared.excludeFromScan(path: image.path)
             if wasSelected { imageModelPathText = "" }
             refreshModels()
@@ -249,19 +277,50 @@ extension AppModel {
                 AppStrings.localized(
                     "Removed '\(image.alias)' from TurboSpark. The files were left on disk at \(image.path); restore it under Settings > Models."),
                 style: .info, duration: 5.0)
-            return
+            return nil
         }
-        do {
-            try TurboSparkCatalog.deleteImage(image.path)
-            if wasSelected {
-                imageModelPathText = ""
-            }
-            refreshModels()
-            showToast(AppStrings.localized("Deleted image model '\(image.alias)'."), style: .info)
-        } catch {
+        let changing = image.installId ?? image.path
+        guard !modelsBeingChanged.contains(changing) else { return nil }
+        modelsBeingChanged.insert(changing)
+
+        let service = libraryState.service
+        let installId = image.installId
+        let path = image.path
+        return Task { [weak self] in
+            let outcome = await Task.detached(priority: .userInitiated) {
+                Result {
+                    if let installId {
+                        try service.deleteImageInstall(installId: installId)
+                    } else {
+                        // A managed row from an engine that sent no id: the
+                        // engine's own validated delete by path (This Mac only).
+                        try TurboSparkCatalog.deleteImage(path)
+                    }
+                }
+            }.value
+            await self?.finishImageModelDelete(image, changing: changing, outcome: outcome)
+        }
+    }
+
+    private func finishImageModelDelete(
+        _ image: ImageInstalledModel, changing: String, outcome: Result<Void, Error>
+    ) async {
+        modelsBeingChanged.remove(changing)
+        switch outcome {
+        case .failure(let error):
             showToast(
-                AppStrings.localized("Could not delete image model: \(error.localizedDescription)"),
-                style: .error, duration: 6.0)
+                ModelDeleteText.failure(error, alias: image.alias, libraryName: image.libraryName),
+                style: .warning, duration: 6.0)
+        case .success:
+            if imageSessionPath == image.path {
+                imageSession?.cancel()
+                imageSession = nil
+                imageSessionPath = nil
+            }
+            if imageModelPath == image.path { imageModelPathText = "" }
+            refreshModels()
+            await libraryState.refresh()
+            showToast(AppStrings.localized("Deleted image model '\(image.alias)'."), style: .info)
         }
     }
 

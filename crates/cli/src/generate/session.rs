@@ -76,6 +76,13 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
     // value an opaque string. A path that exists always wins: a bare name
     // that silently preferred an alias would run a DIFFERENT model than the
     // one on the command line, fluently and with no error.
+    // A model on a drive that is not plugged in is named as such, before the
+    // bare alias is tried as a path and fails as a missing manifest (10.7).
+    if let Some(message) =
+        catalog::not_connected_message(&request.model, catalog::ModelModality::Text)
+    {
+        return Err(message);
+    }
     let resolved = catalog::resolve_model_arg(&request.model);
     let model_dir = resolved.as_path();
     reject_image_install(model_dir)?;

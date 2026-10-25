@@ -25,7 +25,10 @@ USAGE:
     turbospark-model <COMMAND> [OPTIONS]
 
 COMMANDS:
-    list [--filter TEXT]        curated models, marking the ones installed
+    list [--filter TEXT]        curated models, marking the ones installed,
+                                then every install with its library and
+                                whether it is available, not connected, or
+                                missing
     list-speech                 bundled whisper entries (STT installs)
     list-audio                  every pinned audio model (speech, TTS, music,
                                 diarization), marking the ones installed
@@ -56,14 +59,46 @@ COMMANDS:
     rm <ALIAS>                  delete an install
     auth                        inspect Hugging Face credentials, save one
                                 from stdin with --set, or clear with --clear
+    library list                the libraries that hold model files: This
+                                Mac and folders on connected drives
+    library add <PATH> [--name NAME]
+                                add a folder on a directly connected drive,
+                                or the library already there with its models
+    library remove <NAME> [--yes]
+                                stop listing a library and its models; the
+                                files on the drive stay untouched
+    library default <NAME>      the library new downloads go to
+                                (<NAME> is a library name or its id)
+    move <ALIAS> --to <LIBRARY> [--kind KIND]
+                                move an install to another library (a name
+                                or id from `library list`, or This Mac):
+                                copy, verify the copy, then delete the
+                                original. Refused before copying when the
+                                destination lacks the free space. Ctrl-C
+                                cancels and leaves the original in place.
+                                Embedding and OCR models stay on This Mac.
+                                There is no cross-process guard: do not run
+                                an install, or load the model in another
+                                process, while it moves
 
 OPTIONS:
     --out <DIR>                 install here instead of the default store
+    --library <NAME>            for `pull`, `pull-vision`, `pull-image` and
+                                `pull-audio`: install into this library (a
+                                name or id from `library list`). Without it
+                                a pull goes to the default library, or to
+                                This Mac when that drive is not connected.
+                                Not with --out
     --source <DIR>              local Diffusers export for `pull-image`
     --repo <REPO>[@REV]         pinned Hugging Face source for `pull-image`
     --model-id <ID>             source model id for `pull-image`
     --model-revision <REV>      immutable 40-hex source revision for `pull-image`
     --alias <NAME>              name a --repo pull (required for one)
+    --name <NAME>               name a library for `library add`
+    --to <LIBRARY>              the library `move` puts the install in
+    --kind <KIND>               for `move`: text, vision, audio, or image,
+                                when the alias names installs of more than
+                                one kind
     --file <NAME.gguf>          pick one file where a repo offers several,
                                 or (with `pull-vision`) an explicit filename
                                 for a repo whose shard index does not name
@@ -97,7 +132,7 @@ OPTIONS:
     --accept-fish-license       accept the Fish Audio Community License
                                 (for `pull-drama3`; the terms print first)
     --force                     install past a probe refusal
-    --yes                       do not prompt before deleting
+    --yes                       do not prompt before deleting or removing
     --help                      print this text
     --version                   print the version
 
@@ -163,6 +198,15 @@ pub struct Options {
     pub discover: Option<usize>,
     pub probe: bool,
     pub alias: Option<String>,
+    /// The name for `library add`.
+    pub name: Option<String>,
+    /// The library a pull installs into, by name or id. Absent means the
+    /// default library.
+    pub library: Option<String>,
+    /// The library `move` puts the install in, by name or id.
+    pub to: Option<String>,
+    /// Which install `move` means when the alias names several kinds.
+    pub kind: Option<String>,
     pub file: Option<String>,
     pub sidecar_repo: Option<String>,
     /// An already-installed alias to reuse the trunk's resident bytes from,
@@ -248,6 +292,7 @@ fn run(args: &[String]) -> Result<(), Error> {
         "pull" => {
             options.reject_unused(&[
                 "out",
+                "library",
                 "alias",
                 "file",
                 "sidecar-repo",
@@ -257,11 +302,18 @@ fn run(args: &[String]) -> Result<(), Error> {
             model_cmd::pull(&catalog, &store, &client, &positionals, &options)
         }
         "pull-image" => {
-            options.reject_unused(&["out", "alias", "source", "model-id", "model-revision"])?;
+            options.reject_unused(&[
+                "out",
+                "library",
+                "alias",
+                "source",
+                "model-id",
+                "model-revision",
+            ])?;
             model_cmd::pull_image(&catalog, &store, &client, &positionals, &options)
         }
         "pull-audio" => {
-            options.reject_unused(&["accept"])?;
+            options.reject_unused(&["library", "accept"])?;
             let alias = one_positional(&positionals, "pull-audio", "<ALIAS>")?;
             model_cmd::pull_audio(&catalog, &store, &client, alias, &options)
         }
@@ -275,7 +327,7 @@ fn run(args: &[String]) -> Result<(), Error> {
             model_cmd::pull_drama3(&client, &options)
         }
         "pull-vision" => {
-            options.reject_unused(&["out", "alias", "file", "force"])?;
+            options.reject_unused(&["out", "library", "alias", "file", "force"])?;
             model_cmd::pull_vision(&catalog, &store, &client, &positionals, &options)
         }
         "path" => {
@@ -291,6 +343,13 @@ fn run(args: &[String]) -> Result<(), Error> {
         "auth" => {
             options.reject_unused(&["set", "clear", "status"])?;
             model_cmd::auth(&store, &positionals, &options)
+        }
+        // Each library command checks its own flags.
+        "library" => model_cmd::library(&store, &positionals, &options),
+        "move" => {
+            options.reject_unused(&["to", "kind"])?;
+            let alias = one_positional(&positionals, "move", "<ALIAS>")?;
+            model_cmd::move_model(&store, alias, &options)
         }
         other => Err(Error::Usage(format!("unknown command {other:?}"))),
     }
@@ -379,6 +438,22 @@ fn parse(args: &[String]) -> Result<(Vec<String>, Options), Error> {
             "--alias" => {
                 options.alias = Some(value_for(&mut index, "--alias")?);
                 seen.push("alias");
+            }
+            "--name" => {
+                options.name = Some(value_for(&mut index, "--name")?);
+                seen.push("name");
+            }
+            "--library" => {
+                options.library = Some(value_for(&mut index, "--library")?);
+                seen.push("library");
+            }
+            "--to" => {
+                options.to = Some(value_for(&mut index, "--to")?);
+                seen.push("to");
+            }
+            "--kind" => {
+                options.kind = Some(value_for(&mut index, "--kind")?);
+                seen.push("kind");
             }
             "--file" => {
                 options.file = Some(value_for(&mut index, "--file")?);

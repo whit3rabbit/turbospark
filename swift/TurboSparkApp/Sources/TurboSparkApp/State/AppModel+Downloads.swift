@@ -23,25 +23,45 @@ extension AppModel {
     func canQueueModelDownload(_ request: ModelDownload.Request) -> Bool {
         let hasRoom = modelDownloads.count < ModelDownloadHistoryStore.limit
             || modelDownloads.contains(where: { $0.status.isTerminal })
-        return !modelDownloadsShuttingDown && !generating && hasRoom
+        // A move holds the engine's one install-or-move slot: the engine answers
+        // every install `busy` meanwhile, so the button is off (task 6.11).
+        return !modelDownloadsShuttingDown && !generating && activeMove == nil && hasRoom
             && !isModelDownloadPending(request)
     }
 
     @discardableResult
-    func enqueueAudioDownload(profile: AudioProfile, acknowledged: [String] = []) -> Bool {
+    func enqueueAudioDownload(
+        profile: AudioProfile, acknowledged: [String] = [], library: String? = nil
+    ) -> Bool {
         guard !profile.identity.repository.isEmpty,
               Self.isSafeInstallAlias(profile.identity.alias),
               !isModelAlreadyInstalled(.audio(identity: profile.identity)) else { return false }
         if !acknowledged.isEmpty { acceptedAudioTerms[profile.identity.assetFingerprint] = acknowledged }
-        return enqueueModelDownload(.audio(identity: profile.identity))
+        return enqueueModelDownload(.audio(identity: profile.identity), library: library)
     }
 
     /// Adds one request to the shared FIFO. Main-actor serialization and the
     /// queue-key check make repeated button clicks idempotent.
+    ///
+    /// `library` is where the model goes (nil is This Mac) and stays on the row
+    /// through queueing, a retry and a restart. A drive that is not connected
+    /// refuses here for every modality, before anything is queued (requirement
+    /// 2.4). Embedding and OCR requests never keep one (requirement 2.5).
     @discardableResult
-    func enqueueModelDownload(_ request: ModelDownload.Request) -> Bool {
+    func enqueueModelDownload(_ request: ModelDownload.Request, library: String? = nil) -> Bool {
+        // A move is running: say why, in the sentence every busy refusal uses,
+        // instead of a button that does nothing.
+        guard activeMove == nil else {
+            showToast(LibraryActionText.busy(), style: .warning, duration: 8.0)
+            return false
+        }
         guard canQueueModelDownload(request) else {
             if isModelDownloadPending(request) { isDownloadManagerExpanded = true }
+            return false
+        }
+        let destination = request.installsOnlyOnThisMac ? nil : Self.destinationLibrary(library)
+        if let why = installDestinationBlockReason(library: destination) {
+            showToast(why, style: .warning, duration: 8.0)
             return false
         }
 
@@ -53,7 +73,8 @@ extension AppModel {
         }
         guard modelDownloads.count < ModelDownloadHistoryStore.limit else { return false }
 
-        modelDownloads.insert(ModelDownload(request: request, status: .queued), at: 0)
+        modelDownloads.insert(
+            ModelDownload(request: request, status: .queued, library: destination), at: 0)
         isDownloadManagerExpanded = true
         persistModelDownloads()
         startNextModelDownloadIfPossible()
@@ -65,12 +86,16 @@ extension AppModel {
     func startNextModelDownloadIfPossible(
         start: ((ModelDownload.Request) -> Void)? = nil
     ) {
-        guard !modelDownloadsShuttingDown, !generating,
+        // A queued row waits for a move to end: the move's tail starts it.
+        guard !modelDownloadsShuttingDown, !generating, activeMove == nil,
               Self.modelInstallOwner == nil, !hasActiveModelDownload,
               let index = modelDownloads.lastIndex(where: { $0.status == .queued })
         else { return }
 
         let request = modelDownloads[index].request
+        // The destination the row was queued with: a retry and a restart go where
+        // the first try was going.
+        let library = modelDownloads[index].library
         beginModelDownload(request)
         if let start = start ?? modelDownloadStartOverride {
             start(request)
@@ -78,14 +103,14 @@ extension AppModel {
         }
         switch request {
         case .catalog(let alias):
-            startCatalogModelInstall(alias: alias, stream: TurboSparkCatalog.install)
+            startCatalogModelInstall(alias: alias, library: library)
         case .repository(let repo, let alias, let file, let sidecarRepo):
             startRepositoryModelInstall(
-                repo: repo, alias: alias, file: file, sidecarRepo: sidecarRepo)
+                repo: repo, alias: alias, file: file, sidecarRepo: sidecarRepo, library: library)
         case .image(let alias):
-            startImageModelInstall(alias: alias)
+            startImageModelInstall(alias: alias, library: library)
         case .audio(let identity):
-            startAudioModelInstall(identity: identity)
+            startAudioModelInstall(identity: identity, library: library)
         case .embedding(let alias, let revision):
             startEmbeddingModelInstall(alias: alias, revision: revision)
         }
@@ -94,11 +119,17 @@ extension AppModel {
     /// The native transfer owns the shared install slot until its blocking call exits.
     func startAudioModelInstall(
         identity: AudioProfileIdentity,
+        library: String? = nil,
         install override: (@Sendable (AudioProfileIdentity, @escaping @Sendable (AudioDownloadProgress) -> Void) throws -> Void)? = nil
     ) {
         let acknowledged = acceptedAudioTerms[identity.assetFingerprint] ?? []
+        // Through the library seam, into the chosen library. The engine settles
+        // the destination before its first request.
+        let service = libraryState.service
+        let destination = Self.destinationLibrary(library)
         let install = override ?? { identity, progress in
-            _ = try AudioCatalog.install(identity, acknowledged: acknowledged, progress: progress)
+            _ = try service.installAudio(
+                identity, acknowledged: acknowledged, library: destination, progress: progress)
         }
         Self.modelInstallOwner = self
         installingAlias = identity.alias
@@ -172,13 +203,27 @@ extension AppModel {
                 self.audioWorkspace.refreshModels()
                 self.audioWorkspace.status = AppStrings.localized("Audio model installed")
                 self.showToast(AppStrings.localized("Audio model installed"), style: .success)
+                // Listed under the library it went into (requirement 2.6).
+                self.refreshLibraryStateInBackground()
             } catch {
                 guard self.installEpoch == myEpoch, !self.modelDownloadsShuttingDown,
                       self.audioWorkspace.valid(audioEpoch) else { return }
                 if !self.isCancellingModelInstall {
-                    self.setModelDownloadStatus(.failed, failure: error.localizedDescription)
-                    self.audioWorkspace.error = error.localizedDescription
-                    self.audioWorkspace.status = error.localizedDescription
+                    if let sentence = self.libraryInstallFailureSentence(
+                        error, alias: identity.alias, library: library, modality: "audio")
+                    {
+                        // A drive that is away or was lost is a state with its own
+                        // sentence, not the audio pane's error (requirement 2.4).
+                        self.presentLibraryInstallFailure(sentence)
+                        self.audioWorkspace.status = sentence
+                    } else {
+                        self.setModelDownloadStatus(.failed, failure: error.localizedDescription)
+                        self.audioWorkspace.error = error.localizedDescription
+                        self.audioWorkspace.status = error.localizedDescription
+                    }
+                    // No partial model stays in the audio list.
+                    self.audioWorkspace.refreshModels()
+                    self.refreshLibraryStateInBackground()
                 }
             }
             guard self.installEpoch == myEpoch, !self.modelDownloadsShuttingDown else { return }
@@ -186,7 +231,7 @@ extension AppModel {
         }
     }
 
-    func beginModelDownload(_ request: ModelDownload.Request) {
+    func beginModelDownload(_ request: ModelDownload.Request, library: String? = nil) {
         if let index = modelDownloads.firstIndex(where: {
             $0.status == .queued && $0.request.queueKey == request.queueKey
         }) {
@@ -194,7 +239,9 @@ extension AppModel {
             modelDownloads[index].updatedAt = Date()
             activeModelDownloadID = modelDownloads[index].id
         } else {
-            let download = ModelDownload(request: request)
+            let download = ModelDownload(
+                request: request,
+                library: request.installsOnlyOnThisMac ? nil : Self.destinationLibrary(library))
             activeModelDownloadID = download.id
             modelDownloads.insert(download, at: 0)
             modelDownloads = Array(modelDownloads.prefix(ModelDownloadHistoryStore.limit))
@@ -307,15 +354,17 @@ extension AppModel {
 
     func retryModelDownload(_ download: ModelDownload) {
         guard canRetryModelDownload(download) else { return }
+        // A retry goes where the first try was going.
+        let library = download.library
         switch download.request {
         case .catalog(let alias):
-            installModel(alias: alias)
+            installModel(alias: alias, library: library)
         case .repository(let repo, let alias, let file, let sidecarRepo):
-            installRepo(repo: repo, alias: alias, file: file, sidecarRepo: sidecarRepo)
+            installRepo(repo: repo, alias: alias, file: file, sidecarRepo: sidecarRepo, library: library)
         case .image(let alias):
-            enqueueModelDownload(.image(alias: alias))
+            enqueueModelDownload(.image(alias: alias), library: library)
         case .audio(let identity):
-            enqueueModelDownload(.audio(identity: identity))
+            enqueueModelDownload(.audio(identity: identity), library: library)
         case .embedding(let alias, let revision):
             enqueueModelDownload(.embedding(alias: alias, revision: revision))
         }

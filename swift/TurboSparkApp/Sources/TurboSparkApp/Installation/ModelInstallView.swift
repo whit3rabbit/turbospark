@@ -15,6 +15,9 @@ struct ModelInstallView: View {
     @State private var recommendationProgress: ModelRecommendationProbeProgress?
     @State private var recommendationError: String?
     @State private var selectedFilter: RecommendationFilter = .recommended
+    /// The library the user picked for the install. Nil follows the default
+    /// (requirement 2.2). Per install: it is not remembered across launches.
+    @State private var destination: String?
 
     enum RecommendationFilter: String, CaseIterable, Identifiable {
         case recommended = "Best Fit (MoE & Fast)"
@@ -139,6 +142,10 @@ struct ModelInstallView: View {
                 .accessibilityLabel(Text("Recommendations filter", bundle: .module))
             }
 
+            // Where an install from this list goes: only when there is a choice
+            // (requirement 2.1). A drive with no models yet is a library too.
+            InstallDestinationPicker(model: model, selection: $destination)
+
             if isLoadingRecommendations {
                 ModelRecommendationLoadingView(progress: recommendationProgress)
                 .frame(maxWidth: .infinity)
@@ -180,7 +187,9 @@ struct ModelInstallView: View {
             } else {
                 VStack(spacing: 10) {
                     ForEach(displayedRecommendations) { rec in
-                        ModelRecommendationRow(recommendation: rec, model: model)
+                        ModelRecommendationRow(
+                            recommendation: rec, model: model,
+                            library: model.installDestinations.libraryForInstall(selection: destination))
                     }
                 }
             }

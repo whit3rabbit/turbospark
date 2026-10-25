@@ -630,6 +630,27 @@ final class LocalizationParityTests: XCTestCase {
         for entry in SettingsControlCatalog.entries {
             values.append(("SettingsControlCatalog.title", entry.title))
         }
+        // The libraries section (tasks 6.1 and 6.2): a library's status and
+        // the actions on its row render their titles as keys.
+        for status in LibraryRowStatus.allCases {
+            values.append(("LibraryRowStatus.title", status.title))
+        }
+        for action in LibraryRowAction.allCases {
+            values.append(("LibraryRowAction.title", action.title))
+        }
+        // The Installed Models list (tasks 6.4 and 6.5): the status words of an
+        // offline or missing row, and the group modes the sort menu renders as
+        // keys (a new mode is easy to add as an enum case and forget as a key).
+        for status in InstalledRowStatus.allCases {
+            values.append(("InstalledRowStatus.title", status.title))
+        }
+        for option in ModelManagerView.GroupOption.allCases {
+            values.append(("ModelManagerView.GroupOption.rawValue", option.rawValue))
+        }
+        // The move sheet (task 6.11): the phase line under the progress bar.
+        for phase in MoveProgress.Phase.allCases {
+            values.append(("MoveProgress.Phase.title", phase.title))
+        }
         let missing = values.filter { strings[$0.value] == nil }
             .map { "\($0.source): \($0.value)" }
         XCTAssertTrue(

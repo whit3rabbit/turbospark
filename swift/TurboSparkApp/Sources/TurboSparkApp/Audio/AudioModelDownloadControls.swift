@@ -15,6 +15,8 @@ struct AudioModelDownloadControls: View {
     @State private var acknowledging: AudioProfile?
 
     private var download: ModelDownload? { model.audioDownload(for: profile) }
+    /// The default library for downloads, nil for This Mac (requirement 2.2).
+    private var library: String? { model.installDestinations.libraryForInstall(selection: nil) }
 
     var body: some View {
         if let download, !download.status.isTerminal {
@@ -46,7 +48,7 @@ struct AudioModelDownloadControls: View {
 
     private var downloadButton: some View {
         Button {
-            if profile.requiredAcknowledgments.isEmpty { controller.install(profile) }
+            if profile.requiredAcknowledgments.isEmpty { controller.install(profile, library: library) }
             else { acknowledging = profile }
         } label: {
             Label {
@@ -62,7 +64,7 @@ struct AudioModelDownloadControls: View {
         .alert(Text("Before downloading", bundle: .module),
                isPresented: Binding(get: { acknowledging != nil }, set: { if !$0 { acknowledging = nil } }),
                presenting: acknowledging) { terms in
-            Button { controller.install(terms, acknowledged: terms.requiredAcknowledgments.map(\.id)) } label: {
+            Button { controller.install(terms, acknowledged: terms.requiredAcknowledgments.map(\.id), library: library) } label: {
                 Text("Accept and download", bundle: .module)
             }
             Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }

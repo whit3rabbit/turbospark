@@ -123,13 +123,15 @@ extension AppModel {
         let query = arguments.joined(separator: " ").lowercased()
         guard !query.isEmpty else {
             let loaded = selected?.alias ?? AppStrings.localized("None")
-            let example = installed.first?.alias ?? "gemma4"
+            let example = loadableModels.first?.alias ?? "gemma4"
             showToast(
                 AppStrings.localized("Loaded model: \(loaded). Give a name to switch, e.g. /model \(example)."),
                 style: .info)
             return
         }
-        let matches = installed.filter { $0.alias.lowercased().contains(query) }
+        // The loadable list: `/model` starts a load, and a model whose drive is
+        // away is not one (requirement 3.3).
+        let matches = loadableModels.filter { $0.alias.lowercased().contains(query) }
         switch matches.count {
         case 0:
             showToast(AppStrings.localized("No installed model matches '\(query)'."), style: .warning)
@@ -144,10 +146,15 @@ extension AppModel {
                     style: .warning)
                 return
             }
-            if selectModel(matches[0]) {
+            switch requestLoad(matches[0], purpose: .chat(switchToChat: false)) {
+            case .started:
                 showToast(AppStrings.localized("Switched to \(matches[0].alias)."), style: .success)
-            } else {
+            case .alreadyLoaded, .busy:
                 showToast(AppStrings.localized("\(matches[0].alias) is already loaded."), style: .info)
+            case .needsConfirmation, .refused:
+                // The confirmation is on screen, or a toast already said why the
+                // model cannot be loaded: nothing was switched.
+                break
             }
         default:
             let names = matches.prefix(4).map(\.alias).joined(separator: ", ")

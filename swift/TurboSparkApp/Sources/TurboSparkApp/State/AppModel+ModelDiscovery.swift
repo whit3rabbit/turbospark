@@ -46,7 +46,7 @@ extension AppModel {
             // been left on disk for a model this app did install.
             var catalogRows: [InstalledModel] = []
             do {
-                catalogRows = try TurboSparkCatalog.installed()
+                catalogRows = try catalogInstalledReader()
             } catch {
                 self.error =
                     "Could not read the installed-model list: \(error.localizedDescription). "
@@ -56,7 +56,7 @@ extension AppModel {
             installed = catalogRows
             catalog = try TurboSparkCatalog.available()
             imageCatalog = try TurboSparkCatalog.imageAvailable()
-            managedImageModels = try TurboSparkCatalog.imageInstalled()
+            managedImageModels = try imageInstalledReader()
             // Rows from the last scan stay until the new scan lands, so a
             // selected side-loaded model does not vanish during a refresh.
             applyImageModels()
@@ -96,10 +96,17 @@ extension AppModel {
             // actor (this is a recursive `FileManager.enumerator` plus a
             // second full walk per bundle found), so the fix is to store
             // that task rather than to wrap it.
+            // **A FOLDER ON AN UNPLUGGED DRIVE IS NOT WALKED, AND IS NOT AN
+            // ERROR** (task 6.12, requirements 3.4 and 3.9). Settings shows it
+            // as Not connected; here it simply contributes no rows, exactly as a
+            // missing library contributes none. The status is read inside the
+            // task because a connected drive's folder is a stat on that drive.
+            let folderStatus = scanFolderStatusReader
             modelScanTask = Task.detached(priority: .utility) { [weak self] in
+                let reachable = customDirs.filter { folderStatus($0) == .connected }
                 let scanned = ModelStorageManager.scanExternal(
-                    lmStudioPath: lmPath, customPaths: customDirs)
-                let scannedImages = Self.scanImageInstalls(in: customDirs)
+                    lmStudioPath: lmPath, customPaths: reachable)
+                let scannedImages = Self.scanImageInstalls(in: reachable)
                 guard !Task.isCancelled, let self else { return }
                 await MainActor.run {
                     self.mergeScannedModels(scanned, into: catalogRows)
@@ -221,19 +228,24 @@ extension AppModel {
     /// alias-based lookups can silently rebind to the WRONG row once two rows
     /// happen to share one. Path is the one field that actually identifies a
     /// single file on disk.
+    ///
+    /// **FROM THE LOADABLE LIST** (task 6.8, requirement 3.3). A selection rests on
+    /// a model that can be opened: after a drive leaves, the selected row moves to
+    /// one that can. It only SELECTS; restoring a selection never loads anything.
     private func reconcileSelection() {
         // The loaded model is never "gone" just because its row is not in
         // `installed` yet or at all: the catalog rows land before the LM
         // Studio / custom-folder scan merges, and a manually opened path has
-        // no row. Rebinding to `installed.first` there named and reloaded a
+        // no row. Rebinding to the first row there named and reloaded a
         // different model than the one resident.
         let loaded = loadedModelPath
+        let loadable = loadableModels
         if let currentPath = selected?.path {
-            if !installed.contains(where: { $0.path == currentPath }), currentPath != loaded {
-                selected = installed.first
+            if !loadable.contains(where: { $0.path == currentPath }), currentPath != loaded {
+                selected = loadable.first
             }
         } else if loaded == nil {
-            selected = installed.first
+            selected = loadable.first
         }
         if let selected {
             modelPathText = selected.path
@@ -284,6 +296,13 @@ extension AppModel {
             || servedIDs.contains(servedModelID(for: model))
     }
 
+    /// Whether `catalogRows` holds a row at `model`'s path (the rule described in
+    /// the first doc block above).
+    ///
+    /// **NO LONGER THE DELETE GUARD** (task 6.4). `deleteModel` decides by the
+    /// row's identity (`ModelIdentityKey.isPlaceholder`): the engine's available
+    /// list does not hold a model whose drive is away, and reading it cost a
+    /// synchronous engine call on the main actor. Only the path rule is kept.
     static func isCatalogTracked(model: InstalledModel, in catalogRows: [InstalledModel]) -> Bool {
         let stdPath = URL(fileURLWithPath: model.path).standardizedFileURL.path
         return catalogRows.contains { entry in

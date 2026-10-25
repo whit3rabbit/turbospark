@@ -386,6 +386,34 @@ when this file gets updated relative to the version bump and the tag.
   clearing a chat forgets its turns. See `swift/docs/SYNTEXT_CONTEXT.md`,
   which also sets it against memory.
 
+- Model libraries: install models on one or more external drives, and keep
+  using them from the command line and the app. A library is a `TurboSpark`
+  folder on a directly connected drive with a `library.json` marker, so a
+  renamed drive, or the same drive on another Mac, is found again by the marker
+  and its models are listed. This Mac is always the first library. An
+  unplugged drive's models stay listed as not connected and cannot be loaded
+  until it is back. A network share, a FAT32 drive, a read-only drive, a folder
+  on the home disk, and a folder that overlaps another library are each refused
+  with a sentence naming the rule. Embedding and OCR models stay on This Mac.
+  The hardware and manual checks on a real drive are not run yet; they are
+  listed in `docs/MODEL_LIBRARIES_HARDWARE_GATE.md`.
+  - `crates/cli`: `turbospark-model library list|add|remove|default`;
+    `--library` on `pull`, `pull-vision`, `pull-image` and `pull-audio`;
+    `move <alias> --to <library> [--kind KIND]`, which copies, verifies the
+    copy, and only then deletes the original; and an `installed:` table in
+    `list` with each install's library and whether it is available, not
+    connected, or missing. See `docs/CLI.md`.
+  - `crates/ffi`: `ts_libraries_json`, `ts_library_add`, `ts_library_remove`,
+    `ts_library_set_default`, `ts_library_discover_json`, `ts_model_move`,
+    `ts_model_move_cancel`, `ts_model_forget`, `ts_model_delete_install` and
+    `ts_image_delete_install`. The installed lists carry each install's
+    library and availability.
+  - `swift/TurboSparkApp`: a Model libraries section in Models and Storage
+    (add, make default, test speed, remove, reveal), an Install to picker with
+    a free-space check on the chosen destination, a Move to sheet, a warning
+    before loading a model that streams from a slow drive, and an eject that
+    unloads the models on the drive first.
+
 ### Changed
 - MiniMax Music 3 now opens in a faster flow profile by default (`Music3Runner`,
   `turbospark-music`, and so the app, server and FFI): Adams-Bashforth 2 with the
@@ -479,6 +507,14 @@ when this file gets updated relative to the version bump and the tag.
   key an earlier version already stored is kept: the first launch finds the
   item without reading the secret and turns the option on, so nobody's server
   quietly starts without authentication. Turning it off deletes the item.
+- `swift/TurboSparkApp`: Move Store is retired, replaced by model libraries. A
+  store an earlier version moved to a drive is registered as a library at the
+  next launch, with all its models listed and no model file moved. Embedding
+  and OCR models found there are copied to This Mac and the originals left in
+  place. The drive is converted when it is connected if it was not at launch.
+  The package still exports `TurboSparkCatalog.relocateStore(to:)`, which is
+  deprecated, and `ts_store_relocate`, which now refuses once any library is
+  listed; both are slated for removal.
 - `swift/TurboSparkApp`: the icon rail is always on screen, and beside it
   the selected section's panel: the chat list in Chat, every Audio page in
   Audio. The labeled section rows that sat above the chat list are gone,

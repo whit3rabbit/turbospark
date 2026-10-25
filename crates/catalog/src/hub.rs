@@ -279,7 +279,7 @@ pub struct DownloadReceipt {
     pub sources: Vec<VerifiedSourceGroup>,
     /// The unique child staging directory created and owned by this transfer.
     pub staging_root: PathBuf,
-    /// Per-file range cache trees under `<parent>/.download-cache/pinned`
+    /// Per-file range cache trees under `<cache parent>/.download-cache/pinned`
     /// that this transfer used. They stay so a failed install can resume;
     /// the caller removes them with [`Self::discard_download_cache`] once
     /// the install is published.
@@ -767,7 +767,31 @@ impl<'a> HubClient<'a> {
         progress: &mut dyn FnMut(HubDownloadProgress),
         cancel: &crate::install::CancelFlag,
     ) -> Result<DownloadReceipt, HubError> {
-        crate::hub_transfer::download_pinned_artifacts(self, plan, staging_parent, progress, cancel)
+        self.download_pinned_artifacts_into(plan, staging_parent, staging_parent, progress, cancel)
+    }
+
+    /// [`Self::download_pinned_artifacts`] with the range cache under
+    /// `<cache_parent>/.download-cache/pinned` rather than beside staging.
+    /// An install into a library stages on the library's drive, so that
+    /// publication is a same-volume rename, while the cache stays in the
+    /// home: `cache_parent` is the home and `staging_parent` the library's
+    /// staging folder.
+    pub fn download_pinned_artifacts_into(
+        &self,
+        plan: &PinnedArtifactPlan,
+        staging_parent: &Path,
+        cache_parent: &Path,
+        progress: &mut dyn FnMut(HubDownloadProgress),
+        cancel: &crate::install::CancelFlag,
+    ) -> Result<DownloadReceipt, HubError> {
+        crate::hub_transfer::download_pinned_artifacts(
+            self,
+            plan,
+            staging_parent,
+            cache_parent,
+            progress,
+            cancel,
+        )
     }
 
     pub(crate) fn client(&self) -> &Client {

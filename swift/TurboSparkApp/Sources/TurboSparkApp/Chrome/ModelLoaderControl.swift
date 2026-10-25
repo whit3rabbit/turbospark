@@ -215,13 +215,20 @@ struct ModelLoaderControl: View {
         .accessibilityHint(Text("Choose which installed model to use", bundle: .module))
     }
 
+    /// The loadable list only (requirement 3.3): a model on a drive that is away
+    /// is not offered here, and with nothing else to offer the menu says why.
     @ViewBuilder
     private var installedModelsSection: some View {
-        if model.installed.isEmpty {
-            Text("No models installed yet", bundle: .module)
+        let loadable = model.loadableModels
+        if loadable.isEmpty {
+            if let statement = model.notConnectedStatement {
+                Text(verbatim: statement)
+            } else {
+                Text("No models installed yet", bundle: .module)
+            }
         } else {
             Section(header: Text("Installed", bundle: .module)) {
-                ForEach(model.installed) { item in
+                ForEach(loadable) { item in
                     Button {
                         model.openChatWithModel(item)
                     } label: {
@@ -370,6 +377,9 @@ struct ModelLoaderControl: View {
     /// one is current.
     enum LoaderState: Equatable {
         case noneInstalled
+        /// Models exist and none can be loaded because their drive is away. A
+        /// statement naming the drive, never an error.
+        case notConnected
         case noneSelected
         case notLoaded
         case installing
@@ -381,7 +391,9 @@ struct ModelLoaderControl: View {
         // A download of some other model must not mask a live, ready session.
         if model.isInstallingModel && model.session == nil { return .installing }
         if model.opening { return .opening }
-        if model.installed.isEmpty { return .noneInstalled }
+        if model.loadableModels.isEmpty {
+            return model.notConnectedModels.isEmpty ? .noneInstalled : .notConnected
+        }
         guard model.selected != nil else { return .noneSelected }
         return model.session != nil ? .ready : .notLoaded
     }
@@ -389,6 +401,7 @@ struct ModelLoaderControl: View {
     private var primaryText: Text {
         switch loaderState {
         case .noneInstalled: return Text("No model installed", bundle: .module)
+        case .notConnected: return Text(verbatim: model.notConnectedStatement ?? "")
         case .noneSelected: return Text("Select a model", bundle: .module)
         default:
             // The alias is an identifier, so it is never translated.
@@ -398,7 +411,7 @@ struct ModelLoaderControl: View {
 
     private var secondaryText: Text? {
         switch loaderState {
-        case .noneInstalled, .noneSelected:
+        case .noneInstalled, .notConnected, .noneSelected:
             return nil
         case .installing:
             // Installer logs can be arbitrarily wide. Keep the selector
@@ -417,6 +430,9 @@ struct ModelLoaderControl: View {
         switch loaderState {
         case .noneInstalled:
             return Text("No models are installed. Open the Model Hub to download one.", bundle: .module)
+        case .notConnected:
+            // The same statement the pill shows: the way out is the cable.
+            return Text(verbatim: model.notConnectedStatement ?? "")
         case .noneSelected:
             return Text("Choose which installed model to use", bundle: .module)
         case .notLoaded:

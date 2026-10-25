@@ -288,6 +288,9 @@ fn resolve_model(model: &Path) -> Result<PathBuf, Error> {
     }
     let name = model.to_string_lossy();
     let store = Store::default_store().map_err(Error::Failed)?;
+    if let Some(message) = catalog::not_connected_message(&name, catalog::ModelModality::Audio) {
+        return Err(Error::Failed(message));
+    }
     store.resolve_audio(&name).ok_or_else(|| {
         Error::Failed(format!(
             "{name:?} is neither a directory nor an installed audio alias"

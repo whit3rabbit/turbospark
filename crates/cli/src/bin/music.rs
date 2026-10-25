@@ -295,6 +295,11 @@ fn text_request(options: &GenerateOptions) -> TextGenerateRequest {
 }
 
 fn resolve_audio_model(store: &Store, model: &str) -> Result<PathBuf, Error> {
+    // An alias on a drive that is not plugged in says which drive (10.7)
+    // rather than that no such model is installed.
+    if let Some(message) = catalog::not_connected_message(model, catalog::ModelModality::Audio) {
+        return Err(Error::Failed(message));
+    }
     store.resolve_audio(model).ok_or_else(|| {
         Error::Failed(format!(
             "{model:?} is neither a directory nor an installed audio alias; run `turbospark-model list-audio`"

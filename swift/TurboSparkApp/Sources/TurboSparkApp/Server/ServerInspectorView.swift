@@ -63,7 +63,7 @@ struct ServerInspectorView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(verbatim: favorite.name).themedFont(.small, weight: .medium)
                     (Text(verbatim: "\(favorite.host):\(favorite.port) | ")
-                        + Text("\(favorite.modelPaths.count) models", bundle: .module))
+                        + Text("\(favorite.modelCount) models", bundle: .module))
                         .themedCode(.small).foregroundStyle(.appSecondary)
                     HStack {
                         Button { model.loadServerFavorite(favorite) } label: { Text("Load", bundle: .module) }

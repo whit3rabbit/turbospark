@@ -28,7 +28,7 @@ struct ModelStatusDot: View {
         case .ready: return accent
         case .installing, .opening: return accent
         case .notLoaded: return theme.secondaryText
-        case .noneInstalled, .noneSelected: return theme.secondaryText
+        case .noneInstalled, .notConnected, .noneSelected: return theme.secondaryText
         }
     }
 

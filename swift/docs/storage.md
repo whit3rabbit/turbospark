@@ -34,19 +34,38 @@ in the text namespace because they are accessories to text models.
 
 Existing flat installs remain readable for compatibility: legacy text and
 vision paths under `models/`, plus legacy `<alias>.image.gturbo` image paths.
-New installs always use the modality directories. The Swift app exposes a
-Settings move wizard for the managed root. It copies and verifies the whole
-managed `models/` tree, registry, and catalog override, then removes the old
-managed entries only after the destination is verified. The Hugging Face token
-is a credential rather than a model-store artifact and is never copied to the
-destination; an existing token file remains at the old root. The destination
-must be empty, and the move is disabled while a model is loaded, generating,
-or installing. Provider-owned folders are never moved by this operation.
+New installs always use the modality directories. **The app no longer offers to
+move the managed root** (Move Store, retired by requirement 9.1; model
+libraries replace it). Its engine call, `relocate_default_store`, copied the
+engine root's `models/` tree, `installed.json` and catalog override and then
+DELETED them from the root. The engine root is the home now, and the home's
+`installed.json` holds the registry rows of every library, so a caller would
+strip them. `relocate_default_store` (FFI `ts_store_relocate`, Swift
+`TurboSparkCatalog.relocateStore`) therefore stays only as a retired engine
+export with no app caller. The engine refuses it while any library is listed
+(or the list cannot be read), before it touches the destination, and the Swift
+wrapper and its two types are marked deprecated. `MoveStoreRetirementTests`
+fails if any app source references the sheet or the call again. A token file stays where it is:
+the Hugging Face token is a credential, not a model-store artifact, and was
+never copied by that operation.
 
-The app persists a configured root in `MacAppSettings.turboSparkStoreRoot`
-and applies it to the Rust binding at launch. The binding uses a process-local
-override, so changing the app setting does not mutate `TURBOSPARK_HOME` for
-child processes. Clearing the setting restores the environment/default root.
+**The app no longer applies a store root to the engine** (requirement 1.1). The
+engine's root is always the home (`TURBOSPARK_HOME`, else `~/.turbospark`), so
+the CLI, the daemon and the app agree. A root a past Move Store recorded
+(`model_store_root.txt` at machine level, and the legacy
+`MacAppSettings.turboSparkStoreRoot`, which `ModelStoreRootRecord.resolve`
+promotes to the machine record) is only the INPUT of `MoveStoreMigration`
+(`State/MoveStoreMigration.swift`). At launch and on each mount while a
+conversion is pending it calls `importMovedRoot` off the main actor, which
+registers `<root>/models` as a library where it is and moves no model file.
+Only a complete import (`ImportedStore.isComplete`) clears the record, by
+emptying `model_store_root.txt` rather than deleting it (a deleted record would
+be promoted again from a profile's `settings.json` at the next launch). An
+unfinished conversion keeps the record and writes `moved_store_pending.json`
+(machine level, `AppJSONStore`): `{"root": ..., "name": <folder name>,
+"notConnected": <bool>}`. Only `notConnected: true` (the engine found the root
+absent) lists a not-connected placeholder named after the folder in
+`LibraryState.displayLibraries`.
 
 The Models Settings pane also detects conventional Hugging Face, LM Studio,
 and Ollama locations. Detection is read-only until the user adds a result:
@@ -116,6 +135,80 @@ under tests ([SYNTEXT.md](SYNTEXT.md)).
 
 Draft persistence is debounced by 300 ms. SQLCipher compares versioned chat
 payloads and updates only changed rows and their FTS content.
+
+**Per-model metadata is keyed by `install_id`** (`model_organization.json`,
+requirement 8.1). A model's favorite flag, tags, notes, nickname and
+reasoning default live in one `ModelCustomMetadata` record under
+`<library-id>:<modality>/<alias>` (`ModelIdentityKey`). That id survives a
+move to another library and a drive that reconnects under another name. The
+path does not.
+
+The file is still a flat dictionary with no version field. Keys from earlier
+builds (`alias::standardized-path`, the bare alias) load unchanged and are
+found as a fallback. The first read copies the entry to the id key in memory,
+without notifying observers, and the next save removes the old key. Reasoning
+defaults used to sit in `settings.json` (`modelReasoningDefaults`, raw path or
+alias keys). Each one is copied into the record and dropped from that table
+when its model is opened.
+
+When an id entry and a legacy entry both exist, the id entry wins field by
+field where it has a value (`ModelCustomMetadata.filling(gapsFrom:)`). A move
+calls `ModelOrganizationStore.rekey(from:to:legacyPath:)` with the old and new
+ids (`AppModel+Moves.swift`, after the engine reports the install is in the
+destination). `legacyPath` is the path BEFORE the move, because an entry no view
+has read since an older build still sits under `alias::oldPath`, and a
+reasoning default still in `settings.json` is folded into the record first for
+the same reason. A move that fails or is cancelled writes none of it. A corrupt
+file is quarantined by `AppJSONStore` like every other store.
+
+**Server favorites follow the same identity** (`settings.json`, `serverFavorites`,
+requirement 8.1). A favorite keeps `modelInstallIds` beside the legacy
+`modelPaths`, aligned by index: slot `i` of each names the same model, and a
+model the app built a placeholder row for (another app's folder) has the empty
+string in its id slot, never its default id. An older settings file has no
+`modelInstallIds` and decodes with none. The first load resolves each path
+against the library rows, writes the ids back and saves settings, and leaves the
+paths for an older app. A load looks an id up first, then the same
+`<modality>/<alias>` under another library (sole candidate only), then the path,
+and reports a model on a drive that is not connected as such (requirement 8.2).
+
+A model move rewrites the id slot of every favorite that holds the model
+(`ServerFavorite.followingMove`: the old id, or a path-only entry at the old
+path) and leaves the paths alone.
+
+**A model that is being moved is never loaded** (task 6.11). The engine removes
+the original folder once the copy is verified, so a load that began during the
+copy would map files that are about to go. `activeMove` is set at the claim,
+before the engine is called, and cleared when the move ends in any way.
+`AppModel.isMoving` answers from it, by row, by install id or by folder.
+
+`requestLoad` answers `.busy` with a toast, and `canOpenNow` refuses, which
+covers `open`, a reload, a server attach, a favorite's auto-start and the load
+after an install. `canLoadModel` greys the Model menu item. The loaders that open
+a folder and not a row ask for themselves: Humanize, the image session (the
+Images screen and the API worker share one), the audio session, the Qwen speech
+job, and the server's image and audio attaches. A load of another model is not
+affected.
+
+Quitting during a move cancels it without asking. `shutdown()` sends the engine
+a cancel, and sends it again on the first progress figure if the engine had not
+registered the move yet. Nothing is written afterwards, the original stays where
+it was, and a `.staging/move-*` folder may be left on the destination (the
+engine has no sweep yet). An unplugged drive arrives as `not_connected`. An eject
+under a running move is not coordinated: the eject coordinator knows only loaded
+models.
+
+**Model library state is memory, except offer dismissals.** `LibraryState`
+(`AppModel+ModelLibraries.swift`) holds libraries, link speeds, free space,
+measured speeds and the full installed list in memory. It rebuilds them from
+the engine on launch and on volume events, and nothing about availability is
+written. The one file it owns is `library_offer_dismissals.json`, a `[String]`
+of library marker ids the user dismissed. It goes through `AppJSONStore` under
+`AppStorageRoot`, so a corrupt file is quarantined like the others, and it is
+read on first use rather than at launch. The `AppJSONStore` label "Library
+offer dismissals" is shown only if that file cannot be read or saved. The
+moved-store conversion owns `moved_store_pending.json` (see above), labelled
+"Moved store conversion"; neither label has a catalog key yet.
 
 Audio workspace helper stores under `<AppStorageRoot>`:
 - `speaker_profiles.json` (`AudioSpeakerProfileStore`): Cross-meeting learned speaker

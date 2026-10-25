@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use catalog::drama3_install as engine;
 use catalog::{AudioCatalog, CancelFlag, Client};
 
-use super::{human_bytes, install_audio_sigint_handler, AUDIO_PULL_INTERRUPTED};
+use super::{human_bytes, install_sigint_handler, INTERRUPTED};
 use crate::{Error, Options};
 
 /// The id of the license acknowledgment on the catalog profile.
@@ -50,15 +50,15 @@ pub fn pull_drama3(client: &Client, options: &Options) -> Result<(), Error> {
     let available = model_io::available_bytes(&dest).map_err(Error::Failed)?;
     let pins = engine::Pins::from_assets(&profile.assets).map_err(Error::Failed)?;
 
-    AUDIO_PULL_INTERRUPTED.store(false, Ordering::Release);
-    install_audio_sigint_handler();
+    INTERRUPTED.store(false, Ordering::Release);
+    install_sigint_handler();
     let cancel = CancelFlag::new();
     let done = Arc::new(AtomicBool::new(false));
     let watcher = {
         let (done, cancel) = (Arc::clone(&done), cancel.clone());
         thread::spawn(move || {
             while !done.load(Ordering::Acquire) {
-                if AUDIO_PULL_INTERRUPTED.load(Ordering::Acquire) {
+                if INTERRUPTED.load(Ordering::Acquire) {
                     cancel.cancel();
                     break;
                 }
@@ -74,7 +74,7 @@ pub fn pull_drama3(client: &Client, options: &Options) -> Result<(), Error> {
     done.store(true, Ordering::Release);
     let _ = watcher.join();
     result.map_err(|e| {
-        if AUDIO_PULL_INTERRUPTED.load(Ordering::Acquire) {
+        if INTERRUPTED.load(Ordering::Acquire) {
             Error::Failed("interrupted; nothing was left behind".to_string())
         } else {
             Error::Failed(e)

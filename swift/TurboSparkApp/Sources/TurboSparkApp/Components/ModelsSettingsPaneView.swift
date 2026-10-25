@@ -17,7 +17,6 @@ public struct ModelsSettingsPaneView: View {
     /// evaluation this view received for any reason
     /// (`swift/docs/SWIFT_SETTINGS_AUDIT.md`).
     @State private var lmStudioModelCount: Int = 0
-    @State private var showingStoreMigration = false
     @State private var showingProviderDiscovery = false
 
     public init(model: AppModel) {
@@ -54,6 +53,11 @@ public struct ModelsSettingsPaneView: View {
                 HfAuthTokenCardView(model: model)
                     .settingsControl("Hugging Face Authentication", pane: .models, timing: .immediate)
 
+                // Section 0: model libraries (drives that hold models). Above
+                // the storage section on purpose: a library is where models
+                // can live besides the home that section describes.
+                ModelLibrariesSectionView(model: model)
+
                 // Section 1: TurboSpark Primary Storage
                 turboSparkStorageSection
 
@@ -74,9 +78,6 @@ public struct ModelsSettingsPaneView: View {
             }
             .padding(SettingsLayout.contentInsets)
         }
-        .sheet(isPresented: $showingStoreMigration) {
-            ModelStoreMigrationSheet(model: model)
-        }
         .sheet(isPresented: $showingProviderDiscovery) {
             ModelProviderDiscoverySheet(model: model)
         }
@@ -85,19 +86,12 @@ public struct ModelsSettingsPaneView: View {
     // MARK: - TurboSpark Primary Storage
     private var turboSparkStorageSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            AppAdaptiveHeader {
-                Label { Text("TurboSpark Models Storage", bundle: .module) } icon: { Image(systemName: "cylinder.split.1x2") }
-                    .themedFont(.base, weight: .semibold)
-                    .accessibilityAddTraits(.isHeader)
-            } actions: {
-                Button {
-                    showingStoreMigration = true
-                } label: {
-                    Label { Text("Move Store...", bundle: .module) } icon: { Image(systemName: "externaldrive") }
-                }
-                .appAction(.secondary, size: .small)
-                .settingsControl("Move Model Store", pane: .models, timing: .immediate)
-            }
+            // A plain heading: the section had no action once the store move
+            // was retired (requirement 9.1), and an adaptive header with an
+            // empty actions slot still lays out a spacer and a second row.
+            Label { Text("TurboSpark Models Storage", bundle: .module) } icon: { Image(systemName: "cylinder.split.1x2") }
+                .themedFont(.base, weight: .semibold)
+                .accessibilityAddTraits(.isHeader)
 
             VStack(alignment: .leading, spacing: 10) {
                 SettingsPathText(turboSparkStoreRoot)

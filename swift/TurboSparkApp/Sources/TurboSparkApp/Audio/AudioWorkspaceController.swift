@@ -31,8 +31,14 @@ final class AudioWorkspaceController: ObservableObject {
     /// Installs that exist on disk but cannot be used as they are, with the
     /// engine's reason. Shown so a broken install is visible, not just absent.
     @Published var incompatibleInstalls: [AudioIncompatibleInstall] = []
+    /// Installs in a library whose drive is not connected (task 6.10). A state to
+    /// show, not an error: they are not `incompatibleInstalls`, they are not in
+    /// `installedPaths`, and none of them can be run.
+    @Published var notConnectedInstalls: [AudioNotConnectedInstall] = []
     /// The verified installs with their sizes, and managed audio installs the
-    /// catalog no longer lists, for Installed > Audio.
+    /// catalog no longer lists, for Installed > Audio. The rows carry the library
+    /// and the size a move needs (task 6.11); `installedPaths` is derived from
+    /// the same rows.
     @Published var installedRecords: [AudioInstalledRecord] = []
     @Published var otherAudioInstalls: [AudioInstalledRecord] = []
     @Published var isManagingInstall = false
@@ -89,6 +95,10 @@ final class AudioWorkspaceController: ObservableObject {
     let pendingAssetOwner = UUID()
     let lifetime = AudioOperationLifetime()
     var summaryHandler: ((AudioLibraryItem, InstalledModel?) async throws -> AudioMeetingSummary)?
+    /// Whether the model at a path is being moved to another library. The move removes
+    /// the original folder when it ends, so a session is never opened from a path for
+    /// which this says yes (`residentSession`, the Qwen speech job). Set by the owner.
+    var modelMoving: ((String) -> Bool)?
     var summaryAvailable: (() -> Bool)?
     var availableChatModels: (() -> [InstalledModel])?
     var selectedChatModel: (() -> InstalledModel?)?
@@ -98,8 +108,17 @@ final class AudioWorkspaceController: ObservableObject {
             (summaryAvailable?() == true || selectedChatModel?() != nil || !(availableChatModels?().isEmpty ?? true))
     }
     /// Queues a managed download. The second argument lists the ids of the
-    /// profile's acknowledgments the user accepted.
-    var installHandler: ((AudioProfile, [String]) -> Bool)?
+    /// profile's acknowledgments the user accepted; the third is the library it
+    /// goes into (nil is This Mac).
+    var installHandler: ((AudioProfile, [String], String?) -> Bool)?
+    /// The default library for downloads, nil for This Mac (requirement 2.2), for
+    /// installs that offer no destination menu. Set by the owner.
+    var defaultInstallLibrary: (() -> String?)?
+    /// How the catalog is read: the live engine, or a test's answer. It runs off
+    /// the main actor.
+    let catalogReader: @Sendable () throws -> AudioCatalogSnapshot
+    /// The one door to the engine for an install that no queue owns.
+    let installService: ModelLibraryService
     let library: AudioLibraryStore
     let assets: ManagedAssetStore
     var profileID: String?
@@ -118,17 +137,25 @@ final class AudioWorkspaceController: ObservableObject {
     var referencePreviewTask: Task<Void, Never>?
     var referencePlayer: AVAudioPlayer?
     @Published var referencePlaying = false
+    /// Told whenever the resident session is set or cleared, from any of the
+    /// sites that do so, so the eject coordinator's snapshot of loaded models
+    /// stays current without polling.
+    var onResidentModelChanged: (() -> Void)?
     /// The Meeting take whose Name the Speakers sheet is due, and the voice
     /// whose sample plays there, by speaker key (AudioSpeakerLabels.swift).
     @Published var speakerNamingID: UUID?
     @Published var speakerSampleKey: String?
-    @Published var session: AudioSession?
+    @Published var session: AudioSession? { didSet { onResidentModelChanged?() } }
     @Published var qwenModel: Qwen3TTSModel?
     /// A resident FluidAudio recognizer (AudioWorkspaceFluid.swift). Released
     /// wherever the Rust session and Qwen model are.
     var fluidTranscriber: (any FluidAudioTranscriber)?
     @Published var loadedModelAlias: String?
     var sessionKey: String?
+    /// The folder `session` was opened from. Only meaningful while `session`
+    /// is set; read it through `residentModelPath`.
+    var sessionPath: String?
+    var residentModelPath: String? { session == nil ? nil : sessionPath }
     var modelAccessURL: URL?
     var capture: AudioCapture?
     var recordingSetupTask: Task<Void, Never>?
@@ -151,8 +178,13 @@ final class AudioWorkspaceController: ObservableObject {
     var importTask: Task<Void, Never>?
     var scratchURLs: Set<URL> = []
 
-    init(library: AudioLibraryStore = AudioLibraryStore(), assets: ManagedAssetStore = .shared) {
+    init(
+        library: AudioLibraryStore = AudioLibraryStore(), assets: ManagedAssetStore = .shared,
+        catalogReader: @escaping @Sendable () throws -> AudioCatalogSnapshot = AudioCatalogSnapshot.live,
+        installService: ModelLibraryService = LiveModelLibraryService()
+    ) {
         self.library = library; self.assets = assets
+        self.catalogReader = catalogReader; self.installService = installService
         profileID = ProfileVaultStore.shared.session?.profileID
         do {
             preferences = try library.preferences()
@@ -210,6 +242,14 @@ final class AudioWorkspaceController: ObservableObject {
     var modelInstalled: Bool {
         guard let id = recipe.modelID else { return false }
         return installedPaths[id] != nil || preferences.localModels[id] != nil
+    }
+    /// Whether `profile` can be used, is installed on a drive that is away, or is
+    /// not installed. The picker and the install button read this, so an offline
+    /// install is shown as such and never offered a download.
+    func installStatus(for profile: AudioProfile) -> AudioInstallStatus {
+        AudioInstallStatus.resolve(
+            alias: profile.identity.alias, installedPaths: installedPaths,
+            localModels: Set(preferences.localModels.keys), notConnected: notConnectedInstalls)
     }
     var selectedLocalModelURL: URL? {
         guard let id = recipe.modelID, let bookmark = preferences.localModels[id] else { return nil }
@@ -649,8 +689,9 @@ final class AudioWorkspaceController: ObservableObject {
         isRefreshingModels = true
         modelCatalogError = nil
         let token = epoch
+        let reader = catalogReader
         Task { [weak self] in
-            let result = await Task.detached { Result { (try AudioCatalog.profiles(), try AudioCatalog.installed(), try AudioCatalog.capabilities()) } }.value
+            let result = await Task.detached { Result { try reader() } }.value
             guard let self else { return }
             defer {
                 self.isRefreshingModels = false
@@ -661,13 +702,16 @@ final class AudioWorkspaceController: ObservableObject {
             }
             guard !self.isShutDown, self.epoch == token else { return }
             switch result {
-            case .success(let (profiles, installed, capabilities)):
-                self.familyCapabilities = capabilities
-                self.profiles = profiles
+            case .success(let snapshot):
+                let installed = snapshot.installed
+                self.familyCapabilities = snapshot.capabilities
+                self.profiles = snapshot.profiles
                 self.installedPaths = Dictionary(installed.installed.map { ($0.alias, $0.path) }, uniquingKeysWith: { first, _ in first })
+                self.installedRecords = installed.installed
                 self.needsAdoption = installed.needsAdoption
                 self.incompatibleInstalls = installed.incompatible
-                self.installedRecords = installed.installed
+                // Installs on a drive that is away: kept as their own state.
+                self.notConnectedInstalls = installed.notConnected
                 self.otherAudioInstalls = installed.otherAudio
                 self.restoreModelSelection()
                 self.normalizeModelOptions()
@@ -691,23 +735,39 @@ final class AudioWorkspaceController: ObservableObject {
     }
     /// `acknowledged` lists the accepted ids of the profile's
     /// `requiredAcknowledgments`; the native installer refuses a missing one.
-    func installSelectedModel(acknowledged: [String] = []) {
-        if let profile = selectedProfile { install(profile, acknowledged: acknowledged) }
+    /// `library` is where the model goes (nil is This Mac).
+    func installSelectedModel(acknowledged: [String] = [], library: String? = nil) {
+        if let profile = selectedProfile { install(profile, acknowledged: acknowledged, library: library) }
     }
-    func install(_ profile: AudioProfile, acknowledged: [String] = []) {
+    func install(_ profile: AudioProfile, acknowledged: [String] = [], library: String? = nil) {
         guard !profile.identity.repository.isEmpty, !isBusy else { return }
-        if let installHandler { _ = installHandler(profile, acknowledged); return }
+        // An install on a drive that is away is not a download to start: the
+        // engine would refuse it as `alias_elsewhere`, and the picker offers the
+        // statement instead of the button.
+        if case .notConnected = installStatus(for: profile) { return }
+        if let installHandler { _ = installHandler(profile, acknowledged, library); return }
         guard !isInstalling else { return }
         isInstalling = true; error = nil
         status = AppStrings.localized("Downloading audio model")
         let token = epoch
+        let service = installService
         Task { [weak self] in
-            let result = await Task.detached { Result { try AudioCatalog.install(profile.identity, acknowledged: acknowledged) } }.value
+            let result = await Task.detached {
+                Result {
+                    try service.installAudio(
+                        profile.identity, acknowledged: acknowledged,
+                        library: AppModel.destinationLibrary(library), progress: { _ in })
+                }
+            }.value
             guard let self else { return }
             defer { self.isInstalling = false }
             guard self.valid(token) else { return }
             switch result {
-            case .success(let record): self.installedPaths[record.alias] = record.path; self.status = AppStrings.localized("Audio model installed")
+            case .success(let record):
+                self.installedPaths[record.alias] = record.path
+                self.installedRecords.removeAll { $0.alias == record.alias }
+                self.installedRecords.append(record)
+                self.status = AppStrings.localized("Audio model installed")
             case .failure(let error): self.error = error.localizedDescription
             }
         }
@@ -723,6 +783,13 @@ final class AudioWorkspaceController: ObservableObject {
             _ = resolved.startAccessingSecurityScopedResource(); url = resolved; path = resolved.path
         } else if let installed = installedPaths[profile.identity.alias] { path = installed }
         else { throw AudioWorkspaceError.message(AppStrings.localized("Download this model or choose its checkpoint folder.")) }
+        // **NOT A MODEL THAT IS BEING MOVED**: the engine removes the folder it is
+        // opened from when the move ends. Checked on the resolved path, so a local
+        // checkpoint bookmark that points into a moving install is covered too.
+        if modelMoving?(path) == true {
+            url?.stopAccessingSecurityScopedResource()
+            throw AudioWorkspaceError.message(ModelMoveText.modelBeingMoved())
+        }
         let key = "\(profile.family):\(profile.identity.task.rawValue):\(path):\(portable):\(experimentalMetal)"
         if sessionKey == key, let session { url?.stopAccessingSecurityScopedResource(); return session }
         if let previous = session { await Task.detached { previous.close() }.value }
@@ -752,6 +819,7 @@ final class AudioWorkspaceController: ObservableObject {
                 await Task.detached { opened.close() }.value
                 throw CancellationError()
             }
+            sessionPath = path
             session = opened; sessionKey = key; loadedModelAlias = profile.identity.alias; modelAccessURL = url
             return opened
         } catch { opening = nil; progress = nil; url?.stopAccessingSecurityScopedResource(); throw error }
@@ -954,6 +1022,31 @@ final class AudioWorkspaceController: ObservableObject {
         }
     }
     func cancel() { jobTask?.cancel(); qwenSpeechJob?.cancel(); session?.cancel(); opening?.cancelOpen() }
+    /// Takes the resident session out of this controller NOW, whatever is
+    /// running on it: the eject of its drive is under way (requirement 6.1).
+    /// The caller has already called `cancel()`. The same release
+    /// `deleteSelectedModel` and the idle timer do, minus their guards. The
+    /// returned closer closes it off the main actor (`close()` cancels and
+    /// drains) and then ends the security-scoped access.
+    ///
+    /// **THE CLOSE IS SEPARATE BECAUSE IT CAN BLOCK WITHOUT LIMIT.**
+    /// `AudioSession.close()` waits on the session's operation lock until the
+    /// native job returns, so the caller bounds its wait and treats a close
+    /// that is still running as the model still being held. Reads nothing from
+    /// the drive.
+    func detachResidentSession() -> DetachedSession? {
+        idleTask?.cancel()
+        let old = session; let oldAccess = modelAccessURL
+        session = nil; sessionKey = nil; modelAccessURL = nil
+        guard let old else {
+            oldAccess?.stopAccessingSecurityScopedResource()
+            return nil
+        }
+        return DetachedSession {
+            await Task.detached { old.close() }.value
+            oldAccess?.stopAccessingSecurityScopedResource()
+        }
+    }
     func shutdown() {
         guard !isShutDown else { return }
         preferencesTask?.cancel()

@@ -33,6 +33,7 @@ mod hub_transfer;
 mod hub_validation;
 mod image;
 mod install;
+pub mod library;
 pub mod music;
 pub mod ocr;
 mod pinned_dir;
@@ -47,8 +48,8 @@ mod vision;
 pub use audio_catalog::{
     AudioAsset, AudioCapabilities, AudioCatalog, AudioDerived, AudioFrontendProvenance,
     AudioFrontendResource, AudioInstalledRecordError, AudioInstalledReport, AudioLegacyInstall,
-    AudioPcmFormat, AudioProfile, AudioProfileIdentity, AudioReadiness, AudioTask,
-    VERIFY_CANCELLED,
+    AudioNotConnectedInstall, AudioPcmFormat, AudioProfile, AudioProfileIdentity, AudioReadiness,
+    AudioTask, VERIFY_CANCELLED,
 };
 pub use auth::{
     resolve_hf_token, resolve_hf_token_with_source, validate_hf_token, HfTokenSource,
@@ -76,13 +77,14 @@ pub use image::{
     validate_krea2_ram_bits, ImageCatalog, ImageCatalogEntry, QWEN_IMAGE_21_TURBO_PREFIX,
 };
 pub use install::{
-    gate, human_bytes, install, install_variant, install_with_byte_progress, record,
-    ByteProgressCallback, CancelFlag, InstallPlan, Installed, VariantInstallPlan,
-    INSTALL_CANCELLED, VISION_SIDECAR_FILES,
+    gate, human_bytes, install, install_destination, install_text_into, install_variant,
+    install_with_byte_progress, record, record_into, ByteProgressCallback, CancelFlag, InstallKind,
+    InstallPlan, InstallTarget, Installed, VariantInstallPlan, INSTALL_CANCELLED,
+    VISION_SIDECAR_FILES,
 };
 pub use music::{
-    embedded_music_entries, embedded_music_entry, install_music, MusicCatalogEntry,
-    MusicQuantization,
+    embedded_music_entries, embedded_music_entry, install_music, install_music_into,
+    MusicCatalogEntry, MusicQuantization,
 };
 pub use ocr::{OcrCatalog, OcrProfile};
 pub use pinned_dir::{PinnedAsset, PinnedDirReceipt};
@@ -108,8 +110,9 @@ pub use speech::{
 // classify speech installs without each depending on model-io directly.
 pub use model_io::speech_receipt;
 pub use store::{
-    default_root, directory_bytes, relocate_default_store, resolve_image_arg, resolve_model_arg,
-    resolve_ocr_arg, set_default_root, InstalledModel, ModelModality, Store, StoreRelocation,
+    default_root, directory_bytes, not_connected_message, relocate_default_store,
+    resolve_image_arg, resolve_model_arg, resolve_ocr_arg, set_default_root, InstalledEntry,
+    InstalledModel, ModelModality, Store, StoreError, StoreRelocation,
 };
 pub use vision::{resolve_vision_sidecar, resolve_vision_sidecar_auto, AutoVisionSidecar};
 

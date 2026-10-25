@@ -21,22 +21,35 @@ import OpenKind
 public final class AppModel: ObservableObject {
     /// Currently active navigation section in the main window.
     var audioSummaryInFlight = false
+    /// Whether `audioWorkspace` has been built. The eject coordinator asks
+    /// before it reads the workspace, because reading a lazy property builds it
+    /// (it loads the audio library), and a launch with no audio use must not.
+    var audioWorkspaceCreated = false
     lazy var audioWorkspace: AudioWorkspaceController = {
-        let workspace = AudioWorkspaceController()
-        workspace.installHandler = { [weak self] profile, acknowledged in
-            self?.enqueueAudioDownload(profile: profile, acknowledged: acknowledged) ?? false
+        let workspace = AudioWorkspaceController(installService: libraryState.service)
+        audioWorkspaceCreated = true
+        workspace.onResidentModelChanged = { [weak self] in
+            self?.ejectCoordination?.coordinator.scheduleRefresh()
         }
+        workspace.installHandler = { [weak self] profile, acknowledged, library in
+            self?.enqueueAudioDownload(profile: profile, acknowledged: acknowledged, library: library) ?? false
+        }
+        workspace.modelMoving = { [weak self] in self?.isMoving(path: $0) == true }
+        workspace.defaultInstallLibrary = { [weak self] in
+            self?.installDestinations.libraryForInstall(selection: nil)
+        }
+        // Only models that can load now (requirement 3.3), through the gate.
         workspace.availableChatModels = { [weak self] in
-            self?.installed.filter { $0.modality == "text" } ?? []
+            self?.loadableModels.filter { $0.modality == "text" } ?? []
         }
         workspace.selectedChatModel = { [weak self] in
             self?.selected
         }
         workspace.selectChatModel = { [weak self] model in
-            self?.selectModel(model)
+            self?.requestLoad(model)
         }
         workspace.summaryAvailable = { [weak self] in
-            self?.canSummarizeAudio == true || (self?.installed.contains(where: { $0.modality == "text" }) == true)
+            self?.canSummarizeAudio == true || (self?.loadableModels.contains(where: { $0.modality == "text" }) == true)
         }
         workspace.summaryHandler = { [weak self] item, targetModel in
             guard let self else { throw CancellationError() }
@@ -52,12 +65,18 @@ public final class AppModel: ObservableObject {
     var audioUnloadObserver: AnyCancellable?
     lazy var humanizeWorkspace: HumanizeController = {
         let controller = HumanizeController()
+        // The loadable list, not `installed`: a Humanizer on a drive that is away
+        // cannot be opened, and "not installed" would offer to download it again.
         controller.installedPath = { [weak self] in
-            self?.installed.first { $0.alias == HumanizeController.modelAlias }?.path
+            self?.loadableModels.first { $0.alias == HumanizeController.modelAlias }?.path
+        }
+        controller.notConnectedStatement = { [weak self] in
+            self?.notConnectedStatement(forAlias: HumanizeController.modelAlias)
         }
         controller.installHandler = { [weak self] in
             self?.installModel(alias: HumanizeController.modelAlias)
         }
+        controller.modelMoving = { [weak self] in self?.isMoving(path: $0) == true }
         controller.baseOptions = { [weak self] in
             var options = OpenOptions()
             guard let self else { return options }
@@ -131,6 +150,94 @@ public final class AppModel: ObservableObject {
     // Model management
     /// Models currently installed locally on disk.
     @Published public var installed: [InstalledModel] = []
+    /// Model libraries: which are connected, link speed, free space, every
+    /// installed row including offline ones, and add-library offers. `installed`
+    /// above stays the available-only list the pickers read. Not `@Published`
+    /// here on purpose: views that show library state observe this object
+    /// directly, so a mount does not redraw every screen.
+    var libraryState = LibraryState()
+    /// Reads the engine's available-only installed list. A seam: the app suites
+    /// link the release engine, which cannot be given a library to list, so a test
+    /// answers from its fake service the way the engine answers from its registry.
+    var catalogInstalledReader: () throws -> [InstalledModel] = { try TurboSparkCatalog.installed() }
+    /// Classifies an additional model scan folder before `refreshModels()` walks
+    /// it (task 6.12). A seam: a test marks a real temp folder as being on an
+    /// unplugged drive and checks that nothing in it is listed.
+    var scanFolderStatusReader: @Sendable (String) -> ScanFolderStatus = {
+        ModelStorageManager.scanFolderStatus($0)
+    }
+    /// Reads This Mac's free space for the install gate and the destination menu.
+    /// A seam: a test cannot make the boot disk full or empty.
+    var thisMacFreeSpaceReader: () -> UInt64? = { ModelInstallGate.freeSpaceOnThisMac() }
+    /// Re-reads `installed` when the library list changes, so it follows mounts,
+    /// unmounts and renames (task 6.8, `LoadableModels.swift`). Started with
+    /// library monitoring, cancelled by `shutdown()`.
+    var installedListFollower: AnyCancellable?
+    /// A reload is already waiting for the main actor: further changes join it.
+    var installedReloadScheduled = false
+    /// A warned model the user chose and has not yet answered for: the one
+    /// "Load anyway" question (task 6.7). Presented once, at the window root
+    /// (`LoadAnywayConfirmation`); set only by `requestLoad`.
+    @Published var pendingLoadConfirmation: PendingLoadConfirmation?
+    /// Told, right before the engine open begins, which model it is for. A test
+    /// seam: a real open needs a multi-gigabyte install, and what these cases
+    /// assert is WHETHER a path started one.
+    var loadObserver: ((InstalledModel) -> Void)?
+    /// Install ids of the rows a delete or a remove-from-list is running on.
+    /// The engine call can take minutes on a large model, so the row's Delete is
+    /// disabled meanwhile and a second request for the same row is refused.
+    @Published var modelsBeingChanged: Set<String> = []
+    /// The model move in flight, from the moment it starts until it ends in ANY way
+    /// (task 6.11, `AppModel+Moves.swift`). `isInstallOrMoveRunning` reads it.
+    @Published var activeMove: MoveProgress?
+    /// The move sheet on screen. Hosted by the Installed Models list and the Audio
+    /// picker, which present it for their own kinds of model.
+    @Published var moveSheet: ModelMoveSheetModel?
+    /// The model the last move put somewhere else, for the screens that remember
+    /// a model by path (the Installed Models list keeps its own selected path).
+    @Published var lastMovedModel: MovedModelEvent?
+    /// Bookkeeping a move needs that no view reads.
+    var moveDriver = MoveDriverState()
+    /// How the move asks what holds a model. Live by default; a test replaces the
+    /// readers it cannot build (a loaded session needs a multi-gigabyte model).
+    var moveHolderProbe = MoveHolderProbe()
+    /// The size of a model folder the listing does not record. Blocking: it walks
+    /// the folder, so the sheet calls it off the main actor.
+    var modelSizeReader: @Sendable (String) -> UInt64 = { ModelStorageManager.directorySize(at: $0) }
+    /// Reads the engine's image installs, which a move re-reads to find where the
+    /// image went. A seam: the app suites link the release engine.
+    var imageInstalledReader: () throws -> [ImageInstalledModel] = { try TurboSparkCatalog.imageInstalled() }
+    /// Hands a moved model's per-model state (favorite, tags, notes, nickname and
+    /// reasoning default) to its new install id: the old id, the new id and the path
+    /// the model had BEFORE the move. A seam so a test can see exactly what the move
+    /// passed; `ModelOrganizationStoreTests` pin what the store does with it.
+    var metadataRekey: (String, String, String?) -> Void = { old, new, legacyPath in
+        ModelOrganizationStore.shared.rekey(from: old, to: new, legacyPath: legacyPath)
+    }
+    /// The least time between two progress figures the sheet is told about.
+    var moveProgressInterval: TimeInterval = 0.1
+    /// How long a move waits for the library listing after it ended before it says
+    /// how. A listing that hangs on a pulled drive must not hold the answer back.
+    var moveRefreshPatience: Duration = .seconds(3)
+    /// The one-time conversion of a store a past Move Store moved. Created when
+    /// library monitoring starts, never at `init`.
+    var moveStoreMigration: MoveStoreMigration?
+    /// Lets a drive with loaded models eject in one action, and ends the
+    /// sessions of a drive pulled without ejecting (tasks 5.11 and 5.12).
+    /// Created with library monitoring, dropped by `shutdown()`.
+    var ejectCoordination: LibraryEjectCoordination?
+    /// Posts the one info toast that announces an add-library offer when it
+    /// becomes the offer on screen (task 6.6). `LibraryState` has no toast
+    /// reference by design, so the trigger lives here. Created with library
+    /// monitoring, dropped by `shutdown()`.
+    var libraryOfferAnnouncer: LibraryOfferAnnouncer?
+    /// How many releases for an eject are in progress. While it is above zero
+    /// nothing may start a model turn on the chat session (`isEjecting`).
+    var ejectHoldCount = 0
+    /// Where each audio model attached to the running server was loaded from,
+    /// by the id the server serves it under. The server reports only ids, and
+    /// the eject coordinator needs the path to know which drive holds it.
+    @Published var serverAudioModelPaths: [String: String] = [:]
     /// Catalog entries available for download.
     @Published public var catalog: [CatalogEntry] = []
     /// Valid image-generation installs, separate from text model rows.
@@ -925,7 +1032,11 @@ public final class AppModel: ObservableObject {
     @Published public var lmStudioDirectory: String = ""
     /// Additional custom directories to scan for models without copying.
     @Published public var customModelDirectories: [String] = []
-    /// Explicit TurboSpark store root. Empty uses TURBOSPARK_HOME or ~/.turbospark.
+    /// The root a past Move Store recorded, kept only so `settings.json` still
+    /// round-trips it and `loadSettings` can promote it to the machine record
+    /// (`ModelStoreRootRecord`), the input of `MoveStoreMigration`. NOT a store
+    /// root: nothing applies it to the engine and no UI sets it any more, since
+    /// the engine root is always the home (requirements 1.1 and 9.1).
     @Published public var turboSparkStoreRoot: String = ""
 
     // Installation State
