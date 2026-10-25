@@ -84,7 +84,9 @@ impl RealForwardRunner {
                 for kernel in [
                     K::GdnConvDecode,
                     K::GdnQkNorm,
-                    K::GdnDeltaDecode,
+                    K::GdnDeltaDecode {
+                        key_dim: shape.key_head_dim,
+                    },
                     K::GdnGatedNorm,
                 ] {
                     plan.register(kernel);

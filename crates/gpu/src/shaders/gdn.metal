@@ -55,6 +55,19 @@ constant bool FC_GDN_GATE_SIGMOID [[function_constant(95)]];
 constant bool FC_GDN_DELTA_RECORD       [[function_constant(96)]];
 constant bool FC_GDN_DELTA_WRITE_STATE  [[function_constant(97)]];
 
+// Key head dim baked into the delta kernels (decode, prefill, fold). With
+// Dk a compile-time constant the per-lane state loops unroll and `s` stays
+// in registers instead of being indexed at runtime; the arithmetic and its
+// order are unchanged, so the baked build is bit-identical to the runtime
+// one. 0 (the plain helper's default) keeps the runtime `keyDim`. The host
+// bakes only `Dk = 128`, and the pipeline's constants_key carries the value.
+constant uint FC_GDN_DK [[function_constant(98)]];
+
+static inline uint gdn_dk(uint keyDim) {
+    return (is_function_constant_defined(FC_GDN_DK) && FC_GDN_DK != 0u)
+        ? FC_GDN_DK : keyDim;
+}
+
 static inline bool gdn_in_use_fc() {
     return is_function_constant_defined(FC_GDN_IN_USE_FC) && FC_GDN_IN_USE_FC;
 }
@@ -399,7 +412,7 @@ kernel void gdn_delta_step_decode(
 ) {
     const uint Hk = kHeads;
     const uint Hv = vHeads;
-    const uint Dk = keyDim;
+    const uint Dk = gdn_dk(keyDim);
     const uint Dv = valueDim;
     const uint h = tg.x;
     const uint dv = tg.y * 4u + tpos.y;
@@ -467,7 +480,7 @@ kernel void gdn_delta_step_prefill(
 ) {
     const uint Hk = kHeads;
     const uint Hv = vHeads;
-    const uint Dk = keyDim;
+    const uint Dk = gdn_dk(keyDim);
     const uint Dv = valueDim;
     const uint T = rows;
     const uint C = rowStride;
@@ -560,7 +573,7 @@ kernel void gdn_state_fold(
 ) {
     const uint Hk = kHeads;
     const uint Hv = vHeads;
-    const uint Dk = keyDim;
+    const uint Dk = gdn_dk(keyDim);
     const uint Dv = valueDim;
     const uint h = tg.x;
     const uint dv = tg.y * 4u + tpos.y;
