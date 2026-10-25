@@ -8,8 +8,10 @@ result yourself, and you never edit the evaluator.
 Read before the first iteration: `docs/SPEEDUP_PLAYBOOK.md` (how wins were
 found and qualified, the kernel checklist, traps), `docs/KAPITSA_KERNELS.md`
 ("Where we were already ahead" and the decision table: do not re-propose
-what it declines), `docs/BATCHED_PREFILL.md` for prefill drift bounds, and
-the AGENTS.md files of every crate you touch.
+what it declines), `docs/MLX_SERVE_KERNELS.md` (its "Negative results"
+list, and the evaluator additions L1 to L7 that this crate does not have
+yet), `docs/BATCHED_PREFILL.md` for prefill drift bounds, and the AGENTS.md
+files of every crate you touch.
 
 ## Setup (once per loop)
 
