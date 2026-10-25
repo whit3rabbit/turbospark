@@ -1166,8 +1166,10 @@ Side finding, separate from the tree: chain4 is the shipped GDN verify
 kernel with `Dk = 128` unrolled. It is bit-identical (parity test) and 2.78x
 faster at 8 rows, which would save about 2.4 ms a round (about 2.9% at depth
 7), with or without a tree. The shipped kernel loops a runtime
-`nPerLane` over `float s[8]`. The same specialization likely applies to the
-prefill chunks and the decode step. Not wired, not measured in a model.
+`nPerLane` over `float s[8]`. Since wired for all four GDN delta kernels and
+measured in the model: verify fell 69.3 to 66.8 ms a round, DFlash2 7 under
+the flag gained 4-5% and prefill 5% (see "`Dk = 128` baked into the GDN delta
+kernels" under Item 1).
 
 Reopen condition: the verdict assumes today's verify cost. The item 7 bench
 prototype (`docs/INT4_SMALL_M_MMA.md`) measured 8 rows at 1.25-1.29x a
@@ -1396,7 +1398,7 @@ What the sweep says:
 ### `Dk = 128` baked into the GDN delta kernels, 2026-10-24
 
 ADOPTED, default on, `TURBOSPARK_GDN_DK128=0` opts out. Found while costing
-a tree verify for DFlash2 (branch `lab/ext-round-phases`, e0f5de70,
+a tree verify for DFlash2 ("Costing the tree" above,
 `tree_verify_cost_bench.rs`): a bench-only copy of the lazy verify kernel
 with the per-lane state count hard-coded to 4 was 2.78x faster and
 bit-identical. The shipped kernels loop a runtime `nPerLane = Dk / 32` over
