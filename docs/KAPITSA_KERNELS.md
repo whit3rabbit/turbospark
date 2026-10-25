@@ -935,9 +935,16 @@ and how tslab measures it (`crates/lab/program.md`). Estimates are marked.
    pair. The cost is memory: peak `phys_footprint` +147 MiB (one GDN
    mirror), which FAILS tslab's 64 MiB memory gate and is not yet counted
    by `context_policy`, so the switch stays off by default until both are
-   settled. Side finding: the off arm prefills 6,000 tokens at about 139
-   tok/s through the speculative loop's MTP-priming chunked prefill, which
-   is what makes a long follow-up take 44 s without reuse.
+   settled. Without reuse the off arm prefills 6,000 tokens at about 139
+   tok/s, which is what makes a long follow-up take 44 s. That is the
+   trunk's own rate, not the MTP priming: `tslab profile` (ledger
+   `qwen38-prefill-gap`, `corpus:6000`, two runs of 3-4 interleaved rounds,
+   few clean because of Spotlight and a system install) read plain chunked
+   prefill at 138.2 tok/s (2 clean, 132.7-143.6), the speculative loop's
+   batched-priming prefill at 0.96-0.99x of plain in the same round, and
+   per-row priming (`TURBOSPARK_MTP_BATCHED_PRIME=0`) at 0.83-0.92x. Faster
+   long-prompt TTFT is the dense prefill problem (Steel GEMMs, GDN,
+   attention), or the opt-in ANE+Steel split, not a speculation one.
 5. **Hybrid lookup plus MTP.** Why: on copy-heavy output a long n-gram
    match proposes 4-8 tokens that are accepted, where the head proposes
    two. Where: a draft source that tries the n-gram first and falls back to
