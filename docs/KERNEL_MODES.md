@@ -140,10 +140,9 @@ until one exists.
 | `qwen_fused_ffn` | `TURBOSPARK_QWEN_FUSED_FFN` | on | bit-exact | none yet | `dequant_int4_fused_parity.rs` | [KAPITSA_KERNELS.md](KAPITSA_KERNELS.md) |
 | `qwen_batched_row_ops` | `TURBOSPARK_QWEN_BATCHED_ROW_OPS` | on | bit-exact | none yet | the batched-vs-sequential suites | [SPEEDUP_PLAYBOOK.md](SPEEDUP_PLAYBOOK.md) |
 
-`gdn_dk128` prints no engagement line (it is read in the gpu crate), so an arm
-that sets it is trusted and not proven. Adding `foundation::engaged!` where the
-baked pipeline is chosen closes that, and is a gpu-crate change for whoever
-next touches `gdn.rs`.
+`gdn_dk128` is read in the gpu crate and prints `[engaged] gdn_dk128` where the
+baked pipeline is chosen, so an arm with `=0` that still ran the baked build is
+ineligible.
 
 ## Where a new mode starts
 

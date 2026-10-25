@@ -209,9 +209,8 @@ pub const KNOBS: &[Knob] = &[
         ],
     },
     Knob {
-        // Default ON: `=0` keeps the delta kernels on the runtime-Dk loop.
-        // It is read in the gpu crate and prints no engagement line, so an
-        // arm that sets it is trusted, not proven (`docs/KERNEL_MODES.md`).
+        // Default ON: `=0` keeps the delta kernels on the runtime-Dk loop, and
+        // the baked build's line must then be absent.
         name: "gdn_dk128",
         env: "TURBOSPARK_GDN_DK128",
         values: &["<unset>", "0"],
@@ -220,7 +219,7 @@ pub const KNOBS: &[Knob] = &[
         families: &["qwen35", "qwen36"],
         quotable: true,
         doc: "docs/KAPITSA_KERNELS.md",
-        engagement: &[],
+        engagement: &[off("0", "gdn_dk128")],
     },
     Knob {
         name: "routed_batch",

@@ -263,6 +263,9 @@ pub fn print_result(r: &BenchResult) {
     }
 }
 
+/// Benches whose arms are different kernels rather than alternatives.
+const DISTINCT_KERNEL_BENCHES: &[&str] = &["gdn_delta"];
+
 /// What the hashes of one arm say about its arithmetic, read off a hashed
 /// run. `None` means the run did not hash enough points to say.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -283,6 +286,11 @@ pub struct ArmHint {
 /// reference and carries only its own `row_invariant`. These are hints from
 /// one case at one seed, never a gate: the parity tests are the gate.
 pub fn exactness_hints(r: &BenchResult) -> Vec<ArmHint> {
+    // The arms of these benches are different kernels (decode against fold),
+    // not alternatives for one op, so "bit-equal to the first arm" is
+    // meaningless. Their modes are compared across experiments with
+    // `tslab hash-diff`; only row invariance is read here.
+    let distinct_kernels = DISTINCT_KERNEL_BENCHES.contains(&r.bench.as_str());
     let first = r.arms.iter().find(|a| !a.points.is_empty());
     let mut out = Vec::new();
     for (i, a) in r.arms.iter().enumerate() {
@@ -292,7 +300,7 @@ pub fn exactness_hints(r: &BenchResult) -> Vec<ArmHint> {
         let rows: Vec<&String> = a.points.iter().filter_map(|p| p.row_fnv.as_ref()).collect();
         let row_invariant = (rows.len() >= 2).then(|| rows.windows(2).all(|w| w[0] == w[1]));
         let (against, bit_exact_vs_first) = match first {
-            Some(f) if !std::ptr::eq(f, a) && i > 0 => {
+            Some(f) if !std::ptr::eq(f, a) && i > 0 && !distinct_kernels => {
                 let mut pairs = 0usize;
                 let mut equal = true;
                 for p in &a.points {
@@ -450,6 +458,17 @@ mod tests {
         assert_eq!(by("tile").row_invariant, Some(true));
         assert_eq!(by("loose").bit_exact_vs_first, Some(false));
         assert_eq!(by("loose").row_invariant, Some(false));
+    }
+
+    #[test]
+    fn arms_that_are_different_kernels_are_not_compared_with_each_other() {
+        let mut r = with_arms(vec![
+            hashed_arm("decode", &[(1.0, "d1", "r")]),
+            hashed_arm("fold", &[(1.0, "f1", "q")]),
+        ]);
+        r.bench = "gdn_delta".into();
+        let h = exactness_hints(&r);
+        assert!(h.iter().all(|x| x.bit_exact_vs_first.is_none()), "{h:?}");
     }
 
     #[test]

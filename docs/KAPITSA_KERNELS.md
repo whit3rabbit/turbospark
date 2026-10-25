@@ -663,10 +663,11 @@ compared decode digests on the protocol prompts and the copy-heavy prompt,
 256 decode tokens, two rounds (`km-lossless-digests`): short-explanation and
 medium-review are identical across plain, `dflash:2` and `dflash:7`. On
 copy-heavy the two speculative arms agree with each other and plain differs,
-but plain decoded 256 tokens and the speculative arms stopped at 188, so the
-digests cover different lengths. This is NOT shown to be a numerical
-difference. The worker keeps a digest, not token ids, so it cannot be settled
-from this run. A rerun with a decode count under 188 would.
+but plain decoded 256 tokens and the speculative arms stopped at 188, so those
+digests cover different lengths. Rerun at 128 decode tokens, under the stop
+(`km-copy-digest-128`, two rounds): plain, `dflash:2` and `dflash:7` all give
+digest `2b70123f77`, so the three prompts are lossless under the flag. The
+256-token difference was plain decode running past the end-of-turn token.
 
 **The tuned adaptive controller, live, under the tile (lever 2).** MTP install,
 `mtp:8a` with `TURBOSPARK_ADAPTIVE_DEPTH=3,1,1,2` and `TURBOSPARK_INT4_MMA8=1`,
@@ -706,11 +707,18 @@ the tile. That is the fix to the bench, not a lever 9 result. One-row
 `gemv_per_row` on those shapes still reads above its 8-row-per-dispatch share,
 a floor the bench has not explained.
 
-**What the traces did not show.** The two `tslab trace` windows
-(`km-l9-trace-d7`, `km-l9-trace-min1`) landed in the sequential prefill of the
-DFlash2 install (one-row `gdn_delta_step_decode` and tile dispatches), not the
-8-row verify, so they say nothing about whether lever 9's wiring is
-launch-bound. A trace of the verify needs a window placed after the prompt.
+**Lever 9 under a trace.** The first two `tslab trace` windows landed in the
+sequential prefill and said nothing. Rerun on a short prompt with 768 decode
+tokens so the 8 s window sits in the 8-row verify (`km-l9-trace2-d7`,
+`km-l9-trace2-min1`, DFlash2 depth 7, tile on): GPU busy is 92.1% at the
+default threshold and 92.5% with `TURBOSPARK_INT4_MMA8_MIN_ROWS=1`, so neither
+is launch-bound at window level. The scalar batched GEMM is 3.8% of kernel
+samples at the default and absent with the knob, and the tile's GEMM rises from
+95.6% to 99.4% of samples. Compute encoders in the window went 433 to 455.
+Shares come from samples (about a tenth of GPU time), not times. They fit a
+gain of at most a few percent from moving the small projections to the tile,
+which agrees with the +3.3% measured and sits under the +5.8% projected. They
+do not show an extra cost of the extra prep dispatches.
 
 **Mode candidates, priced or not (2026-10-25).** Only what the lab can price
 today is priced. The rest names what is missing, and none is built.
@@ -1501,7 +1509,8 @@ What the sweep says:
 
 ### `Dk = 128` baked into the GDN delta kernels, 2026-10-24
 
-ADOPTED, default on, `TURBOSPARK_GDN_DK128=0` opts out. Found while costing
+ADOPTED, default on, `TURBOSPARK_GDN_DK128=0` opts out (the baked build prints
+`[engaged] gdn_dk128`). Found while costing
 a tree verify for DFlash2 ("Costing the tree" above,
 `tree_verify_cost_bench.rs`): a bench-only copy of the lazy verify kernel
 with the per-lane state count hard-coded to 4 was 2.78x faster and
