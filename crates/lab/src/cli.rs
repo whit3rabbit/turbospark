@@ -385,11 +385,17 @@ fn profile(mut args: Args) -> Result<(), String> {
         "profile_summary",
         json!({"model": model, "workload": workload, "arms": arms, "summary": summary}),
     )?;
+    // Probe and stand-in arms are unquotable by design, which keeps them out
+    // of the profile's clean medians. The fits read the runs the host guard
+    // passed instead: ok, measured, and no reason but that one.
     let decode_ms = |arm: &str| {
-        summary[arm]["decode_tok_s"]
-            .as_f64()
+        let tok_s: Vec<f64> = outcomes
+            .iter()
+            .filter(|o| o.arm == arm && !o.warmup && host_clean(o))
+            .filter_map(|o| o.record["totals"]["decode_tok_s"].as_f64())
             .filter(|t| *t > 0.0)
-            .map(|t| 1e3 / t)
+            .collect();
+        (!tok_s.is_empty()).then(|| 1e3 / stats::median(&tok_s))
     };
     if let Some(ns) = &probe {
         let layers = crate::kernel::Subject::open(&model)?
@@ -435,6 +441,15 @@ fn profile(mut args: Args) -> Result<(), String> {
         )?;
     }
     Ok(())
+}
+
+/// A run the host guard and the worker passed, whose only blemish is an
+/// unquotable switch. Measurement hooks need these; verdicts never use them.
+pub fn host_clean(o: &Outcome) -> bool {
+    o.status == "ok"
+        && o.reasons
+            .iter()
+            .all(|r| r.ends_with("perturbs timing; run is not quotable"))
 }
 
 /// Fit decode ms per token against the chained dispatches the probe adds
@@ -809,6 +824,33 @@ fn inventory_cmd(mut args: Args) -> Result<CmdOutput, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn outcome(status: &str, reasons: &[&str]) -> Outcome {
+        Outcome {
+            run_id: "r".into(),
+            arm: "a".into(),
+            round: 1,
+            warmup: false,
+            record: Value::Null,
+            status: status.into(),
+            eligible: reasons.is_empty(),
+            reasons: reasons.iter().map(|r| r.to_string()).collect(),
+        }
+    }
+
+    /// The bug this exists for: probe arms are unquotable, so the fit that
+    /// read only eligible runs never had a reading to fit.
+    #[test]
+    fn unquotable_alone_is_host_clean_but_a_busy_host_is_not() {
+        let unq = "TURBOSPARK_DISPATCH_PROBE perturbs timing; run is not quotable";
+        assert!(host_clean(&outcome("ok", &[])));
+        assert!(host_clean(&outcome("ok", &[unq])));
+        assert!(!host_clean(&outcome(
+            "ok",
+            &[unq, "foreign CPU over 150% for 5s or more"]
+        )));
+        assert!(!host_clean(&outcome("refused", &[unq])));
+    }
 
     #[test]
     fn the_probe_slope_is_microseconds_per_added_dispatch() {

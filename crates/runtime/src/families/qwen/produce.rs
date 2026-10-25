@@ -343,25 +343,27 @@ impl RealForwardRunner {
             // commit, because nothing in it is data-dependent on a host
             // readback the way the router's top-k is, so the pass stays open
             // across the whole token.
-            if qwen.dense && crate::lab_hooks::standin(crate::lab_hooks::Block::Mlp) {
-                // The FFN and its residual add are skipped; the layer's
-                // steering and capture below still see its output.
-            } else if qwen.dense {
-                dense::encode_qwen_layer_dense(
-                    context,
-                    &pass,
-                    weights,
-                    index,
-                    scratch,
-                    qwen,
-                    &scratch.x,
-                    0,
-                    TRUNK_PREFIX,
-                    layer,
-                    hidden,
-                    inter,
-                    use_silu,
-                )?;
+            if qwen.dense {
+                // `TURBOSPARK_STANDIN=mlp` (lab_hooks) skips the FFN and its
+                // residual add only: steering, the captures and the
+                // `continue` past the MoE half below still run.
+                if !crate::lab_hooks::standin(crate::lab_hooks::Block::Mlp) {
+                    dense::encode_qwen_layer_dense(
+                        context,
+                        &pass,
+                        weights,
+                        index,
+                        scratch,
+                        qwen,
+                        &scratch.x,
+                        0,
+                        TRUNK_PREFIX,
+                        layer,
+                        hidden,
+                        inter,
+                        use_silu,
+                    )?;
+                }
                 // THE DFLASH2 AUX CAPTURE, at the one point where this
                 // layer's OUTPUT exists: the residual stream after the FFN
                 // join. `docs/DFLASH2.md` pins which boundary "layer 5"
