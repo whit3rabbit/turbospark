@@ -42,17 +42,25 @@ impl KernelBench for Int4Matmul {
 
     fn cases(&self, subject: &Subject) -> Result<Vec<Case>, String> {
         let arch = subject.arch()?;
-        let shapes = shapes(arch);
-        if shapes.is_empty() {
-            return Err("no INT4 projection shapes with a width divisible by 64".into());
+        let (mut shapes, source) =
+            super::matmul_shapes(subject, crate::inventory::DTYPE_INT4_AFFINE, || {
+                shapes(arch)
+            });
+        // Routed experts live in packed_experts/, outside the resident index.
+        for (rows, cols) in routed_shapes(arch) {
+            if !shapes.iter().any(|s| (s.rows, s.cols) == (rows, cols)) {
+                shapes.push(super::MatShape {
+                    rows,
+                    cols,
+                    roles: vec!["routed_expert".into()],
+                    count: arch.top_k_experts.max(0) as usize,
+                });
+            }
         }
-        Ok(shapes
-            .into_iter()
-            .map(|(rows, cols)| Case {
-                label: format!("{rows}x{cols}"),
-                params: json!({"rows": rows, "cols": cols}),
-            })
-            .collect())
+        if shapes.is_empty() {
+            return Err("no INT4 affine projection with a width divisible by 64".into());
+        }
+        Ok(shapes.iter().map(|s| s.case(source)).collect())
     }
 
     fn run(
@@ -68,7 +76,13 @@ impl KernelBench for Int4Matmul {
                 .map(|v| v as usize)
                 .ok_or_else(|| format!("int4_matmul case {} lacks {k}", case.label))
         };
-        run_shape(context, &case.label, dim("rows")?, dim("cols")?, opts)
+        let mut r = run_shape(context, &case.label, dim("rows")?, dim("cols")?, opts)?;
+        for k in ["roles", "count", "shape_source"] {
+            if !case.params[k].is_null() {
+                r.subject.insert(k.into(), case.params[k].clone());
+            }
+        }
+        Ok(r)
     }
 }
 
@@ -103,23 +117,54 @@ pub const ARMS: [Arm; 5] = [
     Arm::Mma8,
 ];
 
-/// (rows, cols) pairs this install's INT4 projections run at, deduplicated,
-/// restricted to the layout the resident kernels take (cols a multiple of
-/// 64). Routed-expert shapes are added for MoE installs.
+/// The config-derived INT4 shapes, the fallback when the resident index
+/// cannot be read: (rows, cols) pairs, deduplicated, restricted to the
+/// layout the resident kernels take (cols a multiple of 64), routed-expert
+/// shapes included for MoE installs.
 pub fn shapes(arch: &ArchConfig) -> Vec<(usize, usize)> {
     let mut out: Vec<(usize, usize)> = arch
         .decode_int4_gemv_shapes()
         .into_iter()
         .map(|(m, n)| (m as usize, n as usize))
         .collect();
-    if arch.num_experts > 0 && arch.moe_intermediate_size > 0 {
-        let (h, f) = (
-            arch.hidden_size as usize,
-            arch.moe_intermediate_size as usize,
-        );
-        out.push((2 * f, h));
-        out.push((h, f));
+    let (h, nh) = (arch.hidden_size, arch.num_heads);
+    if arch.has_mla_layers() {
+        // MLA projects through latent ranks, so the q/k/v/o rows the
+        // generic list computes from `full_head_dim` are not real tensors.
+        // Drop them when no layer runs plain attention, and add the latent
+        // projections (`docs/DEEPSEEK2.md` shapes, from `MlaConfig`).
+        if !arch.full_attention_layer_mask.iter().any(|&m| m <= 1) {
+            let fhd = arch.full_head_dim;
+            let generic = [
+                (nh * fhd, h),
+                (arch.num_full_kv_heads * fhd, h),
+                (h, nh * fhd),
+            ];
+            out.retain(|&(r, c)| !generic.contains(&(r as i64, c as i64)));
+        }
+        let m = &arch.mla;
+        let qk = m.nope_head_dim + m.rope_head_dim;
+        let mut mla = vec![
+            (m.kv_lora_rank + m.rope_head_dim, h),
+            (nh * (m.nope_head_dim + m.v_head_dim), m.kv_lora_rank),
+            (h, nh * m.v_head_dim),
+        ];
+        if m.q_lora_rank > 0 {
+            mla.push((m.q_lora_rank, h));
+            mla.push((nh * qk, m.q_lora_rank));
+        } else {
+            mla.push((nh * qk, h));
+        }
+        out.extend(mla.into_iter().map(|(r, c)| (r as usize, c as usize)));
     }
+    if arch.num_dense_leading_layers > 0 && arch.dense_lead_intermediate_size > 0 {
+        let f = arch.dense_lead_intermediate_size;
+        out.push((f as usize, h as usize));
+        out.push((h as usize, f as usize));
+    }
+    // The head: one GEMV per token, the largest one in most installs.
+    out.push((arch.vocab_size as usize, h as usize));
+    out.extend(routed_shapes(arch));
     if arch.has_linear_attention_layers() {
         // The gated-DeltaNet gate projections (`in_proj_a` and `in_proj_b`):
         // `num_v_heads` rows, so a handful of output rows against the full
@@ -136,6 +181,19 @@ pub fn shapes(arch: &ArchConfig) -> Vec<(usize, usize)> {
     out.sort_unstable();
     out.dedup();
     out
+}
+
+/// A routed expert's gate|up and down shapes, for MoE installs.
+pub fn routed_shapes(arch: &ArchConfig) -> Vec<(usize, usize)> {
+    if arch.num_experts > 0 && arch.moe_intermediate_size > 0 {
+        let (h, f) = (
+            arch.hidden_size as usize,
+            arch.moe_intermediate_size as usize,
+        );
+        vec![(2 * f, h), (h, f)]
+    } else {
+        Vec::new()
+    }
 }
 
 /// Time every arm at every M for one shape.

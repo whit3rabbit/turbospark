@@ -14,6 +14,7 @@
 
 pub mod attn_decode;
 pub mod int4_matmul;
+pub mod int8_matmul;
 pub mod support;
 
 pub use crate::fit;
@@ -44,6 +45,82 @@ pub struct Subject {
     pub arch: Option<model_io::ArchConfig>,
     /// An audio install's parsed `config.json`.
     pub audio_config: Option<Value>,
+    /// The resident index's matmul shapes, or why it could not be read.
+    pub inventory: Result<Vec<crate::inventory::Shape>, String>,
+}
+
+/// One matmul shape a bench should time: the install's own tensors that
+/// share it (`roles`, `count`), or the config-derived fallback.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatShape {
+    pub rows: usize,
+    pub cols: usize,
+    pub roles: Vec<String>,
+    /// Tensors of this shape one decode token runs (0 when unknown).
+    pub count: usize,
+}
+
+impl MatShape {
+    pub fn case(&self, source: &str) -> Case {
+        Case {
+            label: format!("{}x{}", self.rows, self.cols),
+            params: json!({"rows": self.rows, "cols": self.cols, "roles": self.roles,
+                           "count": self.count, "shape_source": source}),
+        }
+    }
+}
+
+/// The install's matmul shapes of one resident dtype, from the resident
+/// index when it reads, else from `fallback`. Embedding tables are lookups,
+/// not matmuls, unless the head is tied to them. Widths the resident kernels
+/// cannot take (not a multiple of 64) are dropped.
+pub fn matmul_shapes(
+    subject: &Subject,
+    dtype: u8,
+    fallback: impl FnOnce() -> Vec<(usize, usize)>,
+) -> (Vec<MatShape>, &'static str) {
+    let tied = subject.arch.as_ref().is_some_and(|a| a.tie_word_embeddings);
+    let (mut out, source) = match &subject.inventory {
+        Ok(inv) => (
+            inv.iter()
+                .filter(|s| s.dtype == dtype)
+                .filter_map(|s| {
+                    let roles: Vec<String> = s
+                        .roles
+                        .iter()
+                        .filter(|r| tied || !r.contains("embed_tokens"))
+                        .cloned()
+                        .collect();
+                    // A shape shared by the embedding and the head keeps the
+                    // head: one GEMV per token, not two.
+                    let embeds = s.roles.len() - roles.len();
+                    (!roles.is_empty()).then(|| MatShape {
+                        rows: s.rows,
+                        cols: s.cols,
+                        count: s.count.saturating_sub(embeds).max(1),
+                        roles,
+                    })
+                })
+                .collect::<Vec<_>>(),
+            "resident_index",
+        ),
+        Err(_) => (
+            fallback()
+                .into_iter()
+                .map(|(rows, cols)| MatShape {
+                    rows,
+                    cols,
+                    roles: Vec::new(),
+                    count: 0,
+                })
+                .collect(),
+            "arch_config",
+        ),
+    };
+    out.retain(|s| s.rows > 0 && s.cols > 0 && s.cols % 64 == 0);
+    out.sort_by_key(|s| (s.rows, s.cols));
+    out.dedup_by_key(|s| (s.rows, s.cols));
+    (out, source)
 }
 
 impl Subject {
@@ -55,6 +132,7 @@ impl Subject {
                 family: arch.family.as_str().to_string(),
                 arch: Some(arch),
                 audio_config: None,
+                inventory: crate::inventory::load(&dir),
                 dir,
             });
         }
@@ -71,6 +149,7 @@ impl Subject {
             family: crate::audio_kind::model_type(&cfg).unwrap_or_else(|| "unknown_audio".into()),
             arch: None,
             audio_config: Some(cfg),
+            inventory: Err("an audio install has no resident index".into()),
             dir,
         })
     }
@@ -119,7 +198,11 @@ pub trait KernelBench: Sync {
 
 /// Every bench, in the order `--bench all` runs them.
 pub fn registry() -> Vec<&'static dyn KernelBench> {
-    vec![&int4_matmul::Int4Matmul, &attn_decode::AttnDecode]
+    vec![
+        &int4_matmul::Int4Matmul,
+        &int8_matmul::Int8Matmul,
+        &attn_decode::AttnDecode,
+    ]
 }
 
 pub fn by_name(name: &str) -> Option<&'static dyn KernelBench> {

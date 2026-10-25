@@ -209,17 +209,30 @@ pub fn print_profile(arm_names: &[String], outcomes: &[Outcome]) -> Value {
                 phase.trim_end_matches("_phases")
             );
             let mut phase_json = serde_json::Map::new();
+            let mut zero = Vec::new();
             for b in BUCKET_NAMES {
                 let m = med(aggs.iter().map(|a| a["ms_per_token"][b].as_f64()));
                 if let Some((m, lo, hi)) = m {
+                    phase_json.insert(b.to_string(), json!(m));
+                    // Dense flows fill only the final wait and the
+                    // remainder; a column of zeros reads as a measurement.
+                    if hi == 0.0 {
+                        zero.push(b);
+                        continue;
+                    }
                     let total = med(aggs.iter().map(|a| a["total_ms_per_token"].as_f64()))
                         .map_or(1.0, |t| t.0);
                     crate::say!(
                         "    {b:<24} {m:>8.3}  [{lo:.3}-{hi:.3}]  {:>5.1}%",
                         100.0 * m / total
                     );
-                    phase_json.insert(b.to_string(), json!(m));
                 }
+            }
+            if !zero.is_empty() {
+                crate::say!(
+                    "    0 in every run, not filled by this flow or idle: {}",
+                    zero.join(", ")
+                );
             }
             let busy_cb1 = med(aggs.iter().map(|a| a["gpu_busy"]["cb1"].as_f64()));
             let busy_routed = med(aggs.iter().map(|a| a["gpu_busy"]["routed"].as_f64()));

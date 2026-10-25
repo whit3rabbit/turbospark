@@ -70,6 +70,14 @@ impl AudioKind {
     ];
 }
 
+/// Pipelines `tslab-worker` can open and run as an audio arm. The rest are
+/// covered by kernel benches only, and coverage says so.
+pub const WORKER_KINDS: &[AudioKind] = &[];
+
+pub fn runs_in_worker(k: AudioKind) -> bool {
+    WORKER_KINDS.contains(&k)
+}
+
 /// The pipeline's name: `model_type`, or `kokoro` for a Kokoro layout.
 pub fn model_type(cfg: &Value) -> Option<String> {
     if let Some(t) = cfg["model_type"].as_str() {

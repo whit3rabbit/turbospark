@@ -254,6 +254,12 @@ fn prepare(args: &mut Args, purpose: &str) -> Result<(Prepared, MachineLock), St
     let base = args.take("--base")?;
     let rules = crate::cli::host_rules_from(args)?;
     let (spec, text, sha) = load_spec(&spec_path)?;
+    // The declared class must not be looser than the install's own.
+    let model_dir = catalog::resolve_model_arg(&spec.model);
+    if model_dir.join("manifest.json").is_file() {
+        let arch = repack::peek_manifest_arch(&model_dir)?;
+        spec.exactness.check_declared(arch.num_experts > 0)?;
+    }
     let lab = lab_dir();
     let trusted = match integrity::trusted_exe(&lab) {
         Ok(_) => true,

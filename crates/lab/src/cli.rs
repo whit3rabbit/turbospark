@@ -36,6 +36,8 @@ tslab: the evaluator for kernel and method experiments (macOS).
   tslab chain-capture --model M [--prompt ...]... [--tokens 512] [--depth 8] [--experiment NAME]
   tslab depth-replay [--experiment NAME] [--costs flag_off,flag_on] [--tokens 512] [--top 10]
   tslab ledger  --experiment NAME [--kind run|verdict|...]
+  tslab capabilities --model M                    (what tslab can measure on this install, and tags)
+  tslab inventory --model M                       (the install's weight shapes by dtype)
   tslab knobs
   tslab export  --experiment A[,B]|--all [--kind K[,K]] [--format jsonl|json|csv] [--redact-paths]
                 [--out PATH [--force]]            (ledgers as tslab/1 series)
@@ -120,6 +122,8 @@ pub fn dispatch(cmd: &str, args: Args) -> Result<CmdOutput, String> {
         "schema" => schema_cmd(args),
         "hash-diff" => hash_diff_cmd(args),
         "export" => crate::export::export_cmd(args),
+        "inventory" => inventory_cmd(args),
+        "capabilities" => crate::families::capabilities_cmd(args),
         "report" => crate::export::report_cmd(args),
         "gate" => crate::experiment::gate_cmd(args),
         "run-experiment" => crate::experiment::run_experiment_cmd(args),
@@ -593,4 +597,27 @@ fn hash_diff_cmd(mut args: Args) -> Result<CmdOutput, String> {
         crate::experiment::EXIT_DISCARD
     };
     Ok(CmdOutput::with_code(code, rec))
+}
+
+/// `tslab inventory`: every distinct weight shape the install binds, by
+/// dtype, with how many tensors share it. The shapes the matmul benches and
+/// the verify ladder use.
+fn inventory_cmd(mut args: Args) -> Result<CmdOutput, String> {
+    let model = args.required("--model")?;
+    args.finish()?;
+    let dir = catalog::resolve_model_arg(&model);
+    let shapes = crate::inventory::load(&dir)?;
+    for s in &shapes {
+        crate::say!(
+            "{:<12} {:>7} x {:<7} x{:<4} {}",
+            s.dtype_name,
+            s.rows,
+            s.cols,
+            s.count,
+            s.roles.join(", ")
+        );
+    }
+    Ok(CmdOutput::ok(
+        json!({"model": dir.display().to_string(), "shapes": shapes}),
+    ))
 }

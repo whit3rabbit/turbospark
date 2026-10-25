@@ -31,6 +31,7 @@ pub mod bench;
 pub mod export;
 pub mod fit;
 pub mod gates;
+pub mod inventory;
 pub mod knobs;
 pub mod ledger;
 pub mod lock;
@@ -51,6 +52,8 @@ pub mod cli;
 pub mod depth_replay;
 #[cfg(target_os = "macos")]
 pub mod experiment;
+#[cfg(target_os = "macos")]
+pub mod families;
 #[cfg(target_os = "macos")]
 pub mod host;
 #[cfg(target_os = "macos")]

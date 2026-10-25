@@ -32,6 +32,29 @@ pub fn int4_blob(rows: usize, cols: usize, seed: u64) -> (Vec<u8>, u64, u64) {
     (out, scales, biases)
 }
 
+/// An INT8 affine blob in the resident layout: `rows * cols` code bytes,
+/// then BF16 scales, then BF16 biases, one per 64-element group.
+pub fn int8_blob(rows: usize, cols: usize, seed: u64) -> (Vec<u8>, u64, u64) {
+    let mut state = seed | 1;
+    let mut next = move || {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (state >> 33) as u32
+    };
+    let groups = rows * cols / 64;
+    let mut out: Vec<u8> = (0..rows * cols).map(|_| next() as u8).collect();
+    let scales = out.len() as u64;
+    for _ in 0..groups {
+        out.extend_from_slice(&bf16::from_f32(0.0008).to_bits().to_le_bytes());
+    }
+    let biases = out.len() as u64;
+    for _ in 0..groups {
+        out.extend_from_slice(&bf16::from_f32(-0.1).to_bits().to_le_bytes());
+    }
+    (out, scales, biases)
+}
+
 /// Little-endian f16 bytes of `n` deterministic activations.
 pub fn f16_activations(n: usize, seed: u32) -> Vec<u8> {
     (0..n)
