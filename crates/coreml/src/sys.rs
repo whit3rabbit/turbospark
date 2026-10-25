@@ -791,49 +791,72 @@ pub fn compile_if_needed(path: &Path, cache_root: &Path) -> Result<PathBuf> {
     }
     let key = cache_key(path, &os_tag())?;
     let dest = compiled_path_for(path, cache_root, &key);
-    if dest.is_dir() {
-        return Ok(dest);
-    }
-    fs::create_dir_all(cache_root)?;
-    let stem = path
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "model".into());
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let staging = cache_root.join(format!(
-        ".staging-{stem}-{}-{nanos}.mlmodelc",
-        std::process::id()
-    ));
-    let url = NSURL::from_file_path(path)
-        .ok_or_else(|| CoreMlError::Compile(format!("bad path {}", path.display())))?;
+    serialized_cold_compile(
+        || dest.is_dir().then(|| dest.clone()),
+        || {
+            fs::create_dir_all(cache_root)?;
+            let stem = path
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "model".into());
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            let staging = cache_root.join(format!(
+                ".staging-{stem}-{}-{nanos}.mlmodelc",
+                std::process::id()
+            ));
+            let url = NSURL::from_file_path(path)
+                .ok_or_else(|| CoreMlError::Compile(format!("bad path {}", path.display())))?;
 
-    let compiled_tmp = compile_to_temp(&url)?;
-    // The compiler writes to a temporary directory it may clean up, so move
-    // the result into the cache now. A cross-volume install falls back to
-    // a copy.
-    if fs::rename(&compiled_tmp, &staging).is_err() {
-        copy_dir(&compiled_tmp, &staging)
-            .map_err(|e| CoreMlError::Compile(format!("copying compiled model: {e}")))?;
-        let _ = fs::remove_dir_all(&compiled_tmp);
+            let compiled_tmp = compile_to_temp(&url)?;
+            // The compiler writes to a temporary directory it may clean up, so move
+            // the result into the cache now. A cross-volume install falls back to
+            // a copy.
+            if fs::rename(&compiled_tmp, &staging).is_err() {
+                copy_dir(&compiled_tmp, &staging)
+                    .map_err(|e| CoreMlError::Compile(format!("copying compiled model: {e}")))?;
+                let _ = fs::remove_dir_all(&compiled_tmp);
+            }
+            match fs::rename(&staging, &dest) {
+                Ok(()) => {}
+                Err(_) if dest.is_dir() => {
+                    // Another process finished the same compile first.
+                    let _ = fs::remove_dir_all(&staging);
+                }
+                Err(e) => {
+                    let _ = fs::remove_dir_all(&staging);
+                    return Err(CoreMlError::Compile(format!(
+                        "installing compiled model: {e}"
+                    )));
+                }
+            }
+            prune_stale(cache_root, &stem, &dest);
+            Ok(dest.clone())
+        },
+    )
+}
+
+// Core ML may return the same temporary directory to simultaneous
+// compilers of one package, even with different destination cache roots.
+// Keep compilation and publication in one critical section; prediction
+// remains independently serialized per model.
+fn serialized_cold_compile<T>(
+    cached: impl Fn() -> Option<T>,
+    compile: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    if let Some(value) = cached() {
+        return Ok(value);
     }
-    match fs::rename(&staging, &dest) {
-        Ok(()) => {}
-        Err(_) if dest.is_dir() => {
-            // Another process finished the same compile first.
-            let _ = fs::remove_dir_all(&staging);
-        }
-        Err(e) => {
-            let _ = fs::remove_dir_all(&staging);
-            return Err(CoreMlError::Compile(format!(
-                "installing compiled model: {e}"
-            )));
-        }
+    static COMPILE_AND_PUBLISH: Mutex<()> = Mutex::new(());
+    let _compile = COMPILE_AND_PUBLISH
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    if let Some(value) = cached() {
+        return Ok(value);
     }
-    prune_stale(cache_root, &stem, &dest);
-    Ok(dest)
+    compile()
 }
 
 fn prune_stale(cache_root: &Path, stem: &str, keep: &Path) {
@@ -1379,5 +1402,69 @@ mod shared_plane {
                 Ok(())
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod compile_serialization_tests {
+    use super::*;
+    use std::sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc,
+    };
+    #[test]
+    fn cold_publication_excludes_other_compilers_until_cache_is_ready() {
+        let cached = Arc::new(AtomicBool::new(false));
+        let compiles = Arc::new(AtomicUsize::new(0));
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let first_cache = cached.clone();
+        let first_count = compiles.clone();
+        let first = std::thread::spawn(move || {
+            serialized_cold_compile(
+                || first_cache.load(Ordering::Acquire).then_some(7),
+                || {
+                    first_count.fetch_add(1, Ordering::Relaxed);
+                    started_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                    first_cache.store(true, Ordering::Release);
+                    Ok(7)
+                },
+            )
+        });
+        started_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
+        let (checking_tx, checking_rx) = mpsc::channel();
+        let (compiling_tx, compiling_rx) = mpsc::channel();
+        let second_cache = cached.clone();
+        let second_count = compiles.clone();
+        let second = std::thread::spawn(move || {
+            serialized_cold_compile(
+                || {
+                    let _ = checking_tx.send(());
+                    second_cache.load(Ordering::Acquire).then_some(7)
+                },
+                || {
+                    second_count.fetch_add(1, Ordering::Relaxed);
+                    compiling_tx.send(()).unwrap();
+                    Ok(7)
+                },
+            )
+        });
+        checking_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
+        let premature = compiling_rx
+            .recv_timeout(std::time::Duration::from_millis(100))
+            .is_ok();
+        release_tx.send(()).unwrap();
+        assert_eq!(first.join().unwrap().unwrap(), 7);
+        assert_eq!(second.join().unwrap().unwrap(), 7);
+        assert!(
+            !premature,
+            "second compiler entered before first publication"
+        );
+        assert_eq!(compiles.load(Ordering::Relaxed), 1);
     }
 }
