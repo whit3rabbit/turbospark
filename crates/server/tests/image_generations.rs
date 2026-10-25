@@ -187,15 +187,23 @@ async fn image_route_bounds_prompt_and_body_size() {
     let error: serde_json::Value = over_prompt.json().await.unwrap();
     assert_eq!(error["error"]["param"], "prompt");
 
-    // Far past the route body cap but far under the shared 25 MiB cap: the
-    // route-level limit must apply, not the router-wide one.
+    // Past the route body cap (4x the prompt cap) but far under the shared
+    // 25 MiB cap: the route-level limit must apply, not the router-wide one.
     // The padding field is unknown, so a handler that saw this body would
     // answer 400; only the route-level body limit can produce 413.
+    //
+    // The overshoot is kept small on purpose. The server answers 413 as soon
+    // the cap is crossed and closes the connection. A body of several times
+    // the cap is still being written when that happens, and the client then
+    // fails with a broken pipe before it can read the response (about 1 run
+    // in 9 at 1 MiB). A few tens of KiB over the cap fits in the socket
+    // buffers, so the write completes first.
     let over_body = client
         .post(format!("{base}/v1/images/generations"))
         .bearer_auth("secret")
         .json(&serde_json::json!({
-            "model":"z-test", "prompt":"a fox", "pad":"x".repeat(1024 * 1024)
+            "model":"z-test", "prompt":"a fox",
+            "pad":"x".repeat(5 * turbospark_server::MAX_IMAGE_PROMPT_BYTES)
         }))
         .send()
         .await
