@@ -61,6 +61,12 @@ pub struct Point {
     /// two builds mean the arm's arithmetic did not change at this point.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub out_fnv: Option<String>,
+    /// FNV-1a 64 of the first output row alone, hex, under `--hash`. A row's
+    /// bits that do not move as the batch around it grows is the property
+    /// that lets decode and verify share one arithmetic (`row_invariant` in
+    /// [`exactness_hints`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub row_fnv: Option<String>,
 }
 
 impl Point {
@@ -72,6 +78,7 @@ impl Point {
             tflops: None,
             c_of_m: None,
             out_fnv: None,
+            row_fnv: None,
         }
     }
 }
@@ -234,9 +241,85 @@ pub fn print_result(r: &BenchResult) {
             b.above_x.map_or("never".to_string(), |m| format!("{m:.1}"))
         );
     }
+    for h in exactness_hints(r) {
+        if h.bit_exact_vs_first.is_none() && h.row_invariant.is_none() {
+            continue;
+        }
+        let word = |v: Option<bool>, yes: &str, no: &str| match v {
+            Some(true) => yes.to_string(),
+            Some(false) => no.to_string(),
+            None => "unhashed".to_string(),
+        };
+        crate::say!(
+            "  exactness {}: vs {} {}; row {}",
+            h.arm,
+            h.against,
+            word(h.bit_exact_vs_first, "bit-equal", "DIFFERS"),
+            word(h.row_invariant, "invariant", "VARIES")
+        );
+    }
     for n in &r.notes {
         crate::say!("  note: {n}");
     }
+}
+
+/// What the hashes of one arm say about its arithmetic, read off a hashed
+/// run. `None` means the run did not hash enough points to say.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ArmHint {
+    pub arm: String,
+    /// The arm the others are compared with (the first arm that ran).
+    pub against: String,
+    /// Output bits equal to `against` at every x both hashed. False means the
+    /// arm is a different arithmetic: a drift bound or a shared-arithmetic
+    /// mode, never a `bit_exact` spec.
+    pub bit_exact_vs_first: Option<bool>,
+    /// The first row's bits equal at every x the arm hashed: the row does not
+    /// depend on the rows beside it.
+    pub row_invariant: Option<bool>,
+}
+
+/// Per-arm exactness hints from a result's hashes. The first arm is the
+/// reference and carries only its own `row_invariant`. These are hints from
+/// one case at one seed, never a gate: the parity tests are the gate.
+pub fn exactness_hints(r: &BenchResult) -> Vec<ArmHint> {
+    let first = r.arms.iter().find(|a| !a.points.is_empty());
+    let mut out = Vec::new();
+    for (i, a) in r.arms.iter().enumerate() {
+        if a.points.is_empty() {
+            continue;
+        }
+        let rows: Vec<&String> = a.points.iter().filter_map(|p| p.row_fnv.as_ref()).collect();
+        let row_invariant = (rows.len() >= 2).then(|| rows.windows(2).all(|w| w[0] == w[1]));
+        let (against, bit_exact_vs_first) = match first {
+            Some(f) if !std::ptr::eq(f, a) && i > 0 => {
+                let mut pairs = 0usize;
+                let mut equal = true;
+                for p in &a.points {
+                    let (Some(h), Some(q)) = (
+                        p.out_fnv.as_ref(),
+                        f.points
+                            .iter()
+                            .find(|q| q.x == p.x)
+                            .and_then(|q| q.out_fnv.as_ref()),
+                    ) else {
+                        continue;
+                    };
+                    pairs += 1;
+                    equal &= h == q;
+                }
+                (f.label.clone(), (pairs > 0).then_some(equal))
+            }
+            _ => (a.label.clone(), None),
+        };
+        out.push(ArmHint {
+            arm: a.label.clone(),
+            against,
+            bit_exact_vs_first,
+            row_invariant,
+        });
+    }
+    out
 }
 
 /// FNV-1a 64 over raw bytes, as `music3_linear_bench` hashes its outputs.
@@ -316,6 +399,75 @@ pub fn hash_diff(before: &[BenchResult], after: &[BenchResult]) -> (Vec<HashChan
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn hashed_arm(label: &str, pts: &[(f64, &str, &str)]) -> ArmCurve {
+        ArmCurve {
+            label: label.into(),
+            points: pts
+                .iter()
+                .map(|(x, out, row)| {
+                    let mut p = Point::new(*x, 1.0);
+                    p.out_fnv = Some((*out).into());
+                    p.row_fnv = Some((*row).into());
+                    p
+                })
+                .collect(),
+            fit: None,
+            unsupported: None,
+        }
+    }
+
+    fn with_arms(arms: Vec<ArmCurve>) -> BenchResult {
+        BenchResult {
+            bench: "int4_matmul".into(),
+            case: "64x64".into(),
+            subject: BTreeMap::new(),
+            x: Axis::new("m", "rows", "log2"),
+            layout: "mlx_affine_int4_g64".into(),
+            arms,
+            break_even: Vec::new(),
+            notes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn hints_tell_a_bit_equal_arm_from_a_different_arithmetic() {
+        let r = with_arms(vec![
+            hashed_arm("gemv", &[(1.0, "a1", "r"), (8.0, "a8", "r")]),
+            hashed_arm("same", &[(1.0, "a1", "r"), (8.0, "a8", "r")]),
+            // Different bits, but the row does not move with the batch: the
+            // shared-arithmetic signature.
+            hashed_arm("tile", &[(1.0, "t1", "q"), (8.0, "t8", "q")]),
+            // Same output at x = 1, then a row that changes with the batch.
+            hashed_arm("loose", &[(1.0, "a1", "r"), (8.0, "x8", "z")]),
+        ]);
+        let h = exactness_hints(&r);
+        let by = |name: &str| h.iter().find(|x| x.arm == name).unwrap();
+        assert_eq!(by("gemv").bit_exact_vs_first, None, "the reference");
+        assert_eq!(by("gemv").row_invariant, Some(true));
+        assert_eq!(by("same").bit_exact_vs_first, Some(true));
+        assert_eq!(by("tile").bit_exact_vs_first, Some(false));
+        assert_eq!(by("tile").row_invariant, Some(true));
+        assert_eq!(by("loose").bit_exact_vs_first, Some(false));
+        assert_eq!(by("loose").row_invariant, Some(false));
+    }
+
+    #[test]
+    fn hints_say_nothing_about_unhashed_arms_or_unmatched_points() {
+        let mut unhashed = hashed_arm("a", &[(1.0, "a1", "r")]);
+        unhashed.points[0].out_fnv = None;
+        unhashed.points[0].row_fnv = None;
+        let r = with_arms(vec![
+            unhashed,
+            hashed_arm("b", &[(2.0, "b2", "r")]),
+            ArmCurve::unsupported("c", "no tile"),
+        ]);
+        let h = exactness_hints(&r);
+        assert_eq!(h.len(), 2, "an unsupported arm has no hint");
+        let b = h.iter().find(|x| x.arm == "b").unwrap();
+        assert_eq!(b.bit_exact_vs_first, None, "no shared x, no claim");
+        assert_eq!(b.row_invariant, None, "one point is not an invariance");
+    }
 
     fn result(hash: &str) -> BenchResult {
         let mut p = Point::new(8.0, 1.0);

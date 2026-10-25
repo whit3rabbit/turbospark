@@ -1102,6 +1102,25 @@ and have `depth-replay` read it, so a replay on a 16K prompt prices
 Their rule about the table applies: the token column is a workload mixture,
 so plan on time and take tokens from the acceptance record.
 
+**L8. A projection and a calibration.** `tslab project` prices a kernel mode
+from kernel curves, per-forward counts, a measured base and, where the mode
+changes the dispatch count, the dispatch probe's price. It reports the share
+of the base the benched kernels explain, so a mode whose bench covers little of
+a token says so before the A/B. `tslab calibrate` joins that record to the
+verdict that followed and ledgers the miss, and `tslab calibrate --all` shows
+the bias per bench and arm pair. Built after the 8-row tile's small-projection
+lever, where a microbench and a dispatch profile predicted a gain that the
+clean wall-clock sweep did not show (`docs/KAPITSA_KERNELS.md`, lever 9).
+Contract and reading: [KERNEL_MODES.md](KERNEL_MODES.md).
+
+**L9. Exactness hints from the hashes.** `tslab kernel --hash` now also stores
+the hash of the first output row alone and prints, per arm, whether its output
+bits equal the first arm's and whether that first row changes with the batch
+beside it. A tile that differs but is row-invariant is the shared-arithmetic
+signature (decode and verify can run it together). One that differs and varies
+is a drift bound. It is a hint from one seed that names which exactness class
+to declare in a spec, never a substitute for the parity test.
+
 Two disciplines to adopt without code. Reverse the cell order on the second
 pass of a paired sweep, not just the arm order: their control pack that
 ignored the lever measured a 1.8 to 2.8% "gain" between two identical cells

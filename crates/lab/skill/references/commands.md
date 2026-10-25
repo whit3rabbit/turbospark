@@ -14,7 +14,7 @@ process, which must sit beside `tslab`.
 |---|---|---|
 | `capabilities --model M` | What tslab can measure on this install, and why not the rest. `result.tags` drive workflow `when` clauses | nothing |
 | `inventory --model M` | Every weight shape the install binds, by dtype, with per-forward counts | nothing |
-| `knobs` | Runtime switches tslab knows: env name, values, exactness, quotable, engagement lines | nothing |
+| `knobs` | Runtime switches tslab knows: env name, values, exactness, quotable, engagement lines; then the kernel modes (lanes): the bench that prices each and how it is compared | nothing |
 | `kernel --list` | Registered kernel benches | nothing |
 | `schema` | JSON Schema of everything tslab writes | nothing |
 | `ledger --experiment E [--kind K]` | The raw records of one experiment | nothing |
@@ -61,12 +61,40 @@ gets you numbers from a busy host, which is all they then are.
 | `rows_attn` | Multi-row prefill attention against the per-row loop, with layout arms, one case per context |
 | `moe_routed` | Routed-expert pair: M decode pairs against one route-list pair (union modeled as uniform routing) |
 | `verify_ladder` | Whole-model GEMM cost per verify width; `--verify-from EXP` adds the measured non-GEMM marginal |
+| `gdn_delta` | Gated-DeltaNet delta kernels (decode, eager and lazy prefill, state fold) at the install's geometry. One build per process: put `TURBOSPARK_GDN_DK128=0` on the `tslab` process for the runtime-Dk build |
 | `music3_grid` | Music 3 corpus: output hashes against goldens, per-config timing |
 | `whisper_linear` | Whisper encoder GEMM, decoder GEMV, GEMM at one row |
 
-`--hash` stores each point's output-bit hash. `hash-diff --experiment A
---against B` compares two hashed runs (two builds) and exits 3 if any output
-changed.
+`--hash` stores each point's output-bit hash and the hash of the first output
+row alone, and prints an exactness hint per arm: `bit-equal` or `DIFFERS`
+against the first arm, and whether the first row is `invariant` or `VARIES`
+as the batch grows. A tile that DIFFERS but is row-invariant is the
+shared-arithmetic signature (decode and verify can share it, frozen digests
+re-freeze); one that DIFFERS and VARIES is a drift bound. These are hints
+from one seed, never a gate: the parity tests are the gate. `hash-diff
+--experiment A --against B` compares two hashed runs (two builds) and exits 3
+if any output changed.
+
+## Pricing a kernel mode (no GPU work)
+
+| Command | Answers | Writes (`kind`) |
+|---|---|---|
+| `project --knob K --curves EXP --x N --base-from EXP:ARM` | What a mode should do to a decode token, prefill token or round, from kernel curves, per-forward counts and a measured base. Prints the per-shape table, `coverage` (the share of the base the benched kernels explain) and whether the effect clears the noise floor | `projection` |
+| `project --knob K --default-from A --mode-from B ...` | The same for a switch the gpu crate reads once per process (`gdn_dk128`): one arm timed by two `tslab kernel` processes | `projection` |
+| `calibrate --projection EXP --verdict EXP` | Predicted against measured, and whether it is a miss (wrong sign, or off by more than the floor) | `calibration` |
+| `calibrate --measured X --source TEXT ...` | The same for a number read off a doc row, with where it came from | `calibration` |
+| `calibrate --all` | Every calibration in the lab dir and the mean signed error per bench and arm pair | nothing |
+
+Base: `--base-ms X`, `--base-from EXP[:ARM]` (a `profile_summary`, decode or
+`--base-metric prefill_tok_s`), or `--round-from EXP --width W [--flags L]
+[--kv N] [--phase verify]` (`round_cost` records). Add `--dispatches N
+--probe-from EXP` for a mode that changes the dispatch count, `--floor-from
+EXP` for the host's null floor, `--share-from EXP --block gdn|mlp|attn` to
+read the benched kernels against a stand-in block. `--min-rows N` leaves
+shapes under the mode's routing threshold on the default (the 8-row tile
+serves 4096 rows and up), and `--shapes` prices only the named cases. Read `coverage` first: a
+projection that explains 40% of the base says nothing about the other 60%,
+and the 8-row tile's lever 9 was exactly that.
 
 ## Results out
 

@@ -660,6 +660,10 @@ lookup") so the next drafter is held to it from the start.
 
 ### Checklist for a new or changed kernel
 
+An alternative path that ships beside the default one follows
+[KERNEL_MODES.md](KERNEL_MODES.md): one switch, an untouched default, a lane
+row, a parity test, and a `tslab project` price before the model run.
+
 1. Compute GB/s per kernel at the real shape first. A 27B INT4 GEMV is
    bandwidth-bound by construction, so only a profile showing dispatch or sync
    time licenses work there.

@@ -39,6 +39,25 @@ experiment.
 `tests/knob_registry.rs` fails if the env name or the engagement call goes
 missing from `crates/*/src`, or the doc stops mentioning it.
 
+## A knob that is a kernel mode
+
+A switch that selects an alternative kernel lane (`docs/KERNEL_MODES.md`) gets
+a `Lane` in `knobs::LANES` as well as its `KNOBS` row, so `tslab project
+--knob NAME` can price it and `tests/knob_registry.rs` can hold it to the tree:
+
+1. The bench that times the lane is registered, and its arms have a fixed
+   label list in `kernel::arm_labels`. A bench that builds arms dynamically
+   gets a `pub const ARMS` and uses it where it labels them.
+2. `compare` is `Arms { baseline, lane }` when both arms run in one
+   experiment, or `Process { arm, baseline_env }` when the gpu crate reads the
+   switch once per process and the bench calls the kernels directly: time the
+   same arm in two `tslab kernel` processes and give `project`
+   `--default-from` and `--mode-from`.
+3. `parity` lists the test files that hold the lane to the default's bits or
+   to its stated bound. A lane with none cannot claim an exactness class.
+4. The bench fills `Point.row_fnv` (the first output row alone) under
+   `--hash`, so the exactness hint can say whether a row depends on its batch.
+
 ## A new ledger kind
 
 Append it through `Ledger::append`, add it to `KINDS` in `src/schema.rs` and

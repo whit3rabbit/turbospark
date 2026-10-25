@@ -35,6 +35,10 @@ pub const BUILTIN: &[(&str, &str)] = &[
         "kernel-candidate",
         include_str!("../workflows/kernel-candidate.json"),
     ),
+    (
+        "mode-candidate",
+        include_str!("../workflows/mode-candidate.json"),
+    ),
     ("spec-depth", include_str!("../workflows/spec-depth.json")),
     (
         "audio-survey",

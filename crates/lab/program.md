@@ -13,6 +13,8 @@ list, and the evaluator additions L1 to L7 this crate now carries),
 `docs/BATCHED_PREFILL.md` for prefill drift bounds, and the AGENTS.md files
 of every crate you touch. `skill/SKILL.md` beside this file is the short
 form for an agent: the `--json` contract and which command answers what.
+`docs/KERNEL_MODES.md` is the contract for a switch that selects an alternative
+kernel path, and what `tslab project` and `tslab calibrate` check about it.
 
 ## Setup (once per loop)
 
@@ -86,13 +88,20 @@ form for an agent: the `--json` contract and which command answers what.
 1. **Hypothesis.** One sentence: what gets faster, by which mechanism, and
    which bucket or curve says so. If the playbook or the kapitsa page already
    records the idea as a dead end, pick another.
-2. **Spec.** Write `<name>.spec.json` (template below). Declare the exactness
+2. **Project it.** When the idea is a kernel mode (`tslab knobs` lists the
+   lanes), price it before building the rest of it. Run the hashed bench for
+   the lane, take a base from a profile, and run `tslab project --knob K
+   --curves EXP --x N --base-from EXP:ARM --floor-from EXP`. A projection
+   under the noise floor, or one whose `coverage` is low, is a reason to pick
+   another bucket or to say in the hypothesis what the bench cannot see.
+   `tslab workflow mode-candidate` runs the whole chain as one plan.
+3. **Spec.** Write `<name>.spec.json` (template below). Declare the exactness
    class honestly: `bit_exact` if output bits cannot change, otherwise the
    family's KL class (`dense_kl`, or `moe_kl` for routed MoE).
-3. **Implement behind a new switch.** Add `TURBOSPARK_<NAME>`, read once
+4. **Implement behind a new switch.** Add `TURBOSPARK_<NAME>`, read once
    through a `OnceLock`, default OFF, so the old path stays one variable
    away. The spec's candidate arm sets it, and the baseline does not.
-4. **Prove the primitive.** Add a NEW test file (existing tests and their
+5. **Prove the primitive.** Add a NEW test file (existing tests and their
    tolerances are off limits) that pins the change at its declared class:
    `to_bits()` equality for bit-exact work, a reference comparison for
    KL-bounded work. Break the kernel on purpose once and confirm the test
@@ -107,13 +116,13 @@ form for an agent: the `--json` contract and which command answers what.
    sequential loop. Tests that compare two runs of the new path with each other
    are self-relative and survive a broken kernel: only the comparison against
    the old path has teeth, which is what the mutation check is for.
-5. **Commit** the iteration on `lab/<tag>` (only your paths), so a discard
+6. **Commit** the iteration on `lab/<tag>` (only your paths), so a discard
    is one revert.
-6. **Evaluate:** `$TSLAB run-experiment --spec <name>.spec.json`. It checks
+7. **Evaluate:** `$TSLAB run-experiment --spec <name>.spec.json`. It checks
    the diff, builds the worker, runs the required tests and the quality
    gate, runs the paired A/B under the time budget, checks memory, and
    prints `DECISION:`.
-7. **Act on the decision.** The exit code says it too: 0 keep, 3 discard,
+8. **Act on the decision.** The exit code says it too: 0 keep, 3 discard,
    4 inconclusive, 1 error.
    - `inconclusive`: do NOT revert. Too few clean pairs means nothing judged
      the idea, usually because the host was busy. Read the `reason` and the
@@ -125,9 +134,14 @@ form for an agent: the `--json` contract and which command answers what.
    - `keep_pending_confirm`: run `$TSLAB confirm --spec <name>.spec.json`
      once. It measures the same arms on the held-out `confirm_workload`.
      `keep` leaves the commit in place, and `discard` reverts it as above.
-8. **Note it.** Append one line to `<lab>/<name>/notes.md`: hypothesis, ledger
-   id, decision, and the bucket or curve that moved. The ledger holds the
-   numbers, and the note says why you tried it.
+9. **Calibrate.** If step 2 produced a projection, join it to the verdict:
+   `$TSLAB calibrate --projection <exp> --verdict <exp>`. A miss (wrong sign,
+   or off by more than the floor) goes in the note below with its reason, and
+   `$TSLAB calibrate --all` shows the bias per bench and arm pair so the next
+   projection can be read against it.
+10. **Note it.** Append one line to `<lab>/<name>/notes.md`: hypothesis, ledger
+    id, decision, and the bucket or curve that moved. The ledger holds the
+    numbers, and the note says why you tried it.
 
 Then the next iteration. Stop an idea after three discards in a row and
 move to a different bucket.

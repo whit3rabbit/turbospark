@@ -22,7 +22,7 @@ pub const LAYOUT: &str = "mlx_affine_int8_g64_bf16";
 
 pub struct Int8Matmul;
 
-const ARMS: [&str; 2] = ["gemv_per_row", "batched_gemm"];
+pub const ARMS: [&str; 2] = ["gemv_per_row", "batched_gemm"];
 
 impl KernelBench for Int8Matmul {
     fn name(&self) -> &'static str {
@@ -170,6 +170,7 @@ pub fn run_shape(
                     tflops: Some(flops(*m) / (t[a] * 1e-3) / 1e12),
                     c_of_m: Some(c_of_m(t[a], one_row, *m)),
                     out_fnv: h[a].clone(),
+                    row_fnv: None,
                 })
                 .collect();
             let fit = fit_affine(&points.iter().map(|p| (p.x, p.ms)).collect::<Vec<_>>());

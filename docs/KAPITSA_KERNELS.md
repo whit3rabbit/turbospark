@@ -646,6 +646,82 @@ What it says:
   remaining pieces are the verify floor (70 ms for 8 rows against a
   1.1x-of-a-step 50) and the drafter (11 ms).
 
+#### Measured: the kernel-modes tooling, projections and live checks, 2026-10-25
+
+Apple M4 Max 36 GB, AC power, `tslab` built from the `lab/kernel-modes`
+branch (`docs/KERNEL_MODES.md`), release build, one measuring session. Host
+load was 3-9 from other sessions' builds, and the runs inside the lossless gate
+were flagged dirty for foreign CPU (a bit-equality check, so timing does not
+matter there). Ledger ids are in the lab dir (`~/.turbospark/lab/<experiment>`).
+
+**DFlash2 depth 7 under `TURBOSPARK_INT4_MMA8=1`, lossless (lever 3's owed
+gate).** `tslab gate` on `qwen38-27b-dflash2`, `bit_exact`, plain against
+`dflash:7`, both with `TURBOSPARK_BATCHED_GEMV=0`: PASS, mean KL 0, top-1 1.00,
+tokens equal (experiment `km-lossless`, gate `1792959758519-40525-11`). The
+gate judges six repo-document prompts of 32 decode tokens. A second check
+compared decode digests on the protocol prompts and the copy-heavy prompt,
+256 decode tokens, two rounds (`km-lossless-digests`): short-explanation and
+medium-review are identical across plain, `dflash:2` and `dflash:7`. On
+copy-heavy the two speculative arms agree with each other and plain differs,
+but plain decoded 256 tokens and the speculative arms stopped at 188, so the
+digests cover different lengths. This is NOT shown to be a numerical
+difference. The worker keeps a digest, not token ids, so it cannot be settled
+from this run. A rerun with a decode count under 188 would.
+
+**The tuned adaptive controller, live, under the tile (lever 2).** MTP install,
+`mtp:8a` with `TURBOSPARK_ADAPTIVE_DEPTH=3,1,1,2` and `TURBOSPARK_INT4_MMA8=1`,
+256 decode tokens, 3 clean pairs each:
+
+| Workload | Against fixed 2 with the tile | Against today's default |
+|----------|------------------------------:|------------------------:|
+| medium-review (prose) | +3.5%, NOISE (`km-adapt-prose`) | -5.6%, LOSS (`km-adapt-vs-default-prose`) |
+| code (merge sorted slices) | +16.1% WIN (`km-adapt-code`) | +6.4% WIN (`km-adapt-vs-default-code`) |
+| copy-heavy (rename) | +26.6% WIN (`km-adapt-copy`) | +17.1% WIN (`km-adapt-vs-default-copy`) |
+
+The offline replay predicted code +16%, quote-back +7% and prose -6% against the
+default. Prose agrees. Code is lower live (+6.4%) and copy-heavy higher
+(+17.1%), and the replay's prompts were different texts, so these are not like
+for like. The controller is not a default: prose loses.
+
+**Projection against model A/B (`tslab project`, `tslab calibrate`).**
+
+| Mode and row count | Predicted | Measured | Read |
+|--------------------|----------:|---------:|------|
+| `gdn_dk128`, 8 rows (`km-proj-dk`) | +3.4% | +4.1% short, +5.0% medium (`gdn-dk128-dflash7`) | within the floor |
+| `gdn_dk128`, one row (`km-proj-dk1`) | +0.9%, under the floor | -0.4%, NOISE (`gdn-dk128-decode`) | within the floor |
+| `int4_mma8`, one row, plain decode (`km-proj`) | -16.9% (0.831x) | -26.9% (`km-mma8-plain`, 3 pairs, interval spans zero) | A/B too noisy to call; the doc's 0.81x agrees with the projection |
+| lever 9, small projections at 8 rows (`km-l9-proj2`) | +5.8% (4.1 ms of 75 ms) | +3.3% (`km-l9-ab`, 2 clean pairs, inconclusive) | 2.5 points under, one inconclusive A/B |
+
+Coverage was 2-7% for the GDN and small-projection cases and 85% for the tile
+on decode, so the GDN rows are priced from a small slice of the round and still
+landed, because the effect lives entirely in that kernel.
+
+A bench bias this found: `int4_matmul` timed a tiny shape in a pass of at most
+8 dispatches, so the command buffer's fixed cost dominated. The 48-row gate
+projection read 157 us for the scalar GEMM at 8 rows (46 us in the 64-copy
+bench) and the first lever 9 projection was +21%, a 17.8-point miss
+(`km-l9-proj`). The bench now repeats the copy sweep until a pass holds at
+least 64 dispatches, and the same shape reads about 42 us scalar and 8 us for
+the tile. That is the fix to the bench, not a lever 9 result. One-row
+`gemv_per_row` on those shapes still reads above its 8-row-per-dispatch share,
+a floor the bench has not explained.
+
+**What the traces did not show.** The two `tslab trace` windows
+(`km-l9-trace-d7`, `km-l9-trace-min1`) landed in the sequential prefill of the
+DFlash2 install (one-row `gdn_delta_step_decode` and tile dispatches), not the
+8-row verify, so they say nothing about whether lever 9's wiring is
+launch-bound. A trace of the verify needs a window placed after the prompt.
+
+**Mode candidates, priced or not (2026-10-25).** Only what the lab can price
+today is priced. The rest names what is missing, and none is built.
+
+| Candidate | Projection | What is missing |
+|-----------|-----------|-----------------|
+| Drafter-gated tile (mlx-serve E1: tile only when a drafter is bound) | Removes the plain-decode loss the tile projects (0.831x, `km-proj`) on a headless install, keeps the code gain | No bench arm separates "drafter bound" from the flag; the routing lives in `real_forward_dispatch.rs`, the tile owner's file |
+| Concurrent q/k/v encoder (item 2) | Not priced | No bench arm for concurrent dispatch; the 1.07-1.40x figure is from a same-weight GEMV bench outside the lab |
+| Expert-sorted grouped GEMM MoE prefill (item 8) | Not priced | The mechanism ratio (0.44-0.80) is from `moe_grouped_gemm_bench.rs`, outside the lab, and the `moe_routed` bench times decode pairs, not per-expert prefill GEMMs |
+| Hybrid prompt lookup plus MTP | Not priced | Needs an MTP replay on the copy-heavy stream; copy-heavy already gains +17% live from the adaptive controller above, which is the figure a hybrid has to beat |
+
 #### Re-measured on the shipped defaults, 2026-10-25
 
 HEAD `762e8f65`, tile off (the default), `qwen38-27b-mtp`, MTP block 2 against

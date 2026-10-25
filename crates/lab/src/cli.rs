@@ -31,6 +31,16 @@ tslab: the evaluator for kernel and method experiments (macOS).
                 [--case LABEL] [--reps 5] [--hash] [--verify-from EXP] [--experiment NAME]
   tslab kernel  --list                             (the registered benches)
   tslab hash-diff --experiment A --against B      (exit 3 when any hashed output changed)
+  tslab project --knob NAME|--bench B --default ARM --mode ARM
+                --curves EXP | --default-from A --mode-from B      (kernel_curve experiments)
+                [--x 1] [--shapes LABEL,...] [--min-rows N] [--dispatches N --us-per-dispatch X | --probe-from EXP]
+                --base-ms X | --base-from EXP[:ARM] [--base-metric decode_tok_s|prefill_tok_s]
+                | --round-from EXP --width W [--flags L] [--kv N] [--phase verify]
+                [--floor-from EXP] [--share-from EXP --block gdn|mlp|attn] [--experiment NAME]
+                (price a kernel mode from curves before any model run; no GPU work)
+  tslab calibrate --projection EXP[:ID] (--verdict EXP[:ID] | --measured X --source TEXT)
+                [--metric decode_tok_s] [--invert] [--experiment NAME]   |   --all
+                (join a projection to the verdict that followed; --all lists every miss and the bias)
   tslab tree-replay --model M --drafter mtp|dflash [--prompt ...]... [--generate 512]
                 [--depth 8|7] [--blocks 2,4,DEPTH] [--serve-block 2] [--top-k 4] [--slots 16] [--experiment NAME]
   tslab ane-plan --path PROGRAM.mlpackage|MANIFEST_DIR [--units ane|all|gpu|cpu]
@@ -127,6 +137,8 @@ pub const COMMANDS: &[&str] = &[
     "pinned",
     "schema",
     "hash-diff",
+    "project",
+    "calibrate",
     "export",
     "report",
     "inventory",
@@ -154,6 +166,8 @@ pub fn dispatch(cmd: &str, args: Args) -> Result<CmdOutput, String> {
         "pinned" => pinned_cmd(args),
         "schema" => schema_cmd(args),
         "hash-diff" => hash_diff_cmd(args),
+        "project" => crate::projection::project_cmd(args),
+        "calibrate" => crate::projection::calibrate_cmd(args),
         "export" => crate::export::export_cmd(args),
         "inventory" => inventory_cmd(args),
         "capabilities" => crate::families::capabilities_cmd(args),
@@ -722,7 +736,22 @@ fn knobs_cmd(args: Args) -> Result<CmdOutput, String> {
             if k.quotable { "" } else { " (unquotable)" }
         );
     }
-    Ok(CmdOutput::ok(json!({"knobs": crate::knobs::KNOBS})))
+    crate::say!();
+    crate::say!("kernel modes (docs/KERNEL_MODES.md): the bench that prices each, and how");
+    for l in crate::knobs::LANES {
+        let how = match l.compare {
+            crate::knobs::Compare::Arms { baseline, lane } => {
+                format!("{baseline} -> {lane}")
+            }
+            crate::knobs::Compare::Process { arm, baseline_env } => {
+                format!("{arm} across processes, baseline with {baseline_env}")
+            }
+        };
+        crate::say!("{:<22} {:<14} {how}", l.knob, l.bench);
+    }
+    Ok(CmdOutput::ok(
+        json!({"knobs": crate::knobs::KNOBS, "lanes": crate::knobs::LANES}),
+    ))
 }
 
 /// `tslab schema`: the JSON Schema of everything tslab writes.
