@@ -348,10 +348,10 @@ The measurements are in [MOE_PRIOR_ART.md](MOE_PRIOR_ART.md):
 
 ### Not pursued: ANE routed experts and asynchronous handoffs (2026-10-21)
 
-Two follow-ups to the split were tested and stopped. Their branches
-(`codex/ane-moe`, `codex/ane-async`, `codex/ane-events`) keep the code and
-raw evidence. Nothing from them reached the runtime except the router batch
-capture below.
+Two follow-ups to the split were tested and stopped. Their code and
+raw evidence are kept as the tags `archive/codex-ane-moe`,
+`archive/codex-ane-async` and `archive/codex-ane-events`. Nothing from
+them reached the runtime except the router batch capture below.
 
 - **ANE for routed experts (`matmul_id` with experts used 17+ times).** A
   real Qwen 3.6 35B-A3B capture (`TURBOSPARK_ROUTER_BATCHES=1`, 676,480
