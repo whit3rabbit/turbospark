@@ -11,6 +11,7 @@ use std::time::Instant;
 use foundation::LogitValue;
 
 use super::attn::{encode_full_attention_block, encode_linear_block};
+use super::cb1_trace::PassTrace;
 use super::hc::encode_hyper_connection;
 use super::moe;
 use super::ple::encode_ple_layer;
@@ -138,6 +139,9 @@ impl RealForwardRunner {
             &mut self.router_hist,
             &mut self.phases,
         );
+        // `phases.calls` is bumped after this returns, so it is the 0-based
+        // index of this pass.
+        let mut trace = PassTrace::start(phases.calls, position, phases.expert_io_nanos);
 
         for layer in 0..arch.num_layers as usize {
             if layer == qwen4.ple_layer {
@@ -148,6 +152,7 @@ impl RealForwardRunner {
                 // contents) breaks the aliasing rather than reordering
                 // around it (`crates/runtime/CLAUDE.md` Gotcha 5's shape).
                 let wide_buf = qwen4.wide_x.clone();
+                let t_ple = trace.ple_timer();
                 encode_ple_layer(
                     context,
                     &pass,
@@ -160,6 +165,7 @@ impl RealForwardRunner {
                     token,
                     0,
                 )?;
+                trace.note_ple(t_ple);
             }
 
             if capture_layer_boundaries {
@@ -336,9 +342,24 @@ impl RealForwardRunner {
                 0,
             )?;
 
+            // `gpu_wait_nanos` has always covered `commit()` and the wait
+            // together. The three clocks split them for `TURBOSPARK_CB1_TRACE`
+            // without changing what either counter reports.
             let t_wait = Instant::now();
-            phases.cb1_gpu_nanos += (pass.commit().wait_with_gpu_time() * 1e9) as u64;
-            phases.gpu_wait_nanos += t_wait.elapsed().as_nanos() as u64;
+            let committed = pass.commit();
+            let t_committed = Instant::now();
+            let gpu_secs = committed.wait_with_gpu_time();
+            let t_end = Instant::now();
+            phases.cb1_gpu_nanos += (gpu_secs * 1e9) as u64;
+            phases.gpu_wait_nanos += t_end.duration_since(t_wait).as_nanos() as u64;
+            trace.record_layer(
+                layer,
+                t_wait,
+                t_committed,
+                t_end,
+                gpu_secs,
+                phases.expert_io_nanos,
+            );
 
             pass = context.begin_pass_labeled("routed cb");
             moe::encode_moe_layer(
