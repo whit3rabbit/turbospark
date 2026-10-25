@@ -690,7 +690,7 @@ for like. The controller is not a default: prose loses.
 |--------------------|----------:|---------:|------|
 | `gdn_dk128`, 8 rows (`km-proj-dk`) | +3.4% | +4.1% short, +5.0% medium (`gdn-dk128-dflash7`) | within the floor |
 | `gdn_dk128`, one row (`km-proj-dk1`) | +0.9%, under the floor | -0.4%, NOISE (`gdn-dk128-decode`) | within the floor |
-| `int4_mma8`, one row, plain decode (`km-proj`) | -16.9% (0.831x) | -26.9% (`km-mma8-plain`, 3 pairs, interval spans zero) | A/B too noisy to call; the doc's 0.81x agrees with the projection |
+| `int4_mma8`, one row, plain decode (`km-proj`) | -16.9% (0.831x) | -17.4%, interval [-19.0%, -17.1%], 0 better / 5 worse of 6 pairs (`km-mma8-plain6`); a first 3-pair run read -26.9% with an interval spanning zero (`km-mma8-plain`) | within the floor on the larger sample; the doc's 0.81x agrees |
 | lever 9, small projections at 8 rows (`km-l9-proj2`) | +5.8% (4.1 ms of 75 ms) | +3.3% (`km-l9-ab`, 2 clean pairs, inconclusive) | 2.5 points under, one inconclusive A/B |
 
 Coverage was 2-7% for the GDN and small-projection cases and 85% for the tile
@@ -708,7 +708,12 @@ the tile. That is the fix to the bench, not a lever 9 result. One-row
 8-GEMV pass. A separate output buffer per weight copy was tried to rule out
 output-ordering between dispatches and did not move it (14.9 us a one-row GEMV
 on the 48-row shape against about 5.5 us each inside the 8-GEMV pass), so the
-cause is still unexplained and that change was reverted.
+cause is still unexplained and that change was reverted. A single weight copy
+for the whole pass (every dispatch cache-warm) also left the one-row GEMV at
+14.6 us against 4.9 us each inside the 8-GEMV pass, so cache warmth is ruled
+out too. What differs is that eight independent GEMVs may overlap on the GPU
+while a one-row dispatch pays its full launch and drain latency; that is a
+reading of the numbers, not something this bench tested.
 
 **Lever 9 under a trace.** The first two `tslab trace` windows landed in the
 sequential prefill and said nothing. Rerun on a short prompt with 768 decode
@@ -731,7 +736,7 @@ today is priced. The rest names what is missing, and none is built.
 | Drafter-gated tile (mlx-serve E1: tile only when a drafter is bound) | Removes the plain-decode loss the tile projects (0.831x, `km-proj`) on a headless install, keeps the code gain | No bench arm separates "drafter bound" from the flag; the routing lives in `real_forward_dispatch.rs`, the tile owner's file |
 | Concurrent q/k/v encoder (item 2) | +0.4% on a decode token, UNDER THE FLOOR (`km-proj-qkv`, new `qkv_concurrent` bench: the triple takes 0.896 of its serial time, 0.19 ms across 16 layers of 45.5 ms, output bits identical) | Nothing to build as a standalone mode; it would have to cover far more dispatches than the one triple per layer to clear 2% |
 | Expert-sorted grouped GEMM MoE prefill (item 8) | +4.0% to +4.1% of a Flint prefill token against one GEMV per route, at 4 and 16 rows per expert (`km-proj-moe`; kernels cover 6% of a 40 ms token at 24.9 tok/s) | The base is dominated by something the bench does not time (likely expert I/O), the engine's batched MoE prefill paths may already capture part of it, and the drift bound in `BATCHED_PREFILL.md` still applies. Measure the routed share of a prefill token before building |
-| Hybrid prompt lookup plus MTP | Not priced | Needs an MTP replay on the copy-heavy stream; copy-heavy already gains +17% live from the adaptive controller above, which is the figure a hybrid has to beat |
+| Hybrid prompt lookup plus MTP | Bounded, not priced. On copy-heavy the MTP chain already commits 2.96, 4.27 and 5.95 per round at blocks 2, 4 and 8 (tree-replay table), and the best standalone lookup replay commits about 5.3 per round at its longest draft | A hybrid only adds in rounds where lookup matches and the head does not, which needs a per-position replay over one stream (the lookup probe prices a standalone drafter against the flag-off cost curve). Not built; copy-heavy already gains +17% live from the adaptive controller above |
 
 #### Re-measured on the shipped defaults, 2026-10-25
 
