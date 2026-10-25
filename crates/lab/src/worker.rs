@@ -218,6 +218,11 @@ fn parse_messages(rows: &[serde_json::Value], path: &Path) -> Result<Vec<Message
 pub struct ChatFile {
     pub opening: Vec<Message>,
     pub follow_ups: Vec<String>,
+    /// Whether the model reasons before it replies, so a reply carries a
+    /// `</think>` and the client sends back only what follows it. `false` for a
+    /// template with no thinking channel, where the whole reply is the content.
+    /// The chat file's `"reasoning"` key; absent means `true`.
+    pub reasoning: bool,
 }
 
 impl ChatFile {
@@ -253,16 +258,29 @@ impl ChatFile {
             let content = first.content.clone().unwrap_or_default();
             *first = Message::new(Role::User, format!("{cut}\n\n{content}"));
         }
+        let reasoning = match v.get("reasoning") {
+            None => true,
+            Some(r) => r.as_bool().ok_or_else(|| {
+                format!("{}: \"reasoning\" must be true or false", path.display())
+            })?,
+        };
         Ok(Self {
             opening,
             follow_ups,
+            reasoning,
         })
     }
 }
 
-/// A reply as a client that drops reasoning sends it back: whatever follows
-/// the last `</think>`, or nothing when the turn ended inside the reasoning.
-pub fn visible_content(text: &str) -> String {
+/// A reply as a client sends it back. With `reasoning` (a thinking template)
+/// the client drops the reasoning: whatever follows the last `</think>`, or
+/// nothing when the turn ended inside it. Without `reasoning` there is no
+/// `</think>` to find and the whole reply is the content; dropping it would
+/// send every assistant turn back empty.
+pub fn visible_content(text: &str, reasoning: bool) -> String {
+    if !reasoning {
+        return text.trim().to_string();
+    }
     text.rsplit_once("</think>")
         .map(|(_, after)| after.trim().to_string())
         .unwrap_or_default()
@@ -478,7 +496,10 @@ fn chat_once(
                 decode_s: result.decode_seconds,
             });
             all.extend_from_slice(&generated);
-            history.push(Message::new(Role::Assistant, visible_content(&text)));
+            history.push(Message::new(
+                Role::Assistant,
+                visible_content(&text, chat.reasoning),
+            ));
         }
         Ok(())
     })();

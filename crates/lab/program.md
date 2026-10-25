@@ -259,8 +259,22 @@ reasoning. Prefix reuse is on for the whole chat, so `followup_ttft_s`
 a client waits for. `crates/lab/chats/long-doc.chat.json` is a 6000-token
 document and four follow-ups. Replies stop at end-of-turn, so a chat's
 decode work can differ between arms that change output; a chat workload is
-judged on generated tokens and must declare `bit_exact`. The knob that
-targets it is `gdn_turn_snapshot`:
+judged on generated tokens and must declare `bit_exact`. That gate is
+`gate`, `run-experiment` and `confirm`. `tslab ab` reports `followup_ttft_s`
+but compares no tokens, so an `ab` result on a chat says nothing about
+whether the arms produced the same text.
+
+A reply cut inside the reasoning goes back empty, which is what a client
+that drops reasoning sends. With a small `--decode` on a thinking model most
+replies end there, so the re-rendered reply is empty and the experiment
+prices only the new message. Give `--decode` room to finish the thinking
+when the re-rendered reply is what you are measuring. For a template with no
+thinking channel, set `"reasoning": false` in the chat file (default `true`):
+the whole reply is sent back instead of nothing.
+
+The fit check renders the opening turn only. A later turn that overflows
+`--context` fails mid-run, after the warm pass, with the turn named. The
+knob that targets chats is `gdn_turn_snapshot`:
 
 ```sh
 $TSLAB ab --model <install> --prompt chat:crates/lab/chats/long-doc.chat.json \

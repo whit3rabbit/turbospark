@@ -71,11 +71,62 @@ fn a_chat_without_follow_ups_is_refused_by_name() {
 #[test]
 fn the_reply_sent_back_is_what_follows_the_reasoning() {
     assert_eq!(
-        visible_content("<think>\nhmm\n</think>\n\nAnswer."),
+        visible_content("<think>\nhmm\n</think>\n\nAnswer.", true),
         "Answer."
     );
-    assert_eq!(visible_content("still thinking, cut by the budget"), "");
-    assert_eq!(visible_content("a</think>b</think> c "), "c");
+    assert_eq!(
+        visible_content("still thinking, cut by the budget", true),
+        ""
+    );
+    assert_eq!(visible_content("a</think>b</think> c ", true), "c");
+}
+
+/// A template with no thinking channel never writes `</think>`. Treating its
+/// reply like a cut-off reasoning turn would send every assistant turn back
+/// empty and quietly change what the chat measures.
+#[test]
+fn a_reply_without_a_thinking_channel_goes_back_whole() {
+    assert_eq!(
+        visible_content("  The answer is 4.\n", false),
+        "The answer is 4."
+    );
+    assert_eq!(visible_content("a</think>b", false), "a</think>b");
+}
+
+#[test]
+fn the_reasoning_flag_defaults_on_and_must_be_a_boolean() {
+    let dir = scratch("reasoning");
+    let write = |name: &str, extra: serde_json::Value| {
+        let mut v = json!({
+            "opening": [{"role": "user", "content": "Hi"}],
+            "follow_ups": ["And?"]
+        });
+        if !extra.is_null() {
+            v["reasoning"] = extra;
+        }
+        let path = dir.join(name);
+        std::fs::write(&path, v.to_string()).unwrap();
+        path
+    };
+    let tok = tokenizer();
+    assert!(
+        ChatFile::load(&write("a.json", json!(null)), &tok)
+            .unwrap()
+            .reasoning
+    );
+    assert!(
+        ChatFile::load(&write("b.json", json!(true)), &tok)
+            .unwrap()
+            .reasoning
+    );
+    assert!(
+        !ChatFile::load(&write("c.json", json!(false)), &tok)
+            .unwrap()
+            .reasoning
+    );
+    let err = ChatFile::load(&write("d.json", json!("no")), &tok).unwrap_err();
+    assert!(err.contains("reasoning"), "{err}");
+    std::fs::remove_dir_all(dir).ok();
 }
 
 #[test]
