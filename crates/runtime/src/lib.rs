@@ -5,7 +5,6 @@
 #![forbid(unsafe_code)]
 
 mod config;
-mod lab_hooks;
 mod draft_lattice;
 #[cfg(target_os = "macos")]
 pub mod embedding_probe;
@@ -25,6 +24,7 @@ mod kernel_warmup;
 mod kv_prefix;
 #[cfg(target_os = "macos")]
 mod kv_write;
+mod lab_hooks;
 #[cfg(target_os = "macos")]
 mod moe_prefill_pipeline;
 mod pacing;
