@@ -23,7 +23,8 @@ use crate::gemma4_checkpoint::{canonicalize_flint_header, write_gemma4_install, 
 use crate::ranged_download::MemoryRangeSource;
 use crate::safetensors_header::parse_header;
 use crate::synthetic_tensors::{
-    assemble_safetensors, bf16_vector, expert_int4_triple, int4_triple, int8_triple, Tensor,
+    assemble_safetensors, bf16_vector, expert_int4_triple, expert_low_code_triple, int4_triple,
+    int8_triple, Tensor,
 };
 
 const HIDDEN: usize = 64;
@@ -108,11 +109,33 @@ fn as_u8_packed(mut tensors: Vec<Tensor>) -> Vec<Tensor> {
     tensors
 }
 
+/// How a synthetic Flint install's routed experts are quantized.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SyntheticFlintRouted {
+    /// INT4 codes over the whole `0..=15` range, U8-packed as `flint-int4`
+    /// ships them. What [`build_synthetic_flint_install`] writes.
+    Int4,
+    /// Codes in `0..=7` only, U32-packed at `bits` (4 or 3) as
+    /// `flint-mixed-3-4bit` ships them, with a per-tensor `bits` override at
+    /// 3. One seed gives the same dequantized experts at either width.
+    LowCodes { bits: u32 },
+}
+
 /// Writes a tiny Flint `.gturbo` install and returns the config to open it.
 pub fn build_synthetic_flint_install(
     dir: &std::path::Path,
     vocab_size: i64,
     model_id: &str,
+) -> Result<ArchConfig, Box<dyn std::error::Error>> {
+    build_synthetic_flint_install_with(dir, vocab_size, model_id, SyntheticFlintRouted::Int4)
+}
+
+/// [`build_synthetic_flint_install`] with a choice of routed expert width.
+pub fn build_synthetic_flint_install_with(
+    dir: &std::path::Path,
+    vocab_size: i64,
+    model_id: &str,
+    routed: SyntheticFlintRouted,
 ) -> Result<ArchConfig, Box<dyn std::error::Error>> {
     let arch = tiny_flint_arch(vocab_size);
     let vocab = vocab_size as usize;
@@ -221,13 +244,16 @@ pub fn build_synthetic_flint_install(
                 } else {
                     (MOE_INTER, HIDDEN)
                 };
-                ts.extend(as_u8_packed(expert_int4_triple(
-                    &format!("{p}.mlp.switch_mlp.{role}.weight"),
-                    NUM_EXPERTS,
-                    rows,
-                    cols,
-                    seed + 90 + i as u64,
-                )));
+                let name = format!("{p}.mlp.switch_mlp.{role}.weight");
+                let seed = seed + 90 + i as u64;
+                ts.extend(match routed {
+                    SyntheticFlintRouted::Int4 => {
+                        as_u8_packed(expert_int4_triple(&name, NUM_EXPERTS, rows, cols, seed))
+                    }
+                    SyntheticFlintRouted::LowCodes { bits } => {
+                        expert_low_code_triple(&name, NUM_EXPERTS, rows, cols, seed, bits)
+                    }
+                });
             }
         }
     }
@@ -247,6 +273,16 @@ pub fn build_synthetic_flint_install(
     quant
         .bits_overrides
         .insert("language_model.model.embed_tokens".to_string(), 8);
+    if let SyntheticFlintRouted::LowCodes { bits } = routed {
+        for l in DENSE_LEAD..LAYERS {
+            for role in ["gate_proj", "up_proj", "down_proj"] {
+                quant.bits_overrides.insert(
+                    format!("language_model.model.layers.{l}.mlp.switch_mlp.{role}"),
+                    bits,
+                );
+            }
+        }
+    }
     write_gemma4_install(dir, &arch, model_id, &header, &source, &quant)?;
     // The walk applied the up/down rebalance; the real writer records it too.
     crate::flint_rebalance::record_shift(dir, crate::flint_rebalance::FLINT_SWIGLU_SHIFT)?;

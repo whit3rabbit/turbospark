@@ -139,7 +139,10 @@ pub use safetensors_header::{
     DEFAULT_MAX_HEADER_BYTES,
 };
 pub use synthetic_deepseek2::{build_synthetic_deepseek2_install, tiny_deepseek2_arch};
-pub use synthetic_flint::{build_synthetic_flint_install, tiny_flint_arch};
+pub use synthetic_flint::{
+    build_synthetic_flint_install, build_synthetic_flint_install_with, tiny_flint_arch,
+    SyntheticFlintRouted,
+};
 pub use synthetic_gguf::{
     build_synthetic_gemma4_gguf, build_synthetic_gpt_oss_gguf, build_synthetic_qwen2_gguf,
     GgufBuilder, GgufFileAndRanges, QuantMix, SyntheticGgufShape, SyntheticGptOssShape,

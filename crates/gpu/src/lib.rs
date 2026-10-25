@@ -349,8 +349,9 @@ pub use mla::{
 };
 #[cfg(target_os = "macos")]
 pub use moe_decode::{
-    encode_moe_phase1, encode_moe_phase2, encode_router_gemv_gemma4, moe_decode_source,
-    router_gemv_gemma4, MoeExpertOffsets, RoutedBlobsBuffer, MAX_STREAMED_EXPERTS,
+    encode_moe_phase1, encode_moe_phase1_int3, encode_moe_phase2, encode_moe_phase2_int3,
+    encode_router_gemv_gemma4, moe_decode_source, router_gemv_gemma4, MoeExpertOffsets,
+    RoutedBlobsBuffer, MAX_STREAMED_EXPERTS,
 };
 #[cfg(target_os = "macos")]
 pub use moe_gguf::{
