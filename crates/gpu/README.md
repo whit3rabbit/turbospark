@@ -32,6 +32,7 @@ gpu = { package = "turbospark-gpu", path = "../gpu" }
 - `rope.rs`: Rotary positional embedding dispatches (`rope_proportional_neox`, `rope_neox_subdim`, 2D spatial RoPE, YaRN).
 - `gdn.rs`, `gdn_shape.rs`, `gdn_state.rs`: Gated-DeltaNet linear attention dispatches (conv, SiLU, delta recurrence, gated norm) and persistent state buffers.
 - `dequant_int4_gemv.rs`, `dequant_int8_gemv.rs`, `dequant_int4_batch.rs`, `dequant_int8_batch.rs`: INT4/INT8 affine GEMV and batch GEMM dispatches.
+- `dequant_int4_fused.rs`, `dequant_int4_steel.rs`, `dequant_int4_mma8.rs`: fused INT4 FFN chains (gate/up plus activation, down plus residual epilogue), the vendored MLX Steel qmm (prefill only), and the small-M INT4 matrix-unit GEMM for 1 to 8 token rows, wired behind the opt-in `TURBOSPARK_INT4_MMA8` runtime flag (see `docs/INT4_SMALL_M_MMA.md`).
 - `dequant_1bit_gemv.rs`, `dequant_1bit_gemm_batch.rs`, `dequant_2bit_gemv.rs`, `dequant_2bit_gemm_batch.rs`: 1-bit and 2-bit affine GEMV and speculative verification batch GEMM dispatches.
 - `dequant_iq_gemv.rs` & `dequant_q2_k_gemv.rs`: GGUF importance-quantized (IQ) codebook and Q2_K dispatches.
 - `dequant_q3_k_gemv.rs`, `dequant_q4_k_gemv.rs`, `dequant_q5_k_gemv.rs`, `dequant_q6_k_gemv.rs`, `dequant_q8_0_gemv.rs`: Standard GGUF k-quant dispatches.
@@ -42,8 +43,10 @@ gpu = { package = "turbospark-gpu", path = "../gpu" }
 - `hyper_connection.rs`: Multi-stream residual connection dispatches.
 - `whisper_conv.rs` & `whisper_encoder.rs`: Metal compute dispatches for Whisper speech-to-text 1D convolution and transformer encoder blocks.
 - `moonshine_frontend.rs`: Moonshine speech encoder preprocessing Metal dispatches (conv1d, groupnorm, RoPE, embedding, SwiGLU, tanh).
+- `conformer_stream.rs` & `nemotron_diar.rs`: cache-aware streaming Conformer kernels for the Multitalker Parakeet encoder and the Nemotron-3 diarization kernel beyond the whisper f32 set.
+- `ane_split.rs` (cargo feature `ane-prefill`, off by default): the Metal half of the ANE+Steel dense prefill split, wrapping Core ML F16 IOSurface planes as resident buffers.
 - `resident_metal.rs`: `ResidentGpuWeights` zero-copy `MTLBuffer` creation over memory-mapped weight slices (`newBufferWithBytesNoCopy`).
-- `shaders/`: Metal Shading Language source files containing compute kernels across 46 `.metal` files.
+- `shaders/`: Metal Shading Language source files containing compute kernels across 50 `.metal` files.
 
 ## Development & Test Commands
 
@@ -57,13 +60,16 @@ cargo test -p turbospark-gpu --test rms_norm_parity -- --nocapture
 
 ## Tests
 
-This crate contains 82 integration test suites in `tests/`, the parity ones comparing GPU kernel outputs against CPU reference calculations in `crates/compute`:
-- Quantization parity: `dequant_1bit_gemv_parity.rs`, `dequant_1bit_gemm_parity.rs`, `dequant_2bit_gemv_parity.rs`, `dequant_2bit_gemm_parity.rs`, `dequant_int4_gemv_parity.rs`, `dequant_int4_gemm_parity.rs`, `dequant_int8_gemv_parity.rs`, `dequant_iq_gemv_parity.rs`, `dequant_q4_k_gemv_parity.rs`, `dequant_q5_k_gemv_parity.rs`, `dequant_q6_k_gemv_parity.rs`, `dequant_q8_0_gemv_parity.rs`.
+This crate contains 97 integration test suites in `tests/`, the parity ones comparing GPU kernel outputs against CPU reference calculations in `crates/compute`:
+- Quantization parity: `dequant_1bit_gemv_parity.rs`, `dequant_1bit_gemm_parity.rs`, `dequant_2bit_gemv_parity.rs`, `dequant_2bit_gemm_parity.rs`, `dequant_int4_gemv_parity.rs`, `dequant_int4_gemm_parity.rs`, `dequant_int4_fused_parity.rs`, `dequant_int4_mma_parity.rs`, `dequant_int4_mma8_parity.rs`, `dequant_int4_steel_parity.rs`, `dequant_int8_gemv_parity.rs`, `dequant_int8_gemm_parity.rs`, `dequant_iq_gemv_parity.rs`, `dequant_q3_k_gemv_parity.rs`, `dequant_q4_k_gemv_parity.rs`, `dequant_q5_k_gemv_parity.rs`, `dequant_q6_k_gemv_parity.rs`, `dequant_q8_0_gemv_parity.rs`.
 - Attention and KV cache: `attention_decode_parity.rs`, `attention_indexed_parity.rs`, `attention_tq_parity.rs`, `attention_sinks.rs`, `attention_swa.rs`, `kv_cache.rs`, `kv_cache_quant.rs`, `kv_quantize_parity.rs`.
-- Normalization and activations: `rms_norm_parity.rs`, `rms_norm_grouped_parity.rs`, `scaled_norm_and_embed.rs`, `unary_activation_parity.rs`, `logit_softmax_parity.rs`.
-- Linear attention and MoE: `gdn_parity.rs`, `gdn_conv_dilated_parity.rs`, `gdn_gated_norm_sigmoid_parity.rs`, `moe_decode.rs`, `moe_gguf_parity.rs`, `moe_prefill_batch_parity.rs`, `moe_prefill_batch_gguf_parity.rs`.
+- Normalization and activations: `rms_norm_parity.rs`, `rms_norm_grouped_parity.rs`, `rms_norm_rows_as_heads.rs`, `scaled_norm_and_embed.rs`, `unary_activation_parity.rs`, `logit_softmax_parity.rs`.
+- Linear attention and MoE: `gdn_parity.rs`, `gdn_conv_dilated_parity.rs`, `gdn_gated_norm_sigmoid_parity.rs`, `gdn_lazy_fold.rs`, `moe_decode.rs`, `moe_gguf_parity.rs`, `moe_prefill_batch_parity.rs`, `moe_prefill_batch_gguf_parity.rs`.
+- Speculative decoding: `qwen38_decode_verify_parity.rs` (decode-side against verify-side INT4 kernel forms at real qwen3.8-27B shapes) and `gdn_conv_order_parity.rs` (prefill conv taps summed in decode's order).
 - Vision and architecture components: `vision_parity.rs`, `vision_block_parity.rs`, `rope_parity.rs`, `rope_mrope_parity.rs`, `rope_yarn_parity.rs`, `hyper_connection_parity.rs`, `qsa_indexer_parity.rs`, `ple_gate_parity.rs`, `minimax_router.rs`.
-- Speech kernels: `whisper_conv_parity.rs`, `whisper_encoder_parity.rs`, `moonshine_frontend_parity.rs`.
+- Speech kernels: `whisper_conv_parity.rs`, `whisper_encoder_parity.rs`, `moonshine_frontend_parity.rs`, `conformer_stream_parity.rs`, `nemotron_diar_parity.rs`.
+
+The bench-style suites are `#[ignore]`d and report rather than assert; run them with `--ignored` on a real Metal device (for example `int4_mma8_reg_bench.rs`, `small_n_gemm_bench.rs`, `tree_verify_cost_bench.rs`, `gemv_bandwidth_bench.rs`).
 
 ## Crate Gotchas
 

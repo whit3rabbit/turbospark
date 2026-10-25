@@ -27,6 +27,7 @@ model_io = { package = "turbospark-model-io", path = "../model-io" }
   - `qwen.rs`: Qwen 3.5, 3.6, 3.8 GDN hybrids, Qwen 2.5, Qwen 3 dense, Qwen3-MoE, Qwen3-VL, and `qwen4_exp`.
   - `deepseek.rs`: DeepSeek-V4-Flash.
   - `deepseek2.rs`: DeepSeek-V2-Lite latent-attention MoE (the `deepseek2` architecture).
+  - `flint.rs`: Recursive Flint (`flint_40b_a2_5b`, `flint_layer_mask`): a 40B-A2.5B MoE with two dense lead layers, 256 routed experts under a top-6 INT8 sigmoid router, one ungated shared expert, learned attention sinks, and a 35 sliding / 14 full NoPE layer mask.
   - `llama.rs`: Llama 3, Mixtral, and related Dense/MoE variants.
   - `gpt_oss.rs`: GPT-OSS-20B (Harmony chat template) architecture.
   - `muse_glimmer.rs`: Muse Glimmer architecture.

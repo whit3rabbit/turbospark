@@ -8,7 +8,7 @@ Downstream workspace crates import this package via the `turbospark_image` libra
 
 ```toml
 [dependencies]
-turbospark-image = { path = "../image", version = "0.4.0" }
+turbospark-image = { path = "../image", version = "0.5.0" }
 ```
 
 ## Purpose & Role
@@ -16,6 +16,8 @@ turbospark-image = { path = "../image", version = "0.4.0" }
 `turbospark-image` provides an end-to-end, pure-Rust native diffusion pipeline for image generation on Apple Silicon, with a portable CPU reference implementation for non-macOS targets.
 
 This crate is NOT a text-model family and does not plug into `RealForwardRunner`. Image installs carry their own manifest schema, install receipts, and resource envelopes validated via `install.rs`.
+
+In the macOS app, these families execute through the app's Swift MLX sessions (the vendored `ZImage` and `QwenImage` packages), not through this crate; this crate backs the `turbospark-image` CLI binary and the FFI `ImageSession`.
 
 ## Platform Requirements
 

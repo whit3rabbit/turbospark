@@ -209,6 +209,14 @@ if let url = server.baseURL {
 }
 ```
 
+`ServerOptions.prefixReuse` sets a process-level posture, applied at attach
+to every session the server serves, including ones attached later. `nil`
+(the default) leaves each attached session's own open-time decision alone.
+Pass `false` for a server with more than one client: once a session is
+attached, one engine's KV cache is reachable by every client of the server,
+so prefix reuse can make a match against another client's prompt observable
+through response timing.
+
 The app's API workspace also includes Image generation and a separate
 TypeSafe OpenKind service with a native playground. See
 [Swift API workspace](docs/SWIFT_API_WORKSPACE.md).

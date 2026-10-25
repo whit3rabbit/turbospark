@@ -22,7 +22,7 @@ Downstream Swift code links this crate's `staticlib` directly; nothing in this w
 - `open.rs`: macOS session loader opening `.gturbo` model directories and configuring `RealForwardRunner`.
 - `generate/`: Complete generation pipeline driving prompt rendering, streaming callbacks, tool call emission, and result summaries.
 - `models/`: Portable catalog browsing, model recommendation, and stream-install surface.
-- `server.rs`, `server_model.rs`, `server_registry.rs`, `server_transport.rs`, `server_idle.rs`, `server_image.rs`, `server_speech.rs`: In-process HTTP server engine sharing the open `SessionCore` without loading a second model instance.
+- `server.rs`, `server_model.rs`, `server_registry.rs`, `server_transport.rs`, `server_idle.rs`, `server_image.rs`, `server_speech.rs`: In-process HTTP server engine sharing the open `SessionCore` without loading a second model instance. `ServerOptions.prefixReuse` is process-level, like `guardrails`: once the session's KV cache serves every client of the server, prefix reuse can make a match against another client's prompt observable through response timing, so a multi-client server passes `false` to re-prefill each request in full; `null` leaves the session's own open-time decision (a bare session opens with reuse on) untouched.
 - `image_session.rs`: Verified `.image.gturbo` session, serialized native generation, cancellation, and PNG/metadata ownership for Swift hosts.
 - `stt_session.rs`: Opaque speech-to-text session handle (`TsSttModel`, `TsSttStream`) wrapping the family-dispatched speech runtime (Whisper, Qwen3 ASR, Parakeet on Core ML), buffering PCM audio, and emitting timestamped transcription segments.
 - `telemetry.rs`: Hardware performance counters, phase durations, and peak physical footprint telemetry.
@@ -32,7 +32,7 @@ Downstream Swift code links this crate's `staticlib` directly; nothing in this w
   - `core.rs`: Versioning, error string inspection, memory deallocation, and system metrics.
   - `session.rs`: Session open, close, and model info queries.
   - `generate.rs`: Token generation, streaming callbacks, and generation cancellation.
-  - `models.rs`: Catalog querying, probe, download, and installation.
+  - `models.rs`: Catalog querying, probe, chip capability check (`ts_chip_supports_ane_prefill`), download, and installation.
   - `server.rs`: In-process HTTP server start, stop, and status.
   - `daemon.rs`: External daemon process lifecycle controls.
   - `embedding.rs`: Text embedding generation via Post-LN encoder models.

@@ -25,7 +25,7 @@ cargo run --release -p turbospark-server --bin turbospark-server -- \
 cargo run --release -p turbospark-server --bin turbospark-server -- \
   --model ~/models/gemma4.gturbo --model ~/models/qwen38-27b.gturbo
 
-# Launch server with Speech-to-Text models (Whisper, Qwen3-ASR)
+# Launch server with Speech-to-Text models (Whisper, Qwen3-ASR, Parakeet)
 cargo run --release -p turbospark-server --bin turbospark-server -- \
   --stt-model whisper-base-en --port 8080
 
@@ -45,7 +45,7 @@ cargo run -p turbospark-server --bin turbospark-server -- <tokenizer-dir> [port]
 - `messages.rs`: Handler for Anthropic `/v1/messages` and `/v1/messages/count_tokens`, translating Anthropic messages to/from the OpenAI pipeline.
 - `completions.rs`: Handler for legacy OpenAI `/v1/completions` (raw prompts without chat templates).
 - `responses/`: Handler for the OpenAI `/v1/responses` endpoint.
-- `embeddings.rs` & `encoder_model.rs`: `/v1/embeddings` and Ollama embedding routes backed by BERT/XLM-RoBERTa encoder models.
+- `embeddings.rs` & `encoder_model.rs`: `/v1/embeddings` and Ollama embedding routes backed by BERT/XLM-RoBERTa encoder models; `coreml_embedding_model.rs` is the macOS Core ML backend used when the install carries an EmbeddingGemma 2 Core ML layout.
 - `ollama.rs`: Ollama-compatible `/api/*` endpoints with NDJSON streaming.
 - `guardrails.rs` & `guardrails/`: Tool-call rescue parser, schema repair, and validation retry loop.
 - `registry.rs`: Model routing registry, including `PoolRegistry` for least-busy dispatch (round-robin across idle members) across multiple loaded model instances.
@@ -84,4 +84,4 @@ This crate contains 22 integration test suites in `tests/`:
 1. **Serialized Real Backend & Concurrency Pools**: A single `RealChatModel` instance processes requests serially because Metal forward passes require mutable GPU buffers and KV cache state. For concurrent request processing, configure `--pool-size N` to instantiate multiple runner instances managed by `PoolRegistry`.
 2. **Anthropic SSE Framing Differences**: Anthropic SSE streams use explicit `event:` header lines (e.g. `content_block_delta`, `message_delta`) and terminate with a `message_stop` event rather than the OpenAI `data: [DONE]` sentinel.
 3. **Tailnet Binding Security**: Setting `--bind tailnet` binds exclusively to the Tailscale IPv4 carrier grade interface (100.64.0.0/10) with mandatory API key authentication.
-4. **Speech Installs Refused on `--model`**: Speech (Whisper, Qwen3-ASR) installs carry a typed speech receipt and are refused by `turbospark-server --model`, which serves `.gturbo` text and vision models. Attach speech models via `--stt-model <install-dir|alias>` (repeatable), TTS models via `--tts-model`, and music models via `--music-model`. With no `--model`, the server runs in audio-only mode. Audio models can also be dynamically attached at runtime via `POST /v1/audio/models`.
+4. **Speech Installs Refused on `--model`**: Speech (Whisper, Qwen3-ASR, Parakeet) installs carry a typed speech receipt and are refused by `turbospark-server --model`, which serves `.gturbo` text and vision models. Attach speech models via `--stt-model <install-dir|alias>` (repeatable), TTS models via `--tts-model`, and music models via `--music-model`. With no `--model`, the server runs in audio-only mode (`--embedding-model` alone instead runs an embedding-only server). Audio models can also be dynamically attached at runtime via `POST /v1/audio/models`.

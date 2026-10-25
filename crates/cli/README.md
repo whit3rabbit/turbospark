@@ -48,12 +48,12 @@ Catalog discovery, remote Hugging Face inspection, and streaming install:
 ```sh
 turbospark-model list                         # Browse curated catalog
 turbospark-model list-speech                  # Browse bundled speech models (Whisper & Qwen3-ASR)
-turbospark-model list-audio                   # Browse pinned MiniMax Music 3 profiles
+turbospark-model list-audio                   # Browse pinned audio models (STT, TTS, music)
 turbospark-model info gemma4                  # Inspect catalog entry details
 turbospark-model probe Qwen/Qwen3-30B-A3B-GGUF # Probe remote HF repo (reads KB, no download)
 turbospark-model pull gemma4                  # Stream and repack directly into ~/.turbospark/models
 turbospark-model pull-drama3 --out DIR --accept-fish-license # Install Fish Audio Drama 3 (speech)
-turbospark-model pull-audio minimax-music3-mxfp8 # Install a pinned music profile
+turbospark-model pull-audio minimax-music3-mxfp8 # Install a pinned audio profile
 turbospark-model recommend --context 8192     # Rank models that fit system memory
 turbospark-model path gemma4                  # Print resolved filesystem path
 turbospark-model rm gemma4                    # Delete local install

@@ -7,6 +7,7 @@ Checkpoint manifests, tensor metadata, mappings, and resident buffers.
 - [Detailed module guide](../../.claude/docs/modules/model-io.md)
 - [GTurbo format](../../docs/GTURBO.md)
 - [Model family table](../../docs/MODEL_FAMILY.md)
+- [Flint status](../../docs/FLINT.md)
 
 ## Rules
 

@@ -646,6 +646,25 @@ What it says:
   remaining pieces are the verify floor (70 ms for 8 rows against a
   1.1x-of-a-step 50) and the drafter (11 ms).
 
+#### Re-measured on the shipped defaults, 2026-10-25
+
+HEAD `762e8f65`, tile off (the default), `qwen38-27b-mtp`, MTP block 2 against
+speculation off, two rounds with the arm order reversed, a quiet host (load
+1.4-2.4 at all 12 run starts). Decode tok/s, mean of the two rounds:
+
+| Case | Off | MTP 2 | Ratio | Committed/round |
+|------|----:|------:|------:|----------------:|
+| short-explanation | 21.7 | 33.1 | 1.53x | 2.15 |
+| medium-review | 21.4 | 35.5 | 1.66x | 2.30 |
+| long-synthesis (2,940-token prompt) | 21.4 | 34.6 | 1.61x | 2.30 |
+
+The first two cases match the quiet-host HEAD sweep above (MTP 2 at 33.0 and
+34.5, plain at 22.0 and 21.8) to within 3%, so the defaults did not move
+between 2026-10-23 and now. The long-synthesis row is new, and its speculative
+prefill reads 19.3 s (152 tok/s). The full table, the caveats and the
+comparison with the 2026-10-11 rows are in [BENCHMARKS.md](BENCHMARKS.md)
+under "The `qwen38-27b-mtp` install, measured 2026-10-11".
+
 #### What the testing so far did not cover, and what it found late
 
 Everything on this page was measured on one family (the dense `qwen35`,

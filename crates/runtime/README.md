@@ -28,11 +28,13 @@ runtime = { package = "turbospark-runtime", path = "../runtime" }
 - `real_forward_api.rs` & `real_forward_traits.rs`: Public API abstractions for single-token decode and multi-token prefill.
 - `real_forward_dispatch.rs` & `real_forward_dispatch_moe.rs`: Metal kernel dispatch orchestrators (`encode_gemv_any`, `encode_embed_any`, `encode_moe_phase1_any`, `encode_moe_phase2_any`).
 - `real_forward_layout.rs`: Quantization dtype translation, block sizes, and MoE blob offset calculations.
+- `moe_prefill_pipeline.rs`: Routed-expert prefill pipelining shared by the MoE chunked drivers: host route encoding, expert-union sub-batching, and slot-cache `pread` overlap.
 - `real_forward_rollback.rs`: Atomic rollback of KV cache and recurrent state for speculative rejection.
 - `real_forward_types.rs`: `RealForwardError`, `PhaseCounters`, `dispatch_profile_report`, and `DecodeScratch`.
 - `real_forward_vision_api.rs` & `vision/`: Vision tower forward pass dispatches and multimodal token injection.
 - `families/`: Dedicated per-architecture forward flows:
   - `deepseek2/`: DeepSeek V2 multi-head latent attention plus fine-grained MoE with a fused shared expert.
+  - `flint/`: Recursive Flint flow: learned attention sinks, per-head QK norm before RoPE, NoPE by layer mask, an INT8 sigmoid router, an ungated shared expert, a dense lead, and top-6 routed experts streamed through the slot cache.
   - `gemma4/`: Gemma 4 attention, MoE routing, and layer norms.
   - `gptoss/`: GPT-OSS architecture, served through the Harmony chat dialect.
   - `llama/`: Plain-GQA flow shared by Llama 2/3, Mistral, Mixtral MoE, Qwen 2/2.5, Qwen3 dense, Qwen3-MoE, Qwen3-VL, and MiniMax-M2.
@@ -64,9 +66,9 @@ cargo test -p turbospark-runtime --test real_forward_gemma4
 
 ## Tests
 
-This crate contains 76 integration test suites in `tests/`, including:
-- Model family forward passes: `real_forward_gemma4.rs`, `real_forward_gptoss.rs`, `real_forward_llama.rs`, `real_forward_llama_dense.rs`, `real_forward_minimax.rs`, `real_forward_muse.rs`, `real_forward_qwen.rs`, `real_forward_qwen2.rs`, `real_forward_qwen35.rs`, `real_forward_qwen3moe.rs`, `real_forward_qwen4.rs`, `real_forward_spark.rs`.
-- Chunked prefill & prefix reuse: `chunked_prefill.rs`, `chunked_prefill_refusal.rs`, `prefix_reuse_real.rs`, `real_forward_gemma4_chunked.rs`, `real_forward_qwen35_chunked.rs`.
+This crate contains 81 integration test suites in `tests/`, including:
+- Model family forward passes: `real_forward_flint.rs`, `real_forward_gemma4.rs`, `real_forward_gptoss.rs`, `real_forward_llama.rs`, `real_forward_llama_dense.rs`, `real_forward_minimax.rs`, `real_forward_muse.rs`, `real_forward_qwen.rs`, `real_forward_qwen2.rs`, `real_forward_qwen35.rs`, `real_forward_qwen3moe.rs`, `real_forward_qwen4.rs`, `real_forward_spark.rs`.
+- Chunked prefill & prefix reuse: `chunked_prefill.rs`, `chunked_prefill_refusal.rs`, `prefix_reuse_real.rs`, `real_forward_flint_prefill.rs`, `real_forward_gemma4_chunked.rs`, `real_forward_qwen35_chunked.rs`, `real_forward_qwen_moe_chunked.rs`.
 - Quantized KV cache forward tests: `real_forward_gemma4_kv_quant.rs`, `real_forward_gptoss_kv_quant.rs`, `real_forward_llama_kv_quant.rs`, `real_forward_qwen35_kv_quant.rs`, `real_forward_spark_kv_quant.rs`.
 - Directional steering: `real_forward_gemma4_steered.rs`, `real_forward_gptoss_steered.rs`, `real_forward_llama_steered.rs`, `real_forward_museglimmer_steered.rs`, `real_forward_qwen35_steered_batched.rs`.
 - Speculative decoding & drafting: `real_forward_qwen35_dflash.rs`, `real_forward_qwen35_mtp.rs`, `speculative.rs`.

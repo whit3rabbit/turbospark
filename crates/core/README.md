@@ -27,6 +27,9 @@ foundation = { package = "turbospark-core", path = "../core" }
 - `runtime_config.rs`: Canonical allowed parameter sets and defaults:
   - `ALLOWED_CACHE_SLOTS = [8, 16, 24, 32, 48, 64, 96, 128, 192, 256]` (default: 16)
   - `ALLOWED_CHUNK_SIZES = [32, 64, 128, 256, 512, 1024, 2048, 4096]` (default: 128)
+  - `ALLOWED_SPECULATION_BLOCKS = 1..=15`, the speculative-decoding block sizes both option parsers validate against.
+  - `DEFAULT_MAX_CONTEXT = 4096`: the context-window default has no allowed set; memory bounds it at runtime.
+  - `DEFAULT_ADAPTIVE_CAP = 4` and `MIN_ADAPTIVE_CAP = 3` bound the opt-in adaptive speculative draft depth.
   - Enforces ascending order and valid defaults at compile time via `const` assertions.
 - `chunk_sizing.rs`: Pure 3-state chunk-size resolution algorithm mapping a known-or-unknown input length to an allowed chunk size: the smallest allowed size that covers it, the largest allowed size when it exceeds the set, or the fixed default when the length is unknown.
 - `prefill.rs`: Prefill chunk span planning (`prefill_chunk_spans`, `PrefillChunkSpan`) and chunked-runner commit-state tracking (`PrefillChunkCommitState`, `PrefillError`) for partitioning long prompt token sequences; defines `MAX_CHUNK_TOKENS = 4096`.

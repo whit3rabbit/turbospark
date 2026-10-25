@@ -1,6 +1,6 @@
 # turbospark-tokenizer
 
-Tokenizer wrapper around Hugging Face `tokenizers` (`MfTokenizer`), chat dialect resolution (Gemma 4, ChatML/Qwen, DeepSeek-V4 and V2, Mistral, Harmony/gpt-oss, Muse Glimmer, Llama-3, Spark, MiniMax, GLM, Kimi), chat template rendering (text-only and `minijinja` + `pycompat`), streaming detokenization (`MfDetokenizer`), stop condition matching (`StreamingStopMatcher`), tool call DSL parsers, reasoning effort controls, and streaming structured decoder (`StructuredAssistantDecoder`).
+Tokenizer wrapper around Hugging Face `tokenizers` (`MfTokenizer`), chat dialect resolution (Gemma 4, ChatML/Qwen, DeepSeek-V4 and V2, Mistral, Harmony/gpt-oss, Muse Glimmer, Llama-3, Spark, MiniMax, GLM, Flint, Kimi), chat template rendering (text-only and `minijinja` + `pycompat`), streaming detokenization (`MfDetokenizer`), stop condition matching (`StreamingStopMatcher`), tool call DSL parsers, reasoning effort controls, and streaming structured decoder (`StructuredAssistantDecoder`).
 
 Downstream workspace crates import this package via the `tokenizer` alias:
 
@@ -43,8 +43,8 @@ cargo test -p turbospark-tokenizer
 
 ## Tests
 
-This crate includes 17 comprehensive test suites in `tests/`:
-- Dialect parity: `chatml_dialect.rs`, `deepseek_dialect.rs`, `glm_dialect.rs`, `harmony_dialect.rs`, `kimi_dialect.rs`, `llama3_dialect.rs`, `minimax_dialect.rs`.
+This crate includes 18 comprehensive test suites in `tests/`:
+- Dialect parity: `chatml_dialect.rs`, `deepseek_dialect.rs`, `flint_dialect.rs`, `glm_dialect.rs`, `harmony_dialect.rs`, `kimi_dialect.rs`, `llama3_dialect.rs`, `minimax_dialect.rs`.
 - Chat templates: `installed_template.rs`, `jinja_chat_template.rs`.
 - Streaming and stop conditions: `generation_config_eos.rs`, `harmony_channels.rs`, `vision_markers.rs`.
 - Structured decoding and tool calling: `mistral_tool_calls.rs`, `structured_decoder.rs`, `tool_call_support.rs`, `tool_calls.rs`.
