@@ -212,32 +212,37 @@ impl RealForwardRunner {
             )
             .map_err(gpu_err)?;
 
-            attn::encode_attention_block(
-                context,
-                &pass,
-                weights,
-                index,
-                arch,
-                llama,
-                scratch,
-                kv,
-                layer,
-                position,
-                rope_position,
-            )?;
+            // `TURBOSPARK_STANDIN` (lab_hooks): a skipped block leaves the
+            // stream as it was, so neither the block nor its residual add runs.
+            if !crate::lab_hooks::standin(crate::lab_hooks::Block::Attn) {
+                attn::encode_attention_block(
+                    context,
+                    &pass,
+                    weights,
+                    index,
+                    arch,
+                    llama,
+                    scratch,
+                    kv,
+                    layer,
+                    position,
+                    rope_position,
+                )?;
 
-            // RAW residual add. Gemma normalizes the attention output before
-            // adding it back (its sandwich norms) and Qwen normalizes it with
-            // `post_attention_layernorm`; this architecture does neither, and
-            // getting that wrong is invisible in a greedy smoke.
-            gpu::encode_residual_add(
-                context,
-                &pass,
-                (&scratch.x, 0),
-                (&scratch.o, 0),
-                hidden as u32,
-            )
-            .map_err(gpu_err)?;
+                // RAW residual add. Gemma normalizes the attention output
+                // before adding it back (its sandwich norms) and Qwen
+                // normalizes it with `post_attention_layernorm`; this
+                // architecture does neither, and getting that wrong is
+                // invisible in a greedy smoke.
+                gpu::encode_residual_add(
+                    context,
+                    &pass,
+                    (&scratch.x, 0),
+                    (&scratch.o, 0),
+                    hidden as u32,
+                )
+                .map_err(gpu_err)?;
+            }
 
             let post_attn = norm_view(
                 weights,
@@ -262,19 +267,21 @@ impl RealForwardRunner {
             // head below. A dense layer also needs no mid-layer commit,
             // because nothing in it is data-dependent on a host readback.
             if llama.dense {
-                dense::encode_llama_layer_dense(
-                    context,
-                    &pass,
-                    weights,
-                    index,
-                    scratch,
-                    llama,
-                    layer,
-                    hidden,
-                    dense_inter,
-                    use_silu,
-                    0,
-                )?;
+                if !crate::lab_hooks::standin(crate::lab_hooks::Block::Mlp) {
+                    dense::encode_llama_layer_dense(
+                        context,
+                        &pass,
+                        weights,
+                        index,
+                        scratch,
+                        llama,
+                        layer,
+                        hidden,
+                        dense_inter,
+                        use_silu,
+                        0,
+                    )?;
+                }
                 // The layer's OUTPUT: `encode_llama_layer_dense` ends with
                 // the raw residual add, so the stream below this call is what
                 // feeds the next block. That is the boundary llama.cpp's

@@ -505,6 +505,7 @@ impl RealForwardRunner {
         let Some(tape) = self.batched_tape else {
             return Ok(());
         };
+        foundation::engaged!("gdn_lazy_tape");
         assert!(
             self.real_qwen4.is_none(),
             "the lazy GDN tape is not implemented for qwen4_exp"

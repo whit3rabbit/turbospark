@@ -232,10 +232,71 @@ fn profile(mut args: Args) -> Result<(), String> {
         .map(str::to_string)
         .collect();
     let custom = args.take_all("--arm")?;
+    let probe: Option<Vec<usize>> = args
+        .take("--dispatch-probe")?
+        .map(|v| crate::kernel::parse_list(&v, "--dispatch-probe"))
+        .transpose()?;
+    let standin: Option<Vec<String>> = args
+        .take("--standin")?
+        .map(|v| v.split(',').map(|b| b.trim().to_string()).collect());
     args.finish()?;
 
     let mut arms = Vec::new();
-    if custom.is_empty() {
+    let open_one = || -> Result<OpenParams, String> {
+        Ok(OpenParams {
+            slots: parse_slots(&slots[0])?,
+            residency: parse_residency(&residencies[0])?,
+        })
+    };
+    if probe.is_some() || standin.is_some() {
+        if !custom.is_empty() || probe.is_some() == standin.is_some() {
+            return Err(
+                "--dispatch-probe and --standin each build their own arms: give one, without --arm"
+                    .into(),
+            );
+        }
+        if workload.decode_tokens < 8 {
+            return Err("probe and stand-in arms price decode: give --decode 8 or more".into());
+        }
+        let open = open_one()?;
+        let arm = |name: String, env: Option<(&str, String)>| {
+            let mut e = common.clone();
+            if let Some((k, v)) = env {
+                e.insert(k.to_string(), v);
+            }
+            Arm {
+                name,
+                env: e,
+                open,
+                speculation: None,
+                expect_engaged: Vec::new(),
+            }
+        };
+        if let Some(ns) = &probe {
+            for &n in ns {
+                // N = 0 is the baseline: the variable unset, not set to 0.
+                let env = (n > 0).then(|| ("TURBOSPARK_DISPATCH_PROBE", n.to_string()));
+                arms.push(arm(format!("probe{n}"), env));
+            }
+            if !ns.contains(&0) || ns.len() < 2 {
+                return Err(
+                    "--dispatch-probe needs 0 and at least one other count, e.g. 0,4,8".into(),
+                );
+            }
+        }
+        if let Some(blocks) = &standin {
+            arms.push(arm("base".into(), None));
+            for b in blocks {
+                if !matches!(b.as_str(), "attn" | "mlp" | "gdn") {
+                    return Err(format!("--standin {b:?}: attn, mlp or gdn"));
+                }
+                arms.push(arm(
+                    format!("standin_{b}"),
+                    Some(("TURBOSPARK_STANDIN", b.clone())),
+                ));
+            }
+        }
+    } else if custom.is_empty() {
         for s in &slots {
             for r in &residencies {
                 let open = OpenParams {
@@ -247,6 +308,7 @@ fn profile(mut args: Args) -> Result<(), String> {
                     env: common.clone(),
                     open,
                     speculation: None,
+                    expect_engaged: Vec::new(),
                 });
             }
         }
@@ -279,7 +341,85 @@ fn profile(mut args: Args) -> Result<(), String> {
         "profile_summary",
         json!({"model": model, "workload": workload, "arms": arms, "summary": summary}),
     )?;
+    let decode_ms = |arm: &str| {
+        summary[arm]["decode_tok_s"]
+            .as_f64()
+            .filter(|t| *t > 0.0)
+            .map(|t| 1e3 / t)
+    };
+    if let Some(ns) = &probe {
+        let layers = crate::kernel::Subject::open(&model)?
+            .arch()?
+            .num_layers
+            .max(1) as usize;
+        let rec = dispatch_probe_fit(ns, layers, decode_ms)?;
+        crate::say!(
+            "  dispatch probe: {:.2} us per chained dispatch (fit over {} arms, {} layers; max residual {:.1}%)",
+            rec["us_per_chained_dispatch"].as_f64().unwrap_or(f64::NAN),
+            ns.len(),
+            layers,
+            rec["fit"]["max_rel_residual"].as_f64().unwrap_or(f64::NAN) * 100.0
+        );
+        session.ledger.append(
+            "dispatch_probe",
+            json!({"model": model, "workload": workload, "quotable": false, "result": rec,
+                   "points": rec["points"], "us_per_chained_dispatch": rec["us_per_chained_dispatch"]}),
+        )?;
+    }
+    if let Some(blocks) = &standin {
+        let base = decode_ms("base").ok_or("the base arm has no clean decode reading")?;
+        let mut out = serde_json::Map::new();
+        for b in blocks {
+            let Some(ms) = decode_ms(&format!("standin_{b}")) else {
+                crate::say!("  stand-in {b}: no clean decode reading");
+                continue;
+            };
+            let block = base - ms;
+            crate::say!(
+                "  stand-in {b}: {block:.3} ms per token in place ({:.1}% of {base:.3})",
+                100.0 * block / base
+            );
+            out.insert(
+                b.clone(),
+                json!({"ms_per_token": block, "share": block / base, "standin_ms": ms}),
+            );
+        }
+        session.ledger.append(
+            "standin",
+            json!({"model": model, "workload": workload, "quotable": false,
+                   "base_ms_per_token": base, "blocks": out}),
+        )?;
+    }
     Ok(())
+}
+
+/// Fit decode ms per token against the chained dispatches the probe adds
+/// (N per dense layer per token). The slope is the price of one dispatch
+/// on the dependency chain (evaluator item L1).
+pub fn dispatch_probe_fit(
+    ns: &[usize],
+    layers: usize,
+    decode_ms: impl Fn(&str) -> Option<f64>,
+) -> Result<Value, String> {
+    let mut points = Vec::new();
+    for &n in ns {
+        if let Some(ms) = decode_ms(&format!("probe{n}")) {
+            points.push(json!({"n": n, "added_dispatches": n * layers, "ms_per_token": ms}));
+        }
+    }
+    let xy: Vec<(f64, f64)> = points
+        .iter()
+        .map(|p| {
+            (
+                p["added_dispatches"].as_f64().unwrap(),
+                p["ms_per_token"].as_f64().unwrap(),
+            )
+        })
+        .collect();
+    let fit = crate::fit::fit_affine(&xy)
+        .ok_or("the probe needs clean decode readings at two or more counts")?;
+    Ok(json!({"points": points, "layers": layers, "fit": fit,
+              "us_per_chained_dispatch": fit.b * 1e3}))
 }
 
 /// The latest null calibration for the same workload and metric in this
@@ -620,4 +760,28 @@ fn inventory_cmd(mut args: Args) -> Result<CmdOutput, String> {
     Ok(CmdOutput::ok(
         json!({"model": dir.display().to_string(), "shapes": shapes}),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_probe_slope_is_microseconds_per_added_dispatch() {
+        // 64 layers, 2 us per added dispatch: +4 per layer is +256
+        // dispatches, +0.512 ms per token.
+        let ms = |arm: &str| match arm {
+            "probe0" => Some(40.0),
+            "probe4" => Some(40.512),
+            "probe8" => Some(41.024),
+            _ => None,
+        };
+        let r = dispatch_probe_fit(&[0, 4, 8], 64, ms).unwrap();
+        assert!(
+            (r["us_per_chained_dispatch"].as_f64().unwrap() - 2.0).abs() < 1e-9,
+            "{r}"
+        );
+        assert_eq!(r["points"][2]["added_dispatches"], 512);
+        assert!(dispatch_probe_fit(&[0, 4], 64, |_| None).is_err());
+    }
 }

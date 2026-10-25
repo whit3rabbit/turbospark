@@ -84,6 +84,11 @@ pub struct Arm {
     /// plain decode against MTP or DFlash2 at several depths.
     #[serde(default)]
     pub speculation: Option<Speculation>,
+    /// Engagement lines (`[engaged] NAME`) a run of this arm must print: how
+    /// a spec proves its new switch's lane ran (evaluator item L3). Lines
+    /// for registered knobs come from `knobs.rs` and need not be listed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub expect_engaged: Vec<String>,
 }
 
 impl Arm {

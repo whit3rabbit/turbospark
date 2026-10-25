@@ -53,7 +53,9 @@ pub struct FamilyFacts {
     pub decode_attention: &'static str,
     /// Which `PhaseCounters` buckets its flow fills.
     pub phase_buckets: &'static str,
-    /// The L1 dispatch probe and L4 stand-ins are wired in its decode path.
+    /// The L1 dispatch probe and L4 stand-ins are wired in its decode loop
+    /// (`crates/runtime/src/lab_hooks.rs`): dense FFN layers only, so an
+    /// install that routes experts gets neither even in a wired flow.
     pub probe_and_standin: bool,
     pub notes: &'static [&'static str],
 }
@@ -92,7 +94,7 @@ pub fn facts(f: ModelFamily) -> FamilyFacts {
             steel_prefill: true,
             decode_attention: "barrier",
             phase_buckets: "moe",
-            probe_and_standin: true,
+            probe_and_standin: false,
             notes: &["routed experts keep the per-token loop in prefill"],
         },
         Gemma4 => FamilyFacts {
@@ -102,7 +104,7 @@ pub fn facts(f: ModelFamily) -> FamilyFacts {
             steel_prefill: false,
             decode_attention: "barrier",
             phase_buckets: "moe",
-            probe_and_standin: true,
+            probe_and_standin: false,
             notes: &["sliding and full attention layers with different head shapes"],
         },
         Llama | Qwen3Moe | Qwen3Dense | Qwen2Dense | MiniMaxM2 | Qwen3Vl => llama_flow,
@@ -287,7 +289,7 @@ pub fn text_coverage(subject: &Subject, arch: &ArchConfig) -> Coverage {
     if f.steel_prefill {
         tags.push("steel".into());
     }
-    if f.probe_and_standin {
+    if f.probe_and_standin && arch.num_experts == 0 {
         tags.push("probe".into());
         tags.push("standin".into());
     }

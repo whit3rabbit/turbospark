@@ -109,6 +109,7 @@ pub(crate) fn encode_qwen_layer_dense(
             .map(|e| e.dtype == 4)
             .unwrap_or(false)
     {
+        foundation::engaged!("qwen_fused_ffn");
         let gate_m =
             crate::real_forward_utils::resident_matrix(weights, index, &gate_name, inter, hidden)?;
         let up_m = crate::real_forward_utils::resident_matrix(
@@ -130,6 +131,7 @@ pub(crate) fn encode_qwen_layer_dense(
             !use_silu,
         )
         .map_err(gpu_err)?;
+        crate::lab_hooks::encode_dispatch_probe(context, pass, (&scratch.ffn_act, 0), inter)?;
         // RAW residual add, matching the MoE half and the unfused chain's
         // epilogue: the FFN output is rounded to half BEFORE it meets the
         // stream, which is the double round the fused kernel reproduces.
@@ -177,6 +179,7 @@ pub(crate) fn encode_qwen_layer_dense(
         inter as u32,
     )
     .map_err(gpu_err)?;
+    crate::lab_hooks::encode_dispatch_probe(context, pass, (&scratch.ffn_act, 0), inter)?;
 
     let down_input = match qwen.hadamard.as_ref() {
         Some(h) if h.is_folded(&down_name) => {

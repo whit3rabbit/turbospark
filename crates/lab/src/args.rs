@@ -195,6 +195,7 @@ pub fn parse_arm(
         env,
         open,
         speculation,
+        expect_engaged: Vec::new(),
     })
 }
 

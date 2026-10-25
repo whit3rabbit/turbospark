@@ -222,6 +222,9 @@ impl Session {
                 cmd.env(key, v);
             }
         }
+        // Every run prints its engagement lines; an arm whose variables
+        // promise a lane the log does not show is not the arm it claims.
+        cmd.env("TURBOSPARK_ENGAGEMENT", "1");
         cmd.envs(&arm.env);
         let started = Instant::now();
         let mut child = cmd
@@ -254,9 +257,9 @@ impl Session {
             .ok()
             .and_then(|t| serde_json::from_str(&t).ok())
             .unwrap_or(Value::Null);
-        let spec_stats = std::fs::read_to_string(&stderr_path)
-            .map(|t| parse_spec_stats(&t))
-            .unwrap_or(Value::Null);
+        let stderr_text = std::fs::read_to_string(&stderr_path).unwrap_or_default();
+        let spec_stats = parse_spec_stats(&stderr_text);
+        let engaged = knobs::engaged_lines(&stderr_text);
         if spec_stats.as_array().is_some_and(|a| !a.is_empty()) {
             if let Value::Object(m) = &mut record {
                 m.insert("spec_stats".into(), spec_stats.clone());
@@ -279,6 +282,13 @@ impl Session {
         for env in knobs::unquotable_envs() {
             if arm.env.contains_key(env) {
                 reasons.push(format!("{env} perturbs timing; run is not quotable"));
+            }
+        }
+        // Only a run that got far enough to run its lanes can be held to
+        // them: a refused or crashed run already carries its reason.
+        if status == "ok" {
+            for v in knobs::engagement_violations(&arm.env, &arm.expect_engaged, &engaged) {
+                reasons.push(format!("not engaged: {v}"));
             }
         }
         let eligible = host_ok && reasons.is_empty();
@@ -307,6 +317,7 @@ impl Session {
                 "exe_sha256": record["provenance"]["exe_sha256"],
                 "speculation": arm.speculation,
                 "spec_stats": spec_stats,
+                "engaged": engaged,
             }),
         )?;
         if self.verbose {
