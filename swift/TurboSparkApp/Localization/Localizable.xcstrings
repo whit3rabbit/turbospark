@@ -558354,6 +558354,530 @@
           }
         }
       }
+    },
+    "Are you sure you want to delete this preset? This action cannot be undone.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Are you sure you want to delete this preset? This action cannot be undone."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "¿Seguro que quieres eliminar este ajuste preestablecido? Esta acción no se puede deshacer."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Voulez-vous vraiment supprimer ce préréglage ? Cette action est irréversible."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Möchten Sie diese Voreinstellung wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sei sicuro di voler eliminare questa preimpostazione? Questa azione non può essere annullata."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tem certeza de que deseja excluir esta predefinição? Esta ação não pode ser desfeita."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Weet u zeker dat u deze voorinstelling wilt verwijderen? Deze actie kan niet ongedaan worden gemaakt."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Är du säker på att du vill ta bort denna förinställning? Denna åtgärd kan inte ångras."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Czy na pewno chcesz usunąć to ustawienie wstępne? Tej operacji nie można cofnąć."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вы уверены, что хотите удалить этот пресет? Это действие нельзя отменить."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ви впевнені, що хочете видалити цей пресет? Цю дію не можна скасувати."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu önayarı silmek istediğinizden emin misiniz? Bu işlem geri alınamaz."
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "هل أنت متأكد من أنك تريد حذف هذا الإعداد المسبق؟ لا يمكن التراجع عن هذا الإجراء."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "האם אתה בטוח שברצונך למחוק הגדרה מוגדרת מראש זו? לא ניתן לבטל פעולה זו."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "क्या आप वाकई इस प्रीसेट को हटाना चाहते हैं? इस क्रिया को पहले जैसा नहीं किया जा सकता।"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "您确定要删除此预设吗？此操作无法撤消。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "您確定要刪除此預設嗎？此操作無法復原。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このプリセットを削除してもよろしいですか？この操作は取り消せません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 사전 설정을 삭제하시겠습니까? 이 작업은 취소할 수 없습니다."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bạn có chắc chắn muốn xóa cài đặt trước này không? Thao tác này không thể hoàn tác."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apakah Anda yakin ingin menghapus prasetel ini? Tindakan ini tidak dapat dibatalkan."
+          }
+        }
+      }
+    },
+    "Sampling settings cannot be changed while a generation is running.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sampling settings cannot be changed while a generation is running."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Los ajustes de muestreo no se pueden cambiar mientras se ejecuta una generación."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les paramètres d'échantillonnage ne peuvent pas être modifiés pendant qu'une génération est en cours."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sampling-Einstellungen können während einer laufenden Generierung nicht geändert werden."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le impostazioni di campionamento non possono essere modificate mentre una generazione è in corso."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "As configurações de amostragem não podem ser alteradas enquanto uma geração estiver em execução."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Steekproefinstellingen kunnen niet worden gewijzigd terwijl er een generatie actief is."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Samplingsinställningar kan inte ändras medan en generering pågår."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ustawień próbkowania nie można zmieniać podczas trwania generowania."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Настройки сэмплирования нельзя изменить во время генерации."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Параметри семплювання не можна змінювати під час створення."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bir üretim çalışırken örnekleme ayarları değiştirilemez."
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "لا يمكن تغيير إعدادات أخذ العينات أثناء تشغيل التوليد."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "לא ניתן לשנות את הגדרות הדגימה בזמן שיצירה פועלת."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "पीढ़ी चलने के दौरान नमूना सेटिंग्स को बदला नहीं जा सकता है।"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "生成正在运行时无法更改采样设置。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "生成正在執行時無法變更取樣設定。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "生成の実行中はサンプリング設定を変更できません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "생성이 실행되는 동안에는 샘플링 설정을 변경할 수 없습니다."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Không thể thay đổi cài đặt lấy mẫu khi quá trình tạo đang chạy."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pengaturan pengambilan sampel tidak dapat diubah saat pembuatan sedang berjalan."
+          }
+        }
+      }
+    },
+    "Controls cannot be changed while a generation is running.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Controls cannot be changed while a generation is running."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Los controles no se pueden cambiar mientras se ejecuta una generación."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les commandes ne peuvent pas être modifiées pendant qu'une génération est en cours."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Steuerelemente können während einer laufenden Generierung nicht geändert werden."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "I controlli non possono essere modificati mentre una generazione è in corso."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Os controles não podem ser alterados enquanto uma geração estiver em execução."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bedieningselementen kunnen niet worden gewijzigd terwijl er een generatie actief is."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kontroller kan inte ändras medan en generering pågår."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Elementów sterujących nie można zmieniać podczas trwania generowania."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Элементы управления нельзя изменить во время генерации."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Елементи керування не можна змінювати під час створення."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bir üretim çalışırken kontroller değiştirilemez."
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "لا يمكن تغيير عناصر التحكم أثناء تشغيل التوليد."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "לא ניתן לשנות פקדים בזמן שיצירה פועלת."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "पीढ़ी चलने के दौरान नियंत्रणों को बदला नहीं जा सकता है।"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "生成正在运行时无法更改控件。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "生成正在執行時無法變更控制項。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "生成の実行中はコントロールを変更できません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "생성이 실행되는 동안에는 컨트롤을 변경할 수 없습니다."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Không thể thay đổi các nút điều khiển khi quá trình tạo đang chạy."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kontrol tidak dapat diubah saat pembuatan sedang berjalan."
+          }
+        }
+      }
+    },
+    "Controls cannot be changed while a model is installing.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Controls cannot be changed while a model is installing."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Los controles no se pueden cambiar mientras se instala un modelo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les commandes ne peuvent pas être modifiées pendant l'installation d'un modèle."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Steuerelemente können während der Installation eines Modells nicht geändert werden."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "I controlli non possono essere modificati durante l'installazione di un modello."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Os controles não podem ser alterados enquanto um modelo estiver sendo instalado."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bedieningselementen kunnen niet worden gewijzigd terwijl een model wordt geïnstalleerd."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kontroller kan inte ändras medan en modell installeras."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Elementów sterujących nie można zmieniać podczas instalowania modelu."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Элементы управления нельзя изменить во время установки модели."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Елементи керування не можна змінювати під час встановлення моделі."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bir model yüklenirken kontroller değiştirilemez."
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "لا يمكن تغيير عناصر التحكم أثناء تثبيت النموذج."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "לא ניתן לשנות פקדים בזמן שהמודל מותקן."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "मॉडल स्थापित होने के दौरान नियंत्रणों को बदला नहीं जा सकता है।"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在安装模型时无法更改控件。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在安裝模型時無法變更控制項。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "モデルのインストール中はコントロールを変更できません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "모델이 설치되는 동안에는 컨트롤을 변경할 수 없습니다."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Không thể thay đổi các nút điều khiển khi mô hình đang được cài đặt."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kontrol tidak dapat diubah saat model sedang dipasang."
+          }
+        }
+      }
     }
   },
   "version": "1.0"
