@@ -1011,21 +1011,72 @@ What it says:
   spans (the standalone replay accepted 4.3 per fired round at draft 8) are an
   untested axis that needs a measured round cost at width 9 and up.
 - **The measured round cost at depth 8 is well above the modeled table,
-  and it is the tile boundary.** Clean runs (`km-hybrid-costs`, run ids
-  `1792977781487-51633-9`, `1792977794665-51633-15` at block 8;
-  `1792978407691-21493-4`, `1792978420956-21493-10` at block 2;
-  `1792978414866-21493-7`, `1792978428142-21493-13` at block 4; KV bucket
-  1024, load under 4) read 70, 82 and 156 ms a round, against the flag-on
-  table's 72.5, 86.5 and 114.5. The verify phase is 59, 62 and 117 ms: flat
-  from 3 to 5 rows and doubled at 9, which is width 9 crossing the 8-row tile
-  (`encode_gemm_any` serves up to 16 rows in tiles of 8, so a block-8 round
-  verifies in two tile passes where block 7 would take one). That is a
-  reading of the phase numbers, not something measured here; a `tslab
-  profile` at blocks 7 and 8 with `spec_stats` decides it. If it holds, the
-  tuned controller's cap belongs at 7, not 8, and the depth-8 rounds it
-  spends on copy-heavy cost it about a third of the round. Committed per
-  round above is unaffected; the measured-table tok/s columns already carry
-  the cost.
+  and it is the tile boundary, measured.** The hybrid's measured table
+  (`km-hybrid-costs`, run ids `1792977781487-51633-9` and
+  `1792977794665-51633-15` at block 8, `1792978407691-21493-4` and
+  `1792978420956-21493-10` at block 2, `1792978414866-21493-7` and
+  `1792978428142-21493-13` at block 4, KV bucket 1024, load under 4) read
+  70, 82, and 156 ms a round against the flag-on table's 72.5, 86.5, and
+  114.5, with the verify phase at 59, 62, and 117 ms: flat from 3 to 5 rows
+  and doubled at 9. Width 9 crosses the 8-row MMA tile: `encode_gemm_any`
+  serves up to 16 rows, and under the flag `encode_int4_mma8_rows`
+  dispatches them in tiles of `INT4_MMA8_MAX_ROWS`, 8, so a width-9 verify
+  runs an 8-row tile and a 1-row tile per projection, each reading the
+  weights once. A `tslab profile` at blocks 7 and 8, then 2 and 4, in
+  one experiment confirms it. Conditions: experiment `km-tile-7v8`,
+  `qwen38-27b-mtp`, `copy-heavy.messages.json`, 256 decode tokens,
+  `TURBOSPARK_INT4_MMA8=1` and `TURBOSPARK_SPEC_STATS=1`, KV bucket 1024,
+  Apple M4 Max, AC power, swap 14.7 GiB used of 16, load1 between 3.0 and 5.1
+  across the clean runs, 13 clean of 24 measured (the rest DIRTY for
+  foreign CPU from the IDE helpers and Apple background daemons, ledgered
+  and not used). Medians of the clean `round_cost` records, with the live
+  decode tok/s range of the same runs:
+
+  | Block | Width | Clean | ms a round | verify | draft | committed/round | decode tok/s |
+  |------:|------:|------:|-----------:|-------:|------:|----------------:|-------------:|
+  | 2 | 3 | 3 | 67.3 | 56.4 | 9.3 | 2.98 | 44.2-44.3 |
+  | 4 | 5 | 3 | 81.8 | 61.8 | 17.5 | 4.67 | 57.2-57.5 |
+  | 7 | 8 | 3 | 101.0 | 65.1 | 30.6 | 6.96 | 68.4-69.0 |
+  | 8 | 9 | 4 | 159.9 | 116.8 | 35.4 | 7.83 | 48.4-49.7 |
+
+  Record ids. Block 2: `1793012101181-81202-6`, `1793012114513-81202-12`,
+  `1793012127616-81202-18`. Block 4: `1793012107311-81202-9`,
+  `1793012120654-81202-15`, `1793012133740-81202-21`. Block 7:
+  `1793011648833-57728-6`, `1793011821114-65691-6`,
+  `1793011833513-65691-12`. Block 8: `1793011655490-57728-9`,
+  `1793011667740-57728-15`, `1793011679978-57728-21`,
+  `1793011840256-65691-15`.
+
+  Block 7 verifies in the block-4 time: 65.1 ms against 61.8, 3.3 ms for
+  three more rows. The verify is flat from 3 to 8 rows at about 1.7 ms a
+  row, then steps 51.7 ms at 9 rows for the second tile pass, a third of
+  the block-8 round. A block-8 round costs 58% more than a block-7 round
+  and commits 0.87 more tokens. Live, fixed block 7 decodes copy-heavy at
+  68.4-69.0 tok/s against 48.4-49.7 at block 8. Under the tile the tuned
+  controller's cap belongs at 7, not 8.
+
+  Replayed with `tslab depth-replay --experiment km-hybrid --costs
+  flag_on,ledger:km-tile-7v8@TURBOSPARK_INT4_MMA8=1` on the three captures
+  above, 512 tokens (`km-hybrid` records `1793012166392-88279-0` modeled
+  and `1793012166406-88279-1` measured). Cap 7 was added to the replay grid
+  in `crates/lab/src/depth_replay.rs` for this. On the measured table the
+  tuned `3,1,1,2` controller at cap 8 is 1.099x fixed 2 by geomean (prose
+  35.7, code 45.8, copy-heavy 50.8 tok/s, with 37 of 90 copy-heavy rounds
+  at depth 8). The same thresholds at cap 7 are 1.183x (35.7, 47.9, and
+  60.6 tok/s), the best setting in the grid, worst case 1.022x. Prose is
+  identical because the controller never climbs past 4 there.
+
+  One caveat on that table: depths 5 and 6 are not measured. They sit on
+  the least-squares line through 2, 4, 7, and 8, which the depth-8 point
+  bends upward (99.2 and 112.2 ms, above the measured 101.0 at depth 7),
+  so the cap-7 controller's rounds at depths 5 and 6 (10 of 96 on
+  copy-heavy, 30 of 126 on code) are overpriced and its figures are
+  conservative. Profiling blocks 5 and 6 into `km-tile-7v8` would settle
+  them. Not run live: the gate before lever 2 moves its cap is a `tslab ab`
+  of `mtp:7a` against `mtp:8a`, both with `TURBOSPARK_ADAPTIVE_DEPTH=3,1,1,2`
+  and the tile, on copy-heavy and code. Committed per round in the hybrid
+  table above is unaffected, and its measured-table tok/s columns already
+  carry the block-8 cost.
 
 Proposal, not built, contingent on a second copy-heavy capture agreeing: a
 `Lookup` source inside the MTP speculative loop, gated by an 8-gram suffix over
@@ -1141,6 +1192,9 @@ and how tslab measures it (`crates/lab/program.md`). Estimates are marked.
    replay gives code +16%, quote-back +7%, prose -6%: the one-row tile cost
    in lever 1 decides whether the flag-on setting is a net win. Not run
    live: it needs a worker built with the MMA8 tile.
+   Measured since, under the tile: a block-8 verify crosses the 8-row MMA
+   tile and costs a second pass, so the cap belongs at 7, not 8 ("Measured:
+   the hybrid replay, 2026-10-25" under "Prompt lookup").
 3. **DFlash2 at depth 7 over the flat verify.** Why: a block drafter
    proposes 7 tokens for one pass, and the flat verify makes those rows
    nearly free (31-37 tok/s measured above, 2.1x its flag-off self). Where:
