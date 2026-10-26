@@ -77,31 +77,32 @@ struct WorktreeView: View {
         HStack(spacing: 4) {
             ForEach(WorktreeTabMode.allCases, id: \.self) { tab in
                 Button {
-                    withAnimation(.easeInOut(duration: 0.12)) {
+                    TSMotion.animate(TSMotion.select) {
                         worktree.activeTab = tab
                     }
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: tab.systemImage)
                             .themedFont(.tiny)
-                        Text(tab.title)
+                        Text(LocalizedStringKey(tab.title), bundle: .module)
                             .font(theme.ui(.tiny, weight: worktree.activeTab == tab ? .semibold : .regular))
                     }
                     .padding(.horizontal, 9)
                     .padding(.vertical, 4)
-                    .foregroundStyle(worktree.activeTab == tab ? TurboSparkTheme.accentColor : .secondary)
+                    .foregroundStyle(worktree.activeTab == tab ? AnyShapeStyle(theme.accent) : AnyShapeStyle(.appSecondary))
                     .background(
-                        worktree.activeTab == tab ? TurboSparkTheme.accentColor.opacity(0.12) : Color.clear,
-                        in: RoundedRectangle(cornerRadius: 5)
+                        worktree.activeTab == tab ? theme.accent.opacity(0.12) : Color.clear,
+                        in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
                     )
                 }
                 .buttonStyle(.plain)
+                .accessibilityAddTraits(worktree.activeTab == tab ? [.isSelected] : [])
             }
             Spacer()
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
-        .background(Color.primary.opacity(0.02))
+        .background(.appSurface)
     }
 
     // MARK: - Header matching Claude Code
@@ -110,14 +111,13 @@ struct WorktreeView: View {
         HStack(spacing: 8) {
             if worktree.activeTab == .changes {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.12)) {
+                    TSMotion.animate(TSMotion.select) {
                         worktree.viewMode = worktree.viewMode == .tree ? .flat : .tree
                     }
                 } label: {
                     Image(systemName: worktree.viewMode.systemImage)
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
-                        .frame(width: 22, height: 22)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -135,29 +135,29 @@ struct WorktreeView: View {
                     if worktree.totalAdditions > 0 {
                         Text(verbatim: "+\(worktree.totalAdditions)")
                             .themedFont(.tiny, weight: .semibold).monospacedDigit()
-                            .foregroundStyle(.green)
+                            .foregroundStyle(.appText)
                     }
                     if worktree.totalDeletions > 0 {
                         Text(verbatim: "-\(worktree.totalDeletions)")
                             .themedFont(.tiny, weight: .semibold).monospacedDigit()
-                            .foregroundStyle(.red)
+                            .foregroundStyle(.appSecondary)
                     }
                 }
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background(Color.primary.opacity(0.04), in: Capsule())
+                .background(.appElevated, in: Capsule())
             }
 
             if worktree.activeTab == .changes {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.12)) {
+                    TSMotion.animate(TSMotion.select) {
                         worktree.isSearchVisible.toggle()
                         if !worktree.isSearchVisible { worktree.searchQuery = "" }
                     }
                 } label: {
                     Image(systemName: "magnifyingglass")
                         .themedFont(.small)
-                        .foregroundStyle(worktree.isSearchVisible ? TurboSparkTheme.accentColor : .secondary)
+                        .foregroundStyle(worktree.isSearchVisible ? AnyShapeStyle(theme.accent) : AnyShapeStyle(.appSecondary))
                 }
                 .buttonStyle(.plain)
                 .help(Text("Filter changed files", bundle: .module))
@@ -169,26 +169,22 @@ struct WorktreeView: View {
                 Image(systemName: "arrow.clockwise")
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
-                    .rotationEffect(worktree.isRefreshing ? .degrees(360) : .degrees(0))
-                    .animation(
-                        worktree.isRefreshing ? .linear(duration: 0.8).repeatForever(autoreverses: false) : .default,
-                        value: worktree.isRefreshing
-                    )
+                    .tsPulse(active: worktree.isRefreshing)
             }
             .buttonStyle(.plain)
             .help(Text("Refresh Git changes", bundle: .module))
 
             Button {
-                withAnimation(.easeInOut(duration: 0.15)) {
+                TSMotion.animate(TSMotion.pane) {
                     worktree.isExpandedSplitMode.toggle()
                 }
             } label: {
                 Image(systemName: worktree.isExpandedSplitMode ? "rectangle.split.2x1.fill" : "rectangle.split.2x1")
                     .themedFont(.small)
-                    .foregroundStyle(worktree.isExpandedSplitMode ? TurboSparkTheme.accentColor : .secondary)
+                    .foregroundStyle(worktree.isExpandedSplitMode ? AnyShapeStyle(theme.accent) : AnyShapeStyle(.appSecondary))
             }
             .buttonStyle(.plain)
-            .help(worktree.isExpandedSplitMode ? "Collapse split view" : "Expand into two-column diff view")
+            .help(worktree.isExpandedSplitMode ? Text("Collapse split view", bundle: .module) : Text("Expand into two-column diff view", bundle: .module))
 
             Button {
                 NotificationCenter.default.post(name: .toggleInspector, object: nil)
@@ -239,7 +235,7 @@ struct WorktreeView: View {
                                     let result = await worktree.switchBranch(to: branch)
                                     if !result.success {
                                         model.showToast(
-                                            result.error ?? "Failed to switch branch.", style: .error)
+                                            result.error ?? AppStrings.localized("Failed to switch branch."), style: .error)
                                     }
                                 }
                             } label: {
@@ -285,14 +281,14 @@ struct WorktreeView: View {
             }
         } label: {
             HStack(spacing: 4) {
-                Text(comparisonLabel)
+                Text("\(comparisonTarget) -> working tree", bundle: .module)
                     .font(theme.code(.base, weight: .semibold))
                     .foregroundStyle(.appText)
                     .lineLimit(1)
 
                 Image(systemName: "chevron.down")
                     .themedFont(.tiny)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.appSecondary)
             }
         }
         .menuStyle(.borderlessButton)
@@ -301,11 +297,11 @@ struct WorktreeView: View {
         .accessibilityLabel(Text("Git comparison target", bundle: .module))
     }
 
-    private var comparisonLabel: String {
+    private var comparisonTarget: String {
         switch worktree.comparisonMode {
-        case .uncommitted: return "\(worktree.currentBranch) -> working tree"
-        case .againstBranch(let target): return "\(target) -> working tree"
-        case .commit(let hash, _): return "\(String(hash.prefix(7))) -> working tree"
+        case .uncommitted: return worktree.currentBranch
+        case .againstBranch(let target): return target
+        case .commit(let hash, _): return String(hash.prefix(7))
         }
     }
 
@@ -313,15 +309,21 @@ struct WorktreeView: View {
         HStack {
             Text("Files are collapsed for large diffs. Select a file to expand it.", bundle: .module)
                 .themedFont(.tiny)
-                .foregroundStyle(.tertiary)
-            Spacer()
-            Text("\(worktree.filteredFiles.count) \(worktree.filteredFiles.count == 1 ? "file" : "files")", bundle: .module)
-                .themedFont(.tiny).monospacedDigit()
                 .foregroundStyle(.appSecondary)
+            Spacer()
+            if worktree.filteredFiles.count == 1 {
+                Text("1 file", bundle: .module)
+                    .themedFont(.tiny).monospacedDigit()
+                    .foregroundStyle(.appSecondary)
+            } else {
+                Text("\(worktree.filteredFiles.count) files", bundle: .module)
+                    .themedFont(.tiny).monospacedDigit()
+                    .foregroundStyle(.appSecondary)
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 5)
-        .background(Color.primary.opacity(0.02))
+        .background(.appSurface)
     }
 
     // MARK: - Split Layout (Screenshot 4 Parity)
@@ -333,7 +335,7 @@ struct WorktreeView: View {
                 Divider()
                 WorktreeCommitListView(worktree: worktree, isExpanded: $isCommitsExpanded)
             }
-            .frame(width: 270)
+            .frame(minWidth: 240, idealWidth: 270 * AppMetrics.textScale(theme), maxWidth: 360)
             .frame(maxHeight: .infinity)
 
             Divider()
@@ -345,7 +347,7 @@ struct WorktreeView: View {
     private var timelineSplitLayout: some View {
         HStack(spacing: 0) {
             WorktreeTimelineView(worktree: worktree)
-                .frame(width: 320)
+                .frame(minWidth: 260, idealWidth: 320 * AppMetrics.textScale(theme), maxWidth: 420)
                 .frame(maxHeight: .infinity)
 
             Divider()
@@ -359,12 +361,11 @@ struct WorktreeView: View {
             if let selectedPath = worktree.selectedFilePath,
                let file = worktree.scopedFiles.first(where: { $0.relativePath == selectedPath }) ?? worktree.files.first(where: { $0.relativePath == selectedPath }) {
                 if worktree.isLoadingDiff {
-                    VStack(spacing: 8) {
-                        ProgressView().controlSize(.small)
-                        Text("Loading diff for \(file.fileName)...", bundle: .module)
-                            .themedFont(.tiny)
-                            .foregroundStyle(.appSecondary)
-                    }
+                    AppProgressBar(
+                        value: nil,
+                        label: Text("Loading diff for \(file.fileName)...", bundle: .module),
+                        size: .compact
+                    )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if let diff = worktree.selectedFileDiff {
                     WorktreeDiffView(
@@ -383,21 +384,15 @@ struct WorktreeView: View {
                 } else {
                     Text("No diff available.", bundle: .module)
                         .themedFont(.small)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.appSecondary)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             } else {
-                VStack(spacing: 8) {
-                    Image(systemName: "doc.text.magnifyingglass")
-                        .themedFont(.hero)
-                        .foregroundStyle(.tertiary)
-                    Text("Select a file to inspect diff", bundle: .module)
-                        .themedFont(.base, weight: .medium)
-                        .foregroundStyle(.appSecondary)
-                    Text("Click any file to view modifications.", bundle: .module)
-                        .themedFont(.small)
-                        .foregroundStyle(.tertiary)
-                }
+                AppEmptyState(
+                    systemImage: "doc.text.magnifyingglass",
+                    title: Text("Select a file to inspect diff", bundle: .module),
+                    message: Text("Click any file to view modifications.", bundle: .module)
+                )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
@@ -412,12 +407,11 @@ struct WorktreeView: View {
                let file = worktree.scopedFiles.first(where: { $0.relativePath == selectedPath }) ?? worktree.files.first(where: { $0.relativePath == selectedPath }) {
                 Divider()
                 if worktree.isLoadingDiff {
-                    HStack(spacing: 6) {
-                        ProgressView().controlSize(.mini)
-                        Text("Loading diff...", bundle: .module)
-                            .themedFont(.tiny)
-                            .foregroundStyle(.appSecondary)
-                    }
+                    AppProgressBar(
+                        value: nil,
+                        label: Text("Loading diff...", bundle: .module),
+                        size: .compact
+                    )
                     .padding(8)
                 } else if let diff = worktree.selectedFileDiff {
                     WorktreeDiffView(
@@ -439,37 +433,23 @@ struct WorktreeView: View {
     }
 
     private var nonGitRepositoryCard: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
-                .themedFont(.hero)
-                .foregroundStyle(.appAccent.opacity(0.8))
-                .padding(.top, 40)
-
-            Text("No Git Repository Detected", bundle: .module)
-                .themedFont(.base, weight: .semibold)
-                .foregroundStyle(.appText)
-
-            Text("The current workspace folder is not tracked by Git. Initialize a repository to enable version control, change inspection, and diffs.", bundle: .module)
-                .themedFont(.small)
-                .foregroundStyle(.appSecondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 24)
-
+        AppEmptyState(
+            systemImage: "point.topleft.down.to.point.bottomright.curvepath",
+            title: Text("No Git Repository Detected", bundle: .module),
+            message: Text("The current workspace folder is not tracked by Git. Initialize a repository to enable version control, change inspection, and diffs.", bundle: .module)
+        ) {
             Button {
                 worktree.initRepository()
             } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "plus.circle.fill")
+                Label {
                     Text("Initialize Git Repository", bundle: .module)
+                } icon: {
+                    Image(systemName: "plus.circle.fill")
                 }
-                .themedFont(.base, weight: .medium)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 7)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(TurboSparkTheme.accentColor)
-            .padding(.top, 4)
+            .appAction(.primary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .padding(.top, 40)
     }
 }

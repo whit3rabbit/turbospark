@@ -71,6 +71,7 @@ struct TasksStatusSheet: View {
     /// observation kept the green dot and the Stop button after the run
     /// finished until some unrelated model publish happened by.
     private struct AgentRunRow: View {
+        @Environment(\.appTheme) private var theme
         @ObservedObject var run: SubagentRunState
         let onStop: (String) -> Void
         let onDismiss: (String) -> Void
@@ -78,7 +79,7 @@ struct TasksStatusSheet: View {
         var body: some View {
             HStack(spacing: 10) {
                 Circle()
-                    .fill(run.status == "running" ? Color.green : Color.secondary.opacity(0.5))
+                    .fill(run.status == "running" ? theme.accent : theme.secondaryText)
                     .frame(width: 8, height: 8)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
@@ -91,11 +92,10 @@ struct TasksStatusSheet: View {
                 }
                 Spacer()
                 if run.status == "running" {
-                    Button(role: .destructive) {
+                    Button {
                         onStop(run.id)
                     } label: { Text("Stop", bundle: .module) }
                     .appAction(.quiet, size: .small)
-                    .foregroundStyle(Color.red.opacity(0.8))
                 } else if run.isRecordedComplete {
                     Button {
                         onDismiss(run.id)
@@ -104,7 +104,7 @@ struct TasksStatusSheet: View {
                 }
                 Text(run.status)
                     .themedCode(.tiny)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.appSecondary)
             }
             .accessibilityElement(children: .combine)
         }
@@ -121,14 +121,13 @@ struct TasksStatusSheet: View {
                     .lineLimit(1)
                 Text(shell.id)
                     .themedCode(.tiny)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.appSecondary)
             }
             Spacer()
-            Button(role: .destructive) {
+            Button {
                 model.killBackgroundShell(id: shell.id)
             } label: { Text("Kill", bundle: .module) }
             .appAction(.quiet, size: .small)
-            .foregroundStyle(Color.red.opacity(0.8))
         }
         .accessibilityElement(children: .combine)
     }
@@ -206,6 +205,7 @@ struct StatusSheet: View {
 /// explicit confirm. Rewinding moves the CONVERSATION back, never any
 /// files tools wrote -- the same scope line qwen-code's dialog carries.
 struct RewindSheet: View {
+    @Environment(\.appTheme) private var theme
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var model: AppModel
     @State private var selectedTargetID: UUID?
@@ -228,7 +228,7 @@ struct RewindSheet: View {
                                 Image(systemName: selectedTargetID == target.id
                                     ? "largecircle.fill.circle" : "circle")
                                     .foregroundStyle(selectedTargetID == target.id
-                                        ? TurboSparkTheme.accentColor : Color.secondary)
+                                        ? AnyShapeStyle(theme.accent) : AnyShapeStyle(.appSecondary))
                                     .accessibilityHidden(true)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(target.preview)
@@ -237,7 +237,7 @@ struct RewindSheet: View {
                                     Text(target.createdAt.formatted(
                                         date: .abbreviated, time: .shortened))
                                         .themedFont(.tiny)
-                                        .foregroundStyle(.tertiary)
+                                        .foregroundStyle(.appSecondary)
                                 }
                                 Spacer()
                             }
@@ -283,13 +283,11 @@ struct RecapSheet: View {
         sheetFrame(title: "Conversation Recap", iconName: "doc.text.magnifyingglass", dismiss: dismiss) {
             VStack(alignment: .leading, spacing: 12) {
                 if model.isRecapping && model.recapText.isEmpty {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text("Summarizing this conversation...", bundle: .module)
-                            .themedFont(.small)
-                            .foregroundStyle(.appSecondary)
-                    }
+                    AppProgressBar(
+                        value: nil,
+                        label: Text("Summarizing this conversation...", bundle: .module),
+                        size: .compact
+                    )
                 } else {
                     ScrollView {
                         ChatMessageMarkdownView(model.recapText)
@@ -349,7 +347,7 @@ private func sheetFrame<Content: View>(
                 dismiss()
             }
             .buttonStyle(.plain)
-            .foregroundStyle(.tertiary)
+            .foregroundStyle(.appSecondary)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
@@ -363,7 +361,7 @@ private func sheetFrame<Content: View>(
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
-    .frame(width: 520, height: 460)
+    .frame(minWidth: 480, idealWidth: 520, maxWidth: 600, minHeight: 400, idealHeight: 460, maxHeight: 600)
 }
 
 private func sectionHeader(_ title: LocalizedStringKey) -> some View {
@@ -371,6 +369,7 @@ private func sectionHeader(_ title: LocalizedStringKey) -> some View {
         .themedFont(.small, weight: .bold)
         .foregroundStyle(.appSecondary)
         .textCase(.uppercase)
+        .accessibilityAddTraits(.isHeader)
 }
 
 private func emptyText(_ text: LocalizedStringKey) -> some View {

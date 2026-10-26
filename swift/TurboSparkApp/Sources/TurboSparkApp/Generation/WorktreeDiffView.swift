@@ -80,11 +80,11 @@ public struct WorktreeDiffView: View {
             Divider()
             diffContent
         }
-        .background(.appSurface.opacity(0.3))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(.appSurface)
+        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
+                .stroke(.appBorder, lineWidth: 1)
         )
     }
 
@@ -99,11 +99,7 @@ public struct WorktreeDiffView: View {
                 .foregroundStyle(.appText)
 
             if !file.directoryPath.isEmpty {
-                Text(file.directoryPath)
-                    .themedFont(.tiny)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                SettingsPathText(file.directoryPath, size: .tiny)
             }
 
             Spacer()
@@ -113,20 +109,20 @@ public struct WorktreeDiffView: View {
                     if file.additions > 0 {
                         Text(verbatim: "+\(file.additions)")
                             .themedFont(.tiny, weight: .semibold).monospacedDigit()
-                            .foregroundStyle(.green)
+                            .foregroundStyle(.appText)
                     }
                     if file.deletions > 0 {
                         Text(verbatim: "-\(file.deletions)")
                             .themedFont(.tiny, weight: .semibold).monospacedDigit()
-                            .foregroundStyle(.red)
+                            .foregroundStyle(.appSecondary)
                     }
                 }
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background(Color.primary.opacity(0.04), in: Capsule())
+                .background(.appElevated, in: Capsule())
             }
 
-            Button {
+            AppIconButton(copied ? "checkmark" : "doc.on.doc", label: Text("Copy raw diff", bundle: .module)) {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(diff, forType: .string)
                 copied = true
@@ -134,27 +130,19 @@ public struct WorktreeDiffView: View {
                     try? await Task.sleep(nanoseconds: 1_500_000_000)
                     copied = false
                 }
-            } label: {
-                Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                    .themedFont(.tiny)
-                    .foregroundStyle(copied ? .green : .secondary)
             }
-            .buttonStyle(.plain)
-            .help(Text("Copy raw diff", bundle: .module))
+            .foregroundStyle(copied ? AnyShapeStyle(theme.accent) : AnyShapeStyle(.appSecondary))
 
             if let onClose = onClose {
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .themedFont(.tiny)
-                        .foregroundStyle(.appSecondary)
+                AppIconButton("xmark", label: Text("Close diff view", bundle: .module)) {
+                    onClose()
                 }
-                .buttonStyle(.plain)
-                .help(Text("Close diff view", bundle: .module))
+                .foregroundStyle(.appSecondary)
             }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(.appPage.opacity(0.8))
+        .background(.appPage)
     }
 
     private var diffContent: some View {
@@ -195,7 +183,7 @@ public struct WorktreeDiffView: View {
             HStack(spacing: 6) {
                 Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                     .themedFont(.tiny)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.appSecondary)
                 Text("\(count) unmodified lines", bundle: .module)
                     .font(theme.code(.small, weight: .medium))
                     .foregroundStyle(.appSecondary)
@@ -203,7 +191,7 @@ public struct WorktreeDiffView: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 4)
-            .background(Color.primary.opacity(0.03))
+            .background(.appElevated)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -213,13 +201,13 @@ public struct WorktreeDiffView: View {
         let (fgColor, bgColor): (Color, Color) = {
             switch line.kind {
             case .addition:
-                return (.green, Color.green.opacity(0.09))
+                return (theme.foreground, theme.accent.opacity(0.10))
             case .deletion:
-                return (.red, Color.red.opacity(0.09))
+                return (theme.secondaryText, AppAttention.color.opacity(0.10))
             case .hunkHeader:
-                return (TurboSparkTheme.accentColor, TurboSparkTheme.accentColor.opacity(0.06))
+                return (theme.accent, theme.accent.opacity(0.06))
             case .context:
-                return (.secondary, Color.clear)
+                return (theme.secondaryText, Color.clear)
             }
         }()
 
@@ -228,8 +216,8 @@ public struct WorktreeDiffView: View {
         return HStack(spacing: 8) {
             Text(lineGutter)
                 .font(theme.code(.small))
-                .foregroundStyle(.tertiary)
-                .frame(width: 54, alignment: .trailing)
+                .foregroundStyle(.appSecondary)
+                .frame(minWidth: 54 * AppMetrics.textScale(theme), alignment: .trailing)
 
             Text(line.text)
                 .font(theme.code(.small))
