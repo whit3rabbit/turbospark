@@ -261,6 +261,22 @@ constant uint FC_ATTN_GQA_HEAD_DIM   [[function_constant(73)]];
 // Positions each simdgroup loads per iteration, 1..=kGqaMaxUnroll.
 constant uint FC_ATTN_GQA_UNROLL     [[function_constant(74)]];
 
+// Tree verify (docs/KAPITSA_KERNELS.md lever 4): a verify row's keys past
+// the committed prefix are its ANCESTORS' slots, not consecutive rows. With
+// the constant on, logical position p maps to p below tree_map[0] (the
+// round's base) and to tree_map[1] + tree_map[2 + (p - base)] at and above
+// it (the node slots along the row's root path, in depth order), then to the
+// ring. Only addresses change: with the identity path the kernel issues the
+// same loads in the same order, so its bits are the chain's.
+constant bool FC_ATTN_TREE [[function_constant(77)]];
+constant bool attn_tree = is_function_constant_defined(FC_ATTN_TREE) && FC_ATTN_TREE;
+constant constexpr uint kTreeMaxDepth = 8;
+
+static inline uint attn_tree_position(uint p, constant uint* tree_map) {
+    const uint base = tree_map[0];
+    return p < base ? p : tree_map[1] + tree_map[2u + min(p - base, kTreeMaxDepth - 1u)];
+}
+
 constant constexpr uint kGqaMaxPerLane   = 8;   // head_dim <= 256
 constant constexpr uint kGqaMaxGroup     = 8;
 constant constexpr uint kGqaMaxSimdgroups = 16;
@@ -278,6 +294,7 @@ void attention_decode_gqa_partial(
     constant     uint&  seq_len       [[buffer(7)]],
     constant     uint&  kv_start      [[buffer(8)]],
     constant     uint&  chunk_len     [[buffer(9)]],
+    constant     uint*  tree_map      [[buffer(10), function_constant(attn_tree)]],
     uint tg_id           [[threadgroup_position_in_grid]],
     uint lid             [[thread_position_in_threadgroup]],
     uint simd_lane_id    [[thread_index_in_simdgroup]],
@@ -333,7 +350,10 @@ void attention_decode_gqa_partial(
             if (u >= U) { break; }
             const uint p = p0 + u * NSG;
             live[u] = p < p_end;
-            const uint row = (attn_ring_slot(live[u] ? p : p0) * NKV + kv_head) * HD + e0;
+            // A dead position reads a live row (p0's), mapped like any other.
+            const uint logical = live[u] ? p : p0;
+            const uint at = attn_tree ? attn_tree_position(logical, tree_map) : logical;
+            const uint row = (attn_ring_slot(at) * NKV + kv_head) * HD + e0;
             device const half4* k4 = (device const half4*)(K + row);
             device const half4* v4 = (device const half4*)(V + row);
             for (uint j = 0; j < kGqaMaxPerLane / 4; ++j) {

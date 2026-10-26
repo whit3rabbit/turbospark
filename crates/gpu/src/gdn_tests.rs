@@ -466,3 +466,19 @@ fn baked_dk128_speed_at_qwen38_shapes() {
         }
     }
 }
+
+#[test]
+fn the_tree_conv_sources_of_a_chain_are_the_chain_kernels_indices() {
+    let chain: Vec<i32> = (0..8).map(|t| t - 1).collect();
+    let got = super::conv_tree_sources(&chain, 4);
+    let want: Vec<i32> = (0..8)
+        .flat_map(|t: i32| (0..3).map(move |j| t + j - 3))
+        .collect();
+    assert_eq!(got, want);
+    // Node 6 of [-1, 0, 1, 2, 3, 0, 5, 2] sits at depth 2 on path 0-5-6:
+    // taps oldest first read tail row -1 (depth 2 - 3 steps), then 0, 5.
+    let tree = [-1, 0, 1, 2, 3, 0, 5, 2];
+    let s = super::conv_tree_sources(&tree, 4);
+    assert_eq!(&s[6 * 3..7 * 3], &[-1, 0, 5]);
+    assert_eq!(&s[7 * 3..8 * 3], &[0, 1, 2]);
+}

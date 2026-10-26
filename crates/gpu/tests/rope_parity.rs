@@ -262,3 +262,67 @@ fn subdim_rows_is_bit_identical_to_one_dispatch_per_row() {
         "rows at different positions must differ, or this test proves nothing"
     );
 }
+
+/// `rope_neox_subdim_rows_positions` (tree verify: each node rotates at its
+/// depth) against the per-row `encode_rope_neox_subdim_rows` loop the chain
+/// verify's single-row callers use, bit for bit, over a tree's depth table
+/// with repeated positions. Row 5 sits at row 1's position, so a kernel that
+/// rotated by row index instead of the table would make them differ.
+#[test]
+fn subdim_rows_positions_is_bit_identical_to_one_row_at_each_position() {
+    let mut context = MetalContext::new().expect("Metal device available on this machine");
+    let (num_heads, head_dim, rotary_dim, theta) = (4u32, 256u32, 64u32, 10_000_000.0f32);
+    let start = 1_021u32;
+    let positions: Vec<u32> = [0u32, 1, 2, 3, 4, 1, 2, 3]
+        .iter()
+        .map(|d| start + d)
+        .collect();
+    let row_len = (num_heads * head_dim) as usize;
+    let one_row: Vec<f16> = (0..row_len)
+        .map(|i| f16::from_f32((i as f32 - row_len as f32 / 2.0) * 0.003))
+        .collect();
+    let bytes: Vec<u8> = (0..positions.len())
+        .flat_map(|_| one_row.iter().flat_map(|x| x.to_bits().to_le_bytes()))
+        .collect();
+
+    let per_row = context.new_buffer_with_data(&bytes);
+    let pass = context.begin_pass();
+    for (m, &p) in positions.iter().enumerate() {
+        turbospark_gpu::encode_rope_neox_subdim_rows(
+            &mut context,
+            &pass,
+            (&per_row, (m * row_len * 2) as u64),
+            p,
+            1,
+            num_heads,
+            head_dim,
+            rotary_dim,
+            theta,
+        )
+        .expect("per-row dispatch");
+    }
+    pass.commit_and_wait();
+
+    let table = context.new_buffer_with_data(&bytes);
+    let pass = context.begin_pass();
+    turbospark_gpu::encode_rope_neox_subdim_rows_positions(
+        &mut context,
+        &pass,
+        (&table, 0),
+        &positions,
+        num_heads,
+        head_dim,
+        rotary_dim,
+        theta,
+    )
+    .expect("positions dispatch");
+    pass.commit_and_wait();
+
+    let total = row_len * positions.len();
+    let bits = |v: &[f16]| v.iter().map(|x| x.to_bits()).collect::<Vec<u16>>();
+    let want = bits(&turbospark_gpu::read_buffer_f16(&per_row, 0, total));
+    let got = bits(&turbospark_gpu::read_buffer_f16(&table, 0, total));
+    assert_eq!(got, want);
+    assert_eq!(got[row_len..2 * row_len], got[5 * row_len..6 * row_len]);
+    assert_ne!(got[..row_len], got[row_len..2 * row_len]);
+}

@@ -63,6 +63,17 @@ constant bool FC_GDN_DELTA_WRITE_STATE  [[function_constant(97)]];
 // bakes only `Dk = 128`, and the pipeline's constants_key carries the value.
 constant uint FC_GDN_DK [[function_constant(98)]];
 
+// Tree verify (`TURBOSPARK_DFLASH_TREE`, docs/KAPITSA_KERNELS.md lever 4):
+// `gdn_delta_step_prefill` row t starts from the register state row
+// parent[t] left, or from the block-start state when parent[t] < 0, instead
+// of from row t - 1. Every node's state stays in registers, so the host
+// bakes it only with Dk = 128 (4 floats a lane) and rows <= 8. The parent
+// array is a conditional argument, so the plain builds bind nothing at 14,
+// and with the constant false the arithmetic is the chain's instruction for
+// instruction: a chain of parents (-1, 0, 1, ...) is bit-identical to it.
+constant bool FC_GDN_TREE [[function_constant(99)]];
+constant bool gdn_tree = is_function_constant_defined(FC_GDN_TREE) && FC_GDN_TREE;
+
 static inline uint gdn_dk(uint keyDim) {
     return (is_function_constant_defined(FC_GDN_DK) && FC_GDN_DK != 0u)
         ? FC_GDN_DK : keyDim;
@@ -244,6 +255,10 @@ kernel void gdn_conv_mix_prefill(
     constant uint&      taps     [[buffer(5)]],
     constant uint&      rows     [[buffer(6)]],
     constant uint&      dilation [[buffer(7)]],
+    // Tree builds only: row t's tap j reads virtual row conv_src[t][j]
+    // (the ancestor `K-1-j` steps up its path, or a tail row when the path
+    // is shorter), where the chain reads t + j*D - history.
+    device const int*   conv_src [[buffer(8), function_constant(gdn_tree)]],
     uint2 gid [[thread_position_in_grid]]
 ) {
     const uint C = channels;
@@ -265,7 +280,8 @@ kernel void gdn_conv_mix_prefill(
     for (uint j = 0; j < K - 1u; ++j) {
         // Input row index in the virtual sequence [tail rows | chunk rows],
         // taps `D` apart (`D=1` collapses to the original stride-1 walk).
-        const int src = int(t) + int(j) * int(D) - int(history);
+        const int src = gdn_tree ? conv_src[t * (K - 1u) + j]
+                                 : int(t) + int(j) * int(D) - int(history);
         float value;
         if (src >= 0) {
             value = float(qkv[uint(src) * C + ch]);
@@ -475,6 +491,7 @@ kernel void gdn_delta_step_prefill(
     constant uint&       rows     [[buffer(11)]],
     constant uint&       rowStride [[buffer(12)]], // C, conv_out elements/row
     device float*        delta_tape [[buffer(13)]], // [T, Hv * Dv], RECORD builds
+    device const int*    parent   [[buffer(14), function_constant(gdn_tree)]], // [T], tree builds
     uint2 tg [[threadgroup_position_in_grid]],
     uint2 tpos [[thread_position_in_threadgroup]]
 ) {
@@ -488,6 +505,8 @@ kernel void gdn_delta_step_prefill(
     const uint dv = tg.y * 4u + tpos.y;
     const uint lane = tpos.x;
     if (h >= Hv || dv >= Dv) return;
+    // The host refuses these; the kernel must not index sn out of range.
+    if (gdn_tree && (Dk != 128u || T > 8u)) return;
 
     const uint hk = h / (Hv / Hk);
     const float expA = exp(float(A_log[h]));
@@ -500,11 +519,25 @@ kernel void gdn_delta_step_prefill(
     for (uint i = 0; i < nPerLane; ++i) {
         s[i] = srow[lane * nPerLane + i];
     }
+    // Tree builds only: the block-start state and every node's state.
+    float s0[4];
+    float sn[8][4];
+    if (gdn_tree) {
+        for (uint i = 0; i < 4u; ++i) {
+            s0[i] = s[i];
+        }
+    }
 
     for (uint t = 0; t < T; ++t) {
         device const half* q = conv_out + t * C + hk * Dk;
         device const half* k = conv_out + t * C + Hk * Dk + hk * Dk;
         device const half* v = conv_out + t * C + 2u * Hk * Dk + h * Dv;
+        if (gdn_tree) {
+            const int p = parent[t];
+            for (uint i = 0; i < 4u; ++i) {
+                s[i] = (p < 0) ? s0[i] : sn[p][i];
+            }
+        }
 
         const float g = exp(-expA * gdn_softplus(float(a_proj[t * Hv + h]) + dtb));
         const float beta = 1.0f / (1.0f + exp(-float(b_proj[t * Hv + h])));
@@ -532,10 +565,17 @@ kernel void gdn_delta_step_prefill(
         }
         out = simd_sum(out);
         if (lane == 0) y[t * Hv * Dv + h * Dv + dv] = half(out);
+        if (gdn_tree) {
+            for (uint i = 0; i < 4u; ++i) {
+                sn[t][i] = s[i];
+            }
+        }
     }
 
-    if (!is_function_constant_defined(FC_GDN_DELTA_WRITE_STATE)
-        || FC_GDN_DELTA_WRITE_STATE) {
+    // A tree build is lazy by construction (the host refuses WRITE_STATE):
+    // the last row is a leaf, not the round's end state.
+    if (!gdn_tree && (!is_function_constant_defined(FC_GDN_DELTA_WRITE_STATE)
+        || FC_GDN_DELTA_WRITE_STATE)) {
         for (uint i = 0; i < nPerLane; ++i) {
             srow[lane * nPerLane + i] = s[i];
         }

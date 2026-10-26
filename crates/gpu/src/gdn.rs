@@ -79,7 +79,7 @@ fn gdn_function_constants() -> FunctionConstantValues {
     for index in [20, 21, 23, 24, 25, 90, 91, 92, 93, 98] {
         values.set_constant_value_at_index((&zero as *const u32).cast(), MTLDataType::UInt, index);
     }
-    for index in [22, 26, 94, 95, 96] {
+    for index in [22, 26, 94, 95, 96, 99] {
         values.set_constant_value_at_index(
             (&use_fc as *const bool).cast(),
             MTLDataType::Bool,
@@ -182,14 +182,29 @@ pub(crate) fn delta_pipeline(
     write_state: bool,
     key_dim: u32,
 ) -> Result<metal::ComputePipelineState, GpuError> {
+    delta_pipeline_tree(context, name, record, write_state, key_dim, false)
+}
+
+/// [`delta_pipeline`] with `FC_GDN_TREE` (99) as well, the key's 7th byte.
+/// Every delta pipeline sets it, false unless a tree verify asked.
+fn delta_pipeline_tree(
+    context: &mut MetalContext,
+    name: &'static str,
+    record: bool,
+    write_state: bool,
+    key_dim: u32,
+    tree: bool,
+) -> Result<metal::ComputePipelineState, GpuError> {
     let values = gdn_function_constants();
     values.set_constant_value_at_index((&record as *const bool).cast(), MTLDataType::Bool, 96);
     values.set_constant_value_at_index((&write_state as *const bool).cast(), MTLDataType::Bool, 97);
     values.set_constant_value_at_index((&key_dim as *const u32).cast(), MTLDataType::UInt, 98);
-    let mut key = [0u8; 6];
+    values.set_constant_value_at_index((&tree as *const bool).cast(), MTLDataType::Bool, 99);
+    let mut key = [0u8; 7];
     key[0] = record as u8;
     key[1] = write_state as u8;
-    key[2..].copy_from_slice(&key_dim.to_le_bytes());
+    key[2..6].copy_from_slice(&key_dim.to_le_bytes());
+    key[6] = tree as u8;
     context.pipeline(SOURCE, name, &values, &key)
 }
 
@@ -377,6 +392,90 @@ pub fn encode_gdn_conv_prefill(
             (u32_bytes(&dilation), 7),
         ],
         (channels as u64, rows.max(1) as u64, 1),
+        (CONV_THREADS, 1, 1),
+    );
+    Ok(())
+}
+
+/// The tree verify's conv source table: for row `t` and tap `j` (oldest
+/// first), the row `K-1-j` steps up `t`'s parent chain, or `depth(t) - s`
+/// (negative, a tail row) when the path from the root is shorter than the
+/// step. A chain of parents gives `t + j - (K-1)`, the chain kernel's own
+/// index, so the arithmetic is unchanged.
+pub(crate) fn conv_tree_sources(parent: &[i32], taps: usize) -> Vec<i32> {
+    let depth = |mut t: i32| {
+        let mut d = 0;
+        while parent[t as usize] >= 0 {
+            t = parent[t as usize];
+            d += 1;
+        }
+        d
+    };
+    let mut out = Vec::with_capacity(parent.len() * (taps - 1));
+    for t in 0..parent.len() as i32 {
+        let d = depth(t);
+        for j in 0..taps as i32 - 1 {
+            let steps = taps as i32 - 1 - j;
+            if steps <= d {
+                let mut at = t;
+                for _ in 0..steps {
+                    at = parent[at as usize];
+                }
+                out.push(at);
+            } else {
+                out.push(d - steps);
+            }
+        }
+    }
+    out
+}
+
+/// [`encode_gdn_conv_prefill`] over a tree of rows (`parent[t] < t`, -1 at
+/// a root): each row's taps read its own root path, then the tail. Undilated
+/// only. Bit-identical per node to the chain kernel over that node's path.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_gdn_conv_prefill_tree(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    shape: GdnShape,
+    tail: (&metal::Buffer, u64),
+    qkv_rows: (&metal::Buffer, u64),
+    conv_weight: (&metal::Buffer, u64),
+    out: (&metal::Buffer, u64),
+    parent: &[i32],
+) -> Result<(), GpuError> {
+    shape.validate()?;
+    let rows = parent.len() as u32;
+    if rows == 0 || rows > GDN_TREE_MAX_ROWS || (0..parent.len()).any(|t| parent[t] >= t as i32) {
+        return Err(GpuError::PipelineCreate(format!(
+            "gdn tree conv needs 1..={GDN_TREE_MAX_ROWS} rows with parents before children; \
+             got {parent:?}"
+        )));
+    }
+    let (channels, taps) = (shape.qkv_dim(), shape.conv_kernel_size);
+    let sources = conv_tree_sources(parent, taps as usize);
+    let source_bytes: Vec<u8> = sources.iter().flat_map(|s| s.to_le_bytes()).collect();
+    let values = gdn_function_constants();
+    let tree = true;
+    values.set_constant_value_at_index((&tree as *const bool).cast(), MTLDataType::Bool, 99);
+    let p = context.pipeline(SOURCE, "gdn_conv_mix_prefill", &values, b"tree")?;
+    let dilation = 1u32;
+    pass.encode_threads_3d(
+        &p,
+        &[
+            (tail.0, 0, tail.1),
+            (qkv_rows.0, 1, qkv_rows.1),
+            (conv_weight.0, 2, conv_weight.1),
+            (out.0, 3, out.1),
+        ],
+        &[
+            (u32_bytes(&channels), 4),
+            (u32_bytes(&taps), 5),
+            (u32_bytes(&rows), 6),
+            (u32_bytes(&dilation), 7),
+            (&source_bytes[..], 8),
+        ],
+        (channels as u64, rows as u64, 1),
         (CONV_THREADS, 1, 1),
     );
     Ok(())
@@ -614,6 +713,95 @@ pub fn encode_gdn_delta_prefill_lazy(
     let mut bytes: Vec<(&[u8], u64)> = dims.iter().map(|(v, i)| (&v[..], *i)).collect();
     bytes.push((u32_bytes(&rows), 11));
     bytes.push((u32_bytes(&row_stride), 12));
+    pass.encode_threadgroups_3d(
+        &p,
+        &[
+            (conv_out.0, 0, conv_out.1),
+            (a_proj.0, 1, a_proj.1),
+            (b_proj.0, 2, b_proj.1),
+            (a_log.0, 3, a_log.1),
+            (dt_bias.0, 4, dt_bias.1),
+            (state, 5, 0),
+            (y.0, 6, y.1),
+            (delta_tape.0, 13, delta_tape.1),
+        ],
+        &bytes,
+        (
+            shape.num_v_heads as u64,
+            (shape.value_head_dim / 4) as u64,
+            1,
+        ),
+        DELTA_THREADS,
+    );
+    Ok(())
+}
+
+/// Rows one tree verify takes: the anchor and seven nodes, every node's
+/// state in registers (`FC_GDN_TREE` in `gdn.metal`).
+pub const GDN_TREE_MAX_ROWS: u32 = 8;
+
+/// [`encode_gdn_delta_prefill_lazy`] over a TREE of rows: row `t` starts
+/// from the state row `parent[t]` left, or from the block-start state when
+/// `parent[t] < 0`. Parents come before children (`parent[t] < t`). Each
+/// node's `y` and recorded `delta` are what the chain kernel gives over that
+/// node's root path, so after the accepted path is compacted to rows
+/// `0..keep` the round-end fold is the chain's. Refused unless the key head
+/// dim is baked at 128 and `rows <= 8`: every node's state lives in
+/// registers.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_gdn_delta_prefill_lazy_tree(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    shape: GdnShape,
+    conv_out: (&metal::Buffer, u64),
+    a_proj: (&metal::Buffer, u64),
+    b_proj: (&metal::Buffer, u64),
+    a_log: (&metal::Buffer, u64),
+    dt_bias: (&metal::Buffer, u64),
+    state: &metal::Buffer,
+    y: (&metal::Buffer, u64),
+    delta_tape: (&metal::Buffer, u64),
+    parent: &[i32],
+) -> Result<(), GpuError> {
+    shape.validate()?;
+    let rows = parent.len() as u32;
+    let key_dim = baked_key_dim(shape.key_head_dim);
+    if key_dim != BAKED_KEY_DIM || rows == 0 || rows > GDN_TREE_MAX_ROWS {
+        return Err(GpuError::PipelineCreate(format!(
+            "gdn tree verify needs the key head dim baked at {BAKED_KEY_DIM} and 1..={} rows; \
+             got key head dim {} (baked {key_dim}) and {rows} rows",
+            GDN_TREE_MAX_ROWS, shape.key_head_dim
+        )));
+    }
+    if let Some(t) = (0..parent.len()).find(|&t| parent[t] >= t as i32) {
+        return Err(GpuError::PipelineCreate(format!(
+            "gdn tree verify: row {t}'s parent {} does not precede it",
+            parent[t]
+        )));
+    }
+    assert_tape_view(
+        "delta",
+        delta_tape.0,
+        delta_tape.1,
+        rows,
+        shape.value_dim(),
+        4,
+    );
+    let p = delta_pipeline_tree(
+        context,
+        "gdn_delta_step_prefill",
+        true,
+        false,
+        key_dim,
+        true,
+    )?;
+    let dims = shape.head_dim_bytes();
+    let row_stride = shape.qkv_dim();
+    let parent_bytes: Vec<u8> = parent.iter().flat_map(|p| p.to_le_bytes()).collect();
+    let mut bytes: Vec<(&[u8], u64)> = dims.iter().map(|(v, i)| (&v[..], *i)).collect();
+    bytes.push((u32_bytes(&rows), 11));
+    bytes.push((u32_bytes(&row_stride), 12));
+    bytes.push((&parent_bytes[..], 14));
     pass.encode_threadgroups_3d(
         &p,
         &[

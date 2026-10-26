@@ -184,3 +184,81 @@ pub fn encode_copy_rows_fp16_strided(
     );
     Ok(())
 }
+
+/// Most rows one [`encode_gather_rows_fp16`] call takes: a tree verify's
+/// accepted path, anchor included, inside the 16-row verify cap.
+pub const GATHER_MAX_ROWS: usize = 16;
+
+/// `dst[r] = src[map[r]]` for `r` in `0..map.len()`, fp16 rows of `width`
+/// elements at the given strides (in elements). `src` and `dst` may be the
+/// SAME buffer region only when `map` is strictly increasing with
+/// `map[r] >= r` (a compaction toward row 0), which is refused otherwise:
+/// the kernel walks rows in order with a barrier between them
+/// (`gather_rows_fp16`), and that order is safe for exactly that shape.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_gather_rows_fp16(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    src: (&metal::Buffer, u64),
+    dst: (&metal::Buffer, u64),
+    map: &[u32],
+    width: u32,
+    src_stride: u32,
+    dst_stride: u32,
+) -> Result<(), GpuError> {
+    let rows = map.len();
+    if rows == 0 {
+        return Ok(());
+    }
+    if rows > GATHER_MAX_ROWS {
+        return Err(GpuError::PipelineCreate(format!(
+            "gather_rows_fp16: {rows} rows over the cap of {GATHER_MAX_ROWS}"
+        )));
+    }
+    // A `&BufferRef` IS the Objective-C object pointer, so this is
+    // identity of the underlying MTLBuffer.
+    let overlap = std::ptr::eq::<metal::BufferRef>(&**src.0, &**dst.0);
+    let same = overlap && src.1 == dst.1;
+    if overlap {
+        let compaction = same
+            && src_stride == dst_stride
+            && map.iter().enumerate().all(|(r, &m)| m as usize >= r)
+            && map.windows(2).all(|w| w[0] < w[1]);
+        if !compaction {
+            return Err(GpuError::PipelineCreate(
+                "gather_rows_fp16 in place needs a strictly increasing map with \
+                 map[r] >= r over one region at one stride"
+                    .to_string(),
+            ));
+        }
+    }
+    let max_src = *map.iter().max().expect("non-empty");
+    let bounds = |buffer: &metal::Buffer, offset: u64, last_row: u32, stride: u32| {
+        let end = (u64::from(last_row) * u64::from(stride) + u64::from(width)) * 2 + offset;
+        assert!(end <= buffer.length(), "gather row view exceeds buffer");
+    };
+    bounds(src.0, src.1, max_src, src_stride);
+    bounds(dst.0, dst.1, rows as u32 - 1, dst_stride);
+    let pipeline = context.pipeline(
+        SOURCE,
+        "gather_rows_fp16",
+        &FunctionConstantValues::new(),
+        b"",
+    )?;
+    let map_bytes: Vec<u8> = map.iter().flat_map(|m| m.to_le_bytes()).collect();
+    let rows32 = rows as u32;
+    pass.encode_threadgroups(
+        &pipeline,
+        &[(src.0, 0, src.1), (dst.0, 1, dst.1)],
+        &[
+            (&map_bytes[..], 2),
+            (u32_bytes(&rows32), 3),
+            (u32_bytes(&width), 4),
+            (u32_bytes(&src_stride), 5),
+            (u32_bytes(&dst_stride), 6),
+        ],
+        1,
+        1024,
+    );
+    Ok(())
+}
