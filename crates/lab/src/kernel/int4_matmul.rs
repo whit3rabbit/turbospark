@@ -29,6 +29,9 @@ pub use crate::bench::INT4_AFFINE_LAYOUT as LAYOUT;
 /// bench does not time the tile at M where nothing would route to it.
 const MMA8_BENCH_MAX_M: usize = 2 * INT4_MMA8_MAX_ROWS;
 
+/// Dispatches a timed pass holds at least (see `sweeps` in [`run_shape`]).
+const MIN_DISPATCHES_PER_PASS: usize = 64;
+
 pub struct Int4Matmul;
 
 impl KernelBench for Int4Matmul {
@@ -207,6 +210,12 @@ pub fn run_shape(
     let (ms, reps) = (&opts.rows[..], opts.reps);
     let weight_bytes = rows * cols / 2 + rows * cols / 64 * 4;
     let copies = copies_for(weight_bytes, 256 << 20);
+    // A tiny shape's pass is a handful of microsecond dispatches, and the
+    // command buffer's own fixed cost then dominates the time per dispatch
+    // (the 48-row gate read 157 us against 46 us in the 64-copy bench). Walk
+    // the copies more than once per pass until it holds at least this many
+    // dispatches; the weights stay distinct within each walk.
+    let sweeps = MIN_DISPATCHES_PER_PASS.div_ceil(copies).max(1);
     let mats: Vec<_> = (0..copies)
         .map(|i| {
             let (data, scales, biases) = int4_blob(rows, cols, 0xC0FF_EE00 + i as u64);
@@ -241,11 +250,13 @@ pub fn run_shape(
     // route to it.
     let runs_at =
         |a: usize, m: usize| supported[a] && (ARMS[a] != Arm::Mma8 || m <= MMA8_BENCH_MAX_M);
-    // (m, per-arm median ms, per-arm output hash)
-    let mut table: Vec<(usize, Vec<f64>, Vec<Option<String>>)> = Vec::new();
+    // (m, per-arm median ms, per-arm output hash, per-arm first-row hash)
+    #[allow(clippy::type_complexity)]
+    let mut table: Vec<(usize, Vec<f64>, Vec<Option<String>>, Vec<Option<String>>)> = Vec::new();
     for &m in ms {
         let mut samples = vec![Vec::new(); ARMS.len()];
         let mut hashes = vec![None; ARMS.len()];
+        let mut row_hashes = vec![None; ARMS.len()];
         for rep in 0..=reps {
             for (a, &arm) in ARMS.iter().enumerate() {
                 if !runs_at(a, m) {
@@ -253,27 +264,32 @@ pub fn run_shape(
                 }
                 let t = autorelease_pool(|| -> Result<f64, String> {
                     let pass = context.begin_pass();
-                    for (buffer, scales, biases) in &mats {
-                        let w = Int4ResidentMatrix {
-                            buffer,
-                            weights_offset: 0,
-                            scales_offset: *scales,
-                            biases_offset: *biases,
-                            rows,
-                            cols,
-                        };
-                        encode_arm(context, &pass, arm, &w, &x, &y, m)?;
+                    for _ in 0..sweeps {
+                        for (buffer, scales, biases) in &mats {
+                            let w = Int4ResidentMatrix {
+                                buffer,
+                                weights_offset: 0,
+                                scales_offset: *scales,
+                                biases_offset: *biases,
+                                rows,
+                                cols,
+                            };
+                            encode_arm(context, &pass, arm, &w, &x, &y, m)?;
+                        }
                     }
                     Ok(pass.commit_and_wait_with_gpu_time())
                 })?;
                 if rep > 0 {
-                    samples[a].push(t * 1e3 / copies as f64);
+                    samples[a].push(t * 1e3 / (copies * sweeps) as f64);
                 }
                 // The output of the last copy after the last repetition:
                 // every copy runs the same seeded weights family, so the
                 // bytes are a function of the arm's arithmetic alone.
                 if opts.hash && rep == reps {
                     hashes[a] = Some(fnv_hex(&read_buffer_bytes(&y, 0, m * rows * 2)));
+                    // Row 0 alone: the same bytes whatever M the arm ran at
+                    // when a row's bits do not depend on its batch.
+                    row_hashes[a] = Some(fnv_hex(&read_buffer_bytes(&y, 0, rows * 2)));
                 }
             }
         }
@@ -281,14 +297,14 @@ pub fn run_shape(
             .iter_mut()
             .map(|s| if s.is_empty() { f64::NAN } else { median(s) })
             .collect();
-        table.push((m, medians, hashes));
+        table.push((m, medians, hashes, row_hashes));
     }
 
     // One-row GEMV time is the c(M) unit.
     let one_row = table
         .iter()
-        .find(|(m, _, _)| *m == 1)
-        .map(|(_, t, _)| t[0])
+        .find(|(m, _, _, _)| *m == 1)
+        .map(|(_, t, _, _)| t[0])
         .unwrap_or(table[0].1[0] / table[0].0 as f64);
     let flops = |m: usize| 2.0 * m as f64 * rows as f64 * cols as f64;
     let mut arms = Vec::new();
@@ -302,14 +318,15 @@ pub fn run_shape(
         }
         let points: Vec<Point> = table
             .iter()
-            .filter(|(m, _, _)| runs_at(a, *m))
-            .map(|(m, t, h)| Point {
+            .filter(|(m, _, _, _)| runs_at(a, *m))
+            .map(|(m, t, h, rh)| Point {
                 x: *m as f64,
                 ms: t[a],
                 gb_s: Some(weight_bytes as f64 / (t[a] * 1e-3) / 1e9),
                 tflops: Some(flops(*m) / (t[a] * 1e-3) / 1e12),
                 c_of_m: Some(c_of_m(t[a], one_row, *m)),
                 out_fnv: h[a].clone(),
+                row_fnv: rh[a].clone(),
             })
             .collect();
         let fit = fit_affine(&points.iter().map(|p| (p.x, p.ms)).collect::<Vec<_>>());

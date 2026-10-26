@@ -10,7 +10,7 @@
     {"id": "profile_sequential", "command": "profile", "when": ["text", "runs", "!chunked_prefill"],
      "args": {"model": "{model}", "experiment": "{experiment}", "prompt": "{prompt}", "decode": "{decode}", "rounds": 3, "chunk": "off"}},
     {"id": "kernels", "command": "kernel", "when": ["text"], "continue_on_error": true,
-     "args": {"model": "{model}", "experiment": "{experiment}", "bench": "int4_matmul,int8_matmul,attn_decode,rows_attn,moe_routed", "hash": true, "rows": "1,2,4,8,9,16,32,64"}},
+     "args": {"model": "{model}", "experiment": "{experiment}", "bench": "int4_matmul,int8_matmul,attn_decode,rows_attn,moe_routed,gdn_delta", "hash": true, "rows": "1,2,4,8,9,16,32,64"}},
     {"id": "null", "command": "ab", "when": ["text", "runs", "chunked_prefill"], "continue_on_error": true,
      "args": {"model": "{model}", "experiment": "{experiment}", "prompt": "{prompt}", "decode": "{decode}", "null": true}},
     {"id": "dispatch_probe", "command": "profile", "when": ["probe"], "continue_on_error": true,

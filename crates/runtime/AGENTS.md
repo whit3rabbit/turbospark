@@ -14,6 +14,8 @@ policy.
 - [Audio models](../audio/MODELS.md)
 - [Audio music generation](../../docs/audio/music.md)
 - [Model gates](../../.claude/docs/model-gates.md)
+- [Kernel modes](../../docs/KERNEL_MODES.md): read before adding an
+  alternative kernel path behind a switch.
 
 ## Rules
 

@@ -19,6 +19,7 @@ tslab workflow new-family --model M --experiment E --resume <run>
 |---|---|---|
 | `new-family` | capabilities, inventory, profile, hashed kernels, null floor, dispatch probe, speculative round costs, verify ladder, tree replay, report | `--model` |
 | `kernel-candidate` | hashed kernels, `hash-diff` against a base-build run, null, paired A/B of a switch | `--var against=EXP --var candidate=KNOB=V` |
+| `mode-candidate` | hashed bench curves, a base profile, null floor, `project` from those, paired A/B of the mode's switch, `calibrate` of the projection against that verdict | `--var knob=NAME --var candidate=KEY=V` (a knob with a lane in `tslab knobs`); `--var bench=` and `--var x=` for a lane that is not `int4_matmul` at one row |
 | `spec-depth` | chain capture, MTP arms at two blocks with round stats, depth replay priced from the ledger | an install with an MTP head |
 | `audio-survey` | capabilities, hashed audio kernel benches, profile of a job, null floor | an audio install; `--var job=PATH` to change the job |
 | `report` | export (JSON, paths redacted) and HTML beside the ledger | `--experiment` |

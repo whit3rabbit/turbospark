@@ -45,6 +45,7 @@ pub mod lock;
 pub mod out;
 pub mod paths;
 pub mod pinned;
+pub mod projection;
 pub mod round_cost;
 pub mod schema;
 pub mod series;

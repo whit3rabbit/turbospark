@@ -13,6 +13,8 @@ threadgroup shape, or normalization convention on the device.
 - [Speech to text](../../docs/SPEECH_TO_TEXT.md)
 - [Audio music generation](../../docs/audio/music.md)
 - [Decode and memory guardrails](../../.claude/docs/engineering-gotchas.md)
+- [Kernel modes](../../docs/KERNEL_MODES.md): read before adding an
+  alternative kernel path behind a switch.
 
 ## Rules
 

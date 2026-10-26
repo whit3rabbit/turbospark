@@ -41,6 +41,8 @@ is `$TURBOSPARK_LAB_DIR`, else `$TURBOSPARK_HOME/lab`, else
 | `verdict` | A paired A/B: `verdict.{verdict, median, ci_low, ci_high, improvements}`, `memory` |
 | `kernel_curve` | One kernel bench case: `result` is a `BenchResult` |
 | `hash_diff`, `dispatch_probe`, `standin`, `trace`, `round_cost` | What their command measured |
+| `projection` | `tslab project`: `projection.{ratio, improvement_throughput, improvement_time, coverage, floor, clears_floor, cases, skipped, notes}` and the `inputs` it read |
+| `calibration` | `tslab calibrate`: `calibration.{predicted, measured, error, miss, sign_flip, reason}` and the projection and verdict it joined |
 | `experiment`, `confirm`, `gate`, `experiment_start` | run-experiment's records and decision |
 | `workflow_step`, `workflow_run` | A workflow's steps and summary |
 
@@ -56,7 +58,7 @@ arm. `reasons` says which.
  "x": {"name": "m", "unit": "rows", "scale": "log2"},
  "layout": "mlx_affine_int4_g64_bf16",
  "arms": [{"label": "scalar_gemm",
-           "points": [{"x": 8, "ms": 0.41, "gb_s": 210.0, "c_of_m": 0.37, "out_fnv": "0c7f089a7e72e924"}],
+           "points": [{"x": 8, "ms": 0.41, "gb_s": 210.0, "c_of_m": 0.37, "out_fnv": "0c7f089a7e72e924", "row_fnv": "5e1a0c33f2a7b910"}],
            "fit": {"a": 0.21, "b": 0.025, "max_rel_residual": 0.03}},
           {"label": "steel_m32", "unsupported": "this shape does not fit the tile"}],
  "break_even": [{"arm": "scalar_gemm", "against": "gemv_per_row", "above_x": 1.4}],
@@ -64,7 +66,10 @@ arm. `reasons` says which.
 ```
 
 `c_of_m` is the cost of M rows in one pass over M one-row passes. Below 1,
-batching pays.
+batching pays. `out_fnv` and `row_fnv` (the first output row alone) appear
+under `--hash`. The `kernel_curve` record also carries `exactness_hints`, one
+per arm: `{arm, against, bit_exact_vs_first, row_invariant}`, each `true`,
+`false` or null when too little was hashed to say.
 
 ## Series (from `tslab export`)
 
@@ -80,6 +85,7 @@ batching pays.
 Kinds: `kernel_ms`, `kernel_c_of_m`, `profile_totals`, `profile_buckets`,
 `verdict` (points are pair improvements, and `refs` holds `median`, `ci_low`,
 `ci_high`, `min_effect`, `null_floor`), `dispatch_probe`, `round_cost`,
-`audio_stages`, `trace_shares`, `standin`. Series sharing a `group` belong on
+`audio_stages`, `trace_shares`, `standin`, `calibration` (predicted against
+measured improvement, one point per calibration). Series sharing a `group` belong on
 one chart. A point with `dirty: true` came from a run the host guard
 rejected.

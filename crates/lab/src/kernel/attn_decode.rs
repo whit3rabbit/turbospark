@@ -24,6 +24,10 @@ use super::support::{f16_bytes, median};
 use super::{BenchOpts, Case, KernelBench, Subject};
 use crate::bench::{fnv_hex, ArmCurve, Axis, BenchResult, Point};
 
+/// The arms, barrier first: the kernel `TURBOSPARK_ATTN_DECODE_KERNEL` forces
+/// with `barrier`, then the GQA-shared kernel where the shape is served.
+pub const ARMS: [&str; 2] = ["barrier", "gqa"];
+
 pub struct AttnDecode;
 
 /// One attention variant's shape.
@@ -199,9 +203,9 @@ pub fn run_shape(
         context.new_buffer_with_data(&bytes)
     });
     let out = context.new_output_buffer((q_width * 2) as u64);
-    let mut kernels = vec![("barrier", DecodeAttentionKernel::Barrier)];
+    let mut kernels = vec![(ARMS[0], DecodeAttentionKernel::Barrier)];
     if gqa {
-        kernels.push(("gqa", DecodeAttentionKernel::GqaShared));
+        kernels.push((ARMS[1], DecodeAttentionKernel::GqaShared));
     }
     let scratches: Vec<_> = kernels
         .iter()

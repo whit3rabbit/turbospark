@@ -209,6 +209,19 @@ pub const KNOBS: &[Knob] = &[
         ],
     },
     Knob {
+        // Default ON: `=0` keeps the delta kernels on the runtime-Dk loop, and
+        // the baked build's line must then be absent.
+        name: "gdn_dk128",
+        env: "TURBOSPARK_GDN_DK128",
+        values: &["<unset>", "0"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::BitExact,
+        families: &["qwen35", "qwen36"],
+        quotable: true,
+        doc: "docs/KAPITSA_KERNELS.md",
+        engagement: &[off("0", "gdn_dk128")],
+    },
+    Knob {
         name: "routed_batch",
         env: "TURBOSPARK_ROUTED_BATCH",
         values: &["<unset>", "1"],
@@ -412,6 +425,99 @@ pub const KNOBS: &[Knob] = &[
         engagement: &[],
     },
 ];
+
+/// How a lane is compared with the path it replaces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(tag = "how", rename_all = "snake_case")]
+pub enum Compare {
+    /// Two arms of one bench in one experiment.
+    Arms {
+        /// The path the lane replaces.
+        baseline: &'static str,
+        /// The lane's own arm.
+        lane: &'static str,
+    },
+    /// One arm timed in two `tslab kernel` processes that differ in one
+    /// environment assignment, because the gpu crate reads the switch once
+    /// per process and a bench calls the kernels directly. `tslab project
+    /// --default-from A --mode-from B` reads the pair.
+    Process {
+        arm: &'static str,
+        /// `VAR=value` to put on the process that times the baseline.
+        baseline_env: &'static str,
+    },
+}
+
+/// What makes a knob a kernel mode (`docs/KERNEL_MODES.md`): the bench that
+/// prices it, how the bench separates it from the path it replaces, and the
+/// tests that hold it to the default's bits or to a stated bound.
+/// `tests/knob_registry.rs` checks that each of those still exists.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct Lane {
+    /// A `KNOBS` row's `name`.
+    pub knob: &'static str,
+    /// The default or older path, in words.
+    pub replaces: &'static str,
+    /// A `kernel::registry()` bench name.
+    pub bench: &'static str,
+    pub compare: Compare,
+    /// Repo-relative parity test files (or the module holding the unit test).
+    pub parity: &'static [&'static str],
+}
+
+/// The knobs that are kernel modes. A knob without a bench to price it is not
+/// here yet: the others are listed in `docs/KERNEL_MODES.md` with what is
+/// missing.
+pub const LANES: &[Lane] = &[
+    Lane {
+        knob: "int4_mma8",
+        replaces: "INT4 GEMV (one row) and the scalar batched GEMM (verify)",
+        bench: "int4_matmul",
+        compare: Compare::Arms {
+            baseline: "gemv_per_row",
+            lane: "mma8",
+        },
+        parity: &[
+            "crates/gpu/tests/dequant_int4_mma8_parity.rs",
+            "crates/gpu/tests/qwen38_decode_verify_parity.rs",
+        ],
+    },
+    Lane {
+        knob: "gdn_lazy_tape",
+        replaces: "the eager GDN verify that advances state in place",
+        bench: "gdn_delta",
+        // The lane also pays `state_fold` at the round's end; price the pair.
+        compare: Compare::Arms {
+            baseline: "prefill_eager",
+            lane: "prefill_lazy",
+        },
+        parity: &["crates/gpu/tests/gdn_lazy_fold.rs"],
+    },
+    Lane {
+        knob: "gdn_dk128",
+        replaces: "the runtime-Dk delta kernels",
+        bench: "gdn_delta",
+        compare: Compare::Process {
+            arm: "prefill_lazy",
+            baseline_env: "TURBOSPARK_GDN_DK128=0",
+        },
+        parity: &["crates/gpu/src/gdn_tests.rs"],
+    },
+    Lane {
+        knob: "attn_decode_kernel",
+        replaces: "the barrier decode attention kernel",
+        bench: "attn_decode",
+        compare: Compare::Arms {
+            baseline: "barrier",
+            lane: "gqa",
+        },
+        parity: &["crates/gpu/tests/attention_decode_gqa_parity.rs"],
+    },
+];
+
+pub fn lane_of(knob: &str) -> Option<&'static Lane> {
+    LANES.iter().find(|l| l.knob == knob)
+}
 
 pub fn by_name(name: &str) -> Option<&'static Knob> {
     KNOBS.iter().find(|k| k.name == name)

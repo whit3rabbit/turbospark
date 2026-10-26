@@ -14,6 +14,21 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- Kernel modes (`docs/KERNEL_MODES.md`): the contract for a switch that
+  selects an alternative kernel path beside the default, and the lab tooling
+  around it. `tslab project` prices a mode from kernel curves, per-forward
+  counts and a measured base before a model run, with the share of the base
+  the benched kernels explain. `tslab calibrate` joins that prediction to the
+  A/B verdict that followed and `tslab calibrate --all` shows the bias per
+  bench. `tslab knobs` lists which knobs are modes (`LANES`), checked against
+  the tree by `tests/knob_registry.rs`. The `gdn_delta` kernel bench times the
+  gated-DeltaNet delta kernels at an install's geometry, `qkv_concurrent`
+  times the attention q/k/v triple in a serial against a concurrent pass,
+  `tslab project` takes `--counts` and `--scale` for shapes whose recorded count
+  is another tensor's, `tslab kernel --hash`
+  prints an exactness hint per arm from output and first-row hashes, and the
+  `mode-candidate` workflow runs the chain as one plan. The `gdn_dk128` knob
+  row is added to the table.
 - `tslab` agent skill (`crates/lab/skill`, with command, output, workflow,
   results and extending references). It runs from a checkout or from the zip
   `scripts/package-tslab-skill.sh` builds (release binaries, workloads), so a

@@ -64,9 +64,13 @@ $TSLAB profile --model M --decode 64 --rounds 6 --dispatch-probe 0,4,8,16 --expe
 $TSLAB trace --model M --prompt protocol:short-explanation --decode 64 --experiment E
 $TSLAB profile --model A --audio-job <workloads>/audio/music-short.json --experiment E
 $TSLAB report --experiment E --html E.html
+$TSLAB project --knob int4_mma8 --curves E --x 1 --base-from E:base --floor-from E   # price a mode first
+$TSLAB calibrate --projection E --verdict E                                          # then check the price
 ```
 
-`tslab knobs` lists the switches an arm can set (`KNOB=V`).
+`tslab knobs` lists the switches an arm can set (`KNOB=V`) and, below them,
+the ones that are kernel modes (`docs/KERNEL_MODES.md`) with the bench that
+prices each.
 
 ## What needs a checkout
 

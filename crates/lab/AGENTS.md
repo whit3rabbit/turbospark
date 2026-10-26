@@ -34,6 +34,10 @@ loop's `run-experiment`. Text and audio installs of every family.
   plans.
 - `src/trace.rs`, `tools/trace_tables.py`: `tslab trace` (L5).
 - `src/round_cost.rs`: measured speculative round costs (L7).
+- `src/projection.rs`: `tslab project` and `tslab calibrate` (L8): a kernel
+  mode priced from curves, counts and a measured base, then joined to the
+  verdict that followed. Contract in
+  [KERNEL_MODES.md](../../docs/KERNEL_MODES.md).
 - `src/bin/tslab_worker.rs`, `src/worker.rs`, `src/worker_audio.rs`: one
   arm, one run, one record (text or audio).
 - `src/orchestrate.rs`: fresh-process runs, rotation, the paired A/B.
@@ -43,7 +47,9 @@ loop's `run-experiment`. Text and audio installs of every family.
   record lands in, and the lab dir (`$TURBOSPARK_LAB_DIR`, else
   `$TURBOSPARK_HOME/lab`, else `~/.turbospark/lab`).
 - `src/host.rs`, `src/lock.rs`: quiet-host rules and the machine lock.
-- `src/knobs.rs`: the runtime switch table (`tests/knob_registry.rs`).
+- `src/knobs.rs`: the runtime switch table and `LANES`, the knobs that are
+  kernel modes with the bench, arms and parity tests that hold them
+  (`tests/knob_registry.rs`).
 - `src/experiment.rs`, `src/integrity.rs`, `src/spec.rs`: gate,
   run-experiment, confirm, and what an experiment may not touch.
 - `src/workload.rs`: prompts, arms, metrics, slots, residency, and
