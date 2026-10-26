@@ -184,14 +184,14 @@ left, ranked by the arithmetic below:
 |---|-------|-------|----------------|
 | 1 | Flat verify (MMA8) | Built, opt-in, lossless, block 4 beats the default on code (50.1 vs 43.3 tok/s) and loses 9-12% on prose | Prerequisite for everything below |
 | 2 | Pick the block per request or per round | DECLINED for DFlash2 under the flag: best per-prompt depth beats fixed 7 by 0-1.7% (model below). `AdaptiveDepth` is tuned for the flag-off cost curve and would sit at its floor of 2 | Under a flat verify an extra row costs about 1.3 ms and pays once its survival chance exceeds about 5% |
-| 3 | DFlash2 drafter at depth 7 over the flat verify | MEASURED 2026-10-22 below: 31-37 tok/s, 2.1x its flag-off self, about 55-60% of kapitsa | Confirms the flat verify is what unlocks long blocks |
-| 4 | Tree verify (KFlash) | Replay only, no kernel. `tslab tree-replay` covers MTP and DFlash2. DFlash2 at depth 7 gains 1.07-1.12x committed/round, below | Kapitsa's own doc credits it +6% code, +16% prose over its chain |
-| 5 | Close the one-row gap (1.27x GEMV) | Open in the MMA8 doc | MEASURED below: it is the verify floor, about 13 ms of an 85 ms round |
+| 3 | DFlash2 drafter at depth 7 over the flat verify | MEASURED 2026-10-22 below: 31-37 tok/s, 2.1x its flag-off self, about 55-60% of kapitsa. LOSSLESS 2026-10-25: `dflash_generation_gate` matches sequential decode at blocks 2 and 7, chain and tree, under `TURBOSPARK_INT4_MMA8=1` | Confirms the flat verify is what unlocks long blocks |
+| 4 | Tree verify (KFlash) | BUILT 2026-10-25, opt-in `TURBOSPARK_DFLASH_TREE=1`, lossless. Live: 1.05-1.10x committed/round (the replay said 1.07-1.12x), but the tree verify costs 5-7% more than the chain's, so the net is about even to +4% per token from dirty runs. Not a default | "KFlash: tree verify", "Built and measured" |
+| 5 | Close the one-row gap (1.27x GEMV) | DECLINED 2026-10-25: the one untried design, a two-pass split-K (no barrier tail, KS up to 32), is bit-exact at the shipped KS but 1.6-28% slower on four of five shapes; only `down` gains 1.5-5.1% (`docs/INT4_SMALL_M_MMA.md`, open question 10) | MEASURED below: it is the verify floor, about 13 ms of an 85 ms round. The floor is weight streaming, not the reduction tail |
 | 6 | MTP head quality | RESOLVED: equal. Kapitsa 2.39 committed per cycle on short-explanation, ours 2.38, same depth 4 | The 1.4x gap at equal acceptance is round cost, 57 ms against 86 ms |
-| 7 | DFlash2 drafter pass | Profiled and trimmed ~2 ms (per-row loops batched, selector scan fused), uncommitted in `dflash_draft/` | Only ~2 ms more is in sight; the selector was 1.2 ms, not the suspect |
-| 8 | DFlash2 drafter attention at long context | DONE, uncommitted: one line in `dflash.rs`, draft phase 21.2 to 11.4 ms at 2,940 tokens and 14.5 to 11.0 ms at 426, +3.5% and +11% tok/s | The barrier decode kernel was used by the drafter only; the trunk already used the GQA-shared one |
+| 7 | DFlash2 drafter pass | Profiled and trimmed ~2 ms (per-row loops batched, selector scan fused), committed in `9abbdcf0` (`dflash_draft/`) | Only ~2 ms more is in sight; the selector was 1.2 ms, not the suspect |
+| 8 | DFlash2 drafter attention at long context | DONE, committed (one line in `dflash.rs`, the drafter's `with_decode_kernel(GqaShared)`), draft phase 21.2 to 11.4 ms at 2,940 tokens and 14.5 to 11.0 ms at 426, +3.5% and +11% tok/s | The barrier decode kernel was used by the drafter only; the trunk already used the GQA-shared one |
 | 9 | Small projections in the 8-row verify | NOT CONFIRMED. Per dispatch the tile is 2.7-5.6x faster than the scalar GEMM and the profile read the verify at 66.3 to 63.8 ms/token, but the clean two-round wall-clock sweep read verify 75.3 and 72.0 ms with the threshold at 1 against 69.8 and 70.5 at its default | Leave the threshold where the tile's owner put it; the disagreement is unexplained |
-| 10 | DFlash2 install prefill | OPEN: token by token at 17-23 tok/s, against 142 on the MTP install and 403-417 for kapitsa | Needs the drafter's auxiliary captures in the chunked driver; user-visible as time to first token |
+| 10 | DFlash2 install prefill | DONE 2026-10-25: the chunked driver captures the drafter's aux states (`TURBOSPARK_DFLASH_CHUNKED_PREFILL`, default on). Clean readings 130-158 tok/s on 426 tokens against 16-23 for the walk (whose runs were all dirty, so no paired verdict yet) | Server TTFT not re-measured; see the prefill table |
 | 11 | Which tile mode ships | A DECISION FOR THE TILE'S OWNER: `=verify` speculates as fast as `=1` with no plain-decode or prefill penalty, but its speculative greedy stream parts from sequential decode (561 against 505 tokens) | `=1` is lossless and costs plain decode 21-23%; neither is a free default |
 
 #### Measured: DFlash2 and the flat verify, 2026-10-22
@@ -270,10 +270,9 @@ The flat verify also has a cost the table shows: plain decode and block 2 get
 5-7% and 21% slower under the flag. It only pays if the engine always
 speculates at depth 4 or more, which is why the per-request block choice
 (lever 2) and the one-row gap (lever 5) are linked. Do not default the flag on
-until those are decided. The in-flight MMA8 wiring is uncommitted in the
-shared tree (`real_forward_dispatch.rs`, the qwen `attn.rs`, `dense.rs`,
-`moe.rs`, `gpu/src/lib.rs`), and the drafter work below touches none of
-those.
+until those are decided. The MMA8 wiring landed in `937a9c9f` (PR #176:
+`real_forward_dispatch.rs`, the qwen `attn.rs`, `dense.rs`, `moe.rs`,
+`gpu/src/lib.rs`), and the drafter work below touches none of those.
 
 #### Measured: the DFlash2 drafter pass, 2026-10-22
 
@@ -679,6 +678,7 @@ there than in decode:
 | HEAD plain decode, bench default (sequential driver) | 426 | 18.6 s | 23 |
 | HEAD MTP install, speculative path (chunked driver) | 426 | 3.0 s | 142 |
 | HEAD DFlash2 install, bench (sequential) | 426 | 18.9 s | 23 |
+| DFlash2 install, speculative path, chunked driver with aux capture (2026-10-25, 5 clean runs, `kapitsa-levers-a6`) | 426 | 2.7-3.3 s | 130-158 |
 | DFlash2 install through `turbospark-server`, warm | 62 | 3.83 s | 16 |
 | DFlash2 install through `turbospark-server`, first request (includes model page-in) | 204 | 11.95 s | 17 |
 | tile shared mode, sequential driver | 426 | 23.6-24.4 s | 18 |
@@ -698,6 +698,17 @@ takes ten seconds for a 200-token prompt is a latency regression for any agent
 workload. The bench's plain-decode prefill is its sequential harness default
 (`prefill=sequential` in its header), not a measurement of the server's plain
 path, which was not timed here. This is lever 10 in the table above.
+
+**Lever 10 since (2026-10-25).** The chunked driver now encodes the aux
+captures (`docs/DFLASH2.md`, "Chunked prefill with the drafter open"), so the
+DFlash2 speculative path prefills on the same driver as the MTP install. On
+the 426-token prompt the five clean chunked runs in tslab experiment
+`kapitsa-levers-a6` read 130.3-157.5 tok/s (M4 Max, AC, warm page cache).
+All five token-walk runs in that A/B were DIRTY (other sessions' compiles and
+tests landed in their 20-second prefill window) and read 15.9-22.5 tok/s, so
+the A/B's verdict is INCONCLUSIVE on zero clean pairs and owed a quiet host;
+the gap is far outside run-to-run spread either way. The server TTFT rows
+above were not re-measured.
 
 **Memory.** The bench's peak footprint reads 658 MiB for the plain install,
 868 for MTP and 896 for DFlash2, against 19.6 GB in kapitsa's own bench. The
@@ -1181,7 +1192,8 @@ DFlash2 7 from 31.2 to about 34.6 tok/s on short and from 36.8 to about
   of verify attention (0.9 ms), the overhead would be about 1.8% and the
   projection 1.05-1.10x. The verdict holds either way.
 - Losslessness under the flag has not been checked for DFlash2 (see the
-  flat-verify section). A tree verify inherits that open item.
+  flat-verify section). A tree verify inherits that open item. (Closed
+  2026-10-25: `crates/bench/tests/dflash_generation_gate.rs`, below.)
 
 Verdict: tree verify pays for DFlash2 at depth 7 over the flat verify, by
 this costing. The order to build it, cheapest proof first: the GDN tree
@@ -1204,6 +1216,68 @@ prototype (`docs/INT4_SMALL_M_MMA.md`) measured 8 rows at 1.25-1.29x a
 1-row GEMV. If that lands in the verify, blocks 4 and 8 stop losing and the
 1.03-1.14x tree gains at those blocks become reachable. Re-run this replay
 and the block sweep then.
+
+### Built and measured, 2026-10-25
+
+`TURBOSPARK_DFLASH_TREE=1`, opt-in, greedy fixed-depth DFlash2 rounds only.
+A round verifies a best-first tree of `block` nodes in the chain's rows
+(anchor plus 7 at depth 7), so the MMA8 tile shape is unchanged.
+
+The pieces, each with a bit-parity test and a mutation it catches:
+
+- `gather_rows_fp16`: in-place compaction of the accepted path to rows
+  `0..keep`, one threadgroup walking rows in order with a barrier between
+  them (a flat dispatch races on paths like `[0, 2, 3]`).
+- `FC_GDN_TREE` (99) on `gdn_delta_step_prefill` and `gdn_conv_mix_prefill`:
+  a row starts from its parent's register state, and its conv taps read its
+  root path, then the tail. Chain parents are the shipped kernels' bits.
+- `rope_neox_subdim_rows_positions`: each row at its depth.
+- `FC_ATTN_TREE` (77) on the GQA-shared decode partial: keys past the base
+  map to the row's ancestor slots, at the chain row's own `seq_len`, so the
+  chunking and loads in flight are the chain's. The identity path is the
+  chain row's bits. The barrier override declines and keeps the chain.
+- Host: the best-first builder scores a node's 16 children only when it
+  expands the node, and it and the acceptance walk are pinned to
+  `tslab tree-replay`'s (`crates/bench/tests/dflash_tree_pin.rs`). The
+  accepted path is gathered (each attention layer's K and V, the verify
+  tape, the lazy tape's k and delta, the drafter's capture, `scratch.x`)
+  before the unchanged round-end.
+
+Refused, chain kept: eager tape, the barrier attention, a GDN key dim not
+baked at 128, adaptive depth, budget-shortened rounds.
+
+Synthetic gates (`crates/runtime/tests/real_forward_qwen35_dflash_tree.rs`,
+on a wide-head fixture because the kernels need head_dim 128): a chain-shaped
+tree round is the chain round byte for byte; every branching slot is the
+chain verify over its root path; branching and teacher-forced multi-round
+walks commit the sequential stream. Dropping the compaction, the K/V gather
+or the delta gather each fails them.
+
+Real install (`qwen38-27b-dflash2`, M4 Max, AC):
+
+- Lossless: `dflash_generation_gate` matches sequential decode token for
+  token at blocks 2 and 7 on a code and a prose prompt, tree on and off,
+  under `TURBOSPARK_INT4_MMA8=1` and `TURBOSPARK_BATCHED_GEMV=0`.
+- Acceptance (`tslab ab`, experiment `kapitsa-levers-c10`, 128 tokens,
+  identical on every repeat since greedy):
+
+| Prompt | Chain committed/round | Tree committed/round | Ratio | Replay |
+|---|---:|---:|---:|---:|
+| medium-review | 2.98 | 3.28 | 1.10x | 1.07-1.12x |
+| short-explanation | 3.05 | 3.20 | 1.05x | |
+
+- Cost: 9 of 10 runs were DIRTY (foreign CPU), so the A/B verdict is
+  INCONCLUSIVE and no tok/s is quoted. The phase table of the least-loaded
+  runs reads the verify at 64-67 ms/round for the chain and 68-72 ms for the
+  tree (+5-7%), plus about 0.6 ms of compaction in the rollback phase, where
+  the costing above assumed about 1%. On those readings the net is even on
+  short-explanation and about +4% per token on medium-review.
+
+Verdict: built, lossless, and the acceptance the replay predicted is real,
+but the verify overhead eats most of it. Not a default. The open item is
+where the extra 4-5 ms of verify goes (the per-row tree attention, the tree
+GDN kernels, or the per-row position table); profile it on a quiet host
+before deciding whether to promote. Re-run the A/B then.
 
 ## Item 1: the lazy rank-1 GDN verify tape
 

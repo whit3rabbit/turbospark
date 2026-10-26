@@ -622,8 +622,10 @@ bitwise test against the per-row form, not a tolerance.
   works for any drafter whose input is the trunk's per-position hidden
   state. Priming one row per command buffer cost about 3 s on 2.7K tokens;
   running the drafter's own block through the trunk's M-row encoders under
-  its prefix costs ~0.6 s. DFlash2 needs its per-layer aux captures encoded
-  in the chunked driver first.
+  its prefix costs ~0.6 s. Done for DFlash2 on 2026-10-25: the chunked
+  driver encodes its per-layer aux captures and context-writes each
+  micro-batch (`TURBOSPARK_DFLASH_CHUNKED_PREFILL`), 130-158 tok/s against
+  16-23 for the walk on a 426-token prompt (`docs/DFLASH2.md`).
 - **Draft with less than the full head.** open-jet drafts against 32K
   frequency-ranked rows plus the sequence's own tokens. That would cut the
   two remaining head reads per round to about 15% of their cost. Taking the

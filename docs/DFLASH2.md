@@ -937,3 +937,10 @@ second slice, and it fails) and dropping the last-row copy (all three arms
 fail). As with the MTP head, the Steel arm is not bit-exact against the
 walk, so the default speculative stream can part from a sequential one for
 the prefill reason described in section 6.
+
+On the real install (426-token prompt, M4 Max, AC) five clean chunked runs
+read 130-158 tok/s against 16-23 tok/s for the walk; the walk runs were all
+dirty, so the paired verdict is owed (`docs/KAPITSA_KERNELS.md`, lever 10).
+With `TURBOSPARK_BATCHED_GEMV=0` both prefills are bit-identical, which is
+how `crates/bench/tests/dflash_generation_gate.rs` holds the speculative
+stream, chain and tree (`TURBOSPARK_DFLASH_TREE`), to sequential decode.
