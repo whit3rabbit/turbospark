@@ -1,9 +1,53 @@
 name: CI
 
+# Which changes reach this workflow: everything except documentation and
+# agent instructions. Written as `paths` with negations rather than
+# `paths-ignore`, because two directories under docs/ are build inputs and
+# have to stay in: crates/server's contract tests read docs/openapi/ and
+# crates/image's fixtures read docs/verification/. (The bench probes that
+# read docs/*.md as a prompt corpus are all #[ignore]d.) The GitBook content
+# directories and every *.md are out; docs.yml lints those. main has no
+# required status checks, so a filtered-out push or PR strands nothing.
+#
+# Measured 2026-10-26: eight of the previous forty commits on main were
+# docs-only and each ran both 45-minute package legs.
 on:
   push:
     branches: [main]
+    paths:
+      - '**'
+      - '!docs/**'
+      - 'docs/openapi/**'
+      - 'docs/verification/**'
+      - '!**/*.md'
+      - '!home/**'
+      - '!documentation/**'
+      - '!api-reference/**'
+      - '!changelog/**'
+      - '!help-center/**'
+      - '!.kiro/**'
+      - '!.agents/**'
+      - '!.claude/**'
+      - '!LICENSE'
   pull_request:
+    paths:
+      - '**'
+      - '!docs/**'
+      - 'docs/openapi/**'
+      - 'docs/verification/**'
+      - '!**/*.md'
+      - '!home/**'
+      - '!documentation/**'
+      - '!api-reference/**'
+      - '!changelog/**'
+      - '!help-center/**'
+      - '!.kiro/**'
+      - '!.agents/**'
+      - '!.claude/**'
+      - '!LICENSE'
+  # Runs the push-only package job from a branch, so a change to it can be
+  # timed before it merges.
+  workflow_dispatch:
 
 jobs:
   verify:
@@ -15,19 +59,21 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Before the cache step: its key reads the active rustc.
       - name: Install pinned Rust toolchain
         run: rustup show
 
-      - name: Cache cargo registry and build artifacts
-        uses: actions/cache@v6
+      # Dependencies only, keyed on rustc plus every Cargo.toml and
+      # Cargo.lock, saved from main and only restored on PRs. The previous
+      # actions/cache step kept the whole target/ (4 GB, incremental/
+      # included) under a Cargo.lock-only key: a key hit never refreshed it,
+      # so its workspace artifacts went stale while the restore took up to
+      # 3.5 minutes, and every PR saved its own copy that no other ref can
+      # read, pushing the repository past its 10 GB cache limit.
+      - uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+          shared-key: verify
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Format check
         if: matrix.os == 'macos-latest'
@@ -69,26 +115,6 @@ jobs:
             -p turbospark-window-fit -p turbospark-gpu -p turbospark-vision-io \
             -p turbospark-audio -p turbospark-embeddings
 
-  # GitBook Git Sync imports a whole space or none of it: one page with bad
-  # YAML front matter failed the Documentation import after the push, and the
-  # only symptom was a status in GitBook. This runs the same check locally
-  # (`python3 scripts/check-gitbook-docs.py`) before a bad page can land.
-  # A venv, not `pip install --user`: the runner's system Python is
-  # externally managed and refuses the latter.
-  gitbook-docs:
-    name: GitBook docs lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install PyYAML in a venv
-        run: |
-          python3 -m venv "$RUNNER_TEMP/docs-venv"
-          "$RUNNER_TEMP/docs-venv/bin/pip" install pyyaml==6.0.2
-
-      - name: Check synced docs
-        run: '"$RUNNER_TEMP/docs-venv/bin/python" scripts/check-gitbook-docs.py'
-
   # The release's packaging path, exercised OUTSIDE a release. Everything from
   # here to the DMG (Info.plist, the resource-bundle copy, the ad-hoc
   # signature, the CLI binaries inside the app) is reachable from no other
@@ -97,12 +123,13 @@ jobs:
   # `swift build`'s output layout moved. Same scripts release.yml calls, so
   # they cannot drift apart.
   #
-  # Push-to-main only: it builds the workspace in release AND the Swift app,
-  # which is minutes, and a PR's Rust legs already cover everything the
-  # bundle's contents come from.
+  # Push-to-main only (and workflow_dispatch, for timing it from a branch):
+  # it builds the workspace in release AND the Swift app, which is minutes,
+  # and a PR's Rust legs already cover everything the bundle's contents come
+  # from.
   package-macos:
     name: Package app bundle and DMG (Xcode ${{ matrix.xcode }})
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     # TWO TOOLCHAINS, because the toolchain is what broke v0.2.0 and v0.3.0:
     # SwiftPM's generated resource accessor differs between Xcode 16.4 and
     # newer, and the old one crashed the shipped app on launch. `release`
@@ -125,6 +152,9 @@ jobs:
         include:
           - { runner: macos-26, xcode: "26.6" }
           - { runner: macos-15, xcode: "16.4" }
+    env:
+      OPENKIND_RELEASE_REVISION: ${{ vars.OPENKIND_RELEASE_REVISION || '2dba87572c028aeaf34b27220a3bbd3d8d8dbc76' }}
+      OPENKIND_SERVER_VERSION: ${{ vars.OPENKIND_SERVER_VERSION || '0.3.0' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -138,6 +168,7 @@ jobs:
           swift --version
 
       - uses: dtolnay/rust-toolchain@stable
+        id: toolchain
         with:
           targets: aarch64-apple-darwin
 
@@ -146,10 +177,38 @@ jobs:
       - name: Install protobuf
         run: brew install protobuf
 
+      # openkindd comes from crates.io through `cargo install`, which builds
+      # in a target directory of its own that no workspace cache sees: the
+      # mlx feature (mlx-sys, candle, mlx-rs) was 15 of each leg's 45
+      # minutes, every run. Keyed on the pinned version, the Xcode (mlx-sys
+      # links the selected SDK) and the rustc, so it rebuilds exactly when
+      # one of those changes. make-app-bundle.sh installs into this root and
+      # cargo treats a matching version already there as a no-op.
+      - name: Restore openkindd
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/openkindd
+          key: openkindd-${{ env.OPENKIND_SERVER_VERSION }}-xcode${{ matrix.xcode }}-${{ steps.toolchain.outputs.cachekey }}
+
+      # SwiftPM's dependency objects, mlx-swift's C++ above all (8 of the 20
+      # `swift build` minutes). The app's own module rebuilds every run
+      # regardless, because swift-lib.sh touches every Swift source so the
+      # fresh staticlib links; the cache covers the dependency half. Keyed
+      # on the resolved graph and the Xcode, since the objects are the
+      # SDK's. If a run with a key hit still compiles mlx-swift's .cpp
+      # files, llbuild is distrusting the restored tree and this step is
+      # pure cost: remove it.
+      - name: Restore SwiftPM build
+        uses: actions/cache@v6
+        with:
+          path: swift/TurboSparkApp/.build
+          key: swiftpm-xcode${{ matrix.xcode }}-${{ env.OPENKIND_RELEASE_REVISION }}-${{ hashFiles('swift/TurboSparkApp/Package.resolved', 'swift/TurboSparkApp/Package.swift', 'swift/TurboSparkApp/Vendor/*/Package.swift', 'swift/TurboSpark/Package.swift') }}
+          restore-keys: |
+            swiftpm-xcode${{ matrix.xcode }}-${{ env.OPENKIND_RELEASE_REVISION }}-
+
       - name: Build TurboSpark.app
         env:
-          OPENKIND_RELEASE_REVISION: ${{ vars.OPENKIND_RELEASE_REVISION || '2dba87572c028aeaf34b27220a3bbd3d8d8dbc76' }}
-          OPENKIND_SERVER_VERSION: ${{ vars.OPENKIND_SERVER_VERSION || '0.3.0' }}
+          OPENKINDD_INSTALL_ROOT: ${{ runner.temp }}/openkindd
         run: ./scripts/make-app-bundle.sh
 
       # Launches the app and checks the deployment floor. Packaging success
@@ -161,7 +220,4 @@ jobs:
       # run here means the image is complete and its signature verifies, not
       # merely that hdiutil exited 0.
       - name: Build and verify DMG
-        env:
-          OPENKIND_RELEASE_REVISION: ${{ vars.OPENKIND_RELEASE_REVISION || '2dba87572c028aeaf34b27220a3bbd3d8d8dbc76' }}
-          OPENKIND_SERVER_VERSION: ${{ vars.OPENKIND_SERVER_VERSION || '0.3.0' }}
         run: ./scripts/make-dmg.sh

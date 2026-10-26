@@ -1,0 +1,51 @@
+name: Docs
+
+# GitBook Git Sync imports a whole space or none of it: one page with bad
+# YAML front matter failed the Documentation import after the push, and the
+# only symptom was a status in GitBook. This runs the same check locally
+# (`python3 scripts/check-gitbook-docs.py`) before a bad page can land.
+#
+# Its own workflow, because ci.yml filters documentation out: a docs-only
+# change used to run the Rust matrix and both 45-minute package legs for
+# nothing, while this check needs 25 seconds on Linux. The paths are the
+# content directories gitbook-docs.yaml syncs, plus the checker and its
+# config.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'home/**'
+      - 'documentation/**'
+      - 'api-reference/**'
+      - 'changelog/**'
+      - 'help-center/**'
+      - 'gitbook-docs.yaml'
+      - 'scripts/check-gitbook-docs.py'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    paths:
+      - 'home/**'
+      - 'documentation/**'
+      - 'api-reference/**'
+      - 'changelog/**'
+      - 'help-center/**'
+      - 'gitbook-docs.yaml'
+      - 'scripts/check-gitbook-docs.py'
+      - '.github/workflows/docs.yml'
+
+jobs:
+  gitbook-docs:
+    name: GitBook docs lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # A venv, not `pip install --user`: the runner's system Python is
+      # externally managed and refuses the latter.
+      - name: Install PyYAML in a venv
+        run: |
+          python3 -m venv "$RUNNER_TEMP/docs-venv"
+          "$RUNNER_TEMP/docs-venv/bin/pip" install pyyaml==6.0.2
+
+      - name: Check synced docs
+        run: '"$RUNNER_TEMP/docs-venv/bin/python" scripts/check-gitbook-docs.py'

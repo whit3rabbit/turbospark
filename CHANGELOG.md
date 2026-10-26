@@ -173,6 +173,19 @@ when this file gets updated relative to the version bump and the tag.
     gates (`bit_exact`, and `text_exact` for transcripts).
 
 ### Changed
+- CI: documentation no longer runs the Rust matrix or the two package legs.
+  `ci.yml` filters out `docs/` (except `docs/openapi/` and
+  `docs/verification/`, which tests read), every `*.md`, the GitBook content
+  directories and the agent-instruction trees; the new `docs.yml` lints the
+  GitBook content on its own. `verify` restores Rust dependencies through
+  `Swatinem/rust-cache`, saved from `main` only, in place of a 4 GB
+  whole-`target/` cache keyed on `Cargo.lock` alone. `package-macos` caches
+  the `openkindd` install root (`OPENKINDD_INSTALL_ROOT` in
+  `make-app-bundle.sh`; `cargo install` was 15 minutes of each 45-minute
+  leg) and SwiftPM's `.build`, and the CLI/server release build now shares
+  the staticlib's `MACOSX_DEPLOYMENT_TARGET` so cargo stops rebuilding 22
+  crates a second time. `workflow_dispatch` runs the package job from a
+  branch.
 - Gated-DeltaNet key head dimension `Dk = 128` baked into the Metal delta
   kernels as a compile-time constant (`FC_GDN_DK = 98`), default on. Unrolls
   the per-lane state loops in `gdn_delta_step_decode`, `gdn_delta_step_prefill`
