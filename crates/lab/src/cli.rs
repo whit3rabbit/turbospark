@@ -47,7 +47,7 @@ tslab: the evaluator for kernel and method experiments (macOS).
   tslab chain-capture --model M [--prompt ...]... [--tokens 512] [--depth 8] [--experiment NAME]
   tslab depth-replay [--experiment NAME] [--costs flag_off,flag_on,ledger:EXP[@FLAGS][#KV]] [--tokens 512] [--top 10]
   tslab hybrid-replay [--experiment NAME] [--costs flag_on,ledger:EXP[@FLAGS][#KV]] [--tokens 512]
-                [--ngram 4] [--lookup-draft 8] [--tuned 3,1,1,2] [--cap 8]
+                [--ngram 4] [--lookup-draft 8] [--tuned 3,1,1,2] [--cap 7]
                 (prompt lookup over the MTP chain, replayed on a chain capture that kept its ids)
   tslab ledger  --experiment NAME [--kind run|verdict|...]
   tslab trace   --model M [workload] [--arm NAME[:KEY=V,...]] [--record-s 10] [--experiment NAME]
