@@ -111,9 +111,12 @@ scratch is the same size). `crates/gpu/tests/attention_decode_gqa_parity.rs`
 pins this shape with sinks, the window and a wrapped 641-row ring.
 
 **Still open: the paired performance A/B.** Every `tslab ab` attempt
-(`flint-gqa-decode`) was INCONCLUSIVE on a busy host. The one eligible run,
-a warmup on the GQA default, read 43.4 decode tok/s against the barrier
-profile's 30.3 in another experiment: indicative, not a verdict. Rerun
+(`flint-gqa-decode`, `flint-gqa-decode-2`) was INCONCLUSIVE: other sessions'
+builds and real-model tests kept the host busy. Clean single-arm readings
+only, so indicative and not a verdict: the GQA default read 40.3 to 41.0
+decode tok/s over four clean null-calibration runs (`flint-gqa-decode-2`),
+against 30.3 for barrier over two clean runs in `flint-mixed-3-4bit-profile`,
+both on `protocol:long-synthesis` with 64 decode tokens. Rerun
 `tslab ab --baseline barrier:TURBOSPARK_ATTN_DECODE_KERNEL=barrier
 --candidate gqa:TURBOSPARK_ATTN_DECODE_KERNEL=gqa --metric decode_tok_s` on a
 quiet host before quoting a speedup.
