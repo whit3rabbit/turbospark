@@ -29,7 +29,7 @@ struct NewChatSuggestionBanner: View {
             HStack(spacing: 10) {
                 Image(systemName: "arrow.triangle.branch")
                     .themedFont(.small, weight: .semibold)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(AppAttention.color)
                     .accessibilityHidden(true)
                 Text("This conversation is close to filling its context window. Starting a new chat keeps responses sharp.", bundle: .module)
                     .themedFont(.small)
@@ -53,17 +53,19 @@ struct NewChatSuggestionBanner: View {
                 }
                 .appAction(.primary, size: .small)
                 .disabled(model.isRunning)
-                .help(Text("Start a fresh conversation (Cmd+N)", bundle: .module))
+                .help(model.isRunning
+                    ? Text("While running, a new chat cannot be created", bundle: .module)
+                    : Text("Start a fresh conversation (Cmd+N)", bundle: .module))
                 .accessibilityLabel(Text("Start a new chat", bundle: .module))
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
-            .background(Color.orange.opacity(0.08))
+            .background(AppAttention.color.opacity(0.08))
             .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(Color.orange.opacity(0.35), lineWidth: 1)
+                RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
+                    .stroke(AppAttention.color.opacity(0.35), lineWidth: 1)
             )
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
             .transition(.opacity.combined(with: .move(edge: .bottom)))
             .accessibilityElement(children: .contain)
         }
