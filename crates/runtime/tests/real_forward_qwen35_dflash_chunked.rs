@@ -33,8 +33,8 @@ use turbospark_repack::{
     build_synthetic_qwen_gdn_dense_install_with_dflash, peek_manifest_arch,
 };
 use turbospark_runtime::{
-    DflashDraftPolicy, DraftPolicies, LogitProducer, MtpDraftPolicy, RealForwardRunner,
-    SpeculativeProducer,
+    ChunkedPrefillRunner, DflashDraftPolicy, DraftPolicies, LogitProducer, MtpDraftPolicy,
+    RealForwardRunner, SpeculativeProducer,
 };
 
 /// Above the mask token (248,070) so the drafter's mask rows embed legally.
@@ -76,6 +76,13 @@ fn open_with(dir: &std::path::Path, policies: DraftPolicies) -> RealForwardRunne
 }
 
 fn open_dflash(tag: &str) -> RealForwardRunner {
+    open_dflash_and_plain(tag, false).0
+}
+
+/// The drafter-open runner, and (when `plain`) a second open of the same
+/// install with every drafter off, which the plain chunked entry point
+/// serves.
+fn open_dflash_and_plain(tag: &str, plain: bool) -> (RealForwardRunner, Option<RealForwardRunner>) {
     let dir = temp_dir(tag);
     build_synthetic_qwen_gdn_dense_install_with_dflash(&dir, VOCAB, LAYERS, "dflash-chunked", 4)
         .expect("the dense install with a DFlash2 drafter writes");
@@ -86,8 +93,32 @@ fn open_dflash(tag: &str) -> RealForwardRunner {
             dflash: DflashDraftPolicy::Fixed(BLOCK),
         },
     );
+    let plain = plain.then(|| {
+        open_with(
+            &dir,
+            DraftPolicies {
+                mtp: MtpDraftPolicy::Off,
+                dflash: DflashDraftPolicy::Off,
+            },
+        )
+    });
     let _ = std::fs::remove_dir_all(&dir);
-    runner
+    (runner, plain)
+}
+
+/// The plain chunked driver's last logits over `ids`, in the same spans.
+fn plain_chunked(runner: &mut RealForwardRunner, ids: &[i32]) -> Vec<f32> {
+    runner.reset();
+    let mut logits = vec![LogitValue::from_f32(0.0); VOCAB as usize];
+    let mut start = 0;
+    while start < ids.len() {
+        let end = (start + CHUNK).min(ids.len());
+        runner
+            .prefill_chunk(&ids[start..end], start, &mut logits)
+            .expect("plain chunked prefill");
+        start = end;
+    }
+    logits.iter().map(|v| v.to_f32()).collect()
 }
 
 fn prompt(n: usize) -> Vec<i32> {
@@ -251,29 +282,39 @@ fn the_scalar_batched_arm_primes_the_drafter_exactly_too() {
     assert_exact(&mut runner, "scalar batched");
 }
 
+/// The Steel arm, in two halves. The TRUNK is held to the plain chunked
+/// driver's Steel output, bit for bit: the capture copies must not touch
+/// it. It is not held to the token walk, because that difference is Steel's
+/// own drift over this fixture's 64 layers (the repo's 1% Steel bound comes
+/// from 4-layer fixtures, and a macos-latest runner read 1.2% here), which
+/// this change neither causes nor alters. The DRAFT, the thing this variant
+/// writes, stays within 1% of the walk's.
 #[test]
 fn the_steel_arm_primes_the_drafter_within_the_bound() {
-    let mut runner = open_dflash("steel");
-    runner.set_batched_gemv_prefill(true);
-    runner.set_prefill_steel(true);
+    let (mut runner, plain) = open_dflash_and_plain("steel", true);
+    let mut plain = plain.expect("asked for the plain open");
+    for r in [&mut runner, &mut plain] {
+        r.set_batched_gemv_prefill(true);
+        r.set_prefill_steel(true);
+    }
     for n in LENGTHS {
         let ids = prompt(n);
         let want = reference(&mut runner, &ids);
         let got = chunked(&mut runner, &ids);
         assert_eq!(got.state, want.state, "{n} tokens: handoff state");
-        for (label, g, w) in [
-            ("trunk", &got.trunk, &want.trunk),
-            ("draft", &got.draft, &want.draft),
-        ] {
-            let scale = w.iter().fold(0.0f32, |m, v| m.max(v.abs()));
-            let worst = g
-                .iter()
-                .zip(w)
-                .fold(0.0f32, |m, (a, b)| m.max((a - b).abs()));
-            assert!(
-                worst <= 0.01 * scale,
-                "{n} tokens: {label} logits moved {worst} against max {scale}"
-            );
-        }
+        assert!(
+            got.trunk == plain_chunked(&mut plain, &ids),
+            "{n} tokens: priming the drafter moved the trunk's Steel logits"
+        );
+        let scale = want.draft.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        let worst = got
+            .draft
+            .iter()
+            .zip(&want.draft)
+            .fold(0.0f32, |m, (a, b)| m.max((a - b).abs()));
+        assert!(
+            worst <= 0.01 * scale,
+            "{n} tokens: draft logits moved {worst} against max {scale}"
+        );
     }
 }
