@@ -21,7 +21,7 @@ public struct ModelFeatureBadgeView: View {
     public init(
         title: String,
         iconSystemName: String? = nil,
-        tintColor: Color = .secondary,
+        tintColor: Color = .gray,
         tooltip: String? = nil,
         tooltipDetail: String? = nil,
         style: BadgeStyle = .compact
@@ -52,7 +52,7 @@ public struct ModelFeatureBadgeView: View {
         HStack(spacing: iconSpacing) {
             if let iconSystemName {
                 Image(systemName: iconSystemName)
-                    .themedFont(fitting: iconSize, weight: .semibold)
+                    .themedFont(fontStep, weight: .semibold)
             }
             titleText
                 .themedFont(fontStep, weight: fontWeight)
@@ -124,9 +124,9 @@ public struct ModelFeatureBadgeView: View {
 
     private var cornerRadius: CGFloat {
         switch style {
-        case .compact: return 4
-        case .regular: return 6
-        case .prominent: return 8
+        case .compact: return AppMetrics.controlRadius - 2
+        case .regular: return AppMetrics.controlRadius
+        case .prominent: return AppMetrics.cardRadius
         }
     }
 
@@ -259,7 +259,7 @@ extension ModelFeatureBadgeView {
             return ModelFeatureBadgeView(
                 title: "TurboSpark Store",
                 iconSystemName: "sparkles",
-                tintColor: .secondary,
+                tintColor: .gray,
                 tooltip: "Stored in ~/.turbospark/models",
                 style: style
             )
