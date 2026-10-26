@@ -41,7 +41,7 @@ final class DesignTokenRatchetTests: XCTestCase {
             // `.appAction(.secondary)` is a button role, not a color, so it is
             // not counted.
             pattern: #"Color\.secondary|Color\.primary\.opacity|(?<!appAction)\(\.secondary\)|\(\.tertiary\)"#,
-            baseline: 225,
+            baseline: 223,
             fix: "use .appSecondary or .appSurface"),
     ]
 

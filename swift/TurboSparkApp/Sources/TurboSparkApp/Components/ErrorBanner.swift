@@ -9,7 +9,7 @@ struct ErrorBanner: View {
             HStack(spacing: 8) {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.red)
+                        .foregroundStyle(AppAttention.color)
                         .accessibilityHidden(true)
                     Text(verbatim: error)
                         .themedFont(.base)
@@ -20,18 +20,10 @@ struct ErrorBanner: View {
 
                 Spacer(minLength: 8)
 
-                Button {
+                AppIconButton("xmark", label: Text("Dismiss error", bundle: .module)) {
                     model.error = nil
-                } label: {
-                    Label { Text("Dismiss error", bundle: .module) } icon: { Image(systemName: "xmark") }
-                        .labelStyle(.iconOnly)
-                        .themedFont(.small, weight: .semibold)
-                        .frame(width: 28, height: 28)
-                        .contentShape(Circle())
                 }
-                .buttonStyle(.plain)
-                .help(Text("Dismiss error", bundle: .module))
-                .accessibilityLabel(Text("Dismiss error", bundle: .module))
+                .appAction(.quiet, size: .small)
                 .accessibilityHint(Text("Removes the error message", bundle: .module))
             }
             .padding(.horizontal, 14)
@@ -40,7 +32,7 @@ struct ErrorBanner: View {
                 Capsule()
                     .fill(.appSurface)
                     .overlay {
-                        Capsule().stroke(.red.opacity(0.55), lineWidth: 1)
+                        Capsule().stroke(AppAttention.color, lineWidth: 1)
                     }
             }
             .accessibilityAction(named: Text("Dismiss error", bundle: .module)) {

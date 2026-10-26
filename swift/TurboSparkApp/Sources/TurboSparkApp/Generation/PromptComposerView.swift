@@ -44,7 +44,7 @@ struct PromptComposerView: View {
                 // is certain to look as they compose. Persistent rather than
                 // first-send-only, so a return to the chat re-warns too.
                 HStack(spacing: 4) {
-                    GhostGlyph(size: 11, color: .secondary)
+                    GhostGlyph(size: 11, color: theme.secondaryText)
                         .accessibilityHidden(true)
                     Text("Temporary chat: this conversation can't be recovered.", bundle: .module)
                 }
