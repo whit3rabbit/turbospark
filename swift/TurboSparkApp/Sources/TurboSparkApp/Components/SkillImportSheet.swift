@@ -114,12 +114,14 @@ public struct SkillImportSheet: View {
                 .textFieldStyle(.roundedBorder)
                     .themedFont(.base)
 
+                // The title stays put so the button keeps its size; the bar
+                // sits beside it while the fetch runs.
+                if isFetchingRemote {
+                    AppProgressBar(value: nil, label: Text("Loading...", bundle: .module), size: .compact)
+                        .frame(minWidth: 32, idealWidth: 48, maxWidth: 64)
+                }
                 Button(action: { fetchRemoteMarketplace() }) {
-                    if isFetchingRemote {
-                        AppProgressBar(value: nil, label: Text("Fetch", bundle: .module), size: .compact)
-                    } else {
-                        Text("Fetch", bundle: .module)
-                    }
+                    Text("Fetch", bundle: .module)
                 }
                 .appAction(.primary)
                 .disabled(remoteInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isFetchingRemote)
@@ -213,12 +215,12 @@ public struct SkillImportSheet: View {
                                 Spacer()
 
                                 let isInstalling = installingSkillNames.contains(entry.name)
+                                if isInstalling {
+                                    AppProgressBar(value: nil, label: Text("Loading...", bundle: .module), size: .compact)
+                                        .frame(minWidth: 32, idealWidth: 48, maxWidth: 64)
+                                }
                                 Button(action: { installRemoteEntry(entry) }) {
-                                    if isInstalling {
-                                        AppProgressBar(value: nil, label: Text("Install", bundle: .module), size: .compact)
-                                    } else {
-                                        Text("Install", bundle: .module)
-                                    }
+                                    Text("Install", bundle: .module)
                                 }
                                 .appAction(.secondary, size: .small)
                                 .disabled(isInstalling)

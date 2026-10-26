@@ -192,15 +192,14 @@ public struct McpServerEditorSheet: View {
                     .themedFont(.small, weight: .semibold)
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
+                if isTesting {
+                    AppProgressBar(value: nil, label: Text("Loading...", bundle: .module), size: .compact)
+                        .frame(minWidth: 32, idealWidth: 48, maxWidth: 64)
+                }
                 Button {
                     Task { await runConnectionTest() }
                 } label: {
-                    if isTesting {
-                        AppProgressBar(value: nil, label: Text("Test Connection", bundle: .module), size: .compact)
-                            .frame(width: 16, height: 16)
-                    } else {
-                        Label { Text("Test Connection", bundle: .module) } icon: { Image(systemName: "bolt.fill") }
-                    }
+                    Label { Text("Test Connection", bundle: .module) } icon: { Image(systemName: "bolt.fill") }
                 }
                 .appAction(.secondary, size: .small)
                 .disabled(isTesting || validationMessage != nil)

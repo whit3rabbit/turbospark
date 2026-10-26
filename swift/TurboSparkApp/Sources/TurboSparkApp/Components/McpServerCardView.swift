@@ -97,17 +97,22 @@ struct McpServerCard: View {
     private var rowActions: some View {
         HStack(spacing: 8) {
             if isTesting {
-                AppProgressBar(value: nil, label: Text("Testing connection for \(server.name)", bundle: .module), size: .compact)
-                    .frame(width: 48)
+                AppProgressBar(value: nil, label: Text("Test connection for \(server.name)", bundle: .module), size: .compact)
+                    .frame(minWidth: 32, idealWidth: 48, maxWidth: 64)
             } else {
                 AppIconButton("bolt.fill", label: Text("Test connection and discover tools", bundle: .module)) {
                     onTest()
                 }
+                .appAction(.quiet, size: .small)
+                // The tooltip keeps the generic action; VoiceOver names the server.
+                .accessibilityLabel(Text("Test connection for \(server.name)", bundle: .module))
             }
 
             AppIconButton("gearshape", label: Text("Edit server settings", bundle: .module)) {
                 onEdit()
             }
+            .appAction(.quiet, size: .small)
+            .accessibilityLabel(Text("Edit settings for \(server.name)", bundle: .module))
 
             Toggle(isOn: Binding(
                 get: { server.isEnabled },
@@ -136,6 +141,8 @@ struct McpServerCard: View {
                 Image(systemName: "ellipsis")
             }
             .appMenuAction()
+            .help(Text("Server actions", bundle: .module))
+            .accessibilityLabel(Text("Server actions for \(server.name)", bundle: .module))
         }
     }
 

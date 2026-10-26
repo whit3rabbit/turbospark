@@ -134,15 +134,14 @@ public struct McpImportSheet: View {
             Button { onDismiss() } label: { Text("Done", bundle: .module) }
                 .keyboardShortcut(.cancelAction)
             Spacer()
+            if isFetching {
+                AppProgressBar(value: nil, label: Text("Loading...", bundle: .module), size: .compact)
+                    .frame(minWidth: 32, idealWidth: 48, maxWidth: 64)
+            }
             Button {
                 Task { await fetchCatalog() }
             } label: {
-                if isFetching {
-                    AppProgressBar(value: nil, label: Text("Fetch Catalog", bundle: .module), size: .compact)
-                        .frame(width: 16, height: 16)
-                } else {
-                    Label { Text("Fetch Catalog", bundle: .module) } icon: { Image(systemName: "arrow.down.circle") }
-                }
+                Label { Text("Fetch Catalog", bundle: .module) } icon: { Image(systemName: "arrow.down.circle") }
             }
             .appAction(.primary)
             .disabled(isFetching || sourceText.trimmingCharacters(in: .whitespaces).isEmpty)

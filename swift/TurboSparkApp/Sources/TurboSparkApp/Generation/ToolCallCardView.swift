@@ -778,7 +778,8 @@ struct ToolCallCardView: View {
                     label: fileName,
                     code: content,
                     language: lang,
-                    downloadFilename: fileName
+                    downloadFilename: fileName,
+                    labelIsVerbatim: true
                 )
             }
         }

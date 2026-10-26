@@ -232,7 +232,10 @@ struct AudioCustomVocabularySheet: View {
 
             Spacer()
 
-            AppIconButton("minus.circle", label: Text("Remove term from vocabulary", bundle: .module), role: .destructive) {
+            // Quiet, not destructive: a term is typed back in seconds, so a
+            // red role with no confirmation dialog overstated it (DESIGN.md
+            // section 2, Action hierarchy).
+            AppIconButton("minus.circle", label: Text("Remove term from vocabulary", bundle: .module)) {
                 deleteTerm(id: item.id)
             }
         }

@@ -45,6 +45,8 @@ public struct ChatSystemPromptSheet: View {
             VStack(alignment: .leading, spacing: 10) {
                 TextEditor(text: $text)
                     .themedCode(.base)
+                    // The editor is the only thing that sizes this sheet's width.
+                    .frame(minWidth: 460)
                     .appEditorSurface(minHeight: 220)
                 effectiveSourceDescription
                     .themedFont(.small)

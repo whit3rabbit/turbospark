@@ -153,11 +153,11 @@ struct ToolResultOutputView: View {
         switch palette {
         case .black: return Color(red: 0, green: 0, blue: 0)
         case .red: return Color(red: 0.8, green: 0, blue: 0)
-        case .green: return Color(red: 0.8, green: 0, blue: 0)
+        case .green: return Color(red: 0, green: 0.8, blue: 0)
         case .yellow: return Color(red: 0.8, green: 0.8, blue: 0)
         case .blue: return Color(red: 0, green: 0, blue: 0.93)
         case .magenta: return Color(red: 0.8, green: 0, blue: 0.8)
-        case .cyan: return Color(red: 0.8, green: 0, blue: 0.8)
+        case .cyan: return Color(red: 0, green: 0.8, blue: 0.8)
         case .white: return Color(red: 0.9, green: 0.9, blue: 0.9)
         case .brightBlack: return Color(white: 0.5)
         case .brightRed: return Color(red: 1, green: 0.25, blue: 0.25)

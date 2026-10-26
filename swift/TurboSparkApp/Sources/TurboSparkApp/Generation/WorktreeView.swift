@@ -361,11 +361,18 @@ struct WorktreeView: View {
             if let selectedPath = worktree.selectedFilePath,
                let file = worktree.scopedFiles.first(where: { $0.relativePath == selectedPath }) ?? worktree.files.first(where: { $0.relativePath == selectedPath }) {
                 if worktree.isLoadingDiff {
-                    AppProgressBar(
-                        value: nil,
-                        label: Text("Loading diff for \(file.fileName)...", bundle: .module),
-                        size: .compact
-                    )
+                    VStack(spacing: 8) {
+                        AppProgressBar(
+                            value: nil,
+                            label: Text("Loading diff for \(file.fileName)...", bundle: .module),
+                            size: .compact
+                        )
+                        .frame(minWidth: 40, idealWidth: 80, maxWidth: 120)
+                        Text("Loading diff for \(file.fileName)...", bundle: .module)
+                            .themedFont(.tiny)
+                            .foregroundStyle(.appSecondary)
+                            .accessibilityHidden(true)
+                    }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if let diff = worktree.selectedFileDiff {
                     WorktreeDiffView(
@@ -407,11 +414,18 @@ struct WorktreeView: View {
                let file = worktree.scopedFiles.first(where: { $0.relativePath == selectedPath }) ?? worktree.files.first(where: { $0.relativePath == selectedPath }) {
                 Divider()
                 if worktree.isLoadingDiff {
-                    AppProgressBar(
-                        value: nil,
-                        label: Text("Loading diff...", bundle: .module),
-                        size: .compact
-                    )
+                    HStack(spacing: 6) {
+                        AppProgressBar(
+                            value: nil,
+                            label: Text("Loading diff...", bundle: .module),
+                            size: .compact
+                        )
+                        .frame(minWidth: 40, idealWidth: 80, maxWidth: 120)
+                        Text("Loading diff...", bundle: .module)
+                            .themedFont(.tiny)
+                            .foregroundStyle(.appSecondary)
+                            .accessibilityHidden(true)
+                    }
                     .padding(8)
                 } else if let diff = worktree.selectedFileDiff {
                     WorktreeDiffView(

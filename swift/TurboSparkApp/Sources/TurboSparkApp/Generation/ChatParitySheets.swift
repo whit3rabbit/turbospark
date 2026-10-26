@@ -283,11 +283,19 @@ struct RecapSheet: View {
         sheetFrame(title: "Conversation Recap", iconName: "doc.text.magnifyingglass", dismiss: dismiss) {
             VStack(alignment: .leading, spacing: 12) {
                 if model.isRecapping && model.recapText.isEmpty {
-                    AppProgressBar(
-                        value: nil,
-                        label: Text("Summarizing this conversation...", bundle: .module),
-                        size: .compact
-                    )
+                    // The bar's label is VoiceOver only, so the words stay visible.
+                    HStack(spacing: 8) {
+                        AppProgressBar(
+                            value: nil,
+                            label: Text("Summarizing this conversation...", bundle: .module),
+                            size: .compact
+                        )
+                        .frame(minWidth: 40, idealWidth: 80, maxWidth: 120)
+                        Text("Summarizing this conversation...", bundle: .module)
+                            .themedFont(.small)
+                            .foregroundStyle(.appSecondary)
+                            .accessibilityHidden(true)
+                    }
                 } else {
                     ScrollView {
                         ChatMessageMarkdownView(model.recapText)

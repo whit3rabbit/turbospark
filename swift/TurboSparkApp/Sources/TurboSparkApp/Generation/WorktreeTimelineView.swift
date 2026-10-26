@@ -135,7 +135,7 @@ public struct WorktreeTimelineView: View {
 
                 if worktree.isLoadingCommitFiles {
                     AppProgressBar(value: nil, label: Text("Loading commit files...", bundle: .module), size: .compact)
-                        .frame(width: 80)
+                        .frame(minWidth: 40, idealWidth: 80, maxWidth: 120)
                 } else {
                     Text("\(worktree.selectedCommitFiles.count) files", bundle: .module)
                         .themedFont(.tiny).monospacedDigit()
@@ -144,8 +144,15 @@ public struct WorktreeTimelineView: View {
             }
 
             if worktree.isLoadingCommitFiles {
-                AppProgressBar(value: nil, label: Text("Loading commit files...", bundle: .module))
-                    .padding(.vertical, 4)
+                HStack(spacing: 6) {
+                    AppProgressBar(value: nil, label: Text("Loading commit files...", bundle: .module), size: .compact)
+                        .frame(minWidth: 40, idealWidth: 80, maxWidth: 120)
+                    Text("Loading commit files...", bundle: .module)
+                        .themedFont(.tiny)
+                        .foregroundStyle(.appSecondary)
+                        .accessibilityHidden(true)
+                }
+                .padding(.vertical, 4)
             } else if worktree.selectedCommitFiles.isEmpty {
                 Text("No modified files recorded.", bundle: .module)
                     .themedFont(.tiny)

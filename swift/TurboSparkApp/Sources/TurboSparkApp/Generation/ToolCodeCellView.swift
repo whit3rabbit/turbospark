@@ -9,6 +9,8 @@ struct ToolCodeCellView: View {
     let code: String
     var language: String = "bash"
     var downloadFilename: String? = nil
+    /// True when `label` is a file name rather than a catalog key.
+    var labelIsVerbatim = false
 
     @State private var isCopied = false
     @State private var copyTask: Task<Void, Never>? = nil
@@ -43,7 +45,16 @@ struct ToolCodeCellView: View {
 
     private var headerBar: some View {
         HStack(spacing: 8) {
-            Text(LocalizedStringKey(label), bundle: .module)
+            // The labels are lowercase catalog keys; upper case is a
+            // presentation choice (the output cell's OUTPUT and ERROR match).
+            Group {
+                if labelIsVerbatim {
+                    Text(verbatim: label)
+                } else {
+                    Text(LocalizedStringKey(label), bundle: .module)
+                }
+            }
+                .textCase(.uppercase)
                 .themedCode(.callout, weight: .bold)
                 .foregroundStyle(.appSecondary)
 

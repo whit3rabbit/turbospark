@@ -349,8 +349,8 @@ struct AudioModelPickerView: View {
                     .themedFont(.small)
                     .foregroundStyle(
                         decision.isBlocked
-                            ? AnyShapeStyle(AppAttention.color)
-                            : AnyShapeStyle(AppThemeColor.appSecondary)
+                            ? AnyShapeStyle(Color.red)
+                            : AnyShapeStyle(AppAttention.color)
                     )
                     .fixedSize(horizontal: false, vertical: true)
                 }
