@@ -185,7 +185,12 @@ when this file gets updated relative to the version bump and the tag.
   leg) and SwiftPM's `.build`, and the CLI/server release build now shares
   the staticlib's `MACOSX_DEPLOYMENT_TARGET` so cargo stops rebuilding 22
   crates a second time. `workflow_dispatch` runs the package job from a
-  branch.
+  branch. `turbospark-audio` builds at opt-level 1 in the dev profile
+  (`[profile.dev.package.turbospark-audio]`): its unit suite was 438 s of the
+  test step and runs 2.8x faster optimized. The two refactor-parity tests
+  that were bit-for-bit now carry the tolerance opt-level 1 puts them at:
+  whisper log-mel one ULP, mimi attention four ULPs of its output scale
+  (measured about one); the rest of the suite is unchanged.
 - Gated-DeltaNet key head dimension `Dk = 128` baked into the Metal delta
   kernels as a compile-time constant (`FC_GDN_DK = 98`), default on. Unrolls
   the per-lane state loops in `gdn_delta_step_decode`, `gdn_delta_step_prefill`
