@@ -33,6 +33,12 @@ public enum TSMotion {
     /// The invisible reset at the end of a looping sweep, so the next pass
     /// starts from the leading edge instead of sliding back across the bar.
     public static let snap: Animation = .linear(duration: 0.01)
+
+    /// A slow breathing idle for mascot glow and ambient surfaces.
+    public static let idleGlow: Animation = .easeInOut(duration: 1.8)
+
+    /// A gentle idling bob for mascot characters.
+    public static let idleBob: Animation = .easeInOut(duration: 2.4)
 }
 
 /// Resolves the app's reduce-motion preference over the system one and hands

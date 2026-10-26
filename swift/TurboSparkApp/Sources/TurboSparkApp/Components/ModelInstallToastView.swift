@@ -54,12 +54,17 @@ struct ModelInstallToastView: View {
                     }
                     .appAction(.secondary, size: .small)
                     .disabled(!model.isInstallPaused && !model.canPauseModelDownload)
+                    .help(model.isInstallPaused
+                        ? Text("Resume", bundle: .module)
+                        : (!model.canPauseModelDownload
+                            ? Text("Download cannot be paused at this time.", bundle: .module)
+                            : Text("Pause", bundle: .module)))
                     .fixedSize()
 
-                    Button(role: .destructive, action: model.cancelActiveModelDownload) {
+                    Button(role: .cancel, action: model.cancelActiveModelDownload) {
                         Text("Cancel", bundle: .module)
                     }
-                    .appAction(.destructive, size: .small)
+                    .appAction(.secondary, size: .small)
                     .fixedSize()
                     .accessibilityLabel(Text("Cancel Download", bundle: .module))
                 }
@@ -89,7 +94,7 @@ struct ModelInstallToastView: View {
                 .foregroundStyle(.appSecondary)
             } else if model.isInstallPaused {
                 AppProgressBar(value: model.installProgressFraction ?? 0, label: Text("Paused", bundle: .module),
-                               animated: false)
+                                animated: false)
             } else {
                 AppProgressBar(value: nil, label: Text(title, bundle: .module))
             }
@@ -114,11 +119,11 @@ struct ModelInstallToastView: View {
         .padding(14)
         .foregroundStyle(.appText)
         .background {
-            RoundedRectangle(cornerRadius: 14)
+            RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
                 .fill(.appPage)
                 .shadow(color: .black.opacity(0.18), radius: 12, x: 0, y: 4)
                 .overlay {
-                    RoundedRectangle(cornerRadius: 14)
+                    RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
                         .stroke(.appBorder, lineWidth: 0.5)
                 }
         }

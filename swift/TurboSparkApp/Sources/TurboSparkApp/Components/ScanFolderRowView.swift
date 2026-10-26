@@ -108,7 +108,7 @@ struct ScanFolderRowView: View {
 
     @ViewBuilder private func glyphImage(_ glyph: String) -> some View {
         if glyph == LibraryRowGlyph.warning {
-            Image(systemName: glyph).foregroundStyle(.orange).accessibilityHidden(true)
+            Image(systemName: glyph).foregroundStyle(AppAttention.color).accessibilityHidden(true)
         } else {
             Image(systemName: glyph).foregroundStyle(.appSecondary).accessibilityHidden(true)
         }

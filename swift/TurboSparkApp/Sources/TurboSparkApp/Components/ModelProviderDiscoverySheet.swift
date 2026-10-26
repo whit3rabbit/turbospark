@@ -21,13 +21,14 @@ struct ModelProviderDiscoverySheet: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             if isScanning {
-                HStack(spacing: 8) {
-                    ProgressView()
-                    Text("Scanning known locations...", bundle: .module)
-                }
+                AppProgressBar(value: nil, label: Text("Scanning known locations...", bundle: .module))
+                    .padding(.vertical, 8)
             } else if candidates.isEmpty {
-                Text("No known provider folders were found.", bundle: .module)
-                    .foregroundStyle(.appSecondary)
+                AppEmptyState(
+                    systemImage: "folder.badge.questionmark",
+                    title: Text("No known provider folders were found.", bundle: .module)
+                )
+                .frame(maxHeight: 200)
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 8) {
@@ -54,7 +55,7 @@ struct ModelProviderDiscoverySheet: View {
             }
         }
         .padding(22)
-        .frame(width: 620)
+        .frame(minWidth: 520, idealWidth: 620, maxWidth: 720)
         .task { scan() }
     }
 
@@ -73,7 +74,7 @@ struct ModelProviderDiscoverySheet: View {
                     Spacer()
                     statusText(candidate)
                         .themedFont(.tiny)
-                        .foregroundStyle(candidate.supportedModelCount > 0 ? .green : .orange)
+                        .foregroundStyle(candidate.supportedModelCount > 0 ? AnyShapeStyle(.appAccent) : AnyShapeStyle(AppAttention.color))
                 }
                 SettingsPathText(candidate.path, size: .tiny)
                 if candidate.provider == .ollama && candidate.supportedModelCount == 0 {
@@ -85,7 +86,7 @@ struct ModelProviderDiscoverySheet: View {
         }
         .toggleStyle(.checkbox)
         .padding(9)
-        .background(.appSurface, in: RoundedRectangle(cornerRadius: 7))
+        .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius))
         .disabled(candidate.supportedModelCount == 0 && candidate.provider != .lmStudio)
     }
 

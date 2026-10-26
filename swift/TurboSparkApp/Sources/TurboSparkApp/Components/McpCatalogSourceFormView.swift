@@ -16,12 +16,14 @@ struct McpCatalogSourceFormView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Catalog Source", bundle: .module)
                 .themedFont(.small, weight: .semibold)
+                .accessibilityAddTraits(.isHeader)
 
             Picker(selection: $sourceKind) {
                 ForEach(McpImportSheet.SourceKind.allCases) { kind in
                     kind.title.tag(kind)
                 }
             } label: { Text("Source", bundle: .module) }
+            .labelsHidden()
             .pickerStyle(.segmented)
 
             sourceField
@@ -46,7 +48,7 @@ struct McpCatalogSourceFormView: View {
                 .textFieldStyle(.roundedBorder)
                 if sourceKind == .directory {
                     Button { chooseFolder() } label: { Text("Choose...", bundle: .module) }
-                        .buttonStyle(.bordered)
+                        .appAction(.secondary, size: .small)
                 }
             }
         }
@@ -80,8 +82,7 @@ struct McpCatalogSourceFormView: View {
                 .foregroundStyle(.appSecondary)
             TextEditor(text: $sparsePathsText)
                 .themedCode(.small)
-                .frame(height: 50)
-                .appEditorSurface()
+                .appEditorSurface(minHeight: 50)
                 .accessibilityLabel(Text("Sparse Paths (one per line, optional)", bundle: .module))
             Text("Checks out only these subtrees, for a repository too large to clone whole.", bundle: .module)
                 .themedFont(.tiny)
