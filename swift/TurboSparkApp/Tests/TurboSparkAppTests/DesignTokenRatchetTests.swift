@@ -24,12 +24,12 @@ final class DesignTokenRatchetTests: XCTestCase {
         Rule(
             name: "bare static TurboSparkTheme accessor",
             pattern: #"TurboSparkTheme\.\w+(Color|Background)\b(?!\s*\()"#,
-            baseline: 70,
+            baseline: 69,
             fix: "use TurboSparkTheme.x(isDark: theme.isDark) or the resolved theme"),
         Rule(
             name: "hard-coded border opacity",
             pattern: #"\.appBorder\.opacity\("#,
-            baseline: 13,
+            baseline: 11,
             fix: "stroke .appBorder as the theme gives it"),
         Rule(
             name: "system accent color",
@@ -41,7 +41,7 @@ final class DesignTokenRatchetTests: XCTestCase {
             // `.appAction(.secondary)` is a button role, not a color, so it is
             // not counted.
             pattern: #"Color\.secondary|Color\.primary\.opacity|(?<!appAction)\(\.secondary\)|\(\.tertiary\)"#,
-            baseline: 229,
+            baseline: 227,
             fix: "use .appSecondary or .appSurface"),
     ]
 

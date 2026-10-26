@@ -18,12 +18,14 @@ struct McpServerCard: View {
     let onTest: () -> Void
     let onEdit: () -> Void
 
+    @State private var isConfirmingDelete = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
                 Image(systemName: "server.rack")
                     .themedFont(.title3)
-                    .foregroundStyle(server.isEnabled ? TurboSparkTheme.accentColor : Color.secondary)
+                    .foregroundStyle(server.isEnabled ? AnyShapeStyle(.appAccent) : AnyShapeStyle(.appSecondary))
                     .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: 2) {
@@ -37,7 +39,7 @@ struct McpServerCard: View {
                                 .themedFont(.tiny, weight: .medium)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
-                                .background(Color.secondary.opacity(0.12))
+                                .background(.appElevated)
                                 .clipShape(Capsule())
                         }
                     }
@@ -54,12 +56,16 @@ struct McpServerCard: View {
             }
 
             if let result {
-                Text(result.message)
-                    .themedFont(.small)
-                    .foregroundStyle(result.isError ? .red : .green)
-                    .padding(6)
-                    .background(result.isError ? Color.red.opacity(0.1) : Color.green.opacity(0.1))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                HStack(spacing: 6) {
+                    Image(systemName: result.isError ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
+                        .themedFont(.small)
+                    Text(result.message)
+                        .themedFont(.small)
+                }
+                .foregroundStyle(result.isError ? AnyShapeStyle(AppAttention.color) : AnyShapeStyle(.appAccent))
+                .padding(6)
+                .background(.appElevated)
+                .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius))
             }
 
             if !server.discoveredTools.isEmpty {
@@ -70,31 +76,38 @@ struct McpServerCard: View {
         .background(.appSurface)
         .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius))
         .overlay(RoundedRectangle(cornerRadius: AppMetrics.cardRadius).stroke(.appBorder, lineWidth: 0.5))
+        .confirmationDialog(
+            Text("Delete Server", bundle: .module),
+            isPresented: $isConfirmingDelete,
+            titleVisibility: .visible
+        ) {
+            Button(role: .destructive) {
+                model.deleteGlobalMcpServer(id: server.id)
+            } label: {
+                Text("Delete Server", bundle: .module)
+            }
+            Button(role: .cancel) {} label: {
+                Text("Cancel", bundle: .module)
+            }
+        } message: {
+            Text("Are you sure you want to delete this MCP server? This action cannot be undone.", bundle: .module)
+        }
     }
 
     private var rowActions: some View {
         HStack(spacing: 8) {
-            Button(action: onTest) {
-                if isTesting {
-                    ProgressView()
-                        .scaleEffect(0.5)
-                        .frame(width: 16, height: 16)
-                } else {
-                    Image(systemName: "bolt.fill")
-                        .themedFont(.small)
+            if isTesting {
+                AppProgressBar(value: nil, label: Text("Testing connection for \(server.name)", bundle: .module), size: .compact)
+                    .frame(width: 48)
+            } else {
+                AppIconButton("bolt.fill", label: Text("Test connection and discover tools", bundle: .module)) {
+                    onTest()
                 }
             }
-            .buttonStyle(.borderless)
-            .help(Text("Test connection and discover tools", bundle: .module))
-            .accessibilityLabel(Text("Test connection for \(server.name)", bundle: .module))
 
-            Button(action: onEdit) {
-                Image(systemName: "gearshape")
-                    .themedFont(.small)
+            AppIconButton("gearshape", label: Text("Edit server settings", bundle: .module)) {
+                onEdit()
             }
-            .buttonStyle(.borderless)
-            .help(Text("Edit server settings", bundle: .module))
-            .accessibilityLabel(Text("Edit settings for \(server.name)", bundle: .module))
 
             Toggle(isOn: Binding(
                 get: { server.isEnabled },
@@ -115,19 +128,14 @@ struct McpServerCard: View {
                 }
                 Divider()
                 Button(role: .destructive) {
-                    model.deleteGlobalMcpServer(id: server.id)
+                    isConfirmingDelete = true
                 } label: {
                     Label { Text("Delete Server", bundle: .module) } icon: { Image(systemName: "trash") }
                 }
             } label: {
                 Image(systemName: "ellipsis")
-                    .themedFont(.small)
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .frame(width: 18)
-            .help(Text("Server actions", bundle: .module))
-            .accessibilityLabel(Text("Server actions for \(server.name)", bundle: .module))
+            .appMenuAction()
         }
     }
 
@@ -177,8 +185,8 @@ struct McpServerCard: View {
                 }
             }
             .padding(8)
-            .background(.appSurface.opacity(0.6))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .background(.appSurface)
+            .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius))
         }
     }
 }
