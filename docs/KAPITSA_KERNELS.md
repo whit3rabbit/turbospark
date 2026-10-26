@@ -1066,14 +1066,13 @@ What it says:
   `1793012166392-88279-0`). Cap 7 was added to the replay grid in
   `crates/lab/src/depth_replay.rs` for this.
 
-  On that table the tuned
-  `3,1,1,2` controller at cap 8 is 1.130x fixed 2 by geomean (prose 36.2,
-  code 48.2, copy-heavy 51.9 tok/s, with 37 of 90 copy-heavy rounds at
-  depth 8). The same thresholds at cap 7 are 1.223x (36.2, 50.8, and 62.4
-  tok/s), and the best setting in the grid is cap 7 with `2,1,1,3` at
-  1.231x, worst case 1.040x. Prose is identical across caps because the
-  controller never climbs past 4 there. Replayed fixed 6 also beats fixed 7
-  (1.144x against 1.092x), as it does live.
+  On that table the tuned `3,1,1,2` controller at cap 8 is 1.130x fixed 2
+  by geomean (prose 36.2, code 48.2, copy-heavy 51.9 tok/s, with 37 of 90
+  copy-heavy rounds at depth 8). The same thresholds at cap 7 are 1.223x
+  (36.2, 50.8, and 62.4 tok/s), and the best setting in the grid is cap 7
+  with `2,1,1,3` at 1.231x, worst case 1.040x. Prose is identical across
+  caps because the controller never climbs past 4 there. Replayed fixed 6
+  also beats fixed 7 (1.144x against 1.092x), as it does live.
 
   Run live, `tslab ab` on the same install: `mtp:8a` as the baseline
   against `mtp:7a`, both with `TURBOSPARK_ADAPTIVE_DEPTH=3,1,1,2`, the tile
