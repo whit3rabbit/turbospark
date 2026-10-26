@@ -20,6 +20,7 @@ public struct SkillImportSheet: View {
     @State private var remoteSource: MarketplaceSource? = nil
     @State private var remoteError: String? = nil
     @State private var installingSkillNames: Set<String> = []
+    @FocusState private var isInputFocused: Bool
 
     private let capturedProjectID: UUID?
     public init(model: AppModel, projectID: UUID? = nil) {
@@ -46,6 +47,7 @@ public struct SkillImportSheet: View {
             remoteMarketplaceContent
         }
         .frame(minWidth: 640, minHeight: 480)
+        .onAppear { isInputFocused = true }
         .sheet(isPresented: $showsSources) {
             MarketplaceSourcesView(model: model, kind: .skills, projectID: importToProjectScope ? capturedProjectID : nil) { source in
                 fetchRemoteMarketplace(source: source)
@@ -68,6 +70,7 @@ public struct SkillImportSheet: View {
             Button {
                 dismiss()
             } label: { Text("Close", bundle: .module) }
+                .appAction(.quiet, size: .small)
                 .keyboardShortcut(.cancelAction)
         }
         .padding(.horizontal, 20)
@@ -94,7 +97,7 @@ public struct SkillImportSheet: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 8)
-        .background(.appSurface.opacity(0.4))
+        .background(.appSurface)
     }
 
     // MARK: - Remote Marketplace Content
@@ -106,23 +109,25 @@ public struct SkillImportSheet: View {
                 TextField(text: $remoteInput, prompt: Text("GitHub repo (owner/name), Git URL, or HTTPS marketplace.json", bundle: .module)) {
                     Text("GitHub repo (owner/name), Git URL, or HTTPS marketplace.json", bundle: .module)
                 }
+                .focused($isInputFocused)
                 .labelsHidden()
                 .textFieldStyle(.roundedBorder)
                     .themedFont(.base)
 
                 Button(action: { fetchRemoteMarketplace() }) {
                     if isFetchingRemote {
-                        ProgressView().controlSize(.small)
+                        AppProgressBar(value: nil, label: Text("Fetch", bundle: .module), size: .compact)
                     } else {
                         Text("Fetch", bundle: .module)
                     }
                 }
                 .appAction(.primary)
                 .disabled(remoteInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isFetchingRemote)
+                .keyboardShortcut(.defaultAction)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
-            .background(.appSurface.opacity(0.2))
+            .background(.appSurface)
 
             Rectangle()
                 .fill(.appBorder)
@@ -132,7 +137,7 @@ public struct SkillImportSheet: View {
                 VStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle")
                         .themedFont(.title2)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(AppAttention.color)
                     Text(error)
                         .themedFont(.base)
                         .foregroundStyle(.appSecondary)
@@ -173,60 +178,61 @@ public struct SkillImportSheet: View {
                         .fill(.appBorder)
                         .frame(height: 1)
 
-                    List(manifest.skills) { entry in
-                        HStack(spacing: 12) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack {
-                                    Text(entry.name)
-                                        .themedFont(.small, weight: .semibold)
-                                    if let v = entry.version {
-                                        Text(v)
-                                            .themedFont(.tiny)
-                                            .foregroundStyle(.appSecondary)
+                    if manifest.skills.isEmpty {
+                        AppEmptyState(
+                            systemImage: "wand.and.stars",
+                            title: Text("No Skills Installed", bundle: .module)
+                        )
+                        .padding(.top, 40)
+                    } else {
+                        List(manifest.skills) { entry in
+                            HStack(spacing: 12) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    HStack {
+                                        Text(entry.name)
+                                            .themedFont(.small, weight: .semibold)
+                                        if let v = entry.version {
+                                            Text(v)
+                                                .themedFont(.tiny)
+                                                .foregroundStyle(.appSecondary)
+                                        }
+                                        if let cat = entry.category {
+                                            Text(cat)
+                                                .themedFont(.tiny)
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 1)
+                                                .background(.appAccent.opacity(0.12))
+                                                .clipShape(Capsule())
+                                        }
                                     }
-                                    if let cat = entry.category {
-                                        Text(cat)
-                                            .themedFont(.tiny)
-                                            .padding(.horizontal, 6)
-                                            .padding(.vertical, 1)
-                                            .background(Color.blue.opacity(0.12))
-                                            .clipShape(Capsule())
+                                    Text(entry.description)
+                                        .themedFont(.small)
+                                        .foregroundStyle(.appSecondary)
+                                }
+
+                                Spacer()
+
+                                let isInstalling = installingSkillNames.contains(entry.name)
+                                Button(action: { installRemoteEntry(entry) }) {
+                                    if isInstalling {
+                                        AppProgressBar(value: nil, label: Text("Install", bundle: .module), size: .compact)
+                                    } else {
+                                        Text("Install", bundle: .module)
                                     }
                                 }
-                                Text(entry.description)
-                                    .themedFont(.small)
-                                    .foregroundStyle(.appSecondary)
+                                .appAction(.secondary, size: .small)
+                                .disabled(isInstalling)
                             }
-
-                            Spacer()
-
-                            let isInstalling = installingSkillNames.contains(entry.name)
-                            Button(action: { installRemoteEntry(entry) }) {
-                                if isInstalling {
-                                    ProgressView().controlSize(.small)
-                                } else {
-                                    Text("Install", bundle: .module)
-                                }
-                            }
-                            .buttonStyle(.bordered)
-                            .disabled(isInstalling)
+                            .padding(.vertical, 4)
                         }
-                        .padding(.vertical, 4)
                     }
                 }
             } else {
-                VStack(spacing: 12) {
-                    Image(systemName: "globe.badge.chevron.backward")
-                        .themedFont(.display)
-                        .foregroundStyle(.appSecondary)
-                    Text("Enter a GitHub repository (e.g. 'whit3rabbit/agent-skills') or direct HTTPS URL to browse and install remote skills.", bundle: .module)
-                        .themedFont(.base)
-                        .foregroundStyle(.appSecondary)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 440)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(30)
+                AppEmptyState(
+                    systemImage: "globe.badge.chevron.backward",
+                    title: Text("Skill Marketplace", bundle: .module),
+                    message: Text("Enter a GitHub repository (e.g. 'whit3rabbit/agent-skills') or direct HTTPS URL to browse and install remote skills.", bundle: .module)
+                )
             }
         }
     }

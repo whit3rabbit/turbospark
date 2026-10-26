@@ -72,11 +72,11 @@ public struct ThemeConfigCardView: View {
                 contrastRow
             }
         }
-        .background(.appSurface.opacity(0.7))
+        .background(.appSurface)
         .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
-                .stroke(.appBorder.opacity(0.4), lineWidth: 1)
+                .stroke(.appBorder, lineWidth: 1)
         )
     }
 
@@ -116,8 +116,8 @@ public struct ThemeConfigCardView: View {
                     .font(theme.ui(.small, weight: .bold))
                     .padding(.horizontal, 4)
                     .padding(.vertical, 2)
-                    .background(Color.accentColor.opacity(0.15))
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .background(theme.accent.opacity(0.15))
+                    .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius))
                     .accessibilityHidden(true)
 
                 Text(verbatim: config.preset)
@@ -132,7 +132,7 @@ public struct ThemeConfigCardView: View {
             .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
-                    .stroke(.appBorder.opacity(0.4), lineWidth: 1)
+                    .stroke(.appBorder, lineWidth: 1)
             )
         }
         .menuStyle(.borderlessButton)
@@ -161,7 +161,7 @@ public struct ThemeConfigCardView: View {
                 ForEach(accentOptions) { option in
                     HStack {
                         Circle()
-                            .fill(Color(hex: option.hex) ?? .primary)
+                            .fill(Color(hex: option.hex) ?? theme.accent)
                             .frame(width: 8, height: 8)
                         // Curated names are catalog keys; a carried preset
                         // or custom name has no key and shows as written.

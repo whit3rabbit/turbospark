@@ -110,7 +110,7 @@ struct ModelMoveSheet: View {
             SummaryRow(label: Text("Space required", bundle: .module)) {
                 if plan.isMeasuring {
                     HStack(spacing: 6) {
-                        ProgressView().controlSize(.small)
+                        AppProgressBar(value: nil, label: Text("Measuring...", bundle: .module), size: .compact)
                         Text("Measuring...", bundle: .module)
                     }
                     .accessibilityElement(children: .combine)
@@ -161,9 +161,9 @@ struct ModelMoveSheet: View {
         let move = sheet.progress
         return VStack(alignment: .leading, spacing: 8) {
             if let fraction = move?.fraction {
-                ProgressView(value: fraction)
+                AppProgressBar(value: fraction, label: Text(LocalizedStringKey((move?.phase ?? .finishing).title), bundle: .module))
             } else {
-                ProgressView().progressViewStyle(.linear)
+                AppProgressBar(value: nil, label: Text(LocalizedStringKey((move?.phase ?? .finishing).title), bundle: .module))
             }
             HStack(alignment: .firstTextBaseline) {
                 // No move left but the sheet still waiting: the engine has answered and
@@ -287,7 +287,7 @@ struct ModelMoveSheet: View {
     }
 
     static func tint(for refusal: MoveRefusal?) -> AnyShapeStyle {
-        refusal == .noDestination ? AnyShapeStyle(AppThemeColor.appSecondary) : AnyShapeStyle(Color.orange)
+        refusal == .noDestination ? AnyShapeStyle(AppThemeColor.appSecondary) : AnyShapeStyle(AppAttention.color)
     }
 
     /// "40%", for VoiceOver; nothing while the bar is indeterminate.

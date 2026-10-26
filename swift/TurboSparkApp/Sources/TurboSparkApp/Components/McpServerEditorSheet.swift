@@ -20,6 +20,9 @@ public struct McpServerEditorSheet: View {
     let onSave: (McpServerConfig) -> Void
     let onDismiss: () -> Void
 
+    @Environment(\.appTheme) private var theme
+    @FocusState private var isNameFocused: Bool
+
     @State private var name: String = ""
     @State private var transportType: String = "stdio"
     @State private var command: String = "npx"
@@ -73,8 +76,13 @@ public struct McpServerEditorSheet: View {
             Divider()
             footer
         }
-        .frame(width: 540, height: 640)
-        .onAppear(perform: populateValues)
+        .frame(minWidth: 540, minHeight: 640)
+        .onAppear {
+            populateValues()
+            if existingConfig == nil {
+                isNameFocused = true
+            }
+        }
     }
 
     private var header: some View {
@@ -105,6 +113,7 @@ public struct McpServerEditorSheet: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Server Identity", bundle: .module)
                 .themedFont(.small, weight: .semibold)
+                .accessibilityAddTraits(.isHeader)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Server Name", bundle: .module)
@@ -113,6 +122,7 @@ public struct McpServerEditorSheet: View {
                 TextField(text: $name, prompt: Text(verbatim: "codebase-memory-mcp")) {
                     Text("Server Name", bundle: .module)
                 }
+                .focused($isNameFocused)
                 .labelsHidden()
                 .textFieldStyle(.roundedBorder)
             }
@@ -134,6 +144,7 @@ public struct McpServerEditorSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Transport Type", bundle: .module)
                 .themedFont(.small, weight: .semibold)
+                .accessibilityAddTraits(.isHeader)
 
             Picker(selection: $transportType) {
                 Text("Local Subprocess (Stdio)", bundle: .module).tag("stdio")
@@ -163,6 +174,7 @@ public struct McpServerEditorSheet: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Execution Settings", bundle: .module)
                 .themedFont(.small, weight: .semibold)
+                .accessibilityAddTraits(.isHeader)
 
             Toggle(isOn: $isEnabled) {
                 Text("Enable Server", bundle: .module)
@@ -178,30 +190,30 @@ public struct McpServerEditorSheet: View {
             HStack {
                 Text("Connection & Discovered Tools", bundle: .module)
                     .themedFont(.small, weight: .semibold)
+                    .accessibilityAddTraits(.isHeader)
                 Spacer()
                 Button {
                     Task { await runConnectionTest() }
                 } label: {
                     if isTesting {
-                        ProgressView()
-                            .scaleEffect(0.6)
+                        AppProgressBar(value: nil, label: Text("Test Connection", bundle: .module), size: .compact)
                             .frame(width: 16, height: 16)
                     } else {
                         Label { Text("Test Connection", bundle: .module) } icon: { Image(systemName: "bolt.fill") }
                     }
                 }
-                .buttonStyle(.bordered)
+                .appAction(.secondary, size: .small)
                 .disabled(isTesting || validationMessage != nil)
             }
 
             if let testResult {
                 Text(testResult)
                     .themedFont(.small)
-                    .foregroundStyle(testIsError ? .red : .green)
+                    .foregroundStyle(testIsError ? AppAttention.color : theme.accent)
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(testIsError ? Color.red.opacity(0.1) : Color.green.opacity(0.1))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .background(testIsError ? AppAttention.color.opacity(0.12) : theme.accent.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
             }
 
             if !discoveredTools.isEmpty {
@@ -227,8 +239,8 @@ public struct McpServerEditorSheet: View {
                     }
                 }
                 .padding(8)
-                .background(Color.secondary.opacity(0.06))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .background(.appSurface)
+                .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
             }
         }
     }
@@ -236,18 +248,19 @@ public struct McpServerEditorSheet: View {
     private var footer: some View {
         HStack {
             Button { onDismiss() } label: { Text("Cancel", bundle: .module) }
+                .appAction(.secondary)
                 .keyboardShortcut(.cancelAction)
             if let validationMessage {
                 Text(validationMessage)
                     .themedFont(.small)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(AppAttention.color)
                     .lineLimit(2)
             }
             Spacer()
             Button {
                 saveServer()
             } label: { Text("Save Server", bundle: .module) }
-            .buttonStyle(.borderedProminent)
+            .appAction(.primary)
             .disabled(validationMessage != nil)
             .keyboardShortcut(.defaultAction)
         }
