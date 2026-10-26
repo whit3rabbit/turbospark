@@ -15,6 +15,7 @@ pub use dense::{
     build_synthetic_qwen_gdn_dense_install_with_both_drafters,
     build_synthetic_qwen_gdn_dense_install_with_dflash,
     build_synthetic_qwen_gdn_dense_install_with_dflash_streamed,
+    build_synthetic_qwen_gdn_dense_install_with_dflash_wide_heads,
     build_synthetic_qwen_gdn_dense_install_with_mtp,
     build_synthetic_qwen_gdn_dense_install_with_mtp_streamed,
     build_synthetic_qwen_gdn_dense_install_with_vision,

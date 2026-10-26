@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 mod config;
+mod dflash_tree;
 mod draft_lattice;
 #[cfg(target_os = "macos")]
 pub mod embedding_probe;
@@ -122,6 +123,9 @@ pub use model_io::{
 };
 
 #[cfg(target_os = "macos")]
+pub use dflash_tree::{
+    dflash_best_first_tree, dflash_tree_accept, dflash_tree_slot_parents, DflashTreeNode,
+};
 pub use draft_lattice::DflashLattice;
 pub use error::RuntimeError;
 #[cfg(target_os = "macos")]

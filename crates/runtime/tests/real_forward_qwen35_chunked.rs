@@ -386,10 +386,10 @@ fn an_image_free_map_reproduces_the_sequential_logits() {
     }
 }
 
-/// An open drafter is refused by name too (`families/qwen/prefill.rs`'s
-/// header): the driver does not encode the DFlash2 aux-capture hook the
-/// sequential dense branch fires on every pass, so silently prefilling
-/// through it would leave the drafter reading a stale/empty capture.
+/// An open drafter is refused by name on the PLAIN entry point
+/// (`families/qwen/prefill.rs`'s header): only the priming entry point
+/// primes a drafter over the prompt, so silently prefilling through the
+/// plain one would leave the drafter's cache empty.
 #[test]
 fn an_open_drafter_is_refused_by_name() {
     let dir = temp_dir("drafter-refused");
@@ -418,7 +418,7 @@ fn an_open_drafter_is_refused_by_name() {
         .prefill_chunk(&PROMPT, 0, &mut logits)
         .expect_err("an open drafter must be refused by the chunked driver");
     assert!(
-        err.to_string().contains("aux capture"),
+        err.to_string().contains("prefill_chunk_priming_drafter"),
         "the refusal must name the reason; got {err}"
     );
 }

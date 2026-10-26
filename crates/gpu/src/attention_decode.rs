@@ -1109,6 +1109,131 @@ pub fn encode_attention_decode_gqa(
     num_chunks: u32,
     unroll: u32,
 ) -> Result<(), GpuError> {
+    encode_attention_decode_gqa_inner(
+        context,
+        pass,
+        q,
+        k_buffer,
+        v_buffer,
+        scratch,
+        out,
+        head_dim,
+        num_q_heads,
+        num_kv_heads,
+        seq_len,
+        kv_start,
+        ring_capacity,
+        scale,
+        sinks,
+        simdgroups,
+        num_chunks,
+        unroll,
+        None,
+    )
+}
+
+/// Deepest root path [`encode_attention_decode_tree`] maps: a tree verify's
+/// anchor plus seven nodes.
+pub const ATTENTION_TREE_MAX_DEPTH: usize = 8;
+
+/// One tree-verify row's decode attention: [`encode_attention_decode`]'s
+/// GQA-shared launch over `seq_len = base + path.len()` logical positions,
+/// where positions below `base` are the committed prefix and position
+/// `base + i` reads the K/V slot at `slot_start + path[i]` (the row's root
+/// path, anchor first, in depth order). The same `seq_len` as the chain
+/// row at that depth means the same chunking, simdgroup stride and loads in
+/// flight, so an identity path (`slot_start == base`, `path[i] == i`) is
+/// the chain's dispatch bit for bit.
+///
+/// `Ok(false)` when the scratch is not on the GQA-shared kernel or the
+/// shape is outside it (the barrier override, another head shape): the
+/// caller verifies the round as a chain instead. There is no barrier-kernel
+/// tree variant by design.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_attention_decode_tree(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    q: (&metal::Buffer, u64),
+    k_buffer: &metal::Buffer,
+    v_buffer: &metal::Buffer,
+    scratch: &AttentionScratch,
+    out: (&metal::Buffer, u64),
+    head_dim: u32,
+    num_q_heads: u32,
+    num_kv_heads: u32,
+    kv_start: u32,
+    base: u32,
+    slot_start: u32,
+    path: &[u32],
+    ring_capacity: u32,
+    scale: f32,
+) -> Result<bool, GpuError> {
+    if scratch.decode_kernel() != DecodeAttentionKernel::GqaShared
+        || !attention_decode_gqa_supported(head_dim, num_q_heads, num_kv_heads)
+    {
+        return Ok(false);
+    }
+    if path.is_empty() || path.len() > ATTENTION_TREE_MAX_DEPTH {
+        return Err(GpuError::PipelineCreate(format!(
+            "tree attention takes a root path of 1..={ATTENTION_TREE_MAX_DEPTH} slots, got {}",
+            path.len()
+        )));
+    }
+    // The highest slot must exist in the cache the chain round would have
+    // filled: slot_start + max(path) < the chain row's seq_len at full depth.
+    let seq_len = base + path.len() as u32;
+    let mut map = [0u32; 2 + ATTENTION_TREE_MAX_DEPTH];
+    map[0] = base;
+    map[1] = slot_start;
+    map[2..2 + path.len()].copy_from_slice(path);
+    let map_bytes: Vec<u8> = map.iter().flat_map(|v| v.to_le_bytes()).collect();
+    let (simdgroups, num_chunks, unroll) = gqa_launch(seq_len - kv_start, num_kv_heads);
+    encode_attention_decode_gqa_inner(
+        context,
+        pass,
+        q,
+        k_buffer,
+        v_buffer,
+        scratch,
+        out,
+        head_dim,
+        num_q_heads,
+        num_kv_heads,
+        seq_len,
+        kv_start,
+        ring_capacity,
+        scale,
+        None,
+        simdgroups,
+        num_chunks,
+        unroll,
+        Some(&map_bytes),
+    )?;
+    Ok(true)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn encode_attention_decode_gqa_inner(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    q: (&metal::Buffer, u64),
+    k_buffer: &metal::Buffer,
+    v_buffer: &metal::Buffer,
+    scratch: &AttentionScratch,
+    out: (&metal::Buffer, u64),
+    head_dim: u32,
+    num_q_heads: u32,
+    num_kv_heads: u32,
+    seq_len: u32,
+    kv_start: u32,
+    ring_capacity: u32,
+    scale: f32,
+    sinks: Option<(&metal::Buffer, u64)>,
+    simdgroups: u32,
+    num_chunks: u32,
+    unroll: u32,
+    tree_map: Option<&[u8]>,
+) -> Result<(), GpuError> {
     assert!(attention_decode_gqa_supported(
         head_dim,
         num_q_heads,
@@ -1157,6 +1282,21 @@ pub fn encode_attention_decode_gqa(
     for value in [group, simdgroups, head_dim, unroll] {
         partial_key.extend_from_slice(&value.to_le_bytes());
     }
+    // The tree build's key grows by one byte; the chain keys are unchanged.
+    if tree_map.is_some() {
+        let tree = true;
+        constants.set_constant_value_at_index((&tree as *const bool).cast(), MTLDataType::Bool, 77);
+        partial_key.push(1);
+    }
+    let mut partial_bytes: Vec<(&[u8], u64)> = vec![
+        (u32_bytes(&num_kv_heads), 6),
+        (u32_bytes(&seq_len), 7),
+        (u32_bytes(&kv_start), 8),
+        (u32_bytes(&chunk_len), 9),
+    ];
+    if let Some(map) = tree_map {
+        partial_bytes.push((map, 10));
+    }
     let partial_pipeline = context.pipeline(
         SOURCE,
         "attention_decode_gqa_partial",
@@ -1173,12 +1313,7 @@ pub fn encode_attention_decode_gqa(
             (&scratch.d, 4, 0),
             (&scratch.o, 5, 0),
         ],
-        &[
-            (u32_bytes(&num_kv_heads), 6),
-            (u32_bytes(&seq_len), 7),
-            (u32_bytes(&kv_start), 8),
-            (u32_bytes(&chunk_len), 9),
-        ],
+        &partial_bytes,
         (num_kv_heads * num_chunks) as u64,
         (simdgroups * 32) as u64,
     );

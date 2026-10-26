@@ -207,6 +207,63 @@ pub fn encode_rope_neox_subdim_rows(
     Ok(())
 }
 
+/// Most rows one [`encode_rope_neox_subdim_rows_positions`] call takes.
+pub const ROPE_POSITION_ROWS_MAX: usize = 64;
+
+/// [`encode_rope_neox_subdim_rows`] with row `r` rotated at `positions[r]`
+/// instead of `start_position + r`: a tree verify rotates each node at its
+/// depth. Each row is bit-identical to the single-row dispatch at its
+/// position.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_rope_neox_subdim_rows_positions(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    data: (&metal::Buffer, u64),
+    positions: &[u32],
+    num_heads: u32,
+    head_dim: u32,
+    rotary_dim: u32,
+    theta: f32,
+) -> Result<(), GpuError> {
+    if rotary_dim % 2 != 0 || rotary_dim > head_dim {
+        return Err(GpuError::PipelineCreate(format!(
+            "rope_neox_subdim_rows_positions rotary_dim {rotary_dim} must be even and at most \
+             head_dim {head_dim}"
+        )));
+    }
+    if positions.is_empty() || positions.len() > ROPE_POSITION_ROWS_MAX {
+        return Err(GpuError::PipelineCreate(format!(
+            "rope_neox_subdim_rows_positions takes 1..={ROPE_POSITION_ROWS_MAX} rows, got {}",
+            positions.len()
+        )));
+    }
+    let pipeline = context.pipeline(
+        SOURCE,
+        "rope_neox_subdim_rows_positions",
+        &unused_function_constants(),
+        b"",
+    )?;
+    let table: Vec<u8> = positions.iter().flat_map(|p| p.to_le_bytes()).collect();
+    pass.encode_threads_3d(
+        &pipeline,
+        &[(data.0, 0, data.1)],
+        &[
+            (&table[..], 1),
+            (u32_bytes(&head_dim), 2),
+            (u32_bytes(&num_heads), 3),
+            (f32_bytes(&theta), 4),
+            (u32_bytes(&rotary_dim), 5),
+        ],
+        (
+            (rotary_dim / 2).max(1) as u64,
+            num_heads.max(1) as u64,
+            positions.len() as u64,
+        ),
+        (1, 1, 1),
+    );
+    Ok(())
+}
+
 /// Encoder-level `rope_mrope_interleaved`: Qwen 3.8's interleaved mRoPE
 /// (ROADMAP M-V5). [`encode_rope_neox_subdim`]'s element set and frequency
 /// divisor, with each pair's position chosen from `(t, h, w)` by the

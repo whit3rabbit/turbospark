@@ -538,6 +538,40 @@ Recorded so nobody has to reconstruct them. Each names what would answer it.
 10. **The one-row gap is structural** (`mma8_ablation`, "What would make it
     pay everywhere"). Five variants did not move it. Reopen only with a
     different design, not another loop variant.
+
+    **The different design was tried, 2026-10-25: a two-pass split-K. It
+    does not pay.** Pass 1 is the shipped K loop with the barrier and the
+    slice-0 reduction tail removed; each simdgroup stores its `float2` to a
+    device partials buffer, so KS is no longer capped at 16. Pass 2 sums the
+    slices from zero in ascending order, the shipped tail's order, so at the
+    shipped KS the output is bit-identical to the production tile
+    (`two_pass_split_k_is_bit_equal_to_the_shipped_tile`; a reversed combine
+    fails it). The fragments are already k-slices of one 8x8 tile, so the
+    split costs nothing in exactness, only the partials round trip and a
+    second dispatch.
+
+    `int4_mma8_reg_bench.rs`'s `two_pass_split_k_sweep`, M4 Max on AC, two
+    runs at load 3.5-4.0 (above the 2.5 bar, so read it as directional).
+    Two-pass time, prep and both passes included, over the shipped tile at
+    the same R:
+
+    | shape | R | KS 4 | KS 8 | KS 16 | KS 32 |
+    |---|---:|---:|---:|---:|---:|
+    | gate/up 17408x5120 | 8 | 1.042-1.046 | 1.016 | 1.060-1.064 | 1.273-1.285 |
+    | down 5120x17408 | 8 | 1.007-1.027 | 0.993-1.006 | 0.949-0.980 | 0.949-0.985 |
+    | gdn_inproj 16480x5120 | 8 | 1.039-1.040 | 1.035-1.053 | 1.057-1.072 | 1.254-1.258 |
+    | packed_q 12288x5120 | 8 | 1.030-1.042 | 1.038-1.052 | 1.055-1.059 | 1.187-1.200 |
+    | o_proj 5120x6144 | 8 | 1.030-1.042 | 1.035-1.047 | 1.050-1.056 | 1.025-1.071 |
+
+    R=1 reads the same within 2%. Only `down` (the longest K, 272 groups
+    over 640 row blocks) gains, 1.5-5.1% at KS 16-32, which is more K
+    parallelism and not the tail; every other shape loses at every KS.
+    That fails the promotion rule (5% at R=8 on the large shapes), so it is
+    not wired. Consistent with the ablation's "weights from cache 0.99-1.02x"
+    row: the tile is bound by streaming the weights, and the tail it removes
+    was never the floor. This closes the question again with the new data
+    point; a per-shape KS for `down` alone would buy about 1% of a verify
+    round and is not worth a second kernel path.
 11. **One prep per input** (q/k/v, gate/up): under 1% of a token by the
     measured prep cost, not built.
 12. **16 rows as two tiles** from one weight load (kapitsa's `qmm8t2`).

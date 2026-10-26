@@ -1474,3 +1474,324 @@ fn mma8_ablation() {
         println!("{label}  {g:8.4}  {}", cells.join("  "));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Two-pass split-K (`docs/KAPITSA_KERNELS.md` lever 5): the shipped tile with
+// its barrier and slice-0 reduction tail removed. Pass 1 is the production
+// K loop verbatim, each simdgroup storing its `float2` to device memory, so
+// KS is no longer capped at 16 by `red[]`; pass 2 sums the slices in
+// ascending order from zero, which is exactly the shipped tail's order. At
+// the shipped KS the output must therefore be BIT-equal to the production
+// kernel, and the correctness test below asserts that before any timing.
+
+/// The production shader text with the two passes appended, so the table
+/// prep, the fragment layout and the K loop are the shipped ones.
+static TWO_PASS: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    format!(
+        "{}{}",
+        include_str!("../src/shaders/dequant_int4_mma8.metal"),
+        r#"
+kernel void int4_mma8_partials(
+    device const uchar*  W        [[buffer(0)]],
+    device const bfloat* S        [[buffer(1)]],
+    device const bfloat* Bi       [[buffer(2)]],
+    device const half*   table    [[buffer(3)]],
+    device const float*  sums     [[buffer(4)]],
+    device float2*       partials [[buffer(5)]],   // [KS][blocks][32]
+    uint tg     [[threadgroup_position_in_grid]],
+    uint blocks [[threadgroups_per_grid]],
+    uint kslice [[simdgroup_index_in_threadgroup]],
+    uint lane   [[thread_index_in_simdgroup]]
+) {
+    const uint N = FC_MMA8_N, K = FC_MMA8_K, KS = FC_MMA8_KS;
+    const uint2 c = mma8_frag_coord(lane);
+    const uint fm = c.x, fn = c.y;
+    const uint n = tg * 8u + fm;
+    const uint G = K / kG;
+    const uint g0 = kslice * G / KS, g1 = (kslice + 1u) * G / KS;
+    const bool live = n < N;
+    device const uchar* wrow = W + (live ? n : 0u) * (K / 2u) + (fn >> 1) * 8u;
+
+    float2 acc = float2(0.0f);
+    for (uint g = g0; g < g1; ++g) {
+        device const half4* tb = (device const half4*)(table + (g * 32u + lane) * 16u);
+        const half4 x0 = tb[0], x1 = tb[1], x2 = tb[2], x3 = tb[3];
+        const half2 b[8] = {x0.xy, x0.zw, x1.xy, x1.zw, x2.xy, x2.zw, x3.xy, x3.zw};
+        const float2 sx = float2(sums[g * kRows + fn], sums[g * kRows + fn + 1u]);
+        uint w0 = 0u, w1 = 0u;
+        float s = 0.0f, bi = 0.0f;
+        if (live) {
+            device const ushort* wp = (device const ushort*)(wrow + g * (kG / 2u));
+            w0 = uint(wp[0]) | (uint(wp[1]) << 16);
+            w1 = uint(wp[2]) | (uint(wp[3]) << 16);
+            s = float(S[n * G + g]);
+            bi = float(Bi[n * G + g]);
+        }
+        float2 dot = float2(0.0f);
+        for (uint f = 0; f < 8u; ++f) {
+            const uint word = f < 4u ? w0 : w1;
+            mma8_mac(dot, as_type<half2>((word >> (4u * (f & 3u))) & 0x000F000Fu), b[f]);
+        }
+        acc = fma(dot, float2(s * 16777216.0f), acc);
+        acc = fma(sx, float2(bi), acc);
+    }
+    partials[(kslice * blocks + tg) * 32u + lane] = acc;
+}
+
+// One simdgroup per 8-row block, the shipped tail's order: from zero, k
+// ascending.
+kernel void int4_mma8_combine(
+    device const float2* partials [[buffer(0)]],
+    device half*         y        [[buffer(1)]],
+    constant uint&       R        [[buffer(2)]],
+    uint tg     [[threadgroup_position_in_grid]],
+    uint blocks [[threadgroups_per_grid]],
+    uint lane   [[thread_index_in_threadgroup]]
+) {
+    const uint N = FC_MMA8_N, KS = FC_MMA8_KS;
+    const uint2 c = mma8_frag_coord(lane);
+    const uint fm = c.x, fn = c.y;
+    const uint n = tg * 8u + fm;
+    float2 acc = float2(0.0f);
+    for (uint k = 0; k < KS; ++k) acc += partials[(k * blocks + tg) * 32u + lane];
+    if (n >= N) return;
+    if (fn < R) y[fn * N + n] = half(acc.x);
+    if (fn + 1u < R) y[(fn + 1u) * N + n] = half(acc.y);
+}
+"#
+    )
+});
+
+fn two_pass_constants(n: usize, k: usize, ks: usize) -> (FunctionConstantValues, Vec<u8>) {
+    let values = FunctionConstantValues::new();
+    let mut key = Vec::with_capacity(12);
+    for (index, v) in [(40u64, n as u32), (41, k as u32), (42, ks as u32)] {
+        values.set_constant_value_at_index(
+            (&v as *const u32).cast(),
+            metal::MTLDataType::UInt,
+            index,
+        );
+        key.extend_from_slice(&v.to_le_bytes());
+    }
+    (values, key)
+}
+
+/// The partials scratch for the widest arm of a shape.
+fn two_pass_partials(context: &MetalContext, n: usize, ks: usize) -> MetalBuffer {
+    context.new_output_buffer((ks * n.div_ceil(8) * 32 * 8) as u64)
+}
+
+/// Prep (the production table kernel), pass 1 and pass 2 for one call,
+/// reading x from `rows.x` and writing `rows.y`.
+#[allow(clippy::too_many_arguments)]
+fn encode_two_pass(
+    context: &mut MetalContext,
+    pass: &turbospark_gpu::PassEncoder,
+    w: &Matrix,
+    rows: &Rows,
+    partials: &MetalBuffer,
+    r: usize,
+    ks: usize,
+    prep: bool,
+) {
+    let (n, k) = (w.rows, w.cols);
+    let source: &'static str = TWO_PASS.as_str();
+    if prep {
+        let table = context
+            .pipeline(
+                source,
+                "dequant_int4_mma8_table",
+                &FunctionConstantValues::new(),
+                b"",
+            )
+            .unwrap();
+        let (k32, r32) = ((k as u32).to_le_bytes(), (r as u32).to_le_bytes());
+        pass.encode_threadgroups(
+            &table,
+            &[(&rows.x, 0, 0), (&rows.table, 1, 0), (&rows.sums, 2, 0)],
+            &[(&k32[..], 3), (&r32[..], 4)],
+            (k / 64) as u64,
+            32,
+        );
+    }
+    let (values, key) = two_pass_constants(n, k, ks);
+    let p1 = context
+        .pipeline(source, "int4_mma8_partials", &values, &key)
+        .unwrap();
+    let p2 = context
+        .pipeline(source, "int4_mma8_combine", &values, &key)
+        .unwrap();
+    let blocks = n.div_ceil(8) as u64;
+    pass.encode_threadgroups(
+        &p1,
+        &[
+            (&w.buffer, 0, w.weights_offset),
+            (&w.buffer, 1, w.scales_offset),
+            (&w.buffer, 2, w.biases_offset),
+            (&rows.table, 3, 0),
+            (&rows.sums, 4, 0),
+            (partials, 5, 0),
+        ],
+        &[],
+        blocks,
+        (ks * 32) as u64,
+    );
+    let r32 = (r as u32).to_le_bytes();
+    pass.encode_threadgroups(
+        &p2,
+        &[(partials, 0, 0), (&rows.y, 1, 0)],
+        &[(&r32[..], 2)],
+        blocks,
+        32,
+    );
+}
+
+/// At the shipped KS, the two-pass output is the shipped tile's output to
+/// the bit, at every live-row count and on a remainder row block. Shapes
+/// cover the three KS bands of `int4_mma8_k_split` (4, 8, 16).
+#[test]
+fn two_pass_split_k_is_bit_equal_to_the_shipped_tile() {
+    let mut context = MetalContext::new().expect("Metal device");
+    for (n, k) in [(8200usize, 1024usize), (1000, 2048), (48, 5120), (12, 128)] {
+        let ks = turbospark_gpu::int4_mma8_k_split(n, k);
+        let w = Matrix::random(&context, n, k, 0xB2_000 + n as u64);
+        let rows = Rows::new(&context, n, k, 0xB2_100 + k as u64);
+        let partials = two_pass_partials(&context, n, ks);
+        let shipped_y = context.new_output_buffer((8 * n * 2) as u64);
+        for r in 1..=8 {
+            let pass = context.begin_pass();
+            turbospark_gpu::encode_dequant_int4_mma8_resident(
+                &mut context,
+                &pass,
+                &w.resident(),
+                (&rows.x, 0),
+                (&shipped_y, 0),
+                r,
+            )
+            .unwrap();
+            encode_two_pass(&mut context, &pass, &w, &rows, &partials, r, ks, true);
+            pass.commit_and_wait();
+            let want: Vec<u16> = read_buffer_f16(&shipped_y, 0, r * n)
+                .iter()
+                .map(|v| v.to_bits())
+                .collect();
+            let got: Vec<u16> = read_buffer_f16(&rows.y, 0, r * n)
+                .iter()
+                .map(|v| v.to_bits())
+                .collect();
+            let first = got.iter().zip(&want).position(|(a, b)| a != b);
+            assert!(
+                first.is_none(),
+                "{n}x{k} ks {ks} R {r}: first differing output {first:?}"
+            );
+        }
+    }
+}
+
+/// The spike's deliverable: the two-pass arm (both passes plus the prep, as
+/// a call pays them) against the shipped tile at R=1 and R=8, swept over KS,
+/// interleaved with the GEMV. Promote only at >= 5% over the shipped tile at
+/// R=8 on the large shapes (`docs/KAPITSA_KERNELS.md`, lever 5).
+#[test]
+#[ignore = "benchmark: needs a real Metal device, reports rather than asserts"]
+fn two_pass_split_k_sweep() {
+    let mut context = MetalContext::new().expect("Metal device");
+    let kss = [4usize, 8, 16, 32];
+    println!(
+        "\nshape                  R  gemv1 ms  tile ms   ks=4    ks=8    ks=16   ks=32  (two-pass / tile)"
+    );
+    for (label, n, k) in SHAPES {
+        let pool: Vec<Matrix> = (0..POOL)
+            .map(|i| Matrix::random(&context, n, k, 0xB5_000 + i as u64))
+            .collect();
+        let rows = Rows::new(&context, n, k, 0xB5_100);
+        let partials = two_pass_partials(&context, n, 32);
+        let bytes = n * k / 2 + n * k / 64 * 4;
+        let calls = (TARGET_BYTES / bytes).clamp(POOL, 20_000);
+        let gemv = |context: &mut MetalContext| -> f64 {
+            autorelease_pool(|| {
+                let pass = context.begin_pass();
+                for i in 0..calls {
+                    encode_dequant_int4_gemv_resident(
+                        context,
+                        &pass,
+                        &pool[i % POOL].resident(),
+                        (&rows.x, 0),
+                        (&rows.y, 0),
+                    )
+                    .unwrap();
+                }
+                pass.commit_and_wait_with_gpu_time() * 1e3 / calls as f64
+            })
+        };
+        let tile = |context: &mut MetalContext, r: usize| -> f64 {
+            autorelease_pool(|| {
+                let pass = context.begin_pass();
+                for i in 0..calls {
+                    turbospark_gpu::encode_dequant_int4_mma8_resident(
+                        context,
+                        &pass,
+                        &pool[i % POOL].resident(),
+                        (&rows.x, 0),
+                        (&rows.y, 0),
+                        r,
+                    )
+                    .unwrap();
+                }
+                pass.commit_and_wait_with_gpu_time() * 1e3 / calls as f64
+            })
+        };
+        let two = |context: &mut MetalContext, r: usize, ks: usize| -> f64 {
+            autorelease_pool(|| {
+                let pass = context.begin_pass();
+                for i in 0..calls {
+                    encode_two_pass(
+                        context,
+                        &pass,
+                        &pool[i % POOL],
+                        &rows,
+                        &partials,
+                        r,
+                        ks,
+                        true,
+                    );
+                }
+                pass.commit_and_wait_with_gpu_time() * 1e3 / calls as f64
+            })
+        };
+        // Warmup: every pipeline compiled and every pool copy touched once.
+        gemv(&mut context);
+        for r in [1, 8] {
+            tile(&mut context, r);
+            for &ks in &kss {
+                two(&mut context, r, ks);
+            }
+        }
+        let med = |v: &mut Vec<f64>| {
+            v.sort_by(f64::total_cmp);
+            v[v.len() / 2]
+        };
+        for r in [1usize, 8] {
+            let (mut g, mut t) = (Vec::new(), Vec::new());
+            let mut arms: Vec<Vec<f64>> = vec![Vec::new(); kss.len()];
+            for round in 0..ROUNDS {
+                g.push(gemv(&mut context));
+                t.push(tile(&mut context, r));
+                for j in 0..kss.len() {
+                    let j = (j + round) % kss.len();
+                    arms[j].push(two(&mut context, r, kss[j]));
+                }
+            }
+            let (g, t) = (med(&mut g), med(&mut t));
+            let cells: Vec<String> = arms
+                .iter_mut()
+                .map(|v| format!("{:6.3}x", med(v) / t))
+                .collect();
+            println!(
+                "{label}  {r}  {g:8.4}  {t:7.4}  {}   (tile/gemv1 {:.3}x)",
+                cells.join(" "),
+                t / g
+            );
+        }
+    }
+}

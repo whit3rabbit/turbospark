@@ -72,7 +72,7 @@ impl RealForwardRunner {
                 d.capture_rows, d.capture_base
             )));
         }
-        self.dflash_context_write(1)
+        self.dflash_context_write(0, 1)
     }
 
     /// `SpeculativeProducer::rewind_drafter` for the DFlash2 path: a cursor
@@ -130,6 +130,33 @@ impl RealForwardRunner {
         base: usize,
         proposals: &mut Vec<TokenId>,
     ) -> Result<(), RealForwardError> {
+        proposals.clear();
+        let block = self.dflash_run_block(anchor, base)?;
+        self.dflash_select(anchor, block, proposals)
+    }
+
+    /// One DFlash2 TREE round (`TURBOSPARK_DFLASH_TREE`): the same context
+    /// write and block forward as [`Self::dflash_draft_block`], then the
+    /// best-first tree selector over `nodes` nodes in place of the greedy
+    /// chain. Returns the nodes (parents before children) and each node's
+    /// token.
+    pub fn dflash_draft_tree(
+        &mut self,
+        anchor: TokenId,
+        base: usize,
+        nodes: usize,
+    ) -> Result<(Vec<crate::DflashTreeNode>, Vec<TokenId>), RealForwardError> {
+        let block = self.dflash_run_block(anchor, base)?;
+        self.dflash_select_tree(anchor, block, nodes)
+    }
+
+    /// The GPU half of a round: the context write for the committed prefix
+    /// and the block forward. Returns the drafter's block.
+    fn dflash_run_block(
+        &mut self,
+        anchor: TokenId,
+        base: usize,
+    ) -> Result<usize, RealForwardError> {
         let vocab = self.arch.vocab_size as usize;
         let Some(d) = self.real_dflash.as_ref() else {
             return Err(RealForwardError::Unsupported(
@@ -138,7 +165,6 @@ impl RealForwardRunner {
             ));
         };
         let block = d.block;
-        proposals.clear();
         if anchor < 0 || anchor as usize >= vocab || DFLASH_MASK_TOKEN as usize >= vocab {
             return Err(RealForwardError::Unsupported(format!(
                 "DFlash2 needs token ids {anchor} (anchor) and {DFLASH_MASK_TOKEN} (mask) inside \
@@ -174,12 +200,11 @@ impl RealForwardRunner {
                 base.min(capture_end) - d.capture_base
             };
             if ctx_rows > 0 {
-                self.dflash_context_write(ctx_rows)?;
+                self.dflash_context_write(0, ctx_rows)?;
             }
             self.dflash_forward_block(anchor, base)
         })?;
-
-        self.dflash_select(anchor, block, proposals)
+        Ok(block)
     }
 
     /// Reads one row of the drafter's LAST head output, for the bisect
@@ -206,6 +231,16 @@ impl RealForwardRunner {
         }
         gpu::read_buffer_f16_into(&d.logits, row * vocab * 2, out);
         Ok(())
+    }
+
+    /// The drafter's `(cursor, capture_base, capture_rows)`: the whole
+    /// prefill-to-decode handoff, since the drafter keeps no other state.
+    /// `None` when no drafter is open. For tests that pin a prefill's end
+    /// state against the token walk's.
+    pub fn dflash_handoff_state(&self) -> Option<(usize, usize, usize)> {
+        self.real_dflash
+            .as_ref()
+            .map(|d| (d.kv.position(), d.capture_base, d.capture_rows))
     }
 
     /// Every persistent draft buffer's `(name, nan count, min, max)` over

@@ -29,6 +29,23 @@ when this file gets updated relative to the version bump and the tag.
   prints an exactness hint per arm from output and first-row hashes, and the
   `mode-candidate` workflow runs the chain as one plan. The `gdn_dk128` knob
   row is added to the table.
+- DFlash2 prefill through the chunked driver: the layer encoders capture the
+  drafter's aux states and each micro-batch is context-written into its KV in
+  16-row slices, so a DFlash2 run no longer prefills token by token
+  (130-158 against 16-23 tok/s on a 426-token prompt, M4 Max).
+  `TURBOSPARK_DFLASH_CHUNKED_PREFILL=0` keeps the walk.
+- Tree verify for DFlash2, opt-in `TURBOSPARK_DFLASH_TREE=1`: a best-first
+  tree of `block` nodes per greedy round, verified in the chain's rows with
+  tree kernels (gather, parent-state GDN conv and delta, per-row RoPE
+  positions, ancestor-mapped GQA attention), lossless. It accepts 1.05-1.10x
+  more per round on the real install, but its verify costs 5-7% more, so it
+  is not a default.
+- `dflash_generation_gate` (`crates/bench`): the real-install check that the
+  wired DFlash2 loop, chain and tree, reproduces sequential decode.
+- A two-pass split-K variant of the 8-row INT4 tile in
+  `int4_mma8_reg_bench.rs`, bit-exact against the shipped tile at its KS.
+  Measured slower on four of five verify shapes, so it is a bench-only
+  negative result (`docs/INT4_SMALL_M_MMA.md`, open question 10).
 - `tslab` agent skill (`crates/lab/skill`, with command, output, workflow,
   results and extending references). It runs from a checkout or from the zip
   `scripts/package-tslab-skill.sh` builds (release binaries, workloads), so a

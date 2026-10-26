@@ -130,6 +130,34 @@ kernel void rope_neox_subdim_rows(
                     float(start_position + token_index), theta);
 }
 
+// `rope_neox_subdim_rows` with each row's position read from a table rather
+// than `start_position + row`: a tree verify's node at slot s rotates at its
+// depth, not its slot. Same `apply_neox_pair`, same `float(position)`, so a
+// row is bit-identical to the single-row dispatch at its table position.
+kernel void rope_neox_subdim_rows_positions(
+    device half* data [[buffer(0)]],
+    constant uint* positions [[buffer(1)]],
+    constant uint& head_dim [[buffer(2)]],
+    constant uint& num_heads [[buffer(3)]],
+    constant float& theta [[buffer(4)]],
+    constant uint& rotary_dim [[buffer(5)]],
+    uint3 gid [[thread_position_in_grid]]
+) {
+    const uint pair = gid.x;
+    const uint head_index = gid.y;
+    const uint token_index = gid.z;
+    const uint dimension = rope_head_dim(head_dim);
+    const uint heads = rope_num_heads(num_heads);
+    const uint half_rotary = rotary_dim / 2u;
+    if (pair >= half_rotary || head_index >= heads) return;
+
+    device half* head = data
+        + token_index * heads * dimension
+        + head_index * dimension;
+    apply_neox_pair(head, pair, half_rotary, rotary_dim,
+                    float(positions[token_index]), theta);
+}
+
 // Qwen 3.8's INTERLEAVED mRoPE (ROADMAP M-V5, `docs/VISION_PHASE0.md` item
 // 2). `rope_neox_subdim` with the scalar position replaced by a per-pair
 // choice among (t, h, w).

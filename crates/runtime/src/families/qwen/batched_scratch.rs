@@ -70,6 +70,58 @@ pub(crate) struct BatchedScratch {
     /// not bit-exact against the one-row kernel, so the drafters' verify
     /// scratch never carries it.
     pub(crate) rows_attention: Option<gpu::GqaRowsScratch>,
+    /// The tree of the verify pass being encoded, `Some` only for the
+    /// duration of a `RealForwardRunner::verify_tree` call on the DFlash2
+    /// verify scratch (`TURBOSPARK_DFLASH_TREE`). Carried here rather than
+    /// threaded through the layer encoders because they are shared with
+    /// the chunked prefill and the MTP verify, which never set it; the
+    /// encoders that read it are the attention core (RoPE positions and the
+    /// ancestor-mapped attention) and the linear core (the tree conv and
+    /// delta kernels).
+    pub(crate) tree: std::cell::RefCell<Option<TreeSpec>>,
+}
+
+/// A tree verify's shape over its `rows` slots: slot 0 is the anchor,
+/// `parent[s] < s` (-1 at the anchor), `depth[s]` the slot's depth below the
+/// anchor and `paths[s]` its root path, anchor first.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TreeSpec {
+    pub(crate) parent: Vec<i32>,
+    pub(crate) depth: Vec<u32>,
+    pub(crate) paths: Vec<Vec<u32>>,
+}
+
+impl TreeSpec {
+    /// Refuses a parent array that is not a tree rooted at slot 0 with
+    /// parents before children.
+    pub(crate) fn new(parent: &[i32]) -> Result<Self, String> {
+        if parent.first() != Some(&-1) {
+            return Err(format!(
+                "a tree's slot 0 is the anchor (parent -1): {parent:?}"
+            ));
+        }
+        let mut depth = Vec::with_capacity(parent.len());
+        let mut paths: Vec<Vec<u32>> = Vec::with_capacity(parent.len());
+        for (s, &p) in parent.iter().enumerate() {
+            if s == 0 {
+                depth.push(0);
+                paths.push(vec![0]);
+                continue;
+            }
+            if p < 0 || p as usize >= s {
+                return Err(format!("slot {s}'s parent {p} must precede it: {parent:?}"));
+            }
+            depth.push(depth[p as usize] + 1);
+            let mut path = paths[p as usize].clone();
+            path.push(s as u32);
+            paths.push(path);
+        }
+        Ok(Self {
+            parent: parent.to_vec(),
+            depth,
+            paths,
+        })
+    }
 }
 
 /// The tape buffers. One `qkv_raw` row set and one `a`/`b` row set per
@@ -241,6 +293,7 @@ impl BatchedScratch {
             verify_tape,
             steel_gemm: false,
             rows_attention: None,
+            tree: std::cell::RefCell::new(None),
         })
     }
 }

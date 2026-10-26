@@ -323,15 +323,20 @@ impl SpeculativeProducer for RealForwardRunner {
     // one is ever open in practice: the CLI refuses a request that names
     // both. If both somehow are, the BLOCK drafter wins here, which keeps
     // `drafts_block_passes` and the priming/rewind pair in one branch.
-    // The MTP head on the dense qwen flow only. DFlash2's context write reads
-    // per-layer aux captures the chunked driver does not encode, and an image
-    // prompt already keeps the speculative loop off (the verify is
-    // vision-blind). `TURBOSPARK_MTP_CHUNKED_PREFILL=0` keeps the
-    // token-at-a-time walk, for A/B runs and as a kill switch.
+    // Exactly one drafter open, on the dense qwen flow only: the MTP head
+    // primes per row, the DFlash2 drafter from the per-layer aux captures the
+    // driver encodes beside the trunk. An image prompt already keeps the
+    // speculative loop off (the verify is vision-blind).
+    // `TURBOSPARK_MTP_CHUNKED_PREFILL=0` / `TURBOSPARK_DFLASH_CHUNKED_PREFILL=0`
+    // keep the token-at-a-time walk, for A/B runs and as kill switches.
     fn supports_chunked_drafter_prefill(&self) -> bool {
-        std::env::var("TURBOSPARK_MTP_CHUNKED_PREFILL").as_deref() != Ok("0")
+        let mtp = std::env::var("TURBOSPARK_MTP_CHUNKED_PREFILL").as_deref() != Ok("0")
             && self.real_mtp.is_some()
-            && self.real_dflash.is_none()
+            && self.real_dflash.is_none();
+        let dflash = crate::families::qwen::dflash_chunked_prefill()
+            && self.real_dflash.is_some()
+            && self.real_mtp.is_none();
+        (mtp || dflash)
             && self.real_qwen.as_ref().is_some_and(|q| q.dense)
             && self.prompt_vision.is_none()
     }
@@ -351,12 +356,21 @@ impl SpeculativeProducer for RealForwardRunner {
         self.batched_tape = None;
         self.batched_tape_row0 = None;
         let result = gpu::autorelease_pool(|| {
-            self.prefill_chunk_real_qwen_dense_priming_mtp(
-                tokens,
-                start_position,
-                logits,
-                next_token,
-            )
+            if self.real_dflash.is_some() {
+                self.prefill_chunk_real_qwen_dense_priming_dflash(
+                    tokens,
+                    start_position,
+                    logits,
+                    next_token.is_none(),
+                )
+            } else {
+                self.prefill_chunk_real_qwen_dense_priming_mtp(
+                    tokens,
+                    start_position,
+                    logits,
+                    next_token,
+                )
+            }
             .map_err(|e| e.to_string())
         });
         if result.is_ok() {
@@ -426,6 +440,47 @@ impl SpeculativeProducer for RealForwardRunner {
         })?;
         proposals.truncate(block);
         Ok(())
+    }
+
+    fn tree_nodes(&self) -> Option<usize> {
+        self.dflash_tree_nodes()
+    }
+
+    fn draft_tree(
+        &mut self,
+        anchor: i32,
+        base: usize,
+        nodes: usize,
+        tree: &mut Vec<crate::DflashTreeNode>,
+        tokens: &mut Vec<i32>,
+    ) -> Result<(), String> {
+        let (t, k) = gpu::autorelease_pool(|| {
+            self.dflash_draft_tree(anchor, base, nodes)
+                .map_err(|e| e.to_string())
+        })?;
+        *tree = t;
+        *tokens = k;
+        Ok(())
+    }
+
+    fn verify_tree(
+        &mut self,
+        feed: &[i32],
+        parent: &[i32],
+        base: usize,
+        logits: &mut [LogitValue],
+    ) -> Result<(), String> {
+        gpu::autorelease_pool(|| {
+            self.dflash_verify_tree(feed, base, parent, logits)
+                .map_err(|e| e.to_string())
+        })
+    }
+
+    fn compact_tree(&mut self, base: usize, path: &[u32]) -> Result<(), String> {
+        gpu::autorelease_pool(|| {
+            self.dflash_tree_compact(base, path)
+                .map_err(|e| e.to_string())
+        })
     }
 
     fn rewind_drafter(&mut self, position: usize) -> Result<(), String> {

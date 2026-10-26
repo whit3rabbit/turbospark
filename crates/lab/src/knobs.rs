@@ -168,6 +168,33 @@ pub const KNOBS: &[Knob] = &[
         engagement: &[off("0", "gdn_lazy_tape")],
     },
     Knob {
+        // Off is the token-at-a-time walk; on takes the chunked driver's
+        // default arm (Steel), so the prompt's numerics move with it.
+        name: "dflash_chunked_prefill",
+        env: "TURBOSPARK_DFLASH_CHUNKED_PREFILL",
+        values: &["<unset>", "0"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::KlBounded,
+        families: &["qwen35"],
+        quotable: true,
+        doc: "docs/DFLASH2.md",
+        engagement: &[off("0", "dflash_chunked_prefill")],
+    },
+    Knob {
+        // Lossless by construction (every committed token is the target's
+        // greedy pick); the stream equals the chain's whenever both equal
+        // sequential decode.
+        name: "dflash_tree",
+        env: "TURBOSPARK_DFLASH_TREE",
+        values: &["<unset>", "1"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::BitExact,
+        families: &["qwen35"],
+        quotable: true,
+        doc: "docs/KAPITSA_KERNELS.md",
+        engagement: &[on("1", "dflash_tree")],
+    },
+    Knob {
         // `1` runs decode and verify on the 8-row tile (bit-exact against
         // each other, not against the GEMV), `verify` only the batched calls.
         // It reaches every family through the generic INT4 dispatchers.

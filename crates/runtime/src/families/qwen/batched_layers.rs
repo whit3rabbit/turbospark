@@ -213,6 +213,19 @@ pub(crate) fn encode_full_attention_core_batched(
     // RoPE takes its row's position from the grid. One dispatch per tensor
     // instead of five per row.
     let rows = batch as u32;
+    // A tree verify rotates each slot at its depth, not its slot index, and
+    // reads its ancestors' keys; `None` everywhere else.
+    let tree = batched.tree.borrow();
+    if let Some(t) = tree.as_ref() {
+        if t.depth.len() != batch {
+            return Err(RealForwardError::Unsupported(format!(
+                "tree verify of {} slots driven with {batch} rows",
+                t.depth.len()
+            )));
+        }
+    }
+    let position_of =
+        |m: usize| -> usize { start_position + tree.as_ref().map_or(m, |t| t.depth[m] as usize) };
     if row_batched_ops() {
         gpu::encode_split_q_gate(
             context,
@@ -248,24 +261,39 @@ pub(crate) fn encode_full_attention_core_batched(
         )
         .map_err(gpu_err)?;
         for (data, heads) in [((&batched.q, 0), num_heads), (k_rows, num_kv)] {
-            gpu::encode_rope_neox_subdim_rows(
-                context,
-                pass,
-                data,
-                start_position as u32,
-                rows,
-                heads,
-                head_dim,
-                qwen.rotary_dim,
-                theta,
-            )
+            match tree.as_ref() {
+                Some(_) => {
+                    let positions: Vec<u32> = (0..batch).map(|m| position_of(m) as u32).collect();
+                    gpu::encode_rope_neox_subdim_rows_positions(
+                        context,
+                        pass,
+                        data,
+                        &positions,
+                        heads,
+                        head_dim,
+                        qwen.rotary_dim,
+                        theta,
+                    )
+                }
+                None => gpu::encode_rope_neox_subdim_rows(
+                    context,
+                    pass,
+                    data,
+                    start_position as u32,
+                    rows,
+                    heads,
+                    head_dim,
+                    qwen.rotary_dim,
+                    theta,
+                ),
+            }
             .map_err(gpu_err)?;
         }
     } else {
         // The per-row form, kept one env var away (`TURBOSPARK_QWEN_BATCHED_ROW_OPS=0`)
         // as the kill switch and the A side of a paired measurement.
         for m in 0..batch {
-            let position = start_position + m;
+            let position = position_of(m);
             gpu::encode_split_q_gate(
                 context,
                 pass,
@@ -342,8 +370,44 @@ pub(crate) fn encode_full_attention_core_batched(
         )
         .map_err(gpu_err)?;
     }
+    if let Some(t) = tree.as_ref() {
+        if rows_attention.is_some() {
+            return Err(RealForwardError::Unsupported(
+                "a tree verify runs on the verify scratch, which has no multi-row attention"
+                    .to_string(),
+            ));
+        }
+        for m in 0..batch {
+            let served = gpu::encode_attention_decode_tree(
+                context,
+                pass,
+                (&batched.q, (m * q_dim) as u64 * 2),
+                k_buf,
+                v_buf,
+                &scratch.attn,
+                (&batched.attn_out, (m * q_dim) as u64 * 2),
+                head_dim,
+                num_heads,
+                num_kv,
+                0,
+                start_position as u32,
+                start_position as u32,
+                &t.paths[m],
+                0,
+                arch.attention_scale as f32,
+            )
+            .map_err(gpu_err)?;
+            if !served {
+                return Err(RealForwardError::Unsupported(
+                    "tree verify needs the GQA-shared decode attention; the runner was asked \
+                     for a tree round it cannot verify (see supports_tree_verify)"
+                        .to_string(),
+                ));
+            }
+        }
+    }
     for m in 0..batch {
-        if rows_attention.is_none() {
+        if rows_attention.is_none() && tree.is_none() {
             gpu::encode_attention_decode(
                 context,
                 pass,
@@ -585,18 +649,45 @@ pub(crate) fn encode_linear_core_batched(
         &name("conv1d.weight"),
         qkv_dim * shape.conv_kernel_size as usize,
     )?;
-    gpu::encode_gdn_conv_prefill(
-        context,
-        pass,
-        shape,
-        (qwen.gdn.conv_tail_buffer(layer), 0),
-        (&batched.gdn_qkv_raw, 0),
-        conv_w,
-        (&batched.gdn_conv_out, 0),
-        batch as u32,
-        // Undilated, matching `attn.rs`'s decode-path call.
-        1,
-    )
+    // A tree verify's rows read their own root paths in the conv and the
+    // delta rule; it needs the lazy tape, whose fold runs over the compacted
+    // accepted path (`RealForwardRunner::dflash_tree_compact`).
+    let tree = batched.tree.borrow();
+    if tree.is_some()
+        && batched
+            .verify_tape
+            .as_ref()
+            .and_then(|t| t.rank1.as_ref())
+            .is_none()
+    {
+        return Err(RealForwardError::Unsupported(
+            "tree verify needs the lazy GDN tape (TURBOSPARK_GDN_LAZY_TAPE unset)".to_string(),
+        ));
+    }
+    match tree.as_ref() {
+        Some(t) => gpu::encode_gdn_conv_prefill_tree(
+            context,
+            pass,
+            shape,
+            (qwen.gdn.conv_tail_buffer(layer), 0),
+            (&batched.gdn_qkv_raw, 0),
+            conv_w,
+            (&batched.gdn_conv_out, 0),
+            &t.parent,
+        ),
+        None => gpu::encode_gdn_conv_prefill(
+            context,
+            pass,
+            shape,
+            (qwen.gdn.conv_tail_buffer(layer), 0),
+            (&batched.gdn_qkv_raw, 0),
+            conv_w,
+            (&batched.gdn_conv_out, 0),
+            batch as u32,
+            // Undilated, matching `attn.rs`'s decode-path call.
+            1,
+        ),
+    }
     .map_err(gpu_err)?;
     // THE LAZY SPLIT (TURBOSPARK_GDN_LAZY_TAPE, default on): with a rank-1
     // tape, the two in-place state writes below are DEFERRED. The conv tail
@@ -663,20 +754,36 @@ pub(crate) fn encode_linear_core_batched(
         )
         .map_err(gpu_err)?;
         let delta_off = (slot * batch * shape.value_dim() as usize * 4) as u64;
-        gpu::encode_gdn_delta_prefill_lazy(
-            context,
-            pass,
-            shape,
-            (&batched.gdn_conv_out, 0),
-            (&batched.gdn_a, 0),
-            (&batched.gdn_b, 0),
-            a_log,
-            dt_bias,
-            qwen.gdn.state_buffer(layer),
-            (&batched.gdn_y, 0),
-            (&rank1.delta, delta_off),
-            batch as u32,
-        )
+        match tree.as_ref() {
+            Some(t) => gpu::encode_gdn_delta_prefill_lazy_tree(
+                context,
+                pass,
+                shape,
+                (&batched.gdn_conv_out, 0),
+                (&batched.gdn_a, 0),
+                (&batched.gdn_b, 0),
+                a_log,
+                dt_bias,
+                qwen.gdn.state_buffer(layer),
+                (&batched.gdn_y, 0),
+                (&rank1.delta, delta_off),
+                &t.parent,
+            ),
+            None => gpu::encode_gdn_delta_prefill_lazy(
+                context,
+                pass,
+                shape,
+                (&batched.gdn_conv_out, 0),
+                (&batched.gdn_a, 0),
+                (&batched.gdn_b, 0),
+                a_log,
+                dt_bias,
+                qwen.gdn.state_buffer(layer),
+                (&batched.gdn_y, 0),
+                (&rank1.delta, delta_off),
+                batch as u32,
+            ),
+        }
         .map_err(gpu_err)?;
     } else {
         gpu::encode_gdn_delta_prefill(

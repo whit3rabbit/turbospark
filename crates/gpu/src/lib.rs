@@ -172,9 +172,10 @@ pub use warmup::{KernelWarmup, KernelWarmupPlan, KernelWarmupStats};
 pub use attention_decode::{
     attention_decode, attention_decode_gqa_supported, encode_attention_decode,
     encode_attention_decode_batch, encode_attention_decode_gqa, encode_attention_decode_gqa_rows,
-    encode_attention_decode_gqa_rows_with, AttentionScratch, BatchAttentionInputContract,
-    BatchAttentionKvFormat, BatchAttentionKvLayout, BatchAttentionScratch, DecodeAttentionKernel,
-    GqaRowsScratch, GQA_ROWS_SCRATCH_CHUNKS, MAX_DECODE_ATTENTION_HEAD_DIM, MAX_GQA_GROUP,
+    encode_attention_decode_gqa_rows_with, encode_attention_decode_tree, AttentionScratch,
+    BatchAttentionInputContract, BatchAttentionKvFormat, BatchAttentionKvLayout,
+    BatchAttentionScratch, DecodeAttentionKernel, GqaRowsScratch, ATTENTION_TREE_MAX_DEPTH,
+    GQA_ROWS_SCRATCH_CHUNKS, MAX_DECODE_ATTENTION_HEAD_DIM, MAX_GQA_GROUP,
 };
 #[cfg(target_os = "macos")]
 pub use attention_indexed::{
@@ -298,7 +299,7 @@ pub use device_memory::{process_footprint, recommended_max_working_set};
 #[cfg(target_os = "macos")]
 pub use dflash_conv::{
     encode_copy_rows_fp16_strided, encode_dflash_copy_rows, encode_dflash_grouped_conv,
-    DFLASH_GROUP_SIZE, DFLASH_TAPS,
+    encode_gather_rows_fp16, DFLASH_GROUP_SIZE, DFLASH_TAPS, GATHER_MAX_ROWS,
 };
 #[cfg(target_os = "macos")]
 pub use dispatch_profile::{report as dispatch_profile_report, reset as dispatch_profile_reset};
@@ -306,10 +307,12 @@ pub use dispatch_profile::{report as dispatch_profile_report, reset as dispatch_
 pub use dsv4_state::{Dsv4StateManager, LayerCounters};
 #[cfg(target_os = "macos")]
 pub use gdn::{
-    encode_gdn_conv_decode, encode_gdn_conv_prefill, encode_gdn_conv_tail_update,
-    encode_gdn_delta_decode, encode_gdn_delta_prefill, encode_gdn_delta_prefill_lazy,
-    encode_gdn_gated_norm, encode_gdn_gated_norm_sigmoid, encode_gdn_in_proj, encode_gdn_qk_norm,
-    encode_gdn_qk_norm_with_rms_epsilon, encode_gdn_state_fold, GdnShape,
+    encode_gdn_conv_decode, encode_gdn_conv_prefill, encode_gdn_conv_prefill_tree,
+    encode_gdn_conv_tail_update, encode_gdn_delta_decode, encode_gdn_delta_prefill,
+    encode_gdn_delta_prefill_lazy, encode_gdn_delta_prefill_lazy_tree, encode_gdn_gated_norm,
+    encode_gdn_gated_norm_sigmoid, encode_gdn_in_proj, encode_gdn_qk_norm,
+    encode_gdn_qk_norm_with_rms_epsilon, encode_gdn_state_fold, gdn_tree_supported, GdnShape,
+    GDN_TREE_MAX_ROWS,
 };
 #[cfg(target_os = "macos")]
 pub use gdn_state::{GdnSnapshot, GdnStateManager};
@@ -399,8 +402,9 @@ pub use rms_norm::{
 #[cfg(target_os = "macos")]
 pub use rope::{
     encode_rope_mrope_interleaved, encode_rope_neox_freqs, encode_rope_neox_subdim,
-    encode_rope_neox_subdim_rows, encode_rope_proportional_neox, rope_mrope_interleaved,
-    rope_neox_subdim, rope_proportional_neox,
+    encode_rope_neox_subdim_rows, encode_rope_neox_subdim_rows_positions,
+    encode_rope_proportional_neox, rope_mrope_interleaved, rope_neox_subdim,
+    rope_proportional_neox, ROPE_POSITION_ROWS_MAX,
 };
 #[cfg(target_os = "macos")]
 pub use utility::{
