@@ -113,8 +113,10 @@ whole length, and the bench measured M = 1 first with host work between
 passes, so the one-row unit was the device's state and not the kernel
 (`int4_matmul` now commits a primer before every timed pass; the record's
 `subject.primer` says so). Read a tiny-shape projection from a bench that does
-not prime as suspect. Five points are too few to subtract a bias;
-`tslab calibrate --all` keeps counting.
+not prime as suspect. With the primer the same lever projected +4.8% against a
+conclusive +2.3%, so the remaining miss is coverage (6% of the round) and the
+mode's own prep dispatches, not the bench's unit. Six points are too few to
+subtract a bias; `tslab calibrate --all` keeps counting.
 
 ## Process-cached switches
 

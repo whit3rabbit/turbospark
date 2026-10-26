@@ -692,7 +692,7 @@ for like. The controller is not a default: prose loses.
 | `gdn_dk128`, one row (`km-proj-dk1`) | +0.9%, under the floor | -0.4%, NOISE (`gdn-dk128-decode`) | within the floor |
 | `int4_mma8`, one row, plain decode (`km-proj`) | -16.9% (0.831x) | -17.4%, interval [-19.0%, -17.1%], 0 better / 5 worse of 6 pairs (`km-mma8-plain6`); a first 3-pair run read -26.9% with an interval spanning zero (`km-mma8-plain`) | within the floor on the larger sample; the doc's 0.81x agrees |
 | lever 9, small projections at 8 rows (`km-l9-proj2`) | +5.8% (4.1 ms of 75 ms) | +3.3% (`km-l9-ab`, 2 clean pairs, inconclusive) | 2.5 points under, one inconclusive A/B |
-| lever 9 again, from the primed bench (`km-floor-proj`, `1792977511459-47500-0`) | +4.8% (3.4 ms of 75 ms) | the same +3.3% (`km-l9-ab`) | 1.5 points under, within the floor (`km-floor-cal`, `1792977565457-47778-0`); the 1024-row curve came from a DIRTY run |
+| lever 9 again, from the primed bench (`km-floor-proj`, `1792977511459-47500-0`) | +4.8% (3.4 ms of 75 ms) | +3.3% (`km-l9-ab`, 2 clean pairs, inconclusive); then +2.3% WIN, interval [+1.9%, +3.8%], 3 better of 3 clean pairs of 6 (`km-l9-ab3`, DFlash2 depth 7, medium-review, 256 decode tokens, 5 of 12 runs dirty for foreign CPU) | 1.5 points under the first (`km-floor-cal`, `1792977565457-47778-0`, within the floor); 2.5 points over the conclusive one (`1792979021129-90371-0`, MISS). The 1024-row curve came from a DIRTY run, and the projection covers 6% of the round |
 
 Coverage was 2-7% for the GDN and small-projection cases and 85% for the tile
 on decode, so the GDN rows are priced from a small slice of the round and still
@@ -740,10 +740,15 @@ reads 3.25 us and `gemv_per_row` c(8) is 0.97; scalar at 8 rows 33.2 us and the
 tile 6.8 us (42 and 8.2 us before). The 1024x5120 curve
 (`1792977177535-27848-0`, DIRTY for foreign CPU) reads the one row at 10.2 us
 against 8.3 us in `km-retro2`, scalar at 8 rows 44.5 us (40.9), tile 15.8 us
-(13.6). The lever 9 projection from these curves is +4.8% against the
-measured +3.3% (table above). The other kernel benches do not prime yet, so a
-tiny-shape number from `int8_matmul`, `gdn_delta` or `attn_decode` carries the
-same suspicion until they do.
+(13.6). The lever 9 projection from these curves is +4.8%; the A/B re-run
+with 6 pairs on decode tok/s reads +2.3%, a WIN, so the primed bench still
+overstates the lever by 2.5 points (table above). The two misses the
+projection cannot see are the ones `docs/KERNEL_MODES.md` lists: the tile's
+activation-prep dispatches and shared scratch, which the kernel curve does not
+time, and a base of which the benched kernels are 6%. The primer fixed the
+one-row unit, not the coverage. The other kernel benches do not prime yet, so
+a tiny-shape number from `int8_matmul`, `gdn_delta` or `attn_decode` carries
+the same suspicion until they do.
 
 **Lever 9 under a trace.** The first two `tslab trace` windows landed in the
 sequential prefill and said nothing. Rerun on a short prompt with 768 decode
@@ -938,12 +943,15 @@ last n tokens of prompt plus history, up to 8 tokens) when it is longer than
 the depth the head would propose, with exact acceptance against the stream,
 and never feeds the controller from a lookup round (mlx-serve's two E6 rules).
 Head rounds are `depth_replay::simulate` with the runtime's own
-`AdaptiveDepth`. Costs are the modeled flag-on table (MTP 2 and 4 measured,
-other depths on their line): the round costs measured for this (`km-hybrid`
-profile, MTP 2/4/8 with the tile, copy-heavy) were all DIRTY and are not used.
-A lookup round is priced at the same width's MTP round, head draft steps
-included, so the tok/s column is conservative for the hybrid; the
-committed-per-round column needs no cost table and is what the bar reads.
+`AdaptiveDepth`. Costs: the modeled flag-on table (MTP 2 and 4 measured,
+other depths on their line) for the first run, then the round costs measured
+for this on a quiet host (`km-hybrid-costs`, MTP blocks 2, 4 and 8 with the
+tile, copy-heavy, 256 decode tokens, two clean runs each: 69.5-70.2, 81.6-82.3
+and 154.6-157.1 ms a round; the first profile of the same arms, `km-hybrid`,
+was all DIRTY and is not used). A lookup round is priced at the same width's
+MTP round, head draft steps included, so the tok/s column is conservative for
+the hybrid; the committed-per-round column needs no cost table and is what
+the bar reads.
 
 Committed per round, head alone against the hybrid, and the hybrid's change
 (`km-hybrid` `hybrid_replay` records `1792977511638-47511-0` for the 4-gram,
@@ -961,10 +969,12 @@ Committed per round, head alone against the hybrid, and the hybrid's change
 | tuned 2..8 (3,1,1,2) | code | 4.15 | 3.99 (-3.9%) | 4.15 (0) | 4.15 (0) |
 | tuned 2..8 (3,1,1,2) | copy-heavy | 5.68 | 5.44 (-4.3%) | 5.87 (+3.4%) | 6.08 (+7.1%) |
 
-Projected tok/s on the flag-on table, tuned controller, copy-heavy: 59.7 head
-alone, 54.7 with the 4-gram hybrid (-8.3%), 61.7 with the 8-gram (+3.4%).
-Against fixed 2 the 4-gram hybrid reads +32% tok/s on copy-heavy and -3 to -4%
-on prose and code, the shape the standalone replay predicted.
+Projected tok/s, tuned controller, copy-heavy: on the modeled table 59.7 head
+alone, 54.7 with the 4-gram hybrid (-8.3%), 61.7 with the 8-gram (+3.4%); on
+the measured table (`1792978451801-28468-0` for the 4-gram, `1792978451817-28472-0` for the 8-gram) 49.8 head alone,
+44.6 with the 4-gram (-10.4%), 50.7 with the 8-gram (+1.7%). Against fixed 2
+the 4-gram hybrid reads +32% (modeled) or +4% (measured) tok/s on copy-heavy
+and -3 to -8% on prose and code, the shape the standalone replay predicted.
 
 What it says:
 
@@ -989,14 +999,22 @@ What it says:
   on it. The lookup draft is capped at 8 by the cost table; longer copied
   spans (the standalone replay accepted 4.3 per fired round at draft 8) are an
   untested axis that needs a measured round cost at width 9 and up.
-- **The measured round costs disagree with the modeled table above depth
-  4,** but from DIRTY runs: MTP block 8 with the tile read 182 ms a round
-  (verify 139 ms) against the table's 114.5, and blocks 2 and 4 read 83 and
-  93.5 ms against 72.5 and 86.5 (`km-hybrid` round_cost records, another
-  session's model tests running beside them). If a quiet host confirms it,
-  the tuned controller's projected tok/s at depth 8 is overstated and the
-  hybrid's relative tok/s gain is larger than +3.4%; committed per round is
-  unaffected.
+- **The measured round cost at depth 8 is well above the modeled table,
+  and it is the tile boundary.** Clean runs (`km-hybrid-costs`, run ids
+  `1792977781487-51633-9`, `1792977794665-51633-15` at block 8;
+  `1792978407691-21493-4`, `1792978420956-21493-10` at block 2;
+  `1792978414866-21493-7`, `1792978428142-21493-13` at block 4; KV bucket
+  1024, load under 4) read 70, 82 and 156 ms a round, against the flag-on
+  table's 72.5, 86.5 and 114.5. The verify phase is 59, 62 and 117 ms: flat
+  from 3 to 5 rows and doubled at 9, which is width 9 crossing the 8-row tile
+  (`encode_gemm_any` serves up to 16 rows in tiles of 8, so a block-8 round
+  verifies in two tile passes where block 7 would take one). That is a
+  reading of the phase numbers, not something measured here; a `tslab
+  profile` at blocks 7 and 8 with `spec_stats` decides it. If it holds, the
+  tuned controller's cap belongs at 7, not 8, and the depth-8 rounds it
+  spends on copy-heavy cost it about a third of the round. Committed per
+  round above is unaffected; the measured-table tok/s columns already carry
+  the cost.
 
 Proposal, not built, contingent on a second copy-heavy capture agreeing: a
 `Lookup` source inside the MTP speculative loop, gated by an 8-gram suffix over
