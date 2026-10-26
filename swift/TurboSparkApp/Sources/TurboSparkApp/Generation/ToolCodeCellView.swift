@@ -25,17 +25,17 @@ struct ToolCodeCellView: View {
                     .padding(8)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.appElevated.opacity(0.5))
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .background(.appElevated)
+            .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .stroke(.appBorder.opacity(0.25), lineWidth: 1)
+                RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
+                    .stroke(theme.border, lineWidth: 1)
             )
         }
         .padding(.leading, 8)
         .overlay(
             Rectangle()
-                .fill(Color.primary.opacity(0.15))
+                .fill(theme.border)
                 .frame(width: 2),
             alignment: .leading
         )
@@ -43,7 +43,7 @@ struct ToolCodeCellView: View {
 
     private var headerBar: some View {
         HStack(spacing: 8) {
-            Text(label.uppercased())
+            Text(LocalizedStringKey(label), bundle: .module)
                 .themedCode(.callout, weight: .bold)
                 .foregroundStyle(.appSecondary)
 
@@ -55,10 +55,10 @@ struct ToolCodeCellView: View {
                 HStack(spacing: 3) {
                     Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
                         .themedFont(.tiny)
-                    Text(isCopied ? "Copied" : "Copy")
+                    (isCopied ? Text("Copied", bundle: .module) : Text("Copy", bundle: .module))
                         .themedFont(.tiny, weight: .medium)
                 }
-                .foregroundStyle(isCopied ? Color.green : Color.secondary)
+                .foregroundStyle(isCopied ? AnyShapeStyle(theme.accent) : AnyShapeStyle(.appSecondary))
             }
             .buttonStyle(.plain)
             .help(Text("Copy \(label) to clipboard", bundle: .module))
@@ -73,7 +73,7 @@ struct ToolCodeCellView: View {
                         Text("Download", bundle: .module)
                             .themedFont(.tiny, weight: .medium)
                     }
-                    .foregroundStyle(Color.secondary)
+                    .foregroundStyle(.appSecondary)
                 }
                 .buttonStyle(.plain)
                 .help(Text("Save \(label) to file", bundle: .module))
@@ -87,13 +87,13 @@ struct ToolCodeCellView: View {
         NSPasteboard.general.setString(code, forType: .string)
 
         copyTask?.cancel()
-        withAnimation(.easeInOut(duration: 0.15)) {
+        TSMotion.animate(TSMotion.press) {
             isCopied = true
         }
         copyTask = Task {
             try? await Task.sleep(for: .seconds(1.5))
             guard !Task.isCancelled else { return }
-            withAnimation(.easeInOut(duration: 0.15)) {
+            TSMotion.animate(TSMotion.press) {
                 isCopied = false
             }
         }
