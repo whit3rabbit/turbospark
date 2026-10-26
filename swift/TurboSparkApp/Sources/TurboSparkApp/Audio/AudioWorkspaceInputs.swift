@@ -60,52 +60,58 @@ struct AudioMusicInputs: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("Music description", bundle: .module).themedFont(.small, weight: .semibold)
-                    Spacer()
-                    Button { showGenerator() } label: {
-                        Label { Text("Prompt generator", bundle: .module) } icon: { Image(systemName: "wand.and.stars") }
+                AppAdaptiveHeader(
+                    leading: {
+                        Text("Music description", bundle: .module)
+                            .themedFont(.small, weight: .semibold)
+                            .accessibilityAddTraits(.isHeader)
+                    },
+                    actions: {
+                        Button { showGenerator() } label: {
+                            Label { Text("Prompt generator", bundle: .module) } icon: { Image(systemName: "wand.and.stars") }
+                        }
+                        .appAction(.secondary, size: .small)
                     }
-                    .appAction(.secondary, size: .small)
-                }
+                )
                 ZStack(alignment: .topLeading) {
                     TextEditor(text: $controller.recipe.caption)
-                        .scrollContentBackground(.hidden)
                         .themedFont(.base)
+                        .appEditorSurface(minHeight: 110)
                         .accessibilityLabel(Text("Music description", bundle: .module))
                     if controller.recipe.caption.isEmpty {
                         Text("Describe the mood, instruments, and style", bundle: .module)
                             .foregroundStyle(.appSecondary)
-                            .padding(.horizontal, 5).padding(.vertical, 8)
+                            .padding(.horizontal, 13).padding(.vertical, 16)
                             .allowsHitTesting(false).accessibilityHidden(true)
                     }
                 }
-                .frame(height: 110).padding(8)
-                .overlay { RoundedRectangle(cornerRadius: 8).stroke(.appBorder) }
             }
             if controller.selectedProfile?.capabilities.supportsLyrics == true {
                 VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("Lyrics", bundle: .module).themedFont(.small, weight: .semibold)
-                        Spacer()
-                        if AudioWorkspaceController.effectiveLyrics(controller.recipe.lyrics) == AudioWorkspaceController.instrumentalLyrics {
-                            Text("Instrumental", bundle: .module).themedFont(.small).foregroundStyle(.appSecondary)
+                    AppAdaptiveHeader(
+                        leading: {
+                            Text("Lyrics", bundle: .module)
+                                .themedFont(.small, weight: .semibold)
+                                .accessibilityAddTraits(.isHeader)
+                        },
+                        actions: {
+                            if AudioWorkspaceController.effectiveLyrics(controller.recipe.lyrics) == AudioWorkspaceController.instrumentalLyrics {
+                                Text("Instrumental", bundle: .module).themedFont(.small).foregroundStyle(.appSecondary)
+                            }
                         }
-                    }
+                    )
                     ZStack(alignment: .topLeading) {
                         TextEditor(text: $controller.recipe.lyrics)
                             .themedFont(.base)
-                            .scrollContentBackground(.hidden)
+                            .appEditorSurface(minHeight: 100)
                             .accessibilityLabel(Text("Lyrics", bundle: .module))
                         if controller.recipe.lyrics.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                             Text(verbatim: AudioWorkspaceController.instrumentalLyrics)
                                 .foregroundStyle(.appSecondary)
-                                .padding(.horizontal, 5).padding(.vertical, 8)
+                                .padding(.horizontal, 13).padding(.vertical, 16)
                                 .allowsHitTesting(false).accessibilityHidden(true)
                         }
                     }
-                    .frame(height: 100).padding(8)
-                    .overlay { RoundedRectangle(cornerRadius: 8).stroke(.appBorder) }
                 }
             }
             if controller.selectedProfile != nil {
@@ -132,16 +138,7 @@ struct AudioMusicInputs: View {
                 .appCardSurface()
 
                 if let message = controller.musicValidationMessage {
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.yellow)
-                        Text(verbatim: message)
-                            .themedFont(.small)
-                            .foregroundStyle(.appSecondary)
-                    }
-                    .padding(8)
-                    .background(Color.yellow.opacity(0.12))
-                    .cornerRadius(8)
+                    AppAttentionNote(message: Text(verbatim: message))
                 }
 
                 HStack(spacing: 16) {

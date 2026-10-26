@@ -153,6 +153,7 @@ struct TurboSparkApp: App {
                     ProfileUnlockView(coordinator: vaultCoordinator)
                 }
             }
+                .appThemed()
                 .preferredColorScheme(appearanceManager.appearance.preferredColorScheme)
                 .environment(\.locale, currentLanguage.locale)
                 .environment(\.layoutDirection, currentLanguage.layoutDirection)
@@ -222,11 +223,11 @@ struct TurboSparkApp: App {
             Group {
                 if let model = vaultCoordinator.model {
                     AppSettingsView(model: model)
-                        .appThemed()
                 } else {
                     ProfileUnlockView(coordinator: vaultCoordinator)
                 }
             }
+            .appThemed()
             .preferredColorScheme(appearanceManager.appearance.preferredColorScheme)
             .environment(\.locale, currentLanguage.locale)
             .environment(\.layoutDirection, currentLanguage.layoutDirection)

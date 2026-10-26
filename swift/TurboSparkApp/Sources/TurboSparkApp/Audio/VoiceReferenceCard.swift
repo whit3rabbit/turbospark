@@ -135,7 +135,7 @@ struct VoiceReferenceCard: View {
     private var recorder: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                Circle().fill(Color.red).frame(width: 9, height: 9)
+                Circle().fill(.appAccent).frame(width: 9, height: 9)
                     .tsPulse(active: controller.isRecording && !controller.isPaused)
                     .accessibilityHidden(true)
                 Group {
@@ -206,7 +206,7 @@ private struct VoiceReferenceDetails: View {
             trimControls
             if !reference.isValid {
                 Label { Text("Choose 1 to 30 seconds of reference speech.", bundle: .module) } icon: {
-                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(AppAttention.color)
                 }
                 .themedFont(.small)
             }
@@ -218,7 +218,7 @@ private struct VoiceReferenceDetails: View {
         HStack(spacing: 12) {
             Image(systemName: sourceKind?.voiceReferenceSymbol ?? "waveform")
                 .themedFont(.base).foregroundStyle(.appAccent)
-                .frame(width: 32, height: 32)
+                .frame(minWidth: 32, minHeight: 32)
                 .background(.appAccent.opacity(0.12), in: Circle())
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {

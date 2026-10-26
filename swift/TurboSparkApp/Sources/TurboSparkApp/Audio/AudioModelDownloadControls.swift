@@ -61,6 +61,11 @@ struct AudioModelDownloadControls: View {
         }
         .appAction(.secondary, size: size)
         .disabled(!model.canQueueModelDownload(.audio(identity: profile.identity)) || controller.isBusy)
+        .help(
+            controller.isBusy
+                ? Text("Cannot change model while audio is active or recording.", bundle: .module)
+                : Text("Download model", bundle: .module)
+        )
         .alert(Text("Before downloading", bundle: .module),
                isPresented: Binding(get: { acknowledging != nil }, set: { if !$0 { acknowledging = nil } }),
                presenting: acknowledging) { terms in

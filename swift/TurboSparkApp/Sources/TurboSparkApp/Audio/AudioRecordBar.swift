@@ -78,8 +78,12 @@ struct AudioRecordBar<Accessory: View>: View {
                     Spacer()
                     markerButton
                 }
-                ProgressView(value: level) { Text("Input level", bundle: .module) }
-                    .accessibilityValue(Text(verbatim: "\(Int(level * 100))%"))
+                AppProgressBar(
+                    value: Double(level),
+                    label: Text("Input level", bundle: .module),
+                    valueText: Text(verbatim: "\(Int(level * 100))%"),
+                    size: .compact
+                )
                 HStack { pauseButton; stopButton }
             } else {
                 startButton

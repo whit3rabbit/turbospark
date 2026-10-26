@@ -51,6 +51,7 @@ struct AudioSpeedControl: View {
                 Text("Speed", bundle: .module)
                 Slider(value: $controller.recipe.speed, in: 0.5...2, step: 0.05)
                     .accessibilityLabel(Text("Speech speed", bundle: .module))
+                    .accessibilityValue(Text(controller.recipe.speed, format: .number.precision(.fractionLength(2))))
                 Text(controller.recipe.speed, format: .number.precision(.fractionLength(2)))
                     .monospacedDigit()
             }

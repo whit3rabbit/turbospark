@@ -13,7 +13,10 @@ struct VoiceCloneStepsStrip: View {
         steps.first { $0.state != .done }?.step
     }
 
+    @Environment(\.appTheme) private var theme
+
     var body: some View {
+        let scale = AppMetrics.textScale(theme)
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 6) {
                 ForEach(Array(steps.enumerated()), id: \.element.id) { index, status in
@@ -26,7 +29,7 @@ struct VoiceCloneStepsStrip: View {
                 }
                 Spacer(minLength: 0)
             }
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 8, alignment: .leading)], alignment: .leading, spacing: 8) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: (150 * scale).rounded()), spacing: 8, alignment: .leading)], alignment: .leading, spacing: 8) {
                 ForEach(Array(steps.enumerated()), id: \.element.id) { index, status in
                     stepButton(index: index, status: status)
                 }
@@ -118,7 +121,7 @@ private struct VoiceCloneStepButton: View {
     private var tint: Color {
         switch status.state {
         case .todo: return theme.secondaryText
-        case .attention: return .orange
+        case .attention: return AppAttention.color
         case .done, .ready, .active: return theme.accent
         }
     }
@@ -126,8 +129,8 @@ private struct VoiceCloneStepButton: View {
     private var background: Color {
         switch status.state {
         case .done, .ready, .active: return theme.accent.opacity(hovered ? 0.18 : 0.12)
-        case .attention: return Color.orange.opacity(hovered ? 0.16 : 0.10)
-        case .todo: return Color.primary.opacity(hovered ? 0.08 : 0.04)
+        case .attention: return AppAttention.color.opacity(hovered ? 0.16 : 0.10)
+        case .todo: return theme.secondaryText.opacity(hovered ? 0.12 : 0.06)
         }
     }
 

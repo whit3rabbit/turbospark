@@ -86,12 +86,12 @@ enum MusicMemoryAdvisor {
         let tierSummary: String
         if canSupportMax {
             tierSummary = String(
-                format: "%.0f GB Unified Memory - Full context supported (up to %d frames / %.0fs)",
+                format: AppStrings.localized("%.0f GB Unified Memory - Full context supported (up to %d frames / %.0fs)"),
                 physicalGib, maxModelFrames, maxModelDuration
             )
         } else {
             tierSummary = String(
-                format: "%.0f GB Unified Memory (%.0f GB budget) - Constrained to %d frames (%.0fs)",
+                format: AppStrings.localized("%.0f GB Unified Memory (%.0f GB budget) - Constrained to %d frames (%.0fs)"),
                 physicalGib, gibBudget, maxSupportedFrames, maxSupportedSeconds
             )
         }

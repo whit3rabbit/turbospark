@@ -234,6 +234,7 @@ struct BrowserTabView: View {
     let isAgentControlled: Bool
     let onRetry: () -> Void
     let onRecover: () -> Void
+    @Environment(\.appTheme) private var theme
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -252,11 +253,10 @@ struct BrowserTabView: View {
             case .content:
                 EmptyView()
             case .loading(let progress):
-                ProgressView(value: progress)
+                AppProgressBar(value: progress, label: Text("Loading", bundle: .module), size: .compact)
                     .frame(maxWidth: 180)
                     .padding(12)
                     .background(.regularMaterial, in: Capsule())
-                    .accessibilityLabel(Text("Loading", bundle: .module))
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .padding(12)
             case .failed(let message):
@@ -303,11 +303,11 @@ struct BrowserTabView: View {
 
                 if let candidate = elementPicker.selectedCandidate ?? elementPicker.candidate {
                     let bounds = candidate.bounds
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(Color.accentColor.opacity(0.12))
+                    RoundedRectangle(cornerRadius: AppMetrics.controlRadius)
+                        .fill(theme.accent.opacity(0.12))
                         .overlay {
-                            RoundedRectangle(cornerRadius: 4)
-                                .stroke(Color.accentColor, lineWidth: 2)
+                            RoundedRectangle(cornerRadius: AppMetrics.controlRadius)
+                                .stroke(theme.accent, lineWidth: 2)
                         }
                         .frame(
                             width: max(1, bounds.width * scale),
@@ -360,10 +360,11 @@ struct BrowserTabView: View {
                     Image(systemName: "arrow.clockwise")
                 }
             }
+            .appAction(.primary)
         }
         .padding(20)
         .frame(maxWidth: 360)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
@@ -375,6 +376,7 @@ public struct BrowserPaneView: View {
     @StateObject private var viewportController: BrowserViewportController
     @StateObject private var elementPicker: ElementPickerController
     @State private var isViewportPopoverPresented = false
+    @Environment(\.appTheme) private var theme
 
     public init(engine: WebKitBrowserEngine) {
         self.engine = engine
@@ -414,7 +416,7 @@ public struct BrowserPaneView: View {
             if model.isAddressInvalid {
                 Text("Enter a valid HTTP or HTTPS address.", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(AppAttention.color)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 12)
                     .padding(.bottom, 8)
@@ -432,14 +434,20 @@ public struct BrowserPaneView: View {
                 )
                 .id(tabID)
             } else {
-                Button {
-                    _ = model.createTab()
-                } label: {
-                    Label {
-                        Text("New Tab", bundle: .module)
-                    } icon: {
-                        Image(systemName: "plus")
+                AppEmptyState(
+                    systemImage: "globe",
+                    title: Text("New Tab", bundle: .module)
+                ) {
+                    Button {
+                        _ = model.createTab()
+                    } label: {
+                        Label {
+                            Text("New Tab", bundle: .module)
+                        } icon: {
+                            Image(systemName: "plus")
+                        }
                     }
+                    .appAction(.primary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -516,8 +524,8 @@ public struct BrowserPaneView: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 5)
                 .background(
-                    model.selectedTabID == tab.id ? Color.accentColor.opacity(0.18) : Color.clear,
-                    in: RoundedRectangle(cornerRadius: 6)
+                    AnyShapeStyle(model.selectedTabID == tab.id ? theme.accent.opacity(0.18) : Color.clear),
+                    in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius)
                 )
             }
             .buttonStyle(.plain)
@@ -676,6 +684,7 @@ public struct BrowserPaneView: View {
                     Text(verbatim: "\(viewportController.preference.width) px")
                 }
             }
+            .accessibilityValue(Text(verbatim: "\(viewportController.preference.width) px"))
             .disabled(!viewportController.isFixed)
 
             Stepper(
@@ -696,6 +705,7 @@ public struct BrowserPaneView: View {
                     Text(verbatim: "\(viewportController.preference.height) px")
                 }
             }
+            .accessibilityValue(Text(verbatim: "\(viewportController.preference.height) px"))
             .disabled(!viewportController.isFixed)
 
             Stepper(
@@ -716,6 +726,7 @@ public struct BrowserPaneView: View {
                     Text(verbatim: "\(viewportController.preference.zoom.formatted(.number.precision(.fractionLength(1))))\u{00D7}")
                 }
             }
+            .accessibilityValue(Text(verbatim: "\(viewportController.preference.zoom.formatted(.number.precision(.fractionLength(1))))\u{00D7}"))
             .disabled(!viewportController.isFixed)
         }
         .padding(14)
