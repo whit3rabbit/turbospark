@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Installs the tslab skill for Claude Code.
+# Installs the tslab skill for Claude Code, Codex, and Antigravity IDE.
 #
 #   --repo           Link this checkout's skill (crates/lab/skill) into
-#                    .claude/skills/tslab. .claude/ is not tracked, so each
-#                    checkout or worktree links it once.
+#                    .claude/skills/tslab and .agents/skills/tslab.
+#                    These directories are not tracked, so each checkout
+#                    or worktree links them once.
 #   --zip PATH       Unpack a skill zip (scripts/package-tslab-skill.sh), which
 #                    carries its own binaries, into DEST/tslab. DEST defaults
 #                    to ~/.claude/skills. Inside a checkout prefer --repo: it
@@ -33,20 +34,32 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+link_repo_target() {
+    local target="$1"
+    local rel_source="../../crates/lab/skill"
+    local dir
+    dir="$(dirname "$target")"
+    mkdir -p "$dir"
+    if [ "$force" != 1 ] && [ -L "$target" ] && [ "$(readlink "$target")" = "$rel_source" ]; then
+        echo "already linked $target -> crates/lab/skill"
+        return 0
+    fi
+    if [ -e "$target" ] || [ -L "$target" ]; then
+        if [ "$force" = 1 ] && [ -L "$target" ]; then
+            rm "$target"
+        else
+            echo "$target exists (pass --force to replace a link; a real directory is left alone)" >&2
+            return 1
+        fi
+    fi
+    ln -s "$rel_source" "$target"
+    echo "linked $target -> crates/lab/skill"
+}
+
 case "$mode" in
     repo)
-        target="$root/.claude/skills/tslab"
-        mkdir -p "$root/.claude/skills"
-        if [ -e "$target" ] || [ -L "$target" ]; then
-            if [ "$force" = 1 ] && [ -L "$target" ]; then
-                rm "$target"
-            else
-                echo "$target exists (pass --force to replace a link; a real directory is left alone)" >&2
-                exit 1
-            fi
-        fi
-        ln -s ../../crates/lab/skill "$target"
-        echo "linked $target -> crates/lab/skill"
+        link_repo_target "$root/.claude/skills/tslab"
+        link_repo_target "$root/.agents/skills/tslab"
         ;;
     zip)
         [ -f "$zip" ] || { echo "no such zip: $zip" >&2; exit 1; }

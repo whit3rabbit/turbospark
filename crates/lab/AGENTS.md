@@ -11,9 +11,10 @@ loop's `run-experiment`. Text and audio installs of every family.
 - [skill/SKILL.md](skill/SKILL.md): the `tslab` skill, how an agent drives
   tslab (the `--json` contract, workflows, what to quote), with its
   references in `skill/references/`. One skill serves a checkout
-  (`scripts/install-tslab-skill.sh --repo` links it into `.claude/skills/`)
-  and the zip `scripts/package-tslab-skill.sh` builds with release binaries
-  and workloads; `skill/scripts/doctor.sh` finds whichever binary applies.
+  (`scripts/install-tslab-skill.sh --repo` links it into `.claude/skills/`
+  and `.agents/skills/`) and the zip `scripts/package-tslab-skill.sh` builds
+  with release binaries and workloads; `skill/scripts/doctor.sh` finds
+  whichever binary applies.
   A change to a command, flag or record updates the matching reference.
 - [Benchmarking protocol](../../docs/BENCHMARKING.md) and the bench crate's
   [AGENTS.md](../bench/AGENTS.md): the measurement rules this crate encodes.
