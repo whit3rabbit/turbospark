@@ -1,6 +1,6 @@
 ---
 name: tslab
-description: Measure TurboSpark model installs on an Apple Silicon Mac with tslab, the kernel and method evaluator from crates/lab, from a TurboSpark checkout or from the bundled binaries in this skill. Use when asked to profile a TurboSpark install, bench or A/B a Metal kernel or runtime switch (TURBOSPARK_* variables), survey a new model family, trace GPU work, price speculative decoding, measure an audio pipeline, run the program.md autoresearch loop, read, export or plot tslab ledgers (~/.turbospark/lab), or add a bench, knob, ledger kind or workflow to tslab.
+description: Measures TurboSpark model installs on an Apple Silicon Mac with tslab, the kernel and method evaluator from crates/lab, using a TurboSpark checkout or the bundled binaries. Use when asked to profile an install, bench or A/B a Metal kernel or a knob (a TURBOSPARK_* switch), survey a new model family, trace GPU work, price speculative decoding, measure an audio pipeline, look up pinned kernel settings, run the program.md autoresearch loop, read, export or plot ledgers (~/.turbospark/lab), or add a bench, knob, ledger kind or workflow to tslab. Not for freezing rows in docs/BENCHMARKS.md.
 ---
 
 # tslab
@@ -24,23 +24,40 @@ Use the `tslab` doctor reports:
   `TSLAB=target/release/tslab`. Jobs are in `crates/lab/workloads/` and
   `crates/lab/chats/`.
 
+Below, `M` is the model (an install directory `*.gturbo`, or a catalog alias
+from `~/.turbospark/models`) and `E` is an experiment name you choose.
+
 ```sh
-$TSLAB capabilities --model <install> --json   # what this install supports, and tags
-$TSLAB workflow new-family --model <install> --experiment <name> --dry-run
+$TSLAB capabilities --model M --json           # what this install supports, and tags
+$TSLAB workflow new-family --model M --experiment E --dry-run
 ```
 
-`--model` is an install directory (`*.gturbo`) or a catalog alias from
-`~/.turbospark/models`. Results go to `$TURBOSPARK_LAB_DIR`, else
-`$TURBOSPARK_HOME/lab`, else `~/.turbospark/lab`. Keep `tslab-worker` beside
-`tslab`: every measured run is a fresh worker process.
+Results go to `$TURBOSPARK_LAB_DIR`, else `$TURBOSPARK_HOME/lab`, else
+`~/.turbospark/lab`. Keep `tslab-worker` beside `tslab`: every measured run
+is a fresh worker process.
 
 ## Before you measure
 
-- Finish building first. A `cargo build`, a test run or an editor's
-  background check makes runs dirty.
-- Check AC power, `sysctl vm.swapusage`, and `ps` for another model process
-  or `turbospark-bench`. Do not time beside another session's measurement.
-- One measuring session per machine: tslab holds a lock. If it is held, wait.
+Run `"$SKILL/scripts/preflight.sh"`. It reports AC power, swap, and other
+model processes, builds or editors that would make runs dirty. Finish builds
+first. tslab holds one machine lock, so a second measuring session waits.
+
+## Standard A/B loop
+
+Copy this checklist and tick it off. Do not skip step 2: without a null floor
+the effect floor is only the 2% default.
+
+```
+- [ ] 1. preflight.sh is clean
+- [ ] 2. $TSLAB ab --model M --null --experiment E         (once per workload)
+- [ ] 3. $TSLAB ab --model M --baseline off --candidate on:KNOB=V --experiment E --json
+- [ ] 4. Read decision and exit code (below), then the verdict in reading-results.md
+- [ ] 5. $TSLAB report --experiment E --html E.html
+```
+
+Exit codes: 0 ok or keep, 1 error, 2 usage, 3 discard, 4 inconclusive. On 4
+the host was busy: fix it and rerun the same command. Never revert on 4, and
+never rerun a NOISE verdict until it wins.
 
 ## Which reference to read
 
@@ -50,15 +67,13 @@ $TSLAB workflow new-family --model <install> --experiment <name> --dry-run
 | Parse `--json`, the ledger, `BenchResult` or exported series | [references/output.md](references/output.md) |
 | Run or write a workflow | [references/workflows.md](references/workflows.md) |
 | Interpret a verdict, a dirty run, or what may be quoted | [references/reading-results.md](references/reading-results.md) |
-| Add a bench, switch, ledger kind, command or workflow (checkout only) | [references/extending.md](references/extending.md) |
+| Add a bench, knob, ledger kind, command or workflow (checkout only) | [references/extending.md](references/extending.md) |
 | Iterate on a kernel change against the fixed evaluator (checkout only) | `crates/lab/program.md` |
 
-## Common tasks
+## Other common tasks
 
 ```sh
 $TSLAB profile --model M --prompt protocol:long-synthesis --decode 64 --experiment E
-$TSLAB ab --model M --null --experiment E                         # once per workload
-$TSLAB ab --model M --baseline off --candidate on:KNOB=V --experiment E --json
 $TSLAB kernel --model M --bench int4_matmul,attn_decode --hash --experiment E
 $TSLAB profile --model M --decode 64 --rounds 6 --dispatch-probe 0,4,8,16 --experiment E
 $TSLAB trace --model M --prompt protocol:short-explanation --decode 64 --experiment E
@@ -66,6 +81,7 @@ $TSLAB profile --model A --audio-job <workloads>/audio/music-short.json --experi
 $TSLAB report --experiment E --html E.html
 $TSLAB project --knob int4_mma8 --curves E --x 1 --base-from E:base --floor-from E   # price a mode first
 $TSLAB calibrate --projection E --verdict E                                          # then check the price
+$TSLAB pinned --repo kapitsa --class gemv        # verified settings of compared engines
 ```
 
 `tslab knobs` lists the switches an arm can set (`KNOB=V`) and, below them,
@@ -86,8 +102,6 @@ built from it.
 
 - Quote a number only from clean, quotable runs, with its ledger id, model,
   workload, chip, power source and page-cache class.
-- NOISE is not a reason to rerun until it wins. INCONCLUSIVE means a busy
-  host: fix it and rerun, never revert.
 - Do not loosen a bound, flip a default or freeze a `docs/BENCHMARKS.md` row.
   Those are human decisions.
 - Do not edit `crates/lab` while it grades you (`run-experiment` refuses).

@@ -15,6 +15,7 @@ process, which must sit beside `tslab`.
 | `capabilities --model M` | What tslab can measure on this install, and why not the rest. `result.tags` drive workflow `when` clauses | nothing |
 | `inventory --model M` | Every weight shape the install binds, by dtype, with per-forward counts | nothing |
 | `knobs` | Runtime switches tslab knows: env name, values, exactness, quotable, engagement lines; then the kernel modes (lanes): the bench that prices each and how it is compared | nothing |
+| `pinned [--repo kapitsa\|omlx\|mlx-serve] [--class C] [--id ID] [--dir PATH]` | The verified kernel settings pinned from the engines this repo compares against, each traced to a source line and revision. The baseline is embedded in the binary. `--dir` layers edited copies over it for a sweep (a colliding `id` replaces the baseline) | nothing |
 | `kernel --list` | Registered kernel benches | nothing |
 | `schema` | JSON Schema of everything tslab writes | nothing |
 | `ledger --experiment E [--kind K]` | The raw records of one experiment | nothing |
@@ -35,6 +36,7 @@ process, which must sit beside `tslab`.
 | `trace --model M --prompt ... --decode 64` | Metal System Trace of the measured work: GPU busy, idle gaps, per-kernel shares | `trace` |
 | `tree-replay --model M --drafter mtp\|dflash` | Would tree verify accept more than the chain at equal rows | `tree_replay` |
 | `chain-capture` then `depth-replay` | Best speculative depth policy, priced from modeled or ledger round costs | `chain_capture`, `depth_replay` |
+| `ane-plan --path PROGRAM.mlpackage\|DIR [--units ane\|all\|gpu\|cpu]` | Where Core ML places a program's ops (`MLComputePlan`), as cost shares on ANE, GPU and CPU plus the ops left off the ANE. No timing and no model install. Needs a macOS with compute plans | `ane_plan` |
 
 Workload flags: `--prompt protocol:ID|messages:PATH|text:PATH|corpus:N|chat:PATH`
 (repeatable), `--decode N`, `--chunk N|off`, `--context N`. An audio install
@@ -117,6 +119,9 @@ is `crates/lab/program.md`.
 
 ## Traps
 
+- `ane-plan` says where ops run, not how fast. "Supported on the ANE" is not
+  "placed there": read the cost share, and measure the ANE+Steel split as an
+  ordinary `ab` arm (`ane_prefill` knob) on a worker built with `ane-prefill`.
 - A forced-kernel variable such as `TURBOSPARK_ATTN_DECODE_KERNEL=barrier`
   changes more than the arm you meant (the trunk's verify too). The baseline
   is the variable unset.
