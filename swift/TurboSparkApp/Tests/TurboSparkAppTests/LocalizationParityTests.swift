@@ -654,6 +654,9 @@ final class LocalizationParityTests: XCTestCase {
         for phase in MoveProgress.Phase.allCases {
             values.append(("MoveProgress.Phase.title", phase.title))
         }
+        for category in AppToolCategory.allCases {
+            values.append(("AppToolCategory.label", category.label))
+        }
         let missing = values.filter { strings[$0.value] == nil }
             .map { "\($0.source): \($0.value)" }
         XCTAssertTrue(
