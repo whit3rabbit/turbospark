@@ -107,10 +107,14 @@ Four projections have been checked against a model A/B so far
 The GDN kernel mode projected within the floor at 8 rows and at one row. The
 tile projected plain decode's loss close to the documented figure. The
 small-projection lever missed by a large margin until the bench itself was
-fixed, because a tiny shape's timed pass was dominated by the command buffer's
-fixed cost. Read a projection from a tiny shape as suspect until its per-
-dispatch time is compared with a many-copy pool. Four points are too few to
-subtract a bias; `tslab calibrate --all` keeps counting.
+fixed twice: once for a pass of too few dispatches, then for the device's
+state. A pass started on a cold device runs several times slower for its
+whole length, and the bench measured M = 1 first with host work between
+passes, so the one-row unit was the device's state and not the kernel
+(`int4_matmul` now commits a primer before every timed pass; the record's
+`subject.primer` says so). Read a tiny-shape projection from a bench that does
+not prime as suspect. Five points are too few to subtract a bias;
+`tslab calibrate --all` keeps counting.
 
 ## Process-cached switches
 

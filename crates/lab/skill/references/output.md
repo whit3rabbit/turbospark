@@ -41,6 +41,8 @@ is `$TURBOSPARK_LAB_DIR`, else `$TURBOSPARK_HOME/lab`, else
 | `verdict` | A paired A/B: `verdict.{verdict, median, ci_low, ci_high, improvements}`, `memory` |
 | `kernel_curve` | One kernel bench case: `result` is a `BenchResult` |
 | `hash_diff`, `dispatch_probe`, `standin`, `trace`, `round_cost` | What their command measured |
+| `chain_capture` | `capture.{case, depth, prompt_tokens, match_len, stream_digest}` and, from this build on, `capture.prompt_ids` and `capture.stream` (token ids; absent on older captures) |
+| `depth_replay`, `hybrid_replay` | Controller settings, or the lookup-plus-head hybrid against the head alone, priced over captures: `results[].{label, env, case}` with per-case `head` and `hybrid` walks and `delta_committed_per_round`, `delta_tok_s` |
 | `projection` | `tslab project`: `projection.{ratio, improvement_throughput, improvement_time, coverage, floor, clears_floor, cases, skipped, notes}` and the `inputs` it read |
 | `calibration` | `tslab calibrate`: `calibration.{predicted, measured, error, miss, sign_flip, reason}` and the projection and verdict it joined |
 | `experiment`, `confirm`, `gate`, `experiment_start` | run-experiment's records and decision |

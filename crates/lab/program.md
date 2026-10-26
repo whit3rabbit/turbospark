@@ -275,6 +275,8 @@ Workloads under `crates/lab/workloads/` are for `--prompt messages:PATH`.
 `copy-heavy.messages.json` is a quote-back task (rename one variable in a short
 function and return all of it), the shape where lookup drafting was expected to
 pay and where a block drafter commits nearly the whole block.
+`code.messages.json` asks for a short function and its complexity, the code
+case the adaptive-depth checks were measured on.
 
 ## Spec template
 

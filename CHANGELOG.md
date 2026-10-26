@@ -14,6 +14,21 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- `tslab hybrid-replay`: prices prompt lookup over the MTP chain on a chain
+  capture, per policy and case, against the head alone (ledger kind
+  `hybrid_replay`). `tslab chain-capture` now keeps the prompt and stream
+  token ids on the capture (`prompt_ids`, `stream`; older captures still read).
+  `crates/lab/workloads/code.messages.json` is the code case the adaptive
+  depth checks used.
+
+### Fixed
+- `tslab kernel --bench int4_matmul` commits an untimed primer (about 50 ms
+  of GPU work on its own small matrix) right before every timed pass. A pass
+  started on a cold device runs several times slower for its whole length,
+  and M = 1 was measured first with host work between passes, so a tiny
+  shape's one-row GEMV read about three times its share of an 8-GEMV pass and
+  every `c(M)` against it was wrong. `subject.primer` on the record carries
+  the primer's size and its median GPU time.
 - Kernel modes (`docs/KERNEL_MODES.md`): the contract for a switch that
   selects an alternative kernel path beside the default, and the lab tooling
   around it. `tslab project` prices a mode from kernel curves, per-forward
