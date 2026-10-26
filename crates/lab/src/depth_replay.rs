@@ -264,7 +264,7 @@ pub fn simulate(
 /// several caps, and a grid around it.
 pub fn grid(max_depth: usize) -> Vec<Policy> {
     let mut out: Vec<Policy> = (2..=max_depth.min(8)).map(Policy::Fixed).collect();
-    let caps: Vec<usize> = [3, 4, 5, 6, 8]
+    let caps: Vec<usize> = [3, 4, 5, 6, 7, 8]
         .into_iter()
         .filter(|&c| c <= max_depth)
         .collect();
