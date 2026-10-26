@@ -1371,6 +1371,41 @@ where the extra 4-5 ms of verify goes (the per-row tree attention, the tree
 GDN kernels, or the per-row position table); profile it on a quiet host
 before deciding whether to promote. Re-run the A/B then.
 
+### Compaction off the critical path, and the tile-off A/B (2026-10-26)
+
+The tree compaction (`dflash_tree_compact`) ran in its own command buffer
+with `commit_and_wait`. It is now committed without a wait: every reader of
+what it writes is later GPU work on the same queue (the fold, the next
+context write, the next verify). Its one host reader, the rollback's copy of
+residual row `keep - 1`, is served by a one-row host move, so `scratch.x` is
+no longer gathered on the GPU (no DFlash2 reader depends on that row; only
+the MTP head reads row 0, and dropping the move fails no test). The eager
+tape's `b` is no longer gathered either: the tree runs only on the lazy
+tape, whose fold never reads it (48 fewer dispatches a round).
+
+Lossless on the real install with the tree on, tile on and tile off
+(`dflash_generation_gate`, `TURBOSPARK_BATCHED_GEMV=0`). `tslab ab` on
+`qwen38-27b-dflash2`, medium-review and short-explanation, 128 tokens, M4
+Max on AC:
+
+| Arms | Experiment | Verdict |
+|---|---|---|
+| chain vs tree, `TURBOSPARK_INT4_MMA8=1` | `tree-compact-async` | WIN +4.80%, 95% CI [+4.59%, +6.46%], 3 clean pairs |
+| chain vs tree, tile off (knob unset) | `tree-tile-off-2` | WIN +8.67%, 95% CI [+6.21%, +9.07%], 3 clean pairs |
+
+Both pool the two prompts, so they do not compare directly with the
+per-prompt +8.6% and +3.1% above. The rollback phase, where the compaction
+sat, now reads 0.17-0.32 ms a round for the tree against 0.16-0.25 for the
+chain, about +0.05 ms, where it read +0.5-0.7 ms before.
+
+Tile off, a tree round verifies the same 8 rows as the chain (140-148 ms
+against 140-150 ms of verify a round) and commits 5-10% more, so the tree
+does not regress a DFlash2 user without the tile. Depth 7 itself is the
+cost there: the lossless gate's informal clocks read 0.81x sequential on
+its prose prompt at block 7 with the tile off, for chain and tree alike.
+The tree is still opt-in; promoting it, and which depth DFlash2 serves
+without the tile, are the open decisions.
+
 ## Item 1: the lazy rank-1 GDN verify tape
 
 Adopted, default on, `TURBOSPARK_GDN_LAZY_TAPE=0` restores the eager path.

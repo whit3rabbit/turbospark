@@ -173,6 +173,10 @@ when this file gets updated relative to the version bump and the tag.
     gates (`bit_exact`, and `text_exact` for transcripts).
 
 ### Changed
+- The DFlash2 tree compaction (`TURBOSPARK_DFLASH_TREE=1`) is committed without
+  a wait and no longer gathers the unused eager-tape and residual rows, taking
+  its share of a round from about 0.5-0.7 ms to 0.05 ms. Measured with the
+  8-row tile off as well, the tree beats the chain there too (+8.7%).
 - Gated-DeltaNet key head dimension `Dk = 128` baked into the Metal delta
   kernels as a compile-time constant (`FC_GDN_DK = 98`), default on. Unrolls
   the per-lane state loops in `gdn_delta_step_decode`, `gdn_delta_step_prefill`
