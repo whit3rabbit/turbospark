@@ -568048,6 +568048,792 @@
           }
         }
       }
+    },
+    "This chat sends the prompt below.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This chat sends the prompt below."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Este chat envía la siguiente instrucción del sistema."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ce chat envoie l'invite système ci-dessous."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dieser Chat sendet den folgenden System-Prompt."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Questa chat invia il prompt di sistema seguente."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Este chat envia o prompt do sistema abaixo."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deze chat verzendt de onderstaande systeemprompt."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Denna chatt skickar systemprompten nedan."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ten czat wysyła poniższy monit systemowy."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Этот чат отправляет системный промпт ниже."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Цей чат надсилає системний промпт нижче."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu sohbet aşağıdaki sistem komutunu gönderir."
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ترسل هذه الدردشة المطالبة أدناه."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "צ'אט זה שולח את ההנחיה שלהלן."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "यह चैट नीचे दिया गया प्रॉम्प्ट भेजती है।"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此聊天发送以下系统提示词。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此聊天傳送以下系統提示詞。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このチャットは以下のプロンプトを送信します。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 대화는 아래 프롬프트를 전송합니다."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cuộc trò chuyện này gửi lời nhắc bên dưới."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Obrolan ini mengirimkan prompt di bawah ini."
+          }
+        }
+      }
+    },
+    "This chat sends no system prompt. No app-wide default is set.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This chat sends no system prompt. No app-wide default is set."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Este chat no envía ninguna instrucción del sistema. No se ha definido un valor predeterminado para toda la aplicación."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ce chat n'envoie aucune invite système. Aucun paramètre par défaut global n'est défini."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dieser Chat sendet keinen System-Prompt. Es ist kein app-weiter Standard festgelegt."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Questa chat non invia prompt di sistema. Nessun valore predefinito a livello di app è impostato."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Este chat não envia prompt do sistema. Nenhum padrão do aplicativo foi definido."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deze chat verzendt geen systeemprompt. Er is geen app-brede standaard ingesteld."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Denna chatt skickar ingen systemprompt. Ingen appomfattande standard har angetts."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ten czat nie wysyła monitu systemowego. Nie ustawiono domyślnego dla całej aplikacji."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Этот чат не отправляет системный промпт. Общесистемное значение по умолчанию не задано."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Цей чат не надсилає системний промпт. Загальне значення за замовчуванням не встановлено."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu sohbet sistem komutu göndermez. Uygulama genelinde varsayılan ayarlanmadı."
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "لا ترسل هذه الدردشة أي مطالبة نظام. لم يتم تعيين مطالبة افتراضية للتطبيق."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "צ'אט זה אינו שולח הנחיית מערכת. לא הוגדרה ברירת מחדל לכלל היישום."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "यह चैट कोई सिस्टम प्रॉम्प्ट नहीं भेजती है। कोई ऐप-व्यापी डिफ़ॉल्ट सेट नहीं है।"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此聊天不发送系统提示词。未设置应用全局默认值。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此聊天不傳送系統提示詞。未設定應用程式全域預設值。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このチャットはシステムプロンプトを送信しません。アプリ全体のデフォルトは設定されていません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 대화는 시스템 프롬프트를 전송하지 않습니다. 앱 전체 기본값이 설정되지 않았습니다."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cuộc trò chuyện này không gửi lời nhắc hệ thống. Chưa đặt mặc định trên toàn ứng dụng."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Obrolan ini tidak mengirimkan prompt sistem. Tidak ada default seluruh aplikasi yang disetel."
+          }
+        }
+      }
+    },
+    "Empty, so this chat inherits the app-wide default (%lld characters, set in Settings > Engine).": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Empty, so this chat inherits the app-wide default (%lld characters, set in Settings > Engine)."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vacío, por lo que este chat hereda el valor predeterminado de la aplicación (%lld caracteres, configurado en Ajustes > Motor)."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vide, donc ce chat hérite de la valeur par défaut globale (%lld caractères, définie dans Réglages > Moteur)."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Leer, daher übernimmt dieser Chat den app-weiten Standard (%lld Zeichen, festgelegt in Einstellungen > Engine)."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vuoto, quindi questa chat eredita l'impostazione predefinita a livello di app (%lld caratteri, impostata in Impostazioni > Motore)."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vazio, portanto este chat herda o padrão do aplicativo (%lld caracteres, definido em Ajustes > Motor)."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Leeg, dus deze chat neemt de app-brede standaard over (%lld tekens, ingesteld in Instellingen > Engine)."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tom, så denna chatt ärver appomfattande standard (%lld tecken, inställt i Inställningar > Motor)."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Puste, więc ten czat dziedziczy domyślny dla całej aplikacji (%lld znaków, ustawiony w Ustawienia > Silnik)."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Пусто, поэтому этот чат наследует общесистемное значение по умолчанию (%lld символов, задано в Настройки > Движок)."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Порожньо, тому цей чат успадковує значення за замовчуванням (%lld символів, встановлено в Налаштування > Двигун)."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Boş, bu nedenle bu sohbet uygulama genelindeki varsayılanı devralır (%lld karakter, Ayarlar > Motor bölümünde ayarlanır)."
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "فارغ، لذا ترث هذه الدردشة الإعداد الافتراضي للتطبيق (%lld حرفاً، تم تعيينه في الإعدادات > المحرك)."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ריק, ולכן צ'אט זה יורש את ברירת המחדל של היישום (%lld תווים, הוגדר בהגדרות > מנוע)."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "खाली है, इसलिए यह चैट ऐप-व्यापी डिफ़ॉल्ट (%lld वर्ण, सेटिंग्स > इंजन में सेट) प्राप्त करती है।"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "为空，因此此聊天继承应用全局默认值（%lld 个字符，在“设置 > 引擎”中设置）。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "為空，因此此聊天繼承應用程式全域預設值（%lld 個字元，在「設定 > 引擎」中設定）。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "空のため、このチャットはアプリ全体のデフォルト（%lld 文字、設定 > エンジンで設定）を継承します。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "비어 있으므로 이 대화는 앱 전체 기본값(설정 > 엔진에서 설정된 %lld자)을 상속합니다."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trống, vì vậy cuộc trò chuyện này kế thừa mặc định trên toàn ứng dụng (%lld ký tự, được đặt trong Cài đặt > Công cụ)."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kosong, jadi obrolan ini mewarisi default seluruh aplikasi (%lld karakter, disetel di Pengaturan > Engine)."
+          }
+        }
+      }
+    },
+    "Cannot remove attachments while generation is active": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cannot remove attachments while generation is active"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pueden quitar archivos adjuntos mientras la generación está activa"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible de supprimer les pièces jointes pendant la génération"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anhänge können während der aktiven Generierung nicht entfernt werden"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossibile rimuovere gli allegati durante la generazione attiva"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não é possível remover anexos enquanto a geração estiver ativa"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kan bijlagen niet verwijderen terwijl generatie actief is"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Det går inte att ta bort bilagor medan generering pågår"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nie można usuwać załączników podczas trwania generowania"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Нельзя удалять вложения во время генерации"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не можна видаляти вкладення під час генерації"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Üretim etkinken ekler kaldırılamaz"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "لا يمكن إزالة المرفقات أثناء نشاط التوليد"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "לא ניתן להסיר קבצים מצורפים בזמן יצירה פעילה"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "सक्रिय निर्माण के दौरान संलग्नक नहीं हटाए जा सकते"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "生成处于活跃状态时无法移除附件"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "生成處於活躍狀態時無法移除附件"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "生成中は添付ファイルを削除できません"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "생성이 진행 중인 동안에는 첨부 파일을 제거할 수 없습니다"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Không thể xóa tệp đính kèm khi đang tạo"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tidak dapat menghapus lampiran saat pembuatan aktif"
+          }
+        }
+      }
+    },
+    "While running, a new chat cannot be created": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "While running, a new chat cannot be created"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Durante la ejecución, no se puede crear un nuevo chat"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pendant l'exécution, un nouveau chat ne peut pas être créé"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Während der Ausführung kann kein neuer Chat erstellt werden"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Durante l'esecuzione, non è possibile creare una nuova chat"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Durante a execução, um novo chat não pode ser criado"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tijdens uitvoering kan geen nieuwe chat worden gemaakt"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Det går inte att skapa en ny chatt under körning"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Podczas uruchamiania nie można utworzyć nowego czatu"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Во время выполнения нельзя создать новый чат"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Під час виконання не можна створити новий чат"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Çalışırken yeni bir sohbet oluşturulamaz"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "أثناء التشغيل، لا يمكن إنشاء دردشة جديدة"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "במהלך הפעלה, לא ניתן ליצור צ'אט חדש"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "चलने के दौरान, नई चैट नहीं बनाई जा सकती"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "运行中无法创建新聊天"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "執行中無法建立新聊天"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "実行中は新しいチャットを作成できません"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "실행 중에는 새 대화를 시작할 수 없습니다"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Khi đang chạy, không thể tạo cuộc trò chuyện mới"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saat berjalan, obrolan baru tidak dapat dibuat"
+          }
+        }
+      }
+    },
+    "Use Default is only available when a custom prompt is set": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use Default is only available when a custom prompt is set"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\"Usar predeterminado\" solo está disponible cuando se ha configurado una instrucción personalizada"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\"Utiliser les valeurs par défaut\" est disponible uniquement lorsqu'une invite personnalisée est définie"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\"Standard verwenden\" ist nur verfügbar, wenn ein benutzerdefinierter Prompt festgelegt ist"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\"Usa predefinito\" è disponibile solo quando è impostato un prompt personalizzato"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\"Usar padrão\" só está disponível quando um prompt personalizado estiver definido"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\"Standaard gebruiken\" is alleen beschikbaar wanneer een aangepaste prompt is ingesteld"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\"Använd standard\" är endast tillgängligt när en anpassad prompt har angetts"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\"Użyj domyślnego\" jest dostępne tylko wtedy, gdy ustawiono niestandardowy monit"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\"Использовать по умолчанию\" доступно только при заданном пользовательском промпте"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\"Використовувати за замовчуванням\" доступно лише тоді, коли встановлено власний промпт"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\"Varsayılanı Kullan\" yalnızca özel bir komut ayarlandığında kullanılabilir"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\"استخدام الافتراضي\" متاح فقط عند تعيين مطالبة مخصصة"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\"השתמש בברירת מחדל\" זמין רק כאשר מוגדרת הנחיה מותאמת אישית"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\"डिफ़ॉल्ट का उपयोग करें\" केवल तभी उपलब्ध होता है जब कोई कस्टम प्रॉम्प्ट सेट हो"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "仅在设置了自定义提示词时才可使用“使用默认值”"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "僅在設定了自訂提示詞時才可使用「使用預設值」"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「デフォルトを使用」はカスタムプロンプトが設定されている場合のみ使用できます"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\"기본값 사용\"은 사용자 지정 프롬프트가 설정된 경우에만 사용할 수 있습니다"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\"Sử dụng mặc định\" chỉ khả dụng khi lời nhắc tùy chỉnh được đặt"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\"Gunakan Default\" hanya tersedia jika prompt khusus disetel"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

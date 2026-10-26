@@ -26,17 +26,16 @@ public struct ChatSystemPromptSheet: View {
     /// Stated rather than left to inference: with two places a prompt can come
     /// from and an empty editor meaning "inherit", a user cannot otherwise
     /// tell a chat that has no prompt from one inheriting a long default.
-    private var effectiveSourceDescription: String {
+    private var effectiveSourceDescription: Text {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
-            return "This chat sends the prompt below."
+            return Text("This chat sends the prompt below.", bundle: .module)
         }
         let fallback = model.defaultSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         if fallback.isEmpty {
-            return "This chat sends no system prompt. No app-wide default is set."
+            return Text("This chat sends no system prompt. No app-wide default is set.", bundle: .module)
         }
-        return "Empty, so this chat inherits the app-wide default "
-            + "(\(fallback.count) characters, set in Settings > Engine)."
+        return Text("Empty, so this chat inherits the app-wide default (\(fallback.count) characters, set in Settings > Engine).", bundle: .module)
     }
 
     public var body: some View {
@@ -46,11 +45,8 @@ public struct ChatSystemPromptSheet: View {
             VStack(alignment: .leading, spacing: 10) {
                 TextEditor(text: $text)
                     .themedCode(.base)
-                    .frame(minWidth: 460, minHeight: 220)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color.secondary.opacity(0.25)))
-                Text(effectiveSourceDescription)
+                    .appEditorSurface(minHeight: 220)
+                effectiveSourceDescription
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -68,6 +64,7 @@ public struct ChatSystemPromptSheet: View {
         HStack {
             Label { Text("Chat System Prompt", bundle: .module) } icon: { Image(systemName: "text.bubble") }
                 .themedFont(.base, weight: .semibold)
+                .accessibilityAddTraits(.isHeader)
             Spacer()
         }
         .padding(16)
@@ -82,6 +79,11 @@ public struct ChatSystemPromptSheet: View {
                 text = ""
             } label: { Text("Use Default", bundle: .module) }
             .disabled(text.isEmpty)
+            .help(
+                text.isEmpty
+                    ? Text("Use Default is only available when a custom prompt is set", bundle: .module)
+                    : Text("Use Default", bundle: .module)
+            )
             Spacer()
             Button { onDismiss() } label: { Text("Cancel", bundle: .module) }
                 .keyboardShortcut(.cancelAction)
