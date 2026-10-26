@@ -83,6 +83,79 @@ impl RealForwardRunner {
 }
 
 impl RealForwardRunner {
+    /// The tree-verify selector (`TURBOSPARK_DFLASH_TREE`): the same top-16
+    /// per mask row and the same pair score as [`Self::dflash_select`], fed
+    /// to the best-first builder, which scores a node's children only when
+    /// it expands that node (never the all-pairs lattice). Returns the
+    /// tree's nodes and each node's token. Its forced-greedy path is
+    /// `dflash_select`'s chain: same scores, same first-maximum tie-break.
+    pub(crate) fn dflash_select_tree(
+        &self,
+        anchor: TokenId,
+        block: usize,
+        nodes: usize,
+    ) -> Result<(Vec<crate::DflashTreeNode>, Vec<TokenId>), RealForwardError> {
+        let d = self.real_dflash.as_ref().expect("caller checked");
+        let (rank, vocab) = (d.shape.rank, self.arch.vocab_size as usize);
+        let pred = codebook_view(
+            &self.weights,
+            &self.index,
+            PREDECESSOR_CODEBOOK,
+            vocab,
+            rank,
+        )?;
+        let succ = codebook_view(&self.weights, &self.index, SUCCESSOR_CODEBOOK, vocab, rank)?;
+        let hproj = read_f16_rows(&d.hproj, block + 1, rank);
+        let mut row_logits = vec![LogitValue::from_f32(0.0); vocab];
+        // Per depth: the candidates, their unary logits and successor rows.
+        type Depth = (Vec<TokenId>, Vec<f32>, Vec<Vec<f32>>);
+        let mut depths: Vec<Depth> = Vec::with_capacity(block);
+        for step in 0..block {
+            let row = step + 1;
+            gpu::read_buffer_f16_into(&d.logits, row * vocab * 2, &mut row_logits);
+            let (cand, unary) = top_k_finite(&row_logits, DFLASH_TOP_K).map_err(|bad| {
+                RealForwardError::Unsupported(format!(
+                    "the DFlash2 draft pass produced a non-finite logit (row {row}, id {bad})"
+                ))
+            })?;
+            let succ_rows = cand
+                .iter()
+                .map(|&c| read_bf16_row(succ, c))
+                .collect::<Result<Vec<_>, _>>()?;
+            depths.push((cand, unary, succ_rows));
+        }
+        let mut failure: Option<RealForwardError> = None;
+        let tree = crate::dflash_best_first_tree(block, nodes, |depth, parent| {
+            let prev = parent.map_or(anchor, |n| depths[n.depth].0[n.cand]);
+            let (_, unary, succ_rows) = &depths[depth];
+            let proj = &hproj[(depth + 1) * rank..(depth + 2) * rank];
+            let pred_row = match read_bf16_row(pred, prev) {
+                Ok(r) => r,
+                Err(e) => {
+                    failure.get_or_insert(e);
+                    return vec![0.0; unary.len()];
+                }
+            };
+            succ_rows
+                .iter()
+                .enumerate()
+                .map(|(c, succ_row)| {
+                    // The selector's own expression and summation order.
+                    let mut dot = 0.0f32;
+                    for r in 0..rank {
+                        dot += pred_row[r] * proj[r] * succ_row[r];
+                    }
+                    unary[c] + dot
+                })
+                .collect()
+        });
+        if let Some(e) = failure {
+            return Err(e);
+        }
+        let tokens = tree.iter().map(|n| depths[n.depth].0[n.cand]).collect();
+        Ok((tree, tokens))
+    }
+
     /// The whole candidate lattice of the LAST draft pass, for tree-verify
     /// research (`crate::DflashLattice`). Read-only: it rereads the mask
     /// rows' logits and projections the selector just walked and changes no

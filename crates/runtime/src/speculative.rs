@@ -365,6 +365,15 @@ fn run_speculative<P: SpeculativeProducer>(
     let mut draft_qs: Vec<ShapedDistribution> = Vec::with_capacity(block);
     let mut feed: Vec<TokenId> = Vec::with_capacity(block + 1);
     let reason;
+    // TREE ROUNDS (`TURBOSPARK_DFLASH_TREE`): greedy and fixed-depth only,
+    // and only at the producer's own node count, so a tree round verifies
+    // the rows a chain round would. Budget-shortened rounds and adaptive
+    // runs keep the chain.
+    let tree_nodes = producer
+        .tree_nodes()
+        .filter(|&n| n == block && config.shaping.is_deterministic());
+    let mut tree: Vec<crate::DflashTreeNode> = Vec::with_capacity(block);
+    let mut tree_tokens: Vec<TokenId> = Vec::with_capacity(block);
 
     // Every uniform THIS loop draws comes from one monotonic counter, so a
     // seeded run is reproducible and no two draws share a value. Sharing
@@ -429,6 +438,122 @@ fn run_speculative<P: SpeculativeProducer>(
             return Err(RuntimeError::Producer(
                 "round_block is 0: no room after admission; invariant violation".to_string(),
             ));
+        }
+
+        // -- A TREE round, when the producer verifies trees. The walk is the
+        //    chain's acceptance generalized: at the current node's row, the
+        //    target's pick is accepted when a child of that node carries it.
+        //    The accepted path is then compacted into rows `0..keep`, after
+        //    which retaining rollback, the fold, the record and the drafter
+        //    rewind run exactly as for a chain of that length.
+        if let Some(nodes) = tree_nodes.filter(|_| round_block == block && adaptive.is_none()) {
+            let t_draft = std::time::Instant::now();
+            producer
+                .draft_tree(next, base, nodes, &mut tree, &mut tree_tokens)
+                .map_err(RuntimeError::Producer)?;
+            ph[0] += t_draft.elapsed();
+            let parents = crate::dflash_tree_slot_parents(&tree);
+            feed.clear();
+            feed.push(next);
+            feed.extend_from_slice(&tree_tokens);
+            let t_verify = std::time::Instant::now();
+            let point = producer.checkpoint();
+            producer
+                .verify_tree(
+                    &feed,
+                    &parents,
+                    base,
+                    &mut batch_logits[..feed.len() * vocab_size],
+                )
+                .map_err(RuntimeError::Producer)?;
+            ph[1] += t_verify.elapsed();
+            stat_rounds += 1;
+            if stats {
+                stat_depth[round_block] += 1;
+            }
+            // (committed, bonus, stop, accepted path of slots).
+            type TreeRound = (usize, Option<TokenId>, Option<StopReason>, Vec<u32>);
+            let mut tree_round = || -> Result<TreeRound, RuntimeError> {
+                let t_accept = std::time::Instant::now();
+                let mut path: Vec<u32> = vec![0];
+                let mut at: Option<usize> = None;
+                let mut stopped = None;
+                let mut bonus = None;
+                loop {
+                    let slot = at.map_or(0, |id| id + 1);
+                    let row = &batch_logits[slot * vocab_size..(slot + 1) * vocab_size];
+                    let target = select(
+                        LogitsView::new(row),
+                        &config.shaping,
+                        &sink.history,
+                        sink.generated as u64,
+                    )?;
+                    let depth = path.len() - 1;
+                    let offered = tree.iter().any(|n| n.parent == at);
+                    if stats && offered && depth < block {
+                        stat_offered[depth] += 1;
+                    }
+                    let hit = (0..tree.len())
+                        .find(|&id| tree[id].parent == at && tree_tokens[id] == target);
+                    let Some(id) = hit else {
+                        bonus = Some(target);
+                        break;
+                    };
+                    if stats {
+                        stat_matched[depth] += 1;
+                    }
+                    path.push(id as u32 + 1);
+                    at = Some(id);
+                    if let Some(stop) = sink.commit(target, cancel, &mut on_progress) {
+                        stopped = Some(stop);
+                        break;
+                    }
+                }
+                stat_accepted += path.len() - 1;
+                let committed = sink.history.len() - (base + 1);
+                ph[2] += t_accept.elapsed();
+                let t_roll = std::time::Instant::now();
+                producer
+                    .compact_tree(base, &path[..committed + 1])
+                    .map_err(RuntimeError::Producer)?;
+                if committed + 1 < feed.len() {
+                    stat_rollbacks += 1;
+                    producer
+                        .rollback_retaining(&point, committed + 1)
+                        .map_err(RuntimeError::Producer)?;
+                }
+                ph[3] += t_roll.elapsed();
+                let t_commit = std::time::Instant::now();
+                producer
+                    .commit_pending(committed + 1)
+                    .map_err(RuntimeError::Producer)?;
+                ph[4] += t_commit.elapsed();
+                Ok((committed, bonus, stopped, path))
+            };
+            let (committed, bonus, stopped, path) = match tree_round() {
+                Ok(r) => r,
+                Err(e) => {
+                    producer.discard_pending();
+                    return Err(e);
+                }
+            };
+            position = sink.history.len();
+            let t_rewind = std::time::Instant::now();
+            let path_feed: Vec<TokenId> = path[..committed + 1]
+                .iter()
+                .map(|&s| feed[s as usize])
+                .collect();
+            producer.record_committed(&path_feed, base);
+            producer
+                .rewind_drafter(base + committed)
+                .map_err(RuntimeError::Producer)?;
+            ph[5] += t_rewind.elapsed();
+            if let Some(stop) = stopped {
+                reason = stop;
+                break 'rounds;
+            }
+            next = bonus.expect("a walk that did not stop ends on a bonus pick");
+            continue 'rounds;
         }
 
         // -- Draft. Two shapes, and the producer says which it is:

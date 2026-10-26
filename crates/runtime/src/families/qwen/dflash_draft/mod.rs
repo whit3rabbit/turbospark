@@ -130,6 +130,33 @@ impl RealForwardRunner {
         base: usize,
         proposals: &mut Vec<TokenId>,
     ) -> Result<(), RealForwardError> {
+        proposals.clear();
+        let block = self.dflash_run_block(anchor, base)?;
+        self.dflash_select(anchor, block, proposals)
+    }
+
+    /// One DFlash2 TREE round (`TURBOSPARK_DFLASH_TREE`): the same context
+    /// write and block forward as [`Self::dflash_draft_block`], then the
+    /// best-first tree selector over `nodes` nodes in place of the greedy
+    /// chain. Returns the nodes (parents before children) and each node's
+    /// token.
+    pub fn dflash_draft_tree(
+        &mut self,
+        anchor: TokenId,
+        base: usize,
+        nodes: usize,
+    ) -> Result<(Vec<crate::DflashTreeNode>, Vec<TokenId>), RealForwardError> {
+        let block = self.dflash_run_block(anchor, base)?;
+        self.dflash_select_tree(anchor, block, nodes)
+    }
+
+    /// The GPU half of a round: the context write for the committed prefix
+    /// and the block forward. Returns the drafter's block.
+    fn dflash_run_block(
+        &mut self,
+        anchor: TokenId,
+        base: usize,
+    ) -> Result<usize, RealForwardError> {
         let vocab = self.arch.vocab_size as usize;
         let Some(d) = self.real_dflash.as_ref() else {
             return Err(RealForwardError::Unsupported(
@@ -138,7 +165,6 @@ impl RealForwardRunner {
             ));
         };
         let block = d.block;
-        proposals.clear();
         if anchor < 0 || anchor as usize >= vocab || DFLASH_MASK_TOKEN as usize >= vocab {
             return Err(RealForwardError::Unsupported(format!(
                 "DFlash2 needs token ids {anchor} (anchor) and {DFLASH_MASK_TOKEN} (mask) inside \
@@ -178,8 +204,7 @@ impl RealForwardRunner {
             }
             self.dflash_forward_block(anchor, base)
         })?;
-
-        self.dflash_select(anchor, block, proposals)
+        Ok(block)
     }
 
     /// Reads one row of the drafter's LAST head output, for the bisect

@@ -311,7 +311,8 @@ pub use gdn::{
     encode_gdn_conv_tail_update, encode_gdn_delta_decode, encode_gdn_delta_prefill,
     encode_gdn_delta_prefill_lazy, encode_gdn_delta_prefill_lazy_tree, encode_gdn_gated_norm,
     encode_gdn_gated_norm_sigmoid, encode_gdn_in_proj, encode_gdn_qk_norm,
-    encode_gdn_qk_norm_with_rms_epsilon, encode_gdn_state_fold, GdnShape, GDN_TREE_MAX_ROWS,
+    encode_gdn_qk_norm_with_rms_epsilon, encode_gdn_state_fold, gdn_tree_supported, GdnShape,
+    GDN_TREE_MAX_ROWS,
 };
 #[cfg(target_os = "macos")]
 pub use gdn_state::{GdnSnapshot, GdnStateManager};

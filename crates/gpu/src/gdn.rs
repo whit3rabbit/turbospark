@@ -740,6 +740,13 @@ pub fn encode_gdn_delta_prefill_lazy(
 /// state in registers (`FC_GDN_TREE` in `gdn.metal`).
 pub const GDN_TREE_MAX_ROWS: u32 = 8;
 
+/// Whether [`encode_gdn_delta_prefill_lazy_tree`] serves this shape: the key
+/// head dim must be the baked 128 (`TURBOSPARK_GDN_DK128` not `0`), because
+/// every node's state lives in registers.
+pub fn gdn_tree_supported(shape: GdnShape) -> bool {
+    baked_key_dim(shape.key_head_dim) == BAKED_KEY_DIM
+}
+
 /// [`encode_gdn_delta_prefill_lazy`] over a TREE of rows: row `t` starts
 /// from the state row `parent[t]` left, or from the block-start state when
 /// `parent[t] < 0`. Parents come before children (`parent[t] < t`). Each

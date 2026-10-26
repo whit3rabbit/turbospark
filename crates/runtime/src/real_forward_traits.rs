@@ -442,6 +442,47 @@ impl SpeculativeProducer for RealForwardRunner {
         Ok(())
     }
 
+    fn tree_nodes(&self) -> Option<usize> {
+        self.dflash_tree_nodes()
+    }
+
+    fn draft_tree(
+        &mut self,
+        anchor: i32,
+        base: usize,
+        nodes: usize,
+        tree: &mut Vec<crate::DflashTreeNode>,
+        tokens: &mut Vec<i32>,
+    ) -> Result<(), String> {
+        let (t, k) = gpu::autorelease_pool(|| {
+            self.dflash_draft_tree(anchor, base, nodes)
+                .map_err(|e| e.to_string())
+        })?;
+        *tree = t;
+        *tokens = k;
+        Ok(())
+    }
+
+    fn verify_tree(
+        &mut self,
+        feed: &[i32],
+        parent: &[i32],
+        base: usize,
+        logits: &mut [LogitValue],
+    ) -> Result<(), String> {
+        gpu::autorelease_pool(|| {
+            self.dflash_verify_tree(feed, base, parent, logits)
+                .map_err(|e| e.to_string())
+        })
+    }
+
+    fn compact_tree(&mut self, base: usize, path: &[u32]) -> Result<(), String> {
+        gpu::autorelease_pool(|| {
+            self.dflash_tree_compact(base, path)
+                .map_err(|e| e.to_string())
+        })
+    }
+
     fn rewind_drafter(&mut self, position: usize) -> Result<(), String> {
         if self.real_dflash.is_some() {
             self.dflash_rewind_to(position).map_err(|e| e.to_string())

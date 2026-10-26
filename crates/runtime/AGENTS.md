@@ -89,6 +89,14 @@ policy.
   capture row 0. Its context write is sliced at 16 rows because
   `encode_gemm_any` caps the batch there. `TURBOSPARK_DFLASH_CHUNKED_PREFILL=0`
   keeps the walk. `real_forward_qwen35_dflash_chunked.rs` is the check.
+- `TURBOSPARK_DFLASH_TREE=1` verifies a tree per greedy DFlash2 round. The
+  tree spec rides `BatchedScratch::tree` for one `dflash_verify_tree` call
+  and is read only by the attention and linear cores. Any new per-row buffer
+  that the round-end reads (rollback, fold, next context write) must join
+  the gather in `families/qwen/dflash_tree.rs`, or a branching round commits
+  another branch's rows. `real_forward_qwen35_dflash_tree.rs` is the check;
+  its fixture is the wide-head one because the tree kernels need head_dim
+  128/256 and a GDN key dim of 128.
 - Music 3 zero-tolerance MLX matches are device-bound. The GitHub macOS
   runner's GPU ("Apple Paravirtual device") returns different cos and sin than
   the M4 Max that produced the pinned references, so `music3_rope` moves in the

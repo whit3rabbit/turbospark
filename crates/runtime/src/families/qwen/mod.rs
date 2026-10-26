@@ -12,6 +12,7 @@ mod dense;
 mod dflash;
 mod dflash_draft;
 mod dflash_state;
+mod dflash_tree;
 mod hadamard;
 mod moe;
 mod moe_batch;

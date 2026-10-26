@@ -241,6 +241,50 @@ pub trait SpeculativeProducer: LogitProducer {
         Err("this drafter is step-wise; drive it with draft_step".to_string())
     }
 
+    /// Nodes per TREE round (`TURBOSPARK_DFLASH_TREE`), or `None` when this
+    /// producer verifies chains only. A tree round replaces the chain's
+    /// draft and verify with [`Self::draft_tree`] / [`Self::verify_tree`]
+    /// and compacts the accepted path with [`Self::compact_tree`] before
+    /// the round-end helpers, which then run as for a chain.
+    fn tree_nodes(&self) -> Option<usize> {
+        None
+    }
+
+    /// A tree draft anchored at `anchor` (the token at `base`): `tree` gets
+    /// the nodes, parents before children, `tokens` each node's token.
+    fn draft_tree(
+        &mut self,
+        anchor: TokenId,
+        base: usize,
+        nodes: usize,
+        tree: &mut Vec<crate::DflashTreeNode>,
+        tokens: &mut Vec<TokenId>,
+    ) -> Result<(), String> {
+        let _ = (anchor, base, nodes, tree, tokens);
+        Err("this producer verifies chains only".to_string())
+    }
+
+    /// The tree verify: `feed[s]` at slot `s`, whose row continues from
+    /// `parent[s]`'s (`-1` at the anchor's slot 0). Row `s` of `logits` is
+    /// the chain verify's over slot `s`'s root path.
+    fn verify_tree(
+        &mut self,
+        feed: &[TokenId],
+        parent: &[i32],
+        base: usize,
+        logits: &mut [LogitValue],
+    ) -> Result<(), String> {
+        let _ = (feed, parent, base, logits);
+        Err("this producer verifies chains only".to_string())
+    }
+
+    /// Moves the accepted path's slots (`path[0] == 0`, increasing) to rows
+    /// `0..path.len()`, where the chain's round-end helpers read them.
+    fn compact_tree(&mut self, base: usize, path: &[u32]) -> Result<(), String> {
+        let _ = (base, path);
+        Err("this producer verifies chains only".to_string())
+    }
+
     /// Move the drafter's cursor to `position`, where the accepted prefix
     /// ended.
     fn rewind_drafter(&mut self, position: usize) -> Result<(), String>;
