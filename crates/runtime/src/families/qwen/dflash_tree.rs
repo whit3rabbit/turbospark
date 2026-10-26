@@ -9,9 +9,18 @@
 //! path is gathered into them first, in place (`gpu::encode_gather_rows_fp16`,
 //! race-free because a path's slots are strictly increasing with
 //! `path[i] >= i`). Every per-row buffer the round-end reads is gathered:
-//! each attention layer's K and V, the verify tape (`qkv_raw`, `a`, `b`, and
-//! the lazy tape's `k` and fp32 `delta`), the drafter's capture rows and the
-//! residual rows of `scratch.x`. A node at slot `s` was rotated at `start +
+//! each attention layer's K and V, the lazy tape's inputs to the fold
+//! (`qkv_raw`, `a`, `k` and fp32 `delta`), and the drafter's capture rows.
+//! The eager tape's `b` is not: the tree runs only on the lazy tape, whose
+//! fold never reads it. Of the residual rows, only the one
+//! `rollback_retaining` reads (`keep - 1`) is moved, on the host.
+//!
+//! The gather pass is committed WITHOUT a wait. Every reader of what it
+//! writes is later GPU work on the same queue (the fold, the next context
+//! write, the next verify), and buffers on one queue execute in commit order
+//! (`crates/gpu` Gotcha 8). The one host reader, the rollback's copy of
+//! residual row `keep - 1`, is served by the host move below instead, so it
+//! never reads a row the GPU has not written yet. A node at slot `s` was rotated at `start +
 //! depth[s]`, so after compaction row `i` carries position `start + i`, as
 //! the chain's does. The machinery after that runs unchanged.
 
@@ -133,6 +142,19 @@ impl RealForwardRunner {
         let rank1 = gdn_tape.rank1.as_ref().ok_or_else(|| {
             RealForwardError::Unsupported("tree compaction needs the lazy GDN tape".to_string())
         })?;
+        // The residual row the rollback copies to row 0, moved on the host:
+        // the verify that wrote it has been waited on, and no queued GPU work
+        // touches `scratch.x`. No DFlash2 reader depends on it (only the
+        // step-wise MTP head reads row 0, and the tree never runs with it
+        // open), so dropping this line fails no test; it is kept so that
+        // `rollback_retaining`'s row-0 contract holds whatever reads it later.
+        // Rows `1..keep - 1` are read by nothing before the next pass.
+        let keep = path.len();
+        let row_bytes = hidden * 2;
+        let last = path[keep - 1] as usize;
+        let residual = gpu::read_buffer_bytes(&self.scratch.x, last * row_bytes, row_bytes);
+        gpu::write_buffer_bytes(&self.scratch.x, (keep - 1) * row_bytes, &residual);
+
         let gpu_err = RealForwardError::Gpu;
         let context = &mut self.context;
         let kv = &self.kv;
@@ -166,7 +188,6 @@ impl RealForwardRunner {
                 let at = |dim: usize, bytes: usize| (linear * rows * dim * bytes) as u64;
                 gather(context, &gdn_tape.qkv_raw, at(qkv_dim, 2), qkv_dim)?;
                 gather(context, &gdn_tape.a, at(v_heads, 2), v_heads)?;
-                gather(context, &gdn_tape.b, at(v_heads, 2), v_heads)?;
                 gather(context, &rank1.k, at(k_width, 2), k_width)?;
                 // fp32 rows, moved as twice as many halfs: a bit copy.
                 gather(context, &rank1.delta, at(value_dim, 4), 2 * value_dim)?;
@@ -179,8 +200,8 @@ impl RealForwardRunner {
             gather(context, v_buf, v_off as u64, kv.v_stride(layer) / 2)?;
         }
         gather(context, &d.capture, 0, d.shape.aux_count * hidden)?;
-        gather(context, &self.scratch.x, 0, hidden)?;
-        pass.commit_and_wait();
+        // Not waited (module header). Dropping the handle does not wait.
+        drop(pass.commit());
         Ok(())
     }
 }
