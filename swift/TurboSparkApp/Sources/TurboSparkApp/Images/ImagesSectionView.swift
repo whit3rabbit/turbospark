@@ -18,6 +18,7 @@ struct ImagesSectionView: View {
     /// The library the user picked for the first download. Nil follows the
     /// default (requirement 2.2). Per install: not remembered across launches.
     @State private var downloadDestination: String?
+    @State private var confirmingTrashSelection = false
 
     /// The mode lives on the model because the panel beside the rail switches
     /// it (`ImagesSidebarPanel`); this pane has no switcher of its own.
@@ -81,15 +82,19 @@ struct ImagesSectionView: View {
     /// beside the rail (`ImagesSidebarPanel`), and the rail's Images menu
     /// offers both while that panel is hidden.
     private var header: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text("Image Generation", bundle: .module)
-                .themedFont(.title2, weight: .semibold)
-                .accessibilityAddTraits(.isHeader)
-            Text("\(model.savedImageArtifacts.count) image(s)", bundle: .module)
-                .themedFont(.small)
-                .foregroundStyle(.appSecondary)
+        AppAdaptiveHeader {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Image Generation", bundle: .module)
+                    .themedFont(.title2, weight: .semibold)
+                    .accessibilityAddTraits(.isHeader)
+                Text("\(model.savedImageArtifacts.count) image(s)", bundle: .module)
+                    .themedFont(.small)
+                    .foregroundStyle(.appSecondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } actions: {
+            EmptyView()
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 24).padding(.vertical, 18)
     }
 
@@ -105,7 +110,7 @@ struct ImagesSectionView: View {
                 }
                 .appAction(.secondary)
                 Button(role: .destructive) {
-                    selection.subtract(model.trashGeneratedImages(ids: selection))
+                    confirmingTrashSelection = true
                 } label: {
                     Label { Text("Move to Trash", bundle: .module) } icon: { Image(systemName: "trash") }
                 }
@@ -120,6 +125,20 @@ struct ImagesSectionView: View {
             .disabled(model.savedImageArtifacts.isEmpty)
         }
         .themedFont(.small).padding(.horizontal, 24).padding(.vertical, 12)
+        .confirmationDialog(Text("Move to Trash", bundle: .module), isPresented: $confirmingTrashSelection) {
+            Button(role: .destructive) {
+                selection.subtract(model.trashGeneratedImages(ids: selection))
+            } label: {
+                Text("Move to Trash", bundle: .module)
+            }
+            Button(role: .cancel) {
+                confirmingTrashSelection = false
+            } label: {
+                Text("Cancel", bundle: .module)
+            }
+        } message: {
+            Text("Are you sure you want to move the selected images to the Trash?", bundle: .module)
+        }
     }
 
     @ViewBuilder
@@ -225,9 +244,9 @@ struct ImagesSectionView: View {
             }
         }
         .padding(18)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 12).stroke(.appBorder, lineWidth: 0.75)
+            RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous).stroke(.appBorder, lineWidth: 0.75)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         .accessibilityElement(children: .combine)
@@ -256,14 +275,15 @@ struct ImagesSectionView: View {
            let image = NSImage(data: result.png) {
             VStack(alignment: .leading, spacing: 12) {
                 Image(nsImage: image).resizable().scaledToFit().frame(maxHeight: 260)
+                    .accessibilityLabel(Text("Generated image preview", bundle: .module))
                 Text("This image has not been saved.", bundle: .module).themedFont(.small)
                 HStack(spacing: AppMetrics.actionSpacing) {
                     Button { model.saveImage() } label: { Text("Save", bundle: .module) }
                         .appAction(.secondary, size: .small)
-                    Button(role: .destructive) { model.discardUnsavedImage() } label: {
+                    Button { model.discardUnsavedImage() } label: {
                         Text("Remove", bundle: .module)
                     }
-                    .appAction(.destructive, size: .small)
+                    .appAction(.secondary, size: .small)
                 }
                 .disabled(model.imageGenerationTask != nil)
             }
