@@ -28,7 +28,7 @@ struct PromptComposerView: View {
             if let documentImportError {
                 Text(documentImportError)
                     .themedFont(.small)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(AppAttention.color)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if autocomplete.isVisible {
@@ -300,8 +300,8 @@ private struct QueuedPromptsSection: View {
                         .padding(.horizontal, 8)
                         .padding(.vertical, 5)
                         .background(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(theme.composerBackground.opacity(0.6))
+                            RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
+                                .fill(theme.surface)
                         )
                         .contentShape(Rectangle())
                     }
@@ -312,7 +312,7 @@ private struct QueuedPromptsSection: View {
                 Text("Queued behind the running turn; drains when it finishes.",
                      bundle: .module)
                     .themedFont(.tiny)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.appSecondary)
             }
         }
     }

@@ -33,19 +33,11 @@ public struct WorktreeTimelineView: View {
     }
 
     private var emptyTimelineView: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "clock.arrow.circlepath")
-                .themedFont(.hero)
-                .foregroundStyle(.tertiary)
-                .padding(.top, 40)
-            Text("No Commit History Found", bundle: .module)
-                .themedFont(.base, weight: .medium)
-                .foregroundStyle(.appSecondary)
-            Text("Commit your changes to view the project timeline.", bundle: .module)
-                .themedFont(.small)
-                .foregroundStyle(.tertiary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        AppEmptyState(
+            systemImage: "clock.arrow.circlepath",
+            title: Text("No Commit History Found", bundle: .module),
+            message: Text("Commit your changes to view the project timeline.", bundle: .module)
+        )
     }
 
     private func timelineNodeRow(commit: WorktreeCommit, isLast: Bool) -> some View {
@@ -55,13 +47,13 @@ public struct WorktreeTimelineView: View {
             // Visual timeline node and connector rail
             VStack(spacing: 0) {
                 Circle()
-                    .fill(isSelected ? TurboSparkTheme.accentColor : Color.secondary.opacity(0.6))
+                    .fill(isSelected ? theme.accent : theme.secondaryText.opacity(0.6))
                     .frame(width: 9, height: 9)
                     .padding(.top, 6)
 
                 if !isLast {
                     Rectangle()
-                        .fill(Color.primary.opacity(0.1))
+                        .fill(.appBorder)
                         .frame(width: 1.5)
                         .frame(maxHeight: .infinity)
                 }
@@ -71,7 +63,7 @@ public struct WorktreeTimelineView: View {
             // Commit Card
             VStack(alignment: .leading, spacing: 4) {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.15)) {
+                    TSMotion.animate(TSMotion.select) {
                         if isSelected {
                             worktree.deselectTimelineCommit()
                         } else {
@@ -83,17 +75,17 @@ public struct WorktreeTimelineView: View {
                         HStack(spacing: 6) {
                             Text(commit.summary)
                                 .font(theme.ui(.small, weight: isSelected ? .semibold : .medium))
-                                .foregroundStyle(isSelected ? TurboSparkTheme.accentColor : .primary)
+                                .foregroundStyle(isSelected ? theme.accent : theme.foreground)
                                 .lineLimit(2)
 
                             Spacer(minLength: 4)
 
                             Text(commit.shortHash)
                                 .font(theme.code(.small))
-                                .foregroundStyle(.tertiary)
+                                .foregroundStyle(.appSecondary)
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 1)
-                                .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 4))
+                                .background(.appElevated, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
                         }
 
                         HStack(spacing: 6) {
@@ -102,11 +94,11 @@ public struct WorktreeTimelineView: View {
                                 .foregroundStyle(.appSecondary)
 
                             Text(verbatim: "-")
-                                .foregroundStyle(.tertiary)
+                                .foregroundStyle(.appSecondary)
 
                             Text(commit.relativeDate)
                                 .themedFont(.tiny)
-                                .foregroundStyle(.tertiary)
+                                .foregroundStyle(.appSecondary)
                         }
                     }
                     .padding(.horizontal, 8)
@@ -115,9 +107,10 @@ public struct WorktreeTimelineView: View {
                 }
                 .buttonStyle(.plain)
                 .background(
-                    isSelected ? TurboSparkTheme.accentColor.opacity(0.1) : Color.primary.opacity(0.02),
-                    in: RoundedRectangle(cornerRadius: 6)
+                    isSelected ? theme.selection : theme.surface,
+                    in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
                 )
+                .accessibilityAddTraits(isSelected ? [.isSelected] : [])
 
                 // Expanded commit details and file list
                 if isSelected {
@@ -141,26 +134,22 @@ public struct WorktreeTimelineView: View {
                 Spacer()
 
                 if worktree.isLoadingCommitFiles {
-                    ProgressView().controlSize(.mini)
+                    AppProgressBar(value: nil, label: Text("Loading commit files...", bundle: .module), size: .compact)
+                        .frame(width: 80)
                 } else {
-                    Text(verbatim: "\(worktree.selectedCommitFiles.count) files")
+                    Text("\(worktree.selectedCommitFiles.count) files", bundle: .module)
                         .themedFont(.tiny).monospacedDigit()
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.appSecondary)
                 }
             }
 
             if worktree.isLoadingCommitFiles {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.mini)
-                    Text("Loading commit files...", bundle: .module)
-                        .themedFont(.tiny)
-                        .foregroundStyle(.appSecondary)
-                }
-                .padding(.vertical, 4)
+                AppProgressBar(value: nil, label: Text("Loading commit files...", bundle: .module))
+                    .padding(.vertical, 4)
             } else if worktree.selectedCommitFiles.isEmpty {
                 Text("No modified files recorded.", bundle: .module)
                     .themedFont(.tiny)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.appSecondary)
             } else {
                 VStack(spacing: 2) {
                     ForEach(worktree.selectedCommitFiles) { file in
@@ -170,11 +159,11 @@ public struct WorktreeTimelineView: View {
             }
         }
         .padding(8)
-        .background(.appSurface.opacity(0.6))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .background(.appSurface)
+        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
+                .stroke(.appBorder, lineWidth: 1)
         )
     }
 
@@ -187,17 +176,17 @@ public struct WorktreeTimelineView: View {
                 Image(systemName: file.status.systemImage)
                     .themedFont(.tiny)
                     .foregroundStyle(file.status.color)
-                    .frame(width: 12)
+                    .accessibilityHidden(true)
 
                 Text(file.fileName)
                     .font(theme.code(.small, weight: isSelectedFile ? .semibold : .regular))
-                    .foregroundStyle(isSelectedFile ? TurboSparkTheme.accentColor : .primary)
+                    .foregroundStyle(isSelectedFile ? theme.accent : theme.foreground)
                     .lineLimit(1)
 
                 if !file.directoryPath.isEmpty {
                     Text(file.directoryPath)
                         .themedFont(.tiny)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.appSecondary)
                         .lineLimit(1)
                         .truncationMode(.head)
                 }
@@ -214,7 +203,7 @@ public struct WorktreeTimelineView: View {
                         if file.deletions > 0 {
                             Text(verbatim: "-\(file.deletions)")
                                 .themedFont(.tiny).monospacedDigit()
-                                .foregroundStyle(.red)
+                                .foregroundStyle(AppAttention.color)
                         }
                     }
                 }
@@ -225,8 +214,9 @@ public struct WorktreeTimelineView: View {
         }
         .buttonStyle(.plain)
         .background(
-            isSelectedFile ? TurboSparkTheme.accentColor.opacity(0.12) : Color.clear,
-            in: RoundedRectangle(cornerRadius: 4)
+            isSelectedFile ? theme.selection : Color.clear,
+            in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
         )
+        .accessibilityAddTraits(isSelectedFile ? [.isSelected] : [])
     }
 }

@@ -87,7 +87,7 @@ struct PromptComposerEditor: View {
                         if model.promptText.isEmpty {
                             Text("Ask anything", bundle: .module)
                                 .font(theme.uiFont)
-                                .foregroundStyle(.tertiary)
+                                .foregroundStyle(.appSecondary)
                                 .padding(.leading, 5)
                                 .padding(.vertical, 8)
                                 .allowsHitTesting(false)
@@ -188,7 +188,7 @@ struct PromptComposerEditor: View {
                     } label: {
                         Image(systemName: isExpanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
                             .themedFont(.tiny, weight: .medium)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.appSecondary)
                             .padding(4)
                             .contentShape(Rectangle())
                     }

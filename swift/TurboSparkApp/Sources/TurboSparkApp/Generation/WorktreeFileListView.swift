@@ -57,6 +57,7 @@ public struct WorktreeFileListView: View {
             .padding(.vertical, 6)
     }
 
+    @ViewBuilder
     private var emptySearchResults: some View {
         // Two different empties: the filter matched nothing (the common
         // case while searching), and the repository simply has no changes.
@@ -64,24 +65,19 @@ public struct WorktreeFileListView: View {
         // set is an instruction to do nothing.
         let hasQuery = !worktree.searchQuery
             .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return VStack(spacing: 6) {
-            Image(systemName: hasQuery ? "magnifyingglass" : "checkmark.circle")
-                .themedFont(.title3)
-                .foregroundStyle(.tertiary)
-                .padding(.top, 24)
-            Text(hasQuery ? "No matching changed files" : "No changes", bundle: .module)
-                .themedFont(.base, weight: .medium)
-                .foregroundStyle(.appSecondary)
-            Text(
-                hasQuery
-                    ? "Try clearing the search filter."
-                    : "Files appear here when the selected comparison finds modifications.",
-                bundle: .module)
-                .themedFont(.small)
-                .foregroundStyle(.tertiary)
+        if hasQuery {
+            AppEmptyState(
+                systemImage: "magnifyingglass",
+                title: Text("No matching changed files", bundle: .module),
+                message: Text("Try clearing the search filter.", bundle: .module)
+            )
+        } else {
+            AppEmptyState(
+                systemImage: "checkmark.circle",
+                title: Text("No changes", bundle: .module),
+                message: Text("Files appear here when the selected comparison finds modifications.", bundle: .module)
+            )
         }
-        .frame(maxWidth: .infinity, alignment: .center)
-        .padding(.vertical, 20)
     }
 
     // MARK: - Flat List View
@@ -95,16 +91,17 @@ public struct WorktreeFileListView: View {
                 Image(systemName: file.status.systemImage)
                     .themedFont(.tiny)
                     .foregroundStyle(file.status.color)
+                    .accessibilityHidden(true)
 
                 Text(file.fileName)
                     .themedFont(.base, weight: isSelected ? .semibold : .regular)
-                    .foregroundStyle(isSelected ? TurboSparkTheme.accentColor : .primary)
+                    .foregroundStyle(isSelected ? theme.accent : theme.foreground)
                     .lineLimit(1)
 
                 if !file.directoryPath.isEmpty {
                     Text(file.directoryPath)
                         .themedFont(.tiny)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.appSecondary)
                         .lineLimit(1)
                         .truncationMode(.head)
                 }
@@ -119,9 +116,10 @@ public struct WorktreeFileListView: View {
         }
         .buttonStyle(.plain)
         .background(
-            isSelected ? TurboSparkTheme.accentColor.opacity(0.12) : Color.clear,
-            in: RoundedRectangle(cornerRadius: 6)
+            isSelected ? theme.selection : Color.clear,
+            in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
         )
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 
     private func statPills(adds: Int, dels: Int) -> some View {
@@ -134,7 +132,7 @@ public struct WorktreeFileListView: View {
             if dels > 0 {
                 Text(verbatim: "-\(dels)")
                     .themedFont(.tiny, weight: .medium).monospacedDigit()
-                    .foregroundStyle(.red)
+                    .foregroundStyle(AppAttention.color)
             }
         }
     }
@@ -143,6 +141,7 @@ public struct WorktreeFileListView: View {
 /// Recursive row component rendering a directory or file item in the working tree hierarchy.
 @MainActor
 struct WorktreeTreeNodeRow: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var worktree: WorktreeModel
     let node: WorktreeTreeNode
     let depth: Int
@@ -179,7 +178,7 @@ struct WorktreeTreeNodeRow: View {
     private func directoryRow(_ node: WorktreeTreeNode, depth: Int) -> some View {
         let isExpanded = isNodeExpanded
         return Button {
-            withAnimation(.easeInOut(duration: 0.12)) {
+            TSMotion.animate(TSMotion.select) {
                 if expandedDirectories.contains(node.relativePath) {
                     expandedDirectories.remove(node.relativePath)
                 } else {
@@ -190,8 +189,7 @@ struct WorktreeTreeNodeRow: View {
             HStack(spacing: 5) {
                 Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                     .themedFont(.tiny)
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 12)
+                    .foregroundStyle(.appSecondary)
 
                 Image(systemName: isExpanded ? "folder.fill" : "folder")
                     .themedFont(.small)
@@ -214,7 +212,7 @@ struct WorktreeTreeNodeRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .background(Color.clear, in: RoundedRectangle(cornerRadius: 6))
+        .background(Color.clear, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
     }
 
     private func leafFileRow(_ file: WorktreeFileChange, depth: Int) -> some View {
@@ -226,11 +224,11 @@ struct WorktreeTreeNodeRow: View {
                 Image(systemName: file.status.systemImage)
                     .themedFont(.tiny)
                     .foregroundStyle(file.status.color)
-                    .frame(width: 12)
+                    .accessibilityHidden(true)
 
                 Text(file.fileName)
                     .themedFont(.base, weight: isSelected ? .semibold : .regular)
-                    .foregroundStyle(isSelected ? TurboSparkTheme.accentColor : .primary)
+                    .foregroundStyle(isSelected ? theme.accent : theme.foreground)
                     .lineLimit(1)
 
                 Spacer(minLength: 4)
@@ -244,9 +242,10 @@ struct WorktreeTreeNodeRow: View {
         }
         .buttonStyle(.plain)
         .background(
-            isSelected ? TurboSparkTheme.accentColor.opacity(0.12) : Color.clear,
-            in: RoundedRectangle(cornerRadius: 6)
+            isSelected ? theme.selection : Color.clear,
+            in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
         )
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 
     private func statPills(adds: Int, dels: Int) -> some View {
@@ -259,7 +258,7 @@ struct WorktreeTreeNodeRow: View {
             if dels > 0 {
                 Text(verbatim: "-\(dels)")
                     .themedFont(.tiny, weight: .medium).monospacedDigit()
-                    .foregroundStyle(.red)
+                    .foregroundStyle(AppAttention.color)
             }
         }
     }

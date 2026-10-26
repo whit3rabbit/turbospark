@@ -130,14 +130,14 @@ struct ChatActivityLine: View {
     }
 
     private var labelStyle: AnyShapeStyle {
-        tone == .attention ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.appText)
+        tone == .attention ? AnyShapeStyle(AppAttention.color) : AnyShapeStyle(.appText)
     }
 
     private func row(chevronOpen: Bool?) -> some View {
         HStack(spacing: 6) {
             Image(systemName: tone == .attention ? "exclamationmark.triangle.fill" : "sparkles")
                 .themedFont(.small, weight: .bold)
-                .foregroundStyle(tone == .attention ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.appAccent))
+                .foregroundStyle(tone == .attention ? AnyShapeStyle(AppAttention.color) : AnyShapeStyle(.appAccent))
                 .tsPulse(active: isLive && tone == .normal)
                 .accessibilityHidden(true)
 
@@ -227,8 +227,8 @@ struct ReasoningTraceView: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.primary.opacity(0.03))
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(.appElevated)
+            .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
             .textSelection(.enabled)
             .transition(.opacity)
     }
