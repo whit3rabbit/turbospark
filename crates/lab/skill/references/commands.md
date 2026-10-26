@@ -15,6 +15,7 @@ process, which must sit beside `tslab`.
 | `capabilities --model M` | What tslab can measure on this install, and why not the rest. `result.tags` drive workflow `when` clauses | nothing |
 | `inventory --model M` | Every weight shape the install binds, by dtype, with per-forward counts | nothing |
 | `knobs` | Runtime switches tslab knows: env name, values, exactness, quotable, engagement lines; then the kernel modes (lanes): the bench that prices each and how it is compared | nothing |
+| `pinned [--repo kapitsa\|omlx\|mlx-serve] [--class C] [--id ID] [--dir PATH]` | The verified kernel settings pinned from the engines this repo compares against, each traced to a source line and revision. The baseline is embedded in the binary. `--dir` layers edited copies over it for a sweep (a colliding `id` replaces the baseline) | nothing |
 | `kernel --list` | Registered kernel benches | nothing |
 | `schema` | JSON Schema of everything tslab writes | nothing |
 | `ledger --experiment E [--kind K]` | The raw records of one experiment | nothing |
@@ -36,6 +37,7 @@ process, which must sit beside `tslab`.
 | `tree-replay --model M --drafter mtp\|dflash` | Would tree verify accept more than the chain at equal rows | `tree_replay` |
 | `chain-capture` then `depth-replay` | Best speculative depth policy, priced from modeled or ledger round costs | `chain_capture`, `depth_replay` |
 | `chain-capture` then `hybrid-replay [--ngram 4] [--lookup-draft 8] [--tuned 3,1,1,2] [--cap 7]` | Would prompt lookup over the MTP chain commit more per round than the head alone, against fixed 2, the shipped controller and a tuned one. Needs a capture written with the token ids (this build's `chain-capture`); older captures are refused with that reason. Lookup rounds are priced at the MTP table's round of the same width, so the tok/s delta is conservative; the committed-per-round delta needs no cost table | `hybrid_replay` |
+| `ane-plan --path PROGRAM.mlpackage\|DIR [--units ane\|all\|gpu\|cpu]` | Where Core ML places a program's ops (`MLComputePlan`), as cost shares on ANE, GPU and CPU plus the ops left off the ANE. No timing and no model install. Needs a macOS with compute plans | `ane_plan` |
 
 Workload flags: `--prompt protocol:ID|messages:PATH|text:PATH|corpus:N|chat:PATH`
 (repeatable), `--decode N`, `--chunk N|off`, `--context N`. An audio install
@@ -118,6 +120,9 @@ is `crates/lab/program.md`.
 
 ## Traps
 
+- `ane-plan` says where ops run, not how fast. "Supported on the ANE" is not
+  "placed there": read the cost share, and measure the ANE+Steel split as an
+  ordinary `ab` arm (`ane_prefill` knob) on a worker built with `ane-prefill`.
 - A forced-kernel variable such as `TURBOSPARK_ATTN_DECODE_KERNEL=barrier`
   changes more than the arm you meant (the trunk's verify too). The baseline
   is the variable unset.

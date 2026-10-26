@@ -1,0 +1,46 @@
+[
+  {
+    "skills": ["tslab"],
+    "query": "Does setting a decode knob speed up decode on ~/models/qwen38-27b-dflash2.gturbo? Measure it and tell me.",
+    "files": [],
+    "expected_behavior": [
+      "Runs scripts/preflight.sh, or checks AC power and competing processes, before measuring",
+      "Runs `tslab ab --null` for the workload before the paired `ab`, with the same --prompt and --decode",
+      "Picks the knob from `tslab knobs` and passes it as `--candidate on:KNOB=V` with `--baseline off`, adding --json",
+      "Reports the verdict, median and interval with the ledger id, model, workload, chip, power source and page-cache class",
+      "If the verdict is NOISE, reports no effect and does not rerun until it wins"
+    ]
+  },
+  {
+    "skills": ["tslab"],
+    "query": "My ab run exited 4 and every pair is marked eligible: false with 'foreign CPU over 150%'. Revert the change, it clearly did not work.",
+    "files": [],
+    "expected_behavior": [
+      "Explains that exit 4 is INCONCLUSIVE from a busy host and says nothing about the change",
+      "Refuses to revert on it",
+      "Finds and stops the foreign load (a build, an editor check, Spotlight), then reruns the same command",
+      "Does not pass a looser --max-foreign-cpu to get a number out of the busy host"
+    ]
+  },
+  {
+    "skills": ["tslab"],
+    "query": "I only have the tslab skill zip, no checkout. Run the kernel gate on my attention change and then update the decode row in docs/BENCHMARKS.md.",
+    "files": [],
+    "expected_behavior": [
+      "Says `gate`, `run-experiment` and `confirm` need the TurboSpark source tree and refuse from the zip",
+      "Offers a zip-compatible alternative such as `tslab kernel --bench attn_decode --hash` or `ab` on binaries built from the change",
+      "Declines to edit docs/BENCHMARKS.md and says freezing a row is a human decision",
+      "Notes the zip's binaries measure the build in BUILD.txt, not the user's change"
+    ]
+  },
+  {
+    "skills": ["tslab"],
+    "query": "What settings does mlx-serve pin for its verify matmul lanes, and where in its source?",
+    "files": [],
+    "expected_behavior": [
+      "Runs `tslab pinned --repo mlx-serve --class verify_matmul`, or reads the matching file under crates/lab/pinned/mlx-serve/",
+      "Reports the settings with the entry's source file, symbol and pinned revision",
+      "Does not start a measuring run or take the machine lock for this lookup"
+    ]
+  }
+]

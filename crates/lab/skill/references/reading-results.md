@@ -23,8 +23,8 @@ say why it does not count:
 - `not on AC power`: plug in, or pass `--allow-battery` and say so.
 - `... perturbs timing; run is not quotable`: the arm set a profiler, a trace,
   the probe or a stand-in. Expected for those runs.
-- `not engaged: ...`: the arm set a switch whose lane never ran, or a kill
-  switch whose lane still ran. The arm measured something other than its
+- `not engaged: ...`: the arm set a knob whose lane never ran, or a kill
+  knob whose lane still ran. The arm measured something other than its
   name. Find out why before anything else.
 - `worker status refused`: the install cannot run that arm. `record.refusal`
   says what.

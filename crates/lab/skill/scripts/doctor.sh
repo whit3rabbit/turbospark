@@ -8,8 +8,8 @@
 # the binary is the checkout's release build.
 set -u
 
-# -P resolves the .claude/skills link to the real folder, so a checkout is
-# found from either path.
+# -P resolves symlinks (such as .claude/skills or .agents/skills) to the real
+# folder, so a checkout is found from either path.
 SKILL=$(cd "$(dirname "$0")/.." && pwd -P)
 fail=0
 

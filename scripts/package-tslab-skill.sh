@@ -5,7 +5,7 @@
 # the same skill a checkout links: its doctor script picks bin/ when present.
 #
 # The zip unpacks to one `tslab/` folder, which is a skill directory: put it
-# in ~/.claude/skills/ (scripts/install-tslab-skill.sh --zip does that), or
+# in ~/.claude/skills/ or ~/.agents/skills/ (scripts/install-tslab-skill.sh --zip does that), or
 # upload the zip where a skill zip is accepted. The binaries are unsigned:
 # a browser download is quarantined, and the skill's doctor script says so.
 #
@@ -51,8 +51,8 @@ rm -rf "$stage"
 mkdir -p "$skill/bin" "$skill/references" "$skill/scripts" "$skill/schema" "$out_dir"
 
 cp crates/lab/skill/SKILL.md "$skill/SKILL.md"
-cp crates/lab/skill/scripts/doctor.sh "$skill/scripts/doctor.sh"
-chmod +x "$skill/scripts/doctor.sh"
+cp crates/lab/skill/scripts/doctor.sh crates/lab/skill/scripts/preflight.sh "$skill/scripts/"
+chmod +x "$skill/scripts/doctor.sh" "$skill/scripts/preflight.sh"
 # All references ship, so SKILL.md's links resolve; it marks extending.md
 # as checkout only.
 cp crates/lab/skill/references/*.md "$skill/references/"
