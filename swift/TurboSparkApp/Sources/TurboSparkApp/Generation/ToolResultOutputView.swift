@@ -28,20 +28,19 @@ struct ToolResultOutputView: View {
 
             if !showAll && tail.isTruncated {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.15)) {
+                    TSMotion.animate(TSMotion.select) {
                         showAll = true
                     }
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.down.circle")
                             .themedFont(.tiny)
-                        Text(hiddenNoticeText)
+                        hiddenNoticeView
                             .themedFont(.tiny, weight: .medium)
                     }
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
-                    .background(Color.primary.opacity(0.06))
-                    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                    .background(.appElevated, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
                     .foregroundStyle(.appSecondary)
                 }
                 .buttonStyle(.plain)
@@ -51,7 +50,7 @@ struct ToolResultOutputView: View {
             ScrollView([.horizontal, .vertical], showsIndicators: true) {
                 outputText
                     .font(theme.code(.small))
-                    .foregroundStyle(isError ? Color.red : Color.primary)
+                    .foregroundStyle(isError ? AnyShapeStyle(AppAttention.color) : AnyShapeStyle(.appText))
                     .textSelection(.enabled)
                     .padding(8)
             }
@@ -59,15 +58,15 @@ struct ToolResultOutputView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 isError
-                    ? Color.red.opacity(0.05)
+                    ? AppAttention.color.opacity(0.05)
                     : theme.elevatedSurface.opacity(theme.surfaceOpacity(0.5))
             )
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
                     .stroke(
                         isError
-                            ? Color.red.opacity(0.3)
+                            ? AppAttention.color.opacity(0.3)
                             : theme.border,
                         lineWidth: 1
                     )
@@ -76,7 +75,7 @@ struct ToolResultOutputView: View {
         .padding(.leading, 8)
         .overlay(
             Rectangle()
-                .fill(isError ? Color.red.opacity(0.4) : Color.primary.opacity(0.15))
+                .fill(isError ? AppAttention.color.opacity(0.4) : theme.border)
                 .frame(width: 2),
             alignment: .leading
         )
@@ -128,10 +127,10 @@ struct ToolResultOutputView: View {
         for segment in segments {
             var run = AttributedString(segment.text)
             if segment.foreground != .default {
-                run.foregroundColor = Self.color(segment.foreground)
+                run.foregroundColor = Self.color(segment.foreground, foreground: theme.foreground)
             }
             if segment.background != .default {
-                run.backgroundColor = Self.color(segment.background)
+                run.backgroundColor = Self.color(segment.background, foreground: theme.foreground)
             }
             if segment.bold || segment.italic {
                 run.font = segment.bold && segment.italic
@@ -143,22 +142,22 @@ struct ToolResultOutputView: View {
             // Faint has no font trait; a lower opacity reads the same.
             if segment.faint {
                 run.foregroundColor = (segment.foreground != .default
-                    ? Self.color(segment.foreground) : Color.primary).opacity(0.5)
+                    ? Self.color(segment.foreground, foreground: theme.foreground) : theme.foreground).opacity(0.5)
             }
             attributed += run
         }
         return attributed
     }
 
-    private static func color(_ palette: ANSIColorizer.Palette) -> Color {
+    private static func color(_ palette: ANSIColorizer.Palette, foreground: Color) -> Color {
         switch palette {
         case .black: return Color(red: 0, green: 0, blue: 0)
         case .red: return Color(red: 0.8, green: 0, blue: 0)
-        case .green: return Color(red: 0, green: 0.8, blue: 0)
+        case .green: return Color(red: 0.8, green: 0, blue: 0)
         case .yellow: return Color(red: 0.8, green: 0.8, blue: 0)
         case .blue: return Color(red: 0, green: 0, blue: 0.93)
         case .magenta: return Color(red: 0.8, green: 0, blue: 0.8)
-        case .cyan: return Color(red: 0, green: 0.8, blue: 0.8)
+        case .cyan: return Color(red: 0.8, green: 0, blue: 0.8)
         case .white: return Color(red: 0.9, green: 0.9, blue: 0.9)
         case .brightBlack: return Color(white: 0.5)
         case .brightRed: return Color(red: 1, green: 0.25, blue: 0.25)
@@ -168,27 +167,29 @@ struct ToolResultOutputView: View {
         case .brightMagenta: return Color(red: 1, green: 0.25, blue: 1)
         case .brightCyan: return Color(red: 0.25, green: 1, blue: 1)
         case .brightWhite: return Color(white: 1)
-        case .default: return .primary
+        case .default: return foreground
         }
     }
 
-    private var hiddenNoticeText: String {
+    @ViewBuilder
+    private var hiddenNoticeView: some View {
         if tail.hiddenLineCount > 0 {
-            return "Show all (\(tail.hiddenLineCount) earlier lines hidden)"
+            Text("Show all (\(tail.hiddenLineCount) earlier lines hidden)", bundle: .module)
+        } else {
+            Text("Show all (\(tail.hiddenCharCount) earlier chars hidden)", bundle: .module)
         }
-        return "Show all (\(tail.hiddenCharCount) earlier chars hidden)"
     }
 
     private var headerBar: some View {
         HStack(spacing: 8) {
-            Text(isError ? "ERROR" : "OUTPUT")
+            Text(isError ? "ERROR" : "OUTPUT", bundle: .module)
                 .themedCode(.callout, weight: .bold)
-                .foregroundStyle(isError ? Color.red : Color.secondary)
+                .foregroundStyle(isError ? AnyShapeStyle(AppAttention.color) : AnyShapeStyle(.appSecondary))
 
             if durationSeconds > 0 {
                 Text(String(format: "(%.2fs)", durationSeconds))
                     .themedFont(.tiny)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.appSecondary)
             }
 
             Spacer()
@@ -199,10 +200,10 @@ struct ToolResultOutputView: View {
                 HStack(spacing: 3) {
                     Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
                         .themedFont(.tiny)
-                    Text(isCopied ? "Copied" : "Copy Output")
+                    Text(isCopied ? "Copied" : "Copy Output", bundle: .module)
                         .themedFont(.tiny, weight: .medium)
                 }
-                .foregroundStyle(isCopied ? Color.green : Color.secondary)
+                .foregroundStyle(isCopied ? AnyShapeStyle(Color.green) : AnyShapeStyle(.appSecondary))
             }
             .buttonStyle(.plain)
             .help(Text("Copy full output to clipboard", bundle: .module))
@@ -215,13 +216,13 @@ struct ToolResultOutputView: View {
         NSPasteboard.general.setString(tail.fullText, forType: .string)
 
         copyTask?.cancel()
-        withAnimation(.easeInOut(duration: 0.15)) {
+        TSMotion.animate(TSMotion.select) {
             isCopied = true
         }
         copyTask = Task {
             try? await Task.sleep(for: .seconds(1.5))
             guard !Task.isCancelled else { return }
-            withAnimation(.easeInOut(duration: 0.15)) {
+            TSMotion.animate(TSMotion.select) {
                 isCopied = false
             }
         }
