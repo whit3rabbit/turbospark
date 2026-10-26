@@ -81,6 +81,14 @@ policy.
   activation, residual adds and norms) as a single multi-row dispatch across
   all rows. Each row computes the same bits.
   `TURBOSPARK_QWEN_BATCHED_ROW_OPS=0` restores the per-row form.
+- The dense qwen chunked prefill primes an open drafter only through
+  `prefill_chunk_priming_drafter`: the MTP head per row, the DFlash2 drafter
+  from aux captures (`Priming::Dflash` in `families/qwen/prefill.rs`). The
+  DFlash2 variant must end in the token walk's state: cursor and
+  `capture_base` on the last prompt row, `capture_rows = 1`, that row at
+  capture row 0. Its context write is sliced at 16 rows because
+  `encode_gemm_any` caps the batch there. `TURBOSPARK_DFLASH_CHUNKED_PREFILL=0`
+  keeps the walk. `real_forward_qwen35_dflash_chunked.rs` is the check.
 - Music 3 zero-tolerance MLX matches are device-bound. The GitHub macOS
   runner's GPU ("Apple Paravirtual device") returns different cos and sin than
   the M4 Max that produced the pinned references, so `music3_rope` moves in the

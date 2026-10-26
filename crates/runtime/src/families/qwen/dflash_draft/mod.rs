@@ -72,7 +72,7 @@ impl RealForwardRunner {
                 d.capture_rows, d.capture_base
             )));
         }
-        self.dflash_context_write(1)
+        self.dflash_context_write(0, 1)
     }
 
     /// `SpeculativeProducer::rewind_drafter` for the DFlash2 path: a cursor
@@ -174,7 +174,7 @@ impl RealForwardRunner {
                 base.min(capture_end) - d.capture_base
             };
             if ctx_rows > 0 {
-                self.dflash_context_write(ctx_rows)?;
+                self.dflash_context_write(0, ctx_rows)?;
             }
             self.dflash_forward_block(anchor, base)
         })?;
@@ -206,6 +206,16 @@ impl RealForwardRunner {
         }
         gpu::read_buffer_f16_into(&d.logits, row * vocab * 2, out);
         Ok(())
+    }
+
+    /// The drafter's `(cursor, capture_base, capture_rows)`: the whole
+    /// prefill-to-decode handoff, since the drafter keeps no other state.
+    /// `None` when no drafter is open. For tests that pin a prefill's end
+    /// state against the token walk's.
+    pub fn dflash_handoff_state(&self) -> Option<(usize, usize, usize)> {
+        self.real_dflash
+            .as_ref()
+            .map(|d| (d.kv.position(), d.capture_base, d.capture_rows))
     }
 
     /// Every persistent draft buffer's `(name, nan count, min, max)` over

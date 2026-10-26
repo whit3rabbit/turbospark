@@ -903,3 +903,37 @@ FP16 overflow, which no comparison against a BF16 reference could have
 surfaced, because it is a property of this port's storage rather than of
 the model. Read the references to learn what the semantics ARE; measure to
 learn which of your deviations is biting.
+
+### Chunked prefill with the drafter open (2026-10-25)
+
+Until this date a DFlash2 run prefilled token by token: the chunked driver
+did not encode the per-layer aux captures, so `supports_chunked_drafter_prefill`
+answered for the MTP head only, and a DFlash2 install prefilled at 17-23
+tok/s against 142 for the MTP install on the same driver
+(`docs/KAPITSA_KERNELS.md`, lever 10). The driver now has a DFlash2 priming
+variant (`Priming::Dflash`, `families/qwen/prefill.rs`):
+
+- The chunked layer encoders copy each tapped layer's micro-batch rows into
+  the capture buffer, which is sized for the widest micro-batch
+  (`DFLASH_CAPTURE_ROWS`, 64). Only `capture` grew; the context write's
+  intermediates stay at 16 rows.
+- After each micro-batch the context write runs in slices of at most 16
+  rows (`dflash_context_write(first_row, rows)`), because every GEMM in it
+  goes through `encode_gemm_any`, which caps the batch at 16.
+- The micro-batch that ends the prompt writes all but its last row, copies
+  that row's capture to row 0 and notes it alone. That is the token walk's
+  end state exactly: cursor and `capture_base` on the last prompt position,
+  `capture_rows = 1`. The drafter has no other state, so this is the whole
+  handoff to the first round's `dflash_draft_block`.
+
+`TURBOSPARK_DFLASH_CHUNKED_PREFILL=0` keeps the token walk (read once).
+`crates/runtime/tests/real_forward_qwen35_dflash_chunked.rs` holds the
+per-token and scalar batched arms `==` to the walk (trunk logits, handoff
+state, every query row of the first draft) at prompt lengths crossing the
+16-row slice, the 64-row Steel micro-batch and the 128-token chunk, and the
+Steel arm to the chunked MTP suite's bound. Two mutations were applied and
+caught: dropping the slice's capture offset (only the Steel arm reaches a
+second slice, and it fails) and dropping the last-row copy (all three arms
+fail). As with the MTP head, the Steel arm is not bit-exact against the
+walk, so the default speculative stream can part from a sequential one for
+the prefill reason described in section 6.

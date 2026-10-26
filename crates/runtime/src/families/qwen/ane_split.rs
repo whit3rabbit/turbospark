@@ -850,6 +850,7 @@ impl RealForwardRunner {
                     start_position,
                     want_head,
                     batched,
+                    false,
                     logits,
                 );
                 self.ane_prefill.redo = false;
@@ -1284,6 +1285,7 @@ fn run_micro_batch(
             scratch,
             resid_capture,
             steering,
+            None,
             layer,
             hidden,
             m,

@@ -24,7 +24,21 @@ impl RealForwardRunner {
     /// `k_proj`/`v_proj` straight into the slots (batched: the slot stride
     /// IS the kernel's row stride, asserted at build), per-head `k_norm` in
     /// place, RoPE in place at each row's own position.
-    pub(crate) fn dflash_context_write(&mut self, rows: usize) -> Result<(), RealForwardError> {
+    ///
+    /// `first_row` slices a capture wider than one GEMM can take: rows
+    /// `[first_row, first_row + rows)` land at positions from `capture_base +
+    /// first_row`. Every GEMM here goes through `encode_gemm_any`, which caps
+    /// `rows` at `gpu::MAX_BATCH_ROWS`, so the chunked prefill driver writes
+    /// its 64-row micro-batch as consecutive slices rather than widening
+    /// this pass. Each slice advances the cursor to its own end and marks
+    /// the capture consumed; the write reads only `capture_base`, so later
+    /// slices of the same capture are unaffected, and the driver re-notes
+    /// the capture after its last slice. Every other caller passes 0.
+    pub(crate) fn dflash_context_write(
+        &mut self,
+        first_row: usize,
+        rows: usize,
+    ) -> Result<(), RealForwardError> {
         let (hidden, aux_count, layers, num_kv, head_dim) = {
             let d = self.real_dflash.as_ref().expect("caller checked");
             (
@@ -37,11 +51,21 @@ impl RealForwardRunner {
         };
         let aux_width = hidden * aux_count;
         let kv_dim = num_kv * head_dim;
+        if first_row + rows > super::super::dflash::DFLASH_CAPTURE_ROWS {
+            return Err(RealForwardError::Unsupported(format!(
+                "the DFlash2 context write asks for capture rows [{first_row}, {}) of a {}-row \
+                 buffer",
+                first_row + rows,
+                super::super::dflash::DFLASH_CAPTURE_ROWS
+            )));
+        }
         let base_pos = self
             .real_dflash
             .as_ref()
             .expect("caller checked")
-            .capture_base;
+            .capture_base
+            + first_row;
+        let capture_off = (first_row * aux_width * 2) as u64;
         // BEFORE the pass, not after it: this is a pure function of
         // `capture_base`, `rows` and the cursor, and refusing after
         // `commit_and_wait` would have already written the rows the
@@ -73,7 +97,7 @@ impl RealForwardRunner {
             "dflash.fc.weight",
             hidden,
             aux_width,
-            (&dflash.capture, 0),
+            (&dflash.capture, capture_off),
             (&dflash.ctx_combined, 0),
             rows,
         )?;
@@ -155,7 +179,7 @@ impl RealForwardRunner {
         // they are not written until the GPU has run this pass.
         pass.commit_and_wait();
         let d = self.real_dflash.as_mut().expect("caller checked");
-        let target = d.capture_base + rows;
+        let target = base_pos + rows;
         d.kv.advance_by(target - d.kv.position());
         // Consumed: a later draft must not rewrite these rows, which the
         // next trunk pass replaces wholesale.

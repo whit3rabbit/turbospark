@@ -9,6 +9,7 @@ use super::batched_layers::{
     encode_dense_ffn_batched, encode_full_attention_block_batched, encode_linear_block_batched,
     row_batched_ops,
 };
+use super::dflash::DflashState;
 use super::{dense, RealQwenState, RMS_EPS, TRUNK_PREFIX};
 use crate::real_forward_types::{DecodeScratch, RealForwardError};
 use crate::resid_capture::encode_resid_capture;
@@ -27,6 +28,7 @@ pub(crate) fn encode_qwen_dense_layer_batched_prefill(
     arch: &ArchConfig,
     resid_capture: Option<&crate::resid_capture::ResidCapture>,
     steering: Option<&crate::steering::SteeringState>,
+    dflash: Option<&DflashState>,
     input_norm: (&gpu::MetalBuffer, u64),
     post_attn_norm: (&gpu::MetalBuffer, u64),
     layer: usize,
@@ -74,6 +76,7 @@ pub(crate) fn encode_qwen_dense_layer_batched_prefill(
         scratch,
         resid_capture,
         steering,
+        dflash,
         layer,
         hidden,
         m,
@@ -230,8 +233,9 @@ pub(crate) fn encode_qwen_dense_attn_residual_batched(
     Ok(())
 }
 
-/// The batched dense layer after the FFN: steering and the residual
-/// capture. Split out for the opt-in ANE prefill split.
+/// The batched dense layer after the FFN: steering, the DFlash2 aux
+/// capture, and the residual capture, in `produce.rs`'s order. Split out
+/// for the opt-in ANE prefill split.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_qwen_dense_layer_batched_post_ffn(
     context: &mut gpu::MetalContext,
@@ -239,12 +243,17 @@ pub(crate) fn encode_qwen_dense_layer_batched_post_ffn(
     scratch: &DecodeScratch,
     resid_capture: Option<&crate::resid_capture::ResidCapture>,
     steering: Option<&crate::steering::SteeringState>,
+    dflash: Option<&DflashState>,
     layer: usize,
     hidden: usize,
     m: usize,
 ) -> Result<(), RealForwardError> {
     // ONE M-row steering dispatch rather than m.
     encode_steering(context, pass, scratch, steering, layer, hidden, m, 0)?;
+    // The M rows this layer just produced, into the fc input layout: the
+    // same copy `produce_batched` encodes for a verify block, at the
+    // micro-batch's width (`DFLASH_CAPTURE_ROWS`).
+    encode_dflash_capture(context, pass, scratch, dflash, layer, hidden, 0, m)?;
     for t in 0..m {
         encode_resid_capture(
             context,
@@ -272,6 +281,7 @@ pub(crate) fn encode_qwen_dense_layer_per_token_prefill(
     arch: &ArchConfig,
     resid_capture: Option<&crate::resid_capture::ResidCapture>,
     steering: Option<&crate::steering::SteeringState>,
+    dflash: Option<&DflashState>,
     input_norm: (&gpu::MetalBuffer, u64),
     post_attn_norm: (&gpu::MetalBuffer, u64),
     layer: usize,
@@ -397,9 +407,42 @@ pub(crate) fn encode_qwen_dense_layer_per_token_prefill(
         )?;
 
         encode_steering(context, pass, scratch, steering, layer, hidden, 1, x_off)?;
+        encode_dflash_capture(context, pass, scratch, dflash, layer, hidden, t, 1)?;
         encode_resid_capture(context, pass, scratch, resid_capture, layer, hidden, x_off)?;
     }
     Ok(())
+}
+
+/// Copies `scratch.x` rows `[row, row + rows)` into the same capture rows
+/// when the drafter taps `layer`; encodes nothing otherwise.
+#[allow(clippy::too_many_arguments)]
+fn encode_dflash_capture(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    scratch: &DecodeScratch,
+    dflash: Option<&DflashState>,
+    layer: usize,
+    hidden: usize,
+    row: usize,
+    rows: usize,
+) -> Result<(), RealForwardError> {
+    let Some(d) = dflash else {
+        return Ok(());
+    };
+    let Some(aux) = d.aux_slot(layer) else {
+        return Ok(());
+    };
+    let aux_width = d.shape.aux_count * hidden;
+    gpu::encode_dflash_copy_rows(
+        context,
+        pass,
+        (&scratch.x, (row * hidden * 2) as u64),
+        (&d.capture, ((row * aux_width + aux * hidden) * 2) as u64),
+        rows as u32,
+        hidden as u32,
+        aux_width as u32,
+    )
+    .map_err(RealForwardError::Gpu)
 }
 
 /// Encodes final rms norm and lm_head GEMV for Qwen dense chunked prefill.

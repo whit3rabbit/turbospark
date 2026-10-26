@@ -46,11 +46,30 @@ pub(crate) use super::dflash_state::{
 };
 use super::MOE_SPECULATION_BLOCKER_MARKER;
 use crate::real_forward::{RealForwardError, RealForwardRunner};
+use crate::real_forward_types::QWEN_STEEL_PREFILL_BATCH;
+
+/// Rows the capture buffer holds: the chunked prefill driver's widest
+/// micro-batch, because that driver captures a whole micro-batch before the
+/// context write consumes it in slices of at most `gpu::MAX_BATCH_ROWS`
+/// (`prefill.rs`, `Priming::Dflash`). The verify pass fills at most
+/// `block + 1 <= MAX_BATCH_ROWS` of them. Only `capture` is this wide: the
+/// write's `ctx_combined` / `ctx_normed` intermediates are per slice.
+pub(crate) const DFLASH_CAPTURE_ROWS: usize = QWEN_STEEL_PREFILL_BATCH;
+const _: () = assert!(DFLASH_CAPTURE_ROWS >= gpu::MAX_BATCH_ROWS);
+
+/// Whether a DFlash2 run prefills through the chunked driver
+/// (`TURBOSPARK_DFLASH_CHUNKED_PREFILL`, on unless `0`). Off keeps the
+/// token-at-a-time walk, the reference the chunked variant is tested
+/// against. Read once per process.
+pub(crate) fn dflash_chunked_prefill() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TURBOSPARK_DFLASH_CHUNKED_PREFILL").as_deref() != Ok("0"))
+}
 
 /// The drafter's per-open state.
 pub(crate) struct DflashState {
     pub(crate) kv: gpu::KvCacheManager,
-    /// `[MAX_BATCH_ROWS][aux_count][hidden]`, the fc input layout.
+    /// `[DFLASH_CAPTURE_ROWS][aux_count][hidden]`, the fc input layout.
     pub(crate) capture: gpu::MetalBuffer,
     /// Position of capture row 0; set by every trunk pass.
     pub(crate) capture_base: usize,
@@ -215,7 +234,8 @@ impl DflashState {
         let halfs = |n: u64| context.new_output_buffer(rows * n * 2);
         let state = Self {
             kv,
-            capture: context.new_output_buffer(rows * shape.aux_count as u64 * h * 2),
+            capture: context
+                .new_output_buffer(DFLASH_CAPTURE_ROWS as u64 * shape.aux_count as u64 * h * 2),
             capture_base: 0,
             capture_rows: 0,
             block,

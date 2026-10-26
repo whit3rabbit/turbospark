@@ -106,11 +106,11 @@
 //!   encoder is shared with the MTP/DFlash2 verify pass, which has its own
 //!   vision gap, so it is left alone rather than given a parameter one of its
 //!   two callers would fill with a placeholder.
-//! - **An open drafter.** `produce.rs`'s dense branch fires the DFlash2
-//!   aux-capture hook on every forward pass, which `dflash_prime_from_capture`
-//!   later reads; this driver does not encode that hook, so it refuses
-//!   rather than silently prefilling a prompt whose aux cache the drafter
-//!   would read back empty.
+//! - **An open drafter on the plain entry point.** A drafter must be primed
+//!   over the prompt, which only the priming entry points do (the MTP head
+//!   per row, the DFlash2 drafter from its aux captures, `Priming` below);
+//!   the plain one refuses rather than prefilling a prompt whose drafter
+//!   cache would read back empty.
 
 use std::time::Instant;
 
@@ -126,6 +126,19 @@ use crate::real_forward_dispatch::encode_embed_any;
 use crate::real_forward_types::{RealForwardError, MAX_PREFILL_BATCH};
 use crate::real_forward_utils::norm_view;
 
+/// What a chunk primes beside the trunk, per micro-batch.
+#[derive(Clone, Copy)]
+enum Priming {
+    None,
+    /// The MTP head per row; the prompt token after this chunk, `None` when
+    /// the chunk ends the prompt.
+    Mtp(Option<i32>),
+    /// The DFlash2 drafter from its aux captures.
+    Dflash {
+        prompt_ends: bool,
+    },
+}
+
 impl RealForwardRunner {
     /// Runs a whole prefill chunk through the dense qwen flow, writing the
     /// logits for the position after its last token. Call only once
@@ -140,13 +153,14 @@ impl RealForwardRunner {
     ) -> Result<(), RealForwardError> {
         if self.real_mtp.is_some() || self.real_dflash.is_some() {
             return Err(RealForwardError::Unsupported(
-                "the qwen chunked prefill driver does not encode the drafter's aux capture; \
-                 open without TURBOSPARK_MTP_DRAFT / TURBOSPARK_DFLASH_DRAFT to use it, or prefill \
+                "the qwen chunked prefill driver's plain entry point does not prime the \
+                 drafter; with TURBOSPARK_MTP_DRAFT / TURBOSPARK_DFLASH_DRAFT open, prefill \
+                 through the priming entry point (prefill_chunk_priming_drafter) or \
                  sequentially"
                     .to_string(),
             ));
         }
-        self.prefill_chunk_real_qwen_dense_inner(tokens, start_position, logits, None)
+        self.prefill_chunk_real_qwen_dense_inner(tokens, start_position, logits, Priming::None)
     }
 
     /// [`Self::prefill_chunk_real_qwen_dense`] with the MTP head open,
@@ -169,17 +183,55 @@ impl RealForwardRunner {
                     .to_string(),
             ));
         }
-        self.prefill_chunk_real_qwen_dense_inner(tokens, start_position, logits, Some(next_token))
+        self.prefill_chunk_real_qwen_dense_inner(
+            tokens,
+            start_position,
+            logits,
+            Priming::Mtp(next_token),
+        )
     }
 
-    /// `prime_mtp`: `None` primes nothing; `Some(next)` primes the MTP head
-    /// per row, `next` being the prompt token after this chunk.
+    /// [`Self::prefill_chunk_real_qwen_dense`] with the DFlash2 drafter open:
+    /// every layer the drafter taps copies its micro-batch rows into the
+    /// capture buffer, and each completed micro-batch is context-written into
+    /// the drafter's KV in `gpu::MAX_BATCH_ROWS` slices.
+    ///
+    /// `prompt_ends` (the chunk ends the prompt) leaves the LAST prompt row
+    /// unwritten and noted alone, `capture_base = last, capture_rows = 1`,
+    /// with the cursor at `last`: exactly the state the token walk leaves
+    /// (its last `produce` is not followed by a `prime_drafter`), which the
+    /// first round's `dflash_draft_block` writes from. The drafter has no
+    /// other state (no conv, no tape), so the cursor plus the capture fields
+    /// is the whole handoff. Leaving all `m` rows noted instead would hand
+    /// the first round a context write of up to 64 rows, over the 16-row
+    /// GEMM cap.
+    pub(crate) fn prefill_chunk_real_qwen_dense_priming_dflash(
+        &mut self,
+        tokens: &[i32],
+        start_position: usize,
+        logits: &mut [LogitValue],
+        prompt_ends: bool,
+    ) -> Result<(), RealForwardError> {
+        if self.real_dflash.is_none() || self.real_mtp.is_some() {
+            return Err(RealForwardError::Unsupported(
+                "DFlash2-priming chunked prefill needs an open DFlash2 drafter and no MTP head"
+                    .to_string(),
+            ));
+        }
+        self.prefill_chunk_real_qwen_dense_inner(
+            tokens,
+            start_position,
+            logits,
+            Priming::Dflash { prompt_ends },
+        )
+    }
+
     fn prefill_chunk_real_qwen_dense_inner(
         &mut self,
         tokens: &[i32],
         start_position: usize,
         logits: &mut [LogitValue],
-        prime_mtp: Option<Option<i32>>,
+        priming: Priming,
     ) -> Result<(), RealForwardError> {
         if tokens.is_empty() {
             return Err(RealForwardError::Unsupported(
@@ -228,6 +280,10 @@ impl RealForwardRunner {
         } else {
             MAX_PREFILL_BATCH
         };
+        let capture_dflash = matches!(priming, Priming::Dflash { .. });
+        if capture_dflash {
+            foundation::engaged!("dflash_chunked_prefill");
+        }
         let mut offset = 0usize;
         while offset < tokens.len() {
             let take = (tokens.len() - offset).min(width);
@@ -237,9 +293,13 @@ impl RealForwardRunner {
                 start_position + offset,
                 last,
                 batched,
+                capture_dflash,
                 logits,
             )?;
-            if let Some(chunk_next) = prime_mtp {
+            if let Priming::Dflash { prompt_ends } = priming {
+                self.dflash_write_micro_batch(start_position + offset, take, last && prompt_ends)?;
+            }
+            if let Priming::Mtp(chunk_next) = priming {
                 // The micro-batch's command buffer has completed and left one
                 // row per token in `scratch.x`; the row after the last is the
                 // next micro-batch's first token, or the chunk's `next`.
@@ -256,6 +316,49 @@ impl RealForwardRunner {
                 )?;
             }
             offset += take;
+        }
+        Ok(())
+    }
+
+    /// Context-writes a completed micro-batch's captured rows into the
+    /// drafter's KV. `ends_prompt` writes all but the last row and leaves
+    /// that one noted alone at capture row 0 (see
+    /// [`Self::prefill_chunk_real_qwen_dense_priming_dflash`]).
+    fn dflash_write_micro_batch(
+        &mut self,
+        start: usize,
+        m: usize,
+        ends_prompt: bool,
+    ) -> Result<(), RealForwardError> {
+        let d = self.real_dflash.as_mut().expect("caller checked");
+        d.note_capture(start, m);
+        let write = if ends_prompt { m - 1 } else { m };
+        let mut first = 0usize;
+        while first < write {
+            let len = (write - first).min(gpu::MAX_BATCH_ROWS);
+            self.dflash_context_write(first, len)?;
+            first += len;
+        }
+        if ends_prompt {
+            let d = self.real_dflash.as_ref().expect("caller checked");
+            if m > 1 {
+                let row_bytes = (d.shape.aux_count * d.shape.hidden * 2) as u64;
+                let width = (d.shape.aux_count * d.shape.hidden) as u32;
+                let pass = self.context.begin_pass_labeled("dflash last prompt row");
+                gpu::encode_dflash_copy_rows(
+                    &mut self.context,
+                    &pass,
+                    (&d.capture, (m as u64 - 1) * row_bytes),
+                    (&d.capture, 0),
+                    1,
+                    width,
+                    width,
+                )
+                .map_err(RealForwardError::Gpu)?;
+                pass.commit_and_wait();
+            }
+            let d = self.real_dflash.as_mut().expect("caller checked");
+            d.note_capture(start + m - 1, 1);
         }
         Ok(())
     }
@@ -396,6 +499,7 @@ impl RealForwardRunner {
         start_position: usize,
         want_head: bool,
         batched: bool,
+        capture_dflash: bool,
         logits: &mut [LogitValue],
     ) -> Result<(), RealForwardError> {
         let started = Instant::now();
@@ -404,6 +508,7 @@ impl RealForwardRunner {
             start_position,
             want_head,
             batched,
+            capture_dflash,
             logits,
         );
         // One forward pass per TOKEN, matching every other phase divisor in
@@ -413,12 +518,16 @@ impl RealForwardRunner {
         result
     }
 
+    /// `capture_dflash` encodes the DFlash2 aux capture into the drafter's
+    /// capture rows `[0, m)`; only `Priming::Dflash` sets it.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn prefill_micro_batch_qwen_dense_inner(
         &mut self,
         tokens: &[i32],
         start_position: usize,
         want_head: bool,
         batched: bool,
+        capture_dflash: bool,
         logits: &mut [LogitValue],
     ) -> Result<(), RealForwardError> {
         let arch = self.arch.clone();
@@ -620,7 +729,7 @@ impl RealForwardRunner {
             super::ane_split::AneMicroBatch::Declined(pass) => pass,
         };
 
-        let (context, weights, index, scratch, kv, qwen, resid_capture, steering) = (
+        let (context, weights, index, scratch, kv, qwen, resid_capture, steering, dflash) = (
             &mut self.context,
             &self.weights,
             &self.index,
@@ -629,6 +738,7 @@ impl RealForwardRunner {
             self.real_qwen.as_ref().expect("checked dense above"),
             self.resid_capture.as_ref(),
             self.steering.as_ref(),
+            self.real_dflash.as_ref().filter(|_| capture_dflash),
         );
 
         for layer in 0..arch.num_layers as usize {
@@ -657,6 +767,7 @@ impl RealForwardRunner {
                     &arch,
                     resid_capture,
                     steering,
+                    dflash,
                     input_norm,
                     post_attn_norm,
                     layer,
@@ -678,6 +789,7 @@ impl RealForwardRunner {
                     &arch,
                     resid_capture,
                     steering,
+                    dflash,
                     input_norm,
                     post_attn_norm,
                     layer,
