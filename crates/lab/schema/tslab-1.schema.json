@@ -26,6 +26,7 @@
         "tree_replay",
         "chain_capture",
         "depth_replay",
+        "hybrid_replay",
         "round_cost",
         "dispatch_probe",
         "standin",
