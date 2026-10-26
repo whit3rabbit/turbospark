@@ -21,6 +21,14 @@ when this file gets updated relative to the version bump and the tag.
   `crates/lab/workloads/code.messages.json` is the code case the adaptive
   depth checks used.
 
+### Changed
+- Adaptive speculative depth (`--speculative adaptive[:N]`) holds its cap to
+  7 while the INT4 MMA8 tile is on (`TURBOSPARK_INT4_MMA8`), because a
+  width-9 verify pays a second 8-row tile pass for one row: measured +24.2%
+  decode on a quote-back prompt and noise on code against cap 8, with
+  identical output. Fixed blocks and the flag-off default cap of 4 are
+  unchanged. `tslab hybrid-replay` defaults to `--cap 7`.
+
 ### Fixed
 - `tslab kernel --bench int4_matmul` commits an untimed primer (about 50 ms
   of GPU work on its own small matrix) right before every timed pass. A pass

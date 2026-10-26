@@ -1110,6 +1110,17 @@ What it says:
   quarter. Committed per round in the hybrid table above is unaffected, and
   its measured-table tok/s columns already carry the block-8 cost.
 
+  Acted on: the runtime clamps an adaptive cap to the tile's rows less one while the
+  tile is on (`AdaptiveDepth::tile_cap`, read at the speculative loop's one
+  construction site), and `tslab hybrid-replay` defaults to `--cap 7`. A
+  fixed block is not clamped, and the shipped `DEFAULT_ADAPTIVE_CAP` of 4 is
+  untouched because it is a flag-off number. Checked end to end on the
+  same install (`km-cap7-clamp`, runs `1793045453067-83736-5` with the tile
+  and `1793045460487-83736-7` without, on battery, so a histogram and not a
+  timing): `mtp:8a` with the tile on now spends 17 rounds at depth 7 and
+  none at 8, and with the tile off still spends 12 at depth 8, both at 6.27
+  committed a round.
+
 Proposal, not built, contingent on a second copy-heavy capture agreeing: a
 `Lookup` source inside the MTP speculative loop, gated by an 8-gram suffix over
 prompt plus committed tokens, drafting up to the controller's cap, taken only
@@ -1120,7 +1131,7 @@ controller's `observe`. Off by default behind `TURBOSPARK_LOOKUP_NGRAM=N`
 (unset means off), on the MTP install only. Gates before any default: greedy
 output identical to the sequential loop at several n-grams
 (`mtp_generation_gate` shape), the memory oracle unchanged, and `tslab ab` on
-`qwen38-27b-mtp` with `copy-heavy` and `medium-review`, arms `mtp:8a` with
+`qwen38-27b-mtp` with `copy-heavy` and `medium-review`, arms `mtp:7a` with
 `TURBOSPARK_ADAPTIVE_DEPTH=3,1,1,2` with and without the n-gram, 6 pairs.
 
 ## The 2026-10-22 kapitsa and mlx-serve report, checked against this tree
@@ -1228,7 +1239,10 @@ and how tslab measures it (`crates/lab/program.md`). Estimates are marked.
    tile and costs a second pass, so the cap belongs at 7, not 8. Live, cap 7
    is +24.2% over cap 8 on copy-heavy (WIN) and +1.45% on code (NOISE), same
    thresholds ("Measured: the hybrid replay, 2026-10-25" under "Prompt
-   lookup").
+   lookup"). The runtime now holds an adaptive cap to the tile's rows less
+   one while the tile is on (`AdaptiveDepth::tile_cap`), so `adaptive:8`
+   under `TURBOSPARK_INT4_MMA8=1` runs at 7. `DEFAULT_ADAPTIVE_CAP` stays 4:
+   with the tile off, nothing above depth 4 has paid.
 3. **DFlash2 at depth 7 over the flat verify.** Why: a block drafter
    proposes 7 tokens for one pass, and the flat verify makes those rows
    nearly free (31-37 tok/s measured above, 2.1x its flag-off self). Where:

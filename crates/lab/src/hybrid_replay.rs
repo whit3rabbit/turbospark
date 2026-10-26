@@ -249,7 +249,7 @@ pub fn hybrid_replay_cmd(mut args: crate::args::Args) -> Result<(), String> {
     let tokens: usize = args.parsed("--tokens", 512)?;
     let ngram: usize = args.parsed("--ngram", 4)?;
     let max_draft: usize = args.parsed("--lookup-draft", 8)?;
-    let cap: usize = args.parsed("--cap", 8)?;
+    let cap: usize = args.parsed("--cap", 7)?;
     let tuned = args.take("--tuned")?.unwrap_or_else(|| "3,1,1,2".into());
     let tuned = AdaptiveParams::parse(&tuned)
         .ok_or_else(|| format!("--tuned {tuned:?}: LOW,MID,HIGH,DROP, each at least 1"))?;
