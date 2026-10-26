@@ -20,23 +20,6 @@ when this file gets updated relative to the version bump and the tag.
   token ids on the capture (`prompt_ids`, `stream`; older captures still read).
   `crates/lab/workloads/code.messages.json` is the code case the adaptive
   depth checks used.
-
-### Changed
-- Adaptive speculative depth (`--speculative adaptive[:N]`) holds its cap to
-  7 while the INT4 MMA8 tile is on (`TURBOSPARK_INT4_MMA8`), because a
-  width-9 verify pays a second 8-row tile pass for one row: measured +24.2%
-  decode on a quote-back prompt and noise on code against cap 8, with
-  identical output. Fixed blocks and the flag-off default cap of 4 are
-  unchanged. `tslab hybrid-replay` defaults to `--cap 7`.
-
-### Fixed
-- `tslab kernel --bench int4_matmul` commits an untimed primer (about 50 ms
-  of GPU work on its own small matrix) right before every timed pass. A pass
-  started on a cold device runs several times slower for its whole length,
-  and M = 1 was measured first with host work between passes, so a tiny
-  shape's one-row GEMV read about three times its share of an 8-GEMV pass and
-  every `c(M)` against it was wrong. `subject.primer` on the record carries
-  the primer's size and its median GPU time.
 - Kernel modes (`docs/KERNEL_MODES.md`): the contract for a switch that
   selects an alternative kernel path beside the default, and the lab tooling
   around it. `tslab project` prices a mode from kernel curves, per-forward
@@ -196,6 +179,12 @@ when this file gets updated relative to the version bump and the tag.
     gates (`bit_exact`, and `text_exact` for transcripts).
 
 ### Changed
+- Adaptive speculative depth (`--speculative adaptive[:N]`) holds its cap to
+  7 while the INT4 MMA8 tile is on (`TURBOSPARK_INT4_MMA8`), because a
+  width-9 verify pays a second 8-row tile pass for one row: measured +24.2%
+  decode on a quote-back prompt and noise on code against cap 8, with
+  identical output. Fixed blocks and the flag-off default cap of 4 are
+  unchanged. `tslab hybrid-replay` defaults to `--cap 7`.
 - Gated-DeltaNet key head dimension `Dk = 128` baked into the Metal delta
   kernels as a compile-time constant (`FC_GDN_DK = 98`), default on. Unrolls
   the per-lane state loops in `gdn_delta_step_decode`, `gdn_delta_step_prefill`
@@ -214,6 +203,13 @@ when this file gets updated relative to the version bump and the tag.
   rollback, commit, rewind, bonus).
 
 ### Fixed
+- `tslab kernel --bench int4_matmul` commits an untimed primer (about 50 ms
+  of GPU work on its own small matrix) right before every timed pass. A pass
+  started on a cold device runs several times slower for its whole length,
+  and M = 1 was measured first with host work between passes, so a tiny
+  shape's one-row GEMV read about three times its share of an 8-GEMV pass and
+  every `c(M)` against it was wrong. `subject.primer` on the record carries
+  the primer's size and its median GPU time.
 - Core ML model compilation and cache publication now serialize inside a
   process-wide critical section. Prevents simultaneous cold loads of the same
   package from racing on Core ML's shared temporary build directory. Warm loads
