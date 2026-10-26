@@ -1,5 +1,6 @@
 import AVFoundation
 import AppKit
+import Combine
 import SwiftUI
 import TurboSpark
 import UniformTypeIdentifiers
@@ -89,9 +90,20 @@ struct AudioAPIPaneView: View {
         .onAppear {
             refreshInstalled()
         }
+        .onReceive(installedPathsChanges) { _ in
+            refreshInstalled()
+        }
         .onDisappear {
             stopPlayback()
         }
+    }
+
+    /// Fires when the audio workspace learns of a delete, adopt or download, so a
+    /// deleted model leaves the attach list without leaving and reopening the pane.
+    /// The workspace is not built just to listen: until it exists nothing can change.
+    private var installedPathsChanges: AnyPublisher<[String: String], Never> {
+        guard model.audioWorkspaceCreated else { return Empty().eraseToAnyPublisher() }
+        return model.audioWorkspace.$installedPaths.dropFirst().removeDuplicates().eraseToAnyPublisher()
     }
 
     private var servingPanel: some View {

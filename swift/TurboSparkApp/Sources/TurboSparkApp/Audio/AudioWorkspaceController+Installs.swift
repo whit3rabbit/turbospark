@@ -56,6 +56,7 @@ extension AudioWorkspaceController {
                 self.installedRecords.append(record)
                 self.status = AppStrings.localized("Audio model installed")
                 self.refreshModels()
+                self.onInstalledModelsChanged?(record.alias)
             case .failure(let failure): self.error = failure.localizedDescription
             }
         }
@@ -70,6 +71,12 @@ extension AudioWorkspaceController {
 
     func deleteModel(_ profile: AudioProfile) {
         guard canDelete(profile) else { return }
+        // Refused before anything is released: the resident session stays up when
+        // the delete does not happen.
+        if let reason = deleteBlockedReason?(profile.identity.alias) {
+            error = reason
+            return
+        }
         isManagingInstall = true; error = nil
         idleTask?.cancel()
         let token = epoch
@@ -101,10 +108,11 @@ extension AudioWorkspaceController {
                 self.installedPaths[profile.identity.alias] = nil
                 self.installedRecords.removeAll { $0.alias == profile.identity.alias }
                 self.needsAdoption.removeAll { $0.identity.alias == profile.identity.alias }
-                self.reassignSpeechToTextModels(afterDeleting: profile.identity.alias)
+                self.forgetChoices(of: profile.identity.alias)
                 self.flushPreferences()
                 self.status = AppStrings.localized("Model deleted")
                 self.refreshModels()
+                self.onInstalledModelsChanged?(profile.identity.alias)
             case .failure(let failure): self.error = failure.localizedDescription
             }
         }
@@ -115,7 +123,23 @@ extension AudioWorkspaceController {
         guard preferences.localModels[alias] != nil, !isBusy, !hasRecordingActivity else { return }
         if loadedModelAlias == alias { unloadModel() }
         preferences.localModels.removeValue(forKey: alias)
+        forgetChoices(of: alias)
         flushPreferences()
+        refreshModels()
+        onInstalledModelsChanged?(alias)
+    }
+
+    /// Moves every choice that named `alias` (the recipe's model, the per-task
+    /// remembered one, a Speech-to-Text mode's) to an installed model, or drops it.
+    /// A model a checkpoint folder still serves keeps its choices. Without this the
+    /// next `flushPreferences` saved the deleted id again, and the menu kept it.
+    func forgetChoices(of alias: String) {
+        reassignSpeechToTextModels(afterDeleting: alias)
+        guard installedPaths[alias] == nil, preferences.localModels[alias] == nil else { return }
+        preferences.selectedModels = preferences.selectedModels.filter { $0.value != alias }
+        if recipe.modelID == alias { recipe.modelID = nil }
+        restoreModelSelection()
+        normalizeModelOptions()
     }
 }
 
