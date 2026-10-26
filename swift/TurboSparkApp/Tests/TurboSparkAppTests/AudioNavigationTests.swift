@@ -16,8 +16,16 @@ final class AudioNavigationTests: XCTestCase {
         try body(controller)
     }
 
+    /// The model menu lists what is installed, so a page only has a model once it is.
+    private func installEverything(_ controller: AudioWorkspaceController) {
+        controller.installedPaths = Dictionary(uniqueKeysWithValues: controller.profiles.map {
+            ($0.identity.alias, "/test/installed/\($0.identity.alias)")
+        })
+    }
+
     func testTaskNavigationRestoresModelsAndClearsExperimentalBackend() throws {
         try withController { controller in
+            installEverything(controller)
             controller.selectPage(.transcribe)
             let speech = try XCTUnwrap(controller.availableProfiles.last)
             controller.selectModel(speech.identity.alias)
@@ -55,9 +63,11 @@ final class AudioNavigationTests: XCTestCase {
 
     func testDownloadedModelCanReplaceLocalOverrideOnlyWhenIdle() throws {
         try withController { controller in
-            controller.selectPage(.music)
-            let id = try XCTUnwrap(controller.recipe.modelID)
+            // Selected through its checkpoint folder: nothing is downloaded yet.
+            let id = AudioWorkspaceController.defaultMusicProfileAlias
             controller.preferences.localModels[id] = Data([1])
+            controller.selectPage(.music)
+            XCTAssertEqual(controller.recipe.modelID, id)
             controller.useDownloadedModel()
             XCTAssertNotNil(controller.preferences.localModels[id])
             controller.installedPaths[id] = "/test/installed"
@@ -97,6 +107,7 @@ final class AudioNavigationTests: XCTestCase {
             defer { model.stopCronScheduler() }
             model.downloadHistoryWritable = false
             model.audioWorkspace = controller
+            installEverything(controller)
             model.openAudio(.music)
             XCTAssertEqual(model.activeSection, .audio)
             XCTAssertEqual(controller.selectedProfile?.identity.task, .music)

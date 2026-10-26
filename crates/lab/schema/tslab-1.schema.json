@@ -29,6 +29,8 @@
         "round_cost",
         "dispatch_probe",
         "standin",
+        "projection",
+        "calibration",
         "trace",
         "workflow_step",
         "workflow_run"
@@ -172,7 +174,8 @@
             "round_cost",
             "audio_stages",
             "trace_shares",
-            "standin"
+            "standin",
+            "calibration"
           ]
         },
         "experiment": { "type": "string" },

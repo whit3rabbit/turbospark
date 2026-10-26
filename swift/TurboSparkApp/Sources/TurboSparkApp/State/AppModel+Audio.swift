@@ -28,6 +28,25 @@ extension AppModel {
         modelDownloads.first { $0.request == .audio(identity: profile.identity) }
     }
 
+    /// Why an audio install cannot be deleted now, or nil. A served model has a
+    /// second holder the audio pane cannot see: the server keeps it resident and
+    /// keeps answering for it, so removing its files leaves a server serving a
+    /// model whose bytes are gone. Text and image installs refuse the same way.
+    func audioDeleteBlockedReason(alias: String, path: String?) -> String? {
+        let attached = serverSpeechAttachedModel?.alias == alias
+            || path.map { path in
+                serverAudioModelPaths.values.contains { Self.normalizedModelPath($0) == Self.normalizedModelPath(path) }
+            } == true
+        return attached
+            ? AppStrings.localized("'\(alias)' is attached to the running server. Detach it there first.") : nil
+    }
+
+    /// An audio install was removed, forgotten or adopted: Libraries lists it by
+    /// modality, so it reads the registry again, as a finished download does.
+    func audioInstalledModelsDidChange() {
+        refreshLibraryStateInBackground()
+    }
+
     func cancelQueuedAudioDownload(_ download: ModelDownload) {
         guard case .audio = download.request,
               let index = modelDownloads.firstIndex(where: { $0.id == download.id }),

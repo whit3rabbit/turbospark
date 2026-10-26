@@ -193,6 +193,8 @@ extension AudioLibraryTests {
         let controller = AudioWorkspaceController(library: AudioLibraryStore(repository: ProfileRepository(store: vault)), assets: ManagedAssetStore(vault: vault))
         defer { controller.shutdown() }
         controller.profiles = try AudioCatalog.profiles()
+        // The model menu lists installed models, and a task needs one to select.
+        controller.installedPaths = Dictionary(uniqueKeysWithValues: controller.profiles.map { ($0.identity.alias, "/test/\($0.identity.alias)") })
         controller.page = .advanced
         controller.recipe.language = "unsupported-language"
         controller.recipe.voice = "unsupported-voice"

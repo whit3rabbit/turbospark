@@ -163,6 +163,9 @@ fn baked_key_dim(key_head_dim: u32) -> u32 {
         return 0;
     }
     if key_head_dim == BAKED_KEY_DIM && key_dim_bake_enabled() {
+        // Proof for the lab that the baked build ran (the knob row lists this
+        // line as expected unless `TURBOSPARK_GDN_DK128=0`).
+        foundation::engaged!("gdn_dk128");
         BAKED_KEY_DIM
     } else {
         0

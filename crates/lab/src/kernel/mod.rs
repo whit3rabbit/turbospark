@@ -13,10 +13,12 @@
 //! run is. Env knobs do not reach a bench: it calls the kernels directly.
 
 pub mod attn_decode;
+pub mod gdn_delta;
 pub mod int4_matmul;
 pub mod int8_matmul;
 pub mod moe_routed;
 pub mod music3_grid;
+pub mod qkv_concurrent;
 pub mod rows_attn;
 pub mod support;
 pub mod verify_ladder;
@@ -224,12 +226,29 @@ pub fn registry() -> Vec<&'static dyn KernelBench> {
         &int4_matmul::Int4Matmul,
         &int8_matmul::Int8Matmul,
         &attn_decode::AttnDecode,
+        &gdn_delta::GdnDelta,
         &rows_attn::RowsAttn,
         &moe_routed::MoeRouted,
+        &qkv_concurrent::QkvConcurrent,
         &verify_ladder::VerifyLadder,
         &music3_grid::Music3Grid,
         &whisper_linear::WhisperLinear,
     ]
+}
+
+/// The arm labels a registered bench emits, for the benches whose arms are a
+/// fixed list. `knobs::LANES` names arms by label, and `tests/knob_registry.rs`
+/// holds those names to this list so a renamed arm cannot leave a lane
+/// pointing at nothing.
+pub fn arm_labels(bench: &str) -> Option<Vec<String>> {
+    match bench {
+        "int4_matmul" => Some(int4_matmul::ARMS.iter().map(|a| a.label()).collect()),
+        "int8_matmul" => Some(int8_matmul::ARMS.iter().map(|a| a.to_string()).collect()),
+        "attn_decode" => Some(attn_decode::ARMS.iter().map(|a| a.to_string()).collect()),
+        "gdn_delta" => Some(gdn_delta::ARMS.iter().map(|a| a.to_string()).collect()),
+        "qkv_concurrent" => Some(qkv_concurrent::ARMS.iter().map(|a| a.to_string()).collect()),
+        _ => None,
+    }
 }
 
 pub fn by_name(name: &str) -> Option<&'static dyn KernelBench> {
@@ -332,6 +351,7 @@ pub fn kernel_cmd(mut args: Args) -> Result<(), String> {
             json!({"model": subject.dir.display().to_string(), "family": subject.family,
                    "bench": result.bench, "case": result.case, "hashed": opts.hash,
                    "eligible": eligible, "reasons": reasons, "result": result,
+                   "exactness_hints": crate::bench::exactness_hints(result),
                    "provenance": provenance}),
         )
     };

@@ -78,6 +78,14 @@ pub const KINDS: &[(&str, &str)] = &[
         "standin",
         "in-situ block cost from stand-in arms (unquotable)",
     ),
+    (
+        "projection",
+        "a kernel mode priced from curves, counts and a measured base, before a model run",
+    ),
+    (
+        "calibration",
+        "a projection joined to the A/B verdict that followed: predicted, measured, miss",
+    ),
     ("trace", "Metal System Trace tables (unquotable)"),
     ("workflow_step", "one step of a workflow run"),
     ("workflow_run", "a workflow run's summary"),

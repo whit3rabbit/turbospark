@@ -435,6 +435,36 @@ fn dispatch_probe_series(c: &Ctx, out: &mut Vec<Series>) {
     }
 }
 
+/// One point per calibration: predicted against measured improvement. A
+/// point on the diagonal is a projection the model agreed with; the floor is
+/// the band either side of it that counts as agreement.
+fn calibration_series(c: &Ctx, out: &mut Vec<Series>) {
+    let cal = &c.rec["calibration"];
+    let (Some(x), Some(y)) = (cal["predicted"].as_f64(), cal["measured"].as_f64()) else {
+        return;
+    };
+    let label = format!(
+        "{} {}->{} x{}",
+        c.rec["bench"].as_str().unwrap_or("?"),
+        c.rec["default_arm"].as_str().unwrap_or("?"),
+        c.rec["mode_arm"].as_str().unwrap_or("?"),
+        c.rec["x"]
+    );
+    let mut s = c.series(
+        "calibration",
+        "projection calibration",
+        &label,
+        axis("predicted improvement", "fraction", "linear"),
+        axis("measured improvement", "fraction", "linear"),
+    );
+    s.subject.insert("miss".into(), cal["miss"].clone());
+    if let Some(f) = cal["floor"].as_f64() {
+        s.refs.insert("floor".into(), json!(f));
+    }
+    s.points.push(SPoint::xy(x, y));
+    out.push(s);
+}
+
 fn round_cost_series(c: &Ctx, out: &mut Vec<Series>) {
     let group = format!(
         "round cost {} kv {}",
@@ -545,6 +575,7 @@ pub fn from_record(rec: &Value, experiment: &str, paths: Paths) -> Vec<Series> {
         "verdict" | "experiment" | "confirm" | "null_calibration" => verdict_series(&c, &mut out),
         "dispatch_probe" => dispatch_probe_series(&c, &mut out),
         "round_cost" => round_cost_series(&c, &mut out),
+        "calibration" => calibration_series(&c, &mut out),
         "standin" => standin_series(&c, &mut out),
         "trace" => trace_series(&c, &mut out),
         _ => {}
@@ -636,6 +667,26 @@ mod tests {
         assert_eq!(s[1].kind, "kernel_c_of_m");
         assert_eq!(s[1].points[1].y, 1.0);
         assert!(s.iter().all(|x| x.group == "int4_matmul 48x5120"));
+    }
+
+    #[test]
+    fn a_calibration_is_one_predicted_against_measured_point() {
+        let rec = json!({"id": "4-1-0", "kind": "calibration", "schema": SCHEMA,
+                         "bench": "gdn_delta", "default_arm": "prefill_lazy",
+                         "mode_arm": "prefill_lazy", "x": 8,
+                         "calibration": {"predicted": 0.035, "measured": 0.0407,
+                                         "floor": 0.02, "miss": false}});
+        let s = from_record(&rec, "e", Paths::Keep);
+        assert_eq!(s.len(), 1, "{s:#?}");
+        assert_eq!(s[0].kind, "calibration");
+        assert_eq!(s[0].group, "projection calibration");
+        assert_eq!(s[0].label, "gdn_delta prefill_lazy->prefill_lazy x8");
+        assert_eq!((s[0].points[0].x, s[0].points[0].y), (Some(0.035), 0.0407));
+        assert_eq!(s[0].refs["floor"], 0.02);
+        assert_eq!(s[0].subject["miss"], false);
+        // A record without the numbers yields nothing rather than a zero point.
+        let bare = json!({"id": "5", "kind": "calibration", "calibration": {}});
+        assert!(from_record(&bare, "e", Paths::Keep).is_empty());
     }
 
     #[test]
