@@ -8,6 +8,7 @@ public struct HookSourceDetailSheet: View {
     @State private var expandedHookIDs: Set<UUID> = []
     @State private var editingHook: AppHookCommand? = nil
     @State private var showingOptionsSheet = false
+    @State private var hookPendingDeletion: AppHookCommand? = nil
     @Environment(\.dismiss) private var dismiss
 
     public init(groupID: String) {
@@ -44,24 +45,13 @@ public struct HookSourceDetailSheet: View {
                         } label: {
                             Label { Text("Options", bundle: .module) } icon: { Image(systemName: "slider.horizontal.3") }
                         }
-                        .controlSize(.small)
+                        .appAction(.secondary, size: .small)
                     }
 
-                    Button {
+                    AppIconButton("xmark", label: Text("Close", bundle: .module)) {
                         dismiss()
-                    } label: {
-                        Image(systemName: "xmark")
-                            .themedFont(.callout, weight: .semibold)
-                            .foregroundStyle(.appSecondary)
-                            .frame(width: 24, height: 24)
-                            .background(.appSurface)
-                            .clipShape(Circle())
                     }
-                    .buttonStyle(.plain)
-                    .appPointerCursor()
                     .keyboardShortcut(.cancelAction)
-                    .help(Text("Close", bundle: .module))
-                    .accessibilityLabel(Text("Close", bundle: .module))
                 }
                 .padding(.horizontal, 24)
                 .padding(.top, 20)
@@ -81,15 +71,10 @@ public struct HookSourceDetailSheet: View {
                         let eventsPresent = Array(Set(group.hooks.map { $0.event })).sorted { $0.rawValue < $1.rawValue }
 
                         if eventsPresent.isEmpty {
-                            VStack(spacing: 12) {
-                                Image(systemName: "link.badge.plus")
-                                    .themedFont(.display)
-                                    .foregroundStyle(.appSecondary)
-                                Text("No hooks registered in \(group.title).", bundle: .module)
-                                    .themedFont(.small)
-                                    .foregroundStyle(.appSecondary)
-                            }
-                            .frame(maxWidth: .infinity)
+                            AppEmptyState(
+                                systemImage: "link.badge.plus",
+                                title: Text("No hooks registered in \(group.title).", bundle: .module)
+                            )
                             .padding(.vertical, 40)
                         } else {
                             ForEach(eventsPresent) { event in
@@ -128,6 +113,30 @@ public struct HookSourceDetailSheet: View {
                 HookOptionsConfigSheet(group: group)
             }
         }
+        .confirmationDialog(
+            Text("Delete Hook", bundle: .module),
+            isPresented: Binding(
+                get: { hookPendingDeletion != nil },
+                set: { if !$0 { hookPendingDeletion = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(role: .destructive) {
+                if let h = hookPendingDeletion {
+                    hookStore.deleteCustomHook(id: h.id)
+                    hookPendingDeletion = nil
+                }
+            } label: {
+                Text("Delete", bundle: .module)
+            }
+            Button(role: .cancel) {
+                hookPendingDeletion = nil
+            } label: {
+                Text("Cancel", bundle: .module)
+            }
+        } message: {
+            Text("Are you sure you want to delete this custom hook? This action cannot be undone.", bundle: .module)
+        }
     }
 
     // MARK: - Review Warning Banner
@@ -135,7 +144,7 @@ public struct HookSourceDetailSheet: View {
     private func reviewBanner(group: AppHookSourceGroup) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: "exclamationmark.circle.fill")
-                .foregroundStyle(.orange)
+                .foregroundStyle(AppAttention.color)
                 .themedFont(.title3)
                 .padding(.top, 2)
 
@@ -154,11 +163,8 @@ public struct HookSourceDetailSheet: View {
                             hookStore.trustAllInGroup(group.id)
                         } label: {
                             Label { Text("Trust All in Group", bundle: .module) } icon: { Image(systemName: "checkmark.shield.fill") }
-                                .themedFont(.small, weight: .semibold)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                        .tint(.orange)
+                        .appAction(.primary, size: .small)
                     }
                     .padding(.top, 4)
                 }
@@ -167,11 +173,11 @@ public struct HookSourceDetailSheet: View {
             Spacer()
         }
         .padding(14)
-        .background(Color.orange.opacity(0.12))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(AppAttention.color.opacity(0.12))
+        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(Color.orange.opacity(0.35), lineWidth: 1)
+            RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
+                .stroke(AppAttention.color, lineWidth: 1)
         )
     }
 
@@ -187,6 +193,7 @@ public struct HookSourceDetailSheet: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(event.displayName)
                         .themedFont(.base, weight: .semibold)
+                        .accessibilityAddTraits(.isHeader)
                     Text(event.eventDescription)
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
@@ -199,14 +206,14 @@ public struct HookSourceDetailSheet: View {
                     HStack(spacing: 4) {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .themedFont(.tiny)
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(AppAttention.color)
                         Text("Needs review: \(unreviewedInEvent)", bundle: .module)
                             .themedFont(.tiny, weight: .medium)
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(AppAttention.color)
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
-                    .background(Color.orange.opacity(0.15))
+                    .background(AppAttention.color.opacity(0.15))
                     .clipShape(Capsule())
                 }
             }
@@ -216,11 +223,11 @@ public struct HookSourceDetailSheet: View {
                     hookRow(hook: hook)
                 }
             }
-            .background(.appSurface.opacity(0.6))
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(.appSurface)
+            .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(.appBorder.opacity(0.35), lineWidth: 1)
+                RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
+                    .stroke(.appBorder, lineWidth: 1)
             )
         }
     }
@@ -244,7 +251,7 @@ public struct HookSourceDetailSheet: View {
                                 .themedCode(.tiny)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
-                                .background(Color.accentColor.opacity(0.15))
+                                .background(.appAccent.opacity(0.15))
                                 .clipShape(RoundedRectangle(cornerRadius: 4))
                         }
 
@@ -254,7 +261,7 @@ public struct HookSourceDetailSheet: View {
                                 .foregroundStyle(.appSecondary)
                                 .padding(.horizontal, 4)
                                 .padding(.vertical, 1)
-                                .background(.appBorder.opacity(0.3))
+                                .background(.appBorder)
                                 .clipShape(RoundedRectangle(cornerRadius: 3))
                         }
 
@@ -264,10 +271,10 @@ public struct HookSourceDetailSheet: View {
                         if hook.type == .prompt {
                             Text("not evaluated", bundle: .module)
                                 .themedFont(.tiny, weight: .medium)
-                                .foregroundStyle(.orange)
+                                .foregroundStyle(AppAttention.color)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
-                                .background(Color.orange.opacity(0.12))
+                                .background(AppAttention.color.opacity(0.12))
                                 .clipShape(Capsule())
                                 .help(Text("Prompt-type hooks are not run by this client. The entry is shown so the gap is visible.", bundle: .module))
                         }
@@ -292,7 +299,7 @@ public struct HookSourceDetailSheet: View {
 
                 // Expand/Collapse Chevron
                 Button {
-                    TSMotion.animate(.easeInOut(duration: 0.18)) {
+                    TSMotion.animate(TSMotion.select) {
                         if isExpanded {
                             expandedHookIDs.remove(hook.id)
                         } else {
@@ -318,11 +325,8 @@ public struct HookSourceDetailSheet: View {
                             Image(systemName: "checkmark.shield")
                             Text("Trust", bundle: .module)
                         }
-                        .themedFont(.small, weight: .semibold)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    .tint(.orange)
+                    .appAction(.primary, size: .small)
                 }
 
                 // Named by the hook: an empty label left VoiceOver
@@ -361,8 +365,8 @@ public struct HookSourceDetailSheet: View {
                             .textSelection(.enabled)
                             .padding(8)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(.appElevated.opacity(0.7))
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                            .background(.appElevated)
+                            .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
                     }
 
                     // Metadata row
@@ -390,14 +394,14 @@ public struct HookSourceDetailSheet: View {
                             .appAction(.secondary, size: .small)
 
                             Button(role: .destructive) {
-                                hookStore.deleteCustomHook(id: hook.id)
+                                hookPendingDeletion = hook
                             } label: { Text("Delete", bundle: .module) }
                             .appAction(.destructive, size: .small)
                         }
                     }
                 }
                 .padding(14)
-                .background(.appSurface.opacity(0.3))
+                .background(.appSurface)
             }
         }
     }

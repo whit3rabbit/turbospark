@@ -29,12 +29,12 @@ final class DesignTokenRatchetTests: XCTestCase {
         Rule(
             name: "hard-coded border opacity",
             pattern: #"\.appBorder\.opacity\("#,
-            baseline: 10,
+            baseline: 6,
             fix: "stroke .appBorder as the theme gives it"),
         Rule(
             name: "system accent color",
             pattern: #"Color\.accentColor"#,
-            baseline: 27,
+            baseline: 26,
             fix: "use .appAccent or theme.accent"),
         Rule(
             name: "system secondary style",
