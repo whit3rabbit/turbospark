@@ -21,6 +21,7 @@ struct SteeringPresetEditorSheet: View {
     // Set once the user touches the Mode picker; from then on the file's
     // declared mode must not overwrite the explicit choice.
     @State private var modeTouched = false
+    @FocusState private var isNameFocused: Bool
 
     private let onSave: (AppSteeringPreset) -> Void
 
@@ -44,11 +45,18 @@ struct SteeringPresetEditorSheet: View {
                 editSection
             }
             .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
+            .background(.appPage)
             Divider()
             footer
         }
-        .frame(width: 560, height: 620)
-        .onAppear { readVector(applyDeclaredMode: false) }
+        .frame(minWidth: 560, minHeight: 620)
+        .onAppear {
+            readVector(applyDeclaredMode: false)
+            if draft.name.isEmpty {
+                isNameFocused = true
+            }
+        }
     }
 
     private var header: some View {
@@ -72,6 +80,7 @@ struct SteeringPresetEditorSheet: View {
             TextField(text: $draft.name) {
                 Text("Name", bundle: .module)
             }
+            .focused($isNameFocused)
             .help(Text("What this direction encodes. Only you know: nothing here inspects it.", bundle: .module))
             TextField(text: $draft.notes, axis: .vertical) {
                 Text("Notes", bundle: .module)
@@ -118,7 +127,7 @@ struct SteeringPresetEditorSheet: View {
             if let readError {
                 Label { Text(verbatim: readError) } icon: { Image(systemName: "exclamationmark.triangle") }
                     .themedFont(.small)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(AppAttention.color)
             }
 
             let compatibility = AppSteeringPolicy.compatibility(
@@ -128,7 +137,7 @@ struct SteeringPresetEditorSheet: View {
             )
             Label { SteeringText.compatibility(compatibility) } icon: { Image(systemName: "info.circle") }
                 .themedFont(.small)
-                .foregroundStyle(compatibility.allowsEnabling ? Color.secondary : Color.red)
+                .foregroundStyle(compatibility.allowsEnabling ? AnyShapeStyle(.appSecondary) : AnyShapeStyle(AppAttention.color))
         }
     }
 
@@ -146,9 +155,10 @@ struct SteeringPresetEditorSheet: View {
                 Text("Strength", bundle: .module)
                 Slider(value: $draft.scale, in: -2...2, step: 0.05)
                     .accessibilityLabel(Text("Strength", bundle: .module))
+                    .accessibilityValue(Text(draft.scale, format: .number.precision(.fractionLength(2))))
                 Text(draft.scale, format: .number.precision(.fractionLength(2)))
                     .monospacedDigit()
-                    .frame(width: 48, alignment: .trailing)
+                    .frame(minWidth: 48, alignment: .trailing)
             }
             // The measured warning, stated where the number is set rather
             // than in a doc nobody opens. `docs/OBLITERATION.md`: ablating at
@@ -164,7 +174,7 @@ struct SteeringPresetEditorSheet: View {
                     Image(systemName: "exclamationmark.triangle")
                 }
                 .themedFont(.small)
-                .foregroundStyle(.orange)
+                .foregroundStyle(AppAttention.color)
             }
             TextField(text: $draft.layers) {
                 Text("Layers, e.g. 20:45 (blank = every covered block)", bundle: .module)

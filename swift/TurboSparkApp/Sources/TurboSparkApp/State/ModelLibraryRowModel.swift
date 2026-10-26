@@ -38,14 +38,15 @@ enum LibraryRowAction: String, CaseIterable, Sendable {
         case .setDefault: return "star"
         case .testSpeed: return "speedometer"
         case .reveal: return "arrow.up.right.square"
-        case .remove: return "trash"
-        case .abandonConversion: return "xmark.circle"
+        case .remove: return "minus.circle"
+        case .abandonConversion: return "minus.circle"
         }
     }
 
-    /// Goes through a destructive confirmation and `Button(role: .destructive)`.
+    /// Removing an authorized library is a quiet removal from the app rather than
+    /// a destructive file deletion on disk; it uses quiet/secondary styling.
     var isDestructive: Bool {
-        self == .remove || self == .abandonConversion
+        false
     }
 }
 

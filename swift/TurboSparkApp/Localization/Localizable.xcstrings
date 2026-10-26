@@ -555472,6 +555472,137 @@
           }
         }
       }
+    },
+    "An agent name and system instructions are required to save.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "An agent name and system instructions are required to save."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Se requiere un nombre de agente e instrucciones del sistema para guardar."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un nom d'agent et des instructions système sont requis pour enregistrer."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ein Agentenname und Systemanweisungen sind zum Speichern erforderlich."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Per salvare sono necessari un nome agente e le istruzioni di sistema."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Um nome de agente e instruções do sistema são necessários para salvar."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Een agentnaam en systeeminstructies zijn vereist om op te slaan."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ett agentnamn och systeminstruktioner krävs för att spara."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Do zapisania wymagana jest nazwa agenta i instrukcje systemowe."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Для сохранения требуются имя агента и системные инструкции."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Для збереження потрібні ім'я агента та системні інструкції."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kaydetmek için bir aracı adı ve sistem talimatları gereklidir."
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يلزم توفر اسم الوكيل وتوجيهات النظام للحفظ."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "שם סוכן והוראות מערכת נדרשים כדי לשמור."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "सहेजने के लिए एजेंट का नाम और सिस्टम निर्देश आवश्यक हैं।"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存需要代理名称和系统说明。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "儲存需要代理名稱和系統說明。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存するにはエージェント名とシステム指示が必要です。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "저장하려면 에이전트 이름과 시스템 지침이 필요합니다."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cần có tên tác nhân và hướng dẫn hệ thống để lưu."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nama agen dan instruksi sistem diperlukan untuk menyimpan."
+          }
+        }
+      }
     }
   },
   "version": "1.0"

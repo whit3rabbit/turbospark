@@ -38,16 +38,16 @@ struct CronJobsSettingsPaneView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .alert(
+        .confirmationDialog(
             Text("Delete scheduled task?", bundle: .module),
             isPresented: deletionAlertPresented,
             presenting: jobPendingDeletion
         ) { job in
-            Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
             Button(role: .destructive) {
                 _ = CronScheduler.shared.delete(id: job.id)
                 revision += 1
             } label: { Text("Delete", bundle: .module) }
+            Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
         } message: { job in
             Text("The schedule \"\(job.cron)\" will stop firing.", bundle: .module)
         }
@@ -124,14 +124,14 @@ struct CronJobsSettingsPaneView: View {
             HStack(spacing: 8) {
                 Image(systemName: job.enabled ? "clock.fill" : "clock")
                     .themedFont(.small)
-                    .foregroundStyle(job.enabled ? TurboSparkTheme.accentColor : Color.secondary)
+                    .foregroundStyle(job.enabled ? AnyShapeStyle(.appAccent) : AnyShapeStyle(.appSecondary))
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(schedule)
                         .themedFont(.small, weight: .semibold)
                     Text(job.cron)
                         .themedCode(.tiny)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.appSecondary)
                 }
                 Spacer()
                 if job.enabled, let next = job.nextFireAt {
@@ -142,7 +142,7 @@ struct CronJobsSettingsPaneView: View {
                             .monospacedDigit()
                         Text("next run", bundle: .module)
                             .themedFont(.tiny)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.appSecondary)
                     }
                 } else if !job.enabled {
                     Text("Paused", bundle: .module)
@@ -165,15 +165,10 @@ struct CronJobsSettingsPaneView: View {
                 .help(job.enabled
                     ? Text("Pause this schedule", bundle: .module)
                     : Text("Resume this schedule", bundle: .module))
-                Button {
+                AppIconButton("trash", label: Text("Delete scheduled task", bundle: .module)) {
                     jobPendingDeletion = job
-                } label: {
-                    Image(systemName: "trash")
-                        .foregroundStyle(Color.red.opacity(0.75))
                 }
-                .buttonStyle(.plain)
-                .help(Text("Delete scheduled task", bundle: .module))
-                .accessibilityLabel(Text("Delete scheduled task \(schedule)", bundle: .module))
+                .appAction(.destructive, size: .small)
             }
 
             Text(job.prompt)
@@ -187,7 +182,7 @@ struct CronJobsSettingsPaneView: View {
                 Text(verbatim: runSummary(of: job))
                     .themedFont(.tiny)
                     .foregroundStyle(job.recentRuns.contains(where: { $0.status == "missed" })
-                        ? Color.orange : Color.secondary)
+                        ? AnyShapeStyle(AppAttention.color) : AnyShapeStyle(.appSecondary))
             }
             .buttonStyle(.plain)
             .help(Text("Show run history", bundle: .module))
@@ -198,14 +193,14 @@ struct CronJobsSettingsPaneView: View {
                     if job.recentRuns.isEmpty {
                         Text("This schedule has not fired yet.", bundle: .module)
                             .themedFont(.tiny)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.appSecondary)
                     }
                     ForEach(job.recentRuns.indices, id: \.self) { index in
                         let run = job.recentRuns[index]
                         HStack(spacing: 6) {
                             Image(systemName: run.status == "fired" ? "checkmark.circle" : "xmark.circle")
                                 .themedFont(.tiny)
-                                .foregroundStyle(run.status == "fired" ? Color.green : Color.orange)
+                                .foregroundStyle(run.status == "fired" ? AnyShapeStyle(.appAccent) : AnyShapeStyle(AppAttention.color))
                                 .accessibilityHidden(true)
                             Text(run.date.formatted(date: .abbreviated, time: .shortened))
                                 .themedFont(.tiny)
@@ -223,13 +218,10 @@ struct CronJobsSettingsPaneView: View {
                 }
                 .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.primary.opacity(0.03))
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .background(.appSurface)
+                .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
             }
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(0.04))
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .appCardSurface(padding: 12)
     }
 }
