@@ -569919,6 +569919,137 @@
           }
         }
       }
+    },
+    "Qwen Research License: research and evaluation use only, no commercial use. Built with Qwen.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Qwen Research License: research and evaluation use only, no commercial use. Built with Qwen."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Licencia de investigación de Qwen: solo para investigación y evaluación, sin uso comercial. Creado con Qwen."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Licence de recherche Qwen : utilisation pour la recherche et l'évaluation uniquement, aucun usage commercial. Conçu avec Qwen."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Qwen-Forschungslizenz: Nur für Forschungs- und Evaluierungszwecke, keine kommerzielle Nutzung. Erstellt mit Qwen."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Licenza di ricerca Qwen: solo per ricerca e valutazione, nessun uso commerciale. Creato con Qwen."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Licença de pesquisa do Qwen: uso exclusivo para pesquisa e avaliação, sem uso comercial. Desenvolvido com Qwen."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Qwen Research-licentie: uitsluitend voor onderzoek en evaluatie, geen commercieel gebruik. Gebouwd met Qwen."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Qwen forskningslicens: endast för forskning och utvärdering, ingen kommersiell användning. Byggd med Qwen."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Licencja badawcza Qwen: wyłącznie do celów badawczych i ewaluacyjnych, bez użytku komercyjnego. Zbudowano z Qwen."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Лицензия Qwen Research: только для исследований и оценки, без коммерческого использования. Создано с Qwen."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ліцензія Qwen Research: лише для досліджень та оцінки, без комерційного використання. Створено з Qwen."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Qwen Araştırma Lisansı: yalnızca araştırma ve değerlendirme amaçlıdır, ticari kullanım yoktur. Qwen ile geliştirilmiştir."
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ترخيص أبحاث Qwen: للاستخدام في الأبحاث والتقييم فقط، دون استخدام تجاري. تم بناؤه باستخدام Qwen."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "רישיון מחקר של Qwen: לשימוש מחקרי והערכה בלבד, ללא שימוש מסחרי. נבנה עם Qwen."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Qwen अनुसंधान लाइसेंस: केवल अनुसंधान और मूल्यांकन उपयोग के लिए, कोई व्यावसायिक उपयोग नहीं। Qwen के साथ निर्मित।"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Qwen 研究许可：仅限研究和评估使用，严禁商业用途。基于 Qwen 构建。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Qwen 研究許可：僅供研究和評估使用，嚴禁商業用途。基於 Qwen 構建。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Qwen研究ライセンス：研究および評価目的のみに使用可能、商用利用不可。Qwenで構築。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Qwen 연구 라이선스: 연구 및 평가 목적으로만 사용 가능하며 상업적 사용은 금지됩니다. Qwen으로 구축됨."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Giấy phép nghiên cứu Qwen: chỉ sử dụng cho mục đích nghiên cứu và đánh giá, không sử dụng cho mục đích thương mại. Được xây dựng với Qwen."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lisensi Penelitian Qwen: hanya untuk penggunaan penelitian dan evaluasi, bukan untuk penggunaan komersial. Dibangun dengan Qwen."
+          }
+        }
+      }
     }
   },
   "version": "1.0"

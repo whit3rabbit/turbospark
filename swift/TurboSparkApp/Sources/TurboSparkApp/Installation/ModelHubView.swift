@@ -13,6 +13,7 @@ import TurboSpark
 @MainActor
 struct ModelHubView: View {
     @ObservedObject var model: AppModel
+    @Environment(\.appTheme) private var theme
 
     @State private var filter = ModelHubFilter()
     @State private var selectedAlias: String?
@@ -143,7 +144,7 @@ struct ModelHubView: View {
                     .foregroundStyle(.appAccent)
                 Text("Optimized for Your Mac", bundle: .module)
                     .themedFont(.tiny, weight: .bold)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.appText)
                 Spacer()
                 if let chip = model.telemetry?.chip {
                     Text(verbatim: chip)
@@ -153,15 +154,15 @@ struct ModelHubView: View {
                 if let ram = model.telemetry?.physicalMemoryBytes {
                     Text(verbatim: "(\(MetricFormat.memory(ram)))")
                         .themedFont(.micro)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.appSecondary)
                 }
             }
         }
         .padding(8)
-        .background(.appAccent.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+        .background(.appAccent.opacity(0.08), in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(.appAccent.opacity(0.2), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
+                .stroke(theme.border, lineWidth: 0.5)
         }
         .padding(.bottom, 4)
     }
@@ -234,7 +235,7 @@ struct ModelHubView: View {
         VStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle")
                 .themedFont(.hero)
-                .foregroundStyle(.orange)
+                .foregroundStyle(AppAttention.color)
                 .accessibilityHidden(true)
             Text(message)
                 .themedFont(.small)
