@@ -697,6 +697,7 @@ for like. The controller is not a default: prose loses.
 | `gdn_dk128`, one row (`km-proj-dk1`) | +0.9%, under the floor | -0.4%, NOISE (`gdn-dk128-decode`) | within the floor |
 | `int4_mma8`, one row, plain decode (`km-proj`) | -16.9% (0.831x) | -17.4%, interval [-19.0%, -17.1%], 0 better / 5 worse of 6 pairs (`km-mma8-plain6`); a first 3-pair run read -26.9% with an interval spanning zero (`km-mma8-plain`) | within the floor on the larger sample; the doc's 0.81x agrees |
 | lever 9, small projections at 8 rows (`km-l9-proj2`) | +5.8% (4.1 ms of 75 ms) | +3.3% (`km-l9-ab`, 2 clean pairs, inconclusive) | 2.5 points under, one inconclusive A/B |
+| lever 9 again, from the primed bench (`km-floor-proj`, `1792977511459-47500-0`) | +4.8% (3.4 ms of 75 ms) | +3.3% (`km-l9-ab`, 2 clean pairs, inconclusive); then +2.3% WIN, interval [+1.9%, +3.8%], 3 better of 3 clean pairs of 6 (`km-l9-ab3`, DFlash2 depth 7, medium-review, 256 decode tokens, 5 of 12 runs dirty for foreign CPU) | 1.5 points under the first (`km-floor-cal`, `1792977565457-47778-0`, within the floor); 2.5 points over the conclusive one (`1792979021129-90371-0`, MISS). The 1024-row curve came from a DIRTY run, and the projection covers 6% of the round |
 
 Coverage was 2-7% for the GDN and small-projection cases and 85% for the tile
 on decode, so the GDN rows are priced from a small slice of the round and still
@@ -709,16 +710,50 @@ bench) and the first lever 9 projection was +21%, a 17.8-point miss
 (`km-l9-proj`). The bench now repeats the copy sweep until a pass holds at
 least 64 dispatches, and the same shape reads about 42 us scalar and 8 us for
 the tile. That is the fix to the bench, not a lever 9 result. One-row
-`gemv_per_row` on those shapes still reads about 3x its per-dispatch share in an
-8-GEMV pass. A separate output buffer per weight copy was tried to rule out
-output-ordering between dispatches and did not move it (14.9 us a one-row GEMV
-on the 48-row shape against about 5.5 us each inside the 8-GEMV pass), so the
-cause is still unexplained and that change was reverted. A single weight copy
-for the whole pass (every dispatch cache-warm) also left the one-row GEMV at
-14.6 us against 4.9 us each inside the 8-GEMV pass, so cache warmth is ruled
-out too. What differs is that eight independent GEMVs may overlap on the GPU
-while a one-row dispatch pays its full launch and drain latency; that is a
-reading of the numbers, not something this bench tested.
+`gemv_per_row` on those shapes still read about 3x its per-dispatch share in an
+8-GEMV pass (13.5 us against 3.9 us). A separate output buffer per weight copy
+did not move it, and neither did a single cache-warm weight copy, so output
+ordering and cache warmth were ruled out before the cause was found.
+
+**The one-row floor, explained (2026-10-25).** `crates/lab/tests/int4_one_row_floor_probe.rs`
+(M4 Max, AC power, host load 4-7 from other sessions' builds and model tests;
+probe output, not ledgered). With the device warm, the one-row 48x5120 GEMV
+reads 3.0-3.3 us per dispatch whether the pass holds 8 or 2048 dispatches, with
+rotating x and y offsets, after a scalar or mma8 pass, after a 1-5 ms host gap,
+and with or without a 1024-dispatch primer: nothing in the pass's structure
+moves it, so the overlap reading above was wrong. The bench's own `run_shape`
+called three times in one process read the one row at 13.6, 3.8 and 3.0 us.
+From a cold device (3 s idle before each sample) a 64-dispatch pass reads 18.5
+us per dispatch, a 16384-dispatch pass stays slow for its whole 280 ms (16.9 us
+per dispatch), untimed primers of 1024 and 4096 dispatches committed right
+before the pass leave it at 16-18 us, and a primer of 16384 (about 50 ms)
+brings it to 3.2 us. The device's speed is set by the state it is in when a
+pass starts and does not rise within the pass; only tens of milliseconds of
+work queued ahead of it raise that state. M = 1 was the bench's first
+measurement, with host work between passes, so the one-row unit and every
+c(M) read against it was the device's state and not the kernel. A GPU effect,
+but one a decode step never sees: its command buffer is long and busy, so the
+warm number is the one that prices a round.
+
+The fix is a primer (`kernel::support::Primer`, 16384 one-row GEMVs on its own
+small matrix) committed right before every timed pass of `int4_matmul`; the
+record carries `subject.primer.gpu_ms_median` (51.8 ms here). A "settle until
+consecutive windows agree" warm-up was tried first and rejected: a cold device
+plateaus at 7-14 us and the loop accepts it. Re-timed with the primer
+(`km-floor-curves`, `1792977170082-27350-0`, clean): the 48x5120 one-row GEMV
+reads 3.25 us and `gemv_per_row` c(8) is 0.97; scalar at 8 rows 33.2 us and the
+tile 6.8 us (42 and 8.2 us before). The 1024x5120 curve
+(`1792977177535-27848-0`, DIRTY for foreign CPU) reads the one row at 10.2 us
+against 8.3 us in `km-retro2`, scalar at 8 rows 44.5 us (40.9), tile 15.8 us
+(13.6). The lever 9 projection from these curves is +4.8%; the A/B re-run
+with 6 pairs on decode tok/s reads +2.3%, a WIN, so the primed bench still
+overstates the lever by 2.5 points (table above). The two misses the
+projection cannot see are the ones `docs/KERNEL_MODES.md` lists: the tile's
+activation-prep dispatches and shared scratch, which the kernel curve does not
+time, and a base of which the benched kernels are 6%. The primer fixed the
+one-row unit, not the coverage. The other kernel benches do not prime yet, so
+a tiny-shape number from `int8_matmul`, `gdn_delta` or `attn_decode` carries
+the same suspicion until they do.
 
 **Lever 9 under a trace.** The first two `tslab trace` windows landed in the
 sequential prefill and said nothing. Rerun on a short prompt with 768 decode
@@ -741,7 +776,7 @@ today is priced. The rest names what is missing, and none is built.
 | Drafter-gated tile (mlx-serve E1: tile only when a drafter is bound) | Removes the plain-decode loss the tile projects (0.831x, `km-proj`) on a headless install, keeps the code gain | No bench arm separates "drafter bound" from the flag; the routing lives in `real_forward_dispatch.rs`, the tile owner's file |
 | Concurrent q/k/v encoder (item 2) | +0.4% on a decode token, UNDER THE FLOOR (`km-proj-qkv`, new `qkv_concurrent` bench: the triple takes 0.896 of its serial time, 0.19 ms across 16 layers of 45.5 ms, output bits identical) | Nothing to build as a standalone mode; it would have to cover far more dispatches than the one triple per layer to clear 2% |
 | Expert-sorted grouped GEMM MoE prefill (item 8) | +4.0% to +4.1% of a Flint prefill token against one GEMV per route, at 4 and 16 rows per expert (`km-proj-moe`; kernels cover 6% of a 40 ms token at 24.9 tok/s) | The base is dominated by something the bench does not time (likely expert I/O), the engine's batched MoE prefill paths may already capture part of it, and the drift bound in `BATCHED_PREFILL.md` still applies. Measure the routed share of a prefill token before building |
-| Hybrid prompt lookup plus MTP | Bounded, not priced. On copy-heavy the MTP chain already commits 2.96, 4.27 and 5.95 per round at blocks 2, 4 and 8 (tree-replay table), and the best standalone lookup replay commits about 5.3 per round at its longest draft | A hybrid only adds in rounds where lookup matches and the head does not, which needs a per-position replay over one stream (the lookup probe prices a standalone drafter against the flag-off cost curve). Not built; copy-heavy already gains +17% live from the adaptive controller above |
+| Hybrid prompt lookup plus MTP | Priced by replay (`tslab hybrid-replay`, "Measured: the hybrid replay" under "Prompt lookup"). As specified (4-gram, draft up to 8, lookup when longer than the head's depth): -4.3% committed/round against the tuned 2..8 controller on copy-heavy, -1.4% prose, -3.9% code. With an 8-gram gate: +7.1% on copy-heavy, 0 lookup rounds on prose and code | One greedy stream per case, 512 tokens; round costs from the modeled flag-on table (the measured ones were dirty). Clears the 5% bar only in the 8-gram form, on one stream. Proposed, not built |
 
 #### Re-measured on the shipped defaults, 2026-10-25
 
@@ -945,11 +980,204 @@ a HYBRID: when a long n-gram (4+) matches, propose the copied span (draft 4-8
 accepted 3-4 tokens per round on the copy case) instead of the MTP head's two
 tokens, and otherwise fall back to MTP. That needs an MTP replay on the same
 copy-heavy stream to price, because its ceiling over MTP's 1.44x is the only
-number that matters. Not measured.
+number that matters. Measured below.
 
 Gates: greedy output identical to the sequential loop at several draft
 lengths (`mtp_generation_gate` shape), the memory oracle unchanged, and an
 interleaved paired A/B on AC power. A negative result is recorded here.
+
+#### Measured: the hybrid replay, 2026-10-25
+
+`tslab hybrid-replay` (`crates/lab/src/hybrid_replay.rs`) walks one greedy
+stream per case, captured once by `tslab chain-capture` on `qwen38-27b-mtp`
+with the token ids kept (experiment `km-hybrid`, captures
+`1792977261266-28363-0` medium-review, `-1` `code.messages.json`, `-2`
+`copy-heavy.messages.json`; 512 tokens each, depth-8 chains; Apple M4 Max, AC
+power, host busy with another session's model tests, which does not touch
+acceptance). Per round it takes the lookup proposal (the continuation of the
+last n tokens of prompt plus history, up to 8 tokens) when it is longer than
+the depth the head would propose, with exact acceptance against the stream,
+and never feeds the controller from a lookup round (mlx-serve's two E6 rules).
+Head rounds are `depth_replay::simulate` with the runtime's own
+`AdaptiveDepth`. Costs: the modeled flag-on table (MTP 2 and 4 measured,
+other depths on their line) for the first run, then the round costs measured
+for this on a quiet host (`km-hybrid-costs`, MTP blocks 2, 4 and 8 with the
+tile, copy-heavy, 256 decode tokens, two clean runs each: 69.5-70.2, 81.6-82.3
+and 154.6-157.1 ms a round; the first profile of the same arms, `km-hybrid`,
+was all DIRTY and is not used). A lookup round is priced at the same width's
+MTP round, head draft steps included, so the tok/s column is conservative for
+the hybrid; the committed-per-round column needs no cost table and is what
+the bar reads.
+
+Committed per round, head alone against the hybrid, and the hybrid's change
+(`km-hybrid` `hybrid_replay` records `1792977511638-47511-0` for the 4-gram,
+`1792977580265-47921-0` for the 6-gram, `1792977580237-47913-0` for the 8-gram):
+
+| Policy | Case | Head alone | 4-gram, draft 8 | 6-gram, draft 6 | 8-gram, draft 8 |
+|--------|------|-----------:|----------------:|----------------:|----------------:|
+| fixed 2 | medium-review | 2.35 | 2.31 (-1.8%) | 2.34 (-0.5%) | 2.35 (0, no lookup rounds) |
+| fixed 2 | code | 2.73 | 2.78 (+1.6%) | 2.73 (0) | 2.73 (0) |
+| fixed 2 | copy-heavy | 2.97 | 5.27 (+77%) | 4.48 (+51%) | 5.38 (+81%) |
+| shipped adaptive 2..4 | medium-review | 2.35 | 2.31 (-1.8%) | | |
+| shipped adaptive 2..4 | code | 3.10 | 2.90 (-6.3%) | | |
+| shipped adaptive 2..4 | copy-heavy | 3.84 | 5.32 (+38%) | | |
+| tuned 2..8 (3,1,1,2) | medium-review | 2.44 | 2.41 (-1.4%) | 2.43 (-0.5%) | 2.44 (0) |
+| tuned 2..8 (3,1,1,2) | code | 4.15 | 3.99 (-3.9%) | 4.15 (0) | 4.15 (0) |
+| tuned 2..8 (3,1,1,2) | copy-heavy | 5.68 | 5.44 (-4.3%) | 5.87 (+3.4%) | 6.08 (+7.1%) |
+
+Projected tok/s, tuned controller, copy-heavy: on the modeled table 59.7 head
+alone, 54.7 with the 4-gram hybrid (-8.3%), 61.7 with the 8-gram (+3.4%); on
+the measured table (`1792978451801-28468-0` for the 4-gram, `1792978451817-28472-0` for the 8-gram) 49.8 head alone,
+44.6 with the 4-gram (-10.4%), 50.7 with the 8-gram (+1.7%). Against fixed 2
+the 4-gram hybrid reads +32% (modeled) or +4% (measured) tok/s on copy-heavy
+and -3 to -8% on prose and code, the shape the standalone replay predicted.
+
+What it says:
+
+- **The hybrid as specified loses to the tuned controller on copy-heavy.**
+  A 4-gram matches on 83% of copy-heavy rounds, each lookup draft of 8 is
+  longer than the controller's depth 2, so lookup takes nearly every round
+  and, by the rule that a lookup round never feeds the controller, the
+  controller never climbs: the hybrid becomes the standalone lookup drafter
+  (5.44 per round, the 5.3 the earlier replay found) and gives up the head's
+  5.68 at depth 8. The two E6 rules are right on their own and wrong
+  together with a "longer than the head" gate.
+- **An 8-gram gate clears the bar on this stream.** Lookup then fires on 68%
+  of copy-heavy rounds, the head rounds between them still feed the
+  controller, which climbs, and the hybrid adds where a verbatim span is long
+  and the controller is still low: 6.08 against 5.68 per round (+7.1%), and
+  +3.4% projected tok/s with the conservative price. On medium-review and
+  code an 8-gram never fires, so prose and code are exactly flat, not merely
+  losing little.
+- **This is one stream per case,** 512 tokens of one greedy decode, and the
+  gain is 7 points over a 5-point bar. A second copy-heavy prompt (a RAG-style
+  quote-back, a tool transcript) belongs in the capture before anyone builds
+  on it. The lookup draft is capped at 8 by the cost table; longer copied
+  spans (the standalone replay accepted 4.3 per fired round at draft 8) are an
+  untested axis that needs a measured round cost at width 9 and up.
+- **The measured round cost at depth 8 is well above the modeled table,
+  and it is the tile boundary, measured.** The hybrid's measured table
+  (`km-hybrid-costs`, run ids `1792977781487-51633-9` and
+  `1792977794665-51633-15` at block 8, `1792978407691-21493-4` and
+  `1792978420956-21493-10` at block 2, `1792978414866-21493-7` and
+  `1792978428142-21493-13` at block 4, KV bucket 1024, load under 4) read
+  70, 82, and 156 ms a round against the flag-on table's 72.5, 86.5, and
+  114.5, with the verify phase at 59, 62, and 117 ms: flat from 3 to 5 rows
+  and doubled at 9. Width 9 crosses the 8-row MMA tile: `encode_gemm_any`
+  serves up to 16 rows, and under the flag `encode_int4_mma8_rows`
+  dispatches them in tiles of `INT4_MMA8_MAX_ROWS`, 8, so a width-9 verify
+  runs an 8-row tile and a 1-row tile per projection, each reading the
+  weights once. A `tslab profile` at blocks 7 and 8, then 2 and 4, then
+  5 and 6, all in one experiment, confirms it. Conditions: experiment
+  `km-tile-7v8`, `qwen38-27b-mtp`, `copy-heavy.messages.json`, 256 decode
+  tokens, `TURBOSPARK_INT4_MMA8=1` and `TURBOSPARK_SPEC_STATS=1`, KV bucket
+  1024. Host: Apple M4 Max, AC power, swap 14.7 GiB used of 16, load1
+  between 2.8 and 5.1 across the clean runs. 19 of 30 measured runs were
+  clean. The rest were DIRTY for foreign CPU from the IDE helpers and Apple
+  background daemons, ledgered and not used. Medians of the clean
+  `round_cost` records, with the live decode tok/s range of the same runs:
+
+  | Block | Width | Clean | ms a round | verify | draft | committed/round | decode tok/s |
+  |------:|------:|------:|-----------:|-------:|------:|----------------:|-------------:|
+  | 2 | 3 | 3 | 67.3 | 56.4 | 9.3 | 2.98 | 44.2-44.3 |
+  | 4 | 5 | 3 | 81.8 | 61.8 | 17.5 | 4.67 | 57.2-57.5 |
+  | 5 | 6 | 3 | 86.1 | 62.0 | 21.1 | 5.70 | 65.6-66.9 |
+  | 6 | 7 | 3 | 91.8 | 63.0 | 25.3 | 6.48 | 70.4-70.9 |
+  | 7 | 8 | 3 | 101.0 | 65.1 | 30.6 | 6.96 | 68.4-69.0 |
+  | 8 | 9 | 4 | 159.9 | 116.8 | 35.4 | 7.83 | 48.4-49.7 |
+
+  `round_cost` record ids:
+
+  - block 2: `1793012101181-81202-6`, `1793012114513-81202-12`,
+    `1793012127616-81202-18`
+  - block 4: `1793012107311-81202-9`, `1793012120654-81202-15`,
+    `1793012133740-81202-21`
+  - block 5: `1793014266550-918-6`, `1793014277535-918-12`,
+    `1793014288496-918-18`
+  - block 6: `1793014271917-918-9`, `1793014282885-918-15`,
+    `1793014293861-918-21`
+  - block 7: `1793011648833-57728-6`, `1793011821114-65691-6`,
+    `1793011833513-65691-12`
+  - block 8: `1793011655490-57728-9`, `1793011667740-57728-15`,
+    `1793011679978-57728-21`, `1793011840256-65691-15`
+
+  Block 7 verifies in the block-4 time: 65.1 ms against 61.8, 3.3 ms for
+  three more rows. The verify is flat from 3 to 8 rows at about 1.7 ms a
+  row, then steps 51.7 ms at 9 rows for the second tile pass, a third of
+  the block-8 round. A block-8 round costs 58% more than a block-7 round
+  and commits 0.87 more tokens. Live, fixed block 7 decodes copy-heavy at
+  68.4-69.0 tok/s against 48.4-49.7 at block 8. Under the tile the tuned
+  controller's cap belongs at 7, not 8.
+
+  Fixed block 6 is the fastest fixed depth live, 70.4-70.9 tok/s, because
+  the draft phase grows about 4.7 ms a step while the verify stays flat.
+  That is a different question from the cap, and the controller answers it
+  by climbing only when acceptance earns it.
+
+  Replayed with `tslab depth-replay --experiment km-hybrid --costs
+  ledger:km-tile-7v8@TURBOSPARK_INT4_MMA8=1` on the three captures above,
+  512 tokens, with every depth from 2 to 8 except 3 measured (`km-hybrid`
+  record `1793014663810-51455-0`, after a first pass with depths 5 and 6
+  still modeled, `1793012166406-88279-1`, beside the modeled flag-on table,
+  `1793012166392-88279-0`). Cap 7 was added to the replay grid in
+  `crates/lab/src/depth_replay.rs` for this.
+
+  On that table the tuned `3,1,1,2` controller at cap 8 is 1.130x fixed 2
+  by geomean (prose 36.2, code 48.2, copy-heavy 51.9 tok/s, with 37 of 90
+  copy-heavy rounds at depth 8). The same thresholds at cap 7 are 1.223x
+  (36.2, 50.8, and 62.4 tok/s), and the best setting in the grid is cap 7
+  with `2,1,1,3` at 1.231x, worst case 1.040x. Prose is identical across
+  caps because the controller never climbs past 4 there. Replayed fixed 6
+  also beats fixed 7 (1.144x against 1.092x), as it does live.
+
+  Run live, `tslab ab` on the same install: `mtp:8a` as the baseline
+  against `mtp:7a`, both with `TURBOSPARK_ADAPTIVE_DEPTH=3,1,1,2`, the tile
+  and spec stats, 256 decode tokens, metric decode tok/s. Each workload was
+  null-calibrated first (floors 0.14% and 0.37%, so the 2% default
+  decides). 3 clean pairs each, M4 Max, AC power, load1 2.2 to 3.7, swap
+  14.7 GiB of 16.
+
+  Copy-heavy (`km-cap7-copy-heavy`, verdict
+  `1793014453668-17296-16`): WIN, +24.2%, interval [+24.1%, +24.6%], 3
+  better of 3, 56.1-56.3 tok/s at cap 8 against 69.7-70.0 at cap 7. Both
+  arms decode the same 188 tokens in the same 30 rounds with the same 8
+  rollbacks and 6.27 committed a round. The cap-8 arm spends 12 of those
+  rounds at depth 8, 7 at depth 7, and 3 at 6. The cap-7 arm spends 17 at
+  depth 7 and 5 at 6. The spans between rejections are short enough that a
+  9-token round never saved a round, so every depth-8 round paid the second
+  tile (verify 81.8 ms a round against 61.9) for nothing.
+
+  Code (`km-cap7-code`, verdict `1793014615484-40479-16`): NOISE, +1.45%,
+  interval [+1.3%, +1.7%], 3 better of 3, under the floor, with the cap-8
+  arm at depth 8 in 1 of 59 rounds. Prose was not run, since the controller
+  never passes depth 4 there. The lever 2 live table above was measured at
+  cap 8, so its copy-heavy row understates the tuned controller by about a
+  quarter. Committed per round in the hybrid table above is unaffected, and
+  its measured-table tok/s columns already carry the block-8 cost.
+
+  Acted on: the runtime clamps an adaptive cap to the tile's rows less one while the
+  tile is on (`AdaptiveDepth::tile_cap`, read at the speculative loop's one
+  construction site), and `tslab hybrid-replay` defaults to `--cap 7`. A
+  fixed block is not clamped, and the shipped `DEFAULT_ADAPTIVE_CAP` of 4 is
+  untouched because it is a flag-off number. Checked end to end on the
+  same install (`km-cap7-clamp`, runs `1793045453067-83736-5` with the tile
+  and `1793045460487-83736-7` without, on battery, so a histogram and not a
+  timing): `mtp:8a` with the tile on now spends 17 rounds at depth 7 and
+  none at 8, and with the tile off still spends 12 at depth 8, both at 6.27
+  committed a round.
+
+Proposal, not built, contingent on a second copy-heavy capture agreeing: a
+`Lookup` source inside the MTP speculative loop, gated by an 8-gram suffix over
+prompt plus committed tokens, drafting up to the controller's cap, taken only
+when its draft is longer than the depth the controller asks for, verified with
+the greedy exact-match accept the loop already has for the head (no
+approximate acceptance on a copied draft), and its rounds excluded from the
+controller's `observe`. Off by default behind `TURBOSPARK_LOOKUP_NGRAM=N`
+(unset means off), on the MTP install only. Gates before any default: greedy
+output identical to the sequential loop at several n-grams
+(`mtp_generation_gate` shape), the memory oracle unchanged, and `tslab ab` on
+`qwen38-27b-mtp` with `copy-heavy` and `medium-review`, arms `mtp:7a` with
+`TURBOSPARK_ADAPTIVE_DEPTH=3,1,1,2` with and without the n-gram, 6 pairs.
 
 ## The 2026-10-22 kapitsa and mlx-serve report, checked against this tree
 
@@ -1052,6 +1280,14 @@ and how tslab measures it (`crates/lab/program.md`). Estimates are marked.
    replay gives code +16%, quote-back +7%, prose -6%: the one-row tile cost
    in lever 1 decides whether the flag-on setting is a net win. Not run
    live: it needs a worker built with the MMA8 tile.
+   Measured since, under the tile: a block-8 verify crosses the 8-row MMA
+   tile and costs a second pass, so the cap belongs at 7, not 8. Live, cap 7
+   is +24.2% over cap 8 on copy-heavy (WIN) and +1.45% on code (NOISE), same
+   thresholds ("Measured: the hybrid replay, 2026-10-25" under "Prompt
+   lookup"). The runtime now holds an adaptive cap to the tile's rows less
+   one while the tile is on (`AdaptiveDepth::tile_cap`), so `adaptive:8`
+   under `TURBOSPARK_INT4_MMA8=1` runs at 7. `DEFAULT_ADAPTIVE_CAP` stays 4:
+   with the tile off, nothing above depth 4 has paid.
 3. **DFlash2 at depth 7 over the flat verify.** Why: a block drafter
    proposes 7 tokens for one pass, and the flat verify makes those rows
    nearly free (31-37 tok/s measured above, 2.1x its flag-off self). Where:

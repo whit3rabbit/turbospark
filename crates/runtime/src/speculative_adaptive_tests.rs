@@ -25,6 +25,30 @@ fn degenerate_bounds_collapse_without_a_zero_depth() {
 }
 
 #[test]
+fn the_tile_cap_holds_the_block_to_one_verify_pass() {
+    // An 8-row tile: block 7 verifies 8 rows in one pass, block 8 needs two.
+    assert_eq!(AdaptiveDepth::tile_cap(8, Some(8)), 7);
+    assert_eq!(
+        AdaptiveDepth::tile_cap(4, Some(8)),
+        4,
+        "a cap under the tile is untouched"
+    );
+    assert_eq!(AdaptiveDepth::tile_cap(8, None), 8, "no tile, no clamp");
+    assert_eq!(
+        AdaptiveDepth::tile_cap(8, Some(1)),
+        1,
+        "a one-row tile still leaves a round"
+    );
+    let mut c = AdaptiveDepth::new(2, AdaptiveDepth::tile_cap(8, Some(8)));
+    full_accepts(&mut c, 200);
+    assert_eq!(
+        c.depth(),
+        7,
+        "the controller never climbs past the clamped cap"
+    );
+}
+
+#[test]
 fn climbs_after_exactly_the_threshold_streak() {
     let mut c = AdaptiveDepth::new(2, 8);
     let need = AdaptiveDepth::climb_threshold(2);

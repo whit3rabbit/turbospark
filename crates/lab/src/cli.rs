@@ -49,6 +49,9 @@ tslab: the evaluator for kernel and method experiments (macOS).
   tslab ane-plan --path PROGRAM.mlpackage|MANIFEST_DIR [--units ane|all|gpu|cpu]
   tslab chain-capture --model M [--prompt ...]... [--tokens 512] [--depth 8] [--experiment NAME]
   tslab depth-replay [--experiment NAME] [--costs flag_off,flag_on,ledger:EXP[@FLAGS][#KV]] [--tokens 512] [--top 10]
+  tslab hybrid-replay [--experiment NAME] [--costs flag_on,ledger:EXP[@FLAGS][#KV]] [--tokens 512]
+                [--ngram 4] [--lookup-draft 8] [--tuned 3,1,1,2] [--cap 7]
+                (prompt lookup over the MTP chain, replayed on a chain capture that kept its ids)
   tslab ledger  --experiment NAME [--kind run|verdict|...]
   tslab trace   --model M [workload] [--arm NAME[:KEY=V,...]] [--record-s 10] [--experiment NAME]
                 (Metal System Trace of the arm's measured work; never quotable)
@@ -162,6 +165,7 @@ pub const COMMANDS: &[&str] = &[
     "ane-plan",
     "chain-capture",
     "depth-replay",
+    "hybrid-replay",
     "tree-replay",
 ];
 
@@ -195,6 +199,7 @@ pub fn dispatch(cmd: &str, args: Args) -> Result<CmdOutput, String> {
         "ane-plan" => unit(crate::ane::ane_plan_cmd(args)),
         "chain-capture" => unit(crate::depth_replay::chain_capture_cmd(args)),
         "depth-replay" => unit(crate::depth_replay::depth_replay_cmd(args)),
+        "hybrid-replay" => unit(crate::hybrid_replay::hybrid_replay_cmd(args)),
         "tree-replay" => unit(crate::tree_replay::tree_replay_cmd(args)),
         other => Err(format!("unknown command {other:?}\n\n{USAGE}")),
     }

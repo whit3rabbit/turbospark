@@ -39,6 +39,7 @@ process, which must sit beside `tslab`.
 | `trace --model M --prompt ... --decode 64` | Metal System Trace of the measured work: GPU busy, idle gaps, per-kernel shares | `trace` |
 | `tree-replay --model M --drafter mtp\|dflash` | Would tree verify accept more than the chain at equal rows | `tree_replay` |
 | `chain-capture` then `depth-replay` | Best speculative depth policy, priced from modeled or ledger round costs | `chain_capture`, `depth_replay` |
+| `chain-capture` then `hybrid-replay [--ngram 4] [--lookup-draft 8] [--tuned 3,1,1,2] [--cap 7]` | Would prompt lookup over the MTP chain commit more per round than the head alone, against fixed 2, the shipped controller and a tuned one. Needs a capture written with the token ids (this build's `chain-capture`); older captures are refused with that reason. Lookup rounds are priced at the MTP table's round of the same width, so the tok/s delta is conservative; the committed-per-round delta needs no cost table | `hybrid_replay` |
 | `ane-plan --path PROGRAM.mlpackage\|DIR [--units ane\|all\|gpu\|cpu]` | Where Core ML places a program's ops (`MLComputePlan`), as cost shares on ANE, GPU and CPU plus the ops left off the ANE. No timing and no model install. Needs a macOS with compute plans | `ane_plan` |
 
 Workload flags: `--prompt protocol:ID|messages:PATH|text:PATH|corpus:N|chat:PATH`
@@ -130,5 +131,15 @@ is `crates/lab/program.md`.
   is the variable unset.
 - Probe, stand-in, trace and dispatch-profile runs are never quotable.
 - One measuring session per machine. If the lock is held, wait.
+- Under `int4_mma8` an adaptive arm (`~mtp:Na`) with N above 7 runs at cap
+  7: the runtime holds the cap to the 8-row tile. The record still says
+  block N, so compare caps above 7 with the tile off, or not at all.
 - A cold page cache looks like a slow kernel. Let the warmup round absorb it,
   and check `sysctl vm.swapusage` before timing.
+- A pass started on a cold device runs several times slower for its whole
+  length, and only tens of milliseconds of work queued ahead of it bring the
+  device up (1024 or 4096 tiny dispatches did not, 16384 did). `int4_matmul`
+  commits a primer of that size right before every timed pass;
+  `subject.primer.gpu_ms_median` on the record should read tens of ms. A
+  bench of your own that times tiny passes with host work between them
+  measures the device's state, not the kernel.
