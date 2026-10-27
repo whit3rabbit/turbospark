@@ -60,7 +60,7 @@ struct TopBarView: View {
             // Centre. Fixed-size, so the flexible groups either side keep
             // their own widths and the model loader does not slide when a
             // phase indicator appears.
-            if barWidth >= 760 {
+            if barWidth >= (760 * AppMetrics.textScale(theme)).rounded() {
                 ChromeTelemetryView(model: model).fixedSize()
             }
 
@@ -157,7 +157,7 @@ struct TopBarView: View {
         .buttonStyle(TSPressScaleStyle(scale: 0.9))
         .foregroundStyle(isInspectorVisible ? theme.accent : theme.secondaryText)
         .background {
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
+            RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
                 .fill(isInspectorVisible ? theme.accent.opacity(0.14) : .clear)
         }
         .tsAnimation(TSMotion.hover, value: isInspectorVisible)
@@ -198,7 +198,7 @@ struct TopBarView: View {
         .buttonStyle(TSPressScaleStyle(scale: 0.9))
         .foregroundStyle(model.browserPaneIsOpen ? theme.accent : theme.secondaryText)
         .background {
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
+            RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
                 .fill(model.browserPaneIsOpen ? theme.accent.opacity(0.14) : .clear)
         }
         .tsAnimation(TSMotion.hover, value: model.browserPaneIsOpen)
@@ -225,20 +225,20 @@ struct TopBarView: View {
                         if worktree.totalAdditions > 0 {
                             Text(verbatim: "+\(worktree.totalAdditions)")
                                 .themedFont(.tiny, weight: .semibold).monospacedDigit()
-                                .foregroundStyle(.green)
+                                .foregroundStyle(theme.accent)
                         }
                         if worktree.totalDeletions > 0 {
                             Text(verbatim: "-\(worktree.totalDeletions)")
                                 .themedFont(.tiny, weight: .semibold).monospacedDigit()
-                                .foregroundStyle(.red)
+                                .foregroundStyle(AppAttention.color)
                         }
                     }
                 }
             }
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
-            .background(TurboSparkTheme.surfaceColor, in: Capsule())
-            .overlay(Capsule().stroke(.appText.opacity(0.08), lineWidth: 0.5))
+            .background(.appSurface, in: Capsule())
+            .overlay(Capsule().stroke(.appBorder, lineWidth: 0.5))
         }
         .buttonStyle(TSPressScaleStyle(scale: 0.97))
         .help(Text("Git: \(worktree.currentBranch) (click to open changes pane)", bundle: .module))
@@ -308,9 +308,9 @@ struct TopBarView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(TSPressScaleStyle(scale: 0.9))
-            .foregroundStyle(model.canUnloadAnyModel ? theme.accent : theme.secondaryText.opacity(0.35))
+            .foregroundStyle(model.canUnloadAnyModel ? theme.accent : theme.secondaryText)
             .disabled(!model.canUnloadAnyModel)
-            .help(Text("Unload Model", bundle: .module))
+            .help(model.canUnloadAnyModel ? Text("Unload Model", bundle: .module) : Text("No model loaded.", bundle: .module))
             .accessibilityLabel(Text("Unload Model", bundle: .module))
         }
     }

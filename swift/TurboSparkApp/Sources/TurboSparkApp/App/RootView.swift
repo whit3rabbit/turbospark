@@ -109,11 +109,11 @@ struct RootView: View {
         .background { MainWindowMinimumSize(size: minimumWindowSize).allowsHitTesting(false) }
         .clipped()
         .background(.appPage)
-        .animation(effectiveReduceMotion ? nil : .smooth(duration: 0.2), value: isSidebarExpanded)
-        .animation(effectiveReduceMotion ? nil : .smooth(duration: 0.2), value: isInspectorVisible)
-        .animation(effectiveReduceMotion ? nil : .smooth(duration: 0.2), value: model.previewAttachmentID)
-        .animation(effectiveReduceMotion ? nil : .smooth(duration: 0.2), value: model.openArtifactID)
-        .animation(effectiveReduceMotion ? nil : .smooth(duration: 0.2), value: model.htmlPreviewID)
+        .tsAnimation(TSMotion.pane, value: isSidebarExpanded)
+        .tsAnimation(TSMotion.pane, value: isInspectorVisible)
+        .tsAnimation(TSMotion.pane, value: model.previewAttachmentID)
+        .tsAnimation(TSMotion.pane, value: model.openArtifactID)
+        .tsAnimation(TSMotion.pane, value: model.htmlPreviewID)
         .overlay(alignment: .trailing) {
             // Share the available height so a toast cannot cover the manager
             // when the window is short or interface text is enlarged.

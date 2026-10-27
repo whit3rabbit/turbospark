@@ -2,15 +2,17 @@ import SwiftUI
 
 /// The lock screen shown while the encrypted profile is sealed.
 struct ProfileUnlockView: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var coordinator: ProfileVaultCoordinator
     @State private var passphrase = ""
     @State private var attemptedQuickUnlock = false
+    @FocusState private var isPassphraseFocused: Bool
 
     var body: some View {
         VStack(spacing: 18) {
             Image(systemName: "lock.shield")
                 .themedFont(.display, weight: .medium)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .accessibilityHidden(true)
             VStack(spacing: 5) {
                 Text("Unlock TurboSpark", bundle: .module)
@@ -30,6 +32,7 @@ struct ProfileUnlockView: View {
                 Text("Recovery passphrase", bundle: .module)
             }
             .textFieldStyle(.roundedBorder)
+            .focused($isPassphraseFocused)
             .frame(maxWidth: 360)
             .onSubmit(unlock)
             HStack(spacing: 10) {
@@ -51,21 +54,31 @@ struct ProfileUnlockView: View {
                 }
             }
             if case .error(let message) = coordinator.state {
-                Text(verbatim: message)
-                    .themedFont(.callout)
-                    .foregroundStyle(.red)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 440)
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(AppAttention.color)
+                    Text(verbatim: message)
+                        .themedFont(.callout)
+                        .foregroundStyle(.appSecondary)
+                }
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 440)
             }
             Text("Your recovery passphrase works without this Mac's Keychain. TurboSpark cannot recover it for you.", bundle: .module)
                 .themedFont(.small)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 440)
         }
         .padding(36)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.background)
+        .background(.appPage)
+        .appThemed()
+        .onAppear {
+            if !coordinator.quickUnlockEnabled {
+                isPassphraseFocused = true
+            }
+        }
         .task {
             guard coordinator.quickUnlockEnabled, !attemptedQuickUnlock else { return }
             attemptedQuickUnlock = true

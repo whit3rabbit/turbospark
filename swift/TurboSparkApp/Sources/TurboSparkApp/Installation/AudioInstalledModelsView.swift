@@ -94,15 +94,17 @@ struct AudioInstalledModelsView: View {
 
     @ViewBuilder private var emptyList: some View {
         if controller.isRefreshingModels {
-            ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding(.top, 24)
+            AppProgressBar(value: nil, label: Text("Loading...", bundle: .module), size: .compact)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 24)
         } else if let error = controller.modelCatalogError {
-            AppEmptyState(systemImage: "exclamationmark.triangle", title: Text("No Models Installed", bundle: .module),
+            AppEmptyState(systemImage: "exclamationmark.triangle", title: Text("No models installed", bundle: .module),
                           message: Text(verbatim: error)) {
                 Button { controller.refreshModels() } label: { Text("Retry", bundle: .module) }
                     .appAction(.secondary, size: .small)
             }
         } else {
-            AppEmptyState(systemImage: "waveform", title: Text("No Models Installed", bundle: .module),
+            AppEmptyState(systemImage: "waveform", title: Text("No models installed", bundle: .module),
                           message: Text("Rescan to read the audio catalog again.", bundle: .module)) {
                 Button { controller.refreshModels() } label: { Text("Rescan", bundle: .module) }
                     .appAction(.secondary, size: .small)
@@ -136,10 +138,11 @@ struct AudioInstalledRow: View {
     var body: some View {
         Button(action: onSelect) {
             HStack(alignment: .center, spacing: 10) {
+                let tileSize = max(30, 30 * AppMetrics.textScale(theme))
                 Image(systemName: Self.symbol(entry.profile?.identity.task))
                     .themedFont(.callout, weight: .semibold)
                     .foregroundStyle(.appAccent)
-                    .frame(width: 30, height: 30)
+                    .frame(width: tileSize, height: tileSize)
                     .background(.appElevated, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {

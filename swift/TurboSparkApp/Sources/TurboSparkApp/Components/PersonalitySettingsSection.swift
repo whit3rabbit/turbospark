@@ -9,6 +9,7 @@ import SwiftUI
 struct PersonalitySettingsSection: View {
     @ObservedObject var model: AppModel
     @State private var showingAddSheet = false
+    @State private var isConfirmingDelete = false
 
     var body: some View {
         Section(header: Text("Personality", bundle: .module)) {
@@ -18,6 +19,7 @@ struct PersonalitySettingsSection: View {
                     Text(verbatim: personality.name).tag(Optional(personality.id))
                 }
             } label: { Text("Personality", bundle: .module) }
+            .labelsHidden()
 
             if let personality = model.selectedPersonality {
                 Text(verbatim: personality.instructions)
@@ -25,9 +27,25 @@ struct PersonalitySettingsSection: View {
                     .foregroundStyle(.appSecondary)
 
                 Button(role: .destructive) {
-                    model.deletePersonality(personality.id)
+                    isConfirmingDelete = true
                 } label: { Text("Remove Selected", bundle: .module) }
                 .appAction(.destructive, size: .small)
+                .confirmationDialog(
+                    Text("Delete Personality", bundle: .module),
+                    isPresented: $isConfirmingDelete,
+                    titleVisibility: .visible
+                ) {
+                    Button(role: .destructive) {
+                        model.deletePersonality(personality.id)
+                    } label: {
+                        Text("Delete Personality", bundle: .module)
+                    }
+                    Button(role: .cancel) {} label: {
+                        Text("Cancel", bundle: .module)
+                    }
+                } message: {
+                    Text("Are you sure you want to delete this personality? This action cannot be undone.", bundle: .module)
+                }
             }
 
             Button {
@@ -58,6 +76,7 @@ private struct PersonalityEditorSheet: View {
 
     @State private var name = ""
     @State private var instructions = ""
+    @FocusState private var isNameFocused: Bool
 
     private var canSave: Bool {
         !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -66,11 +85,11 @@ private struct PersonalityEditorSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
+            AppAdaptiveHeader {
                 Text("Add Personality", bundle: .module)
                     .themedFont(.base, weight: .semibold)
                     .accessibilityAddTraits(.isHeader)
-                Spacer()
+            } actions: {
                 Button { dismiss() } label: { Text("Cancel", bundle: .module) }
                     .keyboardShortcut(.cancelAction)
             }
@@ -82,6 +101,8 @@ private struct PersonalityEditorSheet: View {
                 TextField(text: $name) {
                     Text("Name", bundle: .module)
                 }
+                .focused($isNameFocused)
+
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Instructions", bundle: .module)
                     TextEditor(text: $instructions)
@@ -103,9 +124,15 @@ private struct PersonalityEditorSheet: View {
                 .appAction(.primary)
                 .keyboardShortcut(.defaultAction)
                 .disabled(!canSave)
+                .help(canSave
+                    ? Text("Save", bundle: .module)
+                    : Text("A name and instructions are required to save.", bundle: .module))
             }
             .padding()
         }
-        .frame(width: 500, height: 330)
+        .frame(minWidth: 440, idealWidth: 500, minHeight: 310, idealHeight: 350)
+        .onAppear {
+            isNameFocused = true
+        }
     }
 }

@@ -8,6 +8,7 @@ struct OutputPaneView: View {
     @State private var responseCopyFeedbackID: UUID?
     @State private var lastRunningState = false
     @State private var showingMemoryCapture = false
+    @State private var showingClearConfirmation = false
 
     var body: some View {
         Group {
@@ -22,7 +23,7 @@ struct OutputPaneView: View {
             guard responseCopyFeedbackID != nil else { return }
             try? await Task.sleep(for: .seconds(1.2))
             guard !Task.isCancelled else { return }
-            TSMotion.animate(.easeOut(duration: 0.15)) {
+            TSMotion.animate(TSMotion.select) {
                 responseCopyFeedbackID = nil
             }
         }
@@ -78,8 +79,26 @@ struct OutputPaneView: View {
                 } label: { Text("Expand collapsed turns", bundle: .module) }
             }
 
-            Button { model.clearOutput() } label: { Text("Clear chat history", bundle: .module) }
+            Button(role: .destructive) {
+                showingClearConfirmation = true
+            } label: { Text("Clear chat history", bundle: .module) }
                 .disabled(model.isRunning || !model.hasOutputTranscript)
+        }
+        .confirmationDialog(
+            Text("Clear Chat History", bundle: .module),
+            isPresented: $showingClearConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button(role: .destructive) {
+                model.clearOutput()
+            } label: {
+                Text("Clear Chat History", bundle: .module)
+            }
+            Button(role: .cancel) {} label: {
+                Text("Cancel", bundle: .module)
+            }
+        } message: {
+            Text("This will clear the current transcript. This cannot be undone.", bundle: .module)
         }
         .sheet(isPresented: $model.showSessionStats) {
             SessionStatsSheet(model: model)
@@ -181,7 +200,7 @@ struct OutputPaneView: View {
 
     private func copyResponse() {
         copy(model.outputResponsePlainText)
-        TSMotion.animate(.easeIn(duration: 0.15)) {
+        TSMotion.animate(TSMotion.select) {
             responseCopyFeedbackID = UUID()
         }
     }

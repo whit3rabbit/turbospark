@@ -96,8 +96,8 @@ public struct PermissionsSettingsPaneView: View {
         return HStack(spacing: 12) {
             Image(systemName: folder.systemImage)
                 .themedFont(.title3)
-                .foregroundStyle(status.isGranted ? TurboSparkTheme.accentColor : .secondary)
-                .frame(width: 24)
+                .foregroundStyle(status.isGranted ? AnyShapeStyle(.appAccent) : AnyShapeStyle(.appSecondary))
+                .frame(minWidth: 24)
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 2) {
@@ -112,7 +112,7 @@ public struct PermissionsSettingsPaneView: View {
                 Self.folderPurpose(folder)
                     .themedFont(.tiny)
                     .foregroundStyle(.appSecondary)
-                    .lineLimit(1)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Spacer()
@@ -202,29 +202,12 @@ public struct PermissionsSettingsPaneView: View {
     }
 
     private var customFoldersEmptyState: some View {
-        HStack {
-            Spacer()
-            VStack(spacing: 6) {
-                Image(systemName: "folder.badge.plus")
-                    .themedFont(.title2)
-                    .foregroundStyle(.appSecondary)
-                    .accessibilityHidden(true)
-                Text("No custom folders authorized yet.", bundle: .module)
-                    .themedFont(.small)
-                    .foregroundStyle(.appSecondary)
-                Text("Add a folder here to clear the macOS access prompt for it up front.", bundle: .module)
-                    .themedFont(.tiny)
-                    .foregroundStyle(.appSecondary)
-            }
-            .padding(.vertical, 14)
-            Spacer()
-        }
-        .background(.appSurface.opacity(0.5))
-        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
-                .stroke(.appBorder, style: StrokeStyle(lineWidth: 1, dash: [4]))
+        AppEmptyState(
+            systemImage: "folder.badge.plus",
+            title: Text("No custom folders authorized yet.", bundle: .module),
+            message: Text("Add a folder here to clear the macOS access prompt for it up front.", bundle: .module)
         )
+        .padding(.vertical, 8)
     }
 
     private func customFolderRow(_ customFolder: GrantedCustomFolder) -> some View {
@@ -249,14 +232,12 @@ public struct PermissionsSettingsPaneView: View {
             .appAction(.quiet, size: .small)
 
             AppIconButton(
-                "trash",
-                label: Text("Remove authorization for \(customFolder.name)", bundle: .module),
-                role: .destructive
+                "minus.circle",
+                label: Text("Remove authorization for \(customFolder.name)", bundle: .module)
             ) {
                 permissionsManager.removeCustomFolder(id: customFolder.id)
             }
             .appAction(.quiet, size: .small)
-            .foregroundStyle(.red)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)

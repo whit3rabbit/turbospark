@@ -29,7 +29,8 @@ struct DownloadManagerView: View {
                             Text(verbatim: MetricFormat.percent(fraction * 100))
                                 .monospacedDigit()
                         } else {
-                            ProgressView().controlSize(.mini)
+                            AppProgressBar(value: nil, label: Text("Downloading", bundle: .module), size: .compact)
+                                .frame(width: 48)
                         }
                     }
                     Image(systemName: model.isDownloadManagerExpanded ? "chevron.down" : "chevron.up")
@@ -57,10 +58,9 @@ struct DownloadManagerView: View {
 
     private var panel: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
+            AppAdaptiveHeader {
                 Text("Downloads", bundle: .module)
-                    .themedFont(.base, weight: .semibold)
-                Spacer()
+            } actions: {
                 Button { model.clearFinishedDownloads() } label: {
                     Text("Clear", bundle: .module)
                 }
@@ -70,10 +70,11 @@ struct DownloadManagerView: View {
             }
 
             if model.modelDownloads.isEmpty {
-                Text("No downloads yet", bundle: .module)
-                    .themedFont(.small)
-                    .foregroundStyle(.appSecondary)
-                    .padding(.vertical, 12)
+                AppEmptyState(
+                    systemImage: "arrow.down.circle",
+                    title: Text("No downloads yet", bundle: .module)
+                )
+                .padding(.vertical, 12)
             } else {
                 ScrollView {
                     VStack(spacing: 10) {
@@ -107,11 +108,11 @@ struct DownloadManagerView: View {
         }
         .padding(14)
         .background {
-            RoundedRectangle(cornerRadius: 16)
+            RoundedRectangle(cornerRadius: AppMetrics.cardRadius)
                 .fill(.appPage)
                 .shadow(color: .black.opacity(0.2), radius: 14, x: 0, y: 4)
                 .overlay {
-                    RoundedRectangle(cornerRadius: 16).stroke(.appBorder, lineWidth: 1)
+                    RoundedRectangle(cornerRadius: AppMetrics.cardRadius).stroke(.appBorder, lineWidth: 1)
                 }
         }
     }
@@ -171,10 +172,13 @@ struct DownloadManagerView: View {
                 }
                 .appAction(.secondary, size: .small)
                 .disabled(!model.canRetryModelDownload(download))
+                .help(!model.canRetryModelDownload(download)
+                    ? Text("Download cannot be retried at this time.", bundle: .module)
+                    : Text("Retry", bundle: .module))
             }
         }
         .padding(10)
-        .background(.appSurface, in: RoundedRectangle(cornerRadius: 10))
+        .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius))
     }
 
     private func statusLabel(_ status: ModelDownload.Status) -> LocalizedStringKey {

@@ -20,14 +20,17 @@ struct VoiceReferencePickerSheet: View {
         AudioWorkspaceController.voiceReferenceCandidates(in: controller.items, query: query, favoritesOnly: favoritesOnly)
     }
 
+    @Environment(\.appTheme) private var theme
+
     var body: some View {
+        let scale = AppMetrics.textScale(theme)
         VStack(alignment: .leading, spacing: 16) {
             Text("Choose from library", bundle: .module)
                 .themedFont(.title2, weight: .semibold)
                 .accessibilityAddTraits(.isHeader)
             HStack(spacing: AppMetrics.actionSpacing) {
                 AppSearchField(text: $query, prompt: Text("Search recordings and takes", bundle: .module),
-                               maxWidth: .infinity, focus: $searchFocused)
+                                maxWidth: .infinity, focus: $searchFocused)
                 AppChip(Text("Favorites", bundle: .module), systemImage: favoritesOnly ? "star.fill" : "star", isOn: favoritesOnly) {
                     favoritesOnly.toggle()
                 }
@@ -41,7 +44,7 @@ struct VoiceReferencePickerSheet: View {
             }
         }
         .padding(24)
-        .frame(minWidth: 460, idealWidth: 560, minHeight: 420, idealHeight: 580)
+        .frame(minWidth: (460 * scale).rounded(), idealWidth: (560 * scale).rounded(), minHeight: (420 * scale).rounded(), idealHeight: (580 * scale).rounded())
         .themedFont(.base)
         .onAppear { searchFocused = true }
     }
@@ -98,13 +101,15 @@ private struct VoiceReferencePickerRow: View {
 
     @State private var hovered = false
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.appTheme) private var theme
 
     var body: some View {
+        let scale = AppMetrics.textScale(theme)
         Button(action: action) {
             HStack(spacing: 12) {
                 Image(systemName: symbol)
                     .themedFont(.base).foregroundStyle(.appAccent)
-                    .frame(width: 28, height: 28)
+                    .frame(width: (28 * scale).rounded(), height: (28 * scale).rounded())
                     .background(.appAccent.opacity(0.12), in: Circle())
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {

@@ -14,10 +14,13 @@ struct MarketplaceSourcesView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Marketplace sources", bundle: .module).themedFont(.title3, weight: .semibold)
-                Spacer()
+            AppAdaptiveHeader {
+                Text("Marketplace sources", bundle: .module)
+                    .themedFont(.title3, weight: .semibold)
+                    .accessibilityAddTraits(.isHeader)
+            } actions: {
                 Button { dismiss() } label: { Text("Done", bundle: .module) }
+                    .keyboardShortcut(.defaultAction)
             }
             ExtensionScopePicker(model: model, projectID: $projectID)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -29,13 +32,15 @@ struct MarketplaceSourcesView: View {
                         Button(name) { if let source = sources[name] { select(source); dismiss() } }
                         Spacer()
                         Text(origin(name)).themedFont(.small)
-                        Button(role: .destructive) {
+                        Button {
                             do {
                                 try model.removeMarketplace(name: name, kind: kind, projectID: projectID)
                                 error = nil
                             } catch { self.error = error.localizedDescription }
+                        } label: {
+                            Label { Text("Remove source", bundle: .module) } icon: { Image(systemName: "minus.circle") }
                         }
-                            label: { Text("Remove source", bundle: .module) }
+                        .appAction(.quiet, size: .small)
                     }
                 }
                 if let project = model.projects.first(where: { $0.id == projectID }) {
@@ -45,6 +50,7 @@ struct MarketplaceSourcesView: View {
                             Spacer()
                             Button { model.restoreMarketplace(name: name, kind: kind, projectID: project.id) }
                                 label: { Text("Restore inherited source", bundle: .module) }
+                            .appAction(.quiet, size: .small)
                         }
                     }
                 }
@@ -62,8 +68,17 @@ struct MarketplaceSourcesView: View {
                 Text("Location", bundle: .module)
             }
             Button { addSource() } label: { Text("Add source", bundle: .module) }
+                .appAction(.secondary, size: .small)
                 .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || location.trimmingCharacters(in: .whitespaces).isEmpty)
-            if let error { Text(error).foregroundStyle(.red).themedFont(.small) }
+            if let error {
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .accessibilityHidden(true)
+                    Text(error)
+                }
+                .foregroundStyle(AppAttention.color)
+                .themedFont(.small)
+            }
         }
         .padding(20)
         .frame(minWidth: 540, minHeight: 480)

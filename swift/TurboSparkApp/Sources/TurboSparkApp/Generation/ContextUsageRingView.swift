@@ -11,6 +11,7 @@ import TurboSpark
 /// surfaces cannot disagree. Hidden entirely until an engine session is
 /// loaded: without one there is no window to be full.
 struct ContextUsageRingView: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     @State private var showsPopover = false
     @State private var isHovered = false
@@ -38,7 +39,7 @@ struct ContextUsageRingView: View {
                 ring
                     .frame(width: 28, height: 28)
                     .background(
-                        Color.primary.opacity(isHovered ? 0.08 : 0),
+                        isHovered ? AnyShapeStyle(.appElevated) : AnyShapeStyle(Color.clear),
                         in: Circle()
                     )
                     .contentShape(Circle())
@@ -62,14 +63,14 @@ struct ContextUsageRingView: View {
     private var ring: some View {
         ZStack {
             Circle()
-                .stroke(Color.primary.opacity(0.15), lineWidth: 2.5)
+                .stroke(theme.border, lineWidth: 2.5)
             Circle()
                 .trim(from: 0, to: fraction)
                 .stroke(tint, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
                 .rotationEffect(.degrees(-90))
         }
         .frame(width: 13, height: 13)
-        .tsAnimation(.linear(duration: 0.15), value: fraction)
+        .tsAnimation(TSMotion.select, value: fraction)
     }
 }
 
@@ -93,8 +94,8 @@ struct ContextUsagePopoverView: View {
             footer
         }
         .padding(14)
-        .frame(width: 320, alignment: .leading)
-        .background(TurboSparkTheme.surfaceColor)
+        .frame(minWidth: 280, idealWidth: 320, maxWidth: 400, alignment: .leading)
+        .background(.appSurface)
         .onAppear { model.updateTokenEstimate() }
     }
 
@@ -109,6 +110,7 @@ struct ContextUsagePopoverView: View {
         HStack {
             Text("Context window", bundle: .module)
                 .font(theme.ui(.callout, weight: .semibold))
+                .accessibilityAddTraits(.isHeader)
             Spacer()
             if summary != nil {
                 Text(headlineText)
@@ -124,7 +126,7 @@ struct ContextUsagePopoverView: View {
     /// the WINDOW, so unused space stays visibly empty.
     private var bar: some View {
         Capsule()
-            .fill(Color.primary.opacity(0.08))
+            .fill(theme.border.opacity(0.5))
             .frame(height: 6)
             .overlay(
                 GeometryReader { geo in
@@ -162,12 +164,12 @@ struct ContextUsagePopoverView: View {
                     label: Text("Free space", bundle: .module),
                     tokens: summary.freeTokens,
                     window: summary.windowTokens,
-                    color: Color.primary.opacity(0.15))
+                    color: theme.border)
             }
         } else {
             Text("Measuring...", bundle: .module)
                 .font(theme.ui(.tiny))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.appSecondary)
         }
     }
 
@@ -195,23 +197,23 @@ struct ContextUsagePopoverView: View {
         if model.isCompacting {
             Text("Compacting conversation...", bundle: .module)
                 .font(theme.ui(.tiny))
-                .foregroundStyle(Color.orange)
+                .foregroundStyle(AppAttention.color)
         } else if let trigger = summary?.compactionTriggerTokens, summary?.autoCompactEnabled == true {
             Text(
                 "Auto-compact at ~\(trigger.formatted(.number.notation(.compactName))) tokens",
                 bundle: .module)
                 .font(theme.ui(.tiny))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.appSecondary)
         } else {
             Text("Auto-compact off", bundle: .module)
                 .font(theme.ui(.tiny))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.appSecondary)
         }
         Text(
             "The total is exact; the rows apportion it and skip chat-template framing.",
             bundle: .module)
             .font(theme.ui(.tiny))
-            .foregroundStyle(.tertiary)
+            .foregroundStyle(.appSecondary)
             .fixedSize(horizontal: false, vertical: true)
     }
 }

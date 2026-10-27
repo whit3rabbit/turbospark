@@ -81,7 +81,7 @@ struct ModelLoaderControl: View {
             }
         }
         .frame(height: barHeight)
-        .background(TurboSparkTheme.surfaceColor, in: Capsule())
+        .background(.appSurface, in: Capsule())
         .overlay {
             Capsule().stroke(strokeColor, lineWidth: 0.5)
         }
@@ -96,7 +96,7 @@ struct ModelLoaderControl: View {
     private var strokeColor: Color {
         model.session != nil
             ? theme.accent.opacity(0.32)
-            : TurboSparkTheme.hairlineColor
+            : TurboSparkTheme.hairlineColor(isDark: theme.isDark)
     }
 
     // MARK: - Chooser
@@ -179,7 +179,7 @@ struct ModelLoaderControl: View {
                 } else {
                     Image(systemName: "chevron.up.chevron.down")
                         .font(theme.ui(.micro, weight: .bold))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.appSecondary)
                         .accessibilityHidden(true)
                 }
             }
@@ -280,7 +280,7 @@ struct ModelLoaderControl: View {
 
                 Image(systemName: "chevron.up.chevron.down")
                     .font(theme.ui(.micro, weight: .bold))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.appSecondary)
                     .accessibilityHidden(true)
             }
             .padding(.horizontal, 8)

@@ -103,12 +103,14 @@ struct VoiceCloneQualityControls: View {
                             Text("Intelligibility", bundle: .module)
                             Slider(value: controller.cloneOptionBinding(\.intelligibility), in: 0.1...5, step: 0.1)
                                 .accessibilityLabel(Text("Intelligibility", bundle: .module))
+                                .accessibilityValue(Text(controller.cloneOptions.intelligibility, format: .number.precision(.fractionLength(1))))
                             Text(controller.cloneOptions.intelligibility, format: .number.precision(.fractionLength(1))).monospacedDigit()
                         }
                         HStack {
                             Text("Similarity to the reference", bundle: .module)
                             Slider(value: controller.cloneOptionBinding(\.similarity), in: 0.1...10, step: 0.1)
                                 .accessibilityLabel(Text("Similarity to the reference", bundle: .module))
+                                .accessibilityValue(Text(controller.cloneOptions.similarity, format: .number.precision(.fractionLength(1))))
                             Text(controller.cloneOptions.similarity, format: .number.precision(.fractionLength(1))).monospacedDigit()
                         }
                     }
@@ -167,9 +169,10 @@ struct Qwen3ReferenceTranscriptEditor: View {
 
     var body: some View {
         title.themedFont(.small, weight: .semibold)
+            .accessibilityAddTraits(.isHeader)
         TextEditor(text: controller.speechBinding(\.referenceText))
-            .scrollContentBackground(.hidden).frame(height: 90).padding(8)
-            .overlay { RoundedRectangle(cornerRadius: 8).stroke(.appBorder) }
+            .themedFont(.base)
+            .appEditorSurface(minHeight: 90)
             .accessibilityLabel(title)
     }
 }
@@ -186,6 +189,7 @@ struct Qwen3SpeechGenerationSettings: View {
                     Text("Temperature", bundle: .module)
                     Slider(value: controller.speechBinding(\.temperature), in: 0...2, step: 0.05)
                         .accessibilityLabel(Text("Temperature", bundle: .module))
+                        .accessibilityValue(Text(controller.speechSettings.temperature, format: .number.precision(.fractionLength(2))))
                     Text(controller.speechSettings.temperature, format: .number.precision(.fractionLength(2))).monospacedDigit()
                 }
                 Stepper(value: controller.speechBinding(\.maxTokens), in: 64...4096, step: 64) {

@@ -33,7 +33,7 @@ struct GenerationPhaseIndicator: View {
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
-                .background(TurboSparkTheme.surfaceColor, in: Capsule())
+                .background(.appSurface, in: Capsule())
                 .help(statusText)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(Text("Model status", bundle: .module))

@@ -13,6 +13,7 @@ struct ModelDetailPaneView: View {
     let recommendation: ModelRecommendation?
     @State private var showingDeleteConfirm = false
     @State private var showsInstallConfirm = false
+    @Environment(\.appTheme) private var theme
     /// The library the user picked for this install. Nil follows the default
     /// (requirement 2.2). Per install: it is not remembered across launches.
     @State private var destination: String?
@@ -121,7 +122,7 @@ struct ModelDetailPaneView: View {
                         .themedFont(.micro, weight: .bold)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
-                        .background(.appAccent.opacity(0.16), in: RoundedRectangle(cornerRadius: 4))
+                        .background(.appAccent.opacity(theme.surfaceOpacity(0.16)), in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
                         .foregroundStyle(.appAccent)
 
                     statusSeal
@@ -133,7 +134,7 @@ struct ModelDetailPaneView: View {
                         .foregroundStyle(.appSecondary)
 
                     Text(verbatim: "\u{2022}")
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.appSecondary)
 
                     HStack(spacing: 4) {
                         Image(systemName: visuals.iconSystemName)
@@ -146,7 +147,7 @@ struct ModelDetailPaneView: View {
                     .help(Text("Model Family: \(visuals.family)", bundle: .module))
 
                     Text(verbatim: "\u{2022}")
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.appSecondary)
 
                     statusText
                         .themedFont(.small, weight: .medium)
@@ -178,7 +179,7 @@ struct ModelDetailPaneView: View {
         case "caveat":
             Image(systemName: "exclamationmark.triangle.fill")
                 .themedFont(.title3)
-                .foregroundStyle(.orange)
+                .foregroundStyle(AppAttention.color)
                 .help(Text("Runs with a caveat; see the model notes.", bundle: .module))
                 .accessibilityHidden(true)
         default:
@@ -197,11 +198,11 @@ struct ModelDetailPaneView: View {
         }
     }
 
-    private var statusTint: Color {
+    private var statusTint: AnyShapeStyle {
         switch entry.status {
-        case "verified": return .green
-        case "caveat": return .orange
-        default: return .secondary
+        case "verified": return AnyShapeStyle(theme.accent)
+        case "caveat": return AnyShapeStyle(AppAttention.color)
+        default: return AnyShapeStyle(.appSecondary)
         }
     }
 
@@ -239,7 +240,7 @@ struct ModelDetailPaneView: View {
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                         .background(.appSurface, in: Capsule())
-                        .overlay(Capsule().stroke(.appBorder.opacity(0.6), lineWidth: 0.5))
+                        .overlay(Capsule().stroke(.appBorder, lineWidth: 0.5))
                 }
             }
         }
@@ -256,7 +257,7 @@ struct ModelDetailPaneView: View {
                         Text(verbatim: visuals.formatLabel)
                             .themedFont(.base, weight: .semibold)
                         Text(verbatim: "\u{2022}")
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.appSecondary)
                         Text("\(MetricFormat.storage(entry.downloadBytes)) download", bundle: .module)
                             .themedFont(.small)
                             .foregroundStyle(.appSecondary)
@@ -299,7 +300,7 @@ struct ModelDetailPaneView: View {
                         ? "xmark.octagon.fill" : "exclamationmark.triangle.fill"
                 )
                 .themedFont(.small)
-                .foregroundStyle(installDecision.isBlocked ? Color.red : Color.orange)
+                .foregroundStyle(installDecision.isBlocked ? AnyShapeStyle(Color.red) : AnyShapeStyle(AppAttention.color))
                 .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -395,7 +396,7 @@ struct ModelDetailPaneView: View {
                 if let fraction = model.installProgressFraction {
                     Text(verbatim: MetricFormat.percent(fraction * 100))
                         .themedFont(.small, weight: .semibold).monospacedDigit()
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(.appAccent)
                 }
             }
             // Combine the stage text and percentage into one announcement

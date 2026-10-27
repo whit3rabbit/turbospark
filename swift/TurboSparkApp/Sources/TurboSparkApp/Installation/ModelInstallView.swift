@@ -10,6 +10,7 @@ import TurboSpark
 @MainActor
 struct ModelInstallView: View {
     @ObservedObject var model: AppModel
+    @Environment(\.appTheme) private var theme
     @State private var recommendations: [ModelRecommendation] = []
     @State private var isLoadingRecommendations = true
     @State private var recommendationProgress: ModelRecommendationProbeProgress?
@@ -65,7 +66,7 @@ struct ModelInstallView: View {
         HStack(spacing: 12) {
             Image(systemName: "shippingbox.fill")
                 .themedFont(.title2)
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(.appAccent)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("LM Studio Library Detected", bundle: .module)
@@ -88,8 +89,8 @@ struct ModelInstallView: View {
             .appAction(.secondary, size: .small)
         }
         .padding(12)
-        .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.accentColor.opacity(0.3), lineWidth: 1))
+        .background(.appAccent.opacity(theme.surfaceOpacity(0.1)), in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous).stroke(theme.border, lineWidth: 1))
     }
 
     private var headerSection: some View {
@@ -119,6 +120,7 @@ struct ModelInstallView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Recommended Models for Your Mac", bundle: .module)
                         .themedFont(.base, weight: .semibold)
+                        .accessibilityAddTraits(.isHeader)
                     Group {
                         if let chip = model.telemetry?.chip {
                             Text("Ranked by compatibility with your \(chip) memory budget.", bundle: .module)
@@ -138,7 +140,6 @@ struct ModelInstallView: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .themedFont(.small)
-                .fixedSize()
                 .accessibilityLabel(Text("Recommendations filter", bundle: .module))
             }
 
@@ -154,7 +155,7 @@ struct ModelInstallView: View {
                 VStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle")
                         .themedFont(.title2)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(AppAttention.color)
                     Text(recommendationError)
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
@@ -169,12 +170,10 @@ struct ModelInstallView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 24)
             } else if displayedRecommendations.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "sparkles")
-                        .themedFont(.title2)
-                        .foregroundStyle(.quaternary)
-                    Text("No recommended models", bundle: .module)
-                        .themedFont(.base, weight: .medium)
+                AppEmptyState(
+                    systemImage: "sparkles",
+                    title: Text("No recommended models", bundle: .module)
+                ) {
                     Button {
                         selectedFilter = .all
                     } label: {

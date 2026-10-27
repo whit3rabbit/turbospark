@@ -119,26 +119,27 @@ struct ArtifactPanelView: View {
     // MARK: - Header
 
     private var header: some View {
-        HStack(spacing: 8) {
-            Image(systemName: symbolName)
-                .themedFont(.callout)
-                .foregroundStyle(.appAccent)
-                .help(subtitle)
-                .accessibilityHidden(true)
+        AppAdaptiveHeader {
+            HStack(spacing: 8) {
+                Image(systemName: symbolName)
+                    .themedFont(.callout)
+                    .foregroundStyle(.appAccent)
+                    .help(subtitle)
+                    .accessibilityHidden(true)
 
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .themedFont(.small, weight: .semibold)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Text(subtitle)
-                    .themedFont(.tiny)
-                    .foregroundStyle(.appSecondary)
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .themedFont(.small, weight: .semibold)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(title)
+                    Text(subtitle)
+                        .themedFont(.tiny)
+                        .foregroundStyle(.appSecondary)
+                        .lineLimit(1)
+                }
             }
-
-            Spacer(minLength: 4)
-
+        } actions: {
             Picker(selection: $viewMode) {
                 Text("Preview", bundle: .module).tag(ViewMode.preview)
                 Text("Source", bundle: .module).tag(ViewMode.source)
@@ -148,87 +149,52 @@ struct ArtifactPanelView: View {
             .fixedSize()
             .help(Text("Switch between the rendered page and its source", bundle: .module))
 
-            headerButton(
+            AppIconButton(
                 isCopied ? "checkmark" : "doc.on.doc",
-                help: isCopied ? Text("Copied", bundle: .module) : Text("Copy source", bundle: .module),
-                label: isCopied ? Text("Copied source", bundle: .module) : Text("Copy source", bundle: .module))
-            {
+                label: isCopied ? Text("Copied source", bundle: .module) : Text("Copy source", bundle: .module)
+            ) {
                 copySource()
             }
             .disabled(sourceText == nil)
+            .help(sourceText == nil ? Text("Source text is not available", bundle: .module) : (isCopied ? Text("Copied", bundle: .module) : Text("Copy source", bundle: .module)))
 
             if resolvedArtifact?.existsOnDisk == true {
                 if let artifact = resolvedArtifact,
                    artifact.path.flatMap(ManagedAssetStore.assetID(from:)) == nil {
-                    headerButton(
-                        "lock.doc",
-                        help: Text("Copy \(title) into this encrypted profile", bundle: .module),
-                        label: Text("Copy into profile", bundle: .module))
-                    {
+                    AppIconButton("lock.doc", label: Text("Copy into profile", bundle: .module)) {
                         model.copyArtifactIntoProfile(id: artifact.id)
                     }
+                    .help(Text("Copy \(title) into this encrypted profile", bundle: .module))
                 }
-                headerButton(
-                    "arrow.down.to.line",
-                    help: Text("Save a copy of \(title)", bundle: .module),
-                    label: Text("Save a copy", bundle: .module))
-                {
+                AppIconButton("arrow.down.to.line", label: Text("Save a copy", bundle: .module)) {
                     exportArtifact()
                 }
-                headerButton(
-                    "folder",
-                    help: Text("Reveal \(title) in Finder", bundle: .module),
-                    label: Text("Reveal in Finder", bundle: .module))
-                {
+                .help(Text("Save a copy of \(title)", bundle: .module))
+                AppIconButton("folder", label: Text("Reveal in Finder", bundle: .module)) {
                     if let url = resolvedArtifact?.url {
                         NSWorkspace.shared.activateFileViewerSelecting([url])
                     }
                 }
+                .help(Text("Reveal \(title) in Finder", bundle: .module))
             } else if resolvedPreview != nil {
-                headerButton(
-                    "arrow.down.to.line",
-                    help: Text("Save the html to a file", bundle: .module),
-                    label: Text("Save", bundle: .module))
-                {
+                AppIconButton("arrow.down.to.line", label: Text("Save", bundle: .module)) {
                     exportPreview()
                 }
+                .help(Text("Save the html to a file", bundle: .module))
             }
 
-            headerButton(
-                "arrow.up.left.and.arrow.down.right",
-                help: Text("Open a larger preview", bundle: .module),
-                label: Text("Open a larger preview", bundle: .module))
-            {
+            AppIconButton("arrow.up.left.and.arrow.down.right", label: Text("Open a larger preview", bundle: .module)) {
                 isMaximized = true
             }
+            .help(Text("Open a larger preview", bundle: .module))
 
-            headerButton("xmark", help: Text("Close preview", bundle: .module), label: Text("Close preview", bundle: .module)) {
+            AppIconButton("xmark", label: Text("Close preview", bundle: .module)) {
                 close()
             }
+            .help(Text("Close preview", bundle: .module))
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-    }
-
-    /// `label` names the action for VoiceOver and is followed by the
-    /// artifact's title, so a reader moving between panels knows which
-    /// document the control acts on.
-    private func headerButton(
-        _ systemImage: String,
-        help: Text,
-        label: Text,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .themedFont(.tiny, weight: .semibold)
-                .frame(width: 22, height: 22)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(Color.secondary)
-        .help(help)
-        .accessibilityLabel(label + Text(verbatim: " " + title))
     }
 
     // MARK: - Network banner
@@ -237,7 +203,7 @@ struct ArtifactPanelView: View {
         HStack(spacing: 8) {
             Image(systemName: "wifi.slash")
                 .themedFont(.tiny, weight: .semibold)
-                .foregroundStyle(Color.secondary)
+                .foregroundStyle(.appSecondary)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 1) {
                 Text("Network is off for this preview", bundle: .module)
@@ -254,22 +220,14 @@ struct ArtifactPanelView: View {
             }
             .appAction(.secondary, size: .mini)
             .help(Text("Let this preview load remote resources", bundle: .module))
-            Button {
+            AppIconButton("xmark", label: Text("Dismiss network banner", bundle: .module)) {
                 isBannerDismissed = true
-            } label: {
-                Image(systemName: "xmark")
-                    .themedFont(.micro, weight: .semibold)
-                    .frame(width: 16, height: 16)
-                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.appSecondary)
             .help(Text("Dismiss", bundle: .module))
-            .accessibilityLabel(Text("Dismiss network banner", bundle: .module))
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .background(Color.primary.opacity(0.03))
+        .background(.appElevated)
     }
 
     // MARK: - Content
@@ -376,7 +334,7 @@ struct ArtifactPanelView: View {
         VStack(spacing: 8) {
             Image(systemName: "eye.slash")
                 .themedFont(.title2)
-                .foregroundStyle(.quaternary)
+                .foregroundStyle(.appSecondary)
             Text(title)
                 .themedFont(.base, weight: .medium)
             Text(reason, bundle: .module)
@@ -405,25 +363,17 @@ struct ArtifactPanelView: View {
                     .themedFont(.small, weight: .semibold)
                     .lineLimit(1)
                 Spacer()
-                Button {
+                AppIconButton("xmark", label: Text("Close maximized preview", bundle: .module)) {
                     isMaximized = false
-                } label: {
-                    Image(systemName: "xmark")
-                        .themedFont(.tiny, weight: .semibold)
-                        .frame(width: 22, height: 22)
-                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.appSecondary)
                 .help(Text("Close", bundle: .module))
-                .accessibilityLabel(Text("Close maximized preview", bundle: .module))
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             Divider()
             content
         }
-        .frame(width: 1100, height: 800)
+        .frame(minWidth: 700, idealWidth: 1100, maxWidth: 1400, minHeight: 500, idealHeight: 800, maxHeight: 1000)
         .background(TurboSparkTheme.barBackgroundColor(isDark: theme.isDark))
     }
 
@@ -465,10 +415,10 @@ struct ArtifactPanelView: View {
         guard let sourceText else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(sourceText, forType: .string)
-        TSMotion.animate(.easeInOut(duration: 0.15)) { isCopied = true }
+        TSMotion.animate(TSMotion.select) { isCopied = true }
         Task {
             try? await Task.sleep(for: .seconds(1.5))
-            TSMotion.animate(.easeOut(duration: 0.15)) { isCopied = false }
+            TSMotion.animate(TSMotion.select) { isCopied = false }
         }
     }
 

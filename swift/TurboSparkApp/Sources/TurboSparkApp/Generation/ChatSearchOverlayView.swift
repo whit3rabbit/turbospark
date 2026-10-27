@@ -70,10 +70,10 @@ struct ChatSearchOverlayView: View {
                 .frame(height: 0.5)
             footer
         }
-        .frame(width: 640, height: 480)
-        .background(TurboSparkTheme.surfaceColor, in: .rect(cornerRadius: 12))
+        .frame(minWidth: 500, idealWidth: 640, maxWidth: 800, minHeight: 380, idealHeight: 480, maxHeight: 650)
+        .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
                 .stroke(.appBorder, lineWidth: 0.5))
         .shadow(color: .black.opacity(0.25), radius: 24, y: 8)
         .background(hiddenShortcutButtons)
@@ -98,7 +98,7 @@ struct ChatSearchOverlayView: View {
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(theme.ui(.tiny))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.appSecondary)
                 }
                 .buttonStyle(.plain)
                 .help(Text("Clear search", bundle: .module))
@@ -153,7 +153,7 @@ struct ChatSearchOverlayView: View {
         HStack {
             Text("Up/Down to navigate, Enter to open, Esc to close", bundle: .module)
                 .font(theme.ui(.tiny))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.appSecondary)
             Spacer(minLength: 0)
             Group {
                 if hits.count == documents.count {
@@ -163,7 +163,7 @@ struct ChatSearchOverlayView: View {
                 }
             }
                 .font(theme.ui(.tiny))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.appSecondary)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)

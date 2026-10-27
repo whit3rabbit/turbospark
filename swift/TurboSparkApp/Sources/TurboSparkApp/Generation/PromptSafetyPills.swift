@@ -28,13 +28,12 @@ struct ForgeGuardrailsPillControl: View {
                 HStack(spacing: 3) {
                     Image(systemName: isEnabled ? "shield.checkmark.fill" : "shield.slash")
                         .font(theme.ui(.tiny, weight: .semibold))
-                        .foregroundStyle(isEnabled ? TurboSparkTheme.accentColor : Color.secondary)
+                        .foregroundStyle(isEnabled ? AnyShapeStyle(theme.accent) : AnyShapeStyle(.appSecondary))
 
                     (isEnabled ? Text("Guardrails On", bundle: .module) : Text("Guardrails Off", bundle: .module))
                         .font(theme.ui(.small, weight: .medium))
-                        .foregroundStyle(isEnabled ? Color.primary : Color.secondary)
+                        .foregroundStyle(isEnabled ? AnyShapeStyle(.appText) : AnyShapeStyle(.appSecondary))
                         .lineLimit(1)
-                        .fixedSize()
                 }
             }
             .buttonStyle(.plain)
@@ -61,7 +60,7 @@ struct ForgeGuardrailsPillControl: View {
             } label: {
                 Image(systemName: "info.circle")
                     .font(theme.ui(.tiny))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.appSecondary)
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
@@ -126,18 +125,17 @@ struct SteeringPillControl: View {
                 HStack(spacing: 3) {
                     Image(systemName: isOn ? "dial.medium.fill" : "dial.medium")
                         .font(theme.ui(.tiny, weight: .semibold))
-                        .foregroundStyle(isOn ? TurboSparkTheme.accentColor : Color.secondary)
+                        .foregroundStyle(isOn ? AnyShapeStyle(theme.accent) : AnyShapeStyle(.appSecondary))
                     (isOn ? Text("Steering On", bundle: .module) : Text("Steering Off", bundle: .module))
                         .font(theme.ui(.small, weight: .medium))
-                        .foregroundStyle(isOn ? Color.primary : Color.secondary)
+                        .foregroundStyle(isOn ? AnyShapeStyle(.appText) : AnyShapeStyle(.appSecondary))
                         .lineLimit(1)
-                        .fixedSize()
                     // The pending marker is not decoration: without it the
                     // pill reads "On" while the loaded model is unsteered.
                     if pending {
                         Image(systemName: "arrow.clockwise")
                             .font(theme.ui(.micro, weight: .semibold))
-                            .foregroundStyle(Color.orange)
+                            .foregroundStyle(AppAttention.color)
                     }
                 }
             }
@@ -158,7 +156,7 @@ struct SteeringPillControl: View {
             } label: {
                 Image(systemName: "info.circle")
                     .font(theme.ui(.tiny))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.appSecondary)
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)

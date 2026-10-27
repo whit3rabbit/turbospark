@@ -31,6 +31,11 @@ struct ProfilesSettingsPaneView: View {
 
     var body: some View {
         Form {
+            Section {
+                Text("Manage profiles and credentials on this Mac.", bundle: .module)
+                    .font(theme.ui(.small))
+                    .foregroundStyle(.appSecondary)
+            }
             profilesSection
             securitySection
             addSection
@@ -172,8 +177,8 @@ struct ProfilesSettingsPaneView: View {
                             .font(theme.ui(.tiny, weight: .semibold))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(Color.accentColor.opacity(0.15), in: Capsule())
-                            .foregroundStyle(Color.accentColor)
+                            .background(theme.accent.opacity(0.15), in: Capsule())
+                            .foregroundStyle(theme.accent)
                     }
                 }
                 subtitle
@@ -265,6 +270,7 @@ struct ProfilesSettingsPaneView: View {
         } else {
             Button {} label: { Text("Switch to Export", bundle: .module) }
                 .disabled(true)
+                .help(Text("Switch to this profile before exporting its credentials.", bundle: .module))
         }
     }
 
@@ -304,25 +310,28 @@ struct ProfilesSettingsPaneView: View {
                     Text("Touch ID or Mac login", bundle: .module)
                 }
                 .disabled(securityBusy || !vaultCoordinator.canUseQuickUnlock)
+                .help(vaultCoordinator.canUseQuickUnlock
+                    ? Text("Touch ID or Mac login", bundle: .module)
+                    : Text("Touch ID or Mac login authentication is not available.", bundle: .module))
 
                 HStack {
                     Button {
                         securitySheet = .changePassphrase
                     } label: { Text("Change Passphrase...", bundle: .module) }
-                    .appAction(.secondary)
+                    .appAction(.secondary, size: .small)
                     // Opens a sheet that asks for the passphrase; nothing is
                     // removed until that sheet's own confirm.
                     Button(role: .destructive) {
                         securitySheet = .disableProtection
                     } label: { Text("Disable Protection...", bundle: .module) }
-                    .appAction(.destructive)
+                    .appAction(.destructive, size: .small)
                     Spacer()
                     Button {
                         vaultCoordinator.lockNow()
                     } label: {
                         Label { Text("Lock Now", bundle: .module) } icon: { Image(systemName: "lock") }
                     }
-                    .appAction(.secondary)
+                    .appAction(.secondary, size: .small)
                 }
             } else {
                 Button {
@@ -330,7 +339,7 @@ struct ProfilesSettingsPaneView: View {
                 } label: {
                     Label { Text("Protect This Profile...", bundle: .module) } icon: { Image(systemName: "lock.shield") }
                 }
-                .appAction(.secondary)
+                .appAction(.secondary, size: .small)
             }
 
             Text("Protection covers chats, projects, private settings, managed attachments, and generated images. Models, skills, plugins, hooks, external project files, and tool executables remain ordinary files. FileVault is still recommended for whole-disk protection.", bundle: .module)
@@ -366,7 +375,7 @@ struct ProfilesSettingsPaneView: View {
                         encryptedBackupRequest = .restore(url)
                     }
                 } label: { Text("Restore Encrypted Backup...", bundle: .module) }
-                .appAction(.secondary)
+                .appAction(.secondary, size: .small)
                 .disabled(model.profileBackupInFlight)
                 Button {
                     Task {
@@ -375,7 +384,7 @@ struct ProfilesSettingsPaneView: View {
                         }
                     }
                 } label: { Text("Import Legacy ZIP...", bundle: .module) }
-                .appAction(.secondary)
+                .appAction(.secondary, size: .small)
                 .disabled(model.profileBackupInFlight)
                 .help(Text("Restores a version 1 plaintext profile backup", bundle: .module))
                 Text("Encrypted backups restore as locked profiles with a fresh identity. Legacy version 1 ZIP restore remains available for older archives. Keychain items are never included.", bundle: .module)
@@ -395,7 +404,7 @@ struct ProfilesSettingsPaneView: View {
                 Button {
                     model.revealProfilesInFinder()
                 } label: { Text("Reveal Profiles Folder in Finder", bundle: .module) }
-                .appAction(.secondary)
+                .appAction(.secondary, size: .small)
             }
         }
     }

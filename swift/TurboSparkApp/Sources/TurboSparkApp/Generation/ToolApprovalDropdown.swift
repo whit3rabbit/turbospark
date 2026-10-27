@@ -19,22 +19,22 @@ struct ToolApprovalDropdown: View {
             HStack(spacing: 5) {
                 Image(systemName: currentMode.systemImage)
                     .themedFont(.tiny, weight: .semibold)
-                    .foregroundStyle(Color.secondary)
+                    .foregroundStyle(.appSecondary)
 
                 currentMode.approvalLabelText
                     .font(theme.ui(.small, weight: .medium))
-                    .foregroundStyle(Color.primary.opacity(0.85))
+                    .foregroundStyle(.appText)
                     .lineLimit(1)
 
                 Image(systemName: "chevron.down")
                     .themedFont(.micro, weight: .bold)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.appSecondary)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
             .background(
-                Color.primary.opacity(isHovered ? 0.08 : 0.04),
-                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                isHovered ? AnyShapeStyle(.appElevated) : AnyShapeStyle(.appSurface),
+                in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
             )
             .contentShape(Rectangle())
         }
@@ -84,7 +84,7 @@ struct ToolApprovalMenuPopover: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("How should tool calls be approved?", bundle: .module)
                 .font(theme.ui(.tiny, weight: .medium))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.appSecondary)
                 .padding(.horizontal, 14)
                 .padding(.top, 12)
                 .padding(.bottom, 2)
@@ -101,8 +101,8 @@ struct ToolApprovalMenuPopover: View {
             .padding(.horizontal, 6)
             .padding(.bottom, 8)
         }
-        .frame(width: 320)
-        .background(TurboSparkTheme.surfaceColor)
+        .frame(minWidth: 320, idealWidth: 320)
+        .background(.appSurface)
     }
 }
 
@@ -116,16 +116,17 @@ private struct ToolApprovalOptionRow: View {
     var body: some View {
         Button(action: onSelect) {
             HStack(alignment: .top, spacing: 10) {
+                let glyphSize = (18 * AppMetrics.textScale(theme)).rounded()
                 Image(systemName: mode.systemImage)
                     .themedFont(.callout, weight: .semibold)
-                    .foregroundStyle(isSelected ? TurboSparkTheme.accentColor : Color.secondary)
-                    .frame(width: 20, height: 20)
+                    .foregroundStyle(isSelected ? AnyShapeStyle(theme.accent) : AnyShapeStyle(.appSecondary))
+                    .frame(width: glyphSize, height: glyphSize)
                     .padding(.top, 1)
 
                 VStack(alignment: .leading, spacing: 2) {
                     mode.approvalLabelText
                         .font(theme.ui(.small, weight: isSelected ? .semibold : .medium))
-                        .foregroundStyle(Color.primary)
+                        .foregroundStyle(.appText)
 
                     mode.approvalDescriptionText
                         .font(theme.ui(.tiny))
@@ -139,19 +140,22 @@ private struct ToolApprovalOptionRow: View {
                 if isSelected {
                     Image(systemName: "checkmark")
                         .themedFont(.tiny, weight: .bold)
-                        .foregroundStyle(Color.primary)
+                        .foregroundStyle(.appText)
                         .padding(.top, 2)
                 }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 8)
             .background(
-                Color.primary.opacity(isHovered ? 0.08 : (isSelected ? 0.04 : 0)),
-                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                isHovered
+                    ? AnyShapeStyle(.appElevated)
+                    : (isSelected ? AnyShapeStyle(theme.accent.opacity(0.12)) : AnyShapeStyle(Color.clear)),
+                in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
             )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .onHover { isHovered = $0 }
     }
 }

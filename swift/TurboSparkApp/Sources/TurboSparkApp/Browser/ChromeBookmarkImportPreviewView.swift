@@ -283,14 +283,14 @@ struct ChromeBookmarkImportPreviewView: View {
                     bookmarkPreview(enumeration)
                 }
             } else {
-                ProgressView()
+                AppProgressBar(value: nil, label: Text("Loading", bundle: .module))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
 
             if let feedback = viewModel.feedback {
                 Text(feedbackKey(feedback), bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(AppAttention.color)
                     .accessibilityIdentifier("chrome-bookmark-import-feedback")
             }
         }
@@ -305,10 +305,13 @@ struct ChromeBookmarkImportPreviewView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Choose profiles to preview", bundle: .module)
                 .themedFont(.small, weight: .semibold)
+                .accessibilityAddTraits(.isHeader)
 
             if enumeration.profiles.isEmpty {
-                Text("No Chrome profiles with bookmarks found.", bundle: .module)
-                    .foregroundStyle(.appSecondary)
+                AppEmptyState(
+                    systemImage: "bookmark",
+                    title: Text("No Chrome profiles with bookmarks found.", bundle: .module)
+                )
                 ForEach(Array(enumeration.issues.enumerated()), id: \.offset) { _, issue in
                     Text(issueKey(issue), bundle: .module)
                         .foregroundStyle(.appSecondary)
@@ -349,6 +352,7 @@ struct ChromeBookmarkImportPreviewView: View {
                 }
                 Text("Preview", bundle: .module)
                     .themedFont(.small, weight: .semibold)
+                    .accessibilityAddTraits(.isHeader)
             }
 
             ScrollView {
@@ -357,9 +361,10 @@ struct ChromeBookmarkImportPreviewView: View {
                         VStack(alignment: .leading, spacing: 8) {
                             Text(preview.profile.displayLabel)
                                 .themedFont(.base, weight: .semibold)
+                                .accessibilityAddTraits(.isHeader)
                             if let issue = preview.issue {
                                 Text(issueKey(issue), bundle: .module)
-                                    .foregroundStyle(.red)
+                                    .foregroundStyle(AppAttention.color)
                             } else {
                                 ForEach(viewModel.rows(for: preview.profile.id)) { row in
                                     selectionRow(row)

@@ -3,9 +3,12 @@ import SwiftUI
 @MainActor
 struct AudioLibraryView: View {
     @ObservedObject var controller: AudioWorkspaceController
+    @Environment(\.appTheme) private var theme
     @State private var filter: AudioLibraryFilter = .all
     @State private var collection: String?
     @State private var tag: String?
+
+    private var scale: CGFloat { AppMetrics.textScale(theme) }
 
     private var visibleItems: [AudioLibraryItem] {
         AudioLibraryOrganizer.filter(controller.filteredItems, by: filter, collection: collection, tag: tag)
@@ -13,10 +16,14 @@ struct AudioLibraryView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            if geometry.size.width > 850 {
+            if geometry.size.width > (850 * scale).rounded() {
                 HSplitView {
-                    library.frame(minWidth: 260, idealWidth: 310, maxWidth: 400)
-                    detail.frame(minWidth: 360)
+                    library.frame(
+                        minWidth: (260 * scale).rounded(),
+                        idealWidth: (310 * scale).rounded(),
+                        maxWidth: (400 * scale).rounded()
+                    )
+                    detail.frame(minWidth: (360 * scale).rounded())
                 }
             } else {
                 ScrollView {
@@ -51,11 +58,18 @@ struct AudioLibraryView: View {
             if !controller.search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 AudioSearchResultsView(controller: controller, search: controller.librarySearch)
             } else if visibleItems.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("No recordings or takes found", bundle: .module).themedFont(.base, weight: .semibold)
-                    Text("Reopen recordings and takes, or start with an audio file.", bundle: .module)
-                        .foregroundStyle(.appSecondary)
-                }.padding(.vertical, 20)
+                AppEmptyState(
+                    systemImage: "waveform",
+                    title: Text("No recordings or takes found", bundle: .module),
+                    message: Text("Reopen recordings and takes, or start with an audio file.", bundle: .module)
+                ) {
+                    Button { controller.importAudio() } label: {
+                        Label { Text("Import audio", bundle: .module) } icon: { Image(systemName: "square.and.arrow.down") }
+                    }
+                    .appAction(.secondary, size: .small)
+                    .disabled(controller.isBusy || controller.hasRecordingActivity)
+                }
+                .padding(.vertical, 20)
             } else {
                 ScrollView {
                     AudioLibraryList(controller: controller, items: visibleItems)
@@ -75,12 +89,13 @@ struct AudioLibraryView: View {
                     .padding(24).frame(maxWidth: 900, alignment: .leading).frame(maxWidth: .infinity)
             }
         } else {
-            VStack(spacing: 12) {
-                Image(systemName: "waveform").themedFont(.hero).foregroundStyle(.appSecondary)
-                Text("Choose a recording or take", bundle: .module).themedFont(.title2, weight: .semibold)
-                Text("Audio and edits are saved in your encrypted profile.", bundle: .module)
-                    .foregroundStyle(.appSecondary).multilineTextAlignment(.center)
-            }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity)
+            AppEmptyState(
+                systemImage: "waveform",
+                title: Text("Choose a recording or take", bundle: .module),
+                message: Text("Audio and edits are saved in your encrypted profile.", bundle: .module)
+            )
+            .padding(24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 }
@@ -161,16 +176,16 @@ struct AudioItemDetailView: View {
     private var detailContentSwitcher: some View {
         VStack(alignment: .leading, spacing: 14) {
             Picker(selection: $selectedTab) {
-                Text(verbatim: "Transcript").tag(DetailViewTab.transcript)
+                Text("Transcript", bundle: .module).tag(DetailViewTab.transcript)
                 HStack(spacing: 4) {
-                    Text(verbatim: "Notes & Summary")
+                    Text("Notes & Summary", bundle: .module)
                     if item.summary != nil {
                         Image(systemName: "checkmark.circle.fill")
                             .foregroundStyle(.appAccent)
                     }
                 }.tag(DetailViewTab.notes)
             } label: {
-                Text(verbatim: "Detail View")
+                Text("Detail View", bundle: .module)
             }
             .pickerStyle(.segmented)
             .frame(maxWidth: 280)

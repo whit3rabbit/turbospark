@@ -10,6 +10,22 @@ public enum TodoChecklistSummary {
         let base = "\(completed)/\(todos.count) done"
         return inProgress > 0 ? "\(base) (\(inProgress) in progress)" : base
     }
+
+    public static func counts(_ todos: [TodoItem]) -> (completed: Int, total: Int, inProgress: Int) {
+        let completed = todos.filter { $0.isCompleted }.count
+        let inProgress = todos.filter { $0.isInProgress }.count
+        return (completed, todos.count, inProgress)
+    }
+
+    @ViewBuilder
+    public static func view(_ todos: [TodoItem]) -> some View {
+        let (completed, total, inProgress) = counts(todos)
+        if inProgress > 0 {
+            Text("\(completed)/\(total) done (\(inProgress) in progress)", bundle: .module)
+        } else {
+            Text("\(completed)/\(total) done", bundle: .module)
+        }
+    }
 }
 
 /// Pure display rules for the live checklist panel, extracted from the view
@@ -55,8 +71,8 @@ struct TodoItemRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.content)
                     .themedFont(compact ? .small : .base, weight: item.isInProgress ? .semibold : .regular)
-                    .foregroundStyle(item.isCompleted ? .secondary : .primary)
-                    .strikethrough(item.isCompleted || item.isCancelled, color: .secondary)
+                    .foregroundStyle(item.isCompleted ? AnyShapeStyle(.appSecondary) : AnyShapeStyle(.appText))
+                    .strikethrough(item.isCompleted || item.isCancelled)
 
                 if item.isInProgress && !item.activeForm.isEmpty && item.activeForm != item.content {
                     Text(item.activeForm)
@@ -72,8 +88,8 @@ struct TodoItemRow: View {
                     .themedFont(.tiny, weight: .medium)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(Color.orange.opacity(0.15), in: Capsule())
-                    .foregroundStyle(Color.orange)
+                    .background(AppAttention.color.opacity(0.15), in: Capsule())
+                    .foregroundStyle(AppAttention.color)
             }
         }
         .padding(.vertical, 2)
@@ -89,11 +105,11 @@ struct TodoItemRow: View {
             TaskProgressFlameIcon(size: 12)
         } else if item.isCancelled {
             Image(systemName: "minus.circle.fill")
-                .foregroundStyle(Color.secondary)
+                .foregroundStyle(.appSecondary)
                 .themedFont(.small)
         } else {
             Image(systemName: "circle")
-                .foregroundStyle(Color.secondary.opacity(0.7))
+                .foregroundStyle(.appSecondary.opacity(0.7))
                 .themedFont(.small)
         }
     }
@@ -109,6 +125,7 @@ struct TodoItemRow: View {
 /// `AppModel.updateTodos(for:todos:)` mutates `@Published chats` (or bumps the
 /// ghost vault row) on every TodoWrite call.
 struct TaskChecklistPanelView: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     /// Re-expansion of a finished list is viewer-local state, deliberately not
     /// persisted: the collapsed summary is what a finished turn should show.
@@ -133,12 +150,12 @@ struct TaskChecklistPanelView: View {
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            Color(nsColor: .controlBackgroundColor).opacity(0.85),
-            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .appElevated,
+            in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
+                .stroke(theme.border, lineWidth: 1)
         )
     }
 
@@ -146,13 +163,14 @@ struct TaskChecklistPanelView: View {
         HStack(spacing: 6) {
             Image(systemName: settled ? "checkmark.seal.fill" : "checklist")
                 .themedFont(.small, weight: .semibold)
-                .foregroundStyle(settled ? Color.green : TurboSparkTheme.accentColor)
+                .foregroundStyle(settled ? AnyShapeStyle(Color.green) : AnyShapeStyle(theme.accent))
                 .accessibilityHidden(true)
 
             Text("Tasks", bundle: .module)
                 .themedFont(.small, weight: .semibold)
+                .accessibilityAddTraits(.isHeader)
 
-            Text(TodoChecklistSummary.text(todos))
+            TodoChecklistSummary.view(todos)
                 .themedFont(.tiny)
                 .foregroundStyle(.appSecondary)
 
@@ -160,7 +178,7 @@ struct TaskChecklistPanelView: View {
 
             if settled {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.15)) {
+                    TSMotion.animate(TSMotion.select) {
                         showsRowsWhenSettled.toggle()
                     }
                 } label: {
@@ -184,7 +202,7 @@ struct TaskChecklistPanelView: View {
                 TodoItemRow(item: item)
             }
             if display.foldedCompleted > 0 {
-                Text(verbatim: "+\(display.foldedCompleted) completed")
+                Text("+\(display.foldedCompleted) completed", bundle: .module)
                     .themedFont(.tiny)
                     .foregroundStyle(.appSecondary)
                     .padding(.leading, 20)

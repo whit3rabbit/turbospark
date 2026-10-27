@@ -47,7 +47,7 @@ private struct NoModelInstalledBanner: View {
         HStack(spacing: 12) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .themedFont(.title3)
-                .foregroundStyle(.orange)
+                .foregroundStyle(AppAttention.color)
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 2) {
@@ -82,10 +82,10 @@ private struct NoModelInstalledBanner: View {
         }
         .controlSize(.small)
         .padding(12)
-        .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: ConversationLayout.cardRadius))
+        .background(AppAttention.color.opacity(0.08), in: RoundedRectangle(cornerRadius: ConversationLayout.cardRadius, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: ConversationLayout.cardRadius)
-                .stroke(Color.orange.opacity(0.35), lineWidth: 1)
+            RoundedRectangle(cornerRadius: ConversationLayout.cardRadius, style: .continuous)
+                .stroke(AppAttention.color.opacity(0.35), lineWidth: 1)
         }
         .transition(.opacity)
     }

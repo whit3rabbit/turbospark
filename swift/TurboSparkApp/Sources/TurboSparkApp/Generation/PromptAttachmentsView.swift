@@ -25,6 +25,7 @@ struct PromptAttachmentsView: View {
 
 /// An individual attachment chip showing icon, name, character count, and preview/remove actions.
 struct PromptAttachmentChipView: View {
+    @Environment(\.appTheme) private var theme
     let attachment: AppPromptAttachment
     let isPreviewing: Bool
     let isRunning: Bool
@@ -40,8 +41,7 @@ struct PromptAttachmentChipView: View {
                         pixelSize: 16,
                         fallbackSymbol: attachment.symbolName,
                         symbolStep: .tiny,
-                        symbolTint: isPreviewing
-                            ? TurboSparkTheme.accentColor : Color.secondary
+                        symbolTint: isPreviewing ? theme.accent : .secondary
                     )
                     .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 0) {
@@ -62,17 +62,16 @@ struct PromptAttachmentChipView: View {
             .accessibilityValue(detailText)
             .accessibilityHint(Text("Opens this document in the preview pane", bundle: .module))
 
-            Button(action: onRemove) {
-                Image(systemName: "xmark")
-                    .themedFont(.micro, weight: .bold)
-                    .frame(width: 14, height: 14)
-                    .contentShape(Rectangle())
+            AppIconButton("xmark", label: Text("Remove \(attachment.fileName)", bundle: .module)) {
+                onRemove()
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.tertiary)
+            .foregroundStyle(.appSecondary)
             .disabled(isRunning)
-            .help(Text("Remove \(attachment.fileName)", bundle: .module))
-            .accessibilityLabel(Text("Remove attachment \(attachment.fileName)", bundle: .module))
+            .help(
+                isRunning
+                    ? Text("Cannot remove attachments while generation is active", bundle: .module)
+                    : Text("Remove \(attachment.fileName)", bundle: .module)
+            )
             .accessibilityHint(Text("Detaches this document from the prompt", bundle: .module))
         }
         .frame(maxWidth: 220, alignment: .leading)
@@ -80,13 +79,15 @@ struct PromptAttachmentChipView: View {
         .padding(.trailing, 6)
         .padding(.vertical, 5)
         .background(
-            isPreviewing ? TurboSparkTheme.accentColor.opacity(0.12) : Color.primary.opacity(0.05),
-            in: .rect(cornerRadius: 8))
+            isPreviewing ? AnyShapeStyle(theme.accent.opacity(0.12)) : AnyShapeStyle(.appElevated),
+            in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
+        )
         .overlay {
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
                 .stroke(
-                    isPreviewing ? TurboSparkTheme.accentColor.opacity(0.4) : TurboSparkTheme.hairlineColor,
-                    lineWidth: 0.5)
+                    isPreviewing ? AnyShapeStyle(theme.accent) : AnyShapeStyle(theme.border),
+                    lineWidth: 1
+                )
         }
     }
 

@@ -8,6 +8,7 @@ import SwiftUI
 /// taller or shorter than the guess.
 @MainActor
 struct ComposerSuggestionPopup: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var controller: ComposerAutocompleteController
     /// Called when the user clicks a row; keyboard acceptance is handled in
     /// the editor's key handler through the same controller.
@@ -32,11 +33,11 @@ struct ComposerSuggestionPopup: View {
             }
         }
         .frame(maxHeight: 260)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(.appElevated)
+        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color.primary.opacity(0.14), lineWidth: 1)
+            RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
+                .stroke(theme.border, lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.16), radius: 8, y: 2)
         .accessibilityLabel(Text("Suggestions", bundle: .module))
@@ -88,7 +89,9 @@ struct ComposerSuggestionPopup: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .contentShape(Rectangle())
-            .background(isSelected ? Color.primary.opacity(0.09) : Color.clear)
+            .background(
+                isSelected ? AnyShapeStyle(theme.accent.opacity(0.12)) : AnyShapeStyle(Color.clear)
+            )
         }
         .buttonStyle(.plain)
         .id(suggestion.id)

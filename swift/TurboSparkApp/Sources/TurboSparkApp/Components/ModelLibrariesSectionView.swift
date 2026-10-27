@@ -175,9 +175,13 @@ struct ModelLibrariesSectionView: View {
         HStack(alignment: .top, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 if message.kind == .error {
-                    Image(systemName: LibraryRowGlyph.warning).foregroundStyle(.red).accessibilityHidden(true)
+                    Image(systemName: LibraryRowGlyph.warning)
+                        .foregroundStyle(AppAttention.color)
+                        .accessibilityHidden(true)
                 } else {
-                    Image(systemName: LibraryRowGlyph.info).foregroundStyle(.green).accessibilityHidden(true)
+                    Image(systemName: LibraryRowGlyph.info)
+                        .foregroundStyle(AnyShapeStyle(.appAccent))
+                        .accessibilityHidden(true)
                 }
                 Text(verbatim: message.text)
                     .themedFont(.small)
@@ -195,7 +199,7 @@ struct ModelLibrariesSectionView: View {
         .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
-                .stroke(message.kind == .error ? Color.red.opacity(0.55) : Color.green.opacity(0.55), lineWidth: 1)
+                .stroke(message.kind == .error ? AnyShapeStyle(AppAttention.color) : AnyShapeStyle(.appAccent), lineWidth: 1)
         )
         .accessibilityAction(named: Text("Dismiss", bundle: .module)) {
             controller.dismissMessage()
@@ -257,7 +261,7 @@ private struct MovedStoreNoticeView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Image(systemName: LibraryRowGlyph.warning)
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(AppAttention.color)
                             .accessibilityHidden(true)
                         sentence
                             .themedFont(.small)

@@ -136,19 +136,19 @@ public struct HooksSettingsPaneView: View {
         HStack(spacing: 4) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .themedFont(.tiny)
-                .foregroundStyle(.orange)
+                .foregroundStyle(AppAttention.color)
                 .accessibilityHidden(true)
             Text("Needs review: \(totalUnreviewedCount)", bundle: .module)
                 .themedFont(.small, weight: .semibold)
-                .foregroundStyle(.orange)
+                .foregroundStyle(AppAttention.color)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
-        .background(Color.orange.opacity(0.12))
+        .background(AppAttention.color.opacity(0.12))
         .clipShape(Capsule())
         .overlay(
             Capsule()
-                .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+                .stroke(AppAttention.color, lineWidth: 1)
         )
         .accessibilityElement(children: .combine)
     }
@@ -217,14 +217,14 @@ public struct HooksSettingsPaneView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .themedFont(.small)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(AppAttention.color)
                     Text("Issues found while scanning hook config files: \(hookStore.discoveryDiagnostics.count)", bundle: .module)
                         .themedFont(.small, weight: .medium)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(AppAttention.color)
                     Spacer()
                     Image(systemName: showDiagnosticsDetail ? "chevron.up" : "chevron.down")
                         .themedFont(.tiny, weight: .semibold)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(AppAttention.color)
                 }
             }
             .buttonStyle(.plain)
@@ -243,11 +243,11 @@ public struct HooksSettingsPaneView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(Color.orange.opacity(0.12))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(AppAttention.color.opacity(0.12))
+        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+            RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
+                .stroke(AppAttention.color, lineWidth: 1)
         )
     }
 
@@ -262,9 +262,9 @@ public struct HooksSettingsPaneView: View {
                 Image(systemName: groupIcon(for: group.sourceType))
                     .themedFont(.base)
                     .foregroundStyle(.appSecondary)
-                    .frame(width: 28, height: 28)
+                    .padding(6)
                     .background(.appPage)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
 
                 // Title and hook count
                 VStack(alignment: .leading, spacing: 2) {
@@ -284,14 +284,14 @@ public struct HooksSettingsPaneView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "exclamationmark.circle.fill")
                             .themedFont(.tiny)
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(AppAttention.color)
                         Text("Needs review: \(group.unreviewedCount)", bundle: .module)
                             .themedFont(.tiny, weight: .medium)
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(AppAttention.color)
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
-                    .background(Color.orange.opacity(0.12))
+                    .background(AppAttention.color.opacity(0.12))
                     .clipShape(Capsule())
                 }
 
@@ -301,11 +301,11 @@ public struct HooksSettingsPaneView: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
-            .background(.appSurface.opacity(0.6))
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(.appSurface)
+            .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(.appBorder.opacity(0.35), lineWidth: 1)
+                RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
+                    .stroke(.appBorder, lineWidth: 1)
             )
         }
         .buttonStyle(.plain)

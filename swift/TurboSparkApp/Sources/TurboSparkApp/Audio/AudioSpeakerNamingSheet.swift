@@ -56,7 +56,13 @@ struct AudioSpeakerNamingSheet: View {
             footer
                 .padding(.horizontal, 24).padding(.vertical, 14)
         }
-        .frame(minWidth: 460, idealWidth: 600 * scale, maxWidth: 820 * scale, minHeight: 360, idealHeight: 560 * scale)
+        .frame(
+            minWidth: (460 * scale).rounded(),
+            idealWidth: (600 * scale).rounded(),
+            maxWidth: (820 * scale).rounded(),
+            minHeight: (360 * scale).rounded(),
+            idealHeight: (560 * scale).rounded()
+        )
         .background(.appPage)
         .themedFont(.base)
         .onAppear {
@@ -153,7 +159,7 @@ struct AudioSpeakerNamingSheet: View {
             switch suggestion.reason {
             case .microphone:
                 Label {
-                    Text(verbatim: "You (Microphone)")
+                    Text("You (Microphone)", bundle: .module)
                 } icon: {
                     Image(systemName: "mic.fill")
                 }
@@ -166,7 +172,7 @@ struct AudioSpeakerNamingSheet: View {
             }
         }
         .appAction(.secondary, size: .small)
-        .help(Text(verbatim: "Use suggested speaker name."))
+        .help(Text("Use suggested speaker name.", bundle: .module))
     }
 
     private func nameField(_ key: String) -> some View {

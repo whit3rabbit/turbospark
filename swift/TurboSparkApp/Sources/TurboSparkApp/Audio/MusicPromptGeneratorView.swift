@@ -10,7 +10,10 @@ struct MusicPromptGeneratorView: View {
     @ObservedObject var controller: AudioWorkspaceController
     @Binding var selection: MusicPromptSelection
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.appTheme) private var theme
     @State private var tab = Tab.style
+
+    private var scale: CGFloat { AppMetrics.textScale(theme) }
 
     private enum Tab { case style, lyrics }
 
@@ -53,7 +56,17 @@ struct MusicPromptGeneratorView: View {
             if tab == .style { preview }
             footer
         }
-        .padding(24).frame(width: 640, height: 720).themedFont(.base).background(.appPage)
+        .padding(24)
+        .frame(
+            minWidth: (540 * scale).rounded(),
+            idealWidth: (640 * scale).rounded(),
+            maxWidth: (760 * scale).rounded(),
+            minHeight: (600 * scale).rounded(),
+            idealHeight: (720 * scale).rounded(),
+            maxHeight: (880 * scale).rounded()
+        )
+        .themedFont(.base)
+        .background(.appPage)
     }
 
     // MARK: - Style
@@ -67,7 +80,7 @@ struct MusicPromptGeneratorView: View {
                 }
                 TextField(
                     text: $selection.scene,
-                    prompt: Text(verbatim: "a late-night city drive")
+                    prompt: Text("a late-night city drive", bundle: .module)
                 ) { Text("Scene or purpose", bundle: .module) }
                     .textFieldStyle(.roundedBorder)
             }
@@ -84,7 +97,12 @@ struct MusicPromptGeneratorView: View {
                 }
                 HStack(spacing: 8) {
                     TextField(value: $selection.bpm, format: IntegerFormatStyle<Int>()) { Text(verbatim: "BPM") }
-                        .textFieldStyle(.roundedBorder).frame(width: 90)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(
+                            minWidth: (70 * scale).rounded(),
+                            idealWidth: (90 * scale).rounded(),
+                            maxWidth: (120 * scale).rounded()
+                        )
                     Text(verbatim: "\(MusicPromptSelection.bpmRange.lowerBound)-\(MusicPromptSelection.bpmRange.upperBound)")
                         .themedFont(.small).foregroundStyle(.appSecondary)
                 }
@@ -157,9 +175,9 @@ struct MusicPromptGeneratorView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(height: 84).padding(10)
-            .background(.appSurface, in: RoundedRectangle(cornerRadius: 8))
-            .overlay { RoundedRectangle(cornerRadius: 8).stroke(.appBorder, lineWidth: 1) }
+            .frame(height: (84 * scale).rounded()).padding(10)
+            .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
+            .overlay { RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous).stroke(.appBorder, lineWidth: 1) }
             ForEach(warnings, id: \.self) { warning in
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "exclamationmark.triangle").accessibilityHidden(true)
@@ -223,8 +241,8 @@ struct MusicPromptGeneratorView: View {
                                 .themedFont(.small).multilineTextAlignment(.leading)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(10)
-                                .background(.appSurface, in: RoundedRectangle(cornerRadius: 8))
-                                .overlay { RoundedRectangle(cornerRadius: 8).stroke(.appBorder, lineWidth: 1) }
+                                .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
+                                .overlay { RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous).stroke(.appBorder, lineWidth: 1) }
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain).disabled(controller.isBusy)
@@ -322,16 +340,7 @@ struct MusicPromptGeneratorView: View {
     }
 
     private func chip(_ label: String, selected: Bool, disabled: Bool = false, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(verbatim: label).themedFont(.small)
-                .padding(.horizontal, 10).padding(.vertical, 5)
-                .background(.appElevated, in: Capsule())
-                .background(.appAccent.opacity(selected ? 0.18 : 0), in: Capsule())
-                .overlay { Capsule().stroke(.appBorder, lineWidth: 1) }
-                .overlay { Capsule().stroke(.appAccent.opacity(selected ? 1 : 0), lineWidth: 1) }
-                .contentShape(Capsule())
-        }
-        .buttonStyle(.plain).disabled(disabled).opacity(disabled ? 0.45 : 1)
-        .accessibilityAddTraits(selected ? .isSelected : [])
+        AppChip(Text(verbatim: label), isOn: selected, action: action)
+            .disabled(disabled)
     }
 }

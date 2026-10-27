@@ -4,6 +4,7 @@ import TurboSpark
 
 /// Downloads one user-selected Hugging Face control vector for an installed
 /// model, validates it, and turns it into the app's named preset.
+@MainActor
 struct SteeringVectorImportSheet: View {
     @ObservedObject var model: AppModel
     let installedModel: InstalledModel
@@ -40,8 +41,8 @@ struct SteeringVectorImportSheet: View {
 
     private var validationError: String? {
         if let sourceError = source.validationError { return sourceError }
-        guard let parsedScale else { return "Strength must be a finite number." }
-        guard abs(parsedScale) <= 2 else { return "Strength must be between -2 and 2." }
+        guard let parsedScale else { return AppStrings.localized("Strength must be a finite number.") }
+        guard abs(parsedScale) <= 2 else { return AppStrings.localized("Strength must be between -2 and 2.") }
         return nil
     }
 
@@ -58,20 +59,21 @@ struct SteeringVectorImportSheet: View {
     }
 
     private var header: some View {
-        HStack {
+        AppAdaptiveHeader {
             VStack(alignment: .leading, spacing: 3) {
-                Text(verbatim: "Add steering for " + installedModel.alias)
+                Text("Add steering for \(installedModel.alias)", bundle: .module)
                     .themedFont(.base, weight: .semibold)
                     .accessibilityAddTraits(.isHeader)
                 Text("Download a GGUF control vector, check its shape, and select it for the next model load.", bundle: .module)
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
             }
-            Spacer()
+        } actions: {
             Button { dismiss() } label: {
                 Text("Done", bundle: .module)
             }
-                .keyboardShortcut(.cancelAction)
+            .appAction(.secondary)
+            .keyboardShortcut(.cancelAction)
         }
         .padding(16)
     }
@@ -85,7 +87,7 @@ struct SteeringVectorImportSheet: View {
                     } icon: {
                         Image(systemName: "xmark.octagon.fill")
                     }
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Color.red)
                 }
 
                 GroupBox {
@@ -124,7 +126,7 @@ struct SteeringVectorImportSheet: View {
                                 Text("Ablate strength", bundle: .module)
                             }
                                 .textFieldStyle(.roundedBorder)
-                                .frame(width: 90)
+                                .frame(minWidth: 70, idealWidth: 90, maxWidth: 120)
                         }
                     }
                 }
@@ -169,27 +171,27 @@ struct SteeringVectorImportSheet: View {
         }
     }
 
-    private func sourceLink(title: String, urlString: String, hint: String) -> some View {
+    private func sourceLink(title: LocalizedStringKey, urlString: String, hint: LocalizedStringKey) -> some View {
         Button {
             guard let url = URL(string: urlString) else { return }
             NSWorkspace.shared.open(url)
         } label: {
-            Text(verbatim: title)
+            Text(title, bundle: .module)
         }
         .buttonStyle(.link)
         .themedFont(.small)
-        .accessibilityHint(hint)
+        .accessibilityHint(Text(hint, bundle: .module))
     }
 
     private var footer: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let errorMessage {
                 Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Color.red)
                     .fixedSize(horizontal: false, vertical: true)
             } else if let validationError {
                 Label(validationError, systemImage: "info.circle")
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(AppAttention.color)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -198,7 +200,8 @@ struct SteeringVectorImportSheet: View {
                 Button { dismiss() } label: {
                     Text("Cancel", bundle: .module)
                 }
-                    .keyboardShortcut(.cancelAction)
+                .appAction(.secondary)
+                .keyboardShortcut(.cancelAction)
                 Button {
                     downloadAndUse()
                 } label: {
@@ -214,7 +217,7 @@ struct SteeringVectorImportSheet: View {
                         }
                     }
                 }
-                .buttonStyle(.borderedProminent)
+                .appAction(.primary)
                 .disabled(isDownloading || validationError != nil || !descriptor.isSteeringReady || model.generating || model.opening)
             }
         }

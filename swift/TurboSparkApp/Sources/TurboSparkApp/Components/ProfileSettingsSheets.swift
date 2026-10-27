@@ -53,6 +53,7 @@ enum ProfileSheetParts {
         role: AppActionRole = .primary,
         buttonRole: ButtonRole? = nil,
         disabled: Bool,
+        help: Text? = nil,
         cancel: @escaping () -> Void,
         action: @escaping () -> Void
     ) -> some View {
@@ -65,6 +66,7 @@ enum ProfileSheetParts {
                 .appAction(role)
                 .keyboardShortcut(.defaultAction)
                 .disabled(disabled)
+                .help(help ?? confirm)
         }
     }
 }

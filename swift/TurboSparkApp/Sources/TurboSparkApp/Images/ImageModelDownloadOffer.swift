@@ -65,6 +65,7 @@ struct ImageModelDownloadOffer: View {
             }
             .appMenuAction()
             .help(Text("More download options", bundle: .module))
+            .accessibilityLabel(Text("More download options", bundle: .module))
         }
     }
 }

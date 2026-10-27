@@ -18,6 +18,7 @@ struct AgentModeHintsSectionView: View {
             HStack {
                 Label { Text("Agent Mode Classifier Hints", bundle: .module) } icon: { Image(systemName: "brain.head.profile") }
                     .themedFont(.base, weight: .semibold)
+                    .accessibilityAddTraits(.isHeader)
                 Spacer()
                 Text("Used when the tool approval mode is \"Agent (classifier)\"", bundle: .module)
                     .themedFont(.tiny)
@@ -55,8 +56,8 @@ struct AgentModeHintsSectionView: View {
         }
         .padding(14)
         .background(.appPage)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(.appBorder.opacity(0.4), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous).stroke(.appBorder, lineWidth: 1))
     }
 
     private func hintEditor(
@@ -73,7 +74,7 @@ struct AgentModeHintsSectionView: View {
                     .foregroundStyle(.appSecondary)
                 Text("one sentence per line", bundle: .module)
                     .themedFont(.tiny)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.appSecondary)
             }
             TextEditor(text: Binding(
                 get: { entries.wrappedValue.joined(separator: "\n") },
@@ -88,8 +89,7 @@ struct AgentModeHintsSectionView: View {
                     }
                 }))
                 .themedCode(.small)
-                .frame(minHeight: 44, maxHeight: 110)
-                .appEditorSurface()
+                .appEditorSurface(minHeight: 44)
                 .accessibilityLabel(Text(title, bundle: .module))
                 .overlay(alignment: .topLeading) {
                     // Example sentences are prose, so they are catalog keys
@@ -97,7 +97,7 @@ struct AgentModeHintsSectionView: View {
                     if entries.wrappedValue.isEmpty {
                         Text(placeholder, bundle: .module)
                             .themedCode(.small)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.appSecondary)
                             .padding(.horizontal, 14)
                             .padding(.top, 14)
                             .allowsHitTesting(false)

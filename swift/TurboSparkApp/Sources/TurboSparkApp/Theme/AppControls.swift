@@ -289,6 +289,8 @@ struct AppEmptyState<Actions: View>: View {
         self.actions = actions
     }
 
+    @Environment(\.appTheme) private var theme
+
     var body: some View {
         VStack(spacing: 12) {
             Image(systemName: systemImage)
@@ -305,7 +307,7 @@ struct AppEmptyState<Actions: View>: View {
                     .foregroundStyle(.appSecondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: 440)
+                    .frame(maxWidth: (440 * AppMetrics.textScale(theme)).rounded())
             }
             HStack(spacing: AppMetrics.actionSpacing) { actions() }
                 .padding(.top, 4)
@@ -322,7 +324,7 @@ extension AppEmptyState where Actions == EmptyView {
 }
 
 /// The chip every composer-style surface uses (chat composer toggles,
-/// Humanize's options): radius 8, a faint fill that deepens on hover, and an
+/// Humanize's options): radius 7, a faint fill that deepens on hover, and an
 /// accent tint while on. One definition so the chat and Humanize chips stop
 /// drifting apart, which the 2026-10-11 audit found they had.
 ///
@@ -331,7 +333,7 @@ extension AppEmptyState where Actions == EmptyView {
 /// selected trait for toggles.
 struct AppChip: View {
     let label: Text
-    let systemImage: String
+    let systemImage: String?
     var isOn = false
     var iconOnly = false
     let action: () -> Void
@@ -340,7 +342,7 @@ struct AppChip: View {
     @Environment(\.isEnabled) private var isEnabled
     @State private var hovered = false
 
-    init(_ label: Text, systemImage: String, isOn: Bool = false, iconOnly: Bool = false, action: @escaping () -> Void) {
+    init(_ label: Text, systemImage: String? = nil, isOn: Bool = false, iconOnly: Bool = false, action: @escaping () -> Void) {
         self.label = label
         self.systemImage = systemImage
         self.isOn = isOn
@@ -351,9 +353,11 @@ struct AppChip: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 5) {
-                Image(systemName: systemImage)
-                    .themedFont(.tiny, weight: .medium)
-                    .accessibilityHidden(true)
+                if let systemImage, !systemImage.isEmpty {
+                    Image(systemName: systemImage)
+                        .themedFont(.tiny, weight: .medium)
+                        .accessibilityHidden(true)
+                }
                 if !iconOnly {
                     label.themedFont(.small, weight: .medium)
                 }
@@ -361,14 +365,17 @@ struct AppChip: View {
             .lineLimit(1)
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
-            .foregroundStyle(isOn ? Color.primary : Color.secondary)
+            .foregroundStyle(isOn ? theme.foreground : theme.secondaryText)
             .background(
-                isOn ? theme.accent.opacity(0.14) : Color.primary.opacity(hovered && isEnabled ? 0.08 : 0.04),
-                in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                isOn ? theme.selection : (hovered && isEnabled ? theme.elevatedSurface : theme.surface),
+                in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
             .overlay {
-                if isOn {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(theme.accent.opacity(0.3), lineWidth: 0.5)
+                if isOn && theme.isHighContrast {
+                    RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
+                        .stroke(theme.accent, lineWidth: 1)
+                } else {
+                    RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
+                        .stroke(theme.border, lineWidth: 1)
                 }
             }
             .opacity(isEnabled ? 1 : 0.45)

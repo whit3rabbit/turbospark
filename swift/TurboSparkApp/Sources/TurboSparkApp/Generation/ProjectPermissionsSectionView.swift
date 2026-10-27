@@ -70,11 +70,11 @@ struct ProjectPermissionsSectionView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
+            AppAdaptiveHeader {
                 Text("Tool Permissions & Risk Policy", bundle: .module)
                     .themedFont(.small, weight: .semibold)
                     .accessibilityAddTraits(.isHeader)
-                Spacer()
+            } actions: {
                 Menu {
                     Button { applyPreset(.auto) } label: { Text("Auto (Recommended)", bundle: .module) }
                     Button { applyPreset(.alwaysAsk) } label: { Text("Always Ask", bundle: .module) }
@@ -94,6 +94,7 @@ struct ProjectPermissionsSectionView: View {
                 Text("Execution Mode", bundle: .module)
                     .themedFont(.small, weight: .medium)
                     .foregroundStyle(.appSecondary)
+                    .accessibilityAddTraits(.isHeader)
 
                 Picker(selection: $permissionMode) {
                     ForEach(AppPermissionMode.allCases) { mode in
@@ -119,7 +120,7 @@ struct ProjectPermissionsSectionView: View {
                 }
                 .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 6))
+                .background(.appElevated, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
             }
 
             // Granular Category Overrides
@@ -132,7 +133,7 @@ struct ProjectPermissionsSectionView: View {
                 permissionRow(title: "Automation & Crons", desc: "Schedule background tasks and monitors", selection: $automationPermission)
             }
             .padding(12)
-            .background(.appSurface, in: RoundedRectangle(cornerRadius: 8))
+            .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
 
             browserPermissionsSection
 
@@ -155,10 +156,10 @@ struct ProjectPermissionsSectionView: View {
                 }
                 .pickerStyle(.menu)
                 .labelsHidden()
-                .frame(width: 175)
+                .frame(minWidth: 140, idealWidth: 175)
             }
             .padding(12)
-            .background(.appSurface, in: RoundedRectangle(cornerRadius: 8))
+            .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
         }
     }
 
@@ -166,6 +167,7 @@ struct ProjectPermissionsSectionView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Browser access", bundle: .module)
                 .themedFont(.base, weight: .medium)
+                .accessibilityAddTraits(.isHeader)
 
             Picker(
                 selection: Binding(
@@ -188,6 +190,7 @@ struct ProjectPermissionsSectionView: View {
 
             Text("Allowed site origins", bundle: .module)
                 .themedFont(.small, weight: .semibold)
+                .accessibilityAddTraits(.isHeader)
 
             if !browserPermissionModel.originAllowlist.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
@@ -198,10 +201,14 @@ struct ProjectPermissionsSectionView: View {
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                             Spacer(minLength: 4)
-                            Button(role: .destructive) {
+                            Button {
                                 browserPermissionModel.revokeOrigin(origin)
                             } label: {
-                                Text("Remove", bundle: .module)
+                                Label {
+                                    Text("Remove", bundle: .module)
+                                } icon: {
+                                    Image(systemName: "minus.circle")
+                                }
                             }
                             .appAction(.quiet, size: .small)
                         }
@@ -230,12 +237,12 @@ struct ProjectPermissionsSectionView: View {
             if let feedback = browserPermissionModel.feedback {
                 Text(LocalizedStringKey(feedback.localizationKey), bundle: .module)
                     .themedFont(.tiny)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(AppAttention.color)
                     .accessibilityAddTraits(.updatesFrequently)
             }
         }
         .padding(12)
-        .background(.appSurface, in: RoundedRectangle(cornerRadius: 8))
+        .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
     }
 
     /// `title` and `desc` are catalog keys; the picker carries `title` as
@@ -261,7 +268,7 @@ struct ProjectPermissionsSectionView: View {
             }
             .pickerStyle(.menu)
             .labelsHidden()
-            .frame(width: 175)
+            .frame(minWidth: 140, idealWidth: 175)
         }
     }
 

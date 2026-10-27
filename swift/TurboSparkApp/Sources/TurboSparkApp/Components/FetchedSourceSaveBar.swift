@@ -39,7 +39,7 @@ struct FetchedSourceSaveBar: View {
                 .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             if let message {
                 if failed {
-                    Text(verbatim: message).themedFont(.small).foregroundStyle(.orange).lineLimit(2)
+                    Text(verbatim: message).themedFont(.small).foregroundStyle(AppAttention.color).lineLimit(2)
                 } else {
                     Text(verbatim: message).themedFont(.small).foregroundStyle(.appSecondary).lineLimit(2)
                 }

@@ -580,6 +580,9 @@ final class LocalizationParityTests: XCTestCase {
         for kind in InstalledModelKind.allCases {
             values.append(("InstalledModelKind.title", kind.title))
         }
+        for mode in WorktreeTabMode.allCases {
+            values.append(("WorktreeTabMode.title", mode.title))
+        }
         // Audio model pickers render the engine name and its tooltip as keys.
         for label in AudioEngineLabel.allCases {
             values.append(("AudioEngineLabel.title", label.title))
@@ -650,6 +653,9 @@ final class LocalizationParityTests: XCTestCase {
         // The move sheet (task 6.11): the phase line under the progress bar.
         for phase in MoveProgress.Phase.allCases {
             values.append(("MoveProgress.Phase.title", phase.title))
+        }
+        for category in AppToolCategory.allCases {
+            values.append(("AppToolCategory.label", category.label))
         }
         let missing = values.filter { strings[$0.value] == nil }
             .map { "\($0.source): \($0.value)" }

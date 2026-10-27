@@ -91,10 +91,10 @@ struct HumanizeModelBar: View {
             }
         }
         .frame(height: barHeight)
-        .background(TurboSparkTheme.surfaceColor, in: Capsule())
+        .background(.appSurface, in: Capsule())
         .overlay {
             Capsule().stroke(
-                controller.engineLoaded ? theme.accent.opacity(0.32) : TurboSparkTheme.hairlineColor, lineWidth: 0.5)
+                controller.engineLoaded ? (theme.isHighContrast ? theme.accent : theme.accent.opacity(0.32)) : theme.border, lineWidth: 0.5)
         }
         .tsAnimation(TSMotion.select, value: controller.engineLoaded)
         .tsAnimation(TSMotion.hover, value: state)
@@ -200,7 +200,7 @@ private struct HumanizeBarButton: View {
                 .foregroundStyle(tint.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.appSecondary))
                 .padding(.horizontal, 11)
                 .frame(maxHeight: .infinity)
-                .background(hovered && isEnabled ? (tint?.opacity(0.12) ?? Color.primary.opacity(0.06)) : Color.clear)
+                .background(hovered && isEnabled ? (tint.map { AnyShapeStyle($0.opacity(0.12)) } ?? AnyShapeStyle(.appSecondary.opacity(0.12))) : AnyShapeStyle(Color.clear))
                 .contentShape(Rectangle())
         }
         .buttonStyle(TSPressScaleStyle(scale: 0.94))
@@ -226,24 +226,27 @@ struct HumanizeRunButton: View {
 
     var body: some View {
         TSMotionContext { reduceMotion in
-            let ink = ready ? theme.accent.contrastForeground : Color.secondary.opacity(0.5)
+            let scale = HumanizeMetrics.textScale(theme)
+            let buttonSize = (50 * scale).rounded()
+            let inkColor = ready ? theme.accent.contrastForeground : theme.metadataForeground
+            let inkStyle: AnyShapeStyle = ready ? AnyShapeStyle(theme.accent.contrastForeground) : AnyShapeStyle(.appSecondary)
             Button(action: action) {
                 ZStack {
                     if invite, ready, !busy, !reduceMotion { RunRipple(color: theme.accent) }
                     Circle()
-                        .fill(ready ? AnyShapeStyle(theme.accent.gradient) : AnyShapeStyle(Color.primary.opacity(0.08)))
+                        .fill(ready ? AnyShapeStyle(theme.accent.gradient) : AnyShapeStyle(.appSurface))
                     if theme.isHighContrast {
                         Circle()
                             .stroke(ready ? theme.accent : theme.border, lineWidth: 1.5)
                     }
                     if busy {
                         Circle()
-                            .stroke(ink.opacity(0.22), lineWidth: 2.5)
+                            .stroke(inkColor.opacity(0.22), lineWidth: 2.5)
                             .padding(4)
                             .tsPulse(active: !reduceMotion)
                         if let prefill {
                             Circle().trim(from: 0, to: prefill)
-                                .stroke(ink, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                                .stroke(inkColor, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
                                 .rotationEffect(.degrees(-90)).padding(4)
                                 .animation(reduceMotion ? nil : TSMotion.hover, value: prefill)
                         } else if !reduceMotion {
@@ -253,17 +256,17 @@ struct HumanizeRunButton: View {
                                 let turn = context.date.timeIntervalSinceReferenceDate
                                     .truncatingRemainder(dividingBy: 1.1) / 1.1
                                 Circle().trim(from: 0, to: 0.28)
-                                    .stroke(ink, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                                    .stroke(inkColor, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
                                     .rotationEffect(.degrees(turn * 360 - 90)).padding(4)
                             }
                         }
                     }
                     Image(systemName: busy ? "stop.fill" : arrow)
                         .font(theme.ui(busy ? .callout : .large, weight: .bold))
-                        .foregroundStyle(ink)
+                        .foregroundStyle(inkStyle)
                         .contentTransition(.symbolEffect(.replace))
                 }
-                .frame(width: 50, height: 50)
+                .frame(width: buttonSize, height: buttonSize)
                 .scaleEffect(hovered && ready && !busy && !reduceMotion ? 1.05 : 1.0)
                 .appPrimaryGlow(ready && !busy)
                 .contentShape(Circle())
@@ -287,7 +290,7 @@ private struct RunRipple: View {
             .phaseAnimator([false, true]) { view, expanded in
                 view.scaleEffect(expanded ? 1.45 : 1).opacity(expanded ? 0 : 0.9)
             } animation: { expanded in
-                expanded ? .easeOut(duration: 1.8) : TSMotion.snap
+                expanded ? TSMotion.breathe : TSMotion.snap
             }
             .accessibilityHidden(true)
     }
@@ -304,7 +307,7 @@ struct HumanizeSkeleton: View {
             GeometryReader { geometry in
                 let width = geometry.size.width
                 ZStack(alignment: .topLeading) {
-                    bars(width).foregroundStyle(Color.primary.opacity(0.07))
+                    bars(width).foregroundStyle(.appSecondary.opacity(0.15))
                     if !reduceMotion {
                         Color.clear
                             .overlay(alignment: .leading) {

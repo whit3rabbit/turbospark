@@ -70,6 +70,14 @@ struct ImageModelControls: View {
     }
 
     var body: some View {
+        if model.isRunning {
+            content.help(Text("Model controls are unavailable while generation is active", bundle: .module))
+        } else {
+            content
+        }
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 12) {
             controlRow
             // Where a download goes: only when there is a choice (2.1), and only

@@ -50,7 +50,7 @@ struct FanReadoutView: View {
             HStack(spacing: 5) {
                 Image(systemName: "fanblades")
                     .font(theme.ui(.tiny))
-                    .foregroundStyle(isPinned ? Color.orange : theme.secondaryText)
+                    .foregroundStyle(isPinned ? AppAttention.color : theme.secondaryText)
                     .accessibilityHidden(true)
                 Text(verbatim: rpmText)
                     .monospacedDigit()
@@ -58,7 +58,7 @@ struct FanReadoutView: View {
                 if isPinned {
                     Text("MAX", bundle: .module)
                         .font(theme.ui(.micro, weight: .semibold))
-                        .foregroundStyle(Color.orange)
+                        .foregroundStyle(AppAttention.color)
                 }
             }
         }
@@ -93,14 +93,14 @@ struct FanReadoutView: View {
                             .monospacedDigit()
                             .foregroundStyle(.appText)
                         (fan.isHeld ? Text("Held", bundle: .module) : Text("Auto", bundle: .module))
-                            .foregroundStyle(fan.isHeld ? Color.orange : theme.secondaryText)
+                            .foregroundStyle(fan.isHeld ? AppAttention.color : theme.secondaryText)
                     }
                     .font(theme.ui(.tiny))
                 }
                 if let sensor = status.hottestSensor {
                     Text("Hottest sensor \(sensor.name): \(String(format: "%.1f", sensor.celsius)) C", bundle: .module)
                         .font(theme.ui(.tiny))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.appSecondary)
                 }
             } else {
                 // The poll's own failure text comes from `FanController`.
@@ -112,7 +112,7 @@ struct FanReadoutView: View {
                     }
                 }
                 .font(theme.ui(.tiny))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.appSecondary)
             }
 
             Divider()
@@ -149,12 +149,12 @@ struct FanReadoutView: View {
             if let error = fans.lastError ?? fans.statusError {
                 Text(verbatim: error)
                     .font(theme.ui(.tiny))
-                    .foregroundStyle(.red)
+                    .foregroundStyle(AppAttention.color)
             }
 
             Text("A pinned hold outlives this app: quitting restores Apple's curve unless the toggle above is on. Fans can always be released with `thermalforge auto`.", bundle: .module)
             .font(theme.ui(.tiny))
-            .foregroundStyle(.tertiary)
+            .foregroundStyle(.appSecondary)
             .fixedSize(horizontal: false, vertical: true)
         }
         .padding(14)

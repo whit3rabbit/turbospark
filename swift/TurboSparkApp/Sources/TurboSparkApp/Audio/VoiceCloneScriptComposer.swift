@@ -73,14 +73,14 @@ struct VoiceCloneScriptComposer: View {
         let limit = AudioWorkspaceController.speechTextCharacterLimit
         let over = count > limit
         return HStack(spacing: 4) {
-            if over { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange) }
+            if over { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(AppAttention.color) }
             Text(verbatim: count.formatted(.number.locale(locale)) + " / " + limit.formatted(.number.locale(locale)))
                 .monospacedDigit()
                 .contentTransition(.numericText())
                 .tsAnimation(TSMotion.hover, value: count)
         }
         .themedFont(.tiny)
-        .foregroundStyle(over ? AnyShapeStyle(.orange) : AnyShapeStyle(.appSecondary))
+        .foregroundStyle(over ? AnyShapeStyle(AppAttention.color) : AnyShapeStyle(.appSecondary))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text("Characters", bundle: .module))
         .accessibilityValue(Text("\(count) of \(limit)", bundle: .module))
@@ -228,7 +228,7 @@ struct AudioMeasuredTextEditor: View {
                         if text.isEmpty {
                             placeholder
                                 .font(theme.uiFont)
-                                .foregroundStyle(.tertiary)
+                                .foregroundStyle(.appSecondary)
                                 .padding(.leading, 5).padding(.vertical, 8)
                                 .allowsHitTesting(false)
                                 .accessibilityHidden(true)
