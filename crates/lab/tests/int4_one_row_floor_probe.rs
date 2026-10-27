@@ -307,6 +307,7 @@ fn bench_run_shape_against_the_probe_arms_in_one_process() {
         reps: 5,
         hash: false,
         verify_from: None,
+        ane_programs: None,
     };
     println!("\nbench run_shape against probe arms, 48x5120, three alternations");
     for _ in 0..3 {

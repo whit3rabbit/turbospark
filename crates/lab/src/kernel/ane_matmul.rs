@@ -38,6 +38,7 @@ pub const ANE_PLACEMENT_MIN_SHARE: f64 = 0.5;
 
 /// Weight copies rotate through at most this many F16 planes: the big dense
 /// shapes are 170 MiB each as F16, and the IOSurface budget is bounded.
+#[cfg(feature = "ane-prefill")]
 const MAX_PLANE_COPIES: usize = 4;
 
 /// One program of a `sweep.json` manifest.
@@ -84,6 +85,7 @@ pub fn read_manifest(dir: &Path) -> Result<Vec<Program>, String> {
 }
 
 /// The install's INT4 shapes the planes can hold: rows and K multiples of 32.
+#[cfg(feature = "ane-prefill")]
 fn install_shapes(subject: &Subject) -> Result<Vec<super::MatShape>, String> {
     let arch = subject.arch()?;
     let (shapes, _) = super::matmul_shapes(subject, crate::inventory::DTYPE_INT4_AFFINE, || {
@@ -96,6 +98,7 @@ fn install_shapes(subject: &Subject) -> Result<Vec<super::MatShape>, String> {
 }
 
 /// `(hidden, intermediate)` for an install that routes experts.
+#[cfg(feature = "ane-prefill")]
 fn expert_dims(arch: &model_io::ArchConfig) -> Option<(usize, usize)> {
     (arch.num_experts > 0 && arch.moe_intermediate_size > 0).then_some((
         arch.hidden_size as usize,
