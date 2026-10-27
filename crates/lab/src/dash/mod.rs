@@ -3,8 +3,9 @@
 //! Every experiment's ledger on one table, the charts `tslab report` draws
 //! per experiment, a compare view that puts several experiments' series on
 //! shared axes, the verdict board, the sweeps, and each family's profile
-//! over what the lab has measured for it. Server-rendered pages with no
-//! scripts and nothing fetched from anywhere, plus a JSON API.
+//! over what the lab has measured for it. Server-rendered pages in the
+//! TurboSpark theme with nothing fetched from anywhere, one inline script
+//! for hover, legend toggles and the compare tray, plus a JSON API.
 //!
 //! Reading only: no POST route exists, nothing under the lab dir is written,
 //! and the machine lock is never taken, so the dashboard can stay open

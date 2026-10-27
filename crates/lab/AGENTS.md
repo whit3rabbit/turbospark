@@ -115,9 +115,11 @@ loop's `run-experiment`. Text and audio installs of every family.
 - Commands print through `say!`, never `println!`: under `--json` stdout is
   exactly one envelope (`tests/schema_contract.rs`).
 - The dashboard stays read-only and lock-free: no POST route, no write under
-  the lab dir, no `MachineLock`. A page carries no script and fetches
-  nothing (`tests/dash_pages.rs` asserts it), so a saved page reads the same
-  as a live one. A new ledger kind goes
+  the lab dir, no `MachineLock`. A page fetches nothing and its one script
+  is inline and optional (`DASH_JS` in `dash/pages.rs` adds hover tooltips,
+  legend toggles and the compare tray, and `tests/dash_pages.rs` asserts no
+  `src` and no URL), so a saved page reads the same as a live one. A new
+  ledger kind goes
   in `schema.rs` `KINDS` and the schema document in the same change.
 - Changing a field's meaning in the ledger or the envelope is a new schema
   version, not an edit: dashboards and old ledgers outlive any build.
