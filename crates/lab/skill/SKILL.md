@@ -65,6 +65,7 @@ never rerun a NOISE verdict until it wins.
 | Task | Read |
 |---|---|
 | Pick a command, its flags and traps | [references/commands.md](references/commands.md) |
+| Browse or compare results across experiments | `tslab serve`, then [references/reading-results.md](references/reading-results.md) |
 | Parse `--json`, the ledger, `BenchResult` or exported series | [references/output.md](references/output.md) |
 | Run or write a workflow | [references/workflows.md](references/workflows.md) |
 | Interpret a verdict, a dirty run, or what may be quoted | [references/reading-results.md](references/reading-results.md) |
@@ -87,6 +88,7 @@ $TSLAB pinned --repo kapitsa --class gemv        # verified settings of compared
 $TSLAB sweep --model M --sweep all --experiment E --json   # every profile sweep that applies, one verdict per candidate
 $TSLAB sweep --model M --baseline plain --candidate mtp2~mtp:2 --candidate mtp4~mtp:4 --metric decode_tok_s --experiment E
 $TSLAB family --family qwen35 --findings         # the recorded findings with their provenance
+$TSLAB serve --open                              # the read-only dashboard over every ledger (never takes the lock)
 ```
 
 `tslab knobs` lists the switches an arm can set (`KNOB=V`) and, below them,

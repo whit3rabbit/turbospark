@@ -90,3 +90,22 @@ Kinds: `kernel_ms`, `kernel_c_of_m`, `profile_totals`, `profile_buckets`,
 measured improvement, one point per calibration). Series sharing a `group` belong on
 one chart. A point with `dirty: true` came from a run the host guard
 rejected.
+
+## The dashboard API (`tslab serve`)
+
+Every route is a GET and returns `{"schema": "tslab/1", ...}`:
+
+| Route | Returns |
+|---|---|
+| `/api/experiments` | `experiments[]` (name, last activity, counts by kind, models, families, chips, revs, clean and dirty runs) and `totals` by kind |
+| `/api/experiment/{name}` | the summary, `notes`, and that experiment's `verdicts`, `sweeps`, `profiles` rows |
+| `/api/ledger/{name}` | the raw ledger records |
+| `/api/series?exp=a,b[&kind=K]` | the experiments' series, the shape `tslab export --format json` writes |
+| `/api/verdicts[?family=&model=&metric=&exp=]` | the verdict board rows |
+| `/api/sweeps[?family=&model=]` | the sweep rows with `best` |
+| `/api/family/{family}` | the profile plus the lab's rows for that family |
+| `/api/record/{exp}/{id}` | one ledger record |
+
+A bad experiment name or record id is a 400, a missing one a 404, both as
+`{"ok": false, "error": ...}`.
+

@@ -18,6 +18,7 @@ process, which must sit beside `tslab`.
 | `knobs` | Runtime switches tslab knows: env name, values, exactness, quotable, engagement lines; then the kernel modes (lanes): the bench that prices each and how it is compared | nothing |
 | `pinned [--repo kapitsa\|omlx\|mlx-serve] [--class C] [--id ID] [--dir PATH]` | The verified kernel settings pinned from the engines this repo compares against, each traced to a source line and revision. The baseline is embedded in the binary. `--dir` layers edited copies over it for a sweep (a colliding `id` replaces the baseline) | nothing |
 | `kernel --list` | Registered kernel benches | nothing |
+| `serve [--port 7878] [--bind 127.0.0.1] [--lab DIR] [--open]` | The read-only dashboard over every ledger in the lab dir: the experiment table with filters and a compare form, one page per experiment with its charts, runs and notes, `/compare?exp=a,b` with the experiments' series regrouped onto shared axes and a verdict board, `/verdicts`, `/sweeps`, `/families` and `/family/<f>` (the profile over what the lab measured for it), `/record/<exp>/<id>`, and a JSON API under `/api`. Never takes the machine lock, so it stays open beside a measurement. Blocks until Ctrl-C | nothing |
 | `schema` | JSON Schema of everything tslab writes | nothing |
 | `ledger --experiment E [--kind K]` | The raw records of one experiment | nothing |
 

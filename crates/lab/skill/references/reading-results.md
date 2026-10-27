@@ -23,6 +23,16 @@ candidate carries `refused` and no pairs. An inconclusive candidate makes the
 command exit 4 like `ab` does; fix the host and rerun the sweep, which
 re-judges every candidate.
 
+## The compare view
+
+`tslab serve` and `/compare?exp=a,b` put several experiments' series on one
+chart per (kind, group): the same kernel shape, the same profile buckets,
+the sweeps and the verdict forests, with labels prefixed by the experiment.
+A shared axis makes a difference visible, not significant: the verdict
+board under the charts holds the paired results, and two experiments' bars
+on one chart were not paired with each other. Hollow marks stay what they
+are, runs the host guard rejected.
+
 ## Dirty runs
 
 A run is ledgered whatever happened. `eligible: false` and its `reasons`

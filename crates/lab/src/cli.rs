@@ -65,6 +65,9 @@ tslab: the evaluator for kernel and method experiments (macOS).
                 [--out PATH [--force]]            (ledgers as tslab/1 series)
   tslab report  --experiment A[,B]|--all --html OUT.html [--title T] [--kind K] [--redact-paths] [--force]
   tslab schema                                     (the JSON Schema of everything tslab writes)
+  tslab serve   [--port 7878] [--bind 127.0.0.1] [--lab DIR] [--open]
+                (read-only dashboard over every ledger: experiments, compare, verdicts, sweeps,
+                 families, and a JSON API under /api; never takes the machine lock)
 
 workload: [--prompt protocol:ID|messages:PATH|text:PATH|corpus:N|chat:PATH]... [--decode N]
           [--chunk N|off] [--context N]
@@ -150,6 +153,7 @@ pub const COMMANDS: &[&str] = &[
     "capabilities",
     "family",
     "sweep",
+    "serve",
     "trace",
     "gate",
     "run-experiment",
@@ -180,6 +184,7 @@ pub fn dispatch(cmd: &str, args: Args) -> Result<CmdOutput, String> {
         "capabilities" => crate::families::capabilities_cmd(args),
         "family" => crate::families::family_cmd(args),
         "sweep" => crate::sweep::sweep_cmd(args),
+        "serve" => crate::dash::serve_cmd(args),
         "trace" => crate::trace::trace_cmd(args),
         "workflow" => crate::workflow::workflow_cmd(args),
         "report" => crate::export::report_cmd(args),

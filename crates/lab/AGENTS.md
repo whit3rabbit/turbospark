@@ -37,6 +37,11 @@ loop's `run-experiment`. Text and audio installs of every family.
   traps. Embedded and validated like the pinned set; `families/README.md`
   holds the field rules, and `tests/family_profiles.rs` holds every
   `ModelFamily` and `AudioKind` to a file.
+- `src/dash/`: `tslab serve`, the read-only dashboard (`index.rs` reads every
+  ledger and keeps it by `(mtime, len)`; `pages.rs` renders the experiment
+  table, per-experiment, compare, verdict, sweep, family and record pages
+  from the viz cards; `api.rs` the JSON routes). It never takes the machine
+  lock and writes nothing.
 - `src/sweep.rs`: `tslab sweep`, several candidates against one baseline in
   one interleaved session, each judged by `orchestrate::run_sweep` under the
   same pair rule as `run_ab`; one `verdict` record per candidate and one
@@ -108,7 +113,11 @@ loop's `run-experiment`. Text and audio installs of every family.
   `cases` returns `Err(reason)` for an install it cannot serve, which
   `tslab capabilities` reports.
 - Commands print through `say!`, never `println!`: under `--json` stdout is
-  exactly one envelope (`tests/schema_contract.rs`). A new ledger kind goes
+  exactly one envelope (`tests/schema_contract.rs`).
+- The dashboard stays read-only and lock-free: no POST route, no write under
+  the lab dir, no `MachineLock`. A page carries no script and fetches
+  nothing (`tests/dash_pages.rs` asserts it), so a saved page reads the same
+  as a live one. A new ledger kind goes
   in `schema.rs` `KINDS` and the schema document in the same change.
 - Changing a field's meaning in the ledger or the envelope is a new schema
   version, not an edit: dashboards and old ledgers outlive any build.
@@ -132,4 +141,5 @@ family or audio kind has no profile, a knob row names a family the runtime
 does not write, or a finding's doc heading is gone, `tests/phases_format.rs` when the CLI's
 phase table drifts from `src/phases.rs`, `tests/schema_contract.rs` when a
 ledger kind is missing from the contract or `--json` prints more than one
-line, and `tests/family_coverage.rs` when a family loses its coverage.
+line, `tests/dash_pages.rs` when a dashboard page stops being
+self-contained or the index miscounts a ledger, and `tests/family_coverage.rs` when a family loses its coverage.

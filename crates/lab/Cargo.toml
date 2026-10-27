@@ -28,6 +28,16 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 libc = "0.2"
 foundation = { package = "turbospark-core", path = "../core", version = "0.5.0" }
+# `tslab serve`, the read-only dashboard over the lab dir (src/dash). The same
+# axum and tokio crates/server and crates/ffi pin, so no new package enters the
+# lockfile; `json` is the only axum feature a GET-only dashboard needs.
+axum = { version = "0.7", features = ["json"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros"] }
+
+[dev-dependencies]
+# Router smoke tests drive the dashboard without a socket.
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 runtime = { package = "turbospark-runtime", path = "../runtime", version = "0.5.0" }

@@ -35,6 +35,7 @@ pub mod args;
 pub mod atomic;
 pub mod audio_kind;
 pub mod bench;
+pub mod dash;
 pub mod export;
 pub mod family_profile;
 pub mod fit;
