@@ -138,6 +138,19 @@ impl ExperimentSpec {
         if self.exactness == GateClass::TextExact && !audio {
             return Err("text_exact gates an audio transcript; a text spec declares bit_exact, dense_kl or moe_kl".into());
         }
+        // A waveform has no transcript to hold equal: a speak or music job
+        // is judged on its bytes.
+        if self.exactness == GateClass::TextExact
+            && self
+                .workload
+                .audio
+                .as_ref()
+                .is_some_and(|j| j.task() != "transcribe")
+        {
+            return Err(
+                "text_exact gates a transcript; a speak or music job declares bit_exact".into(),
+            );
+        }
         if audio
             && !matches!(
                 self.primary_metric,

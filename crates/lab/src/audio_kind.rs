@@ -70,12 +70,31 @@ impl AudioKind {
     ];
 }
 
-/// Pipelines `tslab-worker` can open and run as an audio arm. The rest are
-/// covered by kernel benches only, and coverage says so.
-pub const WORKER_KINDS: &[AudioKind] = &[AudioKind::Music3, AudioKind::Whisper];
+/// Pipelines `tslab-worker` can open and run as an audio arm. The rest
+/// (OmniVoice, Fish Drama 3) are covered by kernel benches only, and
+/// coverage says so.
+pub const WORKER_KINDS: &[AudioKind] = &[
+    AudioKind::Music3,
+    AudioKind::Whisper,
+    AudioKind::Moonshine,
+    AudioKind::Qwen3Asr,
+    AudioKind::Kokoro,
+    AudioKind::MegaTts3,
+];
 
 pub fn runs_in_worker(k: AudioKind) -> bool {
     WORKER_KINDS.contains(&k)
+}
+
+impl AudioTaskKind {
+    /// The `task` field of the job this pipeline takes.
+    pub fn job_task(self) -> &'static str {
+        match self {
+            Self::Transcribe => "transcribe",
+            Self::Music => "music",
+            Self::Speak => "speak",
+        }
+    }
 }
 
 /// The pipeline's name: `model_type`, or `kokoro` for a Kokoro layout.
@@ -106,5 +125,10 @@ mod tests {
         assert_eq!(kind(&json!({"model_type": "llama"})), None);
         assert_eq!(model_type(&json!({})), None);
         assert_eq!(AudioKind::Music3.task(), AudioTaskKind::Music);
+        assert_eq!(AudioKind::Kokoro.task().job_task(), "speak");
+        assert!(runs_in_worker(AudioKind::Kokoro));
+        assert!(runs_in_worker(AudioKind::MegaTts3));
+        assert!(!runs_in_worker(AudioKind::OmniVoice));
+        assert!(!runs_in_worker(AudioKind::FishDrama3));
     }
 }
