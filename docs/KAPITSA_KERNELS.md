@@ -1247,8 +1247,9 @@ to the third decimal, so the command and the probe agree.
 
 What it says:
 
-- At block 2, the flag-off serving block (`DFLASH_SERVING_BLOCK`), the tree
-  gains 0-1.3%. Same verdict as MTP there.
+- At block 2, the flag-off serving block (`DFLASH_SERVING_BLOCK`) when this
+  replay ran, the tree gains 0-1.3%. Same verdict as MTP there. (Since
+  2026-10-26 `auto` serves 3 with the tile off and 7 with it on.)
 - At depth 7, the block DFlash2 serves over the flat verify (lever 3 above),
   the tree gains 6.7-12.1%. That clears the 5% bar on all three prompts,
   copy-heavy included, where the MTP tree gains nothing at any block.

@@ -172,6 +172,10 @@ when this file gets updated relative to the version bump and the tag.
     gates (`bit_exact`, and `text_exact` for transcripts).
 
 ### Changed
+- DFlash2's `auto` depth follows the 8-row INT4 tile: block 3 with the tile
+  off (was 2; +3.7% decode tok/s) and block 7 with `TURBOSPARK_INT4_MMA8`
+  on (about +26% over block 2 there), re-measured on the current engine.
+  `dflash_serving_block()` resolves it once per process.
 - DFlash2 tree verify is the default for greedy fixed-depth rounds.
   `TURBOSPARK_DFLASH_TREE=0` keeps the chain. On a quiet M4 Max at block 7
   in the default configuration it wins +9.2% decode tok/s on medium-review
