@@ -196,3 +196,85 @@ pub fn cache_class(r: &PhaseReport) -> CacheClass {
         }
     }
 }
+
+/// Where a routed (MoE) stretch spends its wall time, as the reopen test
+/// for Neural Engine expert work asks it (`docs/SPEEDUP_PLAYBOOK.md`, "Not
+/// pursued": reopen "only once the GPU routed path makes MoE prefill
+/// compute bound"). Shares are of `total_ms`:
+///
+/// - `routed_gpu_share`: GPU busy time of the routed command buffers, the
+///   expert math itself.
+/// - `io_share`: expert pread plus routed bind and upload, the streaming
+///   cache's cost.
+/// - `loop_share`: router readback and top-k plus "encode + logit readbk",
+///   the per-token host loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MoeBoundClass {
+    /// No routed work in the stretch (a dense install or mapped residency
+    /// with no routed buffers measured).
+    Dense,
+    IoBound,
+    LoopBound,
+    ComputeBound,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MoeBound {
+    pub routed_gpu_share: f64,
+    pub io_share: f64,
+    pub loop_share: f64,
+    pub class: MoeBoundClass,
+}
+
+/// Compute bound when the routed GPU work is at least this share of the
+/// wall time...
+pub const COMPUTE_BOUND_MIN_ROUTED_GPU_SHARE: f64 = 0.5;
+/// ...and expert I/O is under this share. Below both, the larger of the I/O
+/// and host-loop shares names the bound. The thresholds are a reading aid
+/// with the rule in one place; the shares themselves are in the record.
+pub const COMPUTE_BOUND_MAX_IO_SHARE: f64 = 0.2;
+
+pub fn moe_bound(r: &PhaseReport) -> MoeBound {
+    let total = r.total_ms.max(f64::MIN_POSITIVE);
+    let bucket = |name: &str| {
+        r.buckets
+            .iter()
+            .find(|b| b.name == name)
+            .map_or(0.0, |b| b.ms)
+    };
+    let routed_gpu_ms = r.gpu_busy_ms_per_token.routed * r.calls as f64;
+    let io_ms = bucket("expert io (pread)") + bucket("routed bind+upload");
+    let loop_ms = bucket("router readback+topk") + bucket("encode + logit readbk");
+    let routed_gpu_share = routed_gpu_ms / total;
+    let io_share = io_ms / total;
+    let loop_share = loop_ms / total;
+    let routed = r.expert_requests > 0 || routed_gpu_ms > 0.0 || io_ms > 0.0;
+    MoeBound {
+        routed_gpu_share,
+        io_share,
+        loop_share,
+        class: classify_shares(routed_gpu_share, io_share, loop_share, routed),
+    }
+}
+
+/// The class from the three shares alone, so a reader with medians over
+/// several runs (`report::print_profile`) classifies the same way.
+pub fn classify_shares(
+    routed_gpu_share: f64,
+    io_share: f64,
+    loop_share: f64,
+    routed: bool,
+) -> MoeBoundClass {
+    if !routed {
+        MoeBoundClass::Dense
+    } else if routed_gpu_share >= COMPUTE_BOUND_MIN_ROUTED_GPU_SHARE
+        && io_share < COMPUTE_BOUND_MAX_IO_SHARE
+    {
+        MoeBoundClass::ComputeBound
+    } else if io_share >= loop_share {
+        MoeBoundClass::IoBound
+    } else {
+        MoeBoundClass::LoopBound
+    }
+}

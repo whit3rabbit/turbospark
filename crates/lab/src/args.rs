@@ -141,24 +141,37 @@ pub fn parse_arm(
     open: OpenParams,
     common: &BTreeMap<String, String>,
 ) -> Result<Arm, String> {
-    // `~DRAFTER:BLOCK[a]` runs the arm through the speculative loop. It sits
-    // before any `:KEY=V` list and has its own ':', so split it off first.
-    let (main, speculation) = match s.split_once('~') {
-        None => (s.to_string(), None),
-        Some((before, after)) => {
-            let mut it = after.splitn(3, ':');
-            let drafter = it.next().unwrap_or("");
-            let block = it
-                .next()
-                .ok_or_else(|| format!("arm {s:?}: speculation is ~DRAFTER:BLOCK"))?;
-            let sp = parse_speculation(&format!("{drafter}:{block}"))?;
-            let main = match it.next() {
-                Some(env) => format!("{before}:{env}"),
-                None => before.to_string(),
-            };
-            (main, Some(sp))
+    // `~DRAFTER:BLOCK[a]` runs the arm through the speculative loop and
+    // `~hog:THREADS` runs it under controlled contention. Each sits before
+    // any `:KEY=V` list and has its own ':', so split the modifiers off
+    // first and carry their env tail back to the main part.
+    let mut segments = s.split('~');
+    let mut main = segments.next().unwrap_or("").to_string();
+    let mut speculation = None;
+    let mut contention = None;
+    for seg in segments {
+        let mut it = seg.splitn(3, ':');
+        let kind = it.next().unwrap_or("");
+        let value = it
+            .next()
+            .ok_or_else(|| format!("arm {s:?}: a ~ modifier is ~DRAFTER:BLOCK or ~hog:THREADS"))?;
+        if kind == "hog" {
+            let threads: usize = value
+                .parse()
+                .ok()
+                .filter(|&n| n > 0)
+                .ok_or_else(|| format!("arm {s:?}: hog threads {value:?} must be positive"))?;
+            contention = Some(crate::workload::Contention {
+                hog_threads: threads,
+            });
+        } else {
+            speculation = Some(parse_speculation(&format!("{kind}:{value}"))?);
         }
-    };
+        if let Some(env) = it.next() {
+            main.push(if main.contains(':') { ',' } else { ':' });
+            main.push_str(env);
+        }
+    }
     let s = main.as_str();
     let (head, rest) = s.split_once(':').unwrap_or((s, ""));
     // `NAME@SLOTS/RESIDENCY` overrides the shared open parameters for this
@@ -202,6 +215,7 @@ pub fn parse_arm(
         open,
         speculation,
         expect_engaged: Vec::new(),
+        contention,
     })
 }
 
@@ -305,6 +319,34 @@ mod tests {
         assert_eq!(a.env["TURBOSPARK_ADAPTIVE_DEPTH"], "3,1,1,2");
         assert_eq!(a.env["TURBOSPARK_PREFILL_STEEL"], "0");
         assert!(parse_arm("x~eagle:2", OpenParams::default(), &BTreeMap::new()).is_err());
+    }
+
+    #[test]
+    fn arms_can_run_under_a_hog() {
+        let a = parse_arm("hog8~hog:8", OpenParams::default(), &BTreeMap::new()).unwrap();
+        assert_eq!(a.contention.unwrap().hog_threads, 8);
+        assert!(a.speculation.is_none());
+        let a = parse_arm(
+            "split~hog:4:ane_prefill=split",
+            OpenParams::default(),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        assert_eq!(a.contention.unwrap().hog_threads, 4);
+        assert_eq!(a.env["TURBOSPARK_ANE_PREFILL"], "split");
+        let a = parse_arm(
+            "both:prefill_steel=0~mtp:2~hog:2",
+            OpenParams::default(),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        assert_eq!(a.speculation.as_ref().unwrap().block, 2);
+        assert_eq!(a.contention.unwrap().hog_threads, 2);
+        assert_eq!(a.env["TURBOSPARK_PREFILL_STEEL"], "0");
+        assert!(parse_arm("x~hog:0", OpenParams::default(), &BTreeMap::new()).is_err());
+        assert!(parse_arm("x~hog", OpenParams::default(), &BTreeMap::new()).is_err());
+        let plain = parse_arm("base", OpenParams::default(), &BTreeMap::new()).unwrap();
+        assert!(plain.contention.is_none());
     }
 
     #[test]

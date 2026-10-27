@@ -13,6 +13,17 @@ is invisible to the dispersion check. `docs/POWER_BASELINE.md` holds the rows.
 
 All commands run from the REPOSITORY ROOT, not from this directory.
 
+Two meters exist, and they do not mix. `scripts/power.sh` reads
+`powermetrics` (sudo, wall side of the SoC) and feeds `docs/POWER_BASELINE.md`.
+tslab reads IOReport's Energy Model counters (`crates/lab/src/energy.rs`,
+no sudo): the chip's modeled energy for the whole machine, idle and other
+processes included, as `totals.prefill_j`, `decode_j`, joules per token
+and per-kernel-case deltas in the lab ledger, with
+`energy_model: ioreport_whole_machine` on every such record. Use the tslab
+joules to compare arms within one experiment on a quiet host (the ANE
+split's 0.65x was this kind of reading); use `power.sh` for any number
+that leaves the lab. Never set one beside the other.
+
 ```sh
 # Power baseline over the frozen protocol (ROADMAP Phase P1): watts and
 # joules-per-token, split prefill/decode. NEEDS SUDO (powermetrics is

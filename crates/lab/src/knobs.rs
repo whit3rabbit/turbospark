@@ -598,6 +598,17 @@ pub const KNOBS: &[Knob] = &[
         engagement: &[],
     },
     Knob {
+        name: "router_batches",
+        env: "TURBOSPARK_ROUTER_BATCHES",
+        values: &["<unset>", "1"],
+        read_at: ReadAt::Open,
+        exactness: Exactness::BitExact,
+        families: &[],
+        quotable: false,
+        doc: "docs/ENV.md",
+        engagement: &[],
+    },
+    Knob {
         name: "router_trace",
         env: "TURBOSPARK_ROUTER_TRACE",
         values: &["<unset>", "1"],

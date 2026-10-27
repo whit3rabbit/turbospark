@@ -456,6 +456,15 @@ better, but that is an inference. The result fits the core-count reading of
 the fork's +28% on a 10-core M4. M4 Pro, other models and F16 checkpoints
 were not measured here. Energy is below the sweep table.
 
+**The branch since the review (read 2026-10-27).** Three commits touch the
+Mac path after `689fd77`. `a4557a816d` ("try compatible peer devices before
+CPU weight fallback") lands the loader behaviour the `-ot` rows above
+approximated, so the shipped fork now measures like those two diagnostic
+rows rather than the first four. `dd204bd90c` adds bf16, f32 and q5_K
+copies to the Metal conversion. The rest is Vulkan and ROCm. Nothing new
+on `MUL_MAT_ID` and nothing new on synchronization. The numbers above were
+not re-run. This repository's own re-test tools are the tslab gauges listed
+under "Not pursued" in [SPEEDUP_PLAYBOOK.md](SPEEDUP_PLAYBOOK.md).
 
 **Per-matmul energy, from the same sweep.** The meter is the fork's IOReport
 model of the whole machine, so these ratios compare only within the sweep.

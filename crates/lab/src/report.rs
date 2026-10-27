@@ -299,7 +299,69 @@ pub fn print_profile(arm_names: &[String], outcomes: &[Outcome]) -> Value {
                     ))
                 );
             }
+            // The MoE boundness gauge, from the median shares. Dense flows
+            // read `dense`; the reopen test for ANE expert work is
+            // `compute_bound` on prefill (docs/SPEEDUP_PLAYBOOK.md).
+            let share = |key: &str| -> f64 {
+                med(aggs.iter().map(|a| {
+                    Some(a["ms_per_token"][key].as_f64()? / a["total_ms_per_token"].as_f64()?)
+                }))
+                .map_or(0.0, |m| m.0)
+            };
+            let routed_gpu = med(aggs.iter().map(|a| {
+                Some(a["gpu_busy"]["routed"].as_f64()? / a["total_ms_per_token"].as_f64()?)
+            }))
+            .map_or(0.0, |m| m.0);
+            let io = share("expert io (pread)") + share("routed bind+upload");
+            let host_loop = share("router readback+topk") + share("encode + logit readbk");
+            let routed = aggs.iter().any(|a| {
+                a["expert_hit_rate"].as_f64().is_some()
+                    || a["gpu_busy"]["routed"].as_f64().is_some_and(|r| r > 0.0)
+            });
+            let class = crate::phases::classify_shares(routed_gpu, io, host_loop, routed);
+            if routed {
+                crate::say!(
+                    "    moe bound: {} (routed gpu {:.0}%, expert io {:.0}%, host loop {:.0}%)",
+                    serde_json::to_value(class)
+                        .ok()
+                        .and_then(|v| v.as_str().map(str::to_string))
+                        .unwrap_or_else(|| "?".into()),
+                    100.0 * routed_gpu,
+                    100.0 * io,
+                    100.0 * host_loop
+                );
+            }
+            phase_json.insert(
+                "moe_bound".into(),
+                json!({"routed_gpu_share": routed_gpu, "io_share": io,
+                       "loop_share": host_loop, "class": class}),
+            );
             arm_json[phase] = Value::Object(phase_json);
+        }
+        // Modeled energy (IOReport, whole machine), when the worker metered.
+        let pj = med(clean
+            .iter()
+            .map(|o| o.record["totals"]["prefill_j"].as_f64()));
+        let dj = med(clean
+            .iter()
+            .map(|o| o.record["totals"]["decode_j"].as_f64()));
+        if pj.is_some() || dj.is_some() {
+            let per = |k: &str| med(clean.iter().map(|o| o.record["totals"][k].as_f64()));
+            let show = |v: Option<(f64, f64, f64)>, digits: usize| {
+                v.map_or("n/a".to_string(), |v| format!("{:.*}", digits, v.0))
+            };
+            crate::say!(
+                "  energy    prefill {} J ({} J/token), decode {} J ({} J/token); modeled whole machine, not wall",
+                show(pj, 1),
+                show(per("j_per_prefill_token"), 4),
+                show(dj, 1),
+                show(per("j_per_decode_token"), 4),
+            );
+            arm_json["prefill_j"] = json!(pj.map(|v| v.0));
+            arm_json["decode_j"] = json!(dj.map(|v| v.0));
+            arm_json["j_per_prefill_token"] = json!(per("j_per_prefill_token").map(|v| v.0));
+            arm_json["j_per_decode_token"] = json!(per("j_per_decode_token").map(|v| v.0));
+            arm_json["energy_model"] = json!(crate::energy::ENERGY_MODEL);
         }
         summary.insert(name.clone(), arm_json);
     }

@@ -62,3 +62,58 @@ fn buckets_sum_to_total_and_deltas_subtract() {
         "unsampled physical must read None"
     );
 }
+
+mod moe_bound {
+    use runtime::PhaseCounters;
+    use turbospark_lab::phases::{moe_bound, report, MoeBoundClass};
+
+    /// A 100-call stretch of 1 s: the named nanos set each share directly.
+    fn stretch(routed_gpu: u64, expert_io: u64, router: u64) -> PhaseCounters {
+        PhaseCounters {
+            calls: 100,
+            total_nanos: 1_000_000_000,
+            expert_io_nanos: expert_io,
+            router_nanos: router,
+            routed_cb_gpu_nanos: routed_gpu,
+            expert_requests: if expert_io > 0 || routed_gpu > 0 {
+                800
+            } else {
+                0
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn classes_follow_the_largest_term() {
+        let io = moe_bound(&report(&stretch(100_000_000, 600_000_000, 100_000_000)));
+        assert_eq!(io.class, MoeBoundClass::IoBound);
+        assert!((io.io_share - 0.6).abs() < 1e-9, "{}", io.io_share);
+        let loop_bound = moe_bound(&report(&stretch(100_000_000, 100_000_000, 200_000_000)));
+        // "encode + logit readbk" is the unaccounted rest, 700 ms here (0.2 router + 0.7), and
+        // it belongs to the host loop too.
+        assert_eq!(loop_bound.class, MoeBoundClass::LoopBound);
+        assert!(
+            (loop_bound.loop_share - 0.9).abs() < 1e-9,
+            "{}",
+            loop_bound.loop_share
+        );
+        let compute = moe_bound(&report(&stretch(550_000_000, 150_000_000, 50_000_000)));
+        assert_eq!(compute.class, MoeBoundClass::ComputeBound);
+        assert!((compute.routed_gpu_share - 0.55).abs() < 1e-9);
+        assert_eq!(
+            moe_bound(&report(&stretch(0, 0, 0))).class,
+            MoeBoundClass::Dense
+        );
+    }
+
+    #[test]
+    fn compute_bound_needs_the_gpu_half_not_only_quiet_io() {
+        // Routed GPU at 30% with I/O at 10%: under the 50% rule this is not
+        // compute bound. Swapping the two thresholds (0.2 GPU, 0.5 I/O) would
+        // call it compute bound, which is the mutation this guards against.
+        let b = moe_bound(&report(&stretch(300_000_000, 100_000_000, 50_000_000)));
+        assert_ne!(b.class, MoeBoundClass::ComputeBound);
+        assert_eq!(b.class, MoeBoundClass::LoopBound);
+    }
+}

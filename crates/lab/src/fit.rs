@@ -97,3 +97,189 @@ mod tests {
         assert!(fit_affine(&[(2.0, 1.0), (2.0, 3.0)]).is_none());
     }
 }
+
+/// One matmul the Neural Engine gate decides on: its size, its traffic, and
+/// what each device measured (`kernel::ane_matmul`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GateCase {
+    /// Multiply-accumulates, `rows * cols * tokens`.
+    pub macs: f64,
+    /// MACs per estimated byte moved, conversion traffic included.
+    pub intensity: f64,
+    pub steel_ms: f64,
+    pub ane_ms: f64,
+    pub steel_j: Option<f64>,
+    pub ane_j: Option<f64>,
+}
+
+/// What the gate fit minimizes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GateObjective {
+    Speed,
+    Energy,
+    /// Energy-delay product.
+    Edp,
+}
+
+/// A per-matmul routing rule of the `GGML_ANE_MIN_MACS` and
+/// `GGML_ANE_MIN_INTENSITY` kind: send a matmul to the ANE only at or above
+/// both thresholds.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GateFit {
+    pub objective: GateObjective,
+    pub min_macs: f64,
+    pub min_intensity: f64,
+    /// Cases the rule routes to the ANE, and how many of those lose there.
+    pub selected: usize,
+    pub regressions: usize,
+    /// The weighted sum the search minimized (ms, J or J*ms): gains count
+    /// once, regressions twice.
+    pub score: f64,
+    /// Every case on Steel, every case on its cheaper device, and the rule.
+    pub steel_total: f64,
+    pub oracle_total: f64,
+    pub routed_total: f64,
+}
+
+/// Fits the two thresholds over the observed values (and 0, and one past
+/// the largest) so that the selected cases' summed delta against Steel is
+/// smallest, with a regression weighing twice a gain. `None` without cases,
+/// or when the objective needs joules a case lacks.
+pub fn ane_gate_fit(cases: &[GateCase], objective: GateObjective) -> Option<GateFit> {
+    if cases.is_empty() {
+        return None;
+    }
+    let cost = |c: &GateCase, ane: bool| -> Option<f64> {
+        let (ms, j) = if ane {
+            (c.ane_ms, c.ane_j)
+        } else {
+            (c.steel_ms, c.steel_j)
+        };
+        match objective {
+            GateObjective::Speed => Some(ms),
+            GateObjective::Energy => j,
+            GateObjective::Edp => j.map(|j| j * ms),
+        }
+    };
+    let deltas: Vec<f64> = cases
+        .iter()
+        .map(|c| Some(cost(c, true)? - cost(c, false)?))
+        .collect::<Option<_>>()?;
+    let candidates = |f: fn(&GateCase) -> f64| -> Vec<f64> {
+        let mut v: Vec<f64> = cases.iter().map(f).collect();
+        v.push(0.0);
+        let max = v.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        v.push(max * (1.0 + 1e-9) + f64::MIN_POSITIVE);
+        v.sort_by(|a, b| a.total_cmp(b));
+        v.dedup();
+        v
+    };
+    let mut best: Option<GateFit> = None;
+    for &min_macs in &candidates(|c| c.macs) {
+        for &min_intensity in &candidates(|c| c.intensity) {
+            let selected: Vec<usize> = (0..cases.len())
+                .filter(|&i| cases[i].macs >= min_macs && cases[i].intensity >= min_intensity)
+                .collect();
+            let score: f64 = selected
+                .iter()
+                .map(|&i| {
+                    if deltas[i] < 0.0 {
+                        deltas[i]
+                    } else {
+                        2.0 * deltas[i]
+                    }
+                })
+                .sum();
+            if best.as_ref().is_none_or(|b| score < b.score) {
+                let steel_total: f64 = cases.iter().filter_map(|c| cost(c, false)).sum();
+                best = Some(GateFit {
+                    objective,
+                    min_macs,
+                    min_intensity,
+                    selected: selected.len(),
+                    regressions: selected.iter().filter(|&&i| deltas[i] > 0.0).count(),
+                    score,
+                    steel_total,
+                    oracle_total: steel_total + deltas.iter().filter(|d| **d < 0.0).sum::<f64>(),
+                    routed_total: steel_total + selected.iter().map(|&i| deltas[i]).sum::<f64>(),
+                });
+            }
+        }
+    }
+    best
+}
+
+#[cfg(test)]
+mod gate_tests {
+    use super::*;
+
+    fn case(macs: f64, intensity: f64, steel_ms: f64, ane_ms: f64) -> GateCase {
+        GateCase {
+            macs,
+            intensity,
+            steel_ms,
+            ane_ms,
+            steel_j: Some(steel_ms * 0.05),
+            ane_j: Some(ane_ms * 0.01),
+        }
+    }
+
+    #[test]
+    fn picks_the_thresholds_that_keep_only_the_winners() {
+        // Small matmuls lose on the ANE, big ones win; one big low-intensity
+        // case loses, so the rule needs both thresholds.
+        let cases = [
+            case(1e8, 10.0, 0.1, 0.9),
+            case(1e9, 30.0, 1.0, 1.5),
+            case(1e10, 60.0, 10.0, 6.0),
+            case(2e10, 80.0, 20.0, 12.0),
+            case(3e10, 20.0, 30.0, 35.0),
+        ];
+        let fit = ane_gate_fit(&cases, GateObjective::Speed).unwrap();
+        assert_eq!(fit.selected, 2, "{fit:?}");
+        assert_eq!(fit.regressions, 0);
+        // Whatever thresholds the search lands on, the rule must route the
+        // two winners and nothing else: the low-intensity big case stays out.
+        let routed: Vec<usize> = (0..cases.len())
+            .filter(|&i| cases[i].macs >= fit.min_macs && cases[i].intensity >= fit.min_intensity)
+            .collect();
+        assert_eq!(routed, vec![2, 3], "{fit:?}");
+        assert!((fit.score - (-12.0)).abs() < 1e-9);
+        assert!((fit.steel_total - 61.1).abs() < 1e-9);
+        assert!((fit.routed_total - 49.1).abs() < 1e-9);
+        assert!((fit.oracle_total - 49.1).abs() < 1e-9);
+        // Energy (0.01 J/ms on the ANE against 0.05 on Steel) favors the ANE
+        // everywhere but the smallest case, where its slowness outweighs it.
+        let e = ane_gate_fit(&cases, GateObjective::Energy).unwrap();
+        assert_eq!(e.selected, 4, "{e:?}");
+        assert_eq!(e.regressions, 0);
+        assert!(cases[0].macs < e.min_macs || cases[0].intensity < e.min_intensity);
+    }
+
+    #[test]
+    fn a_regression_costs_twice_a_gain() {
+        // A small loser costing 0.6 ms below a big winner saving 1 ms, at
+        // one intensity: a plain sum would route both (-0.4), the doubled
+        // penalty routes only the winner (-1.0 against -1.0 + 1.2).
+        let cases = [case(1e9, 50.0, 2.0, 2.6), case(2e9, 50.0, 2.0, 1.0)];
+        let fit = ane_gate_fit(&cases, GateObjective::Speed).unwrap();
+        assert_eq!(fit.selected, 1, "{fit:?}");
+        assert_eq!(fit.regressions, 0);
+        assert!(
+            fit.min_macs > 1e9 && fit.min_macs <= 2e9,
+            "{}",
+            fit.min_macs
+        );
+        assert!((fit.score + 1.0).abs() < 1e-9);
+        // Without joules the energy objective cannot be fitted.
+        let dry = [GateCase {
+            steel_j: None,
+            ane_j: None,
+            ..cases[0]
+        }];
+        assert!(ane_gate_fit(&dry, GateObjective::Energy).is_none());
+        assert!(ane_gate_fit(&dry, GateObjective::Speed).is_some());
+        assert!(ane_gate_fit(&[], GateObjective::Speed).is_none());
+    }
+}
