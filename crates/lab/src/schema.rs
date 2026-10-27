@@ -39,6 +39,10 @@ pub const KINDS: &[(&str, &str)] = &[
         "a paired A/B: verdict report, memory check, pair run ids",
     ),
     (
+        "sweep",
+        "several candidates against one baseline, each a paired A/B: per-candidate verdicts and the best WIN",
+    ),
+    (
         "kernel_curve",
         "one kernel bench case: a BenchResult under `result`",
     ),

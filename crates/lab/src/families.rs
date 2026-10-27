@@ -204,11 +204,47 @@ pub struct Coverage {
     /// Predicates a workflow step's `when` can name.
     pub tags: Vec<String>,
     pub notes: Vec<String>,
+    /// The family profile's `recommended` entries whose `when` holds for
+    /// this install (`crates/lab/families/`), as `KEY=V` fragments with why.
+    pub recommended: Vec<Value>,
+    /// The family profile's sweep ids whose `when` holds for this install.
+    pub sweeps: Vec<String>,
 }
 
 impl Coverage {
     pub fn has(&self, tag: &str) -> bool {
         self.tags.iter().any(|t| t == tag)
+    }
+
+    /// Fill `recommended` and `sweeps` from the family profile, when one is
+    /// embedded for this family, and add the `profile` tag.
+    fn attach_profile(&mut self) {
+        let set = match crate::family_profile::ProfileSet::embedded() {
+            Ok(set) => set,
+            Err(e) => {
+                self.notes.push(format!("family profiles unreadable: {e}"));
+                return;
+            }
+        };
+        let Some(profile) = set.by_family(&self.family) else {
+            self.notes
+                .push(format!("no family profile for {}", self.family));
+            return;
+        };
+        self.tags.push("profile".into());
+        let tags: std::collections::BTreeSet<String> = self.tags.iter().cloned().collect();
+        let (rec, sweeps) = profile.applicable(&tags);
+        self.recommended = rec
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "setting": r.as_arm_fragment(),
+                    "why": r.why,
+                    "findings": r.findings,
+                })
+            })
+            .collect();
+        self.sweeps = sweeps.iter().map(|s| s.id.clone()).collect();
     }
 }
 
@@ -303,7 +339,7 @@ pub fn text_coverage(subject: &Subject, arch: &ArchConfig) -> Coverage {
         tags.push(d.to_string());
     }
     let benches = bench_coverage(subject, &mut tags);
-    Coverage {
+    let mut c = Coverage {
         install: subject.dir.display().to_string(),
         kind: "text",
         family: arch.family.as_str().to_string(),
@@ -316,7 +352,11 @@ pub fn text_coverage(subject: &Subject, arch: &ArchConfig) -> Coverage {
         audio_task: None,
         tags,
         notes,
-    }
+        recommended: Vec::new(),
+        sweeps: Vec::new(),
+    };
+    c.attach_profile();
+    c
 }
 
 /// Coverage for an audio install.
@@ -354,7 +394,7 @@ pub fn audio_coverage(subject: &Subject, cfg: &Value) -> Coverage {
         )),
     }
     let benches = bench_coverage(subject, &mut tags);
-    Coverage {
+    let mut c = Coverage {
         install: subject.dir.display().to_string(),
         kind: "audio",
         family: subject.family.clone(),
@@ -367,7 +407,11 @@ pub fn audio_coverage(subject: &Subject, cfg: &Value) -> Coverage {
         audio_task: kind.map(|k| k.task()),
         tags,
         notes,
-    }
+        recommended: Vec::new(),
+        sweeps: Vec::new(),
+    };
+    c.attach_profile();
+    c
 }
 
 fn bench_coverage(subject: &Subject, tags: &mut Vec<String>) -> BTreeMap<String, Value> {
@@ -426,9 +470,194 @@ pub fn capabilities_cmd(mut args: crate::args::Args) -> Result<crate::schema::Cm
         }
     }
     crate::say!("  tags: {}", c.tags.join(" "));
+    for r in &c.recommended {
+        crate::say!(
+            "  recommended {}: {}",
+            r["setting"].as_str().unwrap_or("?"),
+            r["why"].as_str().unwrap_or("")
+        );
+    }
+    if !c.sweeps.is_empty() {
+        crate::say!(
+            "  sweeps: {} (tslab sweep --sweep ID, or all)",
+            c.sweeps.join(" ")
+        );
+    }
     for n in &c.notes {
         crate::say!("  note: {n}");
     }
     let v = serde_json::to_value(&c).map_err(|e| e.to_string())?;
     Ok(crate::schema::CmdOutput::ok(v))
+}
+
+/// `tslab family (--model M | --family F) [--findings] [--sweeps] [--dir DIR]`:
+/// the family profile, filtered to the install when one is given.
+pub fn family_cmd(mut args: crate::args::Args) -> Result<crate::schema::CmdOutput, String> {
+    use crate::family_profile::ProfileSet;
+    let model = args.take("--model")?;
+    let family = args.take("--family")?;
+    let dir = args.take("--dir")?;
+    let want_findings = args.flag("--findings");
+    let want_sweeps = args.flag("--sweeps");
+    args.finish()?;
+    let set = ProfileSet::resolve(dir.as_deref())?;
+    let (family, tags, install) = match (&model, &family) {
+        (Some(m), None) => {
+            let subject = Subject::open(m)?;
+            let c = coverage(&subject);
+            let tags: std::collections::BTreeSet<String> = c.tags.iter().cloned().collect();
+            (c.family.clone(), Some(tags), Some(c.install.clone()))
+        }
+        (None, Some(f)) => (f.clone(), None, None),
+        (None, None) => {
+            // No argument: list the profiles.
+            for p in set.profiles() {
+                crate::say!(
+                    "{:<16} {:<5} {:>2} recommended {:>2} sweeps {:>3} findings  {}",
+                    p.family,
+                    p.kind,
+                    p.recommended.len(),
+                    p.sweeps.len(),
+                    p.findings.len(),
+                    p.title
+                );
+            }
+            let v: Vec<Value> = set
+                .profiles()
+                .iter()
+                .map(|p| {
+                    serde_json::json!({"family": p.family, "kind": p.kind, "title": p.title,
+                        "recommended": p.recommended.len(), "sweeps": p.sweeps.len(),
+                        "findings": p.findings.len()})
+                })
+                .collect();
+            return Ok(crate::schema::CmdOutput::ok(
+                serde_json::json!({"profiles": v}),
+            ));
+        }
+        (Some(_), Some(_)) => return Err("give --model or --family, not both".into()),
+    };
+    let Some(profile) = set.by_family(&family) else {
+        return Err(format!(
+            "no family profile for {family:?}; tslab family lists them"
+        ));
+    };
+    let (rec, sweeps) = match &tags {
+        Some(t) => profile.applicable(t),
+        None => (
+            profile.recommended.iter().collect(),
+            profile.sweeps.iter().collect(),
+        ),
+    };
+    crate::say!("{}: {}", profile.family, profile.title);
+    if let Some(i) = &install {
+        crate::say!("  install: {i}");
+    }
+    crate::say!(
+        "  flow {}, {} finding(s), {} open question(s)",
+        profile.flow,
+        profile.findings.len(),
+        profile.open_questions.len()
+    );
+    crate::say!(
+        "  recommended{}:",
+        if tags.is_some() {
+            " for this install"
+        } else {
+            ""
+        }
+    );
+    for r in &rec {
+        crate::say!("    {:<28} {}", r.as_arm_fragment(), r.why);
+    }
+    crate::say!(
+        "  sweeps{}:",
+        if tags.is_some() {
+            " for this install"
+        } else {
+            ""
+        }
+    );
+    for s in &sweeps {
+        crate::say!(
+            "    {:<16} {} vs {}  [{:?}, {:?}]  {}",
+            s.id,
+            s.baseline,
+            s.candidates.join(", "),
+            s.metric,
+            s.exactness,
+            s.description
+        );
+    }
+    if want_sweeps {
+        for s in &sweeps {
+            crate::say!(
+                "{}",
+                serde_json::to_string_pretty(s).map_err(|e| e.to_string())?
+            );
+        }
+    }
+    if want_findings {
+        crate::say!("  findings:");
+        for f in &profile.findings {
+            let same = install
+                .as_deref()
+                .is_some_and(|i| f.install.split(',').any(|n| i.contains(n.trim())));
+            crate::say!(
+                "    {} [{}{}] {} on {}: {} ({})",
+                f.id,
+                f.verdict,
+                if same { ", this install" } else { "" },
+                f.metric,
+                f.install,
+                serde_json::to_string(&f.values).unwrap_or_default(),
+                match f.provenance.kind.as_str() {
+                    "ledger" => format!(
+                        "ledger {}:{}",
+                        f.provenance.experiment.as_deref().unwrap_or("?"),
+                        f.provenance.record.as_deref().unwrap_or("?")
+                    ),
+                    "doc" => format!(
+                        "{} # {}",
+                        f.provenance.path.as_deref().unwrap_or("?"),
+                        f.provenance.heading.as_deref().unwrap_or("?")
+                    ),
+                    _ => f.provenance.source.clone().unwrap_or_default(),
+                }
+            );
+            crate::say!("      conditions: {}", f.conditions);
+        }
+    }
+    for q in &profile.open_questions {
+        crate::say!("  open: {q}");
+    }
+    for t in &profile.traps {
+        crate::say!("  trap: {t}");
+    }
+    let findings: Vec<Value> = profile
+        .findings
+        .iter()
+        .map(|f| {
+            let mut v = serde_json::to_value(f).unwrap_or(Value::Null);
+            if let (Some(i), Some(obj)) = (install.as_deref(), v.as_object_mut()) {
+                let same = f.install.split(',').any(|n| i.contains(n.trim()));
+                obj.insert("same_install".into(), Value::Bool(same));
+            }
+            v
+        })
+        .collect();
+    Ok(crate::schema::CmdOutput::ok(serde_json::json!({
+        "family": profile.family,
+        "kind": profile.kind,
+        "title": profile.title,
+        "flow": profile.flow,
+        "install": install,
+        "installs": profile.installs,
+        "recommended": rec,
+        "sweeps": sweeps,
+        "findings": findings,
+        "open_questions": profile.open_questions,
+        "traps": profile.traps,
+        "docs": profile.docs,
+    })))
 }

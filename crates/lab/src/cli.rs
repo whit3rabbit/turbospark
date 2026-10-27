@@ -24,6 +24,9 @@ tslab: the evaluator for kernel and method experiments (macOS).
   tslab ab      --model M [workload] --baseline NAME[:KEY=V,...] --candidate NAME[:KEY=V,...]
                 [--null] [--metric prefill_tok_s|decode_tok_s|prefill_s|peak_bytes|followup_ttft_s|audio_run_s|rtf]
                 [--min-effect 0.02] [--pairs 3] [--max-pairs 6] [--experiment NAME]
+  tslab sweep   --model M (--sweep ID|all [--dir DIR] | --sweep-file F | --baseline A --candidate B [--candidate C]...)
+                [workload] [--metric M] [--min-effect 0.02] [--pairs 3] [--max-pairs 6] [--fail-on-loss] [--experiment NAME]
+                (every candidate against the one baseline, each a paired A/B; profile sweeps from `tslab family`)
   tslab gate    --spec SPEC.json [--base REV]      (loads the model: takes minutes)
   tslab run-experiment --spec SPEC.json [--base REV]
   tslab confirm --spec SPEC.json [--base REV]
@@ -51,7 +54,9 @@ tslab: the evaluator for kernel and method experiments (macOS).
                 (Metal System Trace of the arm's measured work; never quotable)
   tslab workflow NAME|--plan PLAN.json [--model M] [--experiment E] [--var KEY=V]...
                 [--step ID] [--from ID] [--resume RUN] [--dry-run]   (--list, --print NAME)
-  tslab capabilities --model M                    (what tslab can measure on this install, and tags)
+  tslab capabilities --model M                    (what tslab can measure on this install, tags, what to set first)
+  tslab family  [--model M | --family F] [--findings] [--sweeps] [--dir DIR]
+                (the family profile: recommended settings, sweeps, findings with provenance, open questions)
   tslab inventory --model M                       (the install's weight shapes by dtype)
   tslab pinned  [--repo kapitsa|omlx|mlx-serve] [--class C] [--id ID] [--dir PATH]
                 (the verified kernel settings pinned from the compared engines)
@@ -60,6 +65,9 @@ tslab: the evaluator for kernel and method experiments (macOS).
                 [--out PATH [--force]]            (ledgers as tslab/1 series)
   tslab report  --experiment A[,B]|--all --html OUT.html [--title T] [--kind K] [--redact-paths] [--force]
   tslab schema                                     (the JSON Schema of everything tslab writes)
+  tslab serve   [--port 7878] [--bind 127.0.0.1] [--lab DIR] [--open]
+                (read-only dashboard over every ledger: experiments, compare, verdicts, sweeps,
+                 families, and a JSON API under /api; never takes the machine lock)
 
 workload: [--prompt protocol:ID|messages:PATH|text:PATH|corpus:N|chat:PATH]... [--decode N]
           [--chunk N|off] [--context N]
@@ -143,6 +151,9 @@ pub const COMMANDS: &[&str] = &[
     "report",
     "inventory",
     "capabilities",
+    "family",
+    "sweep",
+    "serve",
     "trace",
     "gate",
     "run-experiment",
@@ -171,6 +182,9 @@ pub fn dispatch(cmd: &str, args: Args) -> Result<CmdOutput, String> {
         "export" => crate::export::export_cmd(args),
         "inventory" => inventory_cmd(args),
         "capabilities" => crate::families::capabilities_cmd(args),
+        "family" => crate::families::family_cmd(args),
+        "sweep" => crate::sweep::sweep_cmd(args),
+        "serve" => crate::dash::serve_cmd(args),
         "trace" => crate::trace::trace_cmd(args),
         "workflow" => crate::workflow::workflow_cmd(args),
         "report" => crate::export::report_cmd(args),
@@ -262,7 +276,7 @@ fn common_env(args: &mut Args) -> Result<BTreeMap<String, String>, String> {
         .collect()
 }
 
-fn timeout_from(args: &mut Args) -> Result<Duration, String> {
+pub fn timeout_from(args: &mut Args) -> Result<Duration, String> {
     Ok(Duration::from_secs(
         60 * args.parsed("--timeout-min", 60u64)?,
     ))

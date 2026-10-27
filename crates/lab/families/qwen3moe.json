@@ -1,0 +1,47 @@
+{
+  "schema": "turbospark.lab.family/1",
+  "family": "qwen3moe",
+  "kind": "text",
+  "title": "Qwen3 fine-grained MoE on the llama flow (Qwen3-30B-A3B), per-head q/k norm",
+  "flow": "llama",
+  "installs": [
+    {"name": "qwen3-30b-a3b-q4_k_m", "quant": "GGUF Q4_K_M", "machine": "Apple M4 Max 36 GB", "drafters": [], "note": "no install on this host today"}
+  ],
+  "recommended": [
+    {"knob": "routed_batch", "value": "<unset>", "when": [],
+     "why": "the GGUF install refuses TURBOSPARK_ROUTED_BATCH=1 (no GGUF routed batch kernel); an INT4-affine repack could take it",
+     "findings": []},
+    {"slots": "16", "when": [],
+     "why": "the every-install row runs 16 slots",
+     "findings": ["qwen3moe.every-install-row-2026-10-11"]}
+  ],
+  "sweeps": [
+    {"id": "slots", "description": "expert cache slots at streamed residency",
+     "when": ["moe"], "metric": "decode_tok_s", "exactness": "bit_exact",
+     "workload": {"prompts": [{"protocol": "medium-review"}], "decode_tokens": 64},
+     "baseline": "s16@16/streamed", "candidates": ["s32@32/streamed", "s64@64/streamed"]},
+    {"id": "decode_attention", "description": "the GQA-shared decode kernel against barrier",
+     "when": [], "metric": "decode_tok_s", "exactness": "moe_kl",
+     "workload": {"prompts": [{"protocol": "medium-review"}], "decode_tokens": 64},
+     "baseline": "default", "candidates": ["gqa:attn_decode_kernel=gqa"]}
+  ],
+  "findings": [
+    {"id": "qwen3moe.every-install-row-2026-10-11", "date": "2026-10-11",
+     "install": "qwen3-30b-a3b-q4_k_m", "machine": "Apple M4 Max 36 GB", "power": "ac", "rev": "v0.5 era",
+     "workload": "the every-install table",
+     "arms": {"default": {}},
+     "metric": "decode_tok_s", "values": {"decode_tok_s": [16.0, 28.1], "peak_mib": [2741, 2753]},
+     "verdict": "reading",
+     "provenance": {"kind": "doc", "path": "docs/BENCHMARKS.md", "heading": "Every install, side by side"},
+     "conditions": "frozen rows; the llama.cpp cross-engine section compares the same GGUF",
+     "note": ""}
+  ],
+  "open_questions": [
+    "a routed batch kernel for the GGUF expert layout",
+    "no per-family A/B in the lab ledger yet"
+  ],
+  "traps": [
+    "GGUF experts: the int4_matmul bench synthesizes INT4-affine only, so the expert GEMVs are not timed; capabilities says so"
+  ],
+  "docs": ["docs/BENCHMARKS.md"]
+}

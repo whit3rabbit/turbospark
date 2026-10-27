@@ -1,15 +1,20 @@
 {
   "name": "audio-survey",
-  "description": "an audio install: coverage, hashed audio kernel benches, a profile of its job with stage times, and a null floor",
-  "vars": {"job": "{lab_src}/workloads/audio/music-short.json"},
+  "description": "an audio install: coverage, the family profile, hashed audio kernel benches, a profile of its job with stage times, and a null floor",
+  "vars": {"job": "{lab_src}/workloads/audio/music-short.json", "speak_job": "{lab_src}/workloads/audio/speak-short.json"},
   "steps": [
     {"id": "capabilities", "command": "capabilities", "args": {"model": "{model}"}},
+    {"id": "family", "command": "family", "args": {"model": "{model}"}},
     {"id": "kernels", "command": "kernel", "when": ["audio"], "continue_on_error": true,
      "args": {"model": "{model}", "experiment": "{experiment}", "bench": "all", "hash": true}},
-    {"id": "profile", "command": "profile", "when": ["audio", "runs"],
+    {"id": "profile", "command": "profile", "when": ["audio:music", "runs"],
      "args": {"model": "{model}", "experiment": "{experiment}", "audio-job": "{job}", "rounds": 3}},
-    {"id": "null", "command": "ab", "when": ["audio", "runs"], "continue_on_error": true,
+    {"id": "profile_speak", "command": "profile", "when": ["audio:speak", "runs"],
+     "args": {"model": "{model}", "experiment": "{experiment}", "audio-job": "{speak_job}", "rounds": 3}},
+    {"id": "null", "command": "ab", "when": ["audio:music", "runs"], "continue_on_error": true,
      "args": {"model": "{model}", "experiment": "{experiment}", "audio-job": "{job}", "null": true, "metric": "audio_run_s"}},
+    {"id": "null_speak", "command": "ab", "when": ["audio:speak", "runs"], "continue_on_error": true,
+     "args": {"model": "{model}", "experiment": "{experiment}", "audio-job": "{speak_job}", "null": true, "metric": "audio_run_s"}},
     {"id": "report", "command": "report",
      "args": {"experiment": "{experiment}", "html": "{lab}/{experiment}/report.html", "force": true}}
   ]

@@ -1,0 +1,160 @@
+{
+  "schema": "turbospark.lab.family/1",
+  "family": "gptOss",
+  "kind": "text",
+  "title": "gpt-oss MoE: attention sinks, YARN, clamped SwiGLU, 128-token sliding window, MXFP4 experts",
+  "flow": "gptoss",
+  "installs": [
+    {
+      "name": "gpt-oss-20b",
+      "quant": "MXFP4 experts, 11 GB",
+      "machine": "Apple M4 Max 36 GB",
+      "drafters": [],
+      "note": "no install on this host today"
+    }
+  ],
+  "recommended": [
+    {
+      "chunk": "128",
+      "when": [],
+      "why": "the chunked driver (Step 1, attention per token) cut a 75-token prefill from 7.56 to 3.79 s with md5-identical output",
+      "findings": [
+        "gptOss.chunked-prefill-2026-09-01"
+      ]
+    },
+    {
+      "knob": "routed_batch",
+      "value": "<unset>",
+      "when": [],
+      "why": "the MXFP4 routed batch arm is built and opt-in; it has no A/B in the lab ledger yet",
+      "findings": []
+    },
+    {
+      "slots": "16",
+      "when": [],
+      "why": "the every-install row runs 32 experts at 16 slots and 8,192 context",
+      "findings": [
+        "gptOss.every-install-row-2026-10-11"
+      ]
+    }
+  ],
+  "sweeps": [
+    {
+      "id": "routed_batch",
+      "description": "the MXFP4 routed batch arm against one GEMV per route",
+      "when": [
+        "moe"
+      ],
+      "metric": "prefill_tok_s",
+      "exactness": "moe_kl",
+      "workload": {
+        "prompts": [
+          {
+            "protocol": "long-synthesis"
+          }
+        ],
+        "decode_tokens": 16
+      },
+      "baseline": "gemv",
+      "candidates": [
+        "batched:routed_batch=1"
+      ]
+    },
+    {
+      "id": "decode_attention",
+      "description": "the GQA-shared kernel against barrier (sinks are served by the barrier path only unless the dispatcher says otherwise)",
+      "when": [
+        "sinks"
+      ],
+      "metric": "decode_tok_s",
+      "exactness": "dense_kl",
+      "workload": {
+        "prompts": [
+          {
+            "protocol": "medium-review"
+          }
+        ],
+        "decode_tokens": 64
+      },
+      "baseline": "default",
+      "candidates": [
+        "gqa:attn_decode_kernel=gqa"
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "id": "gptOss.chunked-prefill-2026-09-01",
+      "date": "2026-09-01",
+      "install": "gpt-oss-20b",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "v0.4 era",
+      "workload": "a 75-token prompt, sequential against the chunked driver",
+      "arms": {
+        "sequential": {
+          "chunk": "off"
+        },
+        "chunked": {}
+      },
+      "metric": "prefill_s",
+      "values": {
+        "sequential_s": 7.56,
+        "chunked_s": 3.79
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "doc",
+        "path": "docs/BATCHED_PREFILL.md",
+        "heading": "Which families, and in what order"
+      },
+      "conditions": "md5-identical output; a single reading",
+      "note": ""
+    },
+    {
+      "id": "gptOss.every-install-row-2026-10-11",
+      "date": "2026-10-11",
+      "install": "gpt-oss-20b",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "v0.5 era",
+      "workload": "the every-install table: short, medium, long protocol prompts, 16 slots, 8,192 context",
+      "arms": {
+        "default": {}
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "decode_tok_s": [
+          22.9,
+          30.4
+        ],
+        "peak_mib": [
+          5417,
+          5421
+        ],
+        "experts": 32
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "doc",
+        "path": "docs/BENCHMARKS.md",
+        "heading": "Every install, side by side"
+      },
+      "conditions": "frozen rows; the llama.cpp cross-engine section holds the same GGUF's comparison",
+      "note": ""
+    }
+  ],
+  "open_questions": [
+    "no INT4 bench: the MXFP4 and GGUF expert layouts are not synthesized, so kernel curves come only from the attention and generic shapes",
+    "the GQA-shared decode kernel has no qualification on this family",
+    "a dispatch audit of the sinks attention path (playbook item 4)"
+  ],
+  "traps": [
+    "the attention sinks keep the rows_attn bench off this family",
+    "the chunked driver keeps attention per token: a prefill profile shows the routed half, not a batched attention"
+  ],
+  "docs": [
+    "docs/BATCHED_PREFILL.md",
+    "docs/BENCHMARKS.md"
+  ]
+}

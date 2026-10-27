@@ -1,0 +1,79 @@
+{
+  "schema": "turbospark.lab.family/1",
+  "family": "gemma4",
+  "kind": "text",
+  "title": "Gemma 4: MoE with sliding and full attention layers of different head shapes, sandwich norms, softcap; also the dense Humanizer 12B",
+  "flow": "gemma4",
+  "installs": [
+    {"name": "gemma4-26b-a4b", "quant": "INT4 affine and IQ3 GGUF", "machine": "Apple M4 Max 36 GB", "drafters": [], "note": "the Swift parity rows"},
+    {"name": "humanizer-12b", "quant": "MLX INT8, dense", "machine": "Apple M4 Max 36 GB", "drafters": [], "note": "no install on this host today"}
+  ],
+  "recommended": [
+    {"knob": "shared_cb", "value": "<unset>", "when": ["moe"],
+     "why": "default on for the shared command buffer across the routed half; =0 is the kill switch for an A/B",
+     "findings": []},
+    {"knob": "routed_batch", "value": "<unset>", "when": ["moe"],
+     "why": "the batched routed kernel (steps 2 and 3) serves INT4-affine experts only and is opt-in; the IQ3 GGUF install cannot take it",
+     "findings": []},
+    {"slots": "16", "when": ["moe"],
+     "why": "the parity rows and the every-install row run 16 slots; mapped residency is served only on this family",
+     "findings": ["gemma4.decode-parity-2026-10-11"]}
+  ],
+  "sweeps": [
+    {"id": "routed_batch", "description": "the batched routed kernel against one GEMV per route (INT4 affine installs only)",
+     "when": ["moe"], "metric": "prefill_tok_s", "exactness": "moe_kl",
+     "workload": {"prompts": [{"protocol": "long-synthesis"}], "decode_tokens": 16},
+     "baseline": "gemv", "candidates": ["batched:routed_batch=1"]},
+    {"id": "residency", "description": "mapped against streamed expert residency, the one family that serves both",
+     "when": ["moe"], "metric": "decode_tok_s", "exactness": "bit_exact",
+     "workload": {"prompts": [{"protocol": "medium-review"}], "decode_tokens": 64},
+     "baseline": "streamed@16/streamed", "candidates": ["mapped@16/mapped"],
+     "note": "mapped residency is refused with the batched routed verify; compare peak_bytes too"},
+    {"id": "shared_cb", "description": "the shared command buffer against one per routed step",
+     "when": ["moe"], "metric": "decode_tok_s", "exactness": "bit_exact",
+     "workload": {"prompts": [{"protocol": "medium-review"}], "decode_tokens": 64},
+     "baseline": "shared", "candidates": ["split:shared_cb=0"]}
+  ],
+  "findings": [
+    {"id": "gemma4.decode-parity-2026-10-11", "date": "2026-10-11",
+     "install": "gemma4-26b-a4b INT4", "machine": "Apple M4 Max 36 GB", "power": "ac", "rev": "v0.5 era",
+     "workload": "short, medium, long protocol prompts against the Swift reference (../Mference), 16 slots",
+     "arms": {"rust": {}, "swift": {"note": "the upstream Swift engine"}},
+     "metric": "decode_tok_s",
+     "values": {"rust_tok_s": [40.76, 38.42, 34.56], "footprint_mib": {"rust": [2108, 2182], "swift": [2217, 2235]}, "sampler_fix": {"before": 25.5, "after": 39.6},
+                "prefill_ms_per_token": {"rust_sequential": 21.4, "swift": 7.5, "swift_fixed_s": 5.1, "crossover_tokens": 350}},
+     "verdict": "reading",
+     "provenance": {"kind": "doc", "path": "docs/BENCHMARKS.md", "heading": "Decode throughput"},
+     "conditions": "decode parity within 1% of Swift; the rank_top_k sampler fix is what closed the earlier gap",
+     "note": "prefill is sequential on this family: the Swift engine wins past about 350 tokens"},
+    {"id": "gemma4.every-install-row-2026-10-11", "date": "2026-10-11",
+     "install": "gemma4-26b-a4b INT4 and IQ3", "machine": "Apple M4 Max 36 GB", "power": "ac", "rev": "v0.5 era",
+     "workload": "the every-install table",
+     "arms": {"int4": {}, "iq3": {}},
+     "metric": "decode_tok_s", "values": {"int4_tok_s": [34.6, 40.7], "iq3_tok_s": [22.9, 25.4]},
+     "verdict": "reading",
+     "provenance": {"kind": "doc", "path": "docs/BENCHMARKS.md", "heading": "Every install, side by side"},
+     "conditions": "frozen rows",
+     "note": ""},
+    {"id": "gemma4.humanizer-12b-2026-10-09", "date": "2026-10-09",
+     "install": "humanizer-12b MLX INT8 (dense)", "machine": "Apple M4 Max 36 GB", "power": "ac", "rev": "v0.5 era",
+     "workload": "first rows: decode on a quiet host, footprint, rewrite perplexity",
+     "arms": {"default": {}},
+     "metric": "decode_tok_s", "values": {"decode_tok_s": [12.5, 13.4], "peak_mib": [773, 924], "rewrite_perplexity": 1.9198},
+     "verdict": "reading",
+     "provenance": {"kind": "doc", "path": "docs/BENCHMARKS.md", "heading": "Humanizer 12B (dense Gemma 4, MLX INT8), first rows"},
+     "conditions": "INT8 matrices: the int8_matmul bench applies, int4_matmul refuses",
+     "note": "a dense install of a MoE family: kl_class_for decides by architecture, so declare dense_kl here"}
+  ],
+  "open_questions": [
+    "a Steel or batched prefill arm (the playbook names this family next)",
+    "the GQA-shared decode kernel needs kGqaMaxPerLane 16 for the 512-wide heads",
+    "the IQ3 GGUF install's routed batch (steps 2 and 3 are INT4-affine only)"
+  ],
+  "traps": [
+    "sliding and full attention layers have different head shapes: the attn_decode bench emits one case per shape, read both",
+    "mapped residency is refused together with the batched routed verify",
+    "the dense Humanizer install owes dense_kl, not moe_kl: the gate refuses the looser class"
+  ],
+  "docs": ["docs/BENCHMARKS.md", "docs/BATCHED_PREFILL.md", "docs/SPEEDUP_PLAYBOOK.md"]
+}

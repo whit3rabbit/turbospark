@@ -1,0 +1,23 @@
+{
+  "schema": "turbospark.lab.family/1",
+  "family": "spark2_5",
+  "kind": "text",
+  "title": "Spark 2.5: dense, three sliding (512) to one full layer, fused q|k|v projection, headwise scalar gate, exact-erf GELU",
+  "flow": "spark",
+  "installs": [],
+  "recommended": [
+    {"chunk": "off", "when": [],
+     "why": "the spark flow prefills token by token; --chunk off is the only driver and the profile step of new-family uses it",
+     "findings": []}
+  ],
+  "sweeps": [
+    {"id": "decode_attention", "description": "the GQA-shared decode kernel against barrier on the full layers",
+     "when": ["dense"], "metric": "decode_tok_s", "exactness": "dense_kl",
+     "workload": {"prompts": [{"protocol": "medium-review"}], "decode_tokens": 64, "prefill_chunk": null},
+     "baseline": "default", "candidates": ["gqa:attn_decode_kernel=gqa"]}
+  ],
+  "findings": [],
+  "open_questions": ["no install measured by the lab yet", "a chunked prefill driver (SPARK_PHASE0.md)"],
+  "traps": ["the fused q|k|v projection is one resident-index tensor: the int4_matmul bench sees one wide shape, not three"],
+  "docs": ["docs/SPARK_PHASE0.md"]
+}
