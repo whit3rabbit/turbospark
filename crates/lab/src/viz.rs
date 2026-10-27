@@ -373,6 +373,16 @@ pub(crate) fn bar_chart(series: &[&Series]) -> String {
         .flat_map(|s| s.points.iter().map(|p| p.y))
         .collect();
     let sx = Scale::new(&ys, false, label_w, W - PAD_R - 48.0, true);
+    // An improvement axis reads as a signed percent, the way the forest and
+    // the verdict board print it, not as a fraction in scientific notation.
+    let pct = shown[0].y.unit == "fraction";
+    let fmt_y = |v: f64| {
+        if pct {
+            format!("{:+.2}%", v * 100.0)
+        } else {
+            fmt_num(v)
+        }
+    };
     let mut svg = format!(
         "<svg viewBox=\"0 0 {W} {h:.0}\" role=\"img\" aria-label=\"{}\">",
         esc(&shown[0].y.name)
@@ -385,7 +395,7 @@ pub(crate) fn bar_chart(series: &[&Series]) -> String {
             "<line class=\"grid\" x1=\"{x:.1}\" x2=\"{x:.1}\" y1=\"{PAD_T}\" y2=\"{:.1}\"/><text x=\"{x:.1}\" y=\"{:.1}\" text-anchor=\"middle\">{}</text>",
             h - 24.0,
             h - 10.0,
-            fmt_num(t)
+            if pct { format!("{:+.0}%", t * 100.0) } else { fmt_num(t) }
         );
     }
     for (ci, cat) in cats.iter().enumerate() {
@@ -421,7 +431,7 @@ pub(crate) fn bar_chart(series: &[&Series]) -> String {
                 if p.dirty { 1.5 } else { 0.0 },
                 esc(&s.label),
                 esc(cat),
-                fmt_num(p.y),
+                fmt_y(p.y),
                 if p.dirty { " (dirty run)" } else { "" }
             );
             // Direct value label: the table has every number, the bar end
@@ -431,7 +441,7 @@ pub(crate) fn bar_chart(series: &[&Series]) -> String {
                 "<text x=\"{:.1}\" y=\"{:.1}\">{}</text></g>",
                 x + w.max(1.0) + 4.0,
                 y + bar - 2.0,
-                fmt_num(p.y)
+                fmt_y(p.y)
             );
         }
     }

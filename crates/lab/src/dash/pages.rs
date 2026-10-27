@@ -96,6 +96,8 @@ button.primary:disabled { opacity: 0.45; box-shadow: none; cursor: default; }
 .panel .scroll { padding: 0 18px; }
 .panel table { min-width: 1080px; }
 .panel td a { white-space: nowrap; }
+.nw, td.m:first-child { white-space: nowrap; }
+.reasons { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 18px; margin: 12px 0; }
 table { font-size: 13px; }
 th { font-size: 11px; line-height: 14px; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-secondary); padding: 10px 10px 8px 0; white-space: nowrap; }
@@ -537,10 +539,10 @@ pub fn experiments_page(ix: &LabIndex, p: &Params) -> String {
         let _ = write!(
             body,
             "<tr{}><td class=\"cb\"><input type=\"checkbox\" name=\"exp\" value=\"{n}\" aria-label=\"Select {n} for compare\"></td>\
-             <td><a href=\"/experiment/{n}\">{n}</a>{}<div class=\"sub\"><span class=\"badge\" style=\"margin:0 6px 0 0\">{}</span><span class=\"m\">{} &middot; {}</span></div></td>\
+             <td><a href=\"/experiment/{n}\">{n}</a>{}<div class=\"sub nw\"><span class=\"badge\" style=\"margin:0 6px 0 0\">{}</span><span class=\"m\">{} &middot; {}</span></div></td>\
              <td class=\"m\" title=\"{}\">{}</td><td class=\"m\">{}</td>\
              <td><div class=\"mini\" role=\"img\" aria-label=\"{} clean runs, {} dirty\"><i style=\"width:{:.0}%;background:var(--good)\"></i><i style=\"width:{:.0}%;background:var(--warn);opacity:0.6\"></i></div><span class=\"m sub\"><span class=\"good\">{}</span> / {}</span></td>\
-             <td class=\"num\">{}</td><td class=\"num\">{}</td><td class=\"num\">{}</td><td>{}</td><td class=\"sub\">{}</td></tr>",
+             <td class=\"num\">{}</td><td class=\"num\">{}</td><td class=\"num\">{}</td><td class=\"nw\">{}</td><td class=\"sub\">{}</td></tr>",
             if s.runs_clean == 0 && s.runs_dirty > 0 { " class=\"dirty\"" } else { "" },
             if s.broken.is_some() { " <span class=\"badge\">broken ledger</span>" } else { "" },
             list(&s.families),
@@ -709,7 +711,7 @@ pub fn verdict_table(
     for v in rows {
         let _ = write!(
             t,
-            "<tr{}><td class=\"m\">{}</td>{}<td class=\"m\">{} vs {}{}</td><td class=\"m\">{}</td><td>{}{}</td><td class=\"num\">{}</td><td class=\"m\">{} to {}</td><td class=\"num\">{}</td><td class=\"num\">{}</td><td class=\"m\">{}</td><td>{}</td><td>{}</td><td class=\"m\">{}</td><td>{}</td><td><a href=\"/record/{}/{}\">record</a></td></tr>",
+            "<tr{}><td class=\"m\">{}</td>{}<td class=\"m\">{} vs {}{}</td><td class=\"m\">{}</td><td>{}{}</td><td class=\"num\">{}</td><td class=\"m nw\">{} to {}</td><td class=\"num\">{}</td><td class=\"num\">{}</td><td class=\"m\">{}</td><td>{}</td><td>{}</td><td class=\"m\">{}</td><td>{}</td><td><a href=\"/record/{}/{}\">record</a></td></tr>",
             if !v.eligible { " class=\"dirty\"" } else { "" },
             fmt_ts(v.ts_ms),
             if with_experiment {
@@ -844,7 +846,7 @@ fn run_table(records: &[Value]) -> String {
         let eligible = r["eligible"].as_bool().unwrap_or(false);
         let _ = write!(
             t,
-            "<tr{}><td>{}</td><td>{}{}</td><td class=\"num\">{}</td><td>{}</td><td>{}</td><td class=\"num\">{}</td><td class=\"num\">{}</td><td class=\"num\">{}</td><td class=\"sub\">{}</td><td><a href=\"/record/{}/{}\">record</a></td></tr>",
+            "<tr{}><td class=\"m nw\">{}</td><td>{}{}</td><td class=\"num\">{}</td><td>{}</td><td>{}</td><td class=\"num\">{}</td><td class=\"num\">{}</td><td class=\"num\">{}</td><td class=\"sub reasons\" title=\"{}\">{}</td><td><a href=\"/record/{}/{}\">record</a></td></tr>",
             if eligible { "" } else { " class=\"dirty\"" },
             r["ts_ms"].as_u64().map(fmt_ts).unwrap_or_default(),
             esc(r["arm"].as_str().unwrap_or("?")),
@@ -855,6 +857,7 @@ fn run_table(records: &[Value]) -> String {
             num(r["totals"]["prefill_tok_s"].as_f64(), 1),
             num(r["totals"]["decode_tok_s"].as_f64(), 2),
             num(r["peak_footprint_bytes"].as_f64().map(|b| b / 1048576.0), 0),
+            esc(&reasons),
             esc(&reasons),
             esc(r["experiment"].as_str().unwrap_or("")),
             esc(r["id"].as_str().unwrap_or(""))
