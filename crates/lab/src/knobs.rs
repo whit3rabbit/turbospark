@@ -186,13 +186,13 @@ pub const KNOBS: &[Knob] = &[
         // sequential decode.
         name: "dflash_tree",
         env: "TURBOSPARK_DFLASH_TREE",
-        values: &["<unset>", "1"],
+        values: &["<unset>", "0"],
         read_at: ReadAt::ProcessCached,
         exactness: Exactness::BitExact,
         families: &["qwen35"],
         quotable: true,
         doc: "docs/KAPITSA_KERNELS.md",
-        engagement: &[on("1", "dflash_tree")],
+        engagement: &[off("0", "dflash_tree")],
     },
     Knob {
         // `1` runs decode and verify on the 8-row tile (bit-exact against
