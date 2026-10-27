@@ -88,12 +88,14 @@ fn no_fetch(html: &str) {
         "{}",
         &html[..40.min(html.len())]
     );
+    // The one script is inline and loads nothing: a saved page still reads
+    // the same as a live one, with or without it.
     assert!(
-        !html.contains("<script"),
-        "a dashboard page carries no script"
+        !html.contains("<script src") && !html.contains("<link"),
+        "a dashboard page loads no script or stylesheet"
     );
     assert!(
-        !html.contains("http://") && !html.contains("https://"),
+        !html.contains("http://") && !html.contains("https://") && !html.contains("fetch("),
         "nothing fetched from anywhere"
     );
 }
