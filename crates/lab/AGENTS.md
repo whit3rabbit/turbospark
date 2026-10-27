@@ -41,7 +41,10 @@ loop's `run-experiment`. Text and audio installs of every family.
   ledger and keeps it by `(mtime, len)`; `pages.rs` renders the experiment
   table, per-experiment, compare, verdict, sweep, family and record pages
   from the viz cards; `api.rs` the JSON routes). It never takes the machine
-  lock and writes nothing.
+  lock and writes nothing. A loopback bind answers only loopback Host
+  headers and every response is `nosniff` plus a `default-src 'none'` CSP;
+  ledger-sourced strings are escaped or validated before they reach a page
+  or a path, and the tests hold all four guards.
 - `src/sweep.rs`: `tslab sweep`, several candidates against one baseline in
   one interleaved session, each judged by `orchestrate::run_sweep` under the
   same pair rule as `run_ab`; one `verdict` record per candidate and one
