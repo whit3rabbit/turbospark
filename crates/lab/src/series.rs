@@ -408,6 +408,57 @@ fn verdict_series(c: &Ctx, out: &mut Vec<Series>) {
     out.push(s);
 }
 
+/// A sweep: one bar per candidate, the median improvement over the shared
+/// baseline with its CI, the effect floor as a reference line.
+fn sweep_series(c: &Ctx, out: &mut Vec<Series>) {
+    let rec = c.rec;
+    let Some(cands) = rec["candidates"].as_array() else {
+        return;
+    };
+    let metric = rec["metric"].as_str().unwrap_or("primary metric");
+    let label = format!(
+        "{} vs {}",
+        rec["sweep_id"].as_str().unwrap_or("sweep"),
+        rec["baseline"]["name"].as_str().unwrap_or("?")
+    );
+    let mut s = c.series(
+        "sweep",
+        "sweeps",
+        &label,
+        axis("candidate", "", "category"),
+        axis(&format!("improvement in {metric}"), "fraction", "linear"),
+    );
+    for cand in cands {
+        let Some(name) = cand["arm"].as_str() else {
+            continue;
+        };
+        let v = &cand["verdict"];
+        let Some(median) = v["median"].as_f64().filter(|m| m.is_finite()) else {
+            // An inconclusive candidate has no median: it stays in the table
+            // as a point at zero, marked dirty, rather than vanishing.
+            let mut p = SPoint::cat(name, 0.0);
+            p.dirty = true;
+            s.points.push(p);
+            continue;
+        };
+        let mut p = SPoint::cat(name, median);
+        p.lo = v["ci_low"].as_f64();
+        p.hi = v["ci_high"].as_f64();
+        p.n = v["pairs"].as_u64();
+        p.dirty = v["verdict"].as_str() == Some("inconclusive");
+        s.points.push(p);
+    }
+    if let Some(f) = rec["floor"].as_f64() {
+        s.refs.insert("min_effect".into(), json!(f));
+    }
+    if let Some(b) = rec["best"]["arm"].as_str() {
+        s.subject.insert("best".into(), json!(b));
+    }
+    if !s.points.is_empty() {
+        out.push(s);
+    }
+}
+
 fn dispatch_probe_series(c: &Ctx, out: &mut Vec<Series>) {
     let mut s = c.series(
         "dispatch_probe",
@@ -573,6 +624,7 @@ pub fn from_record(rec: &Value, experiment: &str, paths: Paths) -> Vec<Series> {
             audio_series(&c, &mut out);
         }
         "verdict" | "experiment" | "confirm" | "null_calibration" => verdict_series(&c, &mut out),
+        "sweep" => sweep_series(&c, &mut out),
         "dispatch_probe" => dispatch_probe_series(&c, &mut out),
         "round_cost" => round_cost_series(&c, &mut out),
         "calibration" => calibration_series(&c, &mut out),

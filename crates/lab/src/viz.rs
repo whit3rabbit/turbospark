@@ -552,9 +552,8 @@ fn forest(series: &[&Series]) -> String {
 fn chart_kind(kind: &str) -> &'static str {
     match kind {
         "verdict" => "forest",
-        "profile_buckets" | "profile_totals" | "audio_stages" | "trace_shares" | "standin" => {
-            "bars"
-        }
+        "profile_buckets" | "profile_totals" | "audio_stages" | "trace_shares" | "standin"
+        | "sweep" => "bars",
         _ => "line",
     }
 }

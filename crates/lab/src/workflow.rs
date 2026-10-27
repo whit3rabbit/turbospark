@@ -41,6 +41,10 @@ pub const BUILTIN: &[(&str, &str)] = &[
     ),
     ("spec-depth", include_str!("../workflows/spec-depth.json")),
     (
+        "family-sweep",
+        include_str!("../workflows/family-sweep.json"),
+    ),
+    (
         "audio-survey",
         include_str!("../workflows/audio-survey.json"),
     ),

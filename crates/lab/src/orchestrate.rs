@@ -425,6 +425,80 @@ pub fn dirty_causes(pairs: &[(Outcome, Outcome)]) -> Vec<(String, usize)> {
     v
 }
 
+/// One pair: the two arms back to back in an order that alternates by
+/// round, so slow drift cancels within the pair. Returns the outcomes in
+/// (baseline, candidate) order and the pair's improvement when it is clean:
+/// both runs eligible and every prompt in the same page-cache class.
+fn run_pair(
+    session: &Session,
+    baseline: &Arm,
+    candidate: &Arm,
+    workload: &Workload,
+    metric: Metric,
+    round: usize,
+) -> Result<((Outcome, Outcome), Option<f64>), String> {
+    let (first, second) = if round % 2 == 1 {
+        (baseline, candidate)
+    } else {
+        (candidate, baseline)
+    };
+    let o1 = session.run_once(first, workload, Mode::Timing, round, false)?;
+    let o2 = session.run_once(second, workload, Mode::Timing, round, false)?;
+    let (a, b) = if round % 2 == 1 { (o1, o2) } else { (o2, o1) };
+    let same_cache = a.cache_classes() == b.cache_classes();
+    let mut clean = None;
+    if a.eligible && b.eligible && same_cache {
+        if let (Some(va), Some(vb)) = (a.metric(metric), b.metric(metric)) {
+            clean = stats::improvement(va, vb, metric.direction());
+        }
+    } else if !same_cache {
+        eprintln!("  round {round}: page-cache class differs between arms; pair excluded");
+    }
+    Ok(((a, b), clean))
+}
+
+/// Wait for a quiet host before a pair, or say why the run stops.
+fn quiet_or_stop(session: &Session, deadline: Option<Instant>, round: usize) -> Option<String> {
+    if session.rules.quiet_wait_s <= 0.0 {
+        return None;
+    }
+    let quiet = crate::host::wait_until_quiet(&session.rules, deadline);
+    if !quiet.quiet {
+        let why = format!(
+            "the host did not go quiet within {:.0}s ({} checks) before pair {round}: {}",
+            quiet.waited_s,
+            quiet.checks,
+            quiet.reasons.join("; ")
+        );
+        eprintln!("  {why}");
+        return Some(why);
+    }
+    if quiet.checks > 1 {
+        eprintln!(
+            "  host went quiet after {:.0}s ({} checks); starting pair {round}",
+            quiet.waited_s, quiet.checks
+        );
+    }
+    None
+}
+
+fn print_dirty_causes(pairs: &[(Outcome, Outcome)]) {
+    let causes = dirty_causes(pairs);
+    if !causes.is_empty() {
+        let dirty_runs: usize = pairs
+            .iter()
+            .map(|(a, b)| usize::from(!a.eligible) + usize::from(!b.eligible))
+            .sum();
+        eprintln!(
+            "  {dirty_runs} of {} runs were dirty. Causes, by runs affected:",
+            pairs.len() * 2
+        );
+        for (reason, n) in causes.iter().take(6) {
+            eprintln!("    {n:>3}  {reason}");
+        }
+    }
+}
+
 /// A paired A/B: `min_pairs` clean pairs, extended up to `max_pairs` only to
 /// replace dirty ones (never to chase significance, which would inflate the
 /// false-win rate). A pair is clean when both runs are eligible and every
@@ -466,66 +540,125 @@ pub fn run_ab(
             eprintln!("  time budget spent after {} pairs", pairs.len());
             break;
         }
-        if session.rules.quiet_wait_s > 0.0 {
-            let quiet = crate::host::wait_until_quiet(&session.rules, deadline);
-            if !quiet.quiet {
-                let why = format!(
-                    "the host did not go quiet within {:.0}s ({} checks) before pair {round}: {}",
-                    quiet.waited_s,
-                    quiet.checks,
-                    quiet.reasons.join("; ")
-                );
-                eprintln!("  {why}");
-                stopped = Some(why);
-                break;
-            }
-            if quiet.checks > 1 {
-                eprintln!(
-                    "  host went quiet after {:.0}s ({} checks); starting pair {round}",
-                    quiet.waited_s, quiet.checks
-                );
-            }
+        if let Some(why) = quiet_or_stop(session, deadline, round) {
+            stopped = Some(why);
+            break;
         }
-        let (first, second) = if round % 2 == 1 {
-            (baseline, candidate)
-        } else {
-            (candidate, baseline)
-        };
-        let o1 = session.run_once(first, workload, Mode::Timing, round, false)?;
-        let o2 = session.run_once(second, workload, Mode::Timing, round, false)?;
-        let (a, b) = if round % 2 == 1 { (o1, o2) } else { (o2, o1) };
-        let same_cache = a.cache_classes() == b.cache_classes();
-        if a.eligible && b.eligible && same_cache {
-            if let (Some(va), Some(vb)) = (a.metric(metric), b.metric(metric)) {
-                if let Some(imp) = stats::improvement(va, vb, metric.direction()) {
-                    clean.push(imp);
-                }
-            }
-        } else if !same_cache {
-            eprintln!("  round {round}: page-cache class differs between arms; pair excluded");
+        let (pair, imp) = run_pair(session, baseline, candidate, workload, metric, round)?;
+        if let Some(imp) = imp {
+            clean.push(imp);
         }
-        pairs.push((a, b));
+        pairs.push(pair);
         round += 1;
     }
-    let causes = dirty_causes(&pairs);
-    if !causes.is_empty() {
-        let dirty_runs: usize = pairs
-            .iter()
-            .map(|(a, b)| usize::from(!a.eligible) + usize::from(!b.eligible))
-            .sum();
-        eprintln!(
-            "  {dirty_runs} of {} runs were dirty. Causes, by runs affected:",
-            pairs.len() * 2
-        );
-        for (reason, n) in causes.iter().take(6) {
-            eprintln!("    {n:>3}  {reason}");
-        }
-    }
+    print_dirty_causes(&pairs);
     Ok(AbRun {
         verdict: stats::decide(&clean, min_effect),
         pairs,
         stopped,
     })
+}
+
+/// One candidate's share of a sweep.
+pub struct SweepArm {
+    pub candidate: Arm,
+    pub verdict: VerdictReport,
+    pub pairs: Vec<(Outcome, Outcome)>,
+    /// Why the candidate was dropped before it had a pair (a refusal).
+    pub refused: Option<String>,
+}
+
+/// What a sweep produced: every candidate judged against the one baseline.
+pub struct SweepRun {
+    pub arms: Vec<SweepArm>,
+    pub stopped: Option<String>,
+}
+
+/// Several candidates against one baseline, each through the same pair
+/// discipline as [`run_ab`]: the baseline is re-run next to every candidate
+/// so no pair shares a run, and `stats::decide` judges each candidate's own
+/// clean pairs under the same floor. Candidates are interleaved within a
+/// round in a rotated order, so thermal drift falls on all of them alike.
+/// A refused candidate is recorded and dropped; the others continue.
+#[allow(clippy::too_many_arguments)]
+pub fn run_sweep(
+    session: &Session,
+    baseline: &Arm,
+    candidates: &[Arm],
+    workload: &Workload,
+    metric: Metric,
+    min_effect: f64,
+    min_pairs: usize,
+    max_pairs: usize,
+    deadline: Option<Instant>,
+) -> Result<SweepRun, String> {
+    let o = session.run_once(baseline, workload, Mode::Timing, 0, true)?;
+    if o.status == "refused" {
+        return Err(format!(
+            "baseline {} refused: {}",
+            baseline.name,
+            o.record["refusal"].as_str().unwrap_or("(no reason)")
+        ));
+    }
+    let mut arms: Vec<SweepArm> = Vec::with_capacity(candidates.len());
+    let mut clean: Vec<Vec<f64>> = vec![Vec::new(); candidates.len()];
+    for c in candidates {
+        let o = session.run_once(c, workload, Mode::Timing, 0, true)?;
+        let refused = (o.status == "refused").then(|| {
+            let why = o.record["refusal"]
+                .as_str()
+                .unwrap_or("(no reason)")
+                .to_string();
+            eprintln!("  {} refused: {why}", c.name);
+            why
+        });
+        arms.push(SweepArm {
+            candidate: c.clone(),
+            verdict: stats::decide(&[], min_effect),
+            pairs: Vec::new(),
+            refused,
+        });
+    }
+    let needs_more = |i: usize, arms: &[SweepArm], clean: &[Vec<f64>]| {
+        arms[i].refused.is_none() && clean[i].len() < min_pairs && arms[i].pairs.len() < max_pairs
+    };
+    let mut stopped = None;
+    let mut round = 1;
+    loop {
+        let active: Vec<usize> = (0..candidates.len())
+            .filter(|&i| needs_more(i, &arms, &clean))
+            .collect();
+        if active.is_empty() {
+            break;
+        }
+        if deadline.is_some_and(|d| Instant::now() >= d) {
+            eprintln!("  time budget spent after round {}", round - 1);
+            break;
+        }
+        if let Some(why) = quiet_or_stop(session, deadline, round) {
+            stopped = Some(why);
+            break;
+        }
+        // Rotate which candidate goes first each round.
+        let n = active.len();
+        let order: Vec<usize> = (0..n).map(|k| active[(k + round - 1) % n]).collect();
+        for i in order {
+            let (pair, imp) = run_pair(session, baseline, &candidates[i], workload, metric, round)?;
+            if let Some(imp) = imp {
+                clean[i].push(imp);
+            }
+            arms[i].pairs.push(pair);
+        }
+        round += 1;
+    }
+    for (i, arm) in arms.iter_mut().enumerate() {
+        arm.verdict = stats::decide(&clean[i], min_effect);
+        if !arm.pairs.is_empty() {
+            eprintln!("  {}:", arm.candidate.name);
+            print_dirty_causes(&arm.pairs);
+        }
+    }
+    Ok(SweepRun { arms, stopped })
 }
 
 #[cfg(test)]
