@@ -11,7 +11,7 @@ use std::fmt::Write as _;
 
 use serde_json::Value;
 
-use super::index::{fmt_ts, LabIndex, ProfileRow, SweepRow, VerdictRow};
+use super::index::{fmt_ts, tz_label, LabIndex, ProfileRow, SweepRow, VerdictRow};
 use crate::series::Series;
 use crate::viz::{self, esc};
 
@@ -292,8 +292,10 @@ fn nav(active: &str) -> String {
             }
         );
     }
-    out.push_str(
-        "</nav><div class=\"status\"><span class=\"pill\"><span class=\"live\"></span>read-only, lock not taken</span></div></header>",
+    let _ = write!(
+        out,
+        "</nav><div class=\"status\"><span class=\"pill\"><span class=\"live\"></span>read-only, lock not taken</span><span>times {}</span></div></header>",
+        esc(&tz_label())
     );
     out
 }
