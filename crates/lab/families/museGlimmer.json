@@ -1,0 +1,39 @@
+{
+  "schema": "turbospark.lab.family/1",
+  "family": "museGlimmer",
+  "kind": "text",
+  "title": "Muse-Glimmer-30B: dense GQA, three sliding to one full layer, centered norms, NoPE on full layers, softcap 20",
+  "flow": "museglimmer",
+  "installs": [
+    {"name": "muse-glimmer-30b", "quant": "MLX INT4", "machine": "Apple M4 Max 36 GB", "drafters": [], "note": "no install on this host today; 8,192 context with a 2,048 budget"}
+  ],
+  "recommended": [
+    {"chunk": "128", "when": [],
+     "why": "the family's chunked driver; the only measured rows are plain decode and power",
+     "findings": ["museGlimmer.seventh-family-rows-2026-08-15"]}
+  ],
+  "sweeps": [
+    {"id": "batched_gemv", "description": "the batched prefill arm against the per-token loop",
+     "when": ["dense"], "metric": "prefill_tok_s", "exactness": "dense_kl",
+     "workload": {"prompts": [{"protocol": "long-synthesis"}], "decode_tokens": 16},
+     "baseline": "batched", "candidates": ["per_token:batched_gemv=0"]},
+    {"id": "decode_attention", "description": "the GQA-shared decode kernel against barrier on the full layers",
+     "when": ["dense"], "metric": "decode_tok_s", "exactness": "dense_kl",
+     "workload": {"prompts": [{"protocol": "medium-review"}], "decode_tokens": 64},
+     "baseline": "default", "candidates": ["gqa:attn_decode_kernel=gqa"]}
+  ],
+  "findings": [
+    {"id": "museGlimmer.seventh-family-rows-2026-08-15", "date": "2026-08-15",
+     "install": "muse-glimmer-30b MLX INT4", "machine": "Apple M4 Max 36 GB", "power": "ac", "rev": "v0.4 era",
+     "workload": "the seventh family's rows: short, medium, long protocol prompts; perplexity; power",
+     "arms": {"default": {}},
+     "metric": "decode_tok_s", "values": {"decode_tok_s": [13.291, 15.341, 14.483], "peak_mib": 535, "perplexity": 6.2826, "watts": [37.69, 38.24], "j_per_token": [2.01, 2.04], "governor_energy_saving": 0.26, "governor_throughput_cost": 0.013},
+     "verdict": "reading",
+     "provenance": {"kind": "doc", "path": "docs/BENCHMARKS.md", "heading": "The seventh family: `Muse-Glimmer-30B` (MLX INT4)"},
+     "conditions": "the highest J/token in POWER_BASELINE; the thermal governor saves 26% energy for 1.3% throughput",
+     "note": "tslab has no energy meter: use scripts/power.sh"}
+  ],
+  "open_questions": ["no lab A/B yet", "the 2,048 budget against the 8,192 window under a chat workload"],
+  "traps": ["softcap 20 on the logits: a sampling change moves the distribution probe; declare dense_kl"],
+  "docs": ["docs/BENCHMARKS.md", "docs/POWER_BASELINE.md"]
+}

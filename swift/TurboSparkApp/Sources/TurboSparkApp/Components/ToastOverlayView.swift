@@ -31,7 +31,7 @@ public struct ToastOverlayView: View {
                     .task(id: toast.id) {
                         try? await Task.sleep(for: .seconds(toast.duration))
                         guard !Task.isCancelled, model.activeToast?.id == toast.id else { return }
-                        withAnimation(reduceMotion ? .none : .easeOut(duration: 0.2)) {
+                        TSMotion.animate(TSMotion.hover) {
                             model.dismissToast()
                         }
                     }
@@ -56,30 +56,22 @@ public struct ToastOverlayView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            Button {
-                withAnimation(reduceMotion ? .none : .easeOut(duration: 0.15)) {
+            AppIconButton("xmark", label: Text("Dismiss notification", bundle: .module)) {
+                TSMotion.animate(TSMotion.hover) {
                     model.dismissToast()
                 }
-            } label: {
-                Image(systemName: "xmark")
-                    .themedFont(.tiny, weight: .bold)
-                    .foregroundStyle(.appSecondary)
-                    .frame(width: dismissButtonSize, height: dismissButtonSize)
-                    .contentShape(Circle())
             }
-            .buttonStyle(.plain)
-            .help(Text("Dismiss notification", bundle: .module))
-            .accessibilityLabel(Text("Dismiss notification", bundle: .module))
+            .appAction(.quiet, size: .small)
             .accessibilityHint(Text("Dismisses the current status message", bundle: .module))
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .background {
-            RoundedRectangle(cornerRadius: 14)
+            RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
                 .fill(.appPage)
                 .shadow(color: .black.opacity(0.18), radius: 12, x: 0, y: 4)
                 .overlay {
-                    RoundedRectangle(cornerRadius: 14)
+                    RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
                         .stroke(.appBorder, lineWidth: 0.5)
                 }
         }

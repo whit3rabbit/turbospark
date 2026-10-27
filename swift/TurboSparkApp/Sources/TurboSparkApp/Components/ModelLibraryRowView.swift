@@ -43,7 +43,7 @@ struct ModelLibraryRowView: View {
                 }
                 details
                 if let warning = row.slowLinkWarning {
-                    noteLine(glyph: LibraryRowGlyph.warning, tint: .orange, text: warning)
+                    noteLine(glyph: LibraryRowGlyph.warning, tint: AnyShapeStyle(AppAttention.color), text: warning)
                 }
                 if let measured = row.measuredSpeedText {
                     Text(verbatim: measured)
@@ -62,9 +62,7 @@ struct ModelLibraryRowView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(10)
-        .background(.appSurface)
-        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
+        .appCardSurface(padding: 10)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(verbatim: spokenLabel))
         .accessibilityActions {
@@ -130,7 +128,7 @@ struct ModelLibraryRowView: View {
 
     @ViewBuilder private var statusGlyph: some View {
         if row.isConnected {
-            Image(systemName: row.statusGlyph).foregroundStyle(.green).accessibilityHidden(true)
+            Image(systemName: row.statusGlyph).foregroundStyle(AnyShapeStyle(.appAccent)).accessibilityHidden(true)
         } else {
             Image(systemName: row.statusGlyph).foregroundStyle(.appSecondary).accessibilityHidden(true)
         }
@@ -159,7 +157,7 @@ struct ModelLibraryRowView: View {
             .fixedSize(horizontal: false, vertical: true)
     }
 
-    private func noteLine(glyph: String, tint: Color, text: String) -> some View {
+    private func noteLine(glyph: String, tint: AnyShapeStyle, text: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Image(systemName: glyph).foregroundStyle(tint).accessibilityHidden(true)
             Text(verbatim: text)
@@ -173,7 +171,8 @@ struct ModelLibraryRowView: View {
         switch speedTest {
         case .running?:
             HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
+                AppProgressBar(value: nil, label: Text("Testing speed\u{2026}", bundle: .module), size: .compact)
+                    .frame(width: 80)
                 // Wraps instead of truncating: a long translation at Extra
                 // Large text would otherwise cut the sentence to a word.
                 Text("Testing speed\u{2026}", bundle: .module)
@@ -190,7 +189,7 @@ struct ModelLibraryRowView: View {
             }
         case .failed(let sentence)?:
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                noteLine(glyph: LibraryRowGlyph.warning, tint: .orange, text: sentence)
+                noteLine(glyph: LibraryRowGlyph.warning, tint: AnyShapeStyle(AppAttention.color), text: sentence)
                 Spacer(minLength: 4)
                 AppIconButton("xmark", label: Text("Dismiss", bundle: .module)) {
                     dismissSpeedTestFailure()

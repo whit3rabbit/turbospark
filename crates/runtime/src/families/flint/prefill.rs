@@ -92,6 +92,9 @@ impl RealForwardRunner {
         if !chunked_prefill_enabled() {
             return self.prefill_chunk_flint_sequential(tokens, start_position, logits);
         }
+        // The lab's engagement check: a run that set the switch must have
+        // reached this driver (`crates/lab/src/knobs.rs`).
+        foundation::engaged!("flint_chunked_prefill");
         let mut offset = 0usize;
         while offset < tokens.len() {
             let take = (tokens.len() - offset).min(MAX_PREFILL_BATCH);

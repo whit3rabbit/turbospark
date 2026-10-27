@@ -132,7 +132,6 @@ public struct ModelsSettingsPaneView: View {
             label
                 .themedFont(.small, weight: .medium)
                 .frame(minWidth: 52, alignment: .leading)
-                .fixedSize()
             SettingsPathText(path, size: .tiny)
             Spacer()
         }
@@ -173,7 +172,7 @@ public struct ModelsSettingsPaneView: View {
 
                 HStack(spacing: 8) {
                     Image(systemName: isLmStudioPresent ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                        .foregroundStyle(isLmStudioPresent ? Color.green : Color.orange)
+                        .foregroundStyle(isLmStudioPresent ? AnyShapeStyle(.appAccent) : AnyShapeStyle(AppAttention.color))
                         .accessibilityHidden(true)
                     Group {
                         if isLmStudioPresent {

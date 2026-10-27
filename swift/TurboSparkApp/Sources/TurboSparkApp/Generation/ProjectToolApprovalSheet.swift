@@ -8,6 +8,7 @@ import SwiftUI
 /// Approve for that tool. Reject is the default action (Return), Approve is
 /// never the default, and there is no "approve all".
 struct ProjectToolApprovalSheet: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
 
     private var current: ProjectToolReview? {
@@ -34,6 +35,7 @@ struct ProjectToolApprovalSheet: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Project Tool Approval", bundle: .module)
                         .themedFont(.base, weight: .semibold)
+                        .accessibilityAddTraits(.isHeader)
                     Text("Review each tool in full before approving. An approved tool runs commands on this machine with your privileges. Rejecting leaves it off.", bundle: .module)
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
@@ -44,7 +46,7 @@ struct ProjectToolApprovalSheet: View {
                         .themedFont(.small, weight: .medium)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
-                        .background(Color.secondary.opacity(0.12))
+                        .background(.appElevated)
                         .clipShape(Capsule())
                 }
             }
@@ -57,20 +59,24 @@ struct ProjectToolApprovalSheet: View {
                     Text("Declared category", bundle: .module)
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
-                    Text(verbatim: review.declaredCategory.label)
+                    Text(LocalizedStringKey(review.declaredCategory.label), bundle: .module)
                         .themedFont(.small, weight: .medium)
                 }
                 HStack(spacing: 6) {
                     Text("Effective category", bundle: .module)
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
-                    Text(verbatim: review.effectiveCategory.label)
+                    Text(LocalizedStringKey(review.effectiveCategory.label), bundle: .module)
                         .themedFont(.small, weight: .medium)
                 }
                 if review.categoryWasRaised {
-                    Text("The declared category is weaker than what this tool really does, so the effective category is enforced instead.", bundle: .module)
-                        .themedFont(.small)
-                        .foregroundStyle(.orange)
+                    HStack(spacing: 5) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .themedFont(.tiny)
+                        Text("The declared category is weaker than what this tool really does, so the effective category is enforced instead.", bundle: .module)
+                            .themedFont(.small)
+                    }
+                    .foregroundStyle(AppAttention.color)
                 }
                 kindLabel(review.executionKind)
                     .themedFont(.small, weight: .medium)
@@ -89,38 +95,38 @@ struct ProjectToolApprovalSheet: View {
                 }
                 .frame(maxHeight: 240)
                 .padding(8)
-                .background(Color.secondary.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .background(.appElevated)
+                .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
 
                 if let source = review.sourcePath {
-                    Text(verbatim: source)
-                        .themedFont(.tiny)
-                        .foregroundStyle(.appSecondary)
-                        .textSelection(.enabled)
+                    SettingsPathText(source, size: .tiny)
                 }
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(.appSurface)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(.appBorder, lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
+                    .stroke(theme.border, lineWidth: 1)
+            )
 
             HStack(spacing: 10) {
                 Spacer()
                 Button {
                     model.approveProjectTool(review)
                 } label: { Text("Approve", bundle: .module) }
-                .buttonStyle(.bordered)
+                .appAction(.secondary)
 
                 Button {
                     model.rejectProjectTool(review)
                 } label: { Text("Reject", bundle: .module) }
-                .buttonStyle(.borderedProminent)
+                .appAction(.primary)
                 .keyboardShortcut(.defaultAction)
             }
         }
         .padding(24)
-        .frame(width: 560)
+        .frame(minWidth: 480, idealWidth: 560)
     }
 
     @ViewBuilder

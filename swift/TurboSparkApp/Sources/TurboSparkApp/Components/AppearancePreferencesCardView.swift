@@ -16,6 +16,7 @@ public struct AppearancePreferencesCardView: View {
             Text("Preferences", bundle: .module)
                     .settingsControl("Preferences", pane: .appearance, timing: .immediate)
                 .font(theme.ui(.large, weight: .semibold))
+                .accessibilityAddTraits(.isHeader)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 14)
 
@@ -30,11 +31,11 @@ public struct AppearancePreferencesCardView: View {
 
             typographyRows
         }
-        .background(.appSurface.opacity(0.7))
+        .background(.appSurface)
         .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
-                .stroke(.appBorder.opacity(0.4), lineWidth: 1)
+                .stroke(.appBorder, lineWidth: 1)
         )
     }
 
@@ -284,7 +285,7 @@ public struct AppearancePreferencesCardView: View {
         .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
-                .stroke(.appBorder.opacity(0.4), lineWidth: 1)
+                .stroke(.appBorder, lineWidth: 1)
         )
     }
 

@@ -33,21 +33,21 @@ struct ProjectPickerView: View {
                 .themedFont(.small, weight: .medium)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
-                .background(TurboSparkTheme.surfaceColor, in: Capsule())
+                .background(.appSurface, in: Capsule())
                 .overlay(Capsule().strokeBorder(.appBorder, lineWidth: 1))
             }
             .buttonStyle(.plain)
             .disabled(navigationBlocked)
+            .help(
+                navigationBlocked
+                    ? Text("Cannot save project while generation or tool execution is active", bundle: .module)
+                    : Text("Projects", bundle: .module)
+            )
             .popover(isPresented: $isPresented, arrowEdge: .top) {
                 pickerContent
             }
             if let path = model.selectedProject?.rootDirectoryPath {
-                Text(path)
-                    .themedFont(.tiny)
-                    .foregroundStyle(.appSecondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .help(path)
+                SettingsPathText(path, size: .tiny)
             }
             Spacer(minLength: 0)
         }
@@ -74,11 +74,7 @@ struct ProjectPickerView: View {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(project.name).lineLimit(1)
                                     if let path = project.rootDirectoryPath {
-                                        Text(path)
-                                            .themedFont(.tiny)
-                                            .foregroundStyle(.appSecondary)
-                                            .lineLimit(1)
-                                            .truncationMode(.middle)
+                                        SettingsPathText(path, size: .tiny)
                                     }
                                 }
                                 Spacer(minLength: 0)
@@ -90,6 +86,7 @@ struct ProjectPickerView: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .accessibilityAddTraits(model.selectedProjectID == project.id ? [.isButton, .isSelected] : .isButton)
                     }
                 }
             }
@@ -111,7 +108,7 @@ struct ProjectPickerView: View {
         .buttonStyle(.plain)
         .themedFont(.small)
         .padding(14)
-        .frame(width: 340)
+        .frame(minWidth: 320, idealWidth: 340)
         .background(.appSurface)
         .disabled(navigationBlocked)
     }

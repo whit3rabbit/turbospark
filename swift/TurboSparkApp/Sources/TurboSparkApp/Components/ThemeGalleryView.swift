@@ -11,13 +11,16 @@ struct ThemeGalleryView: View {
     @State private var showsNameEditor = false
     @State private var errorMessage: String?
     @State private var importPresented = false
+    @State private var isConfirmingDeleteTheme = false
+    @State private var themeToDeleteID: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
+            AppAdaptiveHeader {
                 Text("Theme gallery", bundle: .module)
-                    .settingsControl("Theme gallery", pane: .appearance, timing: .immediate).themedFont(.large, weight: .semibold)
-                Spacer()
+                    .settingsControl("Theme gallery", pane: .appearance, timing: .immediate)
+                    .themedFont(.large, weight: .semibold)
+            } actions: {
                 // No saved or preset match means the colors were edited by
                 // hand; that state's name is a UI string, a theme's is not.
                 Group {
@@ -28,6 +31,7 @@ struct ThemeGalleryView: View {
                     }
                 }
                 .themedFont(.small)
+                .foregroundStyle(.appSecondary)
             }
             Text("Choose a palette for both Light and Dark. Your fonts and text sizes stay the same.", bundle: .module)
                 .themedFont(.small)
@@ -39,7 +43,7 @@ struct ThemeGalleryView: View {
                                 thumbnail(preset.light)
                                 thumbnail(preset.dark)
                             }
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                            .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius))
                             HStack {
                                 Text(verbatim: preset.name).themedFont(.small, weight: .medium)
                                 Spacer()
@@ -70,8 +74,34 @@ struct ThemeGalleryView: View {
                     .themedFont(.small)
             }
             if let errorMessage {
-                Text(errorMessage).foregroundStyle(.red).themedFont(.small)
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.circle.fill")
+                    Text(errorMessage)
+                }
+                .foregroundStyle(AppAttention.color)
+                .themedFont(.small)
             }
+        }
+        .confirmationDialog(
+            Text("Delete Theme", bundle: .module),
+            isPresented: $isConfirmingDeleteTheme,
+            titleVisibility: .visible
+        ) {
+            Button(role: .destructive) {
+                if let id = themeToDeleteID {
+                    manager.deleteTheme(id: id)
+                    themeToDeleteID = nil
+                }
+            } label: {
+                Text("Delete Theme", bundle: .module)
+            }
+            Button(role: .cancel) {
+                themeToDeleteID = nil
+            } label: {
+                Text("Cancel", bundle: .module)
+            }
+        } message: {
+            Text("Keeps the current colors as Custom.", bundle: .module)
         }
         .alert(Text("Theme name", bundle: .module), isPresented: $showsNameEditor) {
             TextField(text: $name, prompt: Text("Name", bundle: .module)) {
@@ -108,7 +138,10 @@ struct ThemeGalleryView: View {
             } label: { Text("Rename", bundle: .module)
                     .settingsControl("Rename", pane: .appearance, timing: .immediate) }
             .appAction(.secondary)
-            Button(role: .destructive) { manager.deleteTheme(id: id) } label: {
+            Button(role: .destructive) {
+                themeToDeleteID = id
+                isConfirmingDeleteTheme = true
+            } label: {
                 Text("Delete saved theme", bundle: .module)
                     .settingsControl("Delete saved theme", pane: .appearance, timing: .immediate)
             }

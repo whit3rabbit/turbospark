@@ -39,7 +39,7 @@ struct GitInfoSheet: View {
                     dismiss()
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.tertiary)
+                .keyboardShortcut(.cancelAction)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
@@ -66,7 +66,7 @@ struct GitInfoSheet: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .frame(width: 680, height: 520)
+        .frame(minWidth: 540, idealWidth: 680, maxWidth: 900, minHeight: 400, idealHeight: 520, maxHeight: 800)
         .onChange(of: model.gitInfoTab) { _, tab in
             // Tabs are fetched by their slash command, never by this sheet,
             // so an authoritative empty state ("No commits yet.") would
@@ -79,8 +79,9 @@ struct GitInfoSheet: View {
     @ViewBuilder
     private var diffBody: some View {
         if model.isLoadingGitInfo {
-            ProgressView()
+            AppProgressBar(value: nil, label: Text("Loading diff...", bundle: .module))
                 .padding(.top, 24)
+                .padding(.horizontal, 20)
         } else if model.gitDiffText.isEmpty {
             emptyState(Text("No working-tree changes against HEAD.", bundle: .module), systemImage: "checkmark.circle")
         } else {
@@ -112,25 +113,26 @@ struct GitInfoSheet: View {
             }
         }
         .padding(10)
-        .background(Color.primary.opacity(0.03))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(.appElevated)
+        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
     }
 
     private func lineColor(_ line: Substring) -> Color {
         if line.hasPrefix("+++") || line.hasPrefix("---") || line.hasPrefix("diff ") || line.hasPrefix("index ") {
-            return .secondary
+            return theme.secondaryText
         }
         if line.hasPrefix("+") { return .green }
-        if line.hasPrefix("-") { return .red }
-        if line.hasPrefix("@@") { return TurboSparkTheme.accentColor }
-        return .primary
+        if line.hasPrefix("-") { return AppAttention.color }
+        if line.hasPrefix("@@") { return theme.accent }
+        return theme.foreground
     }
 
     @ViewBuilder
     private var logBody: some View {
         if model.isLoadingGitInfo {
-            ProgressView()
+            AppProgressBar(value: nil, label: Text("Loading...", bundle: .module))
                 .padding(.top, 24)
+                .padding(.horizontal, 20)
         } else if model.gitCommits.isEmpty {
             emptyState(Text("No commits yet.", bundle: .module), systemImage: "clock")
         } else {
@@ -157,7 +159,7 @@ struct GitInfoSheet: View {
                         } label: {
                             Image(systemName: "doc.on.doc")
                                 .themedFont(.tiny)
-                                .foregroundStyle(.tertiary)
+                                .foregroundStyle(.appSecondary)
                         }
                         .buttonStyle(.plain)
                         .help(Text("Copy full commit SHA", bundle: .module))
@@ -172,8 +174,9 @@ struct GitInfoSheet: View {
     @ViewBuilder
     private var prsBody: some View {
         if model.isLoadingGitInfo {
-            ProgressView()
+            AppProgressBar(value: nil, label: Text("Loading...", bundle: .module))
                 .padding(.top, 24)
+                .padding(.horizontal, 20)
         } else if model.gitPullRequests.isEmpty {
             emptyState(
                 model.gitInfoError == nil
@@ -203,7 +206,7 @@ struct GitInfoSheet: View {
                             } label: {
                                 Image(systemName: "arrow.up.forward.app")
                                     .themedFont(.tiny)
-                                    .foregroundStyle(.tertiary)
+                                    .foregroundStyle(.appSecondary)
                             }
                             .buttonStyle(.plain)
                             .help(Text("Open in browser", bundle: .module))
@@ -221,7 +224,7 @@ struct GitInfoSheet: View {
         let (symbol, color): (String, Color) = {
             switch normalized {
             case "MERGED": return ("arrow.triangle.merge", .purple)
-            case "CLOSED": return ("xmark.circle", .red)
+            case "CLOSED": return ("xmark.circle", AppAttention.color)
             default: return ("arrow.triangle.pull", .green)
             }
         }()
@@ -237,13 +240,13 @@ struct GitInfoSheet: View {
             .themedFont(.small)
             .foregroundStyle(color)
             .help(stateText)
-            .accessibilityLabel(Text("Pull request state \(stateText)", bundle: .module))
+            .accessibilityLabel(Text("Pull request state", bundle: .module))
     }
 
     private func errorBanner(_ message: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle")
-                .foregroundStyle(.orange)
+                .foregroundStyle(AppAttention.color)
                 .accessibilityHidden(true)
             Text(message)
                 .themedFont(.tiny)
@@ -253,7 +256,7 @@ struct GitInfoSheet: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 8)
-        .background(Color.orange.opacity(0.08))
+        .background(AppAttention.color.opacity(0.08))
     }
 
     private func emptyState(_ text: Text, systemImage: String) -> some View {

@@ -51,7 +51,7 @@ struct HumanizeAdvancedPanel: View {
     }
 
     private func ruleField(
-        _ title: LocalizedStringKey, detail: LocalizedStringKey, example: String,
+        _ title: LocalizedStringKey, detail: LocalizedStringKey, example: LocalizedStringKey,
         text: Binding<String>, field: Field
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -60,7 +60,7 @@ struct HumanizeAdvancedPanel: View {
                 .fixedSize(horizontal: false, vertical: true)
             ZStack(alignment: .topLeading) {
                 if text.wrappedValue.isEmpty {
-                    Text(verbatim: example).font(theme.ui(.small)).foregroundStyle(.appSecondary)
+                    Text(example, bundle: .module).font(theme.ui(.small)).foregroundStyle(.appSecondary)
                         .padding(.horizontal, 9).padding(.vertical, 8)
                         .allowsHitTesting(false)
                 }
@@ -72,7 +72,7 @@ struct HumanizeAdvancedPanel: View {
                     .accessibilityLabel(Text(title, bundle: .module))
             }
             // Grows with the text size so about three lines stay in view.
-            .frame(height: (76 * HumanizeMetrics.textScale(theme)).rounded())
+            .frame(minHeight: (76 * HumanizeMetrics.textScale(theme)).rounded())
             .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
             .overlay {
                 // The solid accent, not a 55% edge: that edge is under 3:1

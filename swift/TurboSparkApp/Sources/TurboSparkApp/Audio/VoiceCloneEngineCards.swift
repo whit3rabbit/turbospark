@@ -15,6 +15,8 @@ struct VoiceCloneEngineCards: View {
     /// consent to, so the page can point at the reference card.
     let needsReference: () -> Void
 
+    @Environment(\.appTheme) private var theme
+
     private var locked: Bool { controller.isBusy || controller.hasRecordingActivity }
 
     var body: some View {
@@ -59,7 +61,7 @@ struct VoiceCloneEngineCards: View {
         .overlay {
             if given {
                 RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
-                    .stroke(.appAccent.opacity(0.35), lineWidth: 1)
+                    .stroke(theme.isHighContrast ? theme.accent : theme.accent.opacity(0.35), lineWidth: theme.isHighContrast ? 1.5 : 1)
                     .allowsHitTesting(false)
             }
         }

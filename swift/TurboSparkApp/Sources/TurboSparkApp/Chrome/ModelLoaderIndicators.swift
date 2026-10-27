@@ -53,7 +53,7 @@ struct ModelStatusDot: View {
                 content.phaseAnimator([0.4, 1.0]) { view, opacity in
                     view.opacity(opacity)
                 } animation: { _ in
-                    .easeInOut(duration: 0.85)
+                    TSMotion.breathe
                 }
             } else {
                 content
@@ -103,7 +103,7 @@ struct ModelLoadProgressBar: View {
                         .phaseAnimator([0.0, 1.0]) { view, phase in
                             view.offset(x: phase == 0 ? 0 : geometry.size.width * 0.6)
                         } animation: { _ in
-                            .easeInOut(duration: 0.95)
+                            TSMotion.sweep
                         }
                 }
             }

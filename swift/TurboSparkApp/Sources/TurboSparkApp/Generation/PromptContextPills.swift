@@ -60,7 +60,7 @@ struct PromptModelSelectorPill: View {
 
                 Image(systemName: "chevron.up.chevron.down")
                     .font(theme.ui(.micro, weight: .bold))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.appSecondary)
             }
         }
         .menuStyle(.borderlessButton)
@@ -110,9 +110,8 @@ struct PromptProjectContextPill: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
-            .background(.appAccent.opacity(0.1), in: Capsule())
-            .overlay(Capsule().stroke(.appAccent.opacity(0.25), lineWidth: 0.5))
-            .fixedSize()
+            .background(.appElevated, in: Capsule())
+            .overlay(Capsule().stroke(.appBorder, lineWidth: 1))
             .help(Text("Active project: \(project.name)", bundle: .module))
             .accessibilityElement(children: .combine)
             .accessibilityLabel(Text("Active project: \(project.name)", bundle: .module))
@@ -159,11 +158,11 @@ struct PromptReasoningPillControl: View {
             HStack(spacing: 3) {
                 Text(LocalizedStringKey(model.reasoningLabel(for: model.reasoning)), bundle: .module)
                     .font(theme.ui(.small, weight: .medium))
-                    .foregroundStyle(isThinkingActive ? Color.primary : Color.secondary)
+                    .foregroundStyle(isThinkingActive ? AnyShapeStyle(.appText) : AnyShapeStyle(.appSecondary))
 
                 Image(systemName: "chevron.up.chevron.down")
                     .font(theme.ui(.micro, weight: .bold))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.appSecondary)
             }
         }
         .menuStyle(.borderlessButton)

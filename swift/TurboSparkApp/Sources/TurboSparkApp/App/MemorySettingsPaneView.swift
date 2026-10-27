@@ -18,10 +18,15 @@ struct MemorySettingsPaneView: View {
     @State private var searchText = ""
     @State private var draftText = ""
     @State private var editingClaim: MemoryClaim?
+    @State private var claimToForget: MemoryClaim?
     @State private var managerError: String?
 
     var body: some View {
         Form {
+            Text("Let the model remember across conversations", bundle: .module)
+                .font(theme.ui(.small))
+                .foregroundStyle(.appSecondary)
+
             enableSection
             profileSection
             managerSection
@@ -42,6 +47,30 @@ struct MemorySettingsPaneView: View {
             } onCancel: {
                 editingClaim = nil
             }
+        }
+        .confirmationDialog(
+            Text("Forget", bundle: .module),
+            isPresented: Binding(
+                get: { claimToForget != nil },
+                set: { if !$0 { claimToForget = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(role: .destructive) {
+                if let target = claimToForget {
+                    perform { try MemoryLedgerStore.shared.forget(target.id) }
+                    claimToForget = nil
+                }
+            } label: {
+                Text("Forget", bundle: .module)
+            }
+            Button(role: .cancel) {
+                claimToForget = nil
+            } label: {
+                Text("Cancel", bundle: .module)
+            }
+        } message: {
+            Text("Forgetting removes this profile's memory records and future exports. Existing external backups must be deleted separately. Original chat messages remain visible in chat history.", bundle: .module)
         }
     }
 
@@ -103,11 +132,19 @@ struct MemorySettingsPaneView: View {
             }
             AppSearchField(text: $searchText, prompt: Text("Search memories...", bundle: .module), maxWidth: .infinity)
             if let managerError {
-                Text(verbatim: managerError).foregroundStyle(.red)
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(AppAttention.color)
+                    Text(verbatim: managerError)
+                        .font(theme.ui(.small))
+                        .foregroundStyle(.appSecondary)
+                }
             }
             if visibleClaims.isEmpty {
-                Text("No memories match this view.", bundle: .module)
-                    .foregroundStyle(.appSecondary)
+                AppEmptyState(
+                    systemImage: "brain",
+                    title: Text("No memories match this view.", bundle: .module)
+                )
             }
             ForEach(visibleClaims) { claim in
                 claimRow(claim)
@@ -204,7 +241,7 @@ struct MemorySettingsPaneView: View {
                 } label: { Text("Edit", bundle: .module) }
                 .appAction(.secondary, size: .small)
                 Button(role: .destructive) {
-                    perform { try MemoryLedgerStore.shared.forget(claim.id) }
+                    claimToForget = claim
                 } label: { Text("Forget", bundle: .module) }
                 .appAction(.destructive, size: .small)
             }
@@ -222,8 +259,10 @@ struct MemorySettingsPaneView: View {
     private var reflectionsSection: some View {
         Section(header: Text("Nightly Reflections", bundle: .module)) {
             if ledgerState.reflections.isEmpty {
-                Text("No reflections yet.", bundle: .module)
-                    .foregroundStyle(.appSecondary)
+                AppEmptyState(
+                    systemImage: "moon.stars",
+                    title: Text("No reflections yet.", bundle: .module)
+                )
             }
             ForEach(visibleReflections, id: \.id) { reflection in
                 VStack(alignment: .leading, spacing: 5) {
@@ -243,7 +282,7 @@ struct MemorySettingsPaneView: View {
     }
 
     private var enableSection: some View {
-        Section(header: Text("Memory", bundle: .module)) {
+        Section {
             HStack(alignment: .center, spacing: 18) {
                 TSIdlingMemorySparkView(size: 80)
                     .opacity(model.memoryEnabled ? 1.0 : 0.65)
@@ -269,6 +308,7 @@ struct MemorySettingsPaneView: View {
                         Text("Suggest memories from idle conversations", bundle: .module)
                     }
                     .disabled(!model.memoryEnabled)
+                    .help(Text("Model memory is disabled.", bundle: .module))
 
                     Text("Use # or /memory text for profile memory. Use /memory project text for this project's memory. Review model suggestions below.", bundle: .module)
                         .font(theme.ui(.small))

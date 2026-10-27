@@ -22,6 +22,14 @@
 #                      minimum an arm64 binary needs to execute AT ALL, and it
 #                      is NOT notarization -- see docs/RELEASE.md's Gatekeeper
 #                      section before assuming a downloaded build just opens.
+#   OPENKINDD_INSTALL_ROOT
+#                      where `cargo install openkind-server` lands; default a
+#                      temp dir discarded with the run. A persistent root is
+#                      what ci.yml caches, because cargo install builds in a
+#                      target directory of its own that no workspace cache
+#                      sees, and the mlx feature (mlx-sys, candle, mlx-rs) was
+#                      15 minutes of every package-macos leg. A matching
+#                      version already in the root makes the install a no-op.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -103,11 +111,19 @@ if [ "$skip_build" -eq 0 ]; then
   if [ -z "${BINDGEN_EXTRA_CLANG_ARGS:-}" ]; then
     export BINDGEN_EXTRA_CLANG_ARGS="-isysroot $SDKROOT"
   fi
-  openkind_build_dir="$(mktemp -d)"
-  trap 'rm -rf "$openkind_build_dir"' EXIT
+  if [ -n "${OPENKINDD_INSTALL_ROOT:-}" ]; then
+    openkind_install_root="$OPENKINDD_INSTALL_ROOT"
+  else
+    openkind_build_dir="$(mktemp -d)"
+    trap 'rm -rf "$openkind_build_dir"' EXIT
+    openkind_install_root="$openkind_build_dir/install"
+  fi
+  # Idempotent: cargo's bookkeeping in the root ("Ignored package ... is
+  # already installed") is what makes a cached root cheap, and it is
+  # version-checked, which a bare `[ -x ]` test would not be.
   cargo install --locked --version "$openkind_server_version" --target "$target" --features mlx \
-    --root "$openkind_build_dir/install" openkind-server
-  openkind_bin="$openkind_build_dir/install/bin/openkindd"
+    --root "$openkind_install_root" openkind-server
+  openkind_bin="$openkind_install_root/bin/openkindd"
 fi
 [ -x "$openkind_bin" ] || { echo "openkindd binary missing; set OPENKINDD_BINARY for --skip-build" >&2; exit 1; }
 
@@ -118,8 +134,14 @@ if [ "$skip_build" -eq 0 ]; then
   echo "==> compiling the string catalog (Localization/Localizable.xcstrings -> .lproj)"
   "$root/scripts/compile-strings.sh"
 
+  # The SAME deployment target swift-lib.sh exported for the staticlib.
+  # Without it the two release builds disagree on MACOSX_DEPLOYMENT_TARGET
+  # and cargo rebuilds 22 shared crates (runtime, gpu, audio, catalog,
+  # repack, image and their deps) a second time: 4m45s of the package-macos
+  # leg, measured 2026-10-26. The CLI binaries' floor becomes 13.0 instead
+  # of rustc's 11.0 default; the bundle's floor is 14.0 either way.
   echo "==> cargo build --release (CLI + server)"
-  cargo build --release --target "$target" \
+  MACOSX_DEPLOYMENT_TARGET=13.0 cargo build --release --target "$target" \
     -p turbospark-cli -p turbospark-server --manifest-path "$root/Cargo.toml"
 
   echo "==> swift build -c release (TurboSparkApp)"

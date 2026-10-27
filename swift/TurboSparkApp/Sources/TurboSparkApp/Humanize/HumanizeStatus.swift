@@ -132,7 +132,7 @@ struct HumanizeFeedback: View {
                 Label(message, systemImage: "xmark.octagon").foregroundStyle(.red).textSelection(.enabled)
             } else if let plan, !plan.fits {
                 Label(HumanizeError.passageTooLong.localizedDescription, systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(AppAttention.color)
             }
             if let plan, plan.parts.count > 1 {
                 Label { Text("Long draft: rewritten in parts at paragraph breaks.", bundle: .module) }
@@ -142,7 +142,7 @@ struct HumanizeFeedback: View {
             if controller.wasTruncated {
                 Label { Text("The rewrite stopped at the length limit and may be cut off.", bundle: .module) }
                     icon: { Image(systemName: "scissors") }
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(AppAttention.color)
             }
             if controller.stopReason == .cancelled {
                 Text("Stopped. The rewrite is incomplete.", bundle: .module).foregroundStyle(.appSecondary)
@@ -152,7 +152,7 @@ struct HumanizeFeedback: View {
                     .foregroundStyle(.appSecondary)
             }
             ForEach(warnings, id: \.self) { line in
-                Label(line, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+                Label(line, systemImage: "exclamationmark.triangle").foregroundStyle(AppAttention.color)
             }
         }
         .font(theme.ui(.small))

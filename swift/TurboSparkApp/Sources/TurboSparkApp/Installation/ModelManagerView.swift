@@ -147,7 +147,7 @@ struct ModelManagerView: View {
                                 Spacer()
                                 Text(verbatim: "\(group.models.count)")
                                     .themedFont(.tiny).monospacedDigit()
-                                    .foregroundStyle(.tertiary)
+                                    .foregroundStyle(.appSecondary)
                             }
                             .padding(.horizontal, 8)
                             .padding(.top, 10)
@@ -188,7 +188,7 @@ struct ModelManagerView: View {
         if displayModels.isEmpty {
             AppEmptyState(
                 systemImage: "internaldrive",
-                title: Text("No Models Installed", bundle: .module),
+                title: Text("No models installed", bundle: .module),
                 message: Text("Download models from the Discover catalog or scan an external folder.", bundle: .module)
             ) {
                 Button {
@@ -211,7 +211,7 @@ struct ModelManagerView: View {
         } else {
             AppEmptyState(
                 systemImage: "line.3.horizontal.decrease.circle",
-                title: Text("No Matching Models", bundle: .module),
+                title: Text("No matching models", bundle: .module),
                 message: Text("Try clearing search or filter terms.", bundle: .module))
             .padding(.top, 8)
         }

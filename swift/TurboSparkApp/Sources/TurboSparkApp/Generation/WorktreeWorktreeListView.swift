@@ -33,36 +33,30 @@ public struct WorktreeWorktreeListView: View {
     }
 
     private var headerBar: some View {
-        HStack {
+        AppAdaptiveHeader {
             Text("Linked Worktrees", bundle: .module)
                 .font(theme.ui(.small, weight: .semibold))
                 .foregroundStyle(.appText)
-
-            Spacer()
-
-            Text(verbatim: "\(worktree.worktrees.count) worktrees")
+                .accessibilityAddTraits(.isHeader)
+        } actions: {
+            let count = worktree.worktrees.count
+            (count == 1
+                ? Text("\(count) worktree", bundle: .module)
+                : Text("\(count) worktrees", bundle: .module))
                 .themedFont(.tiny).monospacedDigit()
                 .foregroundStyle(.appSecondary)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Color.primary.opacity(0.02))
+        .background(.appSurface)
     }
 
     private var emptyWorktreesView: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "folder.badge.gearshape")
-                .themedFont(.hero)
-                .foregroundStyle(.tertiary)
-                .padding(.top, 40)
-            Text("No Additional Worktrees", bundle: .module)
-                .themedFont(.base, weight: .medium)
-                .foregroundStyle(.appSecondary)
-            Text("This repository only has the primary working directory.", bundle: .module)
-                .themedFont(.small)
-                .foregroundStyle(.tertiary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        AppEmptyState(
+            systemImage: "folder.badge.gearshape",
+            title: Text("No Additional Worktrees", bundle: .module),
+            message: Text("This repository only has the primary working directory.", bundle: .module)
+        )
     }
 
     private func worktreeCard(_ wt: GitWorktreeInfo) -> some View {
@@ -79,7 +73,7 @@ public struct WorktreeWorktreeListView: View {
                 if wt.isCurrent {
                     Text("Current", bundle: .module)
                         .themedFont(.tiny, weight: .medium)
-                        .foregroundStyle(.white)
+                        .foregroundStyle(theme.background)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 1)
                         .background(.appAccent, in: Capsule())
@@ -89,14 +83,10 @@ public struct WorktreeWorktreeListView: View {
 
                 Text(wt.head)
                     .font(theme.code(.small))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.appSecondary)
             }
 
-            Text(wt.path)
-                .themedFont(.tiny)
-                .foregroundStyle(.appSecondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
+            SettingsPathText(wt.path, size: .tiny)
 
             if !wt.isCurrent {
                 HStack {
@@ -107,8 +97,7 @@ public struct WorktreeWorktreeListView: View {
                         Text("View in Git pane", bundle: .module)
                             .themedFont(.tiny, weight: .medium)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.mini)
+                    .appAction(.secondary, size: .small)
                     // This only retargets the Git pane. The agent's workspace
                     // root, hooks and snapshots stay on the project folder, so
                     // the label must not read as "move the agent here".
@@ -119,12 +108,12 @@ public struct WorktreeWorktreeListView: View {
         }
         .padding(8)
         .background(
-            wt.isCurrent ? TurboSparkTheme.accentColor.opacity(0.08) : Color(nsColor: .controlBackgroundColor).opacity(0.5),
-            in: RoundedRectangle(cornerRadius: 6)
+            wt.isCurrent ? AnyShapeStyle(theme.accent.opacity(0.08)) : AnyShapeStyle(.appSurface),
+            in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(wt.isCurrent ? TurboSparkTheme.accentColor.opacity(0.3) : Color.primary.opacity(0.08), lineWidth: 1)
+            RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
+                .stroke(wt.isCurrent ? AnyShapeStyle(theme.accent) : AnyShapeStyle(theme.border), lineWidth: 1)
         )
     }
 }

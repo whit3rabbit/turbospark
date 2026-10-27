@@ -1,0 +1,54 @@
+{
+  "schema": "turbospark.lab.family/1",
+  "family": "qwen4exp",
+  "kind": "text",
+  "title": "Qwen 3.8-Flash-Next (qwen4_exp): GDN MoE with 512 experts top-10 plus shared, hyper-connections, n-gram PLE table, sparse indexer attention",
+  "flow": "qwen4",
+  "installs": [
+    {"name": "qwen4exp-reap-288", "quant": "INT4, 68 GB", "machine": "Apple M4 Max 36 GB", "drafters": [], "note": "no install on this host today; 2,048 context"}
+  ],
+  "recommended": [
+    {"knob": "qsa_force_dense", "value": "<unset>", "when": [],
+     "why": "the sparse indexer is the family's attention; forcing dense past its budget is a diagnostic arm, not a lane to ship",
+     "findings": []},
+    {"slots": "auto", "when": ["moe"],
+     "why": "the REAP-288 rows ran untuned slots for top-10 of 288 experts and read a 25-60% run-to-run spread; the slot sweep is the first thing to run",
+     "findings": ["qwen4exp.reap-288-rows-2026-10-11"]}
+  ],
+  "sweeps": [
+    {"id": "slots", "description": "expert cache slots for top-10 routing over 288 or 512 experts",
+     "when": ["moe"], "metric": "decode_tok_s", "exactness": "bit_exact",
+     "workload": {"prompts": [{"protocol": "medium-review"}], "decode_tokens": 64, "max_context": 2048},
+     "baseline": "sauto@auto/auto", "candidates": ["s32@32/streamed", "s64@64/streamed", "s96@96/streamed"]},
+    {"id": "routed_batch", "description": "the batched routed half against one GEMV per route",
+     "when": ["moe"], "metric": "prefill_tok_s", "exactness": "moe_kl",
+     "workload": {"prompts": [{"protocol": "medium-review"}], "decode_tokens": 16, "max_context": 2048},
+     "baseline": "gemv", "candidates": ["batched:routed_batch=1"],
+     "note": "BATCHED_PREFILL.md records a host-write hazard on this flow; read it before the sweep"},
+    {"id": "qsa", "description": "the sparse indexer against forced dense attention",
+     "when": [], "metric": "decode_tok_s", "exactness": "moe_kl",
+     "workload": {"prompts": [{"protocol": "medium-review"}], "decode_tokens": 64, "max_context": 2048},
+     "baseline": "sparse", "candidates": ["dense:qsa_force_dense=1"]}
+  ],
+  "findings": [
+    {"id": "qwen4exp.reap-288-rows-2026-10-11", "date": "2026-10-11",
+     "install": "qwen4exp-reap-288 and the Swift IQ2_XS", "machine": "Apple M4 Max 36 GB", "power": "ac", "rev": "v0.5 era",
+     "workload": "the every-install table at 2,048 context",
+     "arms": {"rust_int4": {}, "swift_iq2_xs": {}},
+     "metric": "decode_tok_s", "values": {"rust": {"decode_tok_s": [6.870, 7.530], "peak_mib": [2503, 2509], "spread": [0.25, 0.60]}, "swift": {"decode_tok_s": [12.23, 12.77], "peak_mib": 1633.7, "perplexity": 4.5957}},
+     "verdict": "reading",
+     "provenance": {"kind": "doc", "path": "docs/BENCHMARKS.md", "heading": "Every install, side by side"},
+     "conditions": "slots untuned for top-10 of 288; the run-to-run spread is the finding",
+     "note": ""}
+  ],
+  "open_questions": [
+    "the host-write hazard in the chunked prefill (BATCHED_PREFILL.md, the seventh flow)",
+    "int4_mma8 touches qwen4/attn.rs and the dilated PLE conv shares the prefill kernel: unverified on a real install (INT4_SMALL_M_MMA.md open question 4)",
+    "the router and shared-expert-gate dtype bug's fix on a real run (QWEN4_EXP.md)"
+  ],
+  "traps": [
+    "2,048 context: a long-synthesis prompt overflows; use short-explanation or medium-review",
+    "the hyper-connections widen the residual 4x: the resident index shapes are not the hidden size"
+  ],
+  "docs": ["docs/QWEN4_EXP.md", "docs/BATCHED_PREFILL.md", "docs/BENCHMARKS.md"]
+}

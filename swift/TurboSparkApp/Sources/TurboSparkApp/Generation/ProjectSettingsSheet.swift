@@ -3,6 +3,7 @@ import SwiftUI
 
 /// Modal configuration sheet for editing project metadata, permissions, agent profiles, rules, and MCP servers.
 struct ProjectSettingsSheet: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     let editingProject: AppProject?
     let onDismiss: () -> Void
@@ -87,23 +88,25 @@ struct ProjectSettingsSheet: View {
             Divider()
             footer
         }
-        .frame(width: 580, height: showingAdvancedSettings ? 660 : 390)
+        .frame(minWidth: 540, idealWidth: 580, maxWidth: 640, minHeight: showingAdvancedSettings ? 500 : 360, idealHeight: showingAdvancedSettings ? 660 : 390)
         .background(.appSurface)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 16)
+            RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
                 .strokeBorder(.appBorder, lineWidth: 1)
                 .allowsHitTesting(false)
         }
         .sheet(isPresented: $showingSkills) {
             VStack {
                 Button { showingSkills = false } label: { Text("Done", bundle: .module) }
+                    .keyboardShortcut(.defaultAction)
                 SkillsSettingsPaneView(model: model, projectID: editingProject?.id)
             }.frame(minWidth: 780, minHeight: 580)
         }
         .sheet(isPresented: $showingPlugins) {
             VStack {
                 Button { showingPlugins = false } label: { Text("Done", bundle: .module) }
+                    .keyboardShortcut(.defaultAction)
                 PluginSettingsPaneView(model: model, projectID: editingProject?.id)
             }.frame(minWidth: 780, minHeight: 580)
         }
@@ -155,9 +158,9 @@ struct ProjectSettingsSheet: View {
                     .textFieldStyle(.plain)
                     .themedFont(.base)
                     .padding(10)
-                    .background(TurboSparkTheme.surfaceColor, in: RoundedRectangle(cornerRadius: 8))
+                    .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
                     .overlay {
-                        RoundedRectangle(cornerRadius: 8)
+                        RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
                             .strokeBorder(.appBorder, lineWidth: 1)
                             .allowsHitTesting(false)
                     }
@@ -176,9 +179,9 @@ struct ProjectSettingsSheet: View {
                         .textFieldStyle(.plain)
                         .themedFont(.base)
                         .padding(10)
-                        .background(TurboSparkTheme.surfaceColor, in: RoundedRectangle(cornerRadius: 8))
+                        .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
                         .overlay {
-                            RoundedRectangle(cornerRadius: 8)
+                            RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
                                 .strokeBorder(.appBorder, lineWidth: 1)
                                 .allowsHitTesting(false)
                         }
@@ -220,7 +223,7 @@ struct ProjectSettingsSheet: View {
                 .foregroundStyle(.appSecondary)
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(TurboSparkTheme.surfaceColor, in: RoundedRectangle(cornerRadius: 8))
+                .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
@@ -255,7 +258,7 @@ struct ProjectSettingsSheet: View {
             }
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(TurboSparkTheme.surfaceColor, in: RoundedRectangle(cornerRadius: 8))
+            .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
         }
     }
 
@@ -293,7 +296,7 @@ struct ProjectSettingsSheet: View {
                 }
             }
             .padding(12)
-            .background(TurboSparkTheme.surfaceColor, in: RoundedRectangle(cornerRadius: 8))
+            .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
         }
     }
 
@@ -324,7 +327,7 @@ struct ProjectSettingsSheet: View {
                 }
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(TurboSparkTheme.surfaceColor, in: RoundedRectangle(cornerRadius: 8))
+                .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
             } else if trimmedPath.isEmpty {
                 Text("Set a codebase root directory above to enable indexing.", bundle: .module)
                     .themedFont(.small)
@@ -334,8 +337,12 @@ struct ProjectSettingsSheet: View {
                 let rootURL = URL(fileURLWithPath: trimmedPath)
                 HStack(spacing: 12) {
                     if isIndexing {
-                        ProgressView()
-                            .controlSize(.small)
+                        AppProgressBar(
+                            value: nil,
+                            label: Text("Indexing project codebase...", bundle: .module),
+                            size: .compact
+                        )
+                        .frame(width: 80)
                         Text("Indexing project codebase...", bundle: .module)
                             .themedFont(.small)
                             .foregroundStyle(.appSecondary)
@@ -363,17 +370,17 @@ struct ProjectSettingsSheet: View {
                         }
 
                         if hasSyntextIndex {
-                            Button(role: .destructive) {
+                            Button {
                                 deleteProjectIndex(rootURL: rootURL)
                             } label: { Text("Remove Index", bundle: .module) }
-                            .appAction(.destructive, size: .small)
+                            .appAction(.secondary, size: .small)
                             .accessibilityLabel(Text("Remove project codebase index", bundle: .module))
                         }
                     }
                 }
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(TurboSparkTheme.surfaceColor, in: RoundedRectangle(cornerRadius: 8))
+                .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
             }
         }
     }
@@ -404,17 +411,34 @@ struct ProjectSettingsSheet: View {
             Spacer()
             Button { onDismiss() } label: { Text("Cancel", bundle: .module) }
                 .appAction(.secondary)
+                .keyboardShortcut(.cancelAction)
             Button {
                 save()
             } label: {
                 editingProject == nil ? Text("Create Project", bundle: .module) : Text("Save Changes", bundle: .module)
             }
             .appAction(.primary)
-            .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                || model.isRunning || model.submitting || model.pendingToolCall != nil)
+            .keyboardShortcut(.defaultAction)
+            .disabled(isSaveDisabled)
+            .help(saveDisabledReason)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
+    }
+
+    private var isSaveDisabled: Bool {
+        name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || model.isRunning || model.submitting || model.pendingToolCall != nil
+    }
+
+    private var saveDisabledReason: Text {
+        if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return Text("Enter a project name to save", bundle: .module)
+        }
+        if model.isRunning || model.submitting || model.pendingToolCall != nil {
+            return Text("Cannot save project while generation or tool execution is active", bundle: .module)
+        }
+        return editingProject == nil ? Text("Create Project", bundle: .module) : Text("Save Changes", bundle: .module)
     }
 
     private func populateInitialValues() {

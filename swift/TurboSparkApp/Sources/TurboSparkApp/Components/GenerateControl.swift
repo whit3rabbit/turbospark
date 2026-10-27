@@ -24,6 +24,10 @@ struct GenerateControl: View {
     /// overlay, so it never changes the control's frame.
     @ScaledMetric private var ringOutset: CGFloat = 4
 
+    private var buttonSize: CGFloat {
+        (circularButtonSize * AppMetrics.textScale(theme)).rounded()
+    }
+
     var body: some View {
         Group {
             if model.isRunning {
@@ -53,18 +57,14 @@ struct GenerateControl: View {
             Image(systemName: "arrow.up")
                 .themedFont(.callout, weight: .bold)
                 .foregroundStyle(ink)
-                .frame(width: circularButtonSize, height: circularButtonSize)
+                .frame(width: buttonSize, height: buttonSize)
                 .background(Circle().fill(fill))
                 .overlay {
                     Circle().stroke(
                         ready ? Color.white.opacity(0.2) : theme.foreground.opacity(0.06),
                         lineWidth: 0.5)
                 }
-                // Only the enabled button gets a shadow. It is the affordance
-                // that says "this will do something".
-                .shadow(
-                    color: ready ? theme.accent.opacity(0.45) : .clear,
-                    radius: 8, y: 2)
+                .appPrimaryGlow(ready)
                 .contentShape(Circle())
         }
         .buttonStyle(TSPressScaleStyle(scale: 0.9))
@@ -87,7 +87,7 @@ struct GenerateControl: View {
             Image(systemName: "stop.fill")
                 .themedFont(.tiny, weight: .bold)
                 .foregroundStyle(ink)
-                .frame(width: circularButtonSize, height: circularButtonSize)
+                .frame(width: buttonSize, height: buttonSize)
                 .background(Circle().fill(theme.accent))
                 .overlay {
                     // Waiting on the user (an approval) or on the stop is

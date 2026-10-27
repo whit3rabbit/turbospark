@@ -110,7 +110,7 @@ struct AgentDetailView: View {
                             .foregroundStyle(.appSecondary)
                         Text(disallowed.joined(separator: ", "))
                             .themedFont(.small)
-                            .foregroundStyle(.red)
+                            .foregroundStyle(AppAttention.color)
                     }
                 }
                 if let allowed = agent.tools, !allowed.isEmpty {
@@ -125,18 +125,12 @@ struct AgentDetailView: View {
                     GridRow {
                         Text("File Location:", bundle: .module)
                             .foregroundStyle(.appSecondary)
-                        Text(path)
-                            .themedFont(.small)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .textSelection(.enabled)
-                            .help(Text(verbatim: path))
+                        SettingsPathText(path, size: .small)
                     }
                 }
             }
         }
-        .padding()
-        .background(RoundedRectangle(cornerRadius: 8).fill(.appSurface))
+        .appCardSurface(padding: 16)
     }
 
     private var systemInstructions: some View {
@@ -149,10 +143,9 @@ struct AgentDetailView: View {
                 Text(agent.systemPrompt)
                     .themedCode(.small)
                     .textSelection(.enabled)
-                    .padding(12)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .background(RoundedRectangle(cornerRadius: 8).fill(.appSurface))
+            .appCardSurface(padding: 12)
         }
     }
 
@@ -166,7 +159,7 @@ struct AgentDetailView: View {
             Text(verbatim: "`/\(agent.name) <task description>`")
                 .themedCode(.small)
                 .padding(8)
-                .background(RoundedRectangle(cornerRadius: 6).fill(.appElevated))
+                .background(RoundedRectangle(cornerRadius: AppMetrics.controlRadius).fill(.appElevated))
         }
     }
 }

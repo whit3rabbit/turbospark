@@ -21,7 +21,8 @@ tslab workflow new-family --model M --experiment E --resume <run>
 | `kernel-candidate` | hashed kernels, `hash-diff` against a base-build run, null, paired A/B of a switch | `--var against=EXP --var candidate=KNOB=V` |
 | `mode-candidate` | hashed bench curves, a base profile, null floor, `project` from those, paired A/B of the mode's switch, `calibrate` of the projection against that verdict | `--var knob=NAME --var candidate=KEY=V` (a knob with a lane in `tslab knobs`); `--var bench=` and `--var x=` for a lane that is not `int4_matmul` at one row |
 | `spec-depth` | chain capture, MTP arms at two blocks with round stats, depth replay priced from the ledger | an install with an MTP head |
-| `audio-survey` | capabilities, hashed audio kernel benches, profile of a job, null floor | an audio install; `--var job=PATH` to change the job |
+| `family-sweep` | capabilities, the family profile, a null floor, every profile sweep whose `when` holds, report | `--model`; the profile's sweeps (`tslab family --model M`) |
+| `audio-survey` | capabilities, the family profile, hashed audio kernel benches, profile of a job (music or speak, by the install's task), null floor | an audio install; `--var job=PATH` or `--var speak_job=PATH` to change the job |
 | `report` | export (JSON, paths redacted) and HTML beside the ledger | `--experiment` |
 
 A step whose `when` fails for the install is skipped, and the reason is
@@ -57,9 +58,10 @@ see which steps will run.
 - `when`: every listed tag must hold. `!tag` negates and `a|b` means either.
   Tags come from `tslab capabilities` (`text`, `audio`, `moe`, `dense`, `gdn`,
   `mla`, `sinks`, `sliding_attention`, `drafter`, `mtp`, `dflash`,
-  `chunked_prefill`, `steel`, `probe`, `standin`, `runs`, `bench:<name>`,
-  `family:<name>`, `audio:music`, `audio:transcribe`). A plan with no
-  `--model` has only `nomodel`.
+  `chunked_prefill`, `steel`, `probe`, `standin`, `runs`, `profile`,
+  `bench:<name>`, `family:<name>`, `flow:<name>`, `audio:music`,
+  `audio:transcribe`, `audio:speak`). A plan with no `--model` has only
+  `nomodel`.
 - `needs`: earlier step ids. A step whose need failed or was skipped is
   skipped.
 - A failed step stops the run unless it sets `continue_on_error`.

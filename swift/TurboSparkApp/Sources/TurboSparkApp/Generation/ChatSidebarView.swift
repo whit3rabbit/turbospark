@@ -102,7 +102,7 @@ struct ChatSidebarView: View {
             ForEach(AppModel.AppInteractionMode.allCases) { mode in
                 let isSelected = model.interactionMode == mode
                 Button {
-                    TSMotion.animate(.easeInOut(duration: 0.12)) {
+                    TSMotion.animate(TSMotion.select) {
                         model.setInteractionMode(mode)
                     }
                 } label: {
@@ -117,10 +117,10 @@ struct ChatSidebarView: View {
                     .frame(minHeight: theme.sidebarRowHeight - 4)
                     .foregroundStyle(isSelected ? theme.foreground : theme.secondaryText)
                     .background(
-                        isSelected ? theme.foreground.opacity(0.12) : Color.clear,
-                        in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        isSelected ? theme.selection : Color.clear,
+                        in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
                     )
-                    .contentShape(.rect(cornerRadius: 6))
+                    .contentShape(.rect(cornerRadius: AppMetrics.controlRadius))
                 }
                 .buttonStyle(.plain)
                 .help(Text(LocalizedStringKey(mode.title), bundle: .module))
@@ -129,9 +129,9 @@ struct ChatSidebarView: View {
             }
         }
         .padding(2)
-        .background(theme.foreground.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(.appElevated, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
                 .stroke(.appBorder, lineWidth: 0.5)
         )
     }
@@ -139,42 +139,12 @@ struct ChatSidebarView: View {
     // MARK: - Filter Bar
 
     private var filterBar: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .font(theme.ui(.tiny))
-                .foregroundStyle(.appSecondary)
-                .accessibilityHidden(true)
-
-            TextField(text: $searchText) {
-                (model.interactionMode == .projects ? Text("Filter projects and tasks...", bundle: .module) : Text("Filter chats...", bundle: .module))
-            }
-            .textFieldStyle(.plain)
-            .font(theme.ui(.tiny))
-
-            if !searchText.isEmpty {
-                Button {
-                    searchText = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(theme.ui(.tiny))
-                        .foregroundStyle(.appSecondary)
-                }
-                .buttonStyle(.plain)
-                .help(Text("Clear filters", bundle: .module))
-                .accessibilityLabel(Text("Clear filters", bundle: .module))
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .frame(minHeight: theme.sidebarRowHeight)
-        .background(theme.surface, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .stroke(.appBorder, lineWidth: 0.5)
+        AppSearchField(
+            text: $searchText,
+            prompt: model.interactionMode == .projects
+                ? Text("Filter projects and tasks...", bundle: .module)
+                : Text("Filter chats...", bundle: .module)
         )
-        .accessibilityElement(children: .contain)
-        .help((model.interactionMode == .projects ? Text("Filter projects and tasks...", bundle: .module) : Text("Filter chats...", bundle: .module)))
-        .accessibilityLabel((model.interactionMode == .projects ? Text("Filter projects and tasks...", bundle: .module) : Text("Filter chats...", bundle: .module)))
     }
 
     // MARK: - Content View
@@ -282,7 +252,7 @@ struct ChatSidebarView: View {
                 .foregroundStyle(.appSecondary)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 2)
-                .background(theme.foreground.opacity(0.06), in: Capsule())
+                .background(.appSecondary.opacity(0.15), in: Capsule())
             }
             .buttonStyle(.plain)
             .help(Text("All Chats", bundle: .module))
@@ -290,7 +260,7 @@ struct ChatSidebarView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(theme.foreground.opacity(0.03), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .background(.appElevated, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
     }
 
     private var newChatButton: some View {
@@ -312,7 +282,9 @@ struct ChatSidebarView: View {
         }
         .buttonStyle(SidebarActionButtonStyle())
         .disabled(model.isRunning)
-        .help(Text("New chat", bundle: .module) + Text(verbatim: " (Cmd+N)"))
+        .help(model.isRunning
+            ? Text("Cannot start a new chat while generation is running", bundle: .module)
+            : (Text("New chat", bundle: .module) + Text(verbatim: " (Cmd+N)")))
     }
 
     private var newChatLabel: some View {
@@ -336,25 +308,22 @@ struct ChatSidebarView: View {
                 let layout = ChatSidebarLayout.make(
                     sortedHistory: historyChats, searchText: searchText)
                 if layout.isEmpty {
-                    VStack(spacing: 6) {
-                        Image(systemName: "bubble.left.and.bubble.right")
-                            .font(theme.ui(.title2))
-                            .foregroundStyle(.appSecondary)
-                            .padding(.top, 18)
-                            .padding(.bottom, 2)
-                            .accessibilityHidden(true)
-                        (searchText.isEmpty ? Text("No chats yet", bundle: .module) : Text("No matching chats", bundle: .module))
-                            .font(theme.ui(.tiny, weight: .medium))
-                            .foregroundStyle(.appSecondary)
-                        (searchText.isEmpty ? Text("Start a conversation to see history here", bundle: .module) : Text("Try a different search term", bundle: .module))
-                            .font(theme.ui(.tiny))
-                            .foregroundStyle(.appSecondary)
-                            .multilineTextAlignment(.center)
+                    AppEmptyState(
+                        systemImage: "bubble.left.and.bubble.right",
+                        title: searchText.isEmpty ? Text("No chats yet", bundle: .module) : Text("No matching chats", bundle: .module),
+                        message: searchText.isEmpty ? Text("Start a conversation to see history here", bundle: .module) : Text("Try a different search term", bundle: .module)
+                    ) {
+                        if searchText.isEmpty {
+                            Button {
+                                model.createChat()
+                            } label: {
+                                Text("New chat", bundle: .module)
+                            }
+                            .appAction(.secondary, size: .small)
+                            .disabled(model.isRunning)
+                        }
                     }
-                    .frame(maxWidth: .infinity)
                     .padding(.vertical, 16)
-                    .padding(.horizontal, 12)
-                    .accessibilityElement(children: .combine)
                 } else if !layout.isSearching {
                     // The qwen-code session grouping: time-bucket headers
                     // over the recency-sorted list. Suppressed while a
@@ -419,14 +388,18 @@ struct ChatSidebarView: View {
             DisclosureGroup {
                 ForEach(archived) { chat in
                     HStack(spacing: 8) {
-                        Image(systemName: "archivebox")
-                            .font(theme.ui(.tiny))
-                            .foregroundStyle(.appSecondary)
-                            .accessibilityHidden(true)
-                        Text(chat.title)
-                            .font(theme.ui(.small))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
+                        HStack(spacing: 8) {
+                            Image(systemName: "archivebox")
+                                .font(theme.ui(.tiny))
+                                .foregroundStyle(.appSecondary)
+                                .accessibilityHidden(true)
+                            Text(chat.title)
+                                .font(theme.ui(.small))
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+                        .accessibilityElement(children: .combine)
+
                         Spacer(minLength: 4)
                         Button {
                             model.setChatArchived(id: chat.id, archived: false)
@@ -445,7 +418,6 @@ struct ChatSidebarView: View {
                     }
                     .padding(.leading, 12)
                     .padding(.vertical, 2)
-                    .accessibilityElement(children: .combine)
                 }
             } label: {
                 Label {

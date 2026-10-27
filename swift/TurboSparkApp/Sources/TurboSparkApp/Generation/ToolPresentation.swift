@@ -174,7 +174,7 @@ struct OfflineSiteIcon: View {
                 Text(String((url.host ?? "?").replacingOccurrences(of: "www.", with: "").prefix(1)).uppercased())
                     .themedFont(.tiny, weight: .semibold)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(.appBorder, in: RoundedRectangle(cornerRadius: 4))
+                    .background(.appBorder, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
             }
         }
         .frame(width: 18, height: 18)

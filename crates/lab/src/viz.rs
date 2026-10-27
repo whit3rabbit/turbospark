@@ -132,7 +132,7 @@ impl Scale {
     }
 }
 
-const CSS: &str = r#"
+pub(crate) const CSS: &str = r#"
 :root {
   color-scheme: light;
   --page: #f9f9f7; --surface-1: #fcfcfb; --text-primary: #0b0b0b;
@@ -188,11 +188,11 @@ th, td { text-align: left; padding: 2px 8px 2px 0; border-bottom: 1px solid var(
 .scroll { overflow-x: auto; }
 "#;
 
-fn color(i: usize) -> String {
+pub(crate) fn color(i: usize) -> String {
     format!("var(--s{})", i % SLOTS + 1)
 }
 
-fn legend(series: &[&Series]) -> String {
+pub(crate) fn legend(series: &[&Series]) -> String {
     if series.len() < 2 {
         return String::new();
     }
@@ -216,7 +216,7 @@ fn legend(series: &[&Series]) -> String {
     out
 }
 
-fn table(series: &[&Series]) -> String {
+pub(crate) fn table(series: &[&Series]) -> String {
     let mut out = String::from(
         "<details><summary>Table</summary><div class=\"scroll\"><table><tr><th>series</th><th>x</th><th>y</th><th>dirty</th></tr>",
     );
@@ -241,7 +241,7 @@ fn table(series: &[&Series]) -> String {
     out
 }
 
-fn line_chart(series: &[&Series]) -> String {
+pub(crate) fn line_chart(series: &[&Series]) -> String {
     let shown: Vec<&Series> = series.iter().copied().take(SLOTS).collect();
     let xs: Vec<f64> = shown
         .iter()
@@ -347,7 +347,7 @@ fn line_chart(series: &[&Series]) -> String {
 }
 
 /// Horizontal grouped bars: one row per category, one bar per series.
-fn bar_chart(series: &[&Series]) -> String {
+pub(crate) fn bar_chart(series: &[&Series]) -> String {
     let shown: Vec<&Series> = series.iter().copied().take(SLOTS).collect();
     let mut cats: Vec<String> = Vec::new();
     for s in &shown {
@@ -442,7 +442,7 @@ fn bar_chart(series: &[&Series]) -> String {
 
 /// One row per verdict: each pair's improvement as a dot, the bootstrap CI
 /// as a bar, the median as a tick, and the effect floor as dashed lines.
-fn forest(series: &[&Series]) -> String {
+pub(crate) fn forest(series: &[&Series]) -> String {
     let row = 30.0;
     let label_w = 190.0;
     let h = PAD_T + series.len() as f64 * row + 30.0;
@@ -549,14 +549,73 @@ fn forest(series: &[&Series]) -> String {
     svg
 }
 
-fn chart_kind(kind: &str) -> &'static str {
+pub(crate) fn chart_kind(kind: &str) -> &'static str {
     match kind {
         "verdict" => "forest",
-        "profile_buckets" | "profile_totals" | "audio_stages" | "trace_shares" | "standin" => {
-            "bars"
-        }
+        "profile_buckets" | "profile_totals" | "audio_stages" | "trace_shares" | "standin"
+        | "sweep" => "bars",
         _ => "line",
     }
+}
+
+/// Series grouped per (kind, group) in first-seen order: the members of one
+/// chart. Across experiments the same key lands series from several
+/// experiments on one chart, which is what the dashboard's compare view
+/// wants; `render` groups within one experiment.
+pub(crate) fn group_series<'a>(list: &[&'a Series]) -> Vec<((String, String), Vec<&'a Series>)> {
+    let mut groups: Vec<((String, String), Vec<&'a Series>)> = Vec::new();
+    for s in list {
+        let key = (s.kind.clone(), s.group.clone());
+        match groups.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, v)) => v.push(s),
+            None => groups.push((key, vec![s])),
+        }
+    }
+    groups
+}
+
+/// One chart card: title, provenance line, legend, the chart, the table.
+pub(crate) fn card(kind: &str, group: &str, members: &[&Series]) -> String {
+    let s0 = members[0];
+    let quotable = members.iter().all(|s| s.quotable);
+    let mut sub = Vec::new();
+    for v in [&s0.model, &s0.family, &s0.chip, &s0.rev]
+        .into_iter()
+        .flatten()
+    {
+        sub.push(esc(v));
+    }
+    let mut body = String::new();
+    let _ = write!(
+        body,
+        "<div class=\"card\"><h3>{} <span class=\"sub\">{}</span>{}</h3><div class=\"sub\">{}</div>",
+        esc(group),
+        esc(kind),
+        if quotable {
+            ""
+        } else {
+            "<span class=\"badge\">unquotable</span>"
+        },
+        sub.join(" &middot; ")
+    );
+    body.push_str(&legend(members));
+    body.push_str(&match chart_kind(kind) {
+        "forest" => forest(members),
+        "bars" => bar_chart(members),
+        _ => line_chart(members),
+    });
+    body.push_str(&table(members));
+    body.push_str("</div>");
+    body
+}
+
+/// Every chart card of one list of series, grouped by (kind, group).
+pub(crate) fn cards(list: &[&Series]) -> String {
+    let mut body = String::new();
+    for ((kind, group), members) in group_series(list) {
+        body.push_str(&card(&kind, &group, &members));
+    }
+    body
 }
 
 /// The whole page. `title` names it; series are grouped per experiment,
@@ -581,48 +640,16 @@ pub fn render(title: &str, generated: &str, series: &[Series]) -> String {
     }
     for (exp, list) in &by_exp {
         let _ = write!(body, "<h2>{}</h2>", esc(exp));
-        let mut groups: Vec<((String, String), Vec<&Series>)> = Vec::new();
-        for s in list {
-            let key = (s.kind.clone(), s.group.clone());
-            match groups.iter_mut().find(|(k, _)| *k == key) {
-                Some((_, v)) => v.push(s),
-                None => groups.push((key, vec![s])),
-            }
-        }
-        for ((kind, group), members) in &groups {
-            let s0 = members[0];
-            let quotable = members.iter().all(|s| s.quotable);
-            let mut sub = Vec::new();
-            for v in [&s0.model, &s0.family, &s0.chip, &s0.rev]
-                .into_iter()
-                .flatten()
-            {
-                sub.push(esc(v));
-            }
-            let _ = write!(
-                body,
-                "<div class=\"card\"><h3>{} <span class=\"sub\">{}</span>{}</h3><div class=\"sub\">{}</div>",
-                esc(group),
-                esc(kind),
-                if quotable {
-                    ""
-                } else {
-                    "<span class=\"badge\">unquotable</span>"
-                },
-                sub.join(" &middot; ")
-            );
-            body.push_str(&legend(members));
-            body.push_str(&match chart_kind(kind) {
-                "forest" => forest(members),
-                "bars" => bar_chart(members),
-                _ => line_chart(members),
-            });
-            body.push_str(&table(members));
-            body.push_str("</div>");
-        }
+        body.push_str(&cards(list));
     }
+    page(title, &body, "")
+}
+
+/// The document shell every page shares: the CSS, an optional extra style
+/// block, and the body inside `<main>`. Nothing is fetched from anywhere.
+pub(crate) fn page(title: &str, body: &str, extra_css: &str) -> String {
     format!(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>{}</title><style>{CSS}</style></head><body><main>{body}</main></body></html>\n",
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>{}</title><style>{CSS}{extra_css}</style></head><body><main>{body}</main></body></html>\n",
         esc(title)
     )
 }

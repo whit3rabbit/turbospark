@@ -84,13 +84,23 @@ struct AudioInstalledModelDetailView: View {
             }
             Spacer(minLength: 0)
             if canDelete {
-                Button(role: .destructive) { confirmingDelete = true } label: {
-                    Label {
-                        entry.group == .local ? Text("Remove", bundle: .module) : Text("Delete", bundle: .module)
-                    } icon: { Image(systemName: "trash") }
+                if entry.group == .local {
+                    Button { confirmingDelete = true } label: {
+                        Label {
+                            Text("Remove", bundle: .module)
+                        } icon: { Image(systemName: "minus.circle") }
+                    }
+                    .appAction(.secondary)
+                    .help(Text("Its folder stays where it is.", bundle: .module))
+                } else {
+                    Button(role: .destructive) { confirmingDelete = true } label: {
+                        Label {
+                            Text("Delete", bundle: .module)
+                        } icon: { Image(systemName: "trash") }
+                    }
+                    .appAction(.destructive)
+                    .help(Text("Delete model from disk", bundle: .module))
                 }
-                .appAction(.destructive)
-                .help(entry.group == .local ? Text("Its folder stays where it is.", bundle: .module) : Text("Delete model from disk", bundle: .module))
             }
         }
     }
@@ -127,6 +137,7 @@ struct AudioInstalledModelDetailView: View {
                     }
                     .appAction(.primary)
                     .disabled(controller.isManagingInstall || controller.isBusy)
+                    .help(Text("Adopt existing install", bundle: .module))
                 }
             case .notInstalled, .downloading:
                 AudioModelDownloadControls(model: model, controller: controller, profile: profile, size: .regular)
@@ -189,6 +200,7 @@ struct AudioInstalledModelDetailView: View {
                     }
                     if !profile.identity.revision.isEmpty, entry.group != .local {
                         row(Text("Revision", bundle: .module), Text(verbatim: profile.identity.revision), code: true)
+                            .help(profile.identity.revision)
                     }
                 }
                 if let size = entry.installBytes ?? profile?.downloadBytes, size > 0 {
@@ -196,6 +208,7 @@ struct AudioInstalledModelDetailView: View {
                 }
                 if let location {
                     row(Text("Location", bundle: .module), Text(verbatim: location), code: true)
+                        .help(location)
                 }
             }
             .themedFont(.small)

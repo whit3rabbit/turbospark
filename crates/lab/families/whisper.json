@@ -1,0 +1,37 @@
+{
+  "schema": "turbospark.lab.family/1",
+  "family": "whisper",
+  "kind": "audio",
+  "title": "Whisper speech to text on Metal (tiny.en through large)",
+  "flow": "transcribe",
+  "installs": [
+    {"name": "whisper-tiny.en", "quant": "f16", "machine": "Apple M4 Max 36 GB", "drafters": [], "note": "no audio install on this host today"}
+  ],
+  "recommended": [
+    {"knob": "whisper_device", "value": "<unset>", "when": [],
+     "why": "Metal is the default and the only arm the worker measures; a cpu arm is another implementation and refuses the worker",
+     "findings": ["whisper.tiny-en-standing-2026-10-11"]}
+  ],
+  "sweeps": [],
+  "findings": [
+    {"id": "whisper.tiny-en-standing-2026-10-11", "date": "2026-10-11",
+     "install": "whisper-tiny.en", "machine": "Apple M4 Max 36 GB", "power": "ac", "rev": "v0.5 era",
+     "workload": "a 20 s clip, warm; split mel on the CPU, encoder and decoder on Metal",
+     "arms": {"metal": {}},
+     "metric": "audio_run_s", "values": {"warm_ms": [160, 165], "whisper_cpp_ms": 180, "mel_cpu_ms": 32, "encoder_ms": 46, "us_per_dispatch_floor": 5.4, "ms_per_decode_token": 0.26},
+     "verdict": "reading",
+     "provenance": {"kind": "doc", "path": "docs/WHISPER.md", "heading": "Measured standing"},
+     "conditions": "single warm readings; profiled with TURBOSPARK_WHISPER_PROFILE=1, which makes a run unquotable",
+     "note": "the whisper_linear bench and the worker arm have not run against a real Whisper install on this host"}
+  ],
+  "open_questions": [
+    "no transcription clip is checked in: a transcribe job names a 16 kHz mono WAV the user supplies",
+    "the Whisper arm and the whisper_linear bench have not run on a real install on this host"
+  ],
+  "traps": [
+    "the worker refuses a Whisper that opened on the CPU path",
+    "resampling is not the lab's job: give a 16 kHz mono WAV",
+    "audio gates are output identity only: declare text_exact for a transcript, never a KL class"
+  ],
+  "docs": ["docs/WHISPER.md", "docs/SPEECH_TO_TEXT.md"]
+}

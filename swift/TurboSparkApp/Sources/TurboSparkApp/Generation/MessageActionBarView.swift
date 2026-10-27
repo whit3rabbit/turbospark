@@ -223,7 +223,7 @@ struct MessageCopyButton: View {
         ) {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
-            TSMotion.animate(.easeInOut(duration: 0.15)) {
+            TSMotion.animate(TSMotion.select) {
                 isCopied = true
             }
         }
@@ -233,7 +233,7 @@ struct MessageCopyButton: View {
             guard isCopied else { return }
             try? await Task.sleep(for: .seconds(1.5))
             guard !Task.isCancelled else { return }
-            TSMotion.animate(.easeOut(duration: 0.15)) {
+            TSMotion.animate(TSMotion.press) {
                 isCopied = false
             }
         }

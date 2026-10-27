@@ -14,6 +14,8 @@ struct BackgroundShellsStripView: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
 
+    @State private var shellToKill: BackgroundShellSummary?
+
     /// Same visibility rule as the agent strip: unscoped shells (a run
     /// whose chat was captured as nil) show everywhere; a chat-scoped shell
     /// shows only in its own chat.
@@ -29,6 +31,27 @@ struct BackgroundShellsStripView: View {
                 ForEach(shells) { shell in
                     shellRow(shell)
                 }
+            }
+            .confirmationDialog(
+                Text("Kill", bundle: .module),
+                isPresented: Binding(
+                    get: { shellToKill != nil },
+                    set: { if !$0 { shellToKill = nil } }
+                ),
+                presenting: shellToKill
+            ) { target in
+                Button(role: .destructive) {
+                    model.killBackgroundShell(id: target.id)
+                } label: {
+                    Text("Kill", bundle: .module)
+                }
+                Button(role: .cancel) {
+                    shellToKill = nil
+                } label: {
+                    Text("Cancel", bundle: .module)
+                }
+            } message: { _ in
+                Text("Kill this background shell (its child processes are killed with it)", bundle: .module)
             }
         }
     }
@@ -68,25 +91,27 @@ struct BackgroundShellsStripView: View {
                 .themedFont(.small)
                 .foregroundStyle(theme.metadataForeground)
             Button(role: .destructive) {
-                model.killBackgroundShell(id: shell.id)
+                shellToKill = shell
             } label: {
                 Image(systemName: "stop.fill")
                     .themedFont(.tiny)
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(Color.red.opacity(0.8))
+            .appAction(.destructive, size: .small)
             .help(Text("Kill this background shell (its child processes are killed with it)", bundle: .module))
             .accessibilityLabel(Text("Kill background shell \(shell.id)", bundle: .module))
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(.appSurface.opacity(0.7))
+        .background(.appSurface)
         .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(.appAccent.opacity(0.45), lineWidth: 1)
+            RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
+                .stroke(theme.border, lineWidth: 1)
         )
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text("Background shell \(shell.id) running, \(shell.commandHead)", bundle: .module))
+        .accessibilityAction(named: Text("Kill", bundle: .module)) {
+            shellToKill = shell
+        }
     }
 }

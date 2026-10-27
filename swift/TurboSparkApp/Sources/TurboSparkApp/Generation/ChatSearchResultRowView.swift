@@ -13,7 +13,7 @@ struct ChatSearchResultRowView: View {
         HStack(spacing: 8) {
             Image(systemName: "bubble.left")
                 .font(theme.ui(.tiny))
-                .foregroundStyle(isSelected ? TurboSparkTheme.accentColor : Color.secondary)
+                .foregroundStyle(isSelected ? AnyShapeStyle(.appAccent) : AnyShapeStyle(.appSecondary))
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(hit.title)
@@ -40,13 +40,15 @@ struct ChatSearchResultRowView: View {
                 // Every bucket `dateBucket` returns is a catalog key.
                 Text(LocalizedStringKey(ChatSearch.dateBucket(hit.updatedAt)), bundle: .module)
                     .font(theme.ui(.tiny))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.appSecondary)
             }
         }
         .padding(.leading, 9)
         .padding(.vertical, 7)
         .padding(.trailing, 9)
         .contentShape(.rect)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 
     /// Folds the snippet's pre-cut segments into one `Text`, coloring the
@@ -56,7 +58,7 @@ struct ChatSearchResultRowView: View {
         for segment in snippet.segments {
             let piece = Text(segment.text)
             text = text + (segment.isMatch
-                ? piece.foregroundColor(TurboSparkTheme.accentColor).fontWeight(.semibold)
+                ? piece.foregroundColor(theme.accent).fontWeight(.semibold)
                 : piece)
         }
         return text

@@ -85,7 +85,7 @@ public struct CollapsibleMessageContentView: View {
 
             if isClamped || gatedPreview != nil {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
+                    TSMotion.animate(TSMotion.pane) {
                         isExpanded.toggle()
                     }
                 } label: {
@@ -104,8 +104,8 @@ public struct CollapsibleMessageContentView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help(isExpanded ? "Collapse message" : "Expand full message")
-                .accessibilityLabel(isExpanded ? "Show less of message" : "Show more of message")
+                .help(isExpanded ? Text("Collapse message", bundle: .module) : Text("Expand full message", bundle: .module))
+                .accessibilityLabel(isExpanded ? Text("Show less of message", bundle: .module) : Text("Show more of message", bundle: .module))
             }
         }
         .frame(maxWidth: isUser ? nil : .infinity, alignment: isUser ? .trailing : .leading)

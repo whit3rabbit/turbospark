@@ -37,9 +37,11 @@ struct ToolGroupView: View {
         return hasRunningTool
     }
 
-    private var groupLabel: String {
+    private var groupLabelText: Text {
         let count = toolCalls.count
-        return "\(count) tool \(count == 1 ? "call" : "calls")"
+        return count == 1
+            ? Text("\(count) tool call", bundle: .module)
+            : Text("\(count) tool calls", bundle: .module)
     }
 
     var body: some View {
@@ -66,7 +68,7 @@ struct ToolGroupView: View {
 
     private var triggerButton: some View {
         Button {
-            withAnimation(.easeInOut(duration: 0.18)) {
+            TSMotion.animate(TSMotion.select) {
                 // The approval force-open overrides the manual flag, so
                 // recording a toggle here would store an invisible value
                 // (the click looks dead, the group stays open) that then
@@ -84,7 +86,7 @@ struct ToolGroupView: View {
                     } else if hasFailedTool {
                         Image(systemName: "exclamationmark.circle")
                             .themedFont(.small, weight: .semibold)
-                            .foregroundStyle(Color.red)
+                            .foregroundStyle(AppAttention.color)
                     } else {
                         Image(systemName: "wrench.and.screwdriver")
                             .themedFont(.small, weight: .semibold)
@@ -93,7 +95,7 @@ struct ToolGroupView: View {
                 }
                 .frame(width: ConversationLayout.activityIconWidth)
 
-                Text(groupLabel)
+                groupLabelText
                     .themedFont(.small, weight: .medium)
                     .foregroundStyle(.appText)
 
@@ -102,16 +104,20 @@ struct ToolGroupView: View {
                         .themedFont(.tiny, weight: .medium)
                         .foregroundStyle(.appAccent)
                 } else if hasPendingApproval {
-                    Text("approval required", bundle: .module)
-                        .themedFont(.tiny, weight: .medium)
-                        .foregroundStyle(Color.orange)
+                    HStack(spacing: 3) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .themedFont(.micro)
+                        Text("approval required", bundle: .module)
+                            .themedFont(.tiny, weight: .medium)
+                    }
+                    .foregroundStyle(AppAttention.color)
                 }
 
                 Spacer()
 
                 Image(systemName: "chevron.right")
                     .themedFont(.tiny, weight: .bold)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.appSecondary)
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
             }
             .frame(minHeight: ConversationLayout.activityHeight)
@@ -127,7 +133,7 @@ struct ToolGroupView: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(Text(verbatim: groupLabel))
-        .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+        .accessibilityLabel(groupLabelText)
+        .accessibilityValue(isExpanded ? Text("Expanded", bundle: .module) : Text("Collapsed", bundle: .module))
     }
 }

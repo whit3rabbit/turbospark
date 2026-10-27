@@ -82,8 +82,8 @@ public struct AppSettingsView: View {
     public var body: some View {
         HStack(spacing: 0) {
             settingsSidebar
-                .frame(width: 252)
-                .background(.appPage.opacity(0.85))
+                .frame(minWidth: 220, idealWidth: 252, maxWidth: 280)
+                .background(.appPage)
 
             Rectangle()
                 .fill(.appBorder)

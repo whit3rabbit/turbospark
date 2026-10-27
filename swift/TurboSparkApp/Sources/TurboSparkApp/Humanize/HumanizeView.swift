@@ -20,6 +20,7 @@ struct HumanizeView: View {
     @State private var copied = false
     @State private var confirmingDelete = false
     @State private var confirmingClearAll = false
+    @State private var confirmingClearRewrite = false
     @FocusState private var draftFocused: Bool
 
     /// From the loadable list: a Humanizer on a drive that is away cannot be
@@ -122,6 +123,14 @@ struct HumanizeView: View {
         } message: {
             Text("This removes the draft and the rewrite.", bundle: .module)
         }
+        .confirmationDialog(Text("Clear Rewrite", bundle: .module), isPresented: $confirmingClearRewrite) {
+            Button(role: .destructive) {
+                controller.clearRewrite()
+                reviewing = false
+            } label: { Text("Clear Rewrite", bundle: .module) }
+        } message: {
+            Text("This removes the rewrite.", bundle: .module)
+        }
     }
 
     private var canClearAll: Bool {
@@ -206,7 +215,7 @@ struct HumanizeView: View {
             if let plan = controller.currentPlan {
                 Text("Tokens: \(plan.tokens)", bundle: .module)
                     .modifier(StatStyle())
-                    .foregroundStyle(plan.fits ? AnyShapeStyle(.appSecondary) : AnyShapeStyle(Color.orange))
+                    .foregroundStyle(plan.fits ? AnyShapeStyle(.appSecondary) : AnyShapeStyle(AppAttention.color))
                     .help(Text("The model reads up to 8,192 tokens at a time. Longer drafts are rewritten in parts at paragraph breaks.", bundle: .module))
             }
         }
@@ -232,12 +241,10 @@ struct HumanizeView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .transition(.opacity)
                 } else {
-                    VStack(spacing: 10) {
-                        Image(systemName: "text.alignleft").themedFont(.title2).accessibilityHidden(true)
-                        Text("Your rewrite will appear here.", bundle: .module)
-                    }
-                    .foregroundStyle(.appSecondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    AppEmptyState(
+                        systemImage: "text.alignleft",
+                        title: Text("Your rewrite will appear here.", bundle: .module)
+                    )
                 }
             } else {
                 ScrollView {
@@ -277,8 +284,7 @@ struct HumanizeView: View {
             // Last, so it sits at the card's outer edge like Clear Draft does
             // on the other side of the run button.
             AppChip(Text("Clear Rewrite", bundle: .module), systemImage: "eraser", iconOnly: tight) {
-                controller.clearRewrite()
-                reviewing = false
+                confirmingClearRewrite = true
             }
             .disabled(controller.rewrite.isEmpty || controller.isBusy)
             .accessibilityIdentifier("humanize.clearRewrite")
@@ -333,7 +339,7 @@ struct HumanizeView: View {
     }
 
     private func checksChip(clean: Bool) -> some View {
-        let tint: Color = clean ? .green : .orange
+        let tint: Color = clean ? .green : AppAttention.color
         return Label {
             if clean { Text("Checks passed", bundle: .module) } else { Text("Check before you use it", bundle: .module) }
         } icon: {
@@ -343,7 +349,7 @@ struct HumanizeView: View {
         .foregroundStyle(tint)
         .lineLimit(1)
         .padding(.horizontal, 8).padding(.vertical, 5)
-        .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
         .fixedSize()
         .help(clean
               ? Text("The automatic checks found nothing. Read it before you use it.", bundle: .module)
@@ -386,8 +392,8 @@ struct HumanizeView: View {
         // warnings, not a view of the diff.
         for range in controller.ruleFindings?.avoidRanges ?? [] {
             guard let bounds = Range(range, in: output), let marked = Range(bounds, in: text) else { continue }
-            text[marked].backgroundColor = Color.orange.opacity(0.22)
-            text[marked].underlineStyle = Text.LineStyle(pattern: .dash, color: .orange)
+            text[marked].backgroundColor = AppAttention.color.opacity(0.22)
+            text[marked].underlineStyle = Text.LineStyle(pattern: .dash, color: AppAttention.color)
         }
         return text
     }

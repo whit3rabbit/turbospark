@@ -1,0 +1,27 @@
+{
+  "schema": "turbospark.lab.family/1",
+  "family": "qwen2",
+  "kind": "text",
+  "title": "Qwen2 dense GQA on the llama flow, qkv biases, no qk norm",
+  "flow": "llama",
+  "installs": [],
+  "recommended": [
+    {"chunk": "128", "when": [],
+     "why": "the dense llama flow's chunked driver; same lab coverage as qwen3",
+     "findings": []}
+  ],
+  "sweeps": [
+    {"id": "batched_gemv", "description": "the batched prefill arm against the per-token loop",
+     "when": ["dense"], "metric": "prefill_tok_s", "exactness": "dense_kl",
+     "workload": {"prompts": [{"protocol": "long-synthesis"}], "decode_tokens": 16},
+     "baseline": "batched", "candidates": ["per_token:batched_gemv=0"]},
+    {"id": "decode_attention", "description": "the GQA-shared decode kernel against barrier",
+     "when": ["dense"], "metric": "decode_tok_s", "exactness": "dense_kl",
+     "workload": {"prompts": [{"protocol": "medium-review"}], "decode_tokens": 64},
+     "baseline": "default", "candidates": ["gqa:attn_decode_kernel=gqa"]}
+  ],
+  "findings": [],
+  "open_questions": ["no install measured by the lab yet: run workflow new-family first"],
+  "traps": ["the qkv biases are part of the projection shapes the resident index reports; a synthesized bench weight has none"],
+  "docs": ["docs/BATCHED_PREFILL.md"]
+}

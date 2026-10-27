@@ -83,19 +83,11 @@ struct PromptComposerFooter: View {
     @ViewBuilder
     private var clearAction: some View {
         if !model.isRunning && !model.promptText.isEmpty {
-            Button {
+            AppIconButton("xmark.circle.fill", label: Text("Clear prompt", bundle: .module)) {
                 model.promptText = ""
                 promptFocused.wrappedValue = true
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .themedFont(.callout)
-                    .foregroundStyle(.tertiary)
-                    .frame(width: iconButtonSize, height: iconButtonSize)
-                    .contentShape(Circle())
             }
-            .buttonStyle(.plain)
-            .help(Text("Clear prompt", bundle: .module))
-            .accessibilityLabel(Text("Clear prompt", bundle: .module))
+            .foregroundStyle(.appSecondary)
             .accessibilityHint(Text("Empties the prompt editor", bundle: .module))
         }
     }

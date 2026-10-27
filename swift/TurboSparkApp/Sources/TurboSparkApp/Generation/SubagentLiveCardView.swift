@@ -55,7 +55,7 @@ struct SubagentLiveCardView: View {
                                     Image(systemName: row.isError
                                             ? "xmark.circle.fill" : "checkmark.circle.fill")
                                         .themedFont(.tiny)
-                                        .foregroundStyle(row.isError ? Color.red : Color.green)
+                                        .foregroundStyle(row.isError ? AnyShapeStyle(AppAttention.color) : AnyShapeStyle(Color.green))
                                         .accessibilityHidden(true)
                                 }
                                 Text(row.name)
@@ -73,7 +73,7 @@ struct SubagentLiveCardView: View {
                     if !text.isEmpty {
                         Text(text)
                             .font(theme.code(.small))
-                            .foregroundStyle(.primary.opacity(0.85))
+                            .foregroundStyle(.appText)
                             .lineLimit(12)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .textSelection(.enabled)
@@ -82,7 +82,7 @@ struct SubagentLiveCardView: View {
                     if !isRunning, let result = state.result, state.mode == .background {
                         Text(result.finalResponse)
                             .font(theme.code(.small))
-                            .foregroundStyle(.primary.opacity(0.85))
+                            .foregroundStyle(.appText)
                             .lineLimit(20)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .textSelection(.enabled)
@@ -93,15 +93,15 @@ struct SubagentLiveCardView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(.appSurface.opacity(0.7))
+        .background(.appSurface)
         .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+            RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
                 .stroke(isRunning
-                    ? TurboSparkTheme.accentColor.opacity(0.45)
-                    : TurboSparkTheme.hairlineColor,
+                    ? theme.accent.opacity(0.45)
+                    : theme.border,
                     lineWidth: 1)
         )
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text("Subagent \(state.displayName), \(statusText)", bundle: .module))
     }
@@ -109,7 +109,7 @@ struct SubagentLiveCardView: View {
     private var header: some View {
         HStack(spacing: 6) {
             Button {
-                TSMotion.animate(.easeInOut(duration: 0.12)) { isExpanded.toggle() }
+                TSMotion.animate(TSMotion.select) { isExpanded.toggle() }
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "person.2.wave.2")
@@ -148,7 +148,7 @@ struct SubagentLiveCardView: View {
                             .themedFont(.tiny)
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(Color.red.opacity(0.8))
+                    .foregroundStyle(AppAttention.color)
                     .help(Text("Stop this background subagent", bundle: .module))
                     .accessibilityLabel(Text("Stop subagent \(state.displayName)", bundle: .module))
                 }
@@ -173,8 +173,8 @@ struct SubagentLiveCardView: View {
     private var statusColor: Color {
         switch state.status {
         case "completed": return .green
-        case "killed", "cancelled": return .orange
-        case "error", "failed": return .red
+        case "killed", "cancelled": return AppAttention.color
+        case "error", "failed": return AppAttention.color
         default: return theme.metadataForeground
         }
     }

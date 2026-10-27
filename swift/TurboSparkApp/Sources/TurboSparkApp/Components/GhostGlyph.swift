@@ -51,7 +51,7 @@ public struct GhostGlyph: View {
     public let size: CGFloat
     public let color: Color
 
-    public init(size: CGFloat, color: Color = .primary) {
+    public init(size: CGFloat, color: Color) {
         self.size = size
         self.color = color
     }

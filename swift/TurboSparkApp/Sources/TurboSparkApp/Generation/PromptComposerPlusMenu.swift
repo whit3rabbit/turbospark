@@ -46,7 +46,7 @@ struct PromptComposerPlusMenu: View {
                 .frame(height: iconButtonSize)
                 .padding(.horizontal, 7)
                 .background(
-                    Color.primary.opacity(isHovered ? 0.08 : 0.04),
+                    isHovered ? .appElevated : .appSurface,
                     in: Capsule()
                 )
                 .contentShape(Capsule())
@@ -56,7 +56,9 @@ struct PromptComposerPlusMenu: View {
             .fixedSize()
             .disabled(isRunning)
             .onHover { isHovered = $0 }
-            .help(Text("Add files, folders, and tools (Cmd+U)", bundle: .module))
+            .help(isRunning
+                ? Text("Cannot add files or tools while generation is running", bundle: .module)
+                : Text("Add files, folders, and tools (Cmd+U)", bundle: .module))
             .accessibilityLabel(Text("Add options and tools", bundle: .module))
         }
     }

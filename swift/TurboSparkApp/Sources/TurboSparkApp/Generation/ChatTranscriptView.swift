@@ -110,7 +110,7 @@ struct ChatTranscriptView: View {
             }
             .onChange(of: selectedRecoveryEvents) { _, events in
                 guard !events.isEmpty else { return }
-                withAnimation(.easeInOut(duration: 0.2)) {
+                TSMotion.animate(TSMotion.pane) {
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
             }
@@ -120,10 +120,10 @@ struct ChatTranscriptView: View {
                 if let pending {
                     let count = pending.items.count
                     let announcement = count == 1
-                        ? "Assistant is asking a question. Please choose an answer."
-                        : "Assistant is asking \(count) questions. Please choose your answers."
+                        ? AppStrings.localized("Assistant is asking a question. Please choose an answer.")
+                        : AppStrings.localized("Assistant is asking \(count) questions. Please choose an answer.")
                     _ = AccessibilityNotification.Announcement.post(.init(announcement))
-                    withAnimation(.easeInOut(duration: 0.2)) {
+                    TSMotion.animate(TSMotion.pane) {
                         proxy.scrollTo("bottom", anchor: .bottom)
                     }
                 }
@@ -135,16 +135,16 @@ struct ChatTranscriptView: View {
             // chords bump a token; this is where the jump actually lands.
             .onChange(of: model.turnNavigationToken) { _, _ in
                 guard let target = model.turnNavigationTargetID else { return }
-                withAnimation(.easeInOut(duration: 0.2)) {
+                TSMotion.animate(TSMotion.pane) {
                     proxy.scrollTo(target, anchor: .top)
                 }
             }
-            .accessibilityRotor("Messages") {
+            .accessibilityRotor(Text("Messages", bundle: .module)) {
                 ForEach(model.selectedTurnMessages) { msg in
-                    AccessibilityRotorEntry(
-                        msg.role == .user ? "User: \(msg.content.prefix(40))" : "Assistant: \(msg.content.prefix(40))",
-                        id: msg.id
-                    )
+                    let prefix = msg.role == .user
+                        ? AppStrings.localized("User: \(String(msg.content.prefix(40)))")
+                        : AppStrings.localized("Assistant: \(String(msg.content.prefix(40)))")
+                    AccessibilityRotorEntry(prefix, id: msg.id)
                 }
             }
         }
@@ -192,16 +192,17 @@ private struct CompactionBoundaryNoticeView: View {
         } icon: {
             Image(systemName: "info.circle")
         }
-        .foregroundStyle(.secondary)
+        .foregroundStyle(.appSecondary)
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+        .background(.appElevated, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("microcompact-boundary-notice-\(event.id.uuidString)")
     }
 }
 
 private struct TurnActivityDisclosure: View {
+    @Environment(\.appTheme) private var theme
     let count: Int
     let isExpanded: Bool
     let onToggle: () -> Void
@@ -210,7 +211,7 @@ private struct TurnActivityDisclosure: View {
         Button(action: onToggle) {
             HStack(spacing: 10) {
                 Image(systemName: "terminal")
-                    .frame(width: ConversationLayout.activityIconWidth)
+                    .frame(width: (ConversationLayout.activityIconWidth * AppMetrics.textScale(theme)).rounded())
                 Text("Activity", bundle: .module)
                 Text(verbatim: "\(count)").monospacedDigit()
                 Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
@@ -219,7 +220,7 @@ private struct TurnActivityDisclosure: View {
             }
             .themedFont(.small, weight: .medium)
             .foregroundStyle(.appSecondary)
-            .frame(minHeight: ConversationLayout.activityHeight)
+            .frame(minHeight: (ConversationLayout.activityHeight * AppMetrics.textScale(theme)).rounded())
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

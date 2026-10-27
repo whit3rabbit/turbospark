@@ -6,6 +6,7 @@ import TurboSpark
 struct ModelProbeSheet: View {
     @ObservedObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.appTheme) private var theme
 
     @State private var repo = ""
     @State private var alias = ""
@@ -78,7 +79,7 @@ struct ModelProbeSheet: View {
     }
 
     private var header: some View {
-        HStack {
+        AppAdaptiveHeader {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Probe Hugging Face Repository", bundle: .module)
                     .themedFont(.base, weight: .semibold)
@@ -87,7 +88,7 @@ struct ModelProbeSheet: View {
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
             }
-            Spacer()
+        } actions: {
             Button { dismiss() } label: { Text("Done", bundle: .module) }
                 .appAction(.secondary)
                 .keyboardShortcut(.cancelAction)
@@ -100,8 +101,8 @@ struct ModelProbeSheet: View {
             VStack(alignment: .leading, spacing: 16) {
                 formFields
                 if isProbing {
-                    HStack(spacing: 8) {
-                        ProgressView().controlSize(.small)
+                    VStack(alignment: .leading, spacing: 6) {
+                        AppProgressBar(value: nil, label: Text("Probing repository headers...", bundle: .module), size: .compact)
                         Text("Probing repository headers...", bundle: .module)
                             .themedFont(.base)
                             .foregroundStyle(.appSecondary)
@@ -112,13 +113,13 @@ struct ModelProbeSheet: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(err)
                             .themedFont(.small)
-                            .foregroundStyle(.red)
+                            .foregroundStyle(Color.red)
 
                         if err.contains("401") || err.contains("403") || err.contains("gated") || err.localizedCaseInsensitiveContains("unauthorized") || err.localizedCaseInsensitiveContains("forbidden") {
                             HStack(spacing: 6) {
                                 Image(systemName: "key.fill")
                                     .themedFont(.tiny)
-                                    .foregroundStyle(.orange)
+                                    .foregroundStyle(AppAttention.color)
                                 Text("This repository may require Hugging Face authentication.", bundle: .module)
                                     .themedFont(.tiny)
                                     .foregroundStyle(.appSecondary)
@@ -132,7 +133,7 @@ struct ModelProbeSheet: View {
                         }
                     }
                     .padding(10)
-                    .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+                    .background(Color.red.opacity(theme.surfaceOpacity(0.1)), in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
                 }
                 if let report {
                     ProbeReportCardView(report: report)
@@ -196,7 +197,7 @@ struct ModelProbeSheet: View {
                         HStack(alignment: .top, spacing: 6) {
                             Image(systemName: "info.circle.fill")
                                 .themedFont(.tiny)
-                                .foregroundStyle(.blue)
+                                .foregroundStyle(.appAccent)
                             Text("GGUF files usually lack tokenizer.json. If the probe reports missing sidecars, enter the upstream Hugging Face repo (e.g. Qwen/Qwen3.8-27B) here.", bundle: .module)
                                 .themedFont(.tiny)
                                 .foregroundStyle(.appSecondary)
@@ -265,13 +266,13 @@ struct ModelProbeSheet: View {
                 if let listed = variants, listed.variants.count > 1 && ggufFile.isEmpty {
                     Text("This repository publishes \(listed.variants.count) GGUF variants. Select a specific file to probe and install.", bundle: .module)
                         .themedFont(.small)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(AppAttention.color)
                 }
 
                 if let v = selectedVariant, !v.executable {
                     Text("This port has no kernels for the type this filename names. Probe it to see what the header actually contains.", bundle: .module)
                         .themedFont(.small)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(AppAttention.color)
                 }
                 // Nonzero shards is why the list may be short or empty. Say
                 // so, or an empty picker reads as "no GGUF here".
@@ -313,7 +314,7 @@ struct ModelProbeSheet: View {
             if let reason = decision.reason, !repo.isEmpty {
                 Label(reason, systemImage: decision.isBlocked ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
                     .themedFont(.small)
-                    .foregroundStyle(decision.isBlocked ? Color.red : Color.orange)
+                    .foregroundStyle(decision.isBlocked ? AnyShapeStyle(Color.red) : AnyShapeStyle(AppAttention.color))
                     .fixedSize(horizontal: false, vertical: true)
             }
             // Where the model will be installed: only when there is a choice

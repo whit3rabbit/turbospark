@@ -50,12 +50,21 @@ kernel path, and what `tslab project` and `tslab calibrate` check about it.
    and `confirm`: `--base <that merge commit>`.
 
 3. Find where time goes, on AC power with a quiet host. Start with what
-   the install supports, then the survey:
+   the family is known to want and what the install supports, then the
+   survey:
 
    ```sh
+   $TSLAB family --model <install> --findings
    $TSLAB capabilities --model <install>
    $TSLAB workflow new-family --model <install> --experiment <tag>-survey
    ```
+
+   `family` prints the profile (`crates/lab/families/<family>.json`): the
+   settings the ledger and the docs found to pay, the sweeps worth running
+   first (`tslab sweep --sweep ID`, or `workflow family-sweep`), every
+   recorded finding with its conditions and where it came from, and the
+   open questions. An idea the profile already records as a dead end is
+   not a hypothesis.
 
    `new-family` runs this page's family checks that apply to the install
    (profile, hashed kernel curves, null floor, dispatch probe, speculative
@@ -271,6 +280,11 @@ cannot run.
     lattice does not. The result and its reading for qwen38 are in
     `docs/KAPITSA_KERNELS.md` (KFlash section).
 
+Record what each check found in the family's profile (a `finding` with the
+ledger id, the install, machine, power source, revision, workload and
+conditions; `crates/lab/families/README.md`), and change a `recommended`
+entry only when a verdict, not a reading, says so.
+
 Workloads under `crates/lab/workloads/` are for `--prompt messages:PATH`.
 `copy-heavy.messages.json` is a quote-back task (rename one variable in a short
 function and return all of it), the shape where lookup drafting was expected to
@@ -391,11 +405,13 @@ Say so in the hypothesis rather than measure around it:
   never quotable. Shader shares come from samples, so compare shares
   between traces, not times. `TURBOSPARK_DISPATCH_PROFILE=1` text is still
   kept unparsed and unquotable.
-- **Audio.** Worker arms run MiniMax Music 3 and Whisper; Kokoro,
-  MegaTTS3, OmniVoice, Moonshine and Qwen3-ASR are kernel-bench only. The
-  Whisper arm and the `whisper_linear` bench have not run against a real
-  Whisper install on this host. Audio has no KL bound: its gates are
-  output identity only.
+- **Audio.** Worker arms run MiniMax Music 3, Whisper, Moonshine and
+  Qwen3-ASR (transcribe), and Kokoro and MegaTTS3 (speak, `workloads/audio/`);
+  OmniVoice and Fish Drama 3 are kernel-bench only. No audio install exists
+  on this host, so the Whisper, Moonshine, Qwen3-ASR, Kokoro and MegaTTS3
+  arms and the `whisper_linear` bench have not run against a real install
+  here: their job parsing, refusals and coverage tags are what the tests
+  cover. Audio has no KL bound: its gates are output identity only.
 - **ANE arms need an `ane-prefill` worker.** The worker refuses an ANE arm
   it was not built for, rather than measuring Steel under the label. The
   split also needs `--chunk 2048`.

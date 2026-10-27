@@ -82,16 +82,16 @@ struct MessageRowView: View {
                     Spacer(minLength: 4)
                     Image(systemName: "sidebar.right")
                         .themedFont(.micro)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.appSecondary)
                         .accessibilityHidden(true)
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
-                .background(Color.primary.opacity(0.04))
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .background(.appSurface)
+                .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .stroke(.appBorder.opacity(0.4), lineWidth: 0.5)
+                    RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
+                        .stroke(.appBorder, lineWidth: 1)
                 )
                 .contentShape(Rectangle())
             }
@@ -119,7 +119,7 @@ struct MessageRowView: View {
                     Image(systemName: "photo.badge.exclamationmark")
                 }
                     .themedFont(.small)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.appSecondary)
             }
         }
     }
@@ -149,12 +149,12 @@ struct MessageRowView: View {
                 .accessibilityHeading(.h2)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
-                .background(.appSurface.opacity(0.85))
+                .background(.appSurface)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: AppMetrics.composerRadius, style: .continuous)
+                        .stroke(.appBorder, lineWidth: 1)
                 )
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: AppMetrics.composerRadius, style: .continuous))
                 .shadow(color: Color.black.opacity(0.03), radius: 3, x: 0, y: 1)
 
                 imageAttachments
@@ -216,19 +216,19 @@ struct MessageRowView: View {
                             .foregroundStyle(theme.metadataForeground)
                             .frame(maxWidth: .infinity, maxHeight: 220, alignment: .topLeading)
                             .padding(8)
-                            .background(Color.primary.opacity(0.04))
-                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .background(.appSurface)
+                            .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
                             .textSelection(.enabled)
                     }
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
-                .background(.appSurface.opacity(0.85))
+                .background(.appSurface)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(.appAccent.opacity(0.25), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: AppMetrics.composerRadius, style: .continuous)
+                        .stroke(theme.accent.opacity(0.25), lineWidth: 1)
                 )
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: AppMetrics.composerRadius, style: .continuous))
 
                 if isHovered || isCurrentlySpeakingThis {
                     MessageActionBarView(
@@ -317,12 +317,12 @@ struct MessageRowView: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
-            .background(.appSurface.opacity(0.85))
+            .background(.appSurface)
             .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(.appAccent.opacity(0.25), lineWidth: 1)
+                RoundedRectangle(cornerRadius: AppMetrics.composerRadius, style: .continuous)
+                    .stroke(theme.accent.opacity(0.25), lineWidth: 1)
             )
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: AppMetrics.composerRadius, style: .continuous))
         }
     }
 
@@ -416,7 +416,7 @@ struct MessageRowView: View {
         .padding(.vertical, 4)
         .contentShape(Rectangle())
         .onHover { hovering in
-            TSMotion.animate(.easeInOut(duration: 0.15)) {
+            TSMotion.animate(TSMotion.hover) {
                 isHovered = hovering
             }
         }

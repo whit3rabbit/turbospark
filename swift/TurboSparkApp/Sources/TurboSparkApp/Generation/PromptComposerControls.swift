@@ -44,7 +44,7 @@ struct PromptTipsGuideView: View {
                        "Attach PDFs, spreadsheets, or code files for local reasoning and question answering.")
         }
         .font(theme.ui(.small))
-        .frame(width: 360, alignment: .leading)
+        .frame(minWidth: 320, idealWidth: 360, alignment: .leading)
         .padding(18)
     }
 
@@ -58,6 +58,7 @@ struct PromptTipsGuideView: View {
 
 /// Button triggering document file attachment dialog.
 struct PromptAttachDocumentButton: View {
+    @Environment(\.appTheme) private var theme
     let iconButtonSize: CGFloat
     let isRunning: Bool
     let isExtracting: Bool
@@ -74,9 +75,9 @@ struct PromptAttachDocumentButton: View {
                         .themedFont(.callout, weight: .medium)
                 }
             }
-            .frame(width: iconButtonSize, height: iconButtonSize)
+            .frame(minWidth: iconButtonSize, minHeight: iconButtonSize)
             .background(
-                Color.primary.opacity(isHovered ? 0.08 : 0.04),
+                isHovered ? AnyShapeStyle(.appElevated) : AnyShapeStyle(.appSurface),
                 in: Circle()
             )
             .contentShape(Circle())
@@ -85,7 +86,11 @@ struct PromptAttachDocumentButton: View {
         .foregroundStyle(.appSecondary)
         .onHover { isHovered = $0 }
         .disabled(isRunning || isExtracting)
-        .help(Text("Attach PDF, Word, Excel, code, or text files", bundle: .module))
+        .help(
+            isRunning
+                ? Text("While running, file attachments cannot be added", bundle: .module)
+                : Text("Attach PDF, Word, Excel, code, or text files", bundle: .module)
+        )
         .accessibilityLabel(isExtracting
                             ? Text("Extracting document text", bundle: .module)
                             : Text("Attach documents", bundle: .module))
@@ -133,6 +138,7 @@ struct SearchToggleButton: View {
 
 /// Audio dictation button triggering macOS speech dictation into the prompt editor.
 struct PromptAudioInputButton: View {
+    @Environment(\.appTheme) private var theme
     @FocusState.Binding var promptFocused: Bool
     @State private var isHovered: Bool = false
 
@@ -141,12 +147,13 @@ struct PromptAudioInputButton: View {
             promptFocused = true
             NSApp.sendAction(Selector(("startDictation:")), to: nil, from: nil)
         } label: {
+            let btnSize = (28 * AppMetrics.textScale(theme)).rounded()
             Image(systemName: "mic")
                 .themedFont(.callout, weight: .medium)
-                .foregroundStyle(Color.secondary)
-                .frame(width: 28, height: 28)
+                .foregroundStyle(.appSecondary)
+                .frame(width: btnSize, height: btnSize)
                 .background(
-                    Color.primary.opacity(isHovered ? 0.08 : 0),
+                    isHovered ? AnyShapeStyle(.appElevated) : AnyShapeStyle(Color.clear),
                     in: Circle()
                 )
                 .contentShape(Circle())

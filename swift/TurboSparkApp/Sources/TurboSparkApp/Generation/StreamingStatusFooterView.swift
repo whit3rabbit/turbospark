@@ -29,7 +29,7 @@ public struct StreamingStatusFooterView: View {
                 }
 
                 if model.liveTokenCount > 0 {
-                    Text(verbatim: "\(model.liveTokenCount) tokens")
+                    Text("\(model.liveTokenCount) tokens", bundle: .module)
                         .themedFont(.tiny, weight: .regular)
                         .foregroundStyle(.appSecondary)
                     dotSeparator
@@ -38,13 +38,13 @@ public struct StreamingStatusFooterView: View {
                 if let pending = model.pendingToolCall {
                     Text("Needs confirmation for \(pending.name)", bundle: .module)
                         .themedFont(.tiny, weight: .medium)
-                        .foregroundStyle(Color.orange)
+                        .foregroundStyle(AppAttention.color)
                 } else if model.isEscCancelArmed {
                     Text("Press Esc again to stop", bundle: .module)
                         .themedFont(.tiny, weight: .medium)
-                        .foregroundStyle(Color.orange)
+                        .foregroundStyle(AppAttention.color)
                 } else {
-                    Text(currentStatusText)
+                    currentStatusView
                         .themedFont(.tiny, weight: .regular)
                         .foregroundStyle(.appSecondary)
                 }
@@ -70,7 +70,7 @@ public struct StreamingStatusFooterView: View {
 
     private var dotSeparator: some View {
         Circle()
-            .fill(Color.secondary.opacity(0.4))
+            .fill(.appSecondary)
             .frame(width: 2.5, height: 2.5)
             .accessibilityHidden(true)
     }
@@ -84,23 +84,23 @@ public struct StreamingStatusFooterView: View {
         return "\(minutes)m \(seconds)s"
     }
 
-    private var currentStatusText: String {
+    @ViewBuilder
+    private var currentStatusView: some View {
         if let activeTask = model.activeTaskDescription {
-            return activeTask
-        }
-        if !model.outputReasoningText.isEmpty && model.outputText.isEmpty {
-            return "Thinking..."
-        }
-        if model.selectedTurnMessages.last?.toolCalls.contains(where: { $0.status == .running }) == true {
-            return "Running tools..."
-        }
-        if model.isRunning {
+            Text(verbatim: activeTask)
+        } else if !model.outputReasoningText.isEmpty && model.outputText.isEmpty {
+            Text("Thinking...", bundle: .module)
+        } else if model.selectedTurnMessages.last?.toolCalls.contains(where: { $0.status == .running }) == true {
+            Text("Running tools...", bundle: .module)
+        } else if model.isRunning {
             // The rotating phrase (qwen-code loadingPhrases parity): a plain
             // decode with nothing more specific to say still says something
             // different every 15 seconds. Any more specific state above
             // outranks it.
-            return LoadingPhrases.phrase(elapsed: TimeInterval(elapsedSeconds))
+            let phrase = LoadingPhrases.phrase(elapsed: TimeInterval(elapsedSeconds))
+            Text(LocalizedStringKey(phrase), bundle: .module)
+        } else {
+            Text("Idle", bundle: .module)
         }
-        return "Idle"
     }
 }

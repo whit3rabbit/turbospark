@@ -140,12 +140,40 @@ pub enum AudioJob {
         #[serde(default)]
         seed: u64,
     },
-    /// A WAV file to a transcript (Whisper).
+    /// A WAV file to a transcript (Whisper, Moonshine, Qwen3-ASR).
     Transcribe {
         wav: PathBuf,
         #[serde(default)]
         language: Option<String>,
     },
+    /// Text to a waveform (Kokoro, MegaTTS3). A MegaTTS3 job clones the
+    /// voice in `reference_wav` and needs `consent: true` for that exact
+    /// reference, the workspace's voice-cloning rule; without it the arm is
+    /// a recorded refusal.
+    Speak {
+        text: String,
+        #[serde(default)]
+        voice: Option<String>,
+        /// Diffusion steps (MegaTTS3; ignored by Kokoro).
+        #[serde(default)]
+        steps: Option<usize>,
+        #[serde(default)]
+        reference_wav: Option<PathBuf>,
+        #[serde(default)]
+        consent: bool,
+        #[serde(default)]
+        seed: u64,
+    },
+}
+
+impl AudioJob {
+    pub fn task(&self) -> &'static str {
+        match self {
+            AudioJob::Music { .. } => "music",
+            AudioJob::Transcribe { .. } => "transcribe",
+            AudioJob::Speak { .. } => "speak",
+        }
+    }
 }
 
 /// Which drafter, and how deep.
@@ -264,6 +292,18 @@ mod tests {
         ));
         let t: AudioJob = serde_json::from_str(r#"{"task":"transcribe","wav":"/a.wav"}"#).unwrap();
         assert!(matches!(t, AudioJob::Transcribe { language: None, .. }));
+        assert_eq!(t.task(), "transcribe");
+        let s: AudioJob = serde_json::from_str(r#"{"task":"speak","text":"hi"}"#).unwrap();
+        assert!(matches!(
+            s,
+            AudioJob::Speak {
+                consent: false,
+                steps: None,
+                seed: 0,
+                ..
+            }
+        ));
+        assert_eq!(s.task(), "speak");
         let r = serde_json::json!({"audio": {"run_s": 2.0, "rtf": 0.5}});
         assert_eq!(Metric::Rtf.read(&r), Some(0.5));
         assert_eq!(Metric::AudioRunS.read(&r), Some(2.0));

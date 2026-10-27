@@ -6,6 +6,7 @@ struct SystemPromptSettingsSection: View {
     @ObservedObject var model: AppModel
     @State private var showingAddSheet = false
     @State private var editingPrompt: AppSystemPrompt?
+    @State private var isConfirmingDelete = false
 
     var body: some View {
         Section(header: Text("System Prompt", bundle: .module)) {
@@ -27,9 +28,25 @@ struct SystemPromptSettingsSection: View {
                     } label: { Text("Edit Selected", bundle: .module) }
                     .appAction(.secondary, size: .small)
                     Button(role: .destructive) {
-                        model.deleteSystemPrompt(prompt.id)
+                        isConfirmingDelete = true
                     } label: { Text("Delete Selected", bundle: .module) }
                     .appAction(.destructive, size: .small)
+                    .confirmationDialog(
+                        Text("Delete System Prompt", bundle: .module),
+                        isPresented: $isConfirmingDelete,
+                        titleVisibility: .visible
+                    ) {
+                        Button(role: .destructive) {
+                            model.deleteSystemPrompt(prompt.id)
+                        } label: {
+                            Text("Delete System Prompt", bundle: .module)
+                        }
+                        Button(role: .cancel) {} label: {
+                            Text("Cancel", bundle: .module)
+                        }
+                    } message: {
+                        Text("Are you sure you want to delete this system prompt? This action cannot be undone.", bundle: .module)
+                    }
                 }
             }
 
@@ -67,6 +84,7 @@ private struct SystemPromptEditorSheet: View {
 
     @State private var name: String
     @State private var instructions: String
+    @FocusState private var isNameFocused: Bool
 
     init(
         title: Text,
@@ -86,11 +104,11 @@ private struct SystemPromptEditorSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
+            AppAdaptiveHeader {
                 title
                     .themedFont(.base, weight: .semibold)
                     .accessibilityAddTraits(.isHeader)
-                Spacer()
+            } actions: {
                 Button { dismiss() } label: { Text("Cancel", bundle: .module) }
                     .keyboardShortcut(.cancelAction)
             }
@@ -102,6 +120,8 @@ private struct SystemPromptEditorSheet: View {
                 TextField(text: $name) {
                     Text("Name", bundle: .module)
                 }
+                .focused($isNameFocused)
+
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Instructions", bundle: .module)
                     TextEditor(text: $instructions)
@@ -123,9 +143,15 @@ private struct SystemPromptEditorSheet: View {
                 .appAction(.primary)
                 .keyboardShortcut(.defaultAction)
                 .disabled(!canSave)
+                .help(canSave
+                    ? Text("Save Prompt", bundle: .module)
+                    : Text("A name and instructions are required to save.", bundle: .module))
             }
             .padding()
         }
-        .frame(width: 540, height: 360)
+        .frame(minWidth: 480, idealWidth: 540, minHeight: 340, idealHeight: 380)
+        .onAppear {
+            isNameFocused = true
+        }
     }
 }

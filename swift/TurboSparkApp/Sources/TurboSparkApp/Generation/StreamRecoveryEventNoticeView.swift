@@ -16,16 +16,16 @@ struct StreamRecoveryEventNoticeView: View {
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: presentation.symbolName)
-                .foregroundStyle(presentation.isTerminal ? Color.orange : Color.secondary)
+                .foregroundStyle(presentation.isTerminal ? AnyShapeStyle(AppAttention.color) : AnyShapeStyle(.appSecondary))
                 .accessibilityHidden(true)
             message
                 .themedFont(.small)
-                .foregroundStyle(.primary)
+                .foregroundStyle(.appText)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+        .background(.appElevated, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("\(presentation.accessibilityIdentifier)-\(occurrence)")
     }

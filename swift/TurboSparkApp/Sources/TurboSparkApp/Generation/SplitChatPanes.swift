@@ -57,38 +57,45 @@ private struct SplitChatPaneView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 6) {
-            Circle()
-                .fill(isChatRunning ? TurboSparkTheme.accentColor : Color.primary.opacity(0.2))
-                .frame(width: 6, height: 6)
-                .accessibilityHidden(true)
-            (chat.map { Text($0.title) } ?? Text("Chat", bundle: .module))
-                .themedFont(.small, weight: .semibold)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .help(Text(verbatim: chat?.title ?? ""))
-            Spacer(minLength: 8)
-            Button {
-                model.promoteSplitPane(chatID: chatID)
-            } label: {
-                Image(systemName: "arrow.up.left.to.line")
-                    .themedFont(.tiny)
-                    .foregroundStyle(.appSecondary)
+        AppAdaptiveHeader {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(isChatRunning ? AnyShapeStyle(theme.accent) : AnyShapeStyle(theme.border))
+                    .frame(width: 6, height: 6)
+                    .accessibilityHidden(true)
+                (chat.map { Text($0.title) } ?? Text("Chat", bundle: .module))
+                    .themedFont(.small, weight: .semibold)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .help(Text(verbatim: chat?.title ?? ""))
             }
-            .buttonStyle(.plain)
-            .disabled(model.isRunning)
-            .help(Text("Make this the main conversation", bundle: .module))
-            .accessibilityLabel(Text("Promote this chat to the main conversation", bundle: .module))
-            Button {
-                model.closeSplitPane(chatID: chatID)
-            } label: {
-                Image(systemName: "xmark")
-                    .themedFont(.tiny)
-                    .foregroundStyle(.tertiary)
+        } actions: {
+            HStack(spacing: 8) {
+                Button {
+                    model.promoteSplitPane(chatID: chatID)
+                } label: {
+                    Image(systemName: "arrow.up.left.to.line")
+                        .themedFont(.tiny)
+                        .foregroundStyle(.appSecondary)
+                }
+                .buttonStyle(.plain)
+                .disabled(model.isRunning)
+                .help(model.isRunning
+                    ? Text("Cannot switch chats while generation is running", bundle: .module)
+                    : Text("Make this the main conversation", bundle: .module))
+                .accessibilityLabel(Text("Promote this chat to the main conversation", bundle: .module))
+
+                Button {
+                    model.closeSplitPane(chatID: chatID)
+                } label: {
+                    Image(systemName: "xmark")
+                        .themedFont(.tiny)
+                        .foregroundStyle(.appSecondary)
+                }
+                .buttonStyle(.plain)
+                .help(Text("Close split pane", bundle: .module))
+                .accessibilityLabel(Text("Close split pane", bundle: .module))
             }
-            .buttonStyle(.plain)
-            .help(Text("Close split pane", bundle: .module))
-            .accessibilityLabel(Text("Close split pane", bundle: .module))
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -119,7 +126,7 @@ private struct SplitChatPaneView: View {
         VStack(spacing: 6) {
             Image(systemName: "bubble.left.and.bubble.right")
                 .font(theme.ui(.title3))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.appSecondary)
             Text("No messages yet", bundle: .module)
                 .themedFont(.tiny)
                 .foregroundStyle(.appSecondary)
@@ -133,6 +140,7 @@ private struct SplitChatPaneView: View {
 /// status line here on purpose -- a pane is for following along, and the
 /// full cards are one promote-click away.
 private struct SplitPaneMessageRow: View {
+    @Environment(\.appTheme) private var theme
     let message: AppChatMessage
 
     var body: some View {
@@ -150,12 +158,12 @@ private struct SplitPaneMessageRow: View {
                 .themedFont(.small)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(.appSurface.opacity(0.85))
+                .background(.appSurface)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
+                        .stroke(theme.border, lineWidth: 1)
                 )
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
             }
         case .assistant:
             VStack(alignment: .leading, spacing: 6) {

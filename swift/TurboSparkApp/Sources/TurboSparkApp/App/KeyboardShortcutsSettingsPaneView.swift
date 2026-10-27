@@ -72,7 +72,7 @@ struct KeyboardShortcutsSettingsPaneView: View {
                 .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
-                        .stroke(.appBorder.opacity(0.3), lineWidth: 1)
+                        .stroke(.appBorder, lineWidth: 1)
                 )
         }
         .fixedSize()

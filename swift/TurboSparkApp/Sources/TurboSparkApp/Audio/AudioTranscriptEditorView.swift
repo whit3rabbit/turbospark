@@ -42,9 +42,8 @@ struct AudioTranscriptEditorView: View {
                             get: { segment.text },
                             set: { segment.text = $0; stageEdits() }
                         )).themedFont(.base)
-                            .frame(minHeight: 72)
+                            .appEditorSurface(minHeight: 72)
                             .accessibilityLabel(Text("Transcript text", bundle: .module))
-                            .padding(6).overlay { RoundedRectangle(cornerRadius: 6).stroke(.appBorder) }
                     }
                     .accessibilityElement(children: .contain)
                 }
@@ -94,10 +93,10 @@ struct AudioTranscriptEditorView: View {
             .appAction(.secondary, size: .small)
             .disabled(controller.hasRecordingActivity)
             Button { showingVocabulary = true } label: {
-                Label { Text(verbatim: "Vocabulary...") } icon: { Image(systemName: "character.book.closed") }
+                Label { Text("Vocabulary...", bundle: .module) } icon: { Image(systemName: "character.book.closed") }
             }
             .appAction(.secondary, size: .small)
-            .help(Text(verbatim: "Manage custom vocabulary and jargon"))
+            .help(Text("Manage custom vocabulary and jargon", bundle: .module))
             if let parts = item.speakerLabelParts, parts > 1 {
                 Label { Text("Labeled in \(parts) parts", bundle: .module) } icon: { Image(systemName: "checkmark.circle") }
                     .themedFont(.small).foregroundStyle(.appSecondary)

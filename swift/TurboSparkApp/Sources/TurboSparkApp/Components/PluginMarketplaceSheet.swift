@@ -34,6 +34,7 @@ struct PluginMarketplaceSheet: View {
                     .font(theme.ui(.title3, weight: .semibold))
                 Spacer()
                 Button { dismiss() } label: { Text("Done", bundle: .module) }
+                    .keyboardShortcut(.cancelAction)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
@@ -55,7 +56,7 @@ struct PluginMarketplaceSheet: View {
 
             HStack(spacing: 0) {
                 marketplaceList
-                    .frame(width: 250)
+                    .frame(minWidth: 200, idealWidth: 250, maxWidth: 350)
 
                 Rectangle().fill(.appBorder).frame(width: 1)
 
@@ -98,6 +99,7 @@ struct PluginMarketplaceSheet: View {
             Text("Sources", bundle: .module)
                 .font(theme.ui(.small, weight: .semibold))
                 .foregroundStyle(.appSecondary)
+                .accessibilityAddTraits(.isHeader)
                 .padding([.horizontal, .top], 14)
 
             ForEach(marketplaces.keys.sorted(), id: \.self) { name in
@@ -109,10 +111,10 @@ struct PluginMarketplaceSheet: View {
                         Text(name)
                             .font(theme.ui(.base))
                             .foregroundStyle(
-                                name == selectedMarketplaceName ? Color.accentColor : Color.primary)
+                                name == selectedMarketplaceName ? AnyShapeStyle(.appAccent) : AnyShapeStyle(.appText))
                         Spacer()
                         if isLoading && name == selectedMarketplaceName {
-                            ProgressView().controlSize(.small)
+                            AppProgressBar(value: nil, label: Text("Loading", bundle: .module), size: .compact)
                         }
                     }
                     .padding(.horizontal, 14)
@@ -120,6 +122,7 @@ struct PluginMarketplaceSheet: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityAddTraits(name == selectedMarketplaceName ? [.isButton, .isSelected] : .isButton)
             }
 
             Spacer()
@@ -133,6 +136,7 @@ struct PluginMarketplaceSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Add marketplace", bundle: .module)
                 .font(theme.ui(.small, weight: .semibold))
+                .accessibilityAddTraits(.isHeader)
             TextField(text: $newMarketplaceName, prompt: Text("Name (e.g. my-plugins)", bundle: .module)) {
                 Text("Name", bundle: .module)
             }
@@ -168,6 +172,7 @@ struct PluginMarketplaceSheet: View {
                 .textFieldStyle(.roundedBorder)
             }
             Button { addMarketplace() } label: { Text("Add", bundle: .module) }
+                .appAction(.primary, size: .small)
                 .disabled(newMarketplaceName.trimmingCharacters(in: .whitespaces).isEmpty)
         }
     }
@@ -226,12 +231,14 @@ struct PluginMarketplaceSheet: View {
                     }
                 }
                 .font(theme.ui(.base, weight: .semibold))
+                .accessibilityAddTraits(.isHeader)
                 Spacer()
                 if let name = selectedMarketplaceName {
                     Button {
                         Task { await loadSelected(force: true) }
                     } label: { Text("Refresh", bundle: .module) }
-                    Button(role: .destructive) {
+                    .appAction(.secondary, size: .small)
+                    Button {
                         do { try model.removeMarketplace(name: name, kind: .plugins, projectID: projectID) }
                         catch {
                             model.showToast(error.localizedDescription, style: .error)
@@ -242,6 +249,7 @@ struct PluginMarketplaceSheet: View {
                         entries = []
                         Task { await loadSelected() }
                     } label: { Text("Remove", bundle: .module) }
+                    .appAction(.secondary, size: .small)
                 }
             }
             .padding(.horizontal, 16)
@@ -251,7 +259,7 @@ struct PluginMarketplaceSheet: View {
 
             if let loadError {
                 Label { Text(loadError) } icon: { Image(systemName: "exclamationmark.triangle") }
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(AppAttention.color)
                     .font(theme.ui(.small))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(12)
@@ -263,10 +271,18 @@ struct PluginMarketplaceSheet: View {
                         entryRow(entry)
                     }
                     if entries.isEmpty && !isLoading {
-                        Text("No plugin entries loaded.", bundle: .module)
-                            .themedFont(.base)
-                            .foregroundStyle(.tertiary)
-                            .padding(.top, 30)
+                        AppEmptyState(
+                            systemImage: "shippingbox",
+                            title: Text("No plugin entries loaded.", bundle: .module)
+                        ) {
+                            if selectedMarketplaceName != nil {
+                                Button {
+                                    Task { await loadSelected(force: true) }
+                                } label: { Text("Refresh", bundle: .module) }
+                                .appAction(.secondary, size: .small)
+                            }
+                        }
+                        .padding(.top, 30)
                     }
                 }
                 .padding(14)
@@ -291,8 +307,8 @@ struct PluginMarketplaceSheet: View {
                             .themedFont(.tiny, weight: .medium)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
-                            .background(Capsule().fill(Color.orange.opacity(0.15)))
-                            .foregroundStyle(.orange)
+                            .background(Capsule().fill(AppAttention.color.opacity(0.15)))
+                            .foregroundStyle(AppAttention.color)
                     }
                 }
                 if let description = entry.descriptionText, !description.isEmpty {
@@ -305,23 +321,22 @@ struct PluginMarketplaceSheet: View {
             Spacer()
             if installed {
                 Label { Text("Installed", bundle: .module) } icon: { Image(systemName: "checkmark.circle.fill") }
-                    .foregroundStyle(.green)
+                    .foregroundStyle(.appAccent)
                     .font(theme.ui(.small))
-                Button(role: .destructive) {
+                Button {
                     uninstall(entry: entry, scope: installScope)
                 } label: { Text("Uninstall", bundle: .module) }
+                .appAction(.secondary, size: .small)
                 .help(Text("Removes only the installation in the selected scope.", bundle: .module))
             } else {
                 Button { install(entry: entry, scope: installScope) } label: {
                     Text("Install", bundle: .module)
                 }
+                .appAction(.primary, size: .small)
                 .disabled(isLoading)
             }
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(.appSurface))
+        .appCardSurface(padding: 10)
     }
 
     // MARK: - Actions

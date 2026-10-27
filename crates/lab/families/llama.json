@@ -1,0 +1,131 @@
+{
+  "schema": "turbospark.lab.family/1",
+  "family": "llama",
+  "kind": "text",
+  "title": "Llama flow, dense Llama and Mistral, and Mixtral MoE under the same family string (split by expert_count)",
+  "flow": "llama",
+  "installs": [
+    {
+      "name": "mistral-7b-q4_k_m",
+      "quant": "GGUF Q4_K_M",
+      "machine": "Apple M4 Max 36 GB",
+      "drafters": [],
+      "note": "no install on this host today"
+    }
+  ],
+  "recommended": [
+    {
+      "chunk": "128",
+      "when": [
+        "dense"
+      ],
+      "why": "the dense half runs the single-command-buffer chunked driver with batched attention (the 2026-10-02 release artifacts); the walk is the fallback, not the default",
+      "findings": [
+        "llama.mistral-7b-rows-2026-10-11"
+      ]
+    },
+    {
+      "knob": "routed_batch",
+      "value": "<unset>",
+      "when": [
+        "moe"
+      ],
+      "why": "Mixtral's routed half is Step 1 with RoutedSlot; the batched arm is opt-in and unmeasured on this flow",
+      "findings": []
+    }
+  ],
+  "sweeps": [
+    {
+      "id": "batched_gemv",
+      "description": "the batched prefill arm against the per-token loop on the dense half",
+      "when": [
+        "dense"
+      ],
+      "metric": "prefill_tok_s",
+      "exactness": "dense_kl",
+      "workload": {
+        "prompts": [
+          {
+            "protocol": "long-synthesis"
+          }
+        ],
+        "decode_tokens": 16
+      },
+      "baseline": "batched",
+      "candidates": [
+        "per_token:batched_gemv=0"
+      ]
+    },
+    {
+      "id": "decode_attention",
+      "description": "the GQA-shared decode kernel against this flow's barrier default",
+      "when": [
+        "dense"
+      ],
+      "metric": "decode_tok_s",
+      "exactness": "dense_kl",
+      "workload": {
+        "prompts": [
+          {
+            "protocol": "medium-review"
+          }
+        ],
+        "decode_tokens": 64
+      },
+      "baseline": "default",
+      "candidates": [
+        "gqa:attn_decode_kernel=gqa"
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "id": "llama.mistral-7b-rows-2026-10-11",
+      "date": "2026-10-11",
+      "install": "mistral-7b-q4_k_m",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "v0.5 era",
+      "workload": "the every-install table at 8,192 and 4,096 context",
+      "arms": {
+        "ctx8192": {},
+        "ctx4096": {}
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "decode_tok_s": [
+          16.3,
+          30.4
+        ],
+        "peak_mib": {
+          "ctx8192": [
+            1201,
+            1203
+          ],
+          "ctx4096": 684
+        }
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "doc",
+        "path": "docs/BENCHMARKS.md",
+        "heading": "Every install, side by side"
+      },
+      "conditions": "frozen rows",
+      "note": ""
+    }
+  ],
+  "open_questions": [
+    "a Steel arm for the dense half (the batched attention kernel is in; the GEMM is scalar)",
+    "no per-family A/B in the lab ledger yet",
+    "Mixtral: the routed batch arm and the slot count"
+  ],
+  "traps": [
+    "dense Llama and Mixtral share this family string: kl_class_for decides the gate class by expert_count, and the dispatch probe and stand-ins apply to the dense half only",
+    "BF16 matrices (MiniCPM-style trunks) refuse the batched arm"
+  ],
+  "docs": [
+    "docs/BATCHED_PREFILL.md",
+    "docs/BENCHMARKS.md"
+  ]
+}

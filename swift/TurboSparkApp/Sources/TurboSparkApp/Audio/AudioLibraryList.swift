@@ -91,9 +91,12 @@ struct AudioLibraryList: View {
                 AudioDeleteButton(controller: controller, item: item, compact: true)
             }
         }
-        .padding(12)
-        .background(.appSurface, in: RoundedRectangle(cornerRadius: 10))
-        .overlay { RoundedRectangle(cornerRadius: 10).stroke(isSelected ? .appAccent : .appBorder, lineWidth: isSelected ? 2 : 1) }
+        .appCardSurface(padding: 12)
+        .overlay {
+            if isSelected {
+                RoundedRectangle(cornerRadius: AppMetrics.cardRadius).stroke(.appAccent, lineWidth: 2)
+            }
+        }
     }
 
     private func beginEditing(_ item: AudioLibraryItem, collection: Bool) {
