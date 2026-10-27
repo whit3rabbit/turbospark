@@ -1,0 +1,23 @@
+{
+  "schema": "turbospark.lab.family/1",
+  "family": "deepseek2",
+  "kind": "text",
+  "title": "DeepSeek V2: absorbed MLA (one latent row per layer) with fine-grained MoE",
+  "flow": "deepseek2",
+  "installs": [],
+  "recommended": [
+    {"chunk": "off", "when": [],
+     "why": "the deepseek2 flow is deliberately sequential; --chunk off is the only driver",
+     "findings": []}
+  ],
+  "sweeps": [
+    {"id": "slots", "description": "expert cache slots at streamed residency",
+     "when": ["moe"], "metric": "decode_tok_s", "exactness": "bit_exact",
+     "workload": {"prompts": [{"protocol": "medium-review"}], "decode_tokens": 64, "prefill_chunk": null},
+     "baseline": "s16@16/streamed", "candidates": ["s32@32/streamed", "s64@64/streamed"]}
+  ],
+  "findings": [],
+  "open_questions": ["no install measured by the lab yet", "MLA attention has no kernel bench; its latent projections come from the resident index"],
+  "traps": ["the attn_decode bench refuses MLA layers; the int4_matmul bench carries the kv_a and kv_b latent shapes instead"],
+  "docs": ["docs/DEEPSEEK2_PHASE0.md"]
+}

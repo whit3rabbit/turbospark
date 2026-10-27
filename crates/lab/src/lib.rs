@@ -36,6 +36,7 @@ pub mod atomic;
 pub mod audio_kind;
 pub mod bench;
 pub mod export;
+pub mod family_profile;
 pub mod fit;
 pub mod gates;
 pub mod inventory;
@@ -78,6 +79,8 @@ pub mod phases;
 pub mod provenance;
 #[cfg(target_os = "macos")]
 pub mod report;
+#[cfg(target_os = "macos")]
+pub mod sweep;
 #[cfg(target_os = "macos")]
 pub mod trace;
 #[cfg(target_os = "macos")]
