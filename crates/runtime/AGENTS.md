@@ -91,9 +91,10 @@ policy.
   capture row 0. Its context write is sliced at 16 rows because
   `encode_gemm_any` caps the batch there. `TURBOSPARK_DFLASH_CHUNKED_PREFILL=0`
   keeps the walk. `real_forward_qwen35_dflash_chunked.rs` is the check.
-- `TURBOSPARK_DFLASH_TREE=1` verifies a tree per greedy DFlash2 round. The
-  tree spec rides `BatchedScratch::tree` for one `dflash_verify_tree` call
-  and is read only by the attention and linear cores. Any new per-row buffer
+- Greedy fixed-depth DFlash2 rounds verify a tree by default
+  (`TURBOSPARK_DFLASH_TREE=0` keeps the chain). The tree spec rides
+  `BatchedScratch::tree` for one `dflash_verify_tree` call and is read only
+  by the attention and linear cores. Any new per-row buffer
   that the round-end reads (rollback, fold, next context write) must join
   the gather in `families/qwen/dflash_tree.rs`, or a branching round commits
   another branch's rows. `real_forward_qwen35_dflash_tree.rs` is the check;

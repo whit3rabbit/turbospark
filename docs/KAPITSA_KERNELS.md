@@ -185,7 +185,7 @@ left, ranked by the arithmetic below:
 | 1 | Flat verify (MMA8) | Built, opt-in, lossless, block 4 beats the default on code (50.1 vs 43.3 tok/s) and loses 9-12% on prose | Prerequisite for everything below |
 | 2 | Pick the block per request or per round | DECLINED for DFlash2 under the flag: best per-prompt depth beats fixed 7 by 0-1.7% (model below). `AdaptiveDepth` is tuned for the flag-off cost curve and would sit at its floor of 2 | Under a flat verify an extra row costs about 1.3 ms and pays once its survival chance exceeds about 5% |
 | 3 | DFlash2 drafter at depth 7 over the flat verify | MEASURED 2026-10-22 below: 31-37 tok/s, 2.1x its flag-off self, about 55-60% of kapitsa. LOSSLESS 2026-10-25: `dflash_generation_gate` matches sequential decode at blocks 2 and 7, chain and tree, under `TURBOSPARK_INT4_MMA8=1` | Confirms the flat verify is what unlocks long blocks |
-| 4 | Tree verify (KFlash) | BUILT 2026-10-25, opt-in `TURBOSPARK_DFLASH_TREE=1`, lossless. Quiet-host A/B 2026-10-26 (`kapitsa-quiet-c1`, 3 clean pairs each): WIN +8.6% decode tok/s on medium-review, WIN +3.1% on short-explanation. The 5-7% verify overhead read on 2026-10-25 was host contention: quiet, the tree round costs about 1.1 ms (1.5%) more than the chain's. Not a default. Promotion is the user's call | "KFlash: tree verify", "Built and measured" |
+| 4 | Tree verify (KFlash) | ADOPTED 2026-10-26, default on, `TURBOSPARK_DFLASH_TREE=0` keeps the chain, lossless. Default-config A/B (`dflash-tree-default-d1`): WIN +9.2% on medium-review, WIN +4.3% on short-explanation, peak footprint +0.8 MB. Quiet-host A/B 2026-10-26 (`kapitsa-quiet-c1`, 3 clean pairs each): WIN +8.6% decode tok/s on medium-review, WIN +3.1% on short-explanation. The 5-7% verify overhead read on 2026-10-25 was host contention: quiet, the tree round costs about 1.1 ms (1.5%) more than the chain's | "KFlash: tree verify", "Built and measured" |
 | 5 | Close the one-row gap (1.27x GEMV) | DECLINED 2026-10-25: the one untried design, a two-pass split-K (no barrier tail, KS up to 32), is bit-exact at the shipped KS but 1.6-28% slower on four of five shapes; only `down` gains 1.5-5.1% (`docs/INT4_SMALL_M_MMA.md`, open question 10) | MEASURED below: it is the verify floor, about 13 ms of an 85 ms round. The floor is weight streaming, not the reduction tail |
 | 6 | MTP head quality | RESOLVED: equal. Kapitsa 2.39 committed per cycle on short-explanation, ours 2.38, same depth 4 | The 1.4x gap at equal acceptance is round cost, 57 ms against 86 ms |
 | 7 | DFlash2 drafter pass | Profiled and trimmed ~2 ms (per-row loops batched, selector scan fused), committed in `9abbdcf0` (`dflash_draft/`) | Only ~2 ms more is in sight; the selector was 1.2 ms, not the suspect |
@@ -1350,7 +1350,9 @@ and the block sweep then.
 
 ### Built and measured, 2026-10-25
 
-`TURBOSPARK_DFLASH_TREE=1`, opt-in, greedy fixed-depth DFlash2 rounds only.
+`TURBOSPARK_DFLASH_TREE=1`, opt-in when built, greedy fixed-depth DFlash2
+rounds only. Default on since 2026-10-26 ("Promotion to the default"
+below), `TURBOSPARK_DFLASH_TREE=0` keeps the chain.
 A round verifies a best-first tree of `block` nodes in the chain's rows
 (anchor plus 7 at depth 7), so the MMA8 tile shape is unchanged.
 
@@ -1468,8 +1470,43 @@ presumably the host's best-first builder, which was not timed separately.
 If the tree is promoted, the two places to trim are folding the compaction
 into the round-end command buffer instead of its own `commit_and_wait`, and
 the GDN tree kernel's parent-state load. Together they are under 1 ms of a
-75 ms round. Whether to promote `TURBOSPARK_DFLASH_TREE` to the default is
-the user's decision. Nothing was flipped.
+75 ms round.
+
+#### Promotion to the default, 2026-10-26
+
+The user decided to promote the tree. The runs above force
+`TURBOSPARK_INT4_MMA8=1` in both arms, and that is not the shipping
+default, so the flip was gated again in the default configuration, after
+the code change, with the opt-out as the baseline: arms
+`chain~dflash:7:TURBOSPARK_DFLASH_TREE=0,spec_stats=1` and
+`tree~dflash:7:spec_stats=1`, `--metric decode_tok_s --decode 128`,
+experiment `dflash-tree-default-d1`. M4 Max, AC power, warm page cache
+(`no_reads`), swap 14.3 GB used and steady, branch
+`claude/dflash-tree-default` on `76e03aab` plus the flip.
+
+| Prompt | Null floor | Chain tok/s | Tree tok/s | Verdict | Peak footprint |
+|---|---:|---:|---:|---|---:|
+| medium-review (426 tokens) | 2.04%, 2 clean pairs (`1793059042395-5641-40`) | 18.01-18.24 | 19.68-20.08 | **WIN +9.22%**, CI [+9.10%, +10.48%], 3/3 pairs (`1793059215378-52766-28`) | +0.85 MB, passed |
+| short-explanation (62 tokens) | 0.68% (`1793059341778-68001-22`) | 18.74-18.75 | 19.54-19.56 | **WIN +4.32%**, CI [+4.29%, +4.38%], 3/3 pairs (`1793059477494-79368-34`) | +0.75 MB, passed |
+
+Committed per round matches the MMA8 runs (2.98 to 3.28, 3.05 to 3.20).
+The verify reads about 142 ms per round in both arms against 62 ms under
+MMA8, so the round costs more and the tree's fixed overhead weighs less,
+which is why the gains are slightly larger here. Every tree run reported the
+`dflash_tree` engagement line and no chain run did.
+
+Losslessness, after the flip: `dflash_generation_gate`
+(`TURBOSPARK_INT4_MMA8=1 TURBOSPARK_BATCHED_GEMV=0`) matches sequential
+decode token for token at blocks 2 and 7 on both prompts, once with the
+switch unset (tree) and once with `TURBOSPARK_DFLASH_TREE=0` (chain). The
+synthetic suite (`real_forward_qwen35_dflash_tree.rs`) now runs the default
+with the switch cleared, and `real_forward_qwen35_dflash_tree_off.rs` holds
+the opt-out. Reverting the default to off fails five of the six default
+tests.
+
+Not covered: sampled runs and adaptive depth never take the tree, so they
+are unchanged. No other DFlash2 install, prompt length past 426 tokens, or
+chip was measured.
 
 ## Item 1: the lazy rank-1 GDN verify tape
 
