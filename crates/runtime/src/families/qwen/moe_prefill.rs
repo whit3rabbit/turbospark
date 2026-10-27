@@ -584,6 +584,7 @@ impl RealForwardRunner {
             self.retire_routed(&mut pending_routed);
 
             if self.routed_batch_prefill {
+                foundation::engaged!("routed_batch");
                 // The whole layer's routed half as one route-list dispatch
                 // pair per union-bounded sub-batch, committed here and
                 // retired after the NEXT layer's router wait, as the per-token
@@ -625,6 +626,7 @@ impl RealForwardRunner {
                     router_hist,
                     phases,
                     self.expert_cache_slots,
+                    self.routed_batch_overlap,
                     layer,
                     hidden,
                     moe_inter,

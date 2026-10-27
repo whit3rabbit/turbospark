@@ -353,6 +353,8 @@ impl RealForwardRunner {
             shared_cb_overlap: std::env::var("TURBOSPARK_SHARED_CB").as_deref() != Ok("0"),
             routed_pipeline: std::env::var("TURBOSPARK_ROUTED_PIPELINE").as_deref() != Ok("0"),
             routed_batch_prefill: std::env::var("TURBOSPARK_ROUTED_BATCH").as_deref() == Ok("1"),
+            routed_batch_overlap: std::env::var("TURBOSPARK_ROUTED_BATCH_OVERLAP").as_deref()
+                == Ok("1"),
             batched_gemv_prefill: std::env::var("TURBOSPARK_BATCHED_GEMV").as_deref() == Ok("1"),
             batched_gemv_prefill_auto: std::env::var_os("TURBOSPARK_BATCHED_GEMV").is_none(),
             prefill_steel: std::env::var("TURBOSPARK_PREFILL_STEEL").as_deref() != Ok("0"),

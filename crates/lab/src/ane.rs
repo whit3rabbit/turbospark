@@ -161,3 +161,117 @@ pub fn ane_plan_cmd(mut args: Args) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use turbospark_coreml::OpPlacement;
+
+    fn op(
+        function: &str,
+        operator: &str,
+        preferred: Option<ComputeDevice>,
+        supported: &[ComputeDevice],
+        cost: Option<f64>,
+    ) -> OpPlacement {
+        OpPlacement {
+            function: function.into(),
+            operator: operator.into(),
+            output: None,
+            preferred,
+            supported: supported.to_vec(),
+            cost,
+        }
+    }
+
+    #[test]
+    fn shares_are_per_function_and_name_what_keeps_ops_off_the_ane() {
+        use ComputeDevice::*;
+        let plan = ComputePlan {
+            ops: vec![
+                op(
+                    "main",
+                    "matmul",
+                    Some(NeuralEngine),
+                    &[NeuralEngine, Gpu],
+                    Some(0.6),
+                ),
+                op(
+                    "main",
+                    "matmul",
+                    Some(NeuralEngine),
+                    &[NeuralEngine],
+                    Some(0.2),
+                ),
+                // Supported there, not chosen.
+                op(
+                    "main",
+                    "softmax",
+                    Some(Gpu),
+                    &[Gpu, NeuralEngine],
+                    Some(0.15),
+                ),
+                // Not supported there.
+                op("main", "gather", Some(Cpu), &[Cpu], Some(0.05)),
+                op("main", "gather", Some(Cpu), &[Cpu], None),
+                // A folded constant: no device, no share, not a blocker.
+                op("main", "const", None, &[], None),
+                op("other", "add", Some(Cpu), &[Cpu, NeuralEngine], Some(1.0)),
+            ],
+        };
+        let v = summarize(&plan);
+        let rows = v.as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        let main = &rows[0];
+        assert_eq!(main["function"], "main");
+        assert_eq!(main["ops"], 6);
+        let close = |a: &Value, b: f64| (a.as_f64().unwrap() - b).abs() < 1e-9;
+        assert!(close(&main["cost_share"]["ane"], 0.8));
+        assert!(close(&main["cost_share"]["gpu"], 0.15));
+        assert!(close(&main["cost_share"]["cpu"], 0.05));
+        assert_eq!(main["op_count"]["ane"], 2);
+        assert_eq!(main["op_count"]["cpu"], 2);
+        let off = main["off_ane"].as_array().unwrap();
+        // Most frequent first; `const` has no device and is not listed.
+        assert_eq!(off.len(), 2);
+        assert_eq!(off[0]["operator"], "gather");
+        assert_eq!(off[0]["count"], 2);
+        assert_eq!(off[0]["ane_supported"], false);
+        assert_eq!(off[1]["operator"], "softmax");
+        assert_eq!(off[1]["ane_supported"], true);
+        assert_eq!(rows[1]["function"], "other");
+        assert!(close(&rows[1]["cost_share"]["cpu"], 1.0));
+    }
+
+    #[test]
+    fn a_plan_with_no_cost_estimates_has_zero_shares_not_nan() {
+        let plan = ComputePlan {
+            ops: vec![op("main", "relu", Some(ComputeDevice::Gpu), &[], None)],
+        };
+        let v = summarize(&plan);
+        assert_eq!(v[0]["cost_share"]["gpu"].as_f64(), Some(0.0));
+    }
+
+    #[test]
+    fn programs_lists_packages_sorted_and_refuses_an_empty_dir() {
+        let dir = std::env::temp_dir().join(format!(
+            "tslab-ane-programs-{}-{}",
+            std::process::id(),
+            crate::ledger::unix_ms()
+        ));
+        std::fs::create_dir_all(dir.join("b.mlmodelc")).unwrap();
+        std::fs::create_dir_all(dir.join("a.mlpackage")).unwrap();
+        std::fs::write(dir.join("manifest.json"), "{}").unwrap();
+        let found = programs(&dir).unwrap();
+        let names: Vec<_> = found
+            .iter()
+            .map(|p| p.file_name().unwrap().to_str().unwrap().to_string())
+            .collect();
+        assert_eq!(names, ["a.mlpackage", "b.mlmodelc"]);
+        assert_eq!(programs(&dir.join("a.mlpackage")).unwrap().len(), 1);
+        let empty = dir.join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        assert!(programs(&empty).unwrap_err().contains("holds no"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

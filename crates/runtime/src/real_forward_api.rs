@@ -205,6 +205,14 @@ impl RealForwardRunner {
     }
 
     /// Sibling of [`Self::set_shared_cb_overlap`] for
+    /// `TURBOSPARK_ROUTED_BATCH_OVERLAP` (the batched routed half's
+    /// read-ahead). Does nothing unless the routed batch is on too.
+    #[doc(hidden)]
+    pub fn set_routed_batch_overlap(&mut self, on: bool) {
+        self.routed_batch_overlap = on;
+    }
+
+    /// Sibling of [`Self::set_shared_cb_overlap`] for
     /// `TURBOSPARK_BATCHED_GEMV` (the chunked-prefill driver's batched
     /// resident GEMVs). An explicit choice either way: `true` forces the
     /// batched arm, `false` the per-token one, and both end the qwen dense

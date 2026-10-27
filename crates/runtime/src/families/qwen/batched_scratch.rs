@@ -186,6 +186,10 @@ pub(crate) struct BatchedRoutedScratch {
     /// The wide expert-blob argument buffer, bound once per layer with
     /// every cache slot.
     pub(crate) wide_blobs: gpu::RoutedBlobsWideBuffer,
+    /// A second one, so the routed prefill's read-ahead can bind the next
+    /// sub-batch while the GPU still reads the first
+    /// (`TURBOSPARK_ROUTED_BATCH_OVERLAP`). Unused otherwise.
+    pub(crate) wide_blobs_alt: gpu::RoutedBlobsWideBuffer,
 }
 
 impl BatchedScratch {
@@ -213,10 +217,11 @@ impl BatchedScratch {
         let wide_blobs = if arch.num_experts == 0 {
             None
         } else {
-            Some(gpu::RoutedBlobsWideBuffer::new(
-                context,
-                arch.hidden_activation.contains("silu"),
-            )?)
+            let silu = arch.hidden_activation.contains("silu");
+            Some((
+                gpu::RoutedBlobsWideBuffer::new(context, silu)?,
+                gpu::RoutedBlobsWideBuffer::new(context, silu)?,
+            ))
         };
         let halfs = |n: u64| context.new_output_buffer(n.max(1) * b * 2);
         // One row set per LINEAR layer, addressed by linear-layer ordinal
@@ -247,7 +252,7 @@ impl BatchedScratch {
         } else {
             None
         };
-        let routed = wide_blobs.map(|wide_blobs| {
+        let routed = wide_blobs.map(|(wide_blobs, wide_blobs_alt)| {
             let top_k = arch.top_k_experts as u64;
             let moe_inter = arch.moe_intermediate_size.max(1) as u64;
             BatchedRoutedScratch {
@@ -261,6 +266,7 @@ impl BatchedScratch {
                 batch_router_logits_f32: context
                     .new_output_buffer(b * arch.num_experts.max(1) as u64 * 4),
                 wide_blobs,
+                wide_blobs_alt,
             }
         });
         Ok(Self {

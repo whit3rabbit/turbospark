@@ -284,6 +284,9 @@ impl RealForwardRunner {
         if capture_dflash {
             foundation::engaged!("dflash_chunked_prefill");
         }
+        if matches!(priming, Priming::Mtp(_)) {
+            foundation::engaged!("mtp_chunked_prefill");
+        }
         let mut offset = 0usize;
         while offset < tokens.len() {
             let take = (tokens.len() - offset).min(width);
@@ -723,6 +726,7 @@ impl RealForwardRunner {
             start_position,
             want_head,
             batched_gemv,
+            capture_dflash,
             logits,
         ) {
             super::ane_split::AneMicroBatch::Ran(result) => return result,
