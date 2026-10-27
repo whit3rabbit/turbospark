@@ -22,7 +22,7 @@ struct AudioSearchResultsView: View {
                 .themedFont(.small).foregroundStyle(.appSecondary)
             }
             if search.results.isEmpty {
-                Text("No matches", bundle: .module).foregroundStyle(.appSecondary).padding(.vertical, 12)
+                AppEmptyState(systemImage: "magnifyingglass", title: Text("No matches", bundle: .module))
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 8) {
@@ -71,8 +71,11 @@ struct AudioSearchResultsView: View {
                 }
             }
         }
-        .padding(12)
-        .background(.appSurface, in: RoundedRectangle(cornerRadius: 10))
-        .overlay { RoundedRectangle(cornerRadius: 10).stroke(controller.selectedID == item.id ? .appAccent : .appBorder, lineWidth: controller.selectedID == item.id ? 2 : 1) }
+        .appCardSurface(padding: 12)
+        .overlay {
+            if controller.selectedID == item.id {
+                RoundedRectangle(cornerRadius: AppMetrics.cardRadius).stroke(.appAccent, lineWidth: 2)
+            }
+        }
     }
 }

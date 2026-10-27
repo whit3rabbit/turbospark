@@ -3,6 +3,7 @@ import TurboSpark
 
 @MainActor
 struct AudioWorkspaceView: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     @ObservedObject var controller: AudioWorkspaceController
     @State private var presetName = ""
@@ -12,6 +13,8 @@ struct AudioWorkspaceView: View {
     @State private var showingGenerator = false
     // Held here, not in the sheet, so reopening the generator keeps the choices.
     @State private var promptSelection = MusicPromptSelection()
+
+    private var scale: CGFloat { AppMetrics.textScale(theme) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -29,10 +32,10 @@ struct AudioWorkspaceView: View {
             } else {
                 GeometryReader { geometry in
                     ScrollView {
-                        if geometry.size.width >= 940 && controller.page != .record {
+                        if geometry.size.width >= (940 * scale).rounded() && controller.page != .record {
                             HStack(alignment: .top, spacing: 24) {
                                 workflow.frame(maxWidth: .infinity)
-                                modelPanel.frame(width: 300)
+                                modelPanel.frame(width: (300 * scale).rounded())
                             }
                             .frame(maxWidth: 1440)
                             .frame(maxWidth: .infinity)
@@ -73,10 +76,11 @@ struct AudioWorkspaceView: View {
     }
 
     private var navigation: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 16) { workspaceTitle; Spacer(minLength: 12); workspaceActions }
-            VStack(alignment: .leading, spacing: 12) { workspaceTitle; workspaceActions }
-        }
+        AppAdaptiveHeader(leading: {
+            workspaceTitle
+        }, actions: {
+            workspaceActions
+        })
         .padding(.horizontal, 24).padding(.vertical, 18)
     }
 
@@ -115,19 +119,16 @@ struct AudioWorkspaceView: View {
             if let item = controller.workspaceResult, item.status != .processing {
                 AudioItemDetailView(controller: controller, item: item)
             } else if !controller.isBusy && AudioWorkspacePage.destinations.contains(controller.page) {
-                VStack(spacing: 10) {
-                    Image(systemName: "waveform")
-                        .themedFont(.title).foregroundStyle(.appSecondary)
-                    Text("No outputs yet", bundle: .module).themedFont(.base, weight: .medium)
-                    Text("Audio and edits are saved in your encrypted profile.", bundle: .module)
-                        .themedFont(.small).foregroundStyle(.appSecondary).multilineTextAlignment(.center)
-                }
-                .frame(maxWidth: .infinity).padding(28)
-                .overlay { RoundedRectangle(cornerRadius: 12).stroke(.appBorder, style: StrokeStyle(lineWidth: 1, dash: [5])) }
+                AppEmptyState(
+                    systemImage: "waveform",
+                    title: Text("No outputs yet", bundle: .module),
+                    message: Text("Audio and edits are saved in your encrypted profile.", bundle: .module)
+                )
             }
             if !controller.workspaceHistory.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Saved audio", bundle: .module).themedFont(.base, weight: .semibold)
+                        .accessibilityAddTraits(.isHeader)
                     ForEach(controller.workspaceHistory.prefix(5)) { item in
                         HStack(spacing: 12) {
                             Button { controller.select(item) } label: {
@@ -146,7 +147,7 @@ struct AudioWorkspaceView: View {
                             AudioSaveAsButton(controller: controller, item: item, compact: true)
                             AudioDeleteButton(controller: controller, item: item, compact: true)
                         }
-                        .padding(12).background(.appSurface, in: RoundedRectangle(cornerRadius: 10))
+                        .padding(12).background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
                     }
                 }
             }
@@ -155,9 +156,7 @@ struct AudioWorkspaceView: View {
 
     private var modelPanel: some View {
         AudioModelPickerView(model: model, controller: controller)
-            .padding(18)
-            .background(.appSurface, in: RoundedRectangle(cornerRadius: 12))
-            .overlay { RoundedRectangle(cornerRadius: 12).stroke(.appBorder, lineWidth: 1) }
+            .appCardSurface(padding: 18)
     }
 
     private var compactModelPanel: some View {
@@ -174,9 +173,7 @@ struct AudioWorkspaceView: View {
                 }
             }.themedFont(.small)
         }
-        .padding(16)
-        .background(.appSurface, in: RoundedRectangle(cornerRadius: 12))
-        .overlay { RoundedRectangle(cornerRadius: 12).stroke(.appBorder, lineWidth: 1) }
+        .appCardSurface(padding: 16)
     }
 
     private var pageDescription: String {
@@ -225,9 +222,7 @@ struct AudioWorkspaceView: View {
             }
             experimentActions
         }
-        .padding(20)
-        .background(.appSurface, in: RoundedRectangle(cornerRadius: 12))
-        .overlay { RoundedRectangle(cornerRadius: 12).stroke(.appBorder, lineWidth: 1) }
+        .appCardSurface(padding: 20)
     }
 
     private var sourcePicker: some View {
@@ -299,11 +294,11 @@ struct AudioWorkspaceView: View {
     private var scriptEditor: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Script", bundle: .module).themedFont(.small, weight: .semibold)
+                .accessibilityAddTraits(.isHeader)
             TextEditor(text: $controller.recipe.text)
-                .themedFont(.base).frame(minHeight: 180)
-                .scrollContentBackground(.hidden)
+                .themedFont(.base)
                 .accessibilityLabel(Text("Script", bundle: .module))
-                .padding(8).overlay { RoundedRectangle(cornerRadius: 8).stroke(.appBorder) }
+                .appEditorSurface(minHeight: 180)
         }
     }
 

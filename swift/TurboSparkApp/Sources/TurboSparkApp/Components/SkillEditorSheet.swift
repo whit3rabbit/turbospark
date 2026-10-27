@@ -1,6 +1,7 @@
 import SwiftUI
 
 /// Modal sheet for creating a new skill or editing an existing skill definition.
+@MainActor
 public struct SkillEditorSheet: View {
     @ObservedObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
@@ -8,6 +9,8 @@ public struct SkillEditorSheet: View {
     var skillToEdit: AppSkill?
     var defaultScope: SkillScope
     private let capturedProjectPath: String?
+
+    @FocusState private var isNameFocused: Bool
 
     @State private var name: String = ""
     @State private var descriptionText: String = ""
@@ -28,7 +31,7 @@ public struct SkillEditorSheet: View {
     public var body: some View {
         VStack(spacing: 0) {
             // Header
-            HStack {
+            AppAdaptiveHeader {
                 Group {
                     if skillToEdit == nil {
                         Text("Create New Skill", bundle: .module)
@@ -37,7 +40,7 @@ public struct SkillEditorSheet: View {
                     }
                 }
                 .themedFont(.base, weight: .semibold)
-                Spacer()
+            } actions: {
                 Button {
                     dismiss()
                 } label: { Text("Cancel", bundle: .module) }
@@ -62,6 +65,7 @@ public struct SkillEditorSheet: View {
                             TextField(text: $name, prompt: Text(verbatim: "git-workflow, jupyter-skill")) {
                                 Text("Skill Name", bundle: .module)
                             }
+                            .focused($isNameFocused)
                             .labelsHidden()
                             .textFieldStyle(.roundedBorder)
                         }
@@ -73,8 +77,14 @@ public struct SkillEditorSheet: View {
                                 Text("User Scope (~/.turbospark/skills)", bundle: .module).tag(false)
                                 Text("Project Scope (.turbospark/skills)", bundle: .module).tag(true)
                             } label: { Text("Scope", bundle: .module) }
+                            .labelsHidden()
                             .pickerStyle(.segmented)
                             .disabled(capturedProjectPath == nil && !isProjectScope)
+                            if capturedProjectPath == nil && !isProjectScope {
+                                Text("Project scope requires an open project.", bundle: .module)
+                                    .themedFont(.tiny)
+                                    .foregroundStyle(.appSecondary)
+                            }
                         }
                     }
 
@@ -149,6 +159,9 @@ public struct SkillEditorSheet: View {
                 } label: { Text("Save Skill", bundle: .module) }
                 .appAction(.primary)
                 .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .help(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? Text("A skill name is required to save.", bundle: .module)
+                    : Text("Save Skill", bundle: .module))
                 .keyboardShortcut(.defaultAction)
             }
             .padding(.horizontal, 20)
@@ -168,7 +181,8 @@ public struct SkillEditorSheet: View {
                 shell = skill.manifest.shell
             } else {
                 isProjectScope = defaultScope.isProjectScope
-                content = "# Workflow Instructions\n\n1. Analyze the context...\n2. Execute necessary steps..."
+                content = AppStrings.localized("# Workflow Instructions\n\n1. Analyze the context...\n2. Execute necessary steps...")
+                isNameFocused = true
             }
         }
     }

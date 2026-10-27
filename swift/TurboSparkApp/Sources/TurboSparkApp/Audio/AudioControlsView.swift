@@ -123,7 +123,7 @@ struct AudioActionLabelStyle: LabelStyle {
         if compact {
             // One width for every icon-only row action, so Play, Save As and
             // Delete line up instead of each taking its glyph's width.
-            configuration.icon.frame(width: 18)
+            configuration.icon.frame(minWidth: 18)
         } else {
             Label(title: { configuration.title }, icon: { configuration.icon })
         }
@@ -185,7 +185,12 @@ struct AudioRecordingBadge: View {
                         Text("Preparing recording...", bundle: .module)
                     } else {
                         Image(systemName: controller.isPaused ? "pause.circle.fill" : "record.circle")
-                        Text(controller.isPaused ? "Paused" : "Recording", bundle: .module)
+                            .tsPulse(active: controller.isRecording && !controller.isPaused)
+                        if controller.isPaused {
+                            Text("Paused", bundle: .module)
+                        } else {
+                            Text("Recording", bundle: .module)
+                        }
                         Text(verbatim: audioTime(controller.recordingSeconds)).monospacedDigit()
                     }
                 }.themedFont(.small, weight: .semibold)

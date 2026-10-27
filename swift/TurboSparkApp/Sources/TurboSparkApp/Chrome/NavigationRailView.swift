@@ -118,7 +118,7 @@ struct NavigationRailView: View {
                 .foregroundStyle(isSelected ? theme.accent : theme.secondaryText)
                 .frame(width: itemSize, height: itemSize)
                 .background(theme.accent.opacity(isSelected ? 0.14 : 0),
-                            in: RoundedRectangle(cornerRadius: 8))
+                            in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
         }
         // `.button` + `.plain`: `.borderlessButton` flattens the label and
         // drops the tint.

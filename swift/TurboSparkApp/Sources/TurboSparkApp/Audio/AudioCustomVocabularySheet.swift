@@ -10,6 +10,7 @@ import TurboSpark
 struct AudioCustomVocabularySheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.appTheme) private var theme
+    @FocusState private var isFieldFocused: Bool
 
     @State private var terms: [AudioVocabularyTerm] = []
     @State private var newTerm: String = ""
@@ -50,10 +51,17 @@ struct AudioCustomVocabularySheet: View {
                 .padding(.horizontal, 24)
                 .padding(.vertical, 14)
         }
-        .frame(minWidth: 480, idealWidth: 620 * scale, maxWidth: 840 * scale, minHeight: 460, idealHeight: 640 * scale)
+        .frame(
+            minWidth: (480 * scale).rounded(),
+            idealWidth: (620 * scale).rounded(),
+            maxWidth: (840 * scale).rounded(),
+            minHeight: (460 * scale).rounded(),
+            idealHeight: (640 * scale).rounded()
+        )
         .background(.appPage)
         .onAppear {
             terms = AudioCustomVocabularyStore.load()
+            isFieldFocused = true
         }
     }
 
@@ -62,16 +70,16 @@ struct AudioCustomVocabularySheet: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(verbatim: "Custom Vocabulary & Jargon")
+                Text("Custom Vocabulary & Jargon", bundle: .module)
                     .themedFont(.title2, weight: .semibold)
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
-                Text(verbatim: "\(terms.count) terms")
+                Text("\(terms.count) terms", bundle: .module)
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
                     .monospacedDigit()
             }
-            Text(verbatim: "Ensure domain-specific terms, acronyms, and company names are recognized accurately. Misrecognized phonetic variants are automatically normalized.")
+            Text("Ensure domain-specific terms, acronyms, and company names are recognized accurately. Misrecognized phonetic variants are automatically normalized.", bundle: .module)
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
         }
@@ -81,38 +89,44 @@ struct AudioCustomVocabularySheet: View {
 
     private var addTermCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(verbatim: "Add New Term")
+            Text("Add New Term", bundle: .module)
                 .themedFont(.base, weight: .semibold)
+                .accessibilityAddTraits(.isHeader)
 
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(verbatim: "Canonical Term")
+                    Text("Canonical Term", bundle: .module)
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
-                    TextField(text: $newTerm, prompt: Text(verbatim: "e.g. TurboSpark, kubectl")) {
-                        Text(verbatim: "Term")
+                    TextField(text: $newTerm, prompt: Text("e.g. TurboSpark, kubectl", bundle: .module)) {
+                        Text("Term", bundle: .module)
                     }
                     .textFieldStyle(.roundedBorder)
+                    .focused($isFieldFocused)
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(verbatim: "Category (Optional)")
+                    Text("Category (Optional)", bundle: .module)
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
-                    TextField(text: $newCategory, prompt: Text(verbatim: "e.g. Project, Tech, Name")) {
-                        Text(verbatim: "Category")
+                    TextField(text: $newCategory, prompt: Text("e.g. Project, Tech, Name", bundle: .module)) {
+                        Text("Category", bundle: .module)
                     }
                     .textFieldStyle(.roundedBorder)
-                    .frame(width: 140 * scale)
+                    .frame(
+                        minWidth: (100 * scale).rounded(),
+                        idealWidth: (140 * scale).rounded(),
+                        maxWidth: (200 * scale).rounded()
+                    )
                 }
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(verbatim: "Sounds Like / Misrecognitions (comma separated)")
+                Text("Sounds Like / Misrecognitions (comma separated)", bundle: .module)
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
-                TextField(text: $newAliases, prompt: Text(verbatim: "e.g. turbo spark, turbospark, cube cuddle")) {
-                    Text(verbatim: "Sounds like")
+                TextField(text: $newAliases, prompt: Text("e.g. turbo spark, turbospark, cube cuddle", bundle: .module)) {
+                    Text("Sounds like", bundle: .module)
                 }
                 .textFieldStyle(.roundedBorder)
             }
@@ -123,7 +137,7 @@ struct AudioCustomVocabularySheet: View {
                     addTerm()
                 } label: {
                     Label {
-                        Text(verbatim: "Add Term")
+                        Text("Add Term", bundle: .module)
                     } icon: {
                         Image(systemName: "plus")
                     }
@@ -139,25 +153,41 @@ struct AudioCustomVocabularySheet: View {
 
     private var termsListSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text(verbatim: "Registered Terms")
-                    .themedFont(.base, weight: .semibold)
-                Spacer()
-                searchField
-            }
+            AppAdaptiveHeader(
+                leading: {
+                    Text("Registered Terms", bundle: .module)
+                        .themedFont(.base, weight: .semibold)
+                        .accessibilityAddTraits(.isHeader)
+                },
+                actions: {
+                    AppSearchField(
+                        text: $searchQuery,
+                        prompt: Text("Filter terms...", bundle: .module),
+                        minWidth: (140 * scale).rounded(),
+                        idealWidth: (180 * scale).rounded(),
+                        maxWidth: (240 * scale).rounded()
+                    )
+                }
+            )
 
             if filteredTerms.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "character.book.closed")
-                        .font(.system(size: 28))
-                        .foregroundStyle(.appSecondary)
-                    Text(verbatim: searchQuery.isEmpty ? "No vocabulary terms registered yet" : "No terms matching '\(searchQuery)'")
-                        .themedFont(.small)
-                        .foregroundStyle(.appSecondary)
+                if searchQuery.isEmpty {
+                    AppEmptyState(
+                        systemImage: "character.book.closed",
+                        title: Text("No vocabulary terms registered yet", bundle: .module)
+                    )
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 28)
+                    .appCardSurface(padding: 16)
+                } else {
+                    AppEmptyState(
+                        systemImage: "magnifyingglass",
+                        title: Text("No terms matching \"\(searchQuery)\"", bundle: .module)
+                    )
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 28)
+                    .appCardSurface(padding: 16)
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 28)
-                .appCardSurface(padding: 16)
             } else {
                 VStack(spacing: 8) {
                     ForEach(filteredTerms) { item in
@@ -166,31 +196,6 @@ struct AudioCustomVocabularySheet: View {
                 }
             }
         }
-    }
-
-    private var searchField: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.appSecondary)
-            TextField(text: $searchQuery, prompt: Text(verbatim: "Filter terms...")) {
-                Text(verbatim: "Search")
-            }
-            .textFieldStyle(.plain)
-            if !searchQuery.isEmpty {
-                Button {
-                    searchQuery = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.appSecondary)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(.appSurface)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .frame(maxWidth: 200 * scale)
     }
 
     private func termRow(_ item: AudioVocabularyTerm) -> some View {
@@ -227,14 +232,12 @@ struct AudioCustomVocabularySheet: View {
 
             Spacer()
 
-            Button {
+            // Quiet, not destructive: a term is typed back in seconds, so a
+            // red role with no confirmation dialog overstated it (DESIGN.md
+            // section 2, Action hierarchy).
+            AppIconButton("minus.circle", label: Text("Remove term from vocabulary", bundle: .module)) {
                 deleteTerm(id: item.id)
-            } label: {
-                Image(systemName: "trash")
-                    .foregroundStyle(.appSecondary)
             }
-            .buttonStyle(.plain)
-            .help(Text(verbatim: "Remove term from vocabulary"))
         }
         .appCardSurface(padding: 12)
     }
@@ -247,7 +250,7 @@ struct AudioCustomVocabularySheet: View {
             Button {
                 dismiss()
             } label: {
-                Text(verbatim: "Done")
+                Text("Done", bundle: .module)
             }
             .appAction(.primary)
             .keyboardShortcut(.defaultAction)

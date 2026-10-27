@@ -72,6 +72,7 @@ struct ProjectChatSummaryView: View {
             VStack(alignment: .leading, spacing: 18) {
                 Text("Chat summary", bundle: .module)
                     .themedFont(.callout, weight: .semibold)
+                    .accessibilityAddTraits(.isHeader)
                 tasks
                 ConversationDivider()
                 outputs
@@ -79,9 +80,9 @@ struct ProjectChatSummaryView: View {
                 sourceList
             }
             .padding(16)
-            .background(.appSurface, in: RoundedRectangle(cornerRadius: 18))
+            .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 18).stroke(.appBorder, lineWidth: 1)
+                RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous).stroke(.appBorder, lineWidth: 1)
             }
             .padding(16)
         }
@@ -105,7 +106,7 @@ struct ProjectChatSummaryView: View {
                 if items.isEmpty {
                     empty("No tasks yet")
                 } else {
-                    Text(TodoChecklistSummary.text(items))
+                    TodoChecklistSummary.view(items)
                         .themedFont(.tiny)
                         .foregroundStyle(.appSecondary)
                     ForEach(visible(items, section: "tasks")) { TodoItemRow(item: $0, compact: true) }
@@ -172,6 +173,7 @@ struct ProjectChatSummaryView: View {
                 // language where `String(localized:)` followed the system's.
                 Text(LocalizedStringKey(title), bundle: .module)
                     .themedFont(.small, weight: .semibold)
+                    .accessibilityAddTraits(.isHeader)
                 Spacer()
                 Text(verbatim: "\(count)").themedFont(.tiny).foregroundStyle(.appSecondary)
                 Image(systemName: collapsed.contains(title) ? "chevron.right" : "chevron.down")

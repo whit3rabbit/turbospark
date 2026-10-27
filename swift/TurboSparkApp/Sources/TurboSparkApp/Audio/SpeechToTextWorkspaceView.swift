@@ -83,12 +83,12 @@ struct SpeechToTextWorkspaceView: View {
     private var vocabularyButton: some View {
         Button { showingVocabulary.toggle() } label: {
             Label {
-                Text(verbatim: "Vocabulary")
+                Text("Vocabulary", bundle: .module)
             } icon: { Image(systemName: "character.book.closed") }
             .lineLimit(1)
         }
         .appAction(.secondary, size: .small)
-        .help(Text(verbatim: "Custom vocabulary & jargon"))
+        .help(Text("Custom vocabulary & jargon", bundle: .module))
     }
 
     private var modelButton: some View {

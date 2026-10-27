@@ -1,6 +1,8 @@
 [
   {
-    "skills": ["tslab"],
+    "skills": [
+      "tslab"
+    ],
     "query": "Does setting a decode knob speed up decode on ~/models/qwen38-27b-dflash2.gturbo? Measure it and tell me.",
     "files": [],
     "expected_behavior": [
@@ -12,7 +14,9 @@
     ]
   },
   {
-    "skills": ["tslab"],
+    "skills": [
+      "tslab"
+    ],
     "query": "My ab run exited 4 and every pair is marked eligible: false with 'foreign CPU over 150%'. Revert the change, it clearly did not work.",
     "files": [],
     "expected_behavior": [
@@ -23,7 +27,9 @@
     ]
   },
   {
-    "skills": ["tslab"],
+    "skills": [
+      "tslab"
+    ],
     "query": "I only have the tslab skill zip, no checkout. Run the kernel gate on my attention change and then update the decode row in docs/BENCHMARKS.md.",
     "files": [],
     "expected_behavior": [
@@ -34,13 +40,41 @@
     ]
   },
   {
-    "skills": ["tslab"],
+    "skills": [
+      "tslab"
+    ],
     "query": "What settings does mlx-serve pin for its verify matmul lanes, and where in its source?",
     "files": [],
     "expected_behavior": [
       "Runs `tslab pinned --repo mlx-serve --class verify_matmul`, or reads the matching file under crates/lab/pinned/mlx-serve/",
       "Reports the settings with the entry's source file, symbol and pinned revision",
       "Does not start a measuring run or take the machine lock for this lookup"
+    ]
+  },
+  {
+    "skills": [
+      "tslab"
+    ],
+    "query": "What speculation block should I run on ~/models/qwen38-27b-mtp.gturbo, and has anyone measured it?",
+    "files": [],
+    "expected_behavior": [
+      "Runs `tslab family --model M` (or `--findings`) and reads the profile's recommended entries instead of guessing from memory",
+      "Reports MTP block 2 as the recorded best with the finding id and its conditions (install, machine, power source, date)",
+      "Says which findings are tslab verdicts (ledger provenance) and which are doc readings",
+      "Offers `tslab sweep --sweep spec_block` to re-measure on this install rather than quoting a reading as a new result"
+    ]
+  },
+  {
+    "skills": [
+      "tslab"
+    ],
+    "query": "Sweep expert cache slots 16, 32 and 64 on my Flint install and tell me which wins.",
+    "files": [],
+    "expected_behavior": [
+      "Runs preflight and a null calibration for the workload first",
+      "Uses one `tslab sweep` with `--baseline` and repeated `--candidate` arms (or the profile's `slots` sweep), not three separate `ab` runs",
+      "Reads the `sweep` record's `best` and per-candidate verdicts; reports `best: none` when no candidate is a WIN rather than picking the largest median",
+      "Reports exit 4 as a busy host, not as a result"
     ]
   }
 ]

@@ -55,6 +55,11 @@ struct SpeechToTextAnyAudioPane: View {
         }
         .appAction(.secondary, size: .small)
         .disabled(controller.isBusy || controller.hasRecordingActivity)
+        .help(
+            (controller.isBusy || controller.hasRecordingActivity)
+                ? Text("Recording can start when the current audio job finishes.", bundle: .module)
+                : Text("Import audio", bundle: .module)
+        )
     }
 
     @ViewBuilder private func detail(_ items: [AudioLibraryItem]) -> some View {

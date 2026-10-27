@@ -5,11 +5,16 @@ import SwiftUI
 /// editable here (they are code and plugin-owned files respectively), which
 /// the pane enforces by not offering the button; the save path refuses them
 /// again, so a stale sheet cannot write either.
+/// Gotcha 45: A view type whose helpers call each other needs an explicit
+/// @MainActor on the type.
+@MainActor
 public struct AgentEditorSheet: View {
     @ObservedObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
 
     var agentToEdit: AppAgentDefinition?
+
+    @FocusState private var isNameFocused: Bool
 
     @State private var name: String = ""
     @State private var displayNameText: String = ""
@@ -69,6 +74,7 @@ public struct AgentEditorSheet: View {
                             TextField(text: $name, prompt: Text(verbatim: "deploy-auditor, doc-writer")) {
                                 Text("Agent Name", bundle: .module)
                             }
+                            .focused($isNameFocused)
                             .labelsHidden()
                             .textFieldStyle(.roundedBorder)
                                 .disabled(agentToEdit != nil)
@@ -85,6 +91,7 @@ public struct AgentEditorSheet: View {
                                 Text("User Scope (~/.turbospark/agents)", bundle: .module).tag(false)
                                 Text("Project Scope (.turbospark/agents)", bundle: .module).tag(true)
                             } label: { Text("Scope", bundle: .module) }
+                            .labelsHidden()
                             .pickerStyle(.segmented)
                             .disabled(agentToEdit != nil || model.selectedProject == nil)
                             if isProjectScope && model.selectedProject == nil && agentToEdit == nil {
@@ -111,6 +118,7 @@ public struct AgentEditorSheet: View {
                                 Text("Max Turns: \(maxTurns)", bundle: .module)
                                     .themedFont(.small)
                             }
+                            .accessibilityValue(Text(verbatim: "\(maxTurns)"))
                             Text("Upper bound on the agent's autonomous turns (1 to \(AppAgentDefinition.maxTurnsCeiling)).",
                                  bundle: .module)
                                 .themedFont(.tiny)
@@ -185,6 +193,9 @@ public struct AgentEditorSheet: View {
                 }
                 .appAction(.primary)
                 .disabled(!canSave)
+                .help(!canSave
+                    ? Text("An agent name and system instructions are required to save.", bundle: .module)
+                    : (agentToEdit == nil ? Text("Create Agent", bundle: .module) : Text("Save", bundle: .module)))
                 .keyboardShortcut(.defaultAction)
             }
             .padding(.horizontal, 20)
@@ -192,7 +203,12 @@ public struct AgentEditorSheet: View {
             .background(.appPage)
         }
         .frame(minWidth: 620, minHeight: 520)
-        .onAppear(perform: loadEditingAgent)
+        .onAppear {
+            loadEditingAgent()
+            if agentToEdit == nil {
+                isNameFocused = true
+            }
+        }
     }
 
     private var canSave: Bool {

@@ -37,7 +37,13 @@ struct PluginDetailView: View {
                 }
 
                 PluginLabeledRow(label: Text("ID", bundle: .module), value: plugin.id)
-                PluginLabeledRow(label: Text("Location", bundle: .module), value: plugin.directoryURL.path)
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Location", bundle: .module)
+                        .themedFont(.base, weight: .medium)
+                        .frame(minWidth: 80, alignment: .leading)
+                    SettingsPathText(plugin.directoryURL.path, size: .small)
+                    Spacer()
+                }
 
                 contributionSummary
 
@@ -55,6 +61,7 @@ struct PluginDetailView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Not applied by this client", bundle: .module)
                             .font(theme.ui(.base, weight: .semibold))
+                            .accessibilityAddTraits(.isHeader)
                         ForEach(plugin.manifest.unsupportedNotes, id: \.self) { note in
                             Label(note, systemImage: "minus.circle")
                                 .font(theme.ui(.small))
@@ -87,28 +94,28 @@ struct PluginDetailView: View {
     /// Product names stay verbatim; the two descriptive origins are catalog
     /// keys.
     private var originBadge: some View {
-        let color: Color
+        let style: AnyShapeStyle
         let text: Text
         switch plugin.origin {
         case .turboSpark:
             text = Text(verbatim: "TurboSpark")
-            color = .blue
+            style = AnyShapeStyle(.appAccent)
         case .marketplace:
             text = Text("Marketplace: \(plugin.marketplaceName ?? "?")", bundle: .module)
-            color = .green
+            style = AnyShapeStyle(.appAccent)
         case .local:
             text = Text("Local folder", bundle: .module)
-            color = .orange
+            style = AnyShapeStyle(AppAttention.color)
         case .claudeInterop:
             text = Text(verbatim: "Claude Code")
-            color = .purple
+            style = AnyShapeStyle(.appSecondary)
         }
         return text
             .themedFont(.tiny, weight: .medium)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(Capsule().fill(color.opacity(0.15)))
-            .foregroundStyle(color)
+            .background(Capsule().fill(style.opacity(0.15)))
+            .foregroundStyle(style)
     }
 
     private var contributionSummary: some View {
@@ -116,6 +123,7 @@ struct PluginDetailView: View {
         return VStack(alignment: .leading, spacing: 6) {
             Text("Contributions", bundle: .module)
                 .font(theme.ui(.base, weight: .semibold))
+                .accessibilityAddTraits(.isHeader)
             HStack(spacing: 14) {
                 PluginContributionCount(label: Text("Commands", bundle: .module), count: counts.commands)
                 PluginContributionCount(label: Text("Skills", bundle: .module), count: counts.skills)
@@ -138,6 +146,7 @@ struct PluginDetailView: View {
                 Text("Options", bundle: .module)
                 .settingsControl("Options", pane: .plugins, timing: .nextTurn)
                     .font(theme.ui(.base, weight: .semibold))
+                    .accessibilityAddTraits(.isHeader)
                 ForEach(specs) { spec in
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
@@ -206,6 +215,7 @@ struct PluginDetailView: View {
             Text("Project override", bundle: .module)
                     .settingsControl("Project override", pane: .plugins, timing: .nextTurn)
                 .font(theme.ui(.base, weight: .semibold))
+                .accessibilityAddTraits(.isHeader)
             HStack {
                 Text("For \(project.name):", bundle: .module)
                     .font(theme.ui(.base))
@@ -260,7 +270,7 @@ private struct PluginLabeledRow: View {
             label
                 .themedFont(.base, weight: .medium)
                 .frame(minWidth: 80, alignment: .leading)
-            Text(value)
+            Text(verbatim: value)
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
                 .textSelection(.enabled)

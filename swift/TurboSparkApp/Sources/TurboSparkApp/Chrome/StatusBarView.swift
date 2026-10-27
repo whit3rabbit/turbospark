@@ -85,7 +85,7 @@ struct StatusBarView: View {
 
     private var viewModeToggleButton: some View {
         Button {
-            TSMotion.animate(.easeInOut(duration: 0.15)) {
+            TSMotion.animate(TSMotion.select) {
                 appearanceManager.statusBarViewMode = isGraphMode ? .text : .graphs
             }
         } label: {
@@ -97,7 +97,7 @@ struct StatusBarView: View {
             .padding(.horizontal, 4)
             .padding(.vertical, 2)
             .background(isGraphMode ? theme.accent.opacity(0.12) : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
+            .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
         }
         .buttonStyle(.plain)
         .help(isGraphMode
@@ -142,7 +142,7 @@ struct StatusBarView: View {
             Image(systemName: "text.alignleft")
                 .font(theme.ui(.tiny))
                 .accessibilityHidden(true)
-            MeterBar(fraction: fraction, tint: hint?.urgent == true ? .orange : theme.accent)
+            MeterBar(fraction: fraction, tint: hint?.urgent == true ? AppAttention.color : theme.accent)
                 .frame(width: 38)
             (hint?.text
                 ?? Text(verbatim: "\(model.estimatedContextTokens.formatted(.number.notation(.compactName))) / \(model.resolvedContextTokens.formatted(.number.notation(.compactName)))"))
@@ -251,8 +251,7 @@ struct StatusBarView: View {
         let isAbnormal = level.lowercased() != "nominal"
         let tintColor: Color = {
             switch level.lowercased() {
-            case "critical": return .red
-            case "serious", "fair": return .orange
+            case "critical", "serious", "fair": return AppAttention.color
             default: return theme.secondaryText
             }
         }()
@@ -265,7 +264,7 @@ struct StatusBarView: View {
             Text(verbatim: thermalLevelName(level))
                 .foregroundStyle(isAbnormal ? tintColor : theme.foreground)
             Text("Temp", bundle: .module)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.appSecondary)
         }
         .help(thermalHelp(level))
         .accessibilityElement(children: .ignore)
@@ -305,7 +304,7 @@ struct StatusBarView: View {
                 .accessibilityHidden(true)
             isCritical ? Text("Memory Critical", bundle: .module) : Text("Memory Warning", bundle: .module)
         }
-        .foregroundStyle(isCritical ? .red : .orange)
+        .foregroundStyle(AppAttention.color)
         .help(Text("The system is short of memory. Generation is being paced down; closing an idle model or another app will relieve it.", bundle: .module))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text("Memory pressure", bundle: .module))

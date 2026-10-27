@@ -73,29 +73,32 @@ struct CustomModelFoldersSectionView: View {
 
             VStack(alignment: .leading, spacing: 10) {
                 if model.customModelDirectories.isEmpty {
-                    HStack {
-                        Spacer()
-                        VStack(spacing: 6) {
-                            Image(systemName: "folder.badge.questionmark")
-                                .themedFont(.title2)
-                                .foregroundStyle(.appSecondary)
-                                .accessibilityHidden(true)
-                            Text("No additional model scan folders configured.", bundle: .module)
-                                .themedFont(.small)
-                                .foregroundStyle(.appSecondary)
+                    AppEmptyState(
+                        systemImage: "folder.badge.questionmark",
+                        title: Text("No additional model scan folders configured.", bundle: .module),
+                        message: Text("Add folders on external drives or secondary locations to scan for .gturbo bundles and .gguf models.", bundle: .module)
+                    ) {
+                        Button {
+                            addCustomFolder()
+                        } label: {
+                            Label {
+                                Text("Add Folder\u{2026}", bundle: .module)
+                            } icon: {
+                                Image(systemName: "plus")
+                            }
                         }
-                        .padding(.vertical, 16)
-                        Spacer()
+                        .appAction(.secondary, size: .small)
                     }
+                    .padding(.vertical, 8)
                 } else {
                     ForEach(model.customModelDirectories, id: \.self) { dir in
                         folderRow(dir)
                     }
-                }
 
-                Text("Add folders on external drives or secondary locations to scan for .gturbo bundles and .gguf models.", bundle: .module)
-                    .themedFont(.tiny)
-                    .foregroundStyle(.appSecondary)
+                    Text("Add folders on external drives or secondary locations to scan for .gturbo bundles and .gguf models.", bundle: .module)
+                        .themedFont(.tiny)
+                        .foregroundStyle(.appSecondary)
+                }
             }
             .modelsSettingsCard()
         }

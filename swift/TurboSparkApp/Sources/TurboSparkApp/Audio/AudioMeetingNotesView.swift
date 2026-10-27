@@ -62,18 +62,22 @@ struct AudioMeetingNotesView: View {
         }
     }
 
+    private var canRunSummarization: Bool {
+        controller.canSummarizeMeeting && !controller.isBusy && !controller.hasRecordingActivity
+    }
+
     // MARK: - Ground Truth Banner
 
     private var groundTruthBanner: some View {
         HStack(spacing: 8) {
             Image(systemName: "shield.checkmark.fill")
                 .foregroundStyle(.appAccent)
-            Text(verbatim: "Transcript preserved: ground truth is immutable.")
+            Text("Transcript preserved: ground truth is immutable.", bundle: .module)
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
             Spacer()
             if let rev = item.preferredTranscript {
-                Text(verbatim: "\(rev.segments.count) segments (\(audioTime(item.duration)))")
+                (Text("\(rev.segments.count) segments", bundle: .module) + Text(verbatim: " (\(audioTime(item.duration)))"))
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
                     .monospacedDigit()
@@ -85,24 +89,22 @@ struct AudioMeetingNotesView: View {
     // MARK: - Header Controls
 
     private var headerControls: some View {
-        HStack(alignment: .center, spacing: 12) {
-            modelMenu
-
-            Spacer(minLength: 8)
-
-            if item.summary != nil {
-                copyButton
-                exportButton
+        AppAdaptiveHeader(
+            leading: { modelMenu },
+            actions: {
+                if item.summary != nil {
+                    copyButton
+                    exportButton
+                }
+                summarizeButton
             }
-
-            summarizeButton
-        }
+        )
     }
 
     private var modelMenu: some View {
         Menu {
             if prioritizedModels.isEmpty {
-                Text(verbatim: "No chat models installed")
+                Text("No chat models installed", bundle: .module)
             } else {
                 ForEach(prioritizedModels) { model in
                     Button {
@@ -115,7 +117,7 @@ struct AudioMeetingNotesView: View {
                             }
                             Text(verbatim: model.alias)
                             if let badge = AudioMeetingNotesAdvisor.recommendationBadge(for: model) {
-                                Text(verbatim: " (\(badge))")
+                                Text(verbatim: " (") + Text(LocalizedStringKey(badge), bundle: .module) + Text(verbatim: ")")
                             }
                         }
                     }
@@ -124,15 +126,19 @@ struct AudioMeetingNotesView: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "cpu")
-                Text(verbatim: activeModel?.alias ?? "Select Model")
-                if let model = activeModel, AudioMeetingNotesAdvisor.isRecommended(model: model) {
-                    Image(systemName: "sparkles")
-                        .foregroundStyle(.appAccent)
+                if let model = activeModel {
+                    Text(verbatim: model.alias)
+                    if AudioMeetingNotesAdvisor.isRecommended(model: model) {
+                        Image(systemName: "sparkles")
+                            .foregroundStyle(.appAccent)
+                    }
+                } else {
+                    Text("Select Model", bundle: .module)
                 }
             }
         }
         .appMenuAction(size: .small)
-        .help(Text(verbatim: "Select model for meeting summarization."))
+        .help(Text("Select model for meeting summarization.", bundle: .module))
     }
 
     private var summarizeButton: some View {
@@ -143,18 +149,23 @@ struct AudioMeetingNotesView: View {
                 if controller.isBusy {
                     ProgressView()
                         .controlSize(.small)
-                    Text(verbatim: "Summarizing...")
+                    Text("Summarizing...", bundle: .module)
                 } else if item.summary == nil {
                     Image(systemName: "sparkles")
-                    Text(verbatim: "Generate Notes")
+                    Text("Generate Notes", bundle: .module)
                 } else {
                     Image(systemName: "arrow.clockwise")
-                    Text(verbatim: "Re-generate")
+                    Text("Re-generate", bundle: .module)
                 }
             }
         }
         .appAction(.primary, size: .small)
-        .disabled(!controller.canSummarizeMeeting || controller.isBusy || controller.hasRecordingActivity)
+        .help(
+            controller.canSummarizeMeeting
+                ? (item.summary == nil ? Text("Generate Notes", bundle: .module) : Text("Re-generate", bundle: .module))
+                : Text("Load a local chat model to summarize this transcript.", bundle: .module)
+        )
+        .disabled(!canRunSummarization)
     }
 
     private var copyButton: some View {
@@ -163,11 +174,15 @@ struct AudioMeetingNotesView: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: copiedFeedback ? "checkmark" : "doc.on.doc")
-                Text(verbatim: copiedFeedback ? "Copied!" : "Copy")
+                if copiedFeedback {
+                    Text("Copied!", bundle: .module)
+                } else {
+                    Text("Copy", bundle: .module)
+                }
             }
         }
         .appAction(.secondary, size: .small)
-        .help(Text(verbatim: "Copy notes to clipboard."))
+        .help(Text("Copy notes to clipboard.", bundle: .module))
     }
 
     private var exportButton: some View {
@@ -176,11 +191,11 @@ struct AudioMeetingNotesView: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "arrow.down.doc")
-                Text(verbatim: "Export MD")
+                Text("Export MD", bundle: .module)
             }
         }
         .appAction(.secondary, size: .small)
-        .help(Text(verbatim: "Export notes as a Markdown file."))
+        .help(Text("Export notes as a Markdown file.", bundle: .module))
     }
 
     // MARK: - Summary Content
@@ -190,7 +205,7 @@ struct AudioMeetingNotesView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 if let alias = summary.modelAlias {
-                    Text(verbatim: "Generated with \(alias)")
+                    Text("Generated with \(alias)", bundle: .module)
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
                 }
@@ -202,7 +217,11 @@ struct AudioMeetingNotesView: View {
                     isEditing.toggle()
                 } label: {
                     Label {
-                        Text(verbatim: isEditing ? "Save Notes" : "Edit Notes")
+                        if isEditing {
+                            Text("Save Notes", bundle: .module)
+                        } else {
+                            Text("Edit Notes", bundle: .module)
+                        }
                     } icon: {
                         Image(systemName: isEditing ? "checkmark" : "pencil")
                     }
@@ -217,12 +236,7 @@ struct AudioMeetingNotesView: View {
             if isEditing {
                 TextEditor(text: $notesText)
                     .themedFont(.base)
-                    .frame(minHeight: 280)
-                    .padding(8)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(.appBorder, lineWidth: 1)
-                    }
+                    .appEditorSurface(minHeight: 280)
             } else {
                 ScrollView {
                     Text(verbatim: notesText)
@@ -239,7 +253,7 @@ struct AudioMeetingNotesView: View {
 
     private func timeJumps(_ times: [Double]) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(verbatim: "Jump to discussion:")
+            Text("Jump to discussion:", bundle: .module)
                 .themedFont(.small, weight: .semibold)
                 .foregroundStyle(.appSecondary)
 
@@ -255,6 +269,11 @@ struct AudioMeetingNotesView: View {
                         }
                     }
                     .appAction(.secondary, size: .small)
+                    .help(
+                        item.clips.isEmpty
+                            ? Text("No clips available to play audio.", bundle: .module)
+                            : Text(verbatim: audioTime(time))
+                    )
                     .disabled(item.clips.isEmpty || controller.hasRecordingActivity)
                 }
             }
@@ -264,52 +283,48 @@ struct AudioMeetingNotesView: View {
     // MARK: - Empty State
 
     private var emptyState: some View {
-        VStack(alignment: .center, spacing: 16) {
-            Image(systemName: "doc.text.badge.sparkles")
-                .font(.system(size: 40))
-                .foregroundStyle(.appSecondary)
-
-            VStack(spacing: 6) {
-                Text(verbatim: "No Meeting Notes Yet")
-                    .themedFont(.title3, weight: .semibold)
-                Text(verbatim: "Generate structured notes with key decisions, action items, and topic overviews using a local model. Your spoken transcript remains untouched.")
+        AppEmptyState(
+            systemImage: "doc.text.badge.sparkles",
+            title: Text("No Meeting Notes Yet", bundle: .module),
+            message: Text("Generate structured notes with key decisions, action items, and topic overviews using a local model. Your spoken transcript remains untouched.", bundle: .module)
+        ) {
+            VStack(spacing: 12) {
+                if let model = activeModel {
+                    HStack(spacing: 6) {
+                        Image(systemName: "sparkles")
+                            .foregroundStyle(.appAccent)
+                        Text("Model: \(model.alias)", bundle: .module)
+                        if let badge = AudioMeetingNotesAdvisor.recommendationBadge(for: model) {
+                            (Text(verbatim: "(") + Text(LocalizedStringKey(badge), bundle: .module) + Text(verbatim: ")"))
+                                .foregroundStyle(.appSecondary)
+                        }
+                    }
                     .themedFont(.small)
-                    .foregroundStyle(.appSecondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 440)
-            }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(.appSurface)
+                    .clipShape(Capsule())
+                }
 
-            if let model = activeModel {
-                HStack(spacing: 6) {
-                    Image(systemName: "sparkles")
-                        .foregroundStyle(.appAccent)
-                    Text(verbatim: "Model: \(model.alias)")
-                    if let badge = AudioMeetingNotesAdvisor.recommendationBadge(for: model) {
-                        Text(verbatim: "(\(badge))")
-                            .foregroundStyle(.appSecondary)
+                Button {
+                    controller.summarizeMeeting(with: activeModel)
+                } label: {
+                    Label {
+                        Text("Generate Notes & Summary", bundle: .module)
+                    } icon: {
+                        Image(systemName: "sparkles")
                     }
                 }
-                .themedFont(.small)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .background(.appSurface)
-                .clipShape(Capsule())
+                .appAction(.primary)
+                .appPrimaryGlow(canRunSummarization)
+                .help(
+                    controller.canSummarizeMeeting
+                        ? Text("Generate Notes & Summary", bundle: .module)
+                        : Text("Load a local chat model to summarize this transcript.", bundle: .module)
+                )
+                .disabled(!canRunSummarization)
             }
-
-            Button {
-                controller.summarizeMeeting(with: activeModel)
-            } label: {
-                Label {
-                    Text(verbatim: "Generate Notes & Summary")
-                } icon: {
-                    Image(systemName: "sparkles")
-                }
-            }
-            .appAction(.primary)
-            .appPrimaryGlow(true)
-            .disabled(!controller.canSummarizeMeeting || controller.isBusy || controller.hasRecordingActivity)
         }
-        .frame(maxWidth: .infinity)
         .appCardSurface(padding: 24)
     }
 

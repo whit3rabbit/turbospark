@@ -1,0 +1,35 @@
+{
+  "schema": "turbospark.lab.family/1",
+  "family": "qwen3_vl",
+  "kind": "text",
+  "title": "Qwen3-VL text tower on the llama flow (vision preprocessing in crates/vision-io, the tower only here)",
+  "flow": "llama",
+  "installs": [
+    {"name": "qwen38-vision", "quant": "MLX affine 4-bit", "machine": "Apple M4 Max 36 GB", "drafters": [], "note": "no install on this host today; also MiniCPM-V 4.7 trunk mxfp4 on this flow"}
+  ],
+  "recommended": [
+    {"chunk": "128", "when": [],
+     "why": "the dense chunked driver; the vision encoder is outside the lab's phases, so prefill_tok_s counts text tokens only",
+     "findings": ["qwen3_vl.vision-install-rows-2026-10-11"]}
+  ],
+  "sweeps": [
+    {"id": "batched_gemv", "description": "the batched prefill arm against the per-token loop",
+     "when": ["dense"], "metric": "prefill_tok_s", "exactness": "dense_kl",
+     "workload": {"prompts": [{"protocol": "long-synthesis"}], "decode_tokens": 16},
+     "baseline": "batched", "candidates": ["per_token:batched_gemv=0"]}
+  ],
+  "findings": [
+    {"id": "qwen3_vl.vision-install-rows-2026-10-11", "date": "2026-10-11",
+     "install": "qwen38-vision and MiniCPM-V 4.7 trunk mxfp4", "machine": "Apple M4 Max 36 GB", "power": "ac", "rev": "v0.5 era",
+     "workload": "the every-install table",
+     "arms": {"default": {}},
+     "metric": "decode_tok_s", "values": {"qwen38_vision": {"decode_tok_s": [12.4, 16.0], "peak_mib": [854.8, 872.5]}, "minicpm_v47": {"decode_tok_s": [24.0, 25.6], "peak_mib": [1481, 1491]}},
+     "verdict": "reading",
+     "provenance": {"kind": "doc", "path": "docs/BENCHMARKS.md", "heading": "Every install, side by side"},
+     "conditions": "frozen rows; MiniCPM's BF16 matrices refuse the batched arm",
+     "note": ""}
+  ],
+  "open_questions": ["MiniCPM needs a BF16 M-row GEMM before its prefill can batch", "no lab A/B yet"],
+  "traps": ["the vision tag is on, but no lab workload feeds an image: a profile measures the text tower"],
+  "docs": ["docs/BENCHMARKS.md"]
+}

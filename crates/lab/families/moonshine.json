@@ -1,0 +1,33 @@
+{
+  "schema": "turbospark.lab.family/1",
+  "family": "moonshine",
+  "kind": "audio",
+  "title": "Moonshine speech to text (Tiny on Metal; larger variants on the CPU reference)",
+  "flow": "transcribe",
+  "installs": [],
+  "recommended": [
+    {"knob": "moonshine_device", "value": "<unset>", "when": [],
+     "why": "CPU is the default until the Metal peak qualifies: Metal is 10x faster on one clip but holds 315.9 MiB against 119.7",
+     "findings": ["moonshine.cpu-vs-metal-2026-10-11"]}
+  ],
+  "sweeps": [
+    {"id": "device", "description": "the Metal engine against the CPU reference; not comparable arms, so read each on its own",
+     "when": ["audio:transcribe"], "metric": "audio_run_s", "exactness": "text_exact",
+     "baseline": "cpu", "candidates": ["metal:moonshine_device=metal"],
+     "note": "pass --audio-job with a 16 kHz mono WAV; the Metal engine serves the Tiny shapes only"}
+  ],
+  "findings": [
+    {"id": "moonshine.cpu-vs-metal-2026-10-11", "date": "2026-10-11",
+     "install": "moonshine-tiny", "machine": "Apple M4 Max 36 GB", "power": "ac", "rev": "v0.5 era",
+     "workload": "one 52,000-sample clip",
+     "arms": {"cpu": {}, "metal": {"env": {"TURBOSPARK_MOONSHINE_DEVICE": "metal"}}},
+     "metric": "audio_run_s", "values": {"cpu_ms": 175.99, "metal_ms": 17.91, "cpu_mib": 119.7, "metal_mib": 315.9},
+     "verdict": "reading",
+     "provenance": {"kind": "doc", "path": "docs/SPEECH_TO_TEXT.md", "heading": "Evidence recorded from real runs"},
+     "conditions": "single readings; memory is why Metal is not the default",
+     "note": ""}
+  ],
+  "open_questions": ["the Metal engine's memory, before it can be the default", "grouped-query and larger variants stay on the CPU reference"],
+  "traps": ["the Metal engine refuses a config whose shapes are not the Tiny checkpoint's"],
+  "docs": ["docs/SPEECH_TO_TEXT.md", "crates/audio/src/stt/moonshine/README.md"]
+}

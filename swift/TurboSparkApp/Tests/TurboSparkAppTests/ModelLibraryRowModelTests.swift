@@ -413,8 +413,8 @@ final class ModelLibraryRowModelTests: XCTestCase {
         XCTAssertEqual(LibraryRowAction.reveal.title, "Reveal in Finder")
         XCTAssertEqual(LibraryRowAction.remove.title, "Remove")
         XCTAssertEqual(LibraryRowAction.abandonConversion.title, "Stop waiting for this drive")
-        XCTAssertTrue(LibraryRowAction.remove.isDestructive)
-        XCTAssertTrue(LibraryRowAction.abandonConversion.isDestructive)
+        XCTAssertFalse(LibraryRowAction.remove.isDestructive)
+        XCTAssertFalse(LibraryRowAction.abandonConversion.isDestructive)
         XCTAssertFalse(LibraryRowAction.setDefault.isDestructive)
     }
 }

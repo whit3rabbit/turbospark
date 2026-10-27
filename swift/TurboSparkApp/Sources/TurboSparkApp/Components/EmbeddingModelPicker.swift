@@ -91,6 +91,9 @@ struct EmbeddingModelPicker: View {
             .accessibilityLabel(Text("Download", bundle: .module) + Text(verbatim: " \(profile.displayName)"))
             .appAction(.secondary, size: .small)
             .disabled(disabled || !model.canQueueModelDownload(AppModel.embeddingDownloadRequest(profile)))
+            .help(disabled || !model.canQueueModelDownload(AppModel.embeddingDownloadRequest(profile))
+                ? Text("Download cannot be queued at this time.", bundle: .module)
+                : Text("Download", bundle: .module))
             .appPointerCursor()
         } else if trimmed == profile.alias {
             Label {
@@ -124,7 +127,7 @@ struct EmbeddingModelPicker: View {
                     } icon: {
                         Image(systemName: "exclamationmark.octagon")
                     }
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(AppAttention.color)
                     if let reason = probe.refusedBecause {
                         Text(verbatim: reason)
                             .foregroundStyle(.appSecondary)
@@ -169,7 +172,7 @@ struct EmbeddingStatusLabel: View {
                 Image(systemName: "exclamationmark.triangle.fill")
             }
             .themedFont(.tiny, weight: .medium)
-            .foregroundStyle(.orange)
+            .foregroundStyle(AppAttention.color)
         default:
             Label {
                 Text("Not verified", bundle: .module)

@@ -9,10 +9,12 @@ struct Qwen3TTSInputsView: View {
             if controller.speechSettings.mode == .clone { referenceControls }
             if controller.speechSupportsStyle {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Voice description or style", bundle: .module).themedFont(.small, weight: .semibold)
+                    Text("Voice description or style", bundle: .module)
+                        .themedFont(.small, weight: .semibold)
+                        .accessibilityAddTraits(.isHeader)
                     TextEditor(text: controller.speechBinding(\.instruction))
-                        .scrollContentBackground(.hidden).frame(height: 80).padding(8)
-                        .overlay { RoundedRectangle(cornerRadius: 8).stroke(.appBorder) }
+                        .themedFont(.base)
+                        .appEditorSurface(minHeight: 80)
                         .accessibilityLabel(Text("Voice description or style", bundle: .module))
                     Text("Describe age, accent, pitch, pace, and emotion.", bundle: .module)
                         .themedFont(.small).foregroundStyle(.appSecondary)

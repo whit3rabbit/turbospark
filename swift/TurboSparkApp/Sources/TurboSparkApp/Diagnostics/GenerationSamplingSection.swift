@@ -32,6 +32,7 @@ struct GenerationSamplingSection: View {
     /// "App defaults".
     @State private var scope: Scope = .appDefaults
     @State private var newPresetName: String = ""
+    @State private var presetPendingDeletion: AppSamplingPreset? = nil
 
     var body: some View {
         Section(header: Text("Generation Sampling", bundle: .module)) {
@@ -88,7 +89,7 @@ struct GenerationSamplingSection: View {
                         .accessibilityValue(String(format: "%.2f", settings.temperature))
                     Text(settings.temperature, format: .number.precision(.fractionLength(2)))
                         .monospacedDigit()
-                        .frame(width: 36, alignment: .trailing)
+                        .frame(minWidth: 36, alignment: .trailing)
                 }
             } label: { Text("Temperature", bundle: .module) }
 
@@ -121,7 +122,7 @@ struct GenerationSamplingSection: View {
                             .accessibilityValue(String(format: "%.2f", settings.topP))
                         Text(settings.topP, format: .number.precision(.fractionLength(2)))
                             .monospacedDigit()
-                            .frame(width: 36, alignment: .trailing)
+                            .frame(minWidth: 36, alignment: .trailing)
                     }
                 } label: {
                     Text("P value", bundle: .module)
@@ -140,7 +141,7 @@ struct GenerationSamplingSection: View {
                             .accessibilityValue(String(format: "%.2f", settings.repetitionPenalty))
                         Text(settings.repetitionPenalty, format: .number.precision(.fractionLength(2)))
                             .monospacedDigit()
-                            .frame(width: 36, alignment: .trailing)
+                            .frame(minWidth: 36, alignment: .trailing)
                     }
                 } label: {
                     Text("Penalty", bundle: .module)
@@ -157,7 +158,7 @@ struct GenerationSamplingSection: View {
                         Text("Seed", bundle: .module)
                     }
                     .textFieldStyle(.roundedBorder)
-                    .frame(width: 100)
+                    .frame(minWidth: 80, maxWidth: 140)
                     .accessibilityLabel(Text("Seed value", bundle: .module))
                     .accessibilityValue(Text(verbatim: "\(settings.seed)"))
                 } label: {
@@ -180,6 +181,9 @@ struct GenerationSamplingSection: View {
             presetsArea
         }
         .disabled(model.isRunning)
+        .help(model.isRunning
+            ? Text("Sampling settings cannot be changed while a generation is running.", bundle: .module)
+            : Text("Generation Sampling", bundle: .module))
         .onAppear(perform: syncScopeWithSelection)
         .onChange(of: model.selectedChatID) { syncScopeWithSelection() }
     }
@@ -205,11 +209,11 @@ struct GenerationSamplingSection: View {
     /// system-prompt sheet's "Use Default".
     private var removeOverrideRow: some View {
         LabeledContent {
-            Button(role: .destructive) {
+            Button {
                 model.removeChatSamplingOverride(id: model.selectedChatID)
                 scope = .appDefaults
             } label: { Text("Remove Override", bundle: .module) }
-            .appAction(.destructive, size: .small)
+            .appAction(.secondary, size: .small)
             .accessibilityLabel(Text("Remove this chat's sampling override", bundle: .module))
         } label: {
             Text("This chat's sampling", bundle: .module)
@@ -275,7 +279,7 @@ struct GenerationSamplingSection: View {
                                 label: Text("Delete sampling preset \(preset.name)", bundle: .module),
                                 role: .destructive
                             ) {
-                                model.deleteSamplingPreset(preset.id)
+                                presetPendingDeletion = preset
                             }
                             .appAction(.quiet, size: .small)
                         }
@@ -284,7 +288,7 @@ struct GenerationSamplingSection: View {
                     }
                     .contextMenu {
                         Button(role: .destructive) {
-                            model.deleteSamplingPreset(preset.id)
+                            presetPendingDeletion = preset
                         } label: { Text("Delete Preset", bundle: .module) }
                     }
                 }
@@ -302,6 +306,30 @@ struct GenerationSamplingSection: View {
                     .disabled(presetName.isEmpty)
                     .accessibilityLabel(Text("Save current sampling as a preset", bundle: .module))
             }
+        }
+        .confirmationDialog(
+            Text("Delete Preset", bundle: .module),
+            isPresented: Binding(
+                get: { presetPendingDeletion != nil },
+                set: { if !$0 { presetPendingDeletion = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(role: .destructive) {
+                if let p = presetPendingDeletion {
+                    model.deleteSamplingPreset(p.id)
+                    presetPendingDeletion = nil
+                }
+            } label: {
+                Text("Delete", bundle: .module)
+            }
+            Button(role: .cancel) {
+                presetPendingDeletion = nil
+            } label: {
+                Text("Cancel", bundle: .module)
+            }
+        } message: {
+            Text("Are you sure you want to delete this preset? This action cannot be undone.", bundle: .module)
         }
     }
 

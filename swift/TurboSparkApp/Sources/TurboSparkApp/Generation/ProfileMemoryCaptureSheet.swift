@@ -22,22 +22,28 @@ struct ProfileMemoryCaptureSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Add conversation to memory", bundle: .module)
                 .themedFont(.title3, weight: .semibold)
+                .accessibilityAddTraits(.isHeader)
             Text("Review and edit what will be appended to this user's profile MEMORY.md. Nothing is saved until you confirm.", bundle: .module)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             TextEditor(text: $draft)
                 .themedFont(.base)
-                .frame(minWidth: 520, minHeight: 260)
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(.quaternary))
+                .appEditorSurface(minHeight: 260)
             HStack {
                 if isSummarizing {
-                    ProgressView()
+                    AppProgressBar(
+                        value: nil,
+                        label: Text("Extracting durable memories\u{2026}", bundle: .module),
+                        size: .compact
+                    )
+                    .frame(width: 80)
                     Text("Extracting durable memories\u{2026}", bundle: .module)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.appSecondary)
                 }
                 Spacer()
                 Button { isPresented = false } label: {
                     Text("Cancel", bundle: .module)
                 }
+                .keyboardShortcut(.cancelAction)
                 Button {
                     model.handleProfileMemorySave(draft)
                     isPresented = false
@@ -45,6 +51,7 @@ struct ProfileMemoryCaptureSheet: View {
                     Text("Save to Memory", bundle: .module)
                 }
                 .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
                 .disabled(isSummarizing || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }

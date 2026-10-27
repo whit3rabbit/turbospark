@@ -1,0 +1,14 @@
+{
+  "schema": "turbospark.lab.family/1",
+  "family": "omnivoice",
+  "kind": "audio",
+  "title": "OmniVoice text to speech",
+  "flow": "speak",
+  "installs": [],
+  "recommended": [],
+  "sweeps": [],
+  "findings": [],
+  "open_questions": ["no worker path in tslab: kernel benches only", "no numbers recorded for this pipeline yet"],
+  "traps": [],
+  "docs": ["docs/AUDIO.md"]
+}

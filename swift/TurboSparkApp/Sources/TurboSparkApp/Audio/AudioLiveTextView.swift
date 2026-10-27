@@ -36,12 +36,12 @@ struct AudioLiveTextView: View {
                         .padding(10)
                     }
                     .frame(minHeight: 72, maxHeight: maxHeight)
-                    .background(.appPage, in: RoundedRectangle(cornerRadius: 8))
-                    .overlay { RoundedRectangle(cornerRadius: 8).stroke(.appBorder, lineWidth: 1) }
+                    .background(.appPage, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius))
+                    .overlay { RoundedRectangle(cornerRadius: AppMetrics.controlRadius).stroke(.appBorder, lineWidth: 1) }
                     .onChange(of: live.text) { _, _ in
-                        let reduce = appearance.shouldReduceMotion(systemReduceMotion: systemReduceMotion)
-                        if reduce { proxy.scrollTo(Self.end, anchor: .bottom) }
-                        else { withAnimation(TSMotion.select) { proxy.scrollTo(Self.end, anchor: .bottom) } }
+                        TSMotion.animate(TSMotion.select) {
+                            proxy.scrollTo(Self.end, anchor: .bottom)
+                        }
                     }
                 }
                 .accessibilityElement(children: .combine)
@@ -82,10 +82,7 @@ struct AudioLiveTextModelRow: View {
                 .foregroundStyle(.appSecondary)
                 if let profile = controller.liveTextProfile, controller.liveTextModelPath == nil, profile.capabilities.canRun {
                     if let download, !download.status.isTerminal {
-                        HStack(spacing: 8) {
-                            ProgressView().controlSize(.small)
-                            Text("Downloading the live text model", bundle: .module).themedFont(.small)
-                        }
+                        AppProgressBar(value: download.fractionDone, label: Text("Downloading the live text model", bundle: .module), size: .compact)
                     } else {
                         Button { controller.installLiveTextModel() } label: {
                             Label {

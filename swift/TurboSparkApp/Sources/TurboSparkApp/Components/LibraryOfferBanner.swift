@@ -143,7 +143,7 @@ private struct LibraryOfferBannerCard: View {
     }
 
     private func failureLine(_ sentence: String) -> some View {
-        noteLine(glyph: LibraryOfferGlyph.failure, tint: AnyShapeStyle(Color.orange), text: sentence)
+        noteLine(glyph: LibraryOfferGlyph.failure, tint: AnyShapeStyle(AppAttention.color), text: sentence)
             .accessibilityElement(children: .combine)
     }
 
@@ -168,7 +168,8 @@ private struct LibraryOfferBannerCard: View {
         notNowButton(blocked: blocked, reason: reason)
         if controller.isAdding {
             HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
+                AppProgressBar(value: nil, label: Text("Adding the library\u{2026}", bundle: .module), size: .compact)
+                    .frame(width: 80)
                 // Wraps instead of truncating: a long translation at the
                 // largest text size would otherwise cut the sentence to a word.
                 Text("Adding the library\u{2026}", bundle: .module)

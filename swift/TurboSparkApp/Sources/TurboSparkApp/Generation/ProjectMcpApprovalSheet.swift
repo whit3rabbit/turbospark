@@ -14,6 +14,7 @@ import SwiftUI
 /// Dismissing the sheet defers -- undecided names re-prompt on the next
 /// project selection.
 struct ProjectMcpApprovalSheet: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
 
     private var pending: PendingMcpServerApproval? {
@@ -40,6 +41,7 @@ struct ProjectMcpApprovalSheet: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("MCP Server Approval", bundle: .module)
                         .themedFont(.base, weight: .semibold)
+                        .accessibilityAddTraits(.isHeader)
                     Text("Project \"\(projectName(approval))\" declares MCP servers in its config files.", bundle: .module)
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
@@ -50,7 +52,7 @@ struct ProjectMcpApprovalSheet: View {
                         .themedFont(.small, weight: .medium)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
-                        .background(Color.secondary.opacity(0.12))
+                        .background(.appElevated)
                         .clipShape(Capsule())
                 }
             }
@@ -70,9 +72,13 @@ struct ProjectMcpApprovalSheet: View {
                 }
                 .frame(maxHeight: 140)
                 if !summary.riskyEnvNames.isEmpty {
-                    Text(verbatim: "! " + summary.riskyEnvNames.joined(separator: ", "))
-                        .themedCode(.small, weight: .semibold)
-                        .foregroundStyle(.red)
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .themedFont(.micro)
+                        Text(verbatim: "! " + summary.riskyEnvNames.joined(separator: ", "))
+                            .themedCode(.small, weight: .semibold)
+                    }
+                    .foregroundStyle(AppAttention.color)
                 }
                 Text("Declared in \(approval.sourceRelativePath)", bundle: .module)
                     .themedFont(.tiny)
@@ -81,8 +87,11 @@ struct ProjectMcpApprovalSheet: View {
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(.appSurface)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(.appBorder, lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
+                    .stroke(theme.border, lineWidth: 1)
+            )
 
             Text("Approving runs this server's commands on this machine. Auto-approval stays off: tool calls still ask unless you opt in later.", bundle: .module)
                 .themedFont(.small)
@@ -110,7 +119,7 @@ struct ProjectMcpApprovalSheet: View {
             }
         }
         .padding(24)
-        .frame(width: 460)
+        .frame(minWidth: 420, idealWidth: 460)
     }
 
     private func projectName(_ approval: PendingMcpServerApproval) -> String {

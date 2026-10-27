@@ -71,13 +71,13 @@ struct SidebarPanelRow: View {
             .padding(.vertical, 4)
             .frame(minHeight: theme.sidebarRowHeight)
             .background {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
                     .fill(
                         isSelected
                             ? theme.selection
                             : theme.foreground.opacity(isHovered ? 0.07 : 0))
             }
-            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
         }
         .buttonStyle(TSPressScaleStyle(scale: 0.98))
         .help(title)

@@ -5,6 +5,7 @@ import SwiftUI
 /// Section in ProjectMcpSettingsSheet for scanning and importing MCP configuration files from the project codebase.
 @MainActor
 struct ProjectMcpDetectionSectionView: View {
+    @Environment(\.appTheme) private var theme
     let project: AppProject?
     let detectedFiles: [DetectedProjectMcpFile]
     let isDetecting: Bool
@@ -15,15 +16,16 @@ struct ProjectMcpDetectionSectionView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
+            AppAdaptiveHeader {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Codebase Import & Detection", bundle: .module)
                         .themedFont(.small, weight: .semibold)
+                        .accessibilityAddTraits(.isHeader)
                     Text("Scans project root for .mcp.json, opencode.json, .cursor, .vscode, and .agents configs.", bundle: .module)
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
                 }
-                Spacer()
+            } actions: {
                 Button {
                     onScan()
                 } label: {
@@ -51,8 +53,8 @@ struct ProjectMcpDetectionSectionView: View {
                     }
                     .padding(10)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.secondary.opacity(0.06))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .background(.appElevated)
+                    .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
                 } else {
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach(detectedFiles) { detected in
@@ -65,8 +67,8 @@ struct ProjectMcpDetectionSectionView: View {
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
                     .padding(8)
-                    .background(Color.secondary.opacity(0.06))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .background(.appElevated)
+                    .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
             }
         }
     }
@@ -111,7 +113,7 @@ struct ProjectMcpDetectionSectionView: View {
                                 .foregroundStyle(.appSecondary)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
-                                .background(Color.secondary.opacity(0.12))
+                                .background(.appElevated)
                                 .clipShape(Capsule())
                         } else {
                             Button {
@@ -124,12 +126,15 @@ struct ProjectMcpDetectionSectionView: View {
                 }
             }
             .padding(8)
-            .background(.appSurface.opacity(0.8))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .background(.appElevated)
+            .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
         }
         .padding(10)
         .background(.appSurface)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.appAccent.opacity(0.3), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
+                .stroke(theme.border, lineWidth: 1)
+        )
     }
 }

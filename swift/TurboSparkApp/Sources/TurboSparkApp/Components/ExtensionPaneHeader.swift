@@ -172,7 +172,7 @@ struct ExtensionSplitView<ListContent: View, DetailContent: View>: View {
                     idealWidth: ExtensionPaneLayout.listIdealWidth,
                     maxWidth: ExtensionPaneLayout.listMaxWidth,
                     maxHeight: .infinity)
-                .background(.appSurface.opacity(0.5))
+                .background(.appSurface)
             detail()
                 .frame(minWidth: ExtensionPaneLayout.detailMinWidth, maxWidth: .infinity, maxHeight: .infinity)
         }

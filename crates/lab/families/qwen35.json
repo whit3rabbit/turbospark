@@ -1,0 +1,1983 @@
+{
+  "schema": "turbospark.lab.family/1",
+  "family": "qwen35",
+  "kind": "text",
+  "title": "Qwen 3.5/3.8 dense, gated DeltaNet hybrid (Qwen3.8-27B, Bonsai 1-bit)",
+  "flow": "qwen",
+  "installs": [
+    {
+      "name": "qwen38-27b",
+      "quant": "MLX affine 4-bit (mlx-community/Qwen3.8-27B-4bit)",
+      "machine": "Apple M4 Max 36 GB",
+      "drafters": [],
+      "note": "plain decode rows"
+    },
+    {
+      "name": "qwen38-27b-mtp",
+      "quant": "MLX affine 4-bit trunk plus MTP head",
+      "machine": "Apple M4 Max 36 GB",
+      "drafters": [
+        "mtp"
+      ],
+      "note": "the shipped default: MTP block 2"
+    },
+    {
+      "name": "qwen38-27b-dflash2",
+      "quant": "MLX affine 4-bit trunk plus incoai DFlash2 drafter",
+      "machine": "Apple M4 Max 36 GB",
+      "drafters": [
+        "dflash"
+      ],
+      "note": "block 7 pays only under TURBOSPARK_INT4_MMA8"
+    }
+  ],
+  "recommended": [
+    {
+      "speculation": {
+        "drafter": "mtp",
+        "block": 2
+      },
+      "when": [
+        "mtp"
+      ],
+      "why": "the only MTP block that pays with the flat-verify tile off: 1.53-1.66x over plain decode on prose, block 4 reads 0.86-0.99x and block 8 0.56-0.65x",
+      "findings": [
+        "qwen35.defaults-mtp2-2026-10-25",
+        "qwen35.mtp-block-sweep-2026-10-21",
+        "qwen35.sweep-mtp-block-2026-10-26"
+      ]
+    },
+    {
+      "knob": "int4_mma8",
+      "value": "<unset>",
+      "when": [],
+      "why": "the 8-row tile costs plain decode 17-23% and sequential prefill 27-31%; it pays only with a block of 4 or more (DFlash2 7: +10% on medium-review, 1.8x on copy-heavy), so it stays opt-in until the per-request block choice is decided",
+      "findings": [
+        "qwen35.mma8-plain-decode-2026-10-25",
+        "qwen35.full-sweep-tile-2026-10-23",
+        "qwen35.flat-verify-dflash7-2026-10-22"
+      ]
+    },
+    {
+      "knob": "adaptive_depth",
+      "value": "<unset>",
+      "when": [
+        "mtp"
+      ],
+      "why": "the tuned 3,1,1,2 controller under the tile loses 5.6% to the default on prose and wins only on code (+6.4%) and quote-back (+17.1%); flag off, fixed 2 beats every controller setting",
+      "findings": [
+        "qwen35.adapt-vs-default-prose-2026-10-25",
+        "qwen35.adapt-vs-default-code-2026-10-25",
+        "qwen35.adapt-vs-default-copy-2026-10-25",
+        "qwen35.depth-confirm-flag-off-2026-10-23"
+      ]
+    },
+    {
+      "knob": "gdn_dk128",
+      "value": "<unset>",
+      "when": [
+        "gdn"
+      ],
+      "why": "default on: the Dk-baked delta kernels won +4.1% and +5.0% (confirm) on DFlash2 7 and +5.3% on prefill, bit-exact; plain decode is NOISE",
+      "findings": [
+        "qwen35.gdn-dk128-dflash7-2026-10-24",
+        "qwen35.gdn-dk128-dflash7-confirm-2026-10-24",
+        "qwen35.gdn-dk128-prefill-2026-10-24",
+        "qwen35.gdn-dk128-decode-2026-10-24"
+      ]
+    },
+    {
+      "knob": "gdn_lazy_tape",
+      "value": "<unset>",
+      "when": [
+        "gdn",
+        "drafter"
+      ],
+      "why": "default on: 1.024-1.027x on speculative decode, and rollback plus commit cost 0.15 ms of an 85 ms round afterwards",
+      "findings": [
+        "qwen35.lazy-tape-fused-ffn-2026-10-20"
+      ]
+    },
+    {
+      "knob": "attn_decode_kernel",
+      "value": "<unset>",
+      "when": [],
+      "why": "the GQA-shared kernel is already this family's default for the trunk and, since 2026-10-23, the DFlash2 drafter; forcing barrier as a baseline also forces the trunk",
+      "findings": [
+        "qwen35.drafter-gqa-attention-2026-10-23"
+      ]
+    },
+    {
+      "knob": "dflash_chunked_prefill",
+      "value": "<unset>",
+      "when": [
+        "dflash"
+      ],
+      "why": "default on: the chunked driver with aux capture reads 130-158 prefill tok/s against 16-23 for the token walk; the paired verdict is still owed (walk arms were dirty)",
+      "findings": [
+        "qwen35.dflash-chunked-prefill-2026-10-25"
+      ]
+    },
+    {
+      "knob": "dflash_tree",
+      "value": "<unset>",
+      "when": [
+        "dflash"
+      ],
+      "why": "lossless and +5-10% committed per round live, but the tree verify costs 5-7% more than the chain, so the net is even to +4% from dirty runs; not a default",
+      "findings": [
+        "qwen35.dflash-tree-live-2026-10-25",
+        "qwen35.tree-replay-dflash-2026-10-24"
+      ]
+    },
+    {
+      "knob": "gdn_turn_snapshot",
+      "value": "<unset>",
+      "when": [],
+      "why": "follow-up TTFT falls 98.5% on the long-doc chat, but the +147 MiB peak fails the 64 MiB memory gate, so it stays off until the snapshot is cheaper",
+      "findings": [
+        "qwen35.turn-snapshot-ttft-2026-10-24"
+      ]
+    }
+  ],
+  "sweeps": [
+    {
+      "id": "spec_block",
+      "description": "which MTP block pays on this install, plain decode as the base",
+      "when": [
+        "mtp"
+      ],
+      "metric": "decode_tok_s",
+      "exactness": "bit_exact",
+      "workload": {
+        "prompts": [
+          {
+            "protocol": "medium-review"
+          }
+        ],
+        "decode_tokens": 128
+      },
+      "baseline": "plain",
+      "candidates": [
+        "mtp2~mtp:2",
+        "mtp4~mtp:4",
+        "mtp8a~mtp:8a:adaptive_depth=3,1,1,2"
+      ],
+      "note": "set spec_stats=1 on the candidates to get committed tokens per round in the records"
+    },
+    {
+      "id": "dflash_block",
+      "description": "which DFlash2 block pays with the tile off",
+      "when": [
+        "dflash"
+      ],
+      "metric": "decode_tok_s",
+      "exactness": "bit_exact",
+      "workload": {
+        "prompts": [
+          {
+            "protocol": "medium-review"
+          }
+        ],
+        "decode_tokens": 128
+      },
+      "baseline": "plain",
+      "candidates": [
+        "d2~dflash:2",
+        "d4~dflash:4",
+        "d7~dflash:7"
+      ]
+    },
+    {
+      "id": "mma8_mode",
+      "description": "the 8-row tile's modes at DFlash2 depth 7: shared (decode and verify on the tile) and verify-only",
+      "when": [
+        "dflash"
+      ],
+      "metric": "decode_tok_s",
+      "exactness": "dense_kl",
+      "workload": {
+        "prompts": [
+          {
+            "protocol": "medium-review"
+          }
+        ],
+        "decode_tokens": 128
+      },
+      "baseline": "off~dflash:7",
+      "candidates": [
+        "shared~dflash:7:int4_mma8=1",
+        "verify~dflash:7:int4_mma8=verify"
+      ],
+      "note": "verify-only is not lossless against plain decode (561 vs 505 tokens on short-explanation); the shared mode is"
+    },
+    {
+      "id": "mma8_plain",
+      "description": "what the tile costs plain decode on a headless install",
+      "when": [
+        "dense",
+        "!drafter"
+      ],
+      "metric": "decode_tok_s",
+      "exactness": "dense_kl",
+      "workload": {
+        "prompts": [
+          {
+            "protocol": "medium-review"
+          }
+        ],
+        "decode_tokens": 128
+      },
+      "baseline": "off",
+      "candidates": [
+        "on:int4_mma8=1"
+      ]
+    },
+    {
+      "id": "gdn_dk128",
+      "description": "the Dk-baked delta kernels against the runtime-Dk loop",
+      "when": [
+        "gdn"
+      ],
+      "metric": "decode_tok_s",
+      "exactness": "bit_exact",
+      "workload": {
+        "prompts": [
+          {
+            "protocol": "medium-review"
+          }
+        ],
+        "decode_tokens": 128
+      },
+      "baseline": "baked",
+      "candidates": [
+        "runtime_dk:gdn_dk128=0"
+      ]
+    },
+    {
+      "id": "mtp_prefill_driver",
+      "description": "chunked priming against the token walk with the MTP head open",
+      "when": [
+        "mtp"
+      ],
+      "metric": "prefill_tok_s",
+      "exactness": "dense_kl",
+      "workload": {
+        "prompts": [
+          {
+            "protocol": "long-synthesis"
+          }
+        ],
+        "decode_tokens": 16
+      },
+      "baseline": "chunked",
+      "candidates": [
+        "walk:mtp_chunked_prefill=0"
+      ]
+    },
+    {
+      "id": "dflash_prefill_driver",
+      "description": "chunked prefill with aux capture against the token walk with the drafter open (lever 10's owed verdict)",
+      "when": [
+        "dflash"
+      ],
+      "metric": "prefill_tok_s",
+      "exactness": "dense_kl",
+      "workload": {
+        "prompts": [
+          {
+            "protocol": "medium-review"
+          }
+        ],
+        "decode_tokens": 16
+      },
+      "baseline": "chunked",
+      "candidates": [
+        "walk:dflash_chunked_prefill=0"
+      ]
+    },
+    {
+      "id": "dflash_tree",
+      "description": "tree verify against the chain at depth 7 under the tile",
+      "when": [
+        "dflash"
+      ],
+      "metric": "decode_tok_s",
+      "exactness": "bit_exact",
+      "workload": {
+        "prompts": [
+          {
+            "protocol": "medium-review"
+          }
+        ],
+        "decode_tokens": 256
+      },
+      "baseline": "chain~dflash:7:int4_mma8=1",
+      "candidates": [
+        "tree~dflash:7:int4_mma8=1,dflash_tree=1"
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "id": "qwen35.defaults-mtp2-2026-10-25",
+      "date": "2026-10-25",
+      "install": "qwen38-27b-mtp",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "762e8f65",
+      "workload": "protocol short-explanation, medium-review, long-synthesis; 512 decode; two rounds, order reversed; turbospark-bench --shaping greedy",
+      "arms": {
+        "off": {
+          "speculation": null
+        },
+        "mtp2": {
+          "speculation": {
+            "drafter": "mtp",
+            "block": 2
+          }
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "short": {
+          "off": 21.7,
+          "mtp2": 33.1,
+          "ratio": 1.53,
+          "committed_per_round": 2.15
+        },
+        "medium": {
+          "off": 21.4,
+          "mtp2": 35.5,
+          "ratio": 1.66,
+          "committed_per_round": 2.3
+        },
+        "long": {
+          "off": 21.4,
+          "mtp2": 34.6,
+          "ratio": 1.61,
+          "committed_per_round": 2.3,
+          "spec_prefill_s": 19.3,
+          "spec_prefill_tok_s": 152
+        }
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "doc",
+        "path": "docs/KAPITSA_KERNELS.md",
+        "heading": "Re-measured on the shipped defaults, 2026-10-25"
+      },
+      "conditions": "quiet host, load 1.4-2.4 at all 12 run starts; tile off (the default)",
+      "note": "matches the 2026-10-23 sweep within 3%, so the defaults did not move"
+    },
+    {
+      "id": "qwen35.sweep-mtp-block-2026-10-26",
+      "date": "2026-10-26",
+      "install": "qwen38-27b-mtp",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "6626d894",
+      "workload": "tslab sweep: protocol medium-review, 256 decode, chunk 128, context 4096; plain against mtp2~mtp:2 and mtp4~mtp:4; 3 clean pairs each, 0 dirty, order alternating by round",
+      "arms": {
+        "plain": {},
+        "mtp2": {
+          "speculation": {
+            "drafter": "mtp",
+            "block": 2
+          }
+        },
+        "mtp4": {
+          "speculation": {
+            "drafter": "mtp",
+            "block": 4
+          }
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "plain_tok_s": [
+          18.27,
+          20.52,
+          20.18,
+          20.56,
+          21.58,
+          22.46
+        ],
+        "mtp2_tok_s": [
+          31.42,
+          34.51,
+          36.75
+        ],
+        "mtp4_tok_s": [
+          19.17,
+          22.53,
+          21.44
+        ],
+        "mtp2": {
+          "median_improvement": 0.636,
+          "ci": [
+            0.531,
+            0.678
+          ],
+          "verdict": "win"
+        },
+        "mtp4": {
+          "median_improvement": 0.05,
+          "ci": [
+            -0.006,
+            0.116
+          ],
+          "verdict": "noise"
+        },
+        "null_floor": 0.0094,
+        "null_baseline_tok_s": [
+          22.0,
+          22.4
+        ],
+        "peak_growth_mib": {
+          "mtp2": 177,
+          "mtp4": 182
+        }
+      },
+      "verdict": "win",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "fam-live-256",
+        "record": "1793063027807-68243-32"
+      },
+      "conditions": "swap 16.7 GB used of 17.4 (a standing condition of this host; every synrepo process had just been killed), load 1.4 at start, every pair passed the host guard; the plain arm read 18.3-22.5 against the null calibration's 22.0-22.4 (null record 1793062778550-50911-16), so the mtp2 ratio reads a few points high; the speculative arms' +177-182 MiB peak is the MTP head's state and exceeds the 64 MiB allowance by design",
+      "note": "the verdict field is mtp2's (verdict record 1793063027798-68243-30); mtp4 is NOISE (1793063027803-68243-31). Agrees with the 2026-10-25 defaults reading (1.53-1.66x for block 2) and with block 4 not paying with the tile off. The first live tslab sweep; a 64-decode attempt the same day (fam-live) had a drifting baseline and is not quotable"
+    },
+    {
+      "id": "qwen35.full-sweep-tile-2026-10-23",
+      "date": "2026-10-23",
+      "install": "qwen38-27b-mtp and qwen38-27b-dflash2",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "2666539a plus the uncommitted tile patch 96adbc76e8b4",
+      "workload": "protocol short-explanation (62 tokens) and medium-review (426 tokens); 16 arms, two rounds with the order reversed; turbospark-bench --shaping greedy",
+      "arms": {
+        "head_mtp2": {
+          "speculation": {
+            "drafter": "mtp",
+            "block": 2
+          }
+        },
+        "tile_shared_d7": {
+          "speculation": {
+            "drafter": "dflash",
+            "block": 7
+          },
+          "env": {
+            "TURBOSPARK_INT4_MMA8": "1"
+          }
+        },
+        "tile_verify_d7": {
+          "speculation": {
+            "drafter": "dflash",
+            "block": 7
+          },
+          "env": {
+            "TURBOSPARK_INT4_MMA8": "verify"
+          }
+        },
+        "tile_shared_plain": {
+          "env": {
+            "TURBOSPARK_INT4_MMA8": "1"
+          }
+        },
+        "tile_min_rows_d7": {
+          "speculation": {
+            "drafter": "dflash",
+            "block": 7
+          },
+          "env": {
+            "TURBOSPARK_INT4_MMA8": "1",
+            "TURBOSPARK_INT4_MMA8_MIN_ROWS": "1"
+          }
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "short": {
+          "head_plain": [
+            22.1,
+            21.8
+          ],
+          "head_mtp2": [
+            33.1,
+            32.9
+          ],
+          "head_mtp4": [
+            18.2,
+            19.1
+          ],
+          "head_d7": [
+            15.2,
+            16.1
+          ],
+          "tile_shared_plain": [
+            16.5,
+            17.2
+          ],
+          "tile_shared_d7": [
+            32.4,
+            33.4
+          ],
+          "tile_verify_plain": [
+            21.7,
+            21.8
+          ],
+          "tile_verify_d7": [
+            32.4,
+            30.4
+          ],
+          "tile_min_rows_d7": [
+            29.1,
+            29.5
+          ],
+          "tile_min_rows_d7_verify_ms": 75.3,
+          "tile_shared_d7_verify_ms": 69.8
+        },
+        "medium": {
+          "head_plain": [
+            21.8,
+            21.7
+          ],
+          "head_mtp2": [
+            34.2,
+            34.8
+          ],
+          "head_mtp4": [
+            21.0,
+            21.6
+          ],
+          "head_d7": [
+            17.7,
+            18.4
+          ],
+          "tile_shared_plain": [
+            16.9,
+            17.5
+          ],
+          "tile_shared_d7": [
+            37.5,
+            38.6
+          ],
+          "tile_verify_plain": [
+            21.7,
+            21.8
+          ],
+          "tile_verify_d7": [
+            36.2,
+            39.7
+          ],
+          "tile_min_rows_d7": [
+            35.1,
+            39.0
+          ],
+          "tile_min_rows_d7_verify_ms": 72.0,
+          "tile_shared_d7_verify_ms": 70.5,
+          "prefill_s": {
+            "head_plain": 18.6,
+            "tile_shared_plain": 23.6,
+            "tile_verify_plain": 18.6
+          }
+        }
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "doc",
+        "path": "docs/KAPITSA_KERNELS.md",
+        "heading": "Measured: the full sweep on current HEAD, 2026-10-23"
+      },
+      "conditions": "load under 4.0 at every start, swap 3.6 GB steady, 64 of 64 runs completed; the tile code was uncommitted at the time",
+      "note": "the tile turns DFlash2 7 from the worst arm into the best; verify-only keeps plain decode but is not lossless (561 vs 505 tokens); MIN_ROWS=1 (lever 9) is slower, not confirmed"
+    },
+    {
+      "id": "qwen35.flat-verify-dflash7-2026-10-22",
+      "date": "2026-10-22",
+      "install": "qwen38-27b-dflash2 and qwen38-27b-mtp",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "2c02a5be plus a copy of the uncommitted MMA8 changes",
+      "workload": "protocol short-explanation and medium-review, 512 decode; two rounds, rotated arm order; turbospark-bench --shaping greedy",
+      "arms": {
+        "flag_off": {},
+        "flag_on": {
+          "env": {
+            "TURBOSPARK_INT4_MMA8": "1"
+          }
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "short": {
+          "plain": [
+            22.0,
+            17.4
+          ],
+          "mtp2": [
+            32.5,
+            30.5
+          ],
+          "mtp4": [
+            18.3,
+            29.3
+          ],
+          "d2": [
+            31.8,
+            29.6
+          ],
+          "d4": [
+            19.4,
+            32.0
+          ],
+          "d7": [
+            14.6,
+            31.2
+          ]
+        },
+        "medium": {
+          "plain": [
+            22.1,
+            17.5
+          ],
+          "mtp2": [
+            33.9,
+            31.6
+          ],
+          "mtp4": [
+            21.4,
+            31.7
+          ],
+          "d2": [
+            34.4,
+            32.7
+          ],
+          "d4": [
+            22.6,
+            36.6
+          ],
+          "d7": [
+            17.6,
+            36.8
+          ]
+        },
+        "ms_per_round_medium_flag_on": {
+          "d2": {
+            "draft": 11.1,
+            "verify": 62.4,
+            "accept": 1.0,
+            "rollback": 0.06
+          },
+          "d7": {
+            "draft": 15.2,
+            "verify": 66.5,
+            "accept": 1.7,
+            "rollback": 0.14
+          },
+          "mtp4": {
+            "draft": 19.2,
+            "verify": 70.2,
+            "accept": 1.4,
+            "rollback": 0.12
+          }
+        }
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "doc",
+        "path": "docs/KAPITSA_KERNELS.md",
+        "heading": "Measured: DFlash2 and the flat verify, 2026-10-22"
+      },
+      "conditions": "values are [flag off, flag on] per arm; load under 2.5 at each start; losslessness was NOT checked in these runs (turbospark-bench hashes no output)",
+      "note": "rows are nearly free under the flag (about 1.3 ms a row) and the floor is the one-row tile, about 58 ms; rollback and commit are 0.15 ms"
+    },
+    {
+      "id": "qwen35.kapitsa-same-machine-2026-10-22",
+      "date": "2026-10-22",
+      "install": "qwen38-27b-mtp against kapitsa 0.2.6 (76a4970) on lmstudio-community/Qwen3.8-27B-MLX-4bit",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "2c02a5be",
+      "workload": "scripts/bench_api.py over each engine's HTTP API: short-explanation, medium-review, copy-heavy; temperature 0, 512 max tokens, one tokenizer; median of 3 per arm, two rounds reversed",
+      "arms": {
+        "ts_off": {},
+        "ts_mtp2": {
+          "speculation": {
+            "drafter": "mtp",
+            "block": 2
+          }
+        },
+        "kapitsa_mtp": {
+          "flags": "--dflash none"
+        },
+        "kapitsa_kflash": {
+          "flags": "default: DFlash2 lattice, tree verify"
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "ts_off": [
+          22.3,
+          22.3,
+          22.4
+        ],
+        "ts_mtp2": [
+          34.9,
+          37.2,
+          47.8
+        ],
+        "kapitsa_mtp": [
+          41.5,
+          46.2,
+          64.1
+        ],
+        "kapitsa_kflash": [
+          52.6,
+          68.4,
+          101.3
+        ],
+        "kflash_over_our_mtp": [
+          1.51,
+          1.84,
+          2.12
+        ],
+        "kapitsa_bench_greedy": 90.7,
+        "kapitsa_peak_gb": 19.6
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "doc",
+        "path": "docs/KAPITSA_KERNELS.md",
+        "heading": "Measured: kapitsa on this machine, 2026-10-22"
+      },
+      "conditions": "host load 1.2-2.4 at each arm start, swap 8.7-10.9 GB; texts differ between engines (copy-heavy answer 501 vs 187 tokens), kapitsa TTFT hits its prefix cache",
+      "note": "the gap is round cost, not head quality: kapitsa commits 2.39 per cycle against our 2.38 at depth 4; its c(8) is about 1.1 against our 4.53 before the tile"
+    },
+    {
+      "id": "qwen35.drafter-pass-trim-2026-10-22",
+      "date": "2026-10-22",
+      "install": "qwen38-27b-dflash2",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "9abbdcf0",
+      "workload": "protocol medium-review and short-explanation, DFlash2 block 7, TURBOSPARK_INT4_MMA8=1; four interleaved pairs, order alternated",
+      "arms": {
+        "old": {},
+        "new": {
+          "note": "per-row norm, residual and SiLU loops batched; selector scan fused (dflash_draft/)"
+        }
+      },
+      "metric": "draft_phase_ms",
+      "values": {
+        "medium": {
+          "draft_ms": [
+            16.5,
+            14.2
+          ],
+          "tok_s": [
+            35.5,
+            37.7
+          ]
+        },
+        "short": {
+          "draft_ms": [
+            14.0,
+            12.1
+          ],
+          "tok_s": [
+            29.3,
+            30.8
+          ]
+        }
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "doc",
+        "path": "docs/KAPITSA_KERNELS.md",
+        "heading": "Measured: the DFlash2 drafter pass, 2026-10-22"
+      },
+      "conditions": "load 1.4-2.5 at each start except one run; bit-identical by construction, acceptance curve unchanged",
+      "note": "about 2 ms of an 85 ms round; quote the draft-phase delta, the tok/s move includes host noise"
+    },
+    {
+      "id": "qwen35.adaptive-depth-model-2026-10-23",
+      "date": "2026-10-23",
+      "install": "qwen38-27b-dflash2",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "2666539a",
+      "workload": "a cost model over the measured per-position acceptance at block 7 with the tile on; predicts measured tok/s at depths 2, 4, 7 within 2%",
+      "arms": {
+        "fixed7": {
+          "speculation": {
+            "drafter": "dflash",
+            "block": 7
+          },
+          "env": {
+            "TURBOSPARK_INT4_MMA8": "1"
+          }
+        }
+      },
+      "metric": "gain_over_fixed_7",
+      "values": {
+        "short": {
+          "best_depth": 5,
+          "gain": 0.017,
+          "committed_at_7": 2.61
+        },
+        "medium": {
+          "best_depth": 7,
+          "gain": 0.0,
+          "committed_at_7": 3.19
+        },
+        "long": {
+          "best_depth": 7,
+          "gain": 0.0,
+          "committed_at_7": 3.16
+        }
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "doc",
+        "path": "docs/KAPITSA_KERNELS.md",
+        "heading": "Measured: does adaptive depth have headroom? 2026-10-23"
+      },
+      "conditions": "a model, not a controller; a row pays once its survival chance passes 3-5% at 1.3 ms a row",
+      "note": "no controller for DFlash2 under the flag: fixed 7 is within 2% of the best per-request choice"
+    },
+    {
+      "id": "qwen35.drafter-gqa-attention-2026-10-23",
+      "date": "2026-10-23",
+      "install": "qwen38-27b-dflash2",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "2666539a plus the drafter edits",
+      "workload": "protocol medium-review (426 tokens, 3 pairs) and long-synthesis (2,940 tokens, 1 pair); DFlash2 block 7, TURBOSPARK_INT4_MMA8=1",
+      "arms": {
+        "barrier_drafter": {},
+        "gqa_drafter": {
+          "env": {
+            "TURBOSPARK_ATTN_DECODE_KERNEL": "gqa"
+          }
+        }
+      },
+      "metric": "draft_phase_ms",
+      "values": {
+        "medium": {
+          "draft_ms": [
+            [
+              14.2,
+              15.5,
+              14.5
+            ],
+            [
+              11.0,
+              11.4,
+              11.1
+            ]
+          ],
+          "tok_s": [
+            [
+              38.9,
+              36.1,
+              37.9
+            ],
+            [
+              39.2,
+              39.1,
+              39.2
+            ]
+          ]
+        },
+        "long": {
+          "draft_ms": [
+            21.2,
+            11.4
+          ],
+          "tok_s": [
+            33.8,
+            37.6
+          ]
+        }
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "doc",
+        "path": "docs/KAPITSA_KERNELS.md",
+        "heading": "Measured: GQA-shared attention in the drafter, 2026-10-23"
+      },
+      "conditions": "acceptance identical in every pair; the earlier arm that forced barrier also slowed the trunk's verify and is not the baseline",
+      "note": "the fix is compiled in (drafter scratch with_decode_kernel(GqaShared)); the long-context gain is one pair and should be re-measured before it is quoted"
+    },
+    {
+      "id": "qwen35.small-projections-tile-2026-10-23",
+      "date": "2026-10-23",
+      "install": "qwen38-27b-dflash2",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "2666539a plus the tile patch",
+      "workload": "dispatch profile of one 8-row verify (DFlash2 block 7, short-explanation, 209 passes) and crates/gpu/tests/small_n_gemm_bench.rs on the real shapes",
+      "arms": {
+        "default_threshold": {
+          "env": {
+            "TURBOSPARK_INT4_MMA8": "1"
+          }
+        },
+        "min_rows_1": {
+          "env": {
+            "TURBOSPARK_INT4_MMA8": "1",
+            "TURBOSPARK_INT4_MMA8_MIN_ROWS": "1"
+          }
+        }
+      },
+      "metric": "verify_ms",
+      "values": {
+        "profiled_verify_ms": [
+          66.3,
+          63.8
+        ],
+        "tile_share_of_pass": 0.716,
+        "scalar_small_gemm_ms": 6.1,
+        "per_dispatch_us_8_rows": {
+          "gdn_ab_48x5120": {
+            "shipped_gemm": 46.2,
+            "tile": 8.2
+          },
+          "attn_kv_1024x5120": {
+            "shipped_gemm": 48.7,
+            "tile": 17.9
+          }
+        }
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "doc",
+        "path": "docs/KAPITSA_KERNELS.md",
+        "heading": "Measured: where the 8-row verify goes, and the small projections, 2026-10-23"
+      },
+      "conditions": "the profiler inflates absolute times (one encoder per dispatch); the baseline profile was taken at a different time; CORRECTED by the clean sweep, which read the knob slower",
+      "note": "a per-dispatch time is not a round time; the threshold stays where the tile's owner put it"
+    },
+    {
+      "id": "qwen35.three-remaining-ideas-2026-10-23",
+      "date": "2026-10-23",
+      "install": "qwen38-27b-dflash2",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "2666539a",
+      "workload": "copy-heavy prompt through turbospark-server, DFlash2 block 7, tile on, one request",
+      "arms": {
+        "server_d7_tile": {
+          "speculation": {
+            "drafter": "dflash",
+            "block": 7
+          },
+          "env": {
+            "TURBOSPARK_INT4_MMA8": "1"
+          }
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "copy_heavy": {
+          "tok_s": 87.3,
+          "accepted_per_round": 6.83,
+          "committed_per_round": 7.83,
+          "rounds": 24
+        },
+        "short": {
+          "tok_s": 28.6,
+          "committed_per_round": 2.65
+        },
+        "verify_attention_ms": 2.3,
+        "prep_dispatches_shareable": 112
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "doc",
+        "path": "docs/KAPITSA_KERNELS.md",
+        "heading": "Measured: the three remaining ideas, 2026-10-23"
+      },
+      "conditions": "one request, a direction not a rate; output byte-identical to the flag-off runs (hash b99aac05c37b)",
+      "note": "hybrid prompt lookup declined (the drafter already commits 98% of the block ceiling); rows-batched verify attention not pursued (1-2% for a numerics change); shared tile prep is about half a percent"
+    },
+    {
+      "id": "qwen35.adapt-vs-default-prose-2026-10-25",
+      "date": "2026-10-25",
+      "install": "qwen38-27b-mtp",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "lab/kernel-modes branch",
+      "workload": "protocol medium-review, 256 decode, 3 clean pairs",
+      "arms": {
+        "default": {
+          "speculation": {
+            "drafter": "mtp",
+            "block": 2
+          }
+        },
+        "adapt": {
+          "speculation": {
+            "drafter": "mtp",
+            "block": 8,
+            "adaptive": true
+          },
+          "env": {
+            "TURBOSPARK_ADAPTIVE_DEPTH": "3,1,1,2",
+            "TURBOSPARK_INT4_MMA8": "1"
+          }
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "median_improvement": -0.0564
+      },
+      "verdict": "loss",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "km-adapt-vs-default-prose",
+        "record": "1792960746395-11828-16"
+      },
+      "conditions": "host load 3-9 from other sessions' builds during the session; the pairs that count were clean",
+      "note": "the offline replay predicted -6% on prose; agrees"
+    },
+    {
+      "id": "qwen35.adapt-vs-default-code-2026-10-25",
+      "date": "2026-10-25",
+      "install": "qwen38-27b-mtp",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "lab/kernel-modes branch",
+      "workload": "code prompt (merge sorted slices), 256 decode, 3 clean pairs",
+      "arms": {
+        "default": {
+          "speculation": {
+            "drafter": "mtp",
+            "block": 2
+          }
+        },
+        "adapt": {
+          "speculation": {
+            "drafter": "mtp",
+            "block": 8,
+            "adaptive": true
+          },
+          "env": {
+            "TURBOSPARK_ADAPTIVE_DEPTH": "3,1,1,2",
+            "TURBOSPARK_INT4_MMA8": "1"
+          }
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "median_improvement": 0.0635
+      },
+      "verdict": "win",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "km-adapt-vs-default-code",
+        "record": "1792960981654-46753-16"
+      },
+      "conditions": "as the prose run; the replay predicted +16% on a different code text",
+      "note": "not a default: prose loses"
+    },
+    {
+      "id": "qwen35.adapt-vs-default-copy-2026-10-25",
+      "date": "2026-10-25",
+      "install": "qwen38-27b-mtp",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "lab/kernel-modes branch",
+      "workload": "copy-heavy (crates/lab/workloads/copy-heavy.messages.json), 256 decode, 3 clean pairs",
+      "arms": {
+        "default": {
+          "speculation": {
+            "drafter": "mtp",
+            "block": 2
+          }
+        },
+        "adapt": {
+          "speculation": {
+            "drafter": "mtp",
+            "block": 8,
+            "adaptive": true
+          },
+          "env": {
+            "TURBOSPARK_ADAPTIVE_DEPTH": "3,1,1,2",
+            "TURBOSPARK_INT4_MMA8": "1"
+          }
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "median_improvement": 0.1706
+      },
+      "verdict": "win",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "km-adapt-vs-default-copy",
+        "record": "1792961199411-78480-16"
+      },
+      "conditions": "as the prose run; the replay predicted +7% on a different quote-back text",
+      "note": "against fixed 2 under the tile the same arm reads +26.6% (km-adapt-copy 1792961128838-68302-16)"
+    },
+    {
+      "id": "qwen35.adapt-vs-fixed2-tile-2026-10-25",
+      "date": "2026-10-25",
+      "install": "qwen38-27b-mtp",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "lab/kernel-modes branch",
+      "workload": "protocol medium-review, code, copy-heavy; 256 decode; 3 clean pairs each; both arms under TURBOSPARK_INT4_MMA8=1",
+      "arms": {
+        "fixed2": {
+          "speculation": {
+            "drafter": "mtp",
+            "block": 2
+          },
+          "env": {
+            "TURBOSPARK_INT4_MMA8": "1"
+          }
+        },
+        "adapt": {
+          "speculation": {
+            "drafter": "mtp",
+            "block": 8,
+            "adaptive": true
+          },
+          "env": {
+            "TURBOSPARK_ADAPTIVE_DEPTH": "3,1,1,2",
+            "TURBOSPARK_INT4_MMA8": "1"
+          }
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "prose": 0.0346,
+        "code": 0.1605,
+        "copy": 0.2661
+      },
+      "verdict": "noise",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "km-adapt-prose",
+        "record": "1792960639884-98060-16"
+      },
+      "conditions": "the verdict field is the prose run's; code (km-adapt-code 1792960905531-35992-16) and copy (km-adapt-copy 1792961128838-68302-16) are WINs",
+      "note": "under the tile, depth helps on predictable text and does nothing on prose"
+    },
+    {
+      "id": "qwen35.mma8-plain-decode-2026-10-25",
+      "date": "2026-10-25",
+      "install": "qwen38-27b",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "lab/kernel-modes branch",
+      "workload": "protocol long-synthesis, 64 decode, 6 pairs (0 better / 5 worse)",
+      "arms": {
+        "off": {},
+        "on": {
+          "env": {
+            "TURBOSPARK_INT4_MMA8": "1"
+          }
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "median_improvement": -0.1743,
+        "ci": [
+          -0.19,
+          -0.171
+        ],
+        "projected": -0.169
+      },
+      "verdict": "loss",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "km-mma8-plain6",
+        "record": "1792971203759-34566-28"
+      },
+      "conditions": "a first 3-pair run read -26.9% with an interval spanning zero (km-mma8-plain 1792956741863-54980-16, NOISE)",
+      "note": "tslab project priced the one-row tile at 0.831x and the doc's 0.81x agrees: the projection landed within the floor"
+    },
+    {
+      "id": "qwen35.mma8-lossless-gate-2026-10-25",
+      "date": "2026-10-25",
+      "install": "qwen38-27b-dflash2",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "lab/kernel-modes branch",
+      "workload": "tslab gate, bit_exact, plain against dflash:7, both arms TURBOSPARK_INT4_MMA8=1 and TURBOSPARK_BATCHED_GEMV=0; six repo-document prompts of 32 decode tokens",
+      "arms": {
+        "plain": {
+          "env": {
+            "TURBOSPARK_INT4_MMA8": "1"
+          }
+        },
+        "d7": {
+          "speculation": {
+            "drafter": "dflash",
+            "block": 7
+          },
+          "env": {
+            "TURBOSPARK_INT4_MMA8": "1"
+          }
+        }
+      },
+      "metric": "mean_kl",
+      "values": {
+        "mean_kl": 0.0,
+        "top1": 1.0,
+        "tokens_equal": 1
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "km-lossless",
+        "record": "1792959758519-40525-11"
+      },
+      "conditions": "runs flagged dirty for foreign CPU (a bit-equality check, timing irrelevant); digests at 128 decode tokens on short, medium and copy-heavy also equal (km-copy-digest-128)",
+      "note": "DFlash2 depth 7 under the tile is lossless (lever 3's owed gate)"
+    },
+    {
+      "id": "qwen35.l9-small-projections-ab-2026-10-25",
+      "date": "2026-10-25",
+      "install": "qwen38-27b-dflash2",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "lab/kernel-modes branch",
+      "workload": "protocol long-synthesis, DFlash2 block 7, tile on; 2 clean pairs of 6",
+      "arms": {
+        "d7": {
+          "speculation": {
+            "drafter": "dflash",
+            "block": 7
+          },
+          "env": {
+            "TURBOSPARK_INT4_MMA8": "1"
+          }
+        },
+        "min1": {
+          "speculation": {
+            "drafter": "dflash",
+            "block": 7
+          },
+          "env": {
+            "TURBOSPARK_INT4_MMA8": "1",
+            "TURBOSPARK_INT4_MMA8_MIN_ROWS": "1"
+          }
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "median_improvement": 0.0332,
+        "projected": 0.058
+      },
+      "verdict": "inconclusive",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "km-l9-ab",
+        "record": "1792962693508-80036-40"
+      },
+      "conditions": "busy host; the trace (km-l9-trace2-d7, km-l9-trace2-min1) read GPU busy 92.1% and 92.5%, so neither arm is launch-bound",
+      "note": "lever 9 sits under its projection; the 2026-10-23 clean sweep read the knob slower"
+    },
+    {
+      "id": "qwen35.gdn-dk128-dflash7-2026-10-24",
+      "date": "2026-10-24",
+      "install": "qwen38-27b-dflash2",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "lab/gdn-dk128",
+      "workload": "protocol long-synthesis, DFlash2 block 7, TURBOSPARK_INT4_MMA8=1; run-experiment, bit_exact",
+      "arms": {
+        "off": {
+          "env": {
+            "TURBOSPARK_GDN_DK128": "0"
+          }
+        },
+        "on": {}
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "off": 33.2,
+        "on": 34.6,
+        "median_improvement": 0.0407
+      },
+      "verdict": "win",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "gdn-dk128-dflash7",
+        "record": "1792872140163-38512-21"
+      },
+      "conditions": "ignore 1792868671395-16692-5 in the same ledger, a discard from a contaminated run",
+      "note": "tslab project priced it at +3.4% from a 2-7% coverage slice (km-proj-dk)"
+    },
+    {
+      "id": "qwen35.gdn-dk128-dflash7-confirm-2026-10-24",
+      "date": "2026-10-24",
+      "install": "qwen38-27b-dflash2",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "lab/gdn-dk128",
+      "workload": "the held-out confirm workload (medium-review and a 2000-token corpus slice), DFlash2 block 7, tile on",
+      "arms": {
+        "off": {
+          "env": {
+            "TURBOSPARK_GDN_DK128": "0"
+          }
+        },
+        "on": {}
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "off": 37.6,
+        "on": 39.8,
+        "median_improvement": 0.0495
+      },
+      "verdict": "win",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "gdn-dk128-dflash7",
+        "record": "1792873152767-30621-17"
+      },
+      "conditions": "confirm pass of the experiment above",
+      "note": ""
+    },
+    {
+      "id": "qwen35.gdn-dk128-prefill-2026-10-24",
+      "date": "2026-10-24",
+      "install": "qwen38-27b-dflash2",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "lab/gdn-dk128",
+      "workload": "protocol long-synthesis prefill through the chunked driver; run-experiment then confirm",
+      "arms": {
+        "off": {
+          "env": {
+            "TURBOSPARK_GDN_DK128": "0"
+          }
+        },
+        "on": {}
+      },
+      "metric": "prefill_tok_s",
+      "values": {
+        "off": 147.5,
+        "on": 155.6,
+        "median_improvement": 0.0533,
+        "confirm_improvement": 0.0536
+      },
+      "verdict": "win",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "gdn-dk128-prefill",
+        "record": "1792872593319-9671-21"
+      },
+      "conditions": "confirm record 1792873269182-50140-17 in the same ledger",
+      "note": ""
+    },
+    {
+      "id": "qwen35.gdn-dk128-decode-2026-10-24",
+      "date": "2026-10-24",
+      "install": "qwen38-27b",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "lab/gdn-dk128",
+      "workload": "protocol long-synthesis, plain decode, 64 tokens",
+      "arms": {
+        "off": {
+          "env": {
+            "TURBOSPARK_GDN_DK128": "0"
+          }
+        },
+        "on": {}
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "median_improvement": -0.0036,
+        "projected": 0.009
+      },
+      "verdict": "noise",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "gdn-dk128-decode",
+        "record": "1792872315739-96209-21"
+      },
+      "conditions": "the one-row projection was under the floor, and the verdict agrees",
+      "note": ""
+    },
+    {
+      "id": "qwen35.dflash-tree-live-2026-10-25",
+      "date": "2026-10-25",
+      "install": "qwen38-27b-dflash2",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "lab branch with TURBOSPARK_DFLASH_TREE",
+      "workload": "protocol medium-review and short-explanation, DFlash2 block 7, TURBOSPARK_INT4_MMA8=1, 256 decode",
+      "arms": {
+        "chain": {
+          "speculation": {
+            "drafter": "dflash",
+            "block": 7
+          },
+          "env": {
+            "TURBOSPARK_INT4_MMA8": "1"
+          }
+        },
+        "tree": {
+          "speculation": {
+            "drafter": "dflash",
+            "block": 7
+          },
+          "env": {
+            "TURBOSPARK_INT4_MMA8": "1",
+            "TURBOSPARK_DFLASH_TREE": "1"
+          }
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "committed_per_round": {
+          "medium": [
+            2.98,
+            3.28
+          ],
+          "short": [
+            3.05,
+            3.2
+          ]
+        },
+        "verify_ms_increase": [
+          0.05,
+          0.07
+        ],
+        "net_tok_s": [
+          0.0,
+          0.04
+        ]
+      },
+      "verdict": "inconclusive",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "kapitsa-levers-c10",
+        "record": "1792977160993-455-44"
+      },
+      "conditions": "9 of 10 runs dirty, no tok/s quoted; lossless (dflash_generation_gate at blocks 2 and 7, chain and tree)",
+      "note": "the replay said 1.07-1.12x committed per round; live reads 1.05-1.10x; not a default"
+    },
+    {
+      "id": "qwen35.tree-replay-dflash-2026-10-24",
+      "date": "2026-10-24",
+      "install": "qwen38-27b-dflash2 and qwen38-27b-mtp",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "lab branch",
+      "workload": "tslab tree-replay: greedy decode, a lattice drafted after every token, chain against best-first tree and a per-round oracle at equal verify rows",
+      "arms": {
+        "chain": {},
+        "tree": {}
+      },
+      "metric": "committed_per_round_ratio",
+      "values": {
+        "dflash_depth7": {
+          "short": 1.121,
+          "medium": 1.105,
+          "copy": 1.067
+        },
+        "dflash_block2": [
+          0.0,
+          0.013
+        ],
+        "mtp_any_block": 0.0
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "tree-replay",
+        "record": "1792852198687-14544-0"
+      },
+      "conditions": "exact on the count, models no cost; the MTP replay is 1792851947169-2408-0 in the same ledger",
+      "note": "an MTP head caps the tree gain at one token per round; a DFlash2 lattice does not"
+    },
+    {
+      "id": "qwen35.dflash-chunked-prefill-2026-10-25",
+      "date": "2026-10-25",
+      "install": "qwen38-27b-dflash2",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "lab branch (lever 10)",
+      "workload": "protocol medium-review (426 tokens), DFlash2 open; 5 clean chunked runs, the walk arms all dirty",
+      "arms": {
+        "walk": {
+          "env": {
+            "TURBOSPARK_DFLASH_CHUNKED_PREFILL": "0"
+          }
+        },
+        "chunked": {}
+      },
+      "metric": "prefill_tok_s",
+      "values": {
+        "chunked_tok_s": [
+          130,
+          158
+        ],
+        "chunked_s": [
+          2.7,
+          3.3
+        ],
+        "walk_tok_s": [
+          16,
+          23
+        ]
+      },
+      "verdict": "inconclusive",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "kapitsa-levers-a6",
+        "record": "1792976692368-78198-20"
+      },
+      "conditions": "no paired verdict yet: every walk run was dirty; server TTFT not re-measured",
+      "note": "the chunked driver captures the drafter's aux states; default on"
+    },
+    {
+      "id": "qwen35.turn-snapshot-ttft-2026-10-24",
+      "date": "2026-10-24",
+      "install": "qwen38-27b-mtp",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "lab branch (lever 4)",
+      "workload": "chat crates/lab/chats/long-doc.chat.json, MTP block 2, 3 clean pairs",
+      "arms": {
+        "off": {
+          "speculation": {
+            "drafter": "mtp",
+            "block": 2
+          }
+        },
+        "on": {
+          "speculation": {
+            "drafter": "mtp",
+            "block": 2
+          },
+          "env": {
+            "TURBOSPARK_GDN_TURN_SNAPSHOT": "1"
+          }
+        }
+      },
+      "metric": "followup_ttft_s",
+      "values": {
+        "off_s": [
+          43.6,
+          44.1
+        ],
+        "on_s": [
+          0.62,
+          0.75
+        ],
+        "median_improvement": 0.985,
+        "peak_growth_mib": 147
+      },
+      "verdict": "win",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "gdn-turn-snapshot-ttft",
+        "record": "1792870919151-68392-16"
+      },
+      "conditions": "the memory gate (64 MiB allowance) FAILS on the +147 MiB peak, so the knob is off by default despite the WIN",
+      "note": "a follow-up resumes from the GDN state snapshot instead of re-prefilling the history"
+    },
+    {
+      "id": "qwen35.dispatch-probe-2026-10-24",
+      "date": "2026-10-24",
+      "install": "qwen38-27b",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "lab branch",
+      "workload": "protocol short-explanation, 64 decode, TURBOSPARK_DISPATCH_PROBE 0, 4, 8, 16 per dense FFN layer (L1)",
+      "arms": {
+        "probe0": {},
+        "probe16": {
+          "env": {
+            "TURBOSPARK_DISPATCH_PROBE": "16"
+          }
+        }
+      },
+      "metric": "decode_ms_per_token",
+      "values": {
+        "probe0": 45.46,
+        "probe16": 47.4,
+        "us_per_chained_dispatch": 1.87
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "qwen38-dispatch-probe-3",
+        "record": "1792932336875-79099-56"
+      },
+      "conditions": "probe arms are never quotable; the slope is the result",
+      "note": "mlx-serve's probe reads the same order of magnitude; see docs/MLX_SERVE_KERNELS.md"
+    },
+    {
+      "id": "qwen35.standin-blocks-2026-10-24",
+      "date": "2026-10-24",
+      "install": "qwen38-27b",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "lab branch",
+      "workload": "protocol short-explanation, 64 decode, TURBOSPARK_STANDIN attn, mlp, gdn (L4)",
+      "arms": {
+        "full": {},
+        "standin": {
+          "env": {
+            "TURBOSPARK_STANDIN": "attn,mlp,gdn"
+          }
+        }
+      },
+      "metric": "block_ms_per_token",
+      "values": {
+        "token_ms": 47.5,
+        "ffn_ms": 28.82,
+        "gdn_ms": 11.27,
+        "attn_ms": 3.36,
+        "ffn_share": 0.61,
+        "gdn_share": 0.24,
+        "attn_share": 0.07
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "qwen38-standin-2",
+        "record": "1792930571803-55890-25"
+      },
+      "conditions": "stand-in arms are never quotable; output is wrong by design",
+      "note": "the FFN is where a dense decode token goes; the GDN delta is a quarter"
+    },
+    {
+      "id": "qwen35.lazy-tape-fused-ffn-2026-10-20",
+      "date": "2026-10-20",
+      "install": "qwen38-27b-mtp",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "pre-tslab A/B script",
+      "workload": "protocol prompts, MTP block 2 for the tape, sequential decode for the fused FFN; interleaved pairs",
+      "arms": {
+        "tape_off": {
+          "env": {
+            "TURBOSPARK_GDN_LAZY_TAPE": "0"
+          }
+        },
+        "tape_on": {},
+        "ffn_off": {
+          "env": {
+            "TURBOSPARK_QWEN_FUSED_FFN": "0"
+          }
+        },
+        "ffn_on": {}
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "lazy_tape_ratio": [
+          1.024,
+          1.027
+        ],
+        "fused_ffn_gain": [
+          0.014,
+          0.022
+        ]
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "doc",
+        "path": "docs/KAPITSA_KERNELS.md",
+        "heading": "Measured: lazy tape and fused FFN, `qwen38-27b-mtp`, 2026-10-20"
+      },
+      "conditions": "the fused FFN gain is on sequential decode only; both bit-exact",
+      "note": "items 1, 4 and 5 of the kapitsa decision table, adopted"
+    },
+    {
+      "id": "qwen35.mtp-block-sweep-2026-10-21",
+      "date": "2026-10-21",
+      "install": "qwen38-27b-mtp",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "pre-tslab A/B script",
+      "workload": "protocol prompts, MTP blocks 2, 4, 8 with the lazy tape off and on, tile off",
+      "arms": {
+        "plain": {},
+        "mtp2": {
+          "speculation": {
+            "drafter": "mtp",
+            "block": 2
+          }
+        },
+        "mtp4": {
+          "speculation": {
+            "drafter": "mtp",
+            "block": 4
+          }
+        },
+        "mtp8": {
+          "speculation": {
+            "drafter": "mtp",
+            "block": 8
+          }
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "mtp2_ratio": [
+          1.5,
+          1.61
+        ],
+        "mtp4_ratio": [
+          0.86,
+          0.99
+        ],
+        "mtp8_ratio": [
+          0.56,
+          0.65
+        ]
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "doc",
+        "path": "docs/KAPITSA_KERNELS.md",
+        "heading": "Measured: MTP block sweep, lazy tape off and on, 2026-10-20 and 21"
+      },
+      "conditions": "the c(M) problem: an M-row verify costs 3.1-3.6x a one-row step on the shipped GEMM",
+      "note": "block 2 is the only block that pays until the verify is flat"
+    },
+    {
+      "id": "qwen35.prompt-lookup-replay-2026-10-21",
+      "date": "2026-10-21",
+      "install": "qwen38-27b-mtp",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "pld_replay_probe.rs",
+      "workload": "n-gram prompt-lookup drafting replayed over greedy streams of the protocol prompts and copy-heavy",
+      "arms": {
+        "lookup": {}
+      },
+      "metric": "projected_tok_s_ratio",
+      "values": {
+        "prose": [
+          0.96,
+          1.01
+        ],
+        "copy_heavy_ceiling": [
+          1.45,
+          1.58
+        ],
+        "mtp_on_copy": 1.44
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "doc",
+        "path": "docs/KAPITSA_KERNELS.md",
+        "heading": "Measured: replay on the dense 27B, 2026-10-21"
+      },
+      "conditions": "a replay against the flag-off cost curve, not a live run",
+      "note": "standalone lookup declined; a hybrid with the head is bounded by what the head already commits"
+    },
+    {
+      "id": "qwen35.depth-confirm-flag-off-2026-10-23",
+      "date": "2026-10-23",
+      "install": "qwen38-27b-mtp",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "lab branch",
+      "workload": "code and copy-heavy, 512 decode, 3 clean rounds per arm, tile off",
+      "arms": {
+        "fixed2": {
+          "speculation": {
+            "drafter": "mtp",
+            "block": 2
+          }
+        },
+        "ad4": {
+          "speculation": {
+            "drafter": "mtp",
+            "block": 4,
+            "adaptive": true
+          }
+        },
+        "tuned": {
+          "speculation": {
+            "drafter": "mtp",
+            "block": 4,
+            "adaptive": true
+          },
+          "env": {
+            "TURBOSPARK_ADAPTIVE_DEPTH": "3,1,1,2"
+          }
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "fixed2": 37.4,
+        "ad4": 35.3,
+        "tuned": 33.2,
+        "committed_per_round": [
+          2.79,
+          3.52,
+          3.73
+        ]
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "doc",
+        "path": "crates/lab/program.md",
+        "heading": "Checks for a new model or family"
+      },
+      "conditions": "from the lab notes of qwen38-depth-confirm: absolute tok/s ran about 12% under the replay (host drift), ordering held, token digests equal across arms",
+      "note": "flag off, no controller setting beats fixed block 2"
+    },
+    {
+      "id": "qwen35.steel-batched-prefill-default-2026-10-11",
+      "date": "2026-10-11",
+      "install": "qwen38-27b",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "v0.5 era",
+      "workload": "2,727-token prefill: per-token loop, scalar batched arm, Steel batched arm; KL against the per-token reference",
+      "arms": {
+        "per_token": {
+          "chunk": "off"
+        },
+        "scalar": {
+          "env": {
+            "TURBOSPARK_PREFILL_STEEL": "0"
+          }
+        },
+        "steel": {}
+      },
+      "metric": "prefill_s",
+      "values": {
+        "per_token_s": 138.64,
+        "scalar_s": 46.58,
+        "steel_s": 21.01,
+        "steel_mean_kl": 2e-05
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "doc",
+        "path": "docs/BATCHED_PREFILL.md",
+        "heading": "The dense qwen batched arm becomes the default, on Steel (2026-10-11)"
+      },
+      "conditions": "the dense KL bound (1e-3) comes from this arm's probe",
+      "note": "Steel is the dense qwen prefill default; another family needs its own gates before it takes Steel"
+    },
+    {
+      "id": "qwen35.mtp-prefill-chunked-priming-2026-10-11",
+      "date": "2026-10-11",
+      "install": "qwen38-27b-mtp",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "v0.5 era",
+      "workload": "1,094 and 2,727-token prompts with the MTP head open: chunked priming against the walk",
+      "arms": {
+        "walk": {
+          "env": {
+            "TURBOSPARK_MTP_CHUNKED_PREFILL": "0"
+          }
+        },
+        "chunked": {}
+      },
+      "metric": "prefill_s",
+      "values": {
+        "t1094": {
+          "walk": 53.08,
+          "chunked": 10.74
+        },
+        "t2727": {
+          "walk": 181.73,
+          "chunked": 24.59
+        },
+        "batched_prime_overhead_s": 0.6
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "doc",
+        "path": "docs/MTP.md",
+        "heading": "Prefill with the head open (2026-10-11)"
+      },
+      "conditions": "single readings per cell",
+      "note": "TURBOSPARK_MTP_CHUNKED_PREFILL defaults on"
+    },
+    {
+      "id": "qwen35.shape-routing-code-block4-2026-10-22",
+      "date": "2026-10-22",
+      "install": "qwen38-27b-mtp",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "tile branch",
+      "workload": "code prompt, MTP block 4 with the tile against the shipped default (block 2, tile off); prose prompts likewise",
+      "arms": {
+        "default": {
+          "speculation": {
+            "drafter": "mtp",
+            "block": 2
+          }
+        },
+        "tile_mtp4": {
+          "speculation": {
+            "drafter": "mtp",
+            "block": 4
+          },
+          "env": {
+            "TURBOSPARK_INT4_MMA8": "1"
+          }
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "code": {
+          "default": 43.3,
+          "tile_mtp4": 50.1,
+          "gain": 0.16
+        },
+        "prose_best_flag_on_vs_default": [
+          -0.12,
+          -0.09
+        ]
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "doc",
+        "path": "docs/INT4_SMALL_M_MMA.md",
+        "heading": "Shape routing (2026-10-22)"
+      },
+      "conditions": "the one-row tile gap is structural (ablation 1.21-1.24x; a two-pass split-K on 2026-10-25 lost on four of five shapes)",
+      "note": "which tile mode ships is the tile owner's decision"
+    }
+  ],
+  "open_questions": [
+    "lever 10: the paired prefill verdict for the DFlash2 chunked driver (walk arms were dirty)",
+    "the tree verify's extra 4-5 ms per verify on a quiet host, and whether a cheaper tree closes it",
+    "which int4_mma8 mode ships: shared is lossless and costs plain decode 21-23%, verify-only is free but drifts",
+    "sampled (temperature above 0) speculative throughput",
+    "decode at 16K context and beyond",
+    "concurrent streams and aggregate tok/s",
+    "energy per token under the tile and under the ANE prefill split",
+    "a cheaper GDN turn snapshot that passes the 64 MiB memory gate"
+  ],
+  "traps": [
+    "never use TURBOSPARK_ATTN_DECODE_KERNEL=barrier as a baseline: it forces the trunk too, and the drafter was the only barrier user",
+    "turbospark-bench hashes no output; losslessness under int4_mma8 comes from tslab gate or the generation gate tests",
+    "the MTP install's speculative stream already differs from plain decode on short-explanation (561 vs 505 tokens); token counts across MTP arms are not an exactness test",
+    "a reply cut inside the reasoning goes back empty in a chat workload; give --decode room on a thinking model",
+    "the kapitsa M5 Max and M4 Pro README rows are unverified here and not targets"
+  ],
+  "docs": [
+    "docs/KAPITSA_KERNELS.md",
+    "docs/MTP.md",
+    "docs/DFLASH2.md",
+    "docs/INT4_SMALL_M_MMA.md",
+    "docs/BATCHED_PREFILL.md",
+    "docs/MLX_SERVE_KERNELS.md",
+    "docs/SPEEDUP_PLAYBOOK.md"
+  ]
+}

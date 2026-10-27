@@ -89,7 +89,7 @@ struct ChromeTelemetryView: View {
                 .foregroundStyle(.appText)
             Text("CPU", bundle: .module)
                 .font(theme.ui(.tiny))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.appSecondary)
         }
         .help(Text("Current CPU utilization of the TurboSpark process", bundle: .module))
         .accessibilityElement(children: .ignore)
@@ -109,7 +109,7 @@ struct ChromeTelemetryView: View {
                 .foregroundStyle(.appText)
             Text("GPU wait", bundle: .module)
                 .font(theme.ui(.tiny))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.appSecondary)
         }
         .help(Text("Metal GPU wait per pass from the last run's phase counters. Updates after a generation pass completes; TurboSpark does not measure a live GPU percentage.", bundle: .module))
         .accessibilityElement(children: .ignore)
@@ -128,8 +128,7 @@ struct ChromeTelemetryView: View {
     }
 
     private func memoryTint(_ fraction: Double) -> Color {
-        if fraction > 0.85 { return .red }
-        if fraction > 0.65 { return .orange }
+        if fraction > 0.65 { return AppAttention.color }
         return theme.accent
     }
 

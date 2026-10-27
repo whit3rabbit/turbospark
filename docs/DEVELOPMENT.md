@@ -210,13 +210,31 @@ frozen 6.2536 with the whole workspace suite green.
 
 - `verify` runs on every PR. It builds and tests the Rust workspace on macOS
   and checks the portable subset on Linux. **It compiles no Swift at all.**
-- `package-macos` builds the app bundle and the DMG. It is push-to-main only.
+- `package-macos` builds the app bundle and the DMG. It is push-to-main only,
+  plus `workflow_dispatch` so a change to the job can be timed from a branch.
 
 So a Swift break reaches you on a push to main rather than on the PR. That
 job's SDK is also not the one on your machine. `swift/AGENTS.md` Gotcha 45
 has the three failure modes this has already produced. The short version:
 build the app locally before merging anything that touches Swift, and read
 `make app-bundle` as the closest local approximation of that job.
+
+Documentation does not reach `ci.yml` at all: `docs/` (except `docs/openapi/`
+and `docs/verification/`, which tests read), every `*.md`, the GitBook
+content directories, `.kiro/`, `.agents/` and `.claude/` are filtered out of
+its triggers. `.github/workflows/docs.yml` lints the GitBook content instead.
+A docs-only PR therefore shows no `verify` check, and that is expected.
+
+The macOS legs are long (verify 24 to 38 minutes, each package leg 45 before
+the caches below) and three caches keep them from being longer. `verify`
+restores Rust dependencies through `Swatinem/rust-cache`, saved only from
+`main`; a PR cannot refresh it, by design, since a cache saved on a PR ref is
+visible to nobody else. `package-macos` additionally caches the `openkindd`
+binary (`cargo install` builds in its own target directory, so nothing else
+could) keyed on its version, the Xcode and the rustc, and the SwiftPM `.build`
+directory keyed on the resolved package graph and the Xcode. When a step
+that should be cached runs long, read its `Post` step in the job log: a save
+that fails every time looks exactly like a cache that works.
 
 ## Running
 

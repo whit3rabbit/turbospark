@@ -8,11 +8,11 @@ struct ToolCallCardView: View {
     @ObservedObject private var appearance = AppearanceManager.shared
 
     private var diffAdditionColor: Color {
-        appearance.diffMarkers == .color ? Color.green : Color.primary
+        appearance.diffMarkers == .color ? Color.green : theme.foreground
     }
 
     private var diffDeletionColor: Color {
-        appearance.diffMarkers == .color ? Color.red : Color.secondary
+        appearance.diffMarkers == .color ? Color.red : theme.secondaryText
     }
 
     @ObservedObject var model: AppModel
@@ -73,10 +73,10 @@ struct ToolCallCardView: View {
 
     private var borderColor: Color {
         if isPendingApproval {
-            return isHighRisk ? Color.red.opacity(0.7) : Color.orange.opacity(0.6)
+            return isHighRisk ? AppAttention.color : AppAttention.color.opacity(0.8)
         }
         if let result, result.isError {
-            return Color.red.opacity(0.4)
+            return AppAttention.color.opacity(0.6)
         }
         return theme.border
     }
@@ -275,7 +275,7 @@ struct ToolCallCardView: View {
 
     private var summaryHeaderButton: some View {
         Button {
-            withAnimation(.easeInOut(duration: 0.18)) {
+            TSMotion.animate(TSMotion.select) {
                 isExpanded.toggle()
             }
         } label: {
@@ -330,7 +330,7 @@ struct ToolCallCardView: View {
 
                 Image(systemName: "chevron.down")
                     .themedFont(.tiny, weight: .semibold)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.appSecondary)
                     .rotationEffect(.degrees((isExpanded || isPendingApproval || isActiveQuestionSet) ? 180 : 0))
             }
             .frame(minHeight: ConversationLayout.activityHeight)
@@ -341,22 +341,30 @@ struct ToolCallCardView: View {
         // Mirrors the visible header (localized tool label, then target)
         // rather than `summary.action`, an English verb.
         .accessibilityLabel(Text(verbatim: "\(ToolPresentation.resolve(call.name).localizedLabel) \(summary.target)"))
-        .accessibilityValue(statusLabel + ", " + ((isExpanded || isPendingApproval || isActiveQuestionSet) ? AppStrings.localized("Expanded") : AppStrings.localized("Collapsed")))
+        .accessibilityValue(statusAccessibilityLabel + ", " + ((isExpanded || isPendingApproval || isActiveQuestionSet) ? AppStrings.localized("Expanded") : AppStrings.localized("Collapsed")))
     }
 
     @ViewBuilder
     private func efficiencyOutcome(_ outcome: ToolEfficiencyOutcome) -> some View {
-        let labels = [
-            outcome.validation.map { "Validation: \($0)" },
-            outcome.archivedOutput ? "Archived output available through recall_tool_output" : nil,
-            outcome.verifiedReduction ? "Verified local reduction" : nil,
-            outcome.boundaryCompaction ? "Completed-todo boundary compacted" : nil,
-        ].compactMap { $0 }
-        if !labels.isEmpty {
-            Text(labels.joined(separator: " | "))
-                .font(theme.ui(.tiny))
-                .foregroundStyle(.appSecondary)
+        HStack(spacing: 4) {
+            if let validation = outcome.validation {
+                Text("Validation: \(validation)", bundle: .module)
+            }
+            if outcome.archivedOutput {
+                if outcome.validation != nil { Text(verbatim: "|") }
+                Text("Full output archived and available on request", bundle: .module)
+            }
+            if outcome.verifiedReduction {
+                if outcome.validation != nil || outcome.archivedOutput { Text(verbatim: "|") }
+                Text("Verified local reduction", bundle: .module)
+            }
+            if outcome.boundaryCompaction {
+                if outcome.validation != nil || outcome.archivedOutput || outcome.verifiedReduction { Text(verbatim: "|") }
+                Text("Completed-todo boundary compacted", bundle: .module)
+            }
         }
+        .font(theme.ui(.tiny))
+        .foregroundStyle(.appSecondary)
     }
 
     private var statusLeadingIcon: some View {
@@ -364,7 +372,7 @@ struct ToolCallCardView: View {
             if isPendingApproval {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .themedFont(.small)
-                    .foregroundStyle(isHighRisk ? Color.red : Color.orange)
+                    .foregroundStyle(isHighRisk ? AppAttention.color : AppAttention.color.opacity(0.8))
             } else {
                 switch ToolPresentation.status(call: call, result: result) {
                 case .running:
@@ -376,15 +384,15 @@ struct ToolCallCardView: View {
                 case .denied:
                     Image(systemName: "minus.circle.fill")
                         .themedFont(.small)
-                        .foregroundStyle(Color.secondary)
+                        .foregroundStyle(theme.secondaryText)
                 case .failed:
                     Image(systemName: "xmark.circle.fill")
                         .themedFont(.small)
-                        .foregroundStyle(Color.red)
+                        .foregroundStyle(AppAttention.color)
                 case .pendingApproval:
                     Image(systemName: "exclamationmark.triangle.fill")
                         .themedFont(.small)
-                        .foregroundStyle(Color.orange)
+                        .foregroundStyle(AppAttention.color)
                 }
             }
         }
@@ -456,8 +464,8 @@ struct ToolCallCardView: View {
         }
         .padding(.horizontal, 5)
         .padding(.vertical, 1)
-        .background(risk.level == .high ? Color.red.opacity(0.15) : Color.orange.opacity(0.12), in: Capsule())
-        .foregroundStyle(risk.level == .high ? Color.red : Color.orange)
+        .background(risk.level == .high ? AppAttention.color.opacity(0.15) : AppAttention.color.opacity(0.12), in: Capsule())
+        .foregroundStyle(risk.level == .high ? AppAttention.color : AppAttention.color.opacity(0.9))
         .help(Text("Security risk: \(Text(LocalizedStringKey(risk.level.label), bundle: .module))", bundle: .module))
     }
 
@@ -465,11 +473,13 @@ struct ToolCallCardView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(risk.level == .high ? Color.red : Color.orange)
+                    .foregroundStyle(AppAttention.color)
                     .themedFont(.small)
-                Text(risk.level == .high ? "High-Risk Operation Detected" : "Security Notice")
+                (risk.level == .high
+                    ? Text("High-Risk Operation Detected", bundle: .module)
+                    : Text("Security Notice", bundle: .module))
                     .themedFont(.small, weight: .semibold)
-                    .foregroundStyle(risk.level == .high ? Color.red : Color.orange)
+                    .foregroundStyle(AppAttention.color)
             }
             ForEach(risk.reasons, id: \.self) { reason in
                 Text(verbatim: "- \(reason)")
@@ -480,13 +490,14 @@ struct ToolCallCardView: View {
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            (risk.level == .high ? Color.red : Color.orange).opacity(0.08),
-            in: RoundedRectangle(cornerRadius: 6)
+            AppAttention.color.opacity(0.08),
+            in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
         )
     }
 
+    @ViewBuilder
     private var statusBadge: some View {
-        Text(statusLabel)
+        statusText
             .themedFont(.tiny, weight: .medium)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
@@ -494,45 +505,64 @@ struct ToolCallCardView: View {
             .foregroundStyle(statusForeground)
     }
 
-    private var statusLabel: String {
-        if isPendingApproval { return "Needs Approval" }
-        // A classifier-approved call is marked so "who decided this" is
-        // always on the card (`swift/docs/SWIFT_AGENT_MODE.md`).
+    @ViewBuilder
+    private var statusText: some View {
+        if isPendingApproval {
+            Text("Needs Approval", bundle: .module)
+        } else if call.autoApprovedBy == "classifier" && (ToolPresentation.status(call: call, result: result) == .running || ToolPresentation.status(call: call, result: result) == .completed) {
+            Text("Classifier Approved", bundle: .module)
+        } else {
+            switch ToolPresentation.status(call: call, result: result) {
+            case .pendingApproval:
+                Text("Needs Approval", bundle: .module)
+            case .running:
+                Text("Running...", bundle: .module)
+            case .completed:
+                Text("Completed", bundle: .module)
+            case .denied:
+                Text("Denied", bundle: .module)
+            case .failed:
+                Text("Failed", bundle: .module)
+            }
+        }
+    }
+
+    private var statusAccessibilityLabel: String {
+        if isPendingApproval { return AppStrings.localized("Needs Approval") }
         if call.autoApprovedBy == "classifier" {
             switch ToolPresentation.status(call: call, result: result) {
-            case .running: return "Classifier Approved"
-            case .completed: return "Classifier Approved"
+            case .running, .completed: return AppStrings.localized("Classifier Approved")
             default: break
             }
         }
         switch ToolPresentation.status(call: call, result: result) {
-        case .pendingApproval: return "Needs Approval"
-        case .running: return "Running..."
-        case .completed: return "Completed"
-        case .denied: return "Denied"
-        case .failed: return "Failed"
+        case .pendingApproval: return AppStrings.localized("Needs Approval")
+        case .running: return AppStrings.localized("Running...")
+        case .completed: return AppStrings.localized("Completed")
+        case .denied: return AppStrings.localized("Denied")
+        case .failed: return AppStrings.localized("Failed")
         }
     }
 
     private var statusBackground: Color {
-        if isPendingApproval { return isHighRisk ? Color.red.opacity(0.15) : Color.orange.opacity(0.15) }
+        if isPendingApproval { return isHighRisk ? AppAttention.color.opacity(0.15) : AppAttention.color.opacity(0.12) }
         switch ToolPresentation.status(call: call, result: result) {
-        case .pendingApproval: return Color.orange.opacity(0.15)
-        case .running: return Color.blue.opacity(0.15)
+        case .pendingApproval: return AppAttention.color.opacity(0.12)
+        case .running: return theme.accent.opacity(0.15)
         case .completed: return Color.green.opacity(0.15)
-        case .denied: return Color.secondary.opacity(0.15)
-        case .failed: return Color.red.opacity(0.15)
+        case .denied: return theme.secondaryText.opacity(0.15)
+        case .failed: return AppAttention.color.opacity(0.15)
         }
     }
 
     private var statusForeground: Color {
-        if isPendingApproval { return isHighRisk ? .red : .orange }
+        if isPendingApproval { return isHighRisk ? AppAttention.color : AppAttention.color.opacity(0.9) }
         switch ToolPresentation.status(call: call, result: result) {
-        case .pendingApproval: return .orange
-        case .running: return .blue
-        case .completed: return .green
-        case .denied: return .secondary
-        case .failed: return .red
+        case .pendingApproval: return AppAttention.color
+        case .running: return theme.accent
+        case .completed: return Color.green
+        case .denied: return theme.secondaryText
+        case .failed: return AppAttention.color
         }
     }
 
@@ -544,7 +574,7 @@ struct ToolCallCardView: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+        .background(.appElevated, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
     }
 
     private func questionPreview(_ questions: [UserQuestionItem]) -> some View {
@@ -592,7 +622,7 @@ struct ToolCallCardView: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+        .background(.appElevated, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
     }
 
     private func findingsPreview(_ findings: [CodeFindingItem]) -> some View {
@@ -602,7 +632,7 @@ struct ToolCallCardView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "exclamationmark.circle.fill")
                             .themedFont(.tiny)
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(AppAttention.color)
 
                         Text(f.file + (f.line.map { ":\($0)" } ?? ""))
                             .font(theme.code(.small, weight: .bold))
@@ -613,7 +643,7 @@ struct ToolCallCardView: View {
                                 .themedFont(.tiny)
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 1)
-                                .background(Color.secondary.opacity(0.12), in: Capsule())
+                                .background(.appSecondary.opacity(0.15), in: Capsule())
                                 .foregroundStyle(.appSecondary)
                         }
                     }
@@ -634,7 +664,7 @@ struct ToolCallCardView: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+        .background(.appElevated, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
     }
 
     private var agentPreview: some View {
@@ -673,8 +703,8 @@ struct ToolCallCardView: View {
                     }
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(Color.purple.opacity(0.15), in: Capsule())
-                    .foregroundStyle(Color.purple)
+                    .background(.appAccent.opacity(0.15), in: Capsule())
+                    .foregroundStyle(.appAccent)
                 }
 
                 if !description.isEmpty && description != prompt {
@@ -688,17 +718,17 @@ struct ToolCallCardView: View {
             if !prompt.isEmpty {
                 Text(prompt)
                     .font(theme.code(.small))
-                    .foregroundStyle(.primary.opacity(0.9))
+                    .foregroundStyle(.appText)
                     .lineLimit(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(8)
-                    .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 6))
+                    .background(.appElevated, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
                     .textSelection(.enabled)
             }
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+        .background(.appElevated, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
     }
 
     private var stopAgentPreview: some View {
@@ -706,7 +736,7 @@ struct ToolCallCardView: View {
         return HStack(spacing: 6) {
             Image(systemName: "stop.circle.fill")
                 .themedFont(.small)
-                .foregroundStyle(Color.red)
+                .foregroundStyle(AppAttention.color)
             Text("Stop Background Agent:", bundle: .module)
                 .themedFont(.small, weight: .medium)
                 .foregroundStyle(.appSecondary)
@@ -716,7 +746,7 @@ struct ToolCallCardView: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+        .background(.appElevated, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
     }
 
     private var fileWritePreview: some View {
@@ -738,7 +768,7 @@ struct ToolCallCardView: View {
                     .foregroundStyle(.appText)
                 Spacer()
                 let lineCount = ToolCallDiffFormatter.countLines(content)
-                Text(verbatim: "\(lineCount) lines")
+                Text("\(lineCount) lines", bundle: .module)
                     .themedFont(.tiny)
                     .foregroundStyle(.appSecondary)
             }
@@ -748,13 +778,14 @@ struct ToolCallCardView: View {
                     label: fileName,
                     code: content,
                     language: lang,
-                    downloadFilename: fileName
+                    downloadFilename: fileName,
+                    labelIsVerbatim: true
                 )
             }
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+        .background(.appElevated, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
     }
 
     private var fileEditPreview: some View {
@@ -785,10 +816,10 @@ struct ToolCallCardView: View {
                     }
                     Text(oldStr)
                         .font(theme.code(.small))
-                        .foregroundStyle(.primary.opacity(0.9))
+                        .foregroundStyle(.appText)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(6)
-                        .background(Color.red.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+                        .background(Color.red.opacity(0.06), in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
                         .textSelection(.enabled)
                 }
             }
@@ -805,17 +836,17 @@ struct ToolCallCardView: View {
                     }
                     Text(newStr)
                         .font(theme.code(.small))
-                        .foregroundStyle(.primary.opacity(0.9))
+                        .foregroundStyle(.appText)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(6)
-                        .background(Color.green.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+                        .background(Color.green.opacity(0.06), in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
                         .textSelection(.enabled)
                 }
             }
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+        .background(.appElevated, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
     }
 
     private var patchPreview: some View {
@@ -845,17 +876,17 @@ struct ToolCallCardView: View {
                 .foregroundStyle(.appText)
 
             if let start, let end, !start.isEmpty, !end.isEmpty {
-                Text(verbatim: "Lines \(start)-\(end)")
+                Text("Lines \(start)-\(end)", bundle: .module)
                     .themedFont(.tiny, weight: .medium)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(Color.secondary.opacity(0.12), in: Capsule())
+                    .background(.appSecondary.opacity(0.15), in: Capsule())
                     .foregroundStyle(.appSecondary)
             }
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+        .background(.appElevated, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
     }
 
     private var webFetchPreview: some View {
@@ -890,12 +921,12 @@ struct ToolCallCardView: View {
                 .themedFont(.tiny, weight: .bold)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background(Color.secondary.opacity(0.12), in: Capsule())
+                .background(.appSecondary.opacity(0.15), in: Capsule())
                 .foregroundStyle(.appSecondary)
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+        .background(.appElevated, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
     }
 
     private var skillPreview: some View {
@@ -930,7 +961,7 @@ struct ToolCallCardView: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+        .background(.appElevated, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
     }
 
     private var mcpPreview: some View {
@@ -950,8 +981,8 @@ struct ToolCallCardView: View {
                         .themedFont(.tiny, weight: .bold)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(Color.indigo.opacity(0.15), in: Capsule())
-                        .foregroundStyle(Color.indigo)
+                        .background(.appAccent.opacity(0.15), in: Capsule())
+                        .foregroundStyle(.appAccent)
                 }
                 if !tool.isEmpty {
                     Text(tool)
@@ -976,7 +1007,7 @@ struct ToolCallCardView: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+        .background(.appElevated, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
     }
 
     private func detectLanguage(from path: String) -> String {
@@ -1022,12 +1053,12 @@ struct ToolCallCardView: View {
             .padding(8)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(.appElevated.opacity(0.4))
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
         }
         .padding(.leading, 8)
         .overlay(
             Rectangle()
-                .fill(Color.primary.opacity(0.15))
+                .fill(theme.border)
                 .frame(width: 2),
             alignment: .leading
         )
@@ -1042,7 +1073,7 @@ struct ToolCallCardView: View {
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "bolt.slash.fill")
                         .themedFont(.tiny, weight: .semibold)
-                        .foregroundStyle(Color.orange)
+                        .foregroundStyle(AppAttention.color)
                     Text(notice)
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
@@ -1051,8 +1082,8 @@ struct ToolCallCardView: View {
                 .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
-                    Color.orange.opacity(0.08),
-                    in: RoundedRectangle(cornerRadius: 6))
+                    AppAttention.color.opacity(0.08),
+                    in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
             }
 
             if isPendingApproval, let request = model.browserPermissionApprovalRequest(for: call) {
@@ -1092,7 +1123,7 @@ struct ToolCallCardView: View {
                         Label { Text("Approve Once", bundle: .module) } icon: { Image(systemName: "checkmark") }
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(isHighRisk ? Color.orange : TurboSparkTheme.accentColor)
+                    .tint(isHighRisk ? AppAttention.color : theme.accent)
                     .help(Text("Approve this tool call once", bundle: .module))
                     .accessibilityLabel(Text("Approve once \(call.name)", bundle: .module))
 

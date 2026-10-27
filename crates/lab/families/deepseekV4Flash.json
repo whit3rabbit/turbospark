@@ -1,0 +1,14 @@
+{
+  "schema": "turbospark.lab.family/1",
+  "family": "deepseekV4Flash",
+  "kind": "text",
+  "title": "DeepSeek V4 Flash: manifest family only, no runtime decode flow",
+  "flow": "none",
+  "installs": [],
+  "recommended": [],
+  "sweeps": [],
+  "findings": [],
+  "open_questions": ["the runtime has no decode flow: open refuses it, and only kernel benches at its shapes can run"],
+  "traps": ["every workflow step that needs the runs tag is skipped with its reason ledgered"],
+  "docs": []
+}

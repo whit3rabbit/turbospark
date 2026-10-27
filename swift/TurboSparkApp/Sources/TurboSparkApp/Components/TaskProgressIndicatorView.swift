@@ -8,8 +8,6 @@ public struct TaskProgressIndicatorView: View {
     public let size: CGFloat
     public let isRunning: Bool
 
-    @State private var isFloating = false
-
     public init(text: String? = nil, size: CGFloat = 16, isRunning: Bool = true) {
         self.text = text
         self.size = size
@@ -19,36 +17,21 @@ public struct TaskProgressIndicatorView: View {
     public var body: some View {
         if isRunning {
             HStack(spacing: 6) {
-                TaskProgressFlameIcon(size: size, isFloating: $isFloating)
+                TaskProgressFlameIcon(size: size)
 
                 // The caller owns the text's localization. The old
                 // `LocalizedStringKey` lookup ran against the main bundle,
                 // which holds no strings in a SwiftPM build.
                 if let text = text, !text.isEmpty {
                     Text(verbatim: text)
-                        .themedFont(fitting: max(11, size * 0.8), weight: .regular)
+                        .themedFont(fitting: size * 0.8, weight: .regular)
                         .foregroundStyle(.appSecondary)
                 }
-            }
-            .onAppear {
-                startFloatingAnimation()
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel(text.map { Text(verbatim: $0) } ?? Text("Task in progress", bundle: .module))
             .accessibilityHint(Text("Animates while task is executing", bundle: .module))
             .transition(.opacity.combined(with: .scale(scale: 0.95)))
-        }
-    }
-
-    // The binding drives the icon's bob, so this has to honor Reduce
-    // Motion itself: the icon's own guard only covers its internal state.
-    @MainActor
-    private func startFloatingAnimation() {
-        TSMotion.animate(
-            .easeInOut(duration: 0.9)
-            .repeatForever(autoreverses: true)
-        ) {
-            isFloating = true
         }
     }
 }
@@ -58,7 +41,6 @@ public struct TaskProgressFlameIcon: View {
     public let size: CGFloat
     @Binding var isFloating: Bool
 
-    @State private var internalFloating = false
     @ObservedObject private var appearanceManager = AppearanceManager.shared
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
 
@@ -71,12 +53,12 @@ public struct TaskProgressFlameIcon: View {
         }
     }
 
-    private var activeFloating: Bool {
-        isFloating || internalFloating
+    private var reduceMotion: Bool {
+        appearanceManager.shouldReduceMotion(systemReduceMotion: systemReduceMotion)
     }
 
     public var body: some View {
-        Group {
+        let content = Group {
             if let nsImage = TaskProgressAssetCache.shared.progressImage {
                 Image(nsImage: nsImage)
                     .resizable()
@@ -86,22 +68,23 @@ public struct TaskProgressFlameIcon: View {
                 Image(systemName: "flame.fill")
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .foregroundStyle(Color.orange)
+                    .foregroundStyle(AppAttention.color)
                     .frame(width: size, height: size)
             }
         }
-        .offset(y: activeFloating ? -2.5 : 2.5)
-        .onAppear {
-            // The bob repeats forever, so honor Reduce motion by not starting it.
-            guard !appearanceManager.shouldReduceMotion(systemReduceMotion: systemReduceMotion) else { return }
-            withAnimation(
-                .easeInOut(duration: 0.9)
-                .repeatForever(autoreverses: true)
-            ) {
-                internalFloating = true
-            }
+
+        if reduceMotion {
+            content
+                .accessibilityHidden(true)
+        } else {
+            content
+                .phaseAnimator([-2.0, 2.0]) { view, offset in
+                    view.offset(y: offset)
+                } animation: { _ in
+                    TSMotion.breathe
+                }
+                .accessibilityHidden(true)
         }
-        .accessibilityHidden(true)
     }
 }
 

@@ -24,12 +24,12 @@ struct ContextSelectionButton: View {
                 Spacer(minLength: 4)
                 Image(systemName: "chevron.up.chevron.down")
                     .themedFont(.micro, weight: .semibold)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.appSecondary)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .background(
-                Color.primary.opacity(0.05),
+                .appSurface,
                 in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
             .contentShape(.rect(cornerRadius: AppMetrics.controlRadius))
         }
@@ -130,7 +130,7 @@ private struct ContextSelectionPopover: View {
         }
         .padding(6)
         .frame(width: 300)
-        .background(TurboSparkTheme.surfaceColor)
+        .background(.appSurface)
     }
 
     private var autoRow: some View {
@@ -240,7 +240,7 @@ private struct ContextSelectionPopover: View {
                 VStack(alignment: .leading, spacing: 1) {
                     primary
                         .font(theme.ui(.small, weight: isSelected ? .semibold : .regular))
-                        .foregroundStyle(Color.primary)
+                        .foregroundStyle(.appText)
                     if let secondary {
                         secondary
                             .font(theme.ui(.tiny))
@@ -252,15 +252,15 @@ private struct ContextSelectionPopover: View {
                 if isSelected {
                     Image(systemName: "checkmark")
                         .themedFont(.tiny, weight: .bold)
-                        .foregroundStyle(Color.primary)
+                        .foregroundStyle(.appText)
                 }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .background(
                 isSelected ? theme.accent.opacity(0.12) : Color.clear,
-                in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .contentShape(.rect(cornerRadius: 6))
+                in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
+            .contentShape(.rect(cornerRadius: AppMetrics.controlRadius))
         }
         .buttonStyle(TSPressScaleStyle(scale: 0.99))
         .disabled(disabled)

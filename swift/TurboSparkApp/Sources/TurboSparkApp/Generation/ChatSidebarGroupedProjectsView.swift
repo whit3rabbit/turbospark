@@ -38,8 +38,10 @@ struct ChatSidebarGroupedProjectsView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .buttonStyle(SidebarActionButtonStyle())
-                    .help(Text("Add Project", bundle: .module))
                     .disabled(model.isRunning || model.submitting || model.pendingToolCall != nil)
+                    .help(model.isRunning || model.submitting || model.pendingToolCall != nil
+                        ? Text("Cannot save project while generation or tool execution is active", bundle: .module)
+                        : Text("Add Project", bundle: .module))
                 }
                 if filteredProjects.isEmpty && unorganizedChats.isEmpty && !trimmedSearch.isEmpty {
                     emptyState
@@ -305,7 +307,7 @@ struct ChatSidebarGroupedProjectsView: View {
 
                     Text(chat.title)
                         .font(theme.ui(.small, weight: isSelected ? .medium : nil))
-                        .foregroundStyle(isSelected ? theme.foreground : theme.foreground.opacity(0.88))
+                        .foregroundStyle(isSelected ? theme.foreground : theme.secondaryText)
                         .lineLimit(1)
 
                     Spacer(minLength: 4)
@@ -320,7 +322,9 @@ struct ChatSidebarGroupedProjectsView: View {
             .buttonStyle(.plain)
             .disabled(model.isRunning && !isSelected)
             // Data only (the chat's own title and a locale-formatted date).
-            .help(Text(verbatim: "\(chat.title) - \(MessageTimestampFormatter.relativeString(for: chat.updatedAt, locale: locale))"))
+            .help((model.isRunning && !isSelected)
+                ? Text("Cannot start a new chat while generation is running", bundle: .module)
+                : Text(verbatim: "\(chat.title) - \(MessageTimestampFormatter.relativeString(for: chat.updatedAt, locale: locale))"))
             .accessibilityLabel(chat.title)
             .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
 
@@ -347,9 +351,11 @@ struct ChatSidebarGroupedProjectsView: View {
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
-                .help(Text("Task actions", bundle: .module))
-                .accessibilityLabel(Text("Task actions", bundle: .module))
                 .disabled(model.isRunning)
+                .help(model.isRunning
+                    ? Text("Cannot start a new chat while generation is running", bundle: .module)
+                    : Text("Task actions", bundle: .module))
+                .accessibilityLabel(Text("Task actions", bundle: .module))
             }
         }
         .padding(.leading, 18)
@@ -358,10 +364,10 @@ struct ChatSidebarGroupedProjectsView: View {
         .background(
             isSelected
                 ? theme.selection
-                : (isHovered ? theme.foreground.opacity(0.04) : Color.clear),
-            in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                : (isHovered ? theme.elevatedSurface : Color.clear),
+            in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
         )
-        .contentShape(.rect(cornerRadius: 6))
+        .contentShape(.rect(cornerRadius: AppMetrics.controlRadius))
         .onHover { hovering in
             hoveredChatID = hovering ? chat.id : nil
         }
@@ -393,7 +399,7 @@ struct ChatSidebarGroupedProjectsView: View {
                 .accessibilityHidden(true)
         } else {
             Circle()
-                .fill(theme.secondaryText.opacity(0.35))
+                .fill(theme.secondaryText)
                 .frame(width: 4, height: 4)
                 .padding(.horizontal, 3)
                 .accessibilityHidden(true)
@@ -427,6 +433,7 @@ struct ChatSidebarGroupedProjectsView: View {
             }
             .padding(.horizontal, 6)
             .padding(.vertical, 4)
+            .accessibilityAddTraits(.isHeader)
 
             VStack(alignment: .leading, spacing: 2) {
                 ForEach(unorganizedChats) { chat in
@@ -439,21 +446,16 @@ struct ChatSidebarGroupedProjectsView: View {
     // MARK: - Empty State
 
     private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "folder.badge.plus")
-                .font(theme.ui(.title2))
-                .foregroundStyle(.appSecondary)
-                .padding(.top, 24)
-            Text("No projects match filter", bundle: .module)
-                .font(theme.ui(.tiny, weight: .medium))
-                .foregroundStyle(.appSecondary)
+        AppEmptyState(
+            systemImage: "folder.badge.plus",
+            title: Text("No projects match filter", bundle: .module)
+        ) {
             Button {
                 projectBeingEdited = nil
                 showingProjectSettingsSheet = true
             } label: { Text("Add Project", bundle: .module) }
             .buttonStyle(SidebarActionButtonStyle())
             .help(Text("Add Project", bundle: .module))
-            .padding(.top, 4)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)

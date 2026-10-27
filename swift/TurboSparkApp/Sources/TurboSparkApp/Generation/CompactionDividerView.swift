@@ -24,8 +24,8 @@ struct CompactionDividerView: View {
                 .foregroundStyle(theme.metadataForeground)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(10)
-                .background(Color.primary.opacity(0.03))
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .background(.appElevated)
+                .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
                 .textSelection(.enabled)
         } label: {
             HStack(spacing: 6) {

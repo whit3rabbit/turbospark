@@ -58,6 +58,27 @@ a `Lane` in `knobs::LANES` as well as its `KNOBS` row, so `tslab project
 4. The bench fills `Point.row_fnv` (the first output row alone) under
    `--hash`, so the exactness hint can say whether a row depends on its batch.
 
+## A family finding, recommendation or sweep
+
+Profiles live in `crates/lab/families/<family>.json` (`README.md` there has
+the field rules) and are embedded by `src/family_profile.rs`:
+
+1. A finding: copy the verdict record's experiment and id (or the doc path
+   and heading for a reading), the install, machine, power, revision,
+   workload and conditions, and the numbers. Its id is
+   `<family>.<slug>-<YYYY-MM-DD>`.
+2. A recommendation: one of `knob` plus `value` (a `KNOBS` row), a
+   `speculation`, `slots`/`residency`, or `chunk`, with `why` and the
+   finding ids that back it. `when` holds coverage tags.
+3. A sweep: a baseline arm and candidate arms in `tslab` arm syntax, the
+   metric and the exactness class, and a workload when the default is wrong.
+
+`cargo test -p turbospark-lab` validates every file (`family_profile.rs`
+unit tests, `tests/family_profiles.rs`): a knob the table lacks, a tag
+coverage never produces, a finding without conditions, a doc heading that
+does not exist, or a verdict on a doc reading all fail there. A new
+`ModelFamily` variant or `AudioKind` needs a new file.
+
 ## A new ledger kind
 
 Append it through `Ledger::append`, add it to `KINDS` in `src/schema.rs` and

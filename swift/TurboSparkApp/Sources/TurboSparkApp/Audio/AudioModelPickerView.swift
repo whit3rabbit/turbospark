@@ -64,14 +64,17 @@ struct AudioModelPickerView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Label { Text("Audio model", bundle: .module) } icon: { Image(systemName: "cpu") }
-                    .themedFont(.base, weight: .semibold)
-                Spacer()
-                AppIconButton("arrow.clockwise", label: Text("Refresh", bundle: .module)) { controller.refreshModels() }
-                    .appAction(.quiet, size: .small)
-                    .disabled(controller.isRefreshingModels)
-            }
+            AppAdaptiveHeader(
+                leading: {
+                    Label { Text("Audio model", bundle: .module) } icon: { Image(systemName: "cpu") }
+                        .themedFont(.base, weight: .semibold)
+                },
+                actions: {
+                    AppIconButton("arrow.clockwise", label: Text("Refresh", bundle: .module)) { controller.refreshModels() }
+                        .appAction(.quiet, size: .small)
+                        .disabled(controller.isRefreshingModels)
+                }
+            )
             // The menu lists what is on this Mac. A selection that is not listed
             // reads as no choice, so the picker never shows a blank for an unknown tag.
             let listed = controller.pickerProfiles
@@ -85,6 +88,11 @@ struct AudioModelPickerView: View {
                 }
             } label: { Text("Audio model", bundle: .module) }
             .labelsHidden().frame(maxWidth: .infinity, alignment: .leading)
+            .help(
+                (controller.isBusy || controller.hasRecordingActivity)
+                    ? Text("Cannot change model while audio is active or recording.", bundle: .module)
+                    : Text("Audio model", bundle: .module)
+            )
             .disabled(controller.isBusy || controller.hasRecordingActivity)
 
             if listed.isEmpty && !controller.isRefreshingModels && controller.modelCatalogError == nil {
@@ -339,7 +347,11 @@ struct AudioModelPickerView: View {
                         systemImage: decision.isBlocked ? "xmark.octagon.fill" : "exclamationmark.triangle.fill"
                     )
                     .themedFont(.small)
-                    .foregroundStyle(decision.isBlocked ? Color.red : Color.orange)
+                    .foregroundStyle(
+                        decision.isBlocked
+                            ? AnyShapeStyle(Color.red)
+                            : AnyShapeStyle(AppAttention.color)
+                    )
                     .fixedSize(horizontal: false, vertical: true)
                 }
                 Button {
@@ -368,12 +380,18 @@ struct AudioModelPickerView: View {
             }
         }
         if let folder = controller.selectedLocalModelURL {
-            Label { Text(folder.lastPathComponent).lineLimit(2).truncationMode(.middle) }
-                icon: { Image(systemName: "folder") }
-                .help(folder.path)
+            HStack(spacing: 6) {
+                Image(systemName: "folder").foregroundStyle(.appSecondary)
+                SettingsPathText(folder.path)
+            }
             if controller.installedPaths[profile.identity.alias] != nil {
                 Button { controller.useDownloadedModel() } label: { Text("Use downloaded model", bundle: .module) }
                     .appAction(.secondary, size: .small)
+                    .help(
+                        (controller.isBusy || controller.hasRecordingActivity)
+                            ? Text("Cannot change model while audio is active or recording.", bundle: .module)
+                            : Text("Use downloaded model", bundle: .module)
+                    )
                     .disabled(controller.isBusy || controller.hasRecordingActivity)
             }
         }
@@ -383,6 +401,11 @@ struct AudioModelPickerView: View {
                 Label { Text("Choose local model folder", bundle: .module) } icon: { Image(systemName: "folder") }
             }
             .appAction(.secondary, size: .small)
+            .help(
+                (controller.isBusy || controller.hasRecordingActivity)
+                    ? Text("Cannot change model while audio is active or recording.", bundle: .module)
+                    : Text("Choose local model folder", bundle: .module)
+            )
             .disabled(controller.isBusy || controller.hasRecordingActivity)
         }
     }

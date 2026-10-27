@@ -27,6 +27,11 @@ struct InspectorEssentialsSection: View {
             ContextLadderPicker(model: model)
         }
         .disabled(model.isRunning || model.isInstallingModel)
+        .help(model.isRunning
+            ? Text("Controls cannot be changed while a generation is running.", bundle: .module)
+            : (model.isInstallingModel
+                ? Text("Controls cannot be changed while a model is installing.", bundle: .module)
+                : Text("Essentials", bundle: .module)))
     }
 }
 
@@ -208,7 +213,7 @@ struct ContextLadderPicker: View {
         }
         .onAppear { syncIsCustom() }
         .onChange(of: model.maxContextTokens) { _, _ in syncIsCustom() }
-        .tsAnimation(.smooth(duration: 0.2), value: isCustom)
+        .tsAnimation(TSMotion.select, value: isCustom)
     }
 
     private var customSizeRow: some View {
@@ -230,7 +235,7 @@ struct ContextLadderPicker: View {
                 .accessibilityValue(Text("\(model.maxContextTokens.formatted()) tokens", bundle: .module))
                 Text(verbatim: "\(model.maxContextTokens.formatted())")
                     .themedFont(.small).monospacedDigit()
-                    .frame(width: 55, alignment: .trailing)
+                    .frame(minWidth: 55, alignment: .trailing)
             }
         } label: {
             Text("Custom Size", bundle: .module)
