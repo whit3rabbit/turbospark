@@ -69,6 +69,16 @@ window_fit = { package = "turbospark-window-fit", path = "../window-fit", versio
 turbospark-vision-io = { path = "../vision-io", version = "0.5.0" }
 serde_json = "1"
 indicatif = "0.18"
+# The `turbospark` front door's command tree, help and shell completions.
+# Held to 4.5: 4.6 moved to edition 2024 and rust-version 1.85, past this
+# workspace's MSRV of 1.82. For the same reason Cargo.lock pins clap_lex to
+# 1.0.0 (1.1 needs 1.85); `cargo update` will lift it, so re-pin with
+# `cargo update -p clap_lex --precise 1.0.0`.
+clap = { version = ">=4.5, <4.6", features = ["derive"] }
+clap_complete = ">=4.5, <4.6"
+# Styles for `src/ui`. Both already arrive with clap and indicatif.
+anstyle = "1"
+console = { version = "0.16", default-features = false }
 
 [dev-dependencies]
 sha2 = "0.10"

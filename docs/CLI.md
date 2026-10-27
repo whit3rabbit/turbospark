@@ -6,7 +6,7 @@ specialized binary when you need a lower-level check or benchmark. Run
 
 The binaries are:
 
-- `turbospark` -- unified entry point providing intuitive subcommands for chat/generation (`run`, `image`), server management (`serve`, `start`, `stop`, `restart`, `status`), agent connectors (`start claude`, `start codex`), and model operations (`list`, `pull`, `info`, `rm`, `probe`, `recommend`, `auth`).
+- `turbospark` -- the one command most people need: `run`, `pull`, `ls`, `search`, `show`, `rm`, `doctor`, the server (`serve`, `start`, `stop`, `restart`, `status`, `ps`), agents (`launch`), media (`image`, `music`, `speak`, `clone`, `ocr`), and `model` for everything advanced. It calls the binaries below; they keep their own command lines and output.
 - `turbospark-check` -- run generation once against an install: a raw prompt, a rendered chat conversation, or an interactive REPL. See [`crates/cli/AGENTS.md`](../crates/cli/AGENTS.md).
 - `turbospark-model` -- find, inspect, and install text models into `~/.turbospark/models/text`, image models into `~/.turbospark/models/image`, and pinned MiniMax Music 3 profiles into `~/.turbospark/models/audio`, or into a model library on an external drive. See [`docs/MODELS.md`](MODELS.md) and [Model libraries](#model-libraries).
 - `turbospark-image` -- pack a local Diffusers image export or generate one PNG. See [`docs/IMAGE_GENERATION.md`](IMAGE_GENERATION.md).
@@ -23,33 +23,62 @@ guides.
 ## `turbospark` (unified CLI)
 
 ```sh
-turbospark <command> [flags...]
+turbospark                       # what is installed, what fits, what to type
+turbospark run qwen3.6           # chat; downloads the model first if needed
+turbospark run qwen3.6 "hello"   # one answer, through the chat template
+turbospark pull gemma4 qwen3-vl  # download several
+turbospark ls                    # installed models
+turbospark search qwen           # the catalog
+turbospark show qwen3.6:35b      # one model in full
+turbospark rm gemma4             # delete, with the space it frees
+turbospark doctor                # this machine and which models fit
+turbospark serve --model qwen3.6 # OpenAI, Anthropic and Ollama APIs
+turbospark launch claude --model qwen3.6
 ```
 
-`turbospark` provides one entry point for the common workflows:
+`turbospark --help` groups every command; `turbospark COMMAND --help` has its
+options. Output is styled in a terminal and plain when piped or with
+`NO_COLOR=1`. `ls`, `search`, `show`, `doctor`, `status` and `ps` take
+`--json`. Exit status: 0 success, 1 a failed command, 2 a usage error, 130
+when cancelled; a peer binary's own status is passed through.
+
+### Model names
+
+A model is named by a tag, an alias, or a path. Tags are ollama-style
+`family[:variant]` spellings of catalog aliases, kept in
+[`crates/catalog/src/tags.json`](../crates/catalog/src/tags.json):
+`qwen3.6` and `qwen3.6:35b` are `qwen36`, `qwen3.6:35b-gguf` is `qwen36-gguf`,
+`gemma4:26b-q8` is `gemma4-gguf`. `turbospark show NAME` lists a model's
+tags. Aliases keep working everywhere; the peer binaries take aliases only,
+and `turbospark` translates a tag before calling them.
 
 ### Commands
 
 | Category | Command | Description |
 | --- | --- | --- |
-| **Run & Chat** | `turbospark run <model> [prompt]` | Run interactive chat REPL (if prompt omitted) or single-turn prompt completion. Accepts flags like `--temperature`, `--max-new`, etc. |
-| **Server (Foreground)** | `turbospark serve [options]` | Run OpenAI & Anthropic HTTP server in foreground (supports `--model-dir`, `--memory-guard`, etc.) |
-| **Server (Daemon)** | `turbospark start [options]` | Start managed background server daemon (`~/.turbospark/run/server.pid`, logs to `~/.turbospark/logs/server.log`) |
-| | `turbospark stop` | Stop running background server daemon |
-| | `turbospark restart [options]` | Restart background server daemon |
-| | `turbospark status` | Inspect background daemon status, port, endpoint, and health check |
-| **Agents** | `turbospark start <agent> --model <m>` | Launch a coding agent (`claude`, `codex`, `opencode`, `grok`, `gemini`, `hermes`, `openclaw`, `dsh`) against the local server, starting or restarting the daemon for the named model first. `turbospark <model> <agent>` is the same launch model-first |
-| **Models** | `turbospark list` | List catalog models, marking installed ones (`--filter TEXT`) |
-| | `turbospark pull <alias\|--repo>` | Install model into store |
-| | `turbospark info <alias>` | Inspect model details and gate targets |
-| | `turbospark rm <alias>` | Remove installed model |
-| | `turbospark probe <repo>` | Inspect remote Hugging Face headers without downloading |
-| | `turbospark recommend` | Rank catalog models by fit for current hardware |
-| | `turbospark auth` | Inspect, set, or clear Hugging Face credentials |
-| | `turbospark path <alias>` | Print install directory |
-| **Image** | `turbospark image generate [options]` | Generate a bounded-size Z-Image-Turbo PNG, using native Metal on macOS by default |
-| | `turbospark image pack [options]` | Pack a local Diffusers image export into the separate image install format |
-| **Bench** | `turbospark bench [options]` | Run benchmark harness |
+| **Run** | `turbospark run <model> [prompt]` | Chat REPL without a prompt; with one, a single templated user turn (`--messages-file` on the engine's stdin). Piped stdin is the prompt. `--raw` encodes the prompt verbatim with no chat template. A catalog model that is not installed is pulled first (asks in a terminal, `--yes` skips). Every `turbospark-check` flag passes through |
+| | `turbospark humanize <model> <draft>` | Rewrite a draft with the humanizer model |
+| **Models** | `turbospark pull <name>...` | Install text, vision, image or audio models, or `owner/repo[@rev]`. Every name is checked before anything downloads |
+| | `turbospark ls` (`list`) | Installed models: size, library, date. `--filter TEXT` |
+| | `turbospark search [text]` | The curated catalog, installed rows marked |
+| | `turbospark show <name>` | One model; `--verbose` adds revision, sidecars, gates and path |
+| | `turbospark rm <name>...` | Delete installs (asks for the alias unless `--yes`) |
+| | `turbospark doctor` | Chip, memory, GPU working set, and the fit ranking `recommend` computes, in user words |
+| | `turbospark model <args>` | `turbospark-model` itself: `probe`, `path`, `auth`, `library`, `move`, `pull-image`, `pull-drama3`, `recommend`, `info`, `list` |
+| **Server** | `turbospark serve [options]` | `turbospark-server` in the foreground |
+| | `turbospark start [options]` | The server as a background daemon (`~/.turbospark/run/server.pid`, log in `~/.turbospark/logs/server.log`), then the status card |
+| | `turbospark stop`, `restart [options]` | Stop or restart the daemon |
+| | `turbospark status`, `ps` | The daemon's model, endpoints (OpenAI `/v1`, Anthropic, Ollama `/api`), pid and log. A foreground `serve` is not tracked |
+| **Agents** | `turbospark launch <agent> --model <m>` | Start `claude`, `codex`, `opencode`, `grok`, `gemini`, `hermes`, `openclaw` or `dsh` against the local server, starting or restarting the daemon on that model first. `turbospark <model> <agent>` and `turbospark start <agent>` are the same launch |
+| **Media** | `turbospark image [generate\|pack] ...` | `turbospark-image`; `generate` is the default |
+| | `turbospark music`, `speak`, `clone`, `ocr` | The matching `turbospark-*` binary, arguments unchanged |
+| **More** | `turbospark bench [options]` | Benchmark harness |
+| | `turbospark completions <shell>` | Shell completions (`zsh`, `bash`, `fish`, `elvish`, `powershell`) |
+
+Earlier spellings still run: `info` and `recommend` print a one-line note
+and run the old view, and `probe`, `path`, `auth`, `list-audio`,
+`list-speech` and `pull-audio` pass to `turbospark-model`. `list` is now the
+installed list (`ls`); the old catalog table is `turbospark model list`.
 
 ### Image generation
 
@@ -183,16 +212,6 @@ turbospark serve --stt-model whisper-base-en --tts-model ~/models/kokoro-82m --a
 turbospark serve --model-dir ~/models --paged-ssd-cache-dir ~/.omlx/cache --hot-cache-max-size 20% --mcp-config mcp.json
 ```
 
-### Quick start (Unsloth style)
-
-```sh
-# Quick interactive chat
-turbospark run gemma4
-
-# Quick one-shot prompt
-turbospark run gemma4 "Explain quantum physics in three sentences"
-```
-
 ### Coding-agent launchers
 
 Launch an external agent CLI pointed at the local TurboSpark server, the way
@@ -264,6 +283,11 @@ turbospark-check --model <path-or-alias> (--prompt TEXT | --messages-file PATH |
 (an existing directory always wins if both would resolve). Exactly one of
 `--prompt`, `--messages-file`, `--chat` selects the mode; giving none, or more
 than one, is a parse error.
+
+A valid command line first prints the resolved request (`resolved
+invocation:` and its fields) on stdout. `TURBOSPARK_HIDE_RESOLVED_REQUEST=1`
+skips it; `turbospark run` and `turbospark humanize` set it, so their output
+starts at the answer.
 
 ### Mode selection
 
@@ -543,9 +567,9 @@ the exit status is still `0` because the install is in its destination.
 Flags a command does not take are rejected (exit `2`), so `library add` with
 `--yes` fails rather than ignoring it. Refusals and failed operations exit `1`.
 
-`turbospark list` and `turbospark pull` hand their arguments to
-`turbospark-model`, so `--library` and the `installed:` table work there too.
-`library` and `move` exist only on `turbospark-model`.
+`turbospark pull --library NAME` installs into a library, and `turbospark
+ls` shows each install's library. `library` and `move` are reached as
+`turbospark model library ...` and `turbospark model move ...`.
 
 See [`docs/MODELS.md`](MODELS.md) for the catalog itself, and what it takes
 to add a row.

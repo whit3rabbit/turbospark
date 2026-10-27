@@ -17,6 +17,8 @@ use std::process::ExitCode;
 use catalog::{Catalog, Client, RepoRef, Store};
 
 mod model_cmd;
+#[path = "../ui/mod.rs"]
+mod ui;
 
 const USAGE: &str = "\
 turbospark-model -- find, inspect and install models
@@ -222,6 +224,10 @@ pub struct Options {
     pub set: bool,
     pub clear: bool,
     pub status: bool,
+    /// Machine-readable output, for `ls`, `search`, `show` and `doctor`.
+    pub json: bool,
+    /// The provenance `show` leaves out by default.
+    pub verbose: bool,
     /// Which options actually appeared, so [`Options::reject_unused`] can
     /// tell "not set" from "set to its default".
     seen: Vec<String>,
@@ -255,6 +261,31 @@ fn run(args: &[String]) -> Result<(), Error> {
             options.reject_unused(&["filter"])?;
             model_cmd::list(&catalog, &store, options.filter.as_deref());
             Ok(())
+        }
+        // The user views (model_cmd/views.rs). New verbs rather than new
+        // output for `list`/`info`/`recommend`, whose text is quoted by
+        // scripts and docs. `home` is what a bare `turbospark` prints.
+        "ls" => {
+            options.reject_unused(&["json", "filter"])?;
+            model_cmd::ls(&catalog, &store, &options)
+        }
+        "search" => {
+            options.reject_unused(&["json"])?;
+            let needle = (!positionals.is_empty()).then(|| positionals.join(" "));
+            model_cmd::search(&catalog, &store, needle.as_deref(), &options)
+        }
+        "show" => {
+            options.reject_unused(&["json", "verbose"])?;
+            let name = one_positional(&positionals, "show", "<NAME>")?;
+            model_cmd::show(&catalog, &store, name, &options)
+        }
+        "doctor" => {
+            options.reject_unused(&["json", "context", "budget", "load-guard"])?;
+            model_cmd::doctor(&catalog, &store, &options)
+        }
+        "home" => {
+            options.reject_unused(&[])?;
+            model_cmd::home(&catalog, &store, &options)
         }
         "list-speech" => {
             options.reject_unused(&[])?;
@@ -561,6 +592,14 @@ fn parse(args: &[String]) -> Result<(Vec<String>, Options), Error> {
             "--status" => {
                 options.status = true;
                 seen.push("status");
+            }
+            "--json" => {
+                options.json = true;
+                seen.push("json");
+            }
+            "--verbose" | "-v" => {
+                options.verbose = true;
+                seen.push("verbose");
             }
             "--help" | "-h" => {
                 println!("{USAGE}");
