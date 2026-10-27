@@ -34,12 +34,11 @@ when this file gets updated relative to the version bump and the tag.
   16-row slices, so a DFlash2 run no longer prefills token by token
   (130-158 against 16-23 tok/s on a 426-token prompt, M4 Max).
   `TURBOSPARK_DFLASH_CHUNKED_PREFILL=0` keeps the walk.
-- Tree verify for DFlash2, opt-in `TURBOSPARK_DFLASH_TREE=1`: a best-first
-  tree of `block` nodes per greedy round, verified in the chain's rows with
-  tree kernels (gather, parent-state GDN conv and delta, per-row RoPE
-  positions, ancestor-mapped GQA attention), lossless. It accepts 1.05-1.10x
-  more per round on the real install, but its verify costs 5-7% more, so it
-  is not a default.
+- Tree verify for DFlash2: a best-first tree of `block` nodes per greedy
+  round, verified in the chain's rows with tree kernels (gather,
+  parent-state GDN conv and delta, per-row RoPE positions, ancestor-mapped
+  GQA attention), lossless. It accepts 1.05-1.10x more per round on the real
+  install. Default on (see Changed).
 - `dflash_generation_gate` (`crates/bench`): the real-install check that the
   wired DFlash2 loop, chain and tree, reproduces sequential decode.
 - A two-pass split-K variant of the 8-row INT4 tile in
@@ -173,10 +172,15 @@ when this file gets updated relative to the version bump and the tag.
     gates (`bit_exact`, and `text_exact` for transcripts).
 
 ### Changed
-- The DFlash2 tree compaction (`TURBOSPARK_DFLASH_TREE=1`) is committed without
-  a wait and no longer gathers the unused eager-tape and residual rows, taking
-  its share of a round from about 0.5-0.7 ms to 0.05 ms. Measured with the
-  8-row tile off as well, the tree beats the chain there too (+8.7%).
+- DFlash2 tree verify is the default for greedy fixed-depth rounds.
+  `TURBOSPARK_DFLASH_TREE=0` keeps the chain. On a quiet M4 Max at block 7
+  in the default configuration it wins +9.2% decode tok/s on medium-review
+  and +4.3% on short-explanation, with under 1 MB more peak footprint, and
+  `dflash_generation_gate` matches sequential decode with the tree on and
+  off (`docs/KAPITSA_KERNELS.md`, lever 4).
+- The DFlash2 tree compaction is committed without a wait and no longer
+  gathers the unused eager-tape and residual rows, taking its share of a
+  round from about 0.5-0.7 ms to 0.05 ms.
 - Gated-DeltaNet key head dimension `Dk = 128` baked into the Metal delta
   kernels as a compile-time constant (`FC_GDN_DK = 98`), default on. Unrolls
   the per-lane state loops in `gdn_delta_step_decode`, `gdn_delta_step_prefill`

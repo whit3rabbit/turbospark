@@ -185,13 +185,13 @@ left, ranked by the arithmetic below:
 | 1 | Flat verify (MMA8) | Built, opt-in, lossless, block 4 beats the default on code (50.1 vs 43.3 tok/s) and loses 9-12% on prose | Prerequisite for everything below |
 | 2 | Pick the block per request or per round | DECLINED for DFlash2 under the flag: best per-prompt depth beats fixed 7 by 0-1.7% (model below). `AdaptiveDepth` is tuned for the flag-off cost curve and would sit at its floor of 2 | Under a flat verify an extra row costs about 1.3 ms and pays once its survival chance exceeds about 5% |
 | 3 | DFlash2 drafter at depth 7 over the flat verify | MEASURED 2026-10-22 below: 31-37 tok/s, 2.1x its flag-off self, about 55-60% of kapitsa. LOSSLESS 2026-10-25: `dflash_generation_gate` matches sequential decode at blocks 2 and 7, chain and tree, under `TURBOSPARK_INT4_MMA8=1` | Confirms the flat verify is what unlocks long blocks |
-| 4 | Tree verify (KFlash) | BUILT 2026-10-25, opt-in `TURBOSPARK_DFLASH_TREE=1`, lossless. Live: 1.05-1.10x committed/round (the replay said 1.07-1.12x), but the tree verify costs 5-7% more than the chain's, so the net is about even to +4% per token from dirty runs. Not a default | "KFlash: tree verify", "Built and measured" |
+| 4 | Tree verify (KFlash) | ADOPTED 2026-10-26, default on, `TURBOSPARK_DFLASH_TREE=0` keeps the chain, lossless. Default-config A/B (`dflash-tree-default-d1`): WIN +9.2% on medium-review, WIN +4.3% on short-explanation, peak footprint +0.8 MB. Quiet-host A/B 2026-10-26 (`kapitsa-quiet-c1`, 3 clean pairs each): WIN +8.6% decode tok/s on medium-review, WIN +3.1% on short-explanation. The 5-7% verify overhead read on 2026-10-25 was host contention: quiet, the tree round costs about 1.1 ms (1.5%) more than the chain's | "KFlash: tree verify", "Built and measured" |
 | 5 | Close the one-row gap (1.27x GEMV) | DECLINED 2026-10-25: the one untried design, a two-pass split-K (no barrier tail, KS up to 32), is bit-exact at the shipped KS but 1.6-28% slower on four of five shapes; only `down` gains 1.5-5.1% (`docs/INT4_SMALL_M_MMA.md`, open question 10) | MEASURED below: it is the verify floor, about 13 ms of an 85 ms round. The floor is weight streaming, not the reduction tail |
 | 6 | MTP head quality | RESOLVED: equal. Kapitsa 2.39 committed per cycle on short-explanation, ours 2.38, same depth 4 | The 1.4x gap at equal acceptance is round cost, 57 ms against 86 ms |
 | 7 | DFlash2 drafter pass | Profiled and trimmed ~2 ms (per-row loops batched, selector scan fused), committed in `9abbdcf0` (`dflash_draft/`) | Only ~2 ms more is in sight; the selector was 1.2 ms, not the suspect |
 | 8 | DFlash2 drafter attention at long context | DONE, committed (one line in `dflash.rs`, the drafter's `with_decode_kernel(GqaShared)`), draft phase 21.2 to 11.4 ms at 2,940 tokens and 14.5 to 11.0 ms at 426, +3.5% and +11% tok/s | The barrier decode kernel was used by the drafter only; the trunk already used the GQA-shared one |
 | 9 | Small projections in the 8-row verify | NOT CONFIRMED. Per dispatch the tile is 2.7-5.6x faster than the scalar GEMM and the profile read the verify at 66.3 to 63.8 ms/token, but the clean two-round wall-clock sweep read verify 75.3 and 72.0 ms with the threshold at 1 against 69.8 and 70.5 at its default | Leave the threshold where the tile's owner put it; the disagreement is unexplained |
-| 10 | DFlash2 install prefill | DONE 2026-10-25: the chunked driver captures the drafter's aux states (`TURBOSPARK_DFLASH_CHUNKED_PREFILL`, default on). Clean readings 130-158 tok/s on 426 tokens against 16-23 for the walk (whose runs were all dirty, so no paired verdict yet) | Server TTFT not re-measured; see the prefill table |
+| 10 | DFlash2 install prefill | DONE 2026-10-25: the chunked driver captures the drafter's aux states (`TURBOSPARK_DFLASH_CHUNKED_PREFILL`, default on). Paired verdict 2026-10-26 (`kapitsa-quiet-a2`): WIN on 3 clean pairs, 158.8-158.9 tok/s against 23.4-23.5 for the walk on 426 tokens (+577%) | Server TTFT re-measured 2026-10-26: 0.39 s at 62 tokens, 2.7-2.8 s at 426 (prefill table) |
 | 11 | Which tile mode ships | A DECISION FOR THE TILE'S OWNER: `=verify` speculates as fast as `=1` with no plain-decode or prefill penalty, but its speculative greedy stream parts from sequential decode (561 against 505 tokens) | `=1` is lossless and costs plain decode 21-23%; neither is a free default |
 
 #### Measured: DFlash2 and the flat verify, 2026-10-22
@@ -771,8 +771,13 @@ there than in decode:
 | HEAD MTP install, speculative path (chunked driver) | 426 | 3.0 s | 142 |
 | HEAD DFlash2 install, bench (sequential) | 426 | 18.9 s | 23 |
 | DFlash2 install, speculative path, chunked driver with aux capture (2026-10-25, 5 clean runs, `kapitsa-levers-a6`) | 426 | 2.7-3.3 s | 130-158 |
-| DFlash2 install through `turbospark-server`, warm | 62 | 3.83 s | 16 |
-| DFlash2 install through `turbospark-server`, first request (includes model page-in) | 204 | 11.95 s | 17 |
+| DFlash2 install, same A/B on a quiet host (2026-10-26, `kapitsa-quiet-a2`, 3 clean pairs), token walk | 426 | 18.1-18.2 s | 23.4-23.5 |
+| DFlash2 install, same A/B, chunked driver | 426 | 2.68 s | 158.8-158.9 |
+| DFlash2 install through `turbospark-server`, before lever 10 (token walk), warm | 62 | 3.83 s | 16 |
+| DFlash2 install through `turbospark-server`, before lever 10, first request (includes model page-in) | 204 | 11.95 s | 17 |
+| DFlash2 install through `turbospark-server`, chunked driver, warm (2026-10-26, 4 runs) | 62 | 0.39 s | 159 |
+| same, copy-heavy prompt | 224 | 1.36 s | 165 |
+| same, medium-review prompt | 426 | 2.67-2.80 s | 152-160 |
 | tile shared mode, sequential driver | 426 | 23.6-24.4 s | 18 |
 | MTP install, long prompt (playbook, chunked, Steel) | 2,727 | 21-25 s | 110-130 |
 | kapitsa, its own bench | 4,133 | 9.9 s | 417 |
@@ -801,6 +806,40 @@ tests landed in their 20-second prefill window) and read 15.9-22.5 tok/s, so
 the A/B's verdict is INCONCLUSIVE on zero clean pairs and owed a quiet host;
 the gap is far outside run-to-run spread either way. The server TTFT rows
 above were not re-measured.
+
+**Lever 10, paired verdict (2026-10-26).** Same command on a quieter host
+(`tslab ab --prompt protocol:medium-review --decode 16 --baseline
+walk~dflash:7:dflash_chunked_prefill=0 --candidate chunked~dflash:7 --metric
+prefill_tok_s --max-pairs 12`), experiment `kapitsa-quiet-a2`, verdict
+`1793051988452-69657-20`: **WIN on 3 clean pairs, median +576.7%, 95% CI
+[+575.7%, +577.6%]**. Walk 23.4-23.5 tok/s (18.1-18.2 s), chunked
+158.8-158.9 tok/s (2.68 s), 426 prompt tokens. Conditions: M4 Max, AC power,
+warm page cache (cache class `no_reads`), swap 14.3 GB used and steady (a
+standing condition of this host), worktree HEAD `f9751f12`, `tslab-worker`
+SHA-256 `632e0f9e`. The null floor for this workload is 0.66%
+(`kapitsa-quiet-a1`, record `1793051786408-61542-16`). Two of the eight runs
+were dirty (`mediaanalysisd` at 280-300% CPU) and are excluded. An earlier
+attempt in `kapitsa-quiet-a1` stopped at 2 clean pairs (browser and
+WindowServer load) and is INCONCLUSIVE.
+
+**Server TTFT after lever 10 (2026-10-26).** Release `turbospark-server` from
+the same tree, `TURBOSPARK_INT4_MMA8=1 --speculative 7
+--speculative-drafter dflash`, driven by `scripts/bench_api.py` (temperature
+0, 32 max tokens, 4 runs per prompt, streamed, time to the first non-empty
+delta). Prompt sizes are the server's own `usage.prompt_tokens`. With
+`--prefix-reuse off` the 62-token short-explanation prompt reads 0.39 s on
+every run, copy-heavy (224 tokens) 1.36 s and medium-review (426 tokens)
+2.67-2.80 s. That is 10x faster than the 3.83 s warm row from before lever
+10. The 204-token row has no current twin (the old prompt is not recorded,
+and the nearest case is copy-heavy at 224), and no cold page-in reading was
+taken because the page cache cannot be purged without `sudo`. These are not
+tslab runs, so they carry no ledger id and no host guard, but load was
+1.3-1.6 at both ends of each arm. With `--prefix-reuse on`, the shipped
+default, repeating the identical prompt is no faster (0.39 s, 1.36 s,
+2.90-2.96 s): a drafter install reuses only a pure continuation
+(`docs/DFLASH2.md`, section 7, "what was adopted", item 2), and a repeated prompt is a rewind
+past the previous reply. Kapitsa's 0.06 s on a repeated prompt is a prefix
+cache this path does not have.
 
 **Memory.** The bench's peak footprint reads 658 MiB for the plain install,
 868 for MTP and 896 for DFlash2, against 19.6 GB in kapitsa's own bench. The
@@ -1311,7 +1350,9 @@ and the block sweep then.
 
 ### Built and measured, 2026-10-25
 
-`TURBOSPARK_DFLASH_TREE=1`, opt-in, greedy fixed-depth DFlash2 rounds only.
+`TURBOSPARK_DFLASH_TREE=1`, opt-in when built, greedy fixed-depth DFlash2
+rounds only. Default on since 2026-10-26 ("Promotion to the default"
+below), `TURBOSPARK_DFLASH_TREE=0` keeps the chain.
 A round verifies a best-first tree of `block` nodes in the chain's rows
 (anchor plus 7 at depth 7), so the MMA8 tile shape is unchanged.
 
@@ -1365,11 +1406,107 @@ Real install (`qwen38-27b-dflash2`, M4 Max, AC):
   the costing above assumed about 1%. On those readings the net is even on
   short-explanation and about +4% per token on medium-review.
 
-Verdict: built, lossless, and the acceptance the replay predicted is real,
-but the verify overhead eats most of it. Not a default. The open item is
-where the extra 4-5 ms of verify goes (the per-row tree attention, the tree
-GDN kernels, or the per-row position table); profile it on a quiet host
-before deciding whether to promote. Re-run the A/B then.
+Verdict (2026-10-25): built, lossless, and the acceptance the replay
+predicted is real, but the verify overhead seemed to eat most of it. The
+quiet-host re-measure below overturns the overhead reading.
+
+#### Quiet-host re-measure, 2026-10-26
+
+The A/B (`tslab ab`, arms `chain~dflash:7:TURBOSPARK_INT4_MMA8=1,spec_stats=1`
+and `tree~dflash:7:TURBOSPARK_INT4_MMA8=1,TURBOSPARK_DFLASH_TREE=1,spec_stats=1`,
+`--metric decode_tok_s --decode 128`), experiment `kapitsa-quiet-c1`. Every
+run was clean. M4 Max, AC power, warm page cache, swap 14.3 GB used and
+steady, worktree HEAD `f9751f12`.
+
+| Prompt | Null floor | Chain tok/s | Tree tok/s | Verdict |
+|---|---:|---:|---:|---|
+| medium-review (426 tokens) | 0.02% (`1793052090530-86510-22`) | 40.19-40.31 | 42.97-43.86 | **WIN +8.57%**, CI [+6.90%, +8.85%], 3/3 pairs (`1793052167891-94971-22`) |
+| short-explanation (62 tokens) | 0.18% (`1793052226998-3692-22`) | 41.42-41.53 | 42.61-42.94 | **WIN +3.07%**, CI [+2.85%, +3.69%], 3/3 pairs (`1793052286041-11187-22`) |
+
+Phase table of the same runs, ms per round (`spec_stats`, ranges over the
+three measured runs per arm):
+
+| Phase | Chain, medium-review | Tree, medium-review | Chain, short | Tree, short |
+|---|---:|---:|---:|---:|
+| draft | 9.53-9.63 | 10.01-10.42 | 9.36-9.44 | 9.81-10.02 |
+| verify | 62.23-62.33 | 62.54-63.62 | 61.93-62.08 | 62.30-62.58 |
+| accept | 1.40-1.43 | 1.56-1.58 | 1.44-1.46 | 1.55-1.61 |
+| rollback | 0.15 | 0.66-0.71 | 0.15 | 0.82-0.86 |
+| bonus | 0.45-0.46 | 0.01 | 0.45-0.46 | 0.00 |
+| committed/round | 2.98 | 3.28 | 3.05 | 3.20 |
+
+**The 4-5 ms of extra verify does not exist on a quiet host.** The tree
+verify is 0.3-0.6 ms (0.5-1%) dearer than the chain's, with one tree run at
++1.3 ms, and the whole round is about 1.1 ms (1.5%) dearer: verify +0.4,
+draft +0.5, compaction in rollback +0.5-0.7, accept +0.15, less the chain's
+0.45 ms bonus phase, which the tree does not run. The 64-67 against 68-72 ms
+read on 2026-10-25 came from contended runs. With a 1.5% dearer round and
+5-10% more committed per round, the per-token gain matches the verdicts.
+
+**Where the extra time goes** (dispatch profile, `tslab profile` with
+`TURBOSPARK_DISPATCH_PROFILE=1`, experiment `kapitsa-quiet-p1`, runs
+`1793052356928-18808-10` chain and `1793052365432-18808-13` tree,
+medium-review, 128 tokens, normalized by the 45 and 41 rounds each run
+took including the warmup's two). The profiler waits on every dispatch, so
+the absolute times are inflated and only the differences rank:
+
+| Kernel, per verify round | Chain | Tree | Difference |
+|---|---:|---:|---:|
+| whole batched verify | 63.39 ms | 63.52 ms | +0.13 |
+| `gdn_delta_step_prefill` (tree register-state variant, `FC_GDN_TREE`) | 1.45 | 1.69 | +0.24 (+16%) |
+| `gdn_conv_mix_prefill` (tree conv taps) | 0.21 | 0.24 | +0.03 |
+| `attention_decode_gqa_partial` (`FC_ATTN_TREE`) | 2.03 | 2.06 | +0.03 |
+| `rope_neox_subdim_rows_positions` against `rope_neox_subdim_rows` | 0.09 | 0.08 | -0.01 |
+| INT4 GEMMs and table prep | 55.6 | 55.5 | -0.1 (noise) |
+| `dflash tree compact` pass (`gather_rows_fp16`, its own command buffer) | 0 | 0.45 | +0.45 |
+
+Ranked: the compaction pass, then the tree GDN delta kernel. The per-row
+tree attention and the position table cost nothing measurable. The draft
+phase's +0.5 ms is not GPU work: the drafter's own dispatches read the same
+in both arms (7.51 and 7.50 ms per round) and the drafter context write
+grows by 0.14 ms because the tree commits more rows per round. The rest is
+presumably the host's best-first builder, which was not timed separately.
+
+If the tree is promoted, the two places to trim are folding the compaction
+into the round-end command buffer instead of its own `commit_and_wait`, and
+the GDN tree kernel's parent-state load. Together they are under 1 ms of a
+75 ms round.
+
+#### Promotion to the default, 2026-10-26
+
+The user decided to promote the tree. The runs above force
+`TURBOSPARK_INT4_MMA8=1` in both arms, and that is not the shipping
+default, so the flip was gated again in the default configuration, after
+the code change, with the opt-out as the baseline: arms
+`chain~dflash:7:TURBOSPARK_DFLASH_TREE=0,spec_stats=1` and
+`tree~dflash:7:spec_stats=1`, `--metric decode_tok_s --decode 128`,
+experiment `dflash-tree-default-d1`. M4 Max, AC power, warm page cache
+(`no_reads`), swap 14.3 GB used and steady, branch
+`claude/dflash-tree-default` on `76e03aab` plus the flip.
+
+| Prompt | Null floor | Chain tok/s | Tree tok/s | Verdict | Peak footprint |
+|---|---:|---:|---:|---|---:|
+| medium-review (426 tokens) | 2.04%, 2 clean pairs (`1793059042395-5641-40`) | 18.01-18.24 | 19.68-20.08 | **WIN +9.22%**, CI [+9.10%, +10.48%], 3/3 pairs (`1793059215378-52766-28`) | +0.85 MB, passed |
+| short-explanation (62 tokens) | 0.68% (`1793059341778-68001-22`) | 18.74-18.75 | 19.54-19.56 | **WIN +4.32%**, CI [+4.29%, +4.38%], 3/3 pairs (`1793059477494-79368-34`) | +0.75 MB, passed |
+
+Committed per round matches the MMA8 runs (2.98 to 3.28, 3.05 to 3.20).
+The verify reads about 142 ms per round in both arms against 62 ms under
+MMA8, so the round costs more and the tree's fixed overhead weighs less,
+which is why the gains are slightly larger here. Every tree run reported the
+`dflash_tree` engagement line and no chain run did.
+
+Losslessness, after the flip: `dflash_generation_gate`
+(`TURBOSPARK_INT4_MMA8=1 TURBOSPARK_BATCHED_GEMV=0`) matches sequential
+decode token for token at blocks 2 and 7 on both prompts, once with the
+switch unset (tree) and once with `TURBOSPARK_DFLASH_TREE=0` (chain). The
+synthetic suite (`real_forward_qwen35_dflash_tree.rs`) now runs the default
+with the switch cleared, and `real_forward_qwen35_dflash_tree_off.rs` holds
+the opt-out. Reverting the default to off fails five of the six default
+tests.
+
+Not covered: sampled runs and adaptive depth never take the tree, so they
+are unchanged. No other DFlash2 install, prompt length past 426 tokens, or
+chip was measured.
 
 ### Compaction off the critical path, and the tile-off A/B (2026-10-26)
 
@@ -1403,8 +1540,8 @@ against 140-150 ms of verify a round) and commits 5-10% more, so the tree
 does not regress a DFlash2 user without the tile. Depth 7 itself is the
 cost there: the lossless gate's informal clocks read 0.81x sequential on
 its prose prompt at block 7 with the tile off, for chain and tree alike.
-The tree is still opt-in; promoting it, and which depth DFlash2 serves
-without the tile, are the open decisions.
+The tree has since become the default (PR #207); which depth DFlash2
+serves without the tile is the open decision.
 
 ## Item 1: the lazy rank-1 GDN verify tape
 

@@ -30,11 +30,12 @@ use super::batched_scratch::TreeSpec;
 use crate::real_forward::{RealForwardError, RealForwardRunner};
 use crate::real_forward_rollback::gdn_lazy_tape;
 
-/// `TURBOSPARK_DFLASH_TREE=1`: greedy DFlash2 rounds verify a best-first
-/// tree instead of the selector's chain. Default off; read once.
+/// Greedy DFlash2 rounds verify a best-first tree instead of the
+/// selector's chain. Default on; `TURBOSPARK_DFLASH_TREE=0` keeps the chain.
+/// Read once.
 pub(crate) fn dflash_tree() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("TURBOSPARK_DFLASH_TREE").as_deref() == Ok("1"))
+    *ON.get_or_init(|| std::env::var("TURBOSPARK_DFLASH_TREE").as_deref() != Ok("0"))
 }
 
 impl RealForwardRunner {

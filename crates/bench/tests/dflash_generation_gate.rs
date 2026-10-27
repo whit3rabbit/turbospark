@@ -10,7 +10,7 @@
 //! TURBOSPARK_DFLASH_INSTALL_DIR=~/models/qwen38-27b-dflash2.gturbo \
 //!   TURBOSPARK_INT4_MMA8=1 TURBOSPARK_BATCHED_GEMV=0 \
 //!   cargo test -p turbospark-bench --test dflash_generation_gate --release -- --ignored --nocapture
-//! # and again with TURBOSPARK_DFLASH_TREE=1
+//! # and again with TURBOSPARK_DFLASH_TREE=0 (the chain)
 //! ```
 //!
 //! `TURBOSPARK_BATCHED_GEMV=0` is required, not advice. The speculative
@@ -55,7 +55,7 @@ fn the_wired_dflash_loop_reproduces_the_sequential_stream() {
         "set TURBOSPARK_BATCHED_GEMV=0: the speculative prefill's default Steel arm is not \
          bit-exact against the sequential walk (this file's header)"
     );
-    let tree = std::env::var("TURBOSPARK_DFLASH_TREE").as_deref() == Ok("1");
+    let tree = std::env::var("TURBOSPARK_DFLASH_TREE").as_deref() != Ok("0");
     let dir = std::path::PathBuf::from(
         std::env::var_os("TURBOSPARK_DFLASH_INSTALL_DIR").expect("TURBOSPARK_DFLASH_INSTALL_DIR"),
     );
@@ -76,7 +76,7 @@ fn the_wired_dflash_loop_reproduces_the_sequential_stream() {
         assert_eq!(
             runner.dflash_tree_nodes(),
             Some(DEPTH),
-            "TURBOSPARK_DFLASH_TREE=1 but this runner refuses trees; the run would test chains"
+            "trees are on but this runner refuses them; the run would test chains"
         );
     }
     let vocab = runner.vocab_size();

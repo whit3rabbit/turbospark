@@ -938,9 +938,40 @@ fail). As with the MTP head, the Steel arm is not bit-exact against the
 walk, so the default speculative stream can part from a sequential one for
 the prefill reason described in section 6.
 
-On the real install (426-token prompt, M4 Max, AC) five clean chunked runs
-read 130-158 tok/s against 16-23 tok/s for the walk; the walk runs were all
-dirty, so the paired verdict is owed (`docs/KAPITSA_KERNELS.md`, lever 10).
+On the real install (426-token prompt, M4 Max, AC, warm page cache) the
+paired tslab A/B on 2026-10-26 (experiment `kapitsa-quiet-a2`, verdict
+`1793051988452-69657-20`) is a WIN on 3 clean pairs: chunked 158.8-158.9
+tok/s against 23.4-23.5 for the walk, +577%. Through `turbospark-server`
+(block 7, `TURBOSPARK_INT4_MMA8=1`) time to first token is now 0.39 s for a
+62-token prompt and 2.7-2.8 s for 426, against 3.83 s for 62 before the
+change. The conditions and the prefix-reuse caveat are in
+`docs/KAPITSA_KERNELS.md`, lever 10.
 With `TURBOSPARK_BATCHED_GEMV=0` both prefills are bit-identical, which is
 how `crates/bench/tests/dflash_generation_gate.rs` holds the speculative
 stream, chain and tree (`TURBOSPARK_DFLASH_TREE`), to sequential decode.
+
+### Tree verify on a quiet host (2026-10-26)
+
+`TURBOSPARK_DFLASH_TREE=1` (opt-in at the time, `docs/KAPITSA_KERNELS.md`
+lever 4) under
+`TURBOSPARK_INT4_MMA8=1` at block 7, 128 tokens, tslab experiment
+`kapitsa-quiet-c1`, every run clean:
+
+- medium-review: WIN +8.57% decode tok/s (chain 40.2-40.3, tree 43.0-43.9),
+  committed per round 2.98 to 3.28.
+- short-explanation: WIN +3.07% (chain 41.4-41.5, tree 42.6-42.9), committed
+  per round 3.05 to 3.20.
+
+A tree round costs about 1.1 ms (1.5%) more than a chain round. The verify
+itself is only 0.3-0.6 ms dearer. The 4-5 ms read on 2026-10-25 came from
+contended runs. A dispatch profile ranks the extra GPU time as the
+compaction pass (`dflash_tree_compact`, about 0.45 ms, its own command
+buffer) first, then the tree GDN delta kernel (+16% on that kernel). The tree
+attention and the per-row position table cost nothing measurable.
+
+The tree is the default since 2026-10-26, and `TURBOSPARK_DFLASH_TREE=0`
+keeps the chain. In the default configuration (MMA8 off) it wins +9.22% on
+medium-review and +4.32% on short-explanation with under 1 MB more peak
+footprint (experiment `dflash-tree-default-d1`), and `dflash_generation_gate`
+stays lossless with it on and off. Conditions and ids are in
+`docs/KAPITSA_KERNELS.md`, lever 4, "Promotion to the default".
