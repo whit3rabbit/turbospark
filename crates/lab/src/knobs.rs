@@ -643,6 +643,7 @@ pub const KNOBS: &[Knob] = &[
         engagement: &[],
     },
     Knob {
+        // Per-batch router capture; adds host work inside the timed loop.
         name: "router_batches",
         env: "TURBOSPARK_ROUTER_BATCHES",
         values: &["<unset>", "1"],
@@ -760,18 +761,6 @@ pub const KNOBS: &[Knob] = &[
         env: "TURBOSPARK_EXPERT_NOCACHE",
         values: &["<unset>", "1"],
         read_at: ReadAt::ProcessCached,
-        exactness: Exactness::BitExact,
-        families: &[],
-        quotable: false,
-        doc: "docs/ENV.md",
-        engagement: &[],
-    },
-    Knob {
-        // Per-batch router capture; adds host work inside the timed loop.
-        name: "router_batches",
-        env: "TURBOSPARK_ROUTER_BATCHES",
-        values: &["<unset>", "1"],
-        read_at: ReadAt::Open,
         exactness: Exactness::BitExact,
         families: &[],
         quotable: false,
