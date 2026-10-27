@@ -48,10 +48,11 @@ use super::MOE_SPECULATION_BLOCKER_MARKER;
 use crate::real_forward::{RealForwardError, RealForwardRunner};
 use crate::real_forward_types::QWEN_STEEL_PREFILL_BATCH;
 
-/// Rows the capture buffer holds: the chunked prefill driver's widest
-/// micro-batch, because that driver captures a whole micro-batch before the
-/// context write consumes it in slices of at most `gpu::MAX_BATCH_ROWS`
-/// (`prefill.rs`, `Priming::Dflash`). The verify pass fills at most
+/// Rows the capture buffer holds at open: the chunked prefill driver's
+/// widest Steel micro-batch, because that driver captures a whole
+/// micro-batch before the context write consumes it in slices of at most
+/// `gpu::MAX_BATCH_ROWS` (`prefill.rs`, `Priming::Dflash`). The ANE prefill
+/// split's wider micro-batch widens it (`DflashState::ensure_capture_rows`). The verify pass fills at most
 /// `block + 1 <= MAX_BATCH_ROWS` of them. Only `capture` is this wide: the
 /// write's `ctx_combined` / `ctx_normed` intermediates are per slice.
 pub(crate) const DFLASH_CAPTURE_ROWS: usize = QWEN_STEEL_PREFILL_BATCH;
@@ -69,8 +70,12 @@ pub(crate) fn dflash_chunked_prefill() -> bool {
 /// The drafter's per-open state.
 pub(crate) struct DflashState {
     pub(crate) kv: gpu::KvCacheManager,
-    /// `[DFLASH_CAPTURE_ROWS][aux_count][hidden]`, the fc input layout.
+    /// `[capture_capacity][aux_count][hidden]`, the fc input layout.
     pub(crate) capture: gpu::MetalBuffer,
+    /// Rows `capture` holds: [`DFLASH_CAPTURE_ROWS`], or the ANE prefill
+    /// split's micro-batch width once the split has run with the drafter
+    /// open ([`Self::ensure_capture_rows`]).
+    pub(crate) capture_capacity: usize,
     /// Position of capture row 0; set by every trunk pass.
     pub(crate) capture_base: usize,
     /// Valid leading rows in the capture buffer.
@@ -236,6 +241,7 @@ impl DflashState {
             kv,
             capture: context
                 .new_output_buffer(DFLASH_CAPTURE_ROWS as u64 * shape.aux_count as u64 * h * 2),
+            capture_capacity: DFLASH_CAPTURE_ROWS,
             capture_base: 0,
             capture_rows: 0,
             block,
@@ -278,6 +284,25 @@ impl DflashState {
 
     pub(crate) fn reset(&mut self) {
         self.kv.reset();
+        self.capture_base = 0;
+        self.capture_rows = 0;
+    }
+
+    /// Widens `capture` to at least `rows` rows. Only the ANE prefill split
+    /// asks (its micro-batch is 2048 rows against Steel's 64), and it asks
+    /// before a micro-batch is encoded, so nothing in flight reads the old
+    /// buffer. Grown here rather than at open because the split can be
+    /// switched on after open (`set_ane_prefill`), and an install that never
+    /// splits never pays for it: at Qwen3.8-27B's shape (5 aux taps of 5120)
+    /// 2048 rows are 100 MiB, computed, not measured.
+    #[cfg(feature = "ane-prefill")]
+    pub(crate) fn ensure_capture_rows(&mut self, context: &gpu::MetalContext, rows: usize) {
+        if rows <= self.capture_capacity {
+            return;
+        }
+        let row_bytes = self.shape.aux_count as u64 * self.shape.hidden as u64 * 2;
+        self.capture = context.new_output_buffer(rows as u64 * row_bytes);
+        self.capture_capacity = rows;
         self.capture_base = 0;
         self.capture_rows = 0;
     }

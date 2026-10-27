@@ -43,9 +43,21 @@
      "when": ["moe"], "metric": "decode_tok_s", "exactness": "moe_kl",
      "workload": {"prompts": [{"protocol": "medium-review"}], "decode_tokens": 64},
      "baseline": "inline", "candidates": ["overlap:qwen_shared_read_overlap=1"],
-     "note": "the overlap seam refuses chunked prefill; the sweep measures decode"}
+     "note": "the overlap seam refuses chunked prefill; the sweep measures decode"},
+    {"id": "routed_batch_slots", "description": "how the batched routed half scales with expert cache slots, the before picture for overlapping the sub-batch pread",
+     "when": ["moe"], "metric": "prefill_tok_s", "exactness": "moe_kl",
+     "workload": {"prompts": [{"protocol": "long-synthesis"}], "decode_tokens": 16},
+     "baseline": "batched16@16/streamed:routed_batch=1", "candidates": ["batched32@32/streamed:routed_batch=1", "batched64@64/streamed:routed_batch=1", "batchedauto@auto/auto:routed_batch=1"],
+     "note": "the routed_batch sweep already holds gemv against batched; this one varies the slots alone. Run a second pass with phases=1 on every arm to split expert io from routed cb retire, the ceiling the overlap could recover"},
+    {"id": "routed_overlap", "description": "the routed batch reading the next sub-batch's experts while the GPU runs the previous one",
+     "when": ["moe"], "metric": "prefill_tok_s", "exactness": "bit_exact",
+     "workload": {"prompts": [{"protocol": "long-synthesis"}], "decode_tokens": 16},
+     "baseline": "batched:routed_batch=1", "candidates": ["ahead:routed_batch=1,routed_batch_overlap=1"],
+     "note": "the arms carry no slot count: run it with --slots 64 and again at --slots auto. At 32 slots and below a sub-batch can hold every slot the next one needs, the read-ahead mostly falls back, and the candidate reads as dirty (no [engaged] routed_batch_overlap)"}
   ],
   "findings": [
+    {"id": "qwen36.routed-overlap-ceiling-2026-10-26", "date": "2026-10-26", "install": "qwen36-ane-experiment", "machine": "Apple M4 Max 36 GB", "power": "ac", "rev": "3fc580df (feat/lab-ane-moe-sweeps)", "workload": "tslab profile, protocol long-synthesis, 16 decode, routed_batch=1 at 16, 32 and 64 streamed slots and auto (96); 2 clean rounds each", "arms": {"b16": {"slots": 16, "env": {"TURBOSPARK_ROUTED_BATCH": "1"}}, "b32": {"slots": 32, "env": {"TURBOSPARK_ROUTED_BATCH": "1"}}, "b64": {"slots": 64, "env": {"TURBOSPARK_ROUTED_BATCH": "1"}}, "bauto": {"slots": "auto", "env": {"TURBOSPARK_ROUTED_BATCH": "1"}}}, "metric": "prefill_ms_per_token", "values": {"prefill_tok_s": {"b16": 81.2, "b32": 108.4, "b64": 118.7, "bauto": 128.1}, "expert_io_ms": {"b16": 5.07, "b32": 4.03, "b64": 3.3, "bauto": 2.63}, "routed_cb_retire_ms": {"b16": 4.14, "b32": 2.49, "b64": 2.46, "bauto": 2.55}, "routed_gpu_busy_ms": {"b16": 1.86, "b32": 1.7, "b64": 1.66, "bauto": 1.65}}, "verdict": "reading", "provenance": {"kind": "ledger", "experiment": "routed-overlap-ceiling-2026-10-26", "record": "1793073085919-81453-24"}, "conditions": "medians of 2 clean runs per arm; the auto arm's warmup was dirty (corespotlightd), its measured runs clean", "note": "the routed batch ran each sub-batch's pread and its GPU work strictly in series, so up to the routed GPU busy time (about 1.65 ms of 7.8 ms per token at auto) was recoverable by reading ahead. The union cap is 32, so 64 slots and up hold two unions and the read-ahead costs no sub-batch width; at 32 it would halve the cap and at 16 it cannot work"},
+    {"id": "qwen36.sweep-routed-overlap-2026-10-26", "date": "2026-10-26", "install": "qwen36-ane-experiment", "machine": "Apple M4 Max 36 GB", "power": "ac", "rev": "3fc580df plus TURBOSPARK_ROUTED_BATCH_OVERLAP (feat/lab-ane-moe-sweeps)", "workload": "tslab sweep routed_overlap, protocol long-synthesis, 16 decode; batched (routed_batch=1) against ahead (routed_batch=1, routed_batch_overlap=1), once at 64 streamed slots and once at auto (96); 3 clean pairs each, 0 dirty, order alternating by round", "arms": {"batched": {"env": {"TURBOSPARK_ROUTED_BATCH": "1"}}, "ahead": {"env": {"TURBOSPARK_ROUTED_BATCH": "1", "TURBOSPARK_ROUTED_BATCH_OVERLAP": "1"}}}, "metric": "prefill_tok_s", "values": {"s64": {"batched_tok_s": [114.8, 115.8], "ahead_tok_s": [121.1, 125.5], "median_improvement": 0.0807, "ci": [0.0527, 0.0837], "verdict": "win", "peak_growth_mib": -5}, "auto": {"batched_tok_s": [126.3, 128.5], "ahead_tok_s": [150.8, 152.0], "median_improvement": 0.189, "ci": [0.1822, 0.1936], "verdict": "win", "peak_growth_mib": 0}}, "verdict": "win", "provenance": {"kind": "ledger", "experiment": "routed-overlap-auto-2026-10-26", "record": "1793073918933-27938-17"}, "conditions": "no null calibration ran first, so the floor was the 2% minimum. Every ahead run printed [engaged] routed_batch_overlap. Both arms' prefill-logits and decode digests were identical in every run at both slot counts, the bit-exact claim on the real install. The 64-slot sweep is experiment routed-overlap-s64-2026-10-26, record 1793073705405-9753-17", "note": "the auto result recovers most of the routed GPU busy time the profile put on the table. Not a default: it rides TURBOSPARK_ROUTED_BATCH, which owes its own gates first (seam-on probe, memory oracle, Ornith, a second chip)"},
     {"id": "qwen36.batched-arm-2026-10-15", "date": "2026-10-15",
      "install": "Qwen 3.6 35B-A3B INT4 and Ornith-1.5-35B-A3B", "machine": "Apple M4 Max 36 GB", "power": "ac", "rev": "v0.5 era",
      "workload": "protocol long-synthesis prefill: sequential, per-token, scalar batched and Steel batched arms; KL against the per-token reference; perplexity",
@@ -88,7 +100,6 @@
   ],
   "open_questions": [
     "routed_batch as the default: the seam-on probe, the memory oracle, Ornith, and a second chip",
-    "overlapping the next sub-batch's expert pread with the GPU",
     "a byte-identical M-row GDN path for the batched prefill",
     "int4_mma8 on a routed family: extra verify rows bring in extra experts, so the verify curve is not the dense one and is unmeasured",
     "no drafter install of this family exists here; the MTP flow is wired but unmeasured"

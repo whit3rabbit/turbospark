@@ -112,7 +112,9 @@ fn profile_when_tags_are_tags_coverage_can_produce() {
             || matches!(
                 *t,
                 "audio" | "drafter" | "mtp" | "dflash" | "nomodel" | "vision" | "compressed_attention"
-            );
+            )
+            // Only a build with the split's feature yields it.
+            || (*t == "ane" && !cfg!(feature = "ane-prefill"));
         assert!(ok, "TAGS lists {t:?}, which no synthetic coverage produced");
     }
     for p in set.profiles() {

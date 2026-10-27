@@ -276,7 +276,7 @@ fn run_speculative<P: SpeculativeProducer>(
         let spans = crate::raw_completion_chunked::prefill_spans_with_cut(
             prompt_ids.len() - reused,
             reused,
-            foundation::DEFAULT_CHUNK_SIZE as usize,
+            producer.drafter_prefill_chunk(),
             cut,
         );
         for span in &spans {

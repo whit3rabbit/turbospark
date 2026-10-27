@@ -58,7 +58,8 @@ see which steps will run.
 - `when`: every listed tag must hold. `!tag` negates and `a|b` means either.
   Tags come from `tslab capabilities` (`text`, `audio`, `moe`, `dense`, `gdn`,
   `mla`, `sinks`, `sliding_attention`, `drafter`, `mtp`, `dflash`,
-  `chunked_prefill`, `steel`, `probe`, `standin`, `runs`, `profile`,
+  `chunked_prefill`, `steel`, `ane` (dense qwen from a build with the
+  `ane-prefill` feature), `probe`, `standin`, `runs`, `profile`,
   `bench:<name>`, `family:<name>`, `flow:<name>`, `audio:music`,
   `audio:transcribe`, `audio:speak`). A plan with no `--model` has only
   `nomodel`.

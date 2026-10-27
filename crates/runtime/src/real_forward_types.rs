@@ -112,6 +112,9 @@ pub struct PhaseCounters {
     /// Experimental scheduling counters prove the measured arm executed.
     /// Mapped preparation bytes are logical page spans, not physical I/O.
     pub qwen_shared_submissions: u64,
+    /// Routed prefill sub-batches whose experts were read while the previous
+    /// one ran (`TURBOSPARK_ROUTED_BATCH_OVERLAP`).
+    pub routed_read_aheads: u64,
     pub mapped_prepare_calls: u64,
     pub mapped_prepared_bytes: u64,
     pub mapped_page_touches: u64,

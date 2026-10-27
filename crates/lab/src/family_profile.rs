@@ -49,6 +49,7 @@ pub const TAGS: &[&str] = &[
     "vision",
     "chunked_prefill",
     "steel",
+    "ane",
     "probe",
     "standin",
     "runs",

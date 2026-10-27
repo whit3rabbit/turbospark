@@ -270,10 +270,11 @@
         ],
         "decode_tokens": 16
       },
-      "baseline": "chunked",
+      "baseline": "chunked~mtp:2",
       "candidates": [
-        "walk:mtp_chunked_prefill=0"
-      ]
+        "walk~mtp:2:mtp_chunked_prefill=0"
+      ],
+      "note": "both arms open the MTP head: without it the knob changes nothing and the sweep compares two plain prefills"
     },
     {
       "id": "dflash_prefill_driver",
@@ -291,10 +292,11 @@
         ],
         "decode_tokens": 16
       },
-      "baseline": "chunked",
+      "baseline": "chunked~dflash:7",
       "candidates": [
-        "walk:dflash_chunked_prefill=0"
-      ]
+        "walk~dflash:7:dflash_chunked_prefill=0"
+      ],
+      "note": "both arms open the drafter: without it the knob changes nothing and the sweep compares two plain prefills"
     },
     {
       "id": "dflash_tree",
@@ -316,6 +318,53 @@
       "candidates": [
         "tree~dflash:7:int4_mma8=1,dflash_tree=1"
       ]
+    },
+    {
+      "id": "ane_split",
+      "description": "the ANE+Steel prefill split against Steel alone, with the break-only control",
+      "when": [
+        "ane"
+      ],
+      "metric": "prefill_tok_s",
+      "exactness": "dense_kl",
+      "workload": {
+        "prompts": [
+          {
+            "protocol": "long-synthesis"
+          }
+        ],
+        "decode_tokens": 16,
+        "prefill_chunk": 2048
+      },
+      "baseline": "steel",
+      "candidates": [
+        "break:ane_prefill=break",
+        "split:ane_prefill=split"
+      ],
+      "note": "the split needs micro-batches of 512 rows or more, so the chunk is 2048 for every arm; break keeps the buffer breaks and host handoffs with Steel taking every row at the split width, so it prices the 2048-row micro-batch plus the handoffs (a small WIN on qwen38-27b, finding qwen35.sweep-ane-split-2026-10-26); a run whose split never completed a micro-batch is dirty (no [engaged] ane_prefill)"
+    },
+    {
+      "id": "ane_split_dflash",
+      "description": "the ANE+Steel split priming a DFlash2 drafter against Steel priming it",
+      "when": [
+        "ane",
+        "dflash"
+      ],
+      "metric": "prefill_tok_s",
+      "exactness": "dense_kl",
+      "workload": {
+        "prompts": [
+          {
+            "protocol": "long-synthesis"
+          }
+        ],
+        "decode_tokens": 64
+      },
+      "baseline": "steel~dflash:7:spec_stats=1",
+      "candidates": [
+        "split~dflash:7:ane_prefill=split,ane_prefill_dflash=1,spec_stats=1"
+      ],
+      "note": "the speculative loop owns prefill, in 2048-token spans on the split arm and 128 on Steel. --gate does not apply: speculative arms are gated on generated tokens, and the split moves the trunk within dense_kl, which the ane_split sweep's gate holds. Compare committed tokens per round across the arms' spec_stats for what the split's captures did to the drafter"
     }
   ],
   "findings": [
@@ -447,6 +496,146 @@
       },
       "conditions": "swap 16.7 GB used of 17.4 (a standing condition of this host; every synrepo process had just been killed), load 1.4 at start, every pair passed the host guard; the plain arm read 18.3-22.5 against the null calibration's 22.0-22.4 (null record 1793062778550-50911-16), so the mtp2 ratio reads a few points high; the speculative arms' +177-182 MiB peak is the MTP head's state and exceeds the 64 MiB allowance by design",
       "note": "the verdict field is mtp2's (verdict record 1793063027798-68243-30); mtp4 is NOISE (1793063027803-68243-31). Agrees with the 2026-10-25 defaults reading (1.53-1.66x for block 2) and with block 4 not paying with the tile off. The first live tslab sweep; a 64-decode attempt the same day (fam-live) had a drifting baseline and is not quotable"
+    },
+    {
+      "id": "qwen35.sweep-ane-split-2026-10-26",
+      "date": "2026-10-26",
+      "install": "qwen38-27b",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "3fc580df plus the ane_prefill engagement line (feat/lab-ane-moe-sweeps)",
+      "workload": "tslab sweep ane_split: protocol long-synthesis, chunk 2048, 16 decode, context 4096; steel against break (ane_prefill=break) and split (ane_prefill=split); programs from ~/models/ane-prefill/qwen38; 3 clean pairs each, 3 pairs dirty from a running compile, order alternating by round",
+      "arms": {
+        "steel": {},
+        "break": {
+          "env": {
+            "TURBOSPARK_ANE_PREFILL": "break"
+          }
+        },
+        "split": {
+          "env": {
+            "TURBOSPARK_ANE_PREFILL": "split"
+          }
+        }
+      },
+      "metric": "prefill_tok_s",
+      "values": {
+        "steel_tok_s": [
+          166.37,
+          166.43
+        ],
+        "break_tok_s": [
+          171.53,
+          171.87
+        ],
+        "split_tok_s": [
+          242.27,
+          245.36
+        ],
+        "break": {
+          "median_improvement": 0.0316,
+          "ci": [
+            0.0309,
+            0.0327
+          ],
+          "verdict": "win"
+        },
+        "split": {
+          "median_improvement": 0.4611,
+          "ci": [
+            0.4559,
+            0.4748
+          ],
+          "verdict": "win"
+        },
+        "peak_growth_mib": {
+          "break": 774,
+          "split": 1770
+        }
+      },
+      "verdict": "win",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "ane-split-sweep-2026-10-26",
+        "record": "1793072120429-23958-44"
+      },
+      "conditions": "no null calibration ran first, so the floor was the 2% minimum; both effects sit far outside the spread of their arms. Every split run printed [engaged] ane_prefill and every break run [engaged] ane_prefill_break. The split arm's warmup read 164 tok/s because it pays the program load (two warm predictions per program)",
+      "note": "the verdict field is split's (verdict record 1793072120425-23958-43); break is a WIN of its own (1793072120421-23958-42), because at chunk 2048 it also runs Steel at the split's 2048-row micro-batch, which the width sweep put at up to +3.7%, so it prices the width plus the handoffs, not the handoffs alone. The split's +1,770 MiB peak over Steel is measured here for the first time, against the 674 + 816 MiB the playbook computed, and fails the 64 MiB allowance, as does break's +774 MiB (the width's scratch): --enforce-memory rejects both. Against the playbook's 1.347x on a 2,940-token prompt this reads 1.46x on long-synthesis"
+    },
+    {
+      "id": "qwen35.sweep-ane-split-dflash-2026-10-26",
+      "date": "2026-10-26",
+      "install": "qwen38-27b-dflash2",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "3fc580df plus TURBOSPARK_ANE_PREFILL_DFLASH (feat/lab-ane-moe-sweeps)",
+      "workload": "tslab sweep ane_split_dflash: protocol long-synthesis, 64 decode through the speculative loop at DFlash2 depth 7 (tile off), spec_stats on; steel (the loop's 128-token spans on Steel) against split (ane_prefill=split, ane_prefill_dflash=1, 2048-token spans); 3 clean pairs, 0 dirty, order alternating by round",
+      "arms": {
+        "steel": {
+          "speculation": {
+            "drafter": "dflash",
+            "block": 7
+          },
+          "env": {
+            "TURBOSPARK_SPEC_STATS": "1"
+          }
+        },
+        "split": {
+          "speculation": {
+            "drafter": "dflash",
+            "block": 7
+          },
+          "env": {
+            "TURBOSPARK_SPEC_STATS": "1",
+            "TURBOSPARK_ANE_PREFILL": "split",
+            "TURBOSPARK_ANE_PREFILL_DFLASH": "1"
+          }
+        }
+      },
+      "metric": "prefill_tok_s",
+      "values": {
+        "steel_tok_s": [
+          160.8,
+          161.7
+        ],
+        "split_tok_s": [
+          233.3,
+          235.6
+        ],
+        "split": {
+          "median_improvement": 0.4512,
+          "ci": [
+            0.4456,
+            0.4602
+          ],
+          "verdict": "win"
+        },
+        "committed_per_round": {
+          "steel": 3.2,
+          "split": 3.37
+        },
+        "decode_tok_s": {
+          "steel": [
+            19.81,
+            19.83
+          ],
+          "split": [
+            20.58,
+            20.65
+          ]
+        },
+        "peak_growth_mib": {
+          "split": 1689
+        }
+      },
+      "verdict": "win",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "ane-split-dflash-2026-10-26",
+        "record": "1793072635667-66141-23"
+      },
+      "conditions": "no null calibration ran first, so the floor was the 2% minimum. Every split run printed [engaged] ane_prefill beside [engaged] dflash_chunked_prefill, so the split primed the drafter; every steel run printed only the latter",
+      "note": "the split's prefill gain holds with the drafter open (+45.1% here against +46.1% without it). The decode and committed-per-round differences are readings, not effects: the split moves the trunk within dense_kl, so the two arms decode different text. The +1,689 MiB peak is the split's own scratch and planes plus the drafter's capture widened to 2048 rows, and fails the 64 MiB allowance. Not a default: owes the trunk quality gate on this install, a second chip and wall power, as the split alone does"
     },
     {
       "id": "qwen35.full-sweep-tile-2026-10-23",

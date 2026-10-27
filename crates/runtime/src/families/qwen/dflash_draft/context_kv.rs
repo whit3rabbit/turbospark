@@ -39,7 +39,7 @@ impl RealForwardRunner {
         first_row: usize,
         rows: usize,
     ) -> Result<(), RealForwardError> {
-        let (hidden, aux_count, layers, num_kv, head_dim) = {
+        let (hidden, aux_count, layers, num_kv, head_dim, capacity) = {
             let d = self.real_dflash.as_ref().expect("caller checked");
             (
                 d.shape.hidden,
@@ -47,16 +47,16 @@ impl RealForwardRunner {
                 d.shape.layers,
                 d.shape.num_kv_heads,
                 d.shape.head_dim,
+                d.capture_capacity,
             )
         };
         let aux_width = hidden * aux_count;
         let kv_dim = num_kv * head_dim;
-        if first_row + rows > super::super::dflash::DFLASH_CAPTURE_ROWS {
+        if first_row + rows > capacity {
             return Err(RealForwardError::Unsupported(format!(
-                "the DFlash2 context write asks for capture rows [{first_row}, {}) of a {}-row \
-                 buffer",
+                "the DFlash2 context write asks for capture rows [{first_row}, {}) of a \
+                 {capacity}-row buffer",
                 first_row + rows,
-                super::super::dflash::DFLASH_CAPTURE_ROWS
             )));
         }
         let base_pos = self
