@@ -67,6 +67,10 @@ pub struct Point {
     /// [`exactness_hints`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub row_fnv: Option<String>,
+    /// Median modeled joules per sample (`energy::ENERGY_MODEL`: IOReport,
+    /// whole machine), where the bench metered its arms.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub j: Option<f64>,
 }
 
 impl Point {
@@ -79,6 +83,7 @@ impl Point {
             c_of_m: None,
             out_fnv: None,
             row_fnv: None,
+            j: None,
         }
     }
 }

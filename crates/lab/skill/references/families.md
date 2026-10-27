@@ -30,7 +30,7 @@ behind it: read those before copying the setting.
 | `llama`, `qwen3`, `qwen2`, `minimax_m2`, `qwen3_vl` | llama | `batched_gemv`, `decode_attention` | chunk 128 on the dense half | Llama and Mixtral share a string: the gate class follows `expert_count`; BF16 trunks refuse the batched arm |
 | `qwen3moe` | llama | `slots` | 16 slots | the GGUF install refuses `routed_batch=1` |
 | `qwen4exp` | qwen4 | `slots` | untuned; the REAP-288 rows spread 25-60% | 2,048 context; the hyper-connections widen the residual |
-| `museGlimmer` | museglimmer | `batched_gemv` | chunk 128 | the highest J/token in the power baseline; tslab has no energy meter |
+| `museGlimmer` | museglimmer | `batched_gemv` | chunk 128 | the highest J/token in the power baseline (powermetrics); tslab's IOReport joules are a different meter and compare only within an experiment |
 | `spark2_5`, `deepseek2` | spark, deepseek2 | `decode_attention`, `slots` | `--chunk off` (the only driver) | MLA has no attention bench; Spark's fused q|k|v is one shape |
 | `deepseekV4Flash` | none | none | none | no decode flow: kernel benches only |
 
@@ -44,7 +44,7 @@ behind it: read those before copying the setting.
 | `minimax_music3` | music | yes | RTF readings on battery only | 60 s and 30 steps by default: use `music-short.json` |
 | `kokoro` | speak | yes | none | en-US only |
 | `megatts3` | speak | yes | none | `consent: true` and `reference_wav` or the arm is refused |
-| `omnivoice`, `fish_drama3` | speak | no | Fish Drama 3 peak 6.1-6.3 GiB | kernel benches only |
+| `omnivoice`, `fish_drama3` | speak | no | Fish Drama 3 peak 6106-6296 MiB | kernel benches only |
 
 Audio arms are judged on output identity (`bit_exact` for a waveform,
 `text_exact` for a transcript). There is no KL class. A job's `steps`,

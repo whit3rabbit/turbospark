@@ -89,6 +89,18 @@ pub struct Arm {
     /// for registered knobs come from `knobs.rs` and need not be listed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub expect_engaged: Vec<String>,
+    /// Controlled host contention (`~hog:N`): the orchestrator runs N busy
+    /// threads beside the worker for the whole run. The run is never
+    /// quotable; it exists to read handoff tails under load
+    /// (`docs/SPEEDUP_PLAYBOOK.md`, "Not pursued").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contention: Option<Contention>,
+}
+
+/// A deliberate CPU load beside the measured worker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Contention {
+    pub hog_threads: usize,
 }
 
 impl Arm {
@@ -227,6 +239,11 @@ pub enum Metric {
     AudioRunS,
     /// Audio job wall time over the audio's duration (real-time factor).
     Rtf,
+    /// Modeled joules over the measured prefills (IOReport, whole machine;
+    /// `energy::ENERGY_MODEL`). Comparable within one experiment only.
+    PrefillJ,
+    /// Modeled joules over the measured decode steps.
+    DecodeJ,
 }
 
 impl Metric {
@@ -238,7 +255,9 @@ impl Metric {
             | Metric::PeakBytes
             | Metric::FollowupTtftS
             | Metric::AudioRunS
-            | Metric::Rtf => LowerIsBetter,
+            | Metric::Rtf
+            | Metric::PrefillJ
+            | Metric::DecodeJ => LowerIsBetter,
         }
     }
 
@@ -253,6 +272,8 @@ impl Metric {
             Metric::FollowupTtftS => totals["followup_ttft_s"].as_f64(),
             Metric::AudioRunS => record["audio"]["run_s"].as_f64(),
             Metric::Rtf => record["audio"]["rtf"].as_f64(),
+            Metric::PrefillJ => totals["prefill_j"].as_f64(),
+            Metric::DecodeJ => totals["decode_j"].as_f64(),
         }
     }
 }

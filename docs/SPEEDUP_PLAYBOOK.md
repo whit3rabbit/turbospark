@@ -387,6 +387,47 @@ compute bound, and then as one multi-expert Core ML call rather than one
 call per expert. Reopen async or events only if a controlled-contention
 run shows handoff tails dominating.
 
+**How to re-test (tslab, 2026-10-27).** Each reopen condition is a ledgered
+reading now, so another chip, model or OS re-asks the question without a
+campaign:
+
+- *Is MoE prefill compute bound?* `tslab profile --model <moe install>`
+  prints `moe bound: ...` per phase and writes `moe_bound.class` into
+  `profile_summary` (`io_bound`, `loop_bound`, `compute_bound`, `dense`
+  from the routed GPU busy, expert I/O and host-loop shares,
+  `crates/lab/src/phases.rs`). The expert idea reopens at `compute_bound`
+  on prefill, not before.
+- *How hot are the hot experts, and does a batch fit the slots?*
+  `tslab expert-census --model <moe install>` runs one router capture
+  (`TURBOSPARK_ROUTER_HIST` plus `TURBOSPARK_ROUTER_BATCHES=1`) and records
+  `expert_census`: the share of selections in experts used 8, 16, 17 or
+  32+ times within an executed batch, the largest in-batch group, the
+  expert union per full batch against 16, 32, 64 and 96 slots, and the
+  routed sub-batch sizes the union caps allow. The same record is the
+  streaming cache's sizing input (`docs/EXPERT_RESIDENCY.md`).
+- *Would one multi-expert Core ML call run on the ANE, and at what cost?*
+  `tslab kernel --bench ane_matmul --model <install> --programs DIR` (a
+  worker built with `--features ane-prefill`; `DIR` from
+  `crates/coreml/tools/gen_ane_sweep_programs.py`, whose exact line the
+  bench prints) times Steel, the ANE program with its conversions and
+  handoff, and the row split at several shares, per install shape and
+  token count, with modeled joules beside each point and Core ML's
+  placement per program. Packed-expert cases (`E` experts of `g` rows as
+  one batched program) run against `E` Steel dispatches. The `ane gate`
+  notes fit `main-npu`'s two thresholds (minimum MACs and MACs per byte)
+  on this engine's numbers, for speed, energy, or their product.
+- *Do handoff tails dominate under load?* An `ane_prefill=split` arm with
+  `~hog:N` (N busy threads the orchestrator runs beside the worker, half
+  the performance cores is the intended N) against the same arm quiet, on
+  an `ane-prefill` worker with `TURBOSPARK_ANE_PREFILL_STATS=1`:
+  `tslab ab --model <qwen38> --chunk 2048 --baseline split:ane_prefill=split,ane_prefill_stats=1 --candidate hog:ane_prefill=split,ane_prefill_stats=1~hog:8`.
+  The run records parse the `[ane-prefill]` lines into `ane_stats.summary`:
+  `handoff_share` (`wake_ms + resume_ms` over `wall_ms`) and its per-point
+  p50 and p95. Device-side events are worth their private framework only
+  if the hogged share passes 5% while the quiet share stays under 1%; the
+  quiet reading here was about 0.3 ms a point, 90 ms of 15.7 s. Hogged runs
+  are never quotable.
+
 **What the capture says about the GPU path instead.**
 `scripts/moe_route_replay.py --union-cap N` replays
 `next_routed_sub_batch`'s greedy shrink over that capture. On full 64-row

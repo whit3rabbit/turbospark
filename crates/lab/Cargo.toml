@@ -10,7 +10,12 @@ description = "Evaluator for kernel and method experiments: per-family phase pro
 
 # The ANE+Steel prefill split as an A/B arm. Off by default, like the runtime.
 [features]
-ane-prefill = ["runtime/ane-prefill", "turbospark-bench/ane-prefill"]
+ane-prefill = [
+    "runtime/ane-prefill",
+    "turbospark-bench/ane-prefill",
+    "turbospark-coreml/ane-prefill",
+    "gpu/ane-prefill",
+]
 
 [[bin]]
 name = "tslab"

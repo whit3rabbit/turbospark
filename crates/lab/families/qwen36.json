@@ -91,7 +91,9 @@
     "overlapping the next sub-batch's expert pread with the GPU",
     "a byte-identical M-row GDN path for the batched prefill",
     "int4_mma8 on a routed family: extra verify rows bring in extra experts, so the verify curve is not the dense one and is unmeasured",
-    "no drafter install of this family exists here; the MTP flow is wired but unmeasured"
+    "no drafter install of this family exists here; the MTP flow is wired but unmeasured",
+    "how concentrated routing really is on this install: tslab expert-census gives the share of selections in experts used 17+ times per batch (28.75% on one 2026-10-21 capture), the union per full batch against 16/32/64/96 slots, and the routed sub-batch sizes per cap; the slots sweep above should be read beside it",
+    "whether MoE prefill is compute bound yet: tslab profile prints the moe_bound class per phase; the Neural Engine expert idea stays closed until prefill reads compute_bound (docs/SPEEDUP_PLAYBOOK.md, Not pursued)"
   ],
   "traps": [
     "declare moe_kl, never dense_kl, for a KL-bounded change on this family: the batched arm's KL is a hundred times the dense arm's",
