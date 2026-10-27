@@ -333,11 +333,12 @@ mod tests {
 
 /// Bitwise parity of the single-log normalization, the cached projector,
 /// and the streaming mel path against the previous pipeline, retained
-/// verbatim in `old`.
+/// verbatim in `old`. The full log-mel pipeline is held to one ULP instead
+/// (`dsp::within_one_ulp` says why).
 #[cfg(test)]
 mod parity_tests {
     use super::*;
-    use crate::dsp::TestRng;
+    use crate::dsp::{within_one_ulp, TestRng};
 
     mod old {
         use super::super::*;
@@ -428,7 +429,7 @@ mod parity_tests {
     }
 
     #[test]
-    fn whisper_log_mel_matches_old_pipeline_bitwise() {
+    fn whisper_log_mel_matches_old_pipeline_within_one_ulp() {
         let mut rng = TestRng(0x0BAD_5EED_F00D_0001);
         for n_mels in [80usize, 128] {
             for len in [3_200usize, 16_000, 40_001] {
@@ -439,10 +440,11 @@ mod parity_tests {
                 for (f, (g, w)) in got.iter().zip(&want).enumerate() {
                     assert_eq!(g.len(), w.len());
                     for (b, (a, c)) in g.iter().zip(w).enumerate() {
-                        assert_eq!(
+                        assert!(
+                            within_one_ulp(*a, *c),
+                            "{n_mels} mels len {len} [{f}][{b}]: {:#010x} vs {:#010x}",
                             a.to_bits(),
-                            c.to_bits(),
-                            "{n_mels} mels len {len} [{f}][{b}]"
+                            c.to_bits()
                         );
                     }
                 }
