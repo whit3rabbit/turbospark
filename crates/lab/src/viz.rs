@@ -32,6 +32,7 @@ pub fn esc(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 fn fmt_num(v: f64) -> String {
@@ -680,20 +681,21 @@ pub fn render(title: &str, generated: &str, series: &[Series]) -> String {
         let _ = write!(body, "<h2>{}</h2>", esc(exp));
         body.push_str(&cards(list));
     }
-    page(title, &body, "", "")
+    page(title, "", &body, "", "")
 }
 
 /// The document shell every page shares: the CSS, an optional extra style
 /// block, the body inside `<main>`, and an optional inline script after it.
-/// Nothing is fetched from anywhere; the report passes no script at all.
-pub(crate) fn page(title: &str, body: &str, extra_css: &str, script: &str) -> String {
+/// Nothing is fetched from anywhere; the report passes no script and no
+/// extra head markup at all.
+pub(crate) fn page(title: &str, head: &str, body: &str, extra_css: &str, script: &str) -> String {
     let script = if script.is_empty() {
         String::new()
     } else {
         format!("<script>{script}</script>")
     };
     format!(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>{}</title><style>{CSS}{extra_css}</style></head><body><main>{body}</main>{script}</body></html>\n",
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">{head}<title>{}</title><style>{CSS}{extra_css}</style></head><body><main>{body}</main>{script}</body></html>\n",
         esc(title)
     )
 }

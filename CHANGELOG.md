@@ -342,6 +342,20 @@ when this file gets updated relative to the version bump and the tag.
     one). The Voice Cloning page shows the transcript as optional.
   - The top bar audio-model eject redraws when a model loads or unloads
     instead of staying dimmed and inert until a section switch.
+- The `tslab serve` dashboard is branded "TurboSpark Lab" in the top bar and
+  page titles instead of the redundant "tslab lab", and every page carries a
+  favicon inlined as a data URI (the response CSP gains `img-src data:` for
+  it alone).
+
+### Security
+- `tslab serve` (crates/lab dashboard): the verdict board's family cell is
+  escaped like every other ledger-sourced cell, a run record's `run_id` is
+  validated before the record page reads its stderr tail, and a run ledger
+  line's `record` pointer is read only when it resolves inside the lab dir,
+  so a crafted or hand-edited ledger can no longer inject HTML or make the
+  dashboard read files outside the lab dir. A loopback bind now answers
+  only loopback Host headers (closing the DNS-rebinding hole) and every
+  response carries `nosniff` plus a `default-src 'none'` CSP.
 
 ## [0.5.0] - 2026-10-20
 

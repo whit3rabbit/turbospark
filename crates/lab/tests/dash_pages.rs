@@ -88,11 +88,21 @@ fn no_fetch(html: &str) {
         "{}",
         &html[..40.min(html.len())]
     );
-    // The one script is inline and loads nothing: a saved page still reads
-    // the same as a live one, with or without it.
+    // The one script is inline and loads nothing, and the one link is the
+    // favicon as an inline data URI: a saved page still reads the same as a
+    // live one, with or without either.
     assert!(
-        !html.contains("<script src") && !html.contains("<link"),
-        "a dashboard page loads no script or stylesheet"
+        !html.contains("<script src"),
+        "a dashboard page loads no script from anywhere"
+    );
+    assert_eq!(
+        html.matches("<link").count(),
+        1,
+        "the favicon is the only link on a dashboard page"
+    );
+    assert!(
+        html.contains("<link rel=\"icon\" type=\"image/svg+xml\" href=\"data:image/svg+xml,"),
+        "the one link is the inline favicon"
     );
     assert!(
         !html.contains("http://") && !html.contains("https://") && !html.contains("fetch("),
@@ -140,6 +150,11 @@ fn every_page_renders_self_contained() {
     let ix = LabIndex::build(&dir);
     let home = pages::experiments_page(&ix, &Params::default());
     no_fetch(&home);
+    assert!(home.contains("<title>TurboSpark Lab</title>"));
+    assert!(
+        home.contains("TurboSpark <span>Lab</span>"),
+        "the top bar brands the site TurboSpark Lab"
+    );
     assert!(home.contains("exp-a") && home.contains("exp-b"));
     assert!(home.contains("first line of notes"));
     assert!(home.contains("win"), "the best verdict shows on the table");
@@ -258,5 +273,179 @@ async fn router_serves_pages_and_json_and_refuses_bad_names() {
     assert_eq!(r.status(), StatusCode::OK);
     let r = app.oneshot(get("/nothing/here")).await.unwrap();
     assert_eq!(r.status(), StatusCode::NOT_FOUND);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Appends one line to a fixture experiment's ledger.
+fn append_line(dir: &std::path::Path, exp: &str, line: String) {
+    use std::io::Write as _;
+    let mut f = std::fs::OpenOptions::new()
+        .append(true)
+        .open(dir.join(exp).join("ledger.jsonl"))
+        .unwrap();
+    writeln!(f, "{line}").unwrap();
+}
+
+#[test]
+fn a_poisoned_ledger_family_renders_escaped() {
+    let dir = lab_dir();
+    // The page shell legitimately holds one inline `<script>`, so the
+    // payload is asserted by its distinctive prefix, not by bare tags.
+    append_line(
+        &dir,
+        "exp-a",
+        json!({"id": "1793000000006-1-5", "kind": "verdict", "ts_ms": 1793000000006u64,
+            "schema": "tslab/1", "model": "/x/p.gturbo",
+            "family": "fam<script>alert(1)</script>", "metric": "decode_tok_s",
+            "baseline": {"name": "plain"}, "candidate": {"name": "mtp2"},
+            "verdict": {"verdict": "win", "median": 0.6, "ci_low": 0.5, "ci_high": 0.7,
+                        "pairs": 3, "improvements": [0.55, 0.6, 0.65], "min_effect": 0.02},
+            "null_floor": 0.01, "memory": {"passed": true}})
+        .to_string(),
+    );
+    let ix = LabIndex::build(&dir);
+    let v = pages::verdicts_page(&ix, &Params::default());
+    no_fetch(&v);
+    assert!(
+        v.contains("fam&lt;script&gt;"),
+        "a ledger family is escaped before it reaches the page"
+    );
+    assert!(
+        !v.contains("fam<script>"),
+        "no markup crosses from a ledger value"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_run_id_cannot_walk_out_of_the_runs_dir() {
+    let dir = lab_dir();
+    // `lab/exp-a/runs/../../secret.stderr` resolves to the lab root, well
+    // outside the runs dir the record page is supposed to read.
+    std::fs::write(dir.join("secret.stderr"), "TSLAB-SECRET-98765\n").unwrap();
+    append_line(
+        &dir,
+        "exp-a",
+        json!({"id": "1793000000007-1-6", "kind": "run", "ts_ms": 1793000000007u64,
+            "schema": "tslab/1", "arm": "plain", "round": 2, "warmup": false, "status": "ok",
+            "eligible": true, "reasons": [], "family": "qwen35",
+            "record": "/nonexistent/run7.json", "run_id": "../../secret"})
+        .to_string(),
+    );
+    // A well-formed run id still finds its stderr tail.
+    std::fs::write(
+        dir.join("exp-a")
+            .join("runs")
+            .join("1793000000000-1-0.stderr"),
+        "one line of stderr\n",
+    )
+    .unwrap();
+    let ix = LabIndex::build(&dir);
+    let bad = pages::record_page(&ix, "exp-a", "1793000000007-1-6").expect("record exists");
+    no_fetch(&bad);
+    assert!(
+        !bad.contains("TSLAB-SECRET-98765"),
+        "a crafted run_id must not read outside the runs dir"
+    );
+    let good = pages::record_page(&ix, "exp-a", "1793000000001-1-0").expect("record exists");
+    assert!(
+        good.contains("stderr (last"),
+        "a well-formed run id still shows its stderr tail"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_record_pointer_is_read_only_inside_the_lab_dir() {
+    let dir = lab_dir();
+    // Both record files exist; only the one inside the lab dir may be read.
+    let outside = dir
+        .parent()
+        .unwrap()
+        .join(format!("tslab-dash-outside-{}.json", std::process::id()));
+    std::fs::write(&outside, json!({"family": "outside-family"}).to_string()).unwrap();
+    let inside = dir
+        .join("exp-a")
+        .join("runs")
+        .join("1793000000008-1-7.json");
+    std::fs::write(
+        &inside,
+        json!({"family": "inside-family", "provenance": {"chip": "M4",
+               "git_rev": "0123456789abcdef"}})
+        .to_string(),
+    )
+    .unwrap();
+    for (id, path) in [
+        ("1793000000009-1-8", outside.clone()),
+        ("1793000000010-1-9", inside.clone()),
+    ] {
+        append_line(
+            &dir,
+            "exp-a",
+            json!({"id": id, "kind": "run", "ts_ms": 1793000000011u64, "schema": "tslab/1",
+                "arm": "plain", "round": 3, "warmup": false, "status": "ok", "eligible": true,
+                "reasons": [], "family": "qwen35", "run_id": id,
+                "record": path.display().to_string()})
+            .to_string(),
+        );
+    }
+    let ix = LabIndex::build(&dir);
+    let s = &ix.experiments["exp-a"].summary;
+    assert!(
+        s.families.contains("inside-family") && s.chips.contains("M4"),
+        "a record inside the lab dir is still read for provenance"
+    );
+    assert!(
+        !s.families.contains("outside-family"),
+        "a record pointer outside the lab dir is not read"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_file(&outside);
+}
+
+#[tokio::test]
+async fn the_loopback_router_refuses_a_foreign_host() {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt as _;
+    let dir = lab_dir();
+    let app = turbospark_lab::dash::serve_router(turbospark_lab::dash::App::new(&dir), true);
+    let get = |host: &str| {
+        Request::builder()
+            .uri("/")
+            .header("host", host)
+            .body(Body::empty())
+            .unwrap()
+    };
+    // A rebound DNS name arrives with its own Host and is refused.
+    let r = app.clone().oneshot(get("evil.example")).await.unwrap();
+    assert_eq!(r.status(), StatusCode::FORBIDDEN);
+    let r = app.clone().oneshot(get("evil.example:7878")).await.unwrap();
+    assert_eq!(r.status(), StatusCode::FORBIDDEN);
+    for host in [
+        "127.0.0.1:7878",
+        "localhost:7878",
+        "[::1]:7878",
+        "localhost",
+    ] {
+        let r = app.clone().oneshot(get(host)).await.unwrap();
+        assert_eq!(r.status(), StatusCode::OK, "Host {host} is this machine");
+        assert_eq!(
+            r.headers()["x-content-type-options"],
+            "nosniff",
+            "every response is nosniff"
+        );
+        assert!(
+            r.headers()["content-security-policy"]
+                .to_str()
+                .unwrap()
+                .contains("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:"),
+            "every response carries the CSP"
+        );
+    }
+    // An off-loopback bind is the user's explicit choice and answers any Host.
+    let lan = turbospark_lab::dash::serve_router(turbospark_lab::dash::App::new(&dir), false);
+    let r = lan.oneshot(get("evil.example")).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
     let _ = std::fs::remove_dir_all(&dir);
 }
