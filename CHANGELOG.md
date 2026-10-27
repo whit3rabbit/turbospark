@@ -14,6 +14,15 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- `turbospark` is redesigned around ollama-style verbs: a home screen with
+  what is installed and what fits, `run` that downloads a missing model
+  first and reads a piped prompt, `pull` for every model kind, `ls`,
+  `search`, `show`, `rm`, `doctor`, `ps`, `launch AGENT`, `completions`, and
+  passthrough `image`, `music`, `speak`, `clone`, `ocr` and `model`. Grouped,
+  styled help, "did you mean" on a typo, color only on a terminal
+  (`NO_COLOR` honored), and `--json` on `ls`, `search`, `show`, `doctor`,
+  `status` and `ps`. Models take ollama-style tags (`qwen3.6:35b`) from
+  `crates/catalog/src/tags.json`; aliases still work.
 - Kernel modes (`docs/KERNEL_MODES.md`): the contract for a switch that
   selects an alternative kernel path beside the default, and the lab tooling
   around it. `tslab project` prices a mode from kernel curves, per-forward
@@ -217,6 +226,14 @@ when this file gets updated relative to the version bump and the tag.
   rollback, commit, rewind, bonus).
 
 ### Fixed
+- `turbospark run MODEL "prompt"` applies the model's chat template (one
+  user turn over `--messages-file`). It passed the text as `--prompt`, which
+  encodes it verbatim, so chat models continued the user's sentence. `--raw`
+  keeps the verbatim path.
+- `turbospark run` no longer prints `turbospark-check`'s resolved-request
+  block before the answer. `turbospark-check` skips it under
+  `TURBOSPARK_HIDE_RESOLVED_REQUEST=1`, which the front door sets; direct
+  use is unchanged.
 - Core ML model compilation and cache publication now serialize inside a
   process-wide critical section. Prevents simultaneous cold loads of the same
   package from racing on Core ML's shared temporary build directory. Warm loads

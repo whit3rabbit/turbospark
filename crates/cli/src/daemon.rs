@@ -251,7 +251,7 @@ pub fn start(args: &[String]) -> Result<(), String> {
     let _lock = acquire_daemon_lock()?;
 
     if let Some(pid) = get_running_pid() {
-        println!("turbospark server is already running (PID {pid}).");
+        crate::ui::note(&format!("the server is already running (pid {pid})"));
         return Ok(());
     }
 
@@ -319,9 +319,11 @@ pub fn start(args: &[String]) -> Result<(), String> {
         ));
     }
 
-    println!("turbospark server started in background (PID {pid})");
-    println!("  Endpoint: http://127.0.0.1:{port}/v1");
-    println!("  Logs:     {}", log_path.display());
+    // On stderr: `turbospark start` prints the status card on stdout next,
+    // and an agent launch wants its own stdout clean.
+    crate::ui::ok(&format!(
+        "server started in the background on port {port} (pid {pid})"
+    ));
     Ok(())
 }
 
@@ -337,7 +339,7 @@ pub fn stop() -> Result<(), String> {
     let pid = match get_running_pid() {
         Some(p) => p,
         None => {
-            println!("turbospark server is not running.");
+            crate::ui::note("the server is not running");
             return Ok(());
         }
     };
@@ -362,7 +364,7 @@ pub fn stop() -> Result<(), String> {
 
     let _ = fs::remove_file(pid_file());
     let _ = fs::remove_file(meta_file());
-    println!("turbospark server stopped (PID {pid}).");
+    crate::ui::ok(&format!("server stopped (pid {pid})"));
     Ok(())
 }
 
@@ -371,35 +373,6 @@ pub fn restart(args: &[String]) -> Result<(), String> {
     stop()?;
     thread::sleep(Duration::from_millis(200));
     start(args)
-}
-
-/// Print the status of the server daemon.
-pub fn status() -> Result<(), String> {
-    let pid = match get_running_pid() {
-        Some(p) => p,
-        None => {
-            println!("Status: STOPPED");
-            println!("Use 'turbospark start' or 'turbospark serve' to launch.");
-            return Ok(());
-        }
-    };
-
-    let port = if let Ok(text) = fs::read_to_string(meta_file()) {
-        serde_json::from_str::<serde_json::Value>(&text)
-            .ok()
-            .and_then(|v| v["port"].as_u64())
-            .map(|p| p as u16)
-            .unwrap_or(8080)
-    } else {
-        8080
-    };
-
-    println!("Status:   RUNNING");
-    println!("PID:      {pid}");
-    println!("Port:     {port}");
-    println!("Endpoint: http://127.0.0.1:{port}/v1");
-    println!("Log file: {}", log_file().display());
-    Ok(())
 }
 
 #[cfg(test)]
