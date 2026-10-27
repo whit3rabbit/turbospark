@@ -98,7 +98,7 @@ button.primary:disabled { opacity: 0.45; box-shadow: none; cursor: default; }
 .panel td a { white-space: nowrap; }
 .nw, td.m:first-child { white-space: nowrap; }
 .reasons { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 18px; margin: 12px 0; }
+.card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 18px; margin: 12px 0; min-width: 0; overflow-wrap: anywhere; }
 table { font-size: 13px; }
 th { font-size: 11px; line-height: 14px; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-secondary); padding: 10px 10px 8px 0; white-space: nowrap; }
 td { padding: 7px 10px 7px 0; border-bottom: 1px solid var(--grid); vertical-align: middle; }
