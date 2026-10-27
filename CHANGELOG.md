@@ -14,6 +14,12 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- `tslab hybrid-replay`: prices prompt lookup over the MTP chain on a chain
+  capture, per policy and case, against the head alone (ledger kind
+  `hybrid_replay`). `tslab chain-capture` now keeps the prompt and stream
+  token ids on the capture (`prompt_ids`, `stream`; older captures still read).
+  `crates/lab/workloads/code.messages.json` is the code case the adaptive
+  depth checks used.
 - `turbospark` is redesigned around ollama-style verbs: a home screen with
   what is installed and what fits, `run` that downloads a missing model
   first and reads a piped prompt, `pull` for every model kind, `ls`,
@@ -181,6 +187,16 @@ when this file gets updated relative to the version bump and the tag.
     gates (`bit_exact`, and `text_exact` for transcripts).
 
 ### Changed
+- Adaptive speculative depth (`--speculative adaptive[:N]`) holds its cap to
+  7 while the INT4 MMA8 tile is on (`TURBOSPARK_INT4_MMA8`), because a
+  width-9 verify pays a second 8-row tile pass for one row: measured +24.2%
+  decode on a quote-back prompt and noise on code against cap 8, with
+  identical output. Fixed blocks and the flag-off default cap of 4 are
+  unchanged. `tslab hybrid-replay` defaults to `--cap 7`.
+- DFlash2's `auto` depth follows the 8-row INT4 tile: block 3 with the tile
+  off (was 2; +3.7% decode tok/s) and block 7 with `TURBOSPARK_INT4_MMA8`
+  on (about +26% over block 2 there), re-measured on the current engine.
+  `dflash_serving_block()` resolves it once per process.
 - CI: documentation no longer runs the Rust matrix or the two package legs.
   `ci.yml` filters out `docs/` (except `docs/openapi/` and
   `docs/verification/`, which tests read), every `*.md`, the GitBook content
@@ -226,6 +242,13 @@ when this file gets updated relative to the version bump and the tag.
   rollback, commit, rewind, bonus).
 
 ### Fixed
+- `tslab kernel --bench int4_matmul` commits an untimed primer (about 50 ms
+  of GPU work on its own small matrix) right before every timed pass. A pass
+  started on a cold device runs several times slower for its whole length,
+  and M = 1 was measured first with host work between passes, so a tiny
+  shape's one-row GEMV read about three times its share of an 8-GEMV pass and
+  every `c(M)` against it was wrong. `subject.primer` on the record carries
+  the primer's size and its median GPU time.
 - `turbospark run MODEL "prompt"` applies the model's chat template (one
   user turn over `--messages-file`). It passed the text as `--prompt`, which
   encodes it verbatim, so chat models continued the user's sentence. `--raw`

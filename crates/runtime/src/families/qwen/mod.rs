@@ -83,7 +83,10 @@ pub(crate) use attn::{encode_full_attention_block, QkNormConvention};
 pub(crate) use batched_layers::{commit_linear_state_batched, replay_linear_state_batched};
 pub(crate) use batched_scratch::BatchedScratch;
 pub(crate) use dflash::{dflash_chunked_prefill, DflashState};
-pub use dflash_state::{install_has_dflash, DflashDraftPolicy, DFLASH_BLOCK, DFLASH_SERVING_BLOCK};
+pub use dflash_state::{
+    dflash_serving_block, install_has_dflash, DflashDraftPolicy, DFLASH_BLOCK,
+    DFLASH_SERVING_BLOCK, DFLASH_SERVING_BLOCK_TILE,
+};
 pub(crate) use hadamard::HadamardPlan;
 pub(crate) use mtp_state::MtpState;
 pub use mtp_state::{install_has_mtp_head, MtpDraftPolicy};

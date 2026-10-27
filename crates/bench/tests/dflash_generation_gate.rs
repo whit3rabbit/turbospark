@@ -49,6 +49,20 @@ fn tokens_of(events: &[RawDecodeProgress]) -> Vec<i32> {
 #[test]
 #[ignore = "needs a real DFlash2 install via TURBOSPARK_DFLASH_INSTALL_DIR"]
 fn the_wired_dflash_loop_reproduces_the_sequential_stream() {
+    gate(DflashDraftPolicy::Fixed(DEPTH), DEPTH, &BLOCKS);
+}
+
+/// What `auto` ships: the drafter opened at `dflash_serving_block()` (3 with
+/// the 8-row tile off, 7 with it on), its rounds at that block, so the tree
+/// is the one `auto` serves rather than a truncated round of a deeper one.
+#[test]
+#[ignore = "needs a real DFlash2 install via TURBOSPARK_DFLASH_INSTALL_DIR"]
+fn the_auto_depth_reproduces_the_sequential_stream() {
+    let depth = runtime::dflash_serving_block();
+    gate(DflashDraftPolicy::Auto, depth, &[depth]);
+}
+
+fn gate(policy: DflashDraftPolicy, depth: usize, blocks: &[usize]) {
     assert_eq!(
         std::env::var("TURBOSPARK_BATCHED_GEMV").as_deref(),
         Ok("0"),
@@ -64,7 +78,7 @@ fn the_wired_dflash_loop_reproduces_the_sequential_stream() {
         SLOTS,
         DraftPolicies {
             mtp: MtpDraftPolicy::Off,
-            dflash: DflashDraftPolicy::Fixed(DEPTH),
+            dflash: policy,
         },
     )
     .expect("install opens");
@@ -75,7 +89,7 @@ fn the_wired_dflash_loop_reproduces_the_sequential_stream() {
     if tree {
         assert_eq!(
             runner.dflash_tree_nodes(),
-            Some(DEPTH),
+            Some(depth),
             "trees are on but this runner refuses them; the run would test chains"
         );
     }
@@ -115,7 +129,7 @@ fn the_wired_dflash_loop_reproduces_the_sequential_stream() {
             seq.new_tokens,
             seq.new_tokens as f64 / seq.decode_seconds
         );
-        for block in BLOCKS {
+        for &block in blocks {
             let mut events = Vec::new();
             let spec = run_raw_completion_speculative(
                 &mut runner,
@@ -150,5 +164,5 @@ fn the_wired_dflash_loop_reproduces_the_sequential_stream() {
             );
         }
     }
-    println!("\nlossless at blocks {BLOCKS:?}, tree {tree}\n");
+    println!("\nlossless at blocks {blocks:?}, tree {tree}\n");
 }

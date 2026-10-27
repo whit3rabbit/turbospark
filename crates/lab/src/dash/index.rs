@@ -136,9 +136,58 @@ pub fn basename(path: &str) -> String {
         .unwrap_or_else(|| path.to_string())
 }
 
-/// `YYYY-MM-DD HH:MM` UTC from unix milliseconds (no time crate: the lab
-/// carries none, and a day-count to civil-date walk is a few lines).
+/// `YYYY-MM-DD HH:MM` in the host's local zone, the zone the measurement
+/// was taken in; `tz_label` names it for the page. Falls back to UTC when
+/// the C library cannot resolve a zone. The API keeps raw `ts_ms`.
 pub fn fmt_ts(ms: u64) -> String {
+    match local_tm(ms) {
+        Some(tm) => format!(
+            "{:04}-{:02}-{:02} {:02}:{:02}",
+            tm.tm_year + 1900,
+            tm.tm_mon + 1,
+            tm.tm_mday,
+            tm.tm_hour,
+            tm.tm_min
+        ),
+        None => fmt_ts_utc(ms),
+    }
+}
+
+/// The host zone's name (`CDT`, `UTC`), else its offset (`UTC-05:00`).
+pub fn tz_label() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    match local_tm(now) {
+        // SAFETY: `tm_zone` points at the C library's static zone name,
+        // which outlives this call; it is read once and copied.
+        Some(tm) if !tm.tm_zone.is_null() => unsafe { std::ffi::CStr::from_ptr(tm.tm_zone) }
+            .to_string_lossy()
+            .into_owned(),
+        Some(tm) => format!(
+            "UTC{:+03}:{:02}",
+            tm.tm_gmtoff / 3600,
+            (tm.tm_gmtoff.abs() % 3600) / 60
+        ),
+        None => "UTC".into(),
+    }
+}
+
+/// The broken-down local time of a unix millisecond stamp. The lab carries
+/// no time crate; `localtime_r` is the one call that knows the zone.
+fn local_tm(ms: u64) -> Option<libc::tm> {
+    let secs = (ms / 1000) as libc::time_t;
+    // SAFETY: a zeroed `tm` is a valid out-parameter, `localtime_r` writes
+    // only into it, and both locals outlive the call.
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    let p = unsafe { libc::localtime_r(&secs, &mut tm) };
+    (!p.is_null()).then_some(tm)
+}
+
+/// `YYYY-MM-DD HH:MM` UTC from unix milliseconds (a day-count to civil-date
+/// walk is a few lines, and it is the fallback when no zone resolves).
+pub fn fmt_ts_utc(ms: u64) -> String {
     let secs = ms / 1000;
     let days = (secs / 86_400) as i64;
     let rem = secs % 86_400;
@@ -504,9 +553,19 @@ mod tests {
 
     #[test]
     fn civil_dates_from_unix_ms() {
-        assert_eq!(fmt_ts(0), "1970-01-01 00:00");
-        assert_eq!(fmt_ts(1_793_063_027_807), "2026-10-27 01:03");
-        assert_eq!(fmt_ts(951_782_400_000), "2000-02-29 00:00");
+        assert_eq!(fmt_ts_utc(0), "1970-01-01 00:00");
+        assert_eq!(fmt_ts_utc(1_793_063_027_807), "2026-10-27 01:03");
+        assert_eq!(fmt_ts_utc(951_782_400_000), "2000-02-29 00:00");
+    }
+
+    #[test]
+    fn local_stamps_resolve_to_the_host_zone() {
+        // Whatever the host zone, the local rendering is a civil stamp that
+        // sits within a day of UTC, and the label is non-empty.
+        let local = fmt_ts(1_793_063_027_807);
+        assert_eq!(local.len(), 16, "{local}");
+        assert!(local.starts_with("2026-10-2"), "{local}");
+        assert!(!tz_label().is_empty());
     }
 
     #[test]

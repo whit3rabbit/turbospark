@@ -18,7 +18,7 @@ use model_io::ArchConfig;
 use serde_json::json;
 
 use super::fit::{break_even, c_of_m, fit_affine};
-use super::support::{copies_for, f16_activations, int4_blob, median};
+use super::support::{copies_for, f16_activations, int4_blob, median, Primer};
 use super::{BenchOpts, Case, KernelBench, Subject};
 use crate::bench::{fnv_hex, ArmCurve, Axis, BenchResult, BreakEven, Point};
 
@@ -246,6 +246,13 @@ pub fn run_shape(
     let max_m = *ms.iter().max().unwrap_or(&1);
     let x = context.new_buffer_with_data(&f16_activations(max_m * cols, 7));
     let y = context.new_output_buffer((max_m * rows * 2) as u64);
+    // Every timed pass is preceded by an untimed primer (`support::Primer`):
+    // a pass started on a cold device runs several times slower for its
+    // whole length, and M = 1 is measured first with host work between
+    // passes, so without it the one-row unit and every c(M) read against it
+    // were the device's state and not the kernel.
+    let primer = Primer::new(context);
+    let mut primer_ms: Vec<f64> = Vec::new();
     // Whether an arm has a point at M: the tile only where the engine would
     // route to it.
     let runs_at =
@@ -262,7 +269,8 @@ pub fn run_shape(
                 if !runs_at(a, m) {
                     continue;
                 }
-                let t = autorelease_pool(|| -> Result<f64, String> {
+                let (t, p_ms) = autorelease_pool(|| -> Result<(f64, f64), String> {
+                    let primed = primer.commit(context)?;
                     let pass = context.begin_pass();
                     for _ in 0..sweeps {
                         for (buffer, scales, biases) in &mats {
@@ -277,10 +285,12 @@ pub fn run_shape(
                             encode_arm(context, &pass, arm, &w, &x, &y, m)?;
                         }
                     }
-                    Ok(pass.commit_and_wait_with_gpu_time())
+                    let t = pass.commit_and_wait_with_gpu_time();
+                    Ok((t, primed.wait_with_gpu_time() * 1e3))
                 })?;
                 if rep > 0 {
                     samples[a].push(t * 1e3 / (copies * sweeps) as f64);
+                    primer_ms.push(p_ms);
                 }
                 // The output of the last copy after the last repetition:
                 // every copy runs the same seeded weights family, so the
@@ -355,6 +365,7 @@ pub fn run_shape(
     subject.insert("weight_bytes".into(), json!(weight_bytes));
     subject.insert("copies".into(), json!(copies));
     subject.insert("one_row_gemv_ms".into(), json!(one_row));
+    subject.insert("primer".into(), Primer::describe(&mut primer_ms));
     let mut notes = Vec::new();
     if ms.iter().any(|&m| m > MMA8_BENCH_MAX_M) {
         notes.push(format!(

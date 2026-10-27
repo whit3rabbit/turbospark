@@ -32,20 +32,38 @@ fn auto_takes_each_drafters_own_block() {
         other => panic!("expected an enabled plan, got {other:?}"),
     };
     assert_eq!(block_of(SpeculativeDrafter::Mtp), DEFAULT_SPECULATION_BLOCK);
-    assert_eq!(block_of(SpeculativeDrafter::Dflash), DFLASH_SERVING_BLOCK);
-    // THE TWO SERVING DEFAULTS AGREE AT 2, independently measured: the MTP
-    // head's optimum (`docs/MTP.md`) and DFlash2's three-workload sweep
-    // (`DFLASH_SERVING_BLOCK`) landed on the same number, because what decides
-    // both is this engine's rollback cost rather than either drafter. So this
-    // test pins the MAPPING and can NO LONGER see an unresolved drafter by its
-    // block alone; `resolve_drafter` below covers that, and only a real-model
-    // run covers the call site. Asserted as an equality so the day they
-    // diverge is the day the discriminating check can come back, rather than a
-    // day nobody notices.
+    // DFlash2's `auto` follows the process's 8-row tile setting (read once),
+    // so the expectation is the same function the resolver calls; the next
+    // test pins the two values it chooses between.
     assert_eq!(
-        DEFAULT_SPECULATION_BLOCK, DFLASH_SERVING_BLOCK,
-        "the serving defaults diverged; restore a discriminating assertion here"
+        block_of(SpeculativeDrafter::Dflash),
+        crate::families::qwen::dflash_serving_block()
     );
+    // THE SERVING DEFAULTS DIVERGED on 2026-10-26 (DFlash2 re-measured at 3
+    // with the tile off, 7 with it on; the MTP head stays at 2), so the
+    // discriminating check this test once had to give up is back: an
+    // unresolved drafter reading the wrong default is visible by its block.
+    assert_ne!(
+        block_of(SpeculativeDrafter::Mtp),
+        block_of(SpeculativeDrafter::Dflash),
+        "the DFlash2 and MTP serving defaults agree again; this check can no longer \
+         tell them apart"
+    );
+}
+
+/// The two blocks DFlash2's `auto` chooses between, measured on 2026-10-26
+/// (`DFLASH_SERVING_BLOCK`'s table): 3 with the 8-row tile off, 7 with it on.
+#[test]
+fn dflash_auto_serves_the_measured_block_for_each_tile_setting() {
+    assert_eq!(DFLASH_SERVING_BLOCK, 3);
+    assert_eq!(crate::families::qwen::DFLASH_SERVING_BLOCK_TILE, 7);
+    let tile_on = std::env::var("TURBOSPARK_INT4_MMA8").is_ok_and(|v| v == "1" || v == "verify");
+    let want = if tile_on {
+        crate::families::qwen::DFLASH_SERVING_BLOCK_TILE
+    } else {
+        DFLASH_SERVING_BLOCK
+    };
+    assert_eq!(crate::families::qwen::dflash_serving_block(), want);
 }
 
 /// An EXPLICIT drafter is passed through untouched, because it is a promise

@@ -196,11 +196,13 @@ pub(crate) fn legend(series: &[&Series]) -> String {
     if series.len() < 2 {
         return String::new();
     }
+    // Each key is a button so the dashboard's script can hide its series;
+    // without a script it is a labelled swatch.
     let mut out = String::from("<div class=\"legend\">");
     for (i, s) in series.iter().enumerate().take(SLOTS) {
         let _ = write!(
             out,
-            "<span><span class=\"key\" style=\"background:{}\"></span>{}</span>",
+            "<button type=\"button\" class=\"lg\" data-si=\"{i}\" aria-pressed=\"true\"><span class=\"key\" style=\"background:{}\"></span>{}</button>",
             color(i),
             esc(&s.label)
         );
@@ -314,6 +316,7 @@ pub(crate) fn line_chart(series: &[&Series]) -> String {
             .filter(|p| p.1.is_finite())
             .collect();
         pts.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let _ = write!(svg, "<g class=\"ser\" data-si=\"{i}\">");
         if pts.len() > 1 {
             let d: Vec<String> = pts
                 .iter()
@@ -322,7 +325,7 @@ pub(crate) fn line_chart(series: &[&Series]) -> String {
                 .collect();
             let _ = write!(
                 svg,
-                "<path d=\"{}\" fill=\"none\" stroke=\"{c}\" stroke-width=\"2\" stroke-linejoin=\"round\"/>",
+                "<path class=\"ln\" d=\"{}\" fill=\"none\" stroke=\"{c}\" stroke-width=\"2\" stroke-linejoin=\"round\"/>",
                 d.join("")
             );
         }
@@ -330,7 +333,7 @@ pub(crate) fn line_chart(series: &[&Series]) -> String {
             let fill = if p.2 { "var(--surface-1)" } else { c.as_str() };
             let _ = write!(
                 svg,
-                "<circle cx=\"{:.1}\" cy=\"{:.1}\" r=\"4\" fill=\"{fill}\" stroke=\"{c}\" stroke-width=\"2\"><title>{}: {} = {}, {} = {}{}</title></circle>",
+                "<circle class=\"mark\" cx=\"{:.1}\" cy=\"{:.1}\" r=\"4\" fill=\"{fill}\" stroke=\"{c}\" stroke-width=\"2\"><title>{}: {} = {}, {} = {}{}</title></circle>",
                 p.0,
                 p.1,
                 esc(&s.label),
@@ -341,6 +344,7 @@ pub(crate) fn line_chart(series: &[&Series]) -> String {
                 if p.2 { " (dirty run)" } else { "" }
             );
         }
+        svg.push_str("</g>");
     }
     svg.push_str("</svg>");
     svg
@@ -369,6 +373,16 @@ pub(crate) fn bar_chart(series: &[&Series]) -> String {
         .flat_map(|s| s.points.iter().map(|p| p.y))
         .collect();
     let sx = Scale::new(&ys, false, label_w, W - PAD_R - 48.0, true);
+    // An improvement axis reads as a signed percent, the way the forest and
+    // the verdict board print it, not as a fraction in scientific notation.
+    let pct = shown[0].y.unit == "fraction";
+    let fmt_y = |v: f64| {
+        if pct {
+            format!("{:+.2}%", v * 100.0)
+        } else {
+            fmt_num(v)
+        }
+    };
     let mut svg = format!(
         "<svg viewBox=\"0 0 {W} {h:.0}\" role=\"img\" aria-label=\"{}\">",
         esc(&shown[0].y.name)
@@ -381,7 +395,7 @@ pub(crate) fn bar_chart(series: &[&Series]) -> String {
             "<line class=\"grid\" x1=\"{x:.1}\" x2=\"{x:.1}\" y1=\"{PAD_T}\" y2=\"{:.1}\"/><text x=\"{x:.1}\" y=\"{:.1}\" text-anchor=\"middle\">{}</text>",
             h - 24.0,
             h - 10.0,
-            fmt_num(t)
+            if pct { format!("{:+.0}%", t * 100.0) } else { fmt_num(t) }
         );
     }
     for (ci, cat) in cats.iter().enumerate() {
@@ -412,22 +426,22 @@ pub(crate) fn bar_chart(series: &[&Series]) -> String {
             };
             let _ = write!(
                 svg,
-                "<rect x=\"{x:.1}\" y=\"{y:.1}\" width=\"{:.1}\" height=\"{bar}\" rx=\"2\" fill=\"{fill}\" stroke=\"{c}\" stroke-width=\"{}\"><title>{} {}: {}{}</title></rect>",
+                "<g class=\"ser\" data-si=\"{si}\"><rect class=\"bar\" x=\"{x:.1}\" y=\"{y:.1}\" width=\"{:.1}\" height=\"{bar}\" rx=\"2\" fill=\"{fill}\" stroke=\"{c}\" stroke-width=\"{}\"><title>{} {}: {}{}</title></rect>",
                 w.max(1.0),
                 if p.dirty { 1.5 } else { 0.0 },
                 esc(&s.label),
                 esc(cat),
-                fmt_num(p.y),
+                fmt_y(p.y),
                 if p.dirty { " (dirty run)" } else { "" }
             );
             // Direct value label: the table has every number, the bar end
             // gets one so the chart reads without hover.
             let _ = write!(
                 svg,
-                "<text x=\"{:.1}\" y=\"{:.1}\">{}</text>",
+                "<text x=\"{:.1}\" y=\"{:.1}\">{}</text></g>",
                 x + w.max(1.0) + 4.0,
                 y + bar - 2.0,
-                fmt_num(p.y)
+                fmt_y(p.y)
             );
         }
     }
@@ -444,7 +458,27 @@ pub(crate) fn bar_chart(series: &[&Series]) -> String {
 /// as a bar, the median as a tick, and the effect floor as dashed lines.
 pub(crate) fn forest(series: &[&Series]) -> String {
     let row = 30.0;
-    let label_w = 190.0;
+    // Compare-view labels carry the experiment: give them a wider gutter,
+    // and cut the longest from the front so the pair stays readable. The
+    // full label is the mark's title.
+    let longest = series
+        .iter()
+        .map(|s| s.label.chars().count())
+        .max()
+        .unwrap_or(0);
+    let label_w = if longest > 26 { 300.0 } else { 190.0 };
+    let max_chars = if longest > 26 { 44 } else { 26 };
+    let short = |l: &str| {
+        let n = l.chars().count();
+        if n > max_chars {
+            format!(
+                "...{}",
+                l.chars().skip(n - max_chars + 3).collect::<String>()
+            )
+        } else {
+            l.to_string()
+        }
+    };
     let h = PAD_T + series.len() as f64 * row + 30.0;
     let mut vals: Vec<f64> = vec![0.0];
     for s in series {
@@ -485,12 +519,14 @@ pub(crate) fn forest(series: &[&Series]) -> String {
             .unwrap_or("");
         let decision = s.subject.get("decision").and_then(|v| v.as_str());
         let tag = decision.map_or(verdict.to_string(), |d| format!("{verdict}, {d}"));
+        let c = color(i);
         let _ = write!(
             svg,
-            "<text x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"end\" style=\"fill:var(--text-secondary)\">{}</text><text x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"end\">{}</text>",
+            "<g class=\"ser\" data-si=\"{i}\"><text x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"end\" style=\"fill:var(--text-secondary)\"><title>{}</title>{}</text><text x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"end\">{}</text>",
             label_w - 8.0,
             y - 1.0,
             esc(&s.label),
+            esc(&short(&s.label)),
             label_w - 8.0,
             y + 11.0,
             esc(&tag)
@@ -513,7 +549,7 @@ pub(crate) fn forest(series: &[&Series]) -> String {
         ) {
             let _ = write!(
                 svg,
-                "<line x1=\"{:.1}\" x2=\"{:.1}\" y1=\"{y:.1}\" y2=\"{y:.1}\" stroke=\"var(--s1)\" stroke-width=\"2\" stroke-linecap=\"round\"><title>95% CI {:+.2}% to {:+.2}%</title></line>",
+                "<line x1=\"{:.1}\" x2=\"{:.1}\" y1=\"{y:.1}\" y2=\"{y:.1}\" stroke=\"{c}\" stroke-width=\"2\" stroke-linecap=\"round\"><title>95% CI {:+.2}% to {:+.2}%</title></line>",
                 sx.at(lo),
                 sx.at(hi),
                 lo * 100.0,
@@ -524,11 +560,12 @@ pub(crate) fn forest(series: &[&Series]) -> String {
             let fill = if p.dirty {
                 "var(--surface-1)"
             } else {
-                "var(--s1)"
+                c.as_str()
             };
             let _ = write!(
                 svg,
-                "<circle cx=\"{:.1}\" cy=\"{y:.1}\" r=\"4\" fill=\"{fill}\" stroke=\"var(--surface-1)\" stroke-width=\"2\"><title>pair {}: {:+.2}%</title></circle>",
+                "<circle class=\"mark\" cx=\"{:.1}\" cy=\"{y:.1}\" r=\"4\" fill=\"{fill}\" stroke=\"{}\" stroke-width=\"2\"><title>pair {}: {:+.2}%</title></circle>",
+                if p.dirty { c.as_str() } else { "var(--surface-1)" },
                 sx.at(p.y),
                 p.x.unwrap_or(0.0),
                 p.y * 100.0
@@ -544,6 +581,7 @@ pub(crate) fn forest(series: &[&Series]) -> String {
                 m * 100.0
             );
         }
+        svg.push_str("</g>");
     }
     svg.push_str("</svg>");
     svg
@@ -642,14 +680,20 @@ pub fn render(title: &str, generated: &str, series: &[Series]) -> String {
         let _ = write!(body, "<h2>{}</h2>", esc(exp));
         body.push_str(&cards(list));
     }
-    page(title, &body, "")
+    page(title, &body, "", "")
 }
 
 /// The document shell every page shares: the CSS, an optional extra style
-/// block, and the body inside `<main>`. Nothing is fetched from anywhere.
-pub(crate) fn page(title: &str, body: &str, extra_css: &str) -> String {
+/// block, the body inside `<main>`, and an optional inline script after it.
+/// Nothing is fetched from anywhere; the report passes no script at all.
+pub(crate) fn page(title: &str, body: &str, extra_css: &str, script: &str) -> String {
+    let script = if script.is_empty() {
+        String::new()
+    } else {
+        format!("<script>{script}</script>")
+    };
     format!(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>{}</title><style>{CSS}{extra_css}</style></head><body><main>{body}</main></body></html>\n",
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>{}</title><style>{CSS}{extra_css}</style></head><body><main>{body}</main>{script}</body></html>\n",
         esc(title)
     )
 }

@@ -71,6 +71,10 @@ pub const KINDS: &[(&str, &str)] = &[
         "controller settings priced over captured chains",
     ),
     (
+        "hybrid_replay",
+        "prompt lookup over the MTP chain against the head alone, per policy and case",
+    ),
+    (
         "round_cost",
         "measured speculative round ms per (install, width, KV bucket)",
     ),
