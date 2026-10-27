@@ -12,7 +12,8 @@ process, which must sit beside `tslab`.
 
 | Command | Answers | Writes |
 |---|---|---|
-| `capabilities --model M` | What tslab can measure on this install, and why not the rest. `result.tags` drive workflow `when` clauses | nothing |
+| `capabilities --model M` | What tslab can measure on this install, and why not the rest. `result.tags` drive workflow `when` clauses; `result.recommended` and `result.sweeps` are the family profile's entries that apply | nothing |
+| `family [--model M \| --family F] [--findings] [--sweeps] [--dir DIR]` | The family profile (`crates/lab/families/`): recommended settings with why, the sweeps, the findings with ledger or doc provenance, open questions, traps. With `--model`, filtered to what applies and findings marked `same_install`. No argument lists every profile. `--dir` overlays edited copies | nothing |
 | `inventory --model M` | Every weight shape the install binds, by dtype, with per-forward counts | nothing |
 | `knobs` | Runtime switches tslab knows: env name, values, exactness, quotable, engagement lines; then the kernel modes (lanes): the bench that prices each and how it is compared | nothing |
 | `pinned [--repo kapitsa\|omlx\|mlx-serve] [--class C] [--id ID] [--dir PATH]` | The verified kernel settings pinned from the engines this repo compares against, each traced to a source line and revision. The baseline is embedded in the binary. `--dir` layers edited copies over it for a sweep (a colliding `id` replaces the baseline) | nothing |
@@ -33,6 +34,7 @@ process, which must sit beside `tslab`.
 | `profile ... --standin attn,mlp,gdn` | Each block's in-place cost (dense qwen and llama trunks) | adds `standin` |
 | `ab --model M --null` | This host's noise floor for a workload and metric. Run once per workload before any `ab` | `null_calibration` |
 | `ab --model M --baseline off --candidate on:KNOB=V` | Does a switch win? Paired, interleaved, with a fixed verdict rule | `run`, `verdict` |
+| `sweep --model M --sweep ID\|all` | Every candidate of a profile sweep against its baseline, each by the same pair rule as `ab`, interleaved in one session; `--sweep-file F` or `--baseline A --candidate B --candidate C` for an ad hoc one. Workload flags override the sweep's workload. Exit 4 if any candidate is inconclusive, 3 only with `--fail-on-loss` | `run`, one `verdict` per candidate, `sweep` |
 | `trace --model M --prompt ... --decode 64` | Metal System Trace of the measured work: GPU busy, idle gaps, per-kernel shares | `trace` |
 | `tree-replay --model M --drafter mtp\|dflash` | Would tree verify accept more than the chain at equal rows | `tree_replay` |
 | `chain-capture` then `depth-replay` | Best speculative depth policy, priced from modeled or ledger round costs | `chain_capture`, `depth_replay` |

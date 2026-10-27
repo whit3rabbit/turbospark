@@ -38,7 +38,8 @@ is `$TURBOSPARK_LAB_DIR`, else `$TURBOSPARK_HOME/lab`, else
 | `run` | One worker process: arm, env, host samples, `eligible`, `reasons`, `totals`, `engaged`, `spec_stats`, `audio` |
 | `profile_summary` | Per-arm medians over clean runs |
 | `null_calibration` | The noise floor (`floor`) for a workload and metric |
-| `verdict` | A paired A/B: `verdict.{verdict, median, ci_low, ci_high, improvements}`, `memory` |
+| `verdict` | A paired A/B: `verdict.{verdict, median, ci_low, ci_high, improvements}`, `memory`; from a sweep also `sweep_id` and `family` |
+| `sweep` | `tslab sweep`: `sweep_id`, `family`, `baseline`, `metric`, `floor`, `candidates[].{arm, verdict, memory, clean_pairs, dirty_pairs, refused, verdict_record}`, `best.{arm, median}` (the largest median among WINs, else null), `stopped` |
 | `kernel_curve` | One kernel bench case: `result` is a `BenchResult` |
 | `hash_diff`, `dispatch_probe`, `standin`, `trace`, `round_cost`, `ane_plan` | What their command measured |
 | `projection` | `tslab project`: `projection.{ratio, improvement_throughput, improvement_time, coverage, floor, clears_floor, cases, skipped, notes}` and the `inputs` it read |

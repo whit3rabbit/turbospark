@@ -31,6 +31,16 @@ loop's `run-experiment`. Text and audio installs of every family.
 - `src/families.rs`, `src/inventory.rs`, `src/audio_kind.rs`: per-install
   coverage (`tslab capabilities`), the resident-index weight inventory, and
   which audio pipeline an install is.
+- `src/family_profile.rs`, `families/`: one profile per text family and
+  audio kind (`tslab family`): the settings known to pay, the sweeps to run
+  first, the findings with their ledger id or doc heading, open questions,
+  traps. Embedded and validated like the pinned set; `families/README.md`
+  holds the field rules, and `tests/family_profiles.rs` holds every
+  `ModelFamily` and `AudioKind` to a file.
+- `src/sweep.rs`: `tslab sweep`, several candidates against one baseline in
+  one interleaved session, each judged by `orchestrate::run_sweep` under the
+  same pair rule as `run_ab`; one `verdict` record per candidate and one
+  `sweep` record.
 - `src/workflow.rs`, `workflows/*.json`: `tslab workflow` and the built-in
   plans.
 - `src/trace.rs`, `tools/trace_tables.py`: `tslab trace` (L5).
@@ -86,7 +96,9 @@ loop's `run-experiment`. Text and audio installs of every family.
   `run-experiment` refuses to grade a tree that changes this crate.
 - Dirty runs are ledgered, never dropped. The ledger is append-only.
 - No benchmark numbers in this file or any AGENTS.md: results live in the
-  ledger, readings in the topic docs, frozen rows in `docs/BENCHMARKS.md`.
+  ledger, findings with provenance in `families/<family>.json`, readings in
+  the topic docs, frozen rows in `docs/BENCHMARKS.md`. A profile finding
+  from a doc table is a `reading`, never a verdict.
 - A new bench implements `KernelBench`, returns a `BenchResult`, and is
   added to `kernel::registry()`. It takes its shapes from the install (the
   resident index via `matmul_shapes`, `ArchConfig`, or an audio
@@ -115,7 +127,9 @@ cargo clippy -p turbospark-lab --tests
 ```
 
 `tests/knob_registry.rs` reddens when a runtime switch is renamed or an
-engagement line stops being printed, `tests/phases_format.rs` when the CLI's
+engagement line stops being printed, `tests/family_profiles.rs` when a
+family or audio kind has no profile, a knob row names a family the runtime
+does not write, or a finding's doc heading is gone, `tests/phases_format.rs` when the CLI's
 phase table drifts from `src/phases.rs`, `tests/schema_contract.rs` when a
 ledger kind is missing from the contract or `--json` prints more than one
 line, and `tests/family_coverage.rs` when a family loses its coverage.

@@ -13,6 +13,16 @@ The effect floor is the largest of 2%, the requested `--min-effect`, and the
 null floor measured for that workload. Run `ab --null` once per workload
 first, or the floor is only the 2% default.
 
+## Sweeps
+
+A `sweep` record holds one verdict per candidate, each judged on its own
+clean pairs against the shared baseline under the same floor. `best` is the
+candidate with the largest median among the WINs, and null when none won: a
+NOISE candidate is never "best", however its median reads. A refused
+candidate carries `refused` and no pairs. An inconclusive candidate makes the
+command exit 4 like `ab` does; fix the host and rerun the sweep, which
+re-judges every candidate.
+
 ## Dirty runs
 
 A run is ledgered whatever happened. `eligible: false` and its `reasons`

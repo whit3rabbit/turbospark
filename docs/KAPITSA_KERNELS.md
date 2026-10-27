@@ -58,6 +58,12 @@ the verify kernel items (2 and 7) are worth building.
 | 13 | Adaptive speculation depth in the server | Server routing (`--speculative adaptive[:N]`) and a tunable controller. MTP replay: flag off, no setting beats fixed block 2 (live check agrees). Flag on, a tuned 2..8 controller is 1.10x fixed 2 (modeled, not yet run live) | Lever 2 below |
 | 14 | KFlash tree verify (best-first candidate tree in the verify rows) | Not adopted for MTP: a replay gives 0.995-1.009x committed/round at block 2, the only block that pays. DFlash2 replay at depth 7, the block it serves over the flat verify: 1.07-1.12x committed/round. The tree's overhead is estimated at about 1% of a round, so the projection is about 1.06-1.11x tok/s. Nothing is built. Rerun with `tslab tree-replay` | Section "KFlash: tree verify" below |
 
+The measured rows on this page are also recorded as findings in the lab's
+family profile, `crates/lab/families/qwen35.json`, each with the heading it
+came from and its conditions (`tslab family --family qwen35 --findings`).
+Where a ledger id exists the finding carries that instead of the heading.
+The profile is the place an agent reads before re-proposing an item above.
+
 ## What makes the headline numbers fast, and what applies here
 
 A later research report compared kapitsa and mlx-serve on Qwen3.8-27B. This
