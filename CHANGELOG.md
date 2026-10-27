@@ -178,6 +178,9 @@ when this file gets updated relative to the version bump and the tag.
   and +4.3% on short-explanation, with under 1 MB more peak footprint, and
   `dflash_generation_gate` matches sequential decode with the tree on and
   off (`docs/KAPITSA_KERNELS.md`, lever 4).
+- The DFlash2 tree compaction is committed without a wait and no longer
+  gathers the unused eager-tape and residual rows, taking its share of a
+  round from about 0.5-0.7 ms to 0.05 ms.
 - Gated-DeltaNet key head dimension `Dk = 128` baked into the Metal delta
   kernels as a compile-time constant (`FC_GDN_DK = 98`), default on. Unrolls
   the per-lane state loops in `gdn_delta_step_decode`, `gdn_delta_step_prefill`
