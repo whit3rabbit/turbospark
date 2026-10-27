@@ -184,6 +184,10 @@ when this file gets updated relative to the version bump and the tag.
   decode on a quote-back prompt and noise on code against cap 8, with
   identical output. Fixed blocks and the flag-off default cap of 4 are
   unchanged. `tslab hybrid-replay` defaults to `--cap 7`.
+- DFlash2's `auto` depth follows the 8-row INT4 tile: block 3 with the tile
+  off (was 2; +3.7% decode tok/s) and block 7 with `TURBOSPARK_INT4_MMA8`
+  on (about +26% over block 2 there), re-measured on the current engine.
+  `dflash_serving_block()` resolves it once per process.
 - CI: documentation no longer runs the Rust matrix or the two package legs.
   `ci.yml` filters out `docs/` (except `docs/openapi/` and
   `docs/verification/`, which tests read), every `*.md`, the GitBook content

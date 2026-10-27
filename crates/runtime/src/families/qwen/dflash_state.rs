@@ -15,51 +15,62 @@ pub(crate) const DFLASH_PREFIX: &str = "dflash";
 /// [`DFLASH_SERVING_BLOCK`].
 pub const DFLASH_BLOCK: usize = 8;
 
-/// What `auto` actually serves, and it is 2 rather than the trained 8.
+/// What `auto` serves with the 8-row INT4 tile off (the default): block 3.
+/// With the tile on it serves [`DFLASH_SERVING_BLOCK_TILE`];
+/// [`dflash_serving_block`] picks between them.
 ///
-/// **MEASURED ON THREE WORKLOADS THROUGH `dflash2_accept_length_probe`**,
-/// 600 greedy tokens each, `Qwen3.8-27B` + DFlash2. The accepted-per-round
-/// and rollback columns are deterministic and reproduce to the last digit
-/// across runs; the wall clock is not and is read for ORDERING only:
+/// **RE-MEASURED 2026-10-26 on the current engine** (lazy GDN tape, `Dk = 128`
+/// bake, tree verify on, chunked prefill), `tslab profile`, experiment
+/// `dflash-depth-sweep`, short-explanation + medium-review + long-synthesis,
+/// 128 greedy tokens each, `Qwen3.8-27B` + DFlash2, M4 Max on AC. Decode
+/// tok/s over the three prompts:
 ///
-/// | workload | per-position acceptance | block 2 | 4 | 7 | 8 |
-/// | --- | --- | ---: | ---: | ---: | ---: |
-/// | prose | 0.53-0.81 | 1.23 | 1.60 | 1.85 | 1.84 |
-/// | code | 0.84-0.94 | 1.74 | 2.98 | 4.37 | 4.56 |
-/// | math | 0.86-0.98 | 1.89 | 3.49 | 5.59 | 5.67 |
+/// | block | tile off | tile on (`TURBOSPARK_INT4_MMA8=1`) |
+/// | ---: | ---: | ---: |
+/// | 2 | 37.0 | 33.5 |
+/// | 3 | 37.5 | 39.2 |
+/// | 4 | 23.1 | 39.4 |
+/// | 5 | 22.6 | 41.7 |
+/// | 7 | 19.3 | 42.1 |
 ///
-/// (accepted per round; a bigger block always accepts more per round and
-/// that is not the question.) The rollback RATE is:
+/// Paired A/Bs on the close calls (3 clean pairs each, no dirty runs):
+/// tile off, block 3 against 2 is a WIN of +3.71%, 95% CI [+3.41%, +4.10%]
+/// (`dflash-depth-off-ab`); tile on, block 7 against 5 is NOISE at +1.76%,
+/// CI [+0.62%, +1.92%], every pair favoring 7 (`dflash-depth-on-ab`).
 ///
-/// | workload | block 2 | 4 | 7 | 8 |
-/// | --- | ---: | ---: | ---: | ---: |
-/// | prose | 52% | 84% | 94% | 96% |
-/// | code | 17% | 38% | 59% | 67% |
-/// | math | 8% | 20% | 37% | 45% |
+/// **WHY THE TWO DIFFER.** Without the tile a verify row costs a batched
+/// INT4 GEMV row, and from 5 rows (block 4) the verify pass roughly doubles,
+/// 62 to 111 ms a round, so a longer block loses more to verify than it gains
+/// in acceptance. With the tile, 8 rows cost about what 1 does (59 to 65 ms a
+/// round across these blocks), so the longest block wins.
 ///
-/// **Block 2 is fastest on all three, and the ordering is monotone in the
-/// block on all three.** The mechanism is the rollback term
-/// `docs/MTP_SPECULATIVE.md` names: a rejected batched round on this
-/// recurrent family restores a whole gated-DeltaNet snapshot and replays the
-/// accepted prefix, and a block of B needs ALL B proposals to land, so even
-/// per-position acceptance of 0.93 compounds to a ~45% rollback rate at 8.
-/// So the trained block is the wrong SERVING block, and the same 2 the MTP
-/// head already defaults to (`DEFAULT_SPECULATION_BLOCK`) is the right one --
-/// two drafters, two architectures, one answer, which is what makes it a
-/// property of this engine rather than of either drafter.
-///
-/// **A LARGE BLOCK IS NOT RESCUED BY HIGH ACCEPTANCE, which the two-workload
-/// version of this table could still be read as implying.** `math` accepts
-/// 0.86-0.98 per position -- higher than `code` -- and block 8 still loses to
-/// block 2 there. Acceptance decides whether speculation pays AT ALL (prose
-/// loses at every block but 2); the BLOCK is decided by compounding and
-/// rollback cost, nearly independently of it.
+/// The block-2 table this replaced (August 2026, before the lazy tape) had
+/// block 2 fastest on prose, code and math, because a rejected round then
+/// restored a whole gated-DeltaNet snapshot. The lazy tape removed that
+/// term, which is what moved the optimum.
 ///
 /// A caller who has measured their own workload names a block explicitly;
 /// `auto` is for the caller who has not.
-pub const DFLASH_SERVING_BLOCK: usize = 2;
+pub const DFLASH_SERVING_BLOCK: usize = 3;
+
+/// What `auto` serves with the 8-row INT4 tile on (`TURBOSPARK_INT4_MMA8`
+/// set to `1` or `verify`): block 7, measured with `=1`
+/// ([`DFLASH_SERVING_BLOCK`] carries the table).
+pub const DFLASH_SERVING_BLOCK_TILE: usize = 7;
+
+/// The block `auto` serves in this process: [`DFLASH_SERVING_BLOCK_TILE`]
+/// when the 8-row INT4 tile is on, [`DFLASH_SERVING_BLOCK`] otherwise. The
+/// tile setting is read once per process, so the drafter's open and the
+/// speculative loop always agree.
+pub fn dflash_serving_block() -> usize {
+    match crate::real_forward_dispatch::int4_mma8_mode() {
+        crate::real_forward_dispatch::Int4Mma8Mode::Off => DFLASH_SERVING_BLOCK,
+        _ => DFLASH_SERVING_BLOCK_TILE,
+    }
+}
 
 const _: () = assert!(DFLASH_SERVING_BLOCK <= DFLASH_BLOCK && DFLASH_SERVING_BLOCK > 0);
+const _: () = assert!(DFLASH_SERVING_BLOCK_TILE < DFLASH_BLOCK && DFLASH_SERVING_BLOCK_TILE > 0);
 
 /// The trunk layers whose OUTPUT residual streams the drafter conditions
 /// on. A property of the training run, read off the checkpoint's

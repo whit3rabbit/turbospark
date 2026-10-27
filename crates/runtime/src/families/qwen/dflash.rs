@@ -42,7 +42,7 @@ use super::batched::BatchedScratch;
 pub use super::dflash_state::{dflash_speculation_blocker, install_has_dflash};
 pub(crate) use super::dflash_state::{
     DflashDraftPolicy, DflashShape, DFLASH_AUX_LAYERS, DFLASH_MASK_TOKEN, DFLASH_RESIDUAL_EPS,
-    DFLASH_RESIDUAL_SCALE, DFLASH_RING_SLACK, DFLASH_SERVING_BLOCK, DFLASH_TOP_K, DFLASH_WINDOW,
+    DFLASH_RESIDUAL_SCALE, DFLASH_RING_SLACK, DFLASH_TOP_K, DFLASH_WINDOW,
 };
 use super::MOE_SPECULATION_BLOCKER_MARKER;
 use crate::real_forward::{RealForwardError, RealForwardRunner};
@@ -138,7 +138,7 @@ impl DflashState {
                         arch.num_experts,
                     )));
                 }
-                DFLASH_SERVING_BLOCK
+                super::dflash_state::dflash_serving_block()
             }
             DflashDraftPolicy::Fixed(block) => {
                 if arch.num_experts != 0 {

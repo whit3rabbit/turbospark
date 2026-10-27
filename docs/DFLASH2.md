@@ -534,7 +534,16 @@ there where this port applies it. It costs nothing measurable: block 8
 commits 5.56 per round against block 7's 5.37, and its last position is
 accepted 0.88 of the time. `DFLASH_BLOCK` stays 8 as the widest buildable
 block. But BOTH lose to block 2 on throughput, which is the decision that
-actually matters and is why `DFLASH_SERVING_BLOCK` is 2.
+actually matters and is why `DFLASH_SERVING_BLOCK` was 2.
+
+**Superseded 2026-10-26.** Re-measured on the current engine (lazy GDN tape,
+`Dk = 128` bake, tree verify, chunked prefill), `auto` now serves block 3
+with the 8-row INT4 tile off (+3.7% over block 2, paired A/B) and block 7
+with it on (`dflash_serving_block`). The lazy tape removed the snapshot
+restore that made long blocks lose here; what limits the block without the
+tile is now the verify pass itself, which roughly doubles from 5 rows. The
+table and the A/B ids are in `DFLASH_SERVING_BLOCK`'s doc comment
+(`crates/runtime/src/families/qwen/dflash_state.rs`).
 
 ### What was wrong, and why every instrument said it was fine
 
