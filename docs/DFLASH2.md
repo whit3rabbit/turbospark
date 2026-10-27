@@ -952,7 +952,8 @@ stream, chain and tree (`TURBOSPARK_DFLASH_TREE`), to sequential decode.
 
 ### Tree verify on a quiet host (2026-10-26)
 
-`TURBOSPARK_DFLASH_TREE=1` (opt-in, `docs/KAPITSA_KERNELS.md` lever 4) under
+`TURBOSPARK_DFLASH_TREE=1` (opt-in at the time, `docs/KAPITSA_KERNELS.md`
+lever 4) under
 `TURBOSPARK_INT4_MMA8=1` at block 7, 128 tokens, tslab experiment
 `kapitsa-quiet-c1`, every run clean:
 
@@ -966,5 +967,11 @@ itself is only 0.3-0.6 ms dearer. The 4-5 ms read on 2026-10-25 came from
 contended runs. A dispatch profile ranks the extra GPU time as the
 compaction pass (`dflash_tree_compact`, about 0.45 ms, its own command
 buffer) first, then the tree GDN delta kernel (+16% on that kernel). The tree
-attention and the per-row position table cost nothing measurable. The
-default stays the chain until the user decides.
+attention and the per-row position table cost nothing measurable.
+
+The tree is the default since 2026-10-26, and `TURBOSPARK_DFLASH_TREE=0`
+keeps the chain. In the default configuration (MMA8 off) it wins +9.22% on
+medium-review and +4.32% on short-explanation with under 1 MB more peak
+footprint (experiment `dflash-tree-default-d1`), and `dflash_generation_gate`
+stays lossless with it on and off. Conditions and ids are in
+`docs/KAPITSA_KERNELS.md`, lever 4, "Promotion to the default".

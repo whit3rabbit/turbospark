@@ -1,5 +1,6 @@
 #![cfg(target_os = "macos")]
-//! The DFlash2 tree verify (`TURBOSPARK_DFLASH_TREE=1`) against the chain,
+//! The DFlash2 tree verify (on by default, `TURBOSPARK_DFLASH_TREE=0` keeps
+//! the chain) against the chain,
 //! on the synthetic dflash install. Untrained weights, so nothing here says
 //! a tree accepts more; what these pin is the MACHINERY's losslessness:
 //!
@@ -12,8 +13,9 @@
 //!    trunk and the drafter exactly where sequential decode of that path
 //!    leaves them, which is what the compaction is for.
 //!
-//! The switch is read once per process, so every test here sets it before
-//! the first runner opens; the binary is tree-only.
+//! The switch is read once per process, so every test here clears it before
+//! the first runner opens; the binary runs the default, which is trees.
+//! `real_forward_qwen35_dflash_tree_off.rs` holds the opt-out.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -56,9 +58,9 @@ fn install() -> std::path::PathBuf {
 }
 
 fn open(dir: &std::path::Path) -> RealForwardRunner {
-    // SAFETY (edition 2021: not unsafe): every test sets the same value
-    // before any runner reads the switch.
-    std::env::set_var("TURBOSPARK_DFLASH_TREE", "1");
+    // SAFETY (edition 2021: not unsafe): every test clears the switch
+    // before any runner reads it, so the binary tests the default.
+    std::env::remove_var("TURBOSPARK_DFLASH_TREE");
     let arch = peek_manifest_arch(dir).expect("manifest peeks");
     RealForwardRunner::open_with_options_and_speculation(
         dir,
@@ -142,7 +144,7 @@ fn finish_round(
 }
 
 #[test]
-fn the_runner_offers_tree_rounds_with_the_switch_on() {
+fn the_runner_offers_tree_rounds_by_default() {
     let dir = install();
     let runner = open(&dir);
     let _ = std::fs::remove_dir_all(&dir);
