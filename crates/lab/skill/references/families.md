@@ -31,6 +31,7 @@ behind it: read those before copying the setting.
 | `qwen3moe` | llama | `slots` | 16 slots | the GGUF install refuses `routed_batch=1` |
 | `qwen4exp` | qwen4 | `slots` | untuned; the REAP-288 rows spread 25-60% | 2,048 context; the hyper-connections widen the residual |
 | `museGlimmer` | museglimmer | `batched_gemv` | chunk 128 | the highest J/token in the power baseline (powermetrics); tslab's IOReport joules are a different meter and compare only within an experiment |
+| `lfm3` | lfm3 | `attn_kernel` (default against barrier), `chunked_prefill` | GQA attention, INT4 chunked prefill and fused FFN all on by default; chunk 128 | the GGUF Q8_0 install has no batched GEMM, use `--chunk off`; phase buckets are final-only (one command buffer), use kernel benches or trace for shares; the fused FFN is bit-exact but NOISE on decode |
 | `spark2_5`, `deepseek2` | spark, deepseek2 | `decode_attention`, `slots` | `--chunk off` (the only driver) | MLA has no attention bench; Spark's fused q|k|v is one shape |
 | `deepseekV4Flash` | none | none | none | no decode flow: kernel benches only |
 
