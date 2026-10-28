@@ -62,6 +62,7 @@ fn toy_arch() -> model_io::ArchConfig {
         swiglu_limit: 0.0,
         rope_scaling: model_io::RopeScalingConfig::NONE,
         vision: model_io::VisionConfig::NONE,
+        short_conv_kernel_size: 0,
         ple: model_io::PleConfig::NONE,
     }
 }

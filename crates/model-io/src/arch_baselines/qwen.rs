@@ -114,6 +114,7 @@ pub fn qwen_gdn_dense_27b() -> ArchConfig {
         swiglu_limit: 0.0,
         rope_scaling: RopeScalingConfig::NONE,
         vision: VisionConfig::NONE,
+        short_conv_kernel_size: 0,
         ple: PleConfig::NONE,
     }
 }
@@ -172,6 +173,7 @@ pub fn qwen_gdn_moe_35b_a3b() -> ArchConfig {
         swiglu_limit: 0.0,
         rope_scaling: RopeScalingConfig::NONE,
         vision: VisionConfig::NONE,
+        short_conv_kernel_size: 0,
         ple: PleConfig::NONE,
     }
 }
@@ -245,6 +247,7 @@ pub fn qwen3_30b_a3b() -> ArchConfig {
         swiglu_limit: 0.0,
         rope_scaling: RopeScalingConfig::NONE,
         vision: VisionConfig::NONE,
+        short_conv_kernel_size: 0,
         ple: PleConfig::NONE,
     }
 }
@@ -326,6 +329,7 @@ pub fn qwen3_4b() -> ArchConfig {
         swiglu_limit: 0.0,
         rope_scaling: RopeScalingConfig::NONE,
         vision: VisionConfig::NONE,
+        short_conv_kernel_size: 0,
         ple: PleConfig::NONE,
     }
 }
@@ -381,6 +385,7 @@ pub fn qwen2_5_7b() -> ArchConfig {
         swiglu_limit: 0.0,
         rope_scaling: RopeScalingConfig::NONE,
         vision: VisionConfig::NONE,
+        short_conv_kernel_size: 0,
         ple: PleConfig::NONE,
     }
 }
@@ -521,6 +526,7 @@ pub fn qwen4_exp_125b_a6b() -> ArchConfig {
         swiglu_limit: 0.0,
         rope_scaling: RopeScalingConfig::NONE,
         vision: VisionConfig::NONE,
+        short_conv_kernel_size: 0,
         ple: PleConfig {
             ngram_size: 3,
             heads_per_ngram: 8,
@@ -621,6 +627,7 @@ pub fn qwen3_vl_4b() -> ArchConfig {
         swiglu_limit: 0.0,
         rope_scaling: RopeScalingConfig::NONE,
         vision: VisionConfig::NONE,
+        short_conv_kernel_size: 0,
         ple: PleConfig::NONE,
     }
 }

@@ -30,6 +30,7 @@ mod gguf_names;
 mod gturbo_writer;
 mod hf_checkpoint;
 mod install_verifier;
+mod lfm3_config;
 mod manifest_peek;
 mod museglimmer_config;
 mod qwen2_config;
@@ -43,6 +44,7 @@ mod safetensors_header;
 mod synthetic_deepseek2;
 mod synthetic_flint;
 mod synthetic_gguf;
+mod synthetic_lfm3;
 mod synthetic_llama;
 mod synthetic_model;
 mod synthetic_muse;
@@ -75,8 +77,8 @@ pub use gemma4_checkpoint::{
     parse_gemma4_quantization, parse_prism_hadamard, pass_through_packed,
     pass_through_packed_qwen2, read_vision_entries, vision_arch_for_manifest, vision_should_ingest,
     write_flint_install_streamed, write_gemma4_install, write_gemma4_install_streamed,
-    write_muse_glimmer_install, write_muse_glimmer_install_streamed, write_ngram_table,
-    write_qwen2_dense_install_streamed, write_qwen3_vl_install_streamed,
+    write_lfm3_install_streamed, write_muse_glimmer_install, write_muse_glimmer_install_streamed,
+    write_ngram_table, write_qwen2_dense_install_streamed, write_qwen3_vl_install_streamed,
     write_qwen4_exp_install_streamed, write_qwen_gdn_dense_install,
     write_qwen_gdn_dense_install_streamed, write_qwen_gdn_dense_install_streamed_with_hadamard,
     write_qwen_gdn_moe_install, write_qwen_gdn_moe_install_streamed, write_vision_sidecar,
@@ -88,8 +90,8 @@ pub use gemma4_checkpoint::{
     VISION_RESIDENT_TENSORS, VISION_SOURCE_PREFIXES,
 };
 pub use gguf_checkpoint::{
-    dtype_tag_for_ggml_type, gguf_manifest_quant, orchestrate_gguf_checkpoint,
-    qwen4exp_tensor_is_transcoded, write_gguf_install_streamed,
+    dtype_tag_for_ggml_type, gguf_manifest_quant, lfm3_rope_freqs_are_zero_tail,
+    orchestrate_gguf_checkpoint, qwen4exp_tensor_is_transcoded, write_gguf_install_streamed,
     write_gguf_install_streamed_resumable, GgufRepackError, GgufRepackOutput, ResumeProvenance,
     FUSED_GATE_FIRST,
 };
@@ -109,6 +111,7 @@ pub use gturbo_writer::{
 };
 pub use hf_checkpoint::{orchestrate_llama_checkpoint, LlamaCheckpointDims, OrchestrateError};
 pub use install_verifier::verify_install_full_sha256;
+pub use lfm3_config::parse_lfm3_config;
 pub use manifest_peek::peek_manifest_arch;
 pub use museglimmer_config::{
     muse_glimmer_mask, parse_muse_glimmer_config, parse_muse_glimmer_scalars, MuseGlimmerScalars,
@@ -140,6 +143,10 @@ pub use synthetic_flint::{build_synthetic_flint_install, tiny_flint_arch};
 pub use synthetic_gguf::{
     build_synthetic_gemma4_gguf, build_synthetic_gpt_oss_gguf, build_synthetic_qwen2_gguf,
     GgufBuilder, GgufFileAndRanges, QuantMix, SyntheticGgufShape, SyntheticGptOssShape,
+};
+pub use synthetic_lfm3::{
+    build_synthetic_lfm3_install, build_synthetic_lfm3_install_with_rope_freqs, tiny_lfm3_arch,
+    tiny_lfm3_layer_mask, tiny_lfm3_rope_freqs,
 };
 pub use synthetic_llama::{
     build_synthetic_dense_llama_install, build_synthetic_gqa_moe_install,

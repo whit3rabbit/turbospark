@@ -666,6 +666,30 @@ pub fn write_qwen3_vl_install_streamed(
     write_gemma4_install_streamed(dir, arch, model_id, shards, quant, progress)
 }
 
+/// Dense `lfm3` install write through the shared MLX checkpoint walk.
+///
+/// The MLX conversion already names every tensor under the canonical
+/// `language_model.model.` prefix, so no header canonicalization runs
+/// first. The BF16 `conv.conv.weight` `[hidden, taps, 1]` lands resident
+/// unquantized, which is the layout the short-conv kernel reads
+/// (channel-major, taps contiguous).
+pub fn write_lfm3_install_streamed(
+    dir: &Path,
+    arch: &ArchConfig,
+    model_id: &str,
+    shards: &Gemma4Shards<'_>,
+    quant: &Gemma4Quant,
+    progress: impl FnMut(&str),
+) -> Result<(), Box<dyn std::error::Error>> {
+    if arch.family != ModelFamily::Lfm3 {
+        return Err(Box::new(Gemma4Error::Config(format!(
+            "write_lfm3_install_streamed needs arch.family = lfm3, got {}",
+            arch.family.as_str()
+        ))));
+    }
+    write_gemma4_install_streamed(dir, arch, model_id, shards, quant, progress)
+}
+
 /// Grafts a multi-token-prediction head onto an EXISTING `qwen3_5` DENSE
 /// install's resident entries -- read back byte for byte off its own
 /// `model_weights.bin` (`crate::resident_reader::read_resident_entries`) --

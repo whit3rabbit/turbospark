@@ -94,6 +94,15 @@ pub const fn protocol_parameters(family: ModelFamily) -> ProtocolParameters {
             max_context: 8192,
             max_new: 4096,
         },
+        // `lfm3`, provisional on the same evidence: its template opens
+        // `<think>` on every generation prompt (`enable_thinking` defaults
+        // true), so the shared 1,024 budget is expected to truncate. Freeze
+        // only after real completions are measured on an install.
+        ModelFamily::Lfm3 => ProtocolParameters {
+            family,
+            max_context: 8192,
+            max_new: 4096,
+        },
         // The shared protocol, and what every frozen row in
         // `docs/BENCHMARKS.md` was measured at.
         // `qwen3_5` is here on the TOKENIZER's evidence rather than on a

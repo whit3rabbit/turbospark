@@ -531,6 +531,14 @@ impl RealForwardRunner {
                     "the DeepSeek-V4-Flash family has no decode flow yet".to_string(),
                 ));
             }
+            // Refused by name until `families/lfm3/` lands: its short-conv
+            // layers have no kernel on any neighbour's flow, and running one
+            // would decode fluently and wrongly (`docs/LFM3_PHASE0.md`).
+            model_io::ModelFamily::Lfm3 => {
+                return Err(RealForwardError::Unsupported(
+                    "the lfm3 family has no decode flow yet (short-conv layers)".to_string(),
+                ));
+            }
             // Its own flow: sinks, NoPE by layer mask, per-head QK norm, a
             // sigmoid router, an ungated shared expert and a dense lead are
             // each inside the layer, so a neighbour's flow would decode

@@ -51,6 +51,7 @@ fn toy_arch() -> turbospark_model_io::ArchConfig {
         swiglu_limit: 0.0,
         rope_scaling: turbospark_model_io::RopeScalingConfig::NONE,
         vision: turbospark_model_io::VisionConfig::NONE,
+        short_conv_kernel_size: 0,
         ple: turbospark_model_io::PleConfig::NONE,
     }
 }

@@ -333,7 +333,10 @@ pub fn routed_marker(family: ModelFamily) -> &'static str {
         // sibling marker to borrow: the default arm for the same reason.
         | ModelFamily::Deepseek2
         | ModelFamily::MiniMaxM2
-        | ModelFamily::Qwen3Vl => ".experts.switch_glu.",
+        | ModelFamily::Qwen3Vl
+        // `lfm3` is DENSE with no MoE sibling (its FFN is
+        // `feed_forward.w{1,2,3}`), so the marker can never match.
+        | ModelFamily::Lfm3 => ".experts.switch_glu.",
     }
 }
 
@@ -346,6 +349,7 @@ fn is_dense_family(family: ModelFamily) -> bool {
             | ModelFamily::Qwen3Dense
             | ModelFamily::Qwen2Dense
             | ModelFamily::Qwen3Vl
+            | ModelFamily::Lfm3
     )
 }
 

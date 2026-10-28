@@ -178,6 +178,17 @@ pub fn facts(f: ModelFamily) -> FamilyFacts {
             probe_and_standin: false,
             notes: &["learned sinks and sliding windows; attention stays per token in prefill"],
         },
+        // Until `families/lfm3/` lands, open refuses it like DeepSeek V4.
+        Lfm3 => FamilyFacts {
+            flow: "none",
+            chunked_prefill: Support::No("the runtime has no decode flow for this family yet".into()),
+            drafters: &[],
+            steel_prefill: false,
+            decode_attention: "none",
+            phase_buckets: "none",
+            probe_and_standin: false,
+            notes: &["open refuses it: short-conv layers have no flow yet"],
+        },
     }
 }
 

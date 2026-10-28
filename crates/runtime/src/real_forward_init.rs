@@ -38,28 +38,39 @@ pub(crate) fn validate_arch_config(expecting: &ArchConfig) -> Result<(), RealFor
             expecting.full_head_dim
         )));
     }
-    let max_kind = expecting
-        .full_attention_layer_mask
-        .iter()
-        .copied()
-        .max()
-        .unwrap_or(0);
+    let mask = &expecting.full_attention_layer_mask;
+    let max_kind = mask.iter().copied().max().unwrap_or(0);
+    // Each kind is checked by membership rather than by the maximum, because
+    // mask 6 (`lfm3`'s short convolution) sits above the MLA code and a
+    // max-based test would read it as one of the compressed kinds.
+    //
     // Mask 5 is multi-head latent attention (`deepseek2`), whose compressed
     // cache and absorbed kernels live in `families/deepseek2/`; masks 3 and
     // 4 remain the DeepSeek V4 compressed-attention kinds nothing runs yet.
     // Gated BY FAMILY rather than by kind alone so a future family declaring
     // mask 5 without an MLA flow is refused here instead of reaching for a
-    // neighbour's kernel.
-    if max_kind == 5 && expecting.family != model_io::ModelFamily::Deepseek2 {
+    // neighbour's kernel. Mask 6 is gated the same way.
+    if mask.contains(&5) && expecting.family != model_io::ModelFamily::Deepseek2 {
         return Err(RealForwardError::Unsupported(format!(
             "MLA (mask 5) layers need the deepseek2 family, not {}",
             expecting.family.as_str()
         )));
     }
-    if max_kind > 2 && max_kind != 5 {
+    if mask.contains(&6) && expecting.family != model_io::ModelFamily::Lfm3 {
+        return Err(RealForwardError::Unsupported(format!(
+            "short-conv (mask 6) layers need the lfm3 family, not {}",
+            expecting.family.as_str()
+        )));
+    }
+    if mask.iter().any(|&k| k == 3 || k == 4) {
         return Err(RealForwardError::Unsupported(
             "compressed (DeepSeek CSA/HCA) attention layers are not supported yet".to_string(),
         ));
+    }
+    if max_kind > 6 {
+        return Err(RealForwardError::Unsupported(format!(
+            "layer mask kind {max_kind} is not a kind this port knows"
+        )));
     }
     // A mask-2 layer is gated DeltaNet, and the three families whose flow can
     // encode one are the two `families/qwen/` serves (`qwen36` and, ROADMAP's
@@ -625,6 +636,8 @@ mod tests {
         // cache has no mapped arm in the deepseek2 dispatch, and the family
         // opens fine on the streamed path.
         ModelFamily::Deepseek2,
+        // Refused deliberately: DENSE, no routed experts to map.
+        ModelFamily::Lfm3,
     ];
 
     fn assert_invalid_kv_dimension(name: &str, value: i64, mutate: fn(&mut model_io::ArchConfig)) {
