@@ -276,6 +276,13 @@ pub struct RealForwardRunner {
     /// only: a GGUF install is refused by layout when the seam is on,
     /// never silently looped.
     pub(crate) routed_batch_prefill: bool,
+    /// `TURBOSPARK_ROUTED_BATCH_OVERLAP=1`: under the batched routed half,
+    /// plan and `pread` each sub-batch's experts while the previous
+    /// sub-batch runs on the GPU, into slots it does not hold
+    /// (`families/qwen/moe_batch.rs`). Byte-identical either way: the plan
+    /// only moves which slot an expert lands in, and phase 2 reduces over
+    /// ranks. Qwen MoE only; the other routed drivers ignore it.
+    pub(crate) routed_batch_overlap: bool,
     /// Whether the chunked-prefill driver runs its RESIDENT GEMVs -- the
     /// four attention projections and the shared expert's three -- as
     /// M-row GEMMs instead of one dispatch per token

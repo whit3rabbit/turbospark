@@ -19,7 +19,9 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 
 use crate::args::Args;
-use crate::gates::{effective_bounds, judge_quality, GateClass, PromptComparison, QualityResult};
+use crate::gates::{
+    effective_bounds, judge_quality, GateClass, PromptComparison, QualityBounds, QualityResult,
+};
 use crate::integrity;
 use crate::lock::MachineLock;
 use crate::orchestrate::{run_ab, AbRun, Session};
@@ -28,7 +30,7 @@ use crate::schema::CmdOutput;
 use crate::spec::ExperimentSpec;
 use crate::stats::Verdict;
 use crate::worker::Mode;
-use crate::workload::{PromptSource, Workload};
+use crate::workload::{Arm, PromptSource, Workload};
 
 /// The arm probes' prompt lengths (`qwen38_prefill_arm_probe`).
 pub const QUALITY_LENGTHS: [usize; 6] = [64, 200, 500, 1000, 2000, 3000];
@@ -44,8 +46,8 @@ fn load_spec(path: &str) -> Result<(ExperimentSpec, String, String), String> {
 }
 
 /// The quality workload: the probe corpus at every length that fits.
-pub fn quality_workload(spec: &ExperimentSpec) -> Workload {
-    let max = spec.workload.max_context as usize;
+pub fn quality_workload(w: &Workload) -> Workload {
+    let max = w.max_context as usize;
     Workload {
         prompts: QUALITY_LENGTHS
             .iter()
@@ -53,9 +55,9 @@ pub fn quality_workload(spec: &ExperimentSpec) -> Workload {
             .map(|&n| PromptSource::Corpus(n))
             .collect(),
         decode_tokens: QUALITY_DECODE,
-        prefill_chunk: spec.workload.prefill_chunk,
-        max_context: spec.workload.max_context,
-        speculation: spec.workload.speculation.clone(),
+        prefill_chunk: w.prefill_chunk,
+        max_context: w.max_context,
+        speculation: w.speculation.clone(),
         audio: None,
     }
 }
@@ -80,16 +82,44 @@ fn read_logits(path: &Path, vocab_rows: usize) -> Result<Vec<Vec<f64>>, String> 
         .collect())
 }
 
+/// What the quality gate compares: two arms over one workload, held to one
+/// exactness class. `tslab gate` takes it from a spec, `tslab sweep --gate`
+/// from a sweep.
+pub struct GateArms<'a> {
+    pub baseline: &'a Arm,
+    pub candidate: &'a Arm,
+    pub workload: &'a Workload,
+    pub exactness: GateClass,
+    pub quality_bounds: Option<QualityBounds>,
+}
+
+impl<'a> GateArms<'a> {
+    pub fn from_spec(spec: &'a ExperimentSpec) -> Self {
+        Self {
+            baseline: &spec.baseline,
+            candidate: &spec.candidate,
+            workload: &spec.workload,
+            exactness: spec.exactness,
+            quality_bounds: spec.quality_bounds,
+        }
+    }
+}
+
 /// Baseline and candidate prefill the probe corpus once each; the candidate
 /// is held to the spec's exactness class against the baseline.
 pub fn quality_gate(session: &Session, spec: &ExperimentSpec) -> Result<QualityResult, String> {
+    quality_gate_arms(session, &GateArms::from_spec(spec))
+}
+
+/// [`quality_gate`] over any two arms.
+pub fn quality_gate_arms(session: &Session, spec: &GateArms) -> Result<QualityResult, String> {
     if spec.workload.audio.is_some() {
         return audio_quality_gate(session, spec);
     }
-    let workload = quality_workload(spec);
+    let workload = quality_workload(spec.workload);
     let n = workload.prompts.len();
-    let a = session.run_once(&spec.baseline, &workload, Mode::Quality, 0, false)?;
-    let b = session.run_once(&spec.candidate, &workload, Mode::Quality, 0, false)?;
+    let a = session.run_once(spec.baseline, &workload, Mode::Quality, 0, false)?;
+    let b = session.run_once(spec.candidate, &workload, Mode::Quality, 0, false)?;
     for o in [&a, &b] {
         if o.status != "ok" {
             return Err(format!(
@@ -169,14 +199,14 @@ pub fn quality_gate(session: &Session, spec: &ExperimentSpec) -> Result<QualityR
 /// An audio spec runs its job once per arm and compares outputs: the
 /// waveform or transcript bytes for `bit_exact`, the transcript text for
 /// `text_exact`. No other class has an audio bound yet, so none is accepted.
-fn audio_quality_gate(session: &Session, spec: &ExperimentSpec) -> Result<QualityResult, String> {
+fn audio_quality_gate(session: &Session, spec: &GateArms) -> Result<QualityResult, String> {
     if !matches!(spec.exactness, GateClass::BitExact | GateClass::TextExact) {
         return Err(
             "an audio spec declares bit_exact or text_exact; no KL bound exists for audio".into(),
         );
     }
-    let a = session.run_once(&spec.baseline, &spec.workload, Mode::Timing, 0, false)?;
-    let b = session.run_once(&spec.candidate, &spec.workload, Mode::Timing, 0, false)?;
+    let a = session.run_once(spec.baseline, spec.workload, Mode::Timing, 0, false)?;
+    let b = session.run_once(spec.candidate, spec.workload, Mode::Timing, 0, false)?;
     for o in [&a, &b] {
         if o.status != "ok" {
             return Err(format!(

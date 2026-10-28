@@ -344,6 +344,18 @@ impl SpeculativeProducer for RealForwardRunner {
             && self.prompt_vision.is_none()
     }
 
+    // The ANE prefill split engages only on micro-batches of 512 rows or
+    // more, and the default 128-token span would keep a DFlash2 prompt on
+    // Steel. Its width while the split is on and can take the drafter (no
+    // MTP head; `ane_prefill_steel_rows`), the default otherwise.
+    fn drafter_prefill_chunk(&self) -> usize {
+        #[cfg(feature = "ane-prefill")]
+        if let Some(width) = self.ane_prefill_drafter_chunk() {
+            return width;
+        }
+        foundation::DEFAULT_CHUNK_SIZE as usize
+    }
+
     fn prefill_chunk_priming_drafter(
         &mut self,
         tokens: &[i32],

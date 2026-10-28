@@ -15,7 +15,9 @@ use serde_json::json;
 
 use crate::args::{parse_arm, parse_env, parse_prompt, parse_residency, parse_slots, Args};
 use crate::cli::{host_rules_from, memory_check, null_floor, timeout_from};
+use crate::experiment::{quality_gate_arms, GateArms};
 use crate::family_profile::{ProfileSet, Sweep};
+use crate::gates::GateClass;
 use crate::lock::MachineLock;
 use crate::orchestrate::{run_sweep, Session, SweepRun};
 use crate::paths::lab_dir;
@@ -168,7 +170,14 @@ pub fn sweep_cmd(mut args: Args) -> Result<CmdOutput, String> {
     let min_pairs: usize = args.parsed("--pairs", stats::MIN_PAIRS)?;
     let max_pairs: usize = args.parsed("--max-pairs", 6)?;
     let fail_on_loss = args.flag("--fail-on-loss");
+    let gate = args.flag("--gate");
+    let enforce_memory = args.flag("--enforce-memory");
     args.finish()?;
+    if gate && baseline.is_some() {
+        return Err(
+            "--gate needs a declared exactness: use --sweep or --sweep-file, not --baseline".into(),
+        );
+    }
     if min_pairs < stats::MIN_PAIRS || max_pairs < min_pairs {
         return Err(format!(
             "--pairs must be >= {} and --max-pairs >= --pairs",
@@ -313,13 +322,37 @@ pub fn sweep_cmd(mut args: Args) -> Result<CmdOutput, String> {
             if let Some(why) = &arm.refused {
                 crate::say!("  refused: {why}");
             }
+            let v = arm.verdict.verdict;
+            // The gates only judge a WIN: a candidate that did not win is
+            // never the sweep's pick, so gating it would spend quality runs
+            // on nothing. The statistical verdict is left as it is; a gate
+            // that fails takes the candidate out of `best`.
+            let quality = match (gate, v, &r.sweep) {
+                (true, stats::Verdict::Win, Some(s)) => Some(gate_candidate(
+                    &session,
+                    &r.baseline,
+                    &arm.candidate,
+                    &r.workload,
+                    s.exactness,
+                )),
+                _ => None,
+            };
+            let rejected = rejection(
+                quality.as_ref(),
+                enforce_memory && v == stats::Verdict::Win,
+                &memory,
+            );
+            if let Some(why) = &rejected {
+                crate::say!("  rejected: {why}");
+            }
             let rec = json!({"model": model, "workload": r.workload, "metric": r.metric,
                 "baseline": r.baseline, "candidate": arm.candidate, "verdict": arm.verdict,
                 "null_floor": floor, "memory": memory, "pairs": run_ids,
-                "sweep_id": r.id, "family": family});
+                "sweep_id": r.id, "family": family, "quality": quality,
+                "rejected": rejected});
             let id = session.ledger.append("verdict", rec)?;
-            let v = arm.verdict.verdict;
             match v {
+                stats::Verdict::Win if rejected.is_some() => {}
                 stats::Verdict::Win => {
                     if best.as_ref().is_none_or(|(_, m)| arm.verdict.median > *m) {
                         best = Some((arm.candidate.name.clone(), arm.verdict.median));
@@ -334,7 +367,7 @@ pub fn sweep_cmd(mut args: Args) -> Result<CmdOutput, String> {
                 "speculation": arm.candidate.speculation, "open": arm.candidate.open,
                 "verdict": arm.verdict, "memory": memory, "refused": arm.refused,
                 "clean_pairs": arm.verdict.pairs, "dirty_pairs": arm.pairs.len() - arm.verdict.pairs,
-                "verdict_record": id,
+                "verdict_record": id, "quality": quality, "rejected": rejected,
             }));
         }
         if let Some(why) = &stopped {
@@ -361,4 +394,122 @@ pub fn sweep_cmd(mut args: Args) -> Result<CmdOutput, String> {
         worst,
         json!({"experiment": experiment, "sweeps": results}),
     ))
+}
+
+/// `--gate` for one winning candidate: the same corpus and bounds `tslab
+/// gate` uses, at the sweep's declared exactness. A quality run that fails
+/// to run is recorded as a failed gate, not dropped.
+fn gate_candidate(
+    session: &Session,
+    baseline: &Arm,
+    candidate: &Arm,
+    workload: &Workload,
+    exactness: GateClass,
+) -> serde_json::Value {
+    let arms = GateArms {
+        baseline,
+        candidate,
+        workload,
+        exactness,
+        quality_bounds: None,
+    };
+    match quality_gate_arms(session, &arms) {
+        Ok(q) => serde_json::to_value(&q)
+            .unwrap_or_else(|e| json!({"passed": false, "error": e.to_string()})),
+        Err(e) => json!({"passed": false, "error": e}),
+    }
+}
+
+/// Why a candidate is out of the sweep's pick, or `None`. Quality first: a
+/// candidate that moves output past its class's bound is out whatever its
+/// memory did.
+fn rejection(
+    quality: Option<&serde_json::Value>,
+    enforce_memory: bool,
+    memory: &serde_json::Value,
+) -> Option<String> {
+    if let Some(q) = quality {
+        if q["passed"] != json!(true) {
+            return Some(match q["error"].as_str() {
+                Some(e) => format!("quality gate did not run: {e}"),
+                None => format!(
+                    "quality gate failed: {}",
+                    q["reasons"]
+                        .as_array()
+                        .map(|r| r
+                            .iter()
+                            .filter_map(|x| x.as_str())
+                            .collect::<Vec<_>>()
+                            .join("; "))
+                        .unwrap_or_default()
+                ),
+            });
+        }
+    }
+    if enforce_memory && memory["passed"] != json!(true) {
+        return Some(match memory["reason"].as_str() {
+            Some(r) => format!("memory check failed: {r}"),
+            None => format!(
+                "memory check failed: peak grew {} bytes against an allowance of {}",
+                memory["growth"], memory["allowance"]
+            ),
+        });
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mem(passed: bool) -> serde_json::Value {
+        json!({"passed": passed, "growth": 200, "allowance": 100})
+    }
+
+    #[test]
+    fn a_passing_win_is_kept() {
+        let q = json!({"passed": true, "reasons": []});
+        assert_eq!(rejection(Some(&q), true, &mem(true)), None);
+        assert_eq!(rejection(None, false, &mem(false)), None);
+    }
+
+    #[test]
+    fn a_failed_quality_gate_names_its_reasons() {
+        let q = json!({"passed": false, "reasons": ["mean KL 0.02 over 0.001"]});
+        let why = rejection(Some(&q), false, &mem(true)).unwrap();
+        assert!(
+            why.contains("quality gate failed") && why.contains("mean KL"),
+            "{why}"
+        );
+    }
+
+    #[test]
+    fn a_quality_gate_that_did_not_run_rejects() {
+        let q = json!({"passed": false, "error": "quality run for split was crash"});
+        let why = rejection(Some(&q), false, &mem(true)).unwrap();
+        assert!(
+            why.contains("did not run") && why.contains("crash"),
+            "{why}"
+        );
+    }
+
+    #[test]
+    fn memory_rejects_only_when_enforced() {
+        assert_eq!(rejection(None, false, &mem(false)), None);
+        let why = rejection(None, true, &mem(false)).unwrap();
+        assert!(
+            why.contains("memory check failed") && why.contains("200"),
+            "{why}"
+        );
+        let none = json!({"passed": false, "reason": "no clean peak readings"});
+        let why = rejection(None, true, &none).unwrap();
+        assert!(why.contains("no clean peak readings"), "{why}");
+    }
+
+    #[test]
+    fn quality_outranks_memory() {
+        let q = json!({"passed": false, "reasons": ["top-1"]});
+        let why = rejection(Some(&q), true, &mem(false)).unwrap();
+        assert!(why.starts_with("quality"), "{why}");
+    }
 }

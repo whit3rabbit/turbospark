@@ -32,14 +32,16 @@
 //! shape on both speculative pages: small blocks are what pay on this
 //! engine.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use model_io::ResidentIndex;
 
 use crate::families::qwen::batched_scratch::BatchedScratch;
 use crate::families::qwen::{layer_tensor, RealQwenState};
-use crate::moe_prefill_pipeline::{encode_routes, next_routed_sub_batch, plan_and_stream_union};
+use crate::moe_prefill_pipeline::{
+    encode_routes, next_routed_sub_batch, plan_and_stream_union, try_plan_and_stream_union,
+};
 use crate::real_forward_dispatch::{encode_gemv_any, router_topk_gemma4};
 use crate::real_forward_init::MappedResidency;
 use crate::real_forward_layout::{RoutedBlobLayout, RoutedLayerLayout};
@@ -367,6 +369,17 @@ pub(crate) fn encode_qwen_layer_moe_batched(
 ///   buffer per sub-batch is safe because the previous sub-batch is waited
 ///   out before this one is planned (below), and the caller retires the
 ///   previous layer's last routed buffer before calling.
+/// - **`overlap` (`TURBOSPARK_ROUTED_BATCH_OVERLAP`) reads ahead.** The next
+///   sub-batch is planned around the slots the in-flight one reads
+///   (`try_plan_and_stream_union`) and its `pread` runs while the GPU does,
+///   bound into the other argument buffer; only then is the in-flight one
+///   waited out and the next committed, so one routed buffer is still in
+///   flight at a time. When its misses do not fit the free slots it falls
+///   back to wait-then-plan. Every host-written range (routes, routing
+///   weights) and every GPU-written one (activations, outputs, residual
+///   rows) is offset by the sub-batch's first row, so the two never share
+///   bytes. It pays only where the slots hold two unions (64 and up: the
+///   union cap is 32); at 32 slots it mostly falls back.
 ///
 /// Returns the last committed routed buffer for the caller to retire after
 /// the next layer's router wait, as the per-token loop pipelines its last
@@ -385,6 +398,7 @@ pub(crate) fn encode_qwen_layer_routed_prefill(
     router_hist: &mut Option<crate::router_hist::RouterHistogram>,
     phases: &mut PhaseCounters,
     expert_cache_slots: usize,
+    overlap: bool,
     layer: usize,
     hidden: usize,
     moe_inter: u32,
@@ -451,24 +465,54 @@ pub(crate) fn encode_qwen_layer_routed_prefill(
     let offsets = &moe_offsets[layer];
     let layer_slots = &slot_buffers[layer];
     let mut committed: Option<gpu::CommittedPass> = None;
+    // The cache slots the in-flight sub-batch reads: the read-ahead's plan
+    // may not evict them.
+    let mut in_flight: HashSet<usize> = HashSet::new();
+    // Which argument buffer this sub-batch binds. The read-ahead alternates
+    // them, so the bind never rewrites one the in-flight sub-batch reads;
+    // without it only `wide_blobs` is used, as before.
+    let mut alt = false;
+    // A sub-batch's GPU time is booked like the driver's `retire_routed`
+    // books the last one's, or `TURBOSPARK_PHASES` would report the routed
+    // GPU busy time of one sub-batch per layer.
+    let retire = |prev: gpu::CommittedPass, phases: &mut PhaseCounters| {
+        let t_wait = Instant::now();
+        phases.routed_cb_gpu_nanos += (prev.wait_with_gpu_time() * 1e9) as u64;
+        phases.pipeline_wait_nanos += t_wait.elapsed().as_nanos() as u64;
+    };
     let mut sub_start = 0usize;
     while sub_start < batch {
-        // A `pread` is host work the queue knows nothing about, and the
-        // argument buffer below is host-written: nothing this sub-batch
-        // evicts or rebinds may still be read by the previous one. Its GPU
-        // time is booked like the driver's `retire_routed` books the last
-        // sub-batch's, or `TURBOSPARK_PHASES` would report the routed GPU
-        // busy time of one sub-batch per layer.
-        if let Some(prev) = committed.take() {
-            let t_wait = Instant::now();
-            phases.routed_cb_gpu_nanos += (prev.wait_with_gpu_time() * 1e9) as u64;
-            phases.pipeline_wait_nanos += t_wait.elapsed().as_nanos() as u64;
-        }
         let sub = next_routed_sub_batch(&selected_all, sub_start, cap, layer, top_k)?;
         let streamer = streamers[layer].as_mut().ok_or_else(|| {
             RealForwardError::Unsupported(format!("real Qwen layer {layer} has no expert streamer"))
         })?;
-        let slot_of = plan_and_stream_union(streamer, phases, &sub.union)?;
+        // A `pread` is host work the queue knows nothing about: nothing this
+        // sub-batch evicts may still be read by the previous one. The
+        // read-ahead plans around the previous sub-batch's slots and reads
+        // while it runs; when the misses do not fit the other slots, or the
+        // read-ahead is off, the previous sub-batch is waited out first.
+        let ahead = match (&committed, overlap) {
+            (Some(_), true) => try_plan_and_stream_union(streamer, phases, &sub.union, &in_flight)?,
+            _ => None,
+        };
+        let slot_of = match ahead {
+            Some(slot_of) => {
+                foundation::engaged!("routed_batch_overlap");
+                phases.routed_read_aheads += 1;
+                slot_of
+            }
+            None => {
+                if let Some(prev) = committed.take() {
+                    retire(prev, phases);
+                }
+                plan_and_stream_union(streamer, phases, &sub.union)?
+            }
+        };
+        let blobs = if alt {
+            &routed.wide_blobs_alt
+        } else {
+            &routed.wide_blobs
+        };
 
         // Bind this sub-batch's union in union order; routes name binding
         // indices (see this function's doc).
@@ -478,10 +522,7 @@ pub(crate) fn encode_qwen_layer_routed_prefill(
         let binding_of: HashMap<usize, usize> =
             sub.union.iter().enumerate().map(|(i, &e)| (e, i)).collect();
         let bind_refs: Vec<(&gpu::MetalBuffer, u64)> = bound.iter().map(|&b| (b, 0u64)).collect();
-        routed
-            .wide_blobs
-            .bind(context, use_silu, &bind_refs)
-            .map_err(gpu_err)?;
+        blobs.bind(context, use_silu, &bind_refs).map_err(gpu_err)?;
         phases.bind_nanos += t_bind.elapsed().as_nanos() as u64;
 
         let (routes, routing16) =
@@ -509,7 +550,7 @@ pub(crate) fn encode_qwen_layer_routed_prefill(
         gpu::encode_moe_prefill_phase1(
             context,
             &pass,
-            &routed.wide_blobs,
+            blobs,
             offsets,
             (&batched.moe_x, x_off),
             (&routed.batch_acts, acts_off),
@@ -524,7 +565,7 @@ pub(crate) fn encode_qwen_layer_routed_prefill(
         gpu::encode_moe_prefill_phase2_fused(
             context,
             &pass,
-            &routed.wide_blobs,
+            blobs,
             offsets,
             (&routed.batch_acts, acts_off),
             (&routed.batch_routing_w, rw_off),
@@ -554,6 +595,13 @@ pub(crate) fn encode_qwen_layer_routed_prefill(
         }
 
         sub_start += sub_len;
+        // A read-ahead's previous sub-batch retires only now, so at most one
+        // routed buffer is in flight when this returns, as before.
+        if let Some(prev) = committed.take() {
+            retire(prev, phases);
+        }
+        in_flight = slot_of.values().copied().collect();
+        alt = overlap && !alt;
         committed = Some(pass.commit());
     }
 

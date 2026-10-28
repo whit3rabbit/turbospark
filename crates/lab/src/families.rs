@@ -335,6 +335,15 @@ pub fn text_coverage(subject: &Subject, arch: &ArchConfig) -> Coverage {
     if f.steel_prefill {
         tags.push("steel".into());
     }
+    // The ANE+Steel split serves dense qwen only, and only from a build with
+    // the feature: the worker refuses an `ane_prefill` arm otherwise.
+    if arch.family == ModelFamily::QwenGdnDense {
+        if cfg!(feature = "ane-prefill") {
+            tags.push("ane".into());
+        } else {
+            notes.push("built without the ane-prefill feature: the ane sweeps do not apply".into());
+        }
+    }
     if f.probe_and_standin && arch.num_experts == 0 {
         tags.push("probe".into());
         tags.push("standin".into());

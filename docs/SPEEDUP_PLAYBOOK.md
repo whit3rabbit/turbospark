@@ -336,7 +336,15 @@ restores it and redoes the micro-batch on Steel.
 **Why it is not a default.** One prompt, one chip, modeled energy. The shares
 are per machine, and the 1024-token program's shares were tuned on the
 evaluation prompt. Width 2048 costs about 674 MiB of scratch, plus about 816
-MiB of IOSurface planes (computed, not measured). The app does not link it.
+MiB of IOSurface planes (computed). The FFI builds it by
+default and the app's setting defaults to `.auto` (`swift/AGENTS.md`), so
+the split runs in the app on M4+ whenever the programs are installed.
+
+The first measurement is a `tslab sweep ane_split` from 2026-10-26 (finding
+`qwen35.sweep-ane-split-2026-10-26`). It put the split's peak 1,770 MiB over
+Steel's, and `break` (the width without the planes) 774 MiB over. The same
+sweep read the split at +46.1% prefill on long-synthesis, and +45.1% with a
+DFlash2 drafter open (`docs/DFLASH2.md`).
 
 A default would owe the gates in `docs/BATCHED_PREFILL.md`, the memory
 oracle, and wall power. It would also owe a second chip (a base M4 first)
