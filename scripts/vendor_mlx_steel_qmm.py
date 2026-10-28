@@ -40,6 +40,10 @@ EXPECTED_SHA256 = {
     QUANTIZED: "344780f5b159669219f993f9705b5f28504196d3fd2c7ab8756119c72e4e267f",
 }
 TILES = [(32, 32, 32), (64, 32, 64)]
+# Tiles that also get an `_edge` entry: `aligned_N` false, so the last
+# threadgroup column may be a partial tile (`load_safe` on the weights and a
+# masked store). Full tiles take the same arithmetic as the aligned entry.
+EDGE_TILES = [(32, 32, 32)]
 
 fetched = {}
 
@@ -55,6 +59,33 @@ def fetch(path):
             raise SystemExit(f"{path}: sha256 {digest} does not match the pinned {want}")
         fetched[path] = (data.decode(), digest)
     return fetched[path][0]
+
+
+def kernel_entry(bm, bk, bn, edge):
+    """One `[[kernel]]` entry; `edge` instantiates `aligned_N = false`."""
+    suffix = "_edge" if edge else ""
+    aligned = "false" if edge else "true"
+    return f"""
+[[kernel, max_total_threads_per_threadgroup(128)]]
+void dequant_int4_steel_{bm}_{bk}_{bn}{suffix}(
+    const device uint8_t* w [[buffer(0)]],
+    const device bfloat16_t* scales [[buffer(1)]],
+    const device bfloat16_t* biases [[buffer(2)]],
+    const device half* x [[buffer(3)]],
+    device half* y [[buffer(4)]],
+    constant int& K [[buffer(5)]],
+    constant int& N [[buffer(6)]],
+    constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]) {{
+    threadgroup half Xs[{bm} * ({bk} + 8)];
+    threadgroup half Ws[{bn} * ({bk} + 8)];
+    qmm_t_impl<half, 64, 4, {aligned}, {bm}, {bk}, {bn}>(
+        w, scales, biases, x, y, Xs, Ws, K, N, M, tid, lid, simd_gid, simd_lid);
+}}
+"""
 
 
 emitted = set()
@@ -150,30 +181,14 @@ inline void ts_dequant4(const device uint8_t* w, float scale, float bias,
 // y[M, N] = x[M, K] * dequant(w[N, K])^T with FP16 x and y, packed INT4 w,
 // BF16 scale and bias planes at group 64, FP32 accumulation. Grid is
 // (ceil(N / BN), ceil(M / BM)) threadgroups of 128 threads. N must be a
-// multiple of BN (aligned_N); M is any size (rows past M are masked).
+// multiple of BN (aligned_N) except in the `_edge` entries, which accept any
+// N; M is any size (rows past M are masked).
 """
     for bm, bk, bn in TILES:
-        kernels += f"""
-[[kernel, max_total_threads_per_threadgroup(128)]]
-void dequant_int4_steel_{bm}_{bk}_{bn}(
-    const device uint8_t* w [[buffer(0)]],
-    const device bfloat16_t* scales [[buffer(1)]],
-    const device bfloat16_t* biases [[buffer(2)]],
-    const device half* x [[buffer(3)]],
-    device half* y [[buffer(4)]],
-    constant int& K [[buffer(5)]],
-    constant int& N [[buffer(6)]],
-    constant int& M [[buffer(7)]],
-    uint3 tid [[threadgroup_position_in_grid]],
-    uint lid [[thread_index_in_threadgroup]],
-    uint simd_gid [[simdgroup_index_in_threadgroup]],
-    uint simd_lid [[thread_index_in_simdgroup]]) {{
-    threadgroup half Xs[{bm} * ({bk} + 8)];
-    threadgroup half Ws[{bn} * ({bk} + 8)];
-    qmm_t_impl<half, 64, 4, true, {bm}, {bk}, {bn}>(
-        w, scales, biases, x, y, Xs, Ws, K, N, M, tid, lid, simd_gid, simd_lid);
-}}
-"""
+        for edge in (False, True):
+            if edge and (bm, bk, bn) not in EDGE_TILES:
+                continue
+            kernels += kernel_entry(bm, bk, bn, edge)
 
     license_text = fetch("LICENSE")
     provenance = "\n".join(

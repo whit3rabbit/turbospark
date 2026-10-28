@@ -139,6 +139,17 @@ pub const KNOBS: &[Knob] = &[
         engagement: &[off("0", "prefill_steel")],
     },
     Knob {
+        name: "prefill_small_n",
+        env: "TURBOSPARK_PREFILL_SMALL_N",
+        values: &["<unset>", "0"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::KlBounded,
+        families: &["qwen35"],
+        quotable: true,
+        doc: "docs/BATCHED_PREFILL.md",
+        engagement: &[off("0", "prefill_small_n")],
+    },
+    Knob {
         name: "prefill_rows_attn",
         env: "TURBOSPARK_PREFILL_ROWS_ATTN",
         values: &["<unset>", "0"],
@@ -921,6 +932,21 @@ pub const LANES: &[Lane] = &[
             lane: "gqa",
         },
         parity: &["crates/gpu/tests/attention_decode_gqa_parity.rs"],
+    },
+    Lane {
+        knob: "prefill_small_n",
+        replaces: "the scalar batched GEMM in 16-row slices on INT4 matrices too narrow for a whole Steel tile (the 48-row GDN a/b)",
+        bench: "int4_matmul",
+        // The `small_n` arm is the shipped routing (8-row tile up to 96 rows
+        // of batch, Steel edge tile above), so price it at the prefill widths.
+        compare: Compare::Arms {
+            baseline: "scalar_gemm",
+            lane: "small_n",
+        },
+        parity: &[
+            "crates/gpu/tests/dequant_int4_steel_parity.rs",
+            "crates/gpu/tests/dequant_int4_mma8_parity.rs",
+        ],
     },
 ];
 

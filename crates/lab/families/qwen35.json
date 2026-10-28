@@ -138,6 +138,15 @@
       "findings": [
         "qwen35.turn-snapshot-ttft-2026-10-24"
       ]
+    },
+    {
+      "knob": "prefill_small_n",
+      "value": "<unset>",
+      "when": [],
+      "why": "the 48-row GDN a/b projections move off the scalar 16-row slices onto the 8-row tile (batches up to 96) or the Steel edge tile: about 4x cheaper per projection in the kernel bench and about 6.6% less summed prefill GPU time on the long-synthesis prompt; it is on by default and the switch is the baseline arm",
+      "findings": [
+        "qwen35.small-n-prefill-2026-10-27"
+      ]
     }
   ],
   "sweeps": [
@@ -2141,6 +2150,38 @@
       },
       "conditions": "the one-row tile gap is structural (ablation 1.21-1.24x; a two-pass split-K on 2026-10-25 lost on four of five shapes)",
       "note": "which tile mode ships is the tile owner's decision"
+    },
+    {
+      "id": "qwen35.small-n-prefill-2026-10-27",
+      "date": "2026-10-27",
+      "install": "qwen38-27b",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "perf/prefill-small-n",
+      "workload": "protocol long-synthesis (2,940 tokens) through the chunked driver at chunk 128 (64-row micro-batches, 46 of them), greedy, 96 new tokens; interleaved arms in one binary, TURBOSPARK_PREFILL_SMALL_N=0 against the default; summed command-buffer GPU time over the micro-batches",
+      "arms": {
+        "off": {
+          "env": {
+            "TURBOSPARK_PREFILL_SMALL_N": "0"
+          }
+        },
+        "on": {}
+      },
+      "metric": "prefill_gpu_ms",
+      "values": {
+        "off": 18090.4,
+        "on": 16895.2,
+        "delta_ms": -1195.2,
+        "delta_fraction": -0.066
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "doc",
+        "path": "docs/BATCHED_PREFILL.md",
+        "heading": "The 48-row GDN a/b projections leave the scalar slices (2026-10-27)"
+      },
+      "conditions": "median of four timed runs per arm after one warmup round; the overlap watcher flagged other sessions' builds in 6 of the 9 runs, swap was 18 of 19 GB; greedy md5 identical in all nine; not in the ledger and not a frozen row",
+      "note": "the standalone kernel pricing predicts about 750 ms of the 1195 ms; the rest is unattributed (dispatch overlap or host noise)"
     }
   ],
   "open_questions": [
@@ -2151,14 +2192,18 @@
     "decode at 16K context and beyond",
     "concurrent streams and aggregate tok/s",
     "energy per token under the tile and under the ANE prefill split",
-    "a cheaper GDN turn snapshot that passes the 64 MiB memory gate"
+    "a cheaper GDN turn snapshot that passes the 64 MiB memory gate",
+    "what the 1.2 s prefill saving from prefill_small_n is made of: the kernel pricing explains about 0.75 s, a per-op-class profile of the two arms would attribute the rest",
+    "whether the 96-row split between the 8-row tile and the Steel edge tile holds inside the model, and what the route does at the 2048-row micro-batch of the ANE prefill split",
+    "a fused a+b dispatch or a split-K small-N kernel for the 48-row projections: the Steel edge tile is latency bound, and about 1.5% of prefill is left after the route"
   ],
   "traps": [
     "never use TURBOSPARK_ATTN_DECODE_KERNEL=barrier as a baseline: it forces the trunk too, and the drafter was the only barrier user",
     "turbospark-bench hashes no output; losslessness under int4_mma8 comes from tslab gate or the generation gate tests",
     "the MTP install's speculative stream already differs from plain decode on short-explanation (561 vs 505 tokens); token counts across MTP arms are not an exactness test",
     "a reply cut inside the reasoning goes back empty in a chat workload; give --decode room on a thinking model",
-    "the kapitsa M5 Max and M4 Pro README rows are unverified here and not targets"
+    "the kapitsa M5 Max and M4 Pro README rows are unverified here and not targets",
+    "chunked-prefill GPU rows ledgered before 2026-10-27 predate the small-N prefill route (prefill_small_n); pair a prefill A/B against TURBOSPARK_PREFILL_SMALL_N=0 in one binary and do not compare across the change"
   ],
   "docs": [
     "docs/KAPITSA_KERNELS.md",

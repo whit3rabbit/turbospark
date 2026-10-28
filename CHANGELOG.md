@@ -239,6 +239,17 @@ when this file gets updated relative to the version bump and the tag.
 - `docs/design-system/tools/derive_tokens.py` mixes surfaces the way
   `NSColor.blended` does (gamma 1.8, not a straight sRGB mix), so the contrast
   table matches what the app draws; tokens and README regenerated.
+- Dense Qwen chunked prefill runs the 48-row GDN `in_proj_a`/`in_proj_b`
+  projections (too narrow for a whole Steel tile) on the 8-row matrix-unit
+  tile up to a batch of 96 and on a new Steel edge tile above it, instead of
+  the scalar GEMM's 16-row slices. About 6.6% less summed prefill GPU time on
+  the 2,940-token long-synthesis prompt (18.1 s to 16.9 s median, interleaved
+  arms in one binary, noisy host); greedy output md5-identical and the Steel
+  KL probe unchanged (mean 1.7e-5 nats). Prefill only, on the Steel scratch:
+  decode and speculative verify are untouched. `TURBOSPARK_PREFILL_SMALL_N=0`
+  restores the slices. Registered as the `prefill_small_n` lane
+  (`tslab kernel --bench int4_matmul` has a `small_n` arm). See
+  `docs/BATCHED_PREFILL.md`.
 - Adaptive speculative depth (`--speculative adaptive[:N]`) holds its cap to
   7 while the INT4 MMA8 tile is on (`TURBOSPARK_INT4_MMA8`), because a
   width-9 verify pays a second 8-row tile pass for one row: measured +24.2%
