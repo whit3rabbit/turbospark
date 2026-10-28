@@ -246,8 +246,22 @@ fn short_rev(v: &Value) -> Option<String> {
     v.as_str().map(|r| r.chars().take(10).collect())
 }
 
+/// A run ledger line's `record` pointer is file content, not a URL: read it
+/// only when it resolves inside the lab dir, so a crafted ledger cannot turn
+/// the index into an arbitrary-file reader.
+fn read_record_file(lab_root: &Path, path: &str) -> Option<String> {
+    let inside = std::fs::canonicalize(path)
+        .map(|p| p.starts_with(lab_root))
+        .unwrap_or(false);
+    if !inside {
+        return None;
+    }
+    std::fs::read_to_string(path).ok()
+}
+
 fn load_experiment(lab: &Path, name: &str) -> Experiment {
     let dir = lab.join(name);
+    let lab_root = std::fs::canonicalize(lab).unwrap_or_else(|_| lab.to_path_buf());
     let ledger_path = dir.join("ledger.jsonl");
     let (mtime_ms, bytes) = stamp(&ledger_path).unwrap_or((0, 0));
     let mut summary = ExperimentSummary {
@@ -304,22 +318,23 @@ fn load_experiment(lab: &Path, name: &str) -> Experiment {
                 summary.runs_dirty += 1;
             }
             if provenance_reads < 3 {
-                if let Some(path) = rec["record"].as_str() {
-                    if let Ok(text) = std::fs::read_to_string(path) {
-                        if let Ok(r) = serde_json::from_str::<Value>(&text) {
-                            provenance_reads += 1;
-                            if let Some(m) = r["model_dir"].as_str() {
-                                summary.models.insert(basename(m));
-                            }
-                            if let Some(f) = r["family"].as_str() {
-                                summary.families.insert(f.to_string());
-                            }
-                            if let Some(c) = r["provenance"]["chip"].as_str() {
-                                summary.chips.insert(c.to_string());
-                            }
-                            if let Some(rev) = short_rev(&r["provenance"]["git_rev"]) {
-                                summary.revs.insert(rev);
-                            }
+                if let Some(text) = rec["record"]
+                    .as_str()
+                    .and_then(|p| read_record_file(&lab_root, p))
+                {
+                    if let Ok(r) = serde_json::from_str::<Value>(&text) {
+                        provenance_reads += 1;
+                        if let Some(m) = r["model_dir"].as_str() {
+                            summary.models.insert(basename(m));
+                        }
+                        if let Some(f) = r["family"].as_str() {
+                            summary.families.insert(f.to_string());
+                        }
+                        if let Some(c) = r["provenance"]["chip"].as_str() {
+                            summary.chips.insert(c.to_string());
+                        }
+                        if let Some(rev) = short_rev(&r["provenance"]["git_rev"]) {
+                            summary.revs.insert(rev);
                         }
                     }
                 }
