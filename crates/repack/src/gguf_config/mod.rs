@@ -29,7 +29,9 @@ mod meta;
 use model_io::{ArchConfig, ModelFamily};
 
 use self::attention::{kv_heads, linear_attention};
-use self::masks::{gemma4_layer_mask, gpt_oss_layer_mask, qwen_gdn_moe_layer_mask};
+use self::masks::{
+    gemma4_layer_mask, gpt_oss_layer_mask, lfm3_layer_mask, qwen_gdn_moe_layer_mask,
+};
 use self::meta::Meta;
 use crate::gguf_header::{GgufHeader, GgufValue};
 use crate::gguf_names::family_for_architecture;
@@ -244,6 +246,10 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         // convention (true = this layer slides), so the Gemma builder IS
         // this family's builder; only the rope divergence below is its own.
         ModelFamily::Spark25 => gemma4_layer_mask(&m, num_layers_usize)?,
+        // `lfm3` publishes the same bool array for the attention kinds and
+        // marks its short-conv layers by a ZERO in the per-layer
+        // `head_count_kv` array (llama.cpp's own `is_recurrent` test).
+        ModelFamily::Lfm3 => lfm3_layer_mask(&m, num_layers_usize)?,
         // ONE builder for both halves, because both publish the same
         // `full_attention_interval` key and the same every-fourth-layer rule.
         // The dense half was refused here until `ornith-ai/Ornith-1.5-9B-GGUF`
@@ -575,7 +581,56 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         }
     }
 
+    if family == ModelFamily::Lfm3 {
+        derive_lfm3_extensions(&m, &mut arch)?;
+    }
+
     Ok(arch)
+}
+
+/// `lfm3`'s fields beyond the generic derivation.
+///
+/// **`rope.dimension_count` IS THE WHOLE HEAD, AND THAT IS NOT THE ROTARY
+/// WIDTH.** The full layers rotate 32 of 64 pairs; llama.cpp expresses the
+/// zero tail through `rope_freqs.weight` (32 ones then 32 x 1e30) and
+/// publishes `dimension_count = 128`. So the partial factor stays the
+/// baseline's 0.5, the key must equal the full head (anything else is a
+/// conversion this derivation has not seen), and the transcode walk checks
+/// the vector's VALUES before dropping it
+/// (`crate::lfm3_rope_freqs_are_zero_tail`).
+fn derive_lfm3_extensions(m: &Meta<'_>, arch: &mut ArchConfig) -> Result<(), GgufConfigError> {
+    // Every norm in the reference reads `norm_eps` (1e-5); the flow carries
+    // it as a constant, so a file that disagrees is refused rather than run
+    // at the wrong epsilon.
+    if m.opt_f64("attention.layer_norm_rms_epsilon")
+        .map(|v| v as f32)
+        != Some(1e-5f32)
+    {
+        return Err(GgufConfigError::BadValue {
+            key: m.key("attention.layer_norm_rms_epsilon"),
+            detail: "LFM3 requires RMS epsilon 1e-5".into(),
+        });
+    }
+    let taps = m.i64("shortconv.l_cache")?;
+    if !(2..=16).contains(&taps) {
+        return Err(GgufConfigError::BadValue {
+            key: m.key("shortconv.l_cache"),
+            detail: format!("{taps} short-conv taps is outside 2..=16"),
+        });
+    }
+    arch.short_conv_kernel_size = taps;
+    if let Some(dims) = m.opt_i64("rope.dimension_count")? {
+        if dims != arch.full_head_dim {
+            return Err(GgufConfigError::BadValue {
+                key: m.key("rope.dimension_count"),
+                detail: format!(
+                    "{dims} rotary dims; the published LFM3 conversion writes the whole                      head ({}) and carries the partial factor in rope_freqs.weight",
+                    arch.full_head_dim
+                ),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Qwen4Exp publishes its hybrid mask directly: `true` means recurrent GDN,

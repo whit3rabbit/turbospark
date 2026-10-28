@@ -237,6 +237,9 @@ pub(crate) fn build_manifest_json(
             "pleLayerIds": arch.ple.layer_ids,
             "pleSeed": arch.ple.seed,
             "pleEosTokenId": arch.ple.eos_token_id,
+            // `lfm3`'s short-conv taps, unconditional for the same reason;
+            // 0 is what every other family writes.
+            "shortConvKernelSize": arch.short_conv_kernel_size,
         },
         "quant": null,
         "files": files,

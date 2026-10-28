@@ -58,6 +58,9 @@ impl LogitProducer for RealForwardRunner {
         if let Some(qwen4) = self.real_qwen4.as_mut() {
             qwen4.reset();
         }
+        if let Some(lfm3) = self.real_lfm3.as_mut() {
+            lfm3.reset();
+        }
         // The head keeps its OWN KV, so the trunk's reset leaves it holding
         // the previous generation's context -- the same shape of leak
         // Gotcha 4 records for the GDN recurrent state, one cache over.

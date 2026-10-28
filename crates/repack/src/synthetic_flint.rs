@@ -90,6 +90,7 @@ pub fn tiny_flint_arch(vocab_size: i64) -> ArchConfig {
         swiglu_limit: 0.0,
         rope_scaling: RopeScalingConfig::NONE,
         vision: VisionConfig::NONE,
+        short_conv_kernel_size: 0,
         ple: PleConfig::NONE,
     }
 }

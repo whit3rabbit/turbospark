@@ -203,6 +203,7 @@ pub(crate) fn stream_mlx(
             repack::parse_qwen3_vl_config(&config_text).map_err(|e| e.to_string())
         }
         ModelFamily::Flint => repack::parse_flint_config(&config_text).map_err(|e| e.to_string()),
+        ModelFamily::Lfm3 => repack::parse_lfm3_config(&config_text).map_err(|e| e.to_string()),
         other => Err(format!("{} has no safetensors intake here", other.as_str())),
     }?;
     enable_requested_vision(plan, family, &mut arch, &config_text)?;
@@ -411,6 +412,9 @@ pub(crate) fn stream_mlx(
         }
         ModelFamily::Flint => {
             repack::write_flint_install_streamed(dir, &arch, &model_id, &shards, &quant, report)
+        }
+        ModelFamily::Lfm3 => {
+            repack::write_lfm3_install_streamed(dir, &arch, &model_id, &shards, &quant, report)
         }
         other => Err(Box::<dyn std::error::Error>::from(format!(
             "{} has no safetensors writer here",

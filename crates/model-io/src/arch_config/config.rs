@@ -7,7 +7,9 @@ use super::sub_configs::{
 /// `full_attention_layer_mask` values: 0 = sliding-window attention, 1 =
 /// full attention, 2 = gated-DeltaNet linear attention, 3 = compressed
 /// sparse attention (CSA), 4 = heavily compressed attention (HCA), 5 =
-/// multi-head latent attention (MLA, `deepseek2`).
+/// multi-head latent attention (MLA, `deepseek2`), 6 = gated short
+/// convolution (`lfm3`; no KV, a fixed `short_conv_kernel_size - 1` row
+/// tail instead).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ArchConfig {
     /// Model hidden dimension size.
@@ -128,6 +130,13 @@ pub struct ArchConfig {
     /// whatever family the manifest claims (AGENTS.md Gotcha 24).
     /// `build_manifest_json` writes it unconditionally.
     pub ple: PleConfig,
+    /// Taps of the gated short convolution on mask-6 layers (`lfm3`'s
+    /// `conv_L_cache`, 7), or 0 for every family without one.
+    ///
+    /// Resolved explicitly to 0 when the manifest omits it, never to a Gemma
+    /// value, for the reason [`Self::vision`] states (AGENTS.md Gotcha 24).
+    /// `build_manifest_json` writes it unconditionally.
+    pub short_conv_kernel_size: i64,
 }
 
 impl ArchConfig {
@@ -205,6 +214,14 @@ impl ArchConfig {
     /// True for any layer carrying a compressed long-range KV branch.
     pub fn layer_is_compressed(&self, layer: usize) -> bool {
         matches!(self.full_attention_layer_mask[layer], 3 | 4)
+    }
+    /// Returns true if layer at index runs a gated short convolution.
+    pub fn layer_is_short_conv(&self, layer: usize) -> bool {
+        self.full_attention_layer_mask[layer] == 6
+    }
+    /// Returns true if model contains gated short-convolution layers.
+    pub fn has_short_conv_layers(&self) -> bool {
+        self.full_attention_layer_mask.contains(&6)
     }
     /// Returns true if model contains linear attention layers.
     pub fn has_linear_attention_layers(&self) -> bool {

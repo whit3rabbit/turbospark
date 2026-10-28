@@ -7,6 +7,7 @@ mod deepseek2;
 mod flint;
 mod gemma;
 mod gpt_oss;
+mod lfm3;
 mod llama;
 mod minimax;
 mod muse_glimmer;
@@ -18,6 +19,7 @@ pub use deepseek2::deepseek_v2_lite_16b;
 pub use flint::{flint_40b_a2_5b, flint_layer_mask};
 pub use gemma::{gemma4_12b_dense, gemma4_26b_a4b};
 pub use gpt_oss::gpt_oss_20b;
+pub use lfm3::{lfm3_1_7b, lfm3_layer_mask};
 pub use llama::mixtral_8x7b;
 pub use minimax::minimax_m2;
 pub use muse_glimmer::{muse_glimmer_30b, muse_glimmer_layer_mask};
@@ -48,6 +50,7 @@ pub fn known_architecture(family: ModelFamily) -> ArchConfig {
         ModelFamily::Deepseek2 => deepseek_v2_lite_16b(),
         ModelFamily::Qwen3Vl => qwen3_vl_4b(),
         ModelFamily::Flint => flint_40b_a2_5b(),
+        ModelFamily::Lfm3 => lfm3_1_7b(),
     }
 }
 
@@ -69,5 +72,6 @@ pub fn all_known_architectures() -> Vec<ArchConfig> {
         deepseek_v2_lite_16b(),
         qwen3_vl_4b(),
         flint_40b_a2_5b(),
+        lfm3_1_7b(),
     ]
 }

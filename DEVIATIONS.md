@@ -2339,3 +2339,39 @@ the ceiling:
   the EndOfTurn short answer, and the codec's agreement with MLX's own
   `quantized_matmul` are the evidence. A capture-and-compare against mlx-vlm's
   `minicpmv4_7` class is the owed cross-engine gate.
+
+## `lfm3` (the seventeenth family), landed 2026-10-27
+
+LiquidAI's LFM3-1.7B runs on its own flow (`crates/runtime/src/families/lfm3/`):
+13 gated short-convolution layers, 6 full and 5 sliding-window (256) GQA
+layers with per-head q/k norms, a headwise sigmoid output gate, sandwich
+norms and a tied head. The MLX 4-bit install carries frozen quality
+(perplexity 14.7455) and memory (351 MiB at 8,192) gates. The catalog rows
+are `lfm3-1.7b` and `lfm3-1.7b-q8`, both `verified`.
+
+- **The short convolution is a port-local kernel.** `shaders/short_conv.metal`
+  has no Swift original, and `turbospark_compute::short_conv_reference` is
+  its contract. `gdn_conv_mix_*` does not fit: it applies silu unconditionally
+  and has no `B` / `C` gating, and LFM3's conv has neither activation nor
+  bias.
+- **`rope_freqs.weight` is checked by value and dropped, for this family
+  only.** llama.cpp's LFM3 conversion encodes the zero-tail partial rotary
+  as a frequency-factor vector (32 ones, then 32 x 1e30) applied to the
+  full layers. This port carries the same thing as `partial_rotary_factor`
+  0.5 on `rope_proportional_neox`, so repack accepts only that exact
+  pattern and drops the tensor. Every other family keeps the by-name
+  refusal, because the same name is learned scaling in Llama 3.1.
+- **Prefill is sequential.** `encode_short_conv_prefill` exists and is
+  parity-tested, but the chunked driver that would use it is not written, so
+  `supports_chunked_prefill` is false and the per-token path serves prompts
+  (the `deepseek2` precedent).
+- **No steering hook.** `family_dispatches_steering` answers false until the
+  flow carries one.
+- **The template's `{% generation %}` tag is rewritten.** transformers marks
+  the assistant span with it for training masks. minijinja rejects it, so
+  the renderer maps it to `{% if true %}` with the same whitespace control.
+  The rendered bytes are unchanged.
+- **llama.cpp agrees on the Q8_0 bytes.** 826 greedy tokens over two
+  prompts are identical to llama.cpp build 11960 on the same file and the
+  same prompt ids. The MLX 4-bit bytes have no external reference, since
+  mlx-lm has no `lfm3` model.

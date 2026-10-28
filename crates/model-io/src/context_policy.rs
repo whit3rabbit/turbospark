@@ -317,7 +317,8 @@ pub fn kv_bytes_for_context_with(arch: &ArchConfig, context: u32, quant: KvQuant
 
     let mut bytes = 0u64;
     for (layer, &mask) in arch.full_attention_layer_mask.iter().enumerate() {
-        if mask == 2 {
+        // No KV on linear (2) or short-conv (6) layers.
+        if mask == 2 || mask == 6 {
             continue;
         }
         let capacity = if mask == 0 {
@@ -353,6 +354,20 @@ pub fn gdn_state_bytes(arch: &ArchConfig) -> u64 {
     linear_layers.saturating_mul(state_bytes.saturating_add(conv_tail_bytes))
 }
 
+/// Bytes one session's gated short-convolution tails cost (`lfm3`): an FP16
+/// `[short_conv_kernel_size - 1, hidden]` window per mask-6 layer, FIXED-size
+/// regardless of context, and zero for every family without one.
+pub fn short_conv_state_bytes(arch: &ArchConfig) -> u64 {
+    let rows = (arch.short_conv_kernel_size.max(1) - 1) as u64;
+    let per_layer = rows * arch.hidden_size.max(0) as u64 * FP16_SIZE;
+    let conv_layers = arch
+        .full_attention_layer_mask
+        .iter()
+        .filter(|&&mask| mask == 6)
+        .count() as u64;
+    conv_layers.saturating_mul(per_layer)
+}
+
 /// Bytes per FP32 element, mirroring `GdnStateManager::new`'s state buffer.
 const FP32_SIZE: u64 = 4;
 
@@ -378,7 +393,9 @@ pub fn session_pool_bytes_with(
 ) -> u64 {
     let extra_slots = u64::from(session_slots.saturating_sub(1));
     extra_slots.saturating_mul(
-        kv_bytes_for_context_with(arch, context, quant).saturating_add(gdn_state_bytes(arch)),
+        kv_bytes_for_context_with(arch, context, quant)
+            .saturating_add(gdn_state_bytes(arch))
+            .saturating_add(short_conv_state_bytes(arch)),
     )
 }
 

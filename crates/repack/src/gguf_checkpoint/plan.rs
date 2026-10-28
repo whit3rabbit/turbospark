@@ -25,6 +25,9 @@ pub struct Plan<'a> {
     /// layer -> role-bearing source tensors.
     pub routed: BTreeMap<usize, Vec<RoutedSource<'a>>>,
     pub ignored: Vec<String>,
+    /// `lfm3`'s `rope_freqs.weight`, verified by value before any write
+    /// (`rope_freqs::verify_zero_tail`).
+    pub rope_freqs: Option<&'a str>,
 }
 
 /// The block index of a `blk.<n>.` tensor that sits ABOVE the trunk, or
@@ -57,6 +60,7 @@ pub fn classify<'a>(
         ngram: None,
         routed: BTreeMap::new(),
         ignored: Vec::new(),
+        rope_freqs: None,
     };
     for name in header.tensors.keys() {
         if family == ModelFamily::Qwen4Exp && name == "per_layer_token_embd.weight" {
@@ -109,6 +113,13 @@ pub fn classify<'a>(
             }
             GgufMapping::Ignored { reason } => {
                 plan.ignored.push(format!("{name} ({reason})"));
+            }
+            GgufMapping::ZeroTailRopeFreqs => {
+                plan.rope_freqs = Some(name.as_str());
+                plan.ignored.push(format!(
+                    "{name} (zero-tail partial rotary, carried as partial_rotary_factor \
+                     once its values are verified)"
+                ));
             }
         }
     }

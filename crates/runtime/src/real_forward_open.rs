@@ -378,6 +378,7 @@ impl RealForwardRunner {
             hidden_out: false,
             headless,
             real_spark: None,
+            real_lfm3: None,
         };
         match runner.arch.family {
             model_io::ModelFamily::Gemma4 => {
@@ -532,6 +533,16 @@ impl RealForwardRunner {
                 return Err(RealForwardError::Unsupported(
                     "the DeepSeek-V4-Flash family has no decode flow yet".to_string(),
                 ));
+            }
+            // Its own flow: short-conv layers, zero-tail per-class rope and
+            // sandwich norms are each inside the layer, and a neighbour's flow
+            // would decode fluently and wrongly (`docs/LFM3_PHASE0.md`).
+            model_io::ModelFamily::Lfm3 => {
+                runner.real_lfm3 = Some(crate::families::lfm3::RealLfm3State::build(
+                    &mut runner.context,
+                    &runner.index,
+                    &runner.arch,
+                )?);
             }
             // Its own flow: sinks, NoPE by layer mask, per-head QK norm, a
             // sigmoid router, an ungated shared expert and a dense lead are

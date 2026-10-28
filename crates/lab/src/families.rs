@@ -178,6 +178,16 @@ pub fn facts(f: ModelFamily) -> FamilyFacts {
             probe_and_standin: false,
             notes: &["learned sinks and sliding windows; attention stays per token in prefill"],
         },
+        Lfm3 => FamilyFacts {
+            flow: "lfm3",
+            chunked_prefill: Support::No("no chunked driver yet; the sequential path serves prefill, use --chunk off".into()),
+            drafters: &[],
+            steel_prefill: false,
+            decode_attention: "barrier",
+            phase_buckets: "final_only",
+            probe_and_standin: false,
+            notes: &["13 short-conv layers carry a fixed tail and no KV"],
+        },
     }
 }
 

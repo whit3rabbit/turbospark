@@ -309,6 +309,12 @@ pub(crate) fn validate_arch(a: &ManifestArch, e: &ArchConfig) -> Result<(), Mode
         a.ple_layer_ids.clone().unwrap_or_default(),
         e.ple.layer_ids
     );
+    // Zero fallback, not Gemma's, on the same Gotcha 24 rule as PLE above.
+    check!(
+        "shortConvKernelSize",
+        a.short_conv_kernel_size.unwrap_or(0),
+        e.short_conv_kernel_size
+    );
     check!(
         "numHashRoutedLayers",
         a.num_hash_routed_layers.unwrap_or(0),
