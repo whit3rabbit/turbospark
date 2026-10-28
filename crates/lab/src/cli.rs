@@ -25,7 +25,7 @@ tslab: the evaluator for kernel and method experiments (macOS).
                 [--null] [--metric prefill_tok_s|decode_tok_s|prefill_s|peak_bytes|followup_ttft_s|audio_run_s|rtf]
                 [--min-effect 0.02] [--pairs 3] [--max-pairs 6] [--experiment NAME]
   tslab sweep   --model M (--sweep ID|all [--dir DIR] | --sweep-file F | --baseline A --candidate B [--candidate C]...)
-                [workload] [--metric M] [--min-effect 0.02] [--pairs 3] [--max-pairs 6] [--fail-on-loss] [--experiment NAME]
+                [workload] [--metric M] [--min-effect 0.02] [--pairs 3] [--max-pairs 6] [--fail-on-loss] [--gate] [--enforce-memory] [--experiment NAME]
                 (every candidate against the one baseline, each a paired A/B; profile sweeps from `tslab family`)
   tslab gate    --spec SPEC.json [--base REV]      (loads the model: takes minutes)
   tslab run-experiment --spec SPEC.json [--base REV]

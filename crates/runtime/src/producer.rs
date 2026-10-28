@@ -182,6 +182,14 @@ pub trait SpeculativeProducer: LogitProducer {
         false
     }
 
+    /// The span the speculative loop hands [`Self::prefill_chunk_priming_drafter`]
+    /// at a time. The default is the runtime's default chunk; a producer
+    /// whose prefill only takes a faster path at wider micro-batches (the
+    /// ANE prefill split needs 512 rows or more) asks for more.
+    fn drafter_prefill_chunk(&self) -> usize {
+        foundation::DEFAULT_CHUNK_SIZE as usize
+    }
+
     /// One prompt chunk through the target's chunked prefill, priming the
     /// drafter over every position whose next token is known, the same
     /// pairs the token-at-a-time walk primes with [`Self::prime_drafter`].
