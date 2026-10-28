@@ -133,7 +133,7 @@ pub const KNOBS: &[Knob] = &[
         values: &["<unset>", "0"],
         read_at: ReadAt::Open,
         exactness: Exactness::KlBounded,
-        families: &["qwen35", "qwen36"],
+        families: &["qwen35", "qwen36", "lfm3"],
         quotable: true,
         doc: "docs/BATCHED_PREFILL.md",
         engagement: &[off("0", "prefill_steel")],
@@ -166,7 +166,7 @@ pub const KNOBS: &[Knob] = &[
         values: &["<unset>", "0"],
         read_at: ReadAt::ProcessCached,
         exactness: Exactness::BitExact,
-        families: &["qwen35", "qwen36"],
+        families: &["qwen35", "qwen36", "lfm3"],
         quotable: true,
         doc: "docs/SPEEDUP_PLAYBOOK.md",
         engagement: &[],
@@ -531,6 +531,34 @@ pub const KNOBS: &[Knob] = &[
         quotable: true,
         doc: "docs/FLINT.md",
         engagement: &[on("1", "flint_chunked_prefill")],
+    },
+    Knob {
+        // LFM3's M-row chunk driver, default on for INT4 installs; `0` is the
+        // per-token loop behind the same entry point. KL-bounded because the
+        // default arm takes Steel and the rows attention: with
+        // `prefill_steel=0` and `prefill_rows_attn=0` it is bit-exact.
+        name: "lfm3_chunked_prefill",
+        env: "TURBOSPARK_LFM3_CHUNKED_PREFILL",
+        values: &["<unset>", "0"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::KlBounded,
+        families: &["lfm3"],
+        quotable: true,
+        doc: "docs/LFM3_PHASE0.md",
+        engagement: &[off("0", "lfm3_chunked_prefill")],
+    },
+    Knob {
+        // Decode's gate+up+silu as one INT4 GEMV; `0` keeps the chain. The
+        // Q8_0 install never takes it, so its line is absent there.
+        name: "lfm3_fused_ffn",
+        env: "TURBOSPARK_LFM3_FUSED_FFN",
+        values: &["<unset>", "0"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::BitExact,
+        families: &["lfm3"],
+        quotable: true,
+        doc: "docs/LFM3_PHASE0.md",
+        engagement: &[off("0", "lfm3_fused_ffn")],
     },
     Knob {
         // The DFlash twin of `dflash_chunked_prefill`: off is the walk.

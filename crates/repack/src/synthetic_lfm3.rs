@@ -136,6 +136,135 @@ pub fn build_synthetic_lfm3_install(
     )
 }
 
+/// The same tiny `lfm3` through the MLX safetensors walk at INT4 affine g64
+/// with BF16 companions, the format of `LiquidAI/LFM3-1.7B-MLX-4bit`. Exists
+/// because the GGUF fixture above is all Q8_0, which has no batched GEMM:
+/// only this one can drive the chunked prefill driver. `head_dim` is 64 for
+/// the default shapes or 128, the narrowest the multi-row GQA attention
+/// serves.
+pub fn build_synthetic_lfm3_mlx_install(
+    dir: &std::path::Path,
+    vocab_size: i64,
+    num_layers: i64,
+    model_id: &str,
+    head_dim: usize,
+) -> Result<ArchConfig, Box<dyn std::error::Error>> {
+    use crate::gemma4_checkpoint::{write_lfm3_install_streamed, Gemma4Quant, Gemma4Shards};
+    use crate::synthetic_tensors::{assemble_safetensors, bf16_vector, int4_triple, Tensor};
+
+    let mut arch = tiny_lfm3_arch(vocab_size, num_layers);
+    arch.head_dim = head_dim as i64;
+    arch.full_head_dim = head_dim as i64;
+    let (h, vocab) = (HIDDEN, vocab_size as usize);
+    let q_dim = NUM_HEADS * head_dim;
+    let kv_dim = NUM_KV_HEADS * head_dim;
+
+    let mut ts: Vec<Tensor> = Vec::new();
+    ts.extend(int4_triple(
+        "language_model.model.embed_tokens.weight",
+        vocab,
+        h,
+        1,
+    ));
+    ts.push(bf16_vector(
+        "language_model.model.embedding_norm.weight",
+        h,
+        1.0,
+        2,
+    ));
+    for l in 0..num_layers as usize {
+        let p = format!("language_model.model.layers.{l}");
+        let seed = 1000 * (l as u64 + 1);
+        for (i, norm) in [
+            "operator_norm",
+            "post_operator_norm",
+            "ffn_norm",
+            "post_ffn_norm",
+        ]
+        .iter()
+        .enumerate()
+        {
+            ts.push(bf16_vector(
+                &format!("{p}.{norm}.weight"),
+                h,
+                1.0,
+                seed + 40 + i as u64,
+            ));
+        }
+        for (role, rows, cols, s) in [
+            ("w1", INTER, h, 60u64),
+            ("w3", INTER, h, 61),
+            ("w2", h, INTER, 62),
+        ] {
+            ts.extend(int4_triple(
+                &format!("{p}.feed_forward.{role}.weight"),
+                rows,
+                cols,
+                seed + s,
+            ));
+        }
+        if arch.layer_is_short_conv(l) {
+            ts.extend(int4_triple(
+                &format!("{p}.conv.in_proj.weight"),
+                3 * h,
+                h,
+                seed + 1,
+            ));
+            ts.extend(int4_triple(
+                &format!("{p}.conv.out_proj.weight"),
+                h,
+                h,
+                seed + 2,
+            ));
+            // MLX ships the taps as `[hidden, taps, 1]`, channel-major.
+            let taps = bf16_vector(&format!("{p}.conv.conv.weight"), h * TAPS, 0.0, seed + 3);
+            ts.push(Tensor {
+                shape: vec![h as u64, TAPS as u64, 1],
+                ..taps
+            });
+        } else {
+            for (role, rows, cols, s) in [
+                ("q_proj", q_dim, h, 1u64),
+                ("k_proj", kv_dim, h, 2),
+                ("v_proj", kv_dim, h, 3),
+                ("o_proj", h, q_dim, 4),
+                ("gate_proj", NUM_HEADS, h, 5),
+            ] {
+                ts.extend(int4_triple(
+                    &format!("{p}.self_attn.{role}.weight"),
+                    rows,
+                    cols,
+                    seed + s,
+                ));
+            }
+            for (i, norm) in ["q_norm", "k_norm"].iter().enumerate() {
+                ts.push(bf16_vector(
+                    &format!("{p}.self_attn.{norm}.weight"),
+                    head_dim,
+                    1.0,
+                    seed + 20 + i as u64,
+                ));
+            }
+        }
+    }
+
+    let blob = assemble_safetensors(&ts);
+    let source = MemoryRangeSource::new(&blob);
+    let header = crate::safetensors_header::parse_header(
+        &blob,
+        crate::safetensors_header::DEFAULT_MAX_HEADER_BYTES,
+    )?;
+    let quant = Gemma4Quant {
+        default_bits: 4,
+        group_size: 64,
+        bits_overrides: std::collections::HashMap::new(),
+        ..Default::default()
+    };
+    let shards = Gemma4Shards::single(&header, &source);
+    write_lfm3_install_streamed(dir, &arch, model_id, &shards, &quant, |_| {})?;
+    Ok(arch)
+}
+
 /// [`build_synthetic_lfm3_install`] with the `rope_freqs.weight` vector
 /// under the caller's control (`None` omits it), so a test can prove the
 /// walk refuses a wrong or missing one.

@@ -19,8 +19,14 @@ when this file gets updated relative to the version bump and the tag.
   GGUF intake, its own decode flow, and a port-local short-conv kernel pair.
   Catalog rows `lfm3-1.7b` (MLX 4-bit) and `lfm3-1.7b-q8` (GGUF Q8_0), both
   verified with frozen memory and quality gates. The Q8_0 file's greedy
-  output matches llama.cpp on the same bytes. Prefill is sequential.
-  See `docs/LFM3_PHASE0.md`.
+  output matches llama.cpp on the same bytes. See `docs/LFM3_PHASE0.md`.
+- `lfm3` chunked prefill on INT4 installs (`families/lfm3/prefill.rs`): each
+  micro-batch runs as M-row GEMMs (Steel from 32 rows), the short-conv
+  prefill kernel, and multi-row GQA attention on the full layers. About 8.7x
+  prefill tok/s at 2,918 tokens on an M4 Max, mean KL 1.9e-5 nats against
+  sequential prefill. `TURBOSPARK_LFM3_CHUNKED_PREFILL=0` runs the per-token
+  loop. The GGUF Q8_0 install stays sequential (no batched kernel for its
+  block type).
 - `make design-check` (`scripts/check-design.py`), also CI's `design` job and
   an opt-in `.githooks/pre-commit`: scans the macOS app's sources against
   `DesignRules.json` (shared with `DesignTokenRatchetTests`), checks the status
@@ -235,6 +241,14 @@ when this file gets updated relative to the version bump and the tag.
   qwen36 profile gains `routed_overlap`.
 
 ### Changed
+- `lfm3` decode takes the GQA-shared decode attention partial by default,
+  about +18.6% decode tok/s at a 2,918-token context. Both quality rows
+  re-froze (greedy digests unchanged, perplexity 14.7455 -> 14.7434 and
+  15.8615 -> 15.8614). `TURBOSPARK_ATTN_DECODE_KERNEL=barrier` restores the
+  old kernel.
+- `lfm3` decode runs the FFN's gate, up and silu as one fused INT4 GEMV,
+  bit-exact against the three-dispatch chain. No measurable decode change on
+  an M4 Max. `TURBOSPARK_LFM3_FUSED_FFN=0` keeps the chain.
 - macOS app: status uses the theme's success, warning and danger colors
   instead of system green, orange and red (light-mode system red was 3.6:1 on
   white); `AppAttention.color` and destructive buttons follow. The composer

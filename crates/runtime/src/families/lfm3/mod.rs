@@ -29,10 +29,10 @@
 //! logits   = h @ embed_tokens                         // TIED, no softcap
 //! ```
 //!
-//! What it deliberately does NOT have yet: a chunked prefill driver. The
-//! sequential `produce` path serves prefill (the `deepseek2` precedent), so
-//! `supports_chunked_prefill` is false; `encode_short_conv_prefill` exists
-//! and is parity-tested for the driver that comes later.
+//! Prefill: `prefill.rs` is the chunked driver, M-row GEMMs per micro-batch,
+//! for INT4-affine installs. Any other install (the GGUF Q8_0 one) and
+//! `TURBOSPARK_LFM3_CHUNKED_PREFILL=0` (the per-token loop behind the same
+//! chunk entry point) keep the sequential arithmetic.
 //!
 //! The steering and residual-capture hooks are not wired, and
 //! `family_dispatches_steering` answers false until they are.
@@ -40,6 +40,7 @@
 mod attn;
 mod conv;
 mod mlp;
+mod prefill;
 mod state;
 
 pub(crate) use state::RealLfm3State;
@@ -177,7 +178,16 @@ impl RealForwardRunner {
             .map_err(gpu_err)?;
 
             mlp::encode_mlp_block(
-                context, &pass, weights, index, scratch, ffn_hist, layer, hidden, inter,
+                context,
+                &pass,
+                weights,
+                index,
+                scratch,
+                ffn_hist,
+                layer,
+                hidden,
+                inter,
+                lfm3.fused_ffn,
             )?;
         }
 
@@ -238,6 +248,15 @@ impl RealForwardRunner {
         }
         gpu::read_buffer_f16_into(&self.scratch.logits, 0, logits);
         Ok(())
+    }
+
+    /// `TURBOSPARK_LFM3_FUSED_FFN` for tests: whether decode runs the fused
+    /// gate+up+silu GEMV. No-op on a non-`lfm3` install.
+    #[doc(hidden)]
+    pub fn set_lfm3_fused_ffn(&mut self, on: bool) {
+        if let Some(lfm3) = self.real_lfm3.as_mut() {
+            lfm3.fused_ffn = on;
+        }
     }
 
     /// Largest absolute value in one short-conv layer's tail, or `None` when
