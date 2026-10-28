@@ -208,10 +208,10 @@ public struct McpServerEditorSheet: View {
             if let testResult {
                 Text(testResult)
                     .themedFont(.small)
-                    .foregroundStyle(testIsError ? AppAttention.color : theme.accent)
+                    .foregroundStyle(testIsError ? theme.warning : theme.accent)
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(testIsError ? AppAttention.color.opacity(0.12) : theme.accent.opacity(0.12))
+                    .background(testIsError ? theme.warning.opacity(0.12) : theme.accent.opacity(0.12))
                     .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
             }
 

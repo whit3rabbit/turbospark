@@ -58,7 +58,7 @@ struct ToolResultOutputView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 isError
-                    ? AppAttention.color.opacity(0.05)
+                    ? theme.warning.opacity(0.05)
                     : theme.elevatedSurface.opacity(theme.surfaceOpacity(0.5))
             )
             .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
@@ -66,7 +66,7 @@ struct ToolResultOutputView: View {
                 RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
                     .stroke(
                         isError
-                            ? AppAttention.color.opacity(0.3)
+                            ? theme.warning.opacity(0.3)
                             : theme.border,
                         lineWidth: 1
                     )
@@ -75,7 +75,7 @@ struct ToolResultOutputView: View {
         .padding(.leading, 8)
         .overlay(
             Rectangle()
-                .fill(isError ? AppAttention.color.opacity(0.4) : theme.border)
+                .fill(isError ? theme.warning.opacity(0.4) : theme.border)
                 .frame(width: 2),
             alignment: .leading
         )
@@ -203,7 +203,7 @@ struct ToolResultOutputView: View {
                     Text(isCopied ? "Copied" : "Copy Output", bundle: .module)
                         .themedFont(.tiny, weight: .medium)
                 }
-                .foregroundStyle(isCopied ? AnyShapeStyle(Color.green) : AnyShapeStyle(.appSecondary))
+                .foregroundStyle(isCopied ? AnyShapeStyle(.appSuccess) : AnyShapeStyle(.appSecondary))
             }
             .buttonStyle(.plain)
             .help(Text("Copy full output to clipboard", bundle: .module))

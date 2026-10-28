@@ -13,12 +13,12 @@ public enum FolderAccessStatus: String, Sendable, Equatable {
         self == .granted
     }
 
-    public var statusColor: Color {
+    func statusColor(in theme: ResolvedAppTheme) -> Color {
         switch self {
-        case .granted: return .green
-        case .restricted: return .orange
-        case .notFound: return .secondary
-        case .unknown: return .secondary
+        case .granted: return theme.success
+        case .restricted: return theme.warning
+        case .notFound: return theme.secondaryText
+        case .unknown: return theme.secondaryText
         }
     }
 

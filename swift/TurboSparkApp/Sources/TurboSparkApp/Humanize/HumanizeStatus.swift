@@ -129,7 +129,7 @@ struct HumanizeFeedback: View {
         let warnings = HumanizeAuditLines.warnings(for: controller)
         VStack(alignment: .leading, spacing: 8) {
             if let message = controller.errorMessage ?? controller.contextError {
-                Label(message, systemImage: "xmark.octagon").foregroundStyle(.red).textSelection(.enabled)
+                Label(message, systemImage: "xmark.octagon").foregroundStyle(.appDanger).textSelection(.enabled)
             } else if let plan, !plan.fits {
                 Label(HumanizeError.passageTooLong.localizedDescription, systemImage: "exclamationmark.triangle")
                     .foregroundStyle(AppAttention.color)

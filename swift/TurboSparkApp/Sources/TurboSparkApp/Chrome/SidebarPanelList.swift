@@ -59,7 +59,7 @@ struct SidebarPanelRow: View {
             HStack(spacing: 9) {
                 Image(systemName: systemImage)
                     .frame(width: 18 * theme.sidebarScale)
-                    .foregroundStyle(isSelected ? theme.accent : theme.secondaryText)
+                    .foregroundStyle(isSelected ? theme.accentText : theme.secondaryText)
                 title
                     .foregroundStyle(isSelected ? theme.foreground : theme.secondaryText)
                     .lineLimit(2)

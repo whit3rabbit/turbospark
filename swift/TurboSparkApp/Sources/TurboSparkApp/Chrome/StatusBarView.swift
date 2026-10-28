@@ -142,7 +142,7 @@ struct StatusBarView: View {
             Image(systemName: "text.alignleft")
                 .font(theme.ui(.tiny))
                 .accessibilityHidden(true)
-            MeterBar(fraction: fraction, tint: hint?.urgent == true ? AppAttention.color : theme.accent)
+            MeterBar(fraction: fraction, tint: hint?.urgent == true ? theme.warning : theme.accent)
                 .frame(width: 38)
             (hint?.text
                 ?? Text(verbatim: "\(model.estimatedContextTokens.formatted(.number.notation(.compactName))) / \(model.resolvedContextTokens.formatted(.number.notation(.compactName)))"))
@@ -251,7 +251,7 @@ struct StatusBarView: View {
         let isAbnormal = level.lowercased() != "nominal"
         let tintColor: Color = {
             switch level.lowercased() {
-            case "critical", "serious", "fair": return AppAttention.color
+            case "critical", "serious", "fair": return theme.warning
             default: return theme.secondaryText
             }
         }()

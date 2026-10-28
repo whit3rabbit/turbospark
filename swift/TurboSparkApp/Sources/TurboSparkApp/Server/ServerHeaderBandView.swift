@@ -5,6 +5,7 @@ import TurboSpark
 /// The one row that is always visible: is it on, where is it, what is it
 /// doing.
 struct ServerHeaderBandView: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
 
     private var info: ServerInfo? { model.serverInfo }
@@ -53,9 +54,9 @@ struct ServerHeaderBandView: View {
     /// answers every generation with a 503 is the light saying a thing works
     /// when it does not yet.
     private var stateColor: Color {
-        guard isRunning else { return .secondary }
-        if servesNothing { return .orange }
-        return model.serverMetrics.totalErrors > 0 ? .yellow : .green
+        guard isRunning else { return theme.secondaryText }
+        if servesNothing { return theme.warning }
+        return model.serverMetrics.totalErrors > 0 ? theme.warning : theme.success
     }
 
     private var stateTitle: Text {
@@ -100,7 +101,7 @@ struct ServerHeaderBandView: View {
                 Image(systemName: rows.authIsWarning ? "lock.open" : "lock")
             }
                 .themedFont(.small)
-                .foregroundStyle(rows.authIsWarning ? Color.orange : Color.secondary)
+                .foregroundStyle(rows.authIsWarning ? AnyShapeStyle(.appWarning) : AnyShapeStyle(.appSecondary))
                 // The warning is not decoration: an unauthenticated loopback
                 // socket is reachable by every process on this machine, and a
                 // key of nothing but spaces produces exactly this state while
@@ -132,14 +133,14 @@ struct ServerHeaderBandView: View {
             stat(Text("In flight", bundle: .module), "\(metrics.inFlight)")
             stat(
                 Text("Errors", bundle: .module), "\(metrics.totalErrors)",
-                tint: metrics.totalErrors > 0 ? .orange : nil)
+                tint: metrics.totalErrors > 0 ? theme.warning : nil)
             if let rate = metrics.aggregateTokensPerSecond {
                 stat(Text("Decode", bundle: .module), String(format: "%.1f tok/s", rate))
             }
             if metrics.droppedEvents > 0 {
                 // Surfaced rather than swallowed: a console missing rows
                 // reads exactly like a server that was idle.
-                stat(Text("Log gaps", bundle: .module), "\(metrics.droppedEvents)", tint: .orange)
+                stat(Text("Log gaps", bundle: .module), "\(metrics.droppedEvents)", tint: theme.warning)
             }
         }
         .themedFont(.small)
@@ -151,7 +152,7 @@ struct ServerHeaderBandView: View {
             label.foregroundStyle(.appSecondary)
             Text(verbatim: value)
                 .monospacedDigit()
-                .foregroundStyle(tint ?? .primary)
+                .foregroundStyle(tint.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.appText))
         }
     }
 

@@ -92,7 +92,7 @@ struct ServerAdvancedSettingsView: View {
                     Image(systemName: "exclamationmark.triangle")
                 }
                     .themedFont(.tiny)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(.appWarning)
             }
 
             field(
@@ -229,7 +229,7 @@ struct ServerAdvancedSettingsView: View {
                         Image(systemName: "exclamationmark.triangle")
                     }
                         .themedFont(.tiny)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(.appWarning)
                 }
             }
         }

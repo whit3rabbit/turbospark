@@ -300,7 +300,7 @@ struct ModelDetailPaneView: View {
                         ? "xmark.octagon.fill" : "exclamationmark.triangle.fill"
                 )
                 .themedFont(.small)
-                .foregroundStyle(installDecision.isBlocked ? AnyShapeStyle(Color.red) : AnyShapeStyle(AppAttention.color))
+                .foregroundStyle(installDecision.isBlocked ? AnyShapeStyle(.appDanger) : AnyShapeStyle(AppAttention.color))
                 .fixedSize(horizontal: false, vertical: true)
             }
 

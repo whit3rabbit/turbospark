@@ -72,7 +72,7 @@ struct ServerLoadedModelsView: View {
                 Label { steeringText(status) } icon: { Image(systemName: status.systemImageName) }
                     .foregroundStyle(
                         status.isActive || status.isUnsupported
-                            ? Color.orange : Color.secondary)
+                            ? AnyShapeStyle(.appWarning) : AnyShapeStyle(.appSecondary))
             }
         } trailing: {
             Text("\(row.requestsServed) requests", bundle: .module)

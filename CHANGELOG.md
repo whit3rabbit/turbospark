@@ -14,6 +14,19 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- `make design-check` (`scripts/check-design.py`), also CI's `design` job and
+  an opt-in `.githooks/pre-commit`: scans the macOS app's sources against
+  `DesignRules.json` (shared with `DesignTokenRatchetTests`), checks the status
+  hexes against the design system, and runs `derive_tokens.py --check`. CI does
+  not run the app's `swift test` suite, so nothing else enforced these rules.
+  The ratchet now also counts system `NSColor`s on themed surfaces and color
+  literals, and fails on a baseline above the real count (two were 190 and 55
+  over). `make design-check-full` adds the contrast tests.
+- `ResolvedAppTheme.success`, `.warning`, `.danger` (and 14% tints) per mode and
+  under Increase Contrast, as `.appSuccess`, `.appWarning`, `.appDanger`,
+  `.appSuccessTint` and friends, plus `.appAccentText` for the accent as text.
+  `AppStatusColorTests` pins 4.5:1 (7:1 under Increase Contrast, 4.5:1 on the
+  14% wash) on every shipped preset.
 - `tslab hybrid-replay`: prices prompt lookup over the MTP chain on a chain
   capture, per policy and case, against the head alone (ledger kind
   `hybrid_replay`). `tslab chain-capture` now keeps the prompt and stream
@@ -215,6 +228,17 @@ when this file gets updated relative to the version bump and the tag.
   qwen36 profile gains `routed_overlap`.
 
 ### Changed
+- macOS app: status uses the theme's success, warning and danger colors
+  instead of system green, orange and red (light-mode system red was 3.6:1 on
+  white); `AppAttention.color` and destructive buttons follow. The composer
+  focus edge is the solid accent (it was 55%, 2.1:1 in light; it falls back to
+  the foreground color when the accent cannot reach 3:1). Selected rail and
+  sidebar glyphs and links use `.appAccentText` (Spark Blue light `#1A64CC`, the
+  accent was 4.3:1 on the composer). Categorical hues (model family, chat
+  label, ANSI, syntax) stay fixed.
+- `docs/design-system/tools/derive_tokens.py` mixes surfaces the way
+  `NSColor.blended` does (gamma 1.8, not a straight sRGB mix), so the contrast
+  table matches what the app draws; tokens and README regenerated.
 - Adaptive speculative depth (`--speculative adaptive[:N]`) holds its cap to
   7 while the INT4 MMA8 tile is on (`TURBOSPARK_INT4_MMA8`), because a
   width-9 verify pays a second 8-row tile pass for one row: measured +24.2%

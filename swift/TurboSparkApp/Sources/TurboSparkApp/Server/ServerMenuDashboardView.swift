@@ -140,7 +140,7 @@ struct ServerMenuDashboardView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
-                .fill(Color.red.opacity(0.14)))
+                .fill(.appDangerTint))
         .padding(.horizontal, 2)
         .padding(.vertical, 4)
     }

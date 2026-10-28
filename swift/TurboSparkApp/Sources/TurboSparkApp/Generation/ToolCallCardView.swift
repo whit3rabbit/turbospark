@@ -8,11 +8,11 @@ struct ToolCallCardView: View {
     @ObservedObject private var appearance = AppearanceManager.shared
 
     private var diffAdditionColor: Color {
-        appearance.diffMarkers == .color ? Color.green : theme.foreground
+        appearance.diffMarkers == .color ? theme.success : theme.foreground
     }
 
     private var diffDeletionColor: Color {
-        appearance.diffMarkers == .color ? Color.red : theme.secondaryText
+        appearance.diffMarkers == .color ? theme.danger : theme.secondaryText
     }
 
     @ObservedObject var model: AppModel
@@ -73,10 +73,10 @@ struct ToolCallCardView: View {
 
     private var borderColor: Color {
         if isPendingApproval {
-            return isHighRisk ? AppAttention.color : AppAttention.color.opacity(0.8)
+            return isHighRisk ? theme.warning : theme.warning.opacity(0.8)
         }
         if let result, result.isError {
-            return AppAttention.color.opacity(0.6)
+            return theme.warning.opacity(0.6)
         }
         return theme.border
     }
@@ -380,7 +380,7 @@ struct ToolCallCardView: View {
                 case .completed:
                     Image(systemName: "checkmark.circle.fill")
                         .themedFont(.small)
-                        .foregroundStyle(Color.green)
+                        .foregroundStyle(.appSuccess)
                 case .denied:
                     Image(systemName: "minus.circle.fill")
                         .themedFont(.small)
@@ -545,24 +545,24 @@ struct ToolCallCardView: View {
     }
 
     private var statusBackground: Color {
-        if isPendingApproval { return isHighRisk ? AppAttention.color.opacity(0.15) : AppAttention.color.opacity(0.12) }
+        if isPendingApproval { return isHighRisk ? theme.warning.opacity(0.15) : theme.warning.opacity(0.12) }
         switch ToolPresentation.status(call: call, result: result) {
-        case .pendingApproval: return AppAttention.color.opacity(0.12)
+        case .pendingApproval: return theme.warning.opacity(0.12)
         case .running: return theme.accent.opacity(0.15)
-        case .completed: return Color.green.opacity(0.15)
+        case .completed: return theme.successTint
         case .denied: return theme.secondaryText.opacity(0.15)
-        case .failed: return AppAttention.color.opacity(0.15)
+        case .failed: return theme.warning.opacity(0.15)
         }
     }
 
     private var statusForeground: Color {
-        if isPendingApproval { return isHighRisk ? AppAttention.color : AppAttention.color.opacity(0.9) }
+        if isPendingApproval { return isHighRisk ? theme.warning : theme.warning.opacity(0.9) }
         switch ToolPresentation.status(call: call, result: result) {
-        case .pendingApproval: return AppAttention.color
+        case .pendingApproval: return theme.warning
         case .running: return theme.accent
-        case .completed: return Color.green
+        case .completed: return theme.success
         case .denied: return theme.secondaryText
-        case .failed: return AppAttention.color
+        case .failed: return theme.warning
         }
     }
 
@@ -819,7 +819,7 @@ struct ToolCallCardView: View {
                         .foregroundStyle(.appText)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(6)
-                        .background(Color.red.opacity(0.06), in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
+                        .background(.appDanger.opacity(0.06), in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
                         .textSelection(.enabled)
                 }
             }
@@ -839,7 +839,7 @@ struct ToolCallCardView: View {
                         .foregroundStyle(.appText)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(6)
-                        .background(Color.green.opacity(0.06), in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
+                        .background(.appSuccess.opacity(0.06), in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
                         .textSelection(.enabled)
                 }
             }
@@ -906,7 +906,7 @@ struct ToolCallCardView: View {
             if let url = ToolPresentation.webLink(urlString) {
                 Link(urlString, destination: url)
                     .font(theme.code(.small, weight: .semibold))
-                    .foregroundStyle(.appAccent)
+                    .foregroundStyle(.appAccentText)
                     .lineLimit(1)
             } else {
                 Text(urlString)
@@ -1123,7 +1123,7 @@ struct ToolCallCardView: View {
                         Label { Text("Approve Once", bundle: .module) } icon: { Image(systemName: "checkmark") }
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(isHighRisk ? AppAttention.color : theme.accent)
+                    .tint(isHighRisk ? theme.warning : theme.accent)
                     .help(Text("Approve this tool call once", bundle: .module))
                     .accessibilityLabel(Text("Approve once \(call.name)", bundle: .module))
 
