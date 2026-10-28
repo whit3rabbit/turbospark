@@ -32,6 +32,7 @@ tslab: the evaluator for kernel and method experiments (macOS).
   tslab confirm --spec SPEC.json [--base REV]
   tslab kernel  --model M [--bench NAME[,NAME]|all] [--rows 1,2,4,...] [--contexts 512,...]
                 [--case LABEL] [--reps 5] [--hash] [--verify-from EXP] [--experiment NAME]
+                [--ane-dir DIR] [--contend N]      (ane_handoff, built with ane-prefill)
   tslab kernel  --list                             (the registered benches)
   tslab hash-diff --experiment A --against B      (exit 3 when any hashed output changed)
   tslab project --knob NAME|--bench B --default ARM --mode ARM

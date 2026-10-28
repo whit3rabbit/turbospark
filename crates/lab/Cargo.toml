@@ -8,7 +8,9 @@ repository.workspace = true
 publish = false  # dev harness: measures local installs on this machine
 description = "Evaluator for kernel and method experiments: per-family phase profiles, gated interleaved A/B with a statistical verdict, shape-derived kernel benches, and an append-only ledger."
 
-# The ANE+Steel prefill split as an A/B arm. Off by default, like the runtime.
+# The ANE+Steel prefill split as an A/B arm, and the ane_handoff kernel bench
+# (which calls the gpu and coreml halves directly). Off by default, like the
+# runtime.
 [features]
 ane-prefill = [
     "runtime/ane-prefill",

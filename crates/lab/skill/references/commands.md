@@ -66,7 +66,7 @@ gets you numbers from a busy host, which is all they then are.
 
 ## Kernel benches (in process, no model weights)
 
-`kernel --model M [--bench NAME[,NAME]|all] [--rows ...] [--contexts ...] [--case LABEL] [--reps 5] [--hash] [--programs DIR]`
+`kernel --model M [--bench NAME[,NAME]|all] [--rows ...] [--contexts ...] [--case LABEL] [--reps 5] [--hash] [--programs DIR] [--ane-dir DIR] [--contend N]`
 
 Every case records an `energy` delta over its run when the host has the
 IOReport counters. `--bench ane_matmul` (a `tslab` built with
@@ -90,6 +90,7 @@ thresholds in its notes.
 | `gdn_delta` | Gated-DeltaNet delta kernels (decode, eager and lazy prefill, state fold) at the install's geometry. One build per process: put `TURBOSPARK_GDN_DK128=0` on the `tslab` process for the runtime-Dk build |
 | `music3_grid` | Music 3 corpus: output hashes against goldens, per-config timing |
 | `whisper_linear` | Whisper encoder GEMM, decoder GEMV, GEMM at one row |
+| `ane_handoff` | Host handoff of one ANE prefill split point, `wait` against `poll`, quiet and under `--contend N` self-made CPU load. Needs a build with `--features ane-prefill`, a dense qwen install and its program set (`--ane-dir`, else the runtime's search list) |
 
 `--hash` stores each point's output-bit hash and the hash of the first output
 row alone, and prints an exactness hint per arm: `bit-equal` or `DIFFERS`
