@@ -115,6 +115,19 @@ jobs:
             -p turbospark-window-fit -p turbospark-gpu -p turbospark-vision-io \
             -p turbospark-audio -p turbospark-embeddings
 
+  # DESIGN.md section 4's color rules and the design-system tokens, without
+  # building the app. CI never runs the app's `swift test` suite, so
+  # `DesignTokenRatchetTests` fails for nobody here; this reads the same
+  # DesignRules.json it does (about a second, standard library only, no Rust
+  # or Xcode). The contrast ratios need the app's real surface blending and
+  # stay in AppStatusColorTests (`make design-check-full`).
+  design:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Design check
+        run: python3 scripts/check-design.py
+
   # The release's packaging path, exercised OUTSIDE a release. Everything from
   # here to the DMG (Info.plist, the resource-bundle copy, the ad-hoc
   # signature, the CLI binaries inside the app) is reachable from no other

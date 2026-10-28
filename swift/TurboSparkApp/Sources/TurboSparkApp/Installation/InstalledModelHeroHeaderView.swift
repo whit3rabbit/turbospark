@@ -34,7 +34,7 @@ struct InstalledModelHeroHeaderView: View {
                     Button(action: onToggleFavorite) {
                         Image(systemName: isFavorite ? "star.fill" : "star")
                             .themedFont(.callout)
-                            .foregroundStyle(isFavorite ? Color.yellow : Color.secondary)
+                            .foregroundStyle(isFavorite ? AnyShapeStyle(.appWarning) : AnyShapeStyle(.appSecondary))
                     }
                     .buttonStyle(.plain)
                     .help(isFavorite ? "Remove from Favorites" : "Mark as Favorite")
@@ -93,7 +93,7 @@ struct InstalledModelHeroHeaderView: View {
                                     .themedFont(.micro)
                             }
                             .themedCode(.small)
-                            .foregroundStyle(Color.accentColor)
+                            .foregroundStyle(.appAccentText)
                         }
                         .help(Text("Open \(installedModel.repo) on Hugging Face: \(url.absoluteString)", bundle: .module))
                         .accessibilityLabel(
@@ -155,14 +155,14 @@ struct InstalledModelHeroHeaderView: View {
             .foregroundStyle(.appText)
         } else if isCurrentlyLoaded {
             HStack(spacing: 4) {
-                Circle().fill(Color.green).frame(width: 7, height: 7)
+                Circle().fill(.appSuccess).frame(width: 7, height: 7)
                 Text("Loaded in Memory", bundle: .module)
                     .themedFont(.tiny, weight: .bold)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 3.5)
-            .background(Color.green.opacity(0.16), in: Capsule())
-            .foregroundStyle(Color.green)
+            .background(.appSuccessTint, in: Capsule())
+            .foregroundStyle(.appSuccess)
         } else if isCurrentlySelected {
             HStack(spacing: 4) {
                 Circle().fill(Color.accentColor).frame(width: 6, height: 6)

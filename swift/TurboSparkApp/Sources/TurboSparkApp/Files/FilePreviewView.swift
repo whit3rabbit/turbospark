@@ -251,7 +251,7 @@ struct FilePreviewView: View {
                     AppIconButton("trash", label: Text("Remove", bundle: .module), role: .destructive) {
                         model.removeAttachment(reference: reference)
                     }
-                    .foregroundStyle(.red)
+                    .foregroundStyle(.appDanger)
                     .accessibilityHint(Text("Detaches this document from the chat", bundle: .module))
                     .disabled(model.isRunning)
                 }

@@ -97,12 +97,12 @@ struct PromptProjectContextPill: View {
                             if worktree.totalAdditions > 0 {
                                 Text(verbatim: "+\(worktree.totalAdditions)")
                                     .font(theme.ui(.tiny, weight: .bold).monospacedDigit())
-                                    .foregroundStyle(.green)
+                                    .foregroundStyle(.appSuccess)
                             }
                             if worktree.totalDeletions > 0 {
                                 Text(verbatim: "-\(worktree.totalDeletions)")
                                     .font(theme.ui(.tiny, weight: .bold).monospacedDigit())
-                                    .foregroundStyle(.red)
+                                    .foregroundStyle(.appDanger)
                             }
                         }
                     }

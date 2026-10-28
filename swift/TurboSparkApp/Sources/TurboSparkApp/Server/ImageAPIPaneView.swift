@@ -111,7 +111,7 @@ struct ImageAPIPaneView: View {
                 APIRunIndicator(running: testing, elapsed: elapsed)
             }
             if let errorMessage {
-                Text(verbatim: errorMessage).foregroundStyle(.red).textSelection(.enabled)
+                Text(verbatim: errorMessage).foregroundStyle(.appDanger).textSelection(.enabled)
             }
             if let result, let image = NSImage(data: result) {
                 Image(nsImage: image)

@@ -99,6 +99,7 @@ public struct HfAuthTokenCardView: View {
                 }
             }
             .buttonStyle(.link)
+            .appLinkTint()
             .appPointerCursor()
         }
     }

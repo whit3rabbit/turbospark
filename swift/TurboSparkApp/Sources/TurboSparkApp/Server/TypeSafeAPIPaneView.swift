@@ -8,6 +8,7 @@ import SwiftUI
 /// words so nobody mistakes this Start for the TurboSpark server's.
 @MainActor
 struct TypeSafeAPIPaneView: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
 
     private var isRunning: Bool { model.typeSafeServer != nil }
@@ -31,8 +32,8 @@ struct TypeSafeAPIPaneView: View {
     }
 
     private var bandColor: Color {
-        guard isRunning else { return .secondary }
-        return model.typeSafeError == nil ? .green : .orange
+        guard isRunning else { return theme.secondaryText }
+        return model.typeSafeError == nil ? theme.success : theme.warning
     }
 
     private var band: some View {
@@ -111,7 +112,7 @@ struct TypeSafeAPIPaneView: View {
 
             APIStatusLine(label: Text("Health", bundle: .module), value: APIStatusText.text(model.typeSafeHealth))
             if let error = model.typeSafeError {
-                Text(verbatim: error).foregroundStyle(.red).textSelection(.enabled)
+                Text(verbatim: error).foregroundStyle(.appDanger).textSelection(.enabled)
             }
         }
     }
@@ -143,7 +144,7 @@ struct TypeSafeAPIPaneView: View {
 
     private func modelRow(_ item: LocalModel) -> some View {
         HStack(spacing: 12) {
-            Circle().fill(item.loaded ? Color.green : Color.secondary).frame(width: 7, height: 7)
+            Circle().fill(item.loaded ? AnyShapeStyle(.appSuccess) : AnyShapeStyle(.appSecondary)).frame(width: 7, height: 7)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(verbatim: item.name).themedCode(.base).textSelection(.enabled)

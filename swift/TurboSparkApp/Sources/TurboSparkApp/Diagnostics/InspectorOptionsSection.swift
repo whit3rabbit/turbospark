@@ -244,7 +244,7 @@ extension InspectorView {
                 HStack {
                     Label { Text("Not applied to the loaded model", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
                         .themedFont(.small)
-                        .foregroundStyle(Color.orange)
+                        .foregroundStyle(.appWarning)
                     Spacer()
                     Button { model.reloadForSteering() } label: { Text("Reload", bundle: .module) }
                         .appAction(.secondary, size: .small)

@@ -42,16 +42,7 @@ extension ThemeModeConfig {
     }
 
     public var textContrastRatio: Double {
-        func luminance(_ hex: String) -> Double {
-            guard let n = UInt32(hex.dropFirst(), radix: 16) else { return 0 }
-            let channels = [Double((n >> 16) & 255), Double((n >> 8) & 255), Double(n & 255)].map {
-                let value = $0 / 255
-                return value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
-            }
-            return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722
-        }
-        let a = luminance(backgroundHex), b = luminance(foregroundHex)
-        return (max(a, b) + 0.05) / (min(a, b) + 0.05)
+        AppContrast.ratio(backgroundHex, foregroundHex)
     }
 }
 
