@@ -14,7 +14,7 @@ sibling, which shares the config). Everything here was read, not inferred.
 | 2. Kernels | Done: `short_conv_decode` / `short_conv_prefill`, CPU reference, parity tests |
 | 3. Decode flow | Done: `families/lfm3/`, sequential prefill. Greedy, templated, 600 tokens coherent on the MLX 4-bit and GGUF Q8_0 installs |
 | 4. Head and sampler | Partial: sampled at CLI defaults coherent for 600 tokens, a short question stops `EndOfTurn`. No sampled run on the Q8_0 install yet |
-| 5-6. Memory, quality | Not started |
+| 5-6. Memory, quality | Done for the MLX 4-bit install: `lfm3_memory_oracle` (peak 343-351 MiB, ceiling 420) and `lfm3_quality_gate` (perplexity 14.7455 and both digests, reproduced from two fresh processes). Not run on the Q8_0 install |
 | 7. CLI | Partial: probe, pull and run work for the MLX and GGUF repos. No catalog row |
 
 Not yet checked against another engine. Homebrew llama.cpp 0.7.0 refuses
@@ -35,6 +35,16 @@ On the M4 Max, `turbospark-check --temperature 0`, sequential prefill:
 MLX 4-bit decodes at about 205 tok/s on a 25-token prompt, GGUF Q8_0 at
 about 97 tok/s on a 42-token prompt. These are single smoke runs, not
 benchmark rows.
+
+The memory oracle's peak (343 to 351 MiB at 8,192 context) agrees with the
+static accounting below: about 100 MiB of KV and conv state plus a
+~250 MiB dense-install residual. It drives two of the three protocol cases:
+`medium-review` reasons past the 4,096-token budget while coherent and
+stops `endOfTurn` at 7,490 tokens when given room, so it is a verbosity
+limit, not a defect. `short-explanation` decode reads either about 180-198
+or about 68-71 tok/s across runs, on a quiet host, while `long-synthesis`
+holds at 164-172. The working hypothesis is the GPU's clock state on small
+per-token passes. The floor (50 tok/s) sits under the slow state.
 
 ## Two fixes outside the family that LFM3 needed
 
