@@ -87,7 +87,7 @@ struct SteeringVectorImportSheet: View {
                     } icon: {
                         Image(systemName: "xmark.octagon.fill")
                     }
-                    .foregroundStyle(Color.red)
+                    .foregroundStyle(.appDanger)
                 }
 
                 GroupBox {
@@ -179,6 +179,7 @@ struct SteeringVectorImportSheet: View {
             Text(title, bundle: .module)
         }
         .buttonStyle(.link)
+        .appLinkTint()
         .themedFont(.small)
         .accessibilityHint(Text(hint, bundle: .module))
     }
@@ -187,7 +188,7 @@ struct SteeringVectorImportSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             if let errorMessage {
                 Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(Color.red)
+                    .foregroundStyle(.appDanger)
                     .fixedSize(horizontal: false, vertical: true)
             } else if let validationError {
                 Label(validationError, systemImage: "info.circle")

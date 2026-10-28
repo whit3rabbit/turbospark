@@ -55,7 +55,7 @@ struct SubagentLiveCardView: View {
                                     Image(systemName: row.isError
                                             ? "xmark.circle.fill" : "checkmark.circle.fill")
                                         .themedFont(.tiny)
-                                        .foregroundStyle(row.isError ? AnyShapeStyle(AppAttention.color) : AnyShapeStyle(Color.green))
+                                        .foregroundStyle(row.isError ? AnyShapeStyle(AppAttention.color) : AnyShapeStyle(.appSuccess))
                                         .accessibilityHidden(true)
                                 }
                                 Text(row.name)
@@ -172,9 +172,9 @@ struct SubagentLiveCardView: View {
 
     private var statusColor: Color {
         switch state.status {
-        case "completed": return .green
-        case "killed", "cancelled": return AppAttention.color
-        case "error", "failed": return AppAttention.color
+        case "completed": return theme.success
+        case "killed", "cancelled": return theme.warning
+        case "error", "failed": return theme.danger
         default: return theme.metadataForeground
         }
     }

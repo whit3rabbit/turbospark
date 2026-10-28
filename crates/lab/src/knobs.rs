@@ -293,7 +293,22 @@ pub const KNOBS: &[Knob] = &[
         ],
         quotable: true,
         doc: "docs/ENV.md",
-        engagement: &[],
+        engagement: &[on("1", "routed_batch")],
+    },
+    Knob {
+        // The routed batch's read-ahead: the next sub-batch's pread under
+        // the GPU running the previous one. Slot choice only, so exact. The
+        // line prints only when a sub-batch actually read ahead, so an arm
+        // whose slots never held two unions (32 and below) reads as dirty.
+        name: "routed_batch_overlap",
+        env: "TURBOSPARK_ROUTED_BATCH_OVERLAP",
+        values: &["<unset>", "1"],
+        read_at: ReadAt::Open,
+        exactness: Exactness::BitExact,
+        families: &["qwen36"],
+        quotable: true,
+        doc: "docs/ENV.md",
+        engagement: &[on("1", "routed_batch_overlap")],
     },
     Knob {
         name: "routed_pipeline",
@@ -367,7 +382,37 @@ pub const KNOBS: &[Knob] = &[
         families: &["qwen35"],
         quotable: true,
         doc: "docs/SPEEDUP_PLAYBOOK.md",
+        // Missing programs turn the split off with one warning and prefill
+        // runs on Steel; without these lines that run reads as the ANE arm.
+        // `auto` is left out: it legitimately stays on Steel below M4.
+        engagement: &[on("split", "ane_prefill"), on("break", "ane_prefill_break")],
+    },
+    Knob {
+        // Where the split's Core ML programs live. A path, not a lane: it
+        // only matters beside `ane_prefill`.
+        name: "ane_prefill_dir",
+        env: "TURBOSPARK_ANE_PREFILL_DIR",
+        values: &["<unset>"],
+        read_at: ReadAt::Open,
+        exactness: Exactness::NotComparable,
+        families: &["qwen35"],
+        quotable: true,
+        doc: "docs/ENV.md",
         engagement: &[],
+    },
+    Knob {
+        // Lets the split run with a DFlash2 drafter open. Set beside
+        // `ane_prefill`, so the line it holds is the split's own: a drafter
+        // arm whose prefill stayed on Steel is dirty.
+        name: "ane_prefill_dflash",
+        env: "TURBOSPARK_ANE_PREFILL_DFLASH",
+        values: &["<unset>", "1"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::KlBounded,
+        families: &["qwen35"],
+        quotable: true,
+        doc: "docs/ENV.md",
+        engagement: &[on("1", "ane_prefill")],
     },
     Knob {
         name: "metal_kernel_warmup",
@@ -497,7 +542,7 @@ pub const KNOBS: &[Knob] = &[
         families: &["qwen35"],
         quotable: true,
         doc: "docs/MTP.md",
-        engagement: &[],
+        engagement: &[off("0", "mtp_chunked_prefill")],
     },
     Knob {
         // Submits the shared expert on its own command buffer ahead of the
@@ -609,6 +654,7 @@ pub const KNOBS: &[Knob] = &[
         engagement: &[],
     },
     Knob {
+        // Per-batch router capture; adds host work inside the timed loop.
         name: "router_batches",
         env: "TURBOSPARK_ROUTER_BATCHES",
         values: &["<unset>", "1"],
@@ -703,6 +749,42 @@ pub const KNOBS: &[Knob] = &[
         read_at: ReadAt::PerCall,
         exactness: Exactness::BitExact,
         families: &["qwen35"],
+        quotable: false,
+        doc: "docs/ENV.md",
+        engagement: &[],
+    },
+    Knob {
+        // Fails one prediction to exercise the Steel redo. A fault
+        // injection, never a timing arm.
+        name: "ane_prefill_fault",
+        env: "TURBOSPARK_ANE_PREFILL_FAULT",
+        values: &["<unset>", "0"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::NotComparable,
+        families: &["qwen35"],
+        quotable: false,
+        doc: "docs/ENV.md",
+        engagement: &[],
+    },
+    Knob {
+        // F_NOCACHE on expert reads: a cold-disk measurement condition.
+        name: "expert_nocache",
+        env: "TURBOSPARK_EXPERT_NOCACHE",
+        values: &["<unset>", "1"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::BitExact,
+        families: &[],
+        quotable: false,
+        doc: "docs/ENV.md",
+        engagement: &[],
+    },
+    Knob {
+        name: "router_batch_limit",
+        env: "TURBOSPARK_ROUTER_BATCH_LIMIT",
+        values: &["<unset>"],
+        read_at: ReadAt::Open,
+        exactness: Exactness::BitExact,
+        families: &[],
         quotable: false,
         doc: "docs/ENV.md",
         engagement: &[],

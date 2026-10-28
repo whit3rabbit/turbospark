@@ -228,7 +228,7 @@ struct AudioAPIPaneView: View {
                 }
             }
             if let errorMessage {
-                Text(verbatim: errorMessage).foregroundStyle(.red).textSelection(.enabled)
+                Text(verbatim: errorMessage).foregroundStyle(.appDanger).textSelection(.enabled)
             }
         }
     }

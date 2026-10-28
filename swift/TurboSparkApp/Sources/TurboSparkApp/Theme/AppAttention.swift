@@ -9,7 +9,8 @@ import SwiftUI
 /// the surface also shows a glyph and words (`AppAttentionNote`).
 enum AppAttention {
     /// The warning hue the steps strip already uses for "Needs attention".
-    static let color = Color.orange
+    /// A theme style rather than `Color.orange`, which is 2.1:1 on white.
+    static var color: AppThemeColor { .appWarning }
 
     /// How long the Reduce Motion fallback holds its static ring.
     static let holdSeconds: Double = 2.7

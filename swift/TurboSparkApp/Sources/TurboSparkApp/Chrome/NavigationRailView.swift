@@ -115,7 +115,7 @@ struct NavigationRailView: View {
         } label: {
             Image(systemName: isSelected ? section.selectedSystemImage : section.systemImage)
                 .font(theme.ui(.callout, weight: .medium))
-                .foregroundStyle(isSelected ? theme.accent : theme.secondaryText)
+                .foregroundStyle(isSelected ? theme.accentText : theme.secondaryText)
                 .frame(width: itemSize, height: itemSize)
                 .background(theme.accent.opacity(isSelected ? 0.14 : 0),
                             in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
@@ -138,7 +138,7 @@ struct NavigationRailView: View {
         } label: {
             Image(systemName: isSelected ? section.selectedSystemImage : section.systemImage)
                 .font(theme.ui(.callout, weight: .medium))
-                .foregroundStyle(isSelected ? theme.accent : theme.secondaryText)
+                .foregroundStyle(isSelected ? theme.accentText : theme.secondaryText)
                 .frame(width: itemSize, height: itemSize)
                 .background {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)

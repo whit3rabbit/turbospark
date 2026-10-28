@@ -2237,3 +2237,45 @@ arm read 70-118 s. The harness now also counts any non-shell process with
 default did: `qwen36_prefill_arm_probe` with the seam on (expected identical to
 the batched arm, by the identity above), the memory oracle, Ornith 35B, and a
 second chip. `TURBOSPARK_ROUTED_BATCH` unset keeps the per-token routed loop.
+
+## The routed batch reads ahead (2026-10-26)
+
+`TURBOSPARK_ROUTED_BATCH_OVERLAP=1` is the overlap named above, built in
+`encode_qwen_layer_routed_prefill` (`families/qwen/moe_batch.rs`):
+
+- The next sub-batch is planned with `try_plan_and_stream_union`
+  (`moe_prefill_pipeline.rs`), which may not evict the slots the in-flight
+  sub-batch reads. Hits on experts the two share stay where they are.
+- Its `pread` then runs while the GPU runs the in-flight sub-batch, and it
+  binds into a second argument buffer (`wide_blobs_alt`), so the bind cannot
+  rewrite what the GPU is reading.
+- Only then is the in-flight sub-batch waited out and the next one
+  committed. One routed buffer is still in flight when the layer returns.
+- When the misses do not fit the other slots, the sub-batch falls back to
+  wait-then-plan.
+
+The plan only moves which slot an expert lands in, and phase 2 reduces over
+ranks, so the output is byte-identical to the routed batch without it.
+`real_forward_qwen_moe_chunked.rs` holds prefill and the decode after it `==`
+at 16 and 64 slots on a 128-expert fixture. The 32-expert fixture never has
+two sub-batches per layer at a 32-expert cap. The phase counter
+`routed_read_aheads` proves the path ran, and a mutation that swapped which
+arm reads ahead failed it.
+
+**Where it pays.** A `tslab profile` on Qwen 3.6 (long-synthesis, M4 Max,
+AC) put the routed GPU busy time at about 1.65 ms of the 7.8 ms per token at
+auto slots. That is the ceiling, because the pread and the GPU work ran
+strictly in series. The union cap is 32, so 64 slots and up hold two unions
+and the read-ahead costs no sub-batch width. At 32 it would halve the cap and
+mostly falls back, and at 16 a sub-batch can hold every slot.
+
+| slots | routed batch | read-ahead | median, 3 clean pairs |
+| --- | ---: | ---: | ---: |
+| 64 streamed | 114.8-115.8 tok/s | 121.1-125.5 tok/s | +8.1% (CI +5.3% to +8.4%) |
+| auto (96) | 126.3-128.5 tok/s | 150.8-152.0 tok/s | +18.9% (CI +18.2% to +19.4%) |
+
+Every read-ahead run printed `[engaged] routed_batch_overlap`. Both arms'
+prefill-logits and decode digests were identical in every run at both slot
+counts, and peak memory did not move. The lab's qwen36 profile holds both
+findings with their ledger records. It rides `TURBOSPARK_ROUTED_BATCH`, so it
+cannot be a default before that seam's own gates above.

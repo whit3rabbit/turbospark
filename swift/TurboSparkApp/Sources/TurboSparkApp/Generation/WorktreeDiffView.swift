@@ -92,7 +92,7 @@ public struct WorktreeDiffView: View {
         HStack(spacing: 8) {
             Image(systemName: file.status.systemImage)
                 .themedFont(.small)
-                .foregroundStyle(file.status.color)
+                .foregroundStyle(file.status.color(in: theme))
 
             Text(file.fileName)
                 .font(theme.code(.base, weight: .semibold))
@@ -203,7 +203,7 @@ public struct WorktreeDiffView: View {
             case .addition:
                 return (theme.foreground, theme.accent.opacity(0.10))
             case .deletion:
-                return (theme.secondaryText, AppAttention.color.opacity(0.10))
+                return (theme.secondaryText, theme.warning.opacity(0.10))
             case .hunkHeader:
                 return (theme.accent, theme.accent.opacity(0.06))
             case .context:

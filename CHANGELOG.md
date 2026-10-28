@@ -14,6 +14,19 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- `make design-check` (`scripts/check-design.py`), also CI's `design` job and
+  an opt-in `.githooks/pre-commit`: scans the macOS app's sources against
+  `DesignRules.json` (shared with `DesignTokenRatchetTests`), checks the status
+  hexes against the design system, and runs `derive_tokens.py --check`. CI does
+  not run the app's `swift test` suite, so nothing else enforced these rules.
+  The ratchet now also counts system `NSColor`s on themed surfaces and color
+  literals, and fails on a baseline above the real count (two were 190 and 55
+  over). `make design-check-full` adds the contrast tests.
+- `ResolvedAppTheme.success`, `.warning`, `.danger` (and 14% tints) per mode and
+  under Increase Contrast, as `.appSuccess`, `.appWarning`, `.appDanger`,
+  `.appSuccessTint` and friends, plus `.appAccentText` for the accent as text.
+  `AppStatusColorTests` pins 4.5:1 (7:1 under Increase Contrast, 4.5:1 on the
+  14% wash) on every shipped preset.
 - `tslab hybrid-replay`: prices prompt lookup over the MTP chain on a chain
   capture, per policy and case, against the head alone (ledger kind
   `hybrid_replay`). `tslab chain-capture` now keeps the prompt and stream
@@ -185,8 +198,47 @@ when this file gets updated relative to the version bump and the tag.
   - Audio arms in `tslab profile` and `tslab ab` (`--audio-job`, MiniMax
     Music 3 and Whisper) with stage times, real-time factor, and output-digest
     gates (`bit_exact`, and `text_exact` for transcripts).
+- Lab sweeps for the ANE split and the MoE routed batch. `tslab sweep --gate`
+  runs the quality gate on each WIN at the sweep's declared exactness and
+  `--enforce-memory` holds each WIN to the memory allowance. A WIN that fails
+  either keeps its verdict, is recorded as `rejected`, and is never the
+  sweep's `best`. The ANE split prints `[engaged] ane_prefill` (or
+  `ane_prefill_break`) only for a micro-batch it completed, so an arm whose
+  programs were missing reads as dirty instead of as the ANE arm. The
+  routed batch and the MTP chunked driver print theirs too. New knob rows
+  for `TURBOSPARK_ANE_PREFILL_DIR`, `TURBOSPARK_ANE_PREFILL_FAULT`,
+  `TURBOSPARK_EXPERT_NOCACHE` and the router batch capture, an `ane`
+  coverage tag, the `ane_split` sweep in the qwen35 profile and
+  `routed_batch_slots` in qwen36. `run_sweep` is tested end to end against a
+  fake worker (`crates/lab/tests/sweep_orchestration.rs`).
+- `TURBOSPARK_ANE_PREFILL_DFLASH=1` lets the ANE+Steel prefill split run
+  with a DFlash2 drafter open (off by default, so the app's `.auto` setting
+  still keeps the split off while a drafter is open). The split's micro-batch
+  captures the drafter's aux taps, the capture widens from 64 to 2048 rows on
+  first use, and the speculative loop primes in 2048-token spans
+  (`SpeculativeProducer::drafter_prefill_chunk`) so the split's 512-row
+  minimum is reachable. The `ane_split_dflash` sweep measures it.
+- `TURBOSPARK_ROUTED_BATCH_OVERLAP=1` (opt-in, beside
+  `TURBOSPARK_ROUTED_BATCH=1`) reads ahead in the Qwen MoE batched routed
+  prefill: each sub-batch's experts are planned around the slots the
+  in-flight sub-batch reads and streamed while the GPU runs it, bound into a
+  second argument buffer. Byte-identical to the routed batch without it.
+  It pays only where the expert cache holds two 32-expert unions (64 slots
+  and up). `routed_read_aheads` in the phase counters proves it ran, and the
+  qwen36 profile gains `routed_overlap`.
 
 ### Changed
+- macOS app: status uses the theme's success, warning and danger colors
+  instead of system green, orange and red (light-mode system red was 3.6:1 on
+  white); `AppAttention.color` and destructive buttons follow. The composer
+  focus edge is the solid accent (it was 55%, 2.1:1 in light; it falls back to
+  the foreground color when the accent cannot reach 3:1). Selected rail and
+  sidebar glyphs and links use `.appAccentText` (Spark Blue light `#1A64CC`, the
+  accent was 4.3:1 on the composer). Categorical hues (model family, chat
+  label, ANSI, syntax) stay fixed.
+- `docs/design-system/tools/derive_tokens.py` mixes surfaces the way
+  `NSColor.blended` does (gamma 1.8, not a straight sRGB mix), so the contrast
+  table matches what the app draws; tokens and README regenerated.
 - Dense Qwen chunked prefill runs the 48-row GDN `in_proj_a`/`in_proj_b`
   projections (too narrow for a whole Steel tile) on the 8-row matrix-unit
   tile up to a batch of 96 and on a new Steel edge tile above it, instead of
@@ -268,6 +320,9 @@ when this file gets updated relative to the version bump and the tag.
   block before the answer. `turbospark-check` skips it under
   `TURBOSPARK_HIDE_RESOLVED_REQUEST=1`, which the front door sets; direct
   use is unchanged.
+- The lab's qwen35 `mtp_prefill_driver` and `dflash_prefill_driver` sweeps
+  opened no drafter, so both arms were plain prefill and the knob under test
+  changed nothing. Both arms now open the drafter.
 - Core ML model compilation and cache publication now serialize inside a
   process-wide critical section. Prevents simultaneous cold loads of the same
   package from racing on Core ML's shared temporary build directory. Warm loads

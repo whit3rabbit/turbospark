@@ -2,6 +2,7 @@ import SwiftUI
 
 /// Floating notification toast overlay presenting dismissible status, error, or confirmation banners.
 public struct ToastOverlayView: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     @ObservedObject private var appearanceManager = AppearanceManager.shared
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
@@ -45,7 +46,7 @@ public struct ToastOverlayView: View {
         HStack(spacing: 10) {
             Image(systemName: toast.style.systemImage)
                 .themedFont(fitting: iconSize, weight: .semibold)
-                .foregroundStyle(toast.style.tintColor)
+                .foregroundStyle(toast.style.tintColor(in: theme))
                 .accessibilityHidden(true)
 
             // The caller owns the message's localization.

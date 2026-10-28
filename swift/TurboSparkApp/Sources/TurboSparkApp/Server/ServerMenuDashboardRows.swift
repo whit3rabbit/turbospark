@@ -12,6 +12,7 @@ import SwiftUI
 /// relying on color (DESIGN.md, Color).
 @MainActor
 struct MenuBarStatusLine: View {
+    @Environment(\.appTheme) private var theme
     let phase: MenuBarServerPhase
     let address: String?
     let copyAddress: () -> Void
@@ -50,12 +51,12 @@ struct MenuBarStatusLine: View {
         }
     }
 
-    static func color(for level: MenuBarServerPhase.Level) -> Color {
+    static func color(for level: MenuBarServerPhase.Level, in theme: ResolvedAppTheme) -> Color {
         switch level {
-        case .off: return .secondary
-        case .ok: return .green
-        case .warning: return AppAttention.color
-        case .error: return .red
+        case .off: return theme.secondaryText
+        case .ok: return theme.success
+        case .warning: return theme.warning
+        case .error: return theme.danger
         }
     }
 
@@ -67,7 +68,7 @@ struct MenuBarStatusLine: View {
         default:
             Image(systemName: Self.symbol(for: phase))
                 .themedFont(.small)
-                .foregroundStyle(Self.color(for: phase.level))
+                .foregroundStyle(Self.color(for: phase.level, in: theme))
         }
     }
 

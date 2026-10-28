@@ -180,7 +180,7 @@ struct ImageModelManagerView: View {
             } else if model.imageModelPath == image.path {
                 Label { Text("Selected", bundle: .module) } icon: { Image(systemName: "checkmark.circle.fill") }
                     .themedFont(.tiny, weight: .medium)
-                    .foregroundStyle(.green)
+                    .foregroundStyle(.appSuccess)
             } else {
                 Button {
                     model.selectImageModel(image)

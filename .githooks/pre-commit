@@ -1,0 +1,14 @@
+#!/bin/sh
+# Opt in with: git config core.hooksPath .githooks
+#
+# Runs the design checks (DESIGN.md section 9) when a commit touches the macOS
+# app's sources or the design system. About a second, no build. CI does not run
+# the app's `swift test` suite, so this is the earliest place a system color on
+# a themed surface or a drifted status hex gets caught.
+if git diff --cached --name-only | grep -qE '^(swift/TurboSparkApp/(Sources|Tests)/|docs/design-system/|DESIGN\.md$)'; then
+  root=$(git rev-parse --show-toplevel) || exit 1
+  python3 "$root/scripts/check-design.py" || {
+    echo "design check failed: fix the sites above or lower the baseline in DesignRules.json (git commit --no-verify skips this)" >&2
+    exit 1
+  }
+fi

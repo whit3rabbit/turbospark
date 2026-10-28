@@ -21,8 +21,8 @@ struct HardwareScanCard: View {
                     .themedFont(.tiny, weight: .bold)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(Color.green.opacity(0.18), in: Capsule())
-                    .foregroundStyle(.green)
+                    .background(.appSuccessTint, in: Capsule())
+                    .foregroundStyle(.appSuccess)
                     .accessibilityHidden(true)
             }
 

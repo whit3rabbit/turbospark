@@ -90,7 +90,7 @@ public struct WorktreeFileListView: View {
             HStack(spacing: 6) {
                 Image(systemName: file.status.systemImage)
                     .themedFont(.tiny)
-                    .foregroundStyle(file.status.color)
+                    .foregroundStyle(file.status.color(in: theme))
                     .accessibilityHidden(true)
 
                 Text(file.fileName)
@@ -127,7 +127,7 @@ public struct WorktreeFileListView: View {
             if adds > 0 {
                 Text(verbatim: "+\(adds)")
                     .themedFont(.tiny, weight: .medium).monospacedDigit()
-                    .foregroundStyle(.green)
+                    .foregroundStyle(.appSuccess)
             }
             if dels > 0 {
                 Text(verbatim: "-\(dels)")
@@ -223,7 +223,7 @@ struct WorktreeTreeNodeRow: View {
             HStack(spacing: 6) {
                 Image(systemName: file.status.systemImage)
                     .themedFont(.tiny)
-                    .foregroundStyle(file.status.color)
+                    .foregroundStyle(file.status.color(in: theme))
                     .accessibilityHidden(true)
 
                 Text(file.fileName)
@@ -253,7 +253,7 @@ struct WorktreeTreeNodeRow: View {
             if adds > 0 {
                 Text(verbatim: "+\(adds)")
                     .themedFont(.tiny, weight: .medium).monospacedDigit()
-                    .foregroundStyle(.green)
+                    .foregroundStyle(.appSuccess)
             }
             if dels > 0 {
                 Text(verbatim: "-\(dels)")

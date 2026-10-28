@@ -113,7 +113,7 @@ struct ModelProbeSheet: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(err)
                             .themedFont(.small)
-                            .foregroundStyle(Color.red)
+                            .foregroundStyle(.appDanger)
 
                         if err.contains("401") || err.contains("403") || err.contains("gated") || err.localizedCaseInsensitiveContains("unauthorized") || err.localizedCaseInsensitiveContains("forbidden") {
                             HStack(spacing: 6) {
@@ -133,7 +133,7 @@ struct ModelProbeSheet: View {
                         }
                     }
                     .padding(10)
-                    .background(Color.red.opacity(theme.surfaceOpacity(0.1)), in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
+                    .background(.appDangerTint, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
                 }
                 if let report {
                     ProbeReportCardView(report: report)
@@ -314,7 +314,7 @@ struct ModelProbeSheet: View {
             if let reason = decision.reason, !repo.isEmpty {
                 Label(reason, systemImage: decision.isBlocked ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
                     .themedFont(.small)
-                    .foregroundStyle(decision.isBlocked ? AnyShapeStyle(Color.red) : AnyShapeStyle(AppAttention.color))
+                    .foregroundStyle(decision.isBlocked ? AnyShapeStyle(.appDanger) : AnyShapeStyle(AppAttention.color))
                     .fixedSize(horizontal: false, vertical: true)
             }
             // Where the model will be installed: only when there is a choice

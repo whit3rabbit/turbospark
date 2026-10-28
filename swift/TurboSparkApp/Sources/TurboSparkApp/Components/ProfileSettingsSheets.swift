@@ -121,7 +121,7 @@ struct ProfileSecuritySheet: View {
             if let error {
                 Text(error)
                     .themedFont(.small)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(.appDanger)
             }
             ProfileSheetParts.buttons(
                 confirm: actionTitle,
@@ -273,10 +273,12 @@ struct ProfileOpenExportSheet: View {
                     selection = OpenProfileExport.allCategoryIDs
                 } label: { Text("Select All", bundle: .module) }
                 .buttonStyle(.link)
+                .appLinkTint()
                 Button {
                     selection = []
                 } label: { Text("Clear All", bundle: .module) }
                 .buttonStyle(.link)
+                .appLinkTint()
                 Spacer()
             }
             Toggle(isOn: $plaintextConfirmed) {
@@ -291,7 +293,7 @@ struct ProfileOpenExportSheet: View {
             if let error {
                 Text(error)
                     .themedFont(.small)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(.appDanger)
             }
             ProfileSheetParts.buttons(
                 confirm: Text("Continue", bundle: .module),
