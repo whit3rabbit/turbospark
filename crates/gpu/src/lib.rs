@@ -156,6 +156,10 @@ mod rms_norm;
 #[cfg(target_os = "macos")]
 mod rope;
 #[cfg(target_os = "macos")]
+mod short_conv;
+#[cfg(target_os = "macos")]
+mod short_conv_state;
+#[cfg(target_os = "macos")]
 mod utility;
 #[cfg(target_os = "macos")]
 mod vision;
@@ -406,6 +410,10 @@ pub use rope::{
     encode_rope_proportional_neox, rope_mrope_interleaved, rope_neox_subdim,
     rope_proportional_neox, ROPE_POSITION_ROWS_MAX,
 };
+#[cfg(target_os = "macos")]
+pub use short_conv::{encode_short_conv_decode, encode_short_conv_prefill};
+#[cfg(target_os = "macos")]
+pub use short_conv_state::ShortConvStateManager;
 #[cfg(target_os = "macos")]
 pub use utility::{
     encode_bias_add, encode_gelu_erf_mul, encode_gelu_mul, encode_logit_softcap,
