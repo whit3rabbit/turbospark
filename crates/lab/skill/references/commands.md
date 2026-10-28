@@ -80,7 +80,7 @@ thresholds in its notes.
 
 | Bench | Measures |
 |---|---|
-| `int4_matmul` | Per-row GEMV, scalar GEMM, Steel tiles and the 8-row MMA tile over M, at every INT4 shape the install binds |
+| `int4_matmul` | Per-row GEMV, scalar GEMM, Steel tiles, the 8-row MMA tile and the small-N prefill route (`small_n`, only on shapes too narrow for a whole Steel tile, such as the 48-row GDN gates) over M, at every INT4 shape the install binds |
 | `int8_matmul` | INT8 GEMV against the batched GEMM (routers, shared gates, INT8 installs) |
 | `attn_decode` | Barrier against GQA-shared decode attention over context, per variant (full, sliding, sinks) |
 | `rows_attn` | Multi-row prefill attention against the per-row loop, with layout arms, one case per context |

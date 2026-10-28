@@ -140,6 +140,20 @@ loop's `run-experiment`. Text and audio installs of every family.
 - A runtime switch that outlives one experiment gets a knob row, and an
   `engagement` entry when its lane prints `foundation::engaged!`. A run
   whose stderr contradicts its arm's switches is ineligible.
+- A lane's bench arm calls the same function the runtime calls (the gpu
+  crate's routing, e.g. `gpu::encode_dequant_int4_gemm_small_n`), never a
+  copy of its thresholds, so the bench prices what ships. A kernel bench's
+  `exactness` hint is read off the bench's synthetic weights: it can say
+  bit-equal where the real install differs, so the lane's class comes from
+  the install's KL or digest gate, not from the hint.
+- Price a runtime route twice before quoting it: the kernel-priced part
+  (per-projection bench times by count) and the observed model delta. When
+  the observed delta is larger than the priced part, say so and attribute the
+  rest with a per-op-class profile before it goes in a doc or a profile
+  finding. A prefill A/B runs both arms in one binary through the knob's
+  kill switch, alternates direction, discards a warmup round, and counts only
+  runs the overlap watcher left clean: a quiet host at the start does not
+  keep another session from starting a build mid-run.
 - A workflow step runs a command through `cli::dispatch` and nothing
   else: no logic in plans that a command typed alone would not do.
 - Joules in a record are IOReport's model of the whole machine

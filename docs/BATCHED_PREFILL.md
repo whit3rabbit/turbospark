@@ -1841,7 +1841,7 @@ at ~3.5 TFLOPS at any width, and Steel's 32-row tile reaches 2.5-2.85x it at 32
 rows, 2.7-3.0x at 64 and 2.9-3.1x at 128 (~10-11 TFLOPS). At 16 rows Steel's
 tile is half empty and loses on the 1024-row K/V projections, so
 `encode_gemm_rows` takes Steel only from 32 rows up and the 48-row GDN `a`/`b`
-projections (not a whole tile) stay scalar.
+projections (not a whole tile) stayed scalar until the small-N route below.
 
 One measurement nearly sent this the wrong way. The first cold run of a
 38-token prompt read 15.0 s against 2.0 s for the per-token arm, and it looked
@@ -1851,6 +1851,132 @@ being re-read after another session's 15 GB job pushed them out, and
 compilation is paid once per machine. The threshold was taken back out. Time
 short prompts with a warm page cache, and check `vm.swapusage` before trusting
 a cold number.
+
+## The 48-row GDN a/b projections leave the scalar slices (2026-10-27)
+
+Qwen3.8's `linear_attn.in_proj_a` and `in_proj_b` are 48 rows x 5120, one pair
+in each of 48 GDN layers. 48 is not a whole 32-row Steel tile, so
+`steel_supports` refused them and `encode_gemm_rows` ran them on the scalar
+GEMM in 16-row slices. A side session priced that at 0.24 ms per matrix per
+64-row micro-batch, about 1.07 s of a 20.6 s prefill GPU total on a 2,940-token
+prompt, and the same at every micro-batch width (the work is launch and
+serial-latency bound, not weight or FLOP bound: 0.24 MB of weights).
+
+**What the resident layout allows.** Each tensor is contiguous as weights, then
+scales, then biases (layer 0: a's three planes, then b's), but a's weights and
+b's weights are not adjacent, and neither is next to `in_proj_z`. A fused
+`[a; b]` or `[z; a; b]` Steel GEMM therefore needs either a runtime copy at
+open (about 12 MB over 48 layers) or a repack change. Neither was built. The
+repack-time concatenation (an install-format change) was not needed and was
+not asked for.
+
+**What shipped.** `encode_gemm_rows` gains a small-N route for an INT4 matrix
+with 64 or fewer output rows that is not a whole Steel tile
+(`gpu::small_n_supports`), reached only when the scratch has `steel_gemm` set.
+The routing lives in the gpu crate (`gpu::encode_dequant_int4_gemm_small_n`,
+with `SMALL_N_MAX_ROWS` and `SMALL_N_MMA8_MAX_BATCH`) so the runtime and the
+lab bench call the same function:
+
+- Up to 96 rows of batch: the existing 8-row matrix-unit tile
+  (`encode_dequant_int4_mma8_resident`, its K split is already tuned for 48
+  rows) in calls of 8 rows.
+- Above 96 rows: one dispatch of a new Steel EDGE entry,
+  `dequant_int4_steel_32_32_32_edge` (`aligned_N = false`). The vendored
+  `qmm_t_impl` already had the unaligned path (`load_safe` on the weights, a
+  masked store); only the entry point was missing. It is added to
+  `scripts/vendor_mlx_steel_qmm.py` and applied by hand to the generated
+  shader with the identical text (the script fetches from GitHub, so it was not
+  rerun). `steel_supports` is unchanged, because the ANE split and the lab
+  bench read it as "aligned"; the new `steel_edge_supports` and
+  `encode_dequant_int4_gemm_steel_edge` are separate.
+- `TURBOSPARK_PREFILL_SMALL_N=0` restores the scalar slices. Read once.
+  `[engaged] prefill_small_n` proves it ran (it prints under
+  `TURBOSPARK_ENGAGEMENT=1`). Decode and speculative verify scratch keep
+  `steel_gemm = false` and never reach it.
+- It is a registered lane (`prefill_small_n` in `crates/lab/src/knobs.rs`,
+  KL-bounded): `tslab kernel --bench int4_matmul` has a `small_n` arm, timed
+  at every M on the shapes the route takes, against `scalar_gemm`. On this
+  install's 48 x 5120 it reads c(64) of 0.26 against 1.08 for the scalar
+  slices (c is the per-row cost in units of a one-row GEMV), the same ratio as
+  the standalone bench below. The bench's `exactness` hint reads "bit-equal"
+  for `small_n` on its synthetic weights; on the real install the route does
+  change bits (the KL probe differs between route on and off at the same
+  prompt), so the class stays KL-bounded and the hint is not evidence about
+  the install.
+
+**Kernel timing, 48x5120, M4 Max, AC, 64 distinct weight copies**
+(`crates/gpu/tests/steel_edge_n48_bench.rs`, microseconds of GPU time per
+projection, median of 7 interleaved rounds):
+
+| batch | scalar slices | Steel edge | 8-row tile |
+| ---: | ---: | ---: | ---: |
+| 32 | 114.5 | 98.4 | 28.1 |
+| 64 | 221.7 | 99.0 | 52.0 |
+| 128 | 441.3 | 100.1 | 107.5 |
+| 256 | 878.3 | 100.1 | 210.7 |
+| 512 | 1751.5 | 100.1 | 425.1 |
+
+The Steel edge tile is flat at ~99 us at any width: the grid is 2 x 2
+threadgroups on a 40-core GPU, each running the whole K = 5120 loop serially,
+so it is latency bound and wider batches are free. The 8-row tile costs ~6.5 us
+per 8 rows and wins until about 96 rows. Hence the split at 96. The Steel edge
+tile alone would have been the simpler change, but it loses to the 8-row tile
+at the default 64-row micro-batch (99 us against 52 us).
+
+**Model run.** `qwen38-27b.gturbo`, 2,940-token long-synthesis messages prompt,
+chunk 128 (64-row micro-batches, 46 of them), greedy, 96 new tokens, AC,
+interleaved arms in ONE binary (`TURBOSPARK_PREFILL_SMALL_N=0` against
+default), one warmup round discarded, summed command-buffer GPU time over the
+micro-batches:
+
+| arm | runs, ms | median |
+| --- | --- | ---: |
+| base (`SMALL_N=0`) | 17,584, 18,452, 18,174, 18,006 | 18,090 |
+| small-N (default) | 16,903, 16,803, 16,887, 17,032 | 16,895 |
+
+-1,195 ms, -6.6% of the micro-batches' GPU time. Greedy output was
+md5-identical (86e4b4b0) across all nine runs of both arms. The driver's
+overlap watcher flagged other sessions' builds during six of the nine runs
+(2 of 4 base and 3 of 4 small-N runs were clean; the earlier GPU sums sit with
+the clean ones), and swap was at 18 of 19 GB, so read this as a size and a
+direction, not a frozen row. It is not in `BENCHMARKS.md`.
+
+`qwen38_prefill_arm_probe` (6 prompts, 64 to 3,000 tokens, vs the per-token
+reference): mean KL 1.73e-5 nats with the route on and 1.76e-5 with it off
+(same binary), against the 1e-3 bound; top-1 agreement 6/6, top-5 5/5 at every
+length; worst single length 4.7e-5 in both. The non-default per-row-attention
+arm read 2.65e-5 on and 1.42e-5 off, dominated by the 500-token case (1.19e-4
+against 3.9e-5). Still inside the bound, and one position at one length, but it
+was not repeated.
+
+Parity: the edge entry is held to the FP64 reference bound at 48, 40 and 17
+rows, writes nothing past the output, and is bit-identical to the aligned
+entry on a whole-tile matrix (`dequant_int4_steel_parity.rs`).
+
+**Read with care.**
+
+- The measured saving (1.2 s) is larger than the standalone numbers predict
+  (about 0.75 s: 96 matrices x 46 micro-batches x 170 us) and larger than the
+  1.07 s the whole a/b cost was priced at. Some of it is not the kernel swap
+  itself: fewer or different dispatches may overlap better in the real pass, or
+  it is host noise (base runs alone spread 0.6 s). A per-op-class profile of
+  the two arms would attribute it. Until then quote -0.75 s as the
+  kernel-priced part and -1.2 s as the observed total.
+- The 96-row threshold comes from the isolated bench, not from the model.
+  Micro-batches wider than 96 only occur with the opt-in ANE split (2048 rows),
+  which has not been run with this route.
+- The route changes a/b numerics on the Steel scratch only (the 8-row tile and
+  the edge tile both differ from the scalar kernel's bits). a feeds the GDN
+  decay gate and b the beta gate, so they feed the recurrence. The KL probe
+  above is the bound; it did not separate a/b from the rest.
+- Not run: clippy, the runtime unit tests, `make swift-lib`/`make swift-test`
+  (the gpu crate's public exports grew), and the sampled-output check.
+
+**What is left on the table.** After the swap a/b cost about 52 us per matrix
+per micro-batch, roughly 0.25 s of the prefill (about 1.5%). A fused a+b
+dispatch (two weight sets in one grid) or a split-K small-N kernel could
+recover part of that; the repack-time concatenation cannot do better than a
+fused dispatch and changes the install format, so it is not worth asking for.
 
 ## The qwen MoE batched arm, and why its bound is not the dense one (2026-10-15)
 
