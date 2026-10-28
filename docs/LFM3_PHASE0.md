@@ -14,21 +14,20 @@ sibling, which shares the config). Everything here was read, not inferred.
 | 2. Kernels | Done: `short_conv_decode` / `short_conv_prefill`, CPU reference, parity tests |
 | 3. Decode flow | Done: `families/lfm3/`, sequential prefill. Greedy, templated, 600 tokens coherent on the MLX 4-bit and GGUF Q8_0 installs |
 | 4. Head and sampler | Partial: sampled at CLI defaults coherent for 600 tokens, a short question stops `EndOfTurn`. No sampled run on the Q8_0 install yet |
-| 5-6. Memory, quality | Done for the MLX 4-bit install: `lfm3_memory_oracle` (peak 343-351 MiB, ceiling 420) and `lfm3_quality_gate` (perplexity 14.7455 and both digests, reproduced from two fresh processes). Not run on the Q8_0 install |
-| 7. CLI | Done: catalog rows `lfm3-1.7b` (MLX 4-bit, verified) and `lfm3-1.7b-q8` (GGUF Q8_0, runs), both pinned, guard byte figures pasted back |
+| 5-6. Memory, quality | Done for the MLX 4-bit install: `lfm3_memory_oracle` (peak 343-351 MiB, ceiling 420) and `lfm3_quality_gate` (perplexity 14.7455 and both digests, reproduced from two fresh processes). The Q8_0 install's own pair is frozen too (`lfm3_q8_memory_oracle`, `lfm3_q8_quality_gate`) |
+| 7. CLI | Done: catalog rows `lfm3-1.7b` (MLX 4-bit, verified) and `lfm3-1.7b-q8` (GGUF Q8_0, verified), both pinned, guard byte figures pasted back |
 | 8. Docs | Done: BENCHMARKS.md, MODELS.md, README, DEVIATIONS.md, CHANGELOG |
 
-Not yet checked against another engine. Homebrew llama.cpp 0.7.0 refuses
-`lfm3` as an unknown architecture, and on 2026-10-27 a Homebrew HEAD build
-failed because llama.cpp master itself did not compile (`ggml_top_k_mask`
-undeclared in `qwen4exp.cpp` and `glm5-next.cpp`). Release tags from
-`b11938` postdate the `lfm3` commit and are the next thing to try. The
-inputs are ready: a raw prompt whose tokens match ours exactly, and 200
-greedy tokens from our Q8_0 install.
+Checked against llama.cpp on the same bytes (2026-10-28, Homebrew llama.cpp
+0.8.0, build 11960): the Q8_0 GGUF, the same 42 prompt ids, greedy with the
+GGUF's repeat penalty turned off on llama.cpp's side. 600 greedy tokens on a
+TCP prompt are identical, and a 226-token answer to a second prompt is
+identical and ends at the same end of turn. There is no external reference
+for the MLX bytes, since mlx-lm has no `lfm3` model.
 
-The 4-bit MLX install's greedy answer to a TCP prompt is fluent and
-factually wrong in places, and the Q8_0 install's is better. Whether that
-is quantization or a port error is that comparison's question.
+The 4-bit MLX install's greedy answer to the TCP prompt is fluent and
+factually wrong in places, and the Q8_0 install's is better. Since the Q8_0
+path matches llama.cpp, that gap is the 4-bit artifact, not the port.
 
 ## Measured so far
 

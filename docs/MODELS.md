@@ -32,11 +32,11 @@ turbospark-model pull --repo "mlx-community/Qwen3-VL-4B-Instruct-4bit@2fd8dacbdb
 
 LFM3 is represented by the `lfm3` family: LiquidAI's dense 1.7B hybrid of
 gated short-convolution, full-attention and sliding-window layers. Two
-artifacts are cataloged. The 4-bit MLX conversion carries the frozen memory
-and quality gates (`verified`). The Q8_0 GGUF runs and has no frozen row
-yet (`runs`). Its tokenizer comes from the HF checkpoint. Prefill is
-sequential, and neither artifact has been compared against another engine
-yet ([`LFM3_PHASE0.md`](LFM3_PHASE0.md)).
+artifacts are cataloged and both are `verified`: the 4-bit MLX conversion
+and the Q8_0 GGUF each carry frozen memory and quality gates. The Q8_0
+file's greedy output matches llama.cpp on the same bytes token for token.
+Its tokenizer comes from the HF checkpoint. Prefill is sequential
+([`LFM3_PHASE0.md`](LFM3_PHASE0.md)).
 
 ```sh
 turbospark-model pull lfm3-1.7b

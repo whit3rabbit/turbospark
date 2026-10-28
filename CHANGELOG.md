@@ -17,8 +17,9 @@ when this file gets updated relative to the version bump and the tag.
 - The `lfm3` family (LiquidAI LFM3-1.7B): a dense hybrid of gated
   short-convolution, full-attention and sliding-window layers, with MLX and
   GGUF intake, its own decode flow, and a port-local short-conv kernel pair.
-  Catalog rows `lfm3-1.7b` (MLX 4-bit, verified: memory and quality gates
-  frozen) and `lfm3-1.7b-q8` (GGUF Q8_0, runs). Prefill is sequential.
+  Catalog rows `lfm3-1.7b` (MLX 4-bit) and `lfm3-1.7b-q8` (GGUF Q8_0), both
+  verified with frozen memory and quality gates. The Q8_0 file's greedy
+  output matches llama.cpp on the same bytes. Prefill is sequential.
   See `docs/LFM3_PHASE0.md`.
 - `tslab hybrid-replay`: prices prompt lookup over the MTP chain on a chain
   capture, per policy and case, against the head alone (ledger kind

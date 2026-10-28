@@ -227,6 +227,7 @@ run-to-run variation.
 | Qwen3.8-27B, MLX INT4, with vision tower | 15 GB | 4,096 | 854.8 - 872.5 MiB | 950 | 12.355 - 15.997 | no, dense + a 2-slot vision tower |
 | Mistral 7B, Q4_K_M | 4.1 GB | 8,192 | 1,201 - 1,203 MiB | 1,300 | 16.3 - 30.4 | no, dense |
 | LFM3-1.7B, MLX INT4 (`lfm3`) | 0.97 GB | 8,192 | 342 - 351 MiB | 420 | 67.8 - 198.1 | no, dense hybrid |
+| LFM3-1.7B, Q8_0 (`lfm3`) | 1.8 GB | 8,192 | 344 - 350 MiB | 420 | 84.1 - 94.7 | no, dense hybrid |
 | **Ternary-Bonsai-27B, MLX 2-bit** | 7.6 GB | 4,096 | **657.8 - 661.6 MiB** | 750 | 12.5 - 13.9 | **no, dense** |
 | Bonsai-27B, MLX 1-bit | 3.9 GB | -- | not measured | -- | ~18.3 | no, dense |
 | Qwen3.8-Flash-Next REAP-288, MLX INT4 (`qwen4_exp`) | 68 GB | **2,048** | 2,503 - 2,509 MiB | 3,000 | 6.870 - 7.530 | yes, 288 experts (top-10) |
@@ -2587,6 +2588,32 @@ TURBOSPARK_LFM3_INSTALL_DIR=~/models/lfm3-1.7b-mlx-4bit \
 - **Two quality runs in separate processes agreed on every digit and hex
   character.** The perplexity does not rank against other families'
   numbers: each row is a sentinel against its own past.
-- **No external reference yet.** The Q8_0 GGUF is ready for llama.cpp on
-  the same bytes, but no released Homebrew llama.cpp carries `lfm3`, and
-  master did not compile on 2026-10-27.
+
+### LFM3-1.7B Q8_0, and llama.cpp on the same bytes
+
+Install `LiquidAI/LFM3-1.7B-GGUF` @ `b3f2ae5d`, `LFM3-1.7B-Q8_0.gguf`,
+tokenizer from `LiquidAI/LFM3-1.7B` @ `40ebe0aa`. Same machine and settings,
+2026-10-28.
+
+| Gate | Reading |
+| --- | --- |
+| Reference perplexity | 15.8615 |
+| Greedy digest | `eb350865` |
+| Sampled digest | `6e5a9eb1` |
+| Session peak (3 runs) | 344 - 350 MiB, ceiling 420 |
+| Decode, short-explanation | 94.7, 91.0, 92.6 tok/s |
+| Decode, long-synthesis | 84.1, 84.4, 85.7 tok/s |
+
+- **llama.cpp agrees token for token.** Homebrew llama.cpp 0.8.0 (build
+  11960) ran the same file on the same 42 prompt ids (checked id by id with
+  `--verbose-prompt`), greedy. 600 tokens on the TCP prompt are identical,
+  and a 226-token answer to a second prompt is identical and ends at the
+  same end of turn. The GGUF declares `general.sampling.penalty_repeat 1.1`,
+  which llama.cpp applies by default even at temperature 0 and which moves
+  the argmax: the comparison needs `--repeat-penalty 1.0`.
+- **The peak equals the MLX row's.** Twice the weight bytes cost nothing in
+  `phys_footprint`, which is AGENTS.md Gotcha 40 again.
+- **Its perplexity is higher than the 4-bit row's**, 15.86 against 14.75,
+  on the same reference answer. The two files come from different
+  converters. The gap is recorded, not explained.
+- **No external reference for the MLX bytes.** mlx-lm has no `lfm3` model.

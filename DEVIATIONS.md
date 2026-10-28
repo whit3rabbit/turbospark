@@ -2347,7 +2347,7 @@ LiquidAI's LFM3-1.7B runs on its own flow (`crates/runtime/src/families/lfm3/`):
 layers with per-head q/k norms, a headwise sigmoid output gate, sandwich
 norms and a tied head. The MLX 4-bit install carries frozen quality
 (perplexity 14.7455) and memory (351 MiB at 8,192) gates. The catalog rows
-are `lfm3-1.7b` (`verified`) and `lfm3-1.7b-q8` (`runs`).
+are `lfm3-1.7b` and `lfm3-1.7b-q8`, both `verified`.
 
 - **The short convolution is a port-local kernel.** `shaders/short_conv.metal`
   has no Swift original, and `turbospark_compute::short_conv_reference` is
@@ -2371,7 +2371,7 @@ are `lfm3-1.7b` (`verified`) and `lfm3-1.7b-q8` (`runs`).
   the assistant span with it for training masks. minijinja rejects it, so
   the renderer maps it to `{% if true %}` with the same whitespace control.
   The rendered bytes are unchanged.
-- **Nothing external has checked the numerics.** The coherent greedy and
-  sampled smokes on two installs and the frozen gates are the evidence. The
-  Q8_0 GGUF against llama.cpp on the same bytes is the owed cross-engine
-  check.
+- **llama.cpp agrees on the Q8_0 bytes.** 826 greedy tokens over two
+  prompts are identical to llama.cpp build 11960 on the same file and the
+  same prompt ids. The MLX 4-bit bytes have no external reference, since
+  mlx-lm has no `lfm3` model.
