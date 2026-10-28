@@ -30,6 +30,7 @@ pub use classify::{
     classify_for_family, classify_gemma4, Gemma4Bucket, DFLASH_PREFIX, MTP_PREFIX,
     VISION_INSTALL_PREFIX, VISION_PREFIX, VISION_SOURCE_PREFIXES,
 };
+pub(crate) use config::parse_quantization_admitting;
 pub use config::{
     is_supported_affine_shape, parse_gemma4_config, parse_gemma4_quantization, Gemma4Error,
     Gemma4Quant, QuantMode, AFFINE_1BIT_GROUP_SIZE, AFFINE_2BIT_GROUP_SIZE, AFFINE_GROUP_SIZE,

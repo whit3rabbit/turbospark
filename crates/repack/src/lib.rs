@@ -64,7 +64,7 @@ pub use fish_drama3::{
     write_drama3_side_safetensors, write_fish_drama3_install_streamed, DRAMA3_MODEL_TYPE,
     DRAMA3_SIDE_FILE, DRAMA3_SIDE_PREFIX, DRAMA3_TRUNK_DIR,
 };
-pub use flint_config::{parse_flint_config, parse_flint_quantization};
+pub use flint_config::{flint_admits_affine_shape, parse_flint_config, parse_flint_quantization};
 pub use flint_rebalance::{
     rebalance_install_in_place, recorded_shift, RebalanceStats, SwigluRole, FLINT_SWIGLU_SHIFT,
 };
@@ -139,7 +139,10 @@ pub use safetensors_header::{
     DEFAULT_MAX_HEADER_BYTES,
 };
 pub use synthetic_deepseek2::{build_synthetic_deepseek2_install, tiny_deepseek2_arch};
-pub use synthetic_flint::{build_synthetic_flint_install, tiny_flint_arch};
+pub use synthetic_flint::{
+    build_synthetic_flint_install, build_synthetic_flint_install_with, tiny_flint_arch,
+    SyntheticFlintRouted,
+};
 pub use synthetic_gguf::{
     build_synthetic_gemma4_gguf, build_synthetic_gpt_oss_gguf, build_synthetic_qwen2_gguf,
     GgufBuilder, GgufFileAndRanges, QuantMix, SyntheticGgufShape, SyntheticGptOssShape,

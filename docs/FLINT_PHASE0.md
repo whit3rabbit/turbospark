@@ -1,8 +1,10 @@
 # Flint Phase 0
 
-Facts for the `flint` family (Recursive Flint), read off the published
-`RecursiveSI/flint-int4` artifact at revision
-`3b93f9053b530488405ae9fca51d4900d6ce21f0` on 2026-10-21, and cross-checked
+Facts for the `flint` family (Recursive Flint). The default build is now
+`mlx-community/flint-mixed-3-4bit` (its own section below Architecture); the
+rest was read off the published `RecursiveSI/flint-int4` artifact at
+revision `3b93f9053b530488405ae9fca51d4900d6ce21f0` on 2026-10-21, and
+cross-checked
 against the open llama.cpp port (ggml-org/llama.cpp#30928, unmerged at the
 time of writing). The checkpoint ships no modeling code, so neither source is
 a vendor reference. Treat the llama.cpp port as an independent second reading,
@@ -28,6 +30,30 @@ not as proof. Read `docs/NEW_MODEL.md` for the bring-up order.
   INT8, `lm_head` INT4 and untied. Packed weights are `U8`, not the usual
   `U32`. The router `mlp.gate.weight` is an unquantized BF16 `[256, 2048]`.
 - No MTP or nextn tensor in any shard.
+
+## The default build: `mlx-community/flint-mixed-3-4bit`
+
+Read off revision `b1c305855ae7c3464813815be4dbd544b22c36aa` on 2026-10-25:
+four shards plus an index, 17,837,530,688 tensor bytes. Same architecture
+and config as `flint-int4`, with these differences:
+
+- Packed weights are MLX's usual `U32`, not `U8`.
+- `config.json -> quantization` carries per-tensor entries in the SOURCE
+  namespace: `model.embed_tokens` at 8 bits and all 141
+  `model.layers.{2..48}.mlp.switch_mlp.{gate,up,down}_proj` at 3 bits, group
+  64, under a 4-bit default. `mlx_export` says the same
+  (`routed_expert_bits: 3`, `embedding_bits: 8`).
+- MLX 3-bit packing: a little-endian bitstream, element `j` of a row at bits
+  `[3j, 3j+3)`; 8 codes in 3 bytes, 24 bytes per group. Confirmed against
+  `mx.quantize` (MLX 0.32.4), and pinned by `mlx_pack_matches_mlx` in
+  `crates/gpu/tests/moe_decode_int3.rs`.
+- The router `mlp.gate.weight` is still BF16 `[256, 2048]`; intake still
+  force-quantizes it to INT8.
+- The sidecars (tokenizer, template, generation config) are byte-identical
+  to `flint-int4`'s.
+
+Expert blobs are 1,376,256 bytes (1,769,472 at INT4); the install is
+17,850,301,582 bytes. Status and measurements: `FLINT.md`.
 
 ## Decisions
 
@@ -117,8 +143,8 @@ migrated in place, streamed experts:
   streamed MoE is about 1.08x at best (`docs/SPECULATIVE_DECODING.md`).
 - GGUF intake. Q4_1 is not an executable block type here.
 - Tool-call parsing for the GLM-style `<tool_call>` format.
-- Catalog row, memory oracle and quality gate. None can exist before a real
-  install has been streamed and run.
+- Memory oracle and quality gate. The catalog rows exist (`flint` for the
+  mixed build, `flint-int4`).
 
 ## Open items
 

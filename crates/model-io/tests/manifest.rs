@@ -465,6 +465,43 @@ fn the_cross_products_of_the_two_bit_shape_are_refused() {
     }
 }
 
+/// `mlx-community/flint-mixed-3-4bit`'s widths: an 8-bit embedding, 4-bit
+/// attention and shared expert, the INT8 router the writer forces, and 3-bit
+/// routed experts, all BF16 at group 64.
+const FLINT_MIXED_BITS: [i64; 5] = [8, 4, 8, 4, 3];
+
+#[test]
+fn three_bit_routed_experts_are_accepted() {
+    let dir = tempfile_dir();
+    write_manifest(
+        dir.path(),
+        &manifest_with_quant(FLINT_MIXED_BITS, "bf16", 64),
+    );
+    let manifest = load_manifest(dir.path(), &toy_arch(), 4 * 1024 * 1024).unwrap();
+    let quant = manifest.quant.expect("the quant block decoded");
+    assert_eq!(quant.routed_expert.weight_bits, 3);
+}
+
+/// 3-bit has a routed kernel pair and nothing else: no resident GEMV, no
+/// embedding lookup. So it is refused on every other slot, and each case
+/// must be refused AT that slot, not at an earlier one.
+#[test]
+fn three_bits_anywhere_but_the_routed_slot_is_refused() {
+    let cases = [
+        ([3, 4, 8, 4, 3], "embedding"),
+        ([8, 3, 8, 4, 3], "attention"),
+        ([8, 4, 3, 4, 3], "router"),
+        ([8, 4, 8, 3, 3], "sharedExpert"),
+    ];
+    for (bits, slot) in cases {
+        let detail = quant_error(bits, "bf16", 64);
+        assert!(
+            detail.contains(&format!("unsupported quantization for {slot}")),
+            "3-bit {slot}: {detail}"
+        );
+    }
+}
+
 /// The bit width, the group size and the companion dtype are ONE shape, not
 /// three independent axes.
 ///

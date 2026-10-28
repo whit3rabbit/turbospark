@@ -1,15 +1,93 @@
 # Flint: status and what is left
 
-Recursive Flint (`RecursiveSI/flint-int4`, MLX affine INT4 group 64) runs
-here: 49 layers, 256 routed experts top-6 streamed through the slot cache,
-an ungated shared expert, a sigmoid router, 14 NoPE full-attention layers and
-35 sliding ones (window 513) with learned sinks. This page is the handoff.
+Recursive Flint runs here: 49 layers, 256 routed experts top-6 streamed
+through the slot cache, an ungated shared expert, a sigmoid router, 14 NoPE
+full-attention layers and 35 sliding ones (window 513) with learned sinks.
+This page is the handoff.
 Facts, decisions, and measurements live in
 [FLINT_PHASE0.md](FLINT_PHASE0.md). Read that first. Nothing here is a
 benchmark: every number below is from one machine (M4 Max, 36 GB) that was not
 always quiet, and none is a frozen row.
 
+## Which build
+
+The default Flint target, and the one to test and build against, is the
+community build `mlx-community/flint-mixed-3-4bit` at revision
+`b1c305855ae7c3464813815be4dbd544b22c36aa` (catalog alias `flint`, 17.8 GB,
+fits 24 to 32 GB Macs). It is Recursive's trained INT4 with only the routed
+experts requantized to MLX 3-bit (group 64, BF16 scales and biases); the
+embedding stays INT8, everything else keeps the trained INT4 codes, and the
+router is BF16 at source. Recursive's own `RecursiveSI/flint-int4@3b93f905`
+(alias `flint-int4`, 22.6 GB) still installs and runs on the same flow.
+
+What the 3-bit experts needed, all in place:
+
+- a routed INT3 decode pair, `moe_phase1_gate_up_act_int3` and
+  `moe_phase2_down_reduce_int3` in `crates/gpu/src/shaders/moe.metal`. MLX
+  packs 3-bit codes as a little-endian bitstream (element `j` at bits
+  `[3j, 3j+3)`, 24 bytes per group); the kernels read bytes and repeat the
+  INT4 pair's accumulation term by term;
+- `RoutedBlobLayout::AffineInt3`, resolved per phase from the blob's
+  weight-to-scale byte ratio (`4 * bits` at group 64 BF16). Any other ratio is
+  refused at open; before this a 2-bit affine blob was read as INT4;
+- intake: `parse_flint_quantization` renames MLX per-tensor quant keys onto
+  the canonical namespace and admits 3-bit on `switch_mlp` tensors only, the
+  expert writer cross-checks packed words against the architecture, the probe
+  parses Flint through the same reader, and `validate_quant` admits 3 on
+  `routedExpert` only. The 2^6 rebalance applies unchanged (it moves scales
+  and biases, not codes).
+
+Tests: `crates/gpu/tests/moe_decode_int3.rs` (CPU dequant reference at
+Flint's shape and on the tail path, 7 shader mutations killed) and
+`three_bit_routed_experts_decode_bit_identically_to_the_same_codes_at_four_bits`
+in `crates/runtime/tests/real_forward_flint.rs` (a synthetic install whose
+3-bit experts must decode bit for bit like the same codes at 4 bits; intake,
+width detection and dispatch are on its path).
+
+## The mixed build against mlx-vlm (2026-10-25, M4 Max 36 GB)
+
+Same bytes on both sides: this port's install of the pinned revision against
+mlx-vlm 0.7.10, which loads Flint through `mlx_vlm/models/flint` (FP32 router
+scores, FP32 routed sum, FP32 `lm_head`). Teacher-forced, ids not text
+(`scripts/kld_flint_mlx_vlm.py`, procedure in
+`.claude/docs/cross-engine-kl.md`). The floor is mlx-vlm against itself,
+one token at a time against one batched pass.
+
+| Sequence | Rows | Mean KL (nats) | p99 | Top-1 | mlx-vlm floor mean / top-1 |
+|---|---|---|---|---|---|
+| quality corpus | 529 | 0.0070 | 0.067 | 97.0% | 0.0066 / 96.8% |
+| mlx-vlm's greedy path, "17 times 23" | 69 | 0.0055 | 0.105 | 95.7% | 0.0067 / 98.6% |
+| mlx-vlm's greedy path, coding prompt | 704 | 0.0011 | 0.023 | 98.7% | 0.0020 / 99.3% |
+
+So the port sits at mlx-vlm's own shape floor, which on an MoE is near-tie
+routing and reduction order. Known differences that remain on purpose: the
+INT8 router (mlx-vlm keeps BF16), and FP16 activations with the rebalance.
+Assistant-slot perplexity on the corpus: 12.82 here, 12.89 mlx-vlm cached,
+12.69 batched.
+
+Greedy through the chat template (`turbospark-check --messages-file
+--temperature 0`, which is what `turbospark run` drives):
+
+- "What is 17 times 23? Answer briefly.": a short `<think>` block, then
+  `391`, `stop=Eos`. Text identical to mlx-vlm's greedy output (57 tokens
+  each), and identical here at 8, 16 and 96 expert-cache slots.
+- A coding prompt (merge overlapping intervals, docstring, empty list, one
+  example): reasoning, then a correct function and the example's output. The
+  two engines' greedy paths part about 90 tokens into the reasoning on a
+  near-synonym ("likely" against "presumably"); the final code is the same.
+
+Against Recursive's INT4 on the same corpus (both through this port): mean KL
+0.213 nats, top-1 82.8%, assistant-slot perplexity 12.82 against 11.69. The
+publisher reports 0.343 and 86.2% on its own corpus. Both arms run through
+this port, so the gap is the requantization.
+
+Indicative only (one prompt, a download running alongside, no AC check):
+peak physical footprint 0.90 GiB at 8 slots and 1.40 GiB at 16, against
+0.98 and 1.61 for the INT4 install.
+
 ## What works (verified on the real checkpoint)
+
+The rest of this section was measured on `flint-int4`; the flow is shared.
 
 - `turbospark-model probe` says RUNNABLE, `pull` installs, and the catalog row
   `flint` (status `runs`) matches the published byte total.
@@ -64,7 +142,9 @@ always quiet, and none is a frozen row.
    protocol row for flint is provisional (8,192 context, 4,096 new tokens,
    because it reasons). Add `flint_memory_oracle.rs` and a quality gate next to
    the existing ones, one model per process.
-5. **Quality unknowns.**
+5. **Quality unknowns.** (The INT8 router and FP16 range items below apply to
+   both builds; the reference comparison now exists for the mixed build, see
+   above.)
    - The INT8 router agrees with the BF16 original on the top-6 set 97.27% of
      the time (every difference a near-tie), measured with
      `TURBOSPARK_FLINT_ROUTER_DUMP`. Whether that moves quality is unmeasured.
@@ -73,9 +153,10 @@ always quiet, and none is a frozen row.
    - The 2^6 rebalance was exercised on about a dozen prompts. A token whose
      product exceeds about 4 million would still overflow. Run new workloads with
      `TURBOSPARK_FLINT_DEBUG=1` and watch for reports near 65,504.
-   - Nothing compares against a reference implementation (SGLang or llama.cpp
-     PR 30928), and no test shows RoPE is correctly absent on the
-     full-attention layers.
+   - The mixed build agrees with mlx-vlm to mlx-vlm's own floor (above), and
+     mlx-vlm skips RoPE on the NoPE layers, so a RoPE mistake there would land
+     far above it. Still no unit test pins it. The INT4 build has no
+     reference comparison of its own.
 6. **Features not wired.**
    - Reasoning splits by token id: `<think>` (150006) and `</think>` (150007)
      are added but not special, and the decoder keys on ids, as GLM's does.
@@ -152,4 +233,10 @@ always quiet, and none is a frozen row.
   followed by a question about village 3 in 1803 (about 1,670 tokens), and edit
   the path. Check `ps` for other sessions' model processes and system indexing
   daemons first: they are what made the first run dirty.
-- Install: `~/.turbospark/models/text/flint.gturbo` (already migrated).
+- Installs on the bring-up machine: the INT4 build at
+  `~/.turbospark/models/text/flint.gturbo` (already migrated), the mixed build
+  at `~/models/flint-mixed-3-4bit.gturbo` (pulled through the `flint` row with
+  `--out`). From a local `hf download`, the same walk the pull runs, writing a
+  byte-identical install (checked against that pull), is
+  `cargo run --release -p turbospark-repack --example flint_local_intake --
+  <checkpoint dir> <new install dir> [model id]`.

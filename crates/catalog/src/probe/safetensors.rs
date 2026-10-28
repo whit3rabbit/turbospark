@@ -155,7 +155,18 @@ pub fn evaluate_config(
         );
         return Ok(report);
     }
-    match repack::parse_gemma4_quantization(config_text) {
+    // Flint parses through its own reader, as the install walk does
+    // (`stream.rs`): it renames MLX per-tensor keys and admits 3-bit routed
+    // experts, which the generic reader refuses.
+    let flint = family == ModelFamily::Flint;
+    let parsed_quant = if flint {
+        repack::parse_flint_quantization(config_text)
+    } else {
+        repack::parse_gemma4_quantization(config_text)
+    };
+    let family_admits =
+        |name: &str, bits: u32, gs: u32| flint && repack::flint_admits_affine_shape(name, bits, gs);
+    match parsed_quant {
         Ok(quant) => {
             // An mxfp4 checkpoint has one legal default shape, which the
             // parser enforced; only its affine overrides are affine, each at
@@ -171,7 +182,10 @@ pub fn evaluate_config(
             }
             for (name, bits) in &quant.bits_overrides {
                 let shape = (*bits, quant.group_for(name));
-                if !repack::is_supported_affine_shape(shape.0, shape.1) && !bad.contains(&shape) {
+                if !repack::is_supported_affine_shape(shape.0, shape.1)
+                    && !family_admits(name, shape.0, shape.1)
+                    && !bad.contains(&shape)
+                {
                     bad.push(shape);
                 }
             }
