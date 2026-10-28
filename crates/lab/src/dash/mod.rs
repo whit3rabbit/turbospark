@@ -201,8 +201,13 @@ pub fn router(app: Shared) -> Router {
 /// with a port, or `[::1]` bracketed.
 fn host_is_loopback(host: &str) -> bool {
     let name = match host.strip_prefix('[') {
-        // `[::1]` or `[::1]:7878`: the name ends at the closing bracket.
-        Some(rest) => rest.split(']').next().unwrap_or(rest),
+        // `[::1]` or `[::1]:7878`: the name ends at the closing bracket, and
+        // only a port may follow it. Anything else (`[::1]evil.example`) is
+        // not a Host a browser sends, so it is not this machine.
+        Some(rest) => match rest.split_once(']') {
+            Some((name, tail)) if tail.is_empty() || tail.starts_with(':') => name,
+            _ => return false,
+        },
         None => host.rsplit_once(':').map_or(host, |(n, _)| n),
     };
     name.eq_ignore_ascii_case("localhost")
