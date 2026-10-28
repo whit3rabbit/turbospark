@@ -2,13 +2,13 @@
   "schema": "turbospark.lab.family/1",
   "family": "lfm3",
   "kind": "text",
-  "title": "LFM3: dense hybrid of gated short-conv, full and sliding (256) layers, intake only, no runtime decode flow yet",
-  "flow": "none",
+  "title": "LFM3: dense hybrid of gated short-conv, full and sliding (256) layers, sandwich norms, headwise scalar gate",
+  "flow": "lfm3",
   "installs": [],
   "recommended": [],
   "sweeps": [],
   "findings": [],
-  "open_questions": ["the runtime has no decode flow yet: open refuses it until families/lfm3 lands (docs/LFM3_PHASE0.md)"],
-  "traps": ["every workflow step that needs the runs tag is skipped with its reason ledgered"],
+  "open_questions": ["no install measured by the lab yet", "a chunked prefill driver over encode_short_conv_prefill"],
+  "traps": ["prefill is sequential: --chunk off is the only driver"],
   "docs": ["docs/LFM3_PHASE0.md"]
 }

@@ -239,6 +239,7 @@ fn the_shim_handles_one_conditional_among_several_kwargs() {
 /// changing four shipped families' prompts to fix a fifth.
 #[test]
 fn the_shim_is_a_no_op_on_templates_that_do_not_need_it() {
+    // (The generation-tag rewrite's own no-op case is below.)
     assert_eq!(render_with("plain", "{{ 'ok' }}"), "ok");
     assert_eq!(
         render_with("comment", "{# k=v if x else y #}{{ 'ok' }}"),
@@ -254,6 +255,50 @@ fn the_shim_is_a_no_op_on_templates_that_do_not_need_it() {
             "{% for m in messages %}<{{ m.role }}:{{ m.content }}>{% endfor %}"
         ),
         "<user:hi>"
+    );
+}
+
+/// HF's `{% generation %}` block (transformers' assistant-mask marker,
+/// `LiquidAI/LFM3-1.7B`'s template) renders its body exactly once.
+#[test]
+fn a_generation_block_renders_its_body() {
+    assert_eq!(
+        render_with(
+            "generation",
+            "[{%- generation -%}{{ messages[0].content }}{%- endgeneration -%}]"
+        ),
+        "[hi]"
+    );
+}
+
+/// The rewrite keeps each tag's whitespace control, so the output is
+/// byte-identical to the same template with the tags removed AND their
+/// trimming kept. Deleting the tags instead would leave the newline and
+/// indentation between them in the output.
+#[test]
+fn a_generation_block_keeps_its_whitespace_control() {
+    let with_tags = render_with(
+        "gen-ws",
+        "<a>\n    {%- generation -%}\n    {{ messages[0].content }}\n    {%- endgeneration -%}\n    <b>",
+    );
+    let without = render_with(
+        "no-gen-ws",
+        "<a>\n    {%- if true -%}\n    {{ messages[0].content }}\n    {%- endif -%}\n    <b>",
+    );
+    assert_eq!(with_tags, without);
+    assert_eq!(with_tags, "<a>hi<b>");
+}
+
+/// Only a block whose whole body is the bare keyword is rewritten: a variable
+/// that happens to be called `generation` is left alone.
+#[test]
+fn a_variable_named_generation_is_untouched() {
+    assert_eq!(
+        render_with(
+            "gen-var",
+            "{%- set generation = 'g' -%}{{ generation }}{# generation #}generation"
+        ),
+        "ggeneration"
     );
 }
 

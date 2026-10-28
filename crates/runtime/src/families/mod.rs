@@ -4,6 +4,7 @@ pub(crate) mod deepseek2;
 pub(crate) mod flint;
 pub(crate) mod gemma4;
 pub(crate) mod gptoss;
+pub(crate) mod lfm3;
 pub(crate) mod llama;
 pub(crate) mod museglimmer;
 pub(crate) mod qwen;

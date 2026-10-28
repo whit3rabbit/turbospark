@@ -87,10 +87,9 @@ naming schemes genuinely differ and none is derivable from another: Qwen 3.6 is
     compressed 576-half cache plus fine-grained MoE; promoted by the
     `deepseek2` bring-up, see [Phase 0](DEEPSEEK2_PHASE0.md))
   - `"lfm3"` -> `ModelFamily::Lfm3` (dense hybrid: gated short-conv,
-    full and sliding layers). Intake only: the GGUF walk derives the
-    baseline and verifies `rope_freqs.weight` by value, and
-    `RealForwardRunner::open` refuses the family by name until its decode
-    flow lands ([Phase 0](LFM3_PHASE0.md))
+    full and sliding layers). The GGUF walk derives the baseline and
+    verifies `rope_freqs.weight` by value; the Q8_0 install decodes
+    coherently through `families/lfm3/` ([Phase 0](LFM3_PHASE0.md))
   - `"llama4"`, `"phi3"` are recognized but unported: the
     refusal names what each would need, and `tests/arch_registry_network.rs`
     re-reads every row's witness header so the string cannot rot silently
@@ -158,8 +157,8 @@ naming schemes genuinely differ and none is derivable from another: Qwen 3.6 is
     intake; see the vision table below for the deepstack boundary.
   - `"lfm3"` -> `ModelFamily::Lfm3`, no `text_config` wrapper, read off
     `LiquidAI/LFM3-1.7B` and its MLX conversion. `parse_lfm3_config` and
-    `write_lfm3_install_streamed` exist; the catalog arms and the decode
-    flow do not yet ([Phase 0](LFM3_PHASE0.md)).
+    `write_lfm3_install_streamed` serve `probe` and `pull`; the 4-bit MLX
+    install decodes coherently ([Phase 0](LFM3_PHASE0.md)).
   - Muse Glimmer and `qwen4_exp` are HF-ONLY in the registry: published GGUF
     conversions of both now exist (`muse-glimmer` and `qwen4exp`,
     witnessed off unsloth's conversions, 2026-09-06 -- note the third
@@ -239,7 +238,7 @@ specific "recognized, needs X" refusal.
 | **Muse Glimmer 30B** (`muse_glimmer`, HF only) | Dense GQA, 3-sliding/1-full 2048 window, **NoPE on the full layers**, separate attention output gate, CENTERED per-layer norms against a PLAIN final one, TWO RMS epsilons, logit softcap behind an output multiplier | **Full Support** | *Not supported* | Full Support (`muse-glimmer`, published after this row was written) | Full Support (mlx-vlm) | **~535 MiB RAM** (dense at 8,192 context; see note) |
 | **Spark-X2.5-4B** (`spark2_5`) | Dense GQA, the muse window at 512 (3 sliding : 1 full), **per-class RoPE** (full: theta 5e6 over the leading quarter; SWA: theta 1e4 whole head), fused `q_k_v_proj`, **headwise scalar sigmoid output gate**, exact-erf GELU, tied head, 1M trained context | **Full Support** (GGUF intake; HF safetensors intake deferred) | *Not supported* | Full Support (upstream PR 27868, 2026-09-06; this port mirrors its conventions) | Full Support (community MLX conversions) | *dense at 8,192 context; oracle passed. See [measured peak and KV verification](TRUBOQUANT.md#spark-real-install-probe)* |
 | **MiniMax-M2** (`minimax-m2`) | Full GQA, whole-projection Q/K RMS norm, 64-of-128 RoPE, 256 experts top-8, sigmoid router with selection-only bias | *Implemented; low-temperature smoke fails* ([record](MINIMAX_M2_PHASE0.md)) | Not assessed | Implemented | Implemented | Oracle passed at 8192 context / 8 slots; no frozen baseline ([record](MINIMAX_M2_PHASE0.md)) |
-| **LFM3 1.7B** (`lfm3`, GGUF and HF agree) | DENSE hybrid: 13 gated short-conv layers (mask 6, a fixed 6-row tail, no KV), 6 full and 5 sliding (256) GQA layers, zero-tail partial RoPE on the full layers, per-head QK norm, headwise sigmoid output gate, sandwich norms, tied head | *Intake only* (registry, baseline, MLX and GGUF repack, synthetic install; open refuses until the flow lands. [Phase 0](LFM3_PHASE0.md)) | Not assessed | Full Support | Not supported (no `lfm3` file in mlx-lm, checked 2026-10-27; LiquidAI ships its own MLX code) | *dense: KV-dominated; no streamed-expert advantage* |
+| **LFM3 1.7B** (`lfm3`, GGUF and HF agree) | DENSE hybrid: 13 gated short-conv layers (mask 6, a fixed 6-row tail, no KV), 6 full and 5 sliding (256) GQA layers, zero-tail partial RoPE on the full layers, per-head QK norm, headwise sigmoid output gate, sandwich norms, tied head | *Runs* (MLX 4-bit and GGUF Q8_0: greedy and sampled coherent; no frozen gates, no catalog row, no cross-engine check yet. [Phase 0](LFM3_PHASE0.md)) | Not assessed | Full Support | Not supported (no `lfm3` file in mlx-lm, checked 2026-10-27; LiquidAI ships its own MLX code) | *dense: KV-dominated; no streamed-expert advantage* |
 | **Phi-3 / Phi-3.5** (`phi3`; Phi-4 reports the same string) | SuScaled (longrope) RoPE, dense FFN | *Registered, planned* | *Planned* | Full Support | Full Support | *dense: whole model resident* |
 
 **Execution support and verification status are separate.** The P0 verification

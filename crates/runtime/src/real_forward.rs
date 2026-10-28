@@ -241,6 +241,9 @@ pub struct RealForwardRunner {
     /// QKV row staging and the per-head gate -- are shapes no shared scratch
     /// carries.
     pub(crate) real_spark: Option<crate::families::spark::RealSparkState>,
+    /// Present for an `lfm3` install: the short-conv tails and the in_proj /
+    /// gate staging no shared scratch carries.
+    pub(crate) real_lfm3: Option<crate::families::lfm3::RealLfm3State>,
     /// Present for a `qwen4_exp` install (Phase 3 of its bring-up,
     /// `docs/QWEN4_PHASE0.md`). Its own state rather than a variant of
     /// `real_qwen`: the residual stream is `hc_count` times wider, every

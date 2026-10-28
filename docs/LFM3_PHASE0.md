@@ -11,12 +11,41 @@ sibling, which shares the config). Everything here was read, not inferred.
 | --- | --- |
 | 0. Scope | Done (this page) |
 | 1. Repack | Done: family, baseline, HF/MLX parser, GGUF derivation and name table, `rope_freqs` value check, synthetic install, open-boundary test |
-| 2. Kernels | Not started: the gated short-conv decode and prefill kernels |
-| 3. Decode flow | Not started: `RealForwardRunner::open` refuses `lfm3` by name |
-| 4-7 | Not started. No catalog row: nothing has been pulled or generated here |
+| 2. Kernels | Done: `short_conv_decode` / `short_conv_prefill`, CPU reference, parity tests |
+| 3. Decode flow | Done: `families/lfm3/`, sequential prefill. Greedy, templated, 600 tokens coherent on the MLX 4-bit and GGUF Q8_0 installs |
+| 4. Head and sampler | Partial: sampled at CLI defaults coherent for 600 tokens, a short question stops `EndOfTurn`. No sampled run on the Q8_0 install yet |
+| 5-6. Memory, quality | Not started |
+| 7. CLI | Partial: probe, pull and run work for the MLX and GGUF repos. No catalog row |
 
-A synthetic install proves plumbing only. No real checkpoint has decoded on
-this port.
+Not yet checked against another engine. Homebrew llama.cpp 0.7.0 refuses
+`lfm3` as an unknown architecture, and on 2026-10-27 a Homebrew HEAD build
+failed because llama.cpp master itself did not compile (`ggml_top_k_mask`
+undeclared in `qwen4exp.cpp` and `glm5-next.cpp`). Release tags from
+`b11938` postdate the `lfm3` commit and are the next thing to try. The
+inputs are ready: a raw prompt whose tokens match ours exactly, and 200
+greedy tokens from our Q8_0 install.
+
+The 4-bit MLX install's greedy answer to a TCP prompt is fluent and
+factually wrong in places, and the Q8_0 install's is better. Whether that
+is quantization or a port error is that comparison's question.
+
+## Measured so far
+
+On the M4 Max, `turbospark-check --temperature 0`, sequential prefill:
+MLX 4-bit decodes at about 205 tok/s on a 25-token prompt, GGUF Q8_0 at
+about 97 tok/s on a 42-token prompt. These are single smoke runs, not
+benchmark rows.
+
+## Two fixes outside the family that LFM3 needed
+
+- `{% generation %}`: transformers' assistant-mask block tag, which
+  minijinja rejects, so `pull` refused the template. `rewrite_generation_tags`
+  (`crates/tokenizer/src/jinja_compat.rs`) maps it to `{% if true %}` with
+  the same whitespace control.
+- ChatML BOS: the resolver hardcoded Qwen's `<|endoftext|>` stand-in. LFM3
+  declares `<|startoftext|>` and its template prints `{{ bos_token }}`, so
+  every prompt opened with an end-of-text token. A config-declared BOS now
+  wins. Qwen's `bos_token: null` is unchanged.
 
 ## Pins
 
