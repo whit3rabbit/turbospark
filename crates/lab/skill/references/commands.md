@@ -66,7 +66,7 @@ gets you numbers from a busy host, which is all they then are.
 
 ## Kernel benches (in process, no model weights)
 
-`kernel --model M [--bench NAME[,NAME]|all] [--rows ...] [--contexts ...] [--case LABEL] [--reps 5] [--hash] [--programs DIR]`
+`kernel --model M [--bench NAME[,NAME]|all] [--rows ...] [--contexts ...] [--case LABEL] [--reps 5] [--hash] [--programs DIR] [--ane-dir DIR] [--contend N]`
 
 Every case records an `energy` delta over its run when the host has the
 IOReport counters. `--bench ane_matmul` (a `tslab` built with

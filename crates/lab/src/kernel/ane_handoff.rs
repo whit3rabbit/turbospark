@@ -15,13 +15,16 @@
 //!
 //! `SPEEDUP_PLAYBOOK.md` reopens the asynchronous Core ML and private
 //! shared-event ideas only if a controlled-contention run shows handoff
-//! tails dominating. `--contend N` is that control: the bench itself spins
-//! N threads for the contended points, so the load is known and in-process
-//! (the host guard still refuses a foreign neighbour). The x axis is that
-//! thread count.
+//! tails dominating. The end-to-end reading of that question is the
+//! `~hog:N` A/B on a real split; this bench is the microbench that prices
+//! the poll alternative against it. `--contend N` is the control: the bench
+//! itself spins N threads for the contended points, so the load is known
+//! and in-process (the host guard still refuses a foreign neighbour). The
+//! x axis is that thread count.
 //!
 //! The producer runs only the activation scale, not the weight dequant, so
-//! its GPU time is not the split's; neither arm's handoff depends on it.
+//! its GPU time is not the split's. Whether the handoff depends on the
+//! producer's length is not measured here.
 
 use std::path::{Path, PathBuf};
 
@@ -231,7 +234,7 @@ mod run {
     use super::super::support::{f16_activations, f16_bytes, median};
     use super::super::{BenchOpts, Case};
     use super::{points_per_microbatch, quantile};
-    use crate::bench::{fnv_hex, ArmCurve, Axis, BenchResult, Point};
+    use crate::bench::{ArmCurve, Axis, BenchResult, Point};
 
     /// Samples per arm per contention level in one repetition: `--reps 5`
     /// gives 200 per point, enough for a nearest-rank p99.
@@ -593,11 +596,6 @@ mod run {
         if read_buffer_bytes(&rig.flag, 0, 4) != [0u8; 4] {
             return Err("the program wrote non-finite rows".into());
         }
-        let out_fnv = opts.hash.then(|| {
-            let len = rig.y.length() as usize;
-            fnv_hex(&read_buffer_bytes(&rig.y, 0, len))
-        });
-
         let points = points_per_microbatch(layers);
         let mut detail = serde_json::Map::new();
         let mut arms = Vec::new();
@@ -606,9 +604,7 @@ mod run {
             for (li, &level) in levels.iter().enumerate() {
                 let s = &samples[ai][li];
                 let mut handoffs: Vec<f64> = s.iter().map(|x| (x.wake + x.resume) * 1e3).collect();
-                let mut pt = Point::new(level as f64, median(&mut handoffs));
-                pt.out_fnv = out_fnv.clone();
-                curve.push(pt);
+                curve.push(Point::new(level as f64, median(&mut handoffs)));
                 detail.insert(format!("{label}@{level}"), summary(s, points));
             }
             arms.push(ArmCurve {
@@ -648,6 +644,10 @@ mod run {
                  compare it with a measured split micro-batch, not with this bench's wall"
                     .into(),
                 "the producer runs the activation scale only, not the weight dequant".into(),
+                "the arms' outputs are not compared, so --hash does nothing here".into(),
+                "the host monitor samples around the case, not during the spinners, so \
+                 `eligible` does not describe the contended points"
+                    .into(),
             ],
         })
     }
@@ -718,7 +718,6 @@ mod tests {
         let opts = BenchOpts {
             reps: 1,
             contend: 2,
-            hash: true,
             ..BenchOpts::default()
         };
         let cases = AneHandoff.cases(&subject, &opts).unwrap();
@@ -731,7 +730,7 @@ mod tests {
         for arm in ["wait", "poll"] {
             let pts = &r.arm(arm).unwrap().points;
             assert_eq!(pts.iter().map(|p| p.x).collect::<Vec<_>>(), [0.0, 2.0]);
-            assert!(pts.iter().all(|p| p.ms.is_finite() && p.out_fnv.is_some()));
+            assert!(pts.iter().all(|p| p.ms.is_finite()));
         }
         assert_eq!(r.subject["detail"]["wait@0"]["samples"], 40);
     }
