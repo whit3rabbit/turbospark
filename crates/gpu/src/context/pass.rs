@@ -202,8 +202,11 @@ impl PassEncoder {
     /// wait on an earlier buffer to be woken as soon as *its* results are
     /// ready, with the later work still running.
     pub fn commit(mut self) -> CommittedPass {
-        self.encoder.borrow().end_encoding();
-        self.ended.set(true);
+        // Already ended when `commit_signaling` encoded its signal.
+        if !self.ended.get() {
+            self.encoder.borrow().end_encoding();
+            self.ended.set(true);
+        }
         self.command_buffer.commit();
         // Timestamps can only be resolved once the buffer has completed,
         // and a pass may be committed and never waited on (the shared and
@@ -334,6 +337,19 @@ impl CommittedPass {
         };
         self.wait_on_drop = false;
         (end - start).max(0.0)
+    }
+}
+
+#[cfg(feature = "ane-prefill")]
+impl PassEncoder {
+    /// [`Self::commit`] after encoding a signal of `event` to `value`, so
+    /// the host can watch the event instead of waiting on the buffer. The
+    /// signal goes after the compute encoder ends, as Metal requires.
+    pub(crate) fn commit_signaling(self, event: &metal::EventRef, value: u64) -> CommittedPass {
+        self.encoder.borrow().end_encoding();
+        self.ended.set(true);
+        self.command_buffer.encode_signal_event(event, value);
+        self.commit()
     }
 }
 

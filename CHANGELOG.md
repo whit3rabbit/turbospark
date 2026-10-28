@@ -249,6 +249,13 @@ when this file gets updated relative to the version bump and the tag.
 - `lfm3` decode runs the FFN's gate, up and silu as one fused INT4 GEMV,
   bit-exact against the three-dispatch chain. No measurable decode change on
   an M4 Max. `TURBOSPARK_LFM3_FUSED_FFN=0` keeps the chain.
+- The catalog alias `flint` now installs `mlx-community/flint-mixed-3-4bit`
+  (routed experts at MLX 3-bit, everything else keeping the trained INT4
+  codes): 17.8 GB against 22.6 GB. The GPU gains an INT3 routed expert pair
+  and intake accepts 3-bit routed tensors. This trades quality for size: mean
+  KL 0.213 nats and 82.8 percent top-1 against the INT4 build through this
+  port, with no quality or memory gate frozen. The trained build stays
+  available as `flint-int4`. See `docs/FLINT.md`.
 - macOS app: status uses the theme's success, warning and danger colors
   instead of system green, orange and red (light-mode system red was 3.6:1 on
   white); `AppAttention.color` and destructive buttons follow. The composer

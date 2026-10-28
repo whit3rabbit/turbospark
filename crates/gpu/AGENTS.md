@@ -72,6 +72,13 @@ threadgroup shape, or normalization convention on the device.
   inferred from the model family.
 - Validate numerical kernel changes with a real model, sampled output, and an
   independent parity or quality check where available.
+- The MLX INT3 routed pair (`moe_phase1_gate_up_act_int3`,
+  `moe_phase2_down_reduce_int3` in `moe.metal`) reads weights a byte at a
+  time (3-bit rows align to nothing wider) and repeats the INT4 pair's
+  accumulation term by term, so codes that fit 3 bits decode bit-identically
+  at either width; the runtime's Flint test relies on that. It binds through
+  the INT4 phase-1 kernel's `RoutedBlobs` reflection
+  (`tests/moe_decode_int3.rs` pins that the two agree).
 - Fused INT4 FFN kernels (`dequant_int4_fused.metal`):
   `dequant_int4_gemv_fused_gate_up_act` and `dequant_int4_gemv_fused_down_epilogue`
   must remain bit-exact to separate GEMV and activation dispatches.
