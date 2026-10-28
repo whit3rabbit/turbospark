@@ -6,6 +6,7 @@ import SwiftUI
 /// macOS File and Privacy Permissions management pane for app settings.
 @MainActor
 public struct PermissionsSettingsPaneView: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     @ObservedObject private var permissionsManager = SystemPermissionsManager.shared
 
@@ -126,10 +127,10 @@ public struct PermissionsSettingsPaneView: View {
                 Self.statusLabel(status)
                     .themedFont(.small, weight: .medium)
             }
-            .foregroundStyle(status.statusColor)
+            .foregroundStyle(status.statusColor(in: theme))
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(status.statusColor.opacity(0.12))
+            .background(status.statusColor(in: theme).opacity(0.12))
             .clipShape(Capsule())
 
             HStack(spacing: 6) {

@@ -34,13 +34,13 @@ struct ModelFitPresentation: Equatable {
     }
     let tone: Tone
 
-    var color: Color {
+    func color(in theme: ResolvedAppTheme) -> Color {
         switch tone {
-        case .good: return .green
+        case .good: return theme.success
         case .streaming: return .blue
-        case .caution: return .orange
-        case .blocked: return .red
-        case .unknown: return .secondary
+        case .caution: return theme.warning
+        case .blocked: return theme.danger
+        case .unknown: return theme.secondaryText
         }
     }
 
@@ -105,9 +105,11 @@ struct ModelFitPresentation: Equatable {
 struct ModelFitVerdictPill: View {
     let verdict: ModelRecommendation.FitVerdict
     var compact: Bool = false
+    @Environment(\.appTheme) private var theme
 
     var body: some View {
         let p = ModelFitPresentation.of(verdict)
+        let color = p.color(in: theme)
         HStack(spacing: compact ? 2 : 3) {
             if let icon = p.iconName {
                 Image(systemName: icon)
@@ -123,8 +125,8 @@ struct ModelFitVerdictPill: View {
         .fixedSize()
         .padding(.horizontal, compact ? 4 : 8)
         .padding(.vertical, compact ? 1.5 : 3)
-        .background(p.color.opacity(0.18), in: Capsule())
-        .foregroundStyle(p.color)
+        .background(color.opacity(0.18), in: Capsule())
+        .foregroundStyle(color)
         .help(Text(LocalizedStringKey(p.help), bundle: .module))
     }
 }

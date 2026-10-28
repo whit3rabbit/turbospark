@@ -182,7 +182,7 @@ public struct WorktreeTimelineView: View {
             HStack(spacing: 5) {
                 Image(systemName: file.status.systemImage)
                     .themedFont(.tiny)
-                    .foregroundStyle(file.status.color)
+                    .foregroundStyle(file.status.color(in: theme))
                     .accessibilityHidden(true)
 
                 Text(file.fileName)
@@ -205,7 +205,7 @@ public struct WorktreeTimelineView: View {
                         if file.additions > 0 {
                             Text(verbatim: "+\(file.additions)")
                                 .themedFont(.tiny).monospacedDigit()
-                                .foregroundStyle(.green)
+                                .foregroundStyle(.appSuccess)
                         }
                         if file.deletions > 0 {
                             Text(verbatim: "-\(file.deletions)")

@@ -45,7 +45,7 @@ struct EmbeddingsAPITestPanel: View {
                     Image(systemName: "exclamationmark.octagon")
                 }
                 .themedFont(.small)
-                .foregroundStyle(.red)
+                .foregroundStyle(.appDanger)
             }
             if let vector {
                 Text("\(vector.count) dimensions", bundle: .module)

@@ -158,6 +158,34 @@ make swift-lib
 make swift-test
 ```
 
+For macOS app UI changes, also run the design check:
+
+```sh
+make design-check        # about a second, no build
+make design-check-full   # adds the contrast and ratchet Swift tests
+```
+
+`make design-check` is `scripts/check-design.py`, and CI runs it as the
+`design` job. It scans app sources against `DesignRules.json` (the file
+`DesignTokenRatchetTests` also loads), compares the status hexes in
+`Theme/AppStatusColors.swift` with the design system, and runs
+`derive_tokens.py --check`. CI does not run the app's `swift test` suite, so
+contrast ratios are checked only by `AppStatusColorTests` (`design-check-full`).
+Rules:
+
+- A count above its baseline is a new violation: use the theme style
+  (`.appSuccess`, `.appWarning`, `.appDanger`, `.appAccentText`, `.appBorder`)
+  instead of a system color or literal. A count below its baseline fails too:
+  lower it in `DesignRules.json` in the same change. Never raise a baseline.
+- Changing a status hex means changing `AppStatusColors.swift`,
+  `AppStatusColorTests`, and `STATUS` in `derive_tokens.py`, then running
+  `python3 docs/design-system/tools/derive_tokens.py` and pasting
+  `--table` into the design-system README.
+- The job skips pushes that touch only `docs/**` or `*.md`, so a hand edit to
+  `tokens.json` alone is not checked in CI.
+- `git config core.hooksPath .githooks` runs the check before each commit that
+  touches the app or design system.
+
 For app or release artifacts:
 
 ```sh

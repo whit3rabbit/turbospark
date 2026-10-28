@@ -50,21 +50,21 @@ struct InstalledModelRowView: View {
                         if isFavorite {
                             Image(systemName: "star.fill")
                                 .themedFont(.micro)
-                                .foregroundStyle(Color.yellow)
+                                .foregroundStyle(.appWarning)
                         }
 
                         Spacer(minLength: 2)
 
                         if isLoaded {
                             HStack(spacing: 3) {
-                                Circle().fill(Color.green).frame(width: 5, height: 5)
+                                Circle().fill(.appSuccess).frame(width: 5, height: 5)
                                 Text("Loaded", bundle: .module)
                                     .themedFont(.tiny, weight: .bold)
-                                    .foregroundStyle(Color.green)
+                                    .foregroundStyle(.appSuccess)
                             }
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1.5)
-                            .background(Color.green.opacity(0.12), in: Capsule())
+                            .background(.appSuccessTint, in: Capsule())
                         }
                     }
 

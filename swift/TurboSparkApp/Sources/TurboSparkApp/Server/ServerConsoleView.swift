@@ -117,7 +117,7 @@ struct ServerConsoleView: View {
                     Image(systemName: "exclamationmark.triangle")
                 }
                     .themedFont(.small)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(.appWarning)
                     .help(Text("The engine's buffer overran while this pane was not polling. Those rows are gone rather than delayed.", bundle: .module))
             }
 
@@ -145,7 +145,7 @@ struct ServerConsoleView: View {
                     Text("Copy the visible rows as JSON", bundle: .module)
                 } icon: {
                     Image(systemName: copiedAll ? "checkmark" : "doc.on.doc")
-                        .foregroundStyle(copiedAll ? .green : .secondary)
+                        .foregroundStyle(copiedAll ? AnyShapeStyle(.appSuccess) : AnyShapeStyle(.appSecondary))
                 }
                 .labelStyle(.iconOnly)
             }
@@ -176,7 +176,7 @@ struct ServerConsoleView: View {
                 if record.isError, let err = record.errorMessage, !err.isEmpty {
                     Text(verbatim: err)
                         .font(theme.code(.small))
-                        .foregroundStyle(.red.opacity(0.85))
+                        .foregroundStyle(.appDanger.opacity(0.85))
                         .lineLimit(1)
                 }
 
@@ -219,7 +219,7 @@ struct ServerConsoleView: View {
                     } icon: {
                         Image(systemName: copiedRecordID == record.id ? "checkmark" : "doc.on.doc")
                             .themedFont(.micro)
-                            .foregroundStyle(copiedRecordID == record.id ? Color.green : Color.secondary)
+                            .foregroundStyle(copiedRecordID == record.id ? AnyShapeStyle(.appSuccess) : AnyShapeStyle(.appSecondary))
                     }
                     .labelStyle(.iconOnly)
                 }
@@ -316,11 +316,11 @@ struct ServerConsoleView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.red)
+                    .foregroundStyle(.appDanger)
                     .imageScale(.small)
                 Text("Error Details (HTTP \(statusText(record)))", bundle: .module)
                     .themedFont(.small, weight: .semibold)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(.appDanger)
 
                 Spacer()
 
@@ -342,11 +342,11 @@ struct ServerConsoleView: View {
             if let err = record.errorMessage, !err.isEmpty {
                 Text(verbatim: err)
                     .font(theme.code(.small))
-                    .foregroundStyle(.red.opacity(0.95))
+                    .foregroundStyle(.appDanger.opacity(0.95))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(6)
-                    .background(Color.red.opacity(0.08))
+                    .background(.appDanger.opacity(0.08))
                     .cornerRadius(4)
             } else {
                 Text("Request failed with HTTP status \(statusText(record)).", bundle: .module)
@@ -355,7 +355,7 @@ struct ServerConsoleView: View {
             }
         }
         .padding(6)
-        .background(Color.red.opacity(0.04))
+        .background(.appDanger.opacity(0.04))
         .cornerRadius(6)
     }
 
@@ -416,10 +416,10 @@ struct ServerConsoleView: View {
     }
 
     private func statusColor(_ record: ServerRequestRecord) -> Color {
-        guard let status = record.status else { return .secondary }
-        if status >= 500 { return .red }
-        if status >= 400 { return .orange }
-        return .green
+        guard let status = record.status else { return theme.secondaryText }
+        if status >= 500 { return theme.danger }
+        if status >= 400 { return theme.warning }
+        return theme.success
     }
 
     private func recordToDictionary(_ record: ServerRequestRecord) -> [String: Any] {

@@ -6,6 +6,6 @@ Status as a glyph plus a word, never color alone, so it survives color-vision de
 - As a pill, the background is the matching `-tint` and the text keeps the status color, never `ink`.
 - Permission rows show status as glyph plus text and offer one next step: Allow while macOS can still prompt, Open System Settings after.
 - `success` is a bluish green, off the red-green axis, so it stays distinct from `danger`.
-- Intentional addition: the app draws status with system green, orange, and red today. Light-mode system red is 3.6:1 on white. These tokens are 4.5:1 or better on every surface.
+- The app draws these as `.appSuccess`, `.appWarning` and `.appDanger` (`ResolvedAppTheme`). System red was 3.6:1 on white. See the README's known gaps for the two themes where `danger` is 4.3:1.
 
 The consumer supplies the status, a localized word, and any next-step action.

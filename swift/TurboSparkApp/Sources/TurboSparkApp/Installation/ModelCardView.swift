@@ -63,7 +63,7 @@ struct ModelCardView: View {
                                 .foregroundStyle(Color.accentColor)
                         } else if isInstalled {
                             HStack(spacing: 3) {
-                                Circle().fill(.green).frame(width: 5, height: 5)
+                                Circle().fill(.appSuccess).frame(width: 5, height: 5)
                                 Text("Installed", bundle: .module)
                                     .themedFont(.tiny, weight: .medium)
                                     .foregroundStyle(.appSecondary)
@@ -189,7 +189,7 @@ struct ModelCardView: View {
         case "caveat":
             Image(systemName: "exclamationmark.triangle.fill")
                 .themedFont(.tiny)
-                .foregroundStyle(.orange)
+                .foregroundStyle(.appWarning)
                 .help(Text("Runs with a caveat; see the model notes.", bundle: .module))
                 .accessibilityHidden(true)
         default:

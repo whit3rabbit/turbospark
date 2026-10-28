@@ -11,6 +11,7 @@ import TurboSpark
 /// and never multiplies a figure of its own.
 @MainActor
 struct ContextLadderView: View {
+    @Environment(\.appTheme) private var theme
     let rungs: [ContextLadderRung]
     let trainedContext: UInt32?
     /// The window currently selected, highlighted so the table reads as "you
@@ -50,6 +51,7 @@ struct ContextLadderView: View {
     @ViewBuilder
     private func row(_ rung: ContextLadderRung) -> some View {
         let p = ModelFitPresentation.of(rung.verdict)
+        let fitColor = p.color(in: theme)
         let isCurrent = currentContext == rung.context
         HStack(spacing: 8) {
             Text(verbatim: rung.context.formatted())
@@ -60,12 +62,12 @@ struct ContextLadderView: View {
                 .frame(width: 78, alignment: .trailing)
                 .foregroundStyle(.appSecondary)
             Circle()
-                .fill(p.color)
+                .fill(fitColor)
                 .frame(width: 7, height: 7)
                 .accessibilityHidden(true)
             Text(LocalizedStringKey(p.compactLabel), bundle: .module)
                 .themedFont(.small)
-                .foregroundStyle(p.color)
+                .foregroundStyle(fitColor)
             Spacer()
             marker(rung, isCurrent: isCurrent)
                 .themedFont(.tiny)
@@ -120,8 +122,8 @@ struct ThroughputRowView: View {
                         .themedFont(.tiny, weight: .semibold)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
-                        .background(Color.green.opacity(0.16), in: Capsule())
-                        .foregroundStyle(.green)
+                        .background(.appSuccessTint, in: Capsule())
+                        .foregroundStyle(.appSuccess)
                 }
                 Spacer()
             }

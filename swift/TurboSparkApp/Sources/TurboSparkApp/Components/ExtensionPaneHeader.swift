@@ -105,6 +105,7 @@ struct ExtensionPaneIntro: View {
                 Link(destination: documentation) {
                     Text("Documentation", bundle: .module)
                 }
+                .appLinkTint()
                 .themedFont(.small)
                 .fixedSize()
                 .help(documentationHint ?? Text("Documentation", bundle: .module))

@@ -59,7 +59,7 @@ extension Theme {
             BackgroundColor(palette.foreground.opacity(0.06))
         }
         .link {
-            ForegroundColor(palette.accent)
+            ForegroundColor(palette.accentText)
             UnderlineStyle(.single)
         }
         .heading1 { configuration in

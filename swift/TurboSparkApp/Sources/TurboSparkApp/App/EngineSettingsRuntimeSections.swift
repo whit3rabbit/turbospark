@@ -225,7 +225,7 @@ extension EngineSettingsPaneView {
                     // ("API key required", "none"), both catalog keys.
                     Text(LocalizedStringKey(rows.authLabel), bundle: .module)
                         .themedFont(.small)
-                        .foregroundStyle(rows.authIsWarning ? Color.orange : Color.secondary)
+                        .foregroundStyle(rows.authIsWarning ? AnyShapeStyle(.appWarning) : AnyShapeStyle(.appSecondary))
                 } label: {
                     Text("Auth", bundle: .module)
                 }
