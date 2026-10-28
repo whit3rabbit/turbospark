@@ -30,6 +30,20 @@ revision by name:
 turbospark-model pull --repo "mlx-community/Qwen3-VL-4B-Instruct-4bit@2fd8dacbdb8f1e54b8c005f081ec5bf79c56376b" --alias qwen3vl-4b-vision
 ```
 
+LFM3 is represented by the `lfm3` family: LiquidAI's dense 1.7B hybrid of
+gated short-convolution, full-attention and sliding-window layers. Two
+artifacts are cataloged. The 4-bit MLX conversion carries the frozen memory
+and quality gates (`verified`). The Q8_0 GGUF runs and has no frozen row
+yet (`runs`). Its tokenizer comes from the HF checkpoint. Prefill is
+sequential, and neither artifact has been compared against another engine
+yet ([`LFM3_PHASE0.md`](LFM3_PHASE0.md)).
+
+```sh
+turbospark-model pull lfm3-1.7b
+turbospark-model pull lfm3-1.7b-q8
+turbospark-check --model lfm3-1.7b --messages-file p.json
+```
+
 Qwen2/Qwen2.5 is represented by the `qwen2` family, and it runs on both
 intake paths. Three artifacts are cataloged and gated: the 4-bit MLX
 safetensors conversion, the official single-file Q3_K_M GGUF (whose attention

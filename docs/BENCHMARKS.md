@@ -226,6 +226,7 @@ run-to-run variation.
 | **Qwen3.8-27B, MLX INT4** | 14 GB | 4,096 | **660.0 - 660.3 MiB** | 750 | 18.6 - 21.1 | **no, dense** |
 | Qwen3.8-27B, MLX INT4, with vision tower | 15 GB | 4,096 | 854.8 - 872.5 MiB | 950 | 12.355 - 15.997 | no, dense + a 2-slot vision tower |
 | Mistral 7B, Q4_K_M | 4.1 GB | 8,192 | 1,201 - 1,203 MiB | 1,300 | 16.3 - 30.4 | no, dense |
+| LFM3-1.7B, MLX INT4 (`lfm3`) | 0.97 GB | 8,192 | 342 - 351 MiB | 420 | 67.8 - 198.1 | no, dense hybrid |
 | **Ternary-Bonsai-27B, MLX 2-bit** | 7.6 GB | 4,096 | **657.8 - 661.6 MiB** | 750 | 12.5 - 13.9 | **no, dense** |
 | Bonsai-27B, MLX 1-bit | 3.9 GB | -- | not measured | -- | ~18.3 | no, dense |
 | Qwen3.8-Flash-Next REAP-288, MLX INT4 (`qwen4_exp`) | 68 GB | **2,048** | 2,503 - 2,509 MiB | 3,000 | 6.870 - 7.530 | yes, 288 experts (top-10) |
@@ -2545,3 +2546,47 @@ same file-backed-weight accounting every other family's row shows; the
 ceiling is the highest reading plus 5%. One loaded session attributed a
 one-off +16 GiB to the warm replay and never again; the instrumented
 rerun measured 0.0 MiB. See the oracle file for the full account.
+
+## LFM3-1.7B (`lfm3`, MLX INT4), first rows
+
+The seventeenth family, a dense hybrid of 13 gated short-conv layers, 6 full
+and 5 sliding-window (256) attention layers. Install
+`LiquidAI/LFM3-1.7B-MLX-4bit` @ `d0ca73dc`, Apple M4 Max, AC, release,
+8,192 context, 2026-10-27. Facts in [`LFM3_PHASE0.md`](LFM3_PHASE0.md).
+
+```sh
+TURBOSPARK_LFM3_INSTALL_DIR=~/models/lfm3-1.7b-mlx-4bit \
+  cargo test -p turbospark-bench --test lfm3_memory_oracle --release -- --ignored --nocapture
+TURBOSPARK_LFM3_INSTALL_DIR=~/models/lfm3-1.7b-mlx-4bit \
+  cargo test -p turbospark-bench --test lfm3_quality_gate --release -- --ignored --nocapture
+```
+
+| Gate | Reading |
+| --- | --- |
+| Reference perplexity | 14.7455 |
+| Greedy digest | `16cc1e9c` |
+| Sampled digest | `58d4c54f` |
+| Session peak (4 runs) | 342 - 351 MiB, ceiling 420 |
+| Warm replay growth | +0.00 to +0.02 MiB |
+| Decode, short-explanation | 198.1, 67.8, 71.0, 180.2 tok/s |
+| Decode, long-synthesis | 171.6, 166.0, 163.9, 166.9 tok/s |
+
+- **The peak matches the accounting.** About 100 MiB of KV and conv state
+  (96 MiB of full-attention KV at 8,192, 3.75 MiB of sliding ring, 0.3 MiB
+  of conv tails) plus a ~250 MiB dense-install residual. Resident weights
+  are not charged (AGENTS.md Gotcha 40).
+- **Two protocol cases, not three.** `medium-review` reasons past the
+  4,096-token budget while coherent and stops `endOfTurn` at 7,490 tokens
+  sampled when given room, so the oracle drives the other two (the
+  `qwen3_vl` precedent).
+- **The short case's decode has two states.** Two of four runs read about
+  70 tok/s, the others about 190, on a quiet host for the last three. The
+  long case holds near 166. The working hypothesis is the GPU's clock
+  state on small per-token passes, and it is not measured. The floor (50) sits
+  under the slow state, so it catches regressions rather than clock states.
+- **Two quality runs in separate processes agreed on every digit and hex
+  character.** The perplexity does not rank against other families'
+  numbers: each row is a sentinel against its own past.
+- **No external reference yet.** The Q8_0 GGUF is ready for llama.cpp on
+  the same bytes, but no released Homebrew llama.cpp carries `lfm3`, and
+  master did not compile on 2026-10-27.

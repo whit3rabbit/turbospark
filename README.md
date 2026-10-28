@@ -138,7 +138,7 @@ The default server listens on `127.0.0.1:8080` and provides `/v1/chat/completion
 
 ## Supported models
 
-TurboSpark supports 15 declared model families (DeepSeek-V4-Flash is still scaffolded-only). Recent additions include the Bonsai line (1-bit Bonsai, 2-bit Ternary-Bonsai, and the Hadamard-folded Ternary-Bonsai 2), Qwen3.8-27B dense with MTP/DFlash2 speculative decoding and an optional vision tower, Qwen3.8-Flash-Next REAP-288 and the text-only Swift-1.5 IQ2_XS GGUF, Qwen3-VL 4B with image input, MiniCPM-V 4.7 35B-A3B (text only, MLX mxfp4), DeepSeek-V2-Lite (MLA), Spark-X2.5, Muse Glimmer, Qwen2.5, and gpt-oss. MiniMax-M2 is implemented but not yet catalog-promoted.
+TurboSpark supports 17 declared model families (DeepSeek-V4-Flash is still scaffolded-only). Recent additions include LFM3-1.7B (a dense short-conv and attention hybrid), the Bonsai line (1-bit Bonsai, 2-bit Ternary-Bonsai, and the Hadamard-folded Ternary-Bonsai 2), Qwen3.8-27B dense with MTP/DFlash2 speculative decoding and an optional vision tower, Qwen3.8-Flash-Next REAP-288 and the text-only Swift-1.5 IQ2_XS GGUF, Qwen3-VL 4B with image input, MiniCPM-V 4.7 35B-A3B (text only, MLX mxfp4), DeepSeek-V2-Lite (MLA), Spark-X2.5, Muse Glimmer, Qwen2.5, and gpt-oss. MiniMax-M2 is implemented but not yet catalog-promoted.
 
 MoE checkpoints can stream routed experts from SSD through a bounded cache,
 so install size and process footprint are different quantities. The Swift
@@ -193,6 +193,7 @@ Dense models do not stream, so budget roughly the on-disk size plus KV and scrat
 | Muse Glimmer 30B | INT4 (group 64) | MLX | ~16 GB | |
 | Humanizer 12B (dense Gemma 4, `humanizer-12b`) | INT8 (group 64) | MLX | ~12.7 GB | raw-completion rewriter behind [Humanize](#humanize), no chat template |
 | Spark-X2.5 4B | Q4_K_M | GGUF | ~2.6 GB | |
+| LFM3 1.7B | INT4 (group 64) / Q8_0 | MLX + GGUF | ~1.0 / 1.9 GB | dense hybrid of gated short-conv and attention layers, sequential prefill |
 | Mistral 7B Instruct v0.3 | Q4_K_M | GGUF | ~4.4 GB | |
 | TinyLlama 1.1B Chat | Q6_K | GGUF | ~0.9 GB | |
 

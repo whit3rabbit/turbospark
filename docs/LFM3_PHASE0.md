@@ -15,7 +15,8 @@ sibling, which shares the config). Everything here was read, not inferred.
 | 3. Decode flow | Done: `families/lfm3/`, sequential prefill. Greedy, templated, 600 tokens coherent on the MLX 4-bit and GGUF Q8_0 installs |
 | 4. Head and sampler | Partial: sampled at CLI defaults coherent for 600 tokens, a short question stops `EndOfTurn`. No sampled run on the Q8_0 install yet |
 | 5-6. Memory, quality | Done for the MLX 4-bit install: `lfm3_memory_oracle` (peak 343-351 MiB, ceiling 420) and `lfm3_quality_gate` (perplexity 14.7455 and both digests, reproduced from two fresh processes). Not run on the Q8_0 install |
-| 7. CLI | Partial: probe, pull and run work for the MLX and GGUF repos. No catalog row |
+| 7. CLI | Done: catalog rows `lfm3-1.7b` (MLX 4-bit, verified) and `lfm3-1.7b-q8` (GGUF Q8_0, runs), both pinned, guard byte figures pasted back |
+| 8. Docs | Done: BENCHMARKS.md, MODELS.md, README, DEVIATIONS.md, CHANGELOG |
 
 Not yet checked against another engine. Homebrew llama.cpp 0.7.0 refuses
 `lfm3` as an unknown architecture, and on 2026-10-27 a Homebrew HEAD build

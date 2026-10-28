@@ -14,6 +14,12 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- The `lfm3` family (LiquidAI LFM3-1.7B): a dense hybrid of gated
+  short-convolution, full-attention and sliding-window layers, with MLX and
+  GGUF intake, its own decode flow, and a port-local short-conv kernel pair.
+  Catalog rows `lfm3-1.7b` (MLX 4-bit, verified: memory and quality gates
+  frozen) and `lfm3-1.7b-q8` (GGUF Q8_0, runs). Prefill is sequential.
+  See `docs/LFM3_PHASE0.md`.
 - `tslab hybrid-replay`: prices prompt lookup over the MTP chain on a chain
   capture, per policy and case, against the head alone (ledger kind
   `hybrid_replay`). `tslab chain-capture` now keeps the prompt and stream
@@ -242,6 +248,12 @@ when this file gets updated relative to the version bump and the tag.
   rollback, commit, rewind, bonus).
 
 ### Fixed
+- Chat templates using transformers' `{% generation %}` block tag now
+  render (minijinja rejected the tag, so such a checkpoint could not be
+  installed).
+- The ChatML tokenizer now uses a BOS the checkpoint's tokenizer config
+  declares, instead of always standing in `<|endoftext|>`. Qwen checkpoints,
+  which declare none, are unchanged.
 - `tslab kernel --bench int4_matmul` commits an untimed primer (about 50 ms
   of GPU work on its own small matrix) right before every timed pass. A pass
   started on a cold device runs several times slower for its whole length,
