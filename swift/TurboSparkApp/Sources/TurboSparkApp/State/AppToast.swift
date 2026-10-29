@@ -21,12 +21,12 @@ public struct AppToast: Identifiable, Equatable, Sendable {
         }
 
         /// Tint color for the style indicator icon.
-        public var tintColor: Color {
+        func tintColor(in theme: ResolvedAppTheme) -> Color {
             switch self {
-            case .info: return .accentColor
-            case .success: return .green
-            case .warning: return .orange
-            case .error: return .red
+            case .info: return theme.accent
+            case .success: return theme.success
+            case .warning: return theme.warning
+            case .error: return theme.danger
             }
         }
     }

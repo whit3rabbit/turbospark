@@ -172,21 +172,22 @@ Every pair below was computed from the tokens, as the worst case across every su
 
 | Theme | `ink` | `ink-secondary` | `accent-ink` | `on-accent` | status (worst) | `focus-ring` | `border-strong` |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Spark Blue dark | 14.4 | 8.6 | 5.6 | 6.5 | 5.5 | 5.6 | 3.1 |
-| Spark Blue light | 15.6 | 7.2 | 5.0 | 4.7 | 4.8 | 4.2 | 3.0 |
-| Codex dark | 13.8 | 8.4 | 12.5 | 16.7 | 4.8 | 12.5 | 3.0 |
-| Codex light | 15.2 | 7.0 | 15.8 | 17.7 | 4.8 | 15.8 | 3.0 |
-| Emerald dark | 13.3 | 8.1 | 5.8 | 7.7 | 4.9 | 5.8 | 3.0 |
-| Emerald light | 15.2 | 7.0 | 4.6 | 5.1 | 4.8 | 4.6 | 3.0 |
-| High contrast dark | 17.9 | 16.5 | 17.9 | 18.3 | 8.6 | 17.9 | 10.3 |
-| High contrast light | 18.8 | 17.7 | 18.8 | 21.0 | 7.3 | 18.8 | 9.7 |
+| Spark Blue dark | 12.6 | 7.8 | 4.9 | 6.5 | 7.5 | 4.9 | 3.0 |
+| Spark Blue light | 15.9 | 7.3 | 5.1 | 4.7 | 5.4 | 4.3 | 3.0 |
+| Codex dark | 12.2 | 7.6 | 11.1 | 16.7 | 6.7 | 11.1 | 3.0 |
+| Codex light | 15.6 | 7.1 | 16.2 | 17.7 | 5.4 | 16.2 | 3.0 |
+| Emerald dark | 11.8 | 7.4 | 5.2 | 7.7 | 6.7 | 5.2 | 3.0 |
+| Emerald light | 15.6 | 7.1 | 4.7 | 5.1 | 5.4 | 4.7 | 3.0 |
+| High contrast dark | 16.6 | 15.3 | 16.6 | 18.3 | 10.7 | 16.6 | 9.8 |
+| High contrast light | 19.2 | 18.1 | 19.2 | 21.0 | 7.3 | 19.2 | 9.9 |
 
-Known gaps in the shipped values, kept exact and flagged:
+Known gaps, kept exact and flagged. Surfaces here use `NSColor.blended`'s real math (a gamma 1.8 mix, not a straight sRGB one), checked against the running macOS API.
 
 - `border` is 1.5:1 to 2.2:1 across the preset themes (Spark Blue 2.1:1 dark, 1.6:1 light). Fine for decorative card edges. Use `border-strong` where an edge alone identifies a control.
-- `focus-edge`, the composer's 55% accent focus edge, is 2.6:1 dark and 2.1:1 light in Spark Blue, and 2.8:1 and 2.1:1 in Emerald. Only Codex clears 3:1 (4.9:1 and 3.8:1). Pair it with the solid `focus-ring` or raise it.
-- Spark Blue's light `accent` as text drops to 4.2:1 on `composer`: set text in `accent-ink`. Its `focus-ring` is 4.2:1 there, still above the 3:1 focus floor.
-- The app still draws status with system green, orange, and red. Light-mode system red is 3.5:1 on white. The status tokens here are the replacement.
+- Status clears 4.5:1 on page, surface, elevated and composer in every shipped preset (and on its own 14% wash), and 7:1 on those surfaces under Increase Contrast. The first hexes (`danger` `#FF6961` dark, `#C00013` light) did not: 3.9:1 on Forest dark, and 4.2:1 to 4.3:1 for the light hues on their own wash. `AppStatusColorTests` holds all of it against the app's real surfaces. A custom user theme is not covered, because its surfaces are arbitrary.
+- `focus-edge` was accent at 55%, 2.7:1 dark and 2.1:1 light. The app now draws the solid accent: 4.9:1 dark and 4.4:1 light in Spark Blue on page and composer, and `ink` when an accent cannot reach 3:1.
+- Spark Blue's light `accent` as text drops to 4.3:1 on `composer`. The app now sets selected rail and sidebar glyphs, markdown links and `Link` buttons in `accent-ink` (`ResolvedAppTheme.accentText`, `.appAccentText`), `#1A64CC` for Spark Blue light, and darkens another light accent just enough for 4.5:1.
+- The app draws status with `.appSuccess`, `.appWarning` and `.appDanger`. What still uses a fixed system hue names a category, not a state: model families, chat labels, context-ring segments, agent scopes, feature badges, ANSI and syntax palettes.
 
 Rules:
 

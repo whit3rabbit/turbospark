@@ -339,7 +339,7 @@ struct HumanizeView: View {
     }
 
     private func checksChip(clean: Bool) -> some View {
-        let tint: Color = clean ? .green : AppAttention.color
+        let tint: Color = clean ? theme.success : theme.warning
         return Label {
             if clean { Text("Checks passed", bundle: .module) } else { Text("Check before you use it", bundle: .module) }
         } icon: {
@@ -364,8 +364,8 @@ struct HumanizeView: View {
         var text = AttributedString(source)
         for range in difference?.deleted ?? [] {
             guard let bounds = Range(range, in: source), let marked = Range(bounds, in: text) else { continue }
-            text[marked].foregroundColor = Color.red.opacity(0.85)
-            text[marked].strikethroughStyle = Text.LineStyle(pattern: .solid, color: .red)
+            text[marked].foregroundColor = theme.danger.opacity(0.85)
+            text[marked].strikethroughStyle = Text.LineStyle(pattern: .solid, color: theme.danger)
         }
         return text
     }
@@ -392,8 +392,8 @@ struct HumanizeView: View {
         // warnings, not a view of the diff.
         for range in controller.ruleFindings?.avoidRanges ?? [] {
             guard let bounds = Range(range, in: output), let marked = Range(bounds, in: text) else { continue }
-            text[marked].backgroundColor = AppAttention.color.opacity(0.22)
-            text[marked].underlineStyle = Text.LineStyle(pattern: .dash, color: AppAttention.color)
+            text[marked].backgroundColor = theme.warning.opacity(0.22)
+            text[marked].underlineStyle = Text.LineStyle(pattern: .dash, color: theme.warning)
         }
         return text
     }

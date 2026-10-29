@@ -413,7 +413,10 @@ public enum TaskItemToolDefinitions {
                             "status": .string(description: "Status: 'pending', 'in_progress', 'completed', 'cancelled'."),
                             "activeForm": .string(description: "Present continuous label (e.g. 'Running test suite').")
                         ],
-                        required: ["content", "status", "activeForm"]
+                        // `activeForm` is optional: the decoder falls back to
+                        // `content`, and opencode- and Pi-trained models never send it,
+                        // so requiring it refused their otherwise valid calls.
+                        required: ["content", "status"]
                     ),
                     description: "Full updated list of todo items."
                 )

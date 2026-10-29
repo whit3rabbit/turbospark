@@ -203,7 +203,7 @@ struct ModelMoveSheet: View {
         case .cancelled:
             return MoveNotice(glyph: "info.circle", tint: AnyShapeStyle(AppThemeColor.appSecondary), text: text.text)
         case .failed:
-            return MoveNotice(glyph: "xmark.octagon.fill", tint: AnyShapeStyle(Color.red), text: text.text)
+            return MoveNotice(glyph: "xmark.octagon.fill", tint: AnyShapeStyle(.appDanger), text: text.text)
         }
     }
 

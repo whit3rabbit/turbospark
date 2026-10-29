@@ -53,7 +53,7 @@ struct ContextSelectionButton: View {
         if let rung = currentRung {
             let presentation = ModelFitPresentation.of(rung.verdict)
             Circle()
-                .fill(presentation.color)
+                .fill(presentation.color(in: theme))
                 .frame(width: 7, height: 7)
                 .accessibilityHidden(true)
             Text(rung.context.formatted())
@@ -67,7 +67,7 @@ struct ContextSelectionButton: View {
             // each one is a catalog key.
             Text(LocalizedStringKey(presentation.compactLabel), bundle: .module)
                 .font(theme.ui(.tiny))
-                .foregroundStyle(presentation.color)
+                .foregroundStyle(presentation.color(in: theme))
         } else if model.maxContextTokens == 0 {
             Text("Auto (\(model.resolvedContextTokens.formatted()))", bundle: .module)
                 .font(theme.ui(.small, weight: .semibold))
@@ -162,7 +162,7 @@ private struct ContextSelectionPopover: View {
             isSelected: isSelected,
             primary: Text(rung.context.formatted()),
             secondary: secondary,
-            dotColor: presentation.color,
+            dotColor: presentation.color(in: theme),
             disabled: isRefused
         ) {
             isCustom = false

@@ -171,6 +171,13 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     public var autoContinuationEnabled: Bool
     /// Whether tools are offered by default in conversational Chat mode.
     public var chatToolsEnabled: Bool
+    /// The user's own tool profiles. The built-ins live in code
+    /// (`AppToolProfile.builtIns`) and are never stored, so an update can change
+    /// them and a corrupt file cannot lose them.
+    public var toolProfiles: [AppToolProfile]
+    /// UUID string of the selected profile. Empty, or an ID that no longer
+    /// resolves, means Default.
+    public var activeToolProfileID: String
     /// Offer tools through the engine's native tool calling when the loaded
     /// checkpoint supports it. Off keeps the prompt-described text lane.
     public var nativeToolCallingEnabled: Bool
@@ -339,6 +346,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         todoBoundaryCompaction: Bool = true,
         compactionKeepRecentTurns: Int = 2,
         chatToolsEnabled: Bool = true,
+        toolProfiles: [AppToolProfile] = [],
+        activeToolProfileID: String = "",
         microcompactEnabled: Bool = true,
         autoContinuationEnabled: Bool = true,
         nativeToolCallingEnabled: Bool = true,
@@ -424,6 +433,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.todoBoundaryCompaction = todoBoundaryCompaction
         self.compactionKeepRecentTurns = compactionKeepRecentTurns
         self.chatToolsEnabled = chatToolsEnabled
+        self.toolProfiles = toolProfiles
+        self.activeToolProfileID = activeToolProfileID
         self.microcompactEnabled = microcompactEnabled
         self.autoContinuationEnabled = autoContinuationEnabled
         self.nativeToolCallingEnabled = nativeToolCallingEnabled
@@ -567,6 +578,9 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
             Int.self, forKey: .compactionKeepRecentTurns, fallback: 2)
         self.chatToolsEnabled = c.decodeLenient(
             Bool.self, forKey: .chatToolsEnabled, fallback: true)
+        self.toolProfiles = c.decodeLenientElements(AppToolProfile.self, forKey: .toolProfiles)
+        self.activeToolProfileID = c.decodeLenient(
+            String.self, forKey: .activeToolProfileID, fallback: "")
         self.microcompactEnabled = c.decodeLenient(
             Bool.self, forKey: .microcompactEnabled, fallback: true)
         self.autoContinuationEnabled = c.decodeLenient(

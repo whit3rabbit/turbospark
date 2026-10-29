@@ -149,8 +149,16 @@ final class NativeToolCallingTests: XCTestCase {
         XCTAssertTrue(text.contains("To invoke a tool, output a tool call block"))
         XCTAssertTrue(text.contains("- `read_file`: Read a file"))
 
+        // The guidance names `TodoWrite` and `agent`, so it rides with them:
+        // a turn that was not offered either (a tool profile can remove them)
+        // must not be told to call them.
+        XCTAssertFalse(text.contains("## Task & Progress Tracking"))
+        XCTAssertFalse(text.contains("## Subagents"))
+
+        let withGuidanceTools = TurnAvailableTools(
+            definitions: available().definitions + [TaskItemToolDefinitions.todoWrite, AgentToolDefinitions.agent])
         let native = AppToolCatalog.systemPromptAddendum(
-            for: .general, availableTools: available(), nativeToolCalling: true)
+            for: .general, availableTools: withGuidanceTools, nativeToolCalling: true)
         XCTAssertFalse(native.contains("## Available Tools"))
         XCTAssertFalse(native.contains("To invoke a tool"))
         XCTAssertFalse(native.contains("<tool_call>"), "a second calling format would confuse the model")

@@ -121,7 +121,7 @@ private struct VoiceCloneStepButton: View {
     private var tint: Color {
         switch status.state {
         case .todo: return theme.secondaryText
-        case .attention: return AppAttention.color
+        case .attention: return theme.warning
         case .done, .ready, .active: return theme.accent
         }
     }
@@ -129,7 +129,7 @@ private struct VoiceCloneStepButton: View {
     private var background: Color {
         switch status.state {
         case .done, .ready, .active: return theme.accent.opacity(hovered ? 0.18 : 0.12)
-        case .attention: return AppAttention.color.opacity(hovered ? 0.16 : 0.10)
+        case .attention: return theme.warning.opacity(hovered ? 0.16 : 0.10)
         case .todo: return theme.secondaryText.opacity(hovered ? 0.12 : 0.06)
         }
     }

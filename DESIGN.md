@@ -227,7 +227,9 @@ the app taking access, and macOS shows each prompt only once.
 - Read the theme from the environment: `@Environment(\.appTheme)` or the
   semantic shape styles `.appPage`, `.appSurface`, `.appElevated`, `.appText`,
   `.appSecondary`, `.appBorder`, `.appAccent`. These resolve per mode and per
-  custom theme.
+  custom theme. `.appAccentText` is the accent where it is text or a glyph
+  (selected rail and sidebar icons, links): light mode darkens it to clear
+  4.5:1, dark modes keep the accent.
 - Never use system colors on a themed surface (`Color(nsColor:
   .separatorColor)`, `.controlBackgroundColor` and friends). They ignore the
   palette, which is how a dark-navy theme drew neutral gray boxes
@@ -243,10 +245,14 @@ the app taking access, and macOS shows each prompt only once.
   (`TurboSparkTheme.barBackgroundColor(isDark: theme.isDark)`) or use the
   resolved theme (`theme.accent`), never the bare property
   (`TurboSparkTheme.barBackgroundColor`, `TurboSparkTheme.accentColor`).
-- `DesignTokenRatchetTests` counts the spellings above, and hard-coded
-  `.appBorder.opacity(...)` borders, outside `Theme/`. The counts may only
-  go down: fix a site and lower its baseline in the same change, never raise
-  one.
+- `DesignTokenRatchetTests` counts the spellings above, hard-coded
+  `.appBorder.opacity(...)` borders, system `NSColor`s on a themed surface,
+  system status colors and color literals, outside `Theme/`. The rules and
+  baselines live in `swift/TurboSparkApp/Tests/TurboSparkAppTests/
+  DesignRules.json`, which `make design-check` and CI's `design` job read too.
+  The counts may only go down: fix a site and lower its baseline in the same
+  change, never raise one. A count below its baseline fails as well, so slack
+  cannot hide a new violation.
 - Every scene injects the theme, locale, and layout direction itself:
   `Window`, `Settings`, and `MenuBarExtra` each call `.appThemed()` and set
   `\.locale` and `\.layoutDirection`. A new scene must too, or it renders the
@@ -254,6 +260,16 @@ the app taking access, and macOS shows each prompt only once.
 - Red is the destructive convention. Status is never color alone: pair it
   with a glyph or text (checkmark, triangle, octagon), so it survives color
   blindness and Differentiate Without Color.
+- Status is `.appSuccess`, `.appWarning` and `.appDanger` (`theme.success`,
+  `.warning`, `.danger`), with 14% washes `.appSuccessTint` and friends.
+  Never system `.green`, `.orange` or `.red` for a status: light-mode system
+  red is 3.6:1 on white. `AppAttention.color` is the warning style. A hue that
+  names a category rather than a state (model family, chat label, ANSI,
+  syntax) may stay a fixed color. `DesignTokenRatchetTests` counts the rest.
+  `AppStatusColorTests` pins the ratios (4.5:1, 7:1 under Increase Contrast,
+  4.5:1 on the 14% wash) on every shipped preset. Code with no view in scope
+  takes the theme: `status.color(in: theme)`, not a stored `Color`. Changing
+  a status hex also means `derive_tokens.py` and the design-system README.
 
 ### Type
 
@@ -282,9 +298,9 @@ the app taking access, and macOS shows each prompt only once.
 
 - Surfaces go through the theme so Reduce Transparency and Increase Contrast
   apply: `surfaceOpacity` forces opaque structural surfaces, and
-  `isHighContrast` raises borders and secondary text (Gotcha 79). Do not
-  hard-code a lower opacity for borders or secondary text than the theme
-  gives.
+  `isHighContrast` raises borders and secondary text (Gotcha 79) and swaps the
+  status colors for a higher-contrast set. Do not hard-code a lower opacity
+  for borders or secondary text than the theme gives.
 - Blur and glass only on floating or navigation chrome where they help
   hierarchy, availability-gated, and opaque under Reduce Transparency.
 - Glows are accent shadows from the vocabulary only: `.appFocusGlow` on an
@@ -293,8 +309,11 @@ the app taking access, and macOS shows each prompt only once.
   focus halo is cast by an edge drawn behind the surface, never by a shadow on
   the view, so text over a see-through surface does not glow. The chat and
   Humanize composers pass `halo: false` and keep their edge-only focus look.
-  Under Increase Contrast glows become solid rings or nothing, so never rely
-  on a glow alone to show focus or readiness.
+  The focused edge is the solid accent, never a partial-opacity one (55% was
+  2.1:1 in light), and falls back to the foreground color when the accent
+  cannot reach 3:1 on the page and the composer
+  (`ResolvedAppTheme.focusEdge`). Under Increase Contrast glows become solid
+  rings or nothing, so never rely on a glow alone to show focus or readiness.
 - Corners are continuous (`style: .continuous`) and use `AppMetrics` radii.
 
 ## 5. Accessibility
@@ -437,12 +456,20 @@ Before calling a UI change done:
 
 ```sh
 # from the repository root
+make design-check    # about a second, no build: the ratchet rules and the design-system tokens
 make compile-strings
 (cd swift/TurboSparkApp && swift build -Xbuild-tools-swiftc -suppress-warnings)
-(cd swift/TurboSparkApp && swift test --filter 'LocalizationParityTests|LocalizationTests|LocalizationAndAccessibilityTests|FontPropagationTests|KeyboardShortcutCatalogTests|UIAuditFixesTests|SettingsWindowLayoutTests')
+(cd swift/TurboSparkApp && swift test --filter 'LocalizationParityTests|LocalizationTests|LocalizationAndAccessibilityTests|FontPropagationTests|KeyboardShortcutCatalogTests|UIAuditFixesTests|SettingsWindowLayoutTests|DesignTokenRatchetTests|AppStatusColorTests')
 python3 scripts/generate-settings-catalog.py --check
 make swift-test-app
 ```
+
+`make design-check` runs as CI's `design` job and from `.githooks/pre-commit`
+once you opt in with `git config core.hooksPath .githooks`. `make
+design-check-full` adds the contrast and ratchet tests. CI does not run the
+app's `swift test` suite, so the contrast ratios and the rest of this section
+are checked only when you run them. The `design` job skips pushes that touch
+only `docs/**` or `*.md`.
 
 Then look at the change in the running app. A green build proves none of the
 following, and a UI change is not verified until the touched screens have
@@ -467,7 +494,8 @@ result from compilation alone.
   a guide per vocabulary control, the brand book, and a local preview
   gallery. Derived from this file and the Swift theme.
   `python3 docs/design-system/tools/derive_tokens.py --check` fails when it
-  drifts from the shipped presets.
+  drifts from the shipped presets, and `scripts/check-design.py` fails when
+  its status hexes drift from `Theme/AppStatusColors.swift`.
 - `swift/AGENTS.md`: Swift package, build order, and app rules.
 - `swift/docs/SWIFT_LOCALIZATION.md`: the catalog pipeline and its gates.
 - `swift/docs/KEYBOARD_SHORTCUTS.md`: shortcuts, menus, and VoiceOver

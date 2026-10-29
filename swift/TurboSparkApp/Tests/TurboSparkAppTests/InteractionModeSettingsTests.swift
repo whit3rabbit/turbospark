@@ -66,7 +66,7 @@ final class InteractionModeSettingsTests: XCTestCase {
 
     @MainActor
     func testProjectlessChatBuildsEmptySystemPrompt() {
-        let model = AppModel()
+        let model = AppModel.withoutChatTools()
         // In Chat mode with no project and NO user prompt, the system message
         // is empty: what the 7k of token injection this guards against really
         // is, is the project-derived sections (agent role, workspace root,

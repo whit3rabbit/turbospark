@@ -17,9 +17,12 @@ final class ContextUsageTests: XCTestCase {
     // MARK: - Tint tiers
 
     private func tintName(_ fraction: Double) -> String {
-        let tint = ContextUsageSummary.tint(forFraction: fraction)
-        if tint == .red { return "red" }
-        if tint == .yellow { return "yellow" }
+        let theme = ResolvedAppTheme.fallback
+        let tint = ContextUsageSummary.tint(forFraction: fraction, in: theme)
+        // The tiers are the theme's danger, warning and success hues; the
+        // test names keep the tier words Claude Code's thresholds use.
+        if tint == theme.danger { return "red" }
+        if tint == theme.warning { return "yellow" }
         return "green"
     }
 
@@ -100,7 +103,7 @@ final class ContextUsageTests: XCTestCase {
     /// breakdown's slices can never describe different text than what is
     /// sent. Both the projectless and project arms.
     func testSystemPromptIsTheJoinOfItsSections() {
-        let model = AppModel()
+        let model = AppModel.withoutChatTools()
 
         let bare = model.buildSystemPrompt(for: nil, userPrompt: "USER-PROMPT")
         let bareSections = model.buildSystemPromptSections(for: nil, userPrompt: "USER-PROMPT")

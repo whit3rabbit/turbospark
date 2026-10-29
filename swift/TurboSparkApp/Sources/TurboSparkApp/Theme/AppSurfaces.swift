@@ -108,7 +108,7 @@ private struct AppFocusGlowModifier: ViewModifier {
 
     private var strokeColor: Color {
         if theme.isHighContrast { return focused ? theme.accent : theme.border }
-        return focused ? theme.accent.opacity(0.55) : Color.primary.opacity(theme.isDark ? 0.18 : 0.14)
+        return focused ? theme.focusEdge : Color.primary.opacity(theme.isDark ? 0.18 : 0.14)
     }
 
     private var lineWidth: CGFloat {

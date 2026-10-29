@@ -455,6 +455,14 @@ public final class AppModel: ObservableObject {
     @Published public var autoContinuationEnabled: Bool = true
     /// Whether tools are offered in conversational Chat mode.
     @Published public var chatToolsEnabled: Bool = true
+    /// The user's own tool profiles; built-ins are `AppToolProfile.builtIns`.
+    @Published public var customToolProfiles: [AppToolProfile] = []
+    /// The selected profile. A stale ID resolves to Default (`activeToolProfile`).
+    @Published public var activeToolProfileID: UUID = AppToolProfile.defaultID
+    /// Unsaved changes made from the composer popover, layered over the
+    /// selected profile. Never persisted: it ends with the launch or on Reset,
+    /// and Default is never edited.
+    @Published public var toolProfileOverride: AppToolProfile?
     /// Offer tools through the engine's native tool calling when the loaded
     /// checkpoint supports it, instead of describing them in the prompt.
     @Published public var nativeToolCallingEnabled: Bool = true
