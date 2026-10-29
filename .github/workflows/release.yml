@@ -148,11 +148,11 @@ jobs:
           # turbospark-check and turbospark-model are both [[bin]] targets of
           # the one turbospark-cli package, so one `-p turbospark-cli` build
           # produces both.
-          cp target/aarch64-apple-darwin/release/turbospark-check dist/stage/
-          cp target/aarch64-apple-darwin/release/turbospark-model dist/stage/
-          cp target/aarch64-apple-darwin/release/turbospark-server dist/stage/
-          cd dist/stage && zip "../turbospark-${VER}-macos-arm64.zip" \
-            turbospark-check turbospark-model turbospark-server
+          # The `turbospark` front end execs its peers (image, ocr) from its
+          # own directory, so they ship together or `turbospark image` fails.
+          bins=(turbospark turbospark-check turbospark-model turbospark-server turbospark-image turbospark-ocr)
+          for b in "${bins[@]}"; do cp "target/aarch64-apple-darwin/release/$b" dist/stage/; done
+          cd dist/stage && zip "../turbospark-${VER}-macos-arm64.zip" "${bins[@]}"
           cd .. && rm -rf stage
 
       # Runs the app, not just `ls` it. v0.2.0 and v0.3.0 packaged cleanly and
@@ -331,8 +331,8 @@ jobs:
 
             app "TurboSpark.app"
 
-            # The four CLI binaries (the \`turbospark\` front end plus the three
-            # tools) ship inside the bundle; make-app-bundle.sh signs them.
+            # The CLI binaries (the \`turbospark\` front end plus the peers it
+            # execs) ship inside the bundle; make-app-bundle.sh signs them.
             # Linking them from there rather than shipping a second copy is what lets one cask
             # cover both, and it means \`brew uninstall\` removes the app and
             # unlinks the commands in one step.
@@ -340,6 +340,8 @@ jobs:
             binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-check"
             binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-model"
             binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-server"
+            binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-image"
+            binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-ocr"
 
             # Only runs under \`brew uninstall --zap\`. Deliberately does NOT
             # list ~/.turbospark: that is where multi-gigabyte model installs
@@ -367,9 +369,12 @@ jobs:
 
             conflicts_with cask: "whit3rabbit/tap/turbospark"
 
+            binary "turbospark"
             binary "turbospark-check"
             binary "turbospark-model"
             binary "turbospark-server"
+            binary "turbospark-image"
+            binary "turbospark-ocr"
           end
           EOF
 

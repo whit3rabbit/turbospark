@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Assembles swift/TurboSparkApp's bare SwiftPM executable into a real
-# TurboSpark.app bundle, with the three CLI binaries and openkindd inside it.
+# TurboSpark.app bundle, with the CLI binaries and openkindd inside it.
 #
 # WHY THIS SCRIPT EXISTS: `swift build` emits an executable and a resource
 # bundle side by side in `.build/release`, not an `.app` (swift/CLAUDE.md
@@ -181,7 +181,11 @@ done
 # The CLI, inside the app. The cask links these onto PATH from here.
 # `turbospark` is the front end the Server pane's Launch buttons run
 # (AgentTerminalLaunch.findCLI looks next to the app executable first).
-for bin in turbospark turbospark-check turbospark-model turbospark-server; do
+# Every peer it dispatches to (`execute_peer` in crates/cli/src/bin/turbospark.rs,
+# except the dev-only turbospark-bench) must be here: 0.6.0 shipped without
+# turbospark-image and `turbospark image` failed. verify-app-bundle.sh checks it.
+cli_bins=(turbospark turbospark-check turbospark-model turbospark-server turbospark-image turbospark-ocr)
+for bin in "${cli_bins[@]}"; do
   src="$root/target/$target/release/$bin"
   [ -x "$src" ] || { echo "expected $src to exist; run without --skip-build" >&2; exit 1; }
   cp "$src" "$contents/MacOS/$bin"
@@ -291,7 +295,7 @@ echo "==> codesign (identity: ${identity})"
 # Inner executables first, then the bundle: a signature over the bundle seals
 # what is inside it, so signing the wrapper before its contents invalidates
 # itself. `--deep` is deprecated by Apple for exactly this reason.
-for bin in turbospark turbospark-check turbospark-model turbospark-server openkindd; do
+for bin in "${cli_bins[@]}" openkindd; do
   codesign --force --timestamp=none --sign "$identity" "$contents/MacOS/$bin"
 done
 

@@ -17,7 +17,10 @@
 #      the CI host and fail on the oldest Mac the cask admits.
 #   2. the resource bundle is under Contents/Resources (codesign refuses it
 #      anywhere else).
-#   3. the app stays alive for a few seconds. It is run with an empty HOME so
+#   3. every peer binary the `turbospark` front end execs is in the bundle.
+#      0.6.0 shipped without turbospark-image because the packaging lists
+#      were hand-kept and nothing compared them to the dispatch table.
+#   4. the app stays alive for a few seconds. It is run with an empty HOME so
 #      it cannot touch real user data.
 set -euo pipefail
 
@@ -60,7 +63,18 @@ if ls -d "$app"/*.bundle >/dev/null 2>&1; then
   fail "a .bundle sits at the app root; codesign rejects unsealed root contents"
 fi
 
-# 3. Launch smoke -----------------------------------------------------------
+# 3. CLI peers -----------------------------------------------------------------
+# turbospark-bench is a dev harness from crates/bench, deliberately not shipped.
+front_end="$root/crates/cli/src/bin/turbospark.rs"
+[ -f "$front_end" ] || fail "$front_end not found; run from a source checkout"
+peers="$(grep -oE 'execute_peer\("[a-z0-9-]+"' "$front_end" | sed -E 's/.*"(.*)"/\1/' | sort -u | grep -vx turbospark-bench || true)"
+[ -n "$peers" ] || fail "found no execute_peer calls in $front_end (dispatch changed?)"
+for bin in turbospark $peers; do
+  [ -x "$contents/MacOS/$bin" ] || fail "CLI binary $bin is dispatched by turbospark but missing from $contents/MacOS"
+done
+echo "==> CLI peers present: $(echo $peers | tr '\n' ' ')"
+
+# 4. Launch smoke -----------------------------------------------------------
 home="$(mktemp -d)"
 log="$(mktemp)"
 trap 'rm -rf "$home" "$log"; [ -n "${pid:-}" ] && kill "$pid" 2>/dev/null || true' EXIT

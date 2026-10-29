@@ -217,6 +217,11 @@ when this file gets updated relative to the version bump and the tag.
   rollback, commit, rewind, bonus).
 
 ### Fixed
+- `turbospark image` and `turbospark ocr` failed in 0.6.0 installs because
+  the app bundle, the Homebrew casks and the CLI-only zip did not ship
+  `turbospark-image` or `turbospark-ocr` (the CLI-only zip also lacked the
+  `turbospark` front end). They are built by CI and now packaged and linked,
+  and `verify-app-bundle.sh` fails if any peer the front end execs is missing.
 - Installing Parakeet Unified EN (live transcription) failed after the
   download verified, with "speech install is missing model.safetensors". The
   install ran the batch speech probe, which reads the Unified Core ML layout
