@@ -21,6 +21,35 @@ when this file gets updated relative to the version bump and the tag.
   ane_matmul` gains queue-depth, token-split, baked and `real:` arms. Opt-in
   and measured: the baked form is no faster than the F16 split on a 36 GB
   Mac (`docs/SPEEDUP_PLAYBOOK.md`), so the F16 split stays the default.
+- macOS app: tool profiles. Default (every tool, unchanged), Minimal and
+  Read-only are built in, and custom profiles are edited in a new Settings
+  Tools tab. A profile only removes tools, and a removed tool is refused at
+  execution as well as left out of the prompt. A Tools status chip in Chat
+  and Projects shows whether tools are on and how many are enabled, and
+  opens the master switch, the profile picker and per-tool toggles (a
+  session override over the profile). The TodoWrite and Subagents prompt
+  sections appear only when those tools are offered.
+- `tslab` documentation: a TurboSpark Lab section in the README,
+  `crates/lab/README.md`, and guide pages for `tslab` and the lab crate.
+  `TURBOSPARK_LAB_DIR` is in the environment variable reference.
+
+### Changed
+- Flint decode takes the GQA-shared decode attention kernel, which serves
+  a group's 8 Q heads from one K/V read. In `tslab kernel` at Flint's shape
+  a full layer drops from 1.49 to 0.40 ms at 512 positions and 91.3 to 3.6
+  ms at 32K. Not bit-exact: mean KL against mlx-vlm on
+  `flint-mixed-3-4bit` is 0.0072 nats (barrier 0.0070, mlx-vlm's own floor
+  0.0066), and peak footprint is unchanged. The paired decode tok/s A/B is
+  still open (`docs/FLINT.md`). `TURBOSPARK_ATTN_DECODE_KERNEL=barrier`
+  restores the old kernel.
+
+### Fixed
+- macOS app: a tool call that named an offered tool by another spelling
+  (`read`, `Read` or `read_file` for `FileRead`) or used an argument alias
+  (`path` or `filePath` for `file_path`) was refused before the alias-aware
+  executor saw it. Names now resolve to the offered definition and argument
+  keys to its declared properties, never to a tool the turn did not offer.
+  `TodoWrite`'s `activeForm` is optional. See `docs/TOOL_NAME_ALIGNMENT.md`.
 
 ## [0.6.0] - 2026-10-28
 
