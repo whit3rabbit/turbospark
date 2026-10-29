@@ -127,7 +127,7 @@ final class TurnProjectAndHistoryTests: XCTestCase {
     /// The guard still drops a genuinely empty turn: a message with no text,
     /// no image and no tool activity is not a turn.
     func testATrulyEmptyMessageIsStillDropped() {
-        let model = AppModel()
+        let model = AppModel.withoutChatTools()
         model.defaultSystemPrompt = ""
         model.selectedSystemPromptID = nil
         model.selectedPersonalityID = nil
@@ -184,7 +184,7 @@ final class TurnProjectAndHistoryTests: XCTestCase {
     }
 
     func testHistoryProjectionKeepsOneSourceRowForEveryToolResultFromThatRow() {
-        let model = AppModel()
+        let model = AppModel.withoutChatTools()
         model.defaultSystemPrompt = ""
         model.selectedSystemPromptID = nil
         model.selectedPersonalityID = nil
@@ -221,7 +221,7 @@ final class TurnProjectAndHistoryTests: XCTestCase {
     }
 
     func testHistoryProjectionCountsAnEmptyTranscriptRowWithoutCompressingIndexes() {
-        let model = AppModel()
+        let model = AppModel.withoutChatTools()
         model.defaultSystemPrompt = ""
         model.selectedSystemPromptID = nil
         model.selectedPersonalityID = nil

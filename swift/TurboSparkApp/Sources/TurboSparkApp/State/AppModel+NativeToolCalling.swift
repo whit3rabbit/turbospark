@@ -56,7 +56,8 @@ extension AppModel {
             globalMcpServers: globalMcpServers,
             contextTokens: maxContextTokens > 0 ? maxContextTokens : nil,
             webToolsEnabled: webSearchEnabled,
-            browserAvailability: browserToolAvailability(mediaCapability: mediaCapability))
+            browserAvailability: browserToolAvailability(mediaCapability: mediaCapability),
+            profile: activeToolProfile)
     }
 
     /// The functions to offer: the ones the text prompt would have LISTED

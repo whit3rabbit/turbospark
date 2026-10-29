@@ -74,14 +74,37 @@ staging files changed.
   to bind those chords to their own run/stop controls.
 - Tool options in Chat vs Projects: In Chat (`interactionMode == .chat`), tools
   can be toggled on/off via `chatToolsEnabled` (persisted in `MacAppSettings`,
-  default true, toggled by the `AppChip` button below the prompt composer or
-  the composer plus menu, and configured in General Settings). When enabled in
+  default true, switched from the Tools chip popover below the prompt composer
+  or the composer plus menu, and configured in General Settings). When enabled in
   Chat, turns only offer and dispatch rootless tools (web search, web fetch,
   browser automation, interactive questions, checklists, planning, memory,
   and automation). File editing, directory navigation, codebase search, and
   shell commands (`workspaceRootedToolNames`) as well as custom/MCP tools
   strictly require an active project root (`interactionMode == .projects` and
   `project != nil`) to prevent path traversal and home-directory pollution.
+- Tool profiles (`AppToolProfile`, `AppModel+ToolProfiles`): a profile only
+  REMOVES tools. `AppToolCatalog.captureTurnAvailableTools(profile:)` narrows
+  the one capture that feeds the prompt, the native lane, the token estimate
+  and `TurnAvailableTools.validate`, so a removed tool is refused at execution,
+  not just unlisted. Built-ins (Default, Minimal, Read-only) are code-defined
+  and never persisted; only `customToolProfiles` are stored. A profile stores
+  lowercase keys from `AppToolCatalog.profileKey(for:)` (`read`, `write`,
+  `edit` fold the file handlers' aliases), so a stored profile survives a
+  rename of the advertised name. The composer popover edits an unsaved session
+  override (`toolProfileOverride`), never the saved profile. Prompt sections
+  that name a tool (`TodoWrite`, `agent`) must stay conditional on that tool
+  being offered. The profile applies to interactive turns only, not to
+  `SubagentRunner` or `AutomationExecutors`.
+- Tool call normalization (`Tools/Core/ToolCallNormalization.swift`):
+  `TurnAvailableTools.validate` resolves a call's tool name (case, then
+  family such as `read`/`read_file`/`FileRead`, `bash`/`shell`) and renames
+  argument keys (`filePath`, `path`, `oldString`, `include`, `numResults`) to
+  the offered definition's declared properties BEFORE schema validation, and
+  the dispatch gate then carries the offered name. It only resolves to tools
+  the turn offered, so it never widens a profile or agent allowlist. Do not
+  make two tools with different schemas share a family (`Grep` and
+  `grep_search` stay separate). `docs/TOOL_NAME_ALIGNMENT.md` has the
+  comparison with Claude Code, opencode and Pi and what is left undone.
 - Resources live in the `TurboSparkAppResources` target
   (`Sources/TurboSparkAppResources/Resources`), and the `TurboSparkApp` target
   declares none. `Bundle.module` in the app is a hand-written forwarder

@@ -11,6 +11,7 @@ extension AppSettingsView {
         case engine = "Engine"
         case safety = "Safety & Steering"
         case mcp = "MCP Servers"
+        case tools = "Tools"
         case skills = "Skills"
         case memory = "Memory"
         case soul = "Soul"
@@ -35,6 +36,7 @@ extension AppSettingsView {
             case .engine: return "cpu"
             case .safety: return "dial.medium"
             case .mcp: return "server.rack"
+            case .tools: return "wrench.and.screwdriver"
             case .skills: return "wand.and.stars"
             case .memory: return "brain"
             case .soul: return "sparkles"
@@ -50,7 +52,7 @@ extension AppSettingsView {
             switch self {
             case .general, .profiles, .appearance, .shortcuts, .permissions:
                 return "Personal"
-            case .models, .engine, .safety, .mcp, .skills, .memory, .soul, .agents, .plugins,
+            case .models, .engine, .safety, .mcp, .tools, .skills, .memory, .soul, .agents, .plugins,
                 .automation, .hooks, .browser:
                 return "Engine & Coding"
             }
@@ -76,6 +78,8 @@ extension AppSettingsView {
                 return ["steering", "vectors", "safety", "direction", "control", "activation"]
             case .mcp:
                 return ["mcp", "servers", "tools", "protocols", "marketplace"]
+            case .tools:
+                return ["tools", "profiles", "tool profile", "minimal", "read-only", "pi", "enable", "disable", "toggle", "allowlist", "function calling"]
             case .skills:
                 return ["skills", "custom tools", "instructions", "triggers", "shell", "scope"]
             case .memory:
