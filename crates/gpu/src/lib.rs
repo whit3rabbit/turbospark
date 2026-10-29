@@ -240,7 +240,10 @@ pub use dequant_int4_mma8::{
     encode_dequant_int4_mma8_resident, int4_mma8_k_split, INT4_MMA8_MAX_ROWS,
 };
 #[cfg(target_os = "macos")]
-pub use dequant_int4_steel::{encode_dequant_int4_gemm_steel, steel_supports, SteelTile};
+pub use dequant_int4_steel::{
+    encode_dequant_int4_gemm_steel, encode_dequant_int4_gemm_steel_edge, steel_edge_supports,
+    steel_supports, SteelTile,
+};
 #[cfg(target_os = "macos")]
 pub use dequant_int8_batch::{
     best_row_block_int8, encode_dequant_int8_gemm_resident,

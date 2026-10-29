@@ -293,18 +293,37 @@ impl DecodeScratch {
                 gpu::write_buffer_bytes(&buffer, 0, &vec![0u8; hidden.max(1) as usize * 2]);
                 buffer
             },
-            // The dense GDN family (Qwen3.8-27B: 24 Q over 4 KV heads at
-            // head_dim 256) runs the GQA-shared decode partial: one K/V
-            // read per group instead of per Q head and no per-position
-            // barrier, 3-13x faster from 512 to 32K positions at that
-            // shape (`crates/gpu/tests/qwen38_attention_decode_probe.rs`).
-            // Other families keep the barrier kernel until their own gates
-            // run on it.
+            // The GQA-shared decode partial: one K/V read per group instead
+            // of per Q head and no per-position barrier. Default for the
+            // families whose installs won it in the lab (2026-10-29, ledger
+            // llama-mistral-sweep-20261029 / qwen2-sweep-20261029 /
+            // qwen3-sweep-20261029 / qwen3vl-sweep-20261029 /
+            // spark25-sweep-20261029; findings in
+            // `crates/lab/families/*.json`). Timing verdicts plus greedy
+            // identity: each sweep's gqa and barrier arms produced the same
+            // 64-token decode_digest on every run, but no KL gate has run on
+            // any of them yet. The encoder still falls back to
+            // the barrier kernel for a shape
+            // `gpu::attention_decode_gqa_supported` rejects (head_dim 64
+            // installs, for example), and
+            // `TURBOSPARK_ATTN_DECODE_KERNEL=barrier` overrides process-wide.
+            // `Llama` is dense only: the same family string covers the
+            // Mixtral MoEs, which were never measured. Qwen3Moe's gqa arm
+            // decoded different tokens (qwen3moe-sweep-20261029) with no
+            // moe_kl gate run, so it stays on Barrier with the families that
+            // have no gqa verdict or whose shapes the kernel cannot serve
+            // (MiniMax M2, gpt-oss, Gemma 4, Muse-Glimmer, DeepSeek, flint).
             attn: gpu::AttentionScratch::new(context, arch.num_heads as u32, max_head_dim as u32)
-                .with_decode_kernel(if arch.family == model_io::ModelFamily::QwenGdnDense {
-                    gpu::DecodeAttentionKernel::GqaShared
-                } else {
-                    gpu::DecodeAttentionKernel::Barrier
+                .with_decode_kernel(match arch.family {
+                    model_io::ModelFamily::Llama if arch.num_experts == 0 => {
+                        gpu::DecodeAttentionKernel::GqaShared
+                    }
+                    model_io::ModelFamily::QwenGdnDense
+                    | model_io::ModelFamily::Qwen2Dense
+                    | model_io::ModelFamily::Qwen3Dense
+                    | model_io::ModelFamily::Qwen3Vl
+                    | model_io::ModelFamily::Spark25 => gpu::DecodeAttentionKernel::GqaShared,
+                    _ => gpu::DecodeAttentionKernel::Barrier,
                 }),
             kv_stage: kv_quant.is_on().then(|| KvStage::new(context, full_kv_dim)),
             tq_attn: kv_quant.is_on().then(|| {

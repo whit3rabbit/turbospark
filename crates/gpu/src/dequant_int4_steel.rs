@@ -91,6 +91,67 @@ pub fn encode_dequant_int4_gemm_steel(
         w.rows,
         w.cols
     );
+    encode_steel(context, pass, w, x, y, batch, tile, tile.function())
+}
+
+/// Whether `w` fits the 32-row EDGE entry: the same checks as
+/// [`steel_supports`] minus the whole-tile row count, so a matrix whose last
+/// 32-row output tile is partial (Qwen3.8's 48-row GDN `a`/`b`) qualifies.
+/// A separate predicate rather than a looser [`steel_supports`], because
+/// callers of that one (the ANE split, the lab bench) rely on it meaning
+/// "aligned".
+pub fn steel_edge_supports(w: &Int4ResidentMatrix<'_>) -> bool {
+    let (_, bk, _) = SteelTile::M32K32N32.dims();
+    w.rows > 0
+        && w.cols > 0
+        && w.cols % GROUP_SIZE == 0
+        && w.cols % bk == 0
+        && i32::try_from(w.rows).is_ok()
+        && i32::try_from(w.cols).is_ok()
+}
+
+/// [`encode_dequant_int4_gemm_steel`] at the 32 x 32 x 32 tile for a matrix
+/// whose row count need not be a multiple of 32 (`aligned_N = false`: the
+/// partial last tile loads its weights through `load_safe` and stores
+/// masked). Full tiles run the aligned entry's arithmetic, so a row's bits
+/// are the aligned kernel's whenever both apply.
+pub fn encode_dequant_int4_gemm_steel_edge(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    w: &Int4ResidentMatrix<'_>,
+    x: (&metal::Buffer, u64),
+    y: (&metal::Buffer, u64),
+    batch: usize,
+) -> Result<(), GpuError> {
+    assert!(
+        steel_edge_supports(w),
+        "{} x {} does not fit the Steel edge tile",
+        w.rows,
+        w.cols
+    );
+    encode_steel(
+        context,
+        pass,
+        w,
+        x,
+        y,
+        batch,
+        SteelTile::M32K32N32,
+        "dequant_int4_steel_32_32_32_edge",
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn encode_steel(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    w: &Int4ResidentMatrix<'_>,
+    x: (&metal::Buffer, u64),
+    y: (&metal::Buffer, u64),
+    batch: usize,
+    tile: SteelTile,
+    function: &'static str,
+) -> Result<(), GpuError> {
     assert!(batch > 0, "an empty batch has nothing to multiply");
     let batch_i32 = i32::try_from(batch).expect("batch fits i32");
     assert!(
@@ -108,8 +169,7 @@ pub fn encode_dequant_int4_gemm_steel(
     let m = batch_i32 as u32;
     // No function constants: shape is a runtime argument, so one pipeline
     // per tile serves every projection and batch width.
-    let pipeline =
-        context.pipeline(SOURCE, tile.function(), &FunctionConstantValues::new(), &[])?;
+    let pipeline = context.pipeline(SOURCE, function, &FunctionConstantValues::new(), &[])?;
     pass.encode_threadgroups_3d(
         &pipeline,
         &[

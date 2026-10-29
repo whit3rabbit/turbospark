@@ -1,11 +1,13 @@
 //! Chunked prefill for `flint`: Gemma 4's Step 1 (`docs/BATCHED_PREFILL.md`)
 //! on this family's layer, behind `TURBOSPARK_FLINT_CHUNKED_PREFILL`.
 //!
-//! **What the switch changes, and what it must not.** OFF (the default) the
-//! chunk entry point runs the sequential path token by token, which is what a
-//! Flint install did before this file existed, so the old behaviour is one
-//! variable away and a lab A/B shares a chunk label across both arms. ON, each
-//! layer of a micro-batch of M tokens is ONE command buffer:
+//! **What the switch changes, and what it must not.** ON by default (the
+//! lab's clean paired win is finding `flint.chunked-prefill-clean-2026-10-28`
+//! in `crates/lab/families/flint.json`); `TURBOSPARK_FLINT_CHUNKED_PREFILL=0`
+//! restores the sequential path token by token, which is what a Flint install
+//! did before this file existed, so the old behaviour is one variable away and
+//! a lab A/B shares a chunk label across both arms. ON, each layer of a
+//! micro-batch of M tokens is ONE command buffer:
 //!
 //! ```text
 //! cb1 (per layer): for each of M tokens, in order
@@ -51,12 +53,13 @@ use crate::real_forward_utils::{entry, norm_view};
 use crate::resid_capture::encode_resid_capture;
 use crate::steering::encode_steering;
 
-/// `TURBOSPARK_FLINT_CHUNKED_PREFILL=1` selects the layer-batched driver. Read
-/// once: half the runtime's switches are cached in `OnceLock`s, and the lab
-/// starts a fresh process per arm for that reason.
+/// The layer-batched driver is the default; `TURBOSPARK_FLINT_CHUNKED_PREFILL=0`
+/// restores the sequential walk. Read once: half the runtime's switches are
+/// cached in `OnceLock`s, and the lab starts a fresh process per arm for that
+/// reason.
 fn chunked_prefill_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("TURBOSPARK_FLINT_CHUNKED_PREFILL").as_deref() == Ok("1"))
+    *ON.get_or_init(|| std::env::var("TURBOSPARK_FLINT_CHUNKED_PREFILL").as_deref() != Ok("0"))
 }
 
 impl RealForwardRunner {

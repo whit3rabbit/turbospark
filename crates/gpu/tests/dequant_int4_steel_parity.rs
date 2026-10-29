@@ -17,8 +17,9 @@
 
 use half::{bf16, f16};
 use turbospark_gpu::{
-    autorelease_pool, encode_dequant_int4_gemm_steel, encode_dequant_int4_gemv_resident,
-    read_half_buffer, steel_supports, Int4ResidentMatrix, MetalContext, SteelTile,
+    autorelease_pool, encode_dequant_int4_gemm_steel, encode_dequant_int4_gemm_steel_edge,
+    encode_dequant_int4_gemv_resident, read_half_buffer, steel_edge_supports, steel_supports,
+    Int4ResidentMatrix, MetalContext, SteelTile,
 };
 
 fn lcg(seed: u64) -> impl FnMut() -> u64 {
@@ -229,4 +230,136 @@ fn shapes_the_tile_cannot_serve_are_reported() {
     assert!(steel_supports(&matrix(96, 5120), SteelTile::M32K32N32));
     // Not a whole quantization group of inputs.
     assert!(!steel_supports(&matrix(64, 96), SteelTile::M32K32N32));
+}
+
+/// The EDGE entry on a row count that is not a whole tile: the FP64 reference
+/// bound, with the partial last tile's rows included. 48 is Qwen3.8's GDN
+/// `a`/`b` (one full tile and a half one), 40 and 17 are other remainders.
+fn check_edge(rows: usize, cols: usize, pad: usize, batches: &[usize]) {
+    let mut context = MetalContext::new().expect("Metal device");
+    let fx = fixture(rows, cols, pad);
+    let buffer = context.new_buffer_with_data(&fx.blob);
+    let matrix = Int4ResidentMatrix {
+        buffer: &buffer,
+        weights_offset: fx.weights_offset as u64,
+        scales_offset: fx.scales_offset as u64,
+        biases_offset: fx.biases_offset as u64,
+        rows,
+        cols,
+    };
+    assert!(steel_edge_supports(&matrix));
+    for &batch in batches {
+        let x = activations(batch, cols);
+        let want = reference(&fx, &x, batch);
+        let x_buf = context.new_buffer_with_data(&bytes(&x));
+        // Sentinel-fill y so a masked store that spills or skips shows.
+        let y = context.new_buffer_with_data(&vec![0xFFu8; batch * rows * 2 + 64]);
+        autorelease_pool(|| {
+            let pass = context.begin_pass();
+            encode_dequant_int4_gemm_steel_edge(
+                &mut context,
+                &pass,
+                &matrix,
+                (&x_buf, 0),
+                (&y, 0),
+                batch,
+            )
+            .expect("steel edge encodes");
+            pass.commit_and_wait();
+        });
+        let got = read_half_buffer(&y, batch * rows);
+        assert!(
+            got.iter().all(|v| v.to_f32().is_finite()),
+            "edge {rows}x{cols} batch {batch}: non-finite output"
+        );
+        let err = worst_row_error(&got, &want, rows);
+        assert!(
+            err < BOUND,
+            "edge {rows}x{cols} pad {pad} batch {batch}: worst row error {err}"
+        );
+        // Nothing past the last row may be written.
+        let tail = read_half_buffer(&y, batch * rows + 32);
+        assert!(
+            tail[batch * rows..].iter().all(|v| v.to_bits() == 0xFFFF),
+            "edge {rows}x{cols} batch {batch}: wrote past the output"
+        );
+    }
+}
+
+#[test]
+fn the_edge_entry_matches_the_reference_on_a_partial_last_tile() {
+    check_edge(48, 5120, 2, &[1, 33, 64, 70]);
+    check_edge(40, 256, 0, &[5, 32]);
+    check_edge(17, 128, 0, &[16, 64]);
+}
+
+/// On a whole-tile matrix both entries apply and must agree to the bit: the
+/// edge entry only changes how a partial tile is loaded and stored.
+#[test]
+fn the_edge_entry_is_bit_identical_to_the_aligned_entry_on_whole_tiles() {
+    let (rows, cols, batch) = (96, 5120, 64);
+    let mut context = MetalContext::new().expect("Metal device");
+    let fx = fixture(rows, cols, 2);
+    let buffer = context.new_buffer_with_data(&fx.blob);
+    let matrix = Int4ResidentMatrix {
+        buffer: &buffer,
+        weights_offset: fx.weights_offset as u64,
+        scales_offset: fx.scales_offset as u64,
+        biases_offset: fx.biases_offset as u64,
+        rows,
+        cols,
+    };
+    let x_buf = context.new_buffer_with_data(&bytes(&activations(batch, cols)));
+    let aligned = context.new_output_buffer((batch * rows * 2) as u64);
+    let edge = context.new_output_buffer((batch * rows * 2) as u64);
+    autorelease_pool(|| {
+        let pass = context.begin_pass();
+        encode_dequant_int4_gemm_steel(
+            &mut context,
+            &pass,
+            &matrix,
+            (&x_buf, 0),
+            (&aligned, 0),
+            batch,
+            SteelTile::M32K32N32,
+        )
+        .expect("aligned encodes");
+        encode_dequant_int4_gemm_steel_edge(
+            &mut context,
+            &pass,
+            &matrix,
+            (&x_buf, 0),
+            (&edge, 0),
+            batch,
+        )
+        .expect("edge encodes");
+        pass.commit_and_wait();
+    });
+    let a: Vec<u16> = read_half_buffer(&aligned, batch * rows)
+        .iter()
+        .map(|v| v.to_bits())
+        .collect();
+    let e: Vec<u16> = read_half_buffer(&edge, batch * rows)
+        .iter()
+        .map(|v| v.to_bits())
+        .collect();
+    assert_eq!(a, e);
+}
+
+#[test]
+fn the_edge_predicate_keeps_the_input_width_rules() {
+    let context = MetalContext::new().expect("Metal device");
+    let buffer = context.new_buffer_with_data(&[0u8; 64]);
+    let matrix = |rows, cols| Int4ResidentMatrix {
+        buffer: &buffer,
+        weights_offset: 0,
+        scales_offset: 0,
+        biases_offset: 0,
+        rows,
+        cols,
+    };
+    assert!(steel_edge_supports(&matrix(48, 5120)));
+    assert!(steel_edge_supports(&matrix(96, 5120)));
+    assert!(!steel_edge_supports(&matrix(48, 96)));
+    assert!(!steel_edge_supports(&matrix(0, 5120)));
 }

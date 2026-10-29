@@ -45,6 +45,16 @@
 //! rows takes the smallest count N >= m, its activations padded, and splits
 //! only when m is at least half the smallest N.
 //!
+//! Baked weights (manifest format 2). The programs above take a class's
+//! weights as F16 input planes, one program per class and token count for
+//! every layer. A format 2 manifest instead lists one program per class,
+//! layer and token count with the layer's own INT4 weights inside it
+//! (`constexpr_blockwise_shift_scale`; `crates/coreml/tools/
+//! bake_ane_prefill_programs.py` writes them from the install). Such a point
+//! has no weight plane and no dequant pass, and a layer or class with no
+//! program runs on Steel. The manifest format picks the form, there is no
+//! separate switch.
+//!
 //! Failure handling. Programs that are missing, fail to load, or do not
 //! match the install turn the split off for the runner with one warning, and
 //! prefill runs on Steel. A split micro-batch snapshots the GDN recurrent
@@ -97,8 +107,13 @@ use gpu::ane_split as ane;
 /// while the split is on, about 674 MiB at Qwen3.8-27B's shape.
 pub(crate) const ANE_PREFILL_WIDTH: usize = 2048;
 
-/// The manifest's format version this build reads.
+/// Manifest format 1: one program per class and token count, weights as F16
+/// input planes.
 const MANIFEST_FORMAT: u64 = 1;
+
+/// Manifest format 2: one program per class, layer and token count, with
+/// the weights baked in.
+const MANIFEST_FORMAT_BAKED: u64 = 2;
 
 /// Which prefill arm [`AnePrefill`] asks for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -276,6 +291,7 @@ impl Class {
 /// The projection widths the classes are built from.
 #[derive(Clone, Copy, Debug)]
 struct Dims {
+    layers: usize,
     hidden: usize,
     inter: usize,
     q_dim: usize,
@@ -286,6 +302,7 @@ struct Dims {
 impl Dims {
     fn new(arch: &ArchConfig, shape: gpu::GdnShape) -> Self {
         Self {
+            layers: arch.num_layers as usize,
             hidden: arch.hidden_size as usize,
             inter: arch.intermediate_size as usize,
             q_dim: (arch.num_heads * arch.full_head_dim) as usize,
@@ -312,9 +329,14 @@ struct Entry {
     class: Class,
     tokens: usize,
     k: usize,
-    /// Per matrix: ANE rows, weight-plane rows.
+    /// Per matrix: ANE rows, weight-plane rows (equal for a baked program,
+    /// which has no plane).
     mats: Vec<(usize, usize)>,
     package: String,
+    /// The layer a baked program was built from. `None` for a program that
+    /// serves every layer.
+    layer: Option<usize>,
+    baked: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -330,12 +352,20 @@ struct ManifestProgram {
     tokens: usize,
     matrices: Vec<ManifestMatrix>,
     package: String,
+    /// Format 2 only.
+    #[serde(default)]
+    layer: Option<usize>,
+    /// Format 2 only: `"const_int4"`.
+    #[serde(default)]
+    weights: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
 struct ManifestMatrix {
     rows: usize,
     ane_rows: usize,
+    /// Format 1 only: a baked program has no weight plane.
+    #[serde(default)]
     plane_rows: usize,
 }
 
@@ -345,12 +375,14 @@ struct ManifestMatrix {
 fn parse_manifest(text: &str, dims: Dims) -> Result<Vec<Entry>, String> {
     let file: ManifestFile =
         serde_json::from_str(text).map_err(|e| format!("manifest.json does not parse: {e}"))?;
-    if file.format != MANIFEST_FORMAT {
+    if file.format != MANIFEST_FORMAT && file.format != MANIFEST_FORMAT_BAKED {
         return Err(format!(
-            "manifest.json is format {}, this build reads {MANIFEST_FORMAT}",
+            "manifest.json is format {}, this build reads {MANIFEST_FORMAT} and \
+             {MANIFEST_FORMAT_BAKED}",
             file.format
         ));
     }
+    let format2 = file.format == MANIFEST_FORMAT_BAKED;
     if dims.q_dim != dims.value_dim && file.programs.iter().any(|p| p.class == "o") {
         return Err(format!(
             "class o needs o_proj and out_proj to share K, but they are {} and {}",
@@ -362,7 +394,42 @@ fn parse_manifest(text: &str, dims: Dims) -> Result<Vec<Entry>, String> {
         let class = Class::from_name(&p.class)
             .ok_or_else(|| format!("unknown class {:?} in manifest.json", p.class))?;
         let (k, rows) = dims.class(class);
-        let what = format!("{} at {} tokens", class.name(), p.tokens);
+        let mut what = format!("{} at {} tokens", class.name(), p.tokens);
+        // A format 2 file mixes both forms: a `const_int4` program is one
+        // layer's own, an `f16` program takes its weight plane like a
+        // format 1 program and serves every layer that has no program of
+        // its own. A hybrid manifest is how only some layers get baked.
+        let baked = if format2 {
+            match p.weights.as_deref() {
+                Some("const_int4") => {
+                    let layer = p
+                        .layer
+                        .ok_or_else(|| format!("{what}: a format 2 program names its layer"))?;
+                    if layer >= dims.layers {
+                        return Err(format!(
+                            "{what}: layer {layer}, the install has {} layers",
+                            dims.layers
+                        ));
+                    }
+                    what = format!("{} layer {layer} at {} tokens", class.name(), p.tokens);
+                    true
+                }
+                Some("f16") if p.layer.is_none() => false,
+                other => {
+                    return Err(format!(
+                        "{what}: weights {other:?} with layer {:?}, a format 2 program is \
+                         const_int4 for one layer or f16 for all",
+                        p.layer
+                    ));
+                }
+            }
+        } else if p.layer.is_some() || p.weights.is_some() {
+            return Err(format!(
+                "{what}: layer and weights belong to format {MANIFEST_FORMAT_BAKED}"
+            ));
+        } else {
+            false
+        };
         if p.k != k || p.matrices.len() != rows.len() {
             return Err(format!(
                 "{what}: manifest K {} with {} matrices, the install needs K {k} with {}",
@@ -382,7 +449,7 @@ fn parse_manifest(text: &str, dims: Dims) -> Result<Vec<Entry>, String> {
                 && m.ane_rows > 0
                 && m.ane_rows < r
                 && m.ane_rows % 32 == 0
-                && m.plane_rows >= m.ane_rows;
+                && (baked || m.plane_rows >= m.ane_rows);
             if !ok {
                 return Err(format!(
                     "{what}: matrix of {} rows with {} ANE rows on a {}-row plane, the install \
@@ -390,7 +457,7 @@ fn parse_manifest(text: &str, dims: Dims) -> Result<Vec<Entry>, String> {
                     m.rows, m.ane_rows, m.plane_rows
                 ));
             }
-            mats.push((m.ane_rows, m.plane_rows));
+            mats.push((m.ane_rows, if baked { m.ane_rows } else { m.plane_rows }));
         }
         if p.package.contains('/') || p.package.contains("..") {
             return Err(format!(
@@ -400,7 +467,7 @@ fn parse_manifest(text: &str, dims: Dims) -> Result<Vec<Entry>, String> {
         }
         if entries
             .iter()
-            .any(|e| e.class == class && e.tokens == p.tokens)
+            .any(|e| e.class == class && e.tokens == p.tokens && e.layer == p.layer)
         {
             return Err(format!("{what} is listed twice"));
         }
@@ -410,6 +477,8 @@ fn parse_manifest(text: &str, dims: Dims) -> Result<Vec<Entry>, String> {
             k,
             mats,
             package: p.package,
+            layer: p.layer,
+            baked,
         });
     }
     if entries.is_empty() {
@@ -499,6 +568,10 @@ impl Planes {
 struct Program {
     class: Class,
     tokens: usize,
+    /// The layer of a baked program, `None` for one that serves every layer.
+    layer: Option<usize>,
+    /// Weights are inside the program: `w` is empty and no dequant runs.
+    baked: bool,
     mas: Vec<usize>,
     w: Vec<usize>,
     a: usize,
@@ -590,7 +663,9 @@ impl AneSplitState {
             let mut w = Vec::new();
             let mut o = Vec::new();
             for (i, &(ma, wr)) in e.mats.iter().enumerate() {
-                w.push(self.planes.get_or_new(context, PlaneKind::W(i), wr, e.k)?);
+                if !e.baked {
+                    w.push(self.planes.get_or_new(context, PlaneKind::W(i), wr, e.k)?);
+                }
                 o.push(
                     self.planes
                         .get_or_new(context, PlaneKind::O(i), ma, e.tokens)?,
@@ -602,6 +677,8 @@ impl AneSplitState {
             let program = Program {
                 class: e.class,
                 tokens: e.tokens,
+                layer: e.layer,
+                baked: e.baked,
                 mas: e.mats.iter().map(|&(ma, _)| ma).collect(),
                 w,
                 a,
@@ -622,12 +699,62 @@ impl AneSplitState {
         Ok(())
     }
 
+    /// The loaded program for a class at one layer and token count: the
+    /// layer's own when the manifest is baked, else the one program every
+    /// layer shares. `None` for a baked layer or class with no program.
+    fn program_for(&self, class: Class, layer: usize, tokens: usize) -> Option<usize> {
+        find_program(
+            self.programs.iter().map(|p| (p.class, p.layer, p.tokens)),
+            class,
+            layer,
+            tokens,
+        )
+    }
+
     fn turn_off(&mut self, reason: String) {
         eprintln!("[ane-prefill] off: {reason}. Prefill runs on Steel.");
         self.programs.clear();
         self.planes = Planes::default();
         self.off = Some(reason);
     }
+}
+
+/// The distinct classes a manifest has programs for at `tokens`, in manifest
+/// order. A baked manifest lists a class once per layer; counting each entry
+/// would multiply the split points (and the command buffers they need) by the
+/// layer count.
+fn classes_at(entries: &[Entry], tokens: usize) -> Vec<Class> {
+    let mut classes = Vec::new();
+    for e in entries.iter().filter(|e| e.tokens == tokens) {
+        if !classes.contains(&e.class) {
+            classes.push(e.class);
+        }
+    }
+    classes
+}
+
+/// The index of the program for a class at one layer and token count among
+/// `(class, layer, tokens)` rows: the layer's own program, else the first
+/// one with no layer, which serves every layer. A layer's own program wins
+/// wherever it sits in the manifest.
+fn find_program(
+    programs: impl Iterator<Item = (Class, Option<usize>, usize)>,
+    class: Class,
+    layer: usize,
+    tokens: usize,
+) -> Option<usize> {
+    let mut shared = None;
+    for (i, (c, l, t)) in programs.enumerate() {
+        if c != class || t != tokens {
+            continue;
+        }
+        match l {
+            Some(l) if l == layer => return Some(i),
+            None if shared.is_none() => shared = Some(i),
+            _ => {}
+        }
+    }
+    shared
 }
 
 /// Makes `state` ready for a micro-batch of `m` rows in `mode` from `dir`,
@@ -903,6 +1030,8 @@ struct Split<'a> {
     /// Each class split in this micro-batch, with its program when the mode
     /// is [`SplitMode::Ane`] (`None` for [`SplitMode::Break`]).
     classes: Vec<(Class, Option<usize>)>,
+    /// The token count the micro-batch's programs were built for.
+    tokens: usize,
     nonfinite: gpu::MetalBuffer,
     m: usize,
     base: u64,
@@ -944,18 +1073,35 @@ impl Split<'_> {
     /// row). `extras` encodes the class's Steel-only projections: in the
     /// running segment when the class does not split here, otherwise beside
     /// Steel's rows.
+    #[allow(clippy::too_many_arguments)]
     fn point(
         &mut self,
         context: &mut gpu::MetalContext,
         class: Class,
+        layer: usize,
         x: &gpu::MetalBuffer,
         cols: usize,
         projs: &[Proj<'_>],
         extras: impl FnOnce(&mut gpu::MetalContext, &gpu::PassEncoder) -> Result<(), RealForwardError>,
     ) -> Result<(), RealForwardError> {
-        let Some(&(_, program)) = self.classes.iter().find(|(c, _)| *c == class) else {
+        let Some(&(_, class_program)) = self.classes.iter().find(|(c, _)| *c == class) else {
             self.full(context, &self.pass, x, cols, projs)?;
             return extras(context, &self.pass);
+        };
+        // A class names one representative program, which only says the
+        // class splits. The layer's own program (baked) or the shared one
+        // (F16) is looked up per layer, and a layer with neither runs on
+        // Steel with no break.
+        let program = match class_program {
+            Some(_) => {
+                let own = self.state.program_for(class, layer, self.tokens);
+                if own.is_none() {
+                    self.full(context, &self.pass, x, cols, projs)?;
+                    return extras(context, &self.pass);
+                }
+                own
+            }
+            None => None,
         };
         let gpu_err = RealForwardError::Gpu;
         let state = self.state;
@@ -965,17 +1111,20 @@ impl Split<'_> {
             .collect::<Result<Vec<_>, _>>()?;
         if let Some(pi) = program {
             let prog = &state.programs[pi];
-            for (i, w) in mats.iter().enumerate() {
-                let plane = state.planes.get(prog.w[i]);
-                ane::encode_ane_dequant_rows(
-                    context,
-                    &self.pass,
-                    w,
-                    prog.mas[i],
-                    (&plane.buffer, 0),
-                    plane.plane.stride(),
-                )
-                .map_err(gpu_err)?;
+            // A baked program carries its weights: no plane, no dequant.
+            if !prog.baked {
+                for (i, w) in mats.iter().enumerate() {
+                    let plane = state.planes.get(prog.w[i]);
+                    ane::encode_ane_dequant_rows(
+                        context,
+                        &self.pass,
+                        w,
+                        prog.mas[i],
+                        (&plane.buffer, 0),
+                        plane.plane.stride(),
+                    )
+                    .map_err(gpu_err)?;
+                }
             }
             let a = state.planes.get(prog.a);
             ane::encode_ane_scale_rows(
@@ -1075,18 +1224,18 @@ fn run_micro_batch(
     let batched = qwen.batched_prefill();
     let tokens = slot_for(&state.slots, m).ok_or_else(|| unsupported("no program slot"))?;
     let mut classes = Vec::new();
-    for e in state.entries.iter().filter(|e| e.tokens == tokens) {
+    for class in classes_at(&state.entries, tokens) {
         let program = match mode {
             SplitMode::Break => None,
             SplitMode::Ane => Some(
                 state
                     .programs
                     .iter()
-                    .position(|p| p.class == e.class && p.tokens == tokens)
+                    .position(|p| p.class == class && p.tokens == tokens)
                     .ok_or_else(|| unsupported("program not loaded"))?,
             ),
         };
-        classes.push((e.class, program));
+        classes.push((class, program));
     }
     // Every buffer is created before any is committed; past the queue's
     // capacity, creating one more blocks forever.
@@ -1112,6 +1261,7 @@ fn run_micro_batch(
         batched,
         state,
         classes,
+        tokens,
         nonfinite: context.new_buffer_with_data(&[0u32]),
         m,
         base: state.event.value(),
@@ -1142,6 +1292,7 @@ fn run_micro_batch(
             sp.point(
                 context,
                 Class::Qkvz,
+                layer,
                 &batched.normed,
                 hidden,
                 &[
@@ -1169,6 +1320,7 @@ fn run_micro_batch(
             sp.point(
                 context,
                 Class::O,
+                layer,
                 &batched.gdn_out,
                 dims.value_dim,
                 &[Proj {
@@ -1184,6 +1336,7 @@ fn run_micro_batch(
             sp.point(
                 context,
                 Class::Qg,
+                layer,
                 &batched.normed,
                 hidden,
                 &[Proj {
@@ -1226,6 +1379,7 @@ fn run_micro_batch(
             sp.point(
                 context,
                 Class::O,
+                layer,
                 &batched.attn_out,
                 dims.q_dim,
                 &[Proj {
@@ -1249,6 +1403,7 @@ fn run_micro_batch(
         sp.point(
             context,
             Class::GateUp,
+            layer,
             &batched.moe_x,
             hidden,
             &[
@@ -1269,6 +1424,7 @@ fn run_micro_batch(
         sp.point(
             context,
             Class::Down,
+            layer,
             &batched.ffn_act,
             inter,
             &[Proj {
@@ -1370,7 +1526,9 @@ fn run_micro_batch(
     for &(rs, re) in &rows_t {
         gpu_busy += re - rs;
     }
-    if std::env::var_os("TURBOSPARK_ANE_PREFILL_STATS").is_some() {
+    // `=1` only, like every other switch: stats mode syncs per micro-batch,
+    // so an arm written `=0` must not pay for it.
+    if std::env::var("TURBOSPARK_ANE_PREFILL_STATS").as_deref() == Ok("1") {
         print_stats(
             mode,
             start_position,
@@ -1472,6 +1630,7 @@ mod manifest_tests {
 
     // Qwen3.8-27B.
     const DIMS: Dims = Dims {
+        layers: 64,
         hidden: 5120,
         inter: 17408,
         q_dim: 6144,
@@ -1527,8 +1686,11 @@ mod manifest_tests {
     fn other_manifest_errors_are_refused() {
         assert!(parse_manifest(&manifest(""), DIMS).is_err());
         assert!(parse_manifest("{", DIMS).is_err());
+        // A format 2 file whose programs name no layer is not a baked manifest.
         let v2 = manifest(GATEUP_2048).replace("\"format\": 1", "\"format\": 2");
         assert!(parse_manifest(&v2, DIMS).is_err());
+        let v3 = manifest(GATEUP_2048).replace("\"format\": 1", "\"format\": 3");
+        assert!(parse_manifest(&v3, DIMS).unwrap_err().contains("format 3"));
         let twice = manifest(&format!("{GATEUP_2048}, {GATEUP_2048}"));
         assert!(parse_manifest(&twice, DIMS).unwrap_err().contains("twice"));
         let wide = GATEUP_2048.replace("\"tokens\": 2048", "\"tokens\": 4096");
@@ -1537,6 +1699,132 @@ mod manifest_tests {
         assert!(parse_manifest(&manifest(&path), DIMS).is_err());
         let class = GATEUP_2048.replace("gateup", "lm_head");
         assert!(parse_manifest(&manifest(&class), DIMS).is_err());
+    }
+
+    fn baked_manifest(programs: &str) -> String {
+        format!(r#"{{"format": 2, "programs": [{programs}]}}"#)
+    }
+
+    fn baked_gateup(layer: usize) -> String {
+        format!(
+            r#"{{"class": "gateup", "k": 5120, "tokens": 2048, "layer": {layer},
+            "weights": "const_int4",
+            "matrices": [{{"rows": 17408, "ane_rows": 8704}},
+                         {{"rows": 17408, "ane_rows": 8704}}],
+            "package": "bake_gateup_l{layer}_n2048.mlpackage"}}"#
+        )
+    }
+
+    #[test]
+    fn a_baked_manifest_parses_per_layer_programs() {
+        let text = baked_manifest(&format!("{}, {}", baked_gateup(0), baked_gateup(3)));
+        let entries = parse_manifest(&text, DIMS).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert!(entries.iter().all(|e| e.baked));
+        assert_eq!(entries[0].layer, Some(0));
+        assert_eq!(entries[1].layer, Some(3));
+        // No weight plane: plane rows are the ANE rows.
+        assert_eq!(entries[0].mats, vec![(8704, 8704), (8704, 8704)]);
+        // The F16 form still parses and is not baked.
+        let f16 = parse_manifest(&manifest(GATEUP_2048), DIMS).unwrap();
+        assert!(!f16[0].baked && f16[0].layer.is_none());
+    }
+
+    #[test]
+    fn a_baked_manifest_must_name_a_real_layer_and_its_weights() {
+        let no_layer = baked_gateup(0).replace("\"layer\": 0,", "");
+        let err = parse_manifest(&baked_manifest(&no_layer), DIMS).unwrap_err();
+        assert!(err.contains("names its layer"), "{err}");
+        let past_end = baked_gateup(64);
+        assert!(parse_manifest(&baked_manifest(&past_end), DIMS).is_err());
+        let f16_weights = baked_gateup(0).replace("const_int4", "f16");
+        assert!(parse_manifest(&baked_manifest(&f16_weights), DIMS).is_err());
+        // Layer and weights are not part of format 1.
+        let in_v1 = baked_gateup(0);
+        let err = parse_manifest(&manifest(&in_v1), DIMS).unwrap_err();
+        assert!(err.contains("belong to format 2"), "{err}");
+        // One program per class, layer and token count.
+        let twice = baked_manifest(&format!("{}, {}", baked_gateup(1), baked_gateup(1)));
+        assert!(parse_manifest(&twice, DIMS).unwrap_err().contains("twice"));
+        // Rows Steel cannot take are still refused.
+        let odd = baked_gateup(0).replacen("8704", "8700", 1);
+        assert!(parse_manifest(&baked_manifest(&odd), DIMS).is_err());
+    }
+
+    #[test]
+    fn a_baked_manifest_yields_each_class_once() {
+        let layers = (0..64).map(baked_gateup).collect::<Vec<_>>().join(", ");
+        let down = |layer: usize| {
+            format!(
+                r#"{{"class": "down", "k": 17408, "tokens": 2048, "layer": {layer},
+                "weights": "const_int4", "matrices": [{{"rows": 5120, "ane_rows": 2560}}],
+                "package": "bake_down_l{layer}_n2048.mlpackage"}}"#
+            )
+        };
+        let downs = (0..64).map(down).collect::<Vec<_>>().join(", ");
+        let entries = parse_manifest(&baked_manifest(&format!("{layers}, {downs}")), DIMS).unwrap();
+        assert_eq!(entries.len(), 128);
+        assert_eq!(classes_at(&entries, 2048), vec![Class::GateUp, Class::Down]);
+        assert!(classes_at(&entries, 1024).is_empty());
+        // 64 layers x 2 classes = 128 split points, 257 buffers: inside the queue.
+        let points = 64 * classes_at(&entries, 2048).len();
+        assert!(2 * points < ane::MAX_COMMAND_BUFFERS);
+    }
+
+    #[test]
+    fn programs_are_found_by_layer_when_baked() {
+        let progs = [
+            (Class::GateUp, Some(0), 2048),
+            (Class::GateUp, Some(3), 2048),
+            (Class::GateUp, Some(3), 1024),
+            (Class::Down, None, 2048),
+        ];
+        let find = |c, l, t| find_program(progs.iter().copied(), c, l, t);
+        assert_eq!(find(Class::GateUp, 0, 2048), Some(0));
+        assert_eq!(find(Class::GateUp, 3, 2048), Some(1));
+        assert_eq!(find(Class::GateUp, 3, 1024), Some(2));
+        // A baked layer with no program has none, whatever other layers have.
+        assert_eq!(find(Class::GateUp, 1, 2048), None);
+        assert_eq!(find(Class::GateUp, 0, 1024), None);
+        // A program with no layer serves every layer.
+        assert_eq!(find(Class::Down, 0, 2048), Some(3));
+        assert_eq!(find(Class::Down, 63, 2048), Some(3));
+    }
+
+    #[test]
+    fn a_hybrid_manifest_mixes_baked_layers_with_a_shared_f16_program() {
+        // The shared program may be listed first: a layer's own program wins.
+        let shared = GATEUP_2048.replace(
+            "\"tokens\": 2048,",
+            "\"tokens\": 2048, \"weights\": \"f16\",",
+        );
+        let text = baked_manifest(&format!(
+            "{shared}, {}, {}",
+            baked_gateup(0),
+            baked_gateup(2)
+        ));
+        let entries = parse_manifest(&text, DIMS).unwrap();
+        assert_eq!(entries.len(), 3);
+        assert!(!entries[0].baked && entries[0].layer.is_none());
+        // The shared program keeps its weight plane; the baked ones have none.
+        assert_eq!(entries[0].mats, vec![(8192, 8192), (8192, 8192)]);
+        assert_eq!(entries[1].mats, vec![(8704, 8704), (8704, 8704)]);
+        assert_eq!(classes_at(&entries, 2048), vec![Class::GateUp]);
+        let rows: Vec<_> = entries
+            .iter()
+            .map(|e| (e.class, e.layer, e.tokens))
+            .collect();
+        let find = |l| find_program(rows.iter().copied(), Class::GateUp, l, 2048);
+        assert_eq!(find(0), Some(1));
+        assert_eq!(find(2), Some(2));
+        assert_eq!(find(1), Some(0));
+        assert_eq!(find(63), Some(0));
+
+        // An f16 program is for every layer, and needs its plane.
+        let with_layer = shared.replace("\"class\"", "\"layer\": 1, \"class\"");
+        assert!(parse_manifest(&baked_manifest(&with_layer), DIMS).is_err());
+        let no_plane = shared.replace("\"plane_rows\": 8192", "\"plane_rows\": 4096");
+        assert!(parse_manifest(&baked_manifest(&no_plane), DIMS).is_err());
     }
 
     #[test]
@@ -1730,6 +2018,7 @@ mod tests {
             return;
         };
         let dims = Dims {
+            layers: 64,
             hidden: 5120,
             inter: 17408,
             q_dim: 6144,

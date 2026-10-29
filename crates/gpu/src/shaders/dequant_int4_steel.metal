@@ -3332,7 +3332,8 @@ METAL_FUNC void qmm_t_impl(
 // y[M, N] = x[M, K] * dequant(w[N, K])^T with FP16 x and y, packed INT4 w,
 // BF16 scale and bias planes at group 64, FP32 accumulation. Grid is
 // (ceil(N / BN), ceil(M / BM)) threadgroups of 128 threads. N must be a
-// multiple of BN (aligned_N); M is any size (rows past M are masked).
+// multiple of BN (aligned_N) except in the `_edge` entries, which accept any
+// N; M is any size (rows past M are masked).
 
 [[kernel, max_total_threads_per_threadgroup(128)]]
 void dequant_int4_steel_32_32_32(
@@ -3351,6 +3352,26 @@ void dequant_int4_steel_32_32_32(
     threadgroup half Xs[32 * (32 + 8)];
     threadgroup half Ws[32 * (32 + 8)];
     qmm_t_impl<half, 64, 4, true, 32, 32, 32>(
+        w, scales, biases, x, y, Xs, Ws, K, N, M, tid, lid, simd_gid, simd_lid);
+}
+
+[[kernel, max_total_threads_per_threadgroup(128)]]
+void dequant_int4_steel_32_32_32_edge(
+    const device uint8_t* w [[buffer(0)]],
+    const device bfloat16_t* scales [[buffer(1)]],
+    const device bfloat16_t* biases [[buffer(2)]],
+    const device half* x [[buffer(3)]],
+    device half* y [[buffer(4)]],
+    constant int& K [[buffer(5)]],
+    constant int& N [[buffer(6)]],
+    constant int& M [[buffer(7)]],
+    uint3 tid [[threadgroup_position_in_grid]],
+    uint lid [[thread_index_in_threadgroup]],
+    uint simd_gid [[simdgroup_index_in_threadgroup]],
+    uint simd_lid [[thread_index_in_simdgroup]]) {
+    threadgroup half Xs[32 * (32 + 8)];
+    threadgroup half Ws[32 * (32 + 8)];
+    qmm_t_impl<half, 64, 4, false, 32, 32, 32>(
         w, scales, biases, x, y, Xs, Ws, K, N, M, tid, lid, simd_gid, simd_lid);
 }
 
