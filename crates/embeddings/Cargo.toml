@@ -19,11 +19,11 @@ path = "src/lib.rs"
 # Shared portable f32 kernels (linear, norms, attention, conv2d), MLX
 # affine dequantization, and the mel/STFT frontends CLAP needs. Reused
 # rather than copied so a kernel fix lands once.
-turbospark-audio = { path = "../audio", version = "0.5.0" }
-turbospark-model-io = { path = "../model-io", version = "0.5.0" }
+turbospark-audio = { path = "../audio", version = "0.6.0" }
+turbospark-model-io = { path = "../model-io", version = "0.6.0" }
 # Portable image decode and PIL-compatible resize for the SigLIP2 vision
 # tower frontend.
-turbospark-vision-io = { path = "../vision-io", version = "0.5.0" }
+turbospark-vision-io = { path = "../vision-io", version = "0.6.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokenizers = { version = "0.20", default-features = false, features = ["onig"] }

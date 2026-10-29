@@ -128,7 +128,7 @@ struct ChromeTelemetryView: View {
     }
 
     private func memoryTint(_ fraction: Double) -> Color {
-        if fraction > 0.65 { return AppAttention.color }
+        if fraction > 0.65 { return theme.warning }
         return theme.accent
     }
 

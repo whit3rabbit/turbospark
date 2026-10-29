@@ -20,7 +20,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use half::f16;
 use turbospark_repack::{
-    build_synthetic_flint_install, rebalance_install_in_place, FLINT_SWIGLU_SHIFT,
+    build_synthetic_flint_install, build_synthetic_flint_install_with, rebalance_install_in_place,
+    SyntheticFlintRouted, FLINT_SWIGLU_SHIFT,
 };
 use turbospark_runtime::{LogitProducer, RealForwardRunner};
 
@@ -374,4 +375,54 @@ fn an_fp16_overflow_is_reproduced_and_then_removed_by_the_exact_inverse() {
         "the in-place shift is not exactly invertible"
     );
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// 3-BIT EXPERTS ARE THE SAME MODEL AS THE SAME CODES AT 4 BITS. Both installs
+/// carry identical dequantized experts (codes in `0..=7`, one set of scales
+/// and biases), written once at 4 bits and once in MLX's 3-bit packing, which
+/// is `flint-mixed-3-4bit`'s. The INT3 kernels repeat the INT4 pair's
+/// accumulation term by term, so the logits must match BIT FOR BIT: any
+/// unpack, offset, width-detection or dispatch mistake moves them. The intake
+/// (per-tensor override, word-count check, rebalance) is on the path too.
+#[test]
+fn three_bit_routed_experts_decode_bit_identically_to_the_same_codes_at_four_bits() {
+    let build = |bits| {
+        let dir = tempdir();
+        let routed = SyntheticFlintRouted::LowCodes { bits };
+        let arch = build_synthetic_flint_install_with(&dir, 64, "flint-toy", routed)
+            .expect("write install");
+        (dir, arch)
+    };
+    let (dir4, arch4) = build(4);
+    let (dir3, arch3) = build(3);
+    // Expert blobs are padded to a page, so the recorded run size is what
+    // shows the width: 64x64 codes are 2048 bytes at 4 bits, 1536 at 3.
+    let gate_bytes = |dir: &std::path::Path| {
+        let text = std::fs::read_to_string(dir.join("packed_experts/layout.json")).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        v["layers"][0]["experts"][0]["tensors"]["gate"]["size"]
+            .as_u64()
+            .unwrap()
+    };
+    assert_eq!(gate_bytes(&dir4), 2048);
+    assert_eq!(
+        gate_bytes(&dir3),
+        1536,
+        "the 3-bit install must store 3-bit experts"
+    );
+    let four = decode(&dir4, &arch4, 12);
+    let three = decode(&dir3, &arch3, 12);
+    let differing = four
+        .iter()
+        .zip(&three)
+        .filter(|(a, b)| a.to_bits() != b.to_bits())
+        .count();
+    assert_eq!(
+        differing, 0,
+        "3-bit and 4-bit logits differ in {differing} places"
+    );
+    // Not vacuous: the low-code experts are a different model from the
+    // default fixture's, so the routed half is in the logits at all.
+    let (dir, arch) = flint_install();
+    assert!(distance(&decode(&dir, &arch, 12), &four) > 0.0);
 }

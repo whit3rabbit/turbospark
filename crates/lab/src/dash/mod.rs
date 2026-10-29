@@ -11,6 +11,9 @@
 //! and the machine lock is never taken, so the dashboard can stay open
 //! beside a measurement. The index is re-read when a ledger's size or mtime
 //! moves (`index.rs`).
+//!
+//! A loopback bind answers only loopback Host headers, so a rebound DNS
+//! name cannot become same-origin with the dashboard and read it.
 
 pub mod api;
 pub mod index;
@@ -21,9 +24,10 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use axum::extract::{Path as AxPath, Query, State};
-use axum::http::StatusCode;
-use axum::response::Html;
+use axum::extract::{Path as AxPath, Query, Request, State};
+use axum::http::{HeaderValue, StatusCode};
+use axum::middleware::{self, Next};
+use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 
@@ -193,6 +197,67 @@ pub fn router(app: Shared) -> Router {
         .with_state(app)
 }
 
+/// A Host header names this machine: `localhost`, a loopback IP, either
+/// with a port, or `[::1]` bracketed.
+fn host_is_loopback(host: &str) -> bool {
+    let name = match host.strip_prefix('[') {
+        // `[::1]` or `[::1]:7878`: the name ends at the closing bracket, and
+        // only a port may follow it. Anything else (`[::1]evil.example`) is
+        // not a Host a browser sends, so it is not this machine.
+        Some(rest) => match rest.split_once(']') {
+            Some((name, tail)) if tail.is_empty() || tail.starts_with(':') => name,
+            _ => return false,
+        },
+        None => host.rsplit_once(':').map_or(host, |(n, _)| n),
+    };
+    name.eq_ignore_ascii_case("localhost")
+        || name
+            .parse::<std::net::IpAddr>()
+            .map(|ip| ip.is_loopback())
+            .unwrap_or(false)
+}
+
+/// Every served response says what it is and fetches nothing, and a
+/// loopback bind refuses a Host header that names some other origin: a
+/// rebound DNS name would otherwise be same-origin with the dashboard.
+/// `img-src data:` exists only so the pages' inline favicon may load.
+async fn hardening(State(loopback): State<bool>, req: Request, next: Next) -> Response {
+    if loopback {
+        let host = req
+            .headers()
+            .get(axum::http::header::HOST)
+            .and_then(|h| h.to_str().ok())
+            .unwrap_or("");
+        if !host_is_loopback(host) {
+            return (
+                StatusCode::FORBIDDEN,
+                "refused: the Host header does not name this machine",
+            )
+                .into_response();
+        }
+    }
+    let mut res = next.run(req).await;
+    let headers = res.headers_mut();
+    headers.insert(
+        axum::http::header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        axum::http::header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(
+            "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; \
+             img-src data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+        ),
+    );
+    res
+}
+
+/// The serve path's router: the pages plus the response hardening, and on
+/// a loopback bind the Host check. `router` stays bare for the tests.
+pub fn serve_router(app: Shared, loopback: bool) -> Router {
+    router(app).layer(middleware::from_fn_with_state(loopback, hardening))
+}
+
 /// `tslab serve [--port 7878] [--bind 127.0.0.1] [--lab DIR] [--open]`.
 /// Blocks until the process is stopped. Never takes the machine lock.
 pub fn serve_cmd(mut args: crate::args::Args) -> Result<crate::schema::CmdOutput, String> {
@@ -219,7 +284,7 @@ pub fn serve_cmd(mut args: crate::args::Args) -> Result<crate::schema::CmdOutput
     );
     if !addr.ip().is_loopback() {
         crate::say!(
-            "  bound to {}: the dashboard has no authentication",
+            "  bound to {}: the dashboard has no authentication and the loopback Host check is off",
             addr.ip()
         );
     }
@@ -235,7 +300,7 @@ pub fn serve_cmd(mut args: crate::args::Args) -> Result<crate::schema::CmdOutput
         let listener = tokio::net::TcpListener::bind(addr)
             .await
             .map_err(|e| format!("bind {addr}: {e}"))?;
-        axum::serve(listener, router(app))
+        axum::serve(listener, serve_router(app, addr.ip().is_loopback()))
             .await
             .map_err(|e| e.to_string())
     })?;

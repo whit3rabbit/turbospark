@@ -109,7 +109,10 @@ fn int8_transcode_targets(family: ModelFamily) -> &'static [&'static str] {
         | ModelFamily::Qwen3Vl
         // `flint` has no GGUF intake in this port (Q4_1 is not an
         // executable block type), so the arm is unreachable today.
-        | ModelFamily::Flint => &[],
+        | ModelFamily::Flint
+        // `lfm3` is DENSE like spark: no router, no shared-expert gate, and
+        // its headwise `attn_gate` takes the BF16 default.
+        | ModelFamily::Lfm3 => &[],
     }
 }
 

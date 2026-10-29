@@ -202,6 +202,7 @@ pub fn parse_gemma4_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
         swiglu_limit: 0.0,
         rope_scaling: RopeScalingConfig::NONE,
         vision: VisionConfig::NONE,
+        short_conv_kernel_size: 0,
         ple: PleConfig::NONE,
     })
 }
@@ -286,6 +287,18 @@ impl Gemma4Quant {
 /// Parses `config.json -> quantization` into a [`Gemma4Quant`]. A missing
 /// `quantization` object yields the 4-bit/group-64 default.
 pub fn parse_gemma4_quantization(json: &str) -> Result<Gemma4Quant, Gemma4Error> {
+    parse_quantization_admitting(json, |_, _, _| false)
+}
+
+/// [`parse_gemma4_quantization`], additionally admitting the per-tensor
+/// `(name, bits, group_size)` overrides `extra` accepts. A family whose
+/// kernels cover a width for SOME tensors only (Flint's 3-bit routed experts)
+/// widens it here for those names, rather than widening
+/// [`is_supported_affine_shape`] for every tensor of every family.
+pub(crate) fn parse_quantization_admitting(
+    json: &str,
+    extra: impl Fn(&str, u32, u32) -> bool,
+) -> Result<Gemma4Quant, Gemma4Error> {
     let root: serde_json::Value =
         serde_json::from_str(json).map_err(|e| Gemma4Error::Config(e.to_string()))?;
     let Some(q) = root.get("quantization").and_then(|v| v.as_object()) else {
@@ -367,7 +380,7 @@ pub fn parse_gemma4_quantization(json: &str) -> Result<Gemma4Quant, Gemma4Error>
         .chain(bits_overrides.iter().map(|(k, v)| (k.as_str(), *v)))
     {
         let group_size = group_overrides.get(name).copied().unwrap_or(group_size);
-        if !is_supported_affine_shape(bits, group_size) {
+        if !is_supported_affine_shape(bits, group_size) && !extra(name, bits, group_size) {
             return Err(Gemma4Error::Config(format!(
                 "unsupported affine quantization for {name}: {bits}-bit at group \
                  {group_size}; this port's kernels implement 4- or 8-bit at group \

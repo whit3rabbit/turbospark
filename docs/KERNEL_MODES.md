@@ -140,6 +140,7 @@ until one exists.
 | `int4_mma8_min_rows` | `TURBOSPARK_INT4_MMA8_MIN_ROWS` | 4096 | routing parameter of `int4_mma8`, not a lane | `verify_ladder` | as `int4_mma8` | [INT4_SMALL_M_MMA.md](INT4_SMALL_M_MMA.md) |
 | `batched_gemv` | `TURBOSPARK_BATCHED_GEMV` | auto, on for INT4 | KL-bounded | none yet: `int4_matmul` has the arms, the knob-to-arm mapping is unchecked | `dequant_int4_gemm_parity.rs` | [ENV.md](ENV.md) |
 | `prefill_steel` | `TURBOSPARK_PREFILL_STEEL` | on | KL-bounded | none yet: which Steel tile it toggles is unchecked | `dequant_int4_steel_parity.rs` | [BATCHED_PREFILL.md](BATCHED_PREFILL.md) |
+| `prefill_small_n` | `TURBOSPARK_PREFILL_SMALL_N` | on | KL-bounded | `int4_matmul`: `scalar_gemm` to `small_n` | `dequant_int4_steel_parity.rs`, `dequant_int4_mma8_parity.rs` | [BATCHED_PREFILL.md](BATCHED_PREFILL.md) |
 | `gdn_lazy_tape` | `TURBOSPARK_GDN_LAZY_TAPE` | on | bit-exact | `gdn_delta`: `prefill_eager` to `prefill_lazy` (plus `state_fold`) | `gdn_lazy_fold.rs` | [KAPITSA_KERNELS.md](KAPITSA_KERNELS.md) |
 | `gdn_dk128` | `TURBOSPARK_GDN_DK128` | on | bit-exact | `gdn_delta`: `prefill_lazy` across two processes | `gdn_tests.rs` (unit module) | [KAPITSA_KERNELS.md](KAPITSA_KERNELS.md) |
 | `attn_decode_kernel` | `TURBOSPARK_ATTN_DECODE_KERNEL` | auto by head dim and GQA ratio | KL-bounded | `attn_decode`: `barrier` to `gqa` | `attention_decode_gqa_parity.rs` | [SPEEDUP_PLAYBOOK.md](SPEEDUP_PLAYBOOK.md) |

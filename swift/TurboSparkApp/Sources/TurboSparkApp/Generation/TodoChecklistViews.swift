@@ -99,7 +99,7 @@ struct TodoItemRow: View {
     private var statusIcon: some View {
         if item.isCompleted {
             Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(Color.green)
+                .foregroundStyle(.appSuccess)
                 .themedFont(.small)
         } else if item.isInProgress {
             TaskProgressFlameIcon(size: 12)
@@ -163,7 +163,7 @@ struct TaskChecklistPanelView: View {
         HStack(spacing: 6) {
             Image(systemName: settled ? "checkmark.seal.fill" : "checklist")
                 .themedFont(.small, weight: .semibold)
-                .foregroundStyle(settled ? AnyShapeStyle(Color.green) : AnyShapeStyle(theme.accent))
+                .foregroundStyle(settled ? AnyShapeStyle(.appSuccess) : AnyShapeStyle(theme.accent))
                 .accessibilityHidden(true)
 
             Text("Tasks", bundle: .module)

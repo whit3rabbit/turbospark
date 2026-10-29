@@ -95,3 +95,104 @@ fn refuses_what_the_flow_does_not_implement() {
     // A sibling family's config is refused by name.
     assert!(mutate(&|v| v["model_type"] = "qwen2".into()).contains("family"));
 }
+
+/// `mlx-community/flint-mixed-3-4bit` (revision b1c30585): stock MLX
+/// per-tensor entries in the SOURCE namespace, the embedding at 8 and every
+/// routed projection at 3, beside an `mlx_export` that says the same.
+fn mixed_config() -> serde_json::Value {
+    let mut v = real_config();
+    v["mlx_export"]["routed_expert_bits"] = 3.into();
+    let mut q = serde_json::json!({
+        "group_size": 64,
+        "bits": 4,
+        "model.embed_tokens": {"group_size": 64, "bits": 8},
+    });
+    for layer in 2..49 {
+        for proj in ["gate_proj", "up_proj", "down_proj"] {
+            q[format!("model.layers.{layer}.mlp.switch_mlp.{proj}")] =
+                serde_json::json!({"group_size": 64, "bits": 3});
+        }
+    }
+    v["quantization"] = q;
+    v
+}
+
+#[test]
+fn mixed_build_routes_three_bit_experts_under_canonical_names() {
+    let q = parse_flint_quantization(&mixed_config().to_string()).unwrap();
+    assert_eq!(q.bits_for("language_model.model.embed_tokens"), 8);
+    assert_eq!(q.bits_for("language_model.lm_head"), 4);
+    assert_eq!(
+        q.bits_for("language_model.model.layers.2.mlp.shared_expert.gate_proj"),
+        4
+    );
+    for proj in ["gate_proj", "up_proj", "down_proj"] {
+        assert_eq!(
+            q.bits_for(&format!(
+                "language_model.model.layers.48.mlp.switch_mlp.{proj}"
+            )),
+            3
+        );
+    }
+    // The source-namespace keys are gone, not kept beside their renames.
+    assert!(q
+        .bits_overrides
+        .keys()
+        .all(|k| k.starts_with("language_model.")));
+}
+
+#[test]
+fn mixed_build_refuses_widths_without_kernels() {
+    let mutate = |f: &dyn Fn(&mut serde_json::Value)| {
+        let mut v = mixed_config();
+        f(&mut v);
+        parse_flint_quantization(&v.to_string())
+            .expect_err("mutation must be refused")
+            .to_string()
+    };
+    // 3-bit is a routed width only.
+    let attn = "model.layers.2.self_attn.q_proj";
+    assert!(
+        mutate(&|v| v["quantization"][attn] = serde_json::json!({"group_size": 64, "bits": 3}))
+            .contains("3-bit"),
+    );
+    let shared = "model.layers.2.mlp.shared_expert.gate_proj";
+    assert!(mutate(
+        &|v| v["quantization"][shared] = serde_json::json!({"group_size": 64, "bits": 3})
+    )
+    .contains("3-bit"),);
+    // Experts at two widths, or disagreeing with `mlx_export`.
+    let one = "model.layers.7.mlp.switch_mlp.up_proj";
+    assert!(
+        mutate(&|v| v["quantization"][one] = serde_json::json!({"group_size": 64, "bits": 4}))
+            .contains("one width"),
+    );
+    assert!(mutate(&|v| v["mlx_export"]["routed_expert_bits"] = 4.into()).contains("one width"));
+    // A routed width the per-tensor entries never state cannot be sized.
+    assert!(
+        mutate(&|v| v["quantization"] = serde_json::json!({"group_size": 64, "bits": 4}))
+            .contains("declares no routed expert")
+    );
+    // 2-bit experts have no Flint kernel.
+    assert!(mutate(&|v| v["mlx_export"]["routed_expert_bits"] = 2.into()).contains("not 3 or 4"));
+}
+
+#[test]
+fn the_published_mixed_config_parses() {
+    // A local copy only; there is no network fetch in this suite.
+    let Some(home) = std::env::var_os("HOME") else {
+        return;
+    };
+    let path = std::path::Path::new(&home).join("models/flint-mixed-3-4bit/config.json");
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        eprintln!("skipping: {} not present", path.display());
+        return;
+    };
+    assert_eq!(parse_flint_config(&text).unwrap(), flint_40b_a2_5b());
+    let q = parse_flint_quantization(&text).unwrap();
+    assert_eq!(
+        q.bits_for("language_model.model.layers.2.mlp.switch_mlp.down_proj"),
+        3
+    );
+    assert_eq!(q.bits_for("language_model.model.embed_tokens"), 8);
+}

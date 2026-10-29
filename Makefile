@@ -1,4 +1,4 @@
-.PHONY: all build build-debug build-release test test-debug test-release fmt fmt-check clippy check catalog-guard swift-lib swift-lib-app compile-strings swift-test swift-test-app swift-test-qwenimage swift-test-real swift-app-build swift-app-release swift-app swift-demo app-bundle dmg clean clean-cargo clean-swift clean-dist clean-tmp install uninstall
+.PHONY: all build build-debug build-release test test-debug test-release fmt fmt-check clippy check catalog-guard swift-lib swift-lib-app compile-strings swift-test swift-test-app swift-test-qwenimage design-check design-check-full swift-test-real swift-app-build swift-app-release swift-app swift-demo app-bundle dmg clean clean-cargo clean-swift clean-dist clean-tmp install uninstall
 
 PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin
@@ -110,6 +110,18 @@ swift-test-real: swift-lib
 # Run them explicitly when touching app sources or Vendor/QwenImage.
 swift-test-app: swift-lib-app compile-strings
 	cd swift/TurboSparkApp && swift test -Xbuild-tools-swiftc -suppress-warnings
+
+# Design rules for the macOS app, before CI. CI does not run the app's
+# `swift test` suite, so these are what catch a system color on a themed
+# surface or a drifted status hex. `design-check` takes about a second and
+# needs no build. `design-check-full` adds the contrast and ratchet tests
+# (a Swift build of the app test target, so minutes on a cold tree).
+design-check:
+	python3 scripts/check-design.py
+
+design-check-full: design-check
+	cd swift/TurboSparkApp && swift test -Xbuild-tools-swiftc -suppress-warnings \
+	  --filter 'DesignTokenRatchetTests|AppStatusColorTests|FontPropagationTests|LocalizationParityTests'
 
 swift-test-qwenimage:
 	cd swift/TurboSparkApp/Vendor/QwenImage && swift test

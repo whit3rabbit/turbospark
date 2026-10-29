@@ -135,6 +135,7 @@ pub fn peek_manifest_arch(model_dir: &Path) -> Result<ArchConfig, String> {
         seed: m.ple_seed.unwrap_or(0),
         eos_token_id: m.ple_eos_token_id.unwrap_or(0),
     };
+    arch.short_conv_kernel_size = m.short_conv_kernel_size.unwrap_or(0);
     // Multi-head latent attention (`deepseek2`) and the dense lead, resolved
     // on the same zero-fallback rule as the three blocks above.
     arch.mla = model_io::MlaConfig {

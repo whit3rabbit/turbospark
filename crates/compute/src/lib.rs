@@ -61,6 +61,8 @@ pub mod rms_norm;
 pub mod rope;
 /// Softmax sampling and logit soft-capping compute kernels.
 pub mod sampling;
+/// LFM3's gated short convolution (PORT-LOCAL).
+pub mod short_conv;
 /// Directional steering of a residual stream row (ablate, add, clamp,
 /// renorm).
 pub mod steering;
@@ -147,6 +149,7 @@ pub use rope::{
     yarn_frequencies, YarnSpec,
 };
 pub use sampling::logit_softcap_softmax;
+pub use short_conv::short_conv_reference;
 pub use steering::{
     direction_coefficient, inv_norm, renorm_gamma, steer_in_place, unit_coefficient,
 };

@@ -107,6 +107,48 @@ pub fn encode_rope_proportional_neox(
     Ok(())
 }
 
+/// [`encode_rope_proportional_neox`] over `rows` contiguous
+/// `[num_heads, head_dim]` rows at positions
+/// `start_position..start_position + rows`, in one dispatch. Each row is
+/// bit-identical to the single-row dispatch at its position.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_rope_proportional_neox_rows(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    data: (&metal::Buffer, u64),
+    start_position: u32,
+    rows: u32,
+    num_heads: u32,
+    head_dim: u32,
+    rotated_pairs: u32,
+    theta: f32,
+) -> Result<(), GpuError> {
+    let pipeline = context.pipeline(
+        SOURCE,
+        "rope_proportional_neox_rows",
+        &unused_function_constants(),
+        b"",
+    )?;
+    pass.encode_threads_3d(
+        &pipeline,
+        &[(data.0, 0, data.1)],
+        &[
+            (u32_bytes(&start_position), 1),
+            (u32_bytes(&head_dim), 2),
+            (u32_bytes(&num_heads), 3),
+            (f32_bytes(&theta), 4),
+            (u32_bytes(&rotated_pairs), 5),
+        ],
+        (
+            rotated_pairs.max(1) as u64,
+            num_heads.max(1) as u64,
+            rows.max(1) as u64,
+        ),
+        (1, 1, 1),
+    );
+    Ok(())
+}
+
 /// Encoder-level `rope_neox_subdim`: Qwen 3.6's partial RoPE. Rotates only
 /// the first `rotary_dim` elements of each head, pairing
 /// `(i, rotary_dim/2 + i)` inside that window with frequency divisor

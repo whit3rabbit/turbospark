@@ -240,6 +240,35 @@ kernel void rope_proportional_neox(
                     float(position), theta);
 }
 
+// `rope_proportional_neox` over `rows` contiguous `[heads, head_dim]` rows,
+// row z at `start_position + z`: LFM3's chunked prefill. Same
+// `apply_neox_pair` and the same `float(uint)` position, so each row is
+// bit-identical to the single-row dispatch at its position.
+kernel void rope_proportional_neox_rows(
+    device half* data [[buffer(0)]],
+    constant uint& start_position [[buffer(1)]],
+    constant uint& head_dim [[buffer(2)]],
+    constant uint& num_heads [[buffer(3)]],
+    constant float& theta [[buffer(4)]],
+    constant uint& rotated_pairs [[buffer(5)]],
+    uint3 gid [[thread_position_in_grid]]
+) {
+    const uint pair = gid.x;
+    const uint head_index = gid.y;
+    const uint token_index = gid.z;
+    const uint dimension = rope_head_dim(head_dim);
+    const uint heads = rope_num_heads(num_heads);
+    const uint active_pairs = rope_rotated_pairs(rotated_pairs);
+    if (pair >= active_pairs || head_index >= heads) return;
+
+    const uint half_dimension = dimension / 2u;
+    device half* head = data
+        + token_index * heads * dimension
+        + head_index * dimension;
+    apply_neox_pair(head, pair, half_dimension, dimension,
+                    float(start_position + token_index), theta);
+}
+
 // Port-local (ROADMAP M5): NeoX rope from a PRECOMPUTED per-pair frequency
 // table, with a magnitude scale on cos and sin.
 //

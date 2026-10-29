@@ -316,6 +316,33 @@
     },
     {
       "alias": "flint",
+      "name": "Flint 40B-A2.5B (MLX, 3-bit routed experts, 4-bit core)",
+      "family": "flint",
+      "source": {
+        "kind": "mlx",
+        "repo": "mlx-community/flint-mixed-3-4bit",
+        "revision": "b1c305855ae7c3464813815be4dbd544b22c36aa",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "generation_config.json"
+        ]
+      },
+      "download_bytes": 17837740282,
+      "install_bytes": 18600000000,
+      "status": "runs",
+      "gates": [],
+      "measured": [],
+      "notes": "The default Flint build: a community requantization of Recursive's trained INT4 (flint-int4) with only the routed experts cut to MLX 3-bit (group 64, per-group MSE clip search); attention, the shared expert, the dense lead and lm_head keep the trained INT4 codes and the embedding stays INT8. The publisher reports 86.2 percent next-token agreement and KL 0.343 against the INT4. Same flow as flint-int4 (sigmoid router force-quantized to INT8, the fixed 2^6 SwiGLU rebalance, streamed experts); the routed experts run through the INT3 routed pair. Against mlx-vlm 0.7.10 on the same bytes it sits at mlx-vlm's own cached-versus-batched floor (0.0070 against 0.0066 mean nats, 97.0 percent top-1, over 529 teacher-forced positions). Against the INT4 build through this port the mean KL is 0.213 nats (top-1 82.8 percent), so the default trades quality for a smaller install (17.8 GB download against 22.6 GB). One indicative reading (a single short prompt, a download running alongside, no AC check, no long context) peaked at 1.40 GiB at 16 slots (0.90 at 8), with greedy output identical at 8, 16 and 96 slots. That is not a peak for a long context. No memory oracle or quality gate is frozen. Use the flint-int4 alias for the trained INT4 build. See docs/FLINT.md."
+    },
+    {
+      "alias": "flint-int4",
       "name": "Flint 40B-A2.5B (MLX INT4, group 64)",
       "family": "flint",
       "source": {
@@ -1165,6 +1192,92 @@
         }
       ],
       "notes": "Dense Gemma 4 12B (gemma4_unified), the first dense and first INT8-affine carrier of the family: the dense decode arm, the INT8 embedding lookup and the INT8 batched prefill GEMM exist for this row. A RAW COMPLETION rewriter: wrap drafts with foundation::humanizer and never apply a chat template (the publisher is explicit that one breaks it); sampling is the model's own recipe (temperature 1.0, top_p 0.95, top_k off), which the CLI forces in the humanize mode. turbospark humanize humanizer-12b <draft> runs the whole flow, audit included."
+    },
+    {
+      "alias": "lfm3-1.7b",
+      "name": "LFM3-1.7B (MLX INT4, group 64, dense hybrid)",
+      "family": "lfm3",
+      "source": {
+        "kind": "mlx",
+        "repo": "LiquidAI/LFM3-1.7B-MLX-4bit",
+        "revision": "d0ca73dcfa70ce18733754a492cdc1fb0123262d",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "generation_config.json"
+        ]
+      },
+      "download_bytes": 973083386,
+      "install_bytes": 1000000000,
+      "status": "verified",
+      "gates": [
+        "lfm3_config (offline parse round-trip)",
+        "real CLI greedy + sampled smokes (EndOfTurn reached)",
+        "lfm3_quality_gate",
+        "lfm3_memory_oracle"
+      ],
+      "measured": [
+        {
+          "chip": "Apple M4 Max",
+          "context": 8192,
+          "expert_cache_slots": 16,
+          "peak_footprint_mib": 351,
+          "decode_tok_s_min": 67.799,
+          "decode_tok_s_max": 198.084,
+          "measured_on": "2026-10-27",
+          "source": "this port, LFM3-1.7B MLX INT4, AC; memory oracle over short-explanation and long-synthesis, quality gate"
+        }
+      ],
+      "notes": "The seventeenth family: a dense hybrid of 13 gated short-convolution layers (a fixed 6-row tail, no KV), 6 full and 5 sliding-window (256) GQA layers with per-head q/k norms, zero-tail partial rope on the full layers, a headwise sigmoid output gate, sandwich norms and a tied head. Quality gate froze at perplexity 14.7455 with greedy and sampled digests reproduced across two fresh processes, re-frozen at 14.7434 (greedy unchanged) when GQA-shared decode attention became the family default; the memory oracle froze at 351 MiB peak (8192 context) with +0.00 MiB replay growth. The oracle drives TWO of the three protocol cases: medium-review reasons past the 4,096-token budget while coherent (7,490 tokens sampled when given room), the qwen3_vl precedent. The short case's decode reads either ~180-198 or ~68-71 tok/s across runs; the floor sits under the slow state. Prefill runs the chunked M-row driver (TURBOSPARK_LFM3_CHUNKED_PREFILL=0 for the per-token loop). No external reference for the MLX bytes (mlx-lm has no lfm3 model); the same model's Q8_0 GGUF matches llama.cpp token for token (lfm3-1.7b-q8). docs/LFM3_PHASE0.md."
+    },
+    {
+      "alias": "lfm3-1.7b-q8",
+      "name": "LFM3-1.7B (GGUF Q8_0, dense hybrid)",
+      "family": "lfm3",
+      "source": {
+        "kind": "gguf",
+        "repo": "LiquidAI/LFM3-1.7B-GGUF",
+        "revision": "b3f2ae5d73cd3c91bf40e8ba752c648aa05dffdf",
+        "file": "LFM3-1.7B-Q8_0.gguf"
+      },
+      "sidecars": {
+        "repo": "LiquidAI/LFM3-1.7B",
+        "revision": "40ebe0aa6662c9d40389c2f5d565b6a2c6aebacd",
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "generation_config.json"
+        ]
+      },
+      "download_bytes": 1846238496,
+      "install_bytes": 1870000000,
+      "status": "verified",
+      "gates": [
+        "lfm3_network (GGUF and MLX derive the baseline; rope_freqs verified by value)",
+        "llama.cpp on the same bytes: 826 greedy tokens identical over two prompts",
+        "lfm3_q8_quality_gate",
+        "lfm3_q8_memory_oracle"
+      ],
+      "notes": "The same LFM3-1.7B as lfm3-1.7b, from llama.cpp's Q8_0 conversion. Greedy output matches llama.cpp (build 11960) on the same bytes and the same 42 prompt ids token for token: 600 tokens on one prompt, and a 226-token answer on another ending at the same end of turn. Quality gate froze at perplexity 15.8615 (higher than the MLX row's 14.7455, recorded rather than explained), re-frozen at 15.8614 with greedy unchanged for the GQA decode attention default; the memory oracle froze at 350 MiB peak, the MLX row's, because resident weights are not charged. The GGUF carries the full-layer partial rope as a rope_freqs.weight vector (32 ones, then 32 x 1e30); repack accepts only that exact pattern and drops it. The tokenizer comes from the HF checkpoint (tokenizer.ggml.pre = lfm2). The QAD-Q4_0 file in the same repo refuses (q4_0 is not an executable block type).",
+      "measured": [
+        {
+          "chip": "Apple M4 Max",
+          "context": 8192,
+          "expert_cache_slots": 16,
+          "peak_footprint_mib": 350,
+          "decode_tok_s_min": 84.056,
+          "decode_tok_s_max": 94.699,
+          "measured_on": "2026-10-28",
+          "source": "this port, LFM3-1.7B GGUF Q8_0, AC; memory oracle over short-explanation and long-synthesis, quality gate"
+        }
+      ]
     }
   ]
 }

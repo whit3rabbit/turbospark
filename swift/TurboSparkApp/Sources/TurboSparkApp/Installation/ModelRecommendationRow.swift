@@ -149,8 +149,8 @@ struct RecommendationVerdictBadge: View {
             .themedFont(.tiny, weight: .semibold)
             .padding(.horizontal, 5)
             .padding(.vertical, 1.5)
-            .background(Color.green.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
-            .foregroundStyle(.green)
+            .background(.appSuccessTint, in: RoundedRectangle(cornerRadius: 4))
+            .foregroundStyle(.appSuccess)
             .help(verdictHelp)
         case .streams:
             HStack(spacing: 3) {
@@ -174,8 +174,8 @@ struct RecommendationVerdictBadge: View {
             .themedFont(.tiny, weight: .semibold)
             .padding(.horizontal, 5)
             .padding(.vertical, 1.5)
-            .background(Color.orange.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
-            .foregroundStyle(.orange)
+            .background(.appWarningTint, in: RoundedRectangle(cornerRadius: 4))
+            .foregroundStyle(.appWarning)
             .help(verdictHelp)
         case .refused:
             HStack(spacing: 3) {
@@ -186,8 +186,8 @@ struct RecommendationVerdictBadge: View {
             .themedFont(.tiny, weight: .semibold)
             .padding(.horizontal, 5)
             .padding(.vertical, 1.5)
-            .background(Color.red.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
-            .foregroundStyle(.red)
+            .background(.appDangerTint, in: RoundedRectangle(cornerRadius: 4))
+            .foregroundStyle(.appDanger)
             .help(verdictHelp)
         case .unknown:
             EmptyView()

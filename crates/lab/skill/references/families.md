@@ -22,7 +22,7 @@ behind it: read those before copying the setting.
 
 | Family (`as_str`) | Flow | First sweep | Known best | Trap |
 |---|---|---|---|---|
-| `qwen35` (Qwen 3.5/3.8 dense, GDN) | qwen | `spec_block` with an MTP install, `mma8_mode` with a DFlash2 install | MTP block 2, tile (`int4_mma8`) unset, `gdn_dk128` on (default), GQA attention (default) | never force `attn_decode_kernel=barrier` as a baseline; the MTP install's stream already differs from plain decode on short-explanation |
+| `qwen35` (Qwen 3.5/3.8 dense, GDN) | qwen | `spec_block` with an MTP install, `mma8_mode` with a DFlash2 install | MTP block 2, tile (`int4_mma8`) unset, `gdn_dk128` on (default), GQA attention (default), `prefill_small_n` on (default) | never force `attn_decode_kernel=barrier` as a baseline; the MTP install's stream already differs from plain decode on short-explanation; chunked-prefill rows ledgered before 2026-10-27 predate `prefill_small_n` (the 48-row GDN a/b projections left the scalar slices), so pair a prefill A/B against `prefill_small_n=0` in one binary and do not compare across the change |
 | `qwen36` (Qwen 3.6 MoE, GDN) | qwen | `routed_batch`, then `slots` | Steel batched arm (default), `routed_batch=1` at 32+ slots, slots auto (96 here) | declare `moe_kl`; `qwen_prefetch` panics on a non-integer; the read-overlap seam refuses chunked prefill |
 | `flint` | flint | `chunked_prefill` (bit-exact) | `flint_chunked_prefill=1` once its paired verdict lands; 16 slots | `batched_gemv` and `routed_batch` refused by name; every lab run so far was dirty |
 | `gptOss` | gptoss | `routed_batch` | chunk 128, 16 slots | sinks keep `rows_attn` off; no INT4 bench for MXFP4 experts |
@@ -31,6 +31,7 @@ behind it: read those before copying the setting.
 | `qwen3moe` | llama | `slots` | 16 slots | the GGUF install refuses `routed_batch=1` |
 | `qwen4exp` | qwen4 | `slots` | untuned; the REAP-288 rows spread 25-60% | 2,048 context; the hyper-connections widen the residual |
 | `museGlimmer` | museglimmer | `batched_gemv` | chunk 128 | the highest J/token in the power baseline (powermetrics); tslab's IOReport joules are a different meter and compare only within an experiment |
+| `lfm3` | lfm3 | `attn_kernel` (default against barrier), `chunked_prefill` | GQA attention, INT4 chunked prefill and fused FFN all on by default; chunk 128 | the GGUF Q8_0 install has no batched GEMM, use `--chunk off`; phase buckets are final-only (one command buffer), use kernel benches or trace for shares; the fused FFN is bit-exact but NOISE on decode |
 | `spark2_5`, `deepseek2` | spark, deepseek2 | `decode_attention`, `slots` | `--chunk off` (the only driver) | MLA has no attention bench; Spark's fused q|k|v is one shape |
 | `deepseekV4Flash` | none | none | none | no decode flow: kernel benches only |
 

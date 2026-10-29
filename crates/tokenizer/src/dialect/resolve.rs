@@ -312,7 +312,7 @@ pub(crate) fn resolve_dialect(
 ) -> Result<Resolved, TokenizerError> {
     match dialect {
         ChatDialect::Gemma => resolve_gemma(tokenizer, config),
-        ChatDialect::ChatMl => resolve_chatml(tokenizer),
+        ChatDialect::ChatMl => resolve_chatml(tokenizer, config),
         ChatDialect::Deepseek => resolve_deepseek(tokenizer),
         ChatDialect::DeepseekV2 => resolve_deepseek_v2(tokenizer),
         ChatDialect::Mistral => resolve_mistral(tokenizer),

@@ -110,6 +110,7 @@ pub fn deepseek_v2_lite_16b() -> ArchConfig {
             mscale: 0.707,
         },
         vision: VisionConfig::NONE,
+        short_conv_kernel_size: 0,
         ple: PleConfig::NONE,
         // Layer 0's dense FFN: `intermediate_size` at 10944 against the
         // shared expert's 2816 above. Zero means "no dense lead".

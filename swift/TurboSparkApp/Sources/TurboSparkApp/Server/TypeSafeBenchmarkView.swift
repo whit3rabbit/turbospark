@@ -61,7 +61,7 @@ struct TypeSafeBenchmarkView: View {
                 }
             }
             if let errorMessage {
-                Text(verbatim: errorMessage).foregroundStyle(.red).textSelection(.enabled)
+                Text(verbatim: errorMessage).foregroundStyle(.appDanger).textSelection(.enabled)
             }
             ForEach(results.keys.sorted(), id: \.self) { name in
                 if let result = results[name] {

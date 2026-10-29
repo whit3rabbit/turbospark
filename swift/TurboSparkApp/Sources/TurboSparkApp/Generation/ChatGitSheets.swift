@@ -121,8 +121,8 @@ struct GitInfoSheet: View {
         if line.hasPrefix("+++") || line.hasPrefix("---") || line.hasPrefix("diff ") || line.hasPrefix("index ") {
             return theme.secondaryText
         }
-        if line.hasPrefix("+") { return .green }
-        if line.hasPrefix("-") { return AppAttention.color }
+        if line.hasPrefix("+") { return theme.success }
+        if line.hasPrefix("-") { return theme.warning }
         if line.hasPrefix("@@") { return theme.accent }
         return theme.foreground
     }
@@ -224,8 +224,8 @@ struct GitInfoSheet: View {
         let (symbol, color): (String, Color) = {
             switch normalized {
             case "MERGED": return ("arrow.triangle.merge", .purple)
-            case "CLOSED": return ("xmark.circle", AppAttention.color)
-            default: return ("arrow.triangle.pull", .green)
+            case "CLOSED": return ("xmark.circle", theme.danger)
+            default: return ("arrow.triangle.pull", theme.success)
             }
         }()
         // `gh` reports the state in English capitals; the three it can

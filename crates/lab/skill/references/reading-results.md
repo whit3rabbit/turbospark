@@ -49,6 +49,23 @@ say why it does not count:
 - `worker status refused`: the install cannot run that arm. `record.refusal`
   says what.
 
+## Pricing a route against the model run
+
+A route that swaps one kernel for another (a lane in `tslab knobs`) is
+priced twice: the kernel part is the bench's per-projection time difference
+times the projection count, and the observed part is the paired model run.
+If the observed delta is larger than the priced part, report both and say the
+difference is unattributed; a per-op-class profile of the two arms is what
+attributes it. Do not quote the larger number alone.
+
+A kernel bench's `exactness` line (bit-equal, row invariant) is read off its
+synthetic weights. It can say bit-equal for an arm that changes bits on the
+real install, so take the lane's class from the install's KL or digest gate.
+
+A quiet host before a run does not cover builds that start during it. Expect
+to repeat pairs, count only clean ones, and say how many of the runs were
+clean when you quote the rest as a reading.
+
 ## Quoting a number
 
 Quote only clean, quotable runs, and always with: the ledger experiment and

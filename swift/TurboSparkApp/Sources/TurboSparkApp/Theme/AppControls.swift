@@ -60,7 +60,7 @@ extension View {
         case .quiet:
             buttonStyle(.borderless).controlSize(size).appControlLabelFont(size)
         case .destructive:
-            buttonStyle(.bordered).controlSize(size).appControlLabelFont(size).foregroundStyle(.red)
+            buttonStyle(.bordered).controlSize(size).appControlLabelFont(size).foregroundStyle(.appDanger)
         }
     }
 

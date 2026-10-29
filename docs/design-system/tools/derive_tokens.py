@@ -3,8 +3,8 @@
 
 TurboSparkApp stores three colors per mode (background, foreground, accent)
 plus a contrast value, and derives every surface from them with
-NSColor.blended in gamma-encoded sRGB (TurboSparkTheme.swift,
-AppThemeColor.swift). This script repeats that math so tokens.json and
+NSColor.blended (TurboSparkTheme.swift, AppThemeColor.swift), which mixes in
+Generic RGB, a gamma 1.8 space, not in encoded sRGB. This script repeats that math so tokens.json and
 tokens.css match what the app draws, and computes the contrast figures the
 usage notes quote.
 
@@ -45,14 +45,16 @@ THEMES = {
     'emerald-light': ('Emerald light', '#FFFFFF', '#1A1C1F', '#237D32', 50, False, False),
 }
 
-# Status colors are an intentional addition: the app uses system
-# .green/.orange/.red today. Chosen to hold 4.5:1 on every surface and on
-# their own 14% tint (7:1 under high contrast); asserted below.
-_DARK = {'success': '#3ddba8', 'warning': '#ffb340', 'danger': '#ff6961'}
-_LIGHT = {'success': '#00704f', 'warning': '#8a5a00', 'danger': '#c00013'}
+# Status colors ship in ResolvedAppTheme (Theme/AppStatusColors.swift). They
+# were chosen for 4.5:1 on every surface and on their own 14% tint (7:1 under
+# high contrast). Measured on the surfaces the app really draws, that holds on
+# Spark Blue light and not everywhere else, so the figures are computed and
+# quoted, not asserted. Swift's AppStatusColorTests pins the same hexes.
+_DARK = {'success': '#3ddba8', 'warning': '#ffb340', 'danger': '#ffaaa5'}
+_LIGHT = {'success': '#00694a', 'warning': '#805300', 'danger': '#b50012'}
 STATUS = {
     'dark': _DARK, 'light': _LIGHT,
-    'hc-dark': {'success': '#5ff0c0', 'warning': '#ffc966', 'danger': '#ff9a94'},
+    'hc-dark': {'success': '#5ff0c0', 'warning': '#ffc966', 'danger': '#ffc0bc'},
     'hc-light': {'success': '#004d3a', 'warning': '#5c3b00', 'danger': '#8f000c'},
     'codex-dark': _DARK, 'codex-light': _LIGHT, 'emerald-dark': _DARK, 'emerald-light': _LIGHT,
 }
@@ -73,13 +75,31 @@ def tohex(c):
     return '#' + ''.join('%02x' % round(max(0.0, min(1.0, v)) * 255) for v in c)
 
 
-def blend(a, b, f):
-    # NSColor.blended(withFraction:of:): a straight mix of encoded components.
+def mix(a, b, f):
+    # Alpha compositing: a straight mix of encoded sRGB components.
     return tuple(x * (1 - f) + y * f for x, y in zip(a, b))
 
 
+def _decode(v):
+    return v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
+
+
+def _encode(v):
+    return 12.92 * v if v <= 0.0031308 else 1.055 * v ** (1 / 2.4) - 0.055
+
+
+def blend(a, b, f):
+    # NSColor.blended(withFraction:of:) on an sRGB color mixes in Generic RGB
+    # (gamma 1.8), then returns to sRGB. Measured on macOS 26: 9% of
+    # #090D16 toward #F2F5FB is #282C33, black to white at 50% is #929292,
+    # where a straight sRGB mix gives #1E222B and #808080.
+    return tuple(
+        _encode(((1 - f) * _decode(x) ** (1 / 1.8) + f * _decode(y) ** (1 / 1.8)) ** 1.8)
+        for x, y in zip(a, b))
+
+
 def over(fg, alpha, bg):
-    return blend(bg, fg, alpha)
+    return mix(bg, fg, alpha)
 
 
 def lum(c):
@@ -131,10 +151,8 @@ def derive():
         assert t['worst'](ink_col) >= 4.5, (tid, 'accent-ink below 4.5:1: add it to ACCENT_INK')
         if not hc:
             t['bs_a'] = next(x / 100 for x in range(20, 100) if t['worst_a'](F, x / 100) >= 3)
-        floor = 7 if hc else 4.5
-        for key, value in STATUS[tid].items():
-            c = hx(value)
-            assert t['worst'](c) >= floor and cr(c, over(c, .14, B)) >= floor, (tid, key)
+        t['status_worst'] = min(min(t['worst'](hx(v)), cr(hx(v), over(hx(v), .14, B)))
+                                for v in STATUS[tid].values())
         out[tid] = t
     return out
 
@@ -159,10 +177,13 @@ def color_tokens(T):
     ring = min(T[k]['worst'](T[k]['A']) for k in ids)
     acc_ink = min(T[k]['worst'](hx(T[k]['accent_ink']) if T[k]['accent_ink'] else T[k]['A']) for k in ids)
     on_acc = min(cr(T[k]['on_accent'], T[k]['A']) for k in ids)
-    fe_dark = T['dark']['worst_a'](T['dark']['A'], .55)
-    fe_light = T['light']['worst_a'](T['light']['A'], .55)
-    status_min = min(min(T[k]['worst'](hx(v)), cr(hx(v), over(hx(v), .14, T[k]['B'])))
-                     for k in presets for v in STATUS[k].values())
+    def edge_ratio(t):
+        # The Swift focusEdge check: the accent against the page and the composer.
+        return min(cr(t['A'], t['g']['page']), cr(t['A'], t['g']['composer']))
+    fe_dark = edge_ratio(T['dark'])
+    fe_light = edge_ratio(T['light'])
+    status_min = min(T[k]['status_worst'] for k in presets)
+    status_hc_min = min(T[k]['status_worst'] for k in ids if T[k]['hc'])
 
     colors = [
         tok('page', per(lambda t: tohex(t['B'])),
@@ -207,8 +228,8 @@ def color_tokens(T):
             'Selected text and selected list rows (`ResolvedAppTheme.selection`). Accent at 25% dark, 12% light, 45% and 30% under Increase Contrast.'),
         tok('focus-ring', per(lambda t: '{accent}'),
             'Keyboard focus: a solid 2px accent ring with a 2px gap, 3px under Increase Contrast. %s:1 or better on every surface in every theme. The soft halo (`glow-focus`) is extra, never the only cue.' % floor1(ring)),
-        tok('focus-edge', per(lambda t: '{accent}' if t['hc'] else rgba(t['A'], .55)),
-            'The composer and editor focus edge as shipped (accent at 55%%, 1.5px, solid 2.5px under Increase Contrast). Spark Blue: %s:1 dark and %s:1 light on composer, under the 3:1 focus floor. Pair it with `focus-ring` for keyboard focus, or raise it.' % (floor1(fe_dark), floor1(fe_light))),
+        tok('focus-edge', per(lambda t: '{accent}'),
+            'The composer and editor focus edge: the solid accent, 1.5px, 2.5px under Increase Contrast. It was accent at 55%%, which was under the 3:1 focus floor. Spark Blue: %s:1 dark and %s:1 light on page and composer. The app falls back to `ink` for an accent that cannot reach 3:1 on both (`ResolvedAppTheme.focusEdge`).' % (floor1(fe_dark), floor1(fe_light))),
         tok('composer-edge', per(lambda t: '{border}' if t['hc'] else rgba(t['F'], .18 if t['dark'] else .14)),
             'Resting 1px stroke of the composer and focus-glow editors (ink at 18%% dark, 14%% light, `border` under Increase Contrast). Decorative: %s:1 to %s:1.' % (floor1(min(edge)), floor1(max(edge)))),
         tok('hover', per(lambda t: rgba(t['F'], .07)),
@@ -224,8 +245,8 @@ def color_tokens(T):
         ('danger', 'Danger and destructive: failed, denied, delete. Pair with xmark.octagon.fill and a word. Destructive buttons also carry `role: .destructive`.'),
     ]
     for key, label in labels:
-        note = ('Intentional addition, replacing system .green/.orange/.red on themed surfaces. ' + label +
-                ' %s:1 or better on every surface and on its own tint (7:1 in the high-contrast themes).' % floor1(status_min))
+        note = ('Replaces system .green/.orange/.red on themed surfaces (`ResolvedAppTheme.%s`, `.app%s`). ' % (key, key.capitalize()) + label +
+                ' Worst case across the preset themes, on any surface or its own 14%% tint: %s:1; %s:1 in the high-contrast themes. See the known gaps in the README.' % (floor1(status_min), floor1(status_hc_min)))
         if key == 'success':
             note += ' Bluish green, off the red-green axis, so it stays distinct from `danger` with color-vision deficiency.'
         colors.append(tok(key, {k: STATUS[k][key] for k in ids}, note))

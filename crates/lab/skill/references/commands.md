@@ -35,7 +35,7 @@ process, which must sit beside `tslab`.
 | `profile ... --standin attn,mlp,gdn` | Each block's in-place cost (dense qwen and llama trunks); also needs `--decode 8` or more | adds `standin` |
 | `ab --model M --null` | This host's noise floor for a workload and metric. Run once per workload before any `ab` | `null_calibration` |
 | `ab --model M --baseline off --candidate on:KNOB=V` | Does a switch win? Paired, interleaved, with a fixed verdict rule | `run`, `verdict` |
-| `sweep --model M --sweep ID\|all` | Every candidate of a profile sweep against its baseline, each by the same pair rule as `ab`, interleaved in one session; `--sweep-file F` or `--baseline A --candidate B --candidate C` for an ad hoc one. Workload flags override the sweep's workload. Exit 4 if any candidate is inconclusive, 3 only with `--fail-on-loss` | `run`, one `verdict` per candidate, `sweep` |
+| `sweep --model M --sweep ID\|all` | Every candidate of a profile sweep against its baseline, each by the same pair rule as `ab`, interleaved in one session; `--sweep-file F` or `--baseline A --candidate B --candidate C` for an ad hoc one. Workload flags override the sweep's workload. Exit 4 if any candidate is inconclusive, 3 only with `--fail-on-loss`. `--gate` runs the quality gate on each WIN at the sweep's declared exactness and `--enforce-memory` holds each WIN to the memory allowance; a WIN that fails either keeps its verdict but gets `rejected` and is never `best` | `run`, one `verdict` per candidate, `sweep` |
 | `trace --model M --prompt ... --decode 64` | Metal System Trace of the measured work: GPU busy, idle gaps, per-kernel shares | `trace` |
 | `tree-replay --model M --drafter mtp\|dflash` | Would tree verify accept more than the chain at equal rows | `tree_replay` |
 | `chain-capture` then `depth-replay` | Best speculative depth policy, priced from modeled or ledger round costs | `chain_capture`, `depth_replay` |
@@ -66,7 +66,7 @@ gets you numbers from a busy host, which is all they then are.
 
 ## Kernel benches (in process, no model weights)
 
-`kernel --model M [--bench NAME[,NAME]|all] [--rows ...] [--contexts ...] [--case LABEL] [--reps 5] [--hash] [--programs DIR]`
+`kernel --model M [--bench NAME[,NAME]|all] [--rows ...] [--contexts ...] [--case LABEL] [--reps 5] [--hash] [--programs DIR] [--ane-dir DIR] [--contend N]`
 
 Every case records an `energy` delta over its run when the host has the
 IOReport counters. `--bench ane_matmul` (a `tslab` built with
@@ -80,7 +80,7 @@ thresholds in its notes.
 
 | Bench | Measures |
 |---|---|
-| `int4_matmul` | Per-row GEMV, scalar GEMM, Steel tiles and the 8-row MMA tile over M, at every INT4 shape the install binds |
+| `int4_matmul` | Per-row GEMV, scalar GEMM, Steel tiles, the 8-row MMA tile and the small-N prefill route (`small_n`, only on shapes too narrow for a whole Steel tile, such as the 48-row GDN gates) over M, at every INT4 shape the install binds |
 | `int8_matmul` | INT8 GEMV against the batched GEMM (routers, shared gates, INT8 installs) |
 | `attn_decode` | Barrier against GQA-shared decode attention over context, per variant (full, sliding, sinks) |
 | `rows_attn` | Multi-row prefill attention against the per-row loop, with layout arms, one case per context |
@@ -90,6 +90,7 @@ thresholds in its notes.
 | `gdn_delta` | Gated-DeltaNet delta kernels (decode, eager and lazy prefill, state fold) at the install's geometry. One build per process: put `TURBOSPARK_GDN_DK128=0` on the `tslab` process for the runtime-Dk build |
 | `music3_grid` | Music 3 corpus: output hashes against goldens, per-config timing |
 | `whisper_linear` | Whisper encoder GEMM, decoder GEMV, GEMM at one row |
+| `ane_handoff` | Host handoff of one ANE prefill split point, `wait` against `poll`, quiet and under `--contend N` self-made CPU load. Needs a build with `--features ane-prefill`, a dense qwen install and its program set (`--ane-dir`, else the runtime's search list) |
 
 `--hash` stores each point's output-bit hash and the hash of the first output
 row alone, and prints an exactness hint per arm: `bit-equal` or `DIFFERS`
@@ -146,6 +147,28 @@ is `crates/lab/program.md`.
 
 ## Traps
 
+- `ab` and an ad hoc `sweep` default to `--metric prefill_tok_s` (a profile
+  sweep carries its own metric). A decode claim needs
+  `--metric decode_tok_s` on the null run and the A/B alike; the header line
+  says which metric ran. Under `--chunk off` the prefill metric times the
+  same per-token step as decode, so it moves in the same direction but by a
+  different amount, and it is still not a decode number.
+- After a switch becomes the default, the A/B flips: baseline `default`,
+  candidate the old value (`barrier:attn_decode_kernel=barrier`). A LOSS then
+  confirms the default and a KEEP means a regression. Flip the family
+  profile's sweep the same way.
+- Prove each arm ran its lane from the ledger, not the arm name: every run
+  record carries `engaged` (the `[engaged]` lines). A default-on lane shows
+  on the baseline with no env set, and a kill switch's arm must lack it.
+- A rebase or merge can bring a new default route that engages on your arm
+  (`prefill_small_n` reached the lfm3 chunk driver this way). Read the
+  `engaged` list again and re-run the KL probe before carrying old numbers
+  across the change.
+- `preflight.sh` lists a `tslab serve` as busy. The dashboard is read-only
+  and never takes the lock; check its command line before stopping anything,
+  and never stop another session's process.
+- Installs outside the catalog store (`~/models/...`) need the path for
+  `--model`, not an alias.
 - `ane-plan` says where ops run, not how fast. "Supported on the ANE" is not
   "placed there": read the cost share, and measure the ANE+Steel split as an
   ordinary `ab` arm (`ane_prefill` knob) on a worker built with `ane-prefill`.

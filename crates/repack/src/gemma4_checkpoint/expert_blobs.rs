@@ -56,13 +56,7 @@ pub fn expert_stride_from_headers(
                 blob += rows * super::mlx_mxfp4::gguf_mxfp4_row_bytes(words as usize * 8) as u64;
                 continue;
             }
-            let bits = quant.bits_for(base);
-            if bits != 4 {
-                return Err(Gemma4Error::UnsupportedDtype {
-                    tensor: name.to_string(),
-                    dtype: format!("{bits}-bit routed expert (kernels are int4-only)"),
-                });
-            }
+            routed_expert_bits(quant, base, name)?;
             for suffix in ["", ".scales", ".biases"] {
                 let full = if suffix.is_empty() {
                     name.to_string()
@@ -83,6 +77,19 @@ pub fn expert_stride_from_headers(
         max_blob = max_blob.max(blob);
     }
     Ok(max_blob.div_ceil(GTURBO_PAGE_BYTES) * GTURBO_PAGE_BYTES)
+}
+
+/// The width of one routed projection, which must be one a routed kernel
+/// pair reads: 4 (`moe_phase*_u16load`/`k8`) or 3 (`moe_phase*_int3`). The
+/// quant parser admits 3 only where a family has those kernels in its flow.
+fn routed_expert_bits(quant: &Gemma4Quant, base: &str, name: &str) -> Result<u32, Gemma4Error> {
+    match quant.bits_for(base) {
+        bits @ (3 | 4) => Ok(bits),
+        bits => Err(Gemma4Error::UnsupportedDtype {
+            tensor: name.to_string(),
+            dtype: format!("{bits}-bit routed expert (routed kernels are 3- and 4-bit)"),
+        }),
+    }
 }
 
 /// Builds one routed layer's per-expert blobs. Blob layout matches the
@@ -155,12 +162,36 @@ pub fn plan_one_expert_layer(
             });
         }
         let base = name.strip_suffix(".weight").unwrap_or(name);
-        let bits = quant.bits_for(base);
-        if bits != 4 {
-            return Err(Gemma4Error::UnsupportedDtype {
+        let bits = routed_expert_bits(quant, base, name)? as u64;
+        if (w.shape[2] * 32) % bits != 0 {
+            return Err(Gemma4Error::ShapeMismatch {
                 tensor: name.to_string(),
-                dtype: format!("{bits}-bit routed expert (kernels are int4-only)"),
+                detail: format!(
+                    "{} packed words do not hold whole {bits}-bit codes",
+                    w.shape[2]
+                ),
             });
+        }
+        let in_dim = w.shape[2] * 32 / bits;
+        // Flint is the one family with two routed widths, so the config's
+        // width and the bytes are cross-checked against the architecture: a
+        // 3-bit blob recorded as 4-bit (or the reverse) is caught here rather
+        // than read at the wrong width by the runtime.
+        if arch.family == model_io::ModelFamily::Flint {
+            let want = if role == "down" {
+                arch.moe_intermediate_size
+            } else {
+                arch.hidden_size
+            } as u64;
+            if in_dim != want {
+                return Err(Gemma4Error::ShapeMismatch {
+                    tensor: name.to_string(),
+                    detail: format!(
+                        "{} packed words per row at {bits} bits is {in_dim} inputs, not {want}",
+                        w.shape[2]
+                    ),
+                });
+            }
         }
         let s_name = format!("{base}.scales");
         let b_name = format!("{base}.biases");
@@ -232,7 +263,7 @@ pub fn plan_one_expert_layer(
         }
 
         let rows = w.shape[1];
-        let cols = w.shape[2] * 8;
+        let cols = in_dim;
         let comp_shape = |t: &TensorInfo| t.shape[1..].to_vec();
         if role == "down" && blob_used % 4 != 0 {
             return Err(Gemma4Error::ShapeMismatch {

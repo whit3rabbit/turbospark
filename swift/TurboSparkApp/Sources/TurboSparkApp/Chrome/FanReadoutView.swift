@@ -50,7 +50,7 @@ struct FanReadoutView: View {
             HStack(spacing: 5) {
                 Image(systemName: "fanblades")
                     .font(theme.ui(.tiny))
-                    .foregroundStyle(isPinned ? AppAttention.color : theme.secondaryText)
+                    .foregroundStyle(isPinned ? theme.warning : theme.secondaryText)
                     .accessibilityHidden(true)
                 Text(verbatim: rpmText)
                     .monospacedDigit()
@@ -93,7 +93,7 @@ struct FanReadoutView: View {
                             .monospacedDigit()
                             .foregroundStyle(.appText)
                         (fan.isHeld ? Text("Held", bundle: .module) : Text("Auto", bundle: .module))
-                            .foregroundStyle(fan.isHeld ? AppAttention.color : theme.secondaryText)
+                            .foregroundStyle(fan.isHeld ? theme.warning : theme.secondaryText)
                     }
                     .font(theme.ui(.tiny))
                 }

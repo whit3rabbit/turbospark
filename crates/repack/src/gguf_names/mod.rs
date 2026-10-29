@@ -35,6 +35,7 @@
 mod deepseek2;
 mod gemma4;
 mod gpt_oss;
+mod lfm3;
 mod llama;
 mod minimax;
 mod qwen;
@@ -117,6 +118,13 @@ pub enum GgufMapping {
     /// Recognized and deliberately not carried. `reason` is reported so a
     /// dropped tensor is a visible decision rather than a silent omission.
     Ignored { reason: &'static str },
+    /// `lfm3`'s `rope_freqs.weight`: llama.cpp's encoding of a zero-tail
+    /// partial rotation (ones over the rotated pairs, 1e30 over the rest),
+    /// which this port expresses as `partial_rotary_factor`. Not carried,
+    /// and not accepted by NAME either: the walk reads the vector and
+    /// refuses any value but that exact pattern, because the same tensor
+    /// name in Llama 3.1 is learned scaling (`UnsupportedRopeScaling`).
+    ZeroTailRopeFreqs,
 }
 
 /// Canonical prefix for per-layer tensors.
@@ -172,6 +180,7 @@ pub fn map_gguf_name(name: &str, family: ModelFamily) -> Result<GgufMapping, Ggu
             ModelFamily::Qwen3Dense => qwen::map_qwen3_dense_layer(suffix, layer),
             ModelFamily::MiniMaxM2 => minimax::map_layer(suffix, layer),
             ModelFamily::Deepseek2 => deepseek2::map_deepseek2_layer(suffix, layer),
+            ModelFamily::Lfm3 => lfm3::map_lfm3_layer(suffix, layer),
             // Neither of the first two is published as a GGUF; an unmapped
             // name is the right answer rather than a neighbour's table,
             // which would map names these families do not have.
@@ -197,10 +206,18 @@ pub fn map_gguf_name(name: &str, family: ModelFamily) -> Result<GgufMapping, Ggu
         .ok_or_else(unmapped);
     }
 
-    // Refused for every family, before the table, so no family can grow a
-    // row for it by accident. See `UnsupportedRopeScaling`: this used to be
-    // an `Ignored` row, which is the one disposition that produces a wrong
-    // model rather than an error.
+    // `lfm3`'s own top-level rows come first, and they are the ONE place
+    // `rope_freqs.weight` is not refused by name: there it maps to
+    // `ZeroTailRopeFreqs`, whose bytes the walk verifies before writing.
+    if family == ModelFamily::Lfm3 {
+        if let Some(mapping) = lfm3::map_lfm3_top_level(name) {
+            return Ok(mapping);
+        }
+    }
+    // Refused for every other family, before the table, so no family can
+    // grow a row for it by accident. See `UnsupportedRopeScaling`: this used
+    // to be an `Ignored` row, which is the one disposition that produces a
+    // wrong model rather than an error.
     if name == "rope_freqs.weight" {
         return Err(GgufNameError::UnsupportedRopeScaling {
             name: name.to_string(),
@@ -249,6 +266,9 @@ pub fn gguf_architecture(family: ModelFamily) -> Option<&'static str> {
         // Read off the V2-Lite header itself (`general.architecture`), and
         // the same spelling the HF `model_type` takes modulo the underscore.
         ModelFamily::Deepseek2 => Some("deepseek2"),
+        // Read off `LiquidAI/LFM3-1.7B-GGUF`; agrees with the HF
+        // `model_type`.
+        ModelFamily::Lfm3 => Some("lfm3"),
         // Neither of the first two is published as a GGUF. `None` is the
         // honest answer: inventing a string here would make
         // `family_for_architecture` claim to recognize a file that does not

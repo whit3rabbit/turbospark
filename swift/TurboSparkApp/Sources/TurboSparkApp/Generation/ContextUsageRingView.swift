@@ -24,7 +24,7 @@ struct ContextUsageRingView: View {
     }
 
     private var tint: Color {
-        ContextUsageSummary.tint(forFraction: fraction)
+        ContextUsageSummary.tint(forFraction: fraction, in: theme)
     }
 
     private var percentText: String {

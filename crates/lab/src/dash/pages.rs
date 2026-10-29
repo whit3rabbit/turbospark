@@ -1,7 +1,8 @@
 //! The dashboard's pages: server-rendered HTML from the index, the viz
 //! charts and the family profiles, in the TurboSpark theme (Spark Blue,
 //! dark by default, light under a light system preference). Nothing is
-//! fetched from anywhere. Filters and sorting are query parameters on plain
+//! fetched from anywhere: even the favicon is an inline data URI. Filters
+//! and sorting are query parameters on plain
 //! forms, and the one inline script (`DASH_JS`) only adds hover tooltips,
 //! legend toggles, line draw-in and the compare tray's count, so a page
 //! reads the same saved to disk as it does live.
@@ -171,6 +172,14 @@ var tray = document.querySelector('.tray'); if (tray) { var boxes = document.que
   boxes.forEach(function(b){ b.addEventListener('change', upd); }); upd(); }
 })();"#;
 
+/// The dashboard's favicon: the brand's spark on the theme's dark tile.
+/// It is inlined into every page as a data URI, so the browser tab needs
+/// nothing fetched from anywhere either.
+pub const FAVICON_SVG: &str = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>\
+<rect width='32' height='32' rx='7' fill='#090d16'/>\
+<path d='M16 4c0 5.5-7 8.5-7 14a7 7 0 0 0 14 0c0-5.5-7-8.5-7-14z' fill='#3b9eff'/>\
+<rect x='14.8' y='24' width='2.4' height='4' rx='1.2' fill='#3b9eff'/></svg>";
+
 /// The status glyph for a verdict word: checkmark, octagon, minus, question.
 fn glyph(verdict: &str) -> &'static str {
     match verdict {
@@ -279,7 +288,7 @@ fn nav(active: &str) -> String {
         ("/api/experiments", "API"),
     ];
     let mut out = String::from(
-        "<header class=\"top\"><a class=\"brand\" href=\"/\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"var(--accent)\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 2c0 4-4 6-4 10a4 4 0 0 0 8 0c0-4-4-6-4-10z\"/><path d=\"M12 22v-4\"/></svg>tslab <span>lab</span></a><nav aria-label=\"Dashboard\">",
+        "<header class=\"top\"><a class=\"brand\" href=\"/\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"var(--accent)\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 2c0 4-4 6-4 10a4 4 0 0 0 8 0c0-4-4-6-4-10z\"/><path d=\"M12 22v-4\"/></svg>TurboSpark <span>Lab</span></a><nav aria-label=\"Dashboard\">",
     );
     for (href, label) in items {
         let _ = write!(
@@ -301,8 +310,13 @@ fn nav(active: &str) -> String {
 }
 
 pub fn shell(title: &str, active: &str, body: &str) -> String {
+    let favicon = format!(
+        "<link rel=\"icon\" type=\"image/svg+xml\" href=\"data:image/svg+xml,{}\">",
+        urlenc(FAVICON_SVG)
+    );
     viz::page(
         title,
+        &favicon,
         &format!("{}<div class=\"wrap\">{body}</div>", nav(active)),
         DASH_CSS,
         DASH_JS,
@@ -569,7 +583,7 @@ pub fn experiments_page(ix: &LabIndex, p: &Params) -> String {
         );
     }
     body.push_str("</table></div></div><div class=\"tray\"><span class=\"count\">0 selected</span><span class=\"names\">Tick experiments to put their series on shared axes.</span><span class=\"sub\">Shared axes show a difference, the verdict board shows significance.</span><button class=\"primary\" type=\"submit\">Compare Selected</button></div></form>");
-    shell("tslab lab", "/", &body)
+    shell("TurboSpark Lab", "/", &body)
 }
 
 /// The totals over every ledger: experiments, runs with their clean share,
@@ -733,7 +747,7 @@ pub fn verdict_table(
             v.pairs,
             pct(v.null_floor),
             esc(opt(&v.model)),
-            opt(&v.family),
+            esc(opt(&v.family)),
             esc(opt(&v.chip)),
             esc(opt(&v.rev)),
             match v.memory_passed {
@@ -927,7 +941,7 @@ pub fn experiment_page(ix: &LabIndex, name: &str) -> Option<String> {
         body.push_str("<h2>Runs</h2>");
         body.push_str(&run_table(&records));
     }
-    Some(shell(&format!("{name} - tslab"), "/", &body))
+    Some(shell(&format!("{name} - TurboSpark Lab"), "/", &body))
 }
 
 /// `/compare?exp=a,b,c`: the selected experiments' series regrouped across
@@ -941,7 +955,7 @@ pub fn compare_page(ix: &LabIndex, p: &Params) -> String {
     let mut body = String::from("<h1>Compare</h1>");
     if names.is_empty() {
         body.push_str("<p>Pick experiments on the <a href=\"/\">experiment table</a>, or name them: <code>/compare?exp=a,b</code>.</p>");
-        return shell("compare - tslab", "/", &body);
+        return shell("compare - TurboSpark Lab", "/", &body);
     }
     let _ = write!(
         body,
@@ -1012,7 +1026,7 @@ pub fn compare_page(ix: &LabIndex, p: &Params) -> String {
         let refs: Vec<&Series> = all.iter().collect();
         body.push_str(&viz::cards(&refs));
     }
-    shell("compare - tslab", "/", &body)
+    shell("compare - TurboSpark Lab", "/", &body)
 }
 
 /// `/verdicts`: every paired A/B in the lab, filtered and sorted.
@@ -1056,7 +1070,7 @@ pub fn verdicts_page(ix: &LabIndex, p: &Params) -> String {
     );
     body.push_str(&filter_form(p, "/verdicts", ix, true));
     body.push_str(&verdict_table(&rows, p, "/verdicts", true));
-    shell("verdicts - tslab", "/verdicts", &body)
+    shell("verdicts - TurboSpark Lab", "/verdicts", &body)
 }
 
 /// `/sweeps`.
@@ -1084,7 +1098,7 @@ pub fn sweeps_page(ix: &LabIndex, p: &Params) -> String {
     );
     body.push_str(&filter_form(p, "/sweeps", ix, false));
     body.push_str(&sweep_table(&rows, true));
-    shell("sweeps - tslab", "/sweeps", &body)
+    shell("sweeps - TurboSpark Lab", "/sweeps", &body)
 }
 
 /// `/families`: one row per profile, with the lab's live counts.
@@ -1122,7 +1136,7 @@ pub fn families_page(ix: &LabIndex) -> String {
         }
     }
     body.push_str("</table></div>");
-    shell("families - tslab", "/families", &body)
+    shell("families - TurboSpark Lab", "/families", &body)
 }
 
 /// `/family/{family}`: the profile over everything the lab measured for it.
@@ -1269,7 +1283,11 @@ pub fn family_page(ix: &LabIndex, family: &str) -> Option<String> {
         );
     }
     body.push_str("</table></div>");
-    Some(shell(&format!("{family} - tslab"), "/families", &body))
+    Some(shell(
+        &format!("{family} - TurboSpark Lab"),
+        "/families",
+        &body,
+    ))
 }
 
 /// `/record/{exp}/{id}`: one ledger record, with its run's stderr tail.
@@ -1290,30 +1308,39 @@ pub fn record_page(ix: &LabIndex, experiment: &str, id: &str) -> Option<String> 
     );
     if rec["kind"].as_str() == Some("run") {
         if let Some(run_id) = rec["run_id"].as_str() {
-            let stderr = ix
-                .lab
-                .join(experiment)
-                .join("runs")
-                .join(format!("{run_id}.stderr"));
-            if let Ok(text) = std::fs::read_to_string(&stderr) {
-                let tail: Vec<&str> = text
-                    .lines()
-                    .rev()
-                    .take(60)
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .rev()
-                    .collect();
-                let _ = write!(
-                    body,
-                    "<h2>stderr (last {} lines)</h2><pre>{}</pre>",
-                    tail.len(),
-                    esc(&tail.join("\n"))
-                );
+            // `run_id` is ledger content, not a URL segment: without the id
+            // check a crafted ledger walks the join out of the lab dir.
+            let stderr = if crate::family_profile::is_record_id(run_id) {
+                Some(
+                    ix.lab
+                        .join(experiment)
+                        .join("runs")
+                        .join(format!("{run_id}.stderr")),
+                )
+            } else {
+                None
+            };
+            if let Some(stderr) = stderr {
+                if let Ok(text) = std::fs::read_to_string(&stderr) {
+                    let tail: Vec<&str> = text
+                        .lines()
+                        .rev()
+                        .take(60)
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev()
+                        .collect();
+                    let _ = write!(
+                        body,
+                        "<h2>stderr (last {} lines)</h2><pre>{}</pre>",
+                        tail.len(),
+                        esc(&tail.join("\n"))
+                    );
+                }
             }
         }
     }
-    Some(shell(&format!("{id} - tslab"), "/", &body))
+    Some(shell(&format!("{id} - TurboSpark Lab"), "/", &body))
 }
 
 /// Counts by kind over every experiment, for the API's index payload.

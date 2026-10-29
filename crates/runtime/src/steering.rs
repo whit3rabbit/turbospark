@@ -485,6 +485,8 @@ pub fn family_dispatches_steering(family: model_io::ModelFamily) -> bool {
         F::Qwen4Exp => false,
         // Flint's decode flow carries no steering hook yet; gate stays shut.
         F::Flint => false,
+        // No decode flow yet, so no layer loop for a hook to sit in.
+        F::Lfm3 => false,
     }
 }
 

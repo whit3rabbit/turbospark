@@ -76,5 +76,18 @@
       "Reads the `sweep` record's `best` and per-candidate verdicts; reports `best: none` when no candidate is a WIN rather than picking the largest median",
       "Reports exit 4 as a busy host, not as a result"
     ]
+  },
+  {
+    "skills": [
+      "tslab"
+    ],
+    "query": "I just made GQA decode attention the default for my family. Confirm it is still faster than barrier on decode with tslab.",
+    "files": [],
+    "expected_behavior": [
+      "Passes --metric decode_tok_s to both the null run and the ab, since ab defaults to prefill_tok_s",
+      "Uses baseline default and candidate barrier:attn_decode_kernel=barrier, and reads a LOSS as confirming the default",
+      "Checks each run record's engaged list: attn_decode_gqa on the default arm with no env set, attn_decode_barrier on the candidate",
+      "Reads the metric named in the ab header line before quoting the number"
+    ]
   }
 ]

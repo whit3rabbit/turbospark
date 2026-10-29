@@ -410,6 +410,7 @@ impl RealForwardRunner {
             self.retire_routed(&mut pending_routed);
 
             if self.routed_batch_prefill {
+                foundation::engaged!("routed_batch");
                 // Steps 2 and 3: the whole layer's routed half as one
                 // route-list dispatch pair per union-bounded sub-batch
                 // (`docs/BATCHED_PREFILL.md`). Same retire discipline as

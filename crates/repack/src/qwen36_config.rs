@@ -644,6 +644,7 @@ fn parse_qwen_family_config(json: &str, family: ModelFamily) -> Result<ArchConfi
         // from the config states a property of the architecture that the walk
         // then has to satisfy rather than a claim it might contradict.
         ple,
+        short_conv_kernel_size: 0,
     })
 }
 

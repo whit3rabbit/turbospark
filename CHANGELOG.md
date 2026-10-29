@@ -13,7 +13,35 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-28
+
 ### Added
+- The `lfm3` family (LiquidAI LFM3-1.7B): a dense hybrid of gated
+  short-convolution, full-attention and sliding-window layers, with MLX and
+  GGUF intake, its own decode flow, and a port-local short-conv kernel pair.
+  Catalog rows `lfm3-1.7b` (MLX 4-bit) and `lfm3-1.7b-q8` (GGUF Q8_0), both
+  verified with frozen memory and quality gates. The Q8_0 file's greedy
+  output matches llama.cpp on the same bytes. See `docs/LFM3_PHASE0.md`.
+- `lfm3` chunked prefill on INT4 installs (`families/lfm3/prefill.rs`): each
+  micro-batch runs as M-row GEMMs (Steel from 32 rows), the short-conv
+  prefill kernel, and multi-row GQA attention on the full layers. About 8.7x
+  prefill tok/s at 2,918 tokens on an M4 Max, mean KL 1.9e-5 nats against
+  sequential prefill. `TURBOSPARK_LFM3_CHUNKED_PREFILL=0` runs the per-token
+  loop. The GGUF Q8_0 install stays sequential (no batched kernel for its
+  block type).
+- `make design-check` (`scripts/check-design.py`), also CI's `design` job and
+  an opt-in `.githooks/pre-commit`: scans the macOS app's sources against
+  `DesignRules.json` (shared with `DesignTokenRatchetTests`), checks the status
+  hexes against the design system, and runs `derive_tokens.py --check`. CI does
+  not run the app's `swift test` suite, so nothing else enforced these rules.
+  The ratchet now also counts system `NSColor`s on themed surfaces and color
+  literals, and fails on a baseline above the real count (two were 190 and 55
+  over). `make design-check-full` adds the contrast tests.
+- `ResolvedAppTheme.success`, `.warning`, `.danger` (and 14% tints) per mode and
+  under Increase Contrast, as `.appSuccess`, `.appWarning`, `.appDanger`,
+  `.appSuccessTint` and friends, plus `.appAccentText` for the accent as text.
+  `AppStatusColorTests` pins 4.5:1 (7:1 under Increase Contrast, 4.5:1 on the
+  14% wash) on every shipped preset.
 - `tslab hybrid-replay`: prices prompt lookup over the MTP chain on a chain
   capture, per policy and case, against the head alone (ledger kind
   `hybrid_replay`). `tslab chain-capture` now keeps the prompt and stream
@@ -185,8 +213,73 @@ when this file gets updated relative to the version bump and the tag.
   - Audio arms in `tslab profile` and `tslab ab` (`--audio-job`, MiniMax
     Music 3 and Whisper) with stage times, real-time factor, and output-digest
     gates (`bit_exact`, and `text_exact` for transcripts).
+- Lab sweeps for the ANE split and the MoE routed batch. `tslab sweep --gate`
+  runs the quality gate on each WIN at the sweep's declared exactness and
+  `--enforce-memory` holds each WIN to the memory allowance. A WIN that fails
+  either keeps its verdict, is recorded as `rejected`, and is never the
+  sweep's `best`. The ANE split prints `[engaged] ane_prefill` (or
+  `ane_prefill_break`) only for a micro-batch it completed, so an arm whose
+  programs were missing reads as dirty instead of as the ANE arm. The
+  routed batch and the MTP chunked driver print theirs too. New knob rows
+  for `TURBOSPARK_ANE_PREFILL_DIR`, `TURBOSPARK_ANE_PREFILL_FAULT`,
+  `TURBOSPARK_EXPERT_NOCACHE` and the router batch capture, an `ane`
+  coverage tag, the `ane_split` sweep in the qwen35 profile and
+  `routed_batch_slots` in qwen36. `run_sweep` is tested end to end against a
+  fake worker (`crates/lab/tests/sweep_orchestration.rs`).
+- `TURBOSPARK_ANE_PREFILL_DFLASH=1` lets the ANE+Steel prefill split run
+  with a DFlash2 drafter open (off by default, so the app's `.auto` setting
+  still keeps the split off while a drafter is open). The split's micro-batch
+  captures the drafter's aux taps, the capture widens from 64 to 2048 rows on
+  first use, and the speculative loop primes in 2048-token spans
+  (`SpeculativeProducer::drafter_prefill_chunk`) so the split's 512-row
+  minimum is reachable. The `ane_split_dflash` sweep measures it.
+- `TURBOSPARK_ROUTED_BATCH_OVERLAP=1` (opt-in, beside
+  `TURBOSPARK_ROUTED_BATCH=1`) reads ahead in the Qwen MoE batched routed
+  prefill: each sub-batch's experts are planned around the slots the
+  in-flight sub-batch reads and streamed while the GPU runs it, bound into a
+  second argument buffer. Byte-identical to the routed batch without it.
+  It pays only where the expert cache holds two 32-expert unions (64 slots
+  and up). `routed_read_aheads` in the phase counters proves it ran, and the
+  qwen36 profile gains `routed_overlap`.
 
 ### Changed
+- `lfm3` decode takes the GQA-shared decode attention partial by default,
+  about +18.6% decode tok/s at a 2,918-token context. Both quality rows
+  re-froze (greedy digests unchanged, perplexity 14.7455 -> 14.7434 and
+  15.8615 -> 15.8614). `TURBOSPARK_ATTN_DECODE_KERNEL=barrier` restores the
+  old kernel.
+- `lfm3` decode runs the FFN's gate, up and silu as one fused INT4 GEMV,
+  bit-exact against the three-dispatch chain. No measurable decode change on
+  an M4 Max. `TURBOSPARK_LFM3_FUSED_FFN=0` keeps the chain.
+- The catalog alias `flint` now installs `mlx-community/flint-mixed-3-4bit`
+  (routed experts at MLX 3-bit, everything else keeping the trained INT4
+  codes): 17.8 GB against 22.6 GB. The GPU gains an INT3 routed expert pair
+  and intake accepts 3-bit routed tensors. This trades quality for size: mean
+  KL 0.213 nats and 82.8 percent top-1 against the INT4 build through this
+  port, with no quality or memory gate frozen. The trained build stays
+  available as `flint-int4`. See `docs/FLINT.md`.
+- macOS app: status uses the theme's success, warning and danger colors
+  instead of system green, orange and red (light-mode system red was 3.6:1 on
+  white); `AppAttention.color` and destructive buttons follow. The composer
+  focus edge is the solid accent (it was 55%, 2.1:1 in light; it falls back to
+  the foreground color when the accent cannot reach 3:1). Selected rail and
+  sidebar glyphs and links use `.appAccentText` (Spark Blue light `#1A64CC`, the
+  accent was 4.3:1 on the composer). Categorical hues (model family, chat
+  label, ANSI, syntax) stay fixed.
+- `docs/design-system/tools/derive_tokens.py` mixes surfaces the way
+  `NSColor.blended` does (gamma 1.8, not a straight sRGB mix), so the contrast
+  table matches what the app draws; tokens and README regenerated.
+- Dense Qwen chunked prefill runs the 48-row GDN `in_proj_a`/`in_proj_b`
+  projections (too narrow for a whole Steel tile) on the 8-row matrix-unit
+  tile up to a batch of 96 and on a new Steel edge tile above it, instead of
+  the scalar GEMM's 16-row slices. About 6.6% less summed prefill GPU time on
+  the 2,940-token long-synthesis prompt (18.1 s to 16.9 s median, interleaved
+  arms in one binary, noisy host); greedy output md5-identical and the Steel
+  KL probe unchanged (mean 1.7e-5 nats). Prefill only, on the Steel scratch:
+  decode and speculative verify are untouched. `TURBOSPARK_PREFILL_SMALL_N=0`
+  restores the slices. Registered as the `prefill_small_n` lane
+  (`tslab kernel --bench int4_matmul` has a `small_n` arm). See
+  `docs/BATCHED_PREFILL.md`.
 - Adaptive speculative depth (`--speculative adaptive[:N]`) holds its cap to
   7 while the INT4 MMA8 tile is on (`TURBOSPARK_INT4_MMA8`), because a
   width-9 verify pays a second 8-row tile pass for one row: measured +24.2%
@@ -242,6 +335,12 @@ when this file gets updated relative to the version bump and the tag.
   rollback, commit, rewind, bonus).
 
 ### Fixed
+- Chat templates using transformers' `{% generation %}` block tag now
+  render (minijinja rejected the tag, so such a checkpoint could not be
+  installed).
+- The ChatML tokenizer now uses a BOS the checkpoint's tokenizer config
+  declares, instead of always standing in `<|endoftext|>`. Qwen checkpoints,
+  which declare none, are unchanged.
 - `tslab kernel --bench int4_matmul` commits an untimed primer (about 50 ms
   of GPU work on its own small matrix) right before every timed pass. A pass
   started on a cold device runs several times slower for its whole length,
@@ -257,6 +356,9 @@ when this file gets updated relative to the version bump and the tag.
   block before the answer. `turbospark-check` skips it under
   `TURBOSPARK_HIDE_RESOLVED_REQUEST=1`, which the front door sets; direct
   use is unchanged.
+- The lab's qwen35 `mtp_prefill_driver` and `dflash_prefill_driver` sweeps
+  opened no drafter, so both arms were plain prefill and the knob under test
+  changed nothing. Both arms now open the drafter.
 - Core ML model compilation and cache publication now serialize inside a
   process-wide critical section. Prevents simultaneous cold loads of the same
   package from racing on Core ML's shared temporary build directory. Warm loads
@@ -287,6 +389,20 @@ when this file gets updated relative to the version bump and the tag.
     one). The Voice Cloning page shows the transcript as optional.
   - The top bar audio-model eject redraws when a model loads or unloads
     instead of staying dimmed and inert until a section switch.
+- The `tslab serve` dashboard is branded "TurboSpark Lab" in the top bar and
+  page titles instead of the redundant "tslab lab", and every page carries a
+  favicon inlined as a data URI (the response CSP gains `img-src data:` for
+  it alone).
+
+### Security
+- `tslab serve` (crates/lab dashboard): the verdict board's family cell is
+  escaped like every other ledger-sourced cell, a run record's `run_id` is
+  validated before the record page reads its stderr tail, and a run ledger
+  line's `record` pointer is read only when it resolves inside the lab dir,
+  so a crafted or hand-edited ledger can no longer inject HTML or make the
+  dashboard read files outside the lab dir. A loopback bind now answers
+  only loopback Host headers (closing the DNS-rebinding hole) and every
+  response carries `nosniff` plus a `default-src 'none'` CSP.
 
 ## [0.5.0] - 2026-10-20
 

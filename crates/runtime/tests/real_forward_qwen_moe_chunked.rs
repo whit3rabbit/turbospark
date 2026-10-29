@@ -297,6 +297,68 @@ fn the_one_bank_fallback_reproduces_the_sequential_logits() {
     }
 }
 
+/// The read-ahead (`TURBOSPARK_ROUTED_BATCH_OVERLAP`) plans each sub-batch
+/// around the slots the in-flight one reads, streams it while that one runs
+/// and binds it into the other argument buffer. It moves which slot an
+/// expert lands in and nothing else, so the bar is the routed batch's own
+/// bytes, through prefill and the decode that follows (the last routed
+/// buffer must still be the only one in flight when the layer returns).
+///
+/// 128 experts, because the read-ahead needs several sub-batches per layer:
+/// on the 32-expert fixture a 16-row micro-batch's union never passes the
+/// 32-entry cap, so each layer is one sub-batch. 64 slots hold two 32-expert
+/// unions and must read ahead (the counter); at 16 a sub-batch can hold every
+/// slot, so most sub-batches fall back, and the bytes still may not move.
+#[test]
+fn the_routed_read_ahead_is_byte_identical_to_the_routed_batch() {
+    const WIDE_EXPERTS: i64 = 128;
+    let open = |tag: &str, slots: usize, overlap: bool| {
+        let dir = temp_dir(tag);
+        let arch = turbospark_repack::build_synthetic_qwen_gdn_moe_install(
+            &dir,
+            VOCAB,
+            LAYERS,
+            WIDE_EXPERTS,
+            "tiny-qwen36-read-ahead",
+        )
+        .expect("MoE qwen install builds");
+        let mut runner = RealForwardRunner::open_with_options(&dir, arch, MAX_CONTEXT, slots)
+            .expect("MoE qwen install opens");
+        let _ = std::fs::remove_dir_all(&dir);
+        runner.set_prefill_steel(false);
+        runner.set_batched_gemv_prefill(true);
+        runner.set_routed_batch_prefill(true);
+        runner.set_routed_batch_overlap(overlap);
+        runner
+    };
+    let prompt = make_prompt(37);
+    for slots in [16usize, 64] {
+        let mut base = open("read-ahead-base", slots, false);
+        let expected = chunked_prefill(&mut base, &prompt, prompt.len());
+        let expected_decode = greedy_continue(&mut base, argmax(&expected), prompt.len(), 4);
+        assert_eq!(base.phase_counters().routed_read_aheads, 0);
+
+        let mut ahead = open("read-ahead", slots, true);
+        let actual = chunked_prefill(&mut ahead, &prompt, prompt.len());
+        let read_aheads = ahead.phase_counters().routed_read_aheads;
+        assert_eq!(
+            actual, expected,
+            "{slots} slots: the read-ahead changed the prefill logits"
+        );
+        let actual_decode = greedy_continue(&mut ahead, argmax(&actual), prompt.len(), 4);
+        assert_eq!(
+            actual_decode, expected_decode,
+            "{slots} slots: decode after the read-ahead differs"
+        );
+        if slots == 64 {
+            assert!(
+                read_aheads > 0,
+                "64 slots: no sub-batch read ahead, so the overlap path did not run"
+            );
+        }
+    }
+}
+
 /// The batched routed half binds each sub-batch's expert UNION, not every
 /// cache slot, so it serves slot counts past the 32-entry argument buffer
 /// (the CLI's `auto` is 96 on a 36 GB Mac). At 48 slots the cache hands out

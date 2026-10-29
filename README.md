@@ -1,5 +1,13 @@
 <p align="center">
-  <img src="assets/banner-nobg.png" alt="TurboSpark" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.png" />
+    <img src="assets/banner-nobg.png" alt="TurboSpark" width="320" />
+  </picture>
+</p>
+
+<p align="center">
+  <b>Local language, image, audio, and music models on Apple Silicon.</b><br />
+  Large Mixture-of-Experts models stream their experts from SSD and run in a small, bounded memory footprint.
 </p>
 
 <p align="center">
@@ -12,15 +20,35 @@
 </p>
 
 <p align="center">
-  <a href="assets/welcome-screen.png"><img src="assets/welcome-screen.png" alt="TurboSpark Welcome Screen" width="48%" /></a>
-  <a href="assets/chat-interface.png"><img src="assets/chat-interface.png" alt="TurboSpark Chat Interface" width="48%" /></a>
-</p>
-
-<p align="center">
   <a href="https://turbospark.gitbook.io/turbospark/documentation">Documentation</a> | <a href="#install">Install</a> | <a href="#quickstart">Quickstart</a> | <a href="#supported-models">Supported Models</a> | <a href="#memory-and-benchmark-results">Benchmarks</a> | <a href="#image-generation">Image Generation</a> | <a href="#humanize">Humanize</a> | <a href="#audio">Audio</a> | <a href="#music-generation">Music</a> | <a href="#decision-models">Decision Models</a> | <a href="#supported-features">Features</a> | <a href="#more-details">More Details</a> | <a href="#license">License</a>
 </p>
 
-** This is a early work in progress. Expect bugs and breaking changes **
+<p align="center">
+  <a href="assets/screenshots/chat.png"><img src="assets/screenshots/chat.png" alt="TurboSpark chat with a loaded Spark-X2.5 model, the chat list, and live memory, CPU, and GPU readouts in the top bar" width="92%" /></a>
+</p>
+
+<table align="center">
+  <tr>
+    <td align="center" valign="top" width="25%">
+      <a href="assets/screenshots/models.png"><img src="assets/screenshots/models.png" alt="TurboSpark model catalog with Flint 40B-A2.5B selected, showing its streaming memory fit and expert slots" /></a><br />
+      <sub><b>Model catalog</b><br />Memory fit for this Mac</sub>
+    </td>
+    <td align="center" valign="top" width="25%">
+      <a href="assets/screenshots/audio.png"><img src="assets/screenshots/audio.png" alt="TurboSpark Audio workspace on the Record page, set to a meeting or call with microphone and system audio sources" /></a><br />
+      <sub><b>Audio</b><br />Record, transcribe, speak</sub>
+    </td>
+    <td align="center" valign="top" width="25%">
+      <a href="assets/screenshots/humanize.png"><img src="assets/screenshots/humanize.png" alt="TurboSpark Humanize with a draft on the left and the protected terms, words to avoid, and replacements rules on the right" /></a><br />
+      <sub><b>Humanize</b><br />Your rules, applied after</sub>
+    </td>
+    <td align="center" valign="top" width="25%">
+      <a href="assets/screenshots/api.png"><img src="assets/screenshots/api.png" alt="TurboSpark API workspace on the TypeSafe tab, with the loopback service, Keychain opt-in, and six example requests" /></a><br />
+      <sub><b>API workspace</b><br />Typed local decisions</sub>
+    </td>
+  </tr>
+</table>
+
+> **Early work in progress.** Expect bugs and breaking changes.
 
 TurboSpark is a native macOS app and Rust workspace for running local language models on Apple Silicon. Its main advantage is fine-grained Mixture-of-Experts (MoE) streaming: routed expert weights stay on SSD until they are needed, so supported large MoE models can run with a small bounded memory footprint.
 
@@ -136,9 +164,22 @@ turbospark-server --model gemma4
 
 The default server listens on `127.0.0.1:8080` and provides `/v1/chat/completions`, `/v1/messages`, `/v1/models`, and `/health`. See [`docs/CLI.md`](docs/CLI.md) for server flags and client setup.
 
+The `turbospark` front end is reworked on `main` for 0.6.0, which is not released yet, so the commands below need a build from source until it ships. It takes ollama-style tags (`qwen3.6:35b`) and verbs, and the server also answers on an Ollama-compatible `/api`:
+
+```sh
+turbospark                        # what is installed, what fits, what to type
+turbospark run qwen3.6            # chat, downloading the model first if needed
+turbospark ls                     # installed models
+turbospark doctor                 # this machine, and which models fit
+turbospark serve --model qwen3.6  # OpenAI, Anthropic and Ollama APIs
+turbospark launch claude --model qwen3.6   # start a coding agent against the local server
+```
+
+`launch` also starts `codex`, `opencode`, `grok`, `gemini`, `hermes`, `openclaw`, and `dsh`. The full command list is in [`docs/CLI.md`](docs/CLI.md).
+
 ## Supported models
 
-TurboSpark supports 15 declared model families (DeepSeek-V4-Flash is still scaffolded-only). Recent additions include the Bonsai line (1-bit Bonsai, 2-bit Ternary-Bonsai, and the Hadamard-folded Ternary-Bonsai 2), Qwen3.8-27B dense with MTP/DFlash2 speculative decoding and an optional vision tower, Qwen3.8-Flash-Next REAP-288 and the text-only Swift-1.5 IQ2_XS GGUF, Qwen3-VL 4B with image input, MiniCPM-V 4.7 35B-A3B (text only, MLX mxfp4), DeepSeek-V2-Lite (MLA), Spark-X2.5, Muse Glimmer, Qwen2.5, and gpt-oss. MiniMax-M2 is implemented but not yet catalog-promoted.
+TurboSpark supports 17 declared model families (DeepSeek-V4-Flash is still scaffolded-only). The newest two are LFM3-1.7B, a small dense hybrid of gated short-convolution and attention layers, and Flint 40B-A2.5B, an MoE with 256 routed experts per layer that streams from SSD like the others. Recent additions also include the Bonsai line (1-bit Bonsai, 2-bit Ternary-Bonsai, and the Hadamard-folded Ternary-Bonsai 2), Qwen3.8-27B dense with MTP/DFlash2 speculative decoding and an optional vision tower, Qwen3.8-Flash-Next REAP-288 and the text-only Swift-1.5 IQ2_XS GGUF, Qwen3-VL 4B with image input, MiniCPM-V 4.7 35B-A3B (text only, MLX mxfp4), DeepSeek-V2-Lite (MLA), Spark-X2.5, Muse Glimmer, Qwen2.5, and gpt-oss. MiniMax-M2 is implemented but not yet catalog-promoted.
 
 MoE checkpoints can stream routed experts from SSD through a bounded cache,
 so install size and process footprint are different quantities. The Swift
@@ -158,6 +199,8 @@ The process peak is measured `phys_footprint` on a 36 GB M4 Max with 16 expert-c
 | Ornith-1.5 35B-A3B | INT4 (group 64) | MLX | ~20 GB | - |
 | Ornith-1.5 35B-A3B | Q8_0 | GGUF | ~38 GB | - |
 | MiniCPM-V 4.7 35B-A3B, text only (`minicpm-v47-35b-mxfp4`) | mxfp4 (group 32) | MLX | ~22 GB | ~1.5 GB @ 4k ctx |
+| Flint 40B-A2.5B (`flint`) | INT4 core, 3-bit routed experts | MLX | ~18.6 GB | - |
+| Flint 40B-A2.5B, trained build (`flint-int4`) | INT4 (group 64) | MLX | ~23.5 GB | - |
 | Qwen3.8-Flash-Next REAP-288 | INT4 | MLX | ~74 GB | ~2.5 GB @ 2k ctx |
 | Qwen3.8-Flash-Next Swift-1.5 (`qwen4exp-swift-iq2-xs`) | IQ2_XS | GGUF | ~69 GB reserve | ~1.60 GiB @ 2k ctx |
 | Qwen3-30B-A3B | Q4_K_M | GGUF | ~19 GB | ~2.7 GB @ 4k ctx |
@@ -167,6 +210,10 @@ The process peak is measured `phys_footprint` on a 36 GB M4 Max with 16 expert-c
 | gpt-oss 20B | MXFP4 | GGUF | ~12 GB | ~5.4 GB @ 8k ctx |
 | DeepSeek-V2-Lite 16B (MLA) | Q8_0 | GGUF | ~17 GB | ~4.1 GB @ 8k ctx |
 | Mixtral 8x7B | Q4_K_M | GGUF | ~29 GB | - |
+
+Flint has no frozen row either. The default `flint` build cuts only the routed experts to 3-bit, which shrinks the download from 22.6 GB to 17.8 GB. Against the trained INT4 build it measured a mean KL of 0.213 nats and 82.8 percent top-1 agreement, so it trades quality for size. One indicative reading of the default build peaked at 1.40 GiB at 16 slots, taken on a short prompt with a download running alongside, so treat it as a rough guide. The INT4 build read 1.61 GiB and about 19 to 22 tok/s the same way.
+
+Flint reasons inside an inline `<think>` block and has no speculative decoding or tool-call parsing yet. Its prefill is sequential by default, about 36 tok/s on the INT4 build, so a 1,667-token prompt takes roughly 46 seconds. See [`docs/FLINT.md`](docs/FLINT.md).
 
 Mixtral has no frozen process-footprint row. Its estimated slot-cache
 capacity is about 55 GiB at 16 slots, so it does not fit ordinary machines.
@@ -193,6 +240,7 @@ Dense models do not stream, so budget roughly the on-disk size plus KV and scrat
 | Muse Glimmer 30B | INT4 (group 64) | MLX | ~16 GB | |
 | Humanizer 12B (dense Gemma 4, `humanizer-12b`) | INT8 (group 64) | MLX | ~12.7 GB | raw-completion rewriter behind [Humanize](#humanize), no chat template |
 | Spark-X2.5 4B | Q4_K_M | GGUF | ~2.6 GB | |
+| LFM3 1.7B (`lfm3-1.7b`, `lfm3-1.7b-q8`) | INT4 (group 64) / Q8_0 | MLX + GGUF | ~1.0 / 1.9 GB | dense hybrid of gated short-conv and attention layers; chunked prefill on the INT4 install only |
 | Mistral 7B Instruct v0.3 | Q4_K_M | GGUF | ~4.4 GB | |
 | TinyLlama 1.1B Chat | Q6_K | GGUF | ~0.9 GB | |
 
@@ -214,11 +262,23 @@ These rows are measured `phys_footprint` process peaks on one Apple M4 Max with 
 | Qwen 3.8 27B, MLX INT4, dense | 4,096 | 661 MiB | 16.8-19.0 tok/s | about 15.2 GB |
 | Qwen 3.8 27B + MTP head, MLX INT4, dense (greedy, MTP speculation) | 4,096 | 872 MiB | 21.9-28.7 tok/s | about 15.4 GB |
 | gpt-oss 20B, GGUF MXFP4 | 8,192 | 5,422 MiB | 23.4-31.3 tok/s | about 12.2 GB |
+| LFM3-1.7B, MLX INT4, dense hybrid | 8,192 | 342-351 MiB | 67.8-198.1 tok/s | about 0.97 GB |
+| LFM3-1.7B, GGUF Q8_0, dense hybrid | 8,192 | 344-350 MiB | 84.1-94.7 tok/s | about 1.8 GB |
 | Humanizer 12B, MLX INT8, dense (raw completion) | 8,192 | 774-924 MiB | 6.5-13.4 tok/s | about 12.7 GB |
 
 The MTP row uses greedy decoding with MTP speculation (block 2), measured with other sessions running on the host. In the same capture, the same install read 14.7-17.9 tok/s without speculation.
 
+LFM3's MLX decode reads either about 180 to 198 or about 68 to 71 tok/s from run to run, so its range is wide. The Q8_0 row matches llama.cpp token for token on the same bytes (greedy, 600 tokens on one prompt). See [`docs/LFM3_PHASE0.md`](docs/LFM3_PHASE0.md).
+
 MiniCPM-V 4.7 runs the same trunk as Qwen 3.6 but ships its embedding, head, and GDN projections in BF16, so it reads more bytes per token and decodes slower. Its prefill is sequential: a 2,940-token prompt takes about 2 minutes before the first token. See [`docs/MINICPM.md`](docs/MINICPM.md).
+
+Decode and prefill work since 0.5.0 is recorded in [`CHANGELOG.md`](CHANGELOG.md) and is not part of the frozen table above. All of it was measured on the same M4 Max:
+
+- **DFlash2 tree verify** is on by default for greedy fixed-depth rounds. At block 7 it gained 9.2% decode tok/s on a medium-review prompt and 4.3% on a short explanation, and `TURBOSPARK_DFLASH_TREE=0` keeps the chain.
+- **DFlash2 chunked prefill** is on by default. A 426-token prompt prefills at 130 to 158 tok/s, against 16 to 23 when it walked token by token.
+- **Batched routed experts** are opt-in (`TURBOSPARK_ROUTED_BATCH=1`). On Qwen 3.6 at `auto` slots, a 2,940-token prompt prefills in 20.2 s instead of 33.3 s. At 16 slots the gain is about 2.5%.
+- **LFM3 chunked prefill** is on by default for INT4 installs and prefills about 8.7x faster at 2,918 tokens, with a mean KL of 1.9e-5 nats against the per-token path (`TURBOSPARK_LFM3_CHUNKED_PREFILL=0` restores it). Its decode also takes the GQA-shared attention kernel by default, about 18.6% faster at that context. The Q8_0 install stays sequential.
+- **GDN turn snapshot** is opt-in (`TURBOSPARK_GDN_TURN_SNAPSHOT=1`) for dense Qwen models. Multi-turn chats reuse a long document prefix without re-prefilling it.
 
 The low-memory result is primarily an MoE result. Dense models run, but they do not get the same routed-expert streaming benefit. For the complete measured rows, quality gates, cross-engine comparisons, and methodology, see [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) and [`docs/BENCHMARKING.md`](docs/BENCHMARKING.md).
 
@@ -391,7 +451,7 @@ The benchmark times are client wall-clock numbers that include local HTTP and Sw
 | Audio | Whisper, Qwen3-ASR, and FluidAudio Core ML / ANE speech to text, Kokoro (Metal and ANE) and Qwen3-TTS speech, Silero VAD, MegaTTS3 voice cloning (Metal on macOS), and meeting speaker intelligence. See [Audio](#audio) |
 | Music | MiniMax Music 3 native Metal generation (4-bit, 6-bit, 8-bit, bf16, mxfp8), experimental 8-step Turbo LoRA checkpoint, prompt builder, and HTTP API. See [Music generation](#music-generation) |
 | Decision models | Typed Noul, Choice, and Score answers through the bundled OpenKind daemon. See [Decision models](#decision-models) |
-| Performance controls | Context and load guards, expert-cache sizing, chunked prefill, KV-cache quantization, and eligible speculative decoding |
+| Performance controls | Context and load guards, expert-cache sizing, chunked prefill, KV-cache quantization, MTP and DFlash2 speculative decoding (tree verify by default), opt-in batched routed-expert prefill, and multi-turn prefix reuse |
 | Steering | Directional residual steering for supported model flows, without modifying model weights |
 
 ## More details

@@ -112,6 +112,9 @@ pub struct PhaseCounters {
     /// Experimental scheduling counters prove the measured arm executed.
     /// Mapped preparation bytes are logical page spans, not physical I/O.
     pub qwen_shared_submissions: u64,
+    /// Routed prefill sub-batches whose experts were read while the previous
+    /// one ran (`TURBOSPARK_ROUTED_BATCH_OVERLAP`).
+    pub routed_read_aheads: u64,
     pub mapped_prepare_calls: u64,
     pub mapped_prepared_bytes: u64,
     pub mapped_page_touches: u64,
@@ -298,14 +301,21 @@ impl DecodeScratch {
             // read per group instead of per Q head and no per-position
             // barrier, 3-13x faster from 512 to 32K positions at that
             // shape (`crates/gpu/tests/qwen38_attention_decode_probe.rs`).
+            // `lfm3` (16 Q over 4 KV at head_dim 128) takes it too, after its
+            // quality gates re-froze on both installs (`docs/LFM3_PHASE0.md`).
             // Other families keep the barrier kernel until their own gates
             // run on it.
             attn: gpu::AttentionScratch::new(context, arch.num_heads as u32, max_head_dim as u32)
-                .with_decode_kernel(if arch.family == model_io::ModelFamily::QwenGdnDense {
-                    gpu::DecodeAttentionKernel::GqaShared
-                } else {
-                    gpu::DecodeAttentionKernel::Barrier
-                }),
+                .with_decode_kernel(
+                    if matches!(
+                        arch.family,
+                        model_io::ModelFamily::QwenGdnDense | model_io::ModelFamily::Lfm3
+                    ) {
+                        gpu::DecodeAttentionKernel::GqaShared
+                    } else {
+                        gpu::DecodeAttentionKernel::Barrier
+                    },
+                ),
             kv_stage: kv_quant.is_on().then(|| KvStage::new(context, full_kv_dim)),
             tq_attn: kv_quant.is_on().then(|| {
                 gpu::TqAttentionScratch::new(

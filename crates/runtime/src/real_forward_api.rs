@@ -89,6 +89,9 @@ impl RealForwardRunner {
             || (self.real_qwen.as_ref().is_some_and(|s| !s.dense)
                 && self.qwen_moe_chunked_refusal().is_none())
             || self.real_qwen4.is_some()
+            // INT4-affine installs only, through the same refusal the
+            // driver itself checks.
+            || (self.real_lfm3.is_some() && self.lfm3_chunked_refusal().is_none())
     }
 
     /// Rows this model's output head writes, i.e. the length every `produce`
@@ -202,6 +205,14 @@ impl RealForwardRunner {
     #[doc(hidden)]
     pub fn set_routed_batch_prefill(&mut self, on: bool) {
         self.routed_batch_prefill = on;
+    }
+
+    /// Sibling of [`Self::set_shared_cb_overlap`] for
+    /// `TURBOSPARK_ROUTED_BATCH_OVERLAP` (the batched routed half's
+    /// read-ahead). Does nothing unless the routed batch is on too.
+    #[doc(hidden)]
+    pub fn set_routed_batch_overlap(&mut self, on: bool) {
+        self.routed_batch_overlap = on;
     }
 
     /// Sibling of [`Self::set_shared_cb_overlap`] for

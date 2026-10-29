@@ -1,0 +1,47 @@
+{
+  "_comment": "Shared by DesignTokenRatchetTests (swift test) and scripts/check-design.py (no build). Counts may only go down: fix a site and lower its baseline in the same change, never raise one. Patterns must work in both NSRegularExpression and Python re. Sites under Theme/ and comment lines are skipped. What remains in 'system status color' and 'hard-coded color literal' is categorical (model family, chat labels, ANSI, syntax, badges), not status.",
+  "rules": [
+    {
+      "name": "bare static TurboSparkTheme accessor",
+      "pattern": "TurboSparkTheme\\.\\w+(Color|Background)\\b(?!\\s*\\()",
+      "baseline": 6,
+      "fix": "use TurboSparkTheme.x(isDark: theme.isDark) or the resolved theme"
+    },
+    {
+      "name": "hard-coded border opacity",
+      "pattern": "\\.appBorder\\.opacity\\(",
+      "baseline": 2,
+      "fix": "stroke .appBorder as the theme gives it"
+    },
+    {
+      "name": "system accent color",
+      "pattern": "Color\\.accentColor",
+      "baseline": 19,
+      "fix": "use .appAccent, .appAccentText or theme.accent"
+    },
+    {
+      "name": "system secondary style",
+      "pattern": "Color\\.secondary|Color\\.primary\\.opacity|(?<!appAction)\\(\\.secondary\\)|\\(\\.tertiary\\)",
+      "baseline": 28,
+      "fix": "use .appSecondary or .appSurface"
+    },
+    {
+      "name": "system status color",
+      "pattern": "\\bColor\\.(green|orange|red|yellow)\\b|[\\s(?:]\\.(green|orange|red|yellow)\\b",
+      "baseline": 29,
+      "fix": "use .appSuccess, .appWarning or .appDanger (theme.success, .warning, .danger)"
+    },
+    {
+      "name": "system NSColor on a themed surface",
+      "pattern": "\\bNSColor\\.(separatorColor|controlBackgroundColor|windowBackgroundColor|textBackgroundColor|labelColor|secondaryLabelColor|tertiaryLabelColor|gridColor|controlColor|underPageBackgroundColor)\\b|nsColor:\\s*\\.(separatorColor|controlBackgroundColor|windowBackgroundColor|textBackgroundColor|labelColor|secondaryLabelColor|tertiaryLabelColor|gridColor|controlColor|underPageBackgroundColor)\\b",
+      "baseline": 7,
+      "fix": "use .appBorder, .appSurface, .appPage, .appText or .appSecondary"
+    },
+    {
+      "name": "hard-coded color literal",
+      "pattern": "\\b(Color|NSColor)\\((hex:|red:|srgbRed:|white:)",
+      "baseline": 45,
+      "fix": "add a role to Theme/ (ResolvedAppTheme) instead of a literal in a view"
+    }
+  ]
+}

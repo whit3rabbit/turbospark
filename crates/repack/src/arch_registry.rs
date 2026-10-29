@@ -143,6 +143,13 @@ const SUPPORTED_GGUF: &[(&str, ModelFamily)] = &[
     // and Mistral-Large-3 -- the roadmap's multi-model unlock. Facts:
     // `docs/DEEPSEEK2_PHASE0.md`.
     ("deepseek2", ModelFamily::Deepseek2),
+    // Read off `LiquidAI/LFM3-1.7B-GGUF`'s Q8_0 and Q4_K_M headers,
+    // 2026-10-27 (docs/LFM3_PHASE0.md): `block_count 24`, per-layer
+    // `head_count_kv` with 0 on the 13 short-conv layers, `shortconv.*`
+    // tensors, and a `rope_freqs.weight` that encodes the zero-tail partial
+    // rotary and is verified by value at repack. Agrees with the HF
+    // `model_type` below.
+    ("lfm3", ModelFamily::Lfm3),
 ];
 
 /// HF `config.json -> model_type` -> family, for the architectures that run.
@@ -226,6 +233,12 @@ const SUPPORTED_HF: &[(&str, ModelFamily)] = &[
     // llama.cpp port instead (`docs/FLINT_PHASE0.md`). No `_text` row: the
     // config is flat, with no `text_config` wrapper to carry one.
     ("flint", ModelFamily::Flint),
+    // Read off `LiquidAI/LFM3-1.7B` @ 40ebe0aa and
+    // `LiquidAI/LFM3-1.7B-MLX-4bit` @ d0ca73dc, both `model_type: "lfm3"`
+    // with no `text_config` wrapper. NOT `lfm2`: that is a different layer
+    // graph (no sliding window, no sandwich norms, no output gate) and stays
+    // unregistered.
+    ("lfm3", ModelFamily::Lfm3),
 ];
 
 /// GGUF architectures this port recognizes and cannot run.

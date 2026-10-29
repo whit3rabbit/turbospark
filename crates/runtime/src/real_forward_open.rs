@@ -353,6 +353,8 @@ impl RealForwardRunner {
             shared_cb_overlap: std::env::var("TURBOSPARK_SHARED_CB").as_deref() != Ok("0"),
             routed_pipeline: std::env::var("TURBOSPARK_ROUTED_PIPELINE").as_deref() != Ok("0"),
             routed_batch_prefill: std::env::var("TURBOSPARK_ROUTED_BATCH").as_deref() == Ok("1"),
+            routed_batch_overlap: std::env::var("TURBOSPARK_ROUTED_BATCH_OVERLAP").as_deref()
+                == Ok("1"),
             batched_gemv_prefill: std::env::var("TURBOSPARK_BATCHED_GEMV").as_deref() == Ok("1"),
             batched_gemv_prefill_auto: std::env::var_os("TURBOSPARK_BATCHED_GEMV").is_none(),
             prefill_steel: std::env::var("TURBOSPARK_PREFILL_STEEL").as_deref() != Ok("0"),
@@ -376,6 +378,7 @@ impl RealForwardRunner {
             hidden_out: false,
             headless,
             real_spark: None,
+            real_lfm3: None,
         };
         match runner.arch.family {
             model_io::ModelFamily::Gemma4 => {
@@ -530,6 +533,16 @@ impl RealForwardRunner {
                 return Err(RealForwardError::Unsupported(
                     "the DeepSeek-V4-Flash family has no decode flow yet".to_string(),
                 ));
+            }
+            // Its own flow: short-conv layers, zero-tail per-class rope and
+            // sandwich norms are each inside the layer, and a neighbour's flow
+            // would decode fluently and wrongly (`docs/LFM3_PHASE0.md`).
+            model_io::ModelFamily::Lfm3 => {
+                runner.real_lfm3 = Some(crate::families::lfm3::RealLfm3State::build(
+                    &mut runner.context,
+                    &runner.index,
+                    &runner.arch,
+                )?);
             }
             // Its own flow: sinks, NoPE by layer mask, per-head QK norm, a
             // sigmoid router, an ungated shared expert and a dense lead are

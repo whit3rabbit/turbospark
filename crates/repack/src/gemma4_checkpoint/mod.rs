@@ -30,6 +30,7 @@ pub use classify::{
     classify_for_family, classify_gemma4, Gemma4Bucket, DFLASH_PREFIX, MTP_PREFIX,
     VISION_INSTALL_PREFIX, VISION_PREFIX, VISION_SOURCE_PREFIXES,
 };
+pub(crate) use config::parse_quantization_admitting;
 pub use config::{
     is_supported_affine_shape, parse_gemma4_config, parse_gemma4_quantization, Gemma4Error,
     Gemma4Quant, QuantMode, AFFINE_1BIT_GROUP_SIZE, AFFINE_2BIT_GROUP_SIZE, AFFINE_GROUP_SIZE,
@@ -660,6 +661,30 @@ pub fn write_qwen3_vl_install_streamed(
     if arch.family != ModelFamily::Qwen3Vl {
         return Err(Box::new(Gemma4Error::Config(format!(
             "write_qwen3_vl_install_streamed needs arch.family = qwen3_vl, got {}",
+            arch.family.as_str()
+        ))));
+    }
+    write_gemma4_install_streamed(dir, arch, model_id, shards, quant, progress)
+}
+
+/// Dense `lfm3` install write through the shared MLX checkpoint walk.
+///
+/// The MLX conversion already names every tensor under the canonical
+/// `language_model.model.` prefix, so no header canonicalization runs
+/// first. The BF16 `conv.conv.weight` `[hidden, taps, 1]` lands resident
+/// unquantized, which is the layout the short-conv kernel reads
+/// (channel-major, taps contiguous).
+pub fn write_lfm3_install_streamed(
+    dir: &Path,
+    arch: &ArchConfig,
+    model_id: &str,
+    shards: &Gemma4Shards<'_>,
+    quant: &Gemma4Quant,
+    progress: impl FnMut(&str),
+) -> Result<(), Box<dyn std::error::Error>> {
+    if arch.family != ModelFamily::Lfm3 {
+        return Err(Box::new(Gemma4Error::Config(format!(
+            "write_lfm3_install_streamed needs arch.family = lfm3, got {}",
             arch.family.as_str()
         ))));
     }
