@@ -17,6 +17,8 @@
 #      the CI host and fail on the oldest Mac the cask admits.
 #   2. the resource bundle is under Contents/Resources (codesign refuses it
 #      anywhere else).
+#      MLX's kernel bundle is among them: without it the app starts and
+#      then exits on the first MLX image generation.
 #   3. the app stays alive for a few seconds. It is run with an empty HOME so
 #      it cannot touch real user data.
 set -euo pipefail
@@ -59,6 +61,12 @@ ls -d "$contents"/Resources/*.bundle >/dev/null 2>&1 \
 if ls -d "$app"/*.bundle >/dev/null 2>&1; then
   fail "a .bundle sits at the app root; codesign rejects unsealed root contents"
 fi
+# MLX's GPU kernels. Without them MLX calls exit(-1) on its first GPU op,
+# which the launch smoke below never reaches: v0.6.0 started fine and quit
+# on the first Z-Image generation.
+mlx_metallib="$contents/Resources/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib"
+[ -s "$mlx_metallib" ] || fail "no MLX kernels at $mlx_metallib"
+echo "==> MLX kernels: $(du -h "$mlx_metallib" | cut -f1) in mlx-swift_Cmlx.bundle"
 
 # 3. Launch smoke -----------------------------------------------------------
 home="$(mktemp -d)"

@@ -148,6 +148,47 @@ if [ "$skip_build" -eq 0 ]; then
   (cd "$root/swift/TurboSparkApp" && swift build -c release -Xbuild-tools-swiftc -suppress-warnings)
 fi
 
+# MLX's GPU kernels. mlx-swift ships them as .metal sources that only Xcode's
+# build system compiles (xcodebuild, or SwiftPM's swiftbuild): the native
+# `swift build` above, which every Xcode the release and CI pin uses, emits
+# no mlx-swift_Cmlx.bundle at all. Without it MLX's first GPU op hits
+# mlx-c's default error handler, which calls exit(-1): v0.6.0 quit on the
+# first Z-Image generation with no crash report. So build that one bundle
+# with xcodebuild, from a copy of the SAME resolved checkout the app linked,
+# so kernels and C++ never disagree. The copy keeps Xcode's .swiftpm state
+# out of SwiftPM's checkout. Under .build, so CI's SwiftPM cache keeps it and
+# --skip-build reuses it.
+mlx_checkout="$root/swift/TurboSparkApp/.build/checkouts/mlx-swift"
+mlx_kernels="$root/swift/TurboSparkApp/.build/mlx-kernels"
+mlx_bundle="$mlx_kernels/derived/Build/Products/Release/mlx-swift_Cmlx.bundle"
+if [ "$skip_build" -eq 0 ]; then
+  [ -f "$mlx_checkout/Package.swift" ] || {
+    echo "no mlx-swift checkout at $mlx_checkout; the swift build should have resolved it" >&2
+    exit 1
+  }
+  if ! xcrun --find metal >/dev/null 2>&1; then
+    # Xcode 26 and later ship the Metal compiler as a separate component.
+    # CI fetches it; on a workstation that download is the user's call.
+    if [ -n "${CI:-}" ]; then
+      echo "==> Metal toolchain missing; xcodebuild -downloadComponent MetalToolchain"
+      xcodebuild -downloadComponent MetalToolchain
+    else
+      echo "the Metal compiler is missing; run: xcodebuild -downloadComponent MetalToolchain" >&2
+      exit 1
+    fi
+  fi
+  echo "==> xcodebuild mlx-swift's Metal kernels (mlx-swift_Cmlx.bundle)"
+  mkdir -p "$mlx_kernels"
+  rsync -a --delete --exclude .git --exclude .swiftpm "$mlx_checkout/" "$mlx_kernels/src/"
+  (cd "$mlx_kernels/src" && xcodebuild build -quiet -scheme MLX -configuration Release \
+    -destination 'generic/platform=macOS' -derivedDataPath "$mlx_kernels/derived" \
+    -skipPackagePluginValidation ARCHS=arm64 ONLY_ACTIVE_ARCH=NO)
+fi
+[ -s "$mlx_bundle/Contents/Resources/default.metallib" ] || {
+  echo "expected MLX kernels at $mlx_bundle/Contents/Resources/default.metallib; run without --skip-build" >&2
+  exit 1
+}
+
 build_dir="$root/swift/TurboSparkApp/.build/release"
 exe="$build_dir/TurboSparkApp"
 [ -x "$exe" ] || { echo "expected $exe to exist; run without --skip-build" >&2; exit 1; }
@@ -177,6 +218,11 @@ done
   echo "no *.bundle in $build_dir -- Logos/ and app-prompts.json would be missing" >&2
   exit 1
 }
+# MLX looks for it in every loaded bundle's resources, the main bundle's
+# Contents/Resources included. A build that already made one (swiftbuild)
+# is replaced, so the kernels always come from the step above.
+rm -rf "$contents/Resources/mlx-swift_Cmlx.bundle"
+cp -R "$mlx_bundle" "$contents/Resources/"
 
 # The CLI, inside the app. The cask links these onto PATH from here.
 # `turbospark` is the front end the Server pane's Launch buttons run
