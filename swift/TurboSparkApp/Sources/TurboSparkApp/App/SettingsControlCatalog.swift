@@ -133,5 +133,11 @@ enum SettingsControlCatalog {
         .init(title: "Import OpenClaw", pane: .soul, timing: .nextTurn),
         .init(title: "Load File...", pane: .soul, timing: .nextTurn),
         .init(title: "SOUL.md", pane: .soul, timing: .nextTurn),
+        .init(title: "Delete", pane: .tools, timing: .nextTurn),
+        .init(title: "Duplicate", pane: .tools, timing: .nextTurn),
+        .init(title: "MCP servers and custom tools", pane: .tools, timing: .nextTurn),
+        .init(title: "Name", pane: .tools, timing: .nextTurn),
+        .init(title: "New Profile", pane: .tools, timing: .nextTurn),
+        .init(title: "Use", pane: .tools, timing: .nextTurn),
     ]
 }

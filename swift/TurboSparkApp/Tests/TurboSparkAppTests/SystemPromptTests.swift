@@ -143,7 +143,7 @@ final class SystemPromptTests: XCTestCase {
     /// Chat mode gets the user's prose. This is the behaviour change.
     @MainActor
     func testAProjectlessChatSendsTheUserPromptAndNothingElse() {
-        let model = AppModel()
+        let model = AppModel.withoutChatTools()
         let prompt = model.buildSystemPrompt(for: nil, userPrompt: "Speak plainly.")
         XCTAssertEqual(prompt, "Speak plainly.")
     }
@@ -157,7 +157,7 @@ final class SystemPromptTests: XCTestCase {
     /// it cannot pass by looking for a word that vocabulary stopped using.
     @MainActor
     func testAProjectlessChatIsOfferedNoToolsEvenWithAUserPrompt() {
-        let model = AppModel()
+        let model = AppModel.withoutChatTools()
         let prompt = model.buildSystemPrompt(for: nil, userPrompt: "Speak plainly.")
         let toolVocabulary = AppToolRegistry.systemPromptAddendum(for: .general)
         XCTAssertFalse(
@@ -171,7 +171,7 @@ final class SystemPromptTests: XCTestCase {
     /// And with no user prompt it is empty, exactly as before this feature.
     @MainActor
     func testAProjectlessChatWithNoUserPromptIsStillEmpty() {
-        let model = AppModel()
+        let model = AppModel.withoutChatTools()
         XCTAssertEqual(model.buildSystemPrompt(for: nil, userPrompt: ""), "")
         XCTAssertEqual(model.buildSystemPrompt(for: nil), "")
     }
@@ -218,7 +218,7 @@ final class SystemPromptTests: XCTestCase {
     /// not a stylistic one (state#32, state#74).
     @MainActor
     func testTheHistoryCarriesExactlyOneSystemMessageAndItIsFirst() {
-        let model = AppModel()
+        let model = AppModel.withoutChatTools()
         model.defaultSystemPrompt = "GLOBAL"
         var chat = AppChat(title: "c")
         chat.messages = [
@@ -239,7 +239,7 @@ final class SystemPromptTests: XCTestCase {
     /// system turn at all, rather than an empty one.
     @MainActor
     func testNoPromptMeansNoSystemMessageAtAll() {
-        let model = AppModel()
+        let model = AppModel.withoutChatTools()
         model.defaultSystemPrompt = ""
         var chat = AppChat(title: "c")
         chat.messages = [AppChatMessage(role: .user, content: "hi")]
@@ -251,7 +251,7 @@ final class SystemPromptTests: XCTestCase {
 
     @MainActor
     func testThePerChatPromptIsWhatReachesTheHistory() {
-        let model = AppModel()
+        let model = AppModel.withoutChatTools()
         model.defaultSystemPrompt = "GLOBAL"
         var chat = AppChat(title: "c", systemPrompt: "PER CHAT")
         chat.messages = [AppChatMessage(role: .user, content: "hi")]

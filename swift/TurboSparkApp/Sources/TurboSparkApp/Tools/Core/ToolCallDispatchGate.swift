@@ -120,8 +120,11 @@ enum ToolCallDispatchGate {
                 toolName: proposedCall.name,
                 argumentsJSON: candidate.argumentsJSON)
             {
-            case .validated(_, let arguments):
+            case .validated(let tool, let arguments):
                 var call = proposedCall
+                // The offered spelling, so the card, the permission engine and
+                // the replayed history all name the tool this turn actually has.
+                call.name = tool.function.name
                 call.arguments = executorArguments(from: arguments)
                 call.typedArguments = TransientTypedArguments(values: arguments)
                 dispatchableCalls.append(call)
@@ -184,8 +187,9 @@ enum ToolCallDispatchGate {
                 switch availableTools.validate(
                     toolName: rescued.name, argumentsJSON: argumentsJSON)
                 {
-                case .validated(_, let arguments):
+                case .validated(let tool, let arguments):
                     var call = rescued
+                    call.name = tool.function.name
                     call.arguments = executorArguments(from: arguments)
                     call.typedArguments = TransientTypedArguments(values: arguments)
                     allCalls.append(call)

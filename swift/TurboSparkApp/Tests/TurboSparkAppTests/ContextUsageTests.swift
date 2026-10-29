@@ -103,7 +103,7 @@ final class ContextUsageTests: XCTestCase {
     /// breakdown's slices can never describe different text than what is
     /// sent. Both the projectless and project arms.
     func testSystemPromptIsTheJoinOfItsSections() {
-        let model = AppModel()
+        let model = AppModel.withoutChatTools()
 
         let bare = model.buildSystemPrompt(for: nil, userPrompt: "USER-PROMPT")
         let bareSections = model.buildSystemPromptSections(for: nil, userPrompt: "USER-PROMPT")

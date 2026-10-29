@@ -51,7 +51,7 @@ final class CompactionTests: XCTestCase {
     private func makeModel(messages: [AppChatMessage], boundary: Int, summary: String?)
         -> AppModel
     {
-        let model = AppModel()
+        let model = AppModel.withoutChatTools()
         model.defaultSystemPrompt = ""
         model.selectedSystemPromptID = nil
         model.selectedPersonalityID = nil

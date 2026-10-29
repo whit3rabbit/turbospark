@@ -98,24 +98,6 @@ struct PromptAttachDocumentButton: View {
     }
 }
 
-/// Tools toggle in the composer bar for Chat mode.
-///
-/// Drawn by the shared `AppChip` matching the composer vocabulary.
-struct ChatToolsToggleButton: View {
-    @ObservedObject var model: AppModel
-
-    var body: some View {
-        AppChip(Text("Tools", bundle: .module), systemImage: "wrench.and.screwdriver", isOn: model.chatToolsEnabled) {
-            model.chatToolsEnabled.toggle()
-            model.persistSettingsDebounced()
-        }
-        .help(model.chatToolsEnabled
-              ? Text("Tools enabled in Chat", bundle: .module)
-              : Text("Enable tools in Chat", bundle: .module))
-        .accessibilityValue(model.chatToolsEnabled ? Text("On", bundle: .module) : Text("Off", bundle: .module))
-    }
-}
-
 /// Web search toggle in the composer bar.
 ///
 /// Drawn by the shared `AppChip` so the chat composer and Humanize offer one

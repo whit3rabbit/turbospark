@@ -323,6 +323,12 @@ extension AppEmptyState where Actions == EmptyView {
     }
 }
 
+/// The state a status chip reports.
+enum AppChipIndicator: Equatable {
+    case on
+    case off
+}
+
 /// The chip every composer-style surface uses (chat composer toggles,
 /// Humanize's options): radius 7, a faint fill that deepens on hover, and an
 /// accent tint while on. One definition so the chat and Humanize chips stop
@@ -336,23 +342,41 @@ struct AppChip: View {
     let systemImage: String?
     var isOn = false
     var iconOnly = false
+    /// A status dot ahead of the icon, for a chip that reports a state beside
+    /// toggling it (the composer's Tools chip). Nil draws nothing, so every
+    /// other chip is unchanged.
+    var indicator: AppChipIndicator?
     let action: () -> Void
 
     @Environment(\.appTheme) private var theme
     @Environment(\.isEnabled) private var isEnabled
     @State private var hovered = false
 
-    init(_ label: Text, systemImage: String? = nil, isOn: Bool = false, iconOnly: Bool = false, action: @escaping () -> Void) {
+    init(
+        _ label: Text, systemImage: String? = nil, isOn: Bool = false, iconOnly: Bool = false,
+        indicator: AppChipIndicator? = nil, action: @escaping () -> Void
+    ) {
         self.label = label
         self.systemImage = systemImage
         self.isOn = isOn
         self.iconOnly = iconOnly
+        self.indicator = indicator
         self.action = action
     }
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 5) {
+                if let indicator {
+                    // A filled dot for on and a slashed ring for off: the two
+                    // differ in shape as well as hue (`DESIGN.md`: status is
+                    // never color alone). Hidden from VoiceOver because the
+                    // caller reports the state as the chip's value.
+                    Image(systemName: indicator == .on ? "circle.fill" : "circle.slash")
+                        .themedFont(.tiny, weight: .semibold)
+                        .foregroundStyle(indicator == .on ? theme.success : theme.danger)
+                        .accessibilityHidden(true)
+                }
                 if let systemImage, !systemImage.isEmpty {
                     Image(systemName: systemImage)
                         .themedFont(.tiny, weight: .medium)

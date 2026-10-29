@@ -287,6 +287,8 @@ public struct AppSettingsView: View {
             SafetySettingsPaneView(model: model)
         case .mcp:
             McpManagementView(model: model)
+        case .tools:
+            ToolsSettingsPaneView(model: model)
         case .skills:
             SkillsSettingsPaneView(model: model)
         case .memory:

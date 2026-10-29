@@ -73,7 +73,9 @@ the engine's tool calling instead:
 - **Parsing.** The engine returns structured calls (`.toolCall` events). They
   become `ToolCallParser.nativeCandidates` and enter
   `ToolCallDispatchGate.evaluate(nativeCalls:)`, which runs the SAME schema
-  validation (`TurnAvailableTools.validate`) as a text call, then the same
+  validation (`TurnAvailableTools.validate`, which first normalizes the tool
+  name and argument spellings, see "Tool call normalization") as a text call,
+  then the same
   hooks, permission engine, risk classifier, approval cards and executors.
   Nothing after "a call exists" changed. With native calls present the reply
   text is prose and neither the text arms nor Forge inspect it; with none, the
@@ -219,9 +221,24 @@ TurboSpark separates tool execution environments between **Chat** and **Projects
   - **When disabled (`chatToolsEnabled == false`)**: The turn completely disables tool advertising, prompt injection, and tool call extraction (`turnAllowsToolCalls == false`).
 
 **User Controls and Settings:**
-1. **Composer Chip Button**: An `AppChip` toggle button ("Tools", wrench and screwdriver icon) located in the leading action row directly beneath the text editor in Chat mode allows immediate single-click toggling before sending a turn.
+1. **Composer Tools chip** (`ToolsStatusChip`): An `AppChip` ("Tools", wrench and screwdriver icon) in the leading action row beneath the text editor, shown in Chat and Projects. A filled green dot means a turn would be offered tools, a slashed red ring means it would not, and the label shows `enabled/total` when the set is narrowed. Clicking opens `ToolsPopoverView`: the Chat master switch, the profile picker, and per-tool toggles for this session.
 2. **Plus Menu (`+`)**: A toggle item in the attachment/plus menu ("Tools in Chat") provides discoverability.
 3. **General Settings**: Under the "Chat & Runtime" section of General Settings, "Enable tools in Chat by default" sets the persistent default for new sessions.
+
+### Tool profiles
+
+A tool profile (`AppToolProfile`) is a named set of tools a turn is offered. Default offers everything and is the selection on a fresh install. Minimal (read, write, edit, bash and the shell-output helpers) and Read-only are built in.
+
+- **Storage.** Built-ins are code-defined and never persisted. `MacAppSettings.toolProfiles` holds the user's own, `activeToolProfileID` the selection (empty or stale means Default). A malformed row is dropped on load, and a row whose allowlist is unreadable is dropped rather than widened to every tool.
+- **Keys.** `allowedTools` holds lowercase keys from `AppToolCatalog.profileKey(for:)`. `nil` means every tool, so Default picks up new tools without a migration. `includesMcpAndCustom` is one switch for MCP servers, the progressive-disclosure tools that front them, `codemode` and custom tools, because they are discovered at runtime. `recall_tool_output` is always on: elided results point at it.
+- **Enforcement.** `AppToolCatalog.captureTurnAvailableTools(profile:)` narrows the capture, which feeds the prompt, the native lane, the token estimate and `TurnAvailableTools.validate`. A removed tool is refused at execution. A profile never grants anything the permission engine denies. It does not apply to `SubagentRunner` or `AutomationExecutors`.
+- **Session override.** The popover edits `AppModel.toolProfileOverride` over the selected profile. It is not persisted, ends on Reset or when another profile is selected, and "Save as profile..." turns it into a custom profile.
+- **What the composer lists.** `toolGroupsForContext` shows only tools the turn's agent profile is ever offered (`offeredProfileKeys`, cached), without the workspace-rooted ones in Chat. The Settings editor (Tools tab, `ToolsSettingsPaneView`) lists every built-in because a profile is global.
+- **Prompt guidance.** `systemPromptAddendum` emits the TodoWrite and Subagents sections only when those tools are offered.
+
+### Tool call normalization
+
+`TurnAvailableTools.validate` used to match the tool name and every required argument exactly, which refused calls the executor would have accepted (`read` for `FileRead`, `path` or `filePath` for `file_path`). `Tools/Core/ToolCallNormalization.swift` now resolves the offered definition (exact, case-insensitive, then a family such as `read`/`read_file`/`FileRead` or `bash`/`shell`/`run_command`) and renames argument keys to the declared properties, then validation runs unchanged. The dispatch gate sets the call's name to the offered one. A canonical value is never overwritten by a synonym, and only tools the turn offered can be reached. The comparison with Claude Code, opencode and Pi, and what was deliberately not changed, is in `docs/TOOL_NAME_ALIGNMENT.md`.
 
 **Defense in Depth:**
 Even if a model in Chat mode produces a tool call targeting a file or terminal tool, `AppToolRegistry.execute` validates the presence of a project root for all names in `workspaceRootedToolNames`, refusing execution with a clear safety error.
@@ -345,6 +362,10 @@ five files adding a tool touches.
 | `Tools/Registry/AppToolCatalog.swift` | the eight `OpenAITool` collections, `allTools`, `tools(for:)`, `category(for:)`, `systemPromptAddendum` |
 | `Tools/Core/OpenAIToolSchema.swift` | `OpenAITool`, `JSONSchema`, the serializer |
 | `Tools/Core/ToolCallParser.swift` | the one parser, XML block first and the markdown form as fallback |
+| `Tools/Core/ToolCallNormalization.swift` | tool-name families and argument-spelling folding applied in `TurnAvailableTools.validate` |
+| `Tools/Registry/AppToolCatalog+Profiles.swift` | `profileKey(for:)`, the profile filter, `profileGroups`, the offered-key cache |
+| `State/AppToolProfile.swift`, `State/AppModel+ToolProfiles.swift` | the profile type and built-ins, selection, session override and library operations |
+| `Generation/ToolsStatusChip.swift`, `App/ToolsSettingsPaneView.swift` | the composer chip and popover, and the Settings Tools tab |
 | `Tools/Core/AppToolPermissionEngine.swift` | `evaluate`, `ToolPermissionDecision`, `SessionApprovalStore` |
 | `Tools/Core/ToolRiskClassifier.swift` | `assessRisk`, sensitive-path list, `assessTerminalCommand` (the classifier's hook point) |
 | `Tools/Core/CommandGate.swift`, `CommandLexicalFeatures.swift`, `HashedFeatureVectorizer.swift` | the bundled logistic model: weight loading, features, scoring. `docs/PERMISSION_GATE.md` owns these |
