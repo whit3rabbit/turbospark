@@ -326,3 +326,74 @@ fn subdim_rows_positions_is_bit_identical_to_one_row_at_each_position() {
     assert_eq!(got[row_len..2 * row_len], got[5 * row_len..6 * row_len]);
     assert_ne!(got[..row_len], got[row_len..2 * row_len]);
 }
+
+/// `rope_proportional_neox_rows` (LFM3's chunked prefill) must be
+/// bit-identical, row for row, to one `rope_proportional_neox` dispatch per
+/// row at that row's position, at both of LFM3's rotation classes: 32 of 64
+/// pairs (full layers) and every pair (sliding). Rows start from the same
+/// values, so a kernel that ignored the row index would fail the
+/// distinctness check.
+#[test]
+fn proportional_rows_is_bit_identical_to_one_dispatch_per_row() {
+    let mut context = MetalContext::new().expect("Metal device available on this machine");
+
+    let rows = 5u32;
+    let num_heads = 4u32;
+    let head_dim = 128u32;
+    let start_position = 1_021u32;
+    for (rotated_pairs, theta) in [(32u32, 1_000_000.0f32), (64, 10_000.0)] {
+        let row_len = (num_heads * head_dim) as usize;
+        let one_row: Vec<f16> = (0..row_len)
+            .map(|i| f16::from_f32((i as f32 - row_len as f32 / 2.0) * 0.003))
+            .collect();
+        let input: Vec<f16> = (0..rows).flat_map(|_| one_row.iter().copied()).collect();
+        let bytes: Vec<u8> = input
+            .iter()
+            .flat_map(|x| x.to_bits().to_le_bytes())
+            .collect();
+
+        let per_row = context.new_buffer_with_data(&bytes);
+        let pass = context.begin_pass();
+        for m in 0..rows {
+            turbospark_gpu::encode_rope_proportional_neox(
+                &mut context,
+                &pass,
+                (&per_row, m as u64 * row_len as u64 * 2),
+                start_position + m,
+                num_heads,
+                head_dim,
+                rotated_pairs,
+                theta,
+            )
+            .expect("per-row dispatch");
+        }
+        pass.commit_and_wait();
+
+        let batched = context.new_buffer_with_data(&bytes);
+        let pass = context.begin_pass();
+        turbospark_gpu::encode_rope_proportional_neox_rows(
+            &mut context,
+            &pass,
+            (&batched, 0),
+            start_position,
+            rows,
+            num_heads,
+            head_dim,
+            rotated_pairs,
+            theta,
+        )
+        .expect("rows dispatch");
+        pass.commit_and_wait();
+
+        let total = row_len * rows as usize;
+        let expected = turbospark_gpu::read_buffer_f16(&per_row, 0, total);
+        let got = turbospark_gpu::read_buffer_f16(&batched, 0, total);
+        let bits = |v: &[f16]| v.iter().map(|x| x.to_bits()).collect::<Vec<u16>>();
+        assert_eq!(bits(&got), bits(&expected), "pairs {rotated_pairs}");
+        assert_ne!(
+            bits(&got[..row_len]),
+            bits(&got[row_len..2 * row_len]),
+            "rows at different positions must differ, or this test proves nothing"
+        );
+    }
+}

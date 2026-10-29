@@ -50,11 +50,19 @@ the effect floor is only the 2% default.
 
 ```
 - [ ] 1. preflight.sh is clean
-- [ ] 2. $TSLAB ab --model M --null --experiment E         (once per workload)
-- [ ] 3. $TSLAB ab --model M --baseline off --candidate on:KNOB=V --experiment E --json
+- [ ] 2. $TSLAB ab --model M --null W --metric X --experiment E      (once per workload and metric)
+- [ ] 3. $TSLAB ab --model M --baseline off --candidate on:KNOB=V W --metric X --experiment E --json
 - [ ] 4. Read decision and exit code (below), then the verdict in reading-results.md
-- [ ] 5. $TSLAB report --experiment E --html E.html
+- [ ] 5. Check the arms ran what they claim: each run record's `engaged` list
+- [ ] 6. $TSLAB report --experiment E --html E.html
 ```
+
+`W` is the workload flags, identical in steps 2 and 3. Always pass
+`--metric`: `ab` defaults to `prefill_tok_s`, so a decode switch measured
+without `--metric decode_tok_s` yields a prefill number. The header line
+names the metric it used (`metric DecodeTokS`); read it before quoting. In
+zsh, hold `W` in an array (`W=(--prompt protocol:long-synthesis --decode
+128)`, then `$W`): a plain string reaches tslab as one argument.
 
 Exit codes: 0 ok or keep, 1 error, 2 usage, 3 discard, 4 inconclusive. On 4
 the host was busy: fix it and rerun the same command. Never revert on 4, and

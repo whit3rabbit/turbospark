@@ -4,11 +4,444 @@
   "kind": "text",
   "title": "LFM3: dense hybrid of gated short-conv, full and sliding (256) layers, sandwich norms, headwise scalar gate",
   "flow": "lfm3",
-  "installs": [],
-  "recommended": [],
-  "sweeps": [],
-  "findings": [],
-  "open_questions": ["no install measured by the lab yet", "a chunked prefill driver over encode_short_conv_prefill"],
-  "traps": ["prefill is sequential: --chunk off is the only driver"],
-  "docs": ["docs/LFM3_PHASE0.md"]
+  "installs": [
+    {
+      "name": "lfm3-1.7b-mlx-4bit",
+      "quant": "MLX affine 4-bit g64 (LiquidAI/LFM3-1.7B-MLX-4bit)",
+      "machine": "Apple M4 Max 36 GB",
+      "drafters": [],
+      "note": "154 INT4 GEMVs per token, about 0.97 GB read"
+    },
+    {
+      "name": "lfm3-1.7b-q8",
+      "quant": "GGUF Q8_0 (LiquidAI/LFM3-1.7B-GGUF)",
+      "machine": "Apple M4 Max 36 GB",
+      "drafters": [],
+      "note": "q8_0 blocks (dtype 6): no lab matmul bench and no Steel loader"
+    }
+  ],
+  "recommended": [
+    {
+      "chunk": "128",
+      "when": [],
+      "why": "the chunked driver (INT4 installs): +771% prefill tok/s at 2,918 tokens, greedy text unchanged, mean KL 1.8e-5 nats against sequential; the Q8_0 install has no batched GEMM and takes --chunk off",
+      "findings": [
+        "lfm3.ab-chunked-prefill-2026-10-28",
+        "lfm3.kl-chunked-prefill-2026-10-28"
+      ]
+    }
+  ],
+  "sweeps": [
+    {
+      "id": "attn_kernel",
+      "description": "this flow's GQA-shared decode default against the barrier kernel at a long context",
+      "when": [],
+      "metric": "decode_tok_s",
+      "exactness": "dense_kl",
+      "workload": {
+        "prompts": [
+          {
+            "protocol": "long-synthesis"
+          }
+        ],
+        "decode_tokens": 128
+      },
+      "baseline": "default",
+      "candidates": [
+        "barrier:attn_decode_kernel=barrier"
+      ],
+      "note": "GQA is the flow's default since 2026-10-28, so the candidate is the old kernel and a keep verdict here would mean a regression; prefill through the per-token step moves too"
+    },
+    {
+      "id": "chunked_prefill",
+      "description": "per-token loop against the M-row chunk driver, TTFT",
+      "when": [],
+      "metric": "prefill_tok_s",
+      "exactness": "dense_kl",
+      "workload": {
+        "prompts": [
+          {
+            "protocol": "long-synthesis"
+          }
+        ],
+        "decode_tokens": 32,
+        "prefill_chunk": 128
+      },
+      "baseline": "seq:lfm3_chunked_prefill=0",
+      "candidates": [
+        "default",
+        "exact:prefill_steel=0,prefill_rows_attn=0"
+      ],
+      "note": "the exact arm is bit-identical to seq (prefill logits digest); INT4 installs only"
+    },
+    {
+      "id": "fused_ffn",
+      "description": "the fused gate+up+silu decode GEMV against the three-dispatch chain (INT4 installs)",
+      "when": [],
+      "metric": "decode_tok_s",
+      "exactness": "bit_exact",
+      "workload": {
+        "prompts": [
+          {
+            "protocol": "short-explanation"
+          }
+        ],
+        "decode_tokens": 128
+      },
+      "baseline": "default",
+      "candidates": [
+        "chain:lfm3_fused_ffn=0"
+      ],
+      "note": "NOISE on 2026-10-28 at both protocol prompts; the Q8_0 install never engages it"
+    }
+  ],
+  "findings": [
+    {
+      "id": "lfm3.ab-gqa-decode-2026-10-28",
+      "date": "2026-10-28",
+      "install": "lfm3-1.7b-mlx-4bit",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "20bd3280",
+      "workload": "tslab ab: protocol long-synthesis (2,918 prompt tokens), 128 decode, chunk off; off against gqa:attn_decode_kernel=gqa; 3 clean pairs, 4 of 12 runs dirty (other sessions' rustc)",
+      "arms": {
+        "off": {},
+        "gqa": {
+          "knobs": {
+            "attn_decode_kernel": "gqa"
+          }
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "median_improvement": 0.1864,
+        "ci": [
+          0.1851,
+          0.1896
+        ],
+        "null_floor": 0.0212,
+        "peak_growth_mib": 0
+      },
+      "verdict": "win",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "lfm3-a3-gqa",
+        "record": "1793218634493-4522-28"
+      },
+      "conditions": "swap 27.5 GB used but 85% memory free (stale swap); null record 1793218364008-64718-24 in the same experiment",
+      "note": "a 3-round tslab profile the same day (lfm3-a1-profile, mostly dirty) read the same direction: decode digests identical between arms on short-explanation and long-synthesis, prefill logits digests differ (KL-bounded kernel), short-prompt decode +3%"
+    },
+    {
+      "id": "lfm3.ab-gqa-default-2026-10-28",
+      "date": "2026-10-28",
+      "install": "lfm3-1.7b-mlx-4bit",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "20bd3280",
+      "workload": "tslab ab after the flip: protocol long-synthesis (2,918 prompt tokens), 128 decode, chunk off, --metric decode_tok_s; default (GQA) against barrier:attn_decode_kernel=barrier; 3 clean pairs, 0 dirty",
+      "arms": {
+        "default": {},
+        "barrier": {
+          "knobs": {
+            "attn_decode_kernel": "barrier"
+          }
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "median_improvement": -0.1567,
+        "ci": [
+          -0.1677,
+          -0.1499
+        ],
+        "null_floor": 0.0216,
+        "peak_growth_mib": 3
+      },
+      "verdict": "loss",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "lfm3-b2b-gqa-decode",
+        "record": "1793229947818-85694-16"
+      },
+      "conditions": "null record 1793229818920-71333-16 in the same experiment; swap about 24 GB used (stale); every default run printed [engaged] attn_decode_gqa with no env set, every barrier run attn_decode_barrier",
+      "note": "the candidate is the old kernel, so a loss confirms the default. An earlier run of the same pair without --metric (experiment lfm3-b2-gqa-default, verdict 1793228595096-11051-16) measured prefill_tok_s, the per-token step under chunk off: -10.71%, CI [-14.28%, -10.24%]. Both quality rows re-froze by the playbook protocol the same day (docs/LFM3_PHASE0.md, Decode attention): greedy digests unchanged, perplexity 14.7455 -> 14.7434 and 15.8615 -> 15.8614"
+    },
+    {
+      "id": "lfm3.ab-fused-ffn-short-explanation-2026-10-28",
+      "date": "2026-10-28",
+      "install": "lfm3-1.7b-mlx-4bit",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "20bd3280",
+      "workload": "tslab ab: protocol short-explanation, 128 decode, chunk off, --metric decode_tok_s; default (fused) against chain:lfm3_fused_ffn=0; 3 clean pairs, 0 dirty",
+      "arms": {
+        "default": {},
+        "chain": {
+          "knobs": {
+            "lfm3_fused_ffn": "0"
+          }
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "median_improvement": -0.0055,
+        "ci": [
+          -0.0145,
+          0.0036
+        ],
+        "null_floor": 0.0113,
+        "peak_growth_mib": 3
+      },
+      "verdict": "noise",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "lfm3-b1b-fused-decode-short-explanation",
+        "record": "1793230013103-7225-16"
+      },
+      "conditions": "null record 1793229980414-170-16 in the same experiment; GQA decode default on both arms; every default run printed [engaged] lfm3_fused_ffn, no chain run did",
+      "note": "the candidate is the unfused chain. Bit-exact (synthetic test, and both quality rows reproduce unchanged), so the switch is safe either way; the measured decode effect is inside this host's noise floor"
+    },
+    {
+      "id": "lfm3.ab-fused-ffn-long-synthesis-2026-10-28",
+      "date": "2026-10-28",
+      "install": "lfm3-1.7b-mlx-4bit",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "20bd3280",
+      "workload": "tslab ab: protocol long-synthesis, 128 decode, chunk off, --metric decode_tok_s; default (fused) against chain:lfm3_fused_ffn=0; 3 clean pairs, 0 dirty",
+      "arms": {
+        "default": {},
+        "chain": {
+          "knobs": {
+            "lfm3_fused_ffn": "0"
+          }
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "median_improvement": -0.0287,
+        "ci": [
+          -0.0316,
+          -0.0264
+        ],
+        "null_floor": 0.0417,
+        "peak_growth_mib": 0
+      },
+      "verdict": "noise",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "lfm3-b1b-fused-decode-long-synthesis",
+        "record": "1793230261131-28464-16"
+      },
+      "conditions": "null record 1793230136602-14062-16 in the same experiment; GQA decode default on both arms; every default run printed [engaged] lfm3_fused_ffn, no chain run did",
+      "note": "the candidate is the unfused chain. Bit-exact (synthetic test, and both quality rows reproduce unchanged), so the switch is safe either way; the measured decode effect is inside this host's noise floor"
+    },
+    {
+      "id": "lfm3.kernel-attn-decode-2026-10-28",
+      "date": "2026-10-28",
+      "install": "lfm3-1.7b-mlx-4bit",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "20bd3280",
+      "workload": "tslab kernel --bench attn_decode,int4_matmul,qkv_concurrent at the install's shapes",
+      "arms": {},
+      "metric": "kernel_ms",
+      "values": {
+        "full_attn_6_layers_ms": {
+          "barrier": [
+            0.805,
+            1.052,
+            2.693,
+            5.364,
+            10.62
+          ],
+          "gqa": [
+            0.281,
+            0.197,
+            0.372,
+            0.618,
+            1.138
+          ],
+          "contexts": [
+            512,
+            2048,
+            8192,
+            16384,
+            32768
+          ]
+        },
+        "sliding_attn_5_layers_ms": {
+          "barrier": 0.4,
+          "gqa": 0.21
+        },
+        "qkv_concurrent_over_serial": 0.611,
+        "one_row_gemv_gbs": {
+          "512x2048": 113,
+          "2048x2048": 210,
+          "6144x2048": 266,
+          "7680x2048": 285,
+          "2048x7680": 285,
+          "128000x2048": 390
+        },
+        "gemv_ms_per_token": 3.5
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "lfm3-a2-kernel",
+        "record": "1793218097694-60656-9"
+      },
+      "conditions": "in-process benches, primed int4_matmul; attn_decode and qkv_concurrent do not prime yet",
+      "note": "decode is mostly GEMV time (about 3.5 of 4.6 ms per token); mma8 at one row is 1.19-1.57x a GEMV, so it is not a decode lever here; Steel at 512 rows costs 0.045-0.098x the per-row GEMV"
+    },
+    {
+      "id": "lfm3.ane-matmul-2026-10-28",
+      "date": "2026-10-28",
+      "install": "lfm3-1.7b-mlx-4bit",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "20bd3280",
+      "workload": "tslab kernel --bench ane_matmul, programs from gen_ane_sweep_programs.py at 512x2048, 2048x2048, 2048x7680, 6144x2048, 7680x2048 and 128-2048 tokens, shares 1.0, 0.7, 0.5, 0.3",
+      "arms": {},
+      "metric": "kernel_ms",
+      "values": {
+        "steel_ms_at_2048": {
+          "512x2048": 1.163,
+          "2048x2048": 1.901,
+          "2048x7680": 6.351,
+          "6144x2048": 5.167,
+          "7680x2048": 6.349
+        },
+        "ane_ms_at_2048": {
+          "512x2048": 1.256,
+          "2048x2048": 3.225,
+          "2048x7680": 8.805,
+          "6144x2048": 6.809,
+          "7680x2048": 8.207
+        },
+        "steel_prefill_matmul_ms_per_token_at_2048": 0.3
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "lfm3-a5-ane",
+        "record": "1793218919896-58080-4"
+      },
+      "conditions": "wall per matmul with conversions and host handoff; energy is IOReport modeled whole machine, not wall power",
+      "note": "speed: neither the ANE nor any split beats Steel at any point (512x2048 crosses only above about 2,600 tokens). Energy gate routes most points to the ANE at about 0.4-0.55x Steel's modeled joules: an energy mode, not a speed one, and it needs a chunked prefill first"
+    },
+    {
+      "id": "lfm3.q8-vs-llamacpp-2026-10-28",
+      "date": "2026-10-28",
+      "install": "lfm3-1.7b-q8",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "20bd3280",
+      "workload": "tslab profile: short-explanation (57 tokens) and long-synthesis (2,918), 128 decode, chunk off, 2 rounds per arm, 0 dirty; llama-bench (Homebrew llama.cpp build 11960) on the same Q8_0 GGUF: pp512, pp2048, tg128, 3 reps",
+      "arms": {
+        "off": {},
+        "gqa": {
+          "knobs": {
+            "attn_decode_kernel": "gqa"
+          }
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "turbospark_decode_tok_s_short": [
+          96.5,
+          98.1,
+          97.3
+        ],
+        "turbospark_prefill_tok_s_2918": 106,
+        "llamacpp_tg128": 153.05,
+        "llamacpp_pp512": 3454.34,
+        "llamacpp_pp2048": 3424.59
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "lfm3-a4-q8",
+        "record": "1793218855739-44460-12"
+      },
+      "conditions": "the llama.cpp numbers are from its own harness, not a tslab ledger; tg128 starts from an empty context",
+      "note": "decode 0.63x llama.cpp (about 180 against 280 GB/s), prefill about 32x behind because ours is sequential"
+    },
+    {
+      "id": "lfm3.ab-chunked-prefill-2026-10-28",
+      "date": "2026-10-28",
+      "install": "lfm3-1.7b-mlx-4bit",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "20bd3280+feat/lfm3-chunked-prefill (uncommitted)",
+      "workload": "tslab ab: protocol long-synthesis (2,918 prompt tokens), 32 decode, chunk 128; seq:lfm3_chunked_prefill=0 against the default driver; 3 clean pairs",
+      "arms": {
+        "seq": {
+          "knobs": {
+            "lfm3_chunked_prefill": "0"
+          }
+        },
+        "default": {}
+      },
+      "metric": "prefill_tok_s",
+      "values": {
+        "median_improvement": 7.7108,
+        "ci": [
+          7.7041,
+          7.7576
+        ],
+        "null_floor": 0.0048,
+        "peak_growth_mib": 15.2
+      },
+      "verdict": "win",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "lfm3-c2-ttft",
+        "record": "1793221201360-12778-16"
+      },
+      "conditions": "null record 1793221115774-6208-16 in the same experiment; a three-arm profile the same day (lfm3-c1-chunk, 2 rounds, 0 dirty) read 12.95-12.99 s seq, 4.49-4.61 s exact, 1.47-1.48 s default for the 2,918-token prompt, with the exact arm's prefill logits digest equal to seq's and all three arms' 128-token greedy decode digests equal",
+      "note": "measured before main's TURBOSPARK_PREFILL_SMALL_N route existed; it now engages on the default arm for narrow projections, unmeasured for speed here"
+    },
+    {
+      "id": "lfm3.kl-chunked-prefill-2026-10-28",
+      "date": "2026-10-28",
+      "install": "lfm3-1.7b-mlx-4bit",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "20bd3280+feat/lfm3-chunked-prefill (uncommitted)",
+      "workload": "crates/bench/tests/lfm3_prefill_arm_probe.rs: docs corpus slices of 64-3000 tokens in 128-token chunks; reference is the exact arm, re-checked bit-identical to sequential produce at 64 and 200 tokens",
+      "arms": {},
+      "metric": "kl_nats",
+      "values": {
+        "steel_rows_attn_mean_kl": 1.803e-05,
+        "steel_per_row_attn_mean_kl": 1.604e-05,
+        "top1_agree": "6/6",
+        "top5_overlap": "5/5 at every length",
+        "bound": 0.001
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "doc",
+        "path": "docs/LFM3_PHASE0.md",
+        "heading": "Chunked prefill"
+      },
+      "conditions": "one fresh process, AC",
+      "note": "comparable to Qwen3.8's Steel arm (1.5e-5). Re-run after the GQA decode default: 1.89e-5 / 1.72e-5; on top of main's prefill_small_n route: 2.19e-5 / 1.41e-5, top-1 6/6"
+    }
+  ],
+  "open_questions": [
+    "ANE split for the chunked prefill: the matmul bench says no speed win at these shapes (lfm3.ane-matmul-2026-10-28), only modeled energy; an energy-mode arm would be the only reason to wire it",
+    "a concurrent q/k/v(+gate) encoder: the triple costs 0.611x serial in the kernel bench, about 0.24 ms per token over 11 attention layers if it carries over",
+    "the q8_0 decode GEMV reads about 180 GB/s against llama.cpp's about 280 on the same bytes; no lab bench times dtype 6",
+    "the bimodal short-explanation decode in docs/LFM3_PHASE0.md did not reproduce in 26 tslab runs on 2026-10-28"
+  ],
+  "traps": [
+    "the GGUF Q8_0 install has no batched GEMM: its prefill is sequential, use --chunk off",
+    "phase buckets are final_only: the whole layer stack is one command buffer, so profile shows about 95% final wait; use kernel benches or trace for shares",
+    "installs live in ~/models (lfm3-1.7b-mlx-4bit, lfm3-1.7b-q8), not the catalog store"
+  ],
+  "docs": [
+    "docs/LFM3_PHASE0.md",
+    "docs/SPEEDUP_PLAYBOOK.md"
+  ]
 }

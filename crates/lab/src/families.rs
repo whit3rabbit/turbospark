@@ -180,9 +180,9 @@ pub fn facts(f: ModelFamily) -> FamilyFacts {
         },
         Lfm3 => FamilyFacts {
             flow: "lfm3",
-            chunked_prefill: Support::No("no chunked driver yet; the sequential path serves prefill, use --chunk off".into()),
+            chunked_prefill: Support::Conditional("INT4-affine installs only; the GGUF Q8_0 install has no batched GEMM, use --chunk off there".into()),
             drafters: &[],
-            steel_prefill: false,
+            steel_prefill: true,
             decode_attention: "barrier",
             phase_buckets: "final_only",
             probe_and_standin: false,

@@ -779,6 +779,13 @@ impl RealForwardRunner {
             })
             .map_err(|e| e.to_string());
         }
+        if self.real_lfm3.is_some() {
+            // INT4 installs only; the driver refuses any other by name.
+            return gpu::autorelease_pool(|| {
+                self.prefill_chunk_real_lfm3(tokens, start_position, logits)
+            })
+            .map_err(|e| e.to_string());
+        }
         if self.real_deepseek2.is_some() {
             return Err(
                 "deepseek2 does not support chunked prefill; the sequential path serves it"

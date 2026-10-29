@@ -28,6 +28,81 @@ pub(crate) struct RealLfm3State {
     pub(crate) attn_gate: gpu::MetalBuffer,
     /// The conv tails, one `[taps - 1, hidden]` FP16 window per conv layer.
     pub(crate) conv: gpu::ShortConvStateManager,
+    /// Decode's FFN takes the fused gate+up+silu GEMV where the weights
+    /// allow (`mlp.rs`); seeded from `TURBOSPARK_LFM3_FUSED_FFN`.
+    pub(crate) fused_ffn: bool,
+    /// The chunked prefill driver's M-row buffers (`prefill.rs`), allocated
+    /// at its first chunk so an install that only decodes never pays for
+    /// them.
+    pub(crate) batched: Option<Lfm3Batched>,
+}
+
+/// The M-row siblings of the single-row buffers above and in
+/// `DecodeScratch`, every one `[rows, width]` FP16 and row-major. `x` is not
+/// here: `DecodeScratch::x` already holds `MAX_PREFILL_ROWS` rows.
+pub(crate) struct Lfm3Batched {
+    pub(crate) rows: usize,
+    pub(crate) normed: gpu::MetalBuffer,
+    pub(crate) in_proj: gpu::MetalBuffer,
+    pub(crate) conv_out: gpu::MetalBuffer,
+    pub(crate) q: gpu::MetalBuffer,
+    /// K and V rows before they reach the cache: the per-head k norm and
+    /// rope run here, then a copy lands each run of rows in its slots, so a
+    /// sliding layer's ring can wrap inside a micro-batch.
+    pub(crate) k_stage: gpu::MetalBuffer,
+    pub(crate) v_stage: gpu::MetalBuffer,
+    pub(crate) attn_gate: gpu::MetalBuffer,
+    pub(crate) attn_out: gpu::MetalBuffer,
+    pub(crate) o: gpu::MetalBuffer,
+    pub(crate) ffn_normed: gpu::MetalBuffer,
+    pub(crate) ffn_gate: gpu::MetalBuffer,
+    pub(crate) ffn_up: gpu::MetalBuffer,
+    pub(crate) ffn_act: gpu::MetalBuffer,
+    pub(crate) ffn_out: gpu::MetalBuffer,
+    /// The multi-row GQA partials for the FULL layers, `None` where the head
+    /// shape is not one the kernel serves.
+    pub(crate) rows_attention: Option<gpu::GqaRowsScratch>,
+}
+
+impl Lfm3Batched {
+    pub(crate) fn new(context: &mut gpu::MetalContext, arch: &ArchConfig, rows: usize) -> Self {
+        let hidden = arch.hidden_size as u64;
+        let inter = arch.intermediate_size as u64;
+        let heads = arch.num_heads as u32;
+        let kv_heads = arch.num_kv_heads as u32;
+        let head_dim = arch.full_head_dim as u32;
+        let q_dim = u64::from(heads * head_dim);
+        let kv_dim = u64::from(kv_heads * head_dim);
+        let rows_attention =
+            gpu::attention_decode_gqa_supported(head_dim, heads, kv_heads).then(|| {
+                gpu::GqaRowsScratch::new(
+                    context,
+                    rows as u32,
+                    heads,
+                    head_dim,
+                    gpu::GQA_ROWS_SCRATCH_CHUNKS,
+                )
+            });
+        let halfs = |n: u64| context.new_output_buffer(n.max(1) * rows as u64 * 2);
+        Self {
+            rows,
+            normed: halfs(hidden),
+            in_proj: halfs(3 * hidden),
+            conv_out: halfs(hidden),
+            q: halfs(q_dim),
+            k_stage: halfs(kv_dim),
+            v_stage: halfs(kv_dim),
+            attn_gate: halfs(u64::from(heads)),
+            attn_out: halfs(q_dim),
+            o: halfs(hidden),
+            ffn_normed: halfs(hidden),
+            ffn_gate: halfs(inter),
+            ffn_up: halfs(inter),
+            ffn_act: halfs(inter),
+            ffn_out: halfs(hidden),
+            rows_attention,
+        }
+    }
 }
 
 impl RealLfm3State {
@@ -203,6 +278,8 @@ impl RealLfm3State {
                 hidden,
                 taps as usize,
             ),
+            fused_ffn: super::mlp::lfm3_fused_ffn(),
+            batched: None,
         })
     }
 

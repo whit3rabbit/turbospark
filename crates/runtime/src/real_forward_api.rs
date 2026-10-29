@@ -89,6 +89,9 @@ impl RealForwardRunner {
             || (self.real_qwen.as_ref().is_some_and(|s| !s.dense)
                 && self.qwen_moe_chunked_refusal().is_none())
             || self.real_qwen4.is_some()
+            // INT4-affine installs only, through the same refusal the
+            // driver itself checks.
+            || (self.real_lfm3.is_some() && self.lfm3_chunked_refusal().is_none())
     }
 
     /// Rows this model's output head writes, i.e. the length every `produce`

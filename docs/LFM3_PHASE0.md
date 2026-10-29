@@ -14,7 +14,7 @@ sibling, which shares the config). Everything here was read, not inferred.
 | 2. Kernels | Done: `short_conv_decode` / `short_conv_prefill`, CPU reference, parity tests |
 | 3. Decode flow | Done: `families/lfm3/`, sequential prefill. Greedy, templated, 600 tokens coherent on the MLX 4-bit and GGUF Q8_0 installs |
 | 4. Head and sampler | Partial: sampled at CLI defaults coherent for 600 tokens, a short question stops `EndOfTurn`. No sampled run on the Q8_0 install yet |
-| 5-6. Memory, quality | Done for the MLX 4-bit install: `lfm3_memory_oracle` (peak 343-351 MiB, ceiling 420) and `lfm3_quality_gate` (perplexity 14.7455 and both digests, reproduced from two fresh processes). The Q8_0 install's own pair is frozen too (`lfm3_q8_memory_oracle`, `lfm3_q8_quality_gate`) |
+| 5-6. Memory, quality | Done for the MLX 4-bit install: `lfm3_memory_oracle` (peak 343-351 MiB, ceiling 420) and `lfm3_quality_gate` (perplexity 14.7455 and both digests, reproduced from two fresh processes). The Q8_0 install's own pair is frozen too (`lfm3_q8_memory_oracle`, `lfm3_q8_quality_gate`). Both quality rows re-froze 2026-10-28 for the GQA decode attention default ("Decode attention" below) |
 | 7. CLI | Done: catalog rows `lfm3-1.7b` (MLX 4-bit, verified) and `lfm3-1.7b-q8` (GGUF Q8_0, verified), both pinned, guard byte figures pasted back |
 | 8. Docs | Done: BENCHMARKS.md, MODELS.md, README, DEVIATIONS.md, CHANGELOG |
 
@@ -28,6 +28,90 @@ for the MLX bytes, since mlx-lm has no `lfm3` model.
 The 4-bit MLX install's greedy answer to the TCP prompt is fluent and
 factually wrong in places, and the Q8_0 install's is better. Since the Q8_0
 path matches llama.cpp, that gap is the 4-bit artifact, not the port.
+
+## Chunked prefill
+
+`families/lfm3/prefill.rs` runs a micro-batch of up to 64 prompt tokens
+through every layer in one command buffer, each projection as one M-row
+GEMM (Steel from 32 rows on INT4), the full layers' attention through the
+multi-row GQA kernel, the sliding layers' through the one-row kernel per
+row. Only INT4-affine installs take it; `supports_chunked_prefill` is false
+on the Q8_0 install. `TURBOSPARK_LFM3_CHUNKED_PREFILL=0` runs the per-token
+loop behind the same entry point.
+
+With `TURBOSPARK_PREFILL_STEEL=0` and `TURBOSPARK_PREFILL_ROWS_ATTN=0` the
+driver is bit-exact against sequential prefill, decode after it included
+(`the_exact_chunk_arm_matches_sequential_bit_for_bit`, on an INT4 fixture
+whose sliding ring wraps inside a micro-batch).
+
+On the MLX 4-bit install (M4 Max, AC, 2026-10-28):
+
+| check | result |
+| --- | --- |
+| `tslab ab`, long-synthesis (2,918 tokens), chunk 128 | +771% prefill tok/s over the per-token loop, CI [+770%, +776%], 3 clean pairs, null floor 0.48%, peak +15.2 MiB (ledger `lfm3-c2-ttft`) |
+| `tslab profile`, same prompt | 12.95-12.99 s per-token, 4.49-4.61 s exact arm, 1.47-1.48 s default; the exact arm's prefill logits digest equals the per-token arm's, and all three 128-token greedy decodes are identical (`lfm3-c1-chunk`) |
+| `lfm3_prefill_arm_probe`, 64-3000 tokens | mean KL 1.80e-5 nats with the multi-row attention, 1.60e-5 with the one-row kernel; top-1 6/6, top-5 5/5 at every length |
+
+The memory oracle and the quality gate drive prefill through `produce`
+explicitly, so their frozen rows do not cover this driver; the gate still
+reproduces them unchanged. The peak figure above is the A/B's own paired
+reading, not an oracle row. The probe row above predates the GQA decode
+default below; re-run after it, it reads 1.89e-5 and 1.72e-5 nats, top-1 6/6,
+and the exact arm still matches sequential prefill bit for bit. On top of
+`main`'s `TURBOSPARK_PREFILL_SMALL_N` route (which now engages on this
+driver's default arm for projections too narrow for a Steel tile) it reads
+2.19e-5 and 1.41e-5 nats, top-1 6/6. The A/B above predates that route.
+
+## Decode attention
+
+The flow's attention scratch takes the GQA-shared decode partial
+(`attention_decode_gqa_partial`) since 2026-10-28: 16 Q over 4 KV at
+head_dim 128 is a shape `attention_decode_gqa_supported` serves, on the full
+and the sliding layers alike. `TURBOSPARK_ATTN_DECODE_KERNEL=barrier` restores
+the old kernel process-wide. It is KL-bounded, not bit-exact, so both quality
+rows re-froze by the playbook protocol (`SPEEDUP_PLAYBOOK.md`, "Quality gates
+on both arms"):
+
+| check | MLX 4-bit | GGUF Q8_0 |
+| --- | --- | --- |
+| barrier arm reproduces the frozen row | yes | yes |
+| perplexity, barrier -> GQA | 14.7455 -> 14.7434 | 15.8615 -> 15.8614 |
+| greedy digest | unchanged | unchanged |
+| sampled text, first divergence | char 481 of ~1240, a swapped phrase | char 453 of ~1185, a swapped phrase |
+| two fresh GQA processes agree | yes | yes |
+| memory oracle peak | 347 MiB (ceiling 420) | 350 MiB (ceiling 420) |
+
+`tslab ab` on the MLX 4-bit install, long-synthesis (2,918 tokens), 128
+decode, chunk off, M4 Max, AC: the barrier arm reads -15.67% decode tok/s
+against the GQA default, CI [-16.77%, -14.99%], 0 of 3 clean pairs better,
+null floor 2.16% (ledger `lfm3-b2b-gqa-decode`, verdict
+`1793229947818-85694-16`). The engagement lines confirm `attn_decode_gqa` on
+the default arm with no env set. The same A/B in the other direction before
+the flip read +18.64% (`lfm3-a3-gqa`). The per-token prefill rate under
+chunk off moves less, -10.71% for barrier (`lfm3-b2-gqa-default`).
+
+## Fused FFN
+
+Decode's FFN runs gate, up and silu as one INT4 GEMV
+(`gpu::encode_gate_up_act_gemv`, `families/lfm3/mlp.rs`), 3 dispatches to 1
+per layer, 48 fewer per token. The kernel is `dequant_int4_gemv_simd` with a
+second accumulator, rounded to half before the vendored `silu_mul_fp16`, so
+it is bit-exact against the chain
+(`the_fused_ffn_matches_the_three_dispatch_chain_bit_for_bit`; switching the
+fused call to gelu fails it). Down stays a plain GEMV, because
+`post_ffn_norm` sits between it and the residual add. INT4 installs only,
+and not where `TURBOSPARK_INT4_MMA8` takes the shape.
+`TURBOSPARK_LFM3_FUSED_FFN=0` keeps the chain.
+
+Both quality rows reproduce unchanged with it on, from two fresh processes
+on the MLX 4-bit install, and the memory oracle reads 349 MiB. The speed
+effect is not measurable on this host: `tslab ab --metric decode_tok_s`,
+chunk off, default against `lfm3_fused_ffn=0`, 3 clean pairs each, M4 Max,
+AC, is NOISE at both protocol prompts. The chain reads -0.55% on
+short-explanation (CI [-1.45%, +0.36%], null floor 1.13%) and -2.87% on
+long-synthesis (CI [-3.16%, -2.64%], all pairs worse, under the 4.17% null
+floor). Ledgers `lfm3-b1b-fused-decode-short-explanation` and
+`lfm3-b1b-fused-decode-long-synthesis`.
 
 ## Measured so far
 

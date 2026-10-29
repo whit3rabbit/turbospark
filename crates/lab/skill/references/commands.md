@@ -147,6 +147,28 @@ is `crates/lab/program.md`.
 
 ## Traps
 
+- `ab` and an ad hoc `sweep` default to `--metric prefill_tok_s` (a profile
+  sweep carries its own metric). A decode claim needs
+  `--metric decode_tok_s` on the null run and the A/B alike; the header line
+  says which metric ran. Under `--chunk off` the prefill metric times the
+  same per-token step as decode, so it moves in the same direction but by a
+  different amount, and it is still not a decode number.
+- After a switch becomes the default, the A/B flips: baseline `default`,
+  candidate the old value (`barrier:attn_decode_kernel=barrier`). A LOSS then
+  confirms the default and a KEEP means a regression. Flip the family
+  profile's sweep the same way.
+- Prove each arm ran its lane from the ledger, not the arm name: every run
+  record carries `engaged` (the `[engaged]` lines). A default-on lane shows
+  on the baseline with no env set, and a kill switch's arm must lack it.
+- A rebase or merge can bring a new default route that engages on your arm
+  (`prefill_small_n` reached the lfm3 chunk driver this way). Read the
+  `engaged` list again and re-run the KL probe before carrying old numbers
+  across the change.
+- `preflight.sh` lists a `tslab serve` as busy. The dashboard is read-only
+  and never takes the lock; check its command line before stopping anything,
+  and never stop another session's process.
+- Installs outside the catalog store (`~/models/...`) need the path for
+  `--model`, not an alias.
 - `ane-plan` says where ops run, not how fast. "Supported on the ANE" is not
   "placed there": read the cost share, and measure the ANE+Steel split as an
   ordinary `ab` arm (`ane_prefill` knob) on a worker built with `ane-prefill`.

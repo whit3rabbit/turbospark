@@ -148,8 +148,8 @@ pub use synthetic_gguf::{
     GgufBuilder, GgufFileAndRanges, QuantMix, SyntheticGgufShape, SyntheticGptOssShape,
 };
 pub use synthetic_lfm3::{
-    build_synthetic_lfm3_install, build_synthetic_lfm3_install_with_rope_freqs, tiny_lfm3_arch,
-    tiny_lfm3_layer_mask, tiny_lfm3_rope_freqs,
+    build_synthetic_lfm3_install, build_synthetic_lfm3_install_with_rope_freqs,
+    build_synthetic_lfm3_mlx_install, tiny_lfm3_arch, tiny_lfm3_layer_mask, tiny_lfm3_rope_freqs,
 };
 pub use synthetic_llama::{
     build_synthetic_dense_llama_install, build_synthetic_gqa_moe_install,

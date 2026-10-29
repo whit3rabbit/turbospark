@@ -412,8 +412,8 @@ pub use rms_norm::{
 pub use rope::{
     encode_rope_mrope_interleaved, encode_rope_neox_freqs, encode_rope_neox_subdim,
     encode_rope_neox_subdim_rows, encode_rope_neox_subdim_rows_positions,
-    encode_rope_proportional_neox, rope_mrope_interleaved, rope_neox_subdim,
-    rope_proportional_neox, ROPE_POSITION_ROWS_MAX,
+    encode_rope_proportional_neox, encode_rope_proportional_neox_rows, rope_mrope_interleaved,
+    rope_neox_subdim, rope_proportional_neox, ROPE_POSITION_ROWS_MAX,
 };
 #[cfg(target_os = "macos")]
 pub use short_conv::{encode_short_conv_decode, encode_short_conv_prefill};

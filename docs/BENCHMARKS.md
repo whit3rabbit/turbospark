@@ -2589,6 +2589,14 @@ TURBOSPARK_LFM3_INSTALL_DIR=~/models/lfm3-1.7b-mlx-4bit \
   character.** The perplexity does not rank against other families'
   numbers: each row is a sentinel against its own past.
 
+**Quality row re-frozen 2026-10-28** for the GQA-shared decode attention
+partial (`attention_decode_gqa_partial`, this family's default since then).
+Perplexity 14.7455 -> 14.7434, greedy `16cc1e9c` unchanged, sampled
+`58d4c54f` -> `532998a6`; two fresh processes agreed. The table above keeps
+the 2026-10-27 values, and they still reproduce exactly under
+`TURBOSPARK_ATTN_DECODE_KERNEL=barrier`. The sampled text's first divergence
+is recorded in `crates/bench/tests/lfm3_quality_gate.rs`.
+
 ### LFM3-1.7B Q8_0, and llama.cpp on the same bytes
 
 Install `LiquidAI/LFM3-1.7B-GGUF` @ `b3f2ae5d`, `LFM3-1.7B-Q8_0.gguf`,
@@ -2617,3 +2625,10 @@ tokenizer from `LiquidAI/LFM3-1.7B` @ `40ebe0aa`. Same machine and settings,
   on the same reference answer. The two files come from different
   converters. The gap is recorded, not explained.
 - **No external reference for the MLX bytes.** mlx-lm has no `lfm3` model.
+
+**Quality row re-frozen 2026-10-28** with the 4-bit row, for the same
+attention default. Perplexity 15.8615 -> 15.8614, greedy `eb350865`
+unchanged (so the llama.cpp match above stands), sampled `6e5a9eb1` ->
+`e458a1a3`; two fresh processes agreed, and the old values reproduce under
+`TURBOSPARK_ATTN_DECODE_KERNEL=barrier`. Details in
+`crates/bench/tests/lfm3_q8_quality_gate.rs`.

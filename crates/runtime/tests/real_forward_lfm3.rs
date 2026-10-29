@@ -10,8 +10,8 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use turbospark_repack::build_synthetic_lfm3_install;
-use turbospark_runtime::{LogitProducer, RealForwardRunner};
+use turbospark_repack::{build_synthetic_lfm3_install, build_synthetic_lfm3_mlx_install};
+use turbospark_runtime::{ChunkedPrefillRunner, LogitProducer, RealForwardRunner};
 
 const VOCAB: i64 = 64;
 /// `[conv, conv, full, conv, sliding, conv, full, conv]`: every kind, and
@@ -292,12 +292,136 @@ fn decode_hot_path_allocates_no_gpu_buffers() {
     assert_eq!(before, runner.gpu_buffer_allocations());
 }
 
-/// No chunked driver yet: the sequential path serves prefill.
+/// The GGUF fixture is all Q8_0, which has no batched GEMM: it keeps the
+/// sequential path, and a chunk call is refused by name rather than looped.
 #[test]
-fn chunked_prefill_is_not_claimed() {
+fn chunked_prefill_is_not_claimed_on_q8_0() {
     let (dir, arch) = install();
-    let runner = RealForwardRunner::open(&dir, arch).expect("open");
+    let mut runner = RealForwardRunner::open(&dir, arch).expect("open");
     assert!(!runner.supports_chunked_prefill());
+    let mut logits = vec![half::f16::ZERO; VOCAB as usize];
+    let err = runner
+        .prefill_chunk(&[1, 2, 3], 0, &mut logits)
+        .expect_err("a Q8_0 install refuses the chunk driver");
+    assert!(err.contains("INT4-affine"), "{err}");
+}
+
+fn mlx_install(head_dim: usize) -> (std::path::PathBuf, model_io::ArchConfig) {
+    let dir = tempdir();
+    let arch = build_synthetic_lfm3_mlx_install(&dir, VOCAB, LAYERS, "lfm3-toy-mlx", head_dim)
+        .expect("writes");
+    (dir, arch)
+}
+
+/// Long enough that a sliding layer's ring (window 8 plus the 128-token
+/// chunk cap) wraps inside a 64-row micro-batch.
+const PROMPT: usize = 200;
+
+fn prompt() -> Vec<i32> {
+    (0..PROMPT)
+        .map(|i| ((i * 7 + 3) % VOCAB as usize) as i32)
+        .collect()
+}
+
+/// `produce` over the prompt, then `extra` greedy-free steps on fixed ids:
+/// every logits vector, the prompt's last first.
+fn sequential(dir: &std::path::Path, arch: &model_io::ArchConfig, extra: usize) -> Vec<Vec<u16>> {
+    let mut runner = RealForwardRunner::open(dir, arch.clone()).expect("open");
+    let mut logits = vec![half::f16::ZERO; VOCAB as usize];
+    for (i, &t) in prompt().iter().enumerate() {
+        runner.produce(t, i, &mut logits).expect("produce");
+    }
+    let mut out = vec![logits.iter().map(|v| v.to_bits()).collect()];
+    for step in 0..extra {
+        runner
+            .produce((step % 5) as i32, PROMPT + step, &mut logits)
+            .expect("produce");
+        out.push(logits.iter().map(|v| v.to_bits()).collect());
+    }
+    out
+}
+
+/// The prompt through `prefill_chunk` calls of `split` tokens, then the same
+/// decode steps as [`sequential`].
+fn chunked(
+    dir: &std::path::Path,
+    arch: &model_io::ArchConfig,
+    split: &[usize],
+    exact: bool,
+    extra: usize,
+) -> Vec<Vec<u16>> {
+    assert_eq!(split.iter().sum::<usize>(), PROMPT);
+    let mut runner = RealForwardRunner::open(dir, arch.clone()).expect("open");
+    assert!(runner.supports_chunked_prefill());
+    if exact {
+        runner.set_prefill_steel(false);
+        runner.set_prefill_rows_attention(false);
+    }
+    let tokens = prompt();
+    let mut logits = vec![half::f16::ZERO; VOCAB as usize];
+    let mut at = 0usize;
+    for &n in split {
+        runner
+            .prefill_chunk(&tokens[at..at + n], at, &mut logits)
+            .expect("prefill_chunk");
+        at += n;
+    }
+    let mut out = vec![logits.iter().map(|v| v.to_bits()).collect()];
+    for step in 0..extra {
+        runner
+            .produce((step % 5) as i32, PROMPT + step, &mut logits)
+            .expect("produce");
+        out.push(logits.iter().map(|v| v.to_bits()).collect());
+    }
+    out
+}
+
+/// The exact arm (scalar GEMM, one-row attention) is bit-identical to
+/// sequential prefill, and so is every decode step after it: K/V slots, the
+/// ring and the conv tails were all left as `produce` leaves them. Splits
+/// cover one call, odd boundaries, and micro-batches shorter than the conv's
+/// six-row tail.
+#[test]
+fn the_exact_chunk_arm_matches_sequential_bit_for_bit() {
+    let (dir, arch) = mlx_install(64);
+    let want = sequential(&dir, &arch, 6);
+    for split in [&[PROMPT][..], &[5, 60, 3, 132], &[1, 2, 3, 64, 65, 65]] {
+        let got = chunked(&dir, &arch, split, true, 6);
+        assert_eq!(got, want, "split {split:?}");
+    }
+}
+
+fn as_f32(bits: &[u16]) -> Vec<f32> {
+    bits.iter()
+        .map(|&b| half::f16::from_bits(b).to_f32())
+        .collect()
+}
+
+/// The default arm (Steel GEMMs, multi-row attention on full layers at
+/// head_dim 128) is not bit-exact, so it is held close instead: same argmax
+/// and a small max difference relative to the logits' spread, at the
+/// prompt's last row and after decode.
+#[test]
+fn the_default_chunk_arm_stays_close_to_sequential() {
+    for head_dim in [64usize, 128] {
+        let (dir, arch) = mlx_install(head_dim);
+        let want = sequential(&dir, &arch, 3);
+        let got = chunked(&dir, &arch, &[PROMPT], false, 3);
+        for (step, (g, w)) in got.iter().zip(&want).enumerate() {
+            let (g, w) = (as_f32(g), as_f32(w));
+            let spread = w.iter().cloned().fold(f32::MIN, f32::max)
+                - w.iter().cloned().fold(f32::MAX, f32::min);
+            let max_diff = g
+                .iter()
+                .zip(&w)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0f32, f32::max);
+            assert!(
+                max_diff <= 0.02 * spread.max(1e-3),
+                "head_dim {head_dim} step {step}: max diff {max_diff} over spread {spread}"
+            );
+        }
+    }
 }
 
 /// A FROZEN DIGEST: every test above is self-relative, so a mutation that
@@ -321,3 +445,36 @@ fn the_synthetic_flows_arithmetic_is_frozen() {
 
 /// Frozen 2026-10-27 at VOCAB 64 / LAYERS 8 / STEPS 12 on Apple M4 Max.
 const FROZEN_LOGIT_HASH: u64 = 4_648_377_871_517_979_813;
+
+/// `produce` for `steps` tokens with the fused gate+up+silu GEMV on or off:
+/// every logits vector.
+fn decode_ffn_arm(
+    dir: &std::path::Path,
+    arch: &model_io::ArchConfig,
+    fused: bool,
+    steps: usize,
+) -> Vec<Vec<u16>> {
+    let mut runner = RealForwardRunner::open(dir, arch.clone()).expect("open");
+    runner.set_lfm3_fused_ffn(fused);
+    let mut logits = vec![half::f16::ZERO; VOCAB as usize];
+    (0..steps)
+        .map(|i| {
+            runner
+                .produce(((i * 7 + 3) % VOCAB as usize) as i32, i, &mut logits)
+                .expect("produce");
+            logits.iter().map(|v| v.to_bits()).collect()
+        })
+        .collect()
+}
+
+/// The fused gate+up+silu GEMV is bit-identical to the gemv, gemv, silu_mul
+/// chain at every step, past the sliding ring's wrap. The INT4 fixture is
+/// the one that reaches it; the Q8_0 fixture keeps the chain.
+#[test]
+fn the_fused_ffn_matches_the_three_dispatch_chain_bit_for_bit() {
+    let (dir, arch) = mlx_install(64);
+    let chain = decode_ffn_arm(&dir, &arch, false, 2 * STEPS);
+    let fused = decode_ffn_arm(&dir, &arch, true, 2 * STEPS);
+    assert_ne!(chain[0], chain[chain.len() - 1], "the logits never moved");
+    assert_eq!(fused, chain);
+}
