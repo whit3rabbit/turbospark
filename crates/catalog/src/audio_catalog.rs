@@ -2389,12 +2389,14 @@ fn profile_record_matches(profile: &AudioProfile, row: &InstalledModel) -> Resul
                     .as_deref()
                     .is_none_or(|variant| variant == "bf16")
         }
+        // Earlier CLI pulls recorded Turbo as `affine-4bit-turbo-8step`.
         AudioTask::Music => {
             row.kind.is_none()
-                && row
-                    .variant
-                    .as_deref()
-                    .is_none_or(|variant| variant == "affine-4bit")
+                && row.variant.as_deref().is_none_or(|variant| {
+                    variant == "affine-4bit"
+                        || (variant == "affine-4bit-turbo-8step"
+                            && row.alias == "minimax-music3-turbo-4bit-8step")
+                })
         }
         // Installed only by this catalog, which records neither field.
         AudioTask::Diarization | AudioTask::SpeechDetection => {

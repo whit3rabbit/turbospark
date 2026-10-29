@@ -318,8 +318,7 @@ pub fn install_music_into(
 
 /// [`install_music_into`] with the audio catalog and the transfer,
 /// `download(plan, staging_parent, cache_parent)`, passed in, so tests can
-/// pin a profile to fixture bytes and stand in for the Hub. The audio
-/// catalog is read only for an install into a library.
+/// pin a profile to fixture bytes and stand in for the Hub.
 pub(crate) fn install_music_with(
     store: &Store,
     alias: &str,
@@ -356,15 +355,11 @@ pub(crate) fn install_music_with(
         std::fs::create_dir_all(destination.parent().expect("audio install has parent"))
             .map_err(|error| StoreError::Io(format!("creating audio install parent: {error}")))?;
     }
-    // Only This Mac adopts a catalog profile's install that lacks its audio
-    // receipt, so into a library the receipt is published with the install.
-    // Read before the transfer, so a catalog that fails to parse wastes no
-    // download.
-    let audio = if into_library {
-        Some(audio_catalog().map_err(StoreError::Io)?)
-    } else {
-        None
-    };
+    // A catalog profile's install is published with the receipt adoption
+    // would write, on This Mac too, so the app lists a CLI install as
+    // installed without adopting it first. Read before the transfer, so a
+    // catalog that fails to parse wastes no download.
+    let audio = audio_catalog().map_err(StoreError::Io)?;
     // Classified by the store's one rule, so a step that failed because the
     // drive went away reads as a disconnect. This Mac's are IO errors.
     let failed = |staging: &Path, error: String| {
@@ -382,16 +377,17 @@ pub(crate) fn install_music_with(
         let _ = std::fs::remove_dir_all(&receipt.staging_root);
         return Err(StoreError::Io(crate::INSTALL_CANCELLED.to_string()));
     }
-    let published = match &audio {
+    let published = if into_library {
         // Written into the staged tree, so one rename publishes it complete.
-        Some(audio) => verified_music_source(&receipt, entry)
+        verified_music_source(&receipt, entry)
             .and_then(|staged| {
                 audio.write_transfer_receipt(alias, &receipt.sources[0].files, &staged)?;
                 Ok(staged)
             })
             .map_err(|error| failed(&receipt.staging_root, error))
-            .and_then(|staged| store.publish_staged(&staged, destination, &target.library_name)),
-        None => promote_music_source(&receipt, entry, destination).map_err(StoreError::Io),
+            .and_then(|staged| store.publish_staged(&staged, destination, &target.library_name))
+    } else {
+        promote_music_source(&receipt, entry, &audio, destination).map_err(StoreError::Io)
     };
     if let Err(error) = published {
         let _ = std::fs::remove_dir_all(&receipt.staging_root);
@@ -419,11 +415,9 @@ pub(crate) fn install_music_with(
         status: "unverified".to_string(),
         kind: None,
         modality: ModelModality::Audio,
-        variant: Some(if entry.turbo {
-            "affine-4bit-turbo-8step".to_string()
-        } else {
-            entry.quantization.as_str().to_string()
-        }),
+        // The quantization alone, as the audio catalog records it: Turbo is
+        // affine 4-bit, and the alias already names it.
+        variant: Some(entry.quantization.as_str().to_string()),
         library: None,
         relative_path: None,
     };
@@ -454,9 +448,13 @@ fn same_repository_pin(repo: &str, revision: &str, entry: &MusicCatalogEntry) ->
 fn promote_music_source(
     receipt: &DownloadReceipt,
     entry: &MusicCatalogEntry,
+    audio: &AudioCatalog,
     destination: &Path,
 ) -> Result<(), String> {
     let staged_root = verified_music_source(receipt, entry)?;
+    // Written into the staged tree, so one rename publishes it complete. A
+    // profile outside the audio catalog writes none.
+    audio.write_transfer_receipt(&entry.alias, &receipt.sources[0].files, &staged_root)?;
     std::fs::rename(&staged_root, destination).map_err(|error| {
         format!(
             "installing audio profile {}: {error}",
@@ -687,10 +685,11 @@ mod tests {
         let mut malformed = receipt.clone();
         malformed.sources[0].files[0].path = "unexpected.json".to_string();
         let rejected_destination = root.join("rejected");
-        assert!(promote_music_source(&malformed, &entry, &rejected_destination).is_err());
+        let audio = AudioCatalog::embedded().unwrap();
+        assert!(promote_music_source(&malformed, &entry, &audio, &rejected_destination).is_err());
         assert!(!rejected_destination.exists());
 
-        promote_music_source(&receipt, &entry, &destination).unwrap();
+        promote_music_source(&receipt, &entry, &audio, &destination).unwrap();
         assert!(destination.join("config.json").is_file());
         assert!(!source_root.exists());
         std::fs::remove_dir_all(&staging_root).unwrap();
