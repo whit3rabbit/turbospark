@@ -651,6 +651,15 @@ dispatch probe and block stand-ins, and resumable sequences of all of these
 (`tslab workflow`, with `new-family` running this page's checks for a family
 not yet measured). `tslab capabilities` says what an install supports.
 
+MoE and energy questions have their own instruments. `tslab expert-census`
+reduces one router capture run to how experts repeat within batches and the
+union per batch against slot counts. `tslab profile` classifies each MoE
+stretch `io_bound`, `loop_bound` or `compute_bound` (`moe_bound`), and an
+IOReport energy meter (`crates/lab/src/energy.rs`) adds modeled whole-machine
+joules to A/B and kernel records (`energy_model: ioreport_whole_machine`).
+Those joules compare arms within one experiment only; they never go beside
+`docs/POWER_BASELINE.md`'s powermetrics rows or into `docs/BENCHMARKS.md`.
+
 Every ledger line, and the one object `--json` prints, carries schema
 `tslab/1` (`tslab schema` prints the JSON Schema). `tslab export` writes
 ledgers as plottable series and `tslab report --html` draws them offline,

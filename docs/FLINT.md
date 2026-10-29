@@ -30,41 +30,36 @@ always quiet, and none is a frozen row.
 - `ChatDialect::Flint` (probed before GLM, whose markers the table shares) and
   shard discovery for a repo that ships no `model.safetensors.index.json`.
 - A layer-batched chunked prefill driver
-  (`crates/runtime/src/families/flint/prefill.rs`) behind
-  `TURBOSPARK_FLINT_CHUNKED_PREFILL=1`, default OFF. It is byte-identical to the
-  sequential path (a new test file, mutation-checked, and the lab's bit-exact
-  quality gate on the real model). Its speedup is NOT established: see item 1.
+  (`crates/runtime/src/families/flint/prefill.rs`), default ON since the
+  lab's clean paired win; `TURBOSPARK_FLINT_CHUNKED_PREFILL=0` restores the
+  sequential walk. It is byte-identical to the sequential path (a test file
+  per arm, mutation-checked, and the lab's bit-exact quality gate on the real
+  model). The clean verdict: +38.2% prefill tok/s, 95% CI [+33.6%, +41.8%],
+  bit-exact, on the `flint` install (`crates/lab/families/flint.json`,
+  finding `flint.chunked-prefill-clean-2026-10-28`).
 
 ## What is left, in order
 
-1. **A clean timing for the chunked prefill.** The lab's run returned
-   Inconclusive with 0 clean pairs because every round was dirty (macOS
-   `mediaanalysisd`, `ANECompilerService` and `corespotlightd` above 90% CPU,
-   compiles, other sessions' probes). The three least dirty rounds read about
-   42 to 44 tok/s sequential against 55 to 56 batched. That is not quotable.
-   Re-run `flint-chunked-prefill` on a quiet machine (spec and notes are in
-   `~/.turbospark/lab/flint-chunked-prefill/`). The lab itself is `crates/lab` (`tslab`). Making the switch the default is a
-   human decision after a clean WIN.
-2. **M-row INT4 GEMMs for the projections and shared expert**
+1. **M-row INT4 GEMMs for the projections and shared expert**
    (`TURBOSPARK_BATCHED_GEMV`, Steel). The sequential path's GPU is busy about
    23 ms per token, far above a bandwidth bound, so it looks dispatch-bound. The
    precedent (Qwen MoE) is 1.4 to 1.6x on top of the Step 1 driver. It is NOT
    bit-exact on a MoE (class `moe_kl`: it can swap near-tie experts), it needs
    a new KL probe, and Flint's FP16 margins make any rounding or reduction-order
    change a real risk. The driver currently refuses this switch by name.
-3. **Expert-major (grouped) MoE prefill.** About a quarter of sequential
+2. **Expert-major (grouped) MoE prefill.** About a quarter of sequential
    prefill is expert `pread` at an 82.6% cache hit rate, and a token re-reads
    its experts. Processing a whole chunk expert by expert reads each once
    (`docs/KAPITSA_KERNELS.md` item 8 measured the GEMM side at 0.44 to 0.80 of
    the GEMV cost). It is the one open MoE-prefill idea, and a project: new
    route-permutation and combine kernels, a drift bound, and FP16 overflow in
    phase 1 to re-check.
-4. **The remaining gates.** No memory oracle, no quality gate, and no frozen
+3. **The remaining gates.** No memory oracle, no quality gate, and no frozen
    benchmark row exist, so the catalog status cannot be `verified`. The bench
    protocol row for flint is provisional (8,192 context, 4,096 new tokens,
    because it reasons). Add `flint_memory_oracle.rs` and a quality gate next to
    the existing ones, one model per process.
-5. **Quality unknowns.**
+4. **Quality unknowns.**
    - The INT8 router agrees with the BF16 original on the top-6 set 97.27% of
      the time (every difference a near-tie), measured with
      `TURBOSPARK_FLINT_ROUTER_DUMP`. Whether that moves quality is unmeasured.
@@ -76,7 +71,7 @@ always quiet, and none is a frozen row.
    - Nothing compares against a reference implementation (SGLang or llama.cpp
      PR 30928), and no test shows RoPE is correctly absent on the
      full-attention layers.
-6. **Features not wired.**
+5. **Features not wired.**
    - Reasoning splits by token id: `<think>` (150006) and `</think>` (150007)
      are added but not special, and the decoder keys on ids, as GLM's does.
      The template has no thinking-off switch and does not prefill the open,
@@ -88,7 +83,7 @@ always quiet, and none is a frozen row.
    - Mapped expert residency: the 19.8 GiB expert table is unlikely to fit the
      GPU working set on a 36 GB machine.
    - GGUF intake: Q4_1 is not an executable block type here.
-7. **Docs and surfaces never written.** Zero Flint mentions in `DEVIATIONS.md`,
+6. **Docs and surfaces never written.** Zero Flint mentions in `DEVIATIONS.md`,
    `AGENTS.md` (a gotcha for the sigmoid router, the dense-lead blob numbering
    and the FP16 range), `docs/MODELS.md` and the README model table. The Swift
    app's `knownMoEFamilies` set and `ModelFamilyVisuals` also lack `flint`, so it
@@ -124,7 +119,7 @@ always quiet, and none is a frozen row.
 
 | Variable | What it does |
 |---|---|
-| `TURBOSPARK_FLINT_CHUNKED_PREFILL=1` | layer-batched prefill driver (default off) |
+| `TURBOSPARK_FLINT_CHUNKED_PREFILL=0` | restore the sequential token walk (the layer-batched prefill driver is the default) |
 | `TURBOSPARK_FLINT_DEBUG=1` | per-MoE-layer report of non-finite or large residual, router, activation and shared values |
 | `TURBOSPARK_FLINT_ROUTER_DUMP=<file>` | appends the post-norm MoE input and the INT8 router logits per layer per token |
 | `TURBOSPARK_PHASES=1` | the phase-bucket table (cb1 wait, expert io, encode) |

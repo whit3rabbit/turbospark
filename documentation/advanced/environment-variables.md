@@ -14,6 +14,7 @@ Most performance switches below are **on by default** and exist as kill switches
 | Variable | Affected Tools | Description | Default |
 | --- | --- | --- | --- |
 | `TURBOSPARK_HOME` | All binaries | Root directory for installed models, catalogs, and temporary staging. | `~/.turbospark` |
+| `TURBOSPARK_LAB_DIR` | `tslab` | Where the TurboSpark Lab evaluator writes and reads its result ledgers (`tslab serve` serves this directory). Checked before `TURBOSPARK_HOME`, so `$TURBOSPARK_HOME/lab` applies only when this is unset. See [TurboSpark Lab (tslab)](tslab.md). | `~/.turbospark/lab` |
 | `TURBOSPARK_STATE_DIR` | Desktop App | Directory for application state, chat history, and encrypted user profiles. | `~/Library/Application Support/TurboSparkApp` |
 | `TURBOSPARK_DISABLE_DOWNLOAD_CACHE` | `turbospark-model` | Set `1` to reduce peak disk use during pinned model pulls. Interrupted downloads must fetch their byte ranges again. | unset |
 | `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN` | `turbospark-model` | Bearer token for accessing private or gated Hugging Face repositories. | unset |

@@ -136,7 +136,7 @@ until one exists.
 | `prefill_steel` | `TURBOSPARK_PREFILL_STEEL` | on | KL-bounded | none yet: which Steel tile it toggles is unchecked | `dequant_int4_steel_parity.rs` | [BATCHED_PREFILL.md](BATCHED_PREFILL.md) |
 | `gdn_lazy_tape` | `TURBOSPARK_GDN_LAZY_TAPE` | on | bit-exact | `gdn_delta`: `prefill_eager` to `prefill_lazy` (plus `state_fold`) | `gdn_lazy_fold.rs` | [KAPITSA_KERNELS.md](KAPITSA_KERNELS.md) |
 | `gdn_dk128` | `TURBOSPARK_GDN_DK128` | on | bit-exact | `gdn_delta`: `prefill_lazy` across two processes | `gdn_tests.rs` (unit module) | [KAPITSA_KERNELS.md](KAPITSA_KERNELS.md) |
-| `attn_decode_kernel` | `TURBOSPARK_ATTN_DECODE_KERNEL` | auto by head dim and GQA ratio | KL-bounded | `attn_decode`: `barrier` to `gqa` | `attention_decode_gqa_parity.rs` | [SPEEDUP_PLAYBOOK.md](SPEEDUP_PLAYBOOK.md) |
+| `attn_decode_kernel` | `TURBOSPARK_ATTN_DECODE_KERNEL` | auto: gqa on the measured dense families (dense Llama, Qwen2, Qwen3, Qwen3-VL, Spark 2.5, plus qwen GDN dense), barrier elsewhere, barrier fallback for unserved shapes | KL-bounded | `attn_decode`: `barrier` to `gqa` (kill-arm form on the flipped families: barrier is the candidate) | `attention_decode_gqa_parity.rs` | [SPEEDUP_PLAYBOOK.md](SPEEDUP_PLAYBOOK.md) |
 | `qwen_fused_ffn` | `TURBOSPARK_QWEN_FUSED_FFN` | on | bit-exact | none yet | `dequant_int4_fused_parity.rs` | [KAPITSA_KERNELS.md](KAPITSA_KERNELS.md) |
 | `qwen_batched_row_ops` | `TURBOSPARK_QWEN_BATCHED_ROW_OPS` | on | bit-exact | none yet | the batched-vs-sequential suites | [SPEEDUP_PLAYBOOK.md](SPEEDUP_PLAYBOOK.md) |
 
