@@ -175,20 +175,7 @@ struct AudioItemDetailView: View {
 
     private var detailContentSwitcher: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Picker(selection: $selectedTab) {
-                Text("Transcript", bundle: .module).tag(DetailViewTab.transcript)
-                HStack(spacing: 4) {
-                    Text("Notes & Summary", bundle: .module)
-                    if item.summary != nil {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.appAccent)
-                    }
-                }.tag(DetailViewTab.notes)
-            } label: {
-                Text("Detail View", bundle: .module)
-            }
-            .pickerStyle(.segmented)
-            .frame(maxWidth: 280)
+            AudioDetailModeSwitcher(selection: $selectedTab, hasSummary: item.summary != nil)
 
             if selectedTab == .transcript {
                 AudioTranscriptEditorView(controller: controller, item: item)
@@ -260,5 +247,29 @@ struct AudioItemDetailView: View {
                 }.padding(.vertical, 4)
             }
         } label: { Text("Tracks and sections", bundle: .module) }
+    }
+}
+
+/// Switches an item's detail between its transcript and its meeting notes.
+/// An `AppPillPicker`, which never shrinks: the labeled segmented picker this
+/// replaces was squeezed to 280 pt and wrapped "Detail View" one or two
+/// letters per line.
+@MainActor
+struct AudioDetailModeSwitcher: View {
+    @Binding var selection: AudioItemDetailView.DetailViewTab
+    let hasSummary: Bool
+
+    var body: some View {
+        AppPillPicker(
+            selection: $selection,
+            items: [
+                AppPillItem(value: .transcript, label: Text("Transcript", bundle: .module)),
+                AppPillItem(
+                    value: .notes,
+                    label: Text("Notes & Summary", bundle: .module),
+                    systemImage: hasSummary ? "checkmark.circle.fill" : nil),
+            ],
+            label: Text("Detail View", bundle: .module)
+        )
     }
 }

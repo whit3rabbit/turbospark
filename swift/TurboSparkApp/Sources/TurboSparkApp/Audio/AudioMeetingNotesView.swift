@@ -239,9 +239,7 @@ struct AudioMeetingNotesView: View {
                     .appEditorSurface(minHeight: 280)
             } else {
                 ScrollView {
-                    Text(verbatim: notesText)
-                        .themedFont(.base)
-                        .textSelection(.enabled)
+                    AudioMeetingNotesReader(text: notesText)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(12)
                 }
@@ -346,5 +344,16 @@ struct AudioMeetingNotesView: View {
         if panel.runModal() == .OK, let url = panel.url {
             try? notesText.write(to: url, atomically: true, encoding: .utf8)
         }
+    }
+}
+
+/// Generated meeting notes, read-only. The model writes markdown (headings,
+/// bullet and task lists), so it renders through the chat's markdown view
+/// rather than showing `###` and `- [ ]`. Editing still shows the source.
+struct AudioMeetingNotesReader: View {
+    let text: String
+
+    var body: some View {
+        ChatMessageMarkdownView(text)
     }
 }
