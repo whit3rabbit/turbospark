@@ -424,30 +424,12 @@ pub fn validate_request(
     samples: &[f32],
 ) -> Result<(), String> {
     // One guard for every other engine: a setting a model ignores would look
-    // like it worked. Music shares `max_frames` as its own frame cap, so it
-    // refuses only the sampler fields.
+    // like it worked.
     if family != FISH_DRAMA3_FAMILY && request.sampling_set() {
-        let mut refused = Vec::new();
-        if request.temperature.is_some() {
-            refused.push("temperature");
-        }
-        if request.top_p.is_some() {
-            refused.push("top_p");
-        }
-        if request.top_k.is_some() {
-            refused.push("top_k");
-        }
-        if request.max_frames.is_some() && request.task != AudioTask::Music {
-            refused.push("max_frames");
-        }
-        if !refused.is_empty() {
-            let what = if refused.len() == 1 {
-                "is a Drama 3 sampler setting; this model does not take it"
-            } else {
-                "are Drama 3 sampler settings; this model does not take them"
-            };
-            return Err(format!("{} {what}", refused.join(", ")));
-        }
+        return Err(
+            "temperature, top_p, top_k and max_frames are Drama 3 sampler settings; this model does not take them"
+                .into(),
+        );
     }
     if request.task == AudioTask::TextToSpeech && family == MEGATTS3_FAMILY {
         return megatts3_request(request, samples).map(|_| ());
@@ -2050,42 +2032,6 @@ mod tests {
             assert!(validate_request("kokoro", &kokoro, &[]).is_ok());
             field(&mut kokoro);
             assert!(validate_request("kokoro", &kokoro, &[]).is_err());
-        }
-    }
-
-    #[test]
-    fn music_takes_max_frames_but_refuses_drama3_sampler_fields() {
-        // What the app sends: max_frames from duration times frame rate.
-        let music = AudioRequest {
-            task: AudioTask::Music,
-            caption: "piano".into(),
-            lyrics: "[instrumental]".into(),
-            duration_seconds: Some(10.0),
-            max_frames: Some(250),
-            context_size: Some(10_240),
-            ..Default::default()
-        };
-        assert_eq!(validate_request("minimax_music3", &music, &[]), Ok(()));
-        // Music's own bound still applies.
-        let over = AudioRequest {
-            max_frames: Some(9_001),
-            ..music.clone()
-        };
-        let err = validate_request("minimax_music3", &over, &[]).unwrap_err();
-        assert!(!err.contains("Drama 3"), "{err:?}");
-        for (field, name) in [
-            (
-                (|r: &mut AudioRequest| r.temperature = Some(0.7)) as fn(&mut AudioRequest),
-                "temperature",
-            ),
-            (|r: &mut AudioRequest| r.top_p = Some(0.7), "top_p"),
-            (|r: &mut AudioRequest| r.top_k = Some(30), "top_k"),
-        ] {
-            let mut r = music.clone();
-            field(&mut r);
-            let err = validate_request("minimax_music3", &r, &[]).unwrap_err();
-            assert!(err.contains("Drama 3") && err.contains(name), "{err:?}");
-            assert!(!err.contains("max_frames"), "{err:?}");
         }
     }
 
