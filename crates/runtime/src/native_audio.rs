@@ -434,10 +434,13 @@ pub fn validate_request(
     // One guard for every other engine: a setting a model ignores would look
     // like it worked.
     if family != FISH_DRAMA3_FAMILY && request.sampling_set(family) {
-        return Err(
+        // Music 3 takes max_frames, so its refusal names only the other three.
+        return Err(if family == MUSIC3_FAMILY {
+            "temperature, top_p and top_k are Drama 3 sampler settings; this model does not take them"
+        } else {
             "temperature, top_p, top_k and max_frames are Drama 3 sampler settings; this model does not take them"
-                .into(),
-        );
+        }
+        .into());
     }
     if request.task == AudioTask::TextToSpeech && family == MEGATTS3_FAMILY {
         return megatts3_request(request, samples).map(|_| ());
@@ -2544,6 +2547,8 @@ mod tests {
             field(&mut r);
             let err = validate_request(MUSIC3_FAMILY, &r, &[]).unwrap_err();
             assert!(err.contains("Drama 3"), "{err:?}");
+            // Music 3 takes max_frames, so its refusal does not name it.
+            assert!(!err.contains("max_frames"), "{err:?}");
         }
     }
     #[test]
