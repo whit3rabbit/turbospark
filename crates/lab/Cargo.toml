@@ -34,7 +34,7 @@ path = "src/bin/tslab_worker.rs"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 libc = "0.2"
-foundation = { package = "turbospark-core", path = "../core", version = "0.5.0" }
+foundation = { package = "turbospark-core", path = "../core", version = "0.6.0" }
 # `tslab serve`, the read-only dashboard over the lab dir (src/dash). The same
 # axum and tokio crates/server and crates/ffi pin, so no new package enters the
 # lockfile; `json` is the only axum feature a GET-only dashboard needs.
@@ -47,15 +47,15 @@ tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-runtime = { package = "turbospark-runtime", path = "../runtime", version = "0.5.0" }
-model_io = { package = "turbospark-model-io", path = "../model-io", version = "0.5.0" }
-repack = { package = "turbospark-repack", path = "../repack", version = "0.5.0" }
-selection = { package = "turbospark-selection", path = "../selection", version = "0.5.0" }
-tokenizer = { package = "turbospark-tokenizer", path = "../tokenizer", version = "0.5.0" }
-catalog = { package = "turbospark-catalog", path = "../catalog", version = "0.5.0" }
-gpu = { package = "turbospark-gpu", path = "../gpu", version = "0.5.0" }
-turbospark-coreml = { path = "../coreml", version = "0.5.0" }
-turbospark-bench = { path = "../bench", version = "0.5.0" }
+runtime = { package = "turbospark-runtime", path = "../runtime", version = "0.6.0" }
+model_io = { package = "turbospark-model-io", path = "../model-io", version = "0.6.0" }
+repack = { package = "turbospark-repack", path = "../repack", version = "0.6.0" }
+selection = { package = "turbospark-selection", path = "../selection", version = "0.6.0" }
+tokenizer = { package = "turbospark-tokenizer", path = "../tokenizer", version = "0.6.0" }
+catalog = { package = "turbospark-catalog", path = "../catalog", version = "0.6.0" }
+gpu = { package = "turbospark-gpu", path = "../gpu", version = "0.6.0" }
+turbospark-coreml = { path = "../coreml", version = "0.6.0" }
+turbospark-bench = { path = "../bench", version = "0.6.0" }
 # The audio arm names the runtime's audio request types (worker_audio.rs).
-audio = { package = "turbospark-audio", path = "../audio", version = "0.5.0" }
+audio = { package = "turbospark-audio", path = "../audio", version = "0.6.0" }
 half = "2"

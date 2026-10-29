@@ -13,6 +13,8 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-28
+
 ### Added
 - The `lfm3` family (LiquidAI LFM3-1.7B): a dense hybrid of gated
   short-convolution, full-attention and sliding-window layers, with MLX and
