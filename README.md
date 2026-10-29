@@ -20,7 +20,7 @@
 </p>
 
 <p align="center">
-  <a href="https://turbospark.gitbook.io/turbospark/documentation">Documentation</a> | <a href="#install">Install</a> | <a href="#quickstart">Quickstart</a> | <a href="#supported-models">Supported Models</a> | <a href="#memory-and-benchmark-results">Benchmarks</a> | <a href="#image-generation">Image Generation</a> | <a href="#humanize">Humanize</a> | <a href="#audio">Audio</a> | <a href="#music-generation">Music</a> | <a href="#decision-models">Decision Models</a> | <a href="#supported-features">Features</a> | <a href="#more-details">More Details</a> | <a href="#license">License</a>
+  <a href="https://turbospark.gitbook.io/turbospark/documentation">Documentation</a> | <a href="#install">Install</a> | <a href="#quickstart">Quickstart</a> | <a href="#supported-models">Supported Models</a> | <a href="#memory-and-benchmark-results">Benchmarks</a> | <a href="#image-generation">Image Generation</a> | <a href="#humanize">Humanize</a> | <a href="#audio">Audio</a> | <a href="#music-generation">Music</a> | <a href="#decision-models">Decision Models</a> | <a href="#supported-features">Features</a> | <a href="#turbospark-lab">Lab</a> | <a href="#more-details">More Details</a> | <a href="#license">License</a>
 </p>
 
 <p align="center">
@@ -473,7 +473,25 @@ The benchmark times are client wall-clock numbers that include local HTTP and Sw
 - [Vision and image generation](docs/VISION.md) and [image generation details](docs/IMAGE_GENERATION.md)
 - [Desktop feature parity and architecture matrix](docs/DESKTOP_FEATURE_PARITY.md)
 - [Testing and evidence gates](docs/TESTING.md)
+- [TurboSpark Lab (tslab) evaluator](crates/lab/README.md) and its [GitBook guide](https://turbospark.gitbook.io/turbospark/documentation/advanced/tslab)
 - [Changelog](CHANGELOG.md)
+
+## TurboSpark Lab
+
+`tslab`, in [`crates/lab`](crates/lab/), is the evaluator behind the repo's kernel and method experiments. It profiles installed models, runs gated interleaved A/Bs between two arms with a fixed verdict rule, benches Metal kernels at install-derived shapes, sweeps several candidates against one baseline in one session, and prices speculative decoding, for text and audio installs alike. Every run appends to an append-only ledger under `~/.turbospark/lab`, and `tslab serve` opens a read-only dashboard over all of it without taking the machine lock.
+
+<p align="center">
+  <a href="assets/tslab-dashboard.png"><img src="assets/tslab-dashboard.png" alt="tslab serve dashboard: experiments, runs, verdicts, sweeps, and kernel curves" width="96%" /></a>
+</p>
+
+```sh
+cargo build --release -p turbospark-lab
+target/release/tslab capabilities --model gemma4 --json
+target/release/tslab ab --model gemma4 --baseline off --candidate on:KNOB=V --experiment my-ab --json
+target/release/tslab serve --open   # 127.0.0.1:7878, read-only, JSON API under /api
+```
+
+The bundled [tslab agent skill](crates/lab/skill/SKILL.md) drives the same commands with preflight and doctor scripts. `scripts/install-tslab-skill.sh --repo` links it into `.claude/skills/` and `.agents/skills/`. The full guide, covering every command, environment variable, and the dashboard's JSON API, is in the [GitBook documentation](https://turbospark.gitbook.io/turbospark/documentation/advanced/tslab).
 
 ## License
 

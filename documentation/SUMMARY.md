@@ -51,6 +51,7 @@
 * [Extreme Quantization (1-bit / 2-bit)](advanced/extreme-quantization.md)
 * [Directional Residual Steering](advanced/directional-steering.md)
 * [Environment Variables Reference](advanced/environment-variables.md)
+* [TurboSpark Lab (tslab)](advanced/tslab.md)
 
 ## Performance & Benchmarks
 
@@ -84,5 +85,6 @@
 * [catalog](crates/catalog.md)
 * [ffi](crates/ffi.md)
 * [bench](crates/bench.md)
+* [lab](crates/lab.md)
 * [vision-io](crates/vision-io.md)
 * [window-fit](crates/window-fit.md)
