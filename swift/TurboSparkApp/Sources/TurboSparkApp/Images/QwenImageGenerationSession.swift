@@ -76,6 +76,8 @@ final class QwenImageGenerationSession: ImageGenerationSession, @unchecked Senda
                         if permit == nil { try await Task.sleep(for: .milliseconds(50)) }
                     }
                     defer { permit?.release() }
+                    // Without its kernels MLX exits the process instead of throwing.
+                    try MLXKernelLibrary.requireForCurrentProcess()
                     // The pipeline floors each side to a multiple of 32, but
                     // the server admits multiples of 16. Reject instead of
                     // returning a smaller image than the metadata claims.
