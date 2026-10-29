@@ -20,6 +20,7 @@
         "kernel_curve",
         "hash_diff",
         "ane_plan",
+        "expert_census",
         "experiment_start",
         "gate",
         "experiment",
@@ -101,7 +102,9 @@
         "gb_s": { "type": "number" },
         "tflops": { "type": "number" },
         "c_of_m": { "type": "number", "description": "x rows in one pass over x one-row passes" },
-        "out_fnv": { "type": "string", "description": "FNV-1a 64 of the output bytes, 16 hex digits, under --hash" }
+        "out_fnv": { "type": "string", "description": "FNV-1a 64 of the output bytes, 16 hex digits, under --hash" },
+        "row_fnv": { "type": "string", "description": "FNV-1a 64 of the first output row alone, under --hash" },
+        "j": { "type": "number", "description": "median modeled joules per sample (IOReport, whole machine; energy_model on the record)" }
       }
     },
     "bench_result": {

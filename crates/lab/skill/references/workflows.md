@@ -19,6 +19,7 @@ tslab workflow new-family --model M --experiment E --resume <run>
 |---|---|---|
 | `new-family` | capabilities, inventory, profile, hashed kernels, null floor, dispatch probe, speculative round costs, verify ladder, tree replay, report | `--model` |
 | `kernel-candidate` | hashed kernels, `hash-diff` against a base-build run, null, paired A/B of a switch | `--var against=EXP --var candidate=KNOB=V` |
+| `ane-sweep` | hashed `ane_matmul` curves with joules, `ane-plan` placement of the same programs, a report (a `tslab` built with `--features ane-prefill`) | `--var programs=DIR` (from `gen_ane_sweep_programs.py`); `--var tokens=` for the token counts |
 | `mode-candidate` | hashed bench curves, a base profile, null floor, `project` from those, paired A/B of the mode's switch, `calibrate` of the projection against that verdict | `--var knob=NAME --var candidate=KEY=V` (a knob with a lane in `tslab knobs`); `--var bench=` and `--var x=` for a lane that is not `int4_matmul` at one row |
 | `spec-depth` | chain capture, MTP arms at two blocks with round stats, depth replay priced from the ledger | an install with an MTP head |
 | `family-sweep` | capabilities, the family profile, a null floor, every profile sweep whose `when` holds, report | `--model`; the profile's sweeps (`tslab family --model M`) |
@@ -57,7 +58,8 @@ see which steps will run.
   and `run`. Add your own with `--var KEY=V`.
 - `when`: every listed tag must hold. `!tag` negates and `a|b` means either.
   Tags come from `tslab capabilities` (`text`, `audio`, `moe`, `dense`, `gdn`,
-  `mla`, `sinks`, `sliding_attention`, `drafter`, `mtp`, `dflash`,
+  `mla`, `sinks`, `sliding_attention`, `full_attention`, `compressed_attention`,
+  `vision`, `drafter`, `mtp`, `dflash`,
   `chunked_prefill`, `steel`, `probe`, `standin`, `runs`, `profile`,
   `bench:<name>`, `family:<name>`, `flow:<name>`, `audio:music`,
   `audio:transcribe`, `audio:speak`). A plan with no `--model` has only

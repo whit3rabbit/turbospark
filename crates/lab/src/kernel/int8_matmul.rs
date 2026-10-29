@@ -171,6 +171,7 @@ pub fn run_shape(
                     c_of_m: Some(c_of_m(t[a], one_row, *m)),
                     out_fnv: h[a].clone(),
                     row_fnv: None,
+                    j: None,
                 })
                 .collect();
             let fit = fit_affine(&points.iter().map(|p| (p.x, p.ms)).collect::<Vec<_>>());

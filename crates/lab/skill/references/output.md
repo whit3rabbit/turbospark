@@ -35,13 +35,15 @@ is `$TURBOSPARK_LAB_DIR`, else `$TURBOSPARK_HOME/lab`, else
 
 | Kind | Holds |
 |---|---|
-| `run` | One worker process: arm, env, host samples, `eligible`, `reasons`, `totals`, `engaged`, `spec_stats`, `audio` |
-| `profile_summary` | Per-arm medians over clean runs |
+| `run` | One worker process: arm, env, host samples, `eligible`, `reasons`, `totals` (with `prefill_j`, `decode_j`, `run_j`, joules per token and `energy_model` when the host meters), `engaged`, `spec_stats`, `ane_stats`, `controlled_contention`, `audio` |
+| `profile_summary` | Per-arm medians over clean runs, each phase with a `moe_bound` class and shares, plus `prefill_j`/`decode_j` when metered |
 | `null_calibration` | The noise floor (`floor`) for a workload and metric |
 | `verdict` | A paired A/B: `verdict.{verdict, median, ci_low, ci_high, improvements}`, `memory`; from a sweep also `sweep_id` and `family` |
 | `sweep` | `tslab sweep`: `sweep_id`, `family`, `baseline`, `metric`, `floor`, `candidates[].{arm, verdict, memory, clean_pairs, dirty_pairs, refused, verdict_record}`, `best.{arm, median}` (the largest median among WINs, else null), `stopped` |
 | `kernel_curve` | One kernel bench case: `result` is a `BenchResult` |
 | `hash_diff`, `dispatch_probe`, `standin`, `trace`, `round_cost`, `ane_plan` | What their command measured |
+| `expert_census` | `tslab expert-census`: `summary.phases.{prefill,decode}.{reuse, concentration, union, slots_fit, sub_batches, largest_group}` over one capture run (`capture` is the file) |
+| `tree_replay`, `chain_capture`, `depth_replay` | Speculative acceptance: tree against chain at equal verify rows, per-position chained capture, and the depth policy priced from it |
 | `projection` | `tslab project`: `projection.{ratio, improvement_throughput, improvement_time, coverage, floor, clears_floor, cases, skipped, notes}` and the `inputs` it read |
 | `calibration` | `tslab calibrate`: `calibration.{predicted, measured, error, miss, sign_flip, reason}` and the projection and verdict it joined |
 | `experiment`, `confirm`, `gate`, `experiment_start` | run-experiment's records and decision |
@@ -85,8 +87,10 @@ per arm: `{arm, against, bit_exact_vs_first, row_invariant}`, each `true`,
 
 Kinds: `kernel_ms`, `kernel_c_of_m`, `profile_totals`, `profile_buckets`,
 `verdict` (points are pair improvements, and `refs` holds `median`, `ci_low`,
-`ci_high`, `min_effect`, `null_floor`), `dispatch_probe`, `round_cost`,
-`audio_stages`, `trace_shares`, `standin`, `calibration` (predicted against
+`ci_high`, `min_effect`, `null_floor`), `sweep` (one point per candidate's
+median on a category axis, an inconclusive candidate at zero and `dirty`),
+`dispatch_probe`, `round_cost`, `audio_stages`, `trace_shares`, `standin`,
+`calibration` (predicted against
 measured improvement, one point per calibration). Series sharing a `group` belong on
 one chart. A point with `dirty: true` came from a run the host guard
 rejected.

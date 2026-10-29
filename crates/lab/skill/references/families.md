@@ -22,16 +22,16 @@ behind it: read those before copying the setting.
 
 | Family (`as_str`) | Flow | First sweep | Known best | Trap |
 |---|---|---|---|---|
-| `qwen35` (Qwen 3.5/3.8 dense, GDN) | qwen | `spec_block` with an MTP install, `mma8_mode` with a DFlash2 install | MTP block 2, tile (`int4_mma8`) unset, `gdn_dk128` on (default), GQA attention (default) | never force `attn_decode_kernel=barrier` as a baseline; the MTP install's stream already differs from plain decode on short-explanation |
+| `qwen35` (Qwen 3.5/3.8 dense, GDN) | qwen | `spec_block` with an MTP install, `mma8_mode` with a DFlash2 install | MTP block 2, tile (`int4_mma8`) unset, `gdn_dk128` on (default), GQA attention (default), small-N prefill route on (default, 2026-10-27) | never force `attn_decode_kernel=barrier` as a baseline; the MTP install's stream already differs from plain decode on short-explanation; chunked-prefill GPU rows ledgered before 2026-10-27 predate the route (the 48-row GDN a/b projections left the scalar slices, about -6.6% summed micro-batch GPU time on the 2,940-token long-synthesis prompt), so pair them against `TURBOSPARK_PREFILL_SMALL_N=0` in one binary and do not compare across the change; it is not a registered knob yet, so set the env by hand and confirm with `TURBOSPARK_ENGAGEMENT=1` that `prefill_small_n` printed (docs/BATCHED_PREFILL.md) |
 | `qwen36` (Qwen 3.6 MoE, GDN) | qwen | `routed_batch`, then `slots` | Steel batched arm (default), `routed_batch=1` at 32+ slots, slots auto (96 here) | declare `moe_kl`; `qwen_prefetch` panics on a non-integer; the read-overlap seam refuses chunked prefill |
-| `flint` | flint | `chunked_prefill` (bit-exact) | `flint_chunked_prefill=1` once its paired verdict lands; 16 slots | `batched_gemv` and `routed_batch` refused by name; every lab run so far was dirty |
-| `gptOss` | gptoss | `routed_batch` | chunk 128, 16 slots | sinks keep `rows_attn` off; no INT4 bench for MXFP4 experts |
-| `gemma4` | gemma4 | `routed_batch` (INT4 installs), `residency` | 16 slots, `shared_cb` on (default) | two attention head shapes, read both `attn_decode` cases; the dense Humanizer owes `dense_kl` |
-| `llama`, `qwen3`, `qwen2`, `minimax_m2`, `qwen3_vl` | llama | `batched_gemv`, `decode_attention` | chunk 128 on the dense half | Llama and Mixtral share a string: the gate class follows `expert_count`; BF16 trunks refuse the batched arm |
-| `qwen3moe` | llama | `slots` | 16 slots | the GGUF install refuses `routed_batch=1` |
+| `flint` | flint | `chunked_prefill` (bit-exact) | `flint_chunked_prefill` on (default since the clean +38.2% prefill win, 2026-10-28); 16 slots | `batched_gemv` and `routed_batch` refused by name; every lab run before 2026-10-28 was dirty |
+| `gptOss` | gptoss | `routed_batch` | routed_batch=1 (+23.5% prefill, 2026-10-29, opt-in pending the moe_kl gates); chunk 128, 16 slots | sinks keep `rows_attn` off AND the GQA decode kernel unreachable; no INT4 bench for MXFP4 experts |
+| `gemma4` | gemma4 | `routed_batch` (INT4 installs), `residency` | 16 slots with routed_batch=1 (+3.3% prefill, 2026-10-29, opt-in pending the moe_kl gates), `shared_cb` on (default; kill arm -27.4%) | two attention head shapes at head_dim 512 (the GQA decode kernel cannot serve them); the batched routed prefill refuses at 32+ slots; the residency sweep cannot pair on the current sampler; the dense Humanizer owes `dense_kl` |
+| `llama`, `qwen3`, `qwen2`, `minimax_m2`, `qwen3_vl` | llama | `batched_gemv`, `decode_attention` | chunk 128 on the dense half; GQA decode default on dense llama, qwen2, qwen3 and qwen3_vl (2026-10-29 flip: +5.7% mistral7b, +3.9% qwen2, +19.8% qwen3_vl, barrier opt-out -5.4% on qwen3) | Llama and Mixtral share a string: the gate class follows `expert_count`, and Mixtral keeps barrier decode; `minimax_m2` is unmeasured and keeps barrier; BF16 trunks refuse the batched arm; head_dim-64 installs fall back to barrier in the encoder regardless |
+| `qwen3moe` | llama | `slots` | 64 slots (+27.9% decode over 16, 2026-10-29; 16 is the tight-memory choice); barrier decode (default) | the GGUF install refuses `routed_batch=1`; the gqa decode arm won +3.4% but changed the decoded tokens, so it stays off until a `moe_kl` gate runs |
 | `qwen4exp` | qwen4 | `slots` | untuned; the REAP-288 rows spread 25-60% | 2,048 context; the hyper-connections widen the residual |
-| `museGlimmer` | museglimmer | `batched_gemv` | chunk 128 | the highest J/token in the power baseline; tslab has no energy meter |
-| `spark2_5`, `deepseek2` | spark, deepseek2 | `decode_attention`, `slots` | `--chunk off` (the only driver) | MLA has no attention bench; Spark's fused q|k|v is one shape |
+| `museGlimmer` | museglimmer | `batched_gemv` | chunk 128 | the highest J/token in the power baseline (powermetrics); tslab's IOReport joules are a different meter and compare only within an experiment |
+| `spark2_5`, `deepseek2` | spark, deepseek2 | `decode_attention`, `slots` | `--chunk off` (the only driver); GQA decode default on spark (2026-10-29, +3.9%); deepseek2 slots 64 (+28.1% over 16, 2026-10-29; 32 mid, 16 tight-memory) | MLA has no attention bench; Spark's fused q|k|v is one shape |
 | `deepseekV4Flash` | none | none | none | no decode flow: kernel benches only |
 
 ## Audio kinds
@@ -44,7 +44,7 @@ behind it: read those before copying the setting.
 | `minimax_music3` | music | yes | RTF readings on battery only | 60 s and 30 steps by default: use `music-short.json` |
 | `kokoro` | speak | yes | none | en-US only |
 | `megatts3` | speak | yes | none | `consent: true` and `reference_wav` or the arm is refused |
-| `omnivoice`, `fish_drama3` | speak | no | Fish Drama 3 peak 6.1-6.3 GiB | kernel benches only |
+| `omnivoice`, `fish_drama3` | speak | no | Fish Drama 3 peak 6106-6296 MiB | kernel benches only |
 
 Audio arms are judged on output identity (`bit_exact` for a waveform,
 `text_exact` for a transcript). There is no KL class. A job's `steps`,

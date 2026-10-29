@@ -54,6 +54,7 @@
       "why": "the 8-row tile costs plain decode 17-23% and sequential prefill 27-31%; it pays only with a block of 4 or more (DFlash2 7: +10% on medium-review, 1.8x on copy-heavy), so it stays opt-in until the per-request block choice is decided",
       "findings": [
         "qwen35.mma8-plain-decode-2026-10-25",
+        "qwen35.mma8-plain-reconfirm-2026-10-28",
         "qwen35.full-sweep-tile-2026-10-23",
         "qwen35.flat-verify-dflash7-2026-10-22"
       ]
@@ -78,12 +79,13 @@
       "when": [
         "gdn"
       ],
-      "why": "default on: the Dk-baked delta kernels won +4.1% and +5.0% (confirm) on DFlash2 7 and +5.3% on prefill, bit-exact; plain decode is NOISE",
+      "why": "default on: the Dk-baked delta kernels won +4.1% and +5.0% (confirm) on DFlash2 7 and +5.3% on prefill, bit-exact; plain decode is NOISE (re-confirmed 2026-10-28, and the same run's prefill side-read the -5.3% again)",
       "findings": [
         "qwen35.gdn-dk128-dflash7-2026-10-24",
         "qwen35.gdn-dk128-dflash7-confirm-2026-10-24",
         "qwen35.gdn-dk128-prefill-2026-10-24",
-        "qwen35.gdn-dk128-decode-2026-10-24"
+        "qwen35.gdn-dk128-decode-2026-10-24",
+        "qwen35.gdn-dk128-decode-reconfirm-2026-10-28"
       ]
     },
     {
@@ -1204,6 +1206,39 @@
       "note": "tslab project priced the one-row tile at 0.831x and the doc's 0.81x agrees: the projection landed within the floor"
     },
     {
+      "id": "qwen35.mma8-plain-reconfirm-2026-10-28",
+      "date": "2026-10-28",
+      "install": "qwen38-27b",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "2026-10-28 release build (tslab exe of 22:24)",
+      "workload": "tslab sweep mma8_plain: protocol medium-review, 128 decode, chunk 128, context 4096; 3 clean pairs, 3 of 14 runs dropped dirty by the host guard",
+      "arms": {
+        "off": {},
+        "on": {
+          "env": {
+            "TURBOSPARK_INT4_MMA8": "1"
+          }
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "off_tok_s": [22.31, 22.47],
+        "on_tok_s": [18.56, 18.63],
+        "median_improvement": -0.1675,
+        "ci": [-0.1739, -0.1647],
+        "null_floor": 0.0036
+      },
+      "verdict": "loss",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "qwen35-sweep-20261028",
+        "record": "1793250370179-47275-28"
+      },
+      "conditions": "null floor 0.36% (record 1793250112885-34872-20), effect floor 2.00%; sweep record 1793250370182-47275-29; engagement verified (int4_mma8 lane on the on arm); memory growth 549 KiB; dense_kl",
+      "note": "re-confirms qwen35.mma8-plain-decode-2026-10-25 (-17.4%) at the mild edge of the documented -17 to -23% band; the tile stays opt-in"
+    },
+    {
       "id": "qwen35.mma8-lossless-gate-2026-10-25",
       "date": "2026-10-25",
       "install": "qwen38-27b-dflash2",
@@ -1408,6 +1443,43 @@
       },
       "conditions": "the one-row projection was under the floor, and the verdict agrees",
       "note": ""
+    },
+    {
+      "id": "qwen35.gdn-dk128-decode-reconfirm-2026-10-28",
+      "date": "2026-10-28",
+      "install": "qwen38-27b",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "2026-10-28 release build (tslab exe of 22:24)",
+      "workload": "tslab sweep gdn_dk128: protocol medium-review, 128 decode, chunk 128, context 4096; 3 clean pairs, 1 of 10 runs dropped dirty",
+      "arms": {
+        "baked": {},
+        "runtime_dk": {
+          "env": {
+            "TURBOSPARK_GDN_DK128": "0"
+          }
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "baked_tok_s": [22.25, 22.45],
+        "runtime_dk_tok_s": [22.34, 22.41],
+        "median_improvement": -0.0003,
+        "ci": [-0.0052, 0.0071],
+        "null_floor": 0.0036,
+        "prefill_side_read_tok_s": {
+          "baked": [169.3, 169.6],
+          "runtime_dk": [160.3, 160.4]
+        }
+      },
+      "verdict": "noise",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "qwen35-sweep-20261028",
+        "record": "1793250496989-47275-50"
+      },
+      "conditions": "sweep record 1793250496994-47275-51; engagement verified (the gdn_dk128 lane ran baked and verifiably did not run under the kill knob); bit_exact; memory growth -180 KiB",
+      "note": "re-confirms qwen35.gdn-dk128-decode-2026-10-24 on plain decode; the same runs' prefill side-read (-5.3% without the baked kernels) agrees with qwen35.gdn-dk128-prefill-2026-10-24"
     },
     {
       "id": "qwen35.dflash-tree-live-2026-10-25",

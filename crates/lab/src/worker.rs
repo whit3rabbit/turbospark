@@ -12,6 +12,7 @@
 //! Exit codes: 0 measured, 3 the arm was refused or failed cleanly (the
 //! reason is in the record), anything else a crash.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -100,6 +101,117 @@ pub struct Totals {
     /// (`Metric::FollowupTtftS`). `None` without a chat follow-up.
     #[serde(default)]
     pub followup_ttft_s: Option<f64>,
+    /// Modeled joules over the measured prefills and decodes (IOReport,
+    /// whole machine, `energy::ENERGY_MODEL`). `None` without a meter, or
+    /// when a reading failed; chat and speculative prompts meter one
+    /// combined window into `run_j` only.
+    #[serde(default)]
+    pub prefill_j: Option<f64>,
+    #[serde(default)]
+    pub decode_j: Option<f64>,
+    #[serde(default)]
+    pub run_j: Option<f64>,
+    #[serde(default)]
+    pub j_per_prefill_token: Option<f64>,
+    #[serde(default)]
+    pub j_per_decode_token: Option<f64>,
+    /// `cpu`, `gpu`, `ane`, `dram`, `other` over every metered window.
+    #[serde(default)]
+    pub energy_by_block: Option<BTreeMap<String, f64>>,
+    #[serde(default)]
+    pub energy_model: Option<String>,
+}
+
+/// The worker's energy bookkeeping: one meter, three windows.
+struct EnergyLog {
+    meter: Option<crate::energy::EnergyMeter>,
+    prefill_j: f64,
+    decode_j: f64,
+    run_j: f64,
+    /// Tokens of the plain prompts behind `prefill_j` and `decode_j`.
+    plain_prompt_tokens: usize,
+    plain_decode_tokens: usize,
+    by_block: BTreeMap<String, f64>,
+    /// A reading or a delta failed: every energy field reads `None`.
+    broken: bool,
+}
+
+impl EnergyLog {
+    fn open() -> Self {
+        let meter = match crate::energy::EnergyMeter::open() {
+            Ok(m) => Some(m),
+            Err(reason) => {
+                eprintln!("[tslab-worker] no energy meter: {reason}");
+                None
+            }
+        };
+        Self {
+            meter,
+            prefill_j: 0.0,
+            decode_j: 0.0,
+            run_j: 0.0,
+            plain_prompt_tokens: 0,
+            plain_decode_tokens: 0,
+            by_block: BTreeMap::new(),
+            broken: false,
+        }
+    }
+
+    fn mark(&mut self) -> Option<crate::energy::EnergyReading> {
+        let r = self.meter.as_ref().and_then(|m| m.read().ok());
+        if self.meter.is_some() && r.is_none() {
+            self.broken = true;
+        }
+        r
+    }
+
+    /// Adds `to - from` to `window` (`prefill`, `decode` or `run`).
+    fn account(
+        &mut self,
+        window: &str,
+        from: &Option<crate::energy::EnergyReading>,
+        to: &Option<crate::energy::EnergyReading>,
+    ) {
+        if self.meter.is_none() {
+            return;
+        }
+        let Some(d) = from
+            .as_ref()
+            .zip(to.as_ref())
+            .and_then(|(a, b)| crate::energy::delta(a, b))
+        else {
+            self.broken = true;
+            return;
+        };
+        match window {
+            "prefill" => self.prefill_j += d.total_j,
+            "decode" => self.decode_j += d.total_j,
+            _ => self.run_j += d.total_j,
+        }
+        for (k, v) in d.by_block {
+            *self.by_block.entry(k).or_default() += v;
+        }
+    }
+
+    fn fill(self, totals: &mut Totals, saw_plain_prompts: bool) {
+        if self.meter.is_none() || self.broken {
+            return;
+        }
+        if saw_plain_prompts {
+            totals.prefill_j = Some(self.prefill_j);
+            totals.decode_j = Some(self.decode_j);
+            // Only plain prompts fill the prefill and decode windows (chat and
+            // speculative prompts land in `run`), so divide by their tokens,
+            // not by `totals`, which counts every prompt kind.
+            totals.j_per_prefill_token =
+                Some(self.prefill_j / self.plain_prompt_tokens.max(1) as f64);
+            totals.j_per_decode_token = (self.plain_decode_tokens > 0)
+                .then(|| self.decode_j / self.plain_decode_tokens as f64);
+        }
+        totals.run_j = Some(self.run_j + self.prefill_j + self.decode_j);
+        totals.energy_by_block = Some(self.by_block);
+        totals.energy_model = Some(crate::energy::ENERGY_MODEL.into());
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -753,6 +865,9 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
         }
     }
     let warm_s = t_warm.elapsed().as_secs_f64();
+    // Energy is metered over the measured windows only, like the tok/s.
+    let mut energy = EnergyLog::open();
+    let mut saw_plain_prompts = false;
     // `tslab trace` attaches its recorder when it reads this line, so the
     // trace covers measured work, not the model load or the warm pass.
     eprintln!("{MEASURING_MARKER}");
@@ -762,6 +877,7 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
     for (ids, source) in all_ids.iter().zip(&req.workload.prompts) {
         if let PromptSource::Chat(path) = source {
             let chat = ChatFile::load(path, &tokenizer)?;
+            let e0 = energy.mark();
             let p0 = runner.phase_counters();
             let (turns, generated) = chat_once(
                 &mut runner,
@@ -774,6 +890,8 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
                 &mut sampler,
             )?;
             let p1 = runner.phase_counters();
+            let e1 = energy.mark();
+            energy.account("run", &e0, &e1);
             let all = phases::report(&phases::delta(&p0, &p1));
             let token_bytes: Vec<u8> = generated.iter().flat_map(|t| t.to_le_bytes()).collect();
             prompts.push(PromptRecord {
@@ -799,6 +917,7 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
         }
         if let Some(sp) = &speculation {
             runner.reset();
+            let e0 = energy.mark();
             let p0 = runner.phase_counters();
             let (result, generated) = speculative_once(
                 &mut runner,
@@ -810,6 +929,8 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
                 &mut sampler,
             )?;
             let p1 = runner.phase_counters();
+            let e1 = energy.mark();
+            energy.account("run", &e0, &e1);
             let all = phases::report(&phases::delta(&p0, &p1));
             let token_bytes: Vec<u8> = generated.iter().flat_map(|t| t.to_le_bytes()).collect();
             prompts.push(PromptRecord {
@@ -829,6 +950,8 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
             continue;
         }
         runner.reset();
+        saw_plain_prompts = true;
+        let e0 = energy.mark();
         let p0 = runner.phase_counters();
         let t0 = Instant::now();
         prefill(
@@ -840,6 +963,8 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
         )?;
         let prefill_s = t0.elapsed().as_secs_f64();
         let p1 = runner.phase_counters();
+        let e1 = energy.mark();
+        energy.account("prefill", &e0, &e1);
         let bits = f16_bits(&logits);
         let prefill_logits_digest = model_io::hash_data(&bits);
         if req.mode == Mode::Quality {
@@ -858,6 +983,12 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
         }
         let decode_s = t1.elapsed().as_secs_f64();
         let p2 = runner.phase_counters();
+        let e2 = energy.mark();
+        if req.workload.decode_tokens > 0 {
+            energy.account("decode", &e1, &e2);
+        }
+        energy.plain_prompt_tokens += ids.len();
+        energy.plain_decode_tokens += generated.len();
         sampler.sample();
 
         let prefill_phases = phases::report(&phases::delta(&p0, &p1));
@@ -901,6 +1032,23 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
     let dispatch_profile = (std::env::var("TURBOSPARK_DISPATCH_PROFILE").as_deref() == Ok("1"))
         .then(|| runtime::dispatch_profile_report(calls))
         .flatten();
+    let mut totals = Totals {
+        prompt_tokens,
+        prefill_s,
+        prefill_tok_s: prompt_tokens as f64 / prefill_s.max(f64::MIN_POSITIVE),
+        decode_tokens,
+        decode_s,
+        decode_tok_s: (decode_tokens > 0).then(|| decode_tokens as f64 / decode_s),
+        followup_ttft_s,
+        prefill_j: None,
+        decode_j: None,
+        run_j: None,
+        j_per_prefill_token: None,
+        j_per_decode_token: None,
+        energy_by_block: None,
+        energy_model: None,
+    };
+    energy.fill(&mut totals, saw_plain_prompts);
     Ok(RunRecord {
         run_id: req.run_id.clone(),
         arm: req.arm.name.clone(),
@@ -915,15 +1063,7 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
         resolved_slots: Some(runner.expert_cache_slots()),
         resolved_residency: Some(format!("{:?}", runner.resolved_expert_residency())),
         chunked: Some(req.workload.prefill_chunk.is_some()),
-        totals: Some(Totals {
-            prompt_tokens,
-            prefill_s,
-            prefill_tok_s: prompt_tokens as f64 / prefill_s.max(f64::MIN_POSITIVE),
-            decode_tokens,
-            decode_s,
-            decode_tok_s: (decode_tokens > 0).then(|| decode_tokens as f64 / decode_s),
-            followup_ttft_s,
-        }),
+        totals: Some(totals),
         prompts,
         peak_footprint_bytes: sampler.peak_bytes(),
         faults: task_fault_counters(),
@@ -931,6 +1071,45 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
         provenance: provenance::collect(),
         audio: None,
     })
+}
+
+/// `tslab-worker --hog N`: N threads of integer arithmetic until stdin
+/// reaches end of file, then exit 0. The orchestrator closes the pipe when
+/// the measured run ends.
+fn hog(threads: &str) -> i32 {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let n: usize = match threads.parse() {
+        Ok(n) if n > 0 => n,
+        _ => {
+            eprintln!("usage: tslab-worker --hog <threads>, threads positive");
+            return 2;
+        }
+    };
+    let stop = std::sync::Arc::new(AtomicBool::new(false));
+    let workers: Vec<_> = (0..n)
+        .map(|i| {
+            let stop = stop.clone();
+            std::thread::spawn(move || {
+                let mut x = i as u64;
+                while !stop.load(Ordering::Relaxed) {
+                    for _ in 0..(1u32 << 16) {
+                        x = x
+                            .wrapping_mul(6_364_136_223_846_793_005)
+                            .wrapping_add(1_442_695_040_888_963_407);
+                    }
+                    std::hint::black_box(x);
+                }
+            })
+        })
+        .collect();
+    eprintln!("[tslab-worker] hog: {n} busy threads until stdin closes");
+    let mut sink = Vec::new();
+    let _ = std::io::Read::read_to_end(&mut std::io::stdin(), &mut sink);
+    stop.store(true, Ordering::Relaxed);
+    for w in workers {
+        let _ = w.join();
+    }
+    0
 }
 
 /// The `tslab-worker` binary body: `--request <json> --out <json>`.
@@ -942,8 +1121,15 @@ pub fn main_entry() -> i32 {
             .and_then(|i| args.get(i + 1))
             .cloned()
     };
+    // `--hog N`: the controlled-contention load (`~hog:N` arms), N busy
+    // threads until stdin closes. Not a measurement, so no request.
+    if let Some(threads) = get("--hog") {
+        return hog(&threads);
+    }
     let (Some(request), Some(out)) = (get("--request"), get("--out")) else {
-        eprintln!("usage: tslab-worker --request <request.json> --out <record.json>");
+        eprintln!(
+            "usage: tslab-worker --request <request.json> --out <record.json> | --hog <threads>"
+        );
         return 2;
     };
     let req: WorkerRequest = match std::fs::read_to_string(&request)
@@ -991,6 +1177,7 @@ mod tests {
             open: Default::default(),
             speculation: None,
             expect_engaged: Vec::new(),
+            contention: None,
         }
     }
 

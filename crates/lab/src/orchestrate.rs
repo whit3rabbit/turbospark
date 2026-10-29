@@ -91,10 +91,80 @@ fn summarize_host(samples: &[HostSample]) -> Value {
         "load1_max": max(|s| s.load1),
         "foreign_cpu_max": max(|s| s.foreign_cpu_percent),
         "swap_used_mib_max": max(|s| s.swap_used_mib.unwrap_or(f64::NAN)),
+        "contention": samples.iter().find_map(|s| s.contention),
         "busiest": samples
             .iter()
             .max_by(|a, b| a.foreign_cpu_percent.total_cmp(&b.foreign_cpu_percent))
             .map(|s| s.foreign_top.iter().take(3).map(|p| json!({"cpu": p.cpu_percent, "command": p.command})).collect::<Vec<_>>()),
+    })
+}
+
+/// The runtime's `[ane-prefill]` stderr lines (`TURBOSPARK_ANE_PREFILL_STATS=1`,
+/// `families/qwen/ane_split.rs` `print_stats`) as data: one entry per split
+/// micro-batch, warm pass included, plus a summary of the host handoff. The
+/// handoff is `wake_ms` (GPU done to the host seeing it) plus `resume_ms`
+/// (host signal to the next segment's first GPU work), the two costs a
+/// device-side event would remove; its share of `wall_ms` is the reopen
+/// test in `docs/SPEEDUP_PLAYBOOK.md`, "Not pursued". `Null` without lines.
+pub fn parse_ane_stats(stderr: &str) -> Value {
+    let mut batches: Vec<serde_json::Map<String, Value>> = Vec::new();
+    for line in stderr.lines() {
+        let Some(rest) = line.strip_prefix("[ane-prefill] ") else {
+            continue;
+        };
+        if !rest.starts_with("mode=") {
+            continue;
+        }
+        let mut m = serde_json::Map::new();
+        for kv in rest.split_whitespace() {
+            if let Some((k, v)) = kv.split_once('=') {
+                m.insert(
+                    k.to_string(),
+                    v.parse::<f64>().map_or_else(|_| json!(v), |x| json!(x)),
+                );
+            }
+        }
+        batches.push(m);
+    }
+    if batches.is_empty() {
+        return Value::Null;
+    }
+    let f = |m: &serde_json::Map<String, Value>, k: &str| {
+        m.get(k).and_then(Value::as_f64).unwrap_or(0.0)
+    };
+    let wall: f64 = batches.iter().map(|m| f(m, "wall_ms")).sum();
+    let handoff: f64 = batches
+        .iter()
+        .map(|m| f(m, "wake_ms") + f(m, "resume_ms"))
+        .sum();
+    let points: f64 = batches.iter().map(|m| f(m, "points")).sum();
+    let gpu_waits: f64 = batches.iter().map(|m| f(m, "gpu_waits_ane_ms")).sum();
+    let ane_waits: f64 = batches.iter().map(|m| f(m, "ane_waits_gpu_ms")).sum();
+    let mut per_point: Vec<f64> = batches
+        .iter()
+        .filter(|m| f(m, "points") > 0.0)
+        .map(|m| (f(m, "wake_ms") + f(m, "resume_ms")) / f(m, "points"))
+        .collect();
+    per_point.sort_by(|a, b| a.total_cmp(b));
+    let pct = |p: f64| {
+        per_point
+            .get(((per_point.len() as f64 - 1.0) * p).round() as usize)
+            .copied()
+    };
+    json!({
+        "micro_batches": batches,
+        "summary": {
+            "micro_batches": per_point.len(),
+            "points": points,
+            "wall_ms": wall,
+            "handoff_ms": handoff,
+            "handoff_share": if wall > 0.0 { handoff / wall } else { 0.0 },
+            "handoff_ms_per_point_mean": if points > 0.0 { handoff / points } else { 0.0 },
+            "handoff_ms_per_point_p50": pct(0.5),
+            "handoff_ms_per_point_p95": pct(0.95),
+            "gpu_waits_ane_ms": gpu_waits,
+            "ane_waits_gpu_ms": ane_waits,
+        }
     })
 }
 
@@ -212,6 +282,25 @@ impl Session {
             .map_err(|e| format!("{}: {e}", stderr_path.display()))?;
 
         let mut monitor = HostMonitor::new();
+        // Controlled contention: a sibling `tslab-worker --hog N` started
+        // before the measured worker and stopped (stdin closed) after it. A
+        // child of this process, so the host monitor's ppid walk never counts
+        // it as foreign load; the sample records it instead.
+        let mut hog = match &arm.contention {
+            Some(c) => {
+                let child = Command::new(&self.worker)
+                    .arg("--hog")
+                    .arg(c.hog_threads.to_string())
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .map_err(|e| format!("hog {}: {e}", self.worker.display()))?;
+                monitor.set_hog(child.id(), c.hog_threads);
+                Some(child)
+            }
+            None => None,
+        };
         let mut samples = vec![monitor.sample(None)];
         let mut cmd = Command::new(&self.worker);
         cmd.arg("--request")
@@ -257,6 +346,10 @@ impl Session {
         };
         let wall_s = started.elapsed().as_secs_f64();
         samples.push(monitor.sample(None));
+        if let Some(mut h) = hog.take() {
+            drop(h.stdin.take());
+            let _ = h.wait();
+        }
 
         let mut record: Value = std::fs::read_to_string(&record_path)
             .ok()
@@ -264,10 +357,14 @@ impl Session {
             .unwrap_or(Value::Null);
         let stderr_text = std::fs::read_to_string(&stderr_path).unwrap_or_default();
         let spec_stats = parse_spec_stats(&stderr_text);
+        let ane_stats = parse_ane_stats(&stderr_text);
         let engaged = knobs::engaged_lines(&stderr_text);
-        if spec_stats.as_array().is_some_and(|a| !a.is_empty()) {
-            if let Value::Object(m) = &mut record {
+        if let Value::Object(m) = &mut record {
+            if spec_stats.as_array().is_some_and(|a| !a.is_empty()) {
                 m.insert("spec_stats".into(), spec_stats.clone());
+            }
+            if !ane_stats.is_null() {
+                m.insert("ane_stats".into(), ane_stats.clone());
             }
         }
         let status = if timed_out {
@@ -288,6 +385,12 @@ impl Session {
             if arm.env.contains_key(env) {
                 reasons.push(format!("{env} perturbs timing; run is not quotable"));
             }
+        }
+        if let Some(c) = &arm.contention {
+            reasons.push(format!(
+                "controlled contention hog:{}, not quotable",
+                c.hog_threads
+            ));
         }
         // Only a run that got far enough to run its lanes can be held to
         // them: a refused or crashed run already carries its reason.
@@ -321,6 +424,8 @@ impl Session {
             "exe_sha256": record["provenance"]["exe_sha256"],
             "speculation": arm.speculation,
             "spec_stats": spec_stats,
+            "ane_stats": ane_stats,
+            "controlled_contention": arm.contention,
             "engaged": engaged,
         });
         self.ledger.append("run", run_payload.clone())?;
@@ -703,6 +808,32 @@ mod tests {
         );
         // A clean run that still carries a stray reason is not counted.
         assert!(dirty_causes(&[(outcome(true, &["stale"]), outcome(true, &[]))]).is_empty());
+    }
+
+    #[test]
+    fn ane_stats_lines_parse_per_micro_batch_with_a_handoff_summary() {
+        let err = "noise\n\
+            [ane-prefill] mode=Split start=0 m=2048 slot=2048 points=4 encode_ms=10.0 wall_ms=200.0 \
+            gpu_busy_ms=150.0 steel_rows_ms=90.0 ane_ms=80.0 wake_ms=1.0 gpu_waits_ane_ms=0.5 \
+            ane_waits_gpu_ms=2.0 resume_ms=1.0 gateup_n=4 gateup_rows_ms=90.0\n\
+            [ane-prefill] mode=Split start=2048 m=1024 slot=2048 points=2 encode_ms=5.0 wall_ms=100.0 \
+            gpu_busy_ms=70.0 steel_rows_ms=40.0 ane_ms=30.0 wake_ms=3.0 gpu_waits_ane_ms=0.0 \
+            ane_waits_gpu_ms=0.0 resume_ms=3.0\n";
+        let v = parse_ane_stats(err);
+        assert_eq!(v["micro_batches"].as_array().unwrap().len(), 2);
+        assert_eq!(v["micro_batches"][0]["mode"], "Split");
+        assert_eq!(v["micro_batches"][0]["gateup_n"], 4.0);
+        let s = &v["summary"];
+        assert_eq!(s["points"], 6.0);
+        assert_eq!(s["wall_ms"], 300.0);
+        // (1 + 1) + (3 + 3) = 8 ms of handoff over 300 ms of wall.
+        assert_eq!(s["handoff_ms"], 8.0);
+        assert!((s["handoff_share"].as_f64().unwrap() - 8.0 / 300.0).abs() < 1e-12);
+        // Per point: 0.5 ms in the first micro-batch, 3.0 in the second.
+        assert_eq!(s["handoff_ms_per_point_p50"], 3.0);
+        assert_eq!(s["handoff_ms_per_point_p95"], 3.0);
+        assert!((s["handoff_ms_per_point_mean"].as_f64().unwrap() - 8.0 / 6.0).abs() < 1e-12);
+        assert!(parse_ane_stats("nothing here\n").is_null());
     }
 
     #[test]

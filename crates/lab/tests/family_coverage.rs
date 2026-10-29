@@ -77,6 +77,29 @@ fn every_family_has_coverage_and_matmul_shapes() {
     }
 }
 
+/// Mirrors the runtime's decode-kernel match in
+/// `crates/runtime/src/real_forward_types.rs`: the 2026-10-29 flip covers
+/// dense Llama but not Mixtral (same family string) or Qwen3Moe.
+#[test]
+fn decode_attention_follows_the_runtime_default() {
+    let decode = |a: ArchConfig| coverage(&subject(a)).facts.unwrap().decode_attention;
+    assert_eq!(decode(arch_for(ModelFamily::Llama)), "gqa");
+    let mut mixtral = repack::tiny_llama_arch(512, 4, 8);
+    mixtral.family = ModelFamily::Llama;
+    assert_eq!(decode(mixtral), "barrier");
+    assert_eq!(decode(arch_for(ModelFamily::Qwen3Moe)), "barrier");
+    assert_eq!(decode(arch_for(ModelFamily::MiniMaxM2)), "barrier");
+    for f in [
+        ModelFamily::QwenGdnDense,
+        ModelFamily::Qwen2Dense,
+        ModelFamily::Qwen3Dense,
+        ModelFamily::Qwen3Vl,
+        ModelFamily::Spark25,
+    ] {
+        assert_eq!(decode(arch_for(f)), "gqa", "{f:?}");
+    }
+}
+
 #[test]
 fn deepseek2_gets_latent_projections_not_generic_attention() {
     let a = arch_for(ModelFamily::Deepseek2);

@@ -12,6 +12,7 @@
 //! apply, because a GPU microbench is as sensitive to a neighbour as a model
 //! run is. Env knobs do not reach a bench: it calls the kernels directly.
 
+pub mod ane_matmul;
 pub mod attn_decode;
 pub mod gdn_delta;
 pub mod int4_matmul;
@@ -189,6 +190,9 @@ pub struct BenchOpts {
     /// `verify_ladder`: an experiment whose speculative runs supply measured
     /// verify ms per round.
     pub verify_from: Option<String>,
+    /// `ane_matmul`: the directory of Core ML sweep programs
+    /// (`gen_ane_sweep_programs.py`), `--programs`.
+    pub ane_programs: Option<PathBuf>,
 }
 
 impl Default for BenchOpts {
@@ -200,6 +204,7 @@ impl Default for BenchOpts {
             reps: 5,
             hash: false,
             verify_from: None,
+            ane_programs: None,
         }
     }
 }
@@ -233,6 +238,7 @@ pub fn registry() -> Vec<&'static dyn KernelBench> {
         &verify_ladder::VerifyLadder,
         &music3_grid::Music3Grid,
         &whisper_linear::WhisperLinear,
+        &ane_matmul::AneMatmul,
     ]
 }
 
@@ -296,6 +302,7 @@ pub fn kernel_cmd(mut args: Args) -> Result<(), String> {
     let reps: usize = args.parsed("--reps", 5)?;
     let hash = args.flag("--hash");
     let verify_from = args.take("--verify-from")?;
+    let ane_programs = args.take("--programs")?.map(PathBuf::from);
     // `--shape RxC` predates `--case`; both select one case label.
     let only_case = match (args.take("--case")?, args.take("--shape")?) {
         (Some(c), _) | (None, Some(c)) => Some(c),
@@ -325,6 +332,7 @@ pub fn kernel_cmd(mut args: Args) -> Result<(), String> {
         reps,
         hash,
         verify_from,
+        ane_programs,
     };
 
     let subject = Subject::open(&model)?;
@@ -334,6 +342,15 @@ pub fn kernel_cmd(mut args: Args) -> Result<(), String> {
     let mut context = gpu::MetalContext::new().map_err(|e| e.to_string())?;
     let provenance = crate::provenance::collect();
     let mut monitor = HostMonitor::new();
+    // Modeled energy per case (IOReport, whole machine). A host without the
+    // counters runs without the column.
+    let meter = match crate::energy::EnergyMeter::open() {
+        Ok(m) => Some(m),
+        Err(reason) => {
+            eprintln!("tslab kernel: no energy meter ({reason})");
+            None
+        }
+    };
     eprintln!(
         "tslab kernel: {} ({}), ledger {}",
         subject.dir.display(),
@@ -341,10 +358,21 @@ pub fn kernel_cmd(mut args: Args) -> Result<(), String> {
         ledger.path().display()
     );
 
-    let record = |result: &BenchResult, samples: Vec<crate::host::HostSample>| {
+    let record = |result: &BenchResult,
+                  samples: Vec<crate::host::HostSample>,
+                  energy: Option<crate::energy::EnergyDelta>| {
         let (eligible, reasons) = eligibility(&samples, &rules);
         if !eligible {
             crate::say!("  DIRTY: {}", reasons.join("; "));
+        }
+        if let Some(e) = &energy {
+            crate::say!(
+                "  energy over the case: {:.2} J (gpu {:.2}, ane {:.2}, cpu {:.2}; modeled whole machine)",
+                e.total_j,
+                e.by_block.get("gpu").copied().unwrap_or(0.0),
+                e.by_block.get("ane").copied().unwrap_or(0.0),
+                e.by_block.get("cpu").copied().unwrap_or(0.0)
+            );
         }
         ledger.append(
             "kernel_curve",
@@ -352,7 +380,7 @@ pub fn kernel_cmd(mut args: Args) -> Result<(), String> {
                    "bench": result.bench, "case": result.case, "hashed": opts.hash,
                    "eligible": eligible, "reasons": reasons, "result": result,
                    "exactness_hints": crate::bench::exactness_hints(result),
-                   "provenance": provenance}),
+                   "energy": energy, "provenance": provenance}),
         )
     };
 
@@ -370,10 +398,16 @@ pub fn kernel_cmd(mut args: Args) -> Result<(), String> {
                 continue;
             }
             let before = monitor.sample(None);
+            let e0 = meter.as_ref().and_then(|m| m.read().ok());
             let result = b.run(&mut context, &subject, &case, &opts)?;
+            let e1 = meter.as_ref().and_then(|m| m.read().ok());
             let after = monitor.sample(None);
+            let energy = match (e0, e1) {
+                (Some(a), Some(b)) => crate::energy::delta(&a, &b),
+                _ => None,
+            };
             print_result(&result);
-            record(&result, vec![before, after])?;
+            record(&result, vec![before, after], energy)?;
             ran += 1;
         }
     }

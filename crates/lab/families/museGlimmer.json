@@ -5,35 +5,193 @@
   "title": "Muse-Glimmer-30B: dense GQA, three sliding to one full layer, centered norms, NoPE on full layers, softcap 20",
   "flow": "museglimmer",
   "installs": [
-    {"name": "muse-glimmer-30b", "quant": "MLX INT4", "machine": "Apple M4 Max 36 GB", "drafters": [], "note": "no install on this host today; 8,192 context with a 2,048 budget"}
+    {
+      "name": "muse-glimmer-30b",
+      "quant": "MLX INT4",
+      "machine": "Apple M4 Max 36 GB",
+      "drafters": [],
+      "note": "no install on this host today; 8,192 context with a 2,048 budget"
+    },
+    {
+      "name": "museglimmer",
+      "quant": "MLX INT4 (mlx-community/Muse-Glimmer-30B-4bit)",
+      "machine": "Apple M4 Max 36 GB",
+      "drafters": [],
+      "note": "head_dim 128, 32 q over 2 kv heads (group 16) on the full layers; measured 2026-10-29 (the family's first lab A/B)"
+    }
   ],
   "recommended": [
-    {"chunk": "128", "when": [],
-     "why": "the family's chunked driver; the only measured rows are plain decode and power",
-     "findings": ["museGlimmer.seventh-family-rows-2026-08-15"]}
+    {
+      "chunk": "128",
+      "when": [],
+      "why": "the family's chunked driver; the only measured rows are plain decode and power",
+      "findings": [
+        "museGlimmer.seventh-family-rows-2026-08-15"
+      ]
+    }
   ],
   "sweeps": [
-    {"id": "batched_gemv", "description": "the batched prefill arm against the per-token loop",
-     "when": ["dense"], "metric": "prefill_tok_s", "exactness": "dense_kl",
-     "workload": {"prompts": [{"protocol": "long-synthesis"}], "decode_tokens": 16},
-     "baseline": "batched", "candidates": ["per_token:batched_gemv=0"]},
-    {"id": "decode_attention", "description": "the GQA-shared decode kernel against barrier on the full layers",
-     "when": ["dense"], "metric": "decode_tok_s", "exactness": "dense_kl",
-     "workload": {"prompts": [{"protocol": "medium-review"}], "decode_tokens": 64},
-     "baseline": "default", "candidates": ["gqa:attn_decode_kernel=gqa"]}
+    {
+      "id": "batched_gemv",
+      "description": "the batched prefill arm against the per-token loop",
+      "when": [
+        "dense"
+      ],
+      "metric": "prefill_tok_s",
+      "exactness": "dense_kl",
+      "workload": {
+        "prompts": [
+          {
+            "protocol": "long-synthesis"
+          }
+        ],
+        "decode_tokens": 16
+      },
+      "baseline": "batched",
+      "candidates": [
+        "per_token:batched_gemv=0"
+      ]
+    },
+    {
+      "id": "decode_attention",
+      "description": "the GQA-shared decode kernel against barrier on the full layers",
+      "when": [
+        "dense"
+      ],
+      "metric": "decode_tok_s",
+      "exactness": "dense_kl",
+      "workload": {
+        "prompts": [
+          {
+            "protocol": "medium-review"
+          }
+        ],
+        "decode_tokens": 64
+      },
+      "baseline": "default",
+      "candidates": [
+        "gqa:attn_decode_kernel=gqa"
+      ]
+    }
   ],
   "findings": [
-    {"id": "museGlimmer.seventh-family-rows-2026-08-15", "date": "2026-08-15",
-     "install": "muse-glimmer-30b MLX INT4", "machine": "Apple M4 Max 36 GB", "power": "ac", "rev": "v0.4 era",
-     "workload": "the seventh family's rows: short, medium, long protocol prompts; perplexity; power",
-     "arms": {"default": {}},
-     "metric": "decode_tok_s", "values": {"decode_tok_s": [13.291, 15.341, 14.483], "peak_mib": 535, "perplexity": 6.2826, "watts": [37.69, 38.24], "j_per_token": [2.01, 2.04], "governor_energy_saving": 0.26, "governor_throughput_cost": 0.013},
-     "verdict": "reading",
-     "provenance": {"kind": "doc", "path": "docs/BENCHMARKS.md", "heading": "The seventh family: `Muse-Glimmer-30B` (MLX INT4)"},
-     "conditions": "the highest J/token in POWER_BASELINE; the thermal governor saves 26% energy for 1.3% throughput",
-     "note": "tslab has no energy meter: use scripts/power.sh"}
+    {
+      "id": "museGlimmer.seventh-family-rows-2026-08-15",
+      "date": "2026-08-15",
+      "install": "muse-glimmer-30b MLX INT4",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "v0.4 era",
+      "workload": "the seventh family's rows: short, medium, long protocol prompts; perplexity; power",
+      "arms": {
+        "default": {}
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "decode_tok_s": [
+          13.291,
+          15.341,
+          14.483
+        ],
+        "peak_mib": 535,
+        "perplexity": 6.2826,
+        "watts": [
+          37.69,
+          38.24
+        ],
+        "j_per_token": [
+          2.01,
+          2.04
+        ],
+        "governor_energy_saving": 0.26,
+        "governor_throughput_cost": 0.013
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "doc",
+        "path": "docs/BENCHMARKS.md",
+        "heading": "The seventh family: `Muse-Glimmer-30B` (MLX INT4)"
+      },
+      "conditions": "the highest J/token in POWER_BASELINE; the thermal governor saves 26% energy for 1.3% throughput",
+      "note": "tslab has no energy meter: use scripts/power.sh"
+    },
+    {
+      "id": "museGlimmer.batched-gemv-2026-10-29",
+      "date": "2026-10-29",
+      "install": "museglimmer",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "2026-10-29 release build",
+      "workload": "tslab sweep batched_gemv: protocol long-synthesis (2,820 prompt tokens), 16 decode, chunk 128; 3 clean pairs, 0 dirty",
+      "arms": {
+        "batched": {},
+        "per_token": {
+          "env": {
+            "TURBOSPARK_BATCHED_GEMV": "0"
+          }
+        }
+      },
+      "metric": "prefill_tok_s",
+      "values": {
+        "batched_median_tok_s": 18.66,
+        "per_token_median_tok_s": 18.54,
+        "median_improvement": -0.0062,
+        "ci": [
+          -0.0095,
+          0.0056
+        ],
+        "null_floor": 0.0033
+      },
+      "verdict": "noise",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "museglimmer-sweep-20261029",
+        "record": "1793283761578-94941-16"
+      },
+      "conditions": "effect floor 2.00% (prefill null 0.33%, record 1793282228867-5274-16); sweep record 1793283761583-94941-17; dense_kl (softcap 20 covered by the class)",
+      "note": "the family's first lab A/B; the chunk-128 batched prefill default stands"
+    },
+    {
+      "id": "museGlimmer.gqa-decode-group16-2026-10-29",
+      "date": "2026-10-29",
+      "install": "museglimmer",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "2026-10-29 release build",
+      "workload": "tslab sweep decode_attention: protocol medium-review, 64 decode; 0 clean pairs of 6, every gqa run rejected by the engagement guard",
+      "arms": {
+        "barrier_default": {},
+        "gqa": {
+          "env": {
+            "TURBOSPARK_ATTN_DECODE_KERNEL": "gqa"
+          }
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "barrier_median_tok_s": 19.7,
+        "clean_pairs": 0
+      },
+      "verdict": "inconclusive",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "museglimmer-sweep-20261029",
+        "record": "1793284196972-94941-46"
+      },
+      "conditions": "every gqa run: not engaged, no [engaged] attn_decode_gqa, engaged list shows attn_decode_barrier; this install is head_dim 128 with 32 q over 2 kv heads - group 16 exceeds the GQA-shared kernel's group <= 8 gate, so the knob is a no-op here; decode null floor 0.61% (record 1793282480241-77852-16); sweep record 1793284196976-94941-47",
+      "note": "the question is structurally closed on this geometry, not lost: the family's exclusion from the 2026-10-29 GQA decode flip was correct; a grouped-query variant (group <= 8) would be a new install"
+    }
   ],
-  "open_questions": ["no lab A/B yet", "the 2,048 budget against the 8,192 window under a chat workload"],
-  "traps": ["softcap 20 on the logits: a sampling change moves the distribution probe; declare dense_kl"],
-  "docs": ["docs/BENCHMARKS.md", "docs/POWER_BASELINE.md"]
+  "open_questions": [
+    "no lab A/B yet",
+    "the 2,048 budget against the 8,192 window under a chat workload"
+  ],
+  "traps": [
+    "softcap 20 on the logits: a sampling change moves the distribution probe; declare dense_kl",
+    "group-16 geometry (32 q over 2 kv): the GQA-shared decode kernel's group <= 8 gate makes attn_decode_kernel=gqa a deterministic no-op here - every such arm measures barrier and is rejected by the engagement guard"
+  ],
+  "docs": [
+    "docs/BENCHMARKS.md",
+    "docs/POWER_BASELINE.md"
+  ]
 }

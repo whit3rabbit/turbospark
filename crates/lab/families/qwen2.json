@@ -4,24 +4,167 @@
   "kind": "text",
   "title": "Qwen2 dense GQA on the llama flow, qkv biases, no qk norm",
   "flow": "llama",
-  "installs": [],
+  "installs": [
+    {
+      "name": "qwen25-7b-q3km",
+      "quant": "GGUF Q3_K_M",
+      "machine": "Apple M4 Max 36 GB",
+      "drafters": [],
+      "note": "head_dim 128, 28 q over 4 kv heads: the GQA-shared decode kernel serves this shape (measured 2026-10-29)"
+    }
+  ],
   "recommended": [
-    {"chunk": "128", "when": [],
-     "why": "the dense llama flow's chunked driver; same lab coverage as qwen3",
-     "findings": []}
+    {
+      "chunk": "128",
+      "when": [],
+      "why": "the dense llama flow's chunked driver; same lab coverage as qwen3",
+      "findings": [
+        "qwen2.batched-gemv-2026-10-29"
+      ]
+    },
+    {
+      "knob": "attn_decode_kernel",
+      "value": "<unset>",
+      "when": [],
+      "why": "default on (llama-flow flip, 2026-10-29): the GQA-shared decode kernel read +3.93% on qwen25-7b-q3km; TURBOSPARK_ATTN_DECODE_KERNEL=barrier restores it and is the sweep's kill arm",
+      "findings": [
+        "qwen2.gqa-decode-2026-10-29"
+      ]
+    }
   ],
   "sweeps": [
-    {"id": "batched_gemv", "description": "the batched prefill arm against the per-token loop",
-     "when": ["dense"], "metric": "prefill_tok_s", "exactness": "dense_kl",
-     "workload": {"prompts": [{"protocol": "long-synthesis"}], "decode_tokens": 16},
-     "baseline": "batched", "candidates": ["per_token:batched_gemv=0"]},
-    {"id": "decode_attention", "description": "the GQA-shared decode kernel against barrier",
-     "when": ["dense"], "metric": "decode_tok_s", "exactness": "dense_kl",
-     "workload": {"prompts": [{"protocol": "medium-review"}], "decode_tokens": 64},
-     "baseline": "default", "candidates": ["gqa:attn_decode_kernel=gqa"]}
+    {
+      "id": "batched_gemv",
+      "description": "the batched prefill arm against the per-token loop",
+      "when": [
+        "dense"
+      ],
+      "metric": "prefill_tok_s",
+      "exactness": "dense_kl",
+      "workload": {
+        "prompts": [
+          {
+            "protocol": "long-synthesis"
+          }
+        ],
+        "decode_tokens": 16
+      },
+      "baseline": "batched",
+      "candidates": [
+        "per_token:batched_gemv=0"
+      ]
+    },
+    {
+      "id": "decode_attention",
+      "description": "the barrier kernel opt-out against the default GQA-shared decode kernel",
+      "when": [
+        "dense"
+      ],
+      "metric": "decode_tok_s",
+      "exactness": "dense_kl",
+      "workload": {
+        "prompts": [
+          {
+            "protocol": "medium-review"
+          }
+        ],
+        "decode_tokens": 64
+      },
+      "baseline": "default",
+      "candidates": [
+        "barrier:attn_decode_kernel=barrier"
+      ]
+    }
   ],
-  "findings": [],
-  "open_questions": ["no install measured by the lab yet: run workflow new-family first"],
-  "traps": ["the qkv biases are part of the projection shapes the resident index reports; a synthesized bench weight has none"],
-  "docs": ["docs/BATCHED_PREFILL.md"]
+  "findings": [
+    {
+      "id": "qwen2.gqa-decode-2026-10-29",
+      "date": "2026-10-29",
+      "install": "qwen25-7b-q3km",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "2026-10-28 release build (tslab exe of 22:24)",
+      "workload": "tslab sweep decode_attention: protocol medium-review, 64 decode, chunk 128; 3 clean pairs, 0 dirty",
+      "arms": {
+        "barrier_default": {},
+        "gqa": {
+          "env": {
+            "TURBOSPARK_ATTN_DECODE_KERNEL": "gqa"
+          }
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "barrier_tok_s": [
+          30.0,
+          30.04
+        ],
+        "gqa_tok_s": [
+          31.18,
+          31.2
+        ],
+        "median_improvement": 0.0393,
+        "ci": [
+          0.0382,
+          0.0396
+        ],
+        "null_floor": 0.0025
+      },
+      "verdict": "win",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "qwen2-sweep-20261029",
+        "record": "1793259670370-35341-38"
+      },
+      "conditions": "workload floor 0.25% (null record 1793258429189-22861-16), effect floor 2.00%; sweep record 1793259670374-35341-39; dense_kl; memory growth -2.54 MiB; engagement verified (attn_decode_gqa on every candidate run, attn_decode_barrier on every default run)",
+      "note": "the family's first lab-ledger A/B; second leg (after llama.gqa-decode-mistral7b-2026-10-29, +5.73%) behind the llama-flow decode default flip"
+    },
+    {
+      "id": "qwen2.batched-gemv-2026-10-29",
+      "date": "2026-10-29",
+      "install": "qwen25-7b-q3km",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "2026-10-28 release build (tslab exe of 22:24)",
+      "workload": "tslab sweep batched_gemv: protocol long-synthesis, 16 decode, chunk 128; 3 clean pairs, 1 dirty pair dropped",
+      "arms": {
+        "batched": {},
+        "per_token": {
+          "env": {
+            "TURBOSPARK_BATCHED_GEMV": "0"
+          }
+        }
+      },
+      "metric": "prefill_tok_s",
+      "values": {
+        "batched_tok_s": [
+          28.7,
+          28.8
+        ],
+        "per_token_median_improvement": 0.0003,
+        "ci": [
+          -0.0003,
+          0.0008
+        ],
+        "null_floor": 0.0001
+      },
+      "verdict": "noise",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "qwen2-sweep-20261029",
+        "record": "1793259508078-35341-20"
+      },
+      "conditions": "effect floor 2.00%; sweep record 1793259508082-35341-21; dense_kl; memory growth 2.36 MiB",
+      "note": "the chunk-128 batched prefill default stands on this family too"
+    }
+  ],
+  "open_questions": [
+    "the GQA decode default (2026-10-29 flip) rests on timing and 64-token greedy identity only: run a dense_kl gate on qwen25-7b-q3km with TURBOSPARK_ATTN_DECODE_KERNEL=barrier against unset"
+  ],
+  "traps": [
+    "the qkv biases are part of the projection shapes the resident index reports; a synthesized bench weight has none"
+  ],
+  "docs": [
+    "docs/BATCHED_PREFILL.md"
+  ]
 }

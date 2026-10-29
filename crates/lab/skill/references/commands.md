@@ -31,8 +31,8 @@ process, which must sit beside `tslab`.
 |---|---|---|
 | `profile --model M --prompt protocol:long-synthesis --decode 64` | Where a pass spends time: prefill and decode tok/s, phase buckets, peak footprint | `run`, `profile_summary` |
 | `profile ... --arm A --arm B:KNOB=V` | Several arms in rotated rounds, no verdict | same |
-| `profile ... --dispatch-probe 0,4,8,16` | Price of one chained dispatch (dense qwen and llama trunks) | adds `dispatch_probe` |
-| `profile ... --standin attn,mlp,gdn` | Each block's in-place cost (dense qwen and llama trunks) | adds `standin` |
+| `profile ... --dispatch-probe 0,4,8,16` | Price of one chained dispatch (dense qwen and llama trunks); the arms price decode, so give `--decode 8` or more | adds `dispatch_probe` |
+| `profile ... --standin attn,mlp,gdn` | Each block's in-place cost (dense qwen and llama trunks); also needs `--decode 8` or more | adds `standin` |
 | `ab --model M --null` | This host's noise floor for a workload and metric. Run once per workload before any `ab` | `null_calibration` |
 | `ab --model M --baseline off --candidate on:KNOB=V` | Does a switch win? Paired, interleaved, with a fixed verdict rule | `run`, `verdict` |
 | `sweep --model M --sweep ID\|all` | Every candidate of a profile sweep against its baseline, each by the same pair rule as `ab`, interleaved in one session; `--sweep-file F` or `--baseline A --candidate B --candidate C` for an ad hoc one. Workload flags override the sweep's workload. Exit 4 if any candidate is inconclusive, 3 only with `--fail-on-loss` | `run`, one `verdict` per candidate, `sweep` |
@@ -40,15 +40,24 @@ process, which must sit beside `tslab`.
 | `tree-replay --model M --drafter mtp\|dflash` | Would tree verify accept more than the chain at equal rows | `tree_replay` |
 | `chain-capture` then `depth-replay` | Best speculative depth policy, priced from modeled or ledger round costs | `chain_capture`, `depth_replay` |
 | `ane-plan --path PROGRAM.mlpackage\|DIR [--units ane\|all\|gpu\|cpu]` | Where Core ML places a program's ops (`MLComputePlan`), as cost shares on ANE, GPU and CPU plus the ops left off the ANE. No timing and no model install. Needs a macOS with compute plans | `ane_plan` |
+| `expert-census --model M [workload]` | One router capture run of a MoE install, reduced: the share of selections in experts used 8/16/17/32+ times within an executed batch, the largest in-batch group, experts per layer covering 50/80/95% of selections, the expert union per full batch against 16/32/64/96 slots, and the routed sub-batch sizes per union cap. The capture run itself is unquotable | `run`, `expert_census` |
 
 Workload flags: `--prompt protocol:ID|messages:PATH|text:PATH|corpus:N|chat:PATH`
 (repeatable), `--decode N`, `--chunk N|off`, `--context N`. An audio install
 takes `--audio-job JOB.json` instead (`workloads/audio/`), and its metrics are
 `audio_run_s` and `rtf`.
 
-Arm syntax: `NAME[@SLOTS/RESIDENCY][~DRAFTER:BLOCK[a]][:KEY=V,...]`, for
-example `mtp2~mtp:2:spec_stats=1`. `KEY` is a `TURBOSPARK_*` name or a knob
-short name.
+Arm syntax: `NAME[@SLOTS/RESIDENCY][~DRAFTER:BLOCK[a]][~hog:N][:KEY=V,...]`,
+for example `mtp2~mtp:2:spec_stats=1`. `KEY` is a `TURBOSPARK_*` name or a
+knob short name. `~hog:N` runs N busy threads beside the worker for the
+whole run (controlled contention, never quotable); its run records keep
+`controlled_contention` and, with `ane_prefill_stats=1`, `ane_stats` with
+the handoff share.
+
+Metrics: `prefill_tok_s`, `decode_tok_s`, `prefill_s`, `peak_bytes`,
+`followup_ttft_s`, `audio_run_s`, `rtf`, and the modeled-energy pair
+`prefill_j`, `decode_j` (IOReport, whole machine, comparable within one
+experiment; never a wall-power claim).
 
 Host flags: `--max-foreign-cpu 150`, `--max-single-cpu 90`, `--allow-battery`,
 `--quiet-wait-min 5`, `--min-free-gb 10`, `--timeout-min 60`. Loosening them
@@ -56,7 +65,17 @@ gets you numbers from a busy host, which is all they then are.
 
 ## Kernel benches (in process, no model weights)
 
-`kernel --model M [--bench NAME[,NAME]|all] [--rows ...] [--contexts ...] [--hash]`
+`kernel --model M [--bench NAME[,NAME]|all] [--rows ...] [--contexts ...] [--case LABEL] [--reps 5] [--hash] [--programs DIR]`
+
+Every case records an `energy` delta over its run when the host has the
+IOReport counters. `--bench ane_matmul` (a `tslab` built with
+`--features ane-prefill`) needs `--programs DIR` from
+`crates/coreml/tools/gen_ane_sweep_programs.py` and prints the exact
+generator line for the install's shapes when they are missing: per shape
+and token count it times Steel, the ANE program (conversions and handoff
+included) and the row split at several shares, records where Core ML
+planned each program, puts joules on each point, and fits the `ane gate`
+thresholds in its notes.
 
 | Bench | Measures |
 |---|---|
@@ -111,6 +130,10 @@ and the 8-row tile's lever 9 was exactly that.
 |---|---|
 | `export --experiment E[,F]\|--all [--format jsonl\|json\|csv] [--redact-paths] [--out P]` | `tslab/1` series, one per plottable line or bar group |
 | `report --experiment E --html OUT.html` | One self-contained HTML page with charts and tables |
+
+## Running several commands at once
+
+`workflow NAME|--plan PLAN.json [--model M] [--experiment E] [--var KEY=V]... [--step ID] [--from ID] [--resume RUN] [--dry-run]` runs several of these commands in order as one resumable, lock-holding run (`--list` and `--print NAME` need no model). It writes `workflow_step` and `workflow_run`. The built-in plans: [workflows.md](workflows.md).
 
 ## Experiments against a code change (repository only)
 

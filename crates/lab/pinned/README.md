@@ -2,8 +2,8 @@
 
 Verified, reproducible settings for kernels in the engines this repository
 compares against: `nace-ai/kapitsa`, `jundot/omlx`, and `ddalcu/mlx-serve`.
-One JSON file per kernel entry, named `<repo>.<short_name>.json` under the
-repo's directory. `crates/lab/src/pinned.rs` reads and validates them; every
+One JSON file per kernel entry, named `<short_name>.json` under the repo's
+directory (`pinned/<repo>/`); the entry's id is `<repo>.<short_name>`. `crates/lab/src/pinned.rs` reads and validates them; every
 file is also embedded into the lab binary at compile time, so the verified
 baseline travels with `tslab` and a sweep can layer tweaked copies over it
 through `--dir`.
@@ -82,7 +82,7 @@ exactly what the baseline was.
 - `schema` is exactly `turbospark.lab.pinned/1`.
 - `repo` is one of `kapitsa`, `omlx`, `mlx-serve`. `id` is `<repo>.<short>`
   with a lowercase `[a-z0-9_]` short name, unique across the directory, and
-  matches the file name.
+  the short name is the file's stem.
 - `kernel_class` is one of `gemv`, `verify_matmul`, `prefill_matmul`,
   `attention_decode`, `attention_prefill`, `gdn`, `moe`, `sampling`,
   `drafter`, `scheduler`, `fusion`, `probe`.

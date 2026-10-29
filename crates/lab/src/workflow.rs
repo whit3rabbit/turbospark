@@ -49,6 +49,7 @@ pub const BUILTIN: &[(&str, &str)] = &[
         include_str!("../workflows/audio-survey.json"),
     ),
     ("report", include_str!("../workflows/report.json")),
+    ("ane-sweep", include_str!("../workflows/ane-sweep.json")),
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

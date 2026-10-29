@@ -9,7 +9,7 @@ Read before the first iteration: `docs/SPEEDUP_PLAYBOOK.md` (how wins were
 found and qualified, the kernel checklist, traps), `docs/KAPITSA_KERNELS.md`
 ("Where we were already ahead" and the decision table: do not re-propose
 what it declines), `docs/MLX_SERVE_KERNELS.md` (its "Negative results"
-list, and the evaluator additions L1 to L7 this crate now carries),
+list, and the evaluator additions L1 to L8 this crate now carries),
 `docs/BATCHED_PREFILL.md` for prefill drift bounds, and the AGENTS.md files
 of every crate you touch. `skill/SKILL.md` beside this file is the short
 form for an agent: the `--json` contract and which command answers what.
@@ -374,9 +374,15 @@ $TSLAB ab --model <install> --prompt chat:crates/lab/chats/long-doc.chat.json \
 
 Say so in the hypothesis rather than measure around it:
 
-- **Energy.** The ANE prefill split's case rests partly on modeled energy
-  (IOReport, about 0.65x), and tslab has no energy meter. Use
-  `scripts/power.sh` for joules until one exists.
+- **Wall energy.** tslab meters modeled energy (IOReport's Energy Model
+  counters, `src/energy.rs`): every worker run carries `totals.prefill_j`,
+  `decode_j`, `run_j` and joules per token, every kernel case an `energy`
+  delta, and `ane_matmul` a `j` per point; `--metric prefill_j|decode_j`
+  verdicts on it. It is the chip's own model of itself over the whole
+  machine, not wall power: compare it within one experiment under the same
+  host rules, and never beside `docs/POWER_BASELINE.md`, which is
+  `scripts/power.sh` (powermetrics, needs sudo). A record with joules says
+  `energy_model: ioreport_whole_machine`.
 - **Concurrent and mixed workloads.** Aggregate tok/s and p95 inter-token
   latency over several streams, and decode stalls while another request
   prefills, are single-stream blind spots here. Chats cover one client's
@@ -414,7 +420,19 @@ Say so in the hypothesis rather than measure around it:
   cover. Audio has no KL bound: its gates are output identity only.
 - **ANE arms need an `ane-prefill` worker.** The worker refuses an ANE arm
   it was not built for, rather than measuring Steel under the label. The
-  split also needs `--chunk 2048`.
+  split also needs `--chunk 2048`. With `ane_prefill_stats=1` the run
+  record carries `ane_stats`: the `[ane-prefill]` lines per micro-batch and
+  a summary of the host handoff (`handoff_share`, per-point p50 and p95).
+  `~hog:N` on an arm runs N busy threads beside the worker for the whole
+  run, the controlled-contention reading `docs/SPEEDUP_PLAYBOOK.md` asks
+  for before any device-side event work; a hogged run is never quotable.
+  `tslab kernel --bench ane_matmul --programs DIR` is the per-shape sweep
+  (Steel, the ANE program, the row split, placement, joules) and prints the
+  generator line for the programs it lacks.
+- **Expert reuse is a capture, not a guess.** `tslab expert-census --model M`
+  records how experts repeat within executed batches, the union per batch
+  against slot counts, and the routed sub-batch replay (`expert_census`).
+  Read it before sizing slots or reopening the ANE expert idea.
 
 ## Reading a verdict
 

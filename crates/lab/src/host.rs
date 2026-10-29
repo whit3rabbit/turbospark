@@ -41,6 +41,18 @@ pub struct HostSample {
     pub rustc_processes: usize,
     pub swap_used_mib: Option<f64>,
     pub error: Option<String>,
+    /// The orchestrator's own busy process beside this run (`~hog:N`),
+    /// when one was started. Inside the owned tree, so never foreign CPU;
+    /// recorded so the run can say it was loaded on purpose.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contention: Option<HogProcess>,
+}
+
+/// A controlled CPU load the orchestrator runs beside the worker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HogProcess {
+    pub pid: u32,
+    pub threads: usize,
 }
 
 /// Process-name fragments that mean "another model or measurement is
@@ -76,6 +88,7 @@ pub struct HostMonitor {
     started: Instant,
     previous: HashMap<i32, f64>,
     previous_at: Option<Instant>,
+    hog: Option<HogProcess>,
 }
 
 impl Default for HostMonitor {
@@ -196,7 +209,15 @@ impl HostMonitor {
             started: Instant::now(),
             previous: HashMap::new(),
             previous_at: None,
+            hog: None,
         }
+    }
+
+    /// Name the controlled-contention process every later sample records.
+    /// It is a child of this process, so the ppid walk already excludes it
+    /// from foreign CPU; this only makes the load visible in the record.
+    pub fn set_hog(&mut self, pid: u32, threads: usize) {
+        self.hog = Some(HogProcess { pid, threads });
     }
 
     /// Take one sample. `owned_root` is the pid of the measured child, whose
@@ -217,6 +238,7 @@ impl HostMonitor {
             rustc_processes: 0,
             swap_used_mib: swap_used_mib(),
             error: None,
+            contention: self.hog,
         };
         let ps = match run("ps", &["-Ao", "pid=,ppid=,pgid=,pcpu=,time=,comm="]) {
             Ok(s) => s,
@@ -635,6 +657,7 @@ mod tests {
             rustc_processes: 0,
             swap_used_mib: Some(1000.0),
             error: None,
+            contention: None,
         }
     }
 

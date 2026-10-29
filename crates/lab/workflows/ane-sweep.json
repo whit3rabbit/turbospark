@@ -1,0 +1,15 @@
+{
+  "name": "ane-sweep",
+  "description": "the Neural Engine against Steel at the install's shapes: hashed ane_matmul curves with modeled energy, the programs' compute-plan placement, and a report (--var programs=DIR from gen_ane_sweep_programs.py)",
+  "requires": ["programs"],
+  "vars": {"tokens": "32,128,512,1024,2048"},
+  "steps": [
+    {"id": "curves", "command": "kernel", "when": ["steel"],
+     "args": {"model": "{model}", "experiment": "{experiment}", "bench": "ane_matmul",
+              "programs": "{programs}", "rows": "{tokens}", "hash": true}},
+    {"id": "placement", "command": "ane-plan", "continue_on_error": true,
+     "args": {"path": "{programs}", "experiment": "{experiment}"}},
+    {"id": "report", "command": "report", "needs": ["curves"],
+     "args": {"experiment": "{experiment}", "html": "{lab}/{experiment}/report.html", "force": true}}
+  ]
+}

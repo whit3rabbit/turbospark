@@ -35,6 +35,7 @@ pub mod args;
 pub mod atomic;
 pub mod audio_kind;
 pub mod bench;
+pub mod census;
 pub mod dash;
 pub mod export;
 pub mod family_profile;
@@ -62,6 +63,8 @@ pub mod ane;
 pub mod cli;
 #[cfg(target_os = "macos")]
 pub mod depth_replay;
+#[cfg(target_os = "macos")]
+pub mod energy;
 #[cfg(target_os = "macos")]
 pub mod experiment;
 #[cfg(target_os = "macos")]

@@ -236,6 +236,15 @@ pub const KNOBS: &[Knob] = &[
         engagement: &[],
     },
     Knob {
+        // The per-family default lives at the runner's scratch
+        // (`real_forward_types.rs`): the dense qwen GDN family and, since
+        // the 2026-10-29 flip (mistral7b +5.7%, qwen2 +3.9%, qwen3vl
+        // +19.8%, spark25 +3.9%), dense Llama, Qwen2Dense, Qwen3Dense,
+        // Qwen3Vl and Spark25 default to gqa. Qwen3Moe (+3.4%, but its gqa
+        // arm decoded different tokens), Mixtral and the rest default to
+        // barrier, and the encoder falls back to barrier for any shape
+        // `attention_decode_gqa_supported` rejects. This env overrides
+        // process-wide either way.
         name: "attn_decode_kernel",
         env: "TURBOSPARK_ATTN_DECODE_KERNEL",
         values: &["<unset>", "barrier", "gqa"],
@@ -464,17 +473,20 @@ pub const KNOBS: &[Knob] = &[
         engagement: &[],
     },
     Knob {
-        // Flint's layer-batched chunk driver. Byte-identical to the walk on
-        // the real install (`docs/FLINT.md`, the lab's bit-exact gate).
+        // Flint's layer-batched chunk driver, the default since the clean
+        // paired win (finding flint.chunked-prefill-clean-2026-10-28,
+        // +38.2% prefill bit-exact); "0" restores the walk. Byte-identical to
+        // the walk on the real install (`docs/FLINT.md`, the lab's bit-exact
+        // gate).
         name: "flint_chunked_prefill",
         env: "TURBOSPARK_FLINT_CHUNKED_PREFILL",
-        values: &["<unset>", "1"],
+        values: &["<unset>", "0"],
         read_at: ReadAt::ProcessCached,
         exactness: Exactness::BitExact,
         families: &["flint"],
         quotable: true,
         doc: "docs/FLINT.md",
-        engagement: &[on("1", "flint_chunked_prefill")],
+        engagement: &[off("0", "flint_chunked_prefill")],
     },
     Knob {
         // The DFlash twin of `dflash_chunked_prefill`: off is the walk.
@@ -590,6 +602,17 @@ pub const KNOBS: &[Knob] = &[
         name: "router_hist",
         env: "TURBOSPARK_ROUTER_HIST",
         values: &["<unset>", "<path>"],
+        read_at: ReadAt::Open,
+        exactness: Exactness::BitExact,
+        families: &[],
+        quotable: false,
+        doc: "docs/ENV.md",
+        engagement: &[],
+    },
+    Knob {
+        name: "router_batches",
+        env: "TURBOSPARK_ROUTER_BATCHES",
+        values: &["<unset>", "1"],
         read_at: ReadAt::Open,
         exactness: Exactness::BitExact,
         families: &[],

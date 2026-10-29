@@ -74,7 +74,17 @@ loop's `run-experiment`. Text and audio installs of every family.
 - `src/workload.rs`: prompts, arms, metrics, slots, residency, and
   speculation: the vocabulary the CLI, spec, and worker share.
 - `src/kernel/`: microbenches behind `KernelBench` (`kernel/mod.rs` holds
-  the registry). `src/ane.rs`: compute-plan placement.
+  the registry). `src/ane.rs`: compute-plan placement. `kernel/ane_matmul.rs`
+  (feature `ane-prefill`): Steel against the Neural Engine per shape, with
+  the row split, placement and joules, over programs from
+  `crates/coreml/tools/gen_ane_sweep_programs.py`.
+- `src/energy.rs`: the IOReport energy meter (modeled, whole machine). The
+  worker, the kernel command and the ANE bench read it; `report.rs` prints
+  it; it is never a wall-power claim.
+- `src/census.rs`: `tslab expert-census`, one router capture run reduced to
+  expert reuse within batches, union against slot counts, and the routed
+  sub-batch replay. `src/phases.rs` also classifies a MoE stretch
+  (`moe_bound`): I/O, host loop, or compute bound.
 - `src/pinned.rs`, `pinned/`: the pinned kernel references, one JSON per
   kernel from `nace-ai/kapitsa`, `jundot/omlx`, and `ddalcu/mlx-serve`,
   each with the repo revision it was read at, the models it serves, and its
@@ -132,6 +142,11 @@ loop's `run-experiment`. Text and audio installs of every family.
   whose stderr contradicts its arm's switches is ineligible.
 - A workflow step runs a command through `cli::dispatch` and nothing
   else: no logic in plans that a command typed alone would not do.
+- Joules in a record are IOReport's model of the whole machine
+  (`energy_model: ioreport_whole_machine`), comparable within one
+  experiment only. They never go beside `docs/POWER_BASELINE.md`
+  (powermetrics) and never into `docs/BENCHMARKS.md`. A `~hog:N` run and a
+  router-capture run are unquotable by construction.
 
 ## Verification
 

@@ -47,6 +47,9 @@ tslab: the evaluator for kernel and method experiments (macOS).
   tslab tree-replay --model M --drafter mtp|dflash [--prompt ...]... [--generate 512]
                 [--depth 8|7] [--blocks 2,4,DEPTH] [--serve-block 2] [--top-k 4] [--slots 16] [--experiment NAME]
   tslab ane-plan --path PROGRAM.mlpackage|MANIFEST_DIR [--units ane|all|gpu|cpu]
+  tslab expert-census --model M [workload] [host] [--experiment NAME]
+                (one router capture run, then how experts repeat within batches, the union per
+                 batch against slot counts, and the routed sub-batch replay; a MoE install)
   tslab chain-capture --model M [--prompt ...]... [--tokens 512] [--depth 8] [--experiment NAME]
   tslab depth-replay [--experiment NAME] [--costs flag_off,flag_on,ledger:EXP[@FLAGS][#KV]] [--tokens 512] [--top 10]
   tslab ledger  --experiment NAME [--kind run|verdict|...]
@@ -160,6 +163,7 @@ pub const COMMANDS: &[&str] = &[
     "confirm",
     "kernel",
     "ane-plan",
+    "expert-census",
     "chain-capture",
     "depth-replay",
     "tree-replay",
@@ -193,6 +197,7 @@ pub fn dispatch(cmd: &str, args: Args) -> Result<CmdOutput, String> {
         "confirm" => crate::experiment::confirm_cmd(args),
         "kernel" => unit(crate::kernel::kernel_cmd(args)),
         "ane-plan" => unit(crate::ane::ane_plan_cmd(args)),
+        "expert-census" => unit(crate::census::census_cmd(args)),
         "chain-capture" => unit(crate::depth_replay::chain_capture_cmd(args)),
         "depth-replay" => unit(crate::depth_replay::depth_replay_cmd(args)),
         "tree-replay" => unit(crate::tree_replay::tree_replay_cmd(args)),
@@ -347,6 +352,7 @@ fn profile(mut args: Args) -> Result<(), String> {
                 open,
                 speculation: None,
                 expect_engaged: Vec::new(),
+                contention: None,
             }
         };
         if let Some(ns) = &probe {
@@ -386,6 +392,7 @@ fn profile(mut args: Args) -> Result<(), String> {
                     open,
                     speculation: None,
                     expect_engaged: Vec::new(),
+                    contention: None,
                 });
             }
         }

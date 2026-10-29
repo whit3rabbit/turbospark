@@ -10,7 +10,14 @@
       "quant": "GGUF Q4_K_M",
       "machine": "Apple M4 Max 36 GB",
       "drafters": [],
-      "note": "no install on this host today"
+      "note": "the dense half's head_dim-128 install: the one shape where the decode_attention sweep can engage the GQA-shared kernel"
+    },
+    {
+      "name": "tinyllama",
+      "quant": "GGUF Q6_K",
+      "machine": "Apple M4 Max 36 GB",
+      "drafters": [],
+      "note": "head_dim 64 with 32 q over 4 kv heads: the GQA-shared decode kernel does not serve this shape and the dispatcher falls back to barrier (measured 2026-10-29)"
     }
   ],
   "recommended": [
@@ -32,6 +39,18 @@
       ],
       "why": "Mixtral's routed half is Step 1 with RoutedSlot; the batched arm is opt-in and unmeasured on this flow",
       "findings": []
+    },
+    {
+      "knob": "attn_decode_kernel",
+      "value": "<unset>",
+      "when": [
+        "dense"
+      ],
+      "why": "default on (llama-flow flip, 2026-10-29): the GQA-shared decode kernel read +5.73% on mistral7b; TURBOSPARK_ATTN_DECODE_KERNEL=barrier restores it and is the sweep's kill arm; head_dim-64 installs fall back to barrier in the encoder regardless",
+      "findings": [
+        "llama.gqa-decode-mistral7b-2026-10-29",
+        "llama.gqa-decode-tinyllama-2026-10-29"
+      ]
     }
   ],
   "sweeps": [
@@ -58,7 +77,7 @@
     },
     {
       "id": "decode_attention",
-      "description": "the GQA-shared decode kernel against this flow's barrier default",
+      "description": "the barrier kernel opt-out against the default GQA-shared decode kernel",
       "when": [
         "dense"
       ],
@@ -74,7 +93,7 @@
       },
       "baseline": "default",
       "candidates": [
-        "gqa:attn_decode_kernel=gqa"
+        "barrier:attn_decode_kernel=barrier"
       ]
     }
   ],
@@ -113,16 +132,183 @@
       },
       "conditions": "frozen rows",
       "note": ""
+    },
+    {
+      "id": "llama.batched-gemv-tinyllama-2026-10-29",
+      "date": "2026-10-29",
+      "install": "tinyllama",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "2026-10-28 release build (tslab exe of 22:24)",
+      "workload": "tslab sweep batched_gemv: protocol long-synthesis (3,432 prompt tokens), 16 decode, chunk 128, context 4096; 3 clean pairs, 0 dirty",
+      "arms": {
+        "batched": {},
+        "per_token": {
+          "env": {
+            "TURBOSPARK_BATCHED_GEMV": "0"
+          }
+        }
+      },
+      "metric": "prefill_tok_s",
+      "values": {
+        "batched_tok_s": [
+          95.9,
+          96.0,
+          96.0
+        ],
+        "per_token_tok_s": [
+          96.0,
+          96.1,
+          96.0
+        ],
+        "median_improvement": 0.0004,
+        "ci": [
+          0.00036,
+          0.00092
+        ],
+        "null_floor": 0.0008
+      },
+      "verdict": "noise",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "llama-sweep-20261029",
+        "record": "1793252059551-8267-16"
+      },
+      "conditions": "effect floor 2.00% (the null floor 0.08% is under it, null record 1793251624532-81103-16); sweep record 1793252059561-8267-17; dense_kl; memory growth 0.44 MiB",
+      "note": "the family's first lab-ledger A/B; the chunk-128 batched default stands, and at this 1.1B size the scalar batched arm is indistinguishable from the walk"
+    },
+    {
+      "id": "llama.gqa-decode-tinyllama-2026-10-29",
+      "date": "2026-10-29",
+      "install": "tinyllama",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "2026-10-28 release build (tslab exe of 22:24)",
+      "workload": "tslab sweep decode_attention: protocol medium-review, 64 decode; 0 clean pairs of 6, every gqa run rejected by the engagement guard",
+      "arms": {
+        "barrier_default": {},
+        "gqa": {
+          "env": {
+            "TURBOSPARK_ATTN_DECODE_KERNEL": "gqa"
+          }
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "barrier_median_tok_s": 158.0,
+        "barrier_range_tok_s": [
+          157.5,
+          160.5
+        ],
+        "clean_pairs": 0
+      },
+      "verdict": "inconclusive",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "llama-sweep-20261029",
+        "record": "1793252153810-8267-46"
+      },
+      "conditions": "every gqa run: not engaged, no [engaged] attn_decode_gqa; the dispatcher falls back to barrier because this install is head_dim 64 with 32 q over 4 kv heads and the GQA-shared kernel serves head_dim 128/256 with group <= 8 (the rows_attn refusal says the same); null record 1793251711165-2260-16, floor 0.96%; sweep record 1793252153814-8267-47",
+      "note": "the question is unmeasurable on this shape, not lost: mistral-7b (head_dim 128, 32q/8kv) is the install that can answer it"
+    },
+    {
+      "id": "llama.gqa-decode-mistral7b-2026-10-29",
+      "date": "2026-10-29",
+      "install": "mistral7b",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "2026-10-28 release build (tslab exe of 22:24)",
+      "workload": "tslab sweep decode_attention: protocol medium-review (470 prompt tokens), 64 decode, chunk 128, context 4096; 3 clean pairs, 0 dirty",
+      "arms": {
+        "barrier_default": {},
+        "gqa": {
+          "env": {
+            "TURBOSPARK_ATTN_DECODE_KERNEL": "gqa"
+          }
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "barrier_tok_s": [
+          29.73,
+          29.8,
+          29.9
+        ],
+        "gqa_tok_s": [
+          31.51,
+          31.52,
+          31.59
+        ],
+        "median_improvement": 0.0573,
+        "ci": [
+          0.0542,
+          0.0624
+        ],
+        "null_floor": 0.0049
+      },
+      "verdict": "win",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "llama-mistral-sweep-20261029",
+        "record": "1793256513219-75227-34"
+      },
+      "conditions": "workload floor 0.49% (null record 1793255152848-61714-16), effect floor 2.00%; sweep record 1793256513223-75227-35; dense_kl; memory growth -0.22 MiB; engagement verified on every run (attn_decode_gqa on the candidate, attn_decode_barrier on the default)",
+      "note": "the family's first real decode-kernel verdict, on the head_dim-128 shape tinyllama could not serve; the llama-flow default flip is owed the other llama-flow families' verdicts (qwen2, qwen3_vl, qwen3moe ride this flow)"
+    },
+    {
+      "id": "llama.batched-gemv-mistral7b-2026-10-29",
+      "date": "2026-10-29",
+      "install": "mistral7b",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "2026-10-28 release build (tslab exe of 22:24)",
+      "workload": "tslab sweep batched_gemv: protocol long-synthesis (3,443 prompt tokens), 16 decode, chunk 128, context 4096; 3 clean pairs, 0 dirty",
+      "arms": {
+        "batched": {},
+        "per_token": {
+          "env": {
+            "TURBOSPARK_BATCHED_GEMV": "0"
+          }
+        }
+      },
+      "metric": "prefill_tok_s",
+      "values": {
+        "batched_tok_s": [
+          24.89,
+          24.91,
+          24.91
+        ],
+        "per_token_tok_s": [
+          24.9,
+          24.9,
+          24.9
+        ],
+        "median_improvement": -0.0004,
+        "ci": [
+          -0.0005,
+          0.0003
+        ],
+        "null_floor": 0.0
+      },
+      "verdict": "noise",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "llama-mistral-sweep-20261029",
+        "record": "1793256333115-75227-16"
+      },
+      "conditions": "effect floor 2.00%; sweep record 1793256333119-75227-17; dense_kl; memory growth -0.41 MiB; 4 dirty warmup runs in the null session (macOS daemons), 0 dirty pairs",
+      "note": "confirms the tinyllama reading at 7B: the chunk-128 batched default stands, and the scalar batched arm is indistinguishable from the walk on this flow at both sizes"
     }
   ],
   "open_questions": [
     "a Steel arm for the dense half (the batched attention kernel is in; the GEMM is scalar)",
-    "no per-family A/B in the lab ledger yet",
+    "the llama-flow decode default flipped to gqa on 2026-10-29 for dense installs on timing wins and greedy identity; a dense_kl gate on mistral7b is still owed, and Mixtral (same family string) keeps barrier until it has its own verdict",
     "Mixtral: the routed batch arm and the slot count"
   ],
   "traps": [
     "dense Llama and Mixtral share this family string: kl_class_for decides the gate class by expert_count, and the dispatch probe and stand-ins apply to the dense half only",
-    "BF16 matrices (MiniCPM-style trunks) refuse the batched arm"
+    "BF16 matrices (MiniCPM-style trunks) refuse the batched arm",
+    "head_dim-64 GGUF installs (tinyllama) silently fall back to the barrier kernel when TURBOSPARK_ATTN_DECODE_KERNEL=gqa: the engagement guard rejects every such run, so the arm is never a measurement"
   ],
   "docs": [
     "docs/BATCHED_PREFILL.md",
