@@ -77,7 +77,10 @@ loop's `run-experiment`. Text and audio installs of every family.
   the registry). `src/ane.rs`: compute-plan placement. `kernel/ane_matmul.rs`
   (feature `ane-prefill`): Steel against the Neural Engine per shape, with
   the row split, placement and joules, over programs from
-  `crates/coreml/tools/gen_ane_sweep_programs.py`. `kernel/ane_handoff.rs`
+  `crates/coreml/tools/gen_ane_sweep_programs.py` (random baked weights) or
+  `bake_ane_prefill_programs.py` (an install's own weights, `real:` cases).
+  Baked-INT4 programs did not beat the F16 split end to end; the findings
+  and the reasons are in `docs/SPEEDUP_PLAYBOOK.md`. `kernel/ane_handoff.rs`
   (feature `ane-prefill`): one split point's host handoff, `wait` against
   `poll`, quiet and under `--contend N`.
 - `src/energy.rs`: the IOReport energy meter (modeled, whole machine). The

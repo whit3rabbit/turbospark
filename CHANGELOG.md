@@ -13,6 +13,15 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+### Added
+- `crates/coreml/tools/bake_ane_prefill_programs.py` bakes an install's INT4
+  weights into Core ML programs for the ANE prefill split (shift-scale or
+  `--lut`), and the split reads them from a format 2 `manifest.json`, mixed
+  with the F16 programs if wanted (`--shared-f16`). `tslab kernel --bench
+  ane_matmul` gains queue-depth, token-split, baked and `real:` arms. Opt-in
+  and measured: the baked form is no faster than the F16 split on a 36 GB
+  Mac (`docs/SPEEDUP_PLAYBOOK.md`), so the F16 split stays the default.
+
 ## [0.6.0] - 2026-10-28
 
 ### Added

@@ -76,7 +76,15 @@ generator line for the install's shapes when they are missing: per shape
 and token count it times Steel, the ANE program (conversions and handoff
 included) and the row split at several shares, records where Core ML
 planned each program, puts joules on each point, and fits the `ane gate`
-thresholds in its notes.
+thresholds in its notes. Extra arms: `ane_pred_x1` and `ane_pred_x2` (raw
+predictions on one model and on two models driven by two threads: does a
+second prediction in flight overlap), `tsplit` (the ANE takes the first half
+of the tokens through every row), and, with `--const-int4` programs, `ane_c4`
+and `split_c4@S` (weights baked into the program as uint4). `--case
+real:LAYER.NAME` runs Steel, the F16-plane split and the baked split on one
+tensor's own bytes from the install, with programs from
+`crates/coreml/tools/bake_ane_prefill_programs.py`, and prints each ANE row
+set's error against Steel's output.
 
 | Bench | Measures |
 |---|---|

@@ -9,7 +9,8 @@ with the shapes the bench prints when programs are missing:
     uv run --python 3.12 --with coremltools==9.0 --with numpy==2.2.6 \\
         python -I crates/coreml/tools/gen_ane_sweep_programs.py OUT_DIR \\
         --shapes 17408x5120,5120x17408 --tokens 32,128,512,1024,2048 \\
-        [--shares 1.0,0.3,0.5,0.7] [--experts 4:32,8:64 --expert-dims 2048,512]
+        [--shares 1.0,0.3,0.5,0.7] [--experts 4:32,8:64 --expert-dims 2048,512] \\
+        [--const-int4 [--const-block 64]]
 
 Each dense program computes `w[0:MA] @ a^T` in F16 with K sliced at 2048,
 exactly as the prefill split's generator does (`gen_ane_prefill_programs.py`,
@@ -83,6 +84,64 @@ def experts_program(builder, e, g, k, rows):
     )
 
 
+def const_int4_program(builder, k, n, rows, block):
+    """`w @ a^T` with the weights baked in as uint4 block-scaled constants.
+
+    The F16 form takes the weights as an input plane the GPU fills with a
+    dequant pass each micro-batch. This form carries them inside the program
+    (`constexpr_blockwise_shift_scale`), so the bench skips that pass and the
+    plane. The weights are random: the ANE's cost does not depend on their
+    values, and this answers where Core ML places it and what a prediction
+    costs, not a quality question. Coremltools writes the offset as a uint4
+    zero point; this engine's affine layout has an fp16 bias instead
+    (offset = -bias / scale), which the op also accepts, so a real-weights
+    version would build the constants by hand. K is sliced at CHUNK as in
+    the F16 form, one constant per slice.
+    """
+    import numpy as np
+    from coremltools.optimize.coreml import (
+        OpLinearQuantizerConfig,
+        OptimizationConfig,
+        linear_quantize_weights,
+    )
+
+    ct, mb, types = builder.ct, builder.mb, builder.types
+    rng = np.random.default_rng(0)
+
+    @mb.program(
+        input_specs=[mb.TensorSpec((1, 1, n, k), types.fp16)],
+        opset_version=ct.target.macOS15,
+    )
+    def prog(a):
+        acc = None
+        for first in range(0, k, builder.CHUNK):
+            count = min(builder.CHUNK, k - first)
+            sa = mb.slice_by_size(x=a, begin=[0, 0, 0, first], size=[1, 1, n, count])
+            w = mb.const(
+                val=(rng.standard_normal((1, 1, rows, count)) * 0.02).astype(np.float16)
+            )
+            p = mb.matmul(x=w, y=sa, transpose_x=False, transpose_y=True)
+            acc = p if acc is None else mb.add(x=acc, y=p)
+        return mb.identity(x=acc, name="o0")
+
+    model = ct.convert(
+        prog,
+        convert_to="mlprogram",
+        minimum_deployment_target=ct.target.macOS15,
+        compute_precision=ct.precision.FLOAT16,
+    )
+    config = OptimizationConfig(
+        global_config=OpLinearQuantizerConfig(
+            mode="linear",
+            dtype="uint4",
+            granularity="per_block",
+            block_size=block,
+            weight_threshold=0,
+        )
+    )
+    return linear_quantize_weights(model, config)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("out_dir")
@@ -91,6 +150,12 @@ def main():
     ap.add_argument("--shares", default="1.0,0.3,0.5,0.7")
     ap.add_argument("--experts", default="", help="E:g pairs for packed-expert programs")
     ap.add_argument("--expert-dims", default="", help="hidden,intermediate for --experts")
+    ap.add_argument(
+        "--const-int4",
+        action="store_true",
+        help="also write, per shape, token count and share, a program with uint4 constant weights",
+    )
+    ap.add_argument("--const-block", type=int, default=64, help="block size of the uint4 scales")
     args = ap.parse_args()
 
     shapes = []
@@ -135,6 +200,22 @@ def main():
                     "kind": "dense", "k": k, "rows": rows, "ane_rows": ma,
                     "plane_rows": rows, "tokens": n, "share": share, "package": name,
                 })
+    if args.const_int4:
+        # One program per share too: the ANE bakes rows [0, MA) and Steel
+        # takes the rest, like the F16 split. The whole-matrix name has no
+        # `ma` so programs written before shares existed stay valid.
+        for rows, k in shapes:
+            for n in tokens:
+                for share in shares:
+                    ma = max(32, int(rows * share) // 32 * 32)
+                    tag = "" if ma == rows else f"_ma{ma}"
+                    name = f"ane_c4_k{k}_rows{rows}{tag}_n{n}.mlpackage"
+                    save(const_int4_program(builder, k, n, ma, args.const_block), name)
+                    programs.append({
+                        "kind": "dense", "weights": "const_int4", "k": k, "rows": rows,
+                        "ane_rows": ma, "plane_rows": rows, "tokens": n, "share": share,
+                        "package": name,
+                    })
     if experts:
         hidden, inter = dims
         for e, g in experts:
