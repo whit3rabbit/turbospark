@@ -1238,11 +1238,14 @@ impl AudioCatalog {
             }
         }
         verify_asset_bytes(profile, &source_root, true, Some(cancel))?;
-        // The speech probe knows the Whisper and Parakeet layouts a Rust
+        // The speech probe knows the Whisper and Parakeet TDT layouts a Rust
         // session opens. Swift-hosted rows never reach one, and their Core ML
-        // layouts would fail it, so they get no speech receipt.
+        // layouts would fail it, so they get no speech receipt. Neither does
+        // Parakeet Unified: it is stream-only, opened by its Core ML layout,
+        // and the probe would read it as a Whisper install.
         if identity.task == AudioTask::SpeechToText
             && !profile.capabilities.backend.starts_with("swift_")
+            && profile.family != "parakeet_unified"
         {
             crate::install_speech_receipt(
                 &source_root,
@@ -5035,6 +5038,28 @@ mod tests {
         assert!(catalog
             .publish_verified(&store, &identity, &receipt, &CancelFlag::new())
             .is_err());
+    }
+
+    /// The pinned Parakeet Unified row publishes without a speech receipt.
+    /// Through the speech probe its Core ML layout reads as Whisper and the
+    /// install fails on a missing model.safetensors.
+    #[test]
+    fn parakeet_unified_publishes_without_the_speech_probe() {
+        let root = Scratch::new();
+        let store = Store::new(root.0.join("store"));
+        let (catalog, identity, receipt) = staged(
+            AudioCatalog::embedded().unwrap(),
+            "parakeet-unified-en-coreml",
+            &root.0,
+        );
+        let installed = catalog
+            .publish_verified(&store, &identity, &receipt, &CancelFlag::new())
+            .unwrap();
+        assert!(!installed
+            .path
+            .join(model_io::speech_receipt::SPEECH_RECEIPT_FILENAME)
+            .exists());
+        assert!(catalog.verify(&store, &identity).is_ok());
     }
 
     #[test]

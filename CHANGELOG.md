@@ -217,6 +217,11 @@ when this file gets updated relative to the version bump and the tag.
   rollback, commit, rewind, bonus).
 
 ### Fixed
+- Installing Parakeet Unified EN (live transcription) failed after the
+  download verified, with "speech install is missing model.safetensors". The
+  install ran the batch speech probe, which reads the Unified Core ML layout
+  as a Whisper install. Stream-only Unified rows now skip that probe, and
+  their audio receipt is unchanged.
 - Core ML model compilation and cache publication now serialize inside a
   process-wide critical section. Prevents simultaneous cold loads of the same
   package from racing on Core ML's shared temporary build directory. Warm loads
