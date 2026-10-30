@@ -951,6 +951,42 @@ fn a_this_mac_music_install_carries_its_audio_receipt() {
     }
 }
 
+/// The Turbo pin's `config.json` is byte for byte the shared fixture that the
+/// audio crate's profile test and the Swift app's sampling test parse. The
+/// CLI, FFI and app all resolve this one catalog row, so a re-pin whose
+/// metadata stops declaring the 8-step profile fails one of those tests.
+#[test]
+fn the_turbo_pin_is_the_shared_config_fixture() {
+    let alias = "minimax-music3-turbo-4bit-8step";
+    let catalog = AudioCatalog::embedded().unwrap();
+    let profile = catalog
+        .entries
+        .iter()
+        .find(|p| p.identity.alias == alias)
+        .unwrap();
+    assert_eq!(profile.identity.task, AudioTask::Music);
+    assert_eq!(
+        profile.identity.repository,
+        "cowWhySo/MiniMax-Music3-TurboSpark-4bit-8step"
+    );
+    assert_eq!(
+        profile.identity.revision,
+        "604e6c2b670d1be390cb6024dec79f46559ae569"
+    );
+    let fixture = fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../audio/tests/fixtures/minimax_music3_turbo_config.json"),
+    )
+    .unwrap();
+    let config = profile
+        .assets
+        .iter()
+        .find(|a| a.path == "config.json")
+        .unwrap();
+    assert_eq!(config.size, fixture.len() as u64);
+    assert_eq!(config.sha256, format!("{:x}", Sha256::digest(&fixture)));
+}
+
 /// A row an earlier CLI recorded for Turbo, `affine-4bit-turbo-8step` and no
 /// receipt, is still offered for adoption rather than reported incompatible.
 #[test]

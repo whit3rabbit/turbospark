@@ -135,6 +135,12 @@ WAV: the driver fails the run if it does not, and `--expect-wav-sha256
 SCENARIO=HEX` pins the hash to a recorded baseline. Performance work on this
 family is bit-preserving, so an optimization that changes the hash is a
 numerics change that needs the parity gates, not a speedup.
+The experimental Turbo profile is the one exception: it has no MLX or float32
+reference, and its F32-stage kernels change its WAV bits by float32 rounding.
+Compare Turbo runs by waveform statistics against the previous build, not by
+hash, and keep its numbers apart from the 4-bit rows. The
+[family README](../crates/audio/src/music/minimax_music3/README.md) records
+the measurements and their limits.
 
 The driver refuses a host that is not on AC power with a low 1-minute load
 average. `--allow-busy` records the load and runs anyway; such numbers are
