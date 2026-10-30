@@ -1739,6 +1739,19 @@ fn only_the_declared_int4_euler_turbo_variant_selects_the_turbo_profile() {
     );
 }
 
+/// The pinned Turbo `config.json` (the catalog test checks its hash against
+/// the pin) selects the 8-step profile. The Swift app parses the same file.
+#[test]
+fn the_pinned_turbo_config_selects_the_eight_step_profile() {
+    let config: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/minimax_music3_turbo_config.json"
+    ))
+    .unwrap();
+    let profile = runner_profile_from_config(&config);
+    assert_eq!(profile, FlowProfile::Turbo);
+    assert_eq!(profile.default_steps(), 8);
+}
+
 /// Tiled F32 linears change output bits, so only Turbo at checkpoint
 /// precision takes them; float32 precision is the reference chain.
 #[test]

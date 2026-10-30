@@ -554,6 +554,63 @@ at the real shapes (691 positions, 32 heads of 64, rotary 32, feed-forward
 `dit_block_sequences_match_the_per_op_flow_bitwise` the whole flow stage on
 the seven tiny native profiles. Every guard was mutation-checked.
 
+### Turbo F32 stages: tiled linears and F32 block sequences
+
+The Turbo checkpoint stores its 216 adapted DiT matrices dense FP16, so BF16
+activations promote every DiT projection to an F32 stage. Two gates kept that
+path slow: the linear planner sent F32 stages to the per-element
+`music3_linear` kernel, and `block_sequence` refused any non-BF16 stage, so
+each block ran op by op with host rotary, residual adds and SiLU between
+projections. A per-op profile with tiled linears showed each projection's wall
+time near ten times its arithmetic, the rest dispatch and readback.
+
+`tiled_f32_linears` turns both on only for the Turbo profile at checkpoint
+precision. Device linears then call `Music3Weight::tiled_for_f32`, and the DiT
+accepts F32 block stages with `music3_add_f32`, `music3_partial_rope_f32` and
+`music3_gated_silu_f32`. Unlike the rest of this section, this is **not**
+bit-preserving: the tiles accumulate in a different order, and the gated SiLU
+uses the device `exp`. Turbo follows a distilled trajectory with no MLX or
+float32 reference, so there was no hash to keep. `--precision float32` and
+every other profile keep their kernels and hashes by construction, but the
+4-bit profile's WAV hashes were not re-run, because that install was not on
+the host.
+
+Gates: `f32_stages_take_tiled_kernels_only_on_opted_in_16_bit_weights`,
+`tiled_f32_linear_stays_within_float32_error_and_leaves_bf16_bits` (f64
+reference bound, BF16 outputs bit-identical with and without the flag),
+`dit_f32_block_ops_match_host_and_synchronous` (add and rotary bitwise against
+the host F32 formulas, SiLU within 4 ulps), and
+`only_turbo_at_checkpoint_precision_takes_tiled_f32_linears`. Removing the
+planner opt-in fails both `music3_tiled_f32` tests.
+
+Indicative only: Apple M4 Max (36 GB), release `turbospark-music generate
+--timings --wav-format float32`, the pinned Turbo profile (`604e6c2b...`),
+caption `lofi piano`, lyrics `[instrumental]`, seed 0, 8 steps. The app held
+its own Turbo model (about 12.7 GB) the whole time, swap stood at 10.5 to 12 GB
+used, the load average ended at 2.8 to 4.8, and AC power was not checked, so
+this breaks the protocol and is not a frozen row. The 2 s arms ran interleaved
+(tiled + blocks, tiled, tiled + blocks, tiled, scalar). Each 8 s cell is a
+single run from a different batch: scalar from the build before these
+changes, tiled from the prototype.
+
+| Scenario | Scalar | Tiled linears | Tiled + F32 blocks |
+|---|---|---|---|
+| 2 s, DiT | 97.0 s | 14.4, 14.8 s | 9.8, 9.3 s |
+| 2 s, vocoder | 11.7 s | 11.2, 11.4 s | 11.4, 11.4 s |
+| 2 s, generate | 115.3 s | 32.2, 32.3 s | 28.6, 27.1 s |
+| 8 s, DiT | 365.3 s | 55.2 s | 37.9 s |
+| 8 s, vocoder | 27.3 s | 27.2 s | 28.3 s |
+| 8 s, generate | 413.6 s | 103.5 s | 88.4 s (RTF 11.0) |
+
+Against the scalar 2 s WAV: correlation 0.99999999990 (max abs 3.9e-6) with
+tiled linears, 0.99999999997 (max abs 6.0e-6, RMS difference 4.7e-7 against
+signal RMS 0.058) with F32 blocks too. Not measured: peak `phys_footprint`
+after the change (12.4 to 14.0 GB before, 10.50 GiB resident weights), a
+listening test, and more than one prompt and seed. The vocoder now leads the
+8 s request and was not touched. `music3_bench --flow-only` defaults to 30
+steps whatever the profile (`request.steps.unwrap_or(30)`), so pass
+`--steps 8` when timing Turbo with it.
+
 ## Default flow profile
 
 `Music3Runner` opens in the profile declared by a recognized checkpoint, or

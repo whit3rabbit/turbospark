@@ -47,7 +47,14 @@ published at
 [`cowWhySo/MiniMax-Music3-Turbo-MLX-LoRA`](https://huggingface.co/cowWhySo/MiniMax-Music3-Turbo-MLX-LoRA),
 revision `26c94413b40fbb26ebd034a4d05f027f7429194f`. The Rust audio catalog
 pins the merged repo revision and the Swift app obtains that pin through the
-catalog. New music workspaces select this checkpoint as the default download;
+catalog. The CLI, the FFI and the app resolve that one catalog row, and
+the pinned `config.json` is committed as
+`crates/audio/tests/fixtures/minimax_music3_turbo_config.json`: a catalog test
+checks its size and SHA-256 against the pin, and both the Rust profile test and
+the Swift sampling test must read 8-step Turbo from it. A re-pin or a Rust
+parser change that drops the marker fails in CI. The Swift test is in the app
+suite, which CI does not run, so a Swift parser change is caught only by
+running that suite. New music workspaces select this checkpoint as the default download;
 saved model choices remain selected. The app can download and run the merged
 checkpoint without Python. The standalone adapter repo is for MLX adapter
 workflows, not the app's runtime.

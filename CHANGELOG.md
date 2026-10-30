@@ -19,8 +19,13 @@ when this file gets updated relative to the version bump and the tag.
   per-element kernel and ran each block op by op. A Turbo checkpoint at
   checkpoint precision now uses the tiled MMA kernels for those stages and one
   device submission per block, with F32 forms of the residual add, rotary and
-  gated SiLU. Output changes by float32 rounding only. `--precision float32`
-  and other checkpoints keep their previous kernels.
+  gated SiLU. Output changes by float32 rounding only (correlation
+  0.99999999997 with the previous WAV). `--precision float32` and other
+  checkpoints keep their previous kernels. On an M4 Max, with the pinned Turbo
+  profile, seed 0 and 8 steps, DiT time for a 2 s take went from 97 s to
+  9.5 s and an 8 s request from 414 s to 88 s. These were single interleaved
+  `turbospark-music --timings` runs under swap with the app loaded, not
+  protocol rows (see the Music 3 README, "Turbo F32 stages").
 
 ### Fixed
 - macOS app: Music 3 now follows the checkpoint's flow profile when the Steps
