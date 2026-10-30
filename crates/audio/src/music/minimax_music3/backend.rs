@@ -34,6 +34,10 @@ pub struct WeightData<'a> {
     /// The device plans width-dependent kernel choices (the dense split-K)
     /// from the full matrix, so the window reproduces its columns bit for bit.
     pub planned_rows: Option<usize>,
+    /// F32 stages over this dense 16-bit weight may use tiled kernels that
+    /// round differently from the float32 reference chain. Only a store
+    /// whose checkpoint has no such reference (Music 3 Turbo) sets it.
+    pub tiled_f32: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -194,6 +198,8 @@ pub trait Sequence {
     ) -> Result<Slot>;
     /// `dtype.round(state * dtype.silu(gate))` over rows of `[state | gate]`,
     /// each `half` wide.
+    /// At F32 a device may use its own `exp`, matching the host only to
+    /// float32 rounding.
     fn gated_silu(&mut self, x: Slot, rows: usize, half: usize, dtype: DType) -> Result<Slot>;
     fn rms_norm(
         &mut self,

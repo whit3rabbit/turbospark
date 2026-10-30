@@ -141,6 +141,9 @@ pub struct Music3Weight {
     /// one. MLX picks a dense projection's split-K from the whole matrix, so
     /// a window plans from this width to reproduce the full head's columns.
     plan_rows: Option<usize>,
+    /// F32 stages over this dense 16-bit weight may take the tiled MMA
+    /// kernels. Off by default: the scalar chain is the float32 reference.
+    tiled_f32: bool,
 }
 /// Planned projection: kernel, packed parameters, and threadgroup count.
 struct LinearPlan {
@@ -362,6 +365,7 @@ impl Music3Device {
                 resident,
                 scales_bf16,
                 plan_rows: None,
+                tiled_f32: false,
             })
         })
     }
@@ -1274,6 +1278,36 @@ impl Music3Weight {
         self.plan_rows = Some(rows);
         self
     }
+    /// Lets F32 stages over this weight use the tiled MMA kernels when it is
+    /// dense F16 or BF16; other encodings ignore it. The tiles accumulate in
+    /// float32 in a different order than the per-element `music3_linear`
+    /// chain, so outputs move by float32 rounding (no MLX bit parity). A
+    /// caller sets it only where that chain is not a reference to match.
+    pub fn tiled_for_f32(mut self) -> Self {
+        self.tiled_f32 = matches!(self.encoding, Music3Encoding::F16 | Music3Encoding::Bf16);
+        self
+    }
+    /// The kernel `linear_typed` would dispatch for this geometry. For tests
+    /// that pin a kernel choice; it validates the geometry like a dispatch.
+    #[doc(hidden)]
+    pub fn linear_kernel(
+        &self,
+        rows: usize,
+        input_dim: usize,
+        output_dim: usize,
+        dtype: Music3DType,
+    ) -> Result<&'static str, GpuError> {
+        let plan = self.linear_plan(
+            rows * input_dim,
+            None,
+            rows,
+            input_dim,
+            output_dim,
+            dtype,
+            false,
+        )?;
+        Ok(plan.kernel)
+    }
     fn parameters(&self) -> Vec<u32> {
         let (mode, bits, group) = self.encoding.parameters();
         vec![mode, self.shape[1] as u32, bits, group as u32]
@@ -1484,8 +1518,10 @@ impl Music3Weight {
         };
         p.push(values_per_lane);
         let vector = kokoro && output_dim == 1;
+        // Without the tiled kernels an F32 stage runs one threadgroup per
+        // output element, about 6x slower on the Turbo DiT's dense F16 blocks.
         let mma = !vector
-            && (kokoro || dtype != Music3DType::F32)
+            && (kokoro || dtype != Music3DType::F32 || self.tiled_f32)
             && rows > 1
             && (self.encoding.parameters().0 < 3 || rows >= limit);
         // The affine wide branch of `music3_linear`, repacked sixteen pairs

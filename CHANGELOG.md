@@ -13,6 +13,15 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+### Changed
+- Music 3 Turbo runs its DiT about 10x faster on Metal. Its dense FP16
+  adapted matrices promote BF16 activations to F32 stages, which took a
+  per-element kernel and ran each block op by op. A Turbo checkpoint at
+  checkpoint precision now uses the tiled MMA kernels for those stages and one
+  device submission per block, with F32 forms of the residual add, rotary and
+  gated SiLU. Output changes by float32 rounding only. `--precision float32`
+  and other checkpoints keep their previous kernels.
+
 ### Fixed
 - macOS app: Music 3 now follows the checkpoint's flow profile when the Steps
   control is untouched, so the Turbo install runs 8 steps and an ordinary

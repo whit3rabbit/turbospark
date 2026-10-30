@@ -56,6 +56,7 @@ impl Execution {
             offsets: &[],
             block_scales: &[],
             planned_rows: None,
+            tiled_f32: false,
         })?;
         self.weights.borrow_mut().insert(key, weight.clone());
         Ok(weight)
