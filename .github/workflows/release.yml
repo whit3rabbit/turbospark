@@ -145,14 +145,16 @@ jobs:
           mkdir -p dist/stage
           # The archive must contain files named exactly as the cask's binary
           # stanzas, or brew links the wrong names.
-          # turbospark-check and turbospark-model are both [[bin]] targets of
-          # the one turbospark-cli package, so one `-p turbospark-cli` build
-          # produces both.
-          cp target/aarch64-apple-darwin/release/turbospark-check dist/stage/
-          cp target/aarch64-apple-darwin/release/turbospark-model dist/stage/
-          cp target/aarch64-apple-darwin/release/turbospark-server dist/stage/
-          cd dist/stage && zip "../turbospark-${VER}-macos-arm64.zip" \
-            turbospark-check turbospark-model turbospark-server
+          # Every [[bin]] of turbospark-cli comes from the one
+          # `-p turbospark-cli` build, and turbospark-server from its own
+          # package. The front end hands image, music, clone, speak and ocr
+          # to the siblings, so all of them ship (the same list as
+          # make-app-bundle.sh).
+          bins="turbospark turbospark-check turbospark-model turbospark-server turbospark-image turbospark-music turbospark-clone turbospark-speak turbospark-ocr"
+          for bin in $bins; do
+            cp "target/aarch64-apple-darwin/release/$bin" dist/stage/
+          done
+          cd dist/stage && zip "../turbospark-${VER}-macos-arm64.zip" $bins
           cd .. && rm -rf stage
 
       # Runs the app, not just `ls` it. v0.2.0 and v0.3.0 packaged cleanly and
@@ -319,7 +321,7 @@ jobs:
 
             # The app updates itself through Sparkle (the release's signed
             # appcast), replacing the bundle in place. Without this stanza
-            # brew would keep offering `brew upgrade` for versions the app
+            # brew would keep offering \`brew upgrade\` for versions the app
             # already installed, and an upgrade would fight the updater over
             # the same /Applications path.
             auto_updates true
@@ -331,8 +333,10 @@ jobs:
 
             app "TurboSpark.app"
 
-            # The four CLI binaries (the \`turbospark\` front end plus the three
-            # tools) ship inside the bundle; make-app-bundle.sh signs them.
+            # The CLI binaries (the \`turbospark\` front end plus the tools
+            # it hands work to) ship inside the bundle; make-app-bundle.sh
+            # signs them. Each is linked: the front end finds a sibling next to
+            # its own path, which under Homebrew is the bin directory.
             # Linking them from there rather than shipping a second copy is what lets one cask
             # cover both, and it means \`brew uninstall\` removes the app and
             # unlinks the commands in one step.
@@ -340,6 +344,11 @@ jobs:
             binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-check"
             binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-model"
             binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-server"
+            binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-image"
+            binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-music"
+            binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-clone"
+            binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-speak"
+            binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-ocr"
 
             # Only runs under \`brew uninstall --zap\`. Deliberately does NOT
             # list ~/.turbospark: that is where multi-gigabyte model installs
@@ -367,9 +376,15 @@ jobs:
 
             conflicts_with cask: "whit3rabbit/tap/turbospark"
 
+            binary "turbospark"
             binary "turbospark-check"
             binary "turbospark-model"
             binary "turbospark-server"
+            binary "turbospark-image"
+            binary "turbospark-music"
+            binary "turbospark-clone"
+            binary "turbospark-speak"
+            binary "turbospark-ocr"
           end
           EOF
 
