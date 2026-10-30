@@ -163,7 +163,7 @@ turbospark-server --model gemma4
 
 The default server listens on `127.0.0.1:8080` and provides `/v1/chat/completions`, `/v1/messages`, `/v1/models`, and `/health`. See [`docs/CLI.md`](docs/CLI.md) for server flags and client setup.
 
-The `turbospark` front end is reworked on `main` for 0.6.0, which is not released yet, so the commands below need a build from source until it ships. It takes ollama-style tags (`qwen3.6:35b`) and verbs, and the server also answers on an Ollama-compatible `/api`:
+The `turbospark` front end (reworked in 0.6.0, shipped with all its peer binaries since 0.6.5) takes ollama-style tags (`qwen3.6:35b`) and verbs, and the server also answers on an Ollama-compatible `/api`:
 
 ```sh
 turbospark                        # what is installed, what fits, what to type
