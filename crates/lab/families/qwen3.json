@@ -4,29 +4,163 @@
   "kind": "text",
   "title": "Qwen3 dense GQA on the llama flow",
   "flow": "llama",
-  "installs": [],
+  "installs": [
+    {
+      "name": "qwen3-8b",
+      "quant": "GGUF Q4_K_M + sidecar tokenizer (Qwen/Qwen3-8B-GGUF)",
+      "machine": "Apple M4 Max 36 GB",
+      "drafters": [],
+      "note": "head_dim 128, 32 q over 8 kv heads (group 4); measured 2026-10-29, the Qwen3Dense flip leg's own verdict"
+    }
+  ],
   "recommended": [
-    {"chunk": "128", "when": [],
-     "why": "the dense llama flow's single-command-buffer chunked driver; the dispatch probe and stand-ins are wired for this flow",
-     "findings": []}
+    {
+      "chunk": "128",
+      "when": [],
+      "why": "the dense llama flow's single-command-buffer chunked driver; the dispatch probe and stand-ins are wired for this flow",
+      "findings": [
+        "qwen3.batched-gemv-2026-10-29"
+      ]
+    },
+    {
+      "knob": "attn_decode_kernel",
+      "value": "<unset>",
+      "when": [],
+      "why": "default on (llama-flow flip, 2026-10-29; the family's own post-flip verdict read the barrier opt-out at -5.4%); TURBOSPARK_ATTN_DECODE_KERNEL=barrier restores it and is the sweep's kill arm",
+      "findings": [
+        "qwen3.gqa-decode-2026-10-29"
+      ]
+    }
   ],
   "sweeps": [
-    {"id": "batched_gemv", "description": "the batched prefill arm against the per-token loop",
-     "when": ["dense"], "metric": "prefill_tok_s", "exactness": "dense_kl",
-     "workload": {"prompts": [{"protocol": "long-synthesis"}], "decode_tokens": 16},
-     "baseline": "batched", "candidates": ["per_token:batched_gemv=0"]},
-    {"id": "decode_attention", "description": "the GQA-shared decode kernel against barrier",
-     "when": ["dense"], "metric": "decode_tok_s", "exactness": "dense_kl",
-     "workload": {"prompts": [{"protocol": "medium-review"}], "decode_tokens": 64},
-     "baseline": "default", "candidates": ["gqa:attn_decode_kernel=gqa"]}
+    {
+      "id": "batched_gemv",
+      "description": "the batched prefill arm against the per-token loop",
+      "when": [
+        "dense"
+      ],
+      "metric": "prefill_tok_s",
+      "exactness": "dense_kl",
+      "workload": {
+        "prompts": [
+          {
+            "protocol": "long-synthesis"
+          }
+        ],
+        "decode_tokens": 16
+      },
+      "baseline": "batched",
+      "candidates": [
+        "per_token:batched_gemv=0"
+      ]
+    },
+    {
+      "id": "decode_attention",
+      "description": "the barrier kernel opt-out against the default GQA-shared decode kernel",
+      "when": [
+        "dense"
+      ],
+      "metric": "decode_tok_s",
+      "exactness": "dense_kl",
+      "workload": {
+        "prompts": [
+          {
+            "protocol": "medium-review"
+          }
+        ],
+        "decode_tokens": 64
+      },
+      "baseline": "default",
+      "candidates": [
+        "barrier:attn_decode_kernel=barrier"
+      ],
+      "note": "the dispatcher falls back to barrier for shapes the GQA-shared kernel does not serve; the engagement line says which ran"
+    }
   ],
-  "findings": [],
+  "findings": [
+    {
+      "id": "qwen3.gqa-decode-2026-10-29",
+      "date": "2026-10-29",
+      "install": "qwen3-8b",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "2026-10-29 release build (llama-flow flip live)",
+      "workload": "tslab sweep decode_attention (kill-arm form): protocol medium-review, 64 decode, chunk 128; 3 clean pairs, 0 dirty",
+      "arms": {
+        "gqa_default": {},
+        "barrier": {
+          "env": {
+            "TURBOSPARK_ATTN_DECODE_KERNEL": "barrier"
+          }
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "default_median_tok_s": 29.08,
+        "barrier_median_tok_s": 27.4,
+        "median_improvement": -0.054,
+        "ci": [
+          -0.0554,
+          -0.0439
+        ],
+        "null_floor": 0.0037
+      },
+      "verdict": "loss",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "qwen3-sweep-20261029",
+        "record": "1793287277337-59948-42"
+      },
+      "conditions": "the verdict field is the barrier candidate's (a LOSS for the opt-out is a win for the default); decode null floor 0.37% (record 1793285904234-47511-16), effect floor 2.00%; sweep record 1793287277341-59948-43; dense_kl; engagement verified on all 36 runs (attn_decode_gqa on every unset run, attn_decode_barrier on every candidate run)",
+      "note": "the Qwen3Dense flip leg's owed verdict, run post-flip: the barrier opt-out loses 5.4%, inside the expected 3-7% band read from the four sibling families (+5.7 mistral7b, +3.9 qwen2, +3.4 qwen3moe, +19.8 qwen3vl)"
+    },
+    {
+      "id": "qwen3.batched-gemv-2026-10-29",
+      "date": "2026-10-29",
+      "install": "qwen3-8b",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "2026-10-29 release build (llama-flow flip live)",
+      "workload": "tslab sweep batched_gemv: protocol long-synthesis, 16 decode, chunk 128; 3 clean pairs (2 dirty pairs excluded), 0 dirty in the verdict pairs",
+      "arms": {
+        "batched": {},
+        "per_token": {
+          "env": {
+            "TURBOSPARK_BATCHED_GEMV": "0"
+          }
+        }
+      },
+      "metric": "prefill_tok_s",
+      "values": {
+        "batched_clean_tok_s": [
+          30.47,
+          31.45
+        ],
+        "per_token_median_improvement": 0.0056,
+        "ci": [
+          -0.0078,
+          0.0067
+        ],
+        "null_floor": 0.0118
+      },
+      "verdict": "noise",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "qwen3-sweep-20261029",
+        "record": "1793287109456-59948-24"
+      },
+      "conditions": "prefill null floor 1.18% (record 1793285722981-877-16), effect floor 2.00%; sweep record 1793287109460-59948-25; dense_kl",
+      "note": "the family's first lab A/Bs; the chunk-128 batched prefill default stands"
+    }
+  ],
   "open_questions": [
-    "no install measured by the lab yet: run workflow new-family first",
+    "the GQA decode default (2026-10-29 flip) rests on timing and 64-token greedy identity only: run a dense_kl gate on qwen3-8b with TURBOSPARK_ATTN_DECODE_KERNEL=barrier against unset",
     "a Steel arm for the dense flow"
   ],
   "traps": [
     "the family string is qwen3 (the GGUF general.architecture); qwen35 and qwen36 are the GDN families, not this one"
   ],
-  "docs": ["docs/BATCHED_PREFILL.md"]
+  "docs": [
+    "docs/BATCHED_PREFILL.md"
+  ]
 }

@@ -4,20 +4,110 @@
   "kind": "text",
   "title": "Spark 2.5: dense, three sliding (512) to one full layer, fused q|k|v projection, headwise scalar gate, exact-erf GELU",
   "flow": "spark",
-  "installs": [],
+  "installs": [
+    {
+      "name": "spark25",
+      "quant": "GGUF Q4_K_M",
+      "machine": "Apple M4 Max 36 GB",
+      "drafters": [],
+      "note": "16q/4kv head_dim 256, fused q|k|v as one resident tensor; measured 2026-10-29"
+    }
+  ],
   "recommended": [
-    {"chunk": "off", "when": [],
-     "why": "the spark flow prefills token by token; --chunk off is the only driver and the profile step of new-family uses it",
-     "findings": []}
+    {
+      "chunk": "off",
+      "when": [],
+      "why": "the spark flow prefills token by token; --chunk off is the only driver and the profile step of new-family uses it",
+      "findings": []
+    },
+    {
+      "knob": "attn_decode_kernel",
+      "value": "<unset>",
+      "when": [
+        "dense"
+      ],
+      "why": "default on (2026-10-29 flip): the GQA-shared decode kernel read +3.88% on spark25 at 16q/4kv/head_dim 256; TURBOSPARK_ATTN_DECODE_KERNEL=barrier restores it and is the sweep's kill arm",
+      "findings": [
+        "spark2_5.gqa-decode-2026-10-29"
+      ]
+    }
   ],
   "sweeps": [
-    {"id": "decode_attention", "description": "the GQA-shared decode kernel against barrier on the full layers",
-     "when": ["dense"], "metric": "decode_tok_s", "exactness": "dense_kl",
-     "workload": {"prompts": [{"protocol": "medium-review"}], "decode_tokens": 64, "prefill_chunk": null},
-     "baseline": "default", "candidates": ["gqa:attn_decode_kernel=gqa"]}
+    {
+      "id": "decode_attention",
+      "description": "the barrier kernel opt-out against the default GQA-shared decode kernel",
+      "when": [
+        "dense"
+      ],
+      "metric": "decode_tok_s",
+      "exactness": "dense_kl",
+      "workload": {
+        "prompts": [
+          {
+            "protocol": "medium-review"
+          }
+        ],
+        "decode_tokens": 64,
+        "prefill_chunk": null
+      },
+      "baseline": "default",
+      "candidates": [
+        "barrier:attn_decode_kernel=barrier"
+      ]
+    }
   ],
-  "findings": [],
-  "open_questions": ["no install measured by the lab yet", "a chunked prefill driver (SPARK_PHASE0.md)"],
-  "traps": ["the fused q|k|v projection is one resident-index tensor: the int4_matmul bench sees one wide shape, not three"],
-  "docs": ["docs/SPARK_PHASE0.md"]
+  "findings": [
+    {
+      "id": "spark2_5.gqa-decode-2026-10-29",
+      "date": "2026-10-29",
+      "install": "spark25",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "2026-10-29 release build (llama-flow flip included)",
+      "workload": "tslab sweep decode_attention: protocol medium-review, 64 decode, chunk off (the flow refuses chunked prefill); 3 clean pairs, 0 dirty",
+      "arms": {
+        "barrier_default": {},
+        "gqa": {
+          "env": {
+            "TURBOSPARK_ATTN_DECODE_KERNEL": "gqa"
+          }
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "default_tok_s": [
+          50.09,
+          50.25
+        ],
+        "gqa_tok_s": [
+          51.84,
+          52.19
+        ],
+        "median_improvement": 0.0388,
+        "ci": [
+          0.0332,
+          0.0397
+        ],
+        "null_floor": 0.0046
+      },
+      "verdict": "win",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "spark25-sweep-20261029",
+        "record": "1793264694732-53634-16"
+      },
+      "conditions": "null floor 0.46% (record 1793264560940-41393-20), effect floor 2.00%; sweep record 1793264694737-53634-17; dense_kl; memory growth -0.54 MiB; engagement verified (attn_decode_gqa on every candidate run, attn_decode_barrier on every default run)",
+      "note": "the family's first lab-ledger A/B; joins the llama-flow families in the 2026-10-29 GQA decode default flip"
+    }
+  ],
+  "open_questions": [
+    "the GQA decode default (2026-10-29 flip) rests on timing and 64-token greedy identity only: run a dense_kl gate on spark25 with TURBOSPARK_ATTN_DECODE_KERNEL=barrier against unset",
+    "a chunked prefill driver (SPARK_PHASE0.md)"
+  ],
+  "traps": [
+    "the fused q|k|v projection is one resident-index tensor: the int4_matmul bench sees one wide shape, not three"
+  ],
+  "docs": [
+    "docs/SPARK_PHASE0.md"
+  ]
 }

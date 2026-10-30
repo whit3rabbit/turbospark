@@ -1574,7 +1574,9 @@ fn run_micro_batch(
     for &(rs, re) in &rows_t {
         gpu_busy += re - rs;
     }
-    if std::env::var_os("TURBOSPARK_ANE_PREFILL_STATS").is_some() {
+    // `=1` only, like every other switch: stats mode syncs per micro-batch,
+    // so an arm written `=0` must not pay for it.
+    if std::env::var("TURBOSPARK_ANE_PREFILL_STATS").as_deref() == Ok("1") {
         print_stats(
             mode,
             start_position,

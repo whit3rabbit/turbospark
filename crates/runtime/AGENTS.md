@@ -56,10 +56,10 @@ policy.
   flow has more than two of those, so a neighbour's flow would decode fluently
   and wrongly. Decode streams the 256 routed experts (top-6) through the expert
   slot cache; mapped expert residency is refused at open. Prefill runs the
-  sequential produce path by default; `TURBOSPARK_FLINT_CHUNKED_PREFILL=1`
-  (opt-in, read once) runs the layer-batched chunk driver, which repeats the
+  layer-batched chunk driver by default; `TURBOSPARK_FLINT_CHUNKED_PREFILL=0`
+  (read once) restores the sequential produce path, which repeats the
   same dispatches in the same order and must stay byte-identical to
-  sequential. A flint prefill chunk refuses `TURBOSPARK_BATCHED_GEMV` and
+  the driver. A flint prefill chunk refuses `TURBOSPARK_BATCHED_GEMV` and
   `TURBOSPARK_ROUTED_BATCH` by name. Every flint install is rebalanced at
   intake by a fixed 2^6 up/down rebalance (`crates/repack/src/flint_rebalance.rs`)
   that keeps the SwiGLU product inside FP16, and the flow relies on it. FP16

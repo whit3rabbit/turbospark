@@ -14,7 +14,6 @@
   <a href="https://github.com/whit3rabbit/turbospark/actions/workflows/ci.yml"><img src="https://github.com/whit3rabbit/turbospark/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="https://github.com/whit3rabbit/turbospark/actions/workflows/release.yml"><img src="https://github.com/whit3rabbit/turbospark/actions/workflows/release.yml/badge.svg" alt="Release" /></a>
   <a href="https://crates.io/crates/turbospark-cli"><img src="https://img.shields.io/crates/v/turbospark-cli.svg" alt="crates.io" /></a>
-  <a href="https://github.com/whit3rabbit/turbospark/stargazers"><img src="https://img.shields.io/github/stars/whit3rabbit/turbospark" alt="GitHub stars" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT" /></a>
   <a href="docs/RELEASE.md"><img src="https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-lightgrey.svg" alt="Platform" /></a>
 </p>
@@ -240,7 +239,7 @@ Dense models do not stream, so budget roughly the on-disk size plus KV and scrat
 | Muse Glimmer 30B | INT4 (group 64) | MLX | ~16 GB | |
 | Humanizer 12B (dense Gemma 4, `humanizer-12b`) | INT8 (group 64) | MLX | ~12.7 GB | raw-completion rewriter behind [Humanize](#humanize), no chat template |
 | Spark-X2.5 4B | Q4_K_M | GGUF | ~2.6 GB | |
-| LFM3 1.7B (`lfm3-1.7b`, `lfm3-1.7b-q8`) | INT4 (group 64) / Q8_0 | MLX + GGUF | ~1.0 / 1.9 GB | dense hybrid of gated short-conv and attention layers; chunked prefill on the INT4 install only |
+| LFM3 1.7B (`lfm3-1.7b`, `lfm3-1.7b-q8`) | INT4 (group 64) / Q8_0 | MLX + GGUF | ~1.0 / 1.8 GB | dense hybrid of gated short-conv and attention layers; chunked prefill on the INT4 install only |
 | Mistral 7B Instruct v0.3 | Q4_K_M | GGUF | ~4.4 GB | |
 | TinyLlama 1.1B Chat | Q6_K | GGUF | ~0.9 GB | |
 

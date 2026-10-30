@@ -19,7 +19,10 @@
 #      anywhere else).
 #      MLX's kernel bundle is among them: without it the app starts and
 #      then exits on the first MLX image generation.
-#   3. the app stays alive for a few seconds. It is run with an empty HOME so
+#   3. every peer binary the `turbospark` front end execs is in the bundle.
+#      0.6.0 shipped without turbospark-image because the packaging lists
+#      were hand-kept and nothing compared them to the dispatch table.
+#   4. the app stays alive for a few seconds. It is run with an empty HOME so
 #      it cannot touch real user data.
 set -euo pipefail
 
@@ -68,7 +71,20 @@ mlx_metallib="$contents/Resources/mlx-swift_Cmlx.bundle/Contents/Resources/defau
 [ -s "$mlx_metallib" ] || fail "no MLX kernels at $mlx_metallib"
 echo "==> MLX kernels: $(du -h "$mlx_metallib" | cut -f1) in mlx-swift_Cmlx.bundle"
 
-# 3. Launch smoke -----------------------------------------------------------
+# 3. CLI peers -----------------------------------------------------------------
+# turbospark-bench is a dev harness from crates/bench, deliberately not shipped.
+front_end="$root/crates/cli/src/bin/turbospark.rs"
+[ -f "$front_end" ] || fail "$front_end not found; run from a source checkout"
+# `peer("turbospark-x", ...)` can wrap its name onto the next line, so match
+# the name literal itself rather than the call.
+peers="$(grep -oE '"turbospark-[a-z0-9-]+"' "$front_end" | tr -d '"' | sort -u | grep -vx turbospark-bench || true)"
+[ -n "$peers" ] || fail "found no turbospark-* peer names in $front_end (dispatch changed?)"
+for bin in turbospark $peers; do
+  [ -x "$contents/MacOS/$bin" ] || fail "CLI binary $bin is dispatched by turbospark but missing from $contents/MacOS"
+done
+echo "==> CLI peers present: $(echo $peers | tr '\n' ' ')"
+
+# 4. Launch smoke -----------------------------------------------------------
 home="$(mktemp -d)"
 log="$(mktemp)"
 trap 'rm -rf "$home" "$log"; [ -n "${pid:-}" ] && kill "$pid" 2>/dev/null || true' EXIT

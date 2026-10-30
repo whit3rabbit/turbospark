@@ -44,6 +44,7 @@ is `$TURBOSPARK_LAB_DIR`, else `$TURBOSPARK_HOME/lab`, else
 | `hash_diff`, `dispatch_probe`, `standin`, `trace`, `round_cost`, `ane_plan` | What their command measured |
 | `chain_capture` | `capture.{case, depth, prompt_tokens, match_len, stream_digest}` and, from this build on, `capture.prompt_ids` and `capture.stream` (token ids; absent on older captures) |
 | `depth_replay`, `hybrid_replay` | Controller settings, or the lookup-plus-head hybrid against the head alone, priced over captures: `results[].{label, env, case}` with per-case `head` and `hybrid` walks and `delta_committed_per_round`, `delta_tok_s` |
+| `tree_replay` | Speculative acceptance: tree against chain at equal verify rows |
 | `expert_census` | `tslab expert-census`: `summary.phases.{prefill,decode}.{reuse, concentration, union, slots_fit, sub_batches, largest_group}` over one capture run (`capture` is the file) |
 | `projection` | `tslab project`: `projection.{ratio, improvement_throughput, improvement_time, coverage, floor, clears_floor, cases, skipped, notes}` and the `inputs` it read |
 | `calibration` | `tslab calibrate`: `calibration.{predicted, measured, error, miss, sign_flip, reason}` and the projection and verdict it joined |

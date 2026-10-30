@@ -4,20 +4,116 @@
   "kind": "text",
   "title": "DeepSeek V2: absorbed MLA (one latent row per layer) with fine-grained MoE",
   "flow": "deepseek2",
-  "installs": [],
+  "installs": [
+    {
+      "name": "dsv2lite-16b",
+      "quant": "GGUF Q8_0",
+      "machine": "Apple M4 Max 36 GB",
+      "drafters": [],
+      "note": "64 experts top-6, MLA, 27 layers; measured 2026-10-29 (the family's first lab A/B)"
+    }
+  ],
   "recommended": [
-    {"chunk": "off", "when": [],
-     "why": "the deepseek2 flow is deliberately sequential; --chunk off is the only driver",
-     "findings": []}
+    {
+      "chunk": "off",
+      "when": [],
+      "why": "the deepseek2 flow is deliberately sequential; --chunk off is the only driver",
+      "findings": []
+    },
+    {
+      "slots": "64",
+      "when": [
+        "moe"
+      ],
+      "why": "the 2026-10-29 sweep read s64 +28.05% and s32 +11.09% decode over 16 slots (3/3 clean pairs each); the cost is peak: 15.65 GiB at 64 against 4.15 at 16 on a 15.5 GiB model, so 64 needs a large-memory host, 32 is the mid point, 16 the tight-memory choice",
+      "findings": [
+        "deepseek2.slots-s64-2026-10-29"
+      ]
+    }
   ],
   "sweeps": [
-    {"id": "slots", "description": "expert cache slots at streamed residency",
-     "when": ["moe"], "metric": "decode_tok_s", "exactness": "bit_exact",
-     "workload": {"prompts": [{"protocol": "medium-review"}], "decode_tokens": 64, "prefill_chunk": null},
-     "baseline": "s16@16/streamed", "candidates": ["s32@32/streamed", "s64@64/streamed"]}
+    {
+      "id": "slots",
+      "description": "expert cache slots at streamed residency",
+      "when": [
+        "moe"
+      ],
+      "metric": "decode_tok_s",
+      "exactness": "bit_exact",
+      "workload": {
+        "prompts": [
+          {
+            "protocol": "medium-review"
+          }
+        ],
+        "decode_tokens": 64,
+        "prefill_chunk": null
+      },
+      "baseline": "s16@16/streamed",
+      "candidates": [
+        "s32@32/streamed",
+        "s64@64/streamed"
+      ]
+    }
   ],
-  "findings": [],
-  "open_questions": ["no install measured by the lab yet", "MLA attention has no kernel bench; its latent projections come from the resident index"],
-  "traps": ["the attn_decode bench refuses MLA layers; the int4_matmul bench carries the kv_a and kv_b latent shapes instead"],
-  "docs": ["docs/DEEPSEEK2_PHASE0.md"]
+  "findings": [
+    {
+      "id": "deepseek2.slots-s64-2026-10-29",
+      "date": "2026-10-29",
+      "install": "dsv2lite-16b",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "11b52ccd (checkout git_dirty; worker sha256 b4825cd8)",
+      "workload": "tslab sweep slots: protocol medium-review, 64 decode, chunk off, streamed residency; 3 clean pairs per candidate, 0 dirty in the sweep's verdict pairs",
+      "arms": {
+        "s16": {
+          "slots": 16
+        },
+        "s32": {
+          "slots": 32
+        },
+        "s64": {
+          "slots": 64
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "s16_median_tok_s": 19.87,
+        "s32_median_improvement": 0.1109,
+        "s32_ci": [
+          0.086,
+          0.1447
+        ],
+        "s64_median_improvement": 0.2805,
+        "s64_ci": [
+          0.2617,
+          0.302
+        ],
+        "s64_median_tok_s": 25.72,
+        "peak_gb": {
+          "s16": 4.15,
+          "s32": 7.98,
+          "s64": 15.65
+        }
+      },
+      "verdict": "win",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "deepseek2-sweep-20261029",
+        "record": "1793275027270-2823-51"
+      },
+      "conditions": "the verdict field is s64's (sweep best); s32's WIN is verdict 1793275027265-2823-50; sweep record 1793275027275-2823-52; bit_exact; null floor 0.00% under the 2% default (record 1793273465426-20288-24); the candidates' memory growth (+3.83 and +11.50 GiB) exceeds the 64 MiB allowance by design - the expert cache is the mechanism; the s64 peak nearly equals the 15.5 GiB model, i.e. nearly all experts resident",
+      "note": "the family's first lab A/B: decode is expert-cache-bound on this MLA MoE and scales monotonically with slots; 64 is the throughput default on large-memory hosts, 32 the mid point (+11.1% for +3.8 GiB), 16 the tight-memory choice"
+    }
+  ],
+  "open_questions": [
+    "no install measured by the lab yet",
+    "MLA attention has no kernel bench; its latent projections come from the resident index"
+  ],
+  "traps": [
+    "the attn_decode bench refuses MLA layers; the int4_matmul bench carries the kv_a and kv_b latent shapes instead"
+  ],
+  "docs": [
+    "docs/DEEPSEEK2_PHASE0.md"
+  ]
 }

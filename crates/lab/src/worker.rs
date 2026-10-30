@@ -128,6 +128,9 @@ struct EnergyLog {
     prefill_j: f64,
     decode_j: f64,
     run_j: f64,
+    /// Tokens of the plain prompts behind `prefill_j` and `decode_j`.
+    plain_prompt_tokens: usize,
+    plain_decode_tokens: usize,
     by_block: BTreeMap<String, f64>,
     /// A reading or a delta failed: every energy field reads `None`.
     broken: bool,
@@ -147,6 +150,8 @@ impl EnergyLog {
             prefill_j: 0.0,
             decode_j: 0.0,
             run_j: 0.0,
+            plain_prompt_tokens: 0,
+            plain_decode_tokens: 0,
             by_block: BTreeMap::new(),
             broken: false,
         }
@@ -195,9 +200,13 @@ impl EnergyLog {
         if saw_plain_prompts {
             totals.prefill_j = Some(self.prefill_j);
             totals.decode_j = Some(self.decode_j);
-            totals.j_per_prefill_token = Some(self.prefill_j / totals.prompt_tokens.max(1) as f64);
-            totals.j_per_decode_token =
-                (totals.decode_tokens > 0).then(|| self.decode_j / totals.decode_tokens as f64);
+            // Only plain prompts fill the prefill and decode windows (chat and
+            // speculative prompts land in `run`), so divide by their tokens,
+            // not by `totals`, which counts every prompt kind.
+            totals.j_per_prefill_token =
+                Some(self.prefill_j / self.plain_prompt_tokens.max(1) as f64);
+            totals.j_per_decode_token = (self.plain_decode_tokens > 0)
+                .then(|| self.decode_j / self.plain_decode_tokens as f64);
         }
         totals.run_j = Some(self.run_j + self.prefill_j + self.decode_j);
         totals.energy_by_block = Some(self.by_block);
@@ -978,6 +987,8 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
         if req.workload.decode_tokens > 0 {
             energy.account("decode", &e1, &e2);
         }
+        energy.plain_prompt_tokens += ids.len();
+        energy.plain_decode_tokens += generated.len();
         sampler.sample();
 
         let prefill_phases = phases::report(&phases::delta(&p0, &p1));

@@ -5,36 +5,221 @@
   "title": "Qwen3 fine-grained MoE on the llama flow (Qwen3-30B-A3B), per-head q/k norm",
   "flow": "llama",
   "installs": [
-    {"name": "qwen3-30b-a3b-q4_k_m", "quant": "GGUF Q4_K_M", "machine": "Apple M4 Max 36 GB", "drafters": [], "note": "no install on this host today"}
+    {
+      "name": "qwen3-30b-a3b-q4_k_m",
+      "quant": "GGUF Q4_K_M",
+      "machine": "Apple M4 Max 36 GB",
+      "drafters": [],
+      "note": "no install on this host today"
+    },
+    {
+      "name": "qwen3moe",
+      "quant": "GGUF Q4_K_M",
+      "machine": "Apple M4 Max 36 GB",
+      "drafters": [],
+      "note": "32q/4kv head_dim 128, 48 full-attention layers, 128 experts top-8; measured 2026-10-29"
+    }
   ],
   "recommended": [
-    {"knob": "routed_batch", "value": "<unset>", "when": [],
-     "why": "the GGUF install refuses TURBOSPARK_ROUTED_BATCH=1 (no GGUF routed batch kernel); an INT4-affine repack could take it",
-     "findings": []},
-    {"slots": "16", "when": [],
-     "why": "the every-install row runs 16 slots",
-     "findings": ["qwen3moe.every-install-row-2026-10-11"]}
+    {
+      "knob": "routed_batch",
+      "value": "<unset>",
+      "when": [],
+      "why": "the GGUF install refuses TURBOSPARK_ROUTED_BATCH=1 (no GGUF routed batch kernel); an INT4-affine repack could take it",
+      "findings": []
+    },
+    {
+      "slots": "64",
+      "when": [
+        "moe"
+      ],
+      "why": "the 2026-10-29 sweep read s64 +27.9% and s32 +15.7% decode over 16 slots (3/3 clean pairs each); the cost is peak: 9.47 GiB at 64 against 2.84 at 16, so 16 stays the tight-memory choice and 64 the throughput default",
+      "findings": [
+        "qwen3moe.every-install-row-2026-10-11",
+        "qwen3moe.slots-s64-2026-10-29"
+      ]
+    },
+    {
+      "knob": "attn_decode_kernel",
+      "value": "<unset>",
+      "when": [],
+      "why": "held at barrier (unset): the GQA-shared kernel read +3.44% on qwen3moe, but the gqa arm's decode_digest (978256398f) differs from barrier's (6e355033dd) on every run and no moe_kl gate ran, and the CI's lower edge sits under the null floor; TURBOSPARK_ATTN_DECODE_KERNEL=gqa opts in until a moe_kl pass and a 6-pair rerun land",
+      "findings": [
+        "qwen3moe.gqa-decode-2026-10-29"
+      ]
+    }
   ],
   "sweeps": [
-    {"id": "slots", "description": "expert cache slots at streamed residency",
-     "when": ["moe"], "metric": "decode_tok_s", "exactness": "bit_exact",
-     "workload": {"prompts": [{"protocol": "medium-review"}], "decode_tokens": 64},
-     "baseline": "s16@16/streamed", "candidates": ["s32@32/streamed", "s64@64/streamed"]},
-    {"id": "decode_attention", "description": "the GQA-shared decode kernel against barrier",
-     "when": [], "metric": "decode_tok_s", "exactness": "moe_kl",
-     "workload": {"prompts": [{"protocol": "medium-review"}], "decode_tokens": 64},
-     "baseline": "default", "candidates": ["gqa:attn_decode_kernel=gqa"]}
+    {
+      "id": "slots",
+      "description": "expert cache slots at streamed residency",
+      "when": [
+        "moe"
+      ],
+      "metric": "decode_tok_s",
+      "exactness": "bit_exact",
+      "workload": {
+        "prompts": [
+          {
+            "protocol": "medium-review"
+          }
+        ],
+        "decode_tokens": 64
+      },
+      "baseline": "s16@16/streamed",
+      "candidates": [
+        "s32@32/streamed",
+        "s64@64/streamed"
+      ]
+    },
+    {
+      "id": "decode_attention",
+      "description": "the GQA-shared decode kernel against the barrier default",
+      "when": [],
+      "metric": "decode_tok_s",
+      "exactness": "moe_kl",
+      "workload": {
+        "prompts": [
+          {
+            "protocol": "medium-review"
+          }
+        ],
+        "decode_tokens": 64
+      },
+      "baseline": "default",
+      "candidates": [
+        "gqa:attn_decode_kernel=gqa"
+      ]
+    }
   ],
   "findings": [
-    {"id": "qwen3moe.every-install-row-2026-10-11", "date": "2026-10-11",
-     "install": "qwen3-30b-a3b-q4_k_m", "machine": "Apple M4 Max 36 GB", "power": "ac", "rev": "v0.5 era",
-     "workload": "the every-install table",
-     "arms": {"default": {}},
-     "metric": "decode_tok_s", "values": {"decode_tok_s": [16.0, 28.1], "peak_mib": [2741, 2753]},
-     "verdict": "reading",
-     "provenance": {"kind": "doc", "path": "docs/BENCHMARKS.md", "heading": "Every install, side by side"},
-     "conditions": "frozen rows; the llama.cpp cross-engine section compares the same GGUF",
-     "note": ""}
+    {
+      "id": "qwen3moe.every-install-row-2026-10-11",
+      "date": "2026-10-11",
+      "install": "qwen3-30b-a3b-q4_k_m",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "v0.5 era",
+      "workload": "the every-install table",
+      "arms": {
+        "default": {}
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "decode_tok_s": [
+          16.0,
+          28.1
+        ],
+        "peak_mib": [
+          2741,
+          2753
+        ]
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "doc",
+        "path": "docs/BENCHMARKS.md",
+        "heading": "Every install, side by side"
+      },
+      "conditions": "frozen rows; the llama.cpp cross-engine section compares the same GGUF",
+      "note": ""
+    },
+    {
+      "id": "qwen3moe.gqa-decode-2026-10-29",
+      "date": "2026-10-29",
+      "install": "qwen3moe",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "2026-10-28 release build (tslab exe of 22:24)",
+      "workload": "tslab sweep decode_attention: protocol medium-review, 64 decode, chunk 128, 16 slots streamed; 3 clean pairs, 0 dirty",
+      "arms": {
+        "barrier_default": {},
+        "gqa": {
+          "env": {
+            "TURBOSPARK_ATTN_DECODE_KERNEL": "gqa"
+          }
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "default_tok_s": [
+          28.05,
+          28.4
+        ],
+        "gqa_tok_s": [
+          28.56,
+          30.45
+        ],
+        "median_improvement": 0.0344,
+        "ci": [
+          0.0144,
+          0.0716
+        ],
+        "null_floor": 0.0242
+      },
+      "verdict": "win",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "qwen3moe-sweep-20261029",
+        "record": "1793261734046-29457-49"
+      },
+      "conditions": "null floor 2.42% (record 1793261229311-16798-16, the governing floor); sweep record 1793261734050-29457-50; moe_kl; engagement verified (attn_decode_gqa on every candidate run, attn_decode_barrier on every default run); peaks ~7.26 GiB both arms",
+      "note": "leg 3 behind the llama-flow decode default flip, after llama.gqa-decode-mistral7b-2026-10-29 (+5.73%) and qwen2.gqa-decode-2026-10-29 (+3.93%); the CI's lower edge sits under the floor while the median clears it with 3/3 unanimous pairs"
+    },
+    {
+      "id": "qwen3moe.slots-s64-2026-10-29",
+      "date": "2026-10-29",
+      "install": "qwen3moe",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "2026-10-28 release build (tslab exe of 22:24)",
+      "workload": "tslab sweep slots: protocol medium-review, 64 decode, streamed residency, 3 clean pairs per candidate, 0 dirty",
+      "arms": {
+        "s16": {
+          "slots": 16
+        },
+        "s32": {
+          "slots": 32
+        },
+        "s64": {
+          "slots": 64
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "s16_tok_s": [
+          23.2,
+          24.1
+        ],
+        "s32_median_improvement": 0.157,
+        "s32_ci": [
+          0.1376,
+          0.1764
+        ],
+        "s64_median_improvement": 0.2788,
+        "s64_ci": [
+          0.2747,
+          0.3035
+        ],
+        "s64_tok_s": [
+          30.4,
+          30.7
+        ],
+        "peak_gb": {
+          "s16": 2.84,
+          "s32": 5.06,
+          "s64": 9.47
+        }
+      },
+      "verdict": "win",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "qwen3moe-sweep-20261029",
+        "record": "1793261574832-29457-31"
+      },
+      "conditions": "the verdict field is s64's (sweep best); s32's WIN is verdict 1793261574827-29457-30; sweep record 1793261574838-29457-32; bit_exact; null floor 2.42% (record 1793261229311-16798-16); the candidates' memory growth (+2.2 and +6.6 GiB) exceeds the 64 MiB allowance by design - a larger expert cache is the mechanism",
+      "note": "128 experts top-8 at this install: 64 slots buys +27.9% decode for +6.6 GiB peak on a 17.3 GiB model; 16 slots stays the right answer for tight-memory hosts"
+    }
   ],
   "open_questions": [
     "a routed batch kernel for the GGUF expert layout",
@@ -43,5 +228,7 @@
   "traps": [
     "GGUF experts: the int4_matmul bench synthesizes INT4-affine only, so the expert GEMVs are not timed; capabilities says so"
   ],
-  "docs": ["docs/BENCHMARKS.md"]
+  "docs": [
+    "docs/BENCHMARKS.md"
+  ]
 }

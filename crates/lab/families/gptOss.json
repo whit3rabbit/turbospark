@@ -11,6 +11,13 @@
       "machine": "Apple M4 Max 36 GB",
       "drafters": [],
       "note": "no install on this host today"
+    },
+    {
+      "name": "gptoss-20b",
+      "quant": "GGUF MXFP4",
+      "machine": "Apple M4 Max 36 GB",
+      "drafters": [],
+      "note": "head_dim 64, 64 q over 8 kv, 32 experts top-4, attention sinks; measured 2026-10-29"
     }
   ],
   "recommended": [
@@ -24,10 +31,12 @@
     },
     {
       "knob": "routed_batch",
-      "value": "<unset>",
+      "value": "1",
       "when": [],
-      "why": "the MXFP4 routed batch arm is built and opt-in; it has no A/B in the lab ledger yet",
-      "findings": []
+      "why": "the arm's first A/B won +23.46% prefill (CI +23.10 to +23.57, 3/3 clean) with peak 14.9 MiB LOWER; set it on this family. The runtime default stays opt-in on the qwen36 precedent: a moe_kl-class batched default owes its KL probe and a memory oracle before it flips",
+      "findings": [
+        "gptOss.routed-batch-2026-10-29"
+      ]
     },
     {
       "slots": "16",
@@ -142,6 +151,82 @@
       },
       "conditions": "frozen rows; the llama.cpp cross-engine section holds the same GGUF's comparison",
       "note": ""
+    },
+    {
+      "id": "gptOss.routed-batch-2026-10-29",
+      "date": "2026-10-29",
+      "install": "gptoss-20b",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "2026-10-29 release build",
+      "workload": "tslab sweep routed_batch: protocol long-synthesis (2,839 prompt tokens), 16 decode, chunk 128; 3 clean pairs, 0 dirty",
+      "arms": {
+        "gemv": {},
+        "batched": {
+          "env": {
+            "TURBOSPARK_ROUTED_BATCH": "1"
+          }
+        }
+      },
+      "metric": "prefill_tok_s",
+      "values": {
+        "gemv_tok_s": [
+          39.25,
+          39.41
+        ],
+        "batched_tok_s": [
+          48.5,
+          48.51
+        ],
+        "median_improvement": 0.2346,
+        "ci": [
+          0.231,
+          0.2357
+        ],
+        "null_floor": 0.0025,
+        "peak_bytes": {
+          "gemv": 8153096520,
+          "batched": 8138170624
+        }
+      },
+      "verdict": "win",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "gptoss-sweep-20261029",
+        "record": "1793267289378-32648-16"
+      },
+      "conditions": "prefill null floor 0.25% (record 1793266531513-70729-20), effect floor 2.00%; sweep record 1793267289382-32648-17; moe_kl; the routed lane engaged (arm_env carried TURBOSPARK_ROUTED_BATCH=1, no not-engaged reason); memory PASSED with the batched arm 14.9 MiB lower",
+      "note": "the arm's first A/B answers the profile's open item; the runtime default stays opt-in on the qwen36 precedent (moe_kl defaults owe a KL probe and a memory oracle before they flip) while the recommendation moves to set it"
+    },
+    {
+      "id": "gptOss.gqa-decode-sinks-2026-10-29",
+      "date": "2026-10-29",
+      "install": "gptoss-20b",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "2026-10-29 release build",
+      "workload": "tslab sweep decode_attention: protocol medium-review, 64 decode; 0 clean pairs of 6, every gqa run rejected by the engagement guard",
+      "arms": {
+        "barrier_default": {},
+        "gqa": {
+          "env": {
+            "TURBOSPARK_ATTN_DECODE_KERNEL": "gqa"
+          }
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "default_median_tok_s": 33.7,
+        "clean_pairs": 0
+      },
+      "verdict": "inconclusive",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "gptoss-sweep-20261029",
+        "record": "1793267568200-32648-46"
+      },
+      "conditions": "every gqa run: not engaged, no [engaged] attn_decode_gqa, and its engaged list shows attn_decode_barrier - the dispatcher keeps the barrier path for this family's sinks (head_dim 64 with 64 q over 8 kv also fails attention_decode_gqa_supported); decode null floor 0.077% (record 1793266697247-20212-16); sweep record 1793267568203-32648-47",
+      "note": "closes the qualification question: the GQA-shared kernel is unreachable on this family, so its decode default stays barrier with no measurement possible through this arm"
     }
   ],
   "open_questions": [
@@ -151,7 +236,8 @@
   ],
   "traps": [
     "the attention sinks keep the rows_attn bench off this family",
-    "the chunked driver keeps attention per token: a prefill profile shows the routed half, not a batched attention"
+    "the chunked driver keeps attention per token: a prefill profile shows the routed half, not a batched attention",
+    "the GQA-shared decode kernel cannot engage here (sinks; head_dim 64 with 64 q over 8 kv): an arm that sets attn_decode_kernel=gqa is a deterministic not-engaged, not a measurement"
   ],
   "docs": [
     "docs/BATCHED_PREFILL.md",

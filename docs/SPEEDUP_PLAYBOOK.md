@@ -622,6 +622,226 @@ campaign:
   Ledgers: `ane-depth`, `ane-c4`, `ane-tsplit2`, `ane-rowsplit-asis`,
   `ane-rowsplit-fixed` under `~/.turbospark/lab`.
 
+**How to re-test (tslab, 2026-10-27).** Each reopen condition is a ledgered
+reading now, so another chip, model or OS re-asks the question without a
+campaign:
+
+- *Is MoE prefill compute bound?* `tslab profile --model <moe install>`
+  prints `moe bound: ...` per phase and writes `moe_bound.class` into
+  `profile_summary` (`io_bound`, `loop_bound`, `compute_bound`, `dense`
+  from the routed GPU busy, expert I/O and host-loop shares,
+  `crates/lab/src/phases.rs`). The expert idea reopens at `compute_bound`
+  on prefill, not before.
+- *How hot are the hot experts, and does a batch fit the slots?*
+  `tslab expert-census --model <moe install>` runs one router capture
+  (`TURBOSPARK_ROUTER_HIST` plus `TURBOSPARK_ROUTER_BATCHES=1`) and records
+  `expert_census`: the share of selections in experts used 8, 16, 17 or
+  32+ times within an executed batch, the largest in-batch group, the
+  expert union per full batch against 16, 32, 64 and 96 slots, and the
+  routed sub-batch sizes the union caps allow. The same record is the
+  streaming cache's sizing input (`docs/EXPERT_RESIDENCY.md`).
+- *Would one multi-expert Core ML call run on the ANE, and at what cost?*
+  `tslab kernel --bench ane_matmul --model <install> --programs DIR` (a
+  worker built with `--features ane-prefill`; `DIR` from
+  `crates/coreml/tools/gen_ane_sweep_programs.py`, whose exact line the
+  bench prints) times Steel, the ANE program with its conversions and
+  handoff, and the row split at several shares, per install shape and
+  token count, with modeled joules beside each point and Core ML's
+  placement per program. Packed-expert cases (`E` experts of `g` rows as
+  one batched program) run against `E` Steel dispatches. The `ane gate`
+  notes fit `main-npu`'s two thresholds (minimum MACs and MACs per byte)
+  on this engine's numbers, for speed, energy, or their product.
+- *Do handoff tails dominate under load?* An `ane_prefill=split` arm with
+  `~hog:N` (N busy threads the orchestrator runs beside the worker, half
+  the performance cores is the intended N) against the same arm quiet, on
+  an `ane-prefill` worker with `TURBOSPARK_ANE_PREFILL_STATS=1`:
+  `tslab ab --model <qwen38> --chunk 2048 --baseline split:ane_prefill=split,ane_prefill_stats=1 --candidate hog:ane_prefill=split,ane_prefill_stats=1~hog:8`.
+  The run records parse the `[ane-prefill]` lines into `ane_stats.summary`:
+  `handoff_share` (`wake_ms + resume_ms` over `wall_ms`) and its per-point
+  p50 and p95. Device-side events are worth their private framework only
+  if the hogged share passes 5% while the quiet share stays under 1%; the
+  quiet reading here was about 0.3 ms a point, 90 ms of 15.7 s. Hogged runs
+  are never quotable.
+
+  **Read on 2026-10-27 (M4 Max, AC, `qwen38-27b`, chunk 2048, 512 points):
+  the tails do not dominate.** `handoff_share` was 0.55% quiet and 0.43%,
+  0.46%, 0.42%, 0.86% under `~hog:2/4/8/12`, never near 5%. The host wake
+  (`wake_ms`, 56 ms) outweighs the GPU resume (`resume_ms`, 5 ms), but there
+  is no tail for a spin or QoS change to flatten. Prefill fell from 248.9 to
+  226.0 tok/s at `hog:12`. That loss tracks `gpu_busy_ms` (+1.2 s, the Steel
+  rows) while `ane_ms` stayed flat, and the handoff delta is about 0.05 s.
+  Async handoffs and device events stay closed. Limits: two micro-batches
+  per run, integer-thread hogs only, and the median includes the warmup
+  round. The summary's p50 equals p95 because it aggregates per
+  micro-batch. The earlier 0.9 s slowdown did not reproduce. Ledger:
+  `~/.turbospark/lab/ane-handoff-hog`.
+
+  **Queue depth, baked weights and the token axis (same day, same host,
+  `tslab kernel --bench ane_matmul`, 17408x5120 and 5120x17408, 2048
+  tokens, ms per matmul; Steel is 34.2 to 34.3).**
+  - *A second prediction in flight does not help.* Raw predictions on one
+    model cost 38.6 to 39.3 ms and on two models driven by two threads 38.6
+    to 39.4 ms (`ane_pred_x1`, `ane_pred_x2`). The ANE serializes them, so
+    its fixed cost does not overlap.
+  - *INT4 constants inside the program are the largest ANE gain so far.*
+    `ane_c4` (`gen_ane_sweep_programs.py --const-int4`, uint4 block 64,
+    random weights) runs 29.2 to 30.8 ms against 41.1 to 42.9 for the F16
+    plane form, beats Steel above about 540 to 840 tokens, and uses about
+    0.38 to 0.41 J against 2.1 to 2.4 J for Steel. Core ML placed it on the
+    ANE (cost share 1.0). Not yet shown: quality with real weights (the
+    engine's affine layout has an fp16 bias, coremltools writes a uint4
+    zero point), the memory and compile cost of one program per layer and
+    class, and whether the ANE keeps the weights packed at run time.
+  - *Splitting tokens works about as well as splitting rows.* `tsplit`
+    (ANE takes the first half of the tokens through every row, Steel the
+    rest) reads 23.7 to 25.7 ms. `split@0.5` (rows) reads 22.1 to 24.4 and
+    peaks near share 0.45 (20.2 to 21.7). Neither prices a fused block's
+    lower handoff count, since the bench runs one matrix at a time.
+  - *Baked INT4 with a row split is the best reading so far.*
+    `split_c4@0.5` (the ANE bakes rows [0, 8704) or [0, 2560) as uint4
+    constants, Steel takes the rest) reads 17.9 to 18.3 ms at 2048 tokens
+    against Steel's 34.2 to 34.4, about 1.9x. At 1024 tokens it reads 9.2
+    to 9.4 against 17.2 to 17.4, and at 512 4.9 to 5.2 against 8.8 to 8.9.
+    Share 0.5 is the best of 0.35 to 0.7 at every count: 0.45 reads 19.6 to
+    20.1 and 0.6 reads 18.0 to 19.5 at 2048. It also uses about 1.3 to 1.4 J
+    against Steel's 2.2 to 2.4. Same limits as `ane_c4`: random weights, no
+    quality check, one program per layer and class. This is one matrix, so
+    the end-to-end gain will be smaller (the F16 split read 1.35x on a
+    whole prefill, with other work unchanged). Run-to-run spread is a few
+    percent, with one 34 ms `ane_c4` outlier against 29 elsewhere.
+  - *Real weights confirm it.* `crates/coreml/tools/bake_ane_prefill_programs.py`
+    bakes rows [0, MA) of named install tensors into programs, refusing a
+    tensor whose fp16 scale and offset do not reproduce the BF16 values.
+    `tslab kernel --bench ane_matmul --programs DIR --case real:0.mlp.gate_proj`
+    then runs Steel, the F16-plane split and the baked split on that tensor's
+    own bytes with unit-variance activations. On eight tensors (layers 0, 3
+    and 10: gate, down, qkv, out, q and o projections, share 0.5, 2048
+    tokens) the baked split reads 7.1 to 19.6 ms against Steel's 12.6 to
+    35.4, a 1.78x to 1.93x gain, and is 7% to 22% faster than the F16-plane
+    split (1.46x to 1.77x). Its ANE rows differ from Steel's output by a
+    relative rms of 6.0e-4 to 8.1e-4 (the F16-plane split: 4.3e-4 to 6.9e-4),
+    Steel's own rows are bit-identical, nothing is non-finite, and Core ML
+    placed every baked program fully on the ANE. That includes layer 10's
+    `in_proj_qkv`, whose tiny scales are subnormal in fp16. Limits: single
+    matrices, not a prefill; random activations, not hidden states; the host
+    carried other sessions' work (load average 3 to 6).
+  - *The runtime takes baked programs (manifest format 2).* One program per
+    class, layer and token count, written by `bake_ane_prefill_programs.py
+    --layers 0,3` into a `manifest.json` that `TURBOSPARK_ANE_PREFILL_DIR`
+    points at. The format picks the form, there is no extra switch. A baked
+    point has no weight plane and no dequant pass, and a layer or class with
+    no program runs on Steel. With layers 0 and 3 baked (16 programs, the
+    same ANE rows as the F16 programs) the split ran 8 points per
+    micro-batch instead of 256, and the 24 greedy tokens matched Steel's
+    (digest `cc79da79...`). Loading 16 programs took 117.7 s cold (ANE
+    compile, about 7.4 s each) and 0.82 s warm (about 0.05 s each). The
+    default F16 path is unchanged: 256 points, the same digest, prefill
+    15.5 to 15.7 s against Steel's 21.7 s. Only two layers are baked, so
+    this proves the path and not the gain.
+  - *Baked programs do not scale to the whole model: the ANE stops
+    keeping them resident.* Baking gateup and down for all 64 layers at
+    width 2048 (128 programs) and running the split gave 51 to 64 s of
+    prefill against Steel's 17 s, with the same tokens. The stats show why:
+    the Steel rows take the same time as in the F16 run, but the ANE takes
+    190 ms per gateup point and 80 ms per down point, against 34 and 18 ms
+    for the F16 form and 26 and 15 ms for the same baked programs when only
+    16 to 48 are loaded. Sweeping the number of loaded programs: 16, 32 and
+    48 are fast, 64 (32 layers of gateup and down) is slow at 140 and 62 ms
+    per point, and 64 down programs alone sit in between at 32 ms. The
+    cliff does not follow package bytes: 64 uint4 programs (2.1 GiB) are as
+    slow as 64 uint8 programs (4.3 GiB). It looks like a limit on how many
+    models, or how many weights once compiled, the ANE keeps loaded, with
+    each miss costing a reload that grows with program size. The F16 form
+    escapes it because two programs serve every layer. Consequence: a
+    per-layer baked manifest can cover roughly the first 20 to 24 layers
+    of gateup and down, and the other layers fall back to Steel or to a
+    shared F16 program, so the whole-model gain measured on single matrices
+    (1.74x to 1.87x against 1.30x to 1.71x) does not carry over.
+  - *The cliff is wired memory, not a program count.* A standalone probe
+    (`turbospark-coreml`, `predict_shared`, no GPU or model) loaded N baked
+    gateup programs and timed predictions. 64 programs loaded at once ran at
+    a median 26 ms with no slow predictions, the same as 16, and idle gaps
+    of 20 or 100 ms and 20 GB of ordinary memory ballast changed nothing.
+    Each loaded program holds about 299 MiB of system wired memory (8
+    programs +2.4 GB, 64 programs +19.1 GB, linear), about six times its
+    47 MB uint4 package: the ANE expands the weights to fp16 (168 MB for
+    gateup at 8192 rows x 2) and adds about 90 MB of input and output
+    buffers. The runtime process also maps a 15 GB model for the GPU, and on
+    a 36 GB machine 64 programs (about 14 GB mixed, 19 GB gateup alone) do not
+    fit beside it. Running the probe while a Steel prefill held the GPU and
+    the model busy gave 5% slow predictions with stalls up to 9 s. That fits
+    thrashing under a wired budget, and it explains why uint8 and uint4
+    packages behaved alike. Not proven in isolation: the probe has no
+    wired GPU ballast, so the budget itself is inferred.
+  - *LUT weights halve the footprint.* The same eight gateup layers built
+    with `constexpr_lut_to_dense` (4-bit indices, a 16-entry fp16 table per
+    64 weights, exact for the affine grid) hold 160 MiB wired each against
+    302 MiB for the shift-scale form, run at the same speed (25.3 ms against
+    25.5 ms) and are placed 100% on the ANE. The package is 80 MiB, so the
+    ANE appears to keep LUT weights compressed. At that size gateup and
+    down for all 64 layers still need about 17 GB wired, more than fits
+    beside the model on a 36 GB machine, so it would cover perhaps half the
+    layers here and the whole model only on a larger Mac.
+  - *The 16-layer LUT hybrid is slower than the F16 split (2026-10-28).*
+    Manifest format 2 now mixes baked `const_int4` layers with shared `f16`
+    programs (a layer's own program wins), and `bake_ane_prefill_programs.py
+    --lut --shared-f16` writes one. Gateup and down for the even layers 0 to
+    30 were baked as LUT programs at 2048 tokens (32 programs, 17 s; worst
+    table error 0.007 level), the other layers and classes stayed on the F16
+    programs. Quality holds: `qwen38_prefill_arm_probe` reads mean KL 2.38e-5
+    nats for the split against 2.47e-5 for `break` and 1.73e-5 for Steel
+    (bound 1e-3), top-1 6/6, but only the 2000- and 3000-token prompts reach
+    a baked layer. Speed does not: on AC, `tslab profile` chunk 2048, three
+    rounds each, interleaved hybrid, F16, F16, hybrid, Steel read 172.8 to
+    173.2 tok/s in all four runs, the F16 split 238 to 246 tok/s (1.4x), and
+    the hybrid 177 to 197 tok/s (1.13x, about 0.81x of the F16 split). The
+    ANE arms were flagged DIRTY for foreign CPU over 150% (the Steel arms
+    were not), so treat them as steady readings, not frozen rows. The gap
+    has two parts, found from per-point timelines of one micro-batch
+    (a temporary dump of each point's segment, Steel rows, prediction and
+    signal times, since removed). First, the baked form buys nothing: per
+    point, the F16 and baked predictions take the same time (gateup 34.3 ms
+    against 31.8 ms for 8192 rows, down 18.3 against 16.5), the point is
+    bound by the Steel rows (36 ms and 19 ms), and the GPU dequant pass the
+    baked form skips costs only 0.7 ms per gateup point. Wall time for a
+    2048-row micro-batch is 7.5 s for the F16 split and 7.6 s for the
+    hybrid, and 3.75 s against 3.80 s for the 892-row one. The ANE does not
+    run faster for having its weights inside the program; the bench's 1.9x
+    was against Steel, which the F16 form also gets. Second, a process that
+    loads baked programs stalls before its first Steel work: the first
+    segment starts 0.45 to 0.64 s after commit with 32 baked programs, 0.2
+    to 0.4 s with 16, and 2 to 4 s in a cold process, against 4 ms with the
+    F16 programs. That is the rest of the 195 against 240 tok/s, because
+    `tslab profile` starts a fresh process every round. The cause was not
+    isolated; it grows with the number of baked programs, and the machine
+    had 30 GB of 31 GB swap in use. Verdict: baking does not pay on this
+    machine in either form, so the F16 split stays the default.
+  - *Two mistakes in the baked work, both fixed.* `np.array(q,
+    dtype=np_uint4_dtype)` drops the sub-byte tag, so the first baked
+    programs held uint8 constants (1.06 bytes per weight, not 0.56). The
+    tool now uses `astype`, and the eight-tensor A/B was repeated: same
+    error (relative rms 6.0e-4 to 8.1e-4), 1.74x to 1.87x over Steel. And
+    a baked manifest lists each class once per layer, which made the split
+    count 8,192 points and the runtime refuse with "16385 command buffers";
+    `classes_at` now yields each class once. Converting with
+    `skip_model_load=True` takes a bake from 8 to 16 s per program to 1 s
+    and stops it compiling every program into the Core ML and ANE caches.
+  - *Disk.* First use compiles each program into the Core ML `compiled/`
+    directory (equal to the package size) and into an ANE cache this
+    session cannot read. Observed: 16 uint8 programs used 1.7 GiB, 128 uint8
+    programs about 15 GiB, 128 uint4 programs about 13 GiB with transient
+    spikes near 8 GiB that vanish when the compile is killed. Cold load is
+    about 10 s per program.
+  - *The bench's row split was mismeasured until today.* It committed the
+    pass that waits on the host ahead of Steel's rows on the same queue,
+    so Steel could not start until the prediction finished and the halves
+    added (`split@0.5` read 40.1 ms, no better than the ANE alone). With
+    Steel committed first it reads 22.3 ms. An earlier `ane_matmul`
+    `split@` curve in a ledger likely reads too slow by about the Steel
+    half. The runtime split commits Steel's rows first and is not affected.
+  Ledgers: `ane-depth`, `ane-c4`, `ane-tsplit2`, `ane-rowsplit-asis`,
+  `ane-rowsplit-fixed` under `~/.turbospark/lab`.
+
 **What the capture says about the GPU path instead.**
 `scripts/moe_route_replay.py --union-cap N` replays
 `next_routed_sub_batch`'s greedy shrink over that capture. On full 64-row
@@ -760,6 +980,13 @@ Recorded so they are not re-derived:
 ## Applying it elsewhere
 
 ### GQA-shared decode attention, other families
+
+The dense llama-flow families (dense Llama, Qwen2, Qwen3, Qwen3-VL, Spark 2.5)
+took the GQA-shared kernel as their default on the 2026-10-29 lab flip: the
+family match in `DecodeScratch`
+(`crates/runtime/src/real_forward_types.rs`), with
+`TURBOSPARK_ATTN_DECODE_KERNEL=barrier` as the kill arm. What follows is the
+procedure for a family that is not on that list.
 
 Any family whose decode reaches `gpu::encode_attention_decode` with a group
 size above 1 can opt in where its `AttentionScratch` is built:

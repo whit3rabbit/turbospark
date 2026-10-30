@@ -191,7 +191,10 @@ pub fn ane_gate_fit(cases: &[GateCase], objective: GateObjective) -> Option<Gate
                     }
                 })
                 .sum();
-            if best.as_ref().is_none_or(|b| score < b.score) {
+            // `<=`: thresholds rise through the search, so a tie keeps the
+            // stricter rule. A case the ANE does not beat (delta 0) adds
+            // nothing to the score and must not be routed to it.
+            if best.as_ref().is_none_or(|b| score <= b.score) {
                 let steel_total: f64 = cases.iter().filter_map(|c| cost(c, false)).sum();
                 best = Some(GateFit {
                     objective,
@@ -281,5 +284,16 @@ mod gate_tests {
         assert!(ane_gate_fit(&dry, GateObjective::Energy).is_none());
         assert!(ane_gate_fit(&dry, GateObjective::Speed).is_some());
         assert!(ane_gate_fit(&[], GateObjective::Speed).is_none());
+    }
+
+    #[test]
+    fn a_tie_keeps_the_stricter_rule() {
+        // The small case is a dead heat, the big one a win: routing both or
+        // only the winner scores the same, so the tie must not route the
+        // dead heat.
+        let cases = [case(1e9, 50.0, 2.0, 2.0), case(2e9, 50.0, 2.0, 1.0)];
+        let fit = ane_gate_fit(&cases, GateObjective::Speed).unwrap();
+        assert_eq!(fit.selected, 1, "{fit:?}");
+        assert!(fit.min_macs > 1e9, "{fit:?}");
     }
 }

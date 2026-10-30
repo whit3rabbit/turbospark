@@ -793,8 +793,8 @@ impl RealForwardRunner {
             );
         }
         if self.real_flint.is_some() {
-            // Always a chunk driver; `TURBOSPARK_FLINT_CHUNKED_PREFILL` picks
-            // the layer-batched one over the per-token loop it replaces.
+            // Always a chunk driver; the layer-batched one is the default and
+            // `TURBOSPARK_FLINT_CHUNKED_PREFILL=0` restores the per-token loop.
             return gpu::autorelease_pool(|| {
                 self.prefill_chunk_real_flint(tokens, start_position, logits)
             })

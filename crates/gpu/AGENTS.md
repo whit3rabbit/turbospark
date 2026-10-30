@@ -39,7 +39,9 @@ threadgroup shape, or normalization convention on the device.
 - GQA decode attention supports head_dim 128 or 256 and groups up to 8
   (`MAX_GQA_GROUP`). Its chunk count is capped at `MAX_CHUNKS`, so it shares
   the barrier kernel's `AttentionScratch` size (more chunks measured slower).
-  A family opts in on its scratch (`with_decode_kernel`), and
+  A family's kernel rides its scratch (`with_decode_kernel`): the runtime's
+  `DecodeScratch` match gives the measured dense families the GQA-shared
+  kernel by default and barrier to every other family, and
   `TURBOSPARK_ATTN_DECODE_KERNEL=barrier|gqa` overrides it process-wide.
 - The multi-row GQA partial (`attention_decode_gqa_rows_partial`) bakes
   group, simdgroups, head_dim, unroll, tile and heads per simdgroup into

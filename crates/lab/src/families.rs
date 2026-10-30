@@ -62,12 +62,19 @@ pub struct FamilyFacts {
 
 pub fn facts(f: ModelFamily) -> FamilyFacts {
     use ModelFamily::*;
+    // The GQA-shared decode kernel is the scratch default for the dense llama
+    // flow families that won it in the lab (2026-10-29; the runtime's match in
+    // `crates/runtime/src/real_forward_types.rs` is the authority). Mixtral
+    // shares the `Llama` string but keeps barrier, which `text_coverage`
+    // corrects per install. The encoder still falls back to barrier for
+    // shapes `attention_decode_gqa_supported` rejects, so the fact names the
+    // default, not what every install runs.
     let llama_flow = FamilyFacts {
         flow: "llama",
         chunked_prefill: Support::Yes,
         drafters: &[],
         steel_prefill: false,
-        decode_attention: "barrier",
+        decode_attention: "gqa",
         phase_buckets: "moe when the install routes experts, else final_only",
         probe_and_standin: true,
         notes: &[],
@@ -107,7 +114,24 @@ pub fn facts(f: ModelFamily) -> FamilyFacts {
             probe_and_standin: false,
             notes: &["sliding and full attention layers with different head shapes"],
         },
-        Llama | Qwen3Moe | Qwen3Dense | Qwen2Dense | MiniMaxM2 | Qwen3Vl => llama_flow,
+        Llama | Qwen3Dense | Qwen2Dense | Qwen3Vl => llama_flow,
+        // Held at barrier: its gqa arm decoded different tokens with no
+        // moe_kl gate run (`crates/lab/families/qwen3moe.json`).
+        Qwen3Moe => FamilyFacts {
+            decode_attention: "barrier",
+            ..llama_flow
+        },
+        // No install to measure, so it keeps the pre-flip barrier default.
+        MiniMaxM2 => FamilyFacts {
+            flow: "llama",
+            chunked_prefill: Support::Yes,
+            drafters: &[],
+            steel_prefill: false,
+            decode_attention: "barrier",
+            phase_buckets: "moe",
+            probe_and_standin: true,
+            notes: &["sigmoid routing with whole-projection q/k norms"],
+        },
         GptOss => FamilyFacts {
             flow: "gptoss",
             chunked_prefill: Support::Yes,
@@ -143,7 +167,7 @@ pub fn facts(f: ModelFamily) -> FamilyFacts {
             chunked_prefill: Support::No("the spark flow prefills token by token; use --chunk off".into()),
             drafters: &[],
             steel_prefill: false,
-            decode_attention: "barrier",
+            decode_attention: "gqa",
             phase_buckets: "final_only",
             probe_and_standin: false,
             notes: &["fused q|k|v projection, visible in the resident index"],
@@ -277,7 +301,12 @@ fn traits(arch: &ArchConfig) -> BTreeMap<&'static str, bool> {
 
 /// Coverage for a text install.
 pub fn text_coverage(subject: &Subject, arch: &ArchConfig) -> Coverage {
-    let f = facts(arch.family);
+    let mut f = facts(arch.family);
+    // The runtime gives the GQA decode default to dense Llama only; a
+    // Mixtral install (same family string) keeps barrier.
+    if arch.family == ModelFamily::Llama && arch.num_experts > 0 {
+        f.decode_attention = "barrier";
+    }
     let traits = traits(arch);
     let mut notes: Vec<String> = f.notes.iter().map(|s| s.to_string()).collect();
     let drafters_present: Vec<&'static str> =
