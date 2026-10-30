@@ -391,7 +391,7 @@ Input audio is WAV only, and each model runs one request at a time. Served behav
 
 ### Metal performance and MLX parity
 
-On macOS, all MiniMax Music 3 kernels (DiT transformer, condition encoder, flow matching Euler step, and vocoder) run on Metal and produce bit-identical waveforms matching reference MLX 0.32.3 end-to-end. Dense bf16 projections, 4-bit affine dequantization, and multi-channel convolutions run natively with 0 differing values. See [`docs/audio/minimax_music3.md`](docs/audio/minimax_music3.md).
+On macOS, all MiniMax Music 3 kernels (DiT transformer, condition encoder, flow matching Euler step, and vocoder) run on Metal. With `--flow-profile exact`, the 4-bit checkpoint produces bit-identical waveforms matching reference MLX 0.32.3 end-to-end: dense bf16 projections, 4-bit affine dequantization, and multi-channel convolutions run natively with 0 differing values. The Turbo checkpoint has no MLX reference and uses faster float32 kernels (see below). See [`docs/audio/minimax_music3.md`](docs/audio/minimax_music3.md).
 
 ### 8-step Turbo LoRA integration
 
@@ -400,6 +400,8 @@ TurboSpark includes support for an experimental 8-step Euler flow checkpoint mer
 - **Merged TurboSpark checkpoint**: Published on Hugging Face at [`cowWhySo/MiniMax-Music3-TurboSpark-4bit-8step`](https://huggingface.co/cowWhySo/MiniMax-Music3-TurboSpark-4bit-8step) (12.68 GB safetensors). Merges `guillaume127/MiniMax-Music-3-Turbo-FP8` adapter weights into `mlx-community/MiniMax-Music3-4bit`. Downloadable in-app or via CLI with zero Python dependencies.
 - **Standalone MLX adapter**: Published on Hugging Face at [`cowWhySo/MiniMax-Music3-Turbo-MLX-LoRA`](https://huggingface.co/cowWhySo/MiniMax-Music3-Turbo-MLX-LoRA) for standalone MLX adapter workflows.
 - **Upstream training**: Based on [Guillaume-127/Minimax-music-3-Turbo-8-steps](https://github.com/Guillaume-127/Minimax-music-3-Turbo-8-steps).
+- **8 steps in the app too**: the app's Music Studio now follows the checkpoint's 8-step default unless you move its Steps control. It used to run 30.
+- **Faster Turbo DiT**: the Turbo checkpoint now uses tiled float32 kernels and one GPU submission per DiT block. On an M4 Max, the DiT for a 2 s take went from 97 s to 9.5 s, and an 8 s request from 414 s to 88 s. These are single runs on a busy host, not protocol rows. Output changes by float32 rounding only. Details and limits: [`docs/audio/minimax_music3.md`](docs/audio/minimax_music3.md#experimental-8-step-turbo-checkpoint).
 
 ### Generating music
 
@@ -408,7 +410,7 @@ Generate tracks using the CLI:
 ```sh
 turbospark-music generate \
   --model minimax-music3-turbo-4bit-8step \
-  --prompt "Upbeat synthwave track with driving bass and energetic lead synth" \
+  --caption "Upbeat synthwave track with driving bass and energetic lead synth" \
   --lyrics "[Verse]\nNeon lights in the rain\n[Chorus]\nRunning through the night" \
   --flow-profile turbo \
   --output song.wav
@@ -416,7 +418,7 @@ turbospark-music generate \
 
 - **Flow profiles**:
   - `--flow-profile turbo`: 8 Euler flow steps (default for the Turbo LoRA checkpoint).
-  - `--flow-profile fast`: 30 Euler flow steps (default for standard checkpoints).
+  - `--flow-profile fast`: 21 Adams-Bashforth 2 flow steps with reused guidance (default for standard checkpoints).
   - `--flow-profile exact`: Bit-for-bit parity with MLX 0.32.3 reference trajectories.
 - **Desktop Music Studio**: Includes an interactive prompt builder for genre, mood, tempo, instrumentation, vocal style, and structured lyric section tags (`[Verse]`, `[Chorus]`, `[Bridge]`, `[Outro]`).
 
