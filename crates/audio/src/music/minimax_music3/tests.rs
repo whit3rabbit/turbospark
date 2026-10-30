@@ -1739,6 +1739,28 @@ fn only_the_declared_int4_euler_turbo_variant_selects_the_turbo_profile() {
     );
 }
 
+/// Tiled F32 linears change output bits, so only Turbo at checkpoint
+/// precision takes them; float32 precision is the reference chain.
+#[test]
+fn only_turbo_at_checkpoint_precision_takes_tiled_f32_linears() {
+    assert!(tiled_f32_linears(
+        FlowProfile::Turbo,
+        Music3Precision::Checkpoint
+    ));
+    assert!(!tiled_f32_linears(
+        FlowProfile::Turbo,
+        Music3Precision::Float32
+    ));
+    for profile in [FlowProfile::Fast, FlowProfile::Exact] {
+        for precision in [Music3Precision::Checkpoint, Music3Precision::Float32] {
+            assert!(
+                !tiled_f32_linears(profile, precision),
+                "{profile:?} {precision:?}"
+            );
+        }
+    }
+}
+
 /// Integrate `dx/dt = -x` from 0 to 1 with `n` equal steps through the same
 /// `ab2_velocity` and `update` the flow loop uses, and return |x(1) - e^-1|.
 fn ode_error(n: usize, ab2: bool) -> f64 {

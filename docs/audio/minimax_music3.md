@@ -64,6 +64,20 @@ One blind 15-second vocal comparison at seed 23 judged Turbo similar to the
 initial evidence, not a multi-seed, long-form, or release quality gate. The
 checkpoint remains marked experimental in the catalog.
 
+**Turbo DiT kernels.** BF16 activations times the dense FP16 adapted matrices
+promote to F32 stages, which the planner used to send to the per-element
+`music3_linear` kernel, and F32 blocks ran op by op with host steps between
+projections. A Turbo checkpoint at checkpoint precision now opts its device
+linears into the tiled MMA kernels for F32 stages
+(`Music3Weight::tiled_for_f32`), and its DiT blocks run as one submission with
+F32 forms of the residual add, rotary (both bitwise equal to the host) and
+gated SiLU (device `exp`, within float32 ulps). The output moves by float32
+rounding only: a 2 s seed-0 take correlates at 0.99999999997 with the scalar
+path, max sample difference 6e-6. `--precision float32` and every other
+checkpoint keep the previous kernels. Single runs on an M4 Max under swap, not
+a protocolled row: DiT time for that take went from 97 s to 9.5 s, and an 8 s
+request from 414 s to 88 s, now led by the vocoder (28 s).
+
 | | Exact | Fast | Turbo |
 |---|---|---|---|
 | Solver | Euler | Adams-Bashforth 2 | Euler |

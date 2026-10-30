@@ -679,12 +679,15 @@ impl Model {
         let config = ModelConfig::from_json(&value);
         let scheme = parse_quant_scheme(&value)?;
         let files = open_converted_shards(dir)?;
-        let mut store =
-            WeightStore::from_files_with_backend(files, scheme, backend).with_precision(precision);
+        let profile = runner_profile_from_config(&value);
+        let tiled_f32 = tiled_f32_linears(profile, precision);
+        let mut store = WeightStore::from_files_with_backend(files, scheme, backend)
+            .with_precision(precision)
+            .with_tiled_f32(tiled_f32);
         let mut model = Model::from_store(&mut store, &config)?;
         store.finish()?;
         model.tokenizer = load_tokenizer(dir)?;
-        model.preferred_runner_profile = runner_profile_from_config(&value);
+        model.preferred_runner_profile = profile;
         Ok(model)
     }
 
@@ -1664,6 +1667,14 @@ fn slice_channel_rows(x: &[f32], dim: usize, len: usize, start: usize, end: usiz
         out.extend_from_slice(&x[c * len + start..c * len + end]);
     }
     out
+}
+
+/// Turbo's adapted DiT matrices are dense F16, so its BF16 activations
+/// promote to F32 stages. No MLX trajectory or float32 reference binds them,
+/// and the scalar F32 kernel made each Turbo step about 6x slower. Float32
+/// precision is the reference chain and keeps it.
+fn tiled_f32_linears(profile: FlowProfile, precision: Music3Precision) -> bool {
+    profile == FlowProfile::Turbo && precision == Music3Precision::Checkpoint
 }
 
 fn runner_profile_from_config(value: &serde_json::Value) -> FlowProfile {

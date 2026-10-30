@@ -849,3 +849,88 @@ fn mxfp8_gemv_decodes_every_code_exactly() {
         }
     }
 }
+
+/// The F32 forms the Turbo DiT block uses at the real shapes: the residual
+/// add and rotary reproduce the host F32 arithmetic bitwise, the tiled F32
+/// projection matches its synchronous call bitwise, and the gated activation
+/// (device `exp`) stays within a few float32 ulps of the host.
+#[test]
+fn dit_f32_block_ops_match_host_and_synchronous() {
+    let device = Music3Device::new().unwrap();
+    let (len, heads, head_dim, rotary, ff) = (173, 32, 64, 32, 8192);
+    let inner = heads * head_dim;
+    let x = values(len * inner, 101);
+    let y = values(len * inner, 102);
+    let want: Vec<f32> = x.iter().zip(&y).map(|(a, b)| a + b).collect();
+    let mut sequence = device.sequence("test");
+    let (xs, ys) = (sequence.upload(&x).unwrap(), sequence.upload(&y).unwrap());
+    let sum = sequence.add_f32(xs, ys).unwrap();
+    assert_bits(&finish_one(sequence, sum), &want, "f32 residual add");
+
+    let (cos, sin) = device.rotary_tables(len, rotary, 10_000.0).unwrap();
+    let half = rotary / 2;
+    let mut want = x.clone();
+    for t in 0..len {
+        for h in 0..heads {
+            let base = t * inner + h * head_dim;
+            for d in 0..half {
+                let (a, b) = (x[base + d], x[base + half + d]);
+                let (c, s) = (cos[t * half + d], sin[t * half + d]);
+                want[base + d] = a * c - b * s;
+                want[base + half + d] = b * c + a * s;
+            }
+        }
+    }
+    let mut sequence = device.sequence("test");
+    let (xs, cs, ss) = (
+        sequence.upload(&x).unwrap(),
+        sequence.upload(&cos).unwrap(),
+        sequence.upload(&sin).unwrap(),
+    );
+    let r = sequence
+        .partial_rope_f32(xs, cs, ss, len, heads, head_dim, rotary)
+        .unwrap();
+    assert_bits(&finish_one(sequence, r), &want, "f32 partial rotary");
+
+    let bytes: Vec<u8> = values(256 * inner, 103)
+        .iter()
+        .flat_map(|&v| half::f16::from_f32(v).to_bits().to_le_bytes())
+        .collect();
+    let weight = device
+        .load_weight(&[256, inner], &bytes, Music3Encoding::F16, &[], &[], &[])
+        .unwrap()
+        .tiled_for_f32();
+    let bias = values(256, 104);
+    let f32 = Music3DType::F32;
+    let want = weight
+        .linear_typed(&x, Some(&bias), len, inner, 256, f32)
+        .unwrap();
+    let mut sequence = device.sequence("test");
+    let xs = sequence.upload(&x).unwrap();
+    let p = sequence
+        .linear(xs, &weight, Some(&bias), len, inner, 256, f32)
+        .unwrap();
+    assert_bits(&finish_one(sequence, p), &want, "tiled f32 projection");
+
+    let rows = values(len * 2 * ff, 105)
+        .into_iter()
+        .map(|v| v * 8.0)
+        .collect::<Vec<_>>();
+    let mut sequence = device.sequence("test");
+    let xs = sequence.upload(&rows).unwrap();
+    let g = sequence.gated_silu_f32(xs, len, ff).unwrap();
+    let got = finish_one(sequence, g);
+    for i in 0..len * ff {
+        let (t, f) = (i / ff, i % ff);
+        let state = rows[t * 2 * ff + f];
+        let gate = rows[t * 2 * ff + ff + f];
+        // `DType::F32.silu` in the audio crate.
+        let want = state * (gate / (1.0 + (-gate).exp()));
+        let ulps = (got[i].to_bits() as i64 - want.to_bits() as i64).abs();
+        assert!(
+            ulps <= 4 || (got[i] - want).abs() <= 1e-30,
+            "gated activation at {i}: {} vs {want}",
+            got[i]
+        );
+    }
+}

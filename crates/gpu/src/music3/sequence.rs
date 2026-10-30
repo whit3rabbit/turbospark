@@ -615,6 +615,62 @@ impl Music3Sequence {
         )
     }
 
+    /// `a + b` in F32, the host residual add of an F32 stage.
+    pub fn add_f32(&mut self, a: Music3Slot, b: Music3Slot) -> Result<Music3Slot, GpuError> {
+        let len = self.len(a)?;
+        if self.len(b)? != len {
+            return Err(bad("Music 3 sequence add operands differ in length"));
+        }
+        self.elementwise("music3_add_f32", &[a, b], len, &[])
+    }
+
+    /// The host F32 partial NeoX rotary of the DiT, with the geometry of
+    /// [`Self::partial_rope_bf16`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn partial_rope_f32(
+        &mut self,
+        x: Music3Slot,
+        cos: Music3Slot,
+        sin: Music3Slot,
+        len: usize,
+        heads: usize,
+        head_dim: usize,
+        rotary: usize,
+    ) -> Result<Music3Slot, GpuError> {
+        let inner = product(&[heads, head_dim])?;
+        let half = rotary / 2;
+        if self.len(x)? != product(&[len, inner])?
+            || rotary % 2 != 0
+            || rotary > head_dim
+            || self.len(cos)? != product(&[len, half])?
+            || self.len(sin)? != len * half
+        {
+            return Err(bad("Music 3 partial rotary geometry mismatch"));
+        }
+        let extra = [inner as u32, head_dim as u32, half as u32];
+        self.elementwise(
+            "music3_partial_rope_f32",
+            &[x, cos, sin],
+            len * inner,
+            &extra,
+        )
+    }
+
+    /// `state * silu(gate)` in F32 over rows of `[state | gate]`. The device
+    /// `exp` can differ from the host's in the last bit, so this matches the
+    /// host only to float32 rounding, not bit for bit.
+    pub fn gated_silu_f32(
+        &mut self,
+        x: Music3Slot,
+        rows: usize,
+        half: usize,
+    ) -> Result<Music3Slot, GpuError> {
+        if self.len(x)? != product(&[rows, half, 2])? {
+            return Err(bad("Music 3 gated activation geometry mismatch"));
+        }
+        self.elementwise("music3_gated_silu_f32", &[x], rows * half, &[half as u32])
+    }
+
     /// One thread per element: inputs at 0.., then the output, then the
     /// inexact flag, then the element count followed by `extra`.
     fn elementwise(

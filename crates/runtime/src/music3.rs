@@ -287,19 +287,27 @@ impl Sequence for MetalSequence<'_> {
         d: DType,
     ) -> Result<Slot> {
         checkpoint(&self.backend.cancellation)?;
-        require_bf16("partial rotary", &[d])?;
         let (x, cos, sin) = (self.slot(x)?, self.slot(cos)?, self.slot(sin)?);
-        let result = self
-            .inner
-            .partial_rope_bf16(x, cos, sin, len, heads, head_dim, rotary);
+        let result = if d == DType::F32 {
+            self.inner
+                .partial_rope_f32(x, cos, sin, len, heads, head_dim, rotary)
+        } else {
+            require_bf16("partial rotary", &[d])?;
+            self.inner
+                .partial_rope_bf16(x, cos, sin, len, heads, head_dim, rotary)
+        };
         self.push(result)
     }
     fn gated_silu(&mut self, x: Slot, rows: usize, half: usize, d: DType) -> Result<Slot> {
         checkpoint(&self.backend.cancellation)?;
-        require_bf16("gated SiLU", &[d])?;
-        let table = self.backend.silu_table()?;
         let x = self.slot(x)?;
-        let result = self.inner.gated_silu_bf16(x, rows, half, &table);
+        let result = if d == DType::F32 {
+            self.inner.gated_silu_f32(x, rows, half)
+        } else {
+            require_bf16("gated SiLU", &[d])?;
+            let table = self.backend.silu_table()?;
+            self.inner.gated_silu_bf16(x, rows, half, &table)
+        };
         self.push(result)
     }
     fn rms_norm(
@@ -345,9 +353,13 @@ impl Sequence for MetalSequence<'_> {
     }
     fn add_round(&mut self, a: Slot, b: Slot, d: DType) -> Result<Slot> {
         checkpoint(&self.backend.cancellation)?;
-        require_bf16("residual add", &[d])?;
         let (a, b) = (self.slot(a)?, self.slot(b)?);
-        let result = self.inner.add_round_bf16(a, b);
+        let result = if d == DType::F32 {
+            self.inner.add_f32(a, b)
+        } else {
+            require_bf16("residual add", &[d])?;
+            self.inner.add_round_bf16(a, b)
+        };
         self.push(result)
     }
     fn swiglu(&mut self, g: Slot, u: Slot, gate: DType, fused: DType) -> Result<Slot> {
@@ -415,6 +427,13 @@ impl ComputeBackend for Backend {
         let weight = match data.planned_rows {
             Some(rows) => weight.planned_as_rows(rows),
             None => weight,
+        };
+        // The store opts in only where no float32 reference applies; an F32
+        // logical dtype (`--precision float32`) keeps the scalar chain.
+        let weight = if data.tiled_f32 && data.dtype != DType::F32 {
+            weight.tiled_for_f32()
+        } else {
+            weight
         };
         Ok(Rc::new(Weight(
             weight,

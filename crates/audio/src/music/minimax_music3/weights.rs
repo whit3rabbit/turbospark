@@ -86,6 +86,8 @@ pub(crate) enum WeightStore {
         precision: Music3Precision,
         backend: Option<Rc<dyn ComputeBackend>>,
         consumed: std::collections::HashSet<String>,
+        /// Linears may use tiled F32 kernels (`WeightData::tiled_f32`).
+        tiled_f32: bool,
     },
     Map {
         precision: Music3Precision,
@@ -111,6 +113,7 @@ impl WeightStore {
             precision: Music3Precision::Float32,
             backend: None,
             consumed: std::collections::HashSet::new(),
+            tiled_f32: false,
         }
     }
 
@@ -125,6 +128,7 @@ impl WeightStore {
             precision: Music3Precision::Float32,
             backend: Some(backend),
             consumed: Default::default(),
+            tiled_f32: false,
         }
     }
 
@@ -133,6 +137,22 @@ impl WeightStore {
             Self::File { precision: p, .. } | Self::Map { precision: p, .. } => *p = precision,
         }
         self
+    }
+    /// Lets device linears take tiled F32 kernels; see `WeightData::tiled_f32`.
+    pub(crate) fn with_tiled_f32(mut self, enabled: bool) -> Self {
+        if let Self::File { tiled_f32, .. } = &mut self {
+            *tiled_f32 = enabled;
+        }
+        self
+    }
+    pub(crate) fn tiled_f32(&self) -> bool {
+        matches!(
+            self,
+            Self::File {
+                tiled_f32: true,
+                ..
+            }
+        )
     }
     pub(crate) fn precision(&self) -> Music3Precision {
         match self {
@@ -174,6 +194,7 @@ impl WeightStore {
                         offsets: &[],
                         block_scales: &[],
                         planned_rows: None,
+                        tiled_f32: false,
                     })?,
                 })
             }
@@ -213,6 +234,7 @@ impl WeightStore {
                 offsets: &[],
                 block_scales: &[],
                 planned_rows: None,
+                tiled_f32: false,
             })?;
             consumed.insert(name.into());
             return Ok(Weight::Device {
@@ -281,6 +303,7 @@ impl WeightStore {
                 backend,
                 consumed,
                 precision,
+                tiled_f32,
             } => {
                 let weight_name = format!("{base}.weight");
                 let file = files
@@ -288,7 +311,14 @@ impl WeightStore {
                     .find(|f| f.contains_tensor(&weight_name))
                     .ok_or_else(|| missing(&weight_name))?;
                 let loaded = if let Some(backend) = backend {
-                    device_linear(file, base, *scheme, backend.as_ref(), *precision)?
+                    device_linear(
+                        file,
+                        base,
+                        *scheme,
+                        backend.as_ref(),
+                        *precision,
+                        *tiled_f32,
+                    )?
                 } else if file.contains_tensor(&format!("{base}.scales")) {
                     if let Some((bits, group_size, kind)) = scheme.float_grouped() {
                         let (w, b) = load_float_quantized(file, base, bits, group_size, kind)?;
@@ -448,6 +478,7 @@ impl WeightStore {
             offsets: &[],
             block_scales: &[],
             planned_rows: Some(full[0]),
+            tiled_f32: false,
         })?;
         consumed.insert(name);
         Ok(Some(Weight::Device {
@@ -520,6 +551,7 @@ fn device_linear(
     scheme: LinearQuantization,
     backend: &dyn ComputeBackend,
     precision: Music3Precision,
+    tiled_f32: bool,
 ) -> Result<(Weight, Option<Vec<f32>>)> {
     let name = format!("{base}.weight");
     let desc = file.descriptor(&name).ok_or_else(|| missing(&name))?;
@@ -653,6 +685,7 @@ fn device_linear(
         offsets: &offsets,
         block_scales,
         planned_rows: None,
+        tiled_f32,
     })?;
     Ok((
         Weight::Device {

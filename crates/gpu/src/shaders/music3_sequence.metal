@@ -133,3 +133,74 @@ kernel void music3_gated_silu_bf16(device const float *x [[buffer(0)]],
     }
     y[gid] = music_round(m, 2);
 }
+
+// F32 forms of the three host steps above, for a DiT whose stages promote
+// to F32 (Music 3 Turbo). Add and rotary are single correctly rounded
+// operations like the host's. The SiLU uses the device `exp`, which can
+// differ from the host's in the last bit, so a caller uses this one only
+// where the per-operation path is not a reference it must match.
+
+// y = a + b.
+kernel void music3_add_f32(device const float *a [[buffer(0)]],
+ device const float *b [[buffer(1)]], device float *y [[buffer(2)]],
+ device atomic_uint *inexact [[buffer(3)]], constant uint *p [[buffer(4)]],
+ uint gid [[thread_position_in_grid]]) {
+    if (gid >= p[0]) return;
+    float x = a[gid], z = b[gid], s = x + z;
+    uint ux = as_type<uint>(x), uz = as_type<uint>(z);
+    bool exact_zero = ((ux | uz) & 0x7fffffffu) == 0u || (ux ^ uz) == 0x80000000u;
+    if (music_subnormal(ux) || music_subnormal(uz)
+        || music_flushed(as_type<uint>(s), exact_zero)) {
+        atomic_store_explicit(inexact, 1u, memory_order_relaxed);
+    }
+    y[gid] = s;
+}
+
+// The host F32 partial NeoX rotary (`partial_rope` in dit.rs):
+//   x[d] = a * c - b * s,   x[d + hw] = b * c + a * s
+// with the same layout and parameters as music3_partial_rope_bf16.
+kernel void music3_partial_rope_f32(device const float *x [[buffer(0)]],
+ device const float *cos_t [[buffer(1)]], device const float *sin_t [[buffer(2)]],
+ device float *y [[buffer(3)]], device atomic_uint *inexact [[buffer(4)]],
+ constant uint *p [[buffer(5)]], uint gid [[thread_position_in_grid]]) {
+    if (gid >= p[0]) return;
+    uint inner = p[1], head_dim = p[2], hw = p[3];
+    uint t = gid / inner, j = (gid % inner) % head_dim;
+    if (j >= 2 * hw) {
+        y[gid] = x[gid];
+        return;
+    }
+    uint d = j < hw ? j : j - hw;
+    uint base = gid - j;
+    float a = x[base + d], b = x[base + hw + d];
+    float c = cos_t[t * hw + d], s = sin_t[t * hw + d];
+    float m0 = j < hw ? a * c : b * c;
+    float m1 = j < hw ? b * s : a * s;
+    float sum = j < hw ? m0 - m1 : m0 + m1;
+    uint ua = as_type<uint>(a), ub = as_type<uint>(b), uc = as_type<uint>(c), us = as_type<uint>(s);
+    uint u0 = as_type<uint>(m0), u1 = as_type<uint>(m1);
+    bool bad = music_subnormal(ua) || music_subnormal(ub) || music_subnormal(uc) || music_subnormal(us)
+        || music_flushed(u0, music_zero(j < hw ? ua : ub) || music_zero(uc))
+        || music_flushed(u1, music_zero(j < hw ? ub : ua) || music_zero(us))
+        || music_flushed(as_type<uint>(sum), (music_zero(u0) && music_zero(u1))
+            || (j < hw ? u0 == u1 : (u0 ^ u1) == 0x80000000u));
+    if (bad) atomic_store_explicit(inexact, 1u, memory_order_relaxed);
+    y[gid] = sum;
+}
+
+// round-free DiT gated activation: rows of `[state | gate]` give
+// state * gate / (1 + exp(-gate)), the host F32 `silu`. p = {count, hw}.
+kernel void music3_gated_silu_f32(device const float *x [[buffer(0)]],
+ device float *y [[buffer(1)]], device atomic_uint *inexact [[buffer(2)]],
+ constant uint *p [[buffer(3)]], uint gid [[thread_position_in_grid]]) {
+    if (gid >= p[0]) return;
+    uint hw = p[1], row = gid / hw, f = gid % hw;
+    float state = x[row * 2 * hw + f], gate = x[row * 2 * hw + hw + f];
+    float silu = gate / (1.0f + exp(-gate)), m = state * silu;
+    uint ux = as_type<uint>(state), ug = as_type<uint>(gate), us = as_type<uint>(silu);
+    if (music_subnormal(ux) || music_subnormal(ug) || music_subnormal(us)
+        || music_flushed(as_type<uint>(m), music_zero(us) || music_zero(ux))) {
+        atomic_store_explicit(inexact, 1u, memory_order_relaxed);
+    }
+    y[gid] = m;
+}
