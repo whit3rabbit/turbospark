@@ -13,6 +13,14 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+### Fixed
+- macOS app: Music 3 now follows the checkpoint's flow profile when the Steps
+  control is untouched, so the Turbo install runs 8 steps and an ordinary
+  checkpoint 21, instead of 30 for both. The runtime filled the step count
+  Swift leaves out with `AudioRequest::default()`'s 30. A step count the user
+  sets is still honored. OmniVoice on Voiceover with no reference takes its
+  own 32-step default for the same reason.
+
 ## [0.6.5] - 2026-10-29
 
 ### Added

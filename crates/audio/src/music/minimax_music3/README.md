@@ -564,9 +564,9 @@ explicit step count is always honored. `FlowProfile::Exact` restores the
 reference: Euler, both branches every step, 30 steps by default. The experimental
 TurboSpark merged-LoRA checkpoint declares `FlowProfile::Turbo`: Euler, both
 guidance branches every step, and eight steps by default. The CLI follows this
-checkpoint default when `--steps` and `--flow-profile` are omitted. The Swift
-audio workspace currently supplies an explicit step count, so it does not yet
-follow the checkpoint default.
+checkpoint default when `--steps` and `--flow-profile` are omitted, and so
+does the app's Music page until the user moves its Steps control (the request
+then carries no step count).
 
 This default does **not** follow MLX's trajectory. The audio differs from the
 exact output (the measured drift is in the AB2 section: correlation 0.974 and
