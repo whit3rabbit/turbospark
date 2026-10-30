@@ -41,6 +41,10 @@ pub struct AudioRequest {
     pub caption: String,
     pub lyrics: String,
     pub duration_seconds: Option<f64>,
+    /// A missing key means the engine's own default, not `Default`'s 30:
+    /// Swift omits nil keys, and the container default made every app music
+    /// run 30 steps instead of the checkpoint's profile (Turbo 8, Fast 21).
+    #[serde(default)]
     pub steps: Option<usize>,
     pub seed: Option<u64>,
     pub instruction: Option<String>,
@@ -2568,6 +2572,54 @@ mod tests {
         assert!(validate_request(family, &sampled, &[0.0; 16_000]).is_err());
         let task: AudioTask = serde_json::from_str("\"diarization\"").unwrap();
         assert_eq!(task, AudioTask::Diarization);
+    }
+    #[test]
+    fn music_json_without_steps_leaves_the_count_to_the_checkpoint() {
+        // The shape Swift's encoder sends for an untouched Steps control:
+        // snake_case keys, nil fields omitted.
+        let untouched: AudioRequest = serde_json::from_str(
+            r#"{"task":"music","caption":"lofi","lyrics":"[instrumental]","duration_seconds":10,"max_frames":250,"context_size":10240,"seed":0}"#,
+        )
+        .unwrap();
+        assert_eq!(music_request(&untouched).steps, None);
+        let explicit: AudioRequest =
+            serde_json::from_str(r#"{"task":"music","steps":12}"#).unwrap();
+        assert_eq!(music_request(&explicit).steps, Some(12));
+    }
+    #[test]
+    #[ignore = "requires TURBOSPARK_MUSIC3_TURBO_DIR and a Metal device"]
+    fn real_music3_turbo_session_runs_the_checkpoint_step_count() {
+        let path = std::env::var_os("TURBOSPARK_MUSIC3_TURBO_DIR").unwrap();
+        let _serial = crate::heavy::serial_test_lock();
+        let session = AudioSession::open(path.into(), AudioTask::Music, false).unwrap();
+        let request: AudioRequest = serde_json::from_str(
+            r#"{"task":"music","caption":"lofi piano","lyrics":"[instrumental]","duration_seconds":2,"max_frames":50,"context_size":10240,"seed":0}"#,
+        )
+        .unwrap();
+        let cancel = AudioCancel::default();
+        let mut totals = Vec::new();
+        let mut step_times = Vec::new();
+        let mut last = std::time::Instant::now();
+        // The first chunk's steps are the evidence; the rest of the job is
+        // cancelled so the gate stays short.
+        let _ = session.execute(request, vec![], cancel.clone(), |event| {
+            if let AudioEvent::Progress(p) = event {
+                if p.stage == "euler" {
+                    let now = std::time::Instant::now();
+                    if p.completed > 0 {
+                        step_times.push(now - last);
+                    }
+                    last = now;
+                    totals.push(p.total);
+                    if p.total.is_some_and(|t| p.completed + 1 >= t) {
+                        cancel.cancel();
+                    }
+                }
+            }
+        });
+        eprintln!("Music 3 Turbo euler totals {totals:?}, step times {step_times:?}");
+        assert!(!totals.is_empty(), "no flow step progress");
+        assert!(totals.iter().all(|t| *t == Some(8)), "{totals:?}");
     }
     #[test]
     fn diarization_transcript_labels_turns_without_text() {
