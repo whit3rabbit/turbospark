@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: TurboSpark Server API
-  version: 0.6.0
+  version: 0.6.5
   description: |
     Local inference HTTP server (turbospark-server / turbospark serve).
 

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: TurboSpark Embeddings API
-  version: 0.6.0
+  version: 0.6.5
   description: |
     Local dense vector embeddings served by `turbospark-server`
     (`turbospark serve`) using Apple Silicon Metal, Core ML, or MLX models.

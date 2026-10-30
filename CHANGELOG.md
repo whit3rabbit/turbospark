@@ -13,6 +13,8 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-10-29
+
 ### Added
 - `crates/coreml/tools/bake_ane_prefill_programs.py` bakes an install's INT4
   weights into Core ML programs for the ANE prefill split (shift-scale or
@@ -32,6 +34,15 @@ when this file gets updated relative to the version bump and the tag.
 - `tslab` documentation: a TurboSpark Lab section in the README,
   `crates/lab/README.md`, and guide pages for `tslab` and the lab crate.
   `TURBOSPARK_LAB_DIR` is in the environment variable reference.
+- Lab tooling for MoE and energy questions: `tslab expert-census` (one
+  router capture run reduced to expert reuse within batches, the union per
+  batch against slot counts, and the routed sub-batch replay), an IOReport
+  energy meter (modeled whole-machine joules,
+  `energy_model: ioreport_whole_machine`, comparable within one experiment
+  only), the `ane_matmul` kernel bench (Steel against the Neural Engine per
+  shape, with the row split, placement and modeled joules), and a
+  `moe_bound` class (`io_bound`, `loop_bound`, `compute_bound`) in the MoE
+  profile's phase summary.
 
 ### Changed
 - Flint decode takes the GQA-shared decode attention kernel, which serves
@@ -42,6 +53,44 @@ when this file gets updated relative to the version bump and the tag.
   0.0066), and peak footprint is unchanged. The paired decode tok/s A/B is
   still open (`docs/FLINT.md`). `TURBOSPARK_ATTN_DECODE_KERNEL=barrier`
   restores the old kernel.
+- The GQA-shared decode attention kernel is the default for the dense
+  Llama (not Mixtral), Qwen2, Qwen3, Qwen3-VL and Spark 2.5 families
+  (`TURBOSPARK_ATTN_DECODE_KERNEL=barrier` restores the old kernel). Made
+  from the lab's clean paired wins on 2026-10-29: +5.7% decode on Mistral
+  7B, +3.9% on Qwen2.5 7B, +19.8% on Qwen3-VL 4B and +3.9% on
+  Spark-X2.5-4B, each 3/3 clean pairs with engagement verified, and the
+  barrier opt-out reading -5.4% on Qwen3-8B. Both arms decoded identical
+  64-token greedy output on every run; no KL gate has run yet. Qwen3-MoE
+  keeps barrier: its +3.4% gqa arm decoded different tokens with no moe_kl
+  gate. The encoder still falls back to barrier for shapes the kernel does
+  not serve (head_dim 64, group over 8), and families without a measured
+  verdict keep barrier. Qwen3-MoE's recommended expert cache moved to 64
+  slots (+27.9% decode over 16; 16 stays the tight-memory choice).
+- Flint's layer-batched chunked prefill is the default;
+  `TURBOSPARK_FLINT_CHUNKED_PREFILL=0` restores the sequential token walk.
+  Made the default on the lab's clean paired win: +38.2% prefill tok/s (95%
+  CI [+33.6%, +41.8%], bit-exact, 3 clean pairs, ledger
+  `flint-sweep-20261028`). A test per arm pins it byte-identical to the
+  sequential path at four chunk splits and two slot counts.
+- The 48-row GDN `in_proj_a`/`in_proj_b` projections of dense Qwen leave the
+  scalar GEMM's 16-row slices in chunked prefill. Up to 96 rows of batch they
+  run the 8-row matrix-unit tile, wider batches a new unaligned Steel edge
+  tile (`dequant_int4_steel_32_32_32_edge`); only the chunked-prefill scratch
+  that already accepted Steel's rounding reaches them, so decode and
+  speculative verify are unchanged. About -6.6% of the micro-batches' summed
+  GPU time on the 2,940-token long-synthesis prompt with greedy output
+  identical across both arms; `TURBOSPARK_PREFILL_SMALL_N=0` restores the
+  scalar slices. See `docs/BATCHED_PREFILL.md`.
+- The lab's family profiles moved their recommendations on the 2026-10-28
+  and 2026-10-29 sweeps: DeepSeek-V2 Lite's expert cache reads 64 slots at
+  +28.1% decode over 16 (32 the mid point, 16 the tight-memory choice; the
+  64-slot peak nearly equals the 15.5 GiB model), gpt-oss-20b's profile now
+  recommends the batched routed prefill (+23.5% prefill with a 14.9 MiB
+  lower peak; the runtime default stays opt-in until its moe_kl gates land,
+  as on Qwen 3.6), and Gemma 4's recommends it at the profile's 16 slots
+  (+3.3% prefill; the batched routed half refuses at 32 or more slots).
+  Flint's 16 slots are confirmed: 96 slots loses 14.2% decode, and 32 and 96
+  fail the 64 MiB memory gate.
 
 ### Fixed
 - macOS app: a tool call that named an offered tool by another spelling
@@ -50,6 +99,36 @@ when this file gets updated relative to the version bump and the tag.
   executor saw it. Names now resolve to the offered definition and argument
   keys to its declared properties, never to a tool the turn did not offer.
   `TodoWrite`'s `activeForm` is optional. See `docs/TOOL_NAME_ALIGNMENT.md`.
+- `turbospark image`, `music`, `clone`, `speak` and `ocr` failed in 0.6.0
+  installs with "cannot run turbospark-image: No such file or directory".
+  The app bundle, the Homebrew casks and the CLI-only zip shipped only
+  `turbospark-check`, `-model` and `-server` (the zip not even the
+  `turbospark` front end). All nine CLI binaries now ship in the bundle and
+  the zip and are linked from both casks, and `verify-app-bundle.sh` fails
+  if any peer the front end runs is missing.
+- macOS app: 0.6.0 quit on the first Z-Image or Qwen-Image generation with
+  no crash report. The release build carried no MLX Metal kernels
+  (`mlx-swift_Cmlx.bundle`), so MLX exited on its first GPU op. The bundle
+  now ships the kernels, `verify-app-bundle.sh` and `make-dmg.sh` fail
+  without them, and the image sessions throw a readable error if they are
+  missing.
+- Installing Parakeet Unified EN (live transcription) failed after the
+  download verified, with "speech install is missing model.safetensors". The
+  install ran the batch speech probe, which reads the Unified Core ML layout
+  as a Whisper install. Stream-only Unified rows now skip that probe, and
+  their audio receipt is unchanged.
+- MiniMax Music 3 generation from the app always failed with the Drama 3
+  sampler message, because the request guard refused `max_frames`. Music 3
+  owns `max_frames` (1 through 9000), so the guard now ignores it there and
+  still refuses temperature, top_p and top_k.
+- `turbospark-model pull-audio` recorded Music 3 Turbo under a variant the
+  app's profile match does not accept and wrote no audio receipt on This
+  Mac, so the app listed a CLI install as needing attention. CLI music
+  installs now record the quantization alone and publish the receipt, and
+  earlier CLI installs are offered for adoption.
+- macOS app: generated meeting notes render as markdown instead of raw
+  `###` and `- [ ]` text, and the Transcript / Notes & Summary switch no
+  longer wraps "Detail View" a letter or two per line.
 
 ## [0.6.0] - 2026-10-28
 
@@ -175,32 +254,17 @@ when this file gets updated relative to the version bump and the tag.
   coherent greedy and sampled generation across languages and multi-turn
   chat, correct retrieval at 1,667 tokens, and byte-identical output at 8,
   16 and 96 expert-cache slots. Not yet done: no frozen quality gate or
-  memory oracle. Prefill runs the layer-batched driver by default (below).
-  See `docs/FLINT.md`.
-- The GQA-shared decode attention kernel is the default for the dense
-  Llama (not Mixtral), Qwen2, Qwen3, Qwen3-VL and Spark 2.5 families
-  (`TURBOSPARK_ATTN_DECODE_KERNEL=barrier` restores the old kernel). Made
-  from the lab's clean paired wins on 2026-10-29: +5.7% decode on Mistral
-  7B, +3.9% on Qwen2.5 7B, +19.8% on Qwen3-VL 4B and +3.9% on
-  Spark-X2.5-4B, each 3/3 clean pairs with engagement verified, and the
-  barrier opt-out reading -5.4% on Qwen3-8B. Both arms decoded identical
-  64-token greedy output on every run; no KL gate has run yet. Qwen3-MoE
-  keeps barrier: its +3.4% gqa arm decoded different tokens with no moe_kl
-  gate. The encoder still falls back to barrier for shapes the kernel does
-  not serve (head_dim 64, group over 8), and families without a measured
-  verdict keep barrier. Qwen3-MoE's recommended expert
-  cache moved to 64 slots (+27.9% decode over 16; 16 stays the
-  tight-memory choice).
-- Layer-batched chunked prefill for Flint, the default;
-  `TURBOSPARK_FLINT_CHUNKED_PREFILL=0` restores the sequential token walk.
-  One command buffer per layer carries all M tokens' attention, the dense
-  lead's FFN and the INT8 router GEMV; the routed half then runs per token,
-  pipelined across two banks so the expert pread for token t+1 overlaps the
-  GPU running token t. Byte-identical to the sequential path, pinned by a
-  test per arm at four chunk splits and two slot counts. Made the default on
-  the lab's clean paired win: +38.2% prefill tok/s (95% CI [+33.6%, +41.8%],
-  bit-exact, 3 clean pairs, ledger `flint-sweep-20261028`); an earlier
-  measuring attempt had been inconclusive on a dirty host.
+  memory oracle, and prefill stays sequential unless the opt-in driver below
+  is enabled. See `docs/FLINT.md`.
+- Opt-in layer-batched chunked prefill for Flint behind
+  `TURBOSPARK_FLINT_CHUNKED_PREFILL=1` (default off). One command buffer per
+  layer carries all M tokens' attention, the dense lead's FFN and the INT8
+  router GEMV; the routed half then runs per token, pipelined across two
+  banks so the expert pread for token t+1 overlaps the GPU running token t.
+  Byte-identical to the sequential path, pinned by a new test at four chunk
+  splits and two slot counts. A clean speedup is not established: the
+  measuring lab run was inconclusive on a dirty host (indicative 55-56
+  against 42-44 tok/s, not quotable).
 - Small-M INT4 matrix-unit GEMM behind `TURBOSPARK_INT4_MMA8` (`crates/gpu`,
   opt-in, default off). An 8-row INT4 GEMM on simdgroup_matrix that reads
   the resident MLX-affine layout in place, so a row's bits never depend on
@@ -209,15 +273,6 @@ when this file gets updated relative to the version bump and the tag.
   numerics change), `verify` restricts it to batched calls. End to end on
   qwen38-27b-mtp it is about 15% faster on a code prompt (MTP block 4) and
   9-12% slower on prose. Runbook and gates in `docs/INT4_SMALL_M_MMA.md`.
-- The 48-row GDN `in_proj_a`/`in_proj_b` projections of dense Qwen leave the
-  scalar GEMM's 16-row slices in chunked prefill. Up to 96 rows of batch they
-  run the 8-row matrix-unit tile, wider batches a new unaligned Steel edge
-  tile (`dequant_int4_steel_32_32_32_edge`); only the chunked-prefill scratch
-  that already accepted Steel's rounding reaches them, so decode and
-  speculative verify are unchanged. About -6.6% of the micro-batches' summed
-  GPU time on the 2,940-token long-synthesis prompt with greedy output
-  identical across both arms; `TURBOSPARK_PREFILL_SMALL_N=0` restores the
-  scalar slices. See `docs/BATCHED_PREFILL.md`.
 - Opt-in GDN turn snapshot for multi-turn prefix reuse behind
   `TURBOSPARK_GDN_TURN_SNAPSHOT=1` (dense Qwen models). Captures the recurrent
   state after each turn so multi-turn conversations can reuse long document
@@ -275,15 +330,6 @@ when this file gets updated relative to the version bump and the tag.
   - Audio arms in `tslab profile` and `tslab ab` (`--audio-job`, MiniMax
     Music 3 and Whisper) with stage times, real-time factor, and output-digest
     gates (`bit_exact`, and `text_exact` for transcripts).
-  - Lab tooling for MoE and energy questions: `tslab expert-census` (one
-    router capture run reduced to expert reuse within batches, the union per
-    batch against slot counts, and the routed sub-batch replay), an IOReport
-    energy meter (modeled whole-machine joules,
-    `energy_model: ioreport_whole_machine`, comparable within one experiment
-    only), the `ane_matmul` kernel bench (Steel against the Neural Engine per
-    shape, with the row split, placement and modeled joules), and a
-    `moe_bound` class (`io_bound`, `loop_bound`, `compute_bound`) in the MoE
-    profile's phase summary.
 - Lab sweeps for the ANE split and the MoE routed batch. `tslab sweep --gate`
   runs the quality gate on each WIN at the sweep's declared exactness and
   `--enforce-memory` holds each WIN to the memory allowance. A WIN that fails
@@ -404,28 +450,8 @@ when this file gets updated relative to the version bump and the tag.
 - Speculative decoding diagnostics: `TURBOSPARK_SPEC_STATS=1` now logs
   wall-clock time in ms per round broken down by phase (draft, verify, accept,
   rollback, commit, rewind, bonus).
-- The lab's family profiles moved their recommendations on the 2026-10-28
-  and 2026-10-29 sweeps: DeepSeek-V2 Lite's expert cache reads 64 slots at
-  +28.1% decode over 16 (32 the mid point, 16 the tight-memory choice; the
-  64-slot peak nearly equals the 15.5 GiB model), gpt-oss-20b's profile now
-  recommends the batched routed prefill (+23.5% prefill with a 14.9 MiB
-  lower peak; the runtime default stays opt-in until its moe_kl gates land,
-  as on Qwen 3.6), and Gemma 4's recommends it at the profile's 16 slots
-  (+3.3% prefill; the batched routed half refuses at 32 or more slots).
-  Flint's 16 slots are confirmed: 96 slots loses 14.2% decode, and 32 and 96
-  fail the 64 MiB memory gate.
 
 ### Fixed
-- `turbospark image` and `turbospark ocr` failed in 0.6.0 installs because
-  the app bundle, the Homebrew casks and the CLI-only zip did not ship
-  `turbospark-image` or `turbospark-ocr` (the CLI-only zip also lacked the
-  `turbospark` front end). They are built by CI and now packaged and linked,
-  and `verify-app-bundle.sh` fails if any peer the front end execs is missing.
-- Installing Parakeet Unified EN (live transcription) failed after the
-  download verified, with "speech install is missing model.safetensors". The
-  install ran the batch speech probe, which reads the Unified Core ML layout
-  as a Whisper install. Stream-only Unified rows now skip that probe, and
-  their audio receipt is unchanged.
 - Chat templates using transformers' `{% generation %}` block tag now
   render (minijinja rejected the tag, so such a checkpoint could not be
   installed).
