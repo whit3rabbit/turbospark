@@ -16,6 +16,7 @@ mod library;
 mod progress;
 mod render;
 mod transfer;
+mod views;
 
 use catalog::{Catalog, Client, InstallKind, InstallPlan, RepoRef, Store, Verdict};
 use destination::Destination;
@@ -33,6 +34,7 @@ pub use drama3::pull_drama3;
 pub use library::library;
 pub use render::human_bytes;
 pub use transfer::move_model;
+pub use views::{doctor, home, ls, search, show};
 
 /// Curated rows, marking which are installed.
 /// The bundled speech table. Speech entries ride their own embedded table

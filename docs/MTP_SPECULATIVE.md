@@ -677,6 +677,16 @@ to leave in as an opt-in (lossless, within noise of fixed 2 except on a
 recall or code case long enough (about 1,000 tokens) to outlast the ramp, 5 or
 more reps, and a host held to the frozen-protocol quietness.
 
+**Under the INT4 MMA8 tile (2026-10-26).** With `TURBOSPARK_INT4_MMA8` set
+the verify runs on an 8-row tile, so a round at block 8 (width 9) pays a
+second tile pass while blocks 3 to 7 verify in about the same time. The adaptive
+cap is therefore held to 7 while the tile is on (`AdaptiveDepth::tile_cap`),
+and a live A/B of the tuned `3,1,1,2` controller at cap 7 against cap 8 read
++24.2% on a quote-back prompt and noise on code, with identical tokens and
+rounds. The measurement, ledger ids and conditions are in
+`docs/KAPITSA_KERNELS.md` ("Measured: the hybrid replay"). A fixed block is
+not clamped, and the flag-off default cap of 4 above is unchanged.
+
 ## Sources
 
 - MTPLX: [github.com/youssofal/MTPLX](https://github.com/youssofal/MTPLX) (Apache-2.0)

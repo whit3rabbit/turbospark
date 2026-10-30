@@ -284,11 +284,32 @@ pub enum ModelFamily {
     /// dense lead layers are also full-attention layers. Facts:
     /// `docs/FLINT_PHASE0.md`.
     Flint,
+    /// LiquidAI LFM3 (`model_type: "lfm3"`, GGUF `general.architecture =
+    /// "lfm3"`; the two agree), witnessed on `LFM3-1.7B`: a DENSE 24-layer
+    /// hybrid of 13 gated short-convolution layers, 6 full-attention and 5
+    /// sliding-window (256) layers, the first family here with a mixer that
+    /// is neither attention nor gated DeltaNet. Its own flow
+    /// (`crates/runtime/src/families/lfm3/`), for three firsts:
+    ///
+    /// 1. THE SHORT CONVOLUTION (mask 6): `B, C, x = split3(in_proj(h))`,
+    ///    `y = C * causal_depthwise_conv7(B * x)`, then `out_proj`. No
+    ///    activation, no KV; the state is a fixed `[6, hidden]` tail.
+    /// 2. ZERO-TAIL PARTIAL RoPE on the full layers: `rope_proportional_neox`
+    ///    over 32 of 64 pairs at theta 1e6 (head_dim divisor, NOT spark's
+    ///    `rope_neox_subdim`); the SWA layers rotate the whole head at 1e4.
+    ///    The GGUF encodes the zero tail as a `rope_freqs.weight` vector,
+    ///    which repack checks by VALUE and drops.
+    /// 3. SANDWICH NORMS ON A DENSE TRUNK, per-head q/k RMSNorm, and spark's
+    ///    headwise scalar sigmoid output gate on separate q/k/v projections.
+    ///
+    /// Silu SwiGLU, tied head, no softcap, no embedding scaling, attention
+    /// scale `128^-0.5`. Facts: `docs/LFM3_PHASE0.md`.
+    Lfm3,
 }
 
 impl ModelFamily {
-    /// Exhaustive list of all 15 model families.
-    pub const ALL: [ModelFamily; 16] = [
+    /// Exhaustive list of all 17 model families.
+    pub const ALL: [ModelFamily; 17] = [
         ModelFamily::Gemma4,
         ModelFamily::QwenGdnMoe,
         ModelFamily::DeepseekV4Flash,
@@ -305,6 +326,7 @@ impl ModelFamily {
         ModelFamily::Deepseek2,
         ModelFamily::Qwen3Vl,
         ModelFamily::Flint,
+        ModelFamily::Lfm3,
     ];
 
     /// Returns static string identifier for the model family.
@@ -357,6 +379,9 @@ impl ModelFamily {
             ModelFamily::Qwen3Vl => "qwen3_vl",
             // New, and it matches the HF `model_type` ("flint").
             ModelFamily::Flint => "flint",
+            // New, and it matches the HF `model_type` AND the GGUF
+            // `general.architecture` string, which agree ("lfm3").
+            ModelFamily::Lfm3 => "lfm3",
         }
     }
 
@@ -379,6 +404,7 @@ impl ModelFamily {
             "deepseek2" => Some(ModelFamily::Deepseek2),
             "qwen3_vl" => Some(ModelFamily::Qwen3Vl),
             "flint" => Some(ModelFamily::Flint),
+            "lfm3" => Some(ModelFamily::Lfm3),
             _ => None,
         }
     }
@@ -408,9 +434,10 @@ mod tests {
                 ModelFamily::Deepseek2 => 13,
                 ModelFamily::Qwen3Vl => 14,
                 ModelFamily::Flint => 15,
+                ModelFamily::Lfm3 => 16,
             };
             assert_eq!(idx, expected_idx);
         }
-        assert_eq!(ModelFamily::ALL.len(), 16);
+        assert_eq!(ModelFamily::ALL.len(), 17);
     }
 }

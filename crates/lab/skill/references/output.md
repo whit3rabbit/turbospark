@@ -42,8 +42,10 @@ is `$TURBOSPARK_LAB_DIR`, else `$TURBOSPARK_HOME/lab`, else
 | `sweep` | `tslab sweep`: `sweep_id`, `family`, `baseline`, `metric`, `floor`, `candidates[].{arm, verdict, memory, clean_pairs, dirty_pairs, refused, verdict_record}`, `best.{arm, median}` (the largest median among WINs, else null), `stopped` |
 | `kernel_curve` | One kernel bench case: `result` is a `BenchResult` |
 | `hash_diff`, `dispatch_probe`, `standin`, `trace`, `round_cost`, `ane_plan` | What their command measured |
+| `chain_capture` | `capture.{case, depth, prompt_tokens, match_len, stream_digest}` and, from this build on, `capture.prompt_ids` and `capture.stream` (token ids; absent on older captures) |
+| `depth_replay`, `hybrid_replay` | Controller settings, or the lookup-plus-head hybrid against the head alone, priced over captures: `results[].{label, env, case}` with per-case `head` and `hybrid` walks and `delta_committed_per_round`, `delta_tok_s` |
+| `tree_replay` | Speculative acceptance: tree against chain at equal verify rows |
 | `expert_census` | `tslab expert-census`: `summary.phases.{prefill,decode}.{reuse, concentration, union, slots_fit, sub_batches, largest_group}` over one capture run (`capture` is the file) |
-| `tree_replay`, `chain_capture`, `depth_replay` | Speculative acceptance: tree against chain at equal verify rows, per-position chained capture, and the depth policy priced from it |
 | `projection` | `tslab project`: `projection.{ratio, improvement_throughput, improvement_time, coverage, floor, clears_floor, cases, skipped, notes}` and the `inputs` it read |
 | `calibration` | `tslab calibrate`: `calibration.{predicted, measured, error, miss, sign_flip, reason}` and the projection and verdict it joined |
 | `experiment`, `confirm`, `gate`, `experiment_start` | run-experiment's records and decision |

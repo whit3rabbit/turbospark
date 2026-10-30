@@ -64,8 +64,11 @@ policy.
   intake by a fixed 2^6 up/down rebalance (`crates/repack/src/flint_rebalance.rs`)
   that keeps the SwiGLU product inside FP16, and the flow relies on it. FP16
   range is the family's open risk; `TURBOSPARK_FLINT_DEBUG` and
-  `TURBOSPARK_FLINT_ROUTER_DUMP` are the readback diagnostics. See
-  `docs/FLINT.md` and `docs/FLINT_PHASE0.md`.
+  `TURBOSPARK_FLINT_ROUTER_DUMP` are the readback diagnostics. The default
+  build (`mlx-community/flint-mixed-3-4bit`) carries 3-bit routed experts:
+  `RoutedBlobLayout::AffineInt3`, resolved per phase from the blob's
+  weight-to-scale byte ratio, which refuses any affine width without a
+  kernel. See `docs/FLINT.md` and `docs/FLINT_PHASE0.md`.
 - The ANE+Steel prefill split (`families/qwen/ane_split.rs`) is opt-in twice:
   cargo feature `ane-prefill` and `TURBOSPARK_ANE_PREFILL` (or via FFI/Swift
   `AnePrefillMode`). When set to `Auto`, it activates on Apple Silicon M4+ /

@@ -462,8 +462,8 @@ into `whit3rabbit/homebrew-tap` in one commit:
 
 | Cask | Asset | Installs |
 |---|---|---|
-| `turbospark` | the DMG | `/Applications/TurboSpark.app` plus the three CLI commands on `PATH` |
-| `turbospark-cli` | the zip | the three CLI commands, nothing else |
+| `turbospark` | the DMG | `/Applications/TurboSpark.app` plus every CLI command on `PATH` |
+| `turbospark-cli` | the zip | every CLI command, nothing else |
 
 ```sh
 brew install --cask whit3rabbit/tap/turbospark        # app + CLI

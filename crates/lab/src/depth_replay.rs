@@ -41,6 +41,14 @@ pub struct ChainCapture {
     pub match_len: Vec<u8>,
     /// SHA-256 of the greedy stream's ids.
     pub stream_digest: String,
+    /// The prompt's token ids. Absent on captures written before the ids
+    /// were kept; `tslab hybrid-replay` needs them and says so.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_ids: Option<Vec<i32>>,
+    /// The greedy stream's token ids, one per `match_len` position, so a
+    /// replay can match n-grams over prompt plus history. Same age rule.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream: Option<Vec<i32>>,
 }
 
 /// Round cost by proposed depth, milliseconds.
@@ -256,7 +264,7 @@ pub fn simulate(
 /// several caps, and a grid around it.
 pub fn grid(max_depth: usize) -> Vec<Policy> {
     let mut out: Vec<Policy> = (2..=max_depth.min(8)).map(Policy::Fixed).collect();
-    let caps: Vec<usize> = [3, 4, 5, 6, 8]
+    let caps: Vec<usize> = [3, 4, 5, 6, 7, 8]
         .into_iter()
         .filter(|&c| c <= max_depth)
         .collect();
@@ -433,6 +441,8 @@ pub fn chain_capture_cmd(mut args: crate::args::Args) -> Result<(), String> {
             prompt_tokens: prompt.len(),
             match_len,
             stream_digest: model_io::hash_data(&bytes),
+            prompt_ids: Some(prompt.clone()),
+            stream: Some(stream),
         };
         let full = cap
             .match_len
@@ -492,6 +502,18 @@ pub fn ledger_costs(spec: &str, max_depth: usize) -> Result<CostTable, String> {
     })
 }
 
+/// One `--costs` entry: a built-in table or `ledger:EXP[@FLAGS][#KV]`.
+pub fn cost_table(name: &str, depth: usize) -> Result<CostTable, String> {
+    match name {
+        "flag_off" => Ok(flag_off()),
+        "flag_on" => Ok(flag_on()),
+        other if other.starts_with("ledger:") => ledger_costs(other, depth),
+        other => Err(format!(
+            "--costs {other:?}: flag_off, flag_on or ledger:EXPERIMENT[@FLAGS][#KV_BUCKET]"
+        )),
+    }
+}
+
 /// `tslab depth-replay`.
 pub fn depth_replay_cmd(mut args: crate::args::Args) -> Result<(), String> {
     use serde_json::json;
@@ -520,16 +542,7 @@ pub fn depth_replay_cmd(mut args: crate::args::Args) -> Result<(), String> {
     }
     let depth = captures.iter().map(|c| c.depth).min().unwrap_or(0);
     for name in tables.split(',') {
-        let costs = match name {
-            "flag_off" => flag_off(),
-            "flag_on" => flag_on(),
-            other if other.starts_with("ledger:") => ledger_costs(other, depth)?,
-            other => {
-                return Err(format!(
-                    "--costs {other:?}: flag_off, flag_on or ledger:EXPERIMENT[@FLAGS][#KV_BUCKET]"
-                ))
-            }
-        };
+        let costs = cost_table(name, depth)?;
         let policies = grid(depth.min(costs.max_depth()));
         // Per policy: tok/s per case, then speedup over fixed 2 per case.
         let mut rows = Vec::new();
@@ -631,7 +644,24 @@ mod tests {
             prompt_tokens: 10,
             match_len: lens.to_vec(),
             stream_digest: String::new(),
+            prompt_ids: None,
+            stream: None,
         }
+    }
+
+    #[test]
+    fn a_capture_without_ids_still_reads_and_writes_none_without_the_fields() {
+        // Records written before the ids were kept have neither field.
+        let old = serde_json::json!({"case": "c", "depth": 8, "prompt_tokens": 3,
+                                     "match_len": [1, 2], "stream_digest": "d"});
+        let c: ChainCapture = serde_json::from_value(old).unwrap();
+        assert_eq!((c.prompt_ids, c.stream), (None, None));
+        let v = serde_json::to_value(cap(&[1])).unwrap();
+        assert!(v.get("prompt_ids").is_none() && v.get("stream").is_none());
+        let mut with = cap(&[1]);
+        with.stream = Some(vec![7]);
+        let v = serde_json::to_value(&with).unwrap();
+        assert_eq!(v["stream"], serde_json::json!([7]));
     }
 
     fn flat(ms: f64) -> CostTable {

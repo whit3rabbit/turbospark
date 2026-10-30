@@ -52,23 +52,33 @@ ane-prefill = ["runtime/ane-prefill"]
 
 [dependencies]
 libc = "0.2"
-invocation = { package = "turbospark-invocation", path = "../invocation", version = "0.5.0" }
-foundation = { package = "turbospark-core", path = "../core", version = "0.5.0" }
-catalog = { package = "turbospark-catalog", path = "../catalog", version = "0.5.0" }
-runtime = { package = "turbospark-runtime", path = "../runtime", version = "0.5.0" }
-selection = { package = "turbospark-selection", path = "../selection", version = "0.5.0" }
-tokenizer = { package = "turbospark-tokenizer", path = "../tokenizer", version = "0.5.0" }
-repack = { package = "turbospark-repack", path = "../repack", version = "0.5.0" }
-model_io = { package = "turbospark-model-io", path = "../model-io", version = "0.5.0" }
-image = { package = "turbospark-image", path = "../image", version = "0.5.0" }
-audio = { package = "turbospark-audio", path = "../audio", version = "0.5.0" }
-window_fit = { package = "turbospark-window-fit", path = "../window-fit", version = "0.5.0" }
+invocation = { package = "turbospark-invocation", path = "../invocation", version = "0.6.0" }
+foundation = { package = "turbospark-core", path = "../core", version = "0.6.0" }
+catalog = { package = "turbospark-catalog", path = "../catalog", version = "0.6.0" }
+runtime = { package = "turbospark-runtime", path = "../runtime", version = "0.6.0" }
+selection = { package = "turbospark-selection", path = "../selection", version = "0.6.0" }
+tokenizer = { package = "turbospark-tokenizer", path = "../tokenizer", version = "0.6.0" }
+repack = { package = "turbospark-repack", path = "../repack", version = "0.6.0" }
+model_io = { package = "turbospark-model-io", path = "../model-io", version = "0.6.0" }
+image = { package = "turbospark-image", path = "../image", version = "0.6.0" }
+audio = { package = "turbospark-audio", path = "../audio", version = "0.6.0" }
+window_fit = { package = "turbospark-window-fit", path = "../window-fit", version = "0.6.0" }
 # `--image` (ROADMAP M-V7): decode, preprocess, the splice and the mRoPE
 # walk. UNALIASED, matching `crates/runtime`'s and `crates/bench`'s spelling
 # for the same crate (AGENTS.md Gotcha 1's per-crate alias rule).
-turbospark-vision-io = { path = "../vision-io", version = "0.5.0" }
+turbospark-vision-io = { path = "../vision-io", version = "0.6.0" }
 serde_json = "1"
 indicatif = "0.18"
+# The `turbospark` front door's command tree, help and shell completions.
+# Held to 4.5: 4.6 moved to edition 2024 and rust-version 1.85, past this
+# workspace's MSRV of 1.82. For the same reason Cargo.lock pins clap_lex to
+# 1.0.0 (1.1 needs 1.85); `cargo update` will lift it, so re-pin with
+# `cargo update -p clap_lex --precise 1.0.0`.
+clap = { version = ">=4.5, <4.6", features = ["derive"] }
+clap_complete = ">=4.5, <4.6"
+# Styles for `src/ui`. Both already arrive with clap and indicatif.
+anstyle = "1"
+console = { version = "0.16", default-features = false }
 
 [dev-dependencies]
 sha2 = "0.10"

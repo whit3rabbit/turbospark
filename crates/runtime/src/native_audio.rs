@@ -102,9 +102,15 @@ impl AudioRequest {
         }
     }
 
-    /// Whether the caller set any Drama 3 sampler field.
-    fn sampling_set(&self) -> bool {
-        self.drama3_sampling() != crate::fish_drama3::Drama3Sampling::default()
+    /// Whether the caller set a Drama 3 sampler field that `family` does not
+    /// take. Music 3 owns `max_frames` as its own frame cap, which its request
+    /// validation bounds, so only the other three count against it.
+    fn sampling_set(&self, family: &str) -> bool {
+        let mut set = self.drama3_sampling();
+        if family == MUSIC3_FAMILY {
+            set.max_frames = None;
+        }
+        set != crate::fish_drama3::Drama3Sampling::default()
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -410,6 +416,8 @@ pub const FISH_DRAMA3_FAMILY: &str = "fish_drama3";
 /// Persisted family string of the OmniVoice engine (the checkpoint
 /// config's `model_type`).
 pub const OMNIVOICE_FAMILY: &str = "omnivoice";
+/// Persisted family string of the MiniMax Music 3 engine.
+pub const MUSIC3_FAMILY: &str = "minimax_music3";
 /// Reference audio bounds for cloning: shorter clips align poorly, and the
 /// pipeline uses at most 28 s.
 const CLONE_REFERENCE_SECONDS: std::ops::RangeInclusive<f64> = 1.0..=30.0;
@@ -425,11 +433,14 @@ pub fn validate_request(
 ) -> Result<(), String> {
     // One guard for every other engine: a setting a model ignores would look
     // like it worked.
-    if family != FISH_DRAMA3_FAMILY && request.sampling_set() {
-        return Err(
+    if family != FISH_DRAMA3_FAMILY && request.sampling_set(family) {
+        // Music 3 takes max_frames, so its refusal names only the other three.
+        return Err(if family == MUSIC3_FAMILY {
+            "temperature, top_p and top_k are Drama 3 sampler settings; this model does not take them"
+        } else {
             "temperature, top_p, top_k and max_frames are Drama 3 sampler settings; this model does not take them"
-                .into(),
-        );
+        }
+        .into());
     }
     if request.task == AudioTask::TextToSpeech && family == MEGATTS3_FAMILY {
         return megatts3_request(request, samples).map(|_| ());
@@ -766,7 +777,7 @@ impl Engine {
             Self::MegaTts3(_) => MEGATTS3_FAMILY,
             Self::FishDrama3(_) => FISH_DRAMA3_FAMILY,
             Self::OmniVoice(_) => OMNIVOICE_FAMILY,
-            Self::Music(_) => "minimax_music3",
+            Self::Music(_) => MUSIC3_FAMILY,
         }
     }
     fn open(
@@ -2508,6 +2519,37 @@ mod tests {
         drop(permit);
         worker.join().unwrap();
         assert!(reply.unwrap().contains("busy"));
+    }
+    /// The app's Music page sends its frame cap as `max_frames`. Music 3 owns
+    /// that field (1 through 9000), so the Drama 3 guard must not refuse it.
+    #[test]
+    fn music_takes_max_frames_but_refuses_the_drama3_sampler() {
+        let music = AudioRequest {
+            task: AudioTask::Music,
+            caption: "upbeat synth pop".into(),
+            lyrics: "[verse]\nla la la".into(),
+            max_frames: Some(1500),
+            ..AudioRequest::default()
+        };
+        assert_eq!(validate_request(MUSIC3_FAMILY, &music, &[]), Ok(()));
+        let out_of_range = AudioRequest {
+            max_frames: Some(9001),
+            ..music.clone()
+        };
+        let err = validate_request(MUSIC3_FAMILY, &out_of_range, &[]).unwrap_err();
+        assert!(err.contains("max_frames"), "{err:?}");
+        for field in [
+            |r: &mut AudioRequest| r.temperature = Some(0.7),
+            |r: &mut AudioRequest| r.top_p = Some(0.7),
+            |r: &mut AudioRequest| r.top_k = Some(30),
+        ] {
+            let mut r = music.clone();
+            field(&mut r);
+            let err = validate_request(MUSIC3_FAMILY, &r, &[]).unwrap_err();
+            assert!(err.contains("Drama 3"), "{err:?}");
+            // Music 3 takes max_frames, so its refusal does not name it.
+            assert!(!err.contains("max_frames"), "{err:?}");
+        }
     }
     #[test]
     fn diarization_requests_need_bounded_finite_pcm() {

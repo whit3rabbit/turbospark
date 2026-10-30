@@ -94,6 +94,17 @@ pub const fn protocol_parameters(family: ModelFamily) -> ProtocolParameters {
             max_context: 8192,
             max_new: 4096,
         },
+        // `lfm3`: the model reasons in a think block before answering, so the
+        // shared 1,024 budget truncates. Measured 2026-10-27 on the MLX 4-bit
+        // install: short-explanation ends at 419 tokens and long-synthesis at
+        // 580, but medium-review runs past 4,096 (7,490 sampled), so
+        // `lfm3_memory_oracle` drives the two that fit, on the qwen3_vl
+        // precedent.
+        ModelFamily::Lfm3 => ProtocolParameters {
+            family,
+            max_context: 8192,
+            max_new: 4096,
+        },
         // The shared protocol, and what every frozen row in
         // `docs/BENCHMARKS.md` was measured at.
         // `qwen3_5` is here on the TOKENIZER's evidence rather than on a

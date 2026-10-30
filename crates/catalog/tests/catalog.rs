@@ -470,3 +470,27 @@ fn find_matches_alias_name_and_repo() {
     );
     assert!(catalog.find("no-such-model-anywhere").is_empty());
 }
+
+#[test]
+fn every_tag_resolves_to_its_alias_and_aliases_still_win() {
+    let catalog = Catalog::embedded().expect("the embedded catalog loads its tags");
+    assert_eq!(catalog.resolve_name("qwen3.6:35b").unwrap().alias, "qwen36");
+    assert_eq!(catalog.resolve_name("QWEN3.6").unwrap().alias, "qwen36");
+    assert_eq!(
+        catalog.resolve_name("gemma4:26b-q8").unwrap().alias,
+        "gemma4-gguf"
+    );
+    // An alias resolves to itself, never through a tag.
+    for entry in catalog.entries() {
+        assert_eq!(
+            catalog.resolve_name(&entry.alias).unwrap().alias,
+            entry.alias
+        );
+    }
+    assert!(catalog.resolve_name("qwen3.6:36b").is_none());
+    assert_eq!(catalog.tags_for("qwen36")[0], "qwen3.6");
+    assert!(catalog
+        .find("qwen3.6")
+        .iter()
+        .any(|entry| entry.alias == "qwen36"));
+}

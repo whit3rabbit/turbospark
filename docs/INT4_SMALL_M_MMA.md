@@ -287,6 +287,20 @@ One-prep-per-input was not built: the prep is 2.6-3.6 us and the served
 projections share inputs in only two places per layer, so the saving is
 under 1% of a token.
 
+### The verify width and the tile (2026-10-26)
+
+A speculative round at block B verifies B + 1 rows, and
+`encode_int4_mma8_rows` serves a batch in tiles of `INT4_MMA8_MAX_ROWS` (8),
+each pass reading the weights once. Measured on `qwen38-27b-mtp` under the
+flag (`km-tile-7v8`, copy-heavy, 256 decode tokens, M4 Max, AC), the verify
+phase is flat from width 3 to 8 and about doubles at width 9. The adaptive
+depth controller now holds its cap to the tile's rows less one while the
+tile is on (`AdaptiveDepth::tile_cap`), which a live A/B of cap 7 against
+cap 8 priced at +24.2% on the quote-back prompt and noise on code. Numbers,
+ledger ids and conditions: `docs/KAPITSA_KERNELS.md`, "Measured: the hybrid
+replay". A fixed `--speculative 8` is the caller's choice and still pays the
+second pass.
+
 ### What would make it pay everywhere
 
 1. **Pick the block per request, or per round.** Under the flag the best

@@ -138,6 +138,25 @@ impl AdaptiveDepth {
     /// The floor [`Self::new`] should get unless a caller measured otherwise.
     pub const DEFAULT_FLOOR: usize = DEFAULT_SPECULATION_BLOCK;
 
+    /// `cap` held to the widest verify one pass of a row tile serves. A
+    /// round at block B verifies B + 1 rows, so with a tile of `rows` rows
+    /// the block past `rows - 1` pays a second tile pass for its last row.
+    /// `None` (no tile in the verify path) leaves the cap alone.
+    ///
+    /// Under the INT4 MMA8 tile (8 rows) that second pass doubled the verify
+    /// phase at block 8 while blocks 3 to 7 verified in about the same time,
+    /// and the tuned controller at cap 7 decoded the same rounds a quarter
+    /// faster than at cap 8 on a quote-back prompt, within noise on code
+    /// (`docs/KAPITSA_KERNELS.md`, "Measured: the hybrid replay"). On prose
+    /// the controller never nears the cap, so the clamp changes nothing
+    /// there. A fixed block is the caller's choice and is not clamped.
+    pub fn tile_cap(cap: usize, tile_rows: Option<usize>) -> usize {
+        match tile_rows {
+            Some(rows) => cap.min(rows.saturating_sub(1).max(1)),
+            None => cap,
+        }
+    }
+
     /// The depth the next round should propose.
     pub fn depth(&self) -> usize {
         self.cur

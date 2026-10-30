@@ -58,6 +58,9 @@ impl LogitProducer for RealForwardRunner {
         if let Some(qwen4) = self.real_qwen4.as_mut() {
             qwen4.reset();
         }
+        if let Some(lfm3) = self.real_lfm3.as_mut() {
+            lfm3.reset();
+        }
         // The head keeps its OWN KV, so the trunk's reset leaves it holding
         // the previous generation's context -- the same shape of leak
         // Gotcha 4 records for the GDN recurrent state, one cache over.
@@ -339,6 +342,18 @@ impl SpeculativeProducer for RealForwardRunner {
         (mtp || dflash)
             && self.real_qwen.as_ref().is_some_and(|q| q.dense)
             && self.prompt_vision.is_none()
+    }
+
+    // The ANE prefill split engages only on micro-batches of 512 rows or
+    // more, and the default 128-token span would keep a DFlash2 prompt on
+    // Steel. Its width while the split is on and can take the drafter (no
+    // MTP head; `ane_prefill_steel_rows`), the default otherwise.
+    fn drafter_prefill_chunk(&self) -> usize {
+        #[cfg(feature = "ane-prefill")]
+        if let Some(width) = self.ane_prefill_drafter_chunk() {
+            return width;
+        }
+        foundation::DEFAULT_CHUNK_SIZE as usize
     }
 
     fn prefill_chunk_priming_drafter(
@@ -761,6 +776,13 @@ impl RealForwardRunner {
         if self.real_qwen4.is_some() {
             return gpu::autorelease_pool(|| {
                 self.prefill_chunk_real_qwen4(tokens, start_position, logits)
+            })
+            .map_err(|e| e.to_string());
+        }
+        if self.real_lfm3.is_some() {
+            // INT4 installs only; the driver refuses any other by name.
+            return gpu::autorelease_pool(|| {
+                self.prefill_chunk_real_lfm3(tokens, start_position, logits)
             })
             .map_err(|e| e.to_string());
         }

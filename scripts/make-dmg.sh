@@ -82,7 +82,7 @@ mounted="$mount_point/TurboSpark.app"
 
 # Each of these has its own way of going missing, so each is named.
 [ -x "$mounted/Contents/MacOS/TurboSparkApp" ] || { echo "main executable missing" >&2; exit 1; }
-for bin in turbospark turbospark-check turbospark-model turbospark-server turbospark-image turbospark-ocr; do
+for bin in turbospark turbospark-check turbospark-model turbospark-server turbospark-image turbospark-music turbospark-clone turbospark-speak turbospark-ocr; do
   [ -x "$mounted/Contents/MacOS/$bin" ] || { echo "CLI binary $bin missing from the bundle" >&2; exit 1; }
 done
 [ -x "$mounted/Contents/MacOS/openkindd" ] || { echo "openkindd missing from the bundle" >&2; exit 1; }
@@ -105,6 +105,8 @@ fi
 # this is asserted rather than left to a launch test.
 ls "$mounted/Contents/Resources"/*.bundle >/dev/null 2>&1 \
   || { echo "no resource .bundle in Contents/Resources" >&2; exit 1; }
+[ -s "$mounted/Contents/Resources/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib" ] \
+  || { echo "MLX kernels (mlx-swift_Cmlx.bundle) missing; MLX image generation would exit the app" >&2; exit 1; }
 codesign --verify --deep --strict "$mounted" \
   || { echo "signature does not verify on the mounted copy" >&2; exit 1; }
 

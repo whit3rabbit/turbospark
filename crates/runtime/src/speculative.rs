@@ -163,10 +163,28 @@ pub fn run_raw_completion_speculative_adaptive_cancellable<P: SpeculativeProduce
         max_context,
         vocab_size,
         cap,
-        Some(AdaptiveDepth::new(floor, cap)),
+        Some(AdaptiveDepth::new(
+            floor,
+            AdaptiveDepth::tile_cap(cap, verify_tile_rows()),
+        )),
         cancel,
         on_progress,
     )
+}
+
+/// The rows one pass of the INT4 MMA8 tile verifies, when the tile is in
+/// the verify path (`TURBOSPARK_INT4_MMA8` set, either mode), so the
+/// adaptive cap never asks for a width that pays a second pass
+/// ([`AdaptiveDepth::tile_cap`]). `None` off macOS and with the tile off.
+#[cfg(target_os = "macos")]
+fn verify_tile_rows() -> Option<usize> {
+    use crate::real_forward_dispatch::{int4_mma8_mode, Int4Mma8Mode};
+    (int4_mma8_mode() != Int4Mma8Mode::Off).then_some(gpu::INT4_MMA8_MAX_ROWS)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn verify_tile_rows() -> Option<usize> {
+    None
 }
 
 /// The one loop. `block` is the CAP: with `adaptive` None every round
@@ -276,7 +294,7 @@ fn run_speculative<P: SpeculativeProducer>(
         let spans = crate::raw_completion_chunked::prefill_spans_with_cut(
             prompt_ids.len() - reused,
             reused,
-            foundation::DEFAULT_CHUNK_SIZE as usize,
+            producer.drafter_prefill_chunk(),
             cut,
         );
         for span in &spans {

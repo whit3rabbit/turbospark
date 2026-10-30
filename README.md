@@ -14,7 +14,6 @@
   <a href="https://github.com/whit3rabbit/turbospark/actions/workflows/ci.yml"><img src="https://github.com/whit3rabbit/turbospark/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="https://github.com/whit3rabbit/turbospark/actions/workflows/release.yml"><img src="https://github.com/whit3rabbit/turbospark/actions/workflows/release.yml/badge.svg" alt="Release" /></a>
   <a href="https://crates.io/crates/turbospark-cli"><img src="https://img.shields.io/crates/v/turbospark-cli.svg" alt="crates.io" /></a>
-  <a href="https://github.com/whit3rabbit/turbospark/stargazers"><img src="https://img.shields.io/github/stars/whit3rabbit/turbospark" alt="GitHub stars" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT" /></a>
   <a href="docs/RELEASE.md"><img src="https://img.shields.io/badge/platform-macOS%20Apple%20Silicon-lightgrey.svg" alt="Platform" /></a>
 </p>
@@ -491,7 +490,7 @@ target/release/tslab ab --model gemma4 --baseline off --candidate on:KNOB=V --ex
 target/release/tslab serve --open   # 127.0.0.1:7878, read-only, JSON API under /api
 ```
 
-The bundled [tslab agent skill](crates/lab/skill/SKILL.md) drives the same commands with preflight and doctor scripts; `scripts/install-tslab-skill.sh --repo` links it into `.claude/skills/` and `.agents/skills/`. The full guide, covering every command, environment variable, and the dashboard's JSON API, is in the [GitBook documentation](https://turbospark.gitbook.io/turbospark/documentation/advanced/tslab).
+The bundled [tslab agent skill](crates/lab/skill/SKILL.md) drives the same commands with preflight and doctor scripts. `scripts/install-tslab-skill.sh --repo` links it into `.claude/skills/` and `.agents/skills/`. The full guide, covering every command, environment variable, and the dashboard's JSON API, is in the [GitBook documentation](https://turbospark.gitbook.io/turbospark/documentation/advanced/tslab).
 
 ## License
 

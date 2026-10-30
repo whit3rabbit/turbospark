@@ -160,7 +160,10 @@ pub fn kv_layer_strides(arch: &ArchConfig, layer: usize, quant: KvQuant) -> (u64
         .get(layer)
         .copied()
         .unwrap_or(1);
-    if mask == 2 {
+    // Gated DeltaNet (2) and `lfm3`'s short convolution (6) keep no KV rows:
+    // their state is a fixed-size tail, sized by the context policy's
+    // recurrent-state terms instead.
+    if mask == 2 || mask == 6 {
         return (0, 0);
     }
     // Mask 5 (MLA, `deepseek2`) reads its geometry from the `mla` block,

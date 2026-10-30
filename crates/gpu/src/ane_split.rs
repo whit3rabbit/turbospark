@@ -25,7 +25,7 @@
 use metal::FunctionConstantValues;
 
 use crate::bytes::u32_bytes;
-use crate::context::{GpuError, MetalContext, PassEncoder};
+use crate::context::{CommittedPass, GpuError, MetalContext, PassEncoder};
 use crate::dequant_int4_gemv::Int4ResidentMatrix;
 
 /// The command-queue capacity the feature build asks for. A split
@@ -402,6 +402,14 @@ pub fn begin_pass_after(
     command_buffer.encode_wait_for_event(&event.event, value);
     let encoder = command_buffer.new_compute_command_encoder().to_owned();
     PassEncoder::new(command_buffer, std::cell::RefCell::new(encoder), None)
+}
+
+/// Commits `pass` with a GPU-side signal of `event` to `value` at its end.
+/// The split itself waits on the buffer (`wait_ref`); this is the
+/// alternative `tslab kernel --bench ane_handoff` prices, where the host
+/// polls [`HostEvent::value`] instead.
+pub fn commit_signaling(pass: PassEncoder, event: &HostEvent, value: u64) -> CommittedPass {
+    pass.commit_signaling(&event.event, value)
 }
 
 #[link(name = "QuartzCore", kind = "framework")]

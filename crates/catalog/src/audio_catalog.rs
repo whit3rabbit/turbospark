@@ -1238,11 +1238,11 @@ impl AudioCatalog {
             }
         }
         verify_asset_bytes(profile, &source_root, true, Some(cancel))?;
-        // The speech probe knows the Whisper and Parakeet TDT layouts a Rust
-        // session opens. Swift-hosted rows never reach one, and their Core ML
-        // layouts would fail it, so they get no speech receipt. Neither does
-        // Parakeet Unified: it is stream-only, opened by its Core ML layout,
-        // and the probe would read it as a Whisper install.
+        // The speech probe knows the Whisper and Parakeet TDT layouts a batch
+        // Rust session opens. Swift-hosted rows never reach one, and live-only
+        // Parakeet Unified opens through the stream API, which checks its own
+        // layout. Both Core ML layouts would fail the probe, so they get no
+        // speech receipt; the audio receipt still pins every asset.
         if identity.task == AudioTask::SpeechToText
             && !profile.capabilities.backend.starts_with("swift_")
             && profile.family != "parakeet_unified"
@@ -2392,12 +2392,14 @@ fn profile_record_matches(profile: &AudioProfile, row: &InstalledModel) -> Resul
                     .as_deref()
                     .is_none_or(|variant| variant == "bf16")
         }
+        // Earlier CLI pulls recorded Turbo as `affine-4bit-turbo-8step`.
         AudioTask::Music => {
             row.kind.is_none()
-                && row
-                    .variant
-                    .as_deref()
-                    .is_none_or(|variant| variant == "affine-4bit")
+                && row.variant.as_deref().is_none_or(|variant| {
+                    variant == "affine-4bit"
+                        || (variant == "affine-4bit-turbo-8step"
+                            && row.alias == "minimax-music3-turbo-4bit-8step")
+                })
         }
         // Installed only by this catalog, which records neither field.
         AudioTask::Diarization | AudioTask::SpeechDetection => {
@@ -5040,9 +5042,11 @@ mod tests {
             .is_err());
     }
 
-    /// The pinned Parakeet Unified row publishes without a speech receipt.
-    /// Through the speech probe its Core ML layout reads as Whisper and the
-    /// install fails on a missing model.safetensors.
+    /// The live Parakeet Unified export ships `parakeet_unified_*.mlmodelc`,
+    /// not the TDT programs the speech probe knows, so the probe fell back to
+    /// the Whisper check and refused it for a missing `model.safetensors`.
+    /// It publishes without a speech receipt, which only batch speech opens
+    /// read; the stream open checks its layout.
     #[test]
     fn parakeet_unified_publishes_without_the_speech_probe() {
         let root = Scratch::new();
@@ -5060,6 +5064,10 @@ mod tests {
             .join(model_io::speech_receipt::SPEECH_RECEIPT_FILENAME)
             .exists());
         assert!(catalog.verify(&store, &identity).is_ok());
+        let report = catalog.installed_report(&store);
+        assert!(report.incompatible.is_empty(), "{:?}", report.incompatible);
+        let listed: Vec<_> = report.installed.iter().map(|row| &row.alias).collect();
+        assert_eq!(listed, ["parakeet-unified-en-coreml"]);
     }
 
     #[test]

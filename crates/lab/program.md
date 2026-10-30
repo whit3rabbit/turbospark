@@ -289,6 +289,8 @@ Workloads under `crates/lab/workloads/` are for `--prompt messages:PATH`.
 `copy-heavy.messages.json` is a quote-back task (rename one variable in a short
 function and return all of it), the shape where lookup drafting was expected to
 pay and where a block drafter commits nearly the whole block.
+`code.messages.json` asks for a short function and its complexity, the code
+case the adaptive-depth checks were measured on.
 
 ## Spec template
 
@@ -433,6 +435,11 @@ Say so in the hypothesis rather than measure around it:
   records how experts repeat within executed batches, the union per batch
   against slot counts, and the routed sub-batch replay (`expert_census`).
   Read it before sizing slots or reopening the ANE expert idea.
+- **ANE handoff, wait against poll.** `tslab kernel --bench ane_handoff`
+  times one split point's host handoff (`wait` against `poll`), quiet and
+  under `--contend N` spinner threads it runs itself. The end-to-end
+  reading is the `~hog:N` A/B above. Its per-micro-batch figure is one
+  point times the point count, a projection, not a split measurement.
 
 ## Reading a verdict
 

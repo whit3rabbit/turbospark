@@ -23,7 +23,7 @@ use serde_json::{json, Value as JsonValue};
 use crate::chat_template::{FunctionDefinition, HistoricalToolCall, Message};
 use crate::dialect::MfTokenizer;
 use crate::error::TokenizerError;
-use crate::jinja_compat::parenthesize_conditional_kwargs;
+use crate::jinja_compat::{parenthesize_conditional_kwargs, rewrite_generation_tags};
 use crate::jinja_date::strftime_now;
 pub use crate::jinja_date::CHAT_DATE_ENV;
 use crate::reasoning::ReasoningEffort;
@@ -169,6 +169,7 @@ pub fn render_generic_chat_template(
     })?;
 
     let source = parenthesize_conditional_kwargs(source);
+    let source = rewrite_generation_tags(source.as_ref());
     let source = source.as_ref();
 
     let mut env = Environment::new();

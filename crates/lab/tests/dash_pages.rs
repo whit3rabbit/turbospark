@@ -422,10 +422,21 @@ async fn the_loopback_router_refuses_a_foreign_host() {
     assert_eq!(r.status(), StatusCode::FORBIDDEN);
     let r = app.clone().oneshot(get("evil.example:7878")).await.unwrap();
     assert_eq!(r.status(), StatusCode::FORBIDDEN);
+    // Text after a bracketed IPv6 literal other than a port is not loopback,
+    // and neither is an unclosed bracket.
+    for host in ["[::1]evil.example", "[::1]evil.example:7878", "[::1", ""] {
+        let r = app.clone().oneshot(get(host)).await.unwrap();
+        assert_eq!(
+            r.status(),
+            StatusCode::FORBIDDEN,
+            "Host {host:?} is refused"
+        );
+    }
     for host in [
         "127.0.0.1:7878",
         "localhost:7878",
         "[::1]:7878",
+        "[::1]",
         "localhost",
     ] {
         let r = app.clone().oneshot(get(host)).await.unwrap();

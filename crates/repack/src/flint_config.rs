@@ -9,7 +9,7 @@ use model_io::{
     ModelFamily, PleConfig, RopeScalingConfig, VisionConfig,
 };
 
-use crate::gemma4_checkpoint::{parse_gemma4_quantization, Gemma4Error, Gemma4Quant};
+use crate::gemma4_checkpoint::{Gemma4Error, Gemma4Quant};
 
 /// The canonical tensor path the embedding table lives under, which is where
 /// `Gemma4Quant` overrides are keyed once `canonicalize_flint_header` has
@@ -248,23 +248,39 @@ pub fn parse_flint_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
         swiglu_limit: 0.0,
         rope_scaling: RopeScalingConfig::NONE,
         vision: VisionConfig::NONE,
+        short_conv_kernel_size: 0,
         ple: PleConfig::NONE,
     })
 }
 
 /// `config.json -> quantization`, plus the embedding width.
 ///
-/// **The embedding is INT8 under an INT4 default and `config.json` does not
-/// say so in `quantization`**: it declares only `{bits: 4, group_size: 64}`,
-/// and the 8-bit table is recorded in the producer's own `mlx_export` block
-/// (`embedding_bits`). Reading the generic quantization alone would size the
-/// embedding as 4-bit and reject its (correctly shaped) packed rows, or worse
-/// accept a mis-sized read. The override is keyed by the canonical path
-/// `canonicalize_flint_header` produces.
+/// **The embedding is INT8 under an INT4 default and `RecursiveSI/flint-int4`
+/// does not say so in `quantization`**: it declares only `{bits: 4,
+/// group_size: 64}`, and the 8-bit table is recorded in the producer's own
+/// `mlx_export` block (`embedding_bits`). Reading the generic quantization
+/// alone would size the embedding as 4-bit and reject its (correctly shaped)
+/// packed rows, or worse accept a mis-sized read. The override is keyed by
+/// the canonical path `canonicalize_flint_header` produces.
+///
+/// `mlx-community/flint-mixed-3-4bit` instead writes stock MLX per-tensor
+/// entries (`model.embed_tokens` at 8, every `switch_mlp` projection at 3)
+/// beside the same `mlx_export` block. Those keys are in the SOURCE
+/// namespace, so they are renamed onto the canonical one here, the same rename
+/// the header gets; left as they were, `bits_for` would never find them and
+/// every 3-bit expert would be read as INT4.
+///
+/// What is admitted is what the kernels cover: an embedding at 4 or 8, and
+/// routed experts at 3 or 4, all experts at one width that agrees with
+/// `mlx_export.routed_expert_bits`. 3-bit is admitted for `switch_mlp`
+/// tensors only (the `moe_*_int3` routed pair); anything else per-tensor is
+/// refused.
 ///
 /// `lm_head` needs no override: it is 4-bit, the default.
 pub fn parse_flint_quantization(json: &str) -> Result<Gemma4Quant, Gemma4Error> {
-    let mut quant = parse_gemma4_quantization(json)?;
+    let routed = |name: &str| name.contains(ROUTED_MARKER);
+    let mut quant =
+        crate::gemma4_checkpoint::parse_quantization_admitting(json, flint_admits_affine_shape)?;
     let root: serde_json::Value =
         serde_json::from_str(json).map_err(|e| Gemma4Error::Config(e.to_string()))?;
     let export = root
@@ -281,18 +297,86 @@ pub fn parse_flint_quantization(json: &str) -> Result<Gemma4Quant, Gemma4Error> 
             "mlx_export.embedding_bits {embedding_bits} is not 4 or 8"
         )));
     }
-    if export.get("routed_expert_bits").and_then(|v| v.as_u64()) != Some(quant.default_bits as u64)
-    {
-        return Err(Gemma4Error::Config(
-            "mlx_export.routed_expert_bits differs from the default width; per-slot widths \
-             beyond the embedding are not modelled"
-                .into(),
-        ));
+    let routed_bits = export
+        .get("routed_expert_bits")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| Gemma4Error::Config("missing mlx_export.routed_expert_bits".into()))?
+        as u32;
+    if !matches!(routed_bits, 3 | 4) {
+        return Err(Gemma4Error::Config(format!(
+            "mlx_export.routed_expert_bits {routed_bits} is not 3 or 4"
+        )));
     }
+
+    let mut overrides = std::collections::HashMap::new();
+    for (key, bits) in std::mem::take(&mut quant.bits_overrides) {
+        let canonical = SOURCE_TO_CANONICAL
+            .iter()
+            .find_map(|(source, target)| key.strip_prefix(source).map(|t| format!("{target}{t}")))
+            .unwrap_or(key);
+        if canonical == EMBED_BASE {
+            if bits != embedding_bits {
+                return Err(Gemma4Error::Config(format!(
+                    "quantization declares the embedding at {bits} bits and \
+                     mlx_export.embedding_bits at {embedding_bits}"
+                )));
+            }
+        } else if routed(&canonical) {
+            if bits != routed_bits {
+                return Err(Gemma4Error::Config(format!(
+                    "quantization declares {canonical} at {bits} bits and \
+                     mlx_export.routed_expert_bits at {routed_bits}; every routed expert \
+                     must be one width"
+                )));
+            }
+        } else if bits != quant.default_bits {
+            return Err(Gemma4Error::Config(format!(
+                "quantization declares {canonical} at {bits} bits; per-tensor widths beyond \
+                 the embedding and the routed experts are not modelled"
+            )));
+        }
+        overrides.insert(canonical, bits);
+    }
+    quant.bits_overrides = overrides;
+    // A width `mlx_export` states but no per-tensor entry carries (the INT4
+    // build's INT8 embedding) is recorded here. Routed experts are never
+    // inferred this way: a routed width off the default with no per-tensor
+    // entries is a config the walk cannot size, so it is refused.
     if embedding_bits != quant.default_bits {
         quant
             .bits_overrides
-            .insert(EMBED_BASE.to_string(), embedding_bits);
+            .entry(EMBED_BASE.to_string())
+            .or_insert(embedding_bits);
+    }
+    let routed_declared = quant.bits_overrides.keys().any(|k| routed(k));
+    if routed_bits != quant.default_bits && !routed_declared {
+        return Err(Gemma4Error::Config(format!(
+            "mlx_export.routed_expert_bits is {routed_bits} under a {}-bit default, but \
+             quantization declares no routed expert at that width",
+            quant.default_bits
+        )));
     }
     Ok(quant)
 }
+
+/// The affine shapes Flint admits beyond `is_supported_affine_shape`: 3-bit
+/// at group 64, on routed expert tensors only (the `moe_*_int3` pair). Shared
+/// with the catalog's probe so the two gates cannot disagree.
+pub fn flint_admits_affine_shape(name: &str, bits: u32, group_size: u32) -> bool {
+    name.contains(ROUTED_MARKER)
+        && bits == 3
+        && group_size == crate::gemma4_checkpoint::AFFINE_GROUP_SIZE
+}
+
+/// Where a Flint checkpoint's routed experts live, which is the only place
+/// 3-bit is admitted.
+const ROUTED_MARKER: &str = ".mlp.switch_mlp.";
+
+/// `canonicalize_flint_header`'s rename, for quantization keys (which name a
+/// tensor without its `.weight` suffix, so `lm_head` has no trailing dot).
+const SOURCE_TO_CANONICAL: [(&str, &str); 4] = [
+    ("model.embed_tokens", "language_model.model.embed_tokens"),
+    ("model.layers.", "language_model.model.layers."),
+    ("model.norm", "language_model.model.norm"),
+    ("lm_head", "language_model.lm_head"),
+];

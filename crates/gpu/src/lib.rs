@@ -156,6 +156,10 @@ mod rms_norm;
 #[cfg(target_os = "macos")]
 mod rope;
 #[cfg(target_os = "macos")]
+mod short_conv;
+#[cfg(target_os = "macos")]
+mod short_conv_state;
+#[cfg(target_os = "macos")]
 mod utility;
 #[cfg(target_os = "macos")]
 mod vision;
@@ -241,8 +245,9 @@ pub use dequant_int4_mma8::{
 };
 #[cfg(target_os = "macos")]
 pub use dequant_int4_steel::{
-    encode_dequant_int4_gemm_steel, encode_dequant_int4_gemm_steel_edge, steel_edge_supports,
-    steel_supports, SteelTile,
+    encode_dequant_int4_gemm_small_n, encode_dequant_int4_gemm_steel,
+    encode_dequant_int4_gemm_steel_edge, small_n_supports, steel_edge_supports, steel_supports,
+    SteelTile, SMALL_N_MAX_ROWS, SMALL_N_MMA8_MAX_BATCH,
 };
 #[cfg(target_os = "macos")]
 pub use dequant_int8_batch::{
@@ -344,8 +349,9 @@ pub use mla::{
 };
 #[cfg(target_os = "macos")]
 pub use moe_decode::{
-    encode_moe_phase1, encode_moe_phase2, encode_router_gemv_gemma4, moe_decode_source,
-    router_gemv_gemma4, MoeExpertOffsets, RoutedBlobsBuffer, MAX_STREAMED_EXPERTS,
+    encode_moe_phase1, encode_moe_phase1_int3, encode_moe_phase2, encode_moe_phase2_int3,
+    encode_router_gemv_gemma4, moe_decode_source, router_gemv_gemma4, MoeExpertOffsets,
+    RoutedBlobsBuffer, MAX_STREAMED_EXPERTS,
 };
 #[cfg(target_os = "macos")]
 pub use moe_gguf::{
@@ -406,9 +412,13 @@ pub use rms_norm::{
 pub use rope::{
     encode_rope_mrope_interleaved, encode_rope_neox_freqs, encode_rope_neox_subdim,
     encode_rope_neox_subdim_rows, encode_rope_neox_subdim_rows_positions,
-    encode_rope_proportional_neox, rope_mrope_interleaved, rope_neox_subdim,
-    rope_proportional_neox, ROPE_POSITION_ROWS_MAX,
+    encode_rope_proportional_neox, encode_rope_proportional_neox_rows, rope_mrope_interleaved,
+    rope_neox_subdim, rope_proportional_neox, ROPE_POSITION_ROWS_MAX,
 };
+#[cfg(target_os = "macos")]
+pub use short_conv::{encode_short_conv_decode, encode_short_conv_prefill};
+#[cfg(target_os = "macos")]
+pub use short_conv_state::ShortConvStateManager;
 #[cfg(target_os = "macos")]
 pub use utility::{
     encode_bias_add, encode_gelu_erf_mul, encode_gelu_mul, encode_logit_softcap,

@@ -226,6 +226,8 @@ run-to-run variation.
 | **Qwen3.8-27B, MLX INT4** | 14 GB | 4,096 | **660.0 - 660.3 MiB** | 750 | 18.6 - 21.1 | **no, dense** |
 | Qwen3.8-27B, MLX INT4, with vision tower | 15 GB | 4,096 | 854.8 - 872.5 MiB | 950 | 12.355 - 15.997 | no, dense + a 2-slot vision tower |
 | Mistral 7B, Q4_K_M | 4.1 GB | 8,192 | 1,201 - 1,203 MiB | 1,300 | 16.3 - 30.4 | no, dense |
+| LFM3-1.7B, MLX INT4 (`lfm3`) | 0.97 GB | 8,192 | 342 - 351 MiB | 420 | 67.8 - 198.1 | no, dense hybrid |
+| LFM3-1.7B, Q8_0 (`lfm3`) | 1.8 GB | 8,192 | 344 - 350 MiB | 420 | 84.1 - 94.7 | no, dense hybrid |
 | **Ternary-Bonsai-27B, MLX 2-bit** | 7.6 GB | 4,096 | **657.8 - 661.6 MiB** | 750 | 12.5 - 13.9 | **no, dense** |
 | Bonsai-27B, MLX 1-bit | 3.9 GB | -- | not measured | -- | ~18.3 | no, dense |
 | Qwen3.8-Flash-Next REAP-288, MLX INT4 (`qwen4_exp`) | 68 GB | **2,048** | 2,503 - 2,509 MiB | 3,000 | 6.870 - 7.530 | yes, 288 experts (top-10) |
@@ -2545,3 +2547,88 @@ same file-backed-weight accounting every other family's row shows; the
 ceiling is the highest reading plus 5%. One loaded session attributed a
 one-off +16 GiB to the warm replay and never again; the instrumented
 rerun measured 0.0 MiB. See the oracle file for the full account.
+
+## LFM3-1.7B (`lfm3`, MLX INT4), first rows
+
+The seventeenth family, a dense hybrid of 13 gated short-conv layers, 6 full
+and 5 sliding-window (256) attention layers. Install
+`LiquidAI/LFM3-1.7B-MLX-4bit` @ `d0ca73dc`, Apple M4 Max, AC, release,
+8,192 context, 2026-10-27. Facts in [`LFM3_PHASE0.md`](LFM3_PHASE0.md).
+
+```sh
+TURBOSPARK_LFM3_INSTALL_DIR=~/models/lfm3-1.7b-mlx-4bit \
+  cargo test -p turbospark-bench --test lfm3_memory_oracle --release -- --ignored --nocapture
+TURBOSPARK_LFM3_INSTALL_DIR=~/models/lfm3-1.7b-mlx-4bit \
+  cargo test -p turbospark-bench --test lfm3_quality_gate --release -- --ignored --nocapture
+```
+
+| Gate | Reading |
+| --- | --- |
+| Reference perplexity | 14.7455 |
+| Greedy digest | `16cc1e9c` |
+| Sampled digest | `58d4c54f` |
+| Session peak (4 runs) | 342 - 351 MiB, ceiling 420 |
+| Warm replay growth | +0.00 to +0.02 MiB |
+| Decode, short-explanation | 198.1, 67.8, 71.0, 180.2 tok/s |
+| Decode, long-synthesis | 171.6, 166.0, 163.9, 166.9 tok/s |
+
+- **The peak matches the accounting.** About 100 MiB of KV and conv state
+  (96 MiB of full-attention KV at 8,192, 3.75 MiB of sliding ring, 0.3 MiB
+  of conv tails) plus a ~250 MiB dense-install residual. Resident weights
+  are not charged (AGENTS.md Gotcha 40).
+- **Two protocol cases, not three.** `medium-review` reasons past the
+  4,096-token budget while coherent and stops `endOfTurn` at 7,490 tokens
+  sampled when given room, so the oracle drives the other two (the
+  `qwen3_vl` precedent).
+- **The short case's decode has two states.** Two of four runs read about
+  70 tok/s, the others about 190, on a quiet host for the last three. The
+  long case holds near 166. The working hypothesis is the GPU's clock
+  state on small per-token passes, and it is not measured. The floor (50) sits
+  under the slow state, so it catches regressions rather than clock states.
+- **Two quality runs in separate processes agreed on every digit and hex
+  character.** The perplexity does not rank against other families'
+  numbers: each row is a sentinel against its own past.
+
+**Quality row re-frozen 2026-10-28** for the GQA-shared decode attention
+partial (`attention_decode_gqa_partial`, this family's default since then).
+Perplexity 14.7455 -> 14.7434, greedy `16cc1e9c` unchanged, sampled
+`58d4c54f` -> `532998a6`; two fresh processes agreed. The table above keeps
+the 2026-10-27 values, and they still reproduce exactly under
+`TURBOSPARK_ATTN_DECODE_KERNEL=barrier`. The sampled text's first divergence
+is recorded in `crates/bench/tests/lfm3_quality_gate.rs`.
+
+### LFM3-1.7B Q8_0, and llama.cpp on the same bytes
+
+Install `LiquidAI/LFM3-1.7B-GGUF` @ `b3f2ae5d`, `LFM3-1.7B-Q8_0.gguf`,
+tokenizer from `LiquidAI/LFM3-1.7B` @ `40ebe0aa`. Same machine and settings,
+2026-10-28.
+
+| Gate | Reading |
+| --- | --- |
+| Reference perplexity | 15.8615 |
+| Greedy digest | `eb350865` |
+| Sampled digest | `6e5a9eb1` |
+| Session peak (3 runs) | 344 - 350 MiB, ceiling 420 |
+| Decode, short-explanation | 94.7, 91.0, 92.6 tok/s |
+| Decode, long-synthesis | 84.1, 84.4, 85.7 tok/s |
+
+- **llama.cpp agrees token for token.** Homebrew llama.cpp 0.8.0 (build
+  11960) ran the same file on the same 42 prompt ids (checked id by id with
+  `--verbose-prompt`), greedy. 600 tokens on the TCP prompt are identical,
+  and a 226-token answer to a second prompt is identical and ends at the
+  same end of turn. The GGUF declares `general.sampling.penalty_repeat 1.1`,
+  which llama.cpp applies by default even at temperature 0 and which moves
+  the argmax: the comparison needs `--repeat-penalty 1.0`.
+- **The peak equals the MLX row's.** Twice the weight bytes cost nothing in
+  `phys_footprint`, which is AGENTS.md Gotcha 40 again.
+- **Its perplexity is higher than the 4-bit row's**, 15.86 against 14.75,
+  on the same reference answer. The two files come from different
+  converters. The gap is recorded, not explained.
+- **No external reference for the MLX bytes.** mlx-lm has no `lfm3` model.
+
+**Quality row re-frozen 2026-10-28** with the 4-bit row, for the same
+attention default. Perplexity 15.8615 -> 15.8614, greedy `eb350865`
+unchanged (so the llama.cpp match above stands), sampled `6e5a9eb1` ->
+`e458a1a3`; two fresh processes agreed, and the old values reproduce under
+`TURBOSPARK_ATTN_DECODE_KERNEL=barrier`. Details in
+`crates/bench/tests/lfm3_q8_quality_gate.rs`.

@@ -106,7 +106,7 @@ The root references are:
   [MoE startup](docs/MOE_STARTUP.md) before changing the default.
 - Steel is the dense qwen prefill default, and the GQA-shared decode attention
   is the measured default on the dense Llama (not Mixtral), Qwen2, Qwen3,
-  Qwen3-VL and Spark 2.5 families. Another family needs its own real-model
+  Qwen3-VL, Qwen3.8 dense GDN, Spark 2.5, LFM3 and Flint families. Another family needs its own real-model
   quality, memory, and paired performance gates before it takes Steel, the
   GQA decode attention, or any other measured default; a family without its
   own verdict keeps the previous path.

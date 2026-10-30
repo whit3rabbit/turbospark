@@ -14,6 +14,87 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- `crates/coreml/tools/bake_ane_prefill_programs.py` bakes an install's INT4
+  weights into Core ML programs for the ANE prefill split (shift-scale or
+  `--lut`), and the split reads them from a format 2 `manifest.json`, mixed
+  with the F16 programs if wanted (`--shared-f16`). `tslab kernel --bench
+  ane_matmul` gains queue-depth, token-split, baked and `real:` arms. Opt-in
+  and measured: the baked form is no faster than the F16 split on a 36 GB
+  Mac (`docs/SPEEDUP_PLAYBOOK.md`), so the F16 split stays the default.
+- macOS app: tool profiles. Default (every tool, unchanged), Minimal and
+  Read-only are built in, and custom profiles are edited in a new Settings
+  Tools tab. A profile only removes tools, and a removed tool is refused at
+  execution as well as left out of the prompt. A Tools status chip in Chat
+  and Projects shows whether tools are on and how many are enabled, and
+  opens the master switch, the profile picker and per-tool toggles (a
+  session override over the profile). The TodoWrite and Subagents prompt
+  sections appear only when those tools are offered.
+- `tslab` documentation: a TurboSpark Lab section in the README,
+  `crates/lab/README.md`, and guide pages for `tslab` and the lab crate.
+  `TURBOSPARK_LAB_DIR` is in the environment variable reference.
+
+### Changed
+- Flint decode takes the GQA-shared decode attention kernel, which serves
+  a group's 8 Q heads from one K/V read. In `tslab kernel` at Flint's shape
+  a full layer drops from 1.49 to 0.40 ms at 512 positions and 91.3 to 3.6
+  ms at 32K. Not bit-exact: mean KL against mlx-vlm on
+  `flint-mixed-3-4bit` is 0.0072 nats (barrier 0.0070, mlx-vlm's own floor
+  0.0066), and peak footprint is unchanged. The paired decode tok/s A/B is
+  still open (`docs/FLINT.md`). `TURBOSPARK_ATTN_DECODE_KERNEL=barrier`
+  restores the old kernel.
+
+### Fixed
+- macOS app: a tool call that named an offered tool by another spelling
+  (`read`, `Read` or `read_file` for `FileRead`) or used an argument alias
+  (`path` or `filePath` for `file_path`) was refused before the alias-aware
+  executor saw it. Names now resolve to the offered definition and argument
+  keys to its declared properties, never to a tool the turn did not offer.
+  `TodoWrite`'s `activeForm` is optional. See `docs/TOOL_NAME_ALIGNMENT.md`.
+
+## [0.6.0] - 2026-10-28
+
+### Added
+- The `lfm3` family (LiquidAI LFM3-1.7B): a dense hybrid of gated
+  short-convolution, full-attention and sliding-window layers, with MLX and
+  GGUF intake, its own decode flow, and a port-local short-conv kernel pair.
+  Catalog rows `lfm3-1.7b` (MLX 4-bit) and `lfm3-1.7b-q8` (GGUF Q8_0), both
+  verified with frozen memory and quality gates. The Q8_0 file's greedy
+  output matches llama.cpp on the same bytes. See `docs/LFM3_PHASE0.md`.
+- `lfm3` chunked prefill on INT4 installs (`families/lfm3/prefill.rs`): each
+  micro-batch runs as M-row GEMMs (Steel from 32 rows), the short-conv
+  prefill kernel, and multi-row GQA attention on the full layers. About 8.7x
+  prefill tok/s at 2,918 tokens on an M4 Max, mean KL 1.9e-5 nats against
+  sequential prefill. `TURBOSPARK_LFM3_CHUNKED_PREFILL=0` runs the per-token
+  loop. The GGUF Q8_0 install stays sequential (no batched kernel for its
+  block type).
+- `make design-check` (`scripts/check-design.py`), also CI's `design` job and
+  an opt-in `.githooks/pre-commit`: scans the macOS app's sources against
+  `DesignRules.json` (shared with `DesignTokenRatchetTests`), checks the status
+  hexes against the design system, and runs `derive_tokens.py --check`. CI does
+  not run the app's `swift test` suite, so nothing else enforced these rules.
+  The ratchet now also counts system `NSColor`s on themed surfaces and color
+  literals, and fails on a baseline above the real count (two were 190 and 55
+  over). `make design-check-full` adds the contrast tests.
+- `ResolvedAppTheme.success`, `.warning`, `.danger` (and 14% tints) per mode and
+  under Increase Contrast, as `.appSuccess`, `.appWarning`, `.appDanger`,
+  `.appSuccessTint` and friends, plus `.appAccentText` for the accent as text.
+  `AppStatusColorTests` pins 4.5:1 (7:1 under Increase Contrast, 4.5:1 on the
+  14% wash) on every shipped preset.
+- `tslab hybrid-replay`: prices prompt lookup over the MTP chain on a chain
+  capture, per policy and case, against the head alone (ledger kind
+  `hybrid_replay`). `tslab chain-capture` now keeps the prompt and stream
+  token ids on the capture (`prompt_ids`, `stream`; older captures still read).
+  `crates/lab/workloads/code.messages.json` is the code case the adaptive
+  depth checks used.
+- `turbospark` is redesigned around ollama-style verbs: a home screen with
+  what is installed and what fits, `run` that downloads a missing model
+  first and reads a piped prompt, `pull` for every model kind, `ls`,
+  `search`, `show`, `rm`, `doctor`, `ps`, `launch AGENT`, `completions`, and
+  passthrough `image`, `music`, `speak`, `clone`, `ocr` and `model`. Grouped,
+  styled help, "did you mean" on a typo, color only on a terminal
+  (`NO_COLOR` honored), and `--json` on `ls`, `search`, `show`, `doctor`,
+  `status` and `ps`. Models take ollama-style tags (`qwen3.6:35b`) from
+  `crates/catalog/src/tags.json`; aliases still work.
 - Kernel modes (`docs/KERNEL_MODES.md`): the contract for a switch that
   selects an alternative kernel path beside the default, and the lab tooling
   around it. `tslab project` prices a mode from kernel curves, per-forward
@@ -203,8 +284,83 @@ when this file gets updated relative to the version bump and the tag.
     shape, with the row split, placement and modeled joules), and a
     `moe_bound` class (`io_bound`, `loop_bound`, `compute_bound`) in the MoE
     profile's phase summary.
+- Lab sweeps for the ANE split and the MoE routed batch. `tslab sweep --gate`
+  runs the quality gate on each WIN at the sweep's declared exactness and
+  `--enforce-memory` holds each WIN to the memory allowance. A WIN that fails
+  either keeps its verdict, is recorded as `rejected`, and is never the
+  sweep's `best`. The ANE split prints `[engaged] ane_prefill` (or
+  `ane_prefill_break`) only for a micro-batch it completed, so an arm whose
+  programs were missing reads as dirty instead of as the ANE arm. The
+  routed batch and the MTP chunked driver print theirs too. New knob rows
+  for `TURBOSPARK_ANE_PREFILL_DIR`, `TURBOSPARK_ANE_PREFILL_FAULT`,
+  `TURBOSPARK_EXPERT_NOCACHE` and the router batch capture, an `ane`
+  coverage tag, the `ane_split` sweep in the qwen35 profile and
+  `routed_batch_slots` in qwen36. `run_sweep` is tested end to end against a
+  fake worker (`crates/lab/tests/sweep_orchestration.rs`).
+- `TURBOSPARK_ANE_PREFILL_DFLASH=1` lets the ANE+Steel prefill split run
+  with a DFlash2 drafter open (off by default, so the app's `.auto` setting
+  still keeps the split off while a drafter is open). The split's micro-batch
+  captures the drafter's aux taps, the capture widens from 64 to 2048 rows on
+  first use, and the speculative loop primes in 2048-token spans
+  (`SpeculativeProducer::drafter_prefill_chunk`) so the split's 512-row
+  minimum is reachable. The `ane_split_dflash` sweep measures it.
+- `TURBOSPARK_ROUTED_BATCH_OVERLAP=1` (opt-in, beside
+  `TURBOSPARK_ROUTED_BATCH=1`) reads ahead in the Qwen MoE batched routed
+  prefill: each sub-batch's experts are planned around the slots the
+  in-flight sub-batch reads and streamed while the GPU runs it, bound into a
+  second argument buffer. Byte-identical to the routed batch without it.
+  It pays only where the expert cache holds two 32-expert unions (64 slots
+  and up). `routed_read_aheads` in the phase counters proves it ran, and the
+  qwen36 profile gains `routed_overlap`.
 
 ### Changed
+- `lfm3` decode takes the GQA-shared decode attention partial by default,
+  about +18.6% decode tok/s at a 2,918-token context. Both quality rows
+  re-froze (greedy digests unchanged, perplexity 14.7455 -> 14.7434 and
+  15.8615 -> 15.8614). `TURBOSPARK_ATTN_DECODE_KERNEL=barrier` restores the
+  old kernel.
+- `lfm3` decode runs the FFN's gate, up and silu as one fused INT4 GEMV,
+  bit-exact against the three-dispatch chain. No measurable decode change on
+  an M4 Max. `TURBOSPARK_LFM3_FUSED_FFN=0` keeps the chain.
+- The catalog alias `flint` now installs `mlx-community/flint-mixed-3-4bit`
+  (routed experts at MLX 3-bit, everything else keeping the trained INT4
+  codes): 17.8 GB against 22.6 GB. The GPU gains an INT3 routed expert pair
+  and intake accepts 3-bit routed tensors. This trades quality for size: mean
+  KL 0.213 nats and 82.8 percent top-1 against the INT4 build through this
+  port, with no quality or memory gate frozen. The trained build stays
+  available as `flint-int4`. See `docs/FLINT.md`.
+- macOS app: status uses the theme's success, warning and danger colors
+  instead of system green, orange and red (light-mode system red was 3.6:1 on
+  white); `AppAttention.color` and destructive buttons follow. The composer
+  focus edge is the solid accent (it was 55%, 2.1:1 in light; it falls back to
+  the foreground color when the accent cannot reach 3:1). Selected rail and
+  sidebar glyphs and links use `.appAccentText` (Spark Blue light `#1A64CC`, the
+  accent was 4.3:1 on the composer). Categorical hues (model family, chat
+  label, ANSI, syntax) stay fixed.
+- `docs/design-system/tools/derive_tokens.py` mixes surfaces the way
+  `NSColor.blended` does (gamma 1.8, not a straight sRGB mix), so the contrast
+  table matches what the app draws; tokens and README regenerated.
+- Dense Qwen chunked prefill runs the 48-row GDN `in_proj_a`/`in_proj_b`
+  projections (too narrow for a whole Steel tile) on the 8-row matrix-unit
+  tile up to a batch of 96 and on a new Steel edge tile above it, instead of
+  the scalar GEMM's 16-row slices. About 6.6% less summed prefill GPU time on
+  the 2,940-token long-synthesis prompt (18.1 s to 16.9 s median, interleaved
+  arms in one binary, noisy host); greedy output md5-identical and the Steel
+  KL probe unchanged (mean 1.7e-5 nats). Prefill only, on the Steel scratch:
+  decode and speculative verify are untouched. `TURBOSPARK_PREFILL_SMALL_N=0`
+  restores the slices. Registered as the `prefill_small_n` lane
+  (`tslab kernel --bench int4_matmul` has a `small_n` arm). See
+  `docs/BATCHED_PREFILL.md`.
+- Adaptive speculative depth (`--speculative adaptive[:N]`) holds its cap to
+  7 while the INT4 MMA8 tile is on (`TURBOSPARK_INT4_MMA8`), because a
+  width-9 verify pays a second 8-row tile pass for one row: measured +24.2%
+  decode on a quote-back prompt and noise on code against cap 8, with
+  identical output. Fixed blocks and the flag-off default cap of 4 are
+  unchanged. `tslab hybrid-replay` defaults to `--cap 7`.
+- DFlash2's `auto` depth follows the 8-row INT4 tile: block 3 with the tile
+  off (was 2; +3.7% decode tok/s) and block 7 with `TURBOSPARK_INT4_MMA8`
+  on (about +26% over block 2 there), re-measured on the current engine.
+  `dflash_serving_block()` resolves it once per process.
 - CI: documentation no longer runs the Rust matrix or the two package legs.
   `ci.yml` filters out `docs/` (except `docs/openapi/` and
   `docs/verification/`, which tests read), every `*.md`, the GitBook content
@@ -270,6 +426,30 @@ when this file gets updated relative to the version bump and the tag.
   install ran the batch speech probe, which reads the Unified Core ML layout
   as a Whisper install. Stream-only Unified rows now skip that probe, and
   their audio receipt is unchanged.
+- Chat templates using transformers' `{% generation %}` block tag now
+  render (minijinja rejected the tag, so such a checkpoint could not be
+  installed).
+- The ChatML tokenizer now uses a BOS the checkpoint's tokenizer config
+  declares, instead of always standing in `<|endoftext|>`. Qwen checkpoints,
+  which declare none, are unchanged.
+- `tslab kernel --bench int4_matmul` commits an untimed primer (about 50 ms
+  of GPU work on its own small matrix) right before every timed pass. A pass
+  started on a cold device runs several times slower for its whole length,
+  and M = 1 was measured first with host work between passes, so a tiny
+  shape's one-row GEMV read about three times its share of an 8-GEMV pass and
+  every `c(M)` against it was wrong. `subject.primer` on the record carries
+  the primer's size and its median GPU time.
+- `turbospark run MODEL "prompt"` applies the model's chat template (one
+  user turn over `--messages-file`). It passed the text as `--prompt`, which
+  encodes it verbatim, so chat models continued the user's sentence. `--raw`
+  keeps the verbatim path.
+- `turbospark run` no longer prints `turbospark-check`'s resolved-request
+  block before the answer. `turbospark-check` skips it under
+  `TURBOSPARK_HIDE_RESOLVED_REQUEST=1`, which the front door sets; direct
+  use is unchanged.
+- The lab's qwen35 `mtp_prefill_driver` and `dflash_prefill_driver` sweeps
+  opened no drafter, so both arms were plain prefill and the knob under test
+  changed nothing. Both arms now open the drafter.
 - Core ML model compilation and cache publication now serialize inside a
   process-wide critical section. Prevents simultaneous cold loads of the same
   package from racing on Core ML's shared temporary build directory. Warm loads

@@ -40,7 +40,7 @@ members = ["crates/core", "crates/compute", "crates/invocation", "crates/selecti
 opt-level = 1
 
 [workspace.package]
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 rust-version = "1.82"
 license = "MIT"

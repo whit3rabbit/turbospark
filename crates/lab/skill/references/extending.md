@@ -39,6 +39,27 @@ experiment.
 `tests/knob_registry.rs` fails if the env name or the engagement call goes
 missing from `crates/*/src`, or the doc stops mentioning it.
 
+Switch design that keeps the lab able to measure it:
+
+- A chunked-prefill driver's off arm runs the per-token loop behind the
+  same chunk entry point (flint, lfm3). The worker refuses a chunked
+  workload on an install that does not claim `supports_chunked_prefill`, so
+  a switch that turns the claim off cannot be A/B'd.
+- Seed the `OnceLock` value into per-runner state and add a
+  `#[doc(hidden)]` setter (`set_prefill_steel`, `set_lfm3_fused_ffn`), so one
+  test process can run both arms. A process-wide `OnceLock` alone forces a
+  subprocess per arm.
+- A bit-exact claim gets a `to_bits()` test on a fixture that reaches the
+  lane (an INT4 fixture for an INT4 kernel: a Q8_0 fixture passes without
+  running it). Mutate the new code (swap an activation, drop a row term),
+  see the test fail, then restore with `cp` and `touch` so cargo rebuilds.
+- A KL-bounded default re-freezes quality rows by the playbook protocol
+  (`docs/SPEEDUP_PLAYBOOK.md`, "Quality gates on both arms"): the old arm
+  reproduces the frozen row, greedy holds, the sampled text's first
+  divergence is a swapped phrase, two fresh processes agree. The gate hashes
+  its text without printing it, so diffing needs a temporary print in
+  `quality_common`, reverted after.
+
 ## A knob that is a kernel mode
 
 A switch that selects an alternative kernel lane (`docs/KERNEL_MODES.md`) gets
@@ -72,6 +93,11 @@ the field rules) and are embedded by `src/family_profile.rs`:
    finding ids that back it. `when` holds coverage tags.
 3. A sweep: a baseline arm and candidate arms in `tslab` arm syntax, the
    metric and the exactness class, and a workload when the default is wrong.
+   Exactness classes are `bit_exact`, `dense_kl`, `moe_kl` and `text_exact`
+   (not the knob table's `KlBounded`).
+4. A NOISE verdict is a finding too (`"verdict": "noise"`), with its CI and
+   null floor. Record it and drop the open question it settles; do not rerun
+   it hoping for a win.
 
 `cargo test -p turbospark-lab` validates every file (`family_profile.rs`
 unit tests, `tests/family_profiles.rs`): a knob the table lacks, a tag

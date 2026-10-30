@@ -114,6 +114,9 @@ impl RealForwardRunner {
         if self.real_spark.is_some() {
             return self.produce_real_spark(token, position, logits);
         }
+        if self.real_lfm3.is_some() {
+            return self.produce_real_lfm3(token, position, logits);
+        }
         if self.real.is_some() {
             return self.produce_real_gemma4(token, position, logits);
         }

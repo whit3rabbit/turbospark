@@ -534,7 +534,16 @@ there where this port applies it. It costs nothing measurable: block 8
 commits 5.56 per round against block 7's 5.37, and its last position is
 accepted 0.88 of the time. `DFLASH_BLOCK` stays 8 as the widest buildable
 block. But BOTH lose to block 2 on throughput, which is the decision that
-actually matters and is why `DFLASH_SERVING_BLOCK` is 2.
+actually matters and is why `DFLASH_SERVING_BLOCK` was 2.
+
+**Superseded 2026-10-26.** Re-measured on the current engine (lazy GDN tape,
+`Dk = 128` bake, tree verify, chunked prefill), `auto` now serves block 3
+with the 8-row INT4 tile off (+3.7% over block 2, paired A/B) and block 7
+with it on (`dflash_serving_block`). The lazy tape removed the snapshot
+restore that made long blocks lose here; what limits the block without the
+tile is now the verify pass itself, which roughly doubles from 5 rows. The
+table and the A/B ids are in `DFLASH_SERVING_BLOCK`'s doc comment
+(`crates/runtime/src/families/qwen/dflash_state.rs`).
 
 ### What was wrong, and why every instrument said it was fine
 
@@ -975,3 +984,62 @@ medium-review and +4.32% on short-explanation with under 1 MB more peak
 footprint (experiment `dflash-tree-default-d1`), and `dflash_generation_gate`
 stays lossless with it on and off. Conditions and ids are in
 `docs/KAPITSA_KERNELS.md`, lever 4, "Promotion to the default".
+
+### The ANE prefill split with the drafter open (2026-10-26)
+
+The ANE+Steel prefill split (`families/qwen/ane_split.rs`,
+`docs/SPEEDUP_PLAYBOOK.md`) used to step aside whenever a drafter was open,
+for two reasons. Its micro-batch is 2048 rows and the drafter's capture held
+64, and the split's encoder passed no drafter to the post-FFN copy. A third
+reason sat in the speculative loop: it prefilled in the runtime's default
+128-token spans, so a micro-batch never reached the split's 512-row minimum
+even with the first two fixed.
+
+`TURBOSPARK_ANE_PREFILL_DFLASH=1` (read once, off by default) lifts the
+step-aside for DFlash2:
+
+- The split's encoder copies each tapped layer's rows into the capture, the
+  same copy the Steel arm encodes.
+- The capture widens to 2048 rows the first time a micro-batch at the
+  split's width is planned (`DflashState::ensure_capture_rows`), so an
+  install that never splits never pays the 100 MiB (Qwen3.8-27B's shape,
+  computed). A micro-batch the split declines at that width runs on Steel
+  and captures into the same rows.
+- The context write is unchanged: slices of 16 rows after the micro-batch
+  completes, so a Steel redo after a failed prediction recaptures before
+  anything reads the capture.
+- `SpeculativeProducer::drafter_prefill_chunk` lets the producer ask the
+  loop for 2048-token spans while the split can take the drafter.
+
+The MTP head still keeps the split off. Its batched prime is sized by the
+same scratch, but it is not wired or tested at 2048 rows.
+
+`crates/runtime/tests/real_forward_qwen35_dflash_ane_split.rs` runs the
+split in `break` mode on the synthetic install (a manifest written for the
+fixture's FFN shapes, no Core ML program), holds the trunk bit for bit to the
+plain open under the same split and the first draft to the chunked suite's 1%
+bound against the token walk. Passing no drafter to the split's post-FFN copy
+fails it at 150 tokens, a split length, and not at 100, which the split
+declines. `real_forward_qwen35_dflash_ane_default.rs` holds the default:
+without the switch the loop keeps its 128-token spans.
+
+On the real install (`tslab sweep ane_split_dflash`, qwen38-27b-dflash2,
+protocol long-synthesis, depth 7 with the tile off, M4 Max, AC, 3 clean
+pairs of 3) the split read 233-236 tok/s against 161-162 for Steel priming,
+a WIN at +45.1% median (CI +44.6% to +46.0%; finding
+`qwen35.sweep-ane-split-dflash-2026-10-26` in the lab's qwen35 profile).
+Every split run printed `[engaged] ane_prefill` beside
+`[engaged] dflash_chunked_prefill`. Committed tokens per round read 3.37
+against 3.20 and decode 20.6 against 19.8 tok/s, but the split moves the
+trunk within the dense KL bound, so the arms decode different text and
+neither number is an effect of the change. Peak memory grew 1,689 MiB, the
+split's scratch and planes plus the widened capture. Not a default: the
+pairing owes what the split alone owes (`docs/SPEEDUP_PLAYBOOK.md`).
+
+**The drafter itself on the ANE is a non-goal.** A draft is 3 to 8 rows,
+each Core ML prediction carries about 1.4 ms of fixed cost
+(`docs/SPEEDUP_PLAYBOOK.md`), and at 32 rows the ANE ran at 0.09x Metal's
+speed (`docs/MOE_PRIOR_ART.md`). The drafter's residual stream peaks near
+113,920, past FP16, and the ANE computes in FP16 only (section 6 stores it
+divided by `DFLASH_RESIDUAL_SCALE` on the GPU for the same reason). And round
+n+1's draft needs round n's verify result, so there is little to overlap.

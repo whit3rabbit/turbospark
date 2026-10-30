@@ -17,6 +17,8 @@
 #      the CI host and fail on the oldest Mac the cask admits.
 #   2. the resource bundle is under Contents/Resources (codesign refuses it
 #      anywhere else).
+#      MLX's kernel bundle is among them: without it the app starts and
+#      then exits on the first MLX image generation.
 #   3. every peer binary the `turbospark` front end execs is in the bundle.
 #      0.6.0 shipped without turbospark-image because the packaging lists
 #      were hand-kept and nothing compared them to the dispatch table.
@@ -62,13 +64,21 @@ ls -d "$contents"/Resources/*.bundle >/dev/null 2>&1 \
 if ls -d "$app"/*.bundle >/dev/null 2>&1; then
   fail "a .bundle sits at the app root; codesign rejects unsealed root contents"
 fi
+# MLX's GPU kernels. Without them MLX calls exit(-1) on its first GPU op,
+# which the launch smoke below never reaches: v0.6.0 started fine and quit
+# on the first Z-Image generation.
+mlx_metallib="$contents/Resources/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib"
+[ -s "$mlx_metallib" ] || fail "no MLX kernels at $mlx_metallib"
+echo "==> MLX kernels: $(du -h "$mlx_metallib" | cut -f1) in mlx-swift_Cmlx.bundle"
 
 # 3. CLI peers -----------------------------------------------------------------
 # turbospark-bench is a dev harness from crates/bench, deliberately not shipped.
 front_end="$root/crates/cli/src/bin/turbospark.rs"
 [ -f "$front_end" ] || fail "$front_end not found; run from a source checkout"
-peers="$(grep -oE 'execute_peer\("[a-z0-9-]+"' "$front_end" | sed -E 's/.*"(.*)"/\1/' | sort -u | grep -vx turbospark-bench || true)"
-[ -n "$peers" ] || fail "found no execute_peer calls in $front_end (dispatch changed?)"
+# `peer("turbospark-x", ...)` can wrap its name onto the next line, so match
+# the name literal itself rather than the call.
+peers="$(grep -oE '"turbospark-[a-z0-9-]+"' "$front_end" | tr -d '"' | sort -u | grep -vx turbospark-bench || true)"
+[ -n "$peers" ] || fail "found no turbospark-* peer names in $front_end (dispatch changed?)"
 for bin in turbospark $peers; do
   [ -x "$contents/MacOS/$bin" ] || fail "CLI binary $bin is dispatched by turbospark but missing from $contents/MacOS"
 done

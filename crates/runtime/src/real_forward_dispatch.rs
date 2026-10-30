@@ -851,68 +851,13 @@ pub(crate) fn encode_gemm_any(
 /// (`crates/gpu/tests/qwen38_int4_prefill_gemm_probe.rs`).
 const STEEL_MIN_ROWS: usize = 32;
 
-/// Most output rows a matrix can have and still take the small-N prefill
-/// route. Qwen3.8's GDN `in_proj_a`/`in_proj_b` are 48; the next shapes up
-/// (1024-row K/V) are whole Steel tiles and never reach it.
-const SMALL_N_MAX_ROWS: usize = 64;
-/// The widest batch the 8-row matrix-unit tile serves before the Steel edge
-/// tile is cheaper. At 48 x 5120 the 8-row tile costs ~6.5 us per 8 rows and
-/// the edge tile a flat ~99 us whatever the width, so they cross near 96 rows
-/// (`crates/gpu/tests/steel_edge_n48_bench.rs`, M4 Max).
-const SMALL_N_MMA8_MAX_BATCH: usize = 96;
-
 /// Whether the small-N prefill route is on. It replaces the scalar GEMM's
-/// 16-row slices for INT4 matrices too narrow for a whole Steel tile, only on
-/// a scratch that already accepted Steel's rounding. Read once;
-/// `TURBOSPARK_PREFILL_SMALL_N=0` restores those slices.
+/// 16-row slices for INT4 matrices too narrow for a whole Steel tile
+/// (`gpu::small_n_supports`), only on a scratch that already accepted Steel's
+/// rounding. Read once; `TURBOSPARK_PREFILL_SMALL_N=0` restores those slices.
 fn small_n_prefill() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("TURBOSPARK_PREFILL_SMALL_N").as_deref() != Ok("0"))
-}
-
-/// An INT4 matrix the small-N route can serve: few output rows, not a whole
-/// Steel tile, and the layout both kernels need (a whole number of 64-wide
-/// quantization groups, 2-aligned offsets).
-fn small_n_fits(w: &gpu::Int4ResidentMatrix<'_>) -> bool {
-    w.rows <= SMALL_N_MAX_ROWS
-        && w.rows % 32 != 0
-        && gpu::steel_edge_supports(w)
-        && [w.weights_offset, w.scales_offset, w.biases_offset]
-            .iter()
-            .all(|o| o % 2 == 0)
-}
-
-/// `y[batch, rows] = x[batch, cols] * w^T` for a [`small_n_fits`] matrix.
-/// Up to [`SMALL_N_MMA8_MAX_BATCH`] rows run the 8-row matrix-unit tile in
-/// calls of [`gpu::INT4_MMA8_MAX_ROWS`] (its K split is tuned for this
-/// shape); wider batches run one Steel edge dispatch.
-fn encode_small_n(
-    context: &mut gpu::MetalContext,
-    pass: &gpu::PassEncoder,
-    w: &gpu::Int4ResidentMatrix<'_>,
-    x: (&gpu::MetalBuffer, u64),
-    y: (&gpu::MetalBuffer, u64),
-    batch: usize,
-) -> Result<(), RealForwardError> {
-    if batch > SMALL_N_MMA8_MAX_BATCH {
-        return gpu::encode_dequant_int4_gemm_steel_edge(context, pass, w, x, y, batch)
-            .map_err(RealForwardError::Gpu);
-    }
-    let mut done = 0usize;
-    while done < batch {
-        let take = (batch - done).min(gpu::INT4_MMA8_MAX_ROWS);
-        gpu::encode_dequant_int4_mma8_resident(
-            context,
-            pass,
-            w,
-            (x.0, x.1 + (done * w.cols * 2) as u64),
-            (y.0, y.1 + (done * w.rows * 2) as u64),
-            take,
-        )
-        .map_err(RealForwardError::Gpu)?;
-        done += take;
-    }
-    Ok(())
 }
 
 /// [`encode_gemm_any`] for any positive `batch`, row-major `x` (`cols` halfs
@@ -920,9 +865,9 @@ fn encode_small_n(
 /// the vendored kernel can serve runs as ONE Steel dispatch from
 /// [`STEEL_MIN_ROWS`] rows up; an INT4 tensor with too few output rows for a
 /// whole Steel tile (Qwen3.8's 48-row GDN `a`/`b`) takes the small-N route
-/// ([`encode_small_n`]); everything else runs the scalar kernel in slices of
-/// `gpu::MAX_BATCH_ROWS` rows. Only a caller that has accepted
-/// Steel's rounding passes `steel` (the chunked-prefill scratch,
+/// (`gpu::encode_dequant_int4_gemm_small_n`); everything else runs the scalar
+/// kernel in slices of `gpu::MAX_BATCH_ROWS` rows. Only a caller that has
+/// accepted Steel's rounding passes `steel` (the chunked-prefill scratch,
 /// `BatchedScratch::steel_gemm`); without it the result is the scalar
 /// kernel's, bit for bit, whatever `batch` is.
 #[allow(clippy::too_many_arguments)]
@@ -947,9 +892,10 @@ pub(crate) fn encode_gemm_rows(
             return gpu::encode_dequant_int4_gemm_steel(context, pass, &w, x, y, batch, tile)
                 .map_err(RealForwardError::Gpu);
         }
-        if small_n_prefill() && small_n_fits(&w) {
+        if small_n_prefill() && gpu::small_n_supports(&w) {
             foundation::engaged!("prefill_small_n");
-            return encode_small_n(context, pass, &w, x, y, batch);
+            return gpu::encode_dequant_int4_gemm_small_n(context, pass, &w, x, y, batch)
+                .map_err(RealForwardError::Gpu);
         }
     }
     let mut done = 0usize;

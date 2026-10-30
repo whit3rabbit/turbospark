@@ -64,14 +64,21 @@
 //! nothing else needs undoing.
 //!
 //! The split steps aside (and the micro-batch stays 64 rows) while an MTP
-//! head or DFlash2 drafter is open, because their priming state is sized for
-//! 64-row micro-batches. Image micro-batches run Steel.
+//! head is open, because its priming state is sized for 64-row
+//! micro-batches, and while a DFlash2 drafter is open unless
+//! `TURBOSPARK_ANE_PREFILL_DFLASH=1`. With that set the drafter rides the
+//! split: every split micro-batch copies its tapped layers' rows into the
+//! drafter's capture, which widens to the split's width the first time
+//! (`DflashState::ensure_capture_rows`), and the context write consumes them
+//! after the micro-batch completes, as on Steel. A Steel redo recaptures.
+//! Image micro-batches run Steel.
 //!
 //! Env:
 //! - `TURBOSPARK_ANE_PREFILL`: `1` (or `on`) splits. `break` keeps every
 //!   buffer break and host handoff but Steel takes every row, a diagnostic
 //!   for the cost of the breaks alone. Anything else is off.
 //! - `TURBOSPARK_ANE_PREFILL_DIR`: the programs directory.
+//! - `TURBOSPARK_ANE_PREFILL_DFLASH=1`: split with a DFlash2 drafter open.
 //! - `TURBOSPARK_ANE_PREFILL_STATS=1`: one counter line per split
 //!   micro-batch on stderr.
 //! - `TURBOSPARK_ANE_PREFILL_FAULT=P`: a diagnostic. The prediction at point
@@ -825,6 +832,14 @@ fn ensure(
     true
 }
 
+/// `TURBOSPARK_ANE_PREFILL_DFLASH=1`: the split runs with a DFlash2 drafter
+/// open. Read once. Off keeps the step-aside, which is what the app ships
+/// (its setting defaults to `.auto`), until the pairing has its own gates.
+fn split_takes_dflash() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TURBOSPARK_ANE_PREFILL_DFLASH").as_deref() == Ok("1"))
+}
+
 /// The diagnostic fault point, once per process.
 fn take_fault_point() -> Option<usize> {
     static FIRED: AtomicBool = AtomicBool::new(false);
@@ -837,13 +852,29 @@ fn take_fault_point() -> Option<usize> {
 }
 
 impl RealForwardRunner {
+    /// The prompt span the speculative loop should prime a DFlash2 drafter
+    /// in while the split is on (`SpeculativeProducer::drafter_prefill_chunk`),
+    /// or `None` to keep the default. An MTP head keeps the split off, so it
+    /// keeps the default span.
+    pub(crate) fn ane_prefill_drafter_chunk(&self) -> Option<usize> {
+        (self.ane_prefill.on() && self.real_dflash.is_some() && !self.ane_split_steps_aside())
+            .then_some(ANE_PREFILL_WIDTH)
+    }
+
+    /// Whether an open drafter keeps the split off: an MTP head always, a
+    /// DFlash2 drafter unless `TURBOSPARK_ANE_PREFILL_DFLASH=1`.
+    fn ane_split_steps_aside(&self) -> bool {
+        self.real_mtp.is_some() || (self.real_dflash.is_some() && !split_takes_dflash())
+    }
+
     /// The qwen dense driver's Steel micro-batch for the next chunk:
-    /// [`ANE_PREFILL_WIDTH`] while the split is on and no drafter is open,
-    /// [`QWEN_STEEL_PREFILL_BATCH`] otherwise. Widens `scratch.x` to match,
-    /// and warns once when the caller's chunk is too small for the split to
-    /// engage.
+    /// [`ANE_PREFILL_WIDTH`] while the split is on and no open drafter keeps
+    /// it off ([`Self::ane_split_steps_aside`]), [`QWEN_STEEL_PREFILL_BATCH`]
+    /// otherwise. Widens `scratch.x` and an open
+    /// DFlash2 drafter's capture to match, and warns once when the caller's
+    /// chunk is too small for the split to engage.
     pub(crate) fn ane_prefill_steel_rows(&mut self, chunk_tokens: usize) -> usize {
-        if !self.ane_prefill.on() || self.real_mtp.is_some() || self.real_dflash.is_some() {
+        if !self.ane_prefill.on() || self.ane_split_steps_aside() {
             return QWEN_STEEL_PREFILL_BATCH;
         }
         let hidden = self.arch.hidden_size as usize;
@@ -851,6 +882,11 @@ impl RealForwardRunner {
             self.scratch.x = self
                 .context
                 .new_output_buffer((hidden * ANE_PREFILL_WIDTH * 2) as u64);
+        }
+        // Every micro-batch at this width captures all its rows for the
+        // drafter, the split's and a declined one's on Steel alike.
+        if let Some(d) = self.real_dflash.as_mut() {
+            d.ensure_capture_rows(&self.context, ANE_PREFILL_WIDTH);
         }
         if !self.prefill_chunk_is_final && chunk_tokens < 512 && !self.ane_prefill.warned_chunk {
             eprintln!(
@@ -880,8 +916,7 @@ impl RealForwardRunner {
         if self.ane_prefill.redo
             || !batched
             || self.prompt_vision.is_some()
-            || self.real_mtp.is_some()
-            || self.real_dflash.is_some()
+            || self.ane_split_steps_aside()
         {
             return None;
         }
@@ -897,6 +932,7 @@ impl RealForwardRunner {
     /// The split arm of a qwen dense micro-batch, when it applies. `first`
     /// already holds the embedding lookups, and comes back unused when the
     /// micro-batch should run the default arm.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn try_ane_prefill_micro_batch(
         &mut self,
         first: gpu::PassEncoder,
@@ -904,6 +940,7 @@ impl RealForwardRunner {
         start_position: usize,
         want_head: bool,
         batched: bool,
+        capture_dflash: bool,
         logits: &mut [foundation::LogitValue],
     ) -> AneMicroBatch {
         let m = tokens.len();
@@ -915,7 +952,7 @@ impl RealForwardRunner {
         let vocab = arch.vocab_size as usize;
         let use_silu = arch.hidden_activation.contains("silu");
         let embed_name = "language_model.model.embed_tokens.weight";
-        let (context, weights, index, scratch, kv, qwen, resid_capture, steering) = (
+        let (context, weights, index, scratch, kv, qwen, resid_capture, steering, dflash) = (
             &mut self.context,
             &self.weights,
             &self.index,
@@ -924,6 +961,7 @@ impl RealForwardRunner {
             self.real_qwen.as_ref().expect("checked dense above"),
             self.resid_capture.as_ref(),
             self.steering.as_ref(),
+            self.real_dflash.as_ref().filter(|_| capture_dflash),
         );
         let outcome = run_micro_batch(
             context,
@@ -936,6 +974,7 @@ impl RealForwardRunner {
             &arch,
             resid_capture,
             steering,
+            dflash,
             mode,
             use_silu,
             start_position,
@@ -955,6 +994,12 @@ impl RealForwardRunner {
         AneMicroBatch::Ran(match outcome {
             Err(e) => Err(e),
             Ok(SplitOutcome::Done(times)) => {
+                // Only a completed split micro-batch counts: a run whose every
+                // micro-batch was redone on Steel must not read as engaged.
+                match mode {
+                    SplitMode::Ane => foundation::engaged!("ane_prefill"),
+                    SplitMode::Break => foundation::engaged!("ane_prefill_break"),
+                }
                 self.phases.final_cb_gpu_nanos += (times.gpu_busy * 1e9) as u64;
                 self.phases.final_wait_nanos += (times.wall * 1e9) as u64;
                 self.finish_qwen_dense_micro_batch(start_position, m, want_head, logits)
@@ -972,12 +1017,14 @@ impl RealForwardRunner {
                     .restore(&snapshot, queue);
                 drop(snapshot);
                 self.ane_prefill.redo = true;
+                // The redo rewrites the drafter's capture rows too: the
+                // context write runs only after this returns.
                 let redone = self.prefill_micro_batch_qwen_dense_inner(
                     tokens,
                     start_position,
                     want_head,
                     batched,
-                    false,
+                    capture_dflash,
                     logits,
                 );
                 self.ane_prefill.redo = false;
@@ -1207,6 +1254,7 @@ fn run_micro_batch(
     arch: &ArchConfig,
     resid_capture: Option<&crate::resid_capture::ResidCapture>,
     steering: Option<&crate::steering::SteeringState>,
+    dflash: Option<&super::dflash::DflashState>,
     mode: SplitMode,
     use_silu: bool,
     start_position: usize,
@@ -1441,7 +1489,7 @@ fn run_micro_batch(
             scratch,
             resid_capture,
             steering,
-            None,
+            dflash,
             layer,
             hidden,
             m,

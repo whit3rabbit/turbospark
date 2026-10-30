@@ -71,6 +71,43 @@ pub fn gemma4_layer_mask(m: &Meta<'_>, num_layers: usize) -> Result<Vec<u8>, Ggu
         .collect()
 }
 
+/// `lfm3`'s three layer kinds: 6 = short convolution, where the per-layer
+/// `head_count_kv` is 0; otherwise `sliding_window_pattern` decides between
+/// 0 (slides) and 1 (full), with [`gemma4_layer_mask`]'s inversion. A conv
+/// layer that the pattern also marks sliding is a contradiction and refused.
+pub fn lfm3_layer_mask(m: &Meta<'_>, num_layers: usize) -> Result<Vec<u8>, GgufConfigError> {
+    let attention = gemma4_layer_mask(m, num_layers)?;
+    let key = m.key("attention.head_count_kv");
+    let kv = m
+        .opt("attention.head_count_kv")
+        .and_then(GgufValue::as_array)
+        .ok_or_else(|| GgufConfigError::BadValue {
+            key: key.clone(),
+            detail: "LFM3 needs the per-layer array (0 marks a short-conv layer)".to_string(),
+        })?;
+    if kv.len() != num_layers {
+        return Err(GgufConfigError::BadValue {
+            key,
+            detail: format!("{} entries for {num_layers} layers", kv.len()),
+        });
+    }
+    kv.iter()
+        .zip(attention)
+        .map(|(heads, kind)| match heads.as_u64() {
+            Some(0) if kind == 1 => Ok(6u8),
+            Some(0) => Err(GgufConfigError::BadValue {
+                key: key.clone(),
+                detail: "a layer with no KV heads is marked sliding".to_string(),
+            }),
+            Some(_) => Ok(kind),
+            None => Err(GgufConfigError::BadValue {
+                key: key.clone(),
+                detail: "entries are not integers".to_string(),
+            }),
+        })
+        .collect()
+}
+
 pub fn qwen_gdn_moe_layer_mask(
     m: &Meta<'_>,
     num_layers: usize,

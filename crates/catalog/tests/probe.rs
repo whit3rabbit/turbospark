@@ -413,3 +413,91 @@ fn a_headless_tts_trunk_is_refused_by_name() {
     }
     assert_eq!(report.family, None);
 }
+
+/// `mlx-community/flint-mixed-3-4bit`'s config, cut to what the probe reads:
+/// the published Flint shape with MLX per-tensor entries putting every routed
+/// projection at 3 bits and the embedding at 8. `extra` adds one more entry.
+fn flint_mixed_config(extra: Option<(&str, u32)>) -> String {
+    let full = [0, 1, 5, 9, 13, 17, 21, 25, 29, 33, 37, 41, 45, 48];
+    let layer_types: Vec<&str> = (0..49)
+        .map(|i| {
+            if full.contains(&i) {
+                "full_attention"
+            } else {
+                "sliding_attention"
+            }
+        })
+        .collect();
+    let mut quant = serde_json::json!({
+        "group_size": 64,
+        "bits": 4,
+        "model.embed_tokens": {"group_size": 64, "bits": 8},
+    });
+    for layer in 2..49 {
+        for proj in ["gate_proj", "up_proj", "down_proj"] {
+            quant[format!("model.layers.{layer}.mlp.switch_mlp.{proj}")] =
+                serde_json::json!({"group_size": 64, "bits": 3});
+        }
+    }
+    if let Some((name, bits)) = extra {
+        quant[name] = serde_json::json!({"group_size": 64, "bits": bits});
+    }
+    serde_json::json!({
+        "architectures": ["FlintForCausalLM"],
+        "attention_bias": false,
+        "attention_sink": true,
+        "head_dim": 128,
+        "hidden_act": "silu",
+        "hidden_size": 2048,
+        "intermediate_size": 6144,
+        "layer_types": layer_types,
+        "mlp_only_layers": [0, 1],
+        "mlx_export": {"bits": 4, "embedding_bits": 8, "routed_expert_bits": 3},
+        "model_type": "flint",
+        "moe_intermediate_size": 512,
+        "no_rope_layer_indices": full,
+        "norm_topk_prob": true,
+        "num_attention_heads": 32,
+        "num_experts": 256,
+        "num_experts_per_tok": 6,
+        "num_hidden_layers": 49,
+        "num_key_value_heads": 4,
+        "quantization": quant,
+        "rms_norm_eps": 1e-6,
+        "rope_parameters": {"rope_theta": 10000.0, "rope_type": "default"},
+        "rope_theta": 10000.0,
+        "router_expert_bias": false,
+        "scoring_func": "sigmoid",
+        "shared_expert_intermediate_size": 1024,
+        "sliding_window": 513,
+        "tie_word_embeddings": false,
+        "use_sliding_window": true,
+        "vocab_size": 150144
+    })
+    .to_string()
+}
+
+/// The probe parses Flint through Flint's own quant reader, so its 3-bit
+/// routed experts (which have the `moe_*_int3` pair) pass, while 3-bit on any
+/// other tensor, or on another family, is still refused.
+#[test]
+fn flints_three_bit_routed_experts_probe_as_runnable_and_nothing_else_does() {
+    let report = evaluate_config(&flint_mixed_config(None), &repo(), None).unwrap();
+    assert_eq!(report.verdict, Verdict::Runnable, "{:?}", report.verdict);
+    assert_eq!(report.family, Some(model_io::ModelFamily::Flint));
+
+    let attn = Some(("model.layers.2.self_attn.q_proj", 3));
+    let report = evaluate_config(&flint_mixed_config(attn), &repo(), None).unwrap();
+    assert!(
+        matches!(&report.verdict, Verdict::Refused(why) if why.contains("3-bit at group 64")),
+        "{:?}",
+        report.verdict
+    );
+
+    let report = evaluate_config(&qwen35_config(3, 64), &repo(), None).unwrap();
+    assert!(
+        matches!(&report.verdict, Verdict::Refused(why) if why.contains("3-bit at group 64")),
+        "{:?}",
+        report.verdict
+    );
+}

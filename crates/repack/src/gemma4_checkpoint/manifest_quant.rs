@@ -174,6 +174,18 @@ pub fn manifest_quant_for(
                 format!("{l2}.mlp.switch_mlp.gate_proj"),
             )
         }
+        // `lfm3`'s layer 0 is a SHORT-CONV layer with no `self_attn` at all,
+        // so the attention probe names layer 2, the first attention layer
+        // (`config.layer_types`). The shared-expert probe measures the dense
+        // FFN's gate, `feed_forward.w1`, which exists on every layer; the
+        // router and routed probes find nothing and take the default, the
+        // muse/spark rule for a dense family (`crates/repack` Gotcha 8).
+        ModelFamily::Lfm3 => (
+            "language_model.model.layers.2.self_attn.q_proj".to_string(),
+            format!("{l0}.mlp.gate"),
+            format!("{l0}.feed_forward.w1"),
+            format!("{l0}.experts.switch_glu.gate_proj"),
+        ),
         // gpt-oss has no safetensors path at all (it is GGUF-only here), so
         // it never reaches this probe; grouped with the families whose names
         // it shares rather than given an arm that cannot run.

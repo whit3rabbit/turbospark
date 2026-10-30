@@ -23,6 +23,7 @@ use metal::FunctionConstantValues;
 use crate::bytes::u32_bytes;
 use crate::context::{GpuError, MetalContext, PassEncoder};
 use crate::dequant_int4_gemv::Int4ResidentMatrix;
+use crate::dequant_int4_mma8::{encode_dequant_int4_mma8_resident, INT4_MMA8_MAX_ROWS};
 
 pub(crate) static SOURCE: &str = include_str!("shaders/dequant_int4_steel.metal");
 
@@ -139,6 +140,69 @@ pub fn encode_dequant_int4_gemm_steel_edge(
         SteelTile::M32K32N32,
         "dequant_int4_steel_32_32_32_edge",
     )
+}
+
+/// Most output rows a matrix can have and still take the small-N route.
+/// Qwen3.8's GDN `in_proj_a`/`in_proj_b` are 48; the next shapes up (the
+/// 1024-row K/V projections) are whole Steel tiles and never reach it.
+pub const SMALL_N_MAX_ROWS: usize = 64;
+
+/// The widest batch the 8-row matrix-unit tile serves before the Steel edge
+/// tile is cheaper. At 48 x 5120 the 8-row tile costs about 6.5 us per 8 rows
+/// and the edge tile a flat ~99 us whatever the width, so they cross near 96
+/// rows (`tests/steel_edge_n48_bench.rs`, M4 Max).
+pub const SMALL_N_MMA8_MAX_BATCH: usize = 96;
+
+/// An INT4 matrix [`encode_dequant_int4_gemm_small_n`] can serve: few output
+/// rows, not a whole Steel tile (those take the aligned entry), and the layout
+/// both kernels need (a whole number of 64-wide quantization groups, 2-aligned
+/// plane offsets).
+pub fn small_n_supports(w: &Int4ResidentMatrix<'_>) -> bool {
+    w.rows <= SMALL_N_MAX_ROWS
+        && w.rows % 32 != 0
+        && steel_edge_supports(w)
+        && [w.weights_offset, w.scales_offset, w.biases_offset]
+            .iter()
+            .all(|o| o % 2 == 0)
+}
+
+/// `y[batch, rows] = x[batch, cols] * w^T` for a [`small_n_supports`] matrix,
+/// on the prefill path that has accepted Steel's rounding. Up to
+/// [`SMALL_N_MMA8_MAX_BATCH`] rows run the 8-row matrix-unit tile in calls of
+/// [`INT4_MMA8_MAX_ROWS`] (its K split is tuned for this shape); wider batches
+/// run one Steel edge dispatch. Neither is bit-identical to the scalar GEMM.
+pub fn encode_dequant_int4_gemm_small_n(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    w: &Int4ResidentMatrix<'_>,
+    x: (&metal::Buffer, u64),
+    y: (&metal::Buffer, u64),
+    batch: usize,
+) -> Result<(), GpuError> {
+    assert!(
+        small_n_supports(w),
+        "{} x {} does not fit the small-N route",
+        w.rows,
+        w.cols
+    );
+    assert!(batch > 0, "an empty batch has nothing to multiply");
+    if batch > SMALL_N_MMA8_MAX_BATCH {
+        return encode_dequant_int4_gemm_steel_edge(context, pass, w, x, y, batch);
+    }
+    let mut done = 0usize;
+    while done < batch {
+        let take = (batch - done).min(INT4_MMA8_MAX_ROWS);
+        encode_dequant_int4_mma8_resident(
+            context,
+            pass,
+            w,
+            (x.0, x.1 + (done * w.cols * 2) as u64),
+            (y.0, y.1 + (done * w.rows * 2) as u64),
+            take,
+        )?;
+        done += take;
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -202,6 +202,16 @@ pub fn facts(f: ModelFamily) -> FamilyFacts {
             probe_and_standin: false,
             notes: &["learned sinks and sliding windows; attention stays per token in prefill"],
         },
+        Lfm3 => FamilyFacts {
+            flow: "lfm3",
+            chunked_prefill: Support::Conditional("INT4-affine installs only; the GGUF Q8_0 install has no batched GEMM, use --chunk off there".into()),
+            drafters: &[],
+            steel_prefill: true,
+            decode_attention: "barrier",
+            phase_buckets: "final_only",
+            probe_and_standin: false,
+            notes: &["13 short-conv layers carry a fixed tail and no KV"],
+        },
     }
 }
 
@@ -353,6 +363,15 @@ pub fn text_coverage(subject: &Subject, arch: &ArchConfig) -> Coverage {
     }
     if f.steel_prefill {
         tags.push("steel".into());
+    }
+    // The ANE+Steel split serves dense qwen only, and only from a build with
+    // the feature: the worker refuses an `ane_prefill` arm otherwise.
+    if arch.family == ModelFamily::QwenGdnDense {
+        if cfg!(feature = "ane-prefill") {
+            tags.push("ane".into());
+        } else {
+            notes.push("built without the ane-prefill feature: the ane sweeps do not apply".into());
+        }
     }
     if f.probe_and_standin && arch.num_experts == 0 {
         tags.push("probe".into());

@@ -910,32 +910,73 @@ fn a_library_music_install_carries_its_audio_receipt_and_moves() {
     );
 }
 
-/// This Mac's music install is today's: the audio catalog is not read, no
-/// receipt is written, and the install is offered for adoption, which
-/// writes the receipt a library install carries.
+/// A This Mac music install (`turbospark-model pull-audio`) publishes the
+/// receipt adoption would write, like a library install, so the app lists it
+/// as installed rather than asking for adoption or reporting it incompatible.
+/// Both audio catalog music profiles, the Turbo one included: the CLI once
+/// recorded Turbo as `affine-4bit-turbo-8step`, which the app's profile
+/// match refused, so the app showed the install as needing attention.
 #[test]
-fn a_this_mac_music_install_has_no_receipt_until_adopted() {
+fn a_this_mac_music_install_carries_its_audio_receipt() {
+    for alias in [MUSIC_ALIAS, "minimax-music3-turbo-4bit-8step"] {
+        let fx = Library::new();
+        let (catalog, identity, files) = pinned_fixture_where(|p| p.identity.alias == alias);
+        let installed = crate::music::install_music_with(
+            &fx.store,
+            alias,
+            None,
+            &fx.env,
+            || Ok(catalog.clone()),
+            &CancelFlag::new(),
+            |plan, staging_parent, _| Ok(stage_plan(plan, &files, staging_parent)),
+        )
+        .unwrap();
+        assert_eq!(installed.path, fx.store.audio_install_path(alias));
+        assert_eq!(installed.variant.as_deref(), Some("affine-4bit"), "{alias}");
+        assert_eq!(
+            fs::read(installed.path.join(RECEIPT_FILENAME)).unwrap(),
+            adoption_receipt(&catalog, &identity),
+            "{alias}"
+        );
+
+        let report = catalog.installed_report_with(&fx.store, &fx.env);
+        assert!(
+            report.incompatible.is_empty(),
+            "{alias}: {:?}",
+            report.incompatible
+        );
+        assert!(report.needs_adoption.is_empty(), "{alias}");
+        let listed: Vec<_> = report.installed.iter().map(|row| &row.alias).collect();
+        assert_eq!(listed, [alias]);
+    }
+}
+
+/// A row an earlier CLI recorded for Turbo, `affine-4bit-turbo-8step` and no
+/// receipt, is still offered for adoption rather than reported incompatible.
+#[test]
+fn an_earlier_cli_turbo_record_is_offered_for_adoption() {
+    let alias = "minimax-music3-turbo-4bit-8step";
     let fx = Library::new();
-    let (catalog, identity, files) = music_fixture();
+    let (catalog, identity, files) = pinned_fixture_where(|p| p.identity.alias == alias);
     let installed = crate::music::install_music_with(
         &fx.store,
-        MUSIC_ALIAS,
+        alias,
         None,
         &fx.env,
-        || panic!("an install into This Mac read the audio catalog"),
+        || Ok(catalog.clone()),
         &CancelFlag::new(),
         |plan, staging_parent, _| Ok(stage_plan(plan, &files, staging_parent)),
     )
     .unwrap();
-    assert_eq!(installed.path, fx.store.audio_install_path(MUSIC_ALIAS));
-    assert!(!installed.path.join(RECEIPT_FILENAME).exists());
+    fs::remove_file(installed.path.join(RECEIPT_FILENAME)).unwrap();
+    let mut earlier = installed.clone();
+    earlier.variant = Some("affine-4bit-turbo-8step".into());
+    fx.store.record(&earlier).unwrap();
 
     let report = catalog.installed_report_with(&fx.store, &fx.env);
-    assert!(report.installed.is_empty());
     assert!(report.incompatible.is_empty(), "{:?}", report.incompatible);
     assert_eq!(report.needs_adoption.len(), 1);
     assert_eq!(report.needs_adoption[0].identity, identity);
-
     catalog
         .adopt_legacy(&fx.store, &identity, &CancelFlag::new())
         .unwrap();

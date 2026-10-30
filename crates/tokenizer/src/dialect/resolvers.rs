@@ -320,10 +320,24 @@ pub(crate) fn resolve_muse_glimmer(tokenizer: &Tokenizer) -> Result<Resolved, To
     })
 }
 
-pub(crate) fn resolve_chatml(tokenizer: &Tokenizer) -> Result<Resolved, TokenizerError> {
+pub(crate) fn resolve_chatml(
+    tokenizer: &Tokenizer,
+    config: &TokenizerConfig,
+) -> Result<Resolved, TokenizerError> {
     let _im_start = required_id(tokenizer, IM_START_MARK)?;
     let im_end = required_id(tokenizer, IM_END_MARK)?;
     let end_of_text = required_id(tokenizer, "<|endoftext|>")?;
+    // BOS IS THE CONFIG'S WHEN IT DECLARES ONE. Qwen declares `bos_token:
+    // null` and its templates never print one, so `<|endoftext|>` stands in,
+    // as before. LFM3 declares `<|startoftext|>` and its template opens with
+    // `{{- bos_token -}}`; taking Qwen's stand-in there renders
+    // `<|endoftext|>` as the first token of every prompt, which the model
+    // reads as end-of-document. A declared BOS the tokenizer does not
+    // register is a malformed checkpoint and refuses.
+    let bos = match config.bos_token.content() {
+        Some(token) => required_id(tokenizer, token)?,
+        None => end_of_text,
+    };
     let tool_call_start = required_id(tokenizer, "<tool_call>")?;
     let tool_call_end = required_id(tokenizer, "</tool_call>")?;
     // Qwen2.5's official ChatML tokenizer registers the tool-call pair but
@@ -358,7 +372,7 @@ pub(crate) fn resolve_chatml(tokenizer: &Tokenizer) -> Result<Resolved, Tokenize
         ));
     }
     Ok(Resolved {
-        bos_id: end_of_text,
+        bos_id: bos,
         bos_prefix_id: None,
         eos_id: end_of_text,
         pad_id: end_of_text,

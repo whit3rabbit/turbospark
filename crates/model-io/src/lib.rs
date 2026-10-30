@@ -38,10 +38,10 @@ pub mod whisper_config;
 
 pub use arch_baselines::{
     all_known_architectures, deepseek_v2_lite_16b, deepseek_v4_flash_284b_a13b, flint_40b_a2_5b,
-    flint_layer_mask, gemma4_12b_dense, gemma4_26b_a4b, gpt_oss_20b, known_architecture,
-    minimax_m2, mixtral_8x7b, muse_glimmer_30b, muse_glimmer_layer_mask, qwen2_5_7b, qwen3_30b_a3b,
-    qwen3_4b, qwen3_vl_4b, qwen4_exp_125b_a6b, qwen_gdn_dense_27b, qwen_gdn_moe_35b_a3b,
-    spark_layer_mask, spark_x25_4b,
+    flint_layer_mask, gemma4_12b_dense, gemma4_26b_a4b, gpt_oss_20b, known_architecture, lfm3_1_7b,
+    lfm3_layer_mask, minimax_m2, mixtral_8x7b, muse_glimmer_30b, muse_glimmer_layer_mask,
+    qwen2_5_7b, qwen3_30b_a3b, qwen3_4b, qwen3_vl_4b, qwen4_exp_125b_a6b, qwen_gdn_dense_27b,
+    qwen_gdn_moe_35b_a3b, spark_layer_mask, spark_x25_4b,
 };
 pub use arch_config::{
     ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig, MlaConfig,
@@ -54,9 +54,9 @@ pub use context_policy::{
     committed_breakdown, committed_breakdown_with_residency, committed_bytes, gdn_state_bytes,
     kv_bytes_for_context, kv_bytes_for_context_with, largest_context_within,
     largest_context_within_with, resolve_max_context, resolve_max_context_with, session_pool_bytes,
-    session_pool_bytes_with, CommittedBytes, ContextCap, ContextFloorUnmet, ContextOverCap,
-    ContextPlan, ContextRefused, ContextTooLarge, MaxContext, CONTEXT_BUDGET_FRACTION,
-    CONTEXT_GRANULARITY, CONTEXT_RESERVE_BYTES, MAX_SUPPORTED_CONTEXT,
+    session_pool_bytes_with, short_conv_state_bytes, CommittedBytes, ContextCap, ContextFloorUnmet,
+    ContextOverCap, ContextPlan, ContextRefused, ContextTooLarge, MaxContext,
+    CONTEXT_BUDGET_FRACTION, CONTEXT_GRANULARITY, CONTEXT_RESERVE_BYTES, MAX_SUPPORTED_CONTEXT,
 };
 pub use disk_space::available_bytes;
 pub use encoder_config::{EncoderConfig, EncoderQuantization};

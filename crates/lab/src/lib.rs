@@ -72,6 +72,8 @@ pub mod families;
 #[cfg(target_os = "macos")]
 pub mod host;
 #[cfg(target_os = "macos")]
+pub mod hybrid_replay;
+#[cfg(target_os = "macos")]
 pub mod integrity;
 #[cfg(target_os = "macos")]
 pub mod kernel;

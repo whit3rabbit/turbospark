@@ -272,7 +272,7 @@ fn parse_launch_flags(args: &[String]) -> Result<LaunchFlags, String> {
 /// GET /health over a hand-rolled HTTP/1.1 request. The server routes
 /// /health outside its auth layer exactly so an unauthenticated liveness
 /// probe can never read as the process being down.
-fn http_health_ok(port: u16) -> bool {
+pub fn http_health_ok(port: u16) -> bool {
     let Ok(mut stream) = TcpStream::connect(("127.0.0.1", port)) else {
         return false;
     };

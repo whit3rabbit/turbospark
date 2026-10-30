@@ -131,9 +131,9 @@ pub use error::RuntimeError;
 #[cfg(target_os = "macos")]
 pub use families::qwen::{chip_is_m4_or_newer, hardware_supports_ane_prefill, AnePrefillMode};
 pub use families::qwen::{
-    install_has_dflash, install_has_mtp_head, DflashDraftPolicy, DraftPolicies, MtpDraftPolicy,
-    DFLASH_BLOCK, DFLASH_SERVING_BLOCK, MOE_SPECULATION_BLOCKER_MARKER,
-    VISION_SPECULATION_BLOCKER_MARKER,
+    dflash_serving_block, install_has_dflash, install_has_mtp_head, DflashDraftPolicy,
+    DraftPolicies, MtpDraftPolicy, DFLASH_BLOCK, DFLASH_SERVING_BLOCK, DFLASH_SERVING_BLOCK_TILE,
+    MOE_SPECULATION_BLOCKER_MARKER, VISION_SPECULATION_BLOCKER_MARKER,
 };
 #[cfg(target_os = "macos")]
 pub use gpu::MetalCompilationStats;

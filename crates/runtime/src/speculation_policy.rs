@@ -26,7 +26,6 @@ use std::path::Path;
 
 use crate::families::qwen::{
     install_has_dflash, install_has_mtp_head, DflashDraftPolicy, DraftPolicies, MtpDraftPolicy,
-    DFLASH_SERVING_BLOCK,
 };
 use crate::speculative::DEFAULT_SPECULATION_BLOCK;
 
@@ -319,12 +318,12 @@ pub fn resolve_speculation(
         None
     };
 
-    // `auto` resolves to the drafter's own default block, which is not one
-    // number in principle even though the two agree today: the MTP head's
-    // measured optimum is 2 (`docs/MTP.md`) and the DFlash2 drafter's is also
-    // 2 (`DFLASH_SERVING_BLOCK`), independently measured.
+    // `auto` resolves to the drafter's own default block: the MTP head's
+    // measured optimum is 2 (`docs/MTP.md`), and DFlash2's is 3 with the
+    // 8-row INT4 tile off and 7 with it on (`DFLASH_SERVING_BLOCK`), read
+    // from the process's tile setting so it matches the drafter's open.
     let auto_block = match drafter {
-        SpeculativeDrafter::Dflash => DFLASH_SERVING_BLOCK,
+        SpeculativeDrafter::Dflash => crate::families::qwen::dflash_serving_block(),
         _ => DEFAULT_SPECULATION_BLOCK,
     };
 

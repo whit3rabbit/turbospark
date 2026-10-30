@@ -1,6 +1,6 @@
 //! INT4 affine matmul at the install's own shapes: M one-row GEMVs against
-//! the scalar batched GEMM, both Steel tiles and the 8-row MMA tile, over a
-//! sweep of M.
+//! the scalar batched GEMM, both Steel tiles, the 8-row MMA tile and the
+//! small-N prefill route, over a sweep of M.
 //!
 //! The port of `crates/gpu/tests/qwen38_int4_prefill_gemm_probe.rs` with the
 //! shapes taken from `ArchConfig` instead of Qwen3.8's constants, and the
@@ -9,16 +9,16 @@
 use std::collections::BTreeMap;
 
 use gpu::{
-    autorelease_pool, encode_dequant_int4_gemm_resident, encode_dequant_int4_gemm_steel,
-    encode_dequant_int4_gemv_resident, encode_dequant_int4_mma8_resident, read_buffer_bytes,
-    steel_supports, Int4ResidentMatrix, MetalContext, SteelTile, INT4_MMA8_MAX_ROWS,
-    MAX_BATCH_ROWS,
+    autorelease_pool, encode_dequant_int4_gemm_resident, encode_dequant_int4_gemm_small_n,
+    encode_dequant_int4_gemm_steel, encode_dequant_int4_gemv_resident,
+    encode_dequant_int4_mma8_resident, read_buffer_bytes, small_n_supports, steel_supports,
+    Int4ResidentMatrix, MetalContext, SteelTile, INT4_MMA8_MAX_ROWS, MAX_BATCH_ROWS,
 };
 use model_io::ArchConfig;
 use serde_json::json;
 
 use super::fit::{break_even, c_of_m, fit_affine};
-use super::support::{copies_for, f16_activations, int4_blob, median};
+use super::support::{copies_for, f16_activations, int4_blob, median, Primer};
 use super::{BenchOpts, Case, KernelBench, Subject};
 use crate::bench::{fnv_hex, ArmCurve, Axis, BenchResult, BreakEven, Point};
 
@@ -98,6 +98,11 @@ pub enum Arm {
     Steel(SteelTile),
     /// The small-M matrix-unit tile (`TURBOSPARK_INT4_MMA8`), 8 rows a call.
     Mma8,
+    /// The prefill route for INT4 matrices too narrow for a whole Steel tile
+    /// (`TURBOSPARK_PREFILL_SMALL_N`): the 8-row tile up to a batch of 96,
+    /// the Steel edge tile above. Timed at every M; only shapes
+    /// `gpu::small_n_supports` takes (the 48-row GDN gates).
+    SmallN,
 }
 
 impl Arm {
@@ -108,16 +113,18 @@ impl Arm {
             Arm::Steel(SteelTile::M32K32N32) => "steel_m32".into(),
             Arm::Steel(SteelTile::M64K32N64) => "steel_m64".into(),
             Arm::Mma8 => "mma8".into(),
+            Arm::SmallN => "small_n".into(),
         }
     }
 }
 
-pub const ARMS: [Arm; 5] = [
+pub const ARMS: [Arm; 6] = [
     Arm::GemvPerRow,
     Arm::Scalar,
     Arm::Steel(SteelTile::M32K32N32),
     Arm::Steel(SteelTile::M64K32N64),
     Arm::Mma8,
+    Arm::SmallN,
 ];
 
 /// The config-derived INT4 shapes, the fallback when the resident index
@@ -239,6 +246,7 @@ pub fn run_shape(
         ARMS.iter()
             .map(|arm| match arm {
                 Arm::Steel(tile) => steel_supports(&w, *tile),
+                Arm::SmallN => small_n_supports(&w),
                 _ => true,
             })
             .collect()
@@ -246,6 +254,13 @@ pub fn run_shape(
     let max_m = *ms.iter().max().unwrap_or(&1);
     let x = context.new_buffer_with_data(&f16_activations(max_m * cols, 7));
     let y = context.new_output_buffer((max_m * rows * 2) as u64);
+    // Every timed pass is preceded by an untimed primer (`support::Primer`):
+    // a pass started on a cold device runs several times slower for its
+    // whole length, and M = 1 is measured first with host work between
+    // passes, so without it the one-row unit and every c(M) read against it
+    // were the device's state and not the kernel.
+    let primer = Primer::new(context);
+    let mut primer_ms: Vec<f64> = Vec::new();
     // Whether an arm has a point at M: the tile only where the engine would
     // route to it.
     let runs_at =
@@ -262,7 +277,8 @@ pub fn run_shape(
                 if !runs_at(a, m) {
                     continue;
                 }
-                let t = autorelease_pool(|| -> Result<f64, String> {
+                let (t, p_ms) = autorelease_pool(|| -> Result<(f64, f64), String> {
+                    let primed = primer.commit(context)?;
                     let pass = context.begin_pass();
                     for _ in 0..sweeps {
                         for (buffer, scales, biases) in &mats {
@@ -277,10 +293,12 @@ pub fn run_shape(
                             encode_arm(context, &pass, arm, &w, &x, &y, m)?;
                         }
                     }
-                    Ok(pass.commit_and_wait_with_gpu_time())
+                    let t = pass.commit_and_wait_with_gpu_time();
+                    Ok((t, primed.wait_with_gpu_time() * 1e3))
                 })?;
                 if rep > 0 {
                     samples[a].push(t * 1e3 / (copies * sweeps) as f64);
+                    primer_ms.push(p_ms);
                 }
                 // The output of the last copy after the last repetition:
                 // every copy runs the same seeded weights family, so the
@@ -356,6 +374,7 @@ pub fn run_shape(
     subject.insert("weight_bytes".into(), json!(weight_bytes));
     subject.insert("copies".into(), json!(copies));
     subject.insert("one_row_gemv_ms".into(), json!(one_row));
+    subject.insert("primer".into(), Primer::describe(&mut primer_ms));
     let mut notes = Vec::new();
     if ms.iter().any(|&m| m > MMA8_BENCH_MAX_M) {
         notes.push(format!(
@@ -439,6 +458,16 @@ fn encode_arm(
                 (y, 0),
                 m,
                 tile,
+            ))?;
+        }
+        Arm::SmallN => {
+            e(encode_dequant_int4_gemm_small_n(
+                context,
+                pass,
+                w,
+                (x, 0),
+                (y, 0),
+                m,
             ))?;
         }
     }

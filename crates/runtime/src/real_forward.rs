@@ -241,6 +241,9 @@ pub struct RealForwardRunner {
     /// QKV row staging and the per-head gate -- are shapes no shared scratch
     /// carries.
     pub(crate) real_spark: Option<crate::families::spark::RealSparkState>,
+    /// Present for an `lfm3` install: the short-conv tails and the in_proj /
+    /// gate staging no shared scratch carries.
+    pub(crate) real_lfm3: Option<crate::families::lfm3::RealLfm3State>,
     /// Present for a `qwen4_exp` install (Phase 3 of its bring-up,
     /// `docs/QWEN4_PHASE0.md`). Its own state rather than a variant of
     /// `real_qwen`: the residual stream is `hc_count` times wider, every
@@ -273,6 +276,13 @@ pub struct RealForwardRunner {
     /// only: a GGUF install is refused by layout when the seam is on,
     /// never silently looped.
     pub(crate) routed_batch_prefill: bool,
+    /// `TURBOSPARK_ROUTED_BATCH_OVERLAP=1`: under the batched routed half,
+    /// plan and `pread` each sub-batch's experts while the previous
+    /// sub-batch runs on the GPU, into slots it does not hold
+    /// (`families/qwen/moe_batch.rs`). Byte-identical either way: the plan
+    /// only moves which slot an expert lands in, and phase 2 reduces over
+    /// ranks. Qwen MoE only; the other routed drivers ignore it.
+    pub(crate) routed_batch_overlap: bool,
     /// Whether the chunked-prefill driver runs its RESIDENT GEMVs -- the
     /// four attention projections and the shared expert's three -- as
     /// M-row GEMMs instead of one dispatch per token

@@ -112,6 +112,9 @@ pub struct PhaseCounters {
     /// Experimental scheduling counters prove the measured arm executed.
     /// Mapped preparation bytes are logical page spans, not physical I/O.
     pub qwen_shared_submissions: u64,
+    /// Routed prefill sub-batches whose experts were read while the previous
+    /// one ran (`TURBOSPARK_ROUTED_BATCH_OVERLAP`).
+    pub routed_read_aheads: u64,
     pub mapped_prepare_calls: u64,
     pub mapped_prepared_bytes: u64,
     pub mapped_page_touches: u64,
@@ -302,7 +305,11 @@ impl DecodeScratch {
             // `crates/lab/families/*.json`). Timing verdicts plus greedy
             // identity: each sweep's gqa and barrier arms produced the same
             // 64-token decode_digest on every run, but no KL gate has run on
-            // any of them yet. The encoder still falls back to
+            // any of them yet. `lfm3` (16 Q over 4 KV at head_dim 128) takes
+            // it after its quality gates re-froze on both installs
+            // (`docs/LFM3_PHASE0.md`), and Flint (32 Q over 4 KV at head_dim
+            // 128, sinks, a 513-position ring on 35 of 49 layers) is held to
+            // its mlx-vlm KL in docs/FLINT.md. The encoder still falls back to
             // the barrier kernel for a shape
             // `gpu::attention_decode_gqa_supported` rejects (head_dim 64
             // installs, for example), and
@@ -312,7 +319,7 @@ impl DecodeScratch {
             // decoded different tokens (qwen3moe-sweep-20261029) with no
             // moe_kl gate run, so it stays on Barrier with the families that
             // have no gqa verdict or whose shapes the kernel cannot serve
-            // (MiniMax M2, gpt-oss, Gemma 4, Muse-Glimmer, DeepSeek, flint).
+            // (MiniMax M2, gpt-oss, Gemma 4, Muse-Glimmer, DeepSeek).
             attn: gpu::AttentionScratch::new(context, arch.num_heads as u32, max_head_dim as u32)
                 .with_decode_kernel(match arch.family {
                     model_io::ModelFamily::Llama if arch.num_experts == 0 => {
@@ -322,7 +329,9 @@ impl DecodeScratch {
                     | model_io::ModelFamily::Qwen2Dense
                     | model_io::ModelFamily::Qwen3Dense
                     | model_io::ModelFamily::Qwen3Vl
-                    | model_io::ModelFamily::Spark25 => gpu::DecodeAttentionKernel::GqaShared,
+                    | model_io::ModelFamily::Spark25
+                    | model_io::ModelFamily::Lfm3
+                    | model_io::ModelFamily::Flint => gpu::DecodeAttentionKernel::GqaShared,
                     _ => gpu::DecodeAttentionKernel::Barrier,
                 }),
             kv_stage: kv_quant.is_on().then(|| KvStage::new(context, full_kv_dim)),

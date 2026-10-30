@@ -107,9 +107,15 @@ Four projections have been checked against a model A/B so far
 The GDN kernel mode projected within the floor at 8 rows and at one row. The
 tile projected plain decode's loss close to the documented figure. The
 small-projection lever missed by a large margin until the bench itself was
-fixed, because a tiny shape's timed pass was dominated by the command buffer's
-fixed cost. Read a projection from a tiny shape as suspect until its per-
-dispatch time is compared with a many-copy pool. Four points are too few to
+fixed twice: once for a pass of too few dispatches, then for the device's
+state. A pass started on a cold device runs several times slower for its
+whole length, and the bench measured M = 1 first with host work between
+passes, so the one-row unit was the device's state and not the kernel
+(`int4_matmul` now commits a primer before every timed pass; the record's
+`subject.primer` says so). Read a tiny-shape projection from a bench that does
+not prime as suspect. With the primer the same lever projected +4.8% against a
+conclusive +2.3%, so the remaining miss is coverage (6% of the round) and the
+mode's own prep dispatches, not the bench's unit. Six points are too few to
 subtract a bias; `tslab calibrate --all` keeps counting.
 
 ## Process-cached switches
@@ -134,6 +140,7 @@ until one exists.
 | `int4_mma8_min_rows` | `TURBOSPARK_INT4_MMA8_MIN_ROWS` | 4096 | routing parameter of `int4_mma8`, not a lane | `verify_ladder` | as `int4_mma8` | [INT4_SMALL_M_MMA.md](INT4_SMALL_M_MMA.md) |
 | `batched_gemv` | `TURBOSPARK_BATCHED_GEMV` | auto, on for INT4 | KL-bounded | none yet: `int4_matmul` has the arms, the knob-to-arm mapping is unchecked | `dequant_int4_gemm_parity.rs` | [ENV.md](ENV.md) |
 | `prefill_steel` | `TURBOSPARK_PREFILL_STEEL` | on | KL-bounded | none yet: which Steel tile it toggles is unchecked | `dequant_int4_steel_parity.rs` | [BATCHED_PREFILL.md](BATCHED_PREFILL.md) |
+| `prefill_small_n` | `TURBOSPARK_PREFILL_SMALL_N` | on | KL-bounded | `int4_matmul`: `scalar_gemm` to `small_n` | `dequant_int4_steel_parity.rs`, `dequant_int4_mma8_parity.rs` | [BATCHED_PREFILL.md](BATCHED_PREFILL.md) |
 | `gdn_lazy_tape` | `TURBOSPARK_GDN_LAZY_TAPE` | on | bit-exact | `gdn_delta`: `prefill_eager` to `prefill_lazy` (plus `state_fold`) | `gdn_lazy_fold.rs` | [KAPITSA_KERNELS.md](KAPITSA_KERNELS.md) |
 | `gdn_dk128` | `TURBOSPARK_GDN_DK128` | on | bit-exact | `gdn_delta`: `prefill_lazy` across two processes | `gdn_tests.rs` (unit module) | [KAPITSA_KERNELS.md](KAPITSA_KERNELS.md) |
 | `attn_decode_kernel` | `TURBOSPARK_ATTN_DECODE_KERNEL` | auto: gqa on the measured dense families (dense Llama, Qwen2, Qwen3, Qwen3-VL, Spark 2.5, plus qwen GDN dense), barrier elsewhere, barrier fallback for unserved shapes | KL-bounded | `attn_decode`: `barrier` to `gqa` (kill-arm form on the flipped families: barrier is the candidate) | `attention_decode_gqa_parity.rs` | [SPEEDUP_PLAYBOOK.md](SPEEDUP_PLAYBOOK.md) |
