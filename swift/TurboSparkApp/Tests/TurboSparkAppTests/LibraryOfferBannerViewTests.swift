@@ -326,7 +326,8 @@ final class LibraryOfferBannerViewTests: LibraryStateTestCase {
         XCTAssertEqual(banner.components(separatedBy: ".disabled(blocked)").count - 1, 2)
         XCTAssertTrue(banner.contains("controller.isChangeBlocked"))
         XCTAssertTrue(banner.contains("model.isInstallOrMoveRunning"))
-        XCTAssertTrue(banner.contains("ProgressView()"), "an add in flight shows a progress indicator")
+        // The design-system bar, indeterminate (#202 replaced `ProgressView()`).
+        XCTAssertTrue(banner.contains("AppProgressBar(value: nil"), "an add in flight shows a progress indicator")
         XCTAssertTrue(banner.contains(".appAction(.primary"))
         XCTAssertTrue(banner.contains(".appAction(.quiet"))
         XCTAssertTrue(banner.contains("accessibilityIdentifier(\"library-offer-banner\")"))
