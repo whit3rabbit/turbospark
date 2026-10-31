@@ -187,6 +187,19 @@ pub(crate) fn mapped_residency_requested() -> bool {
         .unwrap_or(false)
 }
 
+/// `TURBOSPARK_EXPERT_SLOTS_WIRED=1` wires the streamed slot cache (`mlock`)
+/// at open. Off by default: wired pages leave the rest of the system less
+/// memory, and only a larger-than-auto cache under memory pressure has shown
+/// the compression stall it targets (docs/QWEN4_EXP.md).
+pub(crate) fn expert_slots_wired_requested() -> bool {
+    static WIRED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *WIRED.get_or_init(|| {
+        std::env::var("TURBOSPARK_EXPERT_SLOTS_WIRED")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+    })
+}
+
 /// Resolves the residency REQUEST (flag or default) to the mode this open
 /// takes. THE ONE RESOLVER FOR EVERY CALLER: the open itself, the CLI's and
 /// server's pre-open `committed_breakdown` sizing and the startup lines all
@@ -571,6 +584,25 @@ pub(crate) fn open_expert_streamers(
         streamers.resize_with(num_layers, || None);
         None
     };
+
+    if expert_slots_wired_requested() {
+        // Before the no-copy wrap, so every pass sees pages the kernel cannot
+        // compress. Refused, not degraded: an arm that asked for wired slots
+        // and silently ran pageable ones would measure the wrong thing.
+        let mut wired = 0u64;
+        for streamer in streamers.iter_mut().flatten() {
+            wired += streamer.wire_slots().map_err(|e| {
+                RealForwardError::Unsupported(format!(
+                    "TURBOSPARK_EXPERT_SLOTS_WIRED=1: {e} after {:.1} GiB (check \
+                     `ulimit -l` and `sysctl vm.user_wire_limit`, or lower the slot count)",
+                    wired as f64 / (1024.0 * 1024.0 * 1024.0)
+                ))
+            })?;
+        }
+        if wired > 0 {
+            foundation::engaged!("expert_slots_wired");
+        }
+    }
 
     let mut slot_buffers: Vec<Vec<gpu::MetalBuffer>> = Vec::with_capacity(streamers.len());
     for streamer in &streamers {

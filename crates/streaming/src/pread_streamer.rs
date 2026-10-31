@@ -188,6 +188,22 @@ impl PreadExpertStreamer {
         (self.slots[slot].as_ptr(), self.slots[slot].len())
     }
 
+    /// Wires every slot's pages (`mlock`), returning the bytes wired. Stops
+    /// at the first failure; the slots wired before it stay wired until the
+    /// streamer drops.
+    pub fn wire_slots(&mut self) -> Result<u64, StreamerError> {
+        let mut bytes = 0u64;
+        for (slot, aligned) in self.slots.iter_mut().enumerate() {
+            aligned
+                .wire()
+                .map_err(|e| StreamerError::AllocationFailed {
+                    detail: format!("mlock of slot {slot} ({} bytes): {e}", aligned.len()),
+                })?;
+            bytes += aligned.len() as u64;
+        }
+        Ok(bytes)
+    }
+
     /// Loads an expert into the next slot index in round-robin fashion.
     pub fn load_expert(&mut self, layer: usize, expert: usize) -> Result<usize, StreamerError> {
         let slot = self.next_slot;

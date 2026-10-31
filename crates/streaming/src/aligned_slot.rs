@@ -9,6 +9,9 @@ const SLOT_ALIGNMENT: usize = 2 * 1024 * 1024;
 pub struct AlignedSlot {
     ptr: *mut u8,
     len: usize,
+    /// Set by [`AlignedSlot::wire`]; `Drop` unwires before freeing so the
+    /// allocator never gets back pages that are still wired.
+    wired: bool,
 }
 
 // SAFETY: the allocation is plain heap memory; the streamer alone decides
@@ -43,7 +46,26 @@ impl AlignedSlot {
         Ok(Self {
             ptr: raw as *mut u8,
             len: rounded.max(page),
+            wired: false,
         })
+    }
+
+    /// Wires the slot's pages (`mlock`) so the kernel cannot compress or
+    /// swap them. A GPU pass reading a compressed no-copy slot waits for the
+    /// kernel to restore it, which is what made larger qwen4 caches lose
+    /// (docs/QWEN4_EXP.md, "Why larger expert caches lose").
+    pub(crate) fn wire(&mut self) -> std::io::Result<()> {
+        if self.wired {
+            return Ok(());
+        }
+        // SAFETY: `ptr` is a live allocation of `len` bytes owned by self.
+        #[allow(unsafe_code)]
+        let rc = unsafe { libc::mlock(self.ptr as *const std::ffi::c_void, self.len) };
+        if rc != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        self.wired = true;
+        Ok(())
     }
 
     /// Returns a raw const pointer to the slot memory allocation base.
@@ -81,6 +103,14 @@ impl AlignedSlot {
 
 impl Drop for AlignedSlot {
     fn drop(&mut self) {
+        if self.wired {
+            // SAFETY: the same live range `wire` locked. A failure leaves
+            // the pages wired until exit, which is all it can cost.
+            #[allow(unsafe_code)]
+            unsafe {
+                libc::munlock(self.ptr as *const std::ffi::c_void, self.len);
+            }
+        }
         // SAFETY: `ptr` came from posix_memalign and is freed exactly once.
         #[allow(unsafe_code)]
         unsafe {
@@ -97,5 +127,21 @@ fn page_size() -> usize {
         page as usize
     } else {
         4096
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AlignedSlot;
+
+    #[test]
+    fn wire_locks_once_and_drop_unwires() {
+        let mut slot = AlignedSlot::allocate(3 * 1024 * 1024).unwrap();
+        slot.wire().unwrap();
+        assert!(slot.wired);
+        // A second call is a no-op, not a second lock to undo.
+        slot.wire().unwrap();
+        assert!(slot.wired);
+        drop(slot);
     }
 }

@@ -84,6 +84,12 @@ impl Outcome {
     }
 }
 
+fn counter_delta(samples: &[HostSample], f: fn(&HostSample) -> Option<u64>) -> Option<u64> {
+    let first = samples.iter().find_map(f)?;
+    let last = samples.iter().rev().find_map(f)?;
+    Some(last.saturating_sub(first))
+}
+
 fn summarize_host(samples: &[HostSample]) -> Value {
     let max = |f: fn(&HostSample) -> f64| samples.iter().map(f).fold(f64::NAN, f64::max);
     json!({
@@ -91,6 +97,10 @@ fn summarize_host(samples: &[HostSample]) -> Value {
         "load1_max": max(|s| s.load1),
         "foreign_cpu_max": max(|s| s.foreign_cpu_percent),
         "swap_used_mib_max": max(|s| s.swap_used_mib.unwrap_or(f64::NAN)),
+        // First-to-last sample deltas, so they cover the run's sampled span
+        // (model load included), not the time before the first sample.
+        "compressions_delta": counter_delta(samples, |s| s.compressions),
+        "decompressions_delta": counter_delta(samples, |s| s.decompressions),
         "contention": samples.iter().find_map(|s| s.contention),
         "busiest": samples
             .iter()

@@ -2198,6 +2198,32 @@ not grow, which fits a pressure threshold, not a per-slot cost. The
 threshold depends on what else holds memory: swap on this host was 2.2 GB
 before the sweep and 7.9 GB after these runs, with other sessions active.
 
-Untested: wiring the slot pages, a Metal residency set, or sizing auto from
-free memory, any of which might keep the 84% hit rate without the
-compressor churn.
+Wiring the slot pages was tested next ("Wired expert slots" below). A Metal
+residency set and sizing auto from free memory remain untested.
+
+## Wired expert slots (2026-10-31)
+
+`TURBOSPARK_EXPERT_SLOTS_WIRED=1` (`docs/ENV.md`) wires every slot's pages
+with `mlock` at open, before the no-copy wrap, and refuses the open if the
+lock fails. Swept against auto in one interleaved command (`tslab sweep`,
+experiment `qwen4-slots-wired`, protocol medium-review, 64 decode, 3 clean
+pairs per candidate, 2% default floor), decode tok/s:
+
+| Arm | Verdict | Median | 95% CI | Peak | Compressions per run |
+|---|---|---|---|---|---|
+| auto (48), unwired | baseline | | | 6.5 GiB | 0 |
+| 96 wired | win | +6.7% | [+5.3%, +8.5%] | 12.5 GiB | 0.32-0.56M |
+| 128 wired | win | +16.9% | [+12.6%, +61.8%] | 16.5 GiB | 0.09-1.0M |
+| 96 unwired | loss | -2.7% | [-5.2%, -0.7%] | 12.5 GiB | 0.47-0.89M |
+
+Decode digests are identical across all 26 runs. The 128-slot upper bound
+comes from one pair whose auto run read 13.7 tok/s. Swap held at 6.7-7.5 GB
+from other sessions throughout, and the unwired 96-slot loss was 2.7% here
+against 18% in the earlier sweep, so how much an unwired cache loses depends
+on what else holds memory. Wired arms still compress other pages: wiring
+moves the pressure off the slots, it does not remove it.
+
+Wiring stays opt-in. It takes 6-10 GB beyond auto out of the system's reach
+for the life of the process, and auto has not been taught to size a wired
+cache from free memory. Verdict records: 1793466278644-9099-52 (96 wired),
+1793466278647-9099-53 (128 wired), 1793466278651-9099-54 (96 unwired).

@@ -49,6 +49,26 @@ say why it does not count:
 - `worker status refused`: the install cannot run that arm. `record.refusal`
   says what.
 
+## Check the output before the timings
+
+A forward pass that decodes garbage can still run fast and bit-exact between
+arms. On a MoE install it can run faster: degenerate routing hits a few
+experts, so cache hit rates near 99% and batching seams that look like wins
+are symptoms, not results (qwen4exp, 2026-10-30, before the RMSNorm fix).
+Read a few decoded tokens through the chat template before trusting a
+family's first sweep, and re-measure after any forward-pass fix.
+
+## Memory pressure
+
+Each run's `host` block carries `compressions_delta` and
+`decompressions_delta`, the macOS compressor's page counts over the sampled
+span. Swap alone misses pressure: a 96-slot qwen4exp cache pushed about 5
+million pages through the compressor per run while swap barely moved, and
+it lost 18% on decode with GPU busy time flat. When a slot, residency or
+footprint arm loses, compare these deltas across arms before reading the
+loss as compute. Other sessions' memory moves them too, so compare arms
+within one interleaved command.
+
 ## Pricing a route against the model run
 
 A route that swaps one kernel for another (a lane in `tslab knobs`) is
