@@ -583,6 +583,13 @@ impl RealForwardRunner {
                     dir,
                     max_context,
                     runner.expert_cache_slots,
+                    // GGUF intake (`scheme: "gguf"`) stores llama.cpp's
+                    // unit-folded norm scales; the MLX intake keeps Hugging
+                    // Face's offsets from unity.
+                    manifest
+                        .quant
+                        .as_ref()
+                        .is_none_or(|quant| quant.attention.scheme != "gguf"),
                 )?);
             }
             // A FIFTH FLOW, not a sixth family on an existing one: all four

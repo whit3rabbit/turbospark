@@ -358,8 +358,16 @@ pub(crate) fn encode_full_attention_block(
         ("k_norm.weight", (k_buf, k_off), num_kv),
     ] {
         let weight = norm_view(weights, index, &name(suffix), head_dim as usize)?;
-        gpu::encode_rms_norm_bf16w_perhead(
-            context, pass, data, weight, data, heads, head_dim, RMS_EPS,
+        super::rms_norm_perhead(
+            qwen4.norms_centered,
+            context,
+            pass,
+            data,
+            weight,
+            data,
+            heads,
+            head_dim,
+            RMS_EPS,
         )
         .map_err(gpu_err)?;
     }
@@ -399,7 +407,8 @@ pub(crate) fn encode_full_attention_block(
             &name("indexer.q_layernorm.weight"),
             idx_dim as usize,
         )?;
-        gpu::encode_rms_norm_bf16w_perhead(
+        super::rms_norm_perhead(
+            qwen4.norms_centered,
             context,
             pass,
             (&qwen4.idx_qk, 0),

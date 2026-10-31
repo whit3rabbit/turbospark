@@ -178,3 +178,53 @@ pub(crate) const RMS_EPS: f32 = 1e-6;
 pub(crate) fn layer_tensor(layer: usize, suffix: &str) -> String {
     format!("{TRUNK_PREFIX}.layers.{layer}.{suffix}")
 }
+
+/// Grouped RMSNorm with the install's weight convention. Hugging Face
+/// expresses these weights as offsets from unity, and the MLX conversions
+/// keep that, while llama.cpp's GGUF converter folds the `+1` into the
+/// stored scale. Applying one convention to the other's weights decodes
+/// fluent-looking garbage, which is how `00247a7f` broke every MLX install
+/// while fixing GGUF ones.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn rms_norm_grouped(
+    centered: bool,
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    x: (&gpu::MetalBuffer, u64),
+    weight: (&gpu::MetalBuffer, u64),
+    out: (&gpu::MetalBuffer, u64),
+    groups: u32,
+    group_dim: u32,
+    eps: f32,
+) -> Result<(), gpu::GpuError> {
+    if centered {
+        gpu::encode_rms_norm_bf16w_grouped_centered(
+            context, pass, x, weight, out, groups, group_dim, eps,
+        )
+    } else {
+        gpu::encode_rms_norm_bf16w_grouped(context, pass, x, weight, out, groups, group_dim, eps)
+    }
+}
+
+/// Per-head RMSNorm with the install's weight convention, see
+/// [`rms_norm_grouped`].
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn rms_norm_perhead(
+    centered: bool,
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    x: (&gpu::MetalBuffer, u64),
+    weight: (&gpu::MetalBuffer, u64),
+    out: (&gpu::MetalBuffer, u64),
+    num_heads: u32,
+    head_dim: u32,
+    eps: f32,
+) -> Result<(), gpu::GpuError> {
+    if centered {
+        gpu::encode_rms_norm_bf16w_perhead_centered(
+            context, pass, x, weight, out, num_heads, head_dim, eps,
+        )
+    } else {
+        gpu::encode_rms_norm_bf16w_perhead(context, pass, x, weight, out, num_heads, head_dim, eps)
+    }
+}

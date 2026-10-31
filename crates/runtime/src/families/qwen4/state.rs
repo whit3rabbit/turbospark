@@ -664,6 +664,10 @@ pub(crate) struct RealQwen4State {
     /// engine for this checkpoint fits this machine): the KL between the
     /// two arms past 2,051 tokens.
     pub(crate) qsa_force_dense: bool,
+    /// Whether this install's RMSNorm weights are offsets from unity
+    /// (`1 + w`, Hugging Face and the MLX conversions) rather than llama.cpp
+    /// GGUF's folded scales. See [`super::rms_norm_grouped`].
+    pub(crate) norms_centered: bool,
     pub(crate) gdn_qkv_raw: gpu::MetalBuffer,
     pub(crate) gdn_conv_out: gpu::MetalBuffer,
     pub(crate) gdn_norm_capture: Option<GdnNormCapture>,
@@ -792,6 +796,7 @@ impl RealQwen4State {
         install_dir: &Path,
         max_context: usize,
         expert_cache_slots: usize,
+        norms_centered: bool,
     ) -> Result<Self, RealForwardError> {
         let unsupported = |detail: String| Err(RealForwardError::Unsupported(detail));
 
@@ -1199,6 +1204,7 @@ impl RealQwen4State {
             idx_qk: halfs(idx_projection_len),
             qsa_scores,
             qsa_force_dense,
+            norms_centered,
             gdn_qkv_raw: halfs(qkv_dim),
             gdn_conv_out: halfs(qkv_dim),
             gdn_norm_capture,

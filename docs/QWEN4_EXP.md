@@ -2062,3 +2062,34 @@ post-change real-checkpoint throughput, quality, or memory gate was run; the
 checkpoint was removed and current disk headroom is not enough to restore its
 68 GiB install. Measure those gates before claiming sparse decoding is faster
 or changing its release status.
+
+## RMSNorm convention follows the install (2026-10-31)
+
+`00247a7f` (2026-09-26) switched every Qwen4 RMSNorm (hyper-connection
+`hc_norm`, PLE `norm_key`/`norm_query`/`norm_conv`, attention `q_norm`/`k_norm`,
+indexer `q_layernorm`) from centered (`1 + w`) to direct (`w`). That is right
+for GGUF installs, whose llama.cpp converter folds the `+1` into the stored
+scale, and wrong for MLX installs, which keep Hugging Face's offsets from
+unity (REAP-288's `hc_norm` has mean -0.06, `q_norm` mean 0.28). From that
+commit on, `qwen4-reap288` decoded greedy garbage (`_coordinates` repeated)
+at about 33 tok/s, fast only because the garbage kept routing to the same
+experts.
+
+How it was found: the install was compared against the pinned source by HTTP
+byte ranges (resident tensors of layers 0, 1, 3 and 47, n-gram rows from five
+shards, hash multipliers, nine routed expert blobs: all identical), then the
+runtime was bisected on those same bytes. `32ed7a47` is coherent and
+`00247a7f` is not.
+
+The fix: `RealQwen4State::norms_centered` is true unless the manifest's
+attention slot has `scheme: "gguf"`, and `families/qwen4`'s
+`rms_norm_grouped`/`rms_norm_perhead` pick the kernel. The GDN gated norm is
+direct in both conventions and is unchanged. `gpu::encode_qsa_advance_blocks`
+still always centers the indexer `k_layernorm`, which matches MLX installs and
+has not been checked on a GGUF one.
+
+After the fix, greedy output is coherent and the real-install quality gate
+reads reference-answer perplexity 8.4241 against the 8.7224 frozen on
+2026-09-04 (3.4% lower, outside its 2% band, so the gate fails until the
+baseline is re-frozen). The other `00247a7f` changes (GDN Q/K epsilon, the
+single PLE SiLU, the shared expert joining after FP16 rounding) are kept.
