@@ -575290,6 +575290,923 @@
           }
         }
       }
+    },
+    "Expert Residency": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "موضع الخبراء"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Experten-Residenz"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Expert Residency"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Residencia de expertos"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Résidence des experts"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "מיקום המומחים"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "एक्सपर्ट रेज़िडेंसी"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Residensi Pakar"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Residenza degli esperti"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "エキスパートの配置"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "전문가 상주 방식"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Expertresidentie"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rezydencja ekspertów"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Residência de especialistas"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Размещение экспертов"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Expertplacering"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uzman Yerleşimi"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Розміщення експертів"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vị trí chuyên gia"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "专家驻留方式"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "專家駐留方式"
+          }
+        }
+      }
+    },
+    "Mapped": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "معيَّن"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gemappt"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mapped"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mapeado"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mappé"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ממופה"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "मैप किया गया"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dipetakan"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mappato"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "マップ"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "매핑됨"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gemapt"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mapowane"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mapeado"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Отображение"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mappad"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eşlenmiş"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Відображення"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ánh xạ"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "映射"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "映射"
+          }
+        }
+      }
+    },
+    "Adaptive": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تكيّفي"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Adaptiv"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Adaptive"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Adaptativo"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Adaptatif"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "מסתגל"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "अनुकूली"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Adaptif"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Adattivo"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アダプティブ"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "적응형"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Adaptief"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Adaptacyjne"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Adaptativo"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Адаптивно"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Adaptiv"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uyarlanabilir"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Адаптивно"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Thích ứng"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自适应"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自適應"
+          }
+        }
+      }
+    },
+    "No routed experts": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "لا يوجد خبراء موجَّهون"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keine gerouteten Experten"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No routed experts"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sin expertos enrutados"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucun expert routé"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "אין מומחים מנותבים"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "कोई रूटेड एक्सपर्ट नहीं"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tidak ada pakar yang dirutekan"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nessun esperto instradato"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ルーティングされるエキスパートなし"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "라우팅된 전문가 없음"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Geen gerouteerde experts"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Brak routowanych ekspertów"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sem especialistas roteados"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Нет маршрутизируемых экспертов"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Inga routade experter"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yönlendirilen uzman yok"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Немає маршрутизованих експертів"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Không có chuyên gia định tuyến"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有路由专家"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "沒有路由專家"
+          }
+        }
+      }
+    },
+    "Mapped unavailable": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "التعيين غير متاح"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gemappt nicht verfügbar"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mapped unavailable"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mapeado no disponible"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mappé indisponible"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "מיפוי לא זמין"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "मैप किया गया उपलब्ध नहीं"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dipetakan tidak tersedia"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mappato non disponibile"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "マップは利用できません"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "매핑 사용 불가"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gemapt niet beschikbaar"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mapowanie niedostępne"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mapeado indisponível"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Отображение недоступно"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mappad är inte tillgänglig"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eşlenmiş kullanılamıyor"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Відображення недоступне"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Không thể ánh xạ"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "映射不可用"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "映射無法使用"
+          }
+        }
+      }
+    },
+    "Not measured on this model family. It may not improve speed or memory.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "لم يُقَس على عائلة النماذج هذه. قد لا يحسّن السرعة أو الذاكرة."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Für diese Modellfamilie nicht gemessen. Geschwindigkeit oder Speicher verbessern sich möglicherweise nicht."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not measured on this model family. It may not improve speed or memory."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No medido en esta familia de modelos. Puede que no mejore la velocidad ni la memoria."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Non mesuré sur cette famille de modèles. La vitesse ou la mémoire peuvent ne pas s'améliorer."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "לא נמדד במשפחת מודלים זו. ייתכן שלא ישפר מהירות או זיכרון."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "इस मॉडल परिवार पर मापा नहीं गया। इससे गति या मेमोरी में सुधार न हो।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Belum diukur pada keluarga model ini. Mungkin tidak meningkatkan kecepatan atau memori."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Non misurato su questa famiglia di modelli. Potrebbe non migliorare velocità o memoria."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このモデルファミリーでは測定されていません。速度やメモリが改善しない場合があります。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 모델 계열에서는 측정되지 않았습니다. 속도나 메모리가 개선되지 않을 수 있습니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Niet gemeten voor deze modelfamilie. Snelheid of geheugen verbetert mogelijk niet."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nie zmierzono dla tej rodziny modeli. Może nie poprawić szybkości ani pamięci."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não medido nesta família de modelos. Pode não melhorar a velocidade ou a memória."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не измерялось для этого семейства моделей. Скорость или память могут не улучшиться."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Inte uppmätt för den här modellfamiljen. Det kanske inte förbättrar hastighet eller minne."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu model ailesinde ölçülmedi. Hızı veya belleği iyileştirmeyebilir."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не вимірювалося для цієї родини моделей. Швидкість або пам'ять можуть не покращитися."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chưa được đo trên họ mô hình này. Có thể không cải thiện tốc độ hoặc bộ nhớ."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未在此模型系列上测量。可能无法提升速度或节省内存。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未在此模型系列上測量。可能無法提升速度或節省記憶體。"
+          }
+        }
+      }
+    },
+    "Where the experts of mixture-of-experts models live while they run. Streamed copies them into a cache in memory, sized by Cache Slots. Mapped reads them in place from the model file, which uses less memory, on models that support it and fit; other models open as Auto. Auto chooses per model. Takes effect on the next model load.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "مكان وجود خبراء نماذج مزيج الخبراء أثناء تشغيلها. «مبثوث» ينسخهم إلى ذاكرة مؤقتة في الذاكرة، يحدد حجمها «فتحات التخزين المؤقت». «معيَّن» يقرأهم في مكانهم من ملف النموذج، مما يستهلك ذاكرة أقل، على النماذج التي تدعم ذلك وتتسع له؛ وتُفتح النماذج الأخرى على «تلقائي». «تلقائي» يختار لكل نموذج. يسري عند تحميل النموذج التالي."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wo die Experten von Mixture-of-Experts-Modellen während der Ausführung liegen. Gestreamt kopiert sie in einen Cache im Arbeitsspeicher, dessen Größe Cache-Slots festlegt. Gemappt liest sie direkt aus der Modelldatei, was weniger Speicher braucht, bei Modellen, die das unterstützen und hineinpassen; andere Modelle öffnen mit Automatisch. Automatisch wählt pro Modell. Wirkt beim nächsten Laden des Modells."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Where the experts of mixture-of-experts models live while they run. Streamed copies them into a cache in memory, sized by Cache Slots. Mapped reads them in place from the model file, which uses less memory, on models that support it and fit; other models open as Auto. Auto chooses per model. Takes effect on the next model load."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dónde residen los expertos de los modelos de mezcla de expertos mientras se ejecutan. Transmitido los copia en una caché en memoria, cuyo tamaño fija Ranuras de caché. Mapeado los lee directamente del archivo del modelo, lo que usa menos memoria, en los modelos que lo admiten y caben; los demás modelos se abren en Automático. Automático elige por modelo. Se aplica en la próxima carga del modelo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Où résident les experts des modèles à mélange d'experts pendant leur exécution. Diffusé en continu les copie dans un cache en mémoire, dimensionné par Emplacements de cache. Mappé les lit directement dans le fichier du modèle, ce qui utilise moins de mémoire, sur les modèles qui le prennent en charge et qui tiennent ; les autres modèles s'ouvrent en Auto. Auto choisit pour chaque modèle. Prend effet au prochain chargement du modèle."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "היכן נמצאים המומחים של מודלי תערובת מומחים בזמן ריצה. משודר בזרימה מעתיק אותם למטמון בזיכרון, שגודלו נקבע לפי חריצי מטמון. ממופה קורא אותם במקומם מקובץ המודל, וצורך פחות זיכרון, במודלים שתומכים בכך ונכנסים בזיכרון; מודלים אחרים נפתחים במצב אוטומטי. אוטומטי בוחר לכל מודל. ייכנס לתוקף בטעינת המודל הבאה."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "मिक्सचर-ऑफ़-एक्सपर्ट्स मॉडल के चलते समय उनके एक्सपर्ट कहाँ रहते हैं। स्ट्रीम किया गया उन्हें मेमोरी के कैश में कॉपी करता है, जिसका आकार कैश स्लॉट तय करते हैं। मैप किया गया उन्हें मॉडल फ़ाइल से सीधे पढ़ता है, जिससे कम मेमोरी लगती है, उन मॉडलों पर जो इसे सपोर्ट करते हैं और समा जाते हैं; बाकी मॉडल स्वतः में खुलते हैं। स्वतः हर मॉडल के लिए चुनता है। अगली बार मॉडल लोड होने पर लागू होता है।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tempat para pakar model mixture-of-experts berada saat berjalan. Di-streaming menyalinnya ke cache di memori, yang ukurannya ditentukan Slot Cache. Dipetakan membacanya langsung dari file model, sehingga memakai lebih sedikit memori, pada model yang mendukungnya dan muat; model lain dibuka sebagai Otomatis. Otomatis memilih per model. Berlaku saat model dimuat berikutnya."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dove risiedono gli esperti dei modelli mixture-of-experts durante l'esecuzione. In streaming li copia in una cache in memoria, dimensionata da Slot di cache. Mappato li legge direttamente dal file del modello, usando meno memoria, sui modelli che lo supportano e che ci stanno; gli altri modelli si aprono in Automatico. Automatico sceglie per ogni modello. Ha effetto al prossimo caricamento del modello."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mixture-of-Experts モデルの実行中にエキスパートを置く場所です。「ストリーミング」はメモリ上のキャッシュにコピーし、そのサイズはキャッシュスロットで決まります。「マップ」はモデルファイルから直接読み込み、メモリ使用量が少なくなります。対応していて収まるモデルで使われ、それ以外のモデルは自動で開きます。「自動」はモデルごとに選択します。次回のモデル読み込み時に反映されます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "전문가 혼합 모델이 실행되는 동안 전문가가 놓이는 위치입니다. 스트리밍됨은 전문가를 메모리의 캐시에 복사하며, 크기는 캐시 슬롯으로 정합니다. 매핑됨은 모델 파일에서 그 자리에서 읽어 메모리를 덜 사용하며, 이를 지원하고 메모리에 들어가는 모델에서 사용됩니다. 다른 모델은 자동으로 열립니다. 자동은 모델마다 선택합니다. 다음 모델 로드 시 적용됩니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waar de experts van mixture-of-experts-modellen zich tijdens het draaien bevinden. Gestreamd kopieert ze naar een cache in het geheugen, met de grootte van Cache-slots. Gemapt leest ze direct uit het modelbestand, wat minder geheugen gebruikt, bij modellen die dat ondersteunen en passen; andere modellen openen als Automatisch. Automatisch kiest per model. Wordt actief bij de volgende keer dat het model laadt."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gdzie znajdują się eksperci modeli typu mixture-of-experts podczas działania. Strumieniowane kopiuje ich do pamięci podręcznej w pamięci, o rozmiarze ustalanym przez Gniazda pamięci podręcznej. Mapowane odczytuje ich bezpośrednio z pliku modelu, co zużywa mniej pamięci, w modelach, które to obsługują i się mieszczą; pozostałe modele otwierają się w trybie Automatycznie. Automatycznie wybiera dla każdego modelu. Zadziała przy następnym wczytaniu modelu."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Onde ficam os especialistas dos modelos de mistura de especialistas durante a execução. Transmitido os copia para um cache na memória, dimensionado por Slots de Cache. Mapeado os lê diretamente do arquivo do modelo, o que usa menos memória, nos modelos que oferecem suporte e cabem; os outros modelos abrem como Automático. Automático escolhe por modelo. Entra em vigor no próximo carregamento do modelo."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Где находятся эксперты моделей mixture-of-experts во время работы. «Потоковая передача» копирует их в кэш в памяти, размер которого задают слоты кэша. «Отображение» читает их прямо из файла модели и расходует меньше памяти, на моделях, которые это поддерживают и помещаются; остальные модели открываются в режиме «Авто». «Авто» выбирает для каждой модели. Вступает в силу при следующей загрузке модели."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Var experterna i mixture-of-experts-modeller finns medan de körs. Strömmad kopierar dem till en cache i minnet, vars storlek anges av Cache-platser. Mappad läser dem direkt från modellfilen, vilket använder mindre minne, på modeller som stöder det och får plats; andra modeller öppnas som Automatisk. Automatisk väljer per modell. Gäller vid nästa modellinläsning."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uzman karışımı modellerinin uzmanlarının çalışırken nerede durduğu. Akışla gönderildi onları bellekteki bir önbelleğe kopyalar; boyutunu Önbellek Yuvaları belirler. Eşlenmiş onları doğrudan model dosyasından okur ve daha az bellek kullanır; bunu destekleyen ve sığan modellerde geçerlidir, diğer modeller Otomatik olarak açılır. Otomatik her model için seçer. Bir sonraki model yüklemesinde geçerli olur."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Де розміщуються експерти моделей mixture-of-experts під час роботи. «Потокова передача» копіює їх у кеш у пам'яті, розмір якого задають слоти кешу. «Відображення» читає їх безпосередньо з файлу моделі й використовує менше пам'яті, на моделях, які це підтримують і вміщуються; інші моделі відкриваються в режимі «Авто». «Авто» вибирає для кожної моделі. Набуває чинності під час наступного завантаження моделі."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nơi các chuyên gia của mô hình hỗn hợp chuyên gia nằm khi chạy. Đã truyền trực tiếp sao chép chúng vào bộ nhớ đệm trong bộ nhớ, với kích thước do Khe bộ đệm quy định. Ánh xạ đọc chúng trực tiếp từ tệp mô hình, dùng ít bộ nhớ hơn, trên các mô hình hỗ trợ và vừa bộ nhớ; các mô hình khác mở ở chế độ Tự động. Tự động chọn theo từng mô hình. Có hiệu lực ở lần tải mô hình tiếp theo."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "混合专家模型运行时专家所在的位置。“流式”将专家复制到内存中的缓存，大小由缓存槽位决定。“映射”直接从模型文件中原地读取，占用更少内存，适用于支持此方式且放得下的模型；其他模型以“自动”打开。“自动”按模型选择。下次加载模型时生效。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "混合專家模型執行時專家所在的位置。「串流」將專家複製到記憶體中的快取，大小由快取插槽決定。「映射」直接從模型檔案中原地讀取，使用較少記憶體，適用於支援此方式且容納得下的模型；其他模型以「自動」開啟。「自動」依模型選擇。下次載入模型時生效。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

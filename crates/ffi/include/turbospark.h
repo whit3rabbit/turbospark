@@ -1632,10 +1632,14 @@ int32_t ts_kv_quant_supported(int64_t full_head_dim, const uint8_t *layer_mask,
 /*
  * What a model family can do, as JSON, from the spelling installed.json and
  * manifest.json carry (ModelFamily::as_str, e.g. "gemma4", "gptOss"):
- *   { "family": "gemma4", "known": true, "steeringSupported": true }
+ *   { "family": "gemma4", "known": true, "steeringSupported": true,
+ *     "anePrefillSupported": false, "mappedResidencySupported": true,
+ *     "mappedResidencyMeasured": true }
+ * mappedResidencyMeasured: a real-install memory and speed measurement exists
+ * for mapped residency on this family, not only a correctness check.
  * A family this build does not recognise is "known": false with every
- * capability false, not an error. steeringSupported is false off macOS, where
- * no decode flow exists.
+ * capability false, not an error. steeringSupported and
+ * mappedResidencySupported are false off macOS, where no decode flow exists.
  */
 int32_t ts_family_capabilities_json(const char *family, char **out);
 
@@ -1644,6 +1648,20 @@ int32_t ts_family_capabilities_json(const char *family, char **out);
  * 0 otherwise.
  */
 int32_t ts_chip_supports_ane_prefill(void);
+
+/*
+ * What ts_session_open would do with an expertResidency request ("auto",
+ * "streamed" or "mapped") on the install at `path`, without opening it:
+ *   { "applicable": true, "requested": "mapped",
+ *     "resolved": "mapped" | "streamed" | null, "refusal": null | "..." }
+ * applicable is false on an install with no routed experts (send "auto").
+ * resolved is null and refusal names why when the open would refuse the
+ * request: a family with no mapped arm, or an expert table past Metal's
+ * working set. A typo in `requested` is TS_ERR_INVALID_ARGUMENT. Always
+ * applicable: false off macOS.
+ */
+int32_t ts_expert_residency_for_install_json(const char *path, const char *requested,
+                                             char **out);
 
 /*
  * What installing `alias` will cost, as {"downloadBytes","installBytes"}.

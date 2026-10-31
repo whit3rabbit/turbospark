@@ -580,6 +580,12 @@ final class LocalizationParityTests: XCTestCase {
         for option in AppExpertSlotsWiringOption.allCases {
             values.append(("AppExpertSlotsWiringOption.menuLabel", option.menuLabel))
         }
+        for option in AppExpertResidencyOption.allCases {
+            values.append(("AppExpertResidencyOption.menuLabel", option.menuLabel))
+        }
+        for option in AppSpeculationOption.allCases {
+            values.append(("AppSpeculationOption.menuLabel", option.menuLabel))
+        }
         for kind in InstalledModelKind.allCases {
             values.append(("InstalledModelKind.title", kind.title))
         }

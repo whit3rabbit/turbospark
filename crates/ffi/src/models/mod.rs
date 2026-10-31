@@ -21,6 +21,8 @@ mod install;
 pub(crate) use install::{ActiveInstall, ActiveMove};
 mod probe;
 
+#[cfg(target_os = "macos")]
+pub(crate) use capabilities::expert_residency_for_install_json;
 pub(crate) use capabilities::{family_capabilities_json, kv_quant_supported};
 pub(crate) use catalog::{
     catalog_json, delete, delete_image, image_installed_in_json, image_installed_json,

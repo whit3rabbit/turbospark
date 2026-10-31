@@ -943,6 +943,10 @@ public final class AppModel: ObservableObject {
     @Published public var maxContextTokens: Int = 0
     /// High-level runtime options such as speculative decoding and steering.
     @Published public var runtimeOptions = AppRuntimeOptions()
+    /// Installs, by path, whose last open sent auto in place of a Mapped
+    /// residency request, and why (`buildOpenOptions`). Read by the Engine
+    /// pane's Resolved row for the loaded model.
+    @Published public var expertResidencyFallbacks: [String: ExpertResidencyFallback] = [:]
     /// Sampling temperature.
     @Published public var temperature: Double = 0.2
     /// Whether top-k filtering is enabled.

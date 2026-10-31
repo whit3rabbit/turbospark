@@ -395,7 +395,10 @@ pub(crate) fn guard_mapped_residency(
     ))
 }
 
-fn mapped_residency_supported(family: model_io::ModelFamily) -> bool {
+/// Whether `family` has a mapped expert dispatch arm. Public so a host can
+/// offer mapped residency only where an open would take it; the refusal
+/// below names the same families.
+pub fn mapped_residency_supported(family: model_io::ModelFamily) -> bool {
     matches!(
         family,
         model_io::ModelFamily::Gemma4
@@ -422,9 +425,7 @@ fn mapped_residency_supported(family: model_io::ModelFamily) -> bool {
 /// testable without an env var, a GPU or an install -- and so WIDENING it is
 /// one edit here plus the family's own dispatch arm, with the test that names
 /// every unwired family reddening until both are done.
-pub(crate) fn mapped_residency_refusal(
-    family: model_io::ModelFamily,
-) -> Result<(), RealForwardError> {
+pub fn mapped_residency_refusal(family: model_io::ModelFamily) -> Result<(), RealForwardError> {
     if matches!(
         family,
         model_io::ModelFamily::Gemma4
@@ -794,8 +795,8 @@ fn open_expert_streamers_with(
 #[cfg(test)]
 mod tests {
     use super::{
-        guard_mapped_residency, mapped_residency_refusal, resolve_expert_residency,
-        validate_arch_config,
+        guard_mapped_residency, mapped_residency_refusal, mapped_residency_supported,
+        resolve_expert_residency, validate_arch_config,
     };
     use model_io::ModelFamily;
 
@@ -873,6 +874,14 @@ mod tests {
              site, or leave it refused deliberately"
         );
         for &family in EVERY_FAMILY {
+            // The public predicate hosts gate on must name the same families
+            // the open refuses, or a host offers mapped where it then fails.
+            assert_eq!(
+                mapped_residency_supported(family),
+                mapped_residency_refusal(family).is_ok(),
+                "{}",
+                family.as_str()
+            );
             match mapped_residency_refusal(family) {
                 Ok(()) => assert!(
                     matches!(

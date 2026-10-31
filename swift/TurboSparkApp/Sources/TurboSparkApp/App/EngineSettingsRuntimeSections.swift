@@ -212,6 +212,89 @@ extension EngineSettingsPaneView {
         }
     }
 
+    /// Where routed experts live, and the streamed cache's size beside it,
+    /// since mapped residency has no slot cache to size.
+    var expertResidencySection: some View {
+        Section(header: Text("Expert Residency", bundle: .module)) {
+            Picker(selection: $model.runtimeOptions.expertResidency) {
+                ForEach(AppExpertResidencyOption.allCases) { opt in
+                    Text(LocalizedStringKey(opt.menuLabel), bundle: .module).tag(opt)
+                }
+            } label: { Text("Expert Residency", bundle: .module) }
+            .settingsControl("Expert Residency", pane: .engine, timing: .modelReload)
+            .pickerStyle(.menu)
+            .onChange(of: model.runtimeOptions.expertResidency) { _, _ in
+                model.persistSettingsDebounced()
+            }
+
+            // The same engine-owned value set the Inspector offers
+            // (`AppRuntimeOptions.allowedSlotCounts`).
+            Picker(selection: $model.runtimeOptions.expertCacheSlots) {
+                ForEach(AppRuntimeOptions.allowedSlotCounts, id: \.self) { slots in
+                    Group {
+                        if slots == 0 {
+                            Text("Auto", bundle: .module)
+                        } else {
+                            Text("\(slots) slots", bundle: .module)
+                        }
+                    }
+                    .tag(slots)
+                }
+            } label: { Text("Cache Slots", bundle: .module) }
+            .settingsControl("Cache Slots", pane: .engine, timing: .modelReload)
+            .pickerStyle(.menu)
+            .onChange(of: model.runtimeOptions.expertCacheSlots) { _, _ in
+                model.persistSettingsDebounced()
+            }
+
+            if let info = model.session?.info, let resolved = info.expertResidency {
+                LabeledContent {
+                    expertResidencyResolved(info: info, resolved: resolved)
+                        .themedFont(.tiny, systemDesign: .monospaced)
+                        .foregroundStyle(.appSecondary)
+                } label: {
+                    Text("Resolved", bundle: .module)
+                }
+            }
+
+            Text("Where the experts of mixture-of-experts models live while they run. Streamed copies them into a cache in memory, sized by Cache Slots. Mapped reads them in place from the model file, which uses less memory, on models that support it and fit; other models open as Auto. Auto chooses per model. Takes effect on the next model load.", bundle: .module)
+            .themedFont(.tiny)
+            .foregroundStyle(.appSecondary)
+        }
+    }
+
+    /// The loaded model's residency, why a Mapped request opened as Auto, and
+    /// an unmeasured-family note when it runs mapped.
+    private func expertResidencyResolved(info: SessionInfo, resolved: String) -> some View {
+        let fallback = model.expertResidencyFallbacks[info.modelPath]
+        let unmeasured = resolved == "mapped"
+            && !TurboSparkCapabilities.family(info.family).mappedResidencyMeasured
+        let note = AppStrings.localized("Not measured on this model family. It may not improve speed or memory.")
+        return HStack(spacing: 4) {
+            if resolved == "mapped" {
+                Text("Mapped", bundle: .module)
+            } else {
+                Text("Streamed", bundle: .module)
+            }
+            switch fallback {
+            case .noRoutedExperts?:
+                Text(verbatim: "(") + Text("No routed experts", bundle: .module) + Text(verbatim: ")")
+            case .unreadable?:
+                Text(verbatim: "(") + Text("Mapped unavailable", bundle: .module) + Text(verbatim: ")")
+            case .refused(let reason)?:
+                Text(verbatim: "(") + Text("Mapped unavailable", bundle: .module)
+                    + Text(verbatim: reason.map { ": \($0))" } ?? ")")
+            case nil:
+                EmptyView()
+            }
+            if unmeasured {
+                Image(systemName: "info.circle")
+                    .help(note)
+                    .accessibilityLabel(note)
+            }
+        }
+    }
+
     var inProcessServerSection: some View {
         Section(header: Text("In-Process Server", bundle: .module)) {
             LabeledContent {

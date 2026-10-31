@@ -163,8 +163,9 @@ pub use real_forward::{
 };
 #[cfg(target_os = "macos")]
 pub use real_forward_init::{
-    effective_expert_slot_wiring, resolve_expert_residency, resolve_expert_residency_for_install,
-    set_expert_slot_wiring, ExpertSlotWiringOutcome,
+    effective_expert_slot_wiring, mapped_residency_refusal, mapped_residency_supported,
+    resolve_expert_residency, resolve_expert_residency_for_install, set_expert_slot_wiring,
+    ExpertSlotWiringOutcome,
 };
 #[cfg(target_os = "macos")]
 pub use startup::{ExpertPrefetchStats, StartupStats};

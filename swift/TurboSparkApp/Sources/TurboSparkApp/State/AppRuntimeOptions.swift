@@ -156,6 +156,10 @@ public enum AppSpeculationOption: String, CaseIterable, Identifiable, Sendable {
     case block4 = "4"
     /// Draft 8 tokens per forward pass.
     case block8 = "8"
+    /// Let the engine pick the draft depth each round from recent acceptance.
+    /// A named request like the blocks: refused at open on an install with
+    /// no drafter.
+    case adaptive = "adaptive"
 
     /// Unique string identifier.
     public var id: String { rawValue }
@@ -168,6 +172,7 @@ public enum AppSpeculationOption: String, CaseIterable, Identifiable, Sendable {
         case .block2: return "Block 2"
         case .block4: return "Block 4"
         case .block8: return "Block 8"
+        case .adaptive: return "Adaptive"
         }
     }
 
@@ -179,6 +184,7 @@ public enum AppSpeculationOption: String, CaseIterable, Identifiable, Sendable {
         case .block2: return .block(2)
         case .block4: return .block(4)
         case .block8: return .block(8)
+        case .adaptive: return .adaptive()
         }
     }
 }
@@ -336,6 +342,80 @@ public enum AppExpertSlotsWiringOption: String, CaseIterable, Identifiable, Send
     }
 }
 
+/// User-facing option for where the routed experts of a mixture-of-experts
+/// model live while it runs.
+///
+/// **`.mapped` IS NOT SENT AS-IS, UNLIKE AN EXPLICIT `AppKvBitsOption` WIDTH.**
+/// The engine refuses mapped by name on a family without a mapped arm
+/// (qwen4exp among them) and on an install whose expert table exceeds Metal's
+/// working set. This is one global setting applied to every model the app
+/// opens, so sending it unconditionally would stop those models opening at
+/// all. `openOption(preflight:)` sends mapped only where
+/// `TurboSparkCapabilities.expertResidency(forInstallAt:requested:)` says the
+/// open would take it, and auto elsewhere; the Engine pane's Resolved row
+/// shows the reason, so the fallback is not silent.
+public enum AppExpertResidencyOption: String, CaseIterable, Identifiable, Sendable {
+    /// Read experts in place where the family supports it and memory calls
+    /// for it, the streamed cache otherwise. The default.
+    case auto = "auto"
+    /// Always the streamed expert cache.
+    case streamed = "streamed"
+    /// Read experts in place from the mapped file, where the model allows it.
+    case mapped = "mapped"
+
+    public var id: String { rawValue }
+
+    public var menuLabel: String {
+        switch self {
+        case .auto: return "Auto"
+        case .streamed: return "Streamed"
+        case .mapped: return "Mapped"
+        }
+    }
+
+    /// The request as the engine spells it, before any install check.
+    public var requested: OpenOptions.ExpertResidency {
+        switch self {
+        case .auto: return .auto
+        case .streamed: return .streamed
+        case .mapped: return .mapped
+        }
+    }
+
+    /// The open option to send, given the install's pre-open answer for
+    /// `requested` (nil when the manifest could not be read). A model with no
+    /// routed experts always gets auto, a no-op there.
+    public func openOption(preflight: ExpertResidencyPreflight?) -> OpenOptions.ExpertResidency {
+        switch self {
+        case .auto:
+            return .auto
+        case .streamed:
+            return preflight?.applicable == false ? .auto : .streamed
+        case .mapped:
+            return preflight?.resolved == "mapped" ? .mapped : .auto
+        }
+    }
+
+    /// Why `.mapped` fell back to auto on this install, or nil when it did
+    /// not (another option, or the open takes mapped).
+    public func fallback(preflight: ExpertResidencyPreflight?) -> ExpertResidencyFallback? {
+        guard self == .mapped, preflight?.resolved != "mapped" else { return nil }
+        guard let preflight else { return .unreadable }
+        if !preflight.applicable { return .noRoutedExperts }
+        return .refused(preflight.refusal)
+    }
+}
+
+/// Why a Mapped residency request was opened as auto.
+public enum ExpertResidencyFallback: Equatable, Sendable {
+    /// The install's manifest could not be read before open.
+    case unreadable
+    /// A dense model: there are no routed experts to place.
+    case noRoutedExperts
+    /// The open would refuse mapped; the engine's reason, when it gave one.
+    case refused(String?)
+}
+
 /// Activation steering operation modes.
 public enum AppSteeringModeOption: String, CaseIterable, Identifiable, Sendable {
     /// Suppress target activations.
@@ -419,6 +499,8 @@ public struct AppRuntimeOptions: Equatable, Sendable {
     public var anePrefillDir: String = ""
     /// Whether the expert slot cache is locked in memory.
     public var expertSlotsWiring: AppExpertSlotsWiringOption = .auto
+    /// Where routed experts live while a model runs.
+    public var expertResidency: AppExpertResidencyOption = .auto
     /// Maximum tokens per second rate cap (0 for uncapped).
     public var maxTokensPerSec: Double = 0
     /// Filesystem path to steering control vector file.
@@ -447,6 +529,7 @@ public struct AppRuntimeOptions: Equatable, Sendable {
         anePrefill: AppAnePrefillOption = .auto,
         anePrefillDir: String = "",
         expertSlotsWiring: AppExpertSlotsWiringOption = .auto,
+        expertResidency: AppExpertResidencyOption = .auto,
         maxTokensPerSec: Double = 0,
         steeringPath: String? = nil,
         steeringMode: AppSteeringModeOption = .ablate,
@@ -466,6 +549,7 @@ public struct AppRuntimeOptions: Equatable, Sendable {
         self.anePrefill = anePrefill
         self.anePrefillDir = anePrefillDir
         self.expertSlotsWiring = expertSlotsWiring
+        self.expertResidency = expertResidency
         self.maxTokensPerSec = maxTokensPerSec
         self.steeringPath = steeringPath
         self.steeringMode = steeringMode
