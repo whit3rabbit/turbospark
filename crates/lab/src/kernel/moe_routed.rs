@@ -18,7 +18,7 @@ use gpu::{
     autorelease_pool, encode_moe_phase1, encode_moe_phase2, encode_moe_prefill_phase1,
     encode_moe_prefill_phase2_fused, read_buffer_bytes, MetalBuffer, MetalContext,
     MoeExpertOffsets, MoePrefillRoute, RoutedBlobsBuffer, RoutedBlobsWideBuffer,
-    MAX_PREFILL_EXPERT_BINDINGS, MAX_STREAMED_EXPERTS,
+    MAX_PREFILL_EXPERT_BINDINGS, MAX_STREAMED_EXPERTS, PHASE2_FIXED_SLOTS,
 };
 use serde_json::json;
 
@@ -71,6 +71,24 @@ fn blob_layout(d: usize, f: usize) -> (MoeExpertOffsets, usize) {
     )
 }
 
+/// Why this top-k cannot run, or `None`. Both pairs must take it: the
+/// decode pair binds at most `MAX_STREAMED_EXPERTS`, and the route-list
+/// pair asserts `top_k <= PHASE2_FIXED_SLOTS` (a panic, not an error), so
+/// qwen4exp's top-10 has to be refused here before `run` reaches it.
+fn top_k_refusal(k: usize) -> Option<String> {
+    if k == 0 || k > MAX_STREAMED_EXPERTS {
+        return Some(format!(
+            "top-k {k} outside the decode pair's 1..={MAX_STREAMED_EXPERTS}"
+        ));
+    }
+    if k > PHASE2_FIXED_SLOTS {
+        return Some(format!(
+            "top-k {k} above the route-list pair's {PHASE2_FIXED_SLOTS} fixed slots"
+        ));
+    }
+    None
+}
+
 fn routed_scheme(subject: &Subject) -> Option<String> {
     let text = std::fs::read_to_string(subject.dir.join("manifest.json")).ok()?;
     let v: serde_json::Value = serde_json::from_str(&text).ok()?;
@@ -105,10 +123,8 @@ impl KernelBench for MoeRouted {
         if d % 64 != 0 || f % 64 != 0 {
             return Err(format!("D={d} or F={f} is not a multiple of 64"));
         }
-        if k == 0 || k > MAX_STREAMED_EXPERTS {
-            return Err(format!(
-                "top-k {k} outside the decode pair's 1..={MAX_STREAMED_EXPERTS}"
-            ));
+        if let Some(why) = top_k_refusal(k) {
+            return Err(why);
         }
         // The synthetic blob is MLX affine INT4; an install whose experts are
         // MXFP4 or GGUF runs other kernels, which this bench does not time.
@@ -359,5 +375,15 @@ mod tests {
             .collect();
         assert!(u.windows(2).all(|w| w[0] <= w[1]), "{u:?}");
         assert!(uniform_union(8, 4, 64) <= 8);
+    }
+
+    #[test]
+    fn top_k_above_the_fixed_slots_is_refused_not_run() {
+        // qwen4exp routes top-10; the route-list pair panicked on it.
+        let why = top_k_refusal(10).expect("top-10 must be refused");
+        assert!(why.contains("fixed slots"), "{why}");
+        assert_eq!(top_k_refusal(PHASE2_FIXED_SLOTS), None);
+        assert_eq!(top_k_refusal(1), None);
+        assert!(top_k_refusal(0).is_some());
     }
 }
