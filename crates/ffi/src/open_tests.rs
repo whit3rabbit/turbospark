@@ -284,3 +284,41 @@ fn ane_prefill_mode_defaults_to_auto_and_rejects_typos() {
     );
     assert!(ane_prefill_mode(Some("invalid")).is_err());
 }
+
+/// What the session reports for the ANE split, as a pure function of what
+/// was asked, what the runner stored, and the three facts that decide it.
+/// `active` must mean "the dense qwen prefill will try the split": the app's
+/// global "On" sends `split` to every family, and a MoE session reporting
+/// "Active (ANE+Steel)" while nothing consults the mode is the defect.
+#[test]
+fn ane_prefill_info_reports_active_only_where_the_split_can_run() {
+    use runtime::AnePrefillMode::{Auto, Break, Off, Split};
+    // (requested, resolved, dense qwen, M4+, built) -> (active, supported, reason)
+    #[rustfmt::skip]
+    let cases = [
+        // Explicit split on a family that never consults it.
+        (Split, Split, false, true, true, false, false, Some(ANE_DENSE_QWEN_ONLY)),
+        // Off on that family still says why it is unsupported.
+        (Off, Off, false, true, true, false, false, Some(ANE_DENSE_QWEN_ONLY)),
+        // Explicit split runs on any chip (docs/ENV.md); only Auto gates on M4+.
+        (Split, Split, true, false, true, true, false, None),
+        (Auto, Off, true, false, true, false, false, Some(ANE_AUTO_NEEDS_M4)),
+        (Auto, Split, true, true, true, true, true, None),
+        (Break, Break, true, true, true, false, true, Some(ANE_BREAK_DIAGNOSTIC)),
+        (Off, Off, true, true, true, false, true, None),
+        // A build without the feature stores nothing, whatever was asked.
+        (Split, Off, true, true, false, false, false, Some(ANE_NOT_BUILT)),
+    ];
+    for (requested, resolved, dense, m4, built, active, supported, reason) in cases {
+        let info = ane_prefill_info(requested, resolved, dense, m4, built, None);
+        let label = format!("{requested:?}->{resolved:?} dense={dense} m4={m4} built={built}");
+        assert_eq!(info.active, active, "active: {label}");
+        assert_eq!(info.supported, supported, "supported: {label}");
+        assert_eq!(info.reason.as_deref(), reason, "reason: {label}");
+        assert_eq!(info.mode, resolved.as_str(), "mode: {label}");
+        assert!(
+            !info.active || info.reason.is_none(),
+            "reason is null when active: {label}"
+        );
+    }
+}

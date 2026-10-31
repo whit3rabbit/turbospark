@@ -229,9 +229,11 @@ pub struct OpenOptions {
     pub vision_sidecar: Option<String>,
     /// `"off"` | `"2"` | `"3"` | `"3.5"` | `"4"`. Absent means `"off"`, which
     /// is what every release before this option existed produced byte for
-    /// byte. An unsupported family or `head_dim` REFUSES `ts_session_open`
-    /// by name rather than silently opening at FP16 -- see
-    /// `docs/TRUBOQUANT.md`.
+    /// byte. An install that cannot take it REFUSES `ts_session_open` by name
+    /// rather than silently opening at FP16. Eligibility is install facts
+    /// only, not the family: a power-of-two full head width in 32..=512 and a
+    /// quantizable full-attention layer (`ts_kv_quant_supported` answers the
+    /// same rule before open) -- see `docs/TRUBOQUANT.md`.
     pub kv_bits: Option<String>,
     /// Continue each turn from the previous turn's KV wherever the new render
     /// shares a prefix with the old one. Absent or `true` is what every

@@ -436,8 +436,9 @@ pub(crate) fn mapped_residency_refusal(
         return Ok(());
     }
     Err(RealForwardError::Unsupported(format!(
-        "TURBOSPARK_EXPERT_RESIDENCY=mapped is not wired for {}; \
-         unset it to use the pread expert streamer. Widening it is ROADMAP item 9, and \
+        "mapped expert residency is not wired for {}; ask for streamed or auto \
+         (--expert-residency, the expertResidency open option, or \
+         TURBOSPARK_EXPERT_RESIDENCY) to use the pread expert streamer. Widening it is ROADMAP item 9, and \
          each family REPLACES this refusal rather than adding a branch to a silent path",
         family.as_str()
     )))

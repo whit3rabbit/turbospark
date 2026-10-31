@@ -622,29 +622,16 @@ pub(crate) fn open_with_failure(
                 reason: outcome.reason.clone(),
             }
         },
-        ane_prefill: crate::wire::AnePrefillInfo {
-            active: runner.ane_prefill_mode().is_split(),
-            mode: runner.ane_prefill_mode().as_str().to_string(),
-            supported: runner.ane_prefill_supported(),
-            reason: if !runner.ane_prefill_supported() {
-                if !runtime::hardware_supports_ane_prefill() {
-                    Some("requires Apple Silicon M4 or newer".to_string())
-                } else {
-                    Some("only supported for dense Qwen models".to_string())
-                }
-            } else if !runner.ane_prefill_mode().is_split() {
-                if requested_ane_mode == runtime::AnePrefillMode::Off {
-                    None
-                } else {
-                    Some("prefill programs not found or inactive".to_string())
-                }
-            } else {
-                None
-            },
-            programs_dir: runner
+        ane_prefill: ane_prefill_info(
+            requested_ane_mode,
+            runner.ane_prefill_mode(),
+            trunk_family == model_io::ModelFamily::QwenGdnDense,
+            runtime::hardware_supports_ane_prefill(),
+            runtime::ANE_PREFILL_BUILT,
+            runner
                 .ane_prefill_programs()
                 .map(|p| p.display().to_string()),
-        },
+        ),
         special_tokens: crate::wire::SpecialTokensInfo {
             bos_id: (tokenizer.bos_id >= 0).then_some(tokenizer.bos_id),
             eos_id: (tokenizer.eos_id >= 0).then_some(tokenizer.eos_id),
@@ -724,6 +711,55 @@ fn vision_info(
             sidecar_path,
             max_pixels: None,
         },
+    }
+}
+
+pub(crate) const ANE_NOT_BUILT: &str = "this build does not include the ANE prefill split";
+pub(crate) const ANE_DENSE_QWEN_ONLY: &str = "only supported for dense Qwen models";
+pub(crate) const ANE_AUTO_NEEDS_M4: &str = "Auto enables it only on Apple Silicon M4 or newer";
+pub(crate) const ANE_BREAK_DIAGNOSTIC: &str = "break diagnostic: every row runs on Steel";
+
+/// The session's ANE split report, from what was asked (`requested`), what
+/// the runner stored (`resolved`: `set_ane_prefill` keeps an explicit mode
+/// as-is on every family and resolves `Auto`), and the facts that decide it.
+///
+/// `active` means the dense qwen prefill will try the split. Only that
+/// family's prefill consults the mode, so an explicit `split` stored on any
+/// other family is a no-op and must not read as active: the app's global
+/// "On" sends `split` to every model it opens. An explicit `split` runs on
+/// any chip (`docs/ENV.md`); M4+ is only `Auto`'s threshold, so `supported`
+/// keeps meaning "Auto would turn it on". Programs that fail to load turn the
+/// split off at the first chunk, after this report, so `active` cannot see
+/// that.
+pub(crate) fn ane_prefill_info(
+    requested: runtime::AnePrefillMode,
+    resolved: runtime::AnePrefillMode,
+    dense_qwen: bool,
+    chip_m4_or_newer: bool,
+    built: bool,
+    programs_dir: Option<String>,
+) -> crate::wire::AnePrefillInfo {
+    let runs = built && dense_qwen;
+    let active = runs && resolved.is_split();
+    let reason = if !built {
+        Some(ANE_NOT_BUILT)
+    } else if !dense_qwen {
+        Some(ANE_DENSE_QWEN_ONLY)
+    } else if active || requested == runtime::AnePrefillMode::Off {
+        None
+    } else if resolved == runtime::AnePrefillMode::Break {
+        Some(ANE_BREAK_DIAGNOSTIC)
+    } else if requested == runtime::AnePrefillMode::Auto && !chip_m4_or_newer {
+        Some(ANE_AUTO_NEEDS_M4)
+    } else {
+        Some("prefill programs not found or inactive")
+    };
+    crate::wire::AnePrefillInfo {
+        active,
+        mode: resolved.as_str().to_string(),
+        supported: runs && chip_m4_or_newer,
+        reason: reason.map(str::to_string),
+        programs_dir,
     }
 }
 

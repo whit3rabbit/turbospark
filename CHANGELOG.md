@@ -45,6 +45,15 @@ when this file gets updated relative to the version bump and the tag.
   and other checkpoints keep their previous kernels.
 
 ### Fixed
+- Session info no longer reports the ANE+Steel prefill split as active on a
+  model that never uses it. The app's global Prefill Mode "On" sends `split`
+  to every model, and a MoE or non-Qwen session read "Active (ANE+Steel)"
+  while prefill ran on Steel. `anePrefill.active` now needs a dense Qwen
+  model and a build with the `ane-prefill` feature, and the reason names the
+  actual cause (not in this build, dense Qwen only, Auto needs M4 or newer,
+  the `break` diagnostic). An explicit `split` on an older chip still runs
+  and reports active. The family capability `anePrefillSupported` also
+  reports false on a build without the feature.
 - qwen4_exp MLX installs decode correctly again. Since 00247a7f (2026-09-26)
   every RMSNorm was applied as a direct weight, but MLX and Hugging Face store
   these as offsets from one, so MLX installs decoded fluent-looking garbage.
