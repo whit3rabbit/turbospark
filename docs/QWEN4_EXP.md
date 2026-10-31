@@ -2093,3 +2093,51 @@ reads reference-answer perplexity 8.4241 against the 8.7224 frozen on
 2026-09-04 (3.4% lower, outside its 2% band, so the gate fails until the
 baseline is re-frozen). The other `00247a7f` changes (GDN Q/K epsilon, the
 single PLE SiLU, the shared expert joining after FP16 rounding) are kept.
+
+## DFlash2 acceptance on REAP-288 (2026-10-31)
+
+`incoai/Qwen3.8-Flash-Next-DFlash2` (revision `a22a1744`, Apache-2.0, 1.2 GB
+BF16) is a block-diffusion drafter trained on the full model's completed
+outputs of zero-based layers 5, 15, 25, 35 and 45, averaged over the four
+hyper-connection streams (its own SGLang capture patch says so).
+`TURBOSPARK_QWEN4_TAP_FILE=<path>` (layers via `TURBOSPARK_QWEN4_TAP_LAYERS`)
+appends exactly that feature for every position `produce` runs, and walks a
+chunked prefill through `produce` so prompt positions are recorded too.
+
+Method: six greedy chat-template generations of 256 tokens (math, code,
+hash-map explanation, travel chat, a rename-and-copy edit, coastal wetlands)
+on `qwen4-reap288` after the norm fix, taps captured; the drafter run offline
+in a numpy port with the install's own INT4 embedding and LM head; each
+block anchored on the target's token and its leading matches accepted
+against the target's greedy tokens, as a speculative loop would.
+
+Tokens per round (anchor plus accepted):
+
+| Prompt | b2 | b3 | b4 | b5 | b8 |
+| --- | --- | --- | --- | --- | --- |
+| math | 1.95 | 2.83 | 3.63 | 4.42 | 5.93 |
+| code | 1.95 | 2.83 | 3.72 | 4.54 | 7.09 |
+| explain | 1.82 | 2.43 | 2.84 | 3.06 | 3.28 |
+| chat | 1.79 | 2.07 | 2.54 | 2.82 | 3.06 |
+| wet | 1.69 | 2.13 | 2.41 | 2.43 | 2.68 |
+| copy | 2.00 | 3.00 | 4.00 | 5.00 | 8.00 |
+
+The drafter card reports 2.8-3.3 at block 4 under sampling on the FP8
+target; the five non-copy prompts here average 3.03, on a pruned INT4
+target the drafter never saw.
+
+It does not pay on this install. The verify cost was measured on real text
+as a prefill micro-batch (`tslab profile`, experiment `qwen4-fixed-verify`,
+48 streamed slots): 84.2 ms for one decode token, 142.9 ms for 2 rows, 250
+for 4, 476 for 8, 930 for 16. Every row streams its own experts (hit rate
+57-69%, expert `pread` 55-67% of a prefill token), so a verified row costs
+0.6-0.85 of a decode token. With a 5 ms drafter estimate, the non-copy mean
+prices at 1.05x (b2), 1.03x (b3), 1.00x (b4), 0.93x (b5) and 0.77x (b8);
+math and code reach 1.2x at b4, prose loses. Perfect drafts would cap at
+1.32x at b4.
+
+Not verified: the numpy port against the reference implementation (95%
+first-row acceptance on math says the features and port line up, which a
+wrong port would not produce), the drafter's real Metal cost, and the head
+and GDN/PLE/QSA rollback a real verify pass needs. The lever this points at
+is expert I/O, not drafting: re-sweep expert slots on real text first.

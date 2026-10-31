@@ -364,8 +364,9 @@ pub use moe_gguf::{
 };
 #[cfg(target_os = "macos")]
 pub use moe_prefill_batch::{
-    encode_moe_prefill_phase1, encode_moe_prefill_phase2_fused, MoePrefillRoute,
-    RoutedBlobsWideBuffer, MAX_PREFILL_EXPERT_BINDINGS,
+    encode_moe_prefill_phase1, encode_moe_prefill_phase1_wide, encode_moe_prefill_phase2_fused,
+    encode_moe_prefill_phase2_fused_wide, MoePrefillRoute, RoutedBlobsWideBuffer,
+    MAX_PREFILL_EXPERT_BINDINGS,
 };
 #[cfg(target_os = "macos")]
 pub use moe_prefill_batch_gguf::{

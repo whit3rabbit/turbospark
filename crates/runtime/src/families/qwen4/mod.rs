@@ -158,9 +158,11 @@
 //! micro-batch, with no QSA score readback or mid-layer wait.
 
 pub(crate) mod attn;
+mod batched;
 mod cb1_trace;
 pub(crate) mod hc;
 pub(crate) mod moe;
+mod moe_batch;
 pub(crate) mod ple;
 pub(crate) mod prefill;
 mod produce;

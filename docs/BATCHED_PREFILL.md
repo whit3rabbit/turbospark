@@ -1711,10 +1711,61 @@ first multi-token micro-batch it tried. **Any future family whose flow does
 its own host-side dequant-then-upload step owes this same check before
 assuming commit order protects it.**
 
-Both batching seams are refused by name here (`TURBOSPARK_ROUTED_BATCH` and
-`TURBOSPARK_BATCHED_GEMV`), the pair every other chunked driver carries. The
-routed seam is MEANINGFUL on this family rather than vacuous, since it has a
-routed half, which is why it is owed at all.
+Both batching seams were refused by name here until 2026-10-31; both are
+now wired (next section).
+
+### Both seams wired on `qwen4_exp` (2026-10-31)
+
+`TURBOSPARK_ROUTED_BATCH` runs the routed half as one route-list pair per
+union-bounded sub-batch (`families/qwen4/moe_batch.rs`). Top-10 is past the
+eight-wide fused phase 2, which asserts rather than truncating, so the pair
+is the new `_wide` one (`moe_prefill_phase2_fused_int4_wide`): it
+dispatches `top_k` SIMD groups and reduces exactly `top_k` ranks after the
+seed, the decode kernel's loop. Phase 2 seeds from ZERO rows and the gated
+shared expert is added to each token's FP16 routed row afterwards, because
+that is what decode does (`moe_zero`, then `h2 += h1`). Seeding with the
+shared expert as `qwen3_5` does would be a different model.
+
+`TURBOSPARK_BATCHED_GEMV` runs every `attn_hc` first, then each layer's
+input projections (GDN `in_proj_*`, QSA `index_qk_proj` / `q_proj` /
+`k_proj` / `v_proj`) as one `encode_gemm_any` over M rows, then the
+per-token middle through the same `attn.rs` blocks decode runs (handed its
+rows through `PreProjected`, so decode's dispatches are unchanged), then
+`out_proj` / `o_proj` over M rows (`families/qwen4/batched.rs`). K/V rows
+are bit-copied into whatever `kv_write_target` names, so TurboQuant's
+staging-then-commit still applies. The hyper-connection GEMVs, PLE, the
+INT8 router and the shared expert stay per token.
+
+Both are byte-identical to the sequential path on the fixture at every
+chunk span, across the QSA sparsity boundary and under `--kv-bits`
+(`real_forward_qwen4_chunked.rs`, `real_forward_qwen4_kv_quant.rs`), and
+mutation-checked (dropping the shared join, dropping the last out-proj
+row, capping the wide reduce at eight ranks each redden their cases).
+
+Real install, `qwen4-reap288`, Apple M4 Max 36 GB, AC, slots auto (48,
+streamed), protocol `medium-review` (426 prompt tokens), chunk 128, 16
+decode, 3 clean pairs each, fixed 2% effect floor. Measured after the RMSNorm
+convention fix (`docs/QWEN4_EXP.md`, "RMSNorm convention follows the
+install"); every arm's prefill-logit and decode digests are identical:
+
+| Arm | Against | Prefill tok/s (clean medians) | Verdict |
+| --- | --- | --- | --- |
+| routed batch | per-token loop | about 17.1 to 16.2 | loss -7.1%, CI [-12.6, -5.0], record `1793454073854-96733-16` |
+| batched GEMV (routed batch off) | per-token loop | | noise +0.8%, CI [-3.3, +5.2], record `1793454413359-20061-16` |
+
+Neither seam helps here, so both stay opt-in. Prefill is I/O bound: at 48
+slots the expert hit rate on real text is 57-69% and the expert `pread` is
+55-67% of a prefill token (`tslab profile`, experiment `qwen4-fixed-verify`,
+chunk 2/4/8/16 records `1793454690801-41843-12`, `1793454926023-58621-12`,
+`1793455146458-74703-12`, `1793455371091-89862-12`). Batching the GPU half
+cannot move a token whose time goes to streaming experts.
+
+**The first readings were taken on a broken forward pass and are wrong.**
+Before the norm fix this install decoded greedy garbage that kept routing
+to the same few experts (99% cache hits), and these seams then read +47.5%
+(38.5 to 56.6 tok/s, record `1793441245903-64370-16`) and +23.5% on top (57.0
+to 70.2, record `1793441796301-81562-20`). The digests matched across arms
+then too, so exactness held; the speed did not survive real routing.
 
 ## Measuring chunked prefill: the instrument, and what it could not see before
 

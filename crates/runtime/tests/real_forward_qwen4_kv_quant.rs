@@ -271,29 +271,31 @@ fn chunked_prefill_matches_sequential_decode_under_kv_bits() {
     );
 }
 
-/// Both `TURBOSPARK_BATCHED_GEMV` and `TURBOSPARK_ROUTED_BATCH` are refused
-/// BY NAME on this family's chunked driver unconditionally
-/// (`families/qwen4/prefill.rs`, independent of `--kv-bits`). Confirms that
-/// pre-existing refusal still fires the same way on a TurboQuant-quantized
-/// install.
+/// `TURBOSPARK_BATCHED_GEMV` and `TURBOSPARK_ROUTED_BATCH` on a
+/// TurboQuant-quantized install: the batched layer copies each token's K/V
+/// GEMM rows into the STAGING row `kv_write_target` names, which the commit
+/// then quantizes, so the bar is byte-identity with the per-token chunked
+/// driver on the same quantized cache, across the sparsity boundary.
 #[test]
-fn batched_gemv_is_still_refused_by_name_under_kv_bits() {
-    let mut runner = open_runner(
-        "batched-refusal",
-        KvQuant::TurboQuant {
-            k_bits: 3,
-            v_bits: 4,
-        },
-    );
-    runner.set_batched_gemv_prefill(true);
-    let prompt: Vec<i32> = vec![5, 12, 3, 40];
-    let mut logits = vec![f16::from_f32(0.0); VOCAB as usize];
-    let Err(err) = runner.prefill_chunk(&prompt, 0, &mut logits) else {
-        panic!("batched GEMV prefill must still be refused on this family under --kv-bits");
+fn the_batched_seams_match_the_per_token_chunked_driver_under_kv_bits() {
+    let prompt: Vec<i32> = (0..24).map(|i| (i * 7 + 3) % VOCAB as i32).collect();
+    let quant = KvQuant::TurboQuant {
+        k_bits: 3,
+        v_bits: 4,
     };
-    let message = err.to_string();
-    assert!(
-        message.contains("BATCHED_GEMV"),
-        "expected the pre-existing batched-GEMV refusal, got: {message}"
+    let run = |batched: bool| -> Vec<f32> {
+        let mut runner = open_runner("batched-kv-bits", quant);
+        runner.set_batched_gemv_prefill(batched);
+        runner.set_routed_batch_prefill(batched);
+        let mut logits = vec![f16::from_f32(0.0); VOCAB as usize];
+        runner
+            .prefill_chunk(&prompt, 0, &mut logits)
+            .expect("chunked prefill succeeds under --kv-bits");
+        logits.iter().map(|v| v.to_f32()).collect()
+    };
+    assert_eq!(
+        run(true),
+        run(false),
+        "the batched seams changed the logits under --kv-bits"
     );
 }

@@ -234,6 +234,7 @@ impl RealForwardRunner {
                     layer,
                     position,
                     true,
+                    None,
                 )?;
             } else {
                 encode_full_attention_block(
@@ -248,6 +249,7 @@ impl RealForwardRunner {
                     kv,
                     layer,
                     position,
+                    None,
                 )?;
             }
             if capture_attention_intermediates {
@@ -413,6 +415,10 @@ impl RealForwardRunner {
                     )
                     .map_err(gpu_err)?;
             }
+            if let Some(tap) = qwen4.tap_capture.as_ref() {
+                tap.encode_layer(context, &pass, layer, (&qwen4.wide_x, 0))
+                    .map_err(gpu_err)?;
+            }
 
             // The "routed cb" pass carries over as the NEXT layer's
             // "cb1" implicitly -- no commit and no new pass here. It is
@@ -470,6 +476,9 @@ impl RealForwardRunner {
         qwen4.flush_gdn_norm_capture();
         qwen4.flush_layer_boundary_capture();
         qwen4.flush_attention_intermediate_capture();
+        if let Some(tap) = qwen4.tap_capture.as_ref() {
+            tap.append(position, token);
+        }
         self.kv.advance();
 
         if self.skip_head {
