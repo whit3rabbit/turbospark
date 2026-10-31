@@ -2254,3 +2254,25 @@ peak), and under `ulimit -l 1048576` it opened 48 unwired slots (6.4 GiB).
 Not checked: the `mlock`-failure fallback with the limit check passing, and
 any machine other than this one. Other families stay unwired until a paired
 sweep (`slots_wired` in the family profile) says otherwise.
+
+## Default settings benchmark (2026-10-31)
+
+Measured on merged `main` (`86bff0ad`) after wiring became the default, in
+one interleaved `tslab sweep` (experiment `qwen4-wired-default-bench`,
+protocol medium-review, 64 decode, 2,048 context, 3 clean pairs per
+candidate, null floor 1.12%). Decode tok/s against the default:
+
+| Arm | Median | Verdict | 95% CI | Peak |
+|---|---|---|---|---|
+| auto, 96 wired (default) | 16.59 | baseline | | 12.5 GiB |
+| auto, 48 unwired (previous default) | 15.23 | loss, -7.4% | [-10.4%, -6.5%] | 6.5 GiB |
+| 16 slots | 14.63 | loss, -12.6% | [-14.0%, -11.6%] | 2.5 GiB |
+| 96 unwired | 11.80 | loss, -23.4% | [-27.6%, -22.5%] | 12.5 GiB |
+| 128 wired | 18.06 | win, +9.8% | [+7.0%, +14.0%] | 16.5 GiB |
+
+Swap held at 11.5-12.2 GB from other sessions, more than in the first wired
+sweep (6.7-7.5 GB), and the unwired 96-slot loss grew from 2.7% to 23% with
+it. The wired default held up under that pressure. 128 wired slots still win,
+so a larger budget remains open as a memory decision. The full record, with
+verdict ids and conditions, is in `docs/BENCHMARKS.md` ("Qwen4Exp at default
+settings"). The Swift-1.5 IQ2_XS install was not measured.

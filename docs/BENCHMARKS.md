@@ -334,8 +334,9 @@ separate resource baseline. The row therefore covers only
 a partial case list). Its 6.870-7.530 tok/s is also this repo's slowest MoE
 reading by a wide margin -- 288 experts at top-10 against a 16-slot cache
 means most tokens miss and stream 2.6 GiB of resident core plus 36 GiB of
-packed experts, and nothing has tuned `ALLOWED_CACHE_SLOTS` for this
-routing profile yet.
+packed experts. The row pins 16 slots by design. The default cache since
+2026-10-31 is 96 wired slots on this machine (see "Qwen4Exp at default
+settings" below).
 
 **The frozen-protocol binary (`turbospark-bench --model`) confirms the
 oracle's reading and widens the known range.** Two interleaved runs
@@ -351,8 +352,48 @@ when a case starts (left over from whatever ran before it) swings that
 case's own hit rate more than it does for a family whose experts mostly
 fit the cache regardless of history. Treat any single tok/s reading for
 this family as a sample from a wide distribution rather than a
-reproducible number, until `ALLOWED_CACHE_SLOTS` is tuned for this routing
-profile.
+reproducible number at 16 slots.
+
+**Qwen4Exp at default settings (2026-10-31).** Not a frozen row: the
+oracle and `turbospark-bench` still pin 16 slots. This is what the CLI,
+server and app open by default since wired expert slots became the
+`qwen4_exp` default (`docs/QWEN4_EXP.md`, "Wired expert slots"). One
+interleaved `tslab sweep` (experiment `qwen4-wired-default-bench`), REAP-288
+MLX INT4 (`qwen4-reap288`), Apple M4 Max 36 GB, AC, release build of
+`86bff0ad`, protocol `medium-review` (426 prompt tokens), 64 decode, 2,048
+context, fresh process per run, 3 clean pairs per candidate. Null floor
+1.12% (record 1793483940210-95735-24), so the 2% default floor applied.
+Swap held at 11.5-12.2 GB from other sessions throughout.
+
+| Arm | Decode tok/s, median of clean runs | Paired against the default | 95% CI | Prefill tok/s | Peak footprint | Compressions per run |
+| --- | ---: | --- | --- | ---: | ---: | ---: |
+| Default: auto, 96 wired slots | 16.59 (15.12-17.62, n=15) | baseline | | 22.9 | 12.45-12.47 GiB | 0.01-0.97M |
+| Previous default: auto, 48 unwired | 15.23 (n=4) | loss, -7.4% | [-10.4%, -6.5%] | 20.8 | 6.47-6.48 GiB | 0 |
+| 16 slots (the frozen rows' setting) | 14.63 (n=3) | loss, -12.6% | [-14.0%, -11.6%] | 16.7 | 2.48-2.49 GiB | 0 |
+| 96 slots unwired | 11.80 (n=3) | loss, -23.4% | [-27.6%, -22.5%] | 17.2 | 12.46-12.47 GiB | 4.7-5.1M |
+| 128 slots wired | 18.06 (n=3) | win, +9.8% | [+7.0%, +14.0%] | 24.7 | 16.45-16.46 GiB | 0.9-1.3M |
+
+Verdict records: 1793485347180-40732-82 (48 unwired),
+1793485347184-40732-83 (16), 1793485347191-40732-84 (96 unwired),
+1793485347196-40732-85 (128 wired). Every wired arm's run record lists
+`expert_slots_wired` as engaged and every unwired arm's does not.
+
+- The default is about 8% faster than the previous one on decode, at about
+  6 GiB more peak footprint, and the wired pages are held for the life of
+  the process.
+- 128 wired slots won again (+9.8%) at 16.5 GiB. The default stays at 96
+  because the budget is a memory decision, not a speed one.
+- The unwired 96-slot loss (-23%) is larger here than in the first wired
+  sweep (-2.7%, swap 6.7-7.5 GB) and close to the earlier -18%. It tracks
+  host memory pressure, which is why wiring is the default.
+- The 16-slot arm reads about twice the frozen rows' 6.870-7.530 tok/s. Those
+  rows predate the RMSNorm fix (`docs/QWEN4_EXP.md`, 2026-10-31) and later
+  kernel work and were not re-measured, so do not read the difference as one
+  change's effect.
+- Not measured: the Swift-1.5 IQ2_XS install (not installed on this host),
+  `short-explanation`, and any machine other than this one. The wired slot
+  count scales with free memory, so a smaller machine opens fewer slots or
+  falls back to the unwired budget.
 
 **This family's quality-gate row is fixed and frozen (2026-09-04).** It used
 to have none: two back-to-back warm greedy generations of the identical
