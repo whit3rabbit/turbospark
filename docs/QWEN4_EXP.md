@@ -2166,3 +2166,38 @@ null run decoded at 11-12 tok/s against 16-17 tok/s in the sweep, so the
 host warmed between the two commands and the floor came from a colder
 state. Verdict records: 1793463977496-82579-44 (64),
 1793463977500-82579-45 (96), 1793463977505-82579-46 (128).
+
+## Why larger expert caches lose (2026-10-31)
+
+All three readings below are diagnostic runs, not quotable timings
+(experiment `qwen4-slots-trace`, protocol medium-review, auto against 96
+streamed slots).
+
+- Metal System Trace (`tslab trace`, 8 s window): GPU busy 33.8% at auto and
+  30.1% at 96 slots, the same kernel mix (the two MoE phases about 85%), the
+  same idle-gap medians. The GPU does no extra work at 96 slots.
+- Per-layer `cb1` timing (`TURBOSPARK_CB1_TRACE`, 2 timed runs per arm):
+  `commit()` stays under 1 ms per token in both arms, GPU busy stays at
+  18.7-18.9 ms per token, and wait minus busy grows from 7.9-8.4 to
+  13.5-14.3 ms per token. The excess shows on layers that read no expert
+  from disk too (mean 322 us at 96 slots against 152 us at auto), so it is
+  not the current layer's `pread`.
+- `vm_stat` around single-round runs, alternated twice: each 96-slot run
+  made 4.7-5.4 million compressions and 4.4-5.1 million decompressions, each
+  auto run 0 compressions and about 5,000 decompressions. Page-ins were
+  similar (2.8-3.1 million, model load included).
+
+Each slot is its own no-copy Metal buffer over pageable host memory
+(`real_forward_init.rs`), and a pass declares only the 10 slots it reads, so
+the binding work does not grow with the slot count. What grows is memory:
+at 96 slots (12.5 GiB peak) the kernel compresses anonymous pages and the
+GPU waits for them to come back. Which pages (the slots themselves or other
+processes' memory) was not measured; file-backed page cache is dropped, not
+compressed, so it is not the compressed set. At 64 slots (8.5 GiB) the wait did
+not grow, which fits a pressure threshold, not a per-slot cost. The
+threshold depends on what else holds memory: swap on this host was 2.2 GB
+before the sweep and 7.9 GB after these runs, with other sessions active.
+
+Untested: wiring the slot pages, a Metal residency set, or sizing auto from
+free memory, any of which might keep the 84% hit rate without the
+compressor churn.
