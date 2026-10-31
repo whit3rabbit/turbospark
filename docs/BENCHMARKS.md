@@ -381,8 +381,11 @@ Verdict records: 1793485347180-40732-82 (48 unwired),
 - The default is about 8% faster than the previous one on decode, at about
   6 GiB more peak footprint, and the wired pages are held for the life of
   the process.
-- 128 wired slots won again (+9.8%) at 16.5 GiB. The default stays at 96
-  because the budget is a memory decision, not a speed one.
+- 128 wired slots won again (+9.8%) at 16.5 GiB, but only on a quiet host.
+  Beside a 3 GiB process re-touching its memory, 128 was noise against 96
+  (-7.5%, 95% CI [-23.6%, +2.0%], record 1793488871593-92750-20) and that
+  process's pass over its own pages took about 9x longer. The default stays
+  at 96 (`docs/QWEN4_EXP.md`, "128 wired under a competing workload").
 - The unwired 96-slot loss (-23%) is larger here than in the first wired
   sweep (-2.7%, swap 6.7-7.5 GB) and close to the earlier -18%. It tracks
   host memory pressure, which is why wiring is the default.

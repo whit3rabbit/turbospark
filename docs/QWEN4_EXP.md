@@ -2276,3 +2276,25 @@ it. The wired default held up under that pressure. 128 wired slots still win,
 so a larger budget remains open as a memory decision. The full record, with
 verdict ids and conditions, is in `docs/BENCHMARKS.md` ("Qwen4Exp at default
 settings"). The Swift-1.5 IQ2_XS install was not measured.
+
+### 128 wired under a competing workload (2026-10-31)
+
+128 wired slots won quiet, so the next question was whether the budget
+should grow to give them by default (a wired fraction of 0.55 would). A
+3 GiB process (anonymous memory, every page re-touched every 2 s,
+each pass timed) ran beside one interleaved sweep (experiment
+`qwen4-wired-budget-load`, same workload as above, 3 clean pairs, swap at
+12.6 GB from other sessions).
+
+| Arm | Decode tok/s median | Verdict | Compressions per run | Other process's re-touch pass, median (p90) |
+|---|---|---|---|---|
+| auto, 96 wired (default) | 14.16 | baseline | 0.49-0.95M | 0.082 s (0.333 s) |
+| 128 wired | 13.10 | noise, -7.5%, 95% CI [-23.6%, +2.0%] | 3.7-4.6M | 0.764 s (0.804 s) |
+
+With something else holding memory, the 128-slot win is gone, and the
+other process pays for it: its pages get compressed, so each pass over them
+takes about 9x longer than beside the default (0.05-0.15 s before the model
+started). The default stays at half the free budget (96 slots here).
+Verdict record: 1793488871593-92750-20. One run in eight was dirty (foreign
+CPU), and the hog's pass time is a proxy for an app's working set, not a
+measured app.
