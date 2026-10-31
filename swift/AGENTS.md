@@ -275,6 +275,13 @@ staging files changed.
   (`ModelFeatureDescriptor.supportsAnePrefill`) are detected. Missing or
   incompatible ANE programs fall back gracefully to Steel at runtime rather
   than failing session open.
+- Expert cache locking (`AppExpertSlotsWiringOption`, Engine settings) defaults
+  to `.auto`, which the engine resolves per family: qwen4_exp gets a wired
+  cache at twice the slot budget, every other family stays unwired, and a
+  refused lock falls back to unwired instead of failing the load. The outcome
+  is `SessionInfo.expertSlotsWiring`. Wired memory is taken from the rest of
+  the system for the session's life, which is why only measured families
+  default to it.
 
 ## Checks
 

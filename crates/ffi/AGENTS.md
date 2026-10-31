@@ -17,7 +17,8 @@ The C ABI used by the Swift package and macOS app.
   contract. Rust tests alone do not validate the copied Swift header.
 - Trace enum strings and capability predicates through both Rust and Swift.
   Hardware detection symbols (`ts_chip_supports_ane_prefill`) and wire options
-  (`OpenOptions.anePrefill`, `SessionInfo.anePrefill`) must be mirrored across
+  (`OpenOptions.anePrefill`, `SessionInfo.anePrefill`,
+  `OpenOptions.expertSlotsWiring`, `SessionInfo.expertSlotsWiring`) must be mirrored across
   `turbospark.h`, `wire.rs`, `open.rs`, `testing.rs`, and `swift/TurboSpark`.
 - Server posture options in `ServerOptions` (`guardrails`, `prefixReuse`) are
   process-level, never per request: one engine's KV cache and guardrail posture

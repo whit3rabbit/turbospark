@@ -266,6 +266,16 @@ void ts_string_free(char *s);
  *                       mode the session ACTUALLY opened with is reported as
  *                       sessionInfo.expertResidency. A misspelling is refused
  *                       before the install is opened.
+ *   expertSlotsWiring "auto" | "on" | "off" | null (default auto). Whether
+ *                       the streamed expert slot cache is wired (mlock).
+ *                       "auto" wires it, at twice the auto slot budget, on
+ *                       qwen4_exp only, after checking the OS wire limit, and
+ *                       opens an unwired cache at the usual budget when the
+ *                       limit or the lock refuses. "on" wires any streamed
+ *                       family and fails the open on a refused lock. The
+ *                       environment variable TURBOSPARK_EXPERT_SLOTS_WIRED
+ *                       (1, 0) overrides this. The outcome is reported as
+ *                       sessionInfo.expertSlotsWiring.
  *   powerProfile      "performance" | "balanced" | "efficiency" | null
  *                       null ASKS THE OS, so Low Power Mode selects
  *                       efficiency. Name one explicitly when measuring.
@@ -540,6 +550,10 @@ void ts_image_buffer_free(uint8_t *bytes, size_t len);
  * or "mapped"), and expertCacheSlots the RESOLVED slot count: read both
  * before quoting any throughput or footprint, because one install differs by
  * 44.2 against 51.2 tok/s across slot counts.
+ *
+ * expertSlotsWiring is {requested, active, wiredBytes, reason}: the request
+ * the open used, whether the slot cache is wired, the bytes wired, and why it
+ * is not (null when it is). An auto request that fell back says why here.
  *
  * A NON-NULL BLOCK IS A STATEMENT ABOUT THE SESSION, NOT THE NEXT TURN.
  * Acceptance is argmax(target) == proposal, exact only at temperature 0, so

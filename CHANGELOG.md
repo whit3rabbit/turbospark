@@ -13,7 +13,29 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+### Added
+- Expert slot cache wiring: a new `expertSlotsWiring` open option (`auto`,
+  `on`, `off`), reported in session info, with a Lock Expert Cache picker
+  in the app's Engine settings and `TURBOSPARK_EXPERT_SLOTS_WIRED` (`1`,
+  `0`) as an override. A wired cache is locked with `mlock` so macOS cannot
+  compress it. On qwen4_exp an unwired cache above the auto size lost to
+  memory compression (96 slots: -18% decode) while a wired one won (96:
+  +6.7%, 128: +16.9%), with identical tokens.
+- tslab records the macOS compressor's page counts per run
+  (`host.compressions_delta`, `decompressions_delta`), registers the
+  `expert_slots_wired` and `qwen4_tap_file` knobs, and the qwen4exp profile
+  gains a `slots_wired` sweep.
+- qwen4_exp: opt-in multi-row prefill seams (`TURBOSPARK_ROUTED_BATCH`,
+  `TURBOSPARK_BATCHED_GEMV`), exact but no faster on real text, and
+  `TURBOSPARK_QWEN4_TAP_FILE` capture of DFlash2 drafter features.
+
 ### Changed
+- qwen4_exp wires its expert slot cache by default, at twice the auto slot
+  budget (96 slots on a 36 GB M4 Max, 12.4 GiB peak, against 48 unwired). The
+  open checks `RLIMIT_MEMLOCK` and `vm.user_wire_limit` first and falls back
+  to the unwired 48 when the limit or the lock refuses. The CLI, server, FFI
+  and catalog fit size memory against the same request. Other families are
+  unchanged.
 - Music 3 Turbo runs its DiT about 10x faster on Metal. Its dense FP16
   adapted matrices promote BF16 activations to F32 stages, which took a
   per-element kernel and ran each block op by op. A Turbo checkpoint at
@@ -23,6 +45,12 @@ when this file gets updated relative to the version bump and the tag.
   and other checkpoints keep their previous kernels.
 
 ### Fixed
+- qwen4_exp MLX installs decode correctly again. Since 00247a7f (2026-09-26)
+  every RMSNorm was applied as a direct weight, but MLX and Hugging Face store
+  these as offsets from one, so MLX installs decoded fluent-looking garbage.
+  The convention now follows the install's quant scheme (`gguf` direct,
+  otherwise centered). The real-install quality gate now reads perplexity
+  8.42 against the frozen 8.72 and needs a re-freeze.
 - macOS app: Music 3 now follows the checkpoint's flow profile when the Steps
   control is untouched, so the Turbo install runs 8 steps and an ordinary
   checkpoint 21, instead of 30 for both. The runtime filled the step count
