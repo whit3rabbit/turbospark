@@ -237,6 +237,18 @@ extension AppModel {
         }
         options.anePrefill = runtimeOptions.anePrefill.anePrefill
         options.expertSlotsWiring = runtimeOptions.expertSlotsWiring.expertSlotsWiring
+        // `.auto` needs no install facts; the others ask the engine what this
+        // install's open would do first (`AppExpertResidencyOption`).
+        let residency = runtimeOptions.expertResidency
+        let residencyPath = modelPath ?? selected?.path ?? ""
+        let preflight = residency == .auto || residencyPath.isEmpty
+            ? nil
+            : TurboSparkCapabilities.expertResidency(
+                forInstallAt: residencyPath, requested: residency.requested)
+        options.expertResidency = residency.openOption(preflight: preflight)
+        if !residencyPath.isEmpty {
+            expertResidencyFallbacks[residencyPath] = residency.fallback(preflight: preflight)
+        }
         let aneDir = runtimeOptions.anePrefillDir.trimmingCharacters(in: .whitespacesAndNewlines)
         if !aneDir.isEmpty {
             options.anePrefillDir = aneDir

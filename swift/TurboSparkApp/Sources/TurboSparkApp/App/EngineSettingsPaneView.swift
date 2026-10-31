@@ -32,6 +32,7 @@ struct EngineSettingsPaneView: View {
             speculationSection
             kvBitsSection
             anePrefillSection
+            expertResidencySection
             expertSlotsWiringSection
             inProcessServerSection
         }

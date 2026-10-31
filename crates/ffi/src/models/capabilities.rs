@@ -7,7 +7,7 @@
 //! stale host copy either hides a working control or offers one that fails at
 //! open.
 
-use model_io::{layer_is_quantized, rht_supported, KvQuant, ModelFamily};
+use model_io::{layer_is_quantized, rht_supported, KvQuant, ModelFamily, ResolvedExpertResidency};
 use serde_json::json;
 
 /// Whether `--kv-bits` would be accepted for an install with these facts:
@@ -40,6 +40,8 @@ pub(crate) fn family_capabilities_json(family: &str) -> String {
         "known": parsed.is_some(),
         "steeringSupported": parsed.map(steering_supported).unwrap_or(false),
         "anePrefillSupported": parsed.map(ane_prefill_supported).unwrap_or(false),
+        "mappedResidencySupported": parsed.map(mapped_residency_supported).unwrap_or(false),
+        "mappedResidencyMeasured": parsed.map(mapped_residency_measured).unwrap_or(false),
     })
     .to_string()
 }
@@ -49,6 +51,96 @@ pub(crate) fn family_capabilities_json(family: &str) -> String {
 /// (`ts_chip_supports_ane_prefill` answers that half).
 fn ane_prefill_supported(family: ModelFamily) -> bool {
     runtime::ANE_PREFILL_BUILT && family == ModelFamily::QwenGdnDense
+}
+
+#[cfg(target_os = "macos")]
+fn mapped_residency_supported(family: ModelFamily) -> bool {
+    runtime::mapped_residency_supported(family)
+}
+
+/// Mapped residency is served only by the macOS engine.
+#[cfg(not(target_os = "macos"))]
+fn mapped_residency_supported(_family: ModelFamily) -> bool {
+    false
+}
+
+/// Families where mapped residency has a real-install memory and speed
+/// measurement, not only a correctness check (`docs/EXPERT_RESIDENCY.md`:
+/// Gemma 4, 84% less counted memory and 35% more decode; Qwen3Moe and GptOss
+/// are verified byte-identical but not measured). A host marks mapped as
+/// unmeasured elsewhere. Widen only with a measurement.
+fn mapped_residency_measured(family: ModelFamily) -> bool {
+    mapped_residency_supported(family) && family == ModelFamily::Gemma4
+}
+
+/// What an open would do with a residency request on one install, decided
+/// from facts the caller already read, so the rule is testable without one.
+///
+/// `routed` is whether the install has a routed expert layout: a dense
+/// install has nothing to place, so residency is not applicable there and a
+/// host should send `auto`. `resolved` is
+/// `runtime::resolve_expert_residency_for_install`'s answer, which already
+/// refuses a mapped request past Metal's working set. The family refusal is
+/// applied later in the open (`open_expert_streamers`), so it is checked here
+/// too, or a host would offer mapped on qwen4exp and the open would fail.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn residency_preflight_json(
+    routed: bool,
+    requested: &str,
+    family_mapped: bool,
+    resolved: Result<ResolvedExpertResidency, String>,
+    family_refusal: Option<String>,
+) -> serde_json::Value {
+    let (resolved, refusal) = if !routed {
+        (None, None)
+    } else {
+        match resolved {
+            Err(reason) => (None, Some(reason)),
+            Ok(ResolvedExpertResidency::Mapped) if !family_mapped => (None, family_refusal),
+            Ok(mode) => (Some(mode.as_str()), None),
+        }
+    };
+    json!({
+        "applicable": routed,
+        "requested": requested,
+        "resolved": resolved,
+        "refusal": refusal,
+    })
+}
+
+/// `residency_preflight_json` for the install at `path`, with the same
+/// resolver and family rule the open uses. `requested` is parsed like the
+/// `expertResidency` open option, so a typo is refused by name.
+#[cfg(target_os = "macos")]
+pub(crate) fn expert_residency_for_install_json(
+    path: &str,
+    requested: &str,
+) -> Result<String, String> {
+    let dir = std::path::Path::new(path);
+    let request = crate::wire::expert_residency(&Some(requested.to_string()))?;
+    let arch = repack::peek_manifest_arch(dir)?;
+    let routed = model_io::load_packed_experts_layout(
+        dir,
+        model_io::PACKED_EXPERTS_LAYOUT_DEFAULT_MAX_BYTES,
+    )
+    .map(|layout| layout.num_layers > 0)
+    .unwrap_or(false);
+    let resolved = runtime::resolve_expert_residency_for_install(
+        dir,
+        arch.family,
+        request,
+        runtime::physical_memory(),
+    );
+    Ok(residency_preflight_json(
+        routed,
+        &requested.trim().to_ascii_lowercase(),
+        runtime::mapped_residency_supported(arch.family),
+        resolved,
+        runtime::mapped_residency_refusal(arch.family)
+            .err()
+            .map(|e| e.to_string()),
+    )
+    .to_string())
 }
 
 #[cfg(target_os = "macos")]
@@ -91,7 +183,70 @@ mod tests {
         assert_eq!(v["known"], false);
         assert_eq!(v["steeringSupported"], false);
         assert_eq!(v["anePrefillSupported"], false);
+        assert_eq!(v["mappedResidencySupported"], false);
+        assert_eq!(v["mappedResidencyMeasured"], false);
         assert_eq!(v["family"], "not-a-family");
+    }
+
+    #[test]
+    fn residency_preflight_follows_the_open() {
+        use ResolvedExpertResidency::{Mapped, Streamed};
+        let refusal = || Some("not wired".to_string());
+        // Dense: nothing to place, whatever was asked.
+        let v = residency_preflight_json(false, "mapped", true, Ok(Mapped), refusal());
+        assert_eq!(v["applicable"], false);
+        assert!(v["resolved"].is_null() && v["refusal"].is_null());
+        // Mapped on a family with a mapped arm, inside the working set.
+        let v = residency_preflight_json(true, "mapped", true, Ok(Mapped), refusal());
+        assert_eq!(v["resolved"], "mapped");
+        assert!(v["refusal"].is_null());
+        // Mapped on a family without one: the open's family refusal.
+        let v = residency_preflight_json(true, "mapped", false, Ok(Mapped), refusal());
+        assert!(v["resolved"].is_null());
+        assert_eq!(v["refusal"], "not wired");
+        // Past the working set: the resolver's own refusal.
+        let v = residency_preflight_json(true, "mapped", true, Err("too big".into()), refusal());
+        assert!(v["resolved"].is_null());
+        assert_eq!(v["refusal"], "too big");
+        // Streamed is never refused, on any family.
+        let v = residency_preflight_json(true, "streamed", false, Ok(Streamed), refusal());
+        assert_eq!(v["resolved"], "streamed");
+        assert!(v["refusal"].is_null());
+        assert_eq!(v["requested"], "streamed");
+    }
+
+    /// The real resolver on a real install: `TURBOSPARK_RESIDENCY_INSTALL`
+    /// names an MoE install directory. Streamed is always taken, and mapped
+    /// is taken or refused exactly as the family's mapped arm says (a
+    /// working-set refusal on a supported family is also a refusal).
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "needs TURBOSPARK_RESIDENCY_INSTALL, an MoE install directory"]
+    fn residency_preflight_on_a_real_install() {
+        let path = std::env::var("TURBOSPARK_RESIDENCY_INSTALL").expect("set the install path");
+        let family = repack::peek_manifest_arch(std::path::Path::new(&path))
+            .unwrap()
+            .family;
+        let ask = |requested: &str| -> serde_json::Value {
+            let json = expert_residency_for_install_json(&path, requested).unwrap();
+            eprintln!("{requested}: {json}");
+            serde_json::from_str(&json).unwrap()
+        };
+        let streamed = ask("streamed");
+        assert_eq!(streamed["applicable"], true, "not an MoE install");
+        assert_eq!(streamed["resolved"], "streamed");
+        let mapped = ask("mapped");
+        if !runtime::mapped_residency_supported(family) {
+            // Refused either way: the working-set guard runs first, as in the
+            // open (qwen4exp's 35.65 GiB table trips it before the family
+            // check is reached), and the family refusal otherwise.
+            assert!(mapped["resolved"].is_null());
+            assert!(mapped["refusal"].is_string());
+        } else {
+            assert!(mapped["resolved"] == "mapped" || mapped["refusal"].is_string());
+        }
+        assert!(ask("auto")["resolved"].is_string());
+        assert!(expert_residency_for_install_json(&path, "mmap").is_err());
     }
 
     #[cfg(target_os = "macos")]
@@ -110,6 +265,19 @@ mod tests {
             assert_eq!(
                 v["anePrefillSupported"],
                 runtime::ANE_PREFILL_BUILT && family == ModelFamily::QwenGdnDense,
+                "{}",
+                family.as_str()
+            );
+            assert_eq!(
+                v["mappedResidencySupported"],
+                runtime::mapped_residency_supported(family),
+                "{}",
+                family.as_str()
+            );
+            // Measured implies supported: never flag a family as measured
+            // for a mode its open refuses.
+            assert!(
+                v["mappedResidencyMeasured"] == false || v["mappedResidencySupported"] == true,
                 "{}",
                 family.as_str()
             );

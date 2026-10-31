@@ -14,6 +14,16 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- macOS app: an Expert Residency setting (Auto, Streamed, Mapped) in Engine
+  settings, with Cache Slots beside it (previously only in the Inspector) and
+  a Resolved row. Mapped is sent only to models whose open would take it, and
+  other models open as Auto with the reason shown, because one global setting
+  must not stop qwen4exp or an oversized MoE install from loading. A family
+  without a mapped memory and speed measurement (all but Gemma 4) is marked
+  with an info icon. The speculation picker gains Adaptive.
+- FFI: `ts_expert_residency_for_install_json` answers what an open would do
+  with a residency request on one install, and the family capabilities gain
+  `mappedResidencySupported` and `mappedResidencyMeasured`.
 - Expert slot cache wiring: a new `expertSlotsWiring` open option (`auto`,
   `on`, `off`), reported in session info, with a Lock Expert Cache picker
   in the app's Engine settings and `TURBOSPARK_EXPERT_SLOTS_WIRED` (`1`,

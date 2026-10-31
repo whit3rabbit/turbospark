@@ -490,6 +490,43 @@ pub unsafe extern "C" fn ts_family_capabilities_json(
     })
 }
 
+/// What `ts_session_open` would do with an `expertResidency` request
+/// (`auto`, `streamed` or `mapped`) on the install at `path`, without opening
+/// it: `{"applicable","requested","resolved","refusal"}`. `applicable` is
+/// false on an install with no routed experts (send `auto`). `resolved` is
+/// `"streamed"` or `"mapped"` when the open would take the request, and null
+/// with `refusal` naming why when it would refuse it (a family with no mapped
+/// arm, or an expert table past Metal's working set). Always `applicable:
+/// false` off macOS, where nothing decodes.
+#[no_mangle]
+pub unsafe extern "C" fn ts_expert_residency_for_install_json(
+    path: *const c_char,
+    requested: *const c_char,
+    out: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        let path =
+            strings::required(path, "path").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let requested = strings::required(requested, "requested")
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        #[cfg(target_os = "macos")]
+        let json = models::expert_residency_for_install_json(path, requested)
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        #[cfg(not(target_os = "macos"))]
+        let json = {
+            let _ = path;
+            serde_json::json!({
+                "applicable": false,
+                "requested": requested,
+                "resolved": null,
+                "refusal": null,
+            })
+            .to_string()
+        };
+        strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
 /// Returns 1 if the host chip is an Apple Silicon M4 or newer capable of ANE prefill,
 /// 0 otherwise.
 #[no_mangle]
