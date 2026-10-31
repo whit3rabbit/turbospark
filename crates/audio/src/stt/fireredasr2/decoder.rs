@@ -150,6 +150,8 @@ impl Attention {
         for head in 0..self.heads {
             let query_head = &query[head * self.head_dim..(head + 1) * self.head_dim];
             let base = head * projected.stride * self.head_dim;
+            // The index also feeds offsets or math beyond this buffer, so an iterator is not simpler.
+            #[allow(clippy::needless_range_loop)]
             for row in 0..projected.rows {
                 let key =
                     &projected.keys[base + row * self.head_dim..base + (row + 1) * self.head_dim];
@@ -158,6 +160,8 @@ impl Attention {
             ops::softmax_row(&mut scores);
             for feature in 0..self.head_dim {
                 let mut sum = 0.0;
+                // The index also feeds offsets or math beyond this buffer, so an iterator is not simpler.
+                #[allow(clippy::needless_range_loop)]
                 for row in 0..projected.rows {
                     sum += scores[row] * projected.values[base + row * self.head_dim + feature];
                 }
@@ -339,6 +343,8 @@ impl Decoder {
             &positions[row * width..],
             width,
         );
+        // The index also feeds offsets or math beyond this buffer, so an iterator is not simpler.
+        #[allow(clippy::needless_range_loop)]
         for index in 0..self.layers.len() {
             hidden = self.layers[index].step(&hidden, &mut beam.cache[index], &cross_keys[index]);
         }
@@ -346,6 +352,7 @@ impl Decoder {
         self.output_projection.forward(&hidden, 1)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn decode(
         &self,
         encoder: &[f32],

@@ -183,7 +183,7 @@ fn t2s_step_logits_match_the_reference() {
 #[test]
 fn sampled_distribution_matches_the_reference() {
     let traces = read_json(&testdata("pipeline/traces.json"));
-    let logits = f32_vec(&traces["t2s_logits"].as_array().unwrap().last().unwrap());
+    let logits = f32_vec(traces["t2s_logits"].as_array().unwrap().last().unwrap());
     let want = f32_vec(&traces["sampled_probs"].as_array().unwrap()[0]);
     let got = super::t2s::sample_distribution(&logits, &[super::t2s::BOS], 0.8, 30, 0.8, 10.0);
     // 8194-way probability vector; the f32 chain against the f64

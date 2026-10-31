@@ -174,12 +174,10 @@ impl Lexicon {
         }
 
         // Special NNP handling if not found or no primary stress
-        if ps.is_none() || (is_nnp && !ps.as_ref()?.contains('\u{2c8}')) {
-            if is_nnp {
-                if let Some((nnp_ps, nnp_rating)) = self.get_nnp(&current_word) {
-                    ps = Some(nnp_ps);
-                    rating = nnp_rating;
-                }
+        if is_nnp && (ps.is_none() || !ps.as_ref()?.contains('\u{2c8}')) {
+            if let Some((nnp_ps, nnp_rating)) = self.get_nnp(&current_word) {
+                ps = Some(nnp_ps);
+                rating = nnp_rating;
             }
         }
 
@@ -190,12 +188,9 @@ impl Lexicon {
         let mut ps_parts = Vec::new();
         for c in word.chars() {
             if c.is_alphabetic() {
-                if let Some(entry) = self.golds.get(&c.to_uppercase().to_string()) {
-                    if let PhonemeEntry::Simple(p) = entry {
-                        ps_parts.push(p.clone());
-                    }
-                } else {
-                    return None;
+                let entry = self.golds.get(&c.to_uppercase().to_string())?;
+                if let PhonemeEntry::Simple(p) = entry {
+                    ps_parts.push(p.clone());
                 }
             }
         }
@@ -229,8 +224,8 @@ impl Lexicon {
         let s = stress.unwrap();
 
         if s < -1.0 {
-            return ps.replace(primary, "").replace(secondary, "");
-        } else if s == -1.0 || (s >= -0.5 && s <= 0.0 && ps.contains(primary)) {
+            return ps.replace([primary, secondary], "");
+        } else if s == -1.0 || ((-0.5..=0.0).contains(&s) && ps.contains(primary)) {
             return ps
                 .replace(secondary, "")
                 .replace(primary, &secondary.to_string());
@@ -650,10 +645,10 @@ impl Lexicon {
                 ctx,
             );
         }
-        if current_word.ends_with("'") {
+        if let Some(singular) = current_word.strip_suffix('\'') {
             // A plural possessive can need inflection even when its singular
             // is the only dictionary entry, such as dogs' derived from dog.
-            return self.get_word(&current_word[..current_word.len() - 1], tag, stress, ctx);
+            return self.get_word(singular, tag, stress, ctx);
         }
 
         // Try stemming

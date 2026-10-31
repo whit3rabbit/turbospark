@@ -59,6 +59,9 @@ struct DiTBlock {
     skip_in: Option<(Vec<f32>, Vec<f32>)>,
 }
 
+/// One timestep embedder MLP: first weight and bias, second weight and bias.
+type TimeEmbedder = (Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>);
+
 pub struct S2A {
     pub config: S2AConfig,
     hidden: usize,
@@ -73,7 +76,7 @@ pub struct S2A {
     length_norms: Vec<(Vec<f32>, Vec<f32>)>,
     length_final: (Vec<f32>, Vec<f32>),
     prompt_cond: Vec<f32>,
-    t_embedders: [(Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>); 2],
+    t_embedders: [TimeEmbedder; 2],
     input_proj: (Vec<f32>, Vec<f32>),
     mu_projection: (Vec<f32>, Vec<f32>),
     blocks: Vec<DiTBlock>,
@@ -193,7 +196,7 @@ impl S2A {
                 skip_in,
             });
         }
-        let t_embed = |prefix: &str| -> Result<(Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>)> {
+        let t_embed = |prefix: &str| -> Result<TimeEmbedder> {
             Ok((
                 load_tensor(file, &format!("{prefix}.time_mlp.0.weight"), &[hid, 256])?,
                 load_tensor(file, &format!("{prefix}.time_mlp.0.bias"), &[hid])?,
@@ -921,14 +924,7 @@ impl S2A {
     }
 }
 
-fn apply_linear(
-    x: &[f32],
-    w: &Vec<f32>,
-    b: &Vec<f32>,
-    rows: usize,
-    k: usize,
-    n: usize,
-) -> Vec<f32> {
+fn apply_linear(x: &[f32], w: &[f32], b: &[f32], rows: usize, k: usize, n: usize) -> Vec<f32> {
     ops::linear(x, w, Some(b), rows, k, n)
 }
 

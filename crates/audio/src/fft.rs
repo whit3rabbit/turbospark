@@ -748,6 +748,8 @@ mod complex_plan_tests {
             .collect();
         let fwd = plan.forward(&input).unwrap();
         let mut worst = 0.0f64;
+        // The index also feeds offsets or math beyond this buffer, so an iterator is not simpler.
+        #[allow(clippy::needless_range_loop)]
         for k in 0..n {
             let (mut re, mut im) = (0.0f64, 0.0f64);
             for (j, x) in input.iter().enumerate() {
@@ -772,6 +774,8 @@ mod complex_plan_tests {
             .collect();
         let out = plan.inverse(&input).unwrap();
         let mut worst = 0.0f64;
+        // The index also feeds offsets or math beyond this buffer, so an iterator is not simpler.
+        #[allow(clippy::needless_range_loop)]
         for t in 0..n {
             let (mut re, mut im) = (0.0f64, 0.0f64);
             for (k, x) in input.iter().enumerate() {
@@ -796,6 +800,8 @@ mod complex_plan_tests {
             .collect();
         // Forward must match a direct DFT.
         let fwd = plan.forward(&input).unwrap();
+        // The index also feeds offsets or math beyond this buffer, so an iterator is not simpler.
+        #[allow(clippy::needless_range_loop)]
         for k in 0..n {
             let (mut re, mut im) = (0.0f64, 0.0f64);
             for (j, x) in input.iter().enumerate() {

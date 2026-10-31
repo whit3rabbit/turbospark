@@ -974,9 +974,7 @@ impl TransformerLayer {
                     acc += x[c * frames + t] * wr[c];
                 }
                 // gelu tanh approximation.
-                *h = 0.5
-                    * acc
-                    * (1.0 + (0.7978845608028654 * (acc + 0.044715 * acc * acc * acc)).tanh());
+                *h = 0.5 * acc * (1.0 + (0.797_884_6 * (acc + 0.044715 * acc * acc * acc)).tanh());
             }
             let mut o = vec![0.0f32; d];
             for (oi, ov) in o.iter_mut().enumerate() {
@@ -1063,11 +1061,8 @@ impl Mimi {
             causal: true,
             reflect_edge: true,
         };
-        let upsample = StreamableConvTranspose1d::load(
-            file,
-            &format!("upsample.convtr.convtr.convtr.weight"),
-            dim,
-        )?;
+        let upsample =
+            StreamableConvTranspose1d::load(file, "upsample.convtr.convtr.convtr.weight", dim)?;
         Ok(Mimi {
             config,
             encoder,

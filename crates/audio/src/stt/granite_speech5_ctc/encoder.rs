@@ -109,6 +109,8 @@ impl Attention {
                 for query_pos in 0..self.context {
                     let query_row = block * self.context + query_pos;
                     let q_start = query_row * self.hidden + head * self.head_dim;
+                    // The index also feeds offsets or math beyond this buffer, so an iterator is not simpler.
+                    #[allow(clippy::needless_range_loop)]
                     for key_pos in 0..self.context {
                         let key_row = block * self.context + key_pos;
                         let k_start = key_row * self.hidden + head * self.head_dim;
@@ -129,6 +131,8 @@ impl Attention {
                     let out_start = query_row * self.hidden + head * self.head_dim;
                     for dim in 0..self.head_dim {
                         let mut value = 0.0f32;
+                        // The index also feeds offsets or math beyond this buffer, so an iterator is not simpler.
+                        #[allow(clippy::needless_range_loop)]
                         for key_pos in 0..self.context {
                             let value_row = block * self.context + key_pos;
                             value += scores[key_pos]
@@ -224,7 +228,7 @@ impl Convolution {
             1,
             self.channels,
         );
-        let output_rows = (rows + self.stride - 1) / self.stride;
+        let output_rows = rows.div_ceil(self.stride);
         let mut normalized = vec![0.0f32; output_rows * self.channels];
         for row in 0..output_rows {
             for channel in 0..self.channels {
@@ -456,6 +460,23 @@ fn collapse_final_logits(
     collapse.finish()
 }
 
+fn load_tensor(file: &SafetensorsFile, name: &str, expected_shape: &[usize]) -> Result<Vec<f32>> {
+    let descriptor = file.descriptor(name).ok_or_else(|| SpeechError::Tensor {
+        name: name.to_owned(),
+        why: "missing tensor".into(),
+    })?;
+    if descriptor.shape != expected_shape {
+        return Err(SpeechError::Tensor {
+            name: name.to_owned(),
+            why: format!("shape {:?}, expected {expected_shape:?}", descriptor.shape),
+        });
+    }
+    file.load_as_f32(name).map_err(|error| SpeechError::Tensor {
+        name: name.to_owned(),
+        why: format!("cannot decode tensor as f32: {error}"),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{apply_midpoint_conditioning, collapse_final_logits};
@@ -516,21 +537,4 @@ mod tests {
         assert_eq!(expected, vec![1, 2, 1]);
         assert_eq!(collapse_final_logits(&projection, &hidden, 19, 0), expected);
     }
-}
-
-fn load_tensor(file: &SafetensorsFile, name: &str, expected_shape: &[usize]) -> Result<Vec<f32>> {
-    let descriptor = file.descriptor(name).ok_or_else(|| SpeechError::Tensor {
-        name: name.to_owned(),
-        why: "missing tensor".into(),
-    })?;
-    if descriptor.shape != expected_shape {
-        return Err(SpeechError::Tensor {
-            name: name.to_owned(),
-            why: format!("shape {:?}, expected {expected_shape:?}", descriptor.shape),
-        });
-    }
-    file.load_as_f32(name).map_err(|error| SpeechError::Tensor {
-        name: name.to_owned(),
-        why: format!("cannot decode tensor as f32: {error}"),
-    })
 }

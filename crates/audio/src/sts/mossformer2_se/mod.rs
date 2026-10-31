@@ -561,6 +561,7 @@ impl FlashLayer {
 /// `q*`/`k*` are `[groups * GROUP_SIZE, QUERY_KEY_DIM]`, `v` is
 /// `[groups * GROUP_SIZE, value_dim]`; `frames` is the unpadded length
 /// used for the linear-attention normalizer.
+#[allow(clippy::too_many_arguments)]
 fn quad_plus_linear_attention(
     quad_q: &[f32],
     quad_k: &[f32],

@@ -277,7 +277,7 @@ impl NemotronAsrConfig {
         let decoder_hidden = positive(decoder, "pred_hidden")?;
         let decoder_layers = positive(decoder, "pred_rnn_layers")?;
         let joint_hidden = positive(joint, "joint_hidden")?;
-        if boolean(decoder, "blank_as_pad")? != true
+        if !boolean(decoder, "blank_as_pad")?
             || vocabulary.len() != vocab_size
             || positive(joint, "num_classes")? != vocab_size
             || positive(joint, "encoder_hidden")? != encoder_hidden
@@ -334,105 +334,6 @@ impl NemotronAsrConfig {
                     .find_map(|(name, index)| (name == &self.default_language).then_some(*index))
             })
             .unwrap_or(0)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    fn tiny_config() -> Value {
-        json!({
-            "model_type": "nemotron_asr",
-            "preprocessor": {
-                "sample_rate": 16000,
-                "features": 4,
-                "n_fft": 8,
-                "window_size": 0.00025,
-                "window_stride": 0.000125,
-                "window": "hann",
-                "normalize": "NA",
-                "preemph": 0.97,
-                "log_zero_guard_value": 0.000000059604644775390625
-            },
-            "encoder": {
-                "feat_in": 4,
-                "n_layers": 1,
-                "d_model": 8,
-                "n_heads": 2,
-                "ff_expansion_factor": 2,
-                "subsampling_factor": 2,
-                "subsampling_conv_channels": 2,
-                "conv_kernel_size": 3,
-                "causal_downsampling": true,
-                "conv_context_size": "causal",
-                "conv_norm_type": "layer_norm",
-                "att_context_style": "chunked_limited",
-                "att_context_size": [[4, 1], [4, 0]],
-                "use_bias": false,
-                "self_attention_model": "rel_pos",
-                "xscaling": false,
-                "pos_emb_max_len": 64
-            },
-            "prompt": {
-                "num_prompts": 2,
-                "prompt_hidden": 16,
-                "prompt_dictionary": {"en-US": 0, "auto": 1}
-            },
-            "decoder": {
-                "vocab_size": 3,
-                "pred_hidden": 4,
-                "pred_rnn_layers": 2,
-                "blank_as_pad": true
-            },
-            "joint": {
-                "num_classes": 3,
-                "joint_hidden": 4,
-                "encoder_hidden": 8,
-                "pred_hidden": 4,
-                "activation": "relu"
-            },
-            "vocabulary": ["<unk>", "▁hi", "!"],
-            "default_language": "auto",
-            "default_att_context_size": [4, 1],
-            "max_symbols": 5
-        })
-    }
-
-    #[test]
-    fn profile_pin_is_immutable_and_language_aliases_resolve() {
-        assert_eq!(
-            NEMOTRON_3_5_ASR.repository,
-            "mlx-community/nemotron-3.5-asr-streaming-0.6b"
-        );
-        assert_eq!(
-            NEMOTRON_3_5_ASR.revision,
-            "e550040c0478027ed679b2b6b0d055502c103663"
-        );
-        let config = NemotronAsrConfig::from_json(&tiny_config()).unwrap();
-        assert_eq!(config.prompt_index("en-US"), 0);
-        assert_eq!(config.prompt_index("unknown"), 1);
-    }
-
-    #[test]
-    fn rejects_encoder_or_language_prompt_variants_outside_the_checkpoint_graph() {
-        let mut value = tiny_config();
-        value["encoder"]["causal_downsampling"] = json!(false);
-        assert!(NemotronAsrConfig::from_json(&value).is_err());
-
-        let mut value = tiny_config();
-        value["prompt"]["prompt_dictionary"]["en-US"] = json!(2);
-        assert!(NemotronAsrConfig::from_json(&value).is_err());
-    }
-
-    #[test]
-    fn filters_language_tags_like_the_reference_tokenizer() {
-        assert!(is_special_piece("<en-US>"));
-        assert!(is_special_piece("<zh-Hant>"));
-        assert!(is_special_piece("<unk>"));
-        assert!(!is_special_piece("<unknown>"));
-        assert!(!is_special_piece("▁hello"));
     }
 }
 
@@ -699,4 +600,103 @@ fn is_special_piece(piece: &str) -> bool {
         && language.bytes().all(|byte| byte.is_ascii_lowercase())
         && (2..=4).contains(&region.len())
         && region.bytes().all(|byte| byte.is_ascii_alphabetic())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn tiny_config() -> Value {
+        json!({
+            "model_type": "nemotron_asr",
+            "preprocessor": {
+                "sample_rate": 16000,
+                "features": 4,
+                "n_fft": 8,
+                "window_size": 0.00025,
+                "window_stride": 0.000125,
+                "window": "hann",
+                "normalize": "NA",
+                "preemph": 0.97,
+                "log_zero_guard_value": 0.000_000_059_604_644_775_390_63
+            },
+            "encoder": {
+                "feat_in": 4,
+                "n_layers": 1,
+                "d_model": 8,
+                "n_heads": 2,
+                "ff_expansion_factor": 2,
+                "subsampling_factor": 2,
+                "subsampling_conv_channels": 2,
+                "conv_kernel_size": 3,
+                "causal_downsampling": true,
+                "conv_context_size": "causal",
+                "conv_norm_type": "layer_norm",
+                "att_context_style": "chunked_limited",
+                "att_context_size": [[4, 1], [4, 0]],
+                "use_bias": false,
+                "self_attention_model": "rel_pos",
+                "xscaling": false,
+                "pos_emb_max_len": 64
+            },
+            "prompt": {
+                "num_prompts": 2,
+                "prompt_hidden": 16,
+                "prompt_dictionary": {"en-US": 0, "auto": 1}
+            },
+            "decoder": {
+                "vocab_size": 3,
+                "pred_hidden": 4,
+                "pred_rnn_layers": 2,
+                "blank_as_pad": true
+            },
+            "joint": {
+                "num_classes": 3,
+                "joint_hidden": 4,
+                "encoder_hidden": 8,
+                "pred_hidden": 4,
+                "activation": "relu"
+            },
+            "vocabulary": ["<unk>", "▁hi", "!"],
+            "default_language": "auto",
+            "default_att_context_size": [4, 1],
+            "max_symbols": 5
+        })
+    }
+
+    #[test]
+    fn profile_pin_is_immutable_and_language_aliases_resolve() {
+        assert_eq!(
+            NEMOTRON_3_5_ASR.repository,
+            "mlx-community/nemotron-3.5-asr-streaming-0.6b"
+        );
+        assert_eq!(
+            NEMOTRON_3_5_ASR.revision,
+            "e550040c0478027ed679b2b6b0d055502c103663"
+        );
+        let config = NemotronAsrConfig::from_json(&tiny_config()).unwrap();
+        assert_eq!(config.prompt_index("en-US"), 0);
+        assert_eq!(config.prompt_index("unknown"), 1);
+    }
+
+    #[test]
+    fn rejects_encoder_or_language_prompt_variants_outside_the_checkpoint_graph() {
+        let mut value = tiny_config();
+        value["encoder"]["causal_downsampling"] = json!(false);
+        assert!(NemotronAsrConfig::from_json(&value).is_err());
+
+        let mut value = tiny_config();
+        value["prompt"]["prompt_dictionary"]["en-US"] = json!(2);
+        assert!(NemotronAsrConfig::from_json(&value).is_err());
+    }
+
+    #[test]
+    fn filters_language_tags_like_the_reference_tokenizer() {
+        assert!(is_special_piece("<en-US>"));
+        assert!(is_special_piece("<zh-Hant>"));
+        assert!(is_special_piece("<unk>"));
+        assert!(!is_special_piece("<unknown>"));
+        assert!(!is_special_piece("▁hello"));
+    }
 }

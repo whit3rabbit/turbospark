@@ -1127,6 +1127,74 @@ fn rel_shift(input: &[f32], heads: usize, time: usize, pos_len: usize) -> Vec<f3
     output
 }
 
+fn split_heads(input: &[f32], time: usize, heads: usize, head_dim: usize) -> Vec<f32> {
+    let hidden = heads * head_dim;
+    let mut output = vec![0.0; input.len()];
+    for frame in 0..time {
+        for head in 0..heads {
+            let src = frame * hidden + head * head_dim;
+            let dst = head * time * head_dim + frame * head_dim;
+            output[dst..dst + head_dim].copy_from_slice(&input[src..src + head_dim]);
+        }
+    }
+    output
+}
+
+fn merge_heads(input: &[f32], time: usize, heads: usize, head_dim: usize) -> Vec<f32> {
+    let hidden = heads * head_dim;
+    let mut output = vec![0.0; input.len()];
+    for frame in 0..time {
+        for head in 0..heads {
+            let src = head * time * head_dim + frame * head_dim;
+            let dst = frame * hidden + head * head_dim;
+            output[dst..dst + head_dim].copy_from_slice(&input[src..src + head_dim]);
+        }
+    }
+    output
+}
+
+fn dot(left: &[f32], right: &[f32]) -> f32 {
+    left.iter().zip(right).map(|(a, b)| a * b).sum()
+}
+
+fn transpose_time_channels(input: &[f32], time: usize, channels: usize) -> Vec<f32> {
+    let mut output = vec![0.0; input.len()];
+    for t in 0..time {
+        for channel in 0..channels {
+            output[channel * time + t] = input[t * channels + channel];
+        }
+    }
+    output
+}
+
+fn transpose_channels_time(input: &[f32], time: usize, channels: usize) -> Vec<f32> {
+    let mut output = vec![0.0; input.len()];
+    for channel in 0..channels {
+        for t in 0..time {
+            output[t * channels + channel] = input[channel * time + t];
+        }
+    }
+    output
+}
+
+fn add_scaled(target: &mut [f32], values: &[f32], scale: f32) {
+    for (target, value) in target.iter_mut().zip(values) {
+        *target += value * scale;
+    }
+}
+
+fn relu(values: &mut [f32]) {
+    for value in values {
+        *value = value.max(0.0);
+    }
+}
+
+fn silu(values: &mut [f32]) {
+    for value in values {
+        *value *= 1.0 / (1.0 + (-*value).exp());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{dot, rel_shift, scaled_score, split_heads, Linear, RelPosAttention};
@@ -1223,6 +1291,8 @@ mod tests {
                 for query in 0..time {
                     let query_chunk = query / chunk;
                     let mut scores = vec![f32::NEG_INFINITY; time];
+                    // The index also feeds offsets or math beyond this buffer, so an iterator is not simpler.
+                    #[allow(clippy::needless_range_loop)]
                     for key in 0..time {
                         let key_chunk = key / chunk;
                         if query_chunk >= key_chunk && query_chunk - key_chunk <= left_chunks {
@@ -1444,73 +1514,5 @@ mod tests {
         let got = (time, fnv1a_bits(&encoded));
         eprintln!("OFFLINE_DIGEST {got:?}");
         assert_eq!(got, OFFLINE_DIGEST);
-    }
-}
-
-fn split_heads(input: &[f32], time: usize, heads: usize, head_dim: usize) -> Vec<f32> {
-    let hidden = heads * head_dim;
-    let mut output = vec![0.0; input.len()];
-    for frame in 0..time {
-        for head in 0..heads {
-            let src = frame * hidden + head * head_dim;
-            let dst = head * time * head_dim + frame * head_dim;
-            output[dst..dst + head_dim].copy_from_slice(&input[src..src + head_dim]);
-        }
-    }
-    output
-}
-
-fn merge_heads(input: &[f32], time: usize, heads: usize, head_dim: usize) -> Vec<f32> {
-    let hidden = heads * head_dim;
-    let mut output = vec![0.0; input.len()];
-    for frame in 0..time {
-        for head in 0..heads {
-            let src = head * time * head_dim + frame * head_dim;
-            let dst = frame * hidden + head * head_dim;
-            output[dst..dst + head_dim].copy_from_slice(&input[src..src + head_dim]);
-        }
-    }
-    output
-}
-
-fn dot(left: &[f32], right: &[f32]) -> f32 {
-    left.iter().zip(right).map(|(a, b)| a * b).sum()
-}
-
-fn transpose_time_channels(input: &[f32], time: usize, channels: usize) -> Vec<f32> {
-    let mut output = vec![0.0; input.len()];
-    for t in 0..time {
-        for channel in 0..channels {
-            output[channel * time + t] = input[t * channels + channel];
-        }
-    }
-    output
-}
-
-fn transpose_channels_time(input: &[f32], time: usize, channels: usize) -> Vec<f32> {
-    let mut output = vec![0.0; input.len()];
-    for channel in 0..channels {
-        for t in 0..time {
-            output[t * channels + channel] = input[channel * time + t];
-        }
-    }
-    output
-}
-
-fn add_scaled(target: &mut [f32], values: &[f32], scale: f32) {
-    for (target, value) in target.iter_mut().zip(values) {
-        *target += value * scale;
-    }
-}
-
-fn relu(values: &mut [f32]) {
-    for value in values {
-        *value = value.max(0.0);
-    }
-}
-
-fn silu(values: &mut [f32]) {
-    for value in values {
-        *value *= 1.0 / (1.0 + (-*value).exp());
     }
 }

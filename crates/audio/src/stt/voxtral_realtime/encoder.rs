@@ -138,9 +138,9 @@ impl EncoderLayer {
         let mut normed = x.to_vec();
         self.attention_norm.apply(&mut normed, rows);
         let attended = match cache {
-            Some(mut cache) => self
+            Some(cache) => self
                 .attention
-                .forward_windowed(&normed, rows, rope, &mut cache)?,
+                .forward_windowed(&normed, rows, rope, cache)?,
             None => self.attention.forward_causal(&normed, rows, rope)?,
         };
         let mut residual = x.to_vec();

@@ -723,7 +723,7 @@ fn cam_forward(layer: &CamLayer, x: &[f32], frames: usize) -> Vec<f32> {
     // Segment pooling: the reference zero-pads the tail to a whole
     // number of segments, so every segment mean divides by seg_len.
     let seg_len = 100;
-    let n_segs = (out_frames + seg_len - 1) / seg_len;
+    let n_segs = out_frames.div_ceil(seg_len);
     for c in 0..layer.bn_channels {
         let mut seg_pool = vec![0.0f32; out_frames];
         for s in 0..n_segs {
@@ -734,9 +734,7 @@ fn cam_forward(layer: &CamLayer, x: &[f32], frames: usize) -> Vec<f32> {
                 acc += h[c * out_frames + t];
             }
             let mean = acc / seg_len as f32;
-            for t in start..end {
-                seg_pool[t] = mean;
-            }
+            seg_pool[start..end].fill(mean);
         }
         context[c] += seg_pool.iter().sum::<f32>() / out_frames as f32;
     }

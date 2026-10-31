@@ -382,8 +382,6 @@ fn rope_scaling_without_a_factor_is_refused() {
     backbone.rope_scaling = None;
     assert!(super::family_rope(&backbone).is_ok());
     backbone.rope_scaling = Some(serde_json::json!({"rope_type": "llama3"}));
-    let error = super::family_rope(&backbone)
-        .err()
-        .expect("factor is required");
+    let error = super::family_rope(&backbone).expect_err("factor is required");
     assert!(error.to_string().contains("factor"), "{error}");
 }

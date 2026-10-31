@@ -261,10 +261,7 @@ impl OmniVoiceRunner {
             return Err("speech text cannot be empty".into());
         }
         if request.reference.is_none()
-            && request
-                .reference_text
-                .as_deref()
-                .is_some_and(|s| !s.trim().is_empty())
+            && request.reference_text.is_some_and(|s| !s.trim().is_empty())
         {
             return Err("reference_text needs reference audio".into());
         }
@@ -272,7 +269,7 @@ impl OmniVoiceRunner {
             validate_instruction(instruction)?;
         }
         let reference = match (request.reference, request.reference_rate) {
-            (Some(s), _) if s.is_empty() => return Err("reference audio cannot be empty".into()),
+            (Some([]), _) => return Err("reference audio cannot be empty".into()),
             (Some(_), 0) => return Err("reference audio needs a sample rate".into()),
             (Some(samples), rate) => Some(self.reference(samples, rate)?),
             (None, _) => None,

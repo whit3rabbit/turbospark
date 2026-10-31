@@ -6,7 +6,7 @@
 use crate::fft::{real_fft_forward, ComplexF32};
 use crate::{Result, SpeechError};
 
-const MEL_FLOOR: f32 = 1.192092955078125e-07;
+const MEL_FLOOR: f32 = 1.192_092_9e-7;
 
 /// Power spectrum rows of a real FFT: `|rfft(frame)|^2`.
 fn power_spectrum(frame: &[f32], nfft: usize) -> Result<Vec<f32>> {
@@ -152,6 +152,8 @@ pub fn kaldi_fbank(audio: &[f32], sample_rate: usize, num_mel_bins: usize) -> Re
         };
         for m in 0..num_mel_bins {
             let mut acc = 0.0f32;
+            // The index also feeds offsets or math beyond this buffer, so an iterator is not simpler.
+            #[allow(clippy::needless_range_loop)]
             for f in 0..n_freqs {
                 acc += spec[f] * filters.weights[m * n_freqs + f];
             }

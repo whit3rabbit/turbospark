@@ -151,14 +151,14 @@ fn many_independent_dispatches_survive_a_concurrent_pass() {
         .collect();
 
     let mut serial: Vec<Vec<f16>> = Vec::with_capacity(LANES);
-    for lane in 0..LANES {
+    for lane_weights in weights.iter().take(LANES) {
         let sink = zeroed(&context, N * 2);
         let pass = context.begin_pass_labeled("serial lane");
         encode_rms_norm_bf16w(
             &mut context,
             &pass,
             (&x, 0),
-            (&weights[lane], 0),
+            (lane_weights, 0),
             (&sink, 0),
             N as u32,
             1e-6,

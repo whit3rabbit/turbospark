@@ -971,6 +971,8 @@ fn max_score_assignment(scores: &[Vec<f64>]) -> Vec<Option<usize>> {
         }
     }
     let mut out = vec![None; rows];
+    // The index also feeds offsets or math beyond this buffer, so an iterator is not simpler.
+    #[allow(clippy::needless_range_loop)]
     for j in 1..=n {
         let r = p[j];
         if r >= 1 && r <= rows && j <= cols {

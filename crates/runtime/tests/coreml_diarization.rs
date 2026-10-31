@@ -117,8 +117,8 @@ fn der(
     let mut scored = vec![true; frames];
     let c = (collar * 100.0).round() as isize;
     for &(s, a, b) in reference {
-        for f in a / step..(b / step).min(frames) {
-            r[f] = Some(s);
+        for slot in r.iter_mut().take(b / step).skip(a / step) {
+            *slot = Some(s);
         }
         for edge in [a / step, b / step] {
             for f in (edge as isize - c).max(0)..(edge as isize + c).min(frames as isize) {

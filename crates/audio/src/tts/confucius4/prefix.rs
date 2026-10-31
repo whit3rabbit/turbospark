@@ -35,6 +35,7 @@ impl Default for PrefixConfig {
 
 /// A 'same' 1D conv over `[frames, in_ch]` with reflect padding, torch
 /// weight `[out, in, k]`.
+#[allow(clippy::too_many_arguments)]
 pub fn conv_same(
     x: &[f32],
     w: &[f32],
@@ -375,8 +376,8 @@ impl SpeakerEncoder {
                 stds[d] += diff * diff / frames as f32;
             }
         }
-        for d in 0..c {
-            stds[d] = stds[d].max(1e-12).sqrt();
+        for value in stds.iter_mut() {
+            *value = value.max(1e-12).sqrt();
         }
         // Attention over the [x, mean, std] features.
         let mut att_in = vec![0.0f32; frames * c * 3];
@@ -414,17 +415,17 @@ impl SpeakerEncoder {
         );
         // Softmax over time.
         let mut max = f32::NEG_INFINITY;
-        for t in 0..frames {
-            max = max.max(att[t]);
+        for &value in &att[..frames] {
+            max = max.max(value);
         }
         let mut sum = 0.0f32;
-        for t in 0..frames {
-            let w = (att[t] - max).exp();
-            att[t] = w;
+        for value in &mut att[..frames] {
+            let w = (*value - max).exp();
+            *value = w;
             sum += w;
         }
-        for t in 0..frames {
-            att[t] /= sum;
+        for value in &mut att[..frames] {
+            *value /= sum;
         }
         let mut mean = vec![0.0f32; c];
         let mut std = vec![0.0f32; c];

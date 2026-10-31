@@ -263,6 +263,10 @@ pub struct Model {
     fbank_window: Vec<f32>,
 }
 
+/// What `compute_condition` returns: the normalized w2v condition vector, the
+/// CAMPPlus style embedding, the reference mel, and its frame count.
+pub type ReferenceCondition = (Vec<f32>, Vec<f32>, Vec<f32>, usize);
+
 impl Model {
     /// Opens the checkpoint directory.
     pub fn open(dir: &Path) -> Result<Self> {
@@ -334,10 +338,7 @@ impl Model {
     /// Stage 1-2 of the reference generate: the normalized w2v condition
     /// vector, the CAMPPlus style embedding, the reference mel, and its
     /// frame count. `audio_16k` is 16 kHz mono.
-    pub fn compute_condition(
-        &self,
-        audio_16k: &[f32],
-    ) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>, usize)> {
+    pub fn compute_condition(&self, audio_16k: &[f32]) -> Result<ReferenceCondition> {
         let feats = dsp::fbank_160(audio_16k, &self.fbank_mel, &self.fbank_window)?;
         let frames = feats.len() / 160;
         let h17 = self.w2vbert.hidden17(&feats, frames)?;
