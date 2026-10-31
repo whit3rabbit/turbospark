@@ -2227,3 +2227,13 @@ Wiring stays opt-in. It takes 6-10 GB beyond auto out of the system's reach
 for the life of the process, and auto has not been taught to size a wired
 cache from free memory. Verdict records: 1793466278644-9099-52 (96 wired),
 1793466278647-9099-53 (128 wired), 1793466278651-9099-54 (96 unwired).
+
+Wiring alone does not pay at auto. A second sweep in the same experiment
+put wired auto (48) at +1.8% (95% CI [-2.0%, +1.8%], noise, record
+1793466996772-92918-34) and wired 64 at +1.3% ([-0.8%, +6.2%], noise,
+1793466996778-92918-35). Wired auto made 0 compressions per run against
+4K-116K unwired, so the lock does its job, but at 48 slots the compressor
+was not costing decode time. The gain needs a cache above auto's budget
+(25% of what is left after the resident weights and a 4 GiB reserve,
+`model_io::expert_cache_policy`), which is a memory decision rather than a
+switch.
