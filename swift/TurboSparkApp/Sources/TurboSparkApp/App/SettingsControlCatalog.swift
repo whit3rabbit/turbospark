@@ -44,6 +44,7 @@ enum SettingsControlCatalog {
         .init(title: "Guardrails Mode", pane: .engine, timing: .nextTurn),
         .init(title: "KV-Cache Width", pane: .engine, timing: .modelReload),
         .init(title: "Keep fans pinned when TurboSpark quits", pane: .engine, timing: .immediate),
+        .init(title: "Lock Expert Cache", pane: .engine, timing: .modelReload),
         .init(title: "Max New Tokens", pane: .engine, timing: .nextTurn),
         .init(title: "Memory Load Guard", pane: .engine, timing: .modelReload),
         .init(title: "Output Rate Cap", pane: .engine, timing: .modelReload),

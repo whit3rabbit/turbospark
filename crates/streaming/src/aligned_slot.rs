@@ -119,6 +119,47 @@ impl Drop for AlignedSlot {
     }
 }
 
+/// The most this process may wire, or `None` when neither limit can be read:
+/// the smaller of `RLIMIT_MEMLOCK` (when finite) and macOS's per-user
+/// `vm.user_wire_limit`. A ceiling, not a promise: other processes' wired
+/// pages count against the same user limit, so a request under it can
+/// still fail at `mlock`, and the caller must handle that too.
+pub fn wire_limit_bytes() -> Option<u64> {
+    let mut limit: Option<u64> = None;
+    let mut rl = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: getrlimit writes one rlimit through a valid pointer.
+    #[allow(unsafe_code)]
+    let rc = unsafe { libc::getrlimit(libc::RLIMIT_MEMLOCK, &mut rl) };
+    if rc == 0 && rl.rlim_cur != libc::RLIM_INFINITY {
+        limit = Some(rl.rlim_cur);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut value: u64 = 0;
+        let mut len = std::mem::size_of::<u64>();
+        let name = c"vm.user_wire_limit";
+        // SAFETY: sysctlbyname reads a u64 into a buffer of its size; the
+        // name is NUL-terminated and no new value is written.
+        #[allow(unsafe_code)]
+        let rc = unsafe {
+            libc::sysctlbyname(
+                name.as_ptr(),
+                (&mut value as *mut u64).cast(),
+                &mut len,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        if rc == 0 && len == std::mem::size_of::<u64>() && value > 0 {
+            limit = Some(limit.map_or(value, |l| l.min(value)));
+        }
+    }
+    limit
+}
+
 fn page_size() -> usize {
     // SAFETY: reads a process constant.
     #[allow(unsafe_code)]
@@ -133,6 +174,15 @@ fn page_size() -> usize {
 #[cfg(test)]
 mod tests {
     use super::AlignedSlot;
+
+    #[test]
+    fn wire_limit_is_readable_on_macos() {
+        // The limit the runtime checks before it asks for a wired cache. On
+        // macOS the user wire limit always exists; elsewhere it may not.
+        if cfg!(target_os = "macos") {
+            assert!(super::wire_limit_bytes().is_some_and(|b| b > 0));
+        }
+    }
 
     #[test]
     fn wire_locks_once_and_drop_unwires() {

@@ -146,6 +146,9 @@ pub struct RealForwardRunner {
     /// be read beside the mode -- a mapped row and a streamed row differ by
     /// the entire slot cache.
     pub(crate) resolved_residency: model_io::ResolvedExpertResidency,
+    /// What became of the slot-wiring request at open (`docs/ENV.md`,
+    /// `TURBOSPARK_EXPERT_SLOTS_WIRED`).
+    pub(crate) expert_slot_wiring: crate::real_forward_init::ExpertSlotWiringOutcome,
     /// Blob-relative sub-tensor offsets, ONE ENTRY PER LAYER, and the
     /// reusable argument buffer. Empty when the install does not pack
     /// experts.

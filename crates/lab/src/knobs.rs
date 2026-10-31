@@ -750,18 +750,19 @@ pub const KNOBS: &[Knob] = &[
         engagement: &[],
     },
     Knob {
-        // Wires (`mlock`) the streamed slot cache at open. Read in every
-        // streamed MoE open; measured only on qwen4exp, where caches above
-        // auto lost to memory compression (QWEN4_EXP.md).
+        // Wires (`mlock`) the streamed slot cache at open. Unset is the
+        // `auto` request, which wires qwen4exp at twice the slot budget and
+        // leaves every other family unwired; `1` forces it on any streamed
+        // family and `0` turns it off (QWEN4_EXP.md, "Wired expert slots").
         name: "expert_slots_wired",
         env: "TURBOSPARK_EXPERT_SLOTS_WIRED",
-        values: &["<unset>", "1"],
+        values: &["<unset>", "1", "0"],
         read_at: ReadAt::ProcessCached,
         exactness: Exactness::BitExact,
         families: &["qwen4exp"],
         quotable: true,
         doc: "docs/ENV.md",
-        engagement: &[on("1", "expert_slots_wired")],
+        engagement: &[on("1", "expert_slots_wired"), off("0", "expert_slots_wired")],
     },
     Knob {
         // The DFlash2 drafter's context features: per decoded position, the

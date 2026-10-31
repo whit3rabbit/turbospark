@@ -17,7 +17,7 @@ mod rdadvice;
 mod read_pool;
 mod stream_layout;
 
-pub use aligned_slot::AlignedSlot;
+pub use aligned_slot::{wire_limit_bytes, AlignedSlot};
 pub use disk_io::ExpertIoStats;
 pub use error::StreamerError;
 pub use expert_cache::{

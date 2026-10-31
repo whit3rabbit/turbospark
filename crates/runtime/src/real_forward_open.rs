@@ -248,16 +248,23 @@ impl RealForwardRunner {
         startup_stats.kv_scratch_ms = phase_started.elapsed().as_secs_f64() * 1000.0;
         let phase_started = std::time::Instant::now();
 
-        let (streamers, slot_buffers, experts_layout, resolved_slots, resolved_residency, mapped) =
-            crate::real_forward_init::open_expert_streamers(
-                dir,
-                &expecting,
-                expert_cache_slots,
-                residency,
-                index.header.resident_size,
-                PACKED_LAYOUT_MAX_BYTES,
-                &mut context,
-            )?;
+        let (
+            streamers,
+            slot_buffers,
+            experts_layout,
+            resolved_slots,
+            resolved_residency,
+            mapped,
+            expert_slot_wiring,
+        ) = crate::real_forward_init::open_expert_streamers(
+            dir,
+            &expecting,
+            expert_cache_slots,
+            residency,
+            index.header.resident_size,
+            PACKED_LAYOUT_MAX_BYTES,
+            &mut context,
+        )?;
 
         let use_silu = expecting.hidden_activation.contains("silu");
         let (moe_offsets, routed_layouts, routed_blobs, routed_blobs_banks) = match &experts_layout
@@ -325,6 +332,7 @@ impl RealForwardRunner {
             slot_buffers,
             expert_cache_slots: resolved_slots,
             resolved_residency,
+            expert_slot_wiring,
             streamers,
             mapped,
             moe_offsets,

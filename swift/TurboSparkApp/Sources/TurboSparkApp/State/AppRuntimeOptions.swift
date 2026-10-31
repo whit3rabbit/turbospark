@@ -306,6 +306,36 @@ public enum AppAnePrefillOption: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+/// User-facing option for locking the expert slot cache in memory.
+public enum AppExpertSlotsWiringOption: String, CaseIterable, Identifiable, Sendable {
+    /// Locked, with a larger cache, on the models measured to gain; unlocked
+    /// elsewhere or when macOS will not lock it. The default.
+    case auto = "auto"
+    /// Locked on every model with a streamed expert cache; loading fails if
+    /// macOS will not lock it.
+    case on = "on"
+    /// Never locked.
+    case off = "off"
+
+    public var id: String { rawValue }
+
+    public var menuLabel: String {
+        switch self {
+        case .auto: return "Auto"
+        case .on: return "On"
+        case .off: return "Off"
+        }
+    }
+
+    public var expertSlotsWiring: OpenOptions.ExpertSlotsWiring {
+        switch self {
+        case .auto: return .auto
+        case .on: return .on
+        case .off: return .off
+        }
+    }
+}
+
 /// Activation steering operation modes.
 public enum AppSteeringModeOption: String, CaseIterable, Identifiable, Sendable {
     /// Suppress target activations.
@@ -387,6 +417,8 @@ public struct AppRuntimeOptions: Equatable, Sendable {
     public var anePrefill: AppAnePrefillOption = .auto
     /// Custom directory for compiled ANE prefill Core ML programs.
     public var anePrefillDir: String = ""
+    /// Whether the expert slot cache is locked in memory.
+    public var expertSlotsWiring: AppExpertSlotsWiringOption = .auto
     /// Maximum tokens per second rate cap (0 for uncapped).
     public var maxTokensPerSec: Double = 0
     /// Filesystem path to steering control vector file.
@@ -414,6 +446,7 @@ public struct AppRuntimeOptions: Equatable, Sendable {
         kvBits: AppKvBitsOption = .auto,
         anePrefill: AppAnePrefillOption = .auto,
         anePrefillDir: String = "",
+        expertSlotsWiring: AppExpertSlotsWiringOption = .auto,
         maxTokensPerSec: Double = 0,
         steeringPath: String? = nil,
         steeringMode: AppSteeringModeOption = .ablate,
@@ -432,6 +465,7 @@ public struct AppRuntimeOptions: Equatable, Sendable {
         self.kvBits = kvBits
         self.anePrefill = anePrefill
         self.anePrefillDir = anePrefillDir
+        self.expertSlotsWiring = expertSlotsWiring
         self.maxTokensPerSec = maxTokensPerSec
         self.steeringPath = steeringPath
         self.steeringMode = steeringMode

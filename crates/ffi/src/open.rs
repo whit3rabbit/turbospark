@@ -31,7 +31,8 @@ use tokenizer::MfTokenizer;
 
 use crate::session::{Engine, Session, SessionCore};
 use crate::wire::{
-    expert_residency, kv_bits, load_guard, sized, OpenOptions, SessionInfo, SpeculationInfo,
+    expert_residency, expert_slots_wiring, kv_bits, load_guard, sized, OpenOptions, SessionInfo,
+    SpeculationInfo,
 };
 
 /// Maps the wire spelling of a power profile.
@@ -256,6 +257,7 @@ pub(crate) fn open_with_failure(
     // allowed set is the thing that goes stale.
     let expert_cache_slots = crate::wire::expert_cache_slots(&options.expert_cache_slots)?;
     let requested_expert_residency = expert_residency(&options.expert_residency)?;
+    let requested_wiring = expert_slots_wiring(&options.expert_slots_wiring)?;
     // Mapped here with the rest, BEFORE anything is read from disk, so a
     // misspelled tier outranks a bad path in the error -- the rule this file
     // already follows, and what lets the SwiftPM target reach these spellings
@@ -338,11 +340,15 @@ pub(crate) fn open_with_failure(
         requested_expert_residency,
         runtime::physical_memory(),
     )?;
-    let committed = model_io::committed_breakdown_with_residency(
+    // Set before the sizing below and the open, so both see the same
+    // request (the environment override included).
+    runtime::set_expert_slot_wiring(requested_wiring);
+    let committed = model_io::committed_breakdown_with_wiring(
         dir,
         runtime::physical_memory(),
         expert_cache_slots,
         resolved_expert_residency,
+        runtime::effective_expert_slot_wiring(),
     );
     let plan = runtime::resolve_max_context_with(
         match max_context {
@@ -607,6 +613,15 @@ pub(crate) fn open_with_failure(
         ),
         kv_bits: kv_quant.label(),
         prefix_reuse,
+        expert_slots_wiring: {
+            let outcome = runner.expert_slot_wiring();
+            crate::wire::ExpertSlotsWiringInfo {
+                requested: outcome.requested.as_str().to_string(),
+                active: outcome.active,
+                wired_bytes: outcome.wired_bytes,
+                reason: outcome.reason.clone(),
+            }
+        },
         ane_prefill: crate::wire::AnePrefillInfo {
             active: runner.ane_prefill_mode().is_split(),
             mode: runner.ane_prefill_mode().as_str().to_string(),

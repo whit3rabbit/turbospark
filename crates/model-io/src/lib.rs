@@ -51,19 +51,21 @@ pub use cgroup::{
     parse_limit as parse_cgroup_limit, probe_self as probe_cgroup_memory, CgroupMemoryLimit,
 };
 pub use context_policy::{
-    committed_breakdown, committed_breakdown_with_residency, committed_bytes, gdn_state_bytes,
-    kv_bytes_for_context, kv_bytes_for_context_with, largest_context_within,
-    largest_context_within_with, resolve_max_context, resolve_max_context_with, session_pool_bytes,
-    session_pool_bytes_with, short_conv_state_bytes, CommittedBytes, ContextCap, ContextFloorUnmet,
-    ContextOverCap, ContextPlan, ContextRefused, ContextTooLarge, MaxContext,
-    CONTEXT_BUDGET_FRACTION, CONTEXT_GRANULARITY, CONTEXT_RESERVE_BYTES, MAX_SUPPORTED_CONTEXT,
+    committed_breakdown, committed_breakdown_with_residency, committed_breakdown_with_wiring,
+    committed_bytes, gdn_state_bytes, kv_bytes_for_context, kv_bytes_for_context_with,
+    largest_context_within, largest_context_within_with, resolve_max_context,
+    resolve_max_context_with, session_pool_bytes, session_pool_bytes_with, short_conv_state_bytes,
+    CommittedBytes, ContextCap, ContextFloorUnmet, ContextOverCap, ContextPlan, ContextRefused,
+    ContextTooLarge, MaxContext, CONTEXT_BUDGET_FRACTION, CONTEXT_GRANULARITY,
+    CONTEXT_RESERVE_BYTES, MAX_SUPPORTED_CONTEXT,
 };
 pub use disk_space::available_bytes;
 pub use encoder_config::{EncoderConfig, EncoderQuantization};
 pub use error::ModelError;
 pub use expert_cache_policy::{
-    auto_residency_prefers_mapped, mapped_residency_fits, ExpertCacheSlots, ExpertResidency,
-    ResolvedExpertResidency, HEADROOM_FRACTION, HEADROOM_RESERVE_BYTES, MAPPED_WIRED_RESERVE_BYTES,
+    auto_residency_prefers_mapped, mapped_residency_fits, wiring_default_for, ExpertCacheSlots,
+    ExpertResidency, ExpertSlotWiring, ResolvedExpertResidency, HEADROOM_FRACTION,
+    HEADROOM_RESERVE_BYTES, MAPPED_WIRED_RESERVE_BYTES, WIRED_HEADROOM_FRACTION,
 };
 pub use install_receipt::{
     load as load_install_receipt, validate as validate_install_receipt,

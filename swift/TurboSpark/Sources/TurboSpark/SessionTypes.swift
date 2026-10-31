@@ -61,6 +61,8 @@ public struct SessionInfo: Decodable, Sendable, Equatable {
     public let prefixReuse: Bool
     /// What the ANE+Steel prefill split resolved to for this session.
     public let anePrefill: AnePrefill?
+    /// Whether this session's expert slot cache is wired, and why not.
+    public let expertSlotsWiring: ExpertSlotsWiring?
 
     /// The reasoning levels this checkpoint accepts. **BUILD A PICKER FROM
     /// THIS AND FROM NOTHING ELSE.**
@@ -224,5 +226,17 @@ public struct SessionInfo: Decodable, Sendable, Equatable {
         public let reason: String?
         /// The programs directory from which ANE prefill models are loaded, if any.
         public let programsDir: String?
+    }
+
+    /// What a session resolved about wiring its expert slot cache.
+    public struct ExpertSlotsWiring: Decodable, Sendable, Equatable {
+        /// The request the open used: "auto", "on" or "off".
+        public let requested: String
+        /// True when the slot cache is wired.
+        public let active: Bool
+        /// Bytes wired; 0 when inactive.
+        public let wiredBytes: UInt64
+        /// Why it is not active, or nil when it is.
+        public let reason: String?
     }
 }

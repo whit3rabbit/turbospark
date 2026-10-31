@@ -577,6 +577,9 @@ final class LocalizationParityTests: XCTestCase {
         for mode in ImagesWorkspaceMode.allCases {
             values.append(("ImagesWorkspaceMode.title", mode.title))
         }
+        for option in AppExpertSlotsWiringOption.allCases {
+            values.append(("AppExpertSlotsWiringOption.menuLabel", option.menuLabel))
+        }
         for kind in InstalledModelKind.allCases {
             values.append(("InstalledModelKind.title", kind.title))
         }

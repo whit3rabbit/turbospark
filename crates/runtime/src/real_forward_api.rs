@@ -139,6 +139,12 @@ impl RealForwardRunner {
         self.resolved_residency
     }
 
+    /// What became of the slot-wiring request at open: whether the cache is
+    /// wired, how many bytes, and why not when it is not.
+    pub fn expert_slot_wiring(&self) -> &crate::ExpertSlotWiringOutcome {
+        &self.expert_slot_wiring
+    }
+
     /// How many distinct sessions this runner may hold reusable KV/
     /// recurrent state for at once: the one LIVE session plus however many
     /// this opened with in its parked pool (`--session-slots`,

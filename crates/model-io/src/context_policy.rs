@@ -675,6 +675,10 @@ impl CommittedBytes {
 /// cache, matching [`ExpertCacheSlots::resolve`]'s own dense case.
 ///
 /// [`ExpertCacheSlots::resolve`]: crate::ExpertCacheSlots::resolve
+/// The cap for the `manifest.json` read that names the family when sizing
+/// a wired cache; the same 4 MiB the manifest tests peek with.
+const MANIFEST_PEEK_MAX_BYTES: u64 = 4 * 1024 * 1024;
+
 pub fn committed_breakdown(
     model_dir: &Path,
     physical: u64,
@@ -711,6 +715,32 @@ pub fn committed_breakdown_with_residency(
     slots: crate::ExpertCacheSlots,
     residency: crate::ResolvedExpertResidency,
 ) -> CommittedBytes {
+    committed_breakdown_with_wiring(
+        model_dir,
+        physical,
+        slots,
+        residency,
+        crate::ExpertSlotWiring::Auto,
+    )
+}
+
+/// [`committed_breakdown_with_residency`] for an explicit wiring request.
+/// A request that wants a wired cache on this install's family sizes `Auto`
+/// at [`crate::WIRED_HEADROOM_FRACTION`], matching what the open allocates
+/// when the lock engages. When the open falls back to an unwired cache (the
+/// OS wire limit, a failed lock) it allocates less than this, so the budget
+/// errs toward a smaller context, never a larger one.
+pub fn committed_breakdown_with_wiring(
+    model_dir: &Path,
+    physical: u64,
+    slots: crate::ExpertCacheSlots,
+    residency: crate::ResolvedExpertResidency,
+    wiring: crate::ExpertSlotWiring,
+) -> CommittedBytes {
+    let wired = residency == crate::ResolvedExpertResidency::Streamed
+        && crate::peek_family(model_dir, MANIFEST_PEEK_MAX_BYTES)
+            .map(|family| wiring.wants_wired(family))
+            .unwrap_or(false);
     let resident = std::fs::metadata(model_dir.join("model_weights.bin"))
         .map(|m| m.len())
         .unwrap_or(0);
@@ -723,7 +753,7 @@ pub fn committed_breakdown_with_residency(
                 let bytes_per_slot: u64 = layout.layers.iter().map(|l| l.expert_stride).sum();
                 let experts_per_layer = layout.experts_per_layer.max(1);
                 let resolved = slots
-                    .resolve(physical, resident, bytes_per_slot)
+                    .resolve_wired(physical, resident, bytes_per_slot, wired)
                     .min(experts_per_layer);
                 bytes_per_slot.saturating_mul(resolved as u64)
             })

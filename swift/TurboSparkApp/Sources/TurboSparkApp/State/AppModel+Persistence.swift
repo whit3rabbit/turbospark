@@ -80,6 +80,7 @@ extension AppModel {
         self.runtimeOptions.kvBits = AppKvBitsOption(rawValue: settings.kvBits) ?? .auto
         self.runtimeOptions.anePrefill = AppAnePrefillOption(rawValue: settings.anePrefill) ?? .auto
         self.runtimeOptions.anePrefillDir = settings.anePrefillDir
+        self.runtimeOptions.expertSlotsWiring = AppExpertSlotsWiringOption(rawValue: settings.expertSlotsWiring) ?? .auto
         self.runtimeOptions.maxTokensPerSec = settings.maxTokensPerSec
         self.runtimeOptions.steeringPath = settings.steeringPath.isEmpty ? nil : settings.steeringPath
         self.runtimeOptions.steeringMode = AppSteeringModeOption(rawValue: settings.steeringMode) ?? .ablate
@@ -249,6 +250,7 @@ extension AppModel {
             kvBits: runtimeOptions.kvBits.rawValue,
             anePrefill: runtimeOptions.anePrefill.rawValue,
             anePrefillDir: runtimeOptions.anePrefillDir,
+            expertSlotsWiring: runtimeOptions.expertSlotsWiring.rawValue,
             maxTokensPerSec: runtimeOptions.maxTokensPerSec,
             steeringPath: runtimeOptions.steeringPath ?? "",
             steeringMode: runtimeOptions.steeringMode.rawValue,

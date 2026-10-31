@@ -180,11 +180,13 @@ impl RealChatModel {
         // will actually request, not `committed_bytes`'s worst case, so a
         // `--load-guard custom` ceiling is checked against a real
         // allocation.
-        let committed = runtime::committed_breakdown_with_residency(
+        let committed = runtime::committed_breakdown_with_wiring(
             model_dir,
             runtime::physical_memory(),
             expert_cache_slots_policy,
             resolved_expert_residency,
+            // The request the open below reads, environment override included.
+            runtime::effective_expert_slot_wiring(),
         );
         let context = runtime::resolve_max_context_with(
             match max_context {

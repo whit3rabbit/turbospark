@@ -2237,3 +2237,20 @@ was not costing decode time. The gain needs a cache above auto's budget
 (25% of what is left after the resident weights and a 4 GiB reserve,
 `model_io::expert_cache_policy`), which is a memory decision rather than a
 switch.
+
+Wiring is now the qwen4_exp default (2026-10-31). The `auto` request
+(`expertSlotsWiring` in the FFI and the app's Engine settings,
+`model_io::ExpertSlotWiring`) wires the slot cache on this family at
+`WIRED_HEADROOM_FRACTION` (half of what is left after the resident weights
+and the 4 GiB reserve, against a quarter unwired), which is 96 slots on a 36
+GB M4 Max. Before allocating it checks `RLIMIT_MEMLOCK` and
+`vm.user_wire_limit`. If the wired cache would not fit, or `mlock` fails,
+the open uses the unwired budget instead of refusing. `on` refuses on a
+failed lock, `off` never wires, and `TURBOSPARK_EXPERT_SLOTS_WIRED` (`1`,
+`0`) overrides the request. The pre-open sizing in the CLI, server, FFI and
+catalog fit uses the same request, so the context budget counts the wired
+cache. Checked on the install: the default opened 96 wired slots (12.4 GiB
+peak), and under `ulimit -l 1048576` it opened 48 unwired slots (6.4 GiB).
+Not checked: the `mlock`-failure fallback with the limit check passing, and
+any machine other than this one. Other families stay unwired until a paired
+sweep (`slots_wired` in the family profile) says otherwise.
