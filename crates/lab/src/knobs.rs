@@ -762,7 +762,10 @@ pub const KNOBS: &[Knob] = &[
         families: &["qwen4exp"],
         quotable: true,
         doc: "docs/ENV.md",
-        engagement: &[on("1", "expert_slots_wired"), off("0", "expert_slots_wired")],
+        engagement: &[
+            on("1", "expert_slots_wired"),
+            off("0", "expert_slots_wired"),
+        ],
     },
     Knob {
         // The DFlash2 drafter's context features: per decoded position, the
