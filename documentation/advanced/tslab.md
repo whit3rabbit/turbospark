@@ -60,6 +60,134 @@ it. See [the agent skill](#the-bundled-agent-skill) below.
 Below, `M` is a model (an install directory `*.gturbo`, or a catalog alias
 from the model store) and `E` is an experiment name you choose.
 
+## What tslab measures
+
+tslab answers one kind of question: did this change make this install faster
+(or smaller, or cheaper), and is the difference bigger than the noise on this
+Mac? It measures at three levels.
+
+**Whole-model runs.** Every `profile`, `ab`, and `sweep` arm is one fresh
+`tslab-worker` process that opens the install, runs the workload, and writes a
+run record. The metrics an A/B or sweep can judge:
+
+| Metric (`--metric`) | What it is | Better |
+| --- | --- | --- |
+| `prefill_tok_s` | Prompt tokens per prefill wall second (the default) | higher |
+| `decode_tok_s` | Decode tokens per decode wall second | higher |
+| `prefill_s` | Prefill wall seconds | lower |
+| `peak_bytes` | Peak `phys_footprint` of the worker | lower |
+| `followup_ttft_s` | Mean time to first token on every chat turn after the first (chat workloads) | lower |
+| `audio_run_s` | Wall seconds of the audio job | lower |
+| `rtf` | Audio job wall time over the audio's duration (real-time factor) | lower |
+| `prefill_j`, `decode_j` | Modeled joules over the measured prefill or decode (IOReport, whole machine) | lower |
+
+The energy pair is modeled from IOReport counters for the whole machine. It is
+comparable within one experiment and never a wall-power claim.
+
+A run record also carries the phase buckets (on routed MoE installs: layer GPU
+wait, router readback, expert I/O, bind, retire, final wait), the `engaged`
+lanes the runtime reported, host samples taken during the run (foreign CPU,
+power source), and provenance (git revision or binary SHA-256, chip, cargo
+features, every `TURBOSPARK_*` variable set on the tslab process).
+
+**Kernel benches.** `tslab kernel` times Metal kernels in process at the shapes
+the install binds, read from its own manifest, never constants. Each case is
+GPU time over M rows or over context, not throughput. `tslab kernel --list`
+prints the registered benches:
+
+| Bench | Measures |
+| --- | --- |
+| `int4_matmul` | INT4 projections: per-row GEMV, scalar GEMM, Steel tiles, the 8-row MMA tile, and the small-N route, over M |
+| `int8_matmul` | INT8 projections (routers, shared gates): per-row GEMV against the batched GEMM over M |
+| `attn_decode` | Decode attention per variant (full, sliding, sinks): barrier against GQA-shared over context |
+| `gdn_delta` | Gated-DeltaNet delta kernels: decode, eager and lazy prefill, state fold, over rows |
+| `rows_attn` | Multi-row prefill attention against the per-row GQA loop, per context |
+| `moe_routed` | Routed-expert pair: M sequential decode pairs against one route-list pair |
+| `qkv_concurrent` | The q/k/v projection triple: serial pass against a concurrent encoder |
+| `verify_ladder` | Whole-model GEMM time per speculative verify width |
+| `music3_grid` | Music 3 linear and conv corpus: output hashes against goldens, per-config timing |
+| `whisper_linear` | Whisper encoder GEMM, decoder GEMV, GEMM at one row |
+| `ane_matmul` | Steel against the Neural Engine per shape and token count, the row split, baked INT4 programs (`ane_c4`, `split_c4`), and modeled energy. Needs `--features ane-prefill` |
+| `ane_handoff` | One ANE split point's host handoff (wake and resume), `wait` against `poll`, quiet and under `--contend N`. Needs `--features ane-prefill` |
+
+**Offline analysis.** `project`, `calibrate`, `depth-replay`, and
+`hybrid-replay` do no GPU work. They price a change from curves and captures
+already in the ledger, so you can tell whether a model run is worth spending.
+
+### The verdict rule
+
+`ab` and `sweep` run baseline and candidate in interleaved pairs, so thermal
+drift hits both arms. Only clean pairs count. The effect floor is the largest
+of 2%, `--min-effect`, and the null floor measured by `ab --null` for that
+workload and metric. The outcomes:
+
+| Verdict | Means |
+| --- | --- |
+| `WIN` | At least 3 clean pairs, median at or above the floor, bootstrap 95% interval above zero, and every pair agreeing (or a sign test at p <= 0.05 from 6 pairs) |
+| `LOSS` | The same, the other way |
+| `NOISE` | Enough clean pairs, no effect at the floor. This is a result |
+| `INCONCLUSIVE` | Too few clean pairs, usually a busy host. Fix the host and rerun |
+
+The rule and its bounds are fixed in code (`src/stats.rs`, `src/gates.rs`).
+
+## Examples
+
+What can this install do, and what is already known about its family:
+
+```sh
+tslab capabilities --model lfm3-1.7b
+tslab family --model lfm3-1.7b --findings
+```
+
+Profile prefill and decode on a long prompt:
+
+```sh
+tslab profile --model qwen36 --prompt protocol:long-synthesis --decode 64 --experiment qwen36-base
+```
+
+A/B a decode switch. Measure the noise floor first, with the same workload and
+metric, then the pair. LFM3's fused FFN is on by default, so the candidate is
+the kill switch:
+
+```sh
+W=(--prompt protocol:medium-review --decode 128)
+tslab ab --model lfm3-1.7b --null $W --metric decode_tok_s --experiment lfm3-ffn
+tslab ab --model lfm3-1.7b $W --metric decode_tok_s --experiment lfm3-ffn \
+  --baseline default --candidate chain:lfm3_fused_ffn=0 --json
+```
+
+Run every sweep the family profile recommends, one verdict per candidate:
+
+```sh
+tslab sweep --model lfm3-1.7b --sweep all --experiment lfm3-sweep
+```
+
+Time the decode attention kernels at this install's shapes, with output
+hashes, then check the GQA kernel is still the faster one end to end:
+
+```sh
+tslab kernel --model flint --bench attn_decode --hash --experiment flint-attn
+tslab ab --model flint --prompt protocol:long-synthesis --decode 128 --metric decode_tok_s \
+  --baseline default --candidate barrier:attn_decode_kernel=barrier --experiment flint-attn
+```
+
+Price a kernel mode before spending a model run on it, then check the price
+against the verdict that followed:
+
+```sh
+tslab kernel --model qwen36 --bench int4_matmul --hash --experiment mma8
+tslab profile --model qwen36 --prompt protocol:long-synthesis --decode 64 --arm base --experiment mma8
+tslab project --knob int4_mma8 --curves mma8 --x 1 --base-from mma8:base --floor-from mma8
+tslab calibrate --projection mma8 --verdict mma8
+```
+
+Write a self-contained HTML report, or open the dashboard:
+
+```sh
+tslab report --experiment lfm3-ffn --html lfm3-ffn.html
+tslab serve --open
+```
+
 ## Before you measure
 
 Run the skill's `preflight.sh` (or read the host rules yourself): tslab
@@ -87,14 +215,14 @@ commands group by purpose.
 | Command | What it does |
 | --- | --- |
 | `tslab profile --model M [workload] --experiment E` | Phase profile of the install: per-arm medians over clean rounds. `--slots auto,16,32` and `--residency streamed,mapped` name the axes; `--arm NAME[@SLOTS/RESIDENCY][:KEY=V,...]` adds custom arms; `--rounds 3` sets round count. `--dispatch-probe 0,4,8,16` or `--standin attn,mlp,gdn` runs the dispatch-price probes, which are their own arms and need `--decode`. |
-| `tslab ab --model M [workload] --baseline NAME[:KEY=V,...] --candidate NAME[:KEY=V,...]` | The gated interleaved A/B. `--null` first runs an arm against itself to measure the noise floor (once per workload); `--metric prefill_tok_s\|decode_tok_s\|prefill_s\|peak_bytes\|followup_ttft_s\|audio_run_s\|rtf` picks the metric; `--min-effect 0.02` is the effect floor; `--pairs 3 --max-pairs 6` bound the paired rounds. |
+| `tslab ab --model M [workload] --baseline NAME[:KEY=V,...] --candidate NAME[:KEY=V,...]` | The gated interleaved A/B. `--null` first runs an arm against itself to measure the noise floor (once per workload); `--metric` picks one of the metrics [above](#what-tslab-measures); `--min-effect 0.02` is the effect floor; `--pairs 3 --max-pairs 6` bound the paired rounds. |
 | `tslab sweep --model M --sweep ID\|all --experiment E` | Several candidates against one baseline in one interleaved session, one verdict per candidate plus a sweep record. `--sweep all` runs every profile sweep that applies from `tslab family`; `--sweep-file F` loads a file; or name arms directly with `--baseline A --candidate B [--candidate C]...`. `--fail-on-loss` turns a LOSS into a failing exit. |
 
 ### Kernel evidence
 
 | Command | What it does |
 | --- | --- |
-| `tslab kernel --model M --bench NAME[,NAME]\|all --experiment E` | Shape-derived kernel benches sized from the install (never constants). `--list` prints the registered benches; `--rows` and `--contexts` pick cases; `--hash` records output hashes; `--verify-from EXP` replays a prior experiment's cases; `--reps 5` sets repetitions. |
+| `tslab kernel --model M --bench NAME[,NAME]\|all --experiment E` | Shape-derived kernel benches sized from the install (never constants; the list is [above](#what-tslab-measures)). `--list` prints the registered benches; `--programs DIR`, `--ane-dir DIR`, `--contend N` feed the two ANE benches; `--rows` and `--contexts` pick cases; `--hash` records output hashes; `--verify-from EXP` replays a prior experiment's cases; `--reps 5` sets repetitions. |
 | `tslab hash-diff --experiment A --against B` | Compares the hashed outputs of two kernel experiments. Exits 3 when any hashed output changed, so a correctness regression is a verdict, not a reading. |
 | `tslab pinned [--repo kapitsa\|omlx\|mlx-serve] [--class C] [--id ID]` | The verified kernel settings pinned from the compared engines, each traceable to its source revision. `--dir PATH` sweeps a tweaked copy. |
 | `tslab ane-plan --path PROGRAM.mlpackage\|MANIFEST_DIR [--units ane\|all\|gpu\|cpu]` | Core ML compute-plan placement of one program. |
@@ -229,94 +357,25 @@ than measured as its opposite.
 ## The dashboard: `tslab serve`
 
 ```sh
-tslab serve [--port 7878] [--bind 127.0.0.1] [--lab DIR] [--open]
+tslab serve --open
 ```
 
-A read-only dashboard over every ledger in the lab dir: the experiments
-table, per-experiment pages with the report charts, a compare view that puts
-several experiments' series on shared axes, the verdict board, the sweeps,
-each family's profile over what this lab has measured for it, and a JSON
-API. It never takes the machine lock and writes nothing, so it can stay open
-beside a measurement, and the index re-reads automatically when a ledger's
-size or modification time moves. Ctrl-C stops it; `--open` opens a browser.
-
-**Pages** (server-rendered, nothing fetched from anywhere):
-
-| Path | Page |
-| --- | --- |
-| `/` | Experiments table with filter and sort forms, plus the compare tray: tick experiments and compare their series |
-| `/experiment/{name}` | One experiment: summary, notes, verdicts, sweeps, and the report charts |
-| `/compare?exp=a,b` | Shared-axes series for the named experiments |
-| `/verdicts` | The verdict board with `family`, `model`, `metric`, `exp` filters |
-| `/sweeps` | Sweep results with `family` and `model` filters |
-| `/families` | Every family profile beside this lab's live data for it |
-| `/family/{family}` | One profile: settings, sweeps, findings, and its verdicts |
-| `/record/{name}/{id}` | One ledger record rendered from its JSON |
-
-**JSON API** (GET only; every response is a `tslab/1` envelope, and errors
-come back as `{"schema": "tslab/1", "ok": false, "error": ...}`):
-
-| Route | Returns |
-| --- | --- |
-| `GET /api/experiments` | The lab dir, every experiment's summary, and per-kind totals |
-| `GET /api/experiment/{name}` | One experiment's summary, notes, verdicts, sweeps, and profiles |
-| `GET /api/ledger/{name}` | Every record line of one experiment |
-| `GET /api/series?exp=a,b[&kind=K]` | Plottable series; `exp` is required, `kind` filters |
-| `GET /api/verdicts[?family=&model=&metric=&exp=a,b]` | Verdict rows under those filters |
-| `GET /api/sweeps[?family=&model=]` | Sweep rows under those filters |
-| `GET /api/family/{family}` | The embedded profile plus that family's verdicts, sweeps, and profiles |
-| `GET /api/record/{name}/{id}` | One record; ids are `<unix_ms>-<pid>-<n>` |
-
-{% hint style="info" %}
-Every page fetches nothing and its single inline script only adds hover
-tooltips, legend toggles, and the compare tray count, so a page saved to
-disk reads the same as the live one. There is no authentication: on the
-default loopback bind, a `Host` header that does not name this machine is
-refused, and binding a non-loopback address prints a warning that the Host
-check is off.
-{% endhint %}
+A read-only local web server over every ledger in the lab dir: the experiments
+table, one page per experiment with its charts, a compare view, the verdict
+board, sweeps, family profiles, and a GET-only JSON API. It never takes the
+machine lock, so it stays open beside a measurement. Pages, API routes,
+examples, and the security guards are on
+[The tslab dashboard](tslab-serve.md).
 
 ## The bundled agent skill
 
-`crates/lab/skill/` is an agent skill (its `SKILL.md` is the entry point)
-that teaches an agent to drive tslab: the `--json` contract, the standard
-A/B loop, what may be quoted, and references for commands, output, reading
-results, families, workflows, and extending the lab. Two scripts guard it:
-
-- `skill/scripts/doctor.sh` checks that tslab can run here and says which
-  binary applies: the zip's `bin/tslab` or a checkout's release build (it
-  honors `CARGO_TARGET_DIR`). It verifies macOS on Apple Silicon, both
-  binaries, Gatekeeper quarantine, that `tslab knobs` runs, the workloads, a
-  writable results directory, and the optional `xctrace` and `python3` that
-  only `tslab trace` needs. Exit 0 when every required check passes, 1
-  otherwise.
-- `skill/scripts/preflight.sh` checks that the host is quiet enough for
-  clean runs before you spend one: AC power, build and model processes, free
-  disk against the 10 GiB guard default, swap, and who holds the machine
-  lock. Exit 0 means ready; 1 means runs would be ledgered dirty.
-
-Install it with `scripts/install-tslab-skill.sh`:
-
-- `--repo` links this checkout's skill into `.claude/skills/tslab` and
-  `.agents/skills/tslab`. Those directories are untracked, so each checkout
-  or worktree links them once. Inside a checkout prefer this: it measures
-  the tree you are editing.
-- `--zip PATH` unpacks a packaged zip into `DEST/tslab` (`--dest` changes
-  the destination, default `~/.claude/skills`; `--force` replaces).
-
-`scripts/package-tslab-skill.sh [--out DIR] [--no-build]` builds the release
-binaries and zips the skill with them, the workloads, the schema, and a
-`BUILD.txt` (source revision, rustc version, binary SHA-256 hashes) into
-`target/dist/tslab-skill-<rev>[-dirty]-macos-arm64.zip`. The binaries are
-unsigned, so a downloaded zip is quarantined; `doctor.sh` reports it and
-says the `xattr` command, and clearing it is the person's call.
-
-**What degrades without a checkout** (from the zip): `gate`, `run-experiment`,
-and `confirm` refuse to run, because they diff and build the source;
-`corpus:N` prompts refuse, because they read the repository's docs (use
-`protocol:` prompts); and run provenance records the binary's SHA-256
-instead of a git revision. Everything else, including measurement, verdicts,
-the dashboard, and workflows that only measure, works.
+`crates/lab/skill/` teaches a coding agent (Claude Code, Codex, Antigravity) to
+drive tslab: which command answers which question, the `--json` contract, the
+standard A/B checklist, and what may be quoted. `skill/scripts/doctor.sh`
+checks tslab can run here and `skill/scripts/preflight.sh` checks the host is
+quiet. Install it with `scripts/install-tslab-skill.sh --repo` in a checkout,
+or `--zip` from a packaged zip. Details, example prompts, and the evals are on
+[The tslab agent skill](tslab-skill.md).
 
 ## Where results live
 
@@ -344,6 +403,8 @@ always shows the conditions a number was measured under.
 
 ## Related pages
 
+- [The tslab dashboard](tslab-serve.md)
+- [The tslab agent skill](tslab-skill.md)
 - [Environment Variables Reference](environment-variables.md)
 - [lab (crate reference)](../crates/lab.md)
 - [bench (crate reference)](../crates/bench.md)

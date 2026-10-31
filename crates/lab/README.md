@@ -67,6 +67,29 @@ target/release/tslab serve --open
 | `schema` | The JSON Schema of everything tslab writes. |
 | `serve` | The read-only dashboard over every ledger. |
 
+## What it measures
+
+- Whole-model runs, one fresh worker per arm. Metrics an `ab` or `sweep`
+  judges (`Metric` in `src/workload.rs`): `prefill_tok_s` (the default),
+  `decode_tok_s`, `prefill_s`, `peak_bytes`, `followup_ttft_s`,
+  `audio_run_s`, `rtf`, and the modeled-energy pair `prefill_j`, `decode_j`
+  (IOReport, whole machine, comparable within one experiment only). Pass
+  `--metric` every time.
+- Kernel benches at the install's own shapes (`tslab kernel --list`):
+  `int4_matmul`, `int8_matmul`, `attn_decode`, `gdn_delta`, `rows_attn`,
+  `moe_routed`, `qkv_concurrent`, `verify_ladder`, `music3_grid`,
+  `whisper_linear`, and, with `--features ane-prefill`, `ane_matmul` (Steel
+  against the ANE, the row split, baked INT4 `ane_c4` and `split_c4` arms,
+  `--case real:LAYER.NAME` on one tensor's bytes) and `ane_handoff` (wait
+  against poll, `--contend N`).
+- Offline pricing and replays (`project`, `calibrate`, `depth-replay`,
+  `hybrid-replay`), no GPU work.
+
+The verdict rule (`src/stats.rs`): WIN or LOSS needs at least 3 clean
+pairs, a median at or above the effect floor (the largest of 2%,
+`--min-effect`, and the `ab --null` floor), and a bootstrap 95% interval
+that excludes zero. NOISE is a result. INCONCLUSIVE means the host was busy.
+
 ## Output contract
 
 - `--json` is global (anywhere on the line): stdout is exactly one
@@ -126,6 +149,10 @@ query parameters (`src/dash/api.rs`):
   purity, ledger discipline, schema policy, bench registry).
 - [program.md](program.md): the autoresearch loop, the spec format, and the
   checks for a new model family.
+- GitBook guides: [tslab](../../documentation/advanced/tslab.md),
+  [the dashboard](../../documentation/advanced/tslab-serve.md),
+  [the agent skill](../../documentation/advanced/tslab-skill.md), and
+  [the crate reference](../../documentation/crates/lab.md).
 - [skill/SKILL.md](skill/SKILL.md): the agent-facing skill (the `--json`
   contract, which command answers what), with `skill/scripts/doctor.sh` and
   `preflight.sh`; repo-level `scripts/install-tslab-skill.sh` and

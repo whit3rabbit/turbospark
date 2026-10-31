@@ -52,6 +52,8 @@
 * [Directional Residual Steering](advanced/directional-steering.md)
 * [Environment Variables Reference](advanced/environment-variables.md)
 * [TurboSpark Lab (tslab)](advanced/tslab.md)
+  * [The tslab Dashboard](advanced/tslab-serve.md)
+  * [The tslab Agent Skill](advanced/tslab-skill.md)
 
 ## Performance & Benchmarks
 

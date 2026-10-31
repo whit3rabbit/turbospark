@@ -40,7 +40,101 @@ lab dir; frozen results never live in this page. The user-facing guide is
 | Quiet-host rules and the one machine lock | `src/host.rs`, `src/lock.rs` |
 | The append-only ledger and the lab dir | `src/ledger.rs`, `src/paths.rs` |
 | Ledgers as plottable series, the offline HTML report, `tslab export` | `src/series.rs`, `src/viz.rs`, `src/export.rs` |
-| `tslab serve`, the read-only dashboard over every ledger | `src/dash/` (`index.rs`, `pages.rs`, `api.rs`) |
+| `tslab serve`, the read-only dashboard over every ledger ([guide](../advanced/tslab-serve.md)) | `src/dash/` (`index.rs`, `pages.rs`, `api.rs`) |
+| The agent skill, its doctor and preflight scripts, and evals ([guide](../advanced/tslab-skill.md)) | `skill/` |
+
+### What it measures
+
+The crate measures at three levels. The user-facing tables (every metric,
+every bench, the verdict rule) are on
+[TurboSpark Lab](../advanced/tslab.md#what-tslab-measures). This section is
+where each lives in code.
+
+| Level | What gets measured | Recorded as | Code |
+| --- | --- | --- | --- |
+| Whole-model run | Prefill and decode tok/s, prefill seconds, peak `phys_footprint`, follow-up TTFT, audio wall time and RTF, modeled prefill and decode joules, phase buckets, engaged lanes, host samples | `run` (plus `runs/<run_id>.json`), `profile_summary` | `src/worker.rs`, `src/worker_audio.rs`, `src/phases.rs`, `src/energy.rs`, `src/host.rs` |
+| Paired comparison | Median effect, bootstrap 95% interval, clean pair count, null floor | `null_calibration`, `verdict`, `sweep` | `src/orchestrate.rs`, `src/sweep.rs`, `src/stats.rs` |
+| Kernel | GPU time per case over M rows or context, optional output-bit hashes, modeled energy per case | `kernel_curve` | `src/kernel/` |
+| Offline | Projected effect of a kernel mode, its miss against the verdict, speculation depth and tree acceptance from captures | `projection`, `calibration`, `depth_replay`, `tree_replay`, `hybrid_replay` | `src/projection.rs`, `src/depth_replay.rs`, `src/tree_replay.rs`, `src/hybrid_replay.rs` |
+
+`Metric` in `src/workload.rs` is the one list of judgeable metrics, with each
+metric's direction and the record field it reads. A new metric goes there.
+
+**Kernel benches** implement `KernelBench` (`src/kernel/mod.rs`): `name`, a
+one-line `describe` for `tslab kernel --list`, `cases` derived from the
+install's own shapes (an `Err` is a coverage answer such as "no MLA kernel",
+not a failure), and `run`. `registry()` is the order `--bench all` runs them.
+`ane_matmul` and `ane_handoff` compile only with the `ane-prefill` feature.
+
+**Knobs** (`src/knobs.rs`) classify every runtime switch an arm can set, and
+`tslab knobs` prints the table. Two columns decide how an A/B on it is read:
+
+| Field | Values | Meaning |
+| --- | --- | --- |
+| `read_at` | `open` | Captured into the runner when the model opens |
+| | `process_cached` | A process-wide `OnceLock`. Changing it needs a new process, which is why every arm is a fresh worker |
+| | `per_call` | Read on every call (diagnostics) |
+| `exactness` | `bit_exact` | Output bits identical across values. The quality gate checks digests |
+| | `kl_bounded` | Output moves within a distribution bound. The gate runs the KL probe |
+| | `not_comparable` | Changes what is computed or measured. Compare within one value only |
+
+A knob marked unquotable (profilers, probes, stand-ins, dumps) makes every run
+that sets it ineligible for a verdict. Each knob also names the
+`[engaged] NAME` lines that prove its lane ran, and the worker refuses a run
+whose stderr contradicts its arm.
+
+### Environment
+
+| Variable | Read by | Purpose |
+| --- | --- | --- |
+| `TURBOSPARK_LAB_DIR` | `src/paths.rs` | Results root. Wins over `TURBOSPARK_HOME` |
+| `TURBOSPARK_HOME` | `src/paths.rs` | Fallback root (`$TURBOSPARK_HOME/lab`), and the model store for aliases |
+| `CARGO_TARGET_DIR` | `src/experiment.rs`, `skill/scripts/doctor.sh` | Where `run-experiment` and the doctor find the built `tslab-worker` |
+| `TURBOSPARK_ENGAGEMENT` | set by `src/orchestrate.rs` | Always `1` on a worker, so engagement lines print |
+| `TSLAB_ANE_MODEL` | `src/kernel/ane_handoff.rs` (ignored test) | The dense Qwen install the real-program `ane_handoff` test runs on |
+| any `TURBOSPARK_*` | `src/provenance.rs` | Copied into every record's provenance when set on the tslab process |
+
+A worker starts from a cleared environment plus `PATH`, `HOME`, `TMPDIR`,
+`USER`, `LANG`, `LC_ALL`, `TURBOSPARK_HOME`, `TURBOSPARK_LAB_DIR`,
+`TURBOSPARK_ENGAGEMENT=1`, and the arm's own variables (`PASSTHROUGH`,
+`PASSTHROUGH_TURBOSPARK`, and `ORCHESTRATOR_ENV` in `src/orchestrate.rs`).
+A knob exported in your shell does not leak into an arm.
+
+### Examples
+
+Build, and confirm the checkout is usable:
+
+```sh
+cargo build --release -p turbospark-lab
+crates/lab/skill/scripts/doctor.sh
+```
+
+Build with the ANE benches and the ANE+Steel prefill split available as arms:
+
+```sh
+cargo build --release -p turbospark-lab --features ane-prefill
+target/release/tslab kernel --model qwen38-27b --bench ane_handoff --contend 4 --experiment ane-handoff
+```
+
+Run the real-program `ane_handoff` test (ignored by default):
+
+```sh
+TSLAB_ANE_MODEL=~/models/qwen38-27b.gturbo \
+  cargo test -p turbospark-lab --features ane-prefill --release -- --ignored runs_both_arms_on_the_real_programs
+```
+
+Keep an experiment's results apart from your main lab dir:
+
+```sh
+TURBOSPARK_LAB_DIR=~/lab-scratch target/release/tslab profile --model lfm3-1.7b --decode 64 --experiment scratch
+target/release/tslab serve --lab ~/lab-scratch
+```
+
+Read one experiment's verdicts as JSON lines:
+
+```sh
+target/release/tslab ledger --experiment lfm3-ffn --kind verdict
+```
 
 ### The `--json` output contract
 
@@ -104,5 +198,7 @@ phase table drifts from `src/phases.rs`.
 ## Related pages
 
 - [TurboSpark Lab (tslab)](../advanced/tslab.md)
+- [The tslab dashboard](../advanced/tslab-serve.md)
+- [The tslab agent skill](../advanced/tslab-skill.md)
 - [bench](bench.md)
 - [runtime](runtime.md)
