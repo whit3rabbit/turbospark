@@ -22,9 +22,7 @@
   <a href="https://turbospark.gitbook.io/turbospark/documentation">Documentation</a> | <a href="#install">Install</a> | <a href="#quickstart">Quickstart</a> | <a href="#supported-models">Supported Models</a> | <a href="#memory-and-benchmark-results">Benchmarks</a> | <a href="#image-generation">Image Generation</a> | <a href="#humanize">Humanize</a> | <a href="#audio">Audio</a> | <a href="#music-generation">Music</a> | <a href="#decision-models">Decision Models</a> | <a href="#supported-features">Features</a> | <a href="#turbospark-lab">Lab</a> | <a href="#more-details">More Details</a> | <a href="#license">License</a>
 </p>
 
-<p align="center">
-  <a href="assets/screenshots/chat.png"><img src="assets/screenshots/chat.png" alt="TurboSpark chat with a loaded Spark-X2.5 model, the chat list, and live memory, CPU, and GPU readouts in the top bar" width="92%" /></a>
-</p>
+https://github.com/user-attachments/assets/a39f7cbc-f08f-41c3-a06c-4ec5a936b16f
 
 <table align="center">
   <tr>
