@@ -36,6 +36,66 @@ pub const HEADROOM_RESERVE_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 /// the size of this engine can run beside it without the machine swapping.
 pub const HEADROOM_FRACTION: f64 = 0.25;
 
+/// The budget share a WIRED slot cache may take, in place of
+/// [`HEADROOM_FRACTION`]. Wiring is what makes a larger cache pay: on the
+/// REAP-288 qwen4_exp install an unwired 96-slot cache lost to memory
+/// compression while a wired one won 6.7% (128 wired: 16.9%), and wiring at
+/// the quarter budget's 48 slots was noise (docs/QWEN4_EXP.md, "Wired expert
+/// slots"). Half, not more: the pages stay wired for the life of the process.
+pub const WIRED_HEADROOM_FRACTION: f64 = 0.5;
+
+/// Whether the streamed slot cache is wired (`mlock`), as REQUESTED. The
+/// runtime decides whether a request engages (residency, the OS wire limit,
+/// the lock itself), and an environment override wins over this request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExpertSlotWiring {
+    /// Wired for the families measured to gain ([`wiring_default_for`]),
+    /// falling back to an unwired cache at the quarter budget when the lock
+    /// cannot be had.
+    #[default]
+    Auto,
+    /// Wired on every streamed family. A failed lock refuses the open, so a
+    /// measurement that asked for wired slots never runs unwired ones.
+    On,
+    /// Never wired; the quarter budget.
+    Off,
+}
+
+impl ExpertSlotWiring {
+    /// `auto|on|off`, case-insensitive. None so a parser can refuse a typo.
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "auto" => Some(Self::Auto),
+            "on" => Some(Self::On),
+            "off" => Some(Self::Off),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::On => "on",
+            Self::Off => "off",
+        }
+    }
+
+    /// Whether this request asks for a wired cache on `family`.
+    pub fn wants_wired(self, family: crate::ModelFamily) -> bool {
+        match self {
+            Self::Auto => wiring_default_for(family),
+            Self::On => true,
+            Self::Off => false,
+        }
+    }
+}
+
+/// The families whose `Auto` wires the slot cache. Only those with a paired
+/// wired-against-unwired measurement belong here.
+pub fn wiring_default_for(family: crate::ModelFamily) -> bool {
+    family == crate::ModelFamily::Qwen4Exp
+}
+
 /// Whether the minimum streamed cache would exceed the memory budget that
 /// `Auto` is allowed to consume. Mapped residency is the conservative escape
 /// hatch for that case: it removes the pinned slot cache while preserving the
@@ -130,16 +190,50 @@ impl ExpertCacheSlots {
     /// A frozen footprint row taken at whatever the machine felt like that
     /// morning is not a row.
     pub fn resolve(self, physical_bytes: u64, resident_bytes: u64, bytes_per_slot: u64) -> usize {
+        self.resolve_wired(physical_bytes, resident_bytes, bytes_per_slot, false)
+    }
+
+    /// [`ExpertCacheSlots::resolve`] for a cache that will be wired: `Auto`
+    /// budgets [`WIRED_HEADROOM_FRACTION`] instead of [`HEADROOM_FRACTION`].
+    /// `Fixed` is unchanged.
+    pub fn resolve_wired(
+        self,
+        physical_bytes: u64,
+        resident_bytes: u64,
+        bytes_per_slot: u64,
+        wired: bool,
+    ) -> usize {
+        let fraction = if wired {
+            WIRED_HEADROOM_FRACTION
+        } else {
+            HEADROOM_FRACTION
+        };
         match self {
             Self::Fixed(n) => n,
-            Self::Auto => auto_slots(physical_bytes, resident_bytes, bytes_per_slot),
+            Self::Auto => auto_slots_at(physical_bytes, resident_bytes, bytes_per_slot, fraction),
         }
     }
 }
 
 /// The `Auto` arm of [`ExpertCacheSlots::resolve`], split out so the policy
 /// can be tested without naming the enum in every case.
+#[cfg(test)]
 fn auto_slots(physical_bytes: u64, resident_bytes: u64, bytes_per_slot: u64) -> usize {
+    auto_slots_at(
+        physical_bytes,
+        resident_bytes,
+        bytes_per_slot,
+        HEADROOM_FRACTION,
+    )
+}
+
+/// [`auto_slots`] at an explicit budget share.
+fn auto_slots_at(
+    physical_bytes: u64,
+    resident_bytes: u64,
+    bytes_per_slot: u64,
+    fraction: f64,
+) -> usize {
     let floor = DEFAULT_CACHE_SLOTS as usize;
     // A dense install has no routed experts, so every slot count describes
     // the same empty cache and the arithmetic below would divide by zero.
@@ -147,7 +241,7 @@ fn auto_slots(physical_bytes: u64, resident_bytes: u64, bytes_per_slot: u64) -> 
         return floor;
     }
     let free = physical_bytes.saturating_sub(resident_bytes.saturating_add(HEADROOM_RESERVE_BYTES));
-    let budget = (free as f64 * HEADROOM_FRACTION) as u64;
+    let budget = (free as f64 * fraction) as u64;
 
     ALLOWED_CACHE_SLOTS
         .iter()
@@ -224,6 +318,49 @@ impl ResolvedExpertResidency {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One slot of the qwen4_exp REAP-288 install: 48 layers of expert
+    /// stride, about 133 MB, and its 2.79 GB resident region.
+    const QWEN4_BYTES_PER_SLOT: u64 = 133_000_000;
+    const QWEN4_RESIDENT: u64 = 2_789_176_576;
+
+    #[test]
+    fn wired_budget_doubles_auto_on_the_qwen4_install() {
+        let physical = 36 * 1024 * 1024 * 1024;
+        let unwired =
+            ExpertCacheSlots::Auto.resolve(physical, QWEN4_RESIDENT, QWEN4_BYTES_PER_SLOT);
+        let wired = ExpertCacheSlots::Auto.resolve_wired(
+            physical,
+            QWEN4_RESIDENT,
+            QWEN4_BYTES_PER_SLOT,
+            true,
+        );
+        // The two counts the sweep measured: 48 unwired, 96 wired.
+        assert_eq!((unwired, wired), (48, 96));
+        // Fixed ignores the budget either way.
+        assert_eq!(
+            ExpertCacheSlots::Fixed(32).resolve_wired(physical, 0, QWEN4_BYTES_PER_SLOT, true),
+            32
+        );
+    }
+
+    #[test]
+    fn wiring_auto_engages_only_on_measured_families() {
+        use crate::ModelFamily;
+        assert!(ExpertSlotWiring::Auto.wants_wired(ModelFamily::Qwen4Exp));
+        assert!(!ExpertSlotWiring::Auto.wants_wired(ModelFamily::Gemma4));
+        assert!(ExpertSlotWiring::On.wants_wired(ModelFamily::Gemma4));
+        assert!(!ExpertSlotWiring::Off.wants_wired(ModelFamily::Qwen4Exp));
+        for mode in [
+            ExpertSlotWiring::Auto,
+            ExpertSlotWiring::On,
+            ExpertSlotWiring::Off,
+        ] {
+            assert_eq!(ExpertSlotWiring::parse(mode.as_str()), Some(mode));
+        }
+        assert_eq!(ExpertSlotWiring::parse("ON"), Some(ExpertSlotWiring::On));
+        assert_eq!(ExpertSlotWiring::parse("yes"), None);
+    }
 
     /// One slot of Gemma 4 26B-A4B: 30 layers at ~3.2 MiB of expert stride.
     /// The install whose sweep in `docs/DECODE_BUDGET.md` this policy exists

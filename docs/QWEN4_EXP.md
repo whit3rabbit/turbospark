@@ -2062,3 +2062,195 @@ post-change real-checkpoint throughput, quality, or memory gate was run; the
 checkpoint was removed and current disk headroom is not enough to restore its
 68 GiB install. Measure those gates before claiming sparse decoding is faster
 or changing its release status.
+
+## RMSNorm convention follows the install (2026-10-31)
+
+`00247a7f` (2026-09-26) switched every Qwen4 RMSNorm (hyper-connection
+`hc_norm`, PLE `norm_key`/`norm_query`/`norm_conv`, attention `q_norm`/`k_norm`,
+indexer `q_layernorm`) from centered (`1 + w`) to direct (`w`). That is right
+for GGUF installs, whose llama.cpp converter folds the `+1` into the stored
+scale, and wrong for MLX installs, which keep Hugging Face's offsets from
+unity (REAP-288's `hc_norm` has mean -0.06, `q_norm` mean 0.28). From that
+commit on, `qwen4-reap288` decoded greedy garbage (`_coordinates` repeated)
+at about 33 tok/s, fast only because the garbage kept routing to the same
+experts.
+
+How it was found: the install was compared against the pinned source by HTTP
+byte ranges (resident tensors of layers 0, 1, 3 and 47, n-gram rows from five
+shards, hash multipliers, nine routed expert blobs: all identical), then the
+runtime was bisected on those same bytes. `32ed7a47` is coherent and
+`00247a7f` is not.
+
+The fix: `RealQwen4State::norms_centered` is true unless the manifest's
+attention slot has `scheme: "gguf"`, and `families/qwen4`'s
+`rms_norm_grouped`/`rms_norm_perhead` pick the kernel. The GDN gated norm is
+direct in both conventions and is unchanged. `gpu::encode_qsa_advance_blocks`
+still always centers the indexer `k_layernorm`, which matches MLX installs and
+has not been checked on a GGUF one.
+
+After the fix, greedy output is coherent and the real-install quality gate
+reads reference-answer perplexity 8.4241 against the 8.7224 frozen on
+2026-09-04 (3.4% lower, outside its 2% band, so the gate fails until the
+baseline is re-frozen). The other `00247a7f` changes (GDN Q/K epsilon, the
+single PLE SiLU, the shared expert joining after FP16 rounding) are kept.
+
+## DFlash2 acceptance on REAP-288 (2026-10-31)
+
+`incoai/Qwen3.8-Flash-Next-DFlash2` (revision `a22a1744`, Apache-2.0, 1.2 GB
+BF16) is a block-diffusion drafter trained on the full model's completed
+outputs of zero-based layers 5, 15, 25, 35 and 45, averaged over the four
+hyper-connection streams (its own SGLang capture patch says so).
+`TURBOSPARK_QWEN4_TAP_FILE=<path>` (layers via `TURBOSPARK_QWEN4_TAP_LAYERS`)
+appends exactly that feature for every position `produce` runs, and walks a
+chunked prefill through `produce` so prompt positions are recorded too.
+
+Method: six greedy chat-template generations of 256 tokens (math, code,
+hash-map explanation, travel chat, a rename-and-copy edit, coastal wetlands)
+on `qwen4-reap288` after the norm fix, taps captured; the drafter run offline
+in a numpy port with the install's own INT4 embedding and LM head; each
+block anchored on the target's token and its leading matches accepted
+against the target's greedy tokens, as a speculative loop would.
+
+Tokens per round (anchor plus accepted):
+
+| Prompt | b2 | b3 | b4 | b5 | b8 |
+| --- | --- | --- | --- | --- | --- |
+| math | 1.95 | 2.83 | 3.63 | 4.42 | 5.93 |
+| code | 1.95 | 2.83 | 3.72 | 4.54 | 7.09 |
+| explain | 1.82 | 2.43 | 2.84 | 3.06 | 3.28 |
+| chat | 1.79 | 2.07 | 2.54 | 2.82 | 3.06 |
+| wet | 1.69 | 2.13 | 2.41 | 2.43 | 2.68 |
+| copy | 2.00 | 3.00 | 4.00 | 5.00 | 8.00 |
+
+The drafter card reports 2.8-3.3 at block 4 under sampling on the FP8
+target; the five non-copy prompts here average 3.03, on a pruned INT4
+target the drafter never saw.
+
+It does not pay on this install. The verify cost was measured on real text
+as a prefill micro-batch (`tslab profile`, experiment `qwen4-fixed-verify`,
+48 streamed slots): 84.2 ms for one decode token, 142.9 ms for 2 rows, 250
+for 4, 476 for 8, 930 for 16. Every row streams its own experts (hit rate
+57-69%, expert `pread` 55-67% of a prefill token), so a verified row costs
+0.6-0.85 of a decode token. With a 5 ms drafter estimate, the non-copy mean
+prices at 1.05x (b2), 1.03x (b3), 1.00x (b4), 0.93x (b5) and 0.77x (b8);
+math and code reach 1.2x at b4, prose loses. Perfect drafts would cap at
+1.32x at b4.
+
+Not verified: the numpy port against the reference implementation (95%
+first-row acceptance on math says the features and port line up, which a
+wrong port would not produce), the drafter's real Metal cost, and the head
+and GDN/PLE/QSA rollback a real verify pass needs. The lever this points at
+is expert I/O, not drafting: re-sweep expert slots on real text first.
+
+## Expert slots on real text (2026-10-31)
+
+The 48-slot auto choice was first swept while the forward pass decoded
+garbage. Re-swept on the fixed install (`tslab sweep`, experiment
+`qwen4-slots-real`, protocol medium-review, 426 prompt tokens, 64 decode,
+2,048 context, 3 clean pairs per candidate, effect floor 3.49% from the null
+run), decode tok/s against auto:
+
+| Slots | Verdict | Median | 95% CI | Peak | Decode hit rate | Expert I/O ms/tok | GPU wait ms/tok |
+|---|---|---|---|---|---|---|---|
+| auto (48) | baseline | | | 6.5 GiB | 0.658 | 26.9 | 29.1 |
+| 64 | noise | +2.6% | [+0.3%, +14.3%] | 8.5 GiB | 0.731 | 24.8 | 29.2 |
+| 96 | loss | -18.0% | [-19.0%, -13.8%] | 12.5 GiB | 0.838 | 22.7 | 46.9 |
+| 128 | loss | -15.3% | [-19.8%, -12.4%] | 16.4 GiB | 0.911 | 17.8 | 48.5 |
+
+Auto stays. A larger cache does what it should to the hit rate and expert
+I/O, but above 64 slots the host's wait on the layer command buffer grows
+18-19 ms per token while the GPU busy time for that buffer stays at 20-22
+ms. The cause is unmeasured; residency or paging of the larger slot buffer
+is a guess (swap rose from 2.2 to 3.7 GB during the 128-slot warmup). The
+null run decoded at 11-12 tok/s against 16-17 tok/s in the sweep, so the
+host warmed between the two commands and the floor came from a colder
+state. Verdict records: 1793463977496-82579-44 (64),
+1793463977500-82579-45 (96), 1793463977505-82579-46 (128).
+
+## Why larger expert caches lose (2026-10-31)
+
+All three readings below are diagnostic runs, not quotable timings
+(experiment `qwen4-slots-trace`, protocol medium-review, auto against 96
+streamed slots).
+
+- Metal System Trace (`tslab trace`, 8 s window): GPU busy 33.8% at auto and
+  30.1% at 96 slots, the same kernel mix (the two MoE phases about 85%), the
+  same idle-gap medians. The GPU does no extra work at 96 slots.
+- Per-layer `cb1` timing (`TURBOSPARK_CB1_TRACE`, 2 timed runs per arm):
+  `commit()` stays under 1 ms per token in both arms, GPU busy stays at
+  18.7-18.9 ms per token, and wait minus busy grows from 7.9-8.4 to
+  13.5-14.3 ms per token. The excess shows on layers that read no expert
+  from disk too (mean 322 us at 96 slots against 152 us at auto), so it is
+  not the current layer's `pread`.
+- `vm_stat` around single-round runs, alternated twice: each 96-slot run
+  made 4.7-5.4 million compressions and 4.4-5.1 million decompressions, each
+  auto run 0 compressions and about 5,000 decompressions. Page-ins were
+  similar (2.8-3.1 million, model load included).
+
+Each slot is its own no-copy Metal buffer over pageable host memory
+(`real_forward_init.rs`), and a pass declares only the 10 slots it reads, so
+the binding work does not grow with the slot count. What grows is memory:
+at 96 slots (12.5 GiB peak) the kernel compresses anonymous pages and the
+GPU waits for them to come back. Which pages (the slots themselves or other
+processes' memory) was not measured; file-backed page cache is dropped, not
+compressed, so it is not the compressed set. At 64 slots (8.5 GiB) the wait did
+not grow, which fits a pressure threshold, not a per-slot cost. The
+threshold depends on what else holds memory: swap on this host was 2.2 GB
+before the sweep and 7.9 GB after these runs, with other sessions active.
+
+Wiring the slot pages was tested next ("Wired expert slots" below). A Metal
+residency set and sizing auto from free memory remain untested.
+
+## Wired expert slots (2026-10-31)
+
+`TURBOSPARK_EXPERT_SLOTS_WIRED=1` (`docs/ENV.md`) wires every slot's pages
+with `mlock` at open, before the no-copy wrap, and refuses the open if the
+lock fails. Swept against auto in one interleaved command (`tslab sweep`,
+experiment `qwen4-slots-wired`, protocol medium-review, 64 decode, 3 clean
+pairs per candidate, 2% default floor), decode tok/s:
+
+| Arm | Verdict | Median | 95% CI | Peak | Compressions per run |
+|---|---|---|---|---|---|
+| auto (48), unwired | baseline | | | 6.5 GiB | 0 |
+| 96 wired | win | +6.7% | [+5.3%, +8.5%] | 12.5 GiB | 0.32-0.56M |
+| 128 wired | win | +16.9% | [+12.6%, +61.8%] | 16.5 GiB | 0.09-1.0M |
+| 96 unwired | loss | -2.7% | [-5.2%, -0.7%] | 12.5 GiB | 0.47-0.89M |
+
+Decode digests are identical across all 26 runs. The 128-slot upper bound
+comes from one pair whose auto run read 13.7 tok/s. Swap held at 6.7-7.5 GB
+from other sessions throughout, and the unwired 96-slot loss was 2.7% here
+against 18% in the earlier sweep, so how much an unwired cache loses depends
+on what else holds memory. Wired arms still compress other pages: wiring
+moves the pressure off the slots, it does not remove it.
+
+Wiring stays opt-in. It takes 6-10 GB beyond auto out of the system's reach
+for the life of the process, and auto has not been taught to size a wired
+cache from free memory. Verdict records: 1793466278644-9099-52 (96 wired),
+1793466278647-9099-53 (128 wired), 1793466278651-9099-54 (96 unwired).
+
+Wiring alone does not pay at auto. A second sweep in the same experiment
+put wired auto (48) at +1.8% (95% CI [-2.0%, +1.8%], noise, record
+1793466996772-92918-34) and wired 64 at +1.3% ([-0.8%, +6.2%], noise,
+1793466996778-92918-35). Wired auto made 0 compressions per run against
+4K-116K unwired, so the lock does its job, but at 48 slots the compressor
+was not costing decode time. The gain needs a cache above auto's budget
+(25% of what is left after the resident weights and a 4 GiB reserve,
+`model_io::expert_cache_policy`), which is a memory decision rather than a
+switch.
+
+Wiring is now the qwen4_exp default (2026-10-31). The `auto` request
+(`expertSlotsWiring` in the FFI and the app's Engine settings,
+`model_io::ExpertSlotWiring`) wires the slot cache on this family at
+`WIRED_HEADROOM_FRACTION` (half of what is left after the resident weights
+and the 4 GiB reserve, against a quarter unwired), which is 96 slots on a 36
+GB M4 Max. Before allocating it checks `RLIMIT_MEMLOCK` and
+`vm.user_wire_limit`. If the wired cache would not fit, or `mlock` fails,
+the open uses the unwired budget instead of refusing. `on` refuses on a
+failed lock, `off` never wires, and `TURBOSPARK_EXPERT_SLOTS_WIRED` (`1`,
+`0`) overrides the request. The pre-open sizing in the CLI, server, FFI and
+catalog fit uses the same request, so the context budget counts the wired
+cache. Checked on the install: the default opened 96 wired slots (12.4 GiB
+peak), and under `ulimit -l 1048576` it opened 48 unwired slots (6.4 GiB).
+Not checked: the `mlock`-failure fallback with the limit check passing, and
+any machine other than this one. Other families stay unwired until a paired
+sweep (`slots_wired` in the family profile) says otherwise.

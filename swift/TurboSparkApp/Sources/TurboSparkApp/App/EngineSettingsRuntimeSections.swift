@@ -169,6 +169,49 @@ extension EngineSettingsPaneView {
         }
     }
 
+    var expertSlotsWiringSection: some View {
+        Section(header: Text("Expert Cache Locking", bundle: .module)) {
+            Picker(selection: $model.runtimeOptions.expertSlotsWiring) {
+                ForEach(AppExpertSlotsWiringOption.allCases) { opt in
+                    Text(LocalizedStringKey(opt.menuLabel), bundle: .module).tag(opt)
+                }
+            } label: { Text("Lock Expert Cache", bundle: .module) }
+            .settingsControl("Lock Expert Cache", pane: .engine, timing: .modelReload)
+            .pickerStyle(.menu)
+            .onChange(of: model.runtimeOptions.expertSlotsWiring) { _, _ in
+                model.persistSettingsDebounced()
+            }
+
+            if let wiring = model.session?.info.expertSlotsWiring {
+                LabeledContent {
+                    Group {
+                        if wiring.active {
+                            HStack(spacing: 4) {
+                                Text("Active", bundle: .module)
+                                Text(verbatim: "(\(ByteCountFormatter.string(fromByteCount: Int64(clamping: wiring.wiredBytes), countStyle: .memory)))")
+                            }
+                        } else if let reason = wiring.reason {
+                            HStack(spacing: 4) {
+                                Text("Off", bundle: .module)
+                                Text(verbatim: "(\(reason))")
+                            }
+                        } else {
+                            Text("Off", bundle: .module)
+                        }
+                    }
+                    .themedFont(.tiny, systemDesign: .monospaced)
+                    .foregroundStyle(.appSecondary)
+                } label: {
+                    Text("Resolved", bundle: .module)
+                }
+            }
+
+            Text("Locks the expert cache of mixture-of-experts models in memory so macOS cannot compress it. Auto locks a larger cache on models measured to gain from it (Qwen 3.8-Flash-Next) and uses an unlocked cache when macOS will not lock it. Locked memory is unavailable to other apps while the model is loaded. Takes effect on the next model load.", bundle: .module)
+            .themedFont(.tiny)
+            .foregroundStyle(.appSecondary)
+        }
+    }
+
     var inProcessServerSection: some View {
         Section(header: Text("In-Process Server", bundle: .module)) {
             LabeledContent {

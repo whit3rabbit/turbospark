@@ -236,6 +236,7 @@ extension AppModel {
             options.kvBits = runtimeOptions.kvBits.kvBits
         }
         options.anePrefill = runtimeOptions.anePrefill.anePrefill
+        options.expertSlotsWiring = runtimeOptions.expertSlotsWiring.expertSlotsWiring
         let aneDir = runtimeOptions.anePrefillDir.trimmingCharacters(in: .whitespacesAndNewlines)
         if !aneDir.isEmpty {
             options.anePrefillDir = aneDir

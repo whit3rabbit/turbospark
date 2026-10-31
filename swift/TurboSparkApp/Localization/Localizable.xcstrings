@@ -169101,6 +169101,137 @@
         }
       }
     },
+    "Expert Cache Locking": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "قفل ذاكرة التخزين المؤقت للخبراء"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sperren des Experten-Caches"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Expert Cache Locking"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bloqueo de la caché de expertos"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verrouillage du cache d'experts"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "נעילת מטמון המומחים"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "एक्सपर्ट कैश लॉकिंग"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Penguncian Cache Pakar"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Blocco della cache degli esperti"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "エキスパートキャッシュのロック"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "전문가 캐시 잠금"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vergrendeling van expertcache"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Blokowanie pamięci podręcznej ekspertów"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bloqueio do cache de especialistas"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Блокировка кэша экспертов"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Låsning av expertcache"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uzman Önbelleği Kilitleme"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Блокування кешу експертів"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Khóa bộ nhớ đệm chuyên gia"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "专家缓存锁定"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "專家快取鎖定"
+          }
+        }
+      }
+    },
     "Expert I/O": {
       "extractionState": "manual",
       "localizations": {
@@ -252107,6 +252238,137 @@
         }
       }
     },
+    "Lock Expert Cache": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "قفل ذاكرة الخبراء المؤقتة"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Experten-Cache sperren"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lock Expert Cache"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bloquear caché de expertos"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verrouiller le cache d'experts"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "נעל את מטמון המומחים"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "एक्सपर्ट कैश लॉक करें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kunci Cache Pakar"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Blocca cache degli esperti"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "エキスパートキャッシュをロック"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "전문가 캐시 잠그기"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Expertcache vergrendelen"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zablokuj pamięć podręczną ekspertów"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bloquear cache de especialistas"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Заблокировать кэш экспертов"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lås expertcache"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uzman Önbelleğini Kilitle"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Заблокувати кеш експертів"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Khóa bộ nhớ đệm chuyên gia"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "锁定专家缓存"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "鎖定專家快取"
+          }
+        }
+      }
+    },
     "Lock Now": {
       "extractionState": "manual",
       "localizations": {
@@ -252234,6 +252496,137 @@
           "stringUnit": {
             "state": "translated",
             "value": "立即鎖定"
+          }
+        }
+      }
+    },
+    "Locks the expert cache of mixture-of-experts models in memory so macOS cannot compress it. Auto locks a larger cache on models measured to gain from it (Qwen 3.8-Flash-Next) and uses an unlocked cache when macOS will not lock it. Locked memory is unavailable to other apps while the model is loaded. Takes effect on the next model load.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يقفل ذاكرة الخبراء المؤقتة لنماذج مزيج الخبراء في الذاكرة حتى لا يتمكن macOS من ضغطها. يقفل الوضع التلقائي ذاكرة مؤقتة أكبر في النماذج التي ثبت بالقياس أنها تستفيد منها (Qwen 3.8-Flash-Next)، ويستخدم ذاكرة مؤقتة غير مقفلة عندما لا يسمح macOS بقفلها. الذاكرة المقفلة غير متاحة للتطبيقات الأخرى أثناء تحميل النموذج. يسري التغيير عند تحميل النموذج التالي."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sperrt den Experten-Cache von Mixture-of-Experts-Modellen im Arbeitsspeicher, damit macOS ihn nicht komprimieren kann. Auto sperrt einen größeren Cache bei Modellen, bei denen ein Gewinn gemessen wurde (Qwen 3.8-Flash-Next), und verwendet einen ungesperrten Cache, wenn macOS das Sperren nicht zulässt. Gesperrter Speicher steht anderen Apps nicht zur Verfügung, solange das Modell geladen ist. Wird beim nächsten Laden des Modells wirksam."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Locks the expert cache of mixture-of-experts models in memory so macOS cannot compress it. Auto locks a larger cache on models measured to gain from it (Qwen 3.8-Flash-Next) and uses an unlocked cache when macOS will not lock it. Locked memory is unavailable to other apps while the model is loaded. Takes effect on the next model load."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bloquea en memoria la caché de expertos de los modelos de mezcla de expertos para que macOS no pueda comprimirla. Auto bloquea una caché más grande en los modelos en los que se ha medido una mejora (Qwen 3.8-Flash-Next) y usa una caché sin bloquear cuando macOS no permite bloquearla. La memoria bloqueada no está disponible para otras apps mientras el modelo está cargado. Se aplica en la próxima carga del modelo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verrouille en mémoire le cache d'experts des modèles à mélange d'experts afin que macOS ne puisse pas le compresser. Auto verrouille un cache plus grand sur les modèles pour lesquels un gain a été mesuré (Qwen 3.8-Flash-Next) et utilise un cache non verrouillé lorsque macOS refuse de le verrouiller. La mémoire verrouillée n'est pas disponible pour les autres apps tant que le modèle est chargé. Prend effet au prochain chargement du modèle."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "נועל בזיכרון את מטמון המומחים של מודלים מסוג תערובת מומחים כדי ש-macOS לא יוכל לדחוס אותו. מצב אוטומטי נועל מטמון גדול יותר במודלים שנמדד בהם שיפור (Qwen 3.8-Flash-Next), ומשתמש במטמון לא נעול כאשר macOS אינו מאפשר לנעול אותו. זיכרון נעול אינו זמין ליישומים אחרים כל עוד המודל טעון. ייכנס לתוקף בטעינת המודל הבאה."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "मिक्सचर-ऑफ़-एक्सपर्ट्स मॉडल के एक्सपर्ट कैश को मेमोरी में लॉक करता है ताकि macOS उसे संपीड़ित न कर सके। ऑटो उन मॉडलों पर बड़ा कैश लॉक करता है जिन पर लाभ मापा गया है (Qwen 3.8-Flash-Next), और जब macOS लॉक नहीं करने देता तो अनलॉक कैश का उपयोग करता है। मॉडल लोड रहने तक लॉक की गई मेमोरी अन्य ऐप्स के लिए उपलब्ध नहीं होती। अगली बार मॉडल लोड होने पर लागू होता है।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mengunci cache pakar model mixture-of-experts di memori agar macOS tidak dapat mengompresinya. Auto mengunci cache yang lebih besar pada model yang terukur mendapat manfaat (Qwen 3.8-Flash-Next) dan memakai cache tak terkunci saat macOS tidak mengizinkan penguncian. Memori yang terkunci tidak tersedia untuk aplikasi lain selama model dimuat. Berlaku pada pemuatan model berikutnya."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Blocca in memoria la cache degli esperti dei modelli mixture-of-experts così che macOS non possa comprimerla. Auto blocca una cache più grande sui modelli per cui è stato misurato un guadagno (Qwen 3.8-Flash-Next) e usa una cache non bloccata quando macOS non ne consente il blocco. La memoria bloccata non è disponibile per altre app finché il modello è caricato. Ha effetto al prossimo caricamento del modello."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mixture-of-Experts モデルのエキスパートキャッシュをメモリにロックし、macOS が圧縮できないようにします。自動では、効果が測定されたモデル (Qwen 3.8-Flash-Next) でより大きなキャッシュをロックし、macOS がロックを許可しない場合はロックしないキャッシュを使います。ロックされたメモリは、モデルの読み込み中はほかのアプリで使用できません。次回のモデル読み込み時に反映されます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "전문가 혼합(MoE) 모델의 전문가 캐시를 메모리에 잠가 macOS가 압축하지 못하게 합니다. 자동은 효과가 측정된 모델(Qwen 3.8-Flash-Next)에서 더 큰 캐시를 잠그고, macOS가 잠금을 허용하지 않으면 잠기지 않은 캐시를 사용합니다. 잠긴 메모리는 모델이 로드된 동안 다른 앱에서 사용할 수 없습니다. 다음 모델 로드 시 적용됩니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vergrendelt de expertcache van mixture-of-experts-modellen in het geheugen, zodat macOS hem niet kan comprimeren. Auto vergrendelt een grotere cache bij modellen waarvoor winst is gemeten (Qwen 3.8-Flash-Next) en gebruikt een niet-vergrendelde cache als macOS vergrendelen niet toestaat. Vergrendeld geheugen is niet beschikbaar voor andere apps zolang het model geladen is. Wordt van kracht bij het volgende laden van het model."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Blokuje w pamięci pamięć podręczną ekspertów modeli typu mixture-of-experts, aby macOS nie mógł jej kompresować. Auto blokuje większą pamięć podręczną w modelach, dla których zmierzono zysk (Qwen 3.8-Flash-Next), i używa niezablokowanej pamięci podręcznej, gdy macOS nie pozwala jej zablokować. Zablokowana pamięć jest niedostępna dla innych aplikacji, dopóki model jest załadowany. Zmiana obowiązuje od następnego załadowania modelu."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bloqueia na memória o cache de especialistas dos modelos mixture-of-experts para que o macOS não possa comprimi-lo. Auto bloqueia um cache maior nos modelos em que foi medido um ganho (Qwen 3.8-Flash-Next) e usa um cache não bloqueado quando o macOS não permite o bloqueio. A memória bloqueada fica indisponível para outros apps enquanto o modelo estiver carregado. Entra em vigor no próximo carregamento do modelo."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Блокирует в памяти кэш экспертов моделей со смесью экспертов, чтобы macOS не могла его сжимать. В режиме Auto больший кэш блокируется на моделях, для которых измерен выигрыш (Qwen 3.8-Flash-Next), а если macOS не позволяет блокировку, используется незаблокированный кэш. Заблокированная память недоступна другим приложениям, пока модель загружена. Вступает в силу при следующей загрузке модели."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Låser expertcachen för mixture-of-experts-modeller i minnet så att macOS inte kan komprimera den. Auto låser en större cache på modeller där en vinst har uppmätts (Qwen 3.8-Flash-Next) och använder en olåst cache när macOS inte tillåter låsning. Låst minne är inte tillgängligt för andra appar medan modellen är inläst. Träder i kraft nästa gång modellen läses in."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uzman karışımı modellerin uzman önbelleğini bellekte kilitler, böylece macOS onu sıkıştıramaz. Otomatik, kazanç ölçülen modellerde (Qwen 3.8-Flash-Next) daha büyük bir önbelleği kilitler ve macOS kilitlemeye izin vermediğinde kilitlenmemiş bir önbellek kullanır. Kilitli bellek, model yüklü olduğu sürece diğer uygulamalar tarafından kullanılamaz. Bir sonraki model yüklemesinde geçerli olur."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Блокує в пам'яті кеш експертів моделей із сумішшю експертів, щоб macOS не могла його стискати. Режим Auto блокує більший кеш на моделях, для яких виміряно виграш (Qwen 3.8-Flash-Next), а якщо macOS не дозволяє блокування, використовує незаблокований кеш. Заблокована пам'ять недоступна іншим програмам, поки модель завантажена. Набуває чинності під час наступного завантаження моделі."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Khóa bộ nhớ đệm chuyên gia của các mô hình mixture-of-experts trong bộ nhớ để macOS không thể nén nó. Tự động sẽ khóa bộ nhớ đệm lớn hơn trên các mô hình đã đo được lợi ích (Qwen 3.8-Flash-Next) và dùng bộ nhớ đệm không khóa khi macOS không cho phép khóa. Bộ nhớ đã khóa không khả dụng cho các ứng dụng khác khi mô hình đang được tải. Có hiệu lực ở lần tải mô hình tiếp theo."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "将混合专家模型的专家缓存锁定在内存中，使 macOS 无法压缩它。自动模式会在经测量能获益的模型（Qwen 3.8-Flash-Next）上锁定更大的缓存，并在 macOS 不允许锁定时使用未锁定的缓存。模型加载期间，锁定的内存无法供其他 App 使用。下次加载模型时生效。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "將混合專家模型的專家快取鎖定在記憶體中，讓 macOS 無法壓縮它。自動模式會在經測量能獲益的模型（Qwen 3.8-Flash-Next）上鎖定較大的快取，並在 macOS 不允許鎖定時使用未鎖定的快取。模型載入期間，鎖定的記憶體無法供其他 App 使用。下次載入模型時生效。"
           }
         }
       }

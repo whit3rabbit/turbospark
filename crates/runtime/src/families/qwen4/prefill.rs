@@ -55,14 +55,13 @@
 //! neither), no vision, no drafter -- all out of scope for this cut,
 //! `mod.rs`'s own doc.
 //!
-//! BOTH BATCHING SEAMS ARE REFUSED BY NAME, never silently ignored, which
-//! is the pair every other chunked driver carries (crate Gotcha 7's closing
-//! clause). `TURBOSPARK_ROUTED_BATCH` is MEANINGFUL here rather than
-//! vacuous -- this family has a routed half, unlike the dense drivers that
-//! may ignore it legitimately -- and `TURBOSPARK_BATCHED_GEMV` names
-//! resident GEMVs, which every family has. Neither is wired for this
-//! driver, so serving the per-token loop under either arm's label would
-//! report the unbatched engine as the batched one (crate Gotcha 22).
+//! Two opt-in seams batch across the micro-batch's rows, each bit-identical
+//! to the per-token loop it replaces. `TURBOSPARK_ROUTED_BATCH` runs the
+//! routed half as one route-list dispatch pair per union-bounded sub-batch
+//! (`moe_batch.rs`). `TURBOSPARK_BATCHED_GEMV` runs each layer's input and
+//! output projections as M-row GEMMs around the per-token recurrent middle
+//! (`batched.rs`); the hyper-connection GEMVs, PLE, the router and the
+//! shared expert stay per token.
 
 use std::collections::HashSet;
 use std::time::Instant;
@@ -71,8 +70,8 @@ use foundation::LogitValue;
 
 use super::attn::{encode_full_attention_block, encode_linear_block};
 use super::hc::encode_hyper_connection;
-use super::moe;
 use super::ple::encode_ple_layer;
+use super::{batched, moe, moe_batch};
 use super::{layer_tensor, TRUNK_PREFIX};
 use crate::moe_prefill_pipeline::routed_pipeline_banks;
 use crate::real_forward::RealForwardRunner;
@@ -96,38 +95,21 @@ impl RealForwardRunner {
                 "prefill_chunk called with an empty chunk".to_string(),
             ));
         }
-        // REFUSED BY NAME rather than ignored, the same pair every other
-        // chunked driver carries (crate Gotcha 7's closing clause, and
-        // Gotcha 22's silent-ignore rule).
-        //
-        // `TURBOSPARK_ROUTED_BATCH` asks for the routed half as one
-        // route-list dispatch pair. This family HAS a routed half, so the
-        // request is MEANINGFUL here where a dense driver may ignore it
-        // legitimately, and the batched pair is wired in the gemma4
-        // (INT4-affine) and gpt-oss (MXFP4) drivers alone. Running the
-        // per-token routed loop anyway would report the unbatched engine
-        // under the batched arm's label.
-        if self.routed_batch_prefill {
-            return Err(RealForwardError::Unsupported(
-                "TURBOSPARK_ROUTED_BATCH is not wired for this family: the batched \
-                 routed pair exists in the gemma4 (INT4-affine) and gpt-oss (MXFP4) \
-                 chunked drivers alone, and this driver keeps its routed half as a \
-                 per-token loop"
-                    .to_string(),
-            ));
-        }
-        // The resident-GEMV seam, which unlike the one above is meaningful
-        // on EVERY chunked driver: every family has resident GEMVs, and the
-        // M-row GEMM is wired in the gemma4 and dense-qwen drivers alone
-        // (step 6).
-        if self.batched_gemv_prefill {
-            return Err(RealForwardError::Unsupported(
-                "TURBOSPARK_BATCHED_GEMV is not wired for this family: the M-row \
-                 resident GEMM exists in the gemma4 and dense-qwen chunked drivers \
-                 alone (INT4-affine), and this driver keeps every resident GEMV per \
-                 token"
-                    .to_string(),
-            ));
+        // The DFlash2 tap capture records from `produce` only, so a tapped
+        // run walks the prompt through it, one token at a time.
+        if self
+            .real_qwen4
+            .as_ref()
+            .is_some_and(|qwen4| qwen4.tap_capture.is_some())
+        {
+            let last = tokens.len() - 1;
+            for (i, &token) in tokens.iter().enumerate() {
+                self.skip_head = i != last;
+                let result = self.produce_real_qwen4(token, start_position + i, logits);
+                self.skip_head = false;
+                result?;
+            }
+            return Ok(());
         }
         let mut offset = 0usize;
         while offset < tokens.len() {
@@ -238,6 +220,7 @@ impl RealForwardRunner {
         }
 
         let mut pending_routed: Option<gpu::CommittedPass> = None;
+        let batched_gemv = self.batched_gemv_prefill;
         for layer in 0..arch.num_layers as usize {
             {
                 // The attention-and-router half: every token of the
@@ -276,98 +259,117 @@ impl RealForwardRunner {
                     }
                 }
 
-                for t in 0..m {
-                    let x_off = (t * wide_dim * 2) as u64;
-                    let hc_row = (t * hc_count * 2) as u64;
-                    let position = start_position + t;
-
-                    // attn_hc: mixed, raw (= wide_x's row t), inject_w (row t)
-                    encode_hyper_connection(
+                if batched_gemv {
+                    foundation::engaged!("batched_gemv");
+                    batched::encode_layer_cb1_batched(
                         context,
                         &pass,
                         weights,
                         index,
+                        &arch,
                         qwen4,
-                        (&qwen4.wide_x, x_off),
-                        &layer_tensor(layer, "attn_hyper_connection"),
-                        hidden,
-                        (&scratch.normed, 0),
-                        true,
-                        hc_row,
+                        scratch,
+                        kv,
+                        layer,
+                        start_position,
+                        m,
                     )?;
+                } else {
+                    for t in 0..m {
+                        let x_off = (t * wide_dim * 2) as u64;
+                        let hc_row = (t * hc_count * 2) as u64;
+                        let position = start_position + t;
 
-                    if arch.layer_is_linear(layer) {
-                        encode_linear_block(
+                        // attn_hc: mixed, raw (= wide_x's row t), inject_w (row t)
+                        encode_hyper_connection(
                             context,
                             &pass,
                             weights,
                             index,
-                            &arch,
                             qwen4,
+                            (&qwen4.wide_x, x_off),
+                            &layer_tensor(layer, "attn_hyper_connection"),
+                            hidden,
                             (&scratch.normed, 0),
-                            scratch,
-                            layer,
-                            position,
-                            false,
+                            true,
+                            hc_row,
                         )?;
-                    } else {
-                        encode_full_attention_block(
+
+                        if arch.layer_is_linear(layer) {
+                            encode_linear_block(
+                                context,
+                                &pass,
+                                weights,
+                                index,
+                                &arch,
+                                qwen4,
+                                (&scratch.normed, 0),
+                                scratch,
+                                layer,
+                                position,
+                                false,
+                                None,
+                            )?;
+                        } else {
+                            encode_full_attention_block(
+                                context,
+                                &pass,
+                                weights,
+                                index,
+                                &arch,
+                                qwen4,
+                                (&scratch.normed, 0),
+                                scratch,
+                                kv,
+                                layer,
+                                position,
+                                None,
+                            )?;
+                        }
+
+                        gpu::encode_hc_inject_add(
+                            context,
+                            &pass,
+                            (&qwen4.wide_x, x_off),
+                            (&scratch.o, 0),
+                            (&qwen4.hc_inject, hc_row),
+                            hc_count as u32,
+                            hidden as u32,
+                        )
+                        .map_err(gpu_err)?;
+
+                        // mlp_hc: mixed -> qwen4.moe_x's row t (NOT
+                        // scratch.normed -- see moe_x's own doc), raw (= updated
+                        // wide_x's row t), inject_w -> hc_inject's row t.
+                        let moe_x_off = (t * hidden * 2) as u64;
+                        encode_hyper_connection(
                             context,
                             &pass,
                             weights,
                             index,
-                            &arch,
                             qwen4,
-                            (&scratch.normed, 0),
-                            scratch,
-                            kv,
+                            (&qwen4.wide_x, x_off),
+                            &layer_tensor(layer, "mlp_hyper_connection"),
+                            hidden,
+                            (&qwen4.moe_x, moe_x_off),
+                            true,
+                            hc_row,
+                        )?;
+
+                        let logits_row_offset = (t * num_experts * 4) as u64;
+                        moe::encode_moe_router(
+                            context,
+                            &pass,
+                            weights,
+                            index,
+                            qwen4,
+                            (&qwen4.moe_x, moe_x_off),
                             layer,
-                            position,
+                            hidden,
+                            num_experts,
+                            logits_row_offset,
                         )?;
                     }
-
-                    gpu::encode_hc_inject_add(
-                        context,
-                        &pass,
-                        (&qwen4.wide_x, x_off),
-                        (&scratch.o, 0),
-                        (&qwen4.hc_inject, hc_row),
-                        hc_count as u32,
-                        hidden as u32,
-                    )
-                    .map_err(gpu_err)?;
-
-                    // mlp_hc: mixed -> qwen4.moe_x's row t (NOT
-                    // scratch.normed -- see moe_x's own doc), raw (= updated
-                    // wide_x's row t), inject_w -> hc_inject's row t.
-                    let moe_x_off = (t * hidden * 2) as u64;
-                    encode_hyper_connection(
-                        context,
-                        &pass,
-                        weights,
-                        index,
-                        qwen4,
-                        (&qwen4.wide_x, x_off),
-                        &layer_tensor(layer, "mlp_hyper_connection"),
-                        hidden,
-                        (&qwen4.moe_x, moe_x_off),
-                        true,
-                        hc_row,
-                    )?;
-
-                    let logits_row_offset = (t * num_experts * 4) as u64;
-                    moe::encode_moe_router(
-                        context,
-                        &pass,
-                        weights,
-                        index,
-                        qwen4,
-                        (&qwen4.moe_x, moe_x_off),
-                        layer,
-                        hidden,
-                        num_experts,
-                        logits_row_offset,
-                    )?;
                 }
             }
 
@@ -380,6 +382,51 @@ impl RealForwardRunner {
             // starts: token 0 protects no slots, so a survivor from the
             // previous layer could have its slots evicted under it.
             self.retire_routed(&mut pending_routed);
+
+            if self.routed_batch_prefill {
+                foundation::engaged!("routed_batch");
+                let qwen4 = self.real_qwen4.as_mut().expect("checked above");
+                if qwen4.routed_batch.is_none() {
+                    qwen4.routed_batch = Some(
+                        moe_batch::RoutedBatchScratch::new(
+                            &mut self.context,
+                            hidden,
+                            moe_inter as usize,
+                            top_k,
+                            use_silu,
+                        )
+                        .map_err(gpu_err)?,
+                    );
+                }
+                let qwen4 = self.real_qwen4.as_ref().expect("checked above");
+                pending_routed = Some(moe_batch::encode_qwen4_layer_routed_prefill(
+                    &mut self.context,
+                    &self.weights,
+                    &self.index,
+                    &self.scratch,
+                    qwen4,
+                    qwen4.routed_batch.as_ref().expect("allocated above"),
+                    &mut self.streamers,
+                    &self.slot_buffers,
+                    &self.mapped,
+                    &self.moe_offsets,
+                    &self.routed_layouts,
+                    &mut self.router_hist,
+                    &mut self.phases,
+                    self.expert_cache_slots,
+                    self.routed_batch_overlap,
+                    layer,
+                    hidden,
+                    inter,
+                    moe_inter,
+                    num_experts,
+                    top_k,
+                    use_silu,
+                    m,
+                )?);
+                pass = self.context.begin_pass_labeled("chunk cb1 (attn+router)");
+                continue;
+            }
 
             let mut previous_slots: HashSet<usize> = HashSet::new();
             for t in 0..m {

@@ -37,6 +37,8 @@ process, which must sit beside `tslab`.
 | `ab --model M --baseline off --candidate on:KNOB=V` | Does a switch win? Paired, interleaved, with a fixed verdict rule | `run`, `verdict` |
 | `sweep --model M --sweep ID\|all` | Every candidate of a profile sweep against its baseline, each by the same pair rule as `ab`, interleaved in one session; `--sweep-file F` or `--baseline A --candidate B --candidate C` for an ad hoc one. Workload flags override the sweep's workload. Exit 4 if any candidate is inconclusive, 3 only with `--fail-on-loss`. `--gate` runs the quality gate on each WIN at the sweep's declared exactness and `--enforce-memory` holds each WIN to the memory allowance; a WIN that fails either keeps its verdict but gets `rejected` and is never `best` | `run`, one `verdict` per candidate, `sweep` |
 | `trace --model M --prompt ... --decode 64` | Metal System Trace of the measured work: GPU busy, idle gaps, per-kernel shares | `trace` |
+| `profile ... --arm "s96@96/streamed:TURBOSPARK_CB1_TRACE=/path/s96.tsv"` | qwen4exp decode, one TSV row per layer command buffer: `commit()`, wait, GPU busy, idle before, expert I/O. Wait minus busy is host-visible latency the GPU did not spend computing. Rows append across runs and `pass` restarts per run, so split runs where it drops. Unquotable | `run` (dirty) |
+| `profile ... --arm "taps@auto/auto:TURBOSPARK_QWEN4_TAP_FILE=/path/x.bin"` | qwen4exp: the DFlash2 drafter's context features per position (hyper-connection mean after layers 5,15,25,35,45). Forces token-by-token prefill. For offline drafter acceptance against the target's own greedy stream (`docs/QWEN4_EXP.md`, DFlash2 acceptance). Unquotable | `run` (dirty) |
 | `tree-replay --model M --drafter mtp\|dflash` | Would tree verify accept more than the chain at equal rows | `tree_replay` |
 | `chain-capture` then `depth-replay` | Best speculative depth policy, priced from modeled or ledger round costs | `chain_capture`, `depth_replay` |
 | `chain-capture` then `hybrid-replay [--ngram 4] [--lookup-draft 8] [--tuned 3,1,1,2] [--cap 7]` | Would prompt lookup over the MTP chain commit more per round than the head alone, against fixed 2, the shipped controller and a tuned one. Needs a capture written with the token ids (this build's `chain-capture`); older captures are refused with that reason. Lookup rounds are priced at the MTP table's round of the same width, so the tok/s delta is conservative; the committed-per-round delta needs no cost table | `hybrid_replay` |
@@ -185,6 +187,12 @@ is `crates/lab/program.md`.
   is the variable unset.
 - Probe, stand-in, trace and dispatch-profile runs are never quotable.
 - One measuring session per machine. If the lock is held, wait.
+- In zsh, a glob that matches nothing aborts the whole command line
+  (`rm -f dir/*.tsv` before the first run), so the tslab command after it
+  never starts. Use `rm -f -- dir/*.tsv(N)` or skip the cleanup.
+- Arm env values go after the slots part: `NAME@SLOTS/RESIDENCY:KEY=V`. A
+  knob name works for `KEY` (`expert_slots_wired=1`), and so does a raw
+  `TURBOSPARK_*` variable for diagnostics the registry marks unquotable.
 - Under `int4_mma8` an adaptive arm (`~mtp:Na`) with N above 7 runs at cap
   7: the runtime holds the cap to the 8-row tile. The record still says
   block N, so compare caps above 7 with the tile off, or not at all.

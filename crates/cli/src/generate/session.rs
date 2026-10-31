@@ -146,11 +146,13 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
     // resolves the slot cache to what THIS open will actually request,
     // rather than `committed_bytes`'s worst case, so the `--load-guard
     // custom` ceiling below is checked against a real allocation.
-    let committed = model_io::committed_breakdown_with_residency(
+    let committed = model_io::committed_breakdown_with_wiring(
         model_dir,
         runtime::physical_memory(),
         expert_cache_slots,
         resolved_residency,
+        // The request the open below reads, environment override included.
+        runtime::effective_expert_slot_wiring(),
     );
     let plan = runtime::resolve_max_context_with(
         match request.max_context {

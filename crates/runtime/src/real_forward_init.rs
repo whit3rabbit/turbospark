@@ -154,6 +154,8 @@ pub(crate) type ExpertStreamersResult = (
     // Metal buffers FIRST so they drop before the mappings they alias, the
     // same declaration-order contract `slot_buffers` has against `streamers`.
     MappedResidency,
+    // What became of the wiring request.
+    ExpertSlotWiringOutcome,
 );
 
 /// The routed experts read in place out of an `mmap` rather than `pread`-copied
@@ -185,6 +187,71 @@ pub(crate) fn mapped_residency_requested() -> bool {
     std::env::var("TURBOSPARK_EXPERT_RESIDENCY")
         .map(|v| v.eq_ignore_ascii_case("mapped"))
         .unwrap_or(false)
+}
+
+/// The process-wide wiring request (`model_io::ExpertSlotWiring`), set by a
+/// front end before it opens. Process-wide rather than an open argument
+/// because the one front end that exposes it (the app, through `crates/ffi`)
+/// applies one setting to every session it loads, and threading it through
+/// every `RealForwardRunner::open_*` would touch each caller for no
+/// difference in behavior. 0 = auto, 1 = on, 2 = off.
+static EXPERT_SLOT_WIRING: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Sets the wiring request for later opens in this process.
+pub fn set_expert_slot_wiring(mode: model_io::ExpertSlotWiring) {
+    let v = match mode {
+        model_io::ExpertSlotWiring::Auto => 0,
+        model_io::ExpertSlotWiring::On => 1,
+        model_io::ExpertSlotWiring::Off => 2,
+    };
+    EXPERT_SLOT_WIRING.store(v, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The wiring request an open uses: `TURBOSPARK_EXPERT_SLOTS_WIRED` (`1` on,
+/// `0` off, read once) wins over [`set_expert_slot_wiring`], so a measuring
+/// arm is never overridden by a front end's setting.
+pub fn effective_expert_slot_wiring() -> model_io::ExpertSlotWiring {
+    static ENV: std::sync::OnceLock<Option<model_io::ExpertSlotWiring>> =
+        std::sync::OnceLock::new();
+    let env =
+        *ENV.get_or_init(
+            || match std::env::var("TURBOSPARK_EXPERT_SLOTS_WIRED").as_deref() {
+                Ok("1") => Some(model_io::ExpertSlotWiring::On),
+                Ok("0") => Some(model_io::ExpertSlotWiring::Off),
+                _ => None,
+            },
+        );
+    env.unwrap_or(
+        match EXPERT_SLOT_WIRING.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => model_io::ExpertSlotWiring::On,
+            2 => model_io::ExpertSlotWiring::Off,
+            _ => model_io::ExpertSlotWiring::Auto,
+        },
+    )
+}
+
+/// What became of one open's wiring request, for the runner to report.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExpertSlotWiringOutcome {
+    /// The request as [`effective_expert_slot_wiring`] read it.
+    pub requested: model_io::ExpertSlotWiring,
+    /// Whether the slot cache is wired.
+    pub active: bool,
+    /// Bytes wired; 0 when inactive.
+    pub wired_bytes: u64,
+    /// Why it is not active, `None` when it is.
+    pub reason: Option<String>,
+}
+
+impl ExpertSlotWiringOutcome {
+    fn inactive(requested: model_io::ExpertSlotWiring, reason: impl Into<String>) -> Self {
+        Self {
+            requested,
+            active: false,
+            wired_bytes: 0,
+            reason: Some(reason.into()),
+        }
+    }
 }
 
 /// Resolves the residency REQUEST (flag or default) to the mode this open
@@ -385,6 +452,34 @@ pub(crate) fn open_expert_streamers(
     max_bytes: u64,
     context: &mut gpu::MetalContext,
 ) -> Result<ExpertStreamersResult, RealForwardError> {
+    open_expert_streamers_with(
+        dir,
+        expecting,
+        expert_cache_slots,
+        residency,
+        resident_bytes,
+        max_bytes,
+        context,
+        None,
+    )
+}
+
+const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
+
+/// [`open_expert_streamers`]; `force_unwired` carries the outcome of a failed
+/// `Auto` lock into the second, unwired open.
+#[allow(clippy::too_many_arguments)]
+fn open_expert_streamers_with(
+    dir: &Path,
+    expecting: &ArchConfig,
+    expert_cache_slots: ExpertCacheSlots,
+    residency: model_io::ExpertResidency,
+    resident_bytes: u64,
+    max_bytes: u64,
+    context: &mut gpu::MetalContext,
+    force_unwired: Option<ExpertSlotWiringOutcome>,
+) -> Result<ExpertStreamersResult, RealForwardError> {
+    let requested_slots = expert_cache_slots;
     let layout =
         model_io::load_packed_experts_layout(dir, max_bytes).map_err(RealForwardError::Model)?;
     let num_layers = expecting.num_layers as usize;
@@ -507,6 +602,10 @@ pub(crate) fn open_expert_streamers(
             resolved,
             resolved_residency,
             mapped,
+            ExpertSlotWiringOutcome::inactive(
+                effective_expert_slot_wiring(),
+                "mapped residency has no slot cache",
+            ),
         ));
     }
 
@@ -517,9 +616,62 @@ pub(crate) fn open_expert_streamers(
     // ROADMAP Phase S's candidate has a layer 29 at 1.6x its siblings and
     // the model-wide maximum over-states the cost by 35% there.
     let bytes_per_slot = layout.layers.iter().map(|l| l.expert_stride).sum::<u64>();
-    let expert_cache_slots = expert_cache_slots
-        .resolve(gpu::physical_memory(), resident_bytes, bytes_per_slot)
-        .min(experts_per_layer);
+    let requested_wiring = force_unwired
+        .as_ref()
+        .map(|o| o.requested)
+        .unwrap_or_else(effective_expert_slot_wiring);
+    let resolve = |wired: bool| {
+        expert_cache_slots
+            .resolve_wired(
+                gpu::physical_memory(),
+                resident_bytes,
+                bytes_per_slot,
+                wired,
+            )
+            .min(experts_per_layer)
+    };
+    // Detection before allocation: a wired cache the OS limit cannot hold is
+    // never allocated at the wired budget. Only `Auto` degrades; `On` goes on
+    // to `mlock` and is refused there, so a measuring arm cannot run unwired.
+    let mut wiring = match &force_unwired {
+        Some(outcome) => outcome.clone(),
+        None if layout.num_layers == 0 => {
+            ExpertSlotWiringOutcome::inactive(requested_wiring, "no streamed experts")
+        }
+        None if !requested_wiring.wants_wired(expecting.family) => {
+            ExpertSlotWiringOutcome::inactive(
+                requested_wiring,
+                match requested_wiring {
+                    model_io::ExpertSlotWiring::Off => "off",
+                    _ => "not measured to pay on this family",
+                },
+            )
+        }
+        None => {
+            let wanted = bytes_per_slot.saturating_mul(resolve(true) as u64);
+            match streaming::wire_limit_bytes() {
+                Some(limit)
+                    if wanted > limit && requested_wiring == model_io::ExpertSlotWiring::Auto =>
+                {
+                    ExpertSlotWiringOutcome::inactive(
+                        requested_wiring,
+                        format!(
+                            "wired cache {:.1} GiB exceeds the wire limit {:.1} GiB",
+                            wanted as f64 / GIB,
+                            limit as f64 / GIB
+                        ),
+                    )
+                }
+                _ => ExpertSlotWiringOutcome {
+                    requested: requested_wiring,
+                    active: true,
+                    wired_bytes: 0,
+                    reason: None,
+                },
+            }
+        }
+    };
+    let expert_cache_slots = resolve(wiring.active);
     let working_set = bytes_per_slot * expert_cache_slots as u64;
     let mut streamers: Vec<Option<streaming::PreadExpertStreamer>> = Vec::new();
     // Read once per open, like the other streamer seams: every layer's
@@ -572,6 +724,43 @@ pub(crate) fn open_expert_streamers(
         None
     };
 
+    if wiring.active {
+        // Before the no-copy wrap, so every pass reads pages the kernel cannot
+        // compress (docs/QWEN4_EXP.md, "Why larger expert caches lose").
+        let mut wired = 0u64;
+        for streamer in streamers.iter_mut().flatten() {
+            match streamer.wire_slots() {
+                Ok(bytes) => wired += bytes,
+                Err(e) if wiring.requested == model_io::ExpertSlotWiring::Auto => {
+                    // Drop the larger cache (unwiring it) and open again at
+                    // the unwired budget: an unwired cache above that budget
+                    // is the configuration that measured slower.
+                    let reason = format!("mlock failed after {:.1} GiB: {e}", wired as f64 / GIB);
+                    drop(streamers);
+                    return open_expert_streamers_with(
+                        dir,
+                        expecting,
+                        requested_slots,
+                        residency,
+                        resident_bytes,
+                        max_bytes,
+                        context,
+                        Some(ExpertSlotWiringOutcome::inactive(wiring.requested, reason)),
+                    );
+                }
+                Err(e) => {
+                    return Err(RealForwardError::Unsupported(format!(
+                        "expert slot wiring is on: {e} after {:.1} GiB (check `ulimit -l` and \
+                         `sysctl vm.user_wire_limit`, lower the slot count, or set wiring to auto)",
+                        wired as f64 / GIB
+                    )));
+                }
+            }
+        }
+        wiring.wired_bytes = wired;
+        foundation::engaged!("expert_slots_wired");
+    }
+
     let mut slot_buffers: Vec<Vec<gpu::MetalBuffer>> = Vec::with_capacity(streamers.len());
     for streamer in &streamers {
         match streamer {
@@ -597,6 +786,7 @@ pub(crate) fn open_expert_streamers(
         expert_cache_slots,
         resolved_residency,
         MappedResidency::default(),
+        wiring,
     ))
 }
 

@@ -156,6 +156,7 @@ options.kvBits = .threePointFive           // or .off (default), .two, .three, .
 options.prefixReuse = true                 // or false (default true)
 options.anePrefill = .auto                 // or .off, .split, .breakMode
 options.anePrefillDir = "/path/to/ane"     // custom compiled Core ML packages
+options.expertSlotsWiring = .auto          // or .on, .off
 
 let session = try await TurboSparkSession(modelPath: "gemma4", options: options)
 ```
@@ -252,6 +253,17 @@ and Steel running on Metal shaders. Pass `.off` to force pure Metal Steel
 prefill, `.split` to force ANE splitting, or `.breakMode` for diagnostic
 overhead measurement. Custom compiled programs can be provided via
 `anePrefillDir`.
+
+**`expertSlotsWiring` locks a MoE install's expert slot cache in memory.**
+`.auto` (the default) wires the cache, at twice the auto slot budget, on
+qwen4_exp, the one family measured to gain (96 slots on a 36 GB M4 Max,
++6.7% decode against the unwired 48). It checks the OS wire limit first and
+opens an unwired cache at the usual budget when the limit or the lock
+refuses, so a load never fails on it. `.on` wires any streamed family and
+fails the open on a refused lock. `.off` never wires. Wired memory is
+unavailable to other apps while the session is open.
+`SessionInfo.expertSlotsWiring` reports what happened and why
+(`docs/QWEN4_EXP.md`, "Wired expert slots").
 
 **`visionSidecar` points to an external vision tower directory.**
 When using modular multi-modal models where vision weights are stored

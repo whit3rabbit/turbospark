@@ -121,6 +121,12 @@ pub fn session_for_testing_named(
                 reason: Some("a scripted session runs no decode flow".to_string()),
                 programs_dir: None,
             },
+            expert_slots_wiring: wire::ExpertSlotsWiringInfo {
+                requested: "auto".to_string(),
+                active: false,
+                wired_bytes: 0,
+                reason: Some("a scripted session has no slot cache".to_string()),
+            },
             special_tokens: wire::SpecialTokensInfo {
                 bos_id: (tokenizer.bos_id >= 0).then_some(tokenizer.bos_id),
                 eos_id: (tokenizer.eos_id >= 0).then_some(tokenizer.eos_id),

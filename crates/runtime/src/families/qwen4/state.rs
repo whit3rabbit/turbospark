@@ -168,6 +168,127 @@ impl GdnNormCapture {
     }
 }
 
+/// Opt-in per-position tap capture for the offline DFlash2 acceptance
+/// experiment (`docs/QWEN4_EXP.md`). `TURBOSPARK_QWEN4_TAP_FILE=<path>`
+/// appends one record per `produce` call: the completed output of each
+/// tapped layer as the mean of the hyper-connection streams, which is the
+/// feature the drafter was trained on. `TURBOSPARK_QWEN4_TAP_LAYERS` picks
+/// the layers (0-based, default `5,15,25,35,45`, the drafter's
+/// `target_layer_ids`).
+///
+/// File: `i32` magic `QTAP`, version 1, hidden, tap count, then the layer
+/// ids; each record is `i32` position, `i32` input token, then
+/// `f32[taps][hidden]`, all little-endian. The chunked prefill driver walks
+/// the sequential path while this is on, so every prompt position is
+/// recorded by the same code decode uses.
+pub(crate) struct TapCapture {
+    path: PathBuf,
+    pub(crate) buffer: gpu::MetalBuffer,
+    layers: Vec<usize>,
+    hidden: usize,
+    hc_count: usize,
+}
+
+impl TapCapture {
+    fn from_env(
+        context: &gpu::MetalContext,
+        arch: &ArchConfig,
+        hidden: usize,
+        hc_count: usize,
+    ) -> Option<Self> {
+        let path = PathBuf::from(std::env::var_os("TURBOSPARK_QWEN4_TAP_FILE")?);
+        let total_layers = usize::try_from(arch.num_layers).ok()?;
+        let spec = std::env::var("TURBOSPARK_QWEN4_TAP_LAYERS")
+            .unwrap_or_else(|_| "5,15,25,35,45".to_string());
+        let mut layers = Vec::new();
+        for part in spec.split(',') {
+            match part.trim().parse::<usize>() {
+                Ok(layer) if layer < total_layers && !layers.contains(&layer) => layers.push(layer),
+                _ => {
+                    eprintln!(
+                        "[qwen4-tap] layer {part:?} is not a distinct layer below {total_layers}; capture disabled"
+                    );
+                    return None;
+                }
+            }
+        }
+        if layers.is_empty() || hc_count == 0 {
+            return None;
+        }
+        let mut header = Vec::new();
+        for value in [0x5041_5451i32, 1, hidden as i32, layers.len() as i32] {
+            header.extend_from_slice(&value.to_le_bytes());
+        }
+        for &layer in &layers {
+            header.extend_from_slice(&(layer as i32).to_le_bytes());
+        }
+        if let Err(error) = std::fs::write(&path, header) {
+            eprintln!("[qwen4-tap] cannot create {}: {error}", path.display());
+            return None;
+        }
+        let byte_len = layers.len() * hc_count * hidden * 2;
+        Some(Self {
+            path,
+            buffer: context.new_output_buffer(byte_len as u64),
+            layers,
+            hidden,
+            hc_count,
+        })
+    }
+
+    /// Copies the wide residual after `layer`'s MoE join, when tapped.
+    pub(crate) fn encode_layer(
+        &self,
+        context: &mut gpu::MetalContext,
+        pass: &gpu::PassEncoder,
+        layer: usize,
+        source: (&gpu::MetalBuffer, u64),
+    ) -> Result<(), gpu::GpuError> {
+        let Some(slot) = self.layers.iter().position(|&tapped| tapped == layer) else {
+            return Ok(());
+        };
+        let wide = self.hc_count * self.hidden;
+        gpu::encode_dflash_copy_rows(
+            context,
+            pass,
+            source,
+            (&self.buffer, (slot * wide * 2) as u64),
+            1,
+            wide as u32,
+            wide as u32,
+        )
+    }
+
+    /// Appends the record for `position` after its pass has completed.
+    pub(crate) fn append(&self, position: usize, token: i32) {
+        use std::io::Write;
+        let wide = self.hc_count * self.hidden;
+        let values = gpu::read_buffer_f16(&self.buffer, 0, self.layers.len() * wide);
+        let mut bytes = Vec::with_capacity(8 + self.layers.len() * self.hidden * 4);
+        bytes.extend_from_slice(&(position as i32).to_le_bytes());
+        bytes.extend_from_slice(&token.to_le_bytes());
+        let scale = 1.0 / self.hc_count as f32;
+        for tap in values.chunks_exact(wide) {
+            for d in 0..self.hidden {
+                let sum: f32 = (0..self.hc_count)
+                    .map(|c| tap[c * self.hidden + d].to_f32())
+                    .sum();
+                bytes.extend_from_slice(&(sum * scale).to_le_bytes());
+            }
+        }
+        let result = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&self.path)
+            .and_then(|mut file| file.write_all(&bytes));
+        if let Err(error) = result {
+            eprintln!(
+                "[qwen4-tap] failed appending to {}: {error}",
+                self.path.display()
+            );
+        }
+    }
+}
+
 /// Opt-in residual boundary capture for comparing the Qwen4 layer flow with
 /// SlotStream's independent layer reference.
 ///
@@ -664,10 +785,15 @@ pub(crate) struct RealQwen4State {
     /// engine for this checkpoint fits this machine): the KL between the
     /// two arms past 2,051 tokens.
     pub(crate) qsa_force_dense: bool,
+    /// Whether this install's RMSNorm weights are offsets from unity
+    /// (`1 + w`, Hugging Face and the MLX conversions) rather than llama.cpp
+    /// GGUF's folded scales. See [`super::rms_norm_grouped`].
+    pub(crate) norms_centered: bool,
     pub(crate) gdn_qkv_raw: gpu::MetalBuffer,
     pub(crate) gdn_conv_out: gpu::MetalBuffer,
     pub(crate) gdn_norm_capture: Option<GdnNormCapture>,
     pub(crate) layer_boundary_capture: Option<LayerBoundaryCapture>,
+    pub(crate) tap_capture: Option<TapCapture>,
     pub(crate) attention_intermediate_capture: Option<AttentionIntermediateCapture>,
     pub(crate) gdn_z: gpu::MetalBuffer,
     pub(crate) gdn_a: gpu::MetalBuffer,
@@ -721,6 +847,12 @@ pub(crate) struct RealQwen4State {
     /// reference. Immutable after state construction.
     pub(crate) moe_zero: gpu::MetalBuffer,
     pub(crate) shared_gate_logit: gpu::MetalBuffer,
+    /// The batched routed pair's buffers (`moe_batch.rs`), allocated by
+    /// the chunked driver on its first `TURBOSPARK_ROUTED_BATCH` layer.
+    pub(crate) routed_batch: Option<super::moe_batch::RoutedBatchScratch>,
+    /// The M-row projection buffers (`batched.rs`), allocated by the
+    /// chunked driver on its first `TURBOSPARK_BATCHED_GEMV` layer.
+    pub(crate) batched_gemv: Option<super::batched::BatchedGemvScratch>,
 
     /// PLE's concatenated n-gram lookup, `[hidden]` -- host dequant, GPU
     /// upload, holding [`MAX_PREFILL_BATCH`] rows. **Widened for
@@ -792,6 +924,7 @@ impl RealQwen4State {
         install_dir: &Path,
         max_context: usize,
         expert_cache_slots: usize,
+        norms_centered: bool,
     ) -> Result<Self, RealForwardError> {
         let unsupported = |detail: String| Err(RealForwardError::Unsupported(detail));
 
@@ -1167,6 +1300,7 @@ impl RealQwen4State {
         let ple_conv_tail = halfs(PLE_CONV_HISTORY * wide_dim);
         let gdn_norm_capture = GdnNormCapture::from_env(context, arch, shape);
         let layer_boundary_capture = LayerBoundaryCapture::from_env(context, arch, wide_dim);
+        let tap_capture = TapCapture::from_env(context, arch, hidden, hc_count);
         let attention_intermediate_capture =
             AttentionIntermediateCapture::from_env(context, arch, wide_dim, hidden, hc_count);
         gpu::write_buffer_bytes(
@@ -1199,10 +1333,12 @@ impl RealQwen4State {
             idx_qk: halfs(idx_projection_len),
             qsa_scores,
             qsa_force_dense,
+            norms_centered,
             gdn_qkv_raw: halfs(qkv_dim),
             gdn_conv_out: halfs(qkv_dim),
             gdn_norm_capture,
             layer_boundary_capture,
+            tap_capture,
             attention_intermediate_capture,
             gdn_z: halfs(value_dim),
             gdn_a: halfs(v_heads),
@@ -1219,6 +1355,8 @@ impl RealQwen4State {
             h2: halfs(hidden),
             moe_zero,
             shared_gate_logit: halfs(1),
+            routed_batch: None,
+            batched_gemv: None,
 
             ngram_emb: halfs(hidden * MAX_PREFILL_BATCH),
             ple_key: halfs(wide_dim),

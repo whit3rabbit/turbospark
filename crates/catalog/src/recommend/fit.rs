@@ -218,7 +218,13 @@ pub fn fit(
     let expert_table = bytes_per_slot.saturating_mul(experts);
     let resident_bytes = shape.install_bytes.saturating_sub(expert_table);
 
-    let slots = slot_policy.resolve(physical_bytes, resident_bytes, bytes_per_slot);
+    // The open's default wiring request, so a family that wires by default
+    // (qwen4_exp) is fitted at the wired budget it will actually allocate.
+    let wired = shape
+        .arch
+        .as_ref()
+        .is_some_and(|a| model_io::ExpertSlotWiring::Auto.wants_wired(a.family));
+    let slots = slot_policy.resolve_wired(physical_bytes, resident_bytes, bytes_per_slot, wired);
     let slot_cache_bytes = (slots as u64).saturating_mul(bytes_per_slot);
     let kv_bytes = shape
         .arch

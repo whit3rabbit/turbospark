@@ -42,7 +42,8 @@ use metal::Buffer;
 use turbospark_compute::quant::Int4AffineRow;
 use turbospark_gpu::{
     encode_moe_phase1, encode_moe_phase2, encode_moe_prefill_phase1,
-    encode_moe_prefill_phase2_fused, MoeExpertOffsets, MoePrefillRoute, RoutedBlobsBuffer,
+    encode_moe_prefill_phase1_wide, encode_moe_prefill_phase2_fused,
+    encode_moe_prefill_phase2_fused_wide, MoeExpertOffsets, MoePrefillRoute, RoutedBlobsBuffer,
     RoutedBlobsWideBuffer, MAX_STREAMED_EXPERTS,
 };
 
@@ -146,6 +147,9 @@ struct Fixture {
     f: usize,
     top_k: usize,
     tokens: usize,
+    /// Run the `_wide` pair (`top_k` up to `MAX_STREAMED_EXPERTS`) instead
+    /// of the eight-wide one.
+    wide: bool,
 }
 
 impl Fixture {
@@ -195,7 +199,14 @@ impl Fixture {
             f,
             top_k,
             tokens,
+            wide: false,
         }
+    }
+
+    /// Use the `_wide` pair, the one `qwen4_exp`'s top-10 needs.
+    fn wide(mut self) -> Self {
+        self.wide = true;
+        self
     }
 
     /// Give phase 2 a NON-ZERO accumulator seed, the shape `qwen3_5`'s
@@ -328,7 +339,17 @@ impl Fixture {
         for blob in &self.blobs {
             pass.use_read_buffer(blob);
         }
-        encode_moe_prefill_phase1(
+        let phase1 = if self.wide {
+            encode_moe_prefill_phase1_wide
+        } else {
+            encode_moe_prefill_phase1
+        };
+        let phase2 = if self.wide {
+            encode_moe_prefill_phase2_fused_wide
+        } else {
+            encode_moe_prefill_phase2_fused
+        };
+        phase1(
             &mut self.context,
             &pass,
             &routed,
@@ -343,7 +364,7 @@ impl Fixture {
             false,
         )
         .expect("batched phase1");
-        encode_moe_prefill_phase2_fused(
+        phase2(
             &mut self.context,
             &pass,
             &routed,
@@ -449,6 +470,61 @@ fn a_shared_expert_residual_is_bit_identical_at_the_real_shape() {
     let (got_acts, got_y) = fixture.batched_pair(None, None);
     assert_bits_equal("acts", &got_acts, &want_acts);
     assert_bits_equal("y", &got_y, &want_y);
+}
+
+/// The `_wide` pair at `qwen4_exp`'s top-10, past the eight-wide reduce:
+/// ragged routes over a 16-expert union, bit-exact against M decode passes
+/// (whose phase 2 reduces exactly `top_k` slots).
+#[test]
+fn the_wide_pair_is_bit_identical_at_top_10() {
+    let mut fixture = Fixture::new(128, 128, 10, 5, 16).wide();
+    let (want_acts, want_y) = fixture.decode_pair_sequential();
+    let (got_acts, got_y) = fixture.batched_pair(None, None);
+    assert_bits_equal("acts", &got_acts, &want_acts);
+    assert_bits_equal("y", &got_y, &want_y);
+}
+
+/// The same at the real `qwen4_exp` routed shape (D=2560, F=640), with a
+/// non-zero seed: the long sums are where a reduce-order slip shows.
+#[test]
+fn the_wide_pair_is_bit_identical_at_the_real_qwen4_shape() {
+    let mut fixture = Fixture::new(2560, 640, 10, 3, 14).with_residual().wide();
+    let (want_acts, want_y) = fixture.decode_pair_sequential();
+    let (got_acts, got_y) = fixture.batched_pair(None, None);
+    assert_bits_equal("acts", &got_acts, &want_acts);
+    assert_bits_equal("y", &got_y, &want_y);
+}
+
+/// Below eight the wide pair dispatches fewer SIMD groups than the fixed
+/// kernel and must still match the decode pass, which reduces only `top_k`.
+#[test]
+fn the_wide_pair_is_bit_identical_below_eight() {
+    let mut fixture = Fixture::new(128, 64, 2, 5, 4).wide();
+    let (want_acts, want_y) = fixture.decode_pair_sequential();
+    let (got_acts, got_y) = fixture.batched_pair(None, None);
+    assert_bits_equal("acts", &got_acts, &want_acts);
+    assert_bits_equal("y", &got_y, &want_y);
+}
+
+/// The eight-wide pair cannot serve top-10: it asserts rather than reducing
+/// the first eight ranks.
+#[test]
+#[should_panic]
+fn the_eight_wide_pair_refuses_top_10() {
+    let mut fixture = Fixture::new(128, 128, 10, 2, 16);
+    let _ = fixture.batched_pair(None, None);
+}
+
+/// Mutation guard for the wide pair: swapping two ranks' weights must move
+/// the output, or the top-10 cases above are not looking at the reduce.
+#[test]
+fn mutating_rank_weights_breaks_wide_parity() {
+    let mut fixture = Fixture::new(128, 128, 10, 3, 16).wide();
+    let (_, want_y) = fixture.decode_pair_sequential();
+    let mut weights = fixture.weights.clone();
+    weights.swap(8, 9);
+    let (_, got_y) = fixture.batched_pair(Some(weights), None);
+    assert_bits_differ("y", &got_y, &want_y);
 }
 
 /// THE FIXTURE MUST DISCRIMINATE BEFORE THE TWO CASES ABOVE MEAN

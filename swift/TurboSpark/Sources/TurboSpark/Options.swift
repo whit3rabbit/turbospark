@@ -242,6 +242,21 @@ public struct OpenOptions: Encodable, Sendable {
     /// Custom directory for compiled ANE Core ML prefill programs.
     public var anePrefillDir: String?
 
+    /// Whether the streamed expert slot cache is wired (locked in memory).
+    public enum ExpertSlotsWiring: String, Encodable, Sendable {
+        /// Wired, at twice the slot budget, on the families measured to gain
+        /// (qwen4_exp); unwired elsewhere. Falls back to an unwired cache
+        /// when the OS will not lock it.
+        case auto
+        /// Wired on every streamed family; the open fails if the lock does.
+        case on
+        /// Never wired.
+        case off
+    }
+
+    /// Expert slot cache wiring (`nil` means `.auto`).
+    public var expertSlotsWiring: ExpertSlotsWiring?
+
     /// Creates options for opening a model session.
     public init(
         maxContext: Sizing? = nil,
@@ -263,7 +278,8 @@ public struct OpenOptions: Encodable, Sendable {
         kvBits: KvBits? = nil,
         prefixReuse: Bool? = nil,
         anePrefill: AnePrefill? = nil,
-        anePrefillDir: String? = nil
+        anePrefillDir: String? = nil,
+        expertSlotsWiring: ExpertSlotsWiring? = nil
     ) {
         self.maxContext = maxContext
         self.expertCacheSlots = expertCacheSlots
@@ -285,6 +301,7 @@ public struct OpenOptions: Encodable, Sendable {
         self.prefixReuse = prefixReuse
         self.anePrefill = anePrefill
         self.anePrefillDir = anePrefillDir
+        self.expertSlotsWiring = expertSlotsWiring
     }
 }
 

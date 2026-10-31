@@ -162,3 +162,65 @@ kernel void moe_prefill_phase2_fused_int4(
         y[t * DD + d] = half(acc);
     }
 }
+
+// The fused phase 2 for top_k up to kMaxStreamedExperts (qwen4_exp routes
+// top-10): `moe_phase2_down_reduce_k8` with a token axis, at THAT kernel's
+// width rather than the fixed eight above. The host dispatches exactly
+// top_k SIMD groups, one per rank, and the reduce adds partial[0..top_k)
+// after the residual seed in rank order -- the decode kernel's loop, term
+// for term, so a token's output is bit-identical to its decode pass. The
+// eight-wide kernel above stays as it is: its padded `+ 0.0f` terms are
+// what its own callers' parity is pinned against.
+kernel void moe_prefill_phase2_fused_int4_wide(
+    device const RoutedBlobsWide& routed [[buffer(0)]],
+    constant ExpertOffsets& routed_offsets [[buffer(1)]],
+    device const half* acts [[buffer(2)]],         // [tokens * top_k, F]
+    device const half* routing_w [[buffer(3)]],    // [tokens * top_k]
+    device const MoePrefillRoute* routes [[buffer(4)]],
+    device half* y [[buffer(5)]],                  // [tokens, D]
+    constant uint& D [[buffer(6)]],
+    constant uint& F [[buffer(7)]],
+    constant uint& top_k [[buffer(8)]],
+    constant uint& tokens [[buffer(9)]],
+    device const half* residual [[buffer(10)]],    // [tokens, D], the seed
+    uint2 tg [[threadgroup_position_in_grid]],
+    uint sg_idx [[simdgroup_index_in_threadgroup]],
+    uint lane [[thread_index_in_simdgroup]]
+) {
+    threadgroup float partial[kMaxStreamedExperts];
+    const uint DD = moe_fc_d(D);
+    const uint FF = moe_fc_f(F);
+    const uint KK = moe_fc_top_k(top_k);
+    const uint t = tg.y;
+    const uint d = tg.x;
+    if (t >= tokens) return;
+
+    // Every SIMD group reaches the barrier: an out-of-range slot masks the
+    // compute to a zero partial rather than returning (the divergent-barrier
+    // hazard the eight-wide kernel's comment records).
+    if (sg_idx < KK && sg_idx < kMaxStreamedExperts) {
+        const uint pair = t * KK + sg_idx;
+        const MoePrefillRoute r = routes[pair];
+        if (r.slot < kMaxPrefillExpertBindings) {
+            device const uint8_t* base = routed.blob[r.slot];
+            const ExpertOffsets re = routed_offsets;
+            const float value = moe_int4_gemv_row_simd_dev_vec(
+                base + re.down_W_off,
+                (device const bfloat*)(base + re.down_s_off),
+                (device const bfloat*)(base + re.down_b_off),
+                acts + pair * FF, d, FF, lane);
+            if (lane == 0) partial[sg_idx] = float(routing_w[pair]) * value;
+        } else if (lane == 0) {
+            partial[sg_idx] = 0.0f;
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    if (sg_idx == 0 && lane == 0) {
+        float acc = float(residual[t * DD + d]);
+        for (uint rank = 0; rank < KK && rank < kMaxStreamedExperts; ++rank) {
+            acc += partial[rank];
+        }
+        y[t * DD + d] = half(acc);
+    }
+}

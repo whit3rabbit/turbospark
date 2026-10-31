@@ -74,6 +74,16 @@ pub fn expert_residency(value: &Option<String>) -> Result<model_io::ExpertReside
     }
 }
 
+/// Reads the slot-cache wiring request. Absent and `null` mean `auto`; a
+/// typo is rejected before an install is opened.
+pub fn expert_slots_wiring(value: &Option<String>) -> Result<model_io::ExpertSlotWiring, String> {
+    match value.as_deref() {
+        None => Ok(model_io::ExpertSlotWiring::Auto),
+        Some(raw) => model_io::ExpertSlotWiring::parse(raw)
+            .ok_or_else(|| format!("expertSlotsWiring must be auto, on or off, got {raw:?}")),
+    }
+}
+
 /// Reads a load guard that may be a tier NAME, a byte ceiling, `null`, or
 /// absent.
 ///
@@ -168,6 +178,12 @@ pub struct OpenOptions {
     /// `auto` | `streamed` | `mapped`. Absent means `auto`, which maps only
     /// when the minimum streamed cache cannot fit the measured headroom.
     pub expert_residency: Option<String>,
+    /// `auto` | `on` | `off`: whether the streamed slot cache is wired
+    /// (`mlock`). Absent means `auto`, which wires it, at twice the slot
+    /// budget, on the families measured to gain (qwen4_exp) and falls back
+    /// to an unwired cache when the OS will not lock it. The environment
+    /// variable `TURBOSPARK_EXPERT_SLOTS_WIRED` wins over this.
+    pub expert_slots_wiring: Option<String>,
     /// `performance` | `balanced` | `efficiency`. Absent means ASK THE OS,
     /// which is what a user-facing binary should do (Low Power Mode selects
     /// `efficiency`) and what a measurement harness must not.
@@ -248,6 +264,20 @@ pub struct AnePrefillInfo {
     pub reason: Option<String>,
     /// The programs directory from which ANE prefill models are loaded, if any.
     pub programs_dir: Option<String>,
+}
+
+/// What a session resolved about wiring its expert slot cache, once, at open.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExpertSlotsWiringInfo {
+    /// The request the open used: `"auto"`, `"on"` or `"off"`.
+    pub requested: String,
+    /// True when the slot cache is wired.
+    pub active: bool,
+    /// Bytes wired; 0 when inactive.
+    pub wired_bytes: u64,
+    /// Why it is not active, or null when it is.
+    pub reason: Option<String>,
 }
 
 /// What a session resolved about directional steering, once, at open.
@@ -718,6 +748,8 @@ pub struct SessionInfo {
     pub prefix_reuse: bool,
     /// What the ANE+Steel prefill split resolved to for this session.
     pub ane_prefill: AnePrefillInfo,
+    /// Whether this session's expert slot cache is wired, and why not.
+    pub expert_slots_wiring: ExpertSlotsWiringInfo,
 }
 
 /// Arguments to `ts_server_start`. `{}` is valid and means "an OS-assigned

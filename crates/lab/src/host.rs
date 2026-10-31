@@ -40,6 +40,13 @@ pub struct HostSample {
     pub foreign_models: Vec<String>,
     pub rustc_processes: usize,
     pub swap_used_mib: Option<f64>,
+    /// `vm_stat`'s cumulative compressor counters (pages). A run's delta is
+    /// the memory-pressure reading swap alone misses: a 96-slot qwen4 cache
+    /// made about 5 million of each per run with swap barely moving.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compressions: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decompressions: Option<u64>,
     pub error: Option<String>,
     /// The orchestrator's own busy process beside this run (`~hog:N`),
     /// when one was started. Inside the owned tree, so never foreign CPU;
@@ -203,6 +210,24 @@ pub fn swap_used_mib() -> Option<f64> {
     })
 }
 
+/// `Compressions:` and `Decompressions:` from `vm_stat`, cumulative pages.
+pub fn compressor_counters() -> (Option<u64>, Option<u64>) {
+    match run("vm_stat", &[]) {
+        Ok(text) => parse_compressor_counters(&text),
+        Err(_) => (None, None),
+    }
+}
+
+fn parse_compressor_counters(text: &str) -> (Option<u64>, Option<u64>) {
+    let field = |name: &str| {
+        text.lines().find_map(|line| {
+            let rest = line.strip_prefix(name)?.strip_prefix(':')?;
+            rest.trim().trim_end_matches('.').parse::<u64>().ok()
+        })
+    };
+    (field("Compressions"), field("Decompressions"))
+}
+
 impl HostMonitor {
     pub fn new() -> Self {
         Self {
@@ -237,9 +262,12 @@ impl HostMonitor {
             foreign_models: Vec::new(),
             rustc_processes: 0,
             swap_used_mib: swap_used_mib(),
+            compressions: None,
+            decompressions: None,
             error: None,
             contention: self.hog,
         };
+        (sample.compressions, sample.decompressions) = compressor_counters();
         let ps = match run("ps", &["-Ao", "pid=,ppid=,pgid=,pcpu=,time=,comm="]) {
             Ok(s) => s,
             Err(e) => {
@@ -656,9 +684,24 @@ mod tests {
             foreign_models: vec![],
             rustc_processes: 0,
             swap_used_mib: Some(1000.0),
+            compressions: None,
+            decompressions: None,
             error: None,
             contention: None,
         }
+    }
+
+    #[test]
+    fn parses_compressor_counters() {
+        let text = "Mach Virtual Memory Statistics: (page size of 16384 bytes)\n\
+                    Pages stored in compressor:                  1029795.\n\
+                    Decompressions:                           2259287100.\n\
+                    Compressions:                             2502180604.\n";
+        assert_eq!(
+            super::parse_compressor_counters(text),
+            (Some(2_502_180_604), Some(2_259_287_100))
+        );
+        assert_eq!(super::parse_compressor_counters("junk"), (None, None));
     }
 
     #[test]
