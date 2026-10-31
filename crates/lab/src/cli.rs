@@ -882,57 +882,6 @@ fn inventory_cmd(mut args: Args) -> Result<CmdOutput, String> {
     ))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn outcome(status: &str, reasons: &[&str]) -> Outcome {
-        Outcome {
-            run_id: "r".into(),
-            arm: "a".into(),
-            round: 1,
-            warmup: false,
-            record: Value::Null,
-            status: status.into(),
-            eligible: reasons.is_empty(),
-            reasons: reasons.iter().map(|r| r.to_string()).collect(),
-        }
-    }
-
-    /// The bug this exists for: probe arms are unquotable, so the fit that
-    /// read only eligible runs never had a reading to fit.
-    #[test]
-    fn unquotable_alone_is_host_clean_but_a_busy_host_is_not() {
-        let unq = "TURBOSPARK_DISPATCH_PROBE perturbs timing; run is not quotable";
-        assert!(host_clean(&outcome("ok", &[])));
-        assert!(host_clean(&outcome("ok", &[unq])));
-        assert!(!host_clean(&outcome(
-            "ok",
-            &[unq, "foreign CPU over 150% for 5s or more"]
-        )));
-        assert!(!host_clean(&outcome("refused", &[unq])));
-    }
-
-    #[test]
-    fn the_probe_slope_is_microseconds_per_added_dispatch() {
-        // 64 layers, 2 us per added dispatch: +4 per layer is +256
-        // dispatches, +0.512 ms per token.
-        let ms = |arm: &str| match arm {
-            "probe0" => Some(40.0),
-            "probe4" => Some(40.512),
-            "probe8" => Some(41.024),
-            _ => None,
-        };
-        let r = dispatch_probe_fit(&[0, 4, 8], 64, ms).unwrap();
-        assert!(
-            (r["us_per_chained_dispatch"].as_f64().unwrap() - 2.0).abs() < 1e-9,
-            "{r}"
-        );
-        assert_eq!(r["points"][2]["added_dispatches"], 512);
-        assert!(dispatch_probe_fit(&[0, 4], 64, |_| None).is_err());
-    }
-}
-
 /// List or inspect the pinned kernel settings (`crates/lab/pinned/`).
 /// The embedded set is the verified baseline. `--dir` loads a sweep
 /// directory instead, and `--dir` plus `--id` shows one entry from it.
@@ -983,4 +932,55 @@ fn pinned_cmd(mut args: Args) -> Result<CmdOutput, String> {
         );
     }
     Ok(CmdOutput::ok(json!({"pinned": matches})))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn outcome(status: &str, reasons: &[&str]) -> Outcome {
+        Outcome {
+            run_id: "r".into(),
+            arm: "a".into(),
+            round: 1,
+            warmup: false,
+            record: Value::Null,
+            status: status.into(),
+            eligible: reasons.is_empty(),
+            reasons: reasons.iter().map(|r| r.to_string()).collect(),
+        }
+    }
+
+    /// The bug this exists for: probe arms are unquotable, so the fit that
+    /// read only eligible runs never had a reading to fit.
+    #[test]
+    fn unquotable_alone_is_host_clean_but_a_busy_host_is_not() {
+        let unq = "TURBOSPARK_DISPATCH_PROBE perturbs timing; run is not quotable";
+        assert!(host_clean(&outcome("ok", &[])));
+        assert!(host_clean(&outcome("ok", &[unq])));
+        assert!(!host_clean(&outcome(
+            "ok",
+            &[unq, "foreign CPU over 150% for 5s or more"]
+        )));
+        assert!(!host_clean(&outcome("refused", &[unq])));
+    }
+
+    #[test]
+    fn the_probe_slope_is_microseconds_per_added_dispatch() {
+        // 64 layers, 2 us per added dispatch: +4 per layer is +256
+        // dispatches, +0.512 ms per token.
+        let ms = |arm: &str| match arm {
+            "probe0" => Some(40.0),
+            "probe4" => Some(40.512),
+            "probe8" => Some(41.024),
+            _ => None,
+        };
+        let r = dispatch_probe_fit(&[0, 4, 8], 64, ms).unwrap();
+        assert!(
+            (r["us_per_chained_dispatch"].as_f64().unwrap() - 2.0).abs() < 1e-9,
+            "{r}"
+        );
+        assert_eq!(r["points"][2]["added_dispatches"], 512);
+        assert!(dispatch_probe_fit(&[0, 4], 64, |_| None).is_err());
+    }
 }

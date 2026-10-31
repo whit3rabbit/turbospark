@@ -38,11 +38,7 @@ pub struct RotaryCache {
 
 impl RotaryCache {
     fn half(&self) -> usize {
-        if self.positions == 0 {
-            0
-        } else {
-            self.cos.len() / self.positions
-        }
+        self.cos.len().checked_div(self.positions).unwrap_or(0)
     }
 
     /// `cos/sin[start_pos .. start_pos + rows]` gathered into a fresh
@@ -342,6 +338,8 @@ fn masked_attention(
                 }
                 let inv = 1.0 / sum;
                 let out_base = ((b * seq + i) * heads + h) * dim;
+                // The index also feeds offsets or math beyond this buffer, so an iterator is not simpler.
+                #[allow(clippy::needless_range_loop)]
                 for j in 0..total_keys {
                     let weight = scores[j] * inv;
                     if weight == 0.0 {
@@ -868,6 +866,7 @@ pub struct EchoDiT {
 }
 
 impl EchoDiT {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn from_parts(
         config: EchoDiTConfig,
         text_encoder: TextEncoder,

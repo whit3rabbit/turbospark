@@ -593,6 +593,8 @@ impl DiffusionHead {
                     let qbase = (t_i * self.heads + head) * self.head_dim;
                     let mut scores = vec![0.0f32; frames];
                     let mut max_score = f32::NEG_INFINITY;
+                    // The index also feeds offsets or math beyond this buffer, so an iterator is not simpler.
+                    #[allow(clippy::needless_range_loop)]
                     for u in 0..frames {
                         let kbase = (u * self.heads + head) * self.head_dim;
                         let mut dot = 0.0f32;

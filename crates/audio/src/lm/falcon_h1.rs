@@ -418,12 +418,12 @@ struct Layer {
 impl Layer {
     fn forward(
         &mut self,
-        h: &mut Vec<f32>,
+        h: &mut [f32],
         len: usize,
         offset: usize,
         cache: Option<&mut FalconLayerCache>,
     ) -> Result<()> {
-        let mut normed = h.clone();
+        let mut normed = h.to_vec();
         self.input_layernorm.apply(&mut normed, len);
         let (mamba_h, attn_h) = match cache {
             Some(cache) => {
@@ -447,7 +447,7 @@ impl Layer {
         for (index, value) in h.iter_mut().enumerate() {
             *value += mamba_h[index] + attn_h[index];
         }
-        let mut fed = h.clone();
+        let mut fed = h.to_vec();
         self.pre_ff_layernorm.apply(&mut fed, len);
         let fed_forward = self.mlp.forward(&fed, len);
         for (index, value) in fed_forward.into_iter().enumerate() {
@@ -581,12 +581,11 @@ impl FalconH1Model {
 
     /// Loads from an already parsed config.
     pub fn from_config(weights: &Weights, config: FalconConfig) -> Result<Self> {
-        let prefix =
-            if weights.contains_absolute(&format!("model.layers.0.self_attn.q_proj.weight")) {
-                "model."
-            } else {
-                ""
-            };
+        let prefix = if weights.contains_absolute("model.layers.0.self_attn.q_proj.weight") {
+            "model."
+        } else {
+            ""
+        };
         Self::load_impl(weights, config, prefix, Some("embed_tokens"))
     }
 

@@ -263,6 +263,8 @@ impl SeBlock {
             s[c] = acc / frames as f32;
         }
         let mut h = vec![0.0f32; self.bottleneck];
+        // The index also feeds offsets or math beyond this buffer, so an iterator is not simpler.
+        #[allow(clippy::needless_range_loop)]
         for o in 0..self.bottleneck {
             let mut acc = self.conv1_b[o];
             let w = &self.conv1_w[o * self.in_dim..(o + 1) * self.in_dim];
@@ -272,6 +274,8 @@ impl SeBlock {
             h[o] = acc.max(0.0);
         }
         let mut scale = vec![0.0f32; self.in_dim];
+        // The index also feeds offsets or math beyond this buffer, so an iterator is not simpler.
+        #[allow(clippy::needless_range_loop)]
         for o in 0..self.in_dim {
             let mut acc = self.conv2_b[o];
             let w = &self.conv2_w[o * self.bottleneck..(o + 1) * self.bottleneck];
@@ -367,9 +371,9 @@ impl AttentiveStatsPool {
             }
             let max = row.iter().copied().fold(f32::NEG_INFINITY, f32::max);
             let mut sum = 0.0f32;
-            for f in 0..frames {
-                row[f] = (row[f] - max).exp();
-                sum += row[f];
+            for value in row.iter_mut() {
+                *value = (*value - max).exp();
+                sum += *value;
             }
             for f in 0..frames {
                 row[f] /= sum;
@@ -548,6 +552,8 @@ impl EcapaTdnn {
             .forward(&mut pooled_bn, self.config.channels * 6);
         // fc: kernel-1 conv on a single frame.
         let mut embed = vec![0.0f32; self.config.embed_dim];
+        // The index also feeds offsets or math beyond this buffer, so an iterator is not simpler.
+        #[allow(clippy::needless_range_loop)]
         for o in 0..self.config.embed_dim {
             let mut acc = self.fc_b[o];
             let w = &self.fc_w[o * self.config.channels * 6..(o + 1) * self.config.channels * 6];

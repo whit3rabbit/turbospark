@@ -252,8 +252,8 @@ fn adaptive_depth_against_fixed_blocks() {
     for (pi, (name, _)) in cases.iter().enumerate() {
         print!("{name:<10} {:>10.2}", seq_tps[pi]);
         let mut med = Vec::new();
-        for ai in 0..ARMS.len() {
-            let m = median(&mut tps[pi][ai].clone());
+        for arm_tps in tps[pi].iter().take(ARMS.len()) {
+            let m = median(&mut arm_tps.clone());
             med.push(m);
             print!(" {m:>16.2}");
         }

@@ -390,6 +390,8 @@ impl RoFormerAttention {
                     let mut acc = vec![0.0f32; self.dim_head];
                     let mut max_score = f32::NEG_INFINITY;
                     let mut scores = vec![0.0f32; seq];
+                    // The index also feeds offsets or math beyond this buffer, so an iterator is not simpler.
+                    #[allow(clippy::needless_range_loop)]
                     for u in 0..seq {
                         let kbase = (row * seq + u) * inner + head * self.dim_head;
                         let mut dot = 0.0f32;
@@ -802,6 +804,8 @@ impl MelRoFormer {
         // CaC interleave: [channels, freq, T] -> [freq*2, T, 2] with
         // real/imag last. stft returns [T, freq] complex per channel.
         let mut stft_repr = vec![0.0f32; freq_bins * 2 * frames * 2];
+        // The index also feeds offsets or math beyond this buffer, so an iterator is not simpler.
+        #[allow(clippy::needless_range_loop)]
         for b in 0..freq_bins {
             for t in 0..frames {
                 // CaC interleave: entry 2b is the left channel, 2b + 1

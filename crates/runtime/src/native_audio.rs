@@ -1379,7 +1379,7 @@ fn synthesize_omnivoice(
     let stop = || cancel.is_cancelled();
     let (_, audio) = runner
         .synthesize(&request, &mut |step, total| {
-            if events
+            events
                 .send(AudioEvent::Progress(AudioProgress {
                     stage: "diffusion_step".into(),
                     completed: step,
@@ -1387,11 +1387,6 @@ fn synthesize_omnivoice(
                 }))
                 .is_ok()
                 && !stop()
-            {
-                true
-            } else {
-                false
-            }
         })
         .map_err(|e| {
             if stop() || e.contains("cancelled") {
@@ -1831,7 +1826,7 @@ mod tests {
         if let Ok(reference_dir) = std::env::var("TURBOSPARK_TEST_OMNIVOICE_REF") {
             let (_, reference_samples) =
                 read_npy_f32(&Path::new(&reference_dir).join("reference_24k.npy"));
-            let mut clone = crate::omnivoice::OmniVoiceRequest {
+            let clone = crate::omnivoice::OmniVoiceRequest {
                 text: "Cross-engine cloning check.",
                 language: Some("en"),
                 instruction: None,
@@ -1843,12 +1838,12 @@ mod tests {
                 seed: 7,
             };
             let (clone_cells, clone_audio) = runner
-                .synthesize(&mut clone, &mut |_, _| true)
+                .synthesize(&clone, &mut |_, _| true)
                 .expect("real clone");
             assert!(!clone_audio.is_empty());
             assert!(clone_audio.iter().all(|v| v.is_finite()));
             let (clone_cells_again, clone_audio_again) = runner
-                .synthesize(&mut clone, &mut |_, _| true)
+                .synthesize(&clone, &mut |_, _| true)
                 .expect("second clone");
             assert_eq!(clone_cells, clone_cells_again);
             assert_eq!(

@@ -80,6 +80,7 @@ impl Execution {
         layer.forward(x, rows)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn attention(
         &self,
         q: &[f32],

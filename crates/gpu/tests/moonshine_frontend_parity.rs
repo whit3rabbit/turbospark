@@ -182,10 +182,7 @@ fn decoder_primitives_match_small_known_values() {
     pass.commit_and_wait();
     assert_eq!(read_f32_buffer(&embedded, 3), vec![4.0, 5.0, 6.0]);
     let actual = read_f32_buffer(&gated, 2);
-    let expected = [
-        2.0 * -1.0 / (1.0 + 1.0f32.exp()),
-        3.0 / (1.0 + (-1.0f32).exp()),
-    ];
+    let expected = [-2.0 / (1.0 + 1.0f32.exp()), 3.0 / (1.0 + (-1.0f32).exp())];
     for (got, want) in actual.iter().zip(expected) {
         assert!((got - want).abs() < 1e-6);
     }

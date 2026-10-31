@@ -1485,7 +1485,7 @@ fn round_duration(value: f32) -> i32 {
 }
 
 fn noise_source_padding(stride: usize) -> usize {
-    (stride + 1) / 2
+    stride.div_ceil(2)
 }
 
 #[cfg(test)]
@@ -1851,6 +1851,7 @@ impl KokoroDecoder {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn forward(
         &self,
         asr: &[f32],
@@ -2155,7 +2156,7 @@ impl Kokoro {
             None => {
                 let up: Vec<f32> = f0
                     .iter()
-                    .flat_map(|v| std::iter::repeat(*v).take(TOTAL_UPSAMPLE))
+                    .flat_map(|v| std::iter::repeat_n(*v, TOTAL_UPSAMPLE))
                     .collect();
                 self.decoder.generator.m_source.forward(
                     &up,

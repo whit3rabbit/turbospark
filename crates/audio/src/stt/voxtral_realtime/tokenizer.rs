@@ -133,7 +133,7 @@ pub(crate) fn decode_base64(input: &str) -> Option<Vec<u8>> {
     for chunk in clean.chunks_exact(4) {
         // Padding is a suffix run of at most two.
         let pad = chunk.iter().rev().take_while(|&&b| b == b'=').count();
-        if pad > 2 || chunk[..4 - pad].iter().any(|&b| b == b'=') {
+        if pad > 2 || chunk[..4 - pad].contains(&b'=') {
             return None;
         }
         let mut group = 0u32;

@@ -303,7 +303,7 @@ fn voice_clone_matches_the_reference_end_to_end() {
     let text = traces["text"]["normalized"].as_str().expect("normalized");
     let mut noise = ReplayNoise::from_trace(&traces);
     let generated = model
-        .generate(&text, Some(&ref_audio), &ctrl, &mut noise)
+        .generate(text, Some(&ref_audio), &ctrl, &mut noise)
         .unwrap_or_else(|error| panic!("{name}: generate failed: {error}"));
     assert!(noise.draws.is_empty(), "{name}: draws left unconsumed");
 

@@ -2779,7 +2779,7 @@ fn verify_one_file(
     expected: &str,
     source: &str,
     hash: bool,
-    mut observer: Option<&mut VerifyObserver<'_>>,
+    observer: Option<&mut VerifyObserver<'_>>,
     finished_bytes: u64,
     total: u64,
 ) -> Result<(), String> {
@@ -2801,7 +2801,7 @@ fn verify_one_file(
         ));
     }
     if hash {
-        let digest = match observer.as_deref_mut() {
+        let digest = match observer {
             None => Some(model_io::hash_file(&path, 1024 * 1024).map_err(|e| e.to_string())?),
             Some(observer) => {
                 let mut reported = 0u64;

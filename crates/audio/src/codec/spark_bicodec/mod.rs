@@ -291,6 +291,7 @@ fn linear_cm(
 /// `[out, K, in/groups]` (the published module tree) or torch
 /// `[out, in/groups, K]` (a raw conversion export). The fold runs per
 /// output channel on the contiguous row either way.
+#[allow(clippy::too_many_arguments)]
 fn load_wn_conv1d(
     file: &SafetensorsFile,
     prefix: &str,

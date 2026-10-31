@@ -920,6 +920,8 @@ fn dit_f32_block_ops_match_host_and_synchronous() {
     let xs = sequence.upload(&rows).unwrap();
     let g = sequence.gated_silu_f32(xs, len, ff).unwrap();
     let got = finish_one(sequence, g);
+    // The index also feeds offsets or math beyond this buffer, so an iterator is not simpler.
+    #[allow(clippy::needless_range_loop)]
     for i in 0..len * ff {
         let (t, f) = (i / ff, i % ff);
         let state = rows[t * 2 * ff + f];

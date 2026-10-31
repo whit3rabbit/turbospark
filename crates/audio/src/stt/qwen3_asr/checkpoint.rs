@@ -576,7 +576,7 @@ mod tests {
 
         // Mutation: a missing decoder tensor must be refused too.
         let mut missing = tensors;
-        missing.remove(&"model.layers.1.mlp.down_proj.scales".to_owned());
+        missing.remove("model.layers.1.mlp.down_proj.scales");
         write_safetensors(&path, &missing);
         let file = turbospark_model_io::safetensors::SafetensorsFile::open(&path).unwrap();
         let error = validate_checkpoint(&file, &config).unwrap_err().to_string();

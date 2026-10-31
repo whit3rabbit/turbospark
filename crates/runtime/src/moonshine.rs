@@ -318,6 +318,7 @@ impl MoonshineMetalEngine {
             .ok_or_else(|| format!("Moonshine checkpoint missing {name}"))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn matmul(
         &self,
         pass: &PassEncoder,
@@ -478,6 +479,7 @@ impl MoonshineMetalEngine {
         ))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn gemv(
         &self,
         pass: &PassEncoder,
@@ -505,6 +507,7 @@ impl MoonshineMetalEngine {
         ))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn rope(
         &self,
         pass: &PassEncoder,
@@ -1010,6 +1013,8 @@ impl MoonshineMetalEngine {
 
 /// Device choice is made at open. The CPU reference is the default, and an
 /// unsupported Metal profile fails without retaining a second weight copy.
+// One per runner, so the size difference costs nothing worth a Box.
+#[allow(clippy::large_enum_variant)]
 pub enum MoonshineBackend {
     Cpu(Moonshine),
     Metal(Mutex<MoonshineMetalEngine>),

@@ -710,8 +710,7 @@ fn unified_codes_refuse_interleaved_audio_placeholders() {
     let blocks: [&[Vec<i32>]; 2] = [&codes, &codes];
     let err = model
         .build_delay_unified_codes(&content, &blocks, false)
-        .err()
-        .expect("interleaved placeholders refused");
+        .expect_err("interleaved placeholders refused");
     assert!(
         matches!(err, crate::SpeechError::Input { .. }),
         "expected Input, got {err:?}"

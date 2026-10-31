@@ -41,13 +41,17 @@ pub(crate) struct LstmLayer {
 /// One step through a stack of LSTM layers: returns the top layer output
 /// and every layer's next hidden and cell state. `input` is the embedded
 /// token; the arithmetic order is the one both transducer families used.
+/// One LSTM stack step: the top layer's output, then every layer's next
+/// hidden and cell state.
+pub(crate) type LstmStep = (Vec<f32>, Vec<Vec<f32>>, Vec<Vec<f32>>);
+
 pub(crate) fn lstm_stack(
     layers: &[LstmLayer],
     width: usize,
     mut input: Vec<f32>,
     hidden: &[Vec<f32>],
     cell: &[Vec<f32>],
-) -> (Vec<f32>, Vec<Vec<f32>>, Vec<Vec<f32>>) {
+) -> LstmStep {
     let mut next_hidden = Vec::with_capacity(layers.len());
     let mut next_cell = Vec::with_capacity(layers.len());
     for (index, layer) in layers.iter().enumerate() {
@@ -123,7 +127,7 @@ impl NemotronPredictor {
         token: Option<usize>,
         hidden: &[Vec<f32>],
         cell: &[Vec<f32>],
-    ) -> Result<(Vec<f32>, Vec<Vec<f32>>, Vec<Vec<f32>>)> {
+    ) -> Result<LstmStep> {
         if hidden.len() != self.layers.len() || cell.len() != self.layers.len() {
             return Err(SpeechError::Input {
                 why: "Nemotron predictor state has the wrong layer count".into(),
@@ -396,7 +400,7 @@ mod tests {
         token: Option<usize>,
         hidden: &[Vec<f32>],
         cell: &[Vec<f32>],
-    ) -> Result<(Vec<f32>, Vec<Vec<f32>>, Vec<Vec<f32>>)> {
+    ) -> Result<LstmStep> {
         if hidden.len() != this.layers.len() || cell.len() != this.layers.len() {
             return Err(SpeechError::Input {
                 why: "Nemotron predictor state has the wrong layer count".into(),

@@ -626,10 +626,7 @@ pub fn punc_norm(text: &str, capitalize: bool) -> String {
     let enders = [
         '.', '!', '?', '-', ',', '\u{3001}', '\u{ff0c}', '\u{3002}', '\u{ff1f}', '\u{ff01}',
     ];
-    let needs_stop = trimmed
-        .chars()
-        .last()
-        .map_or(true, |c| !enders.contains(&c));
+    let needs_stop = trimmed.chars().last().is_none_or(|c| !enders.contains(&c));
     if needs_stop {
         format!("{trimmed}.")
     } else {

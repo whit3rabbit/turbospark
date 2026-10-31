@@ -69,7 +69,7 @@ fn frontend_style_rows_count_characters_and_pack_geometry() {
     let last = SynthesisSegment::from_phonemes(&"a".repeat(510), &vocab()).unwrap();
     assert_eq!(last.style_row(), 509);
     let values: Vec<_> = (0..510)
-        .flat_map(|row| std::iter::repeat(row as f32).take(256))
+        .flat_map(|row| std::iter::repeat_n(row as f32, 256))
         .collect();
     let pack = VoicePack::from_values(Voice::AfHeart, &[510, 1, 256], values).unwrap();
     assert_eq!(pack.style_for(&a), &[13.0; 256]);

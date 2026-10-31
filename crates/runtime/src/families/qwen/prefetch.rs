@@ -132,6 +132,9 @@ impl Prefetcher {
 
     /// Hands `layer`'s streamer to the worker. A layer with no streamer
     /// (mapped residency) is skipped.
+    // The large `Err` is the failed send carrying the `Job` back, which is
+    // how the streamer is recovered below. Boxing it would only add a copy.
+    #[allow(clippy::result_large_err)]
     pub(crate) fn submit(
         &self,
         layer: usize,
@@ -252,7 +255,7 @@ mod tests {
         ));
         let stride = 4096usize;
         let bytes: Vec<u8> = (0..experts)
-            .flat_map(|e| std::iter::repeat(e as u8 + 1).take(stride))
+            .flat_map(|e| std::iter::repeat_n(e as u8 + 1, stride))
             .collect();
         std::fs::write(&path, bytes).unwrap();
         let layout = StreamLayout {

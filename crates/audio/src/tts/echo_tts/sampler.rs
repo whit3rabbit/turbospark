@@ -107,12 +107,12 @@ impl<'a> Guidance<'a> {
     fn new(params: &'a SamplerParams, text_mask: &'a [bool], speaker_mask: &'a [bool]) -> Self {
         let mut full_text_mask = Vec::with_capacity(text_mask.len() * 3);
         full_text_mask.extend_from_slice(text_mask);
-        full_text_mask.extend(std::iter::repeat(false).take(text_mask.len()));
+        full_text_mask.extend(std::iter::repeat_n(false, text_mask.len()));
         full_text_mask.extend_from_slice(text_mask);
         let mut full_speaker_mask = Vec::with_capacity(speaker_mask.len() * 3);
         full_speaker_mask.extend_from_slice(speaker_mask);
         full_speaker_mask.extend_from_slice(speaker_mask);
-        full_speaker_mask.extend(std::iter::repeat(false).take(speaker_mask.len()));
+        full_speaker_mask.extend(std::iter::repeat_n(false, speaker_mask.len()));
         Guidance {
             params,
             text_mask,

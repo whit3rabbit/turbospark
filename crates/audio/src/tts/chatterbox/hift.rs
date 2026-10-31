@@ -798,7 +798,7 @@ pub(crate) fn trim_fade(samples: &mut [f32]) {
             let k = i - N_TRIM;
             // linspace(pi, 0, n_trim) at index k, then (cos + 1) / 2.
             let angle = std::f32::consts::PI * (1.0 - k as f32 / (N_TRIM - 1) as f32);
-            *v *= ((angle.cos() + 1.0) / 2.0) as f32;
+            *v *= (angle.cos() + 1.0) / 2.0;
         }
     }
 }
