@@ -12,8 +12,8 @@
      "why": "the sparse indexer is the family's attention; forcing dense past its budget is a diagnostic arm, not a lane to ship",
      "findings": []},
     {"slots": "auto", "when": ["moe"],
-     "why": "UNVERIFIED on real text (measured while the forward pass decoded garbage; real-text hit rate at 48 slots is 57-69%, re-sweep): auto picked 48 slots at a 99% hit rate and no fixed count beat it on decode: s64 lost 2.9%, s32 and s96 were noise; 19 experts per layer cover 95% of decode selections",
-     "findings": ["qwen4exp.slots-sweep-2026-10-30", "qwen4exp.expert-census-2026-10-30", "qwen4exp.reap-288-rows-2026-10-11"]}
+     "why": "re-swept on real text: auto (48 slots, 66% decode hit rate) beat s96 by 18% and s128 by 15% and s64 was noise at +2.1 GB; larger caches cut expert I/O but the host's GPU wait grew from 29 to 47-49 ms per token with GPU busy time flat",
+     "findings": ["qwen4exp.slots-sweep-real-2026-10-31", "qwen4exp.slots-sweep-2026-10-30", "qwen4exp.expert-census-2026-10-30", "qwen4exp.reap-288-rows-2026-10-11"]}
   ],
   "sweeps": [
     {"id": "slots", "description": "expert cache slots for top-10 routing over 288 or 512 experts",
@@ -107,6 +107,14 @@
      "provenance": {"kind": "ledger", "experiment": "qwen4-survey", "record": "1793411931010-26356-49"},
      "conditions": "s32 (record 1793411931006-26356-48) and s96 (1793411931014-26356-50) read noise; the effect floor is the fixed 2% minimum, which the null record 1793411508644-13909-16 (0.21%) only raises; CAVEAT 2026-10-31: measured while every RMS norm was applied uncentered (00247a7f), which decodes this MLX install as garbage; the norm convention now follows the install's quant scheme. Exactness still holds on real text, but these timings came from garbage routing and need re-measuring (single unquotable runs after the fix showed no prefill gain on a 90-token prompt)",
      "note": ""},
+    {"id": "qwen4exp.slots-sweep-real-2026-10-31", "date": "2026-10-31", "install": "qwen4-reap288", "machine": "Apple M4 Max 36 GB", "power": "ac", "rev": "9adbd54e",
+     "workload": "tslab sweep --baseline sauto@auto/auto --candidate s64/s96/s128@N/streamed: protocol medium-review (426 prompt tokens), 64 decode, context 2048; 3 clean pairs per candidate, 0 dirty",
+     "arms": {"sauto": {}, "s64": {"slots": 64}, "s96": {"slots": 96}, "s128": {"slots": 128}},
+     "metric": "decode_tok_s", "values": {"s64_median": 0.0257, "s64_ci": [0.0032, 0.1435], "s96_median": -0.1797, "s96_ci": [-0.1904, -0.1378], "s128_median": -0.1534, "s128_ci": [-0.1976, -0.1245], "peak_gib": {"sauto": 6.5, "s64": 8.5, "s96": 12.5, "s128": 16.4}, "decode_hit_rate": {"sauto": 0.658, "s64": 0.731, "s96": 0.838, "s128": 0.911}, "decode_ms_per_token": {"expert_io": {"sauto": 26.9, "s64": 24.8, "s96": 22.7, "s128": 17.8}, "gpu_wait": {"sauto": 29.1, "s64": 29.2, "s96": 46.9, "s128": 48.5}, "cb1_gpu_busy": {"sauto": 19.8, "s64": 19.7, "s96": 21.6, "s128": 21.4}}},
+     "verdict": "loss",
+     "provenance": {"kind": "ledger", "experiment": "qwen4-slots-real", "record": "1793463977510-82579-47"},
+     "conditions": "verdict records: s64 noise 1793463977496-82579-44, s96 loss 1793463977500-82579-45, s128 loss 1793463977505-82579-46; effect floor 3.49% from null record 1793463217525-58186-16, whose baseline-again arm itself won +6% while decode ran 11-12 tok/s against 16-17 tok/s in the sweep (page cache warming between the two commands), so the floor came from a colder host; swap rose from 2.2 to 3.7 GB during the s128 warmup and stayed there; phase values are medians over the sweep's runs from the decode_phases block. Why the GPU wait grows at 96+ slots with GPU busy time flat is unmeasured (memory residency or paging of the larger slot buffer is a guess)",
+     "note": ""},
     {"id": "qwen4exp.reap-288-rows-2026-10-11", "date": "2026-10-11",
      "install": "qwen4exp-reap-288 and the Swift IQ2_XS", "machine": "Apple M4 Max 36 GB", "power": "ac", "rev": "v0.5 era",
      "workload": "the every-install table at 2,048 context",
@@ -118,7 +126,7 @@
      "note": ""}
   ],
   "open_questions": [
-    "expert slots on real text: the 48-slot auto reading came from garbage routing; real-text hit rate is 57-69% and prefill and decode are I/O bound, so a real-text slots sweep is the first speed lever",
+    "why decode gets slower above 64 slots: expert I/O falls but the host's wait on the layer command buffer grows 18-19 ms per token while GPU busy time stays flat (slots-sweep-real-2026-10-31); a trace of an s96 run against auto is the next measurement",
     "the real-install quality gate reads perplexity 8.4241 against the frozen 8.7224 after the norm fix (outside its 2% band, lower); re-freezing is a human decision",
     "the host-write hazard in the chunked prefill (BATCHED_PREFILL.md, the seventh flow)",
     "int4_mma8 touches qwen4/attn.rs and the dilated PLE conv shares the prefill kernel: unverified on a real install (INT4_SMALL_M_MMA.md open question 4)",

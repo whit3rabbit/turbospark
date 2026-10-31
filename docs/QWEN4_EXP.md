@@ -2141,3 +2141,28 @@ first-row acceptance on math says the features and port line up, which a
 wrong port would not produce), the drafter's real Metal cost, and the head
 and GDN/PLE/QSA rollback a real verify pass needs. The lever this points at
 is expert I/O, not drafting: re-sweep expert slots on real text first.
+
+## Expert slots on real text (2026-10-31)
+
+The 48-slot auto choice was first swept while the forward pass decoded
+garbage. Re-swept on the fixed install (`tslab sweep`, experiment
+`qwen4-slots-real`, protocol medium-review, 426 prompt tokens, 64 decode,
+2,048 context, 3 clean pairs per candidate, effect floor 3.49% from the null
+run), decode tok/s against auto:
+
+| Slots | Verdict | Median | 95% CI | Peak | Decode hit rate | Expert I/O ms/tok | GPU wait ms/tok |
+|---|---|---|---|---|---|---|---|
+| auto (48) | baseline | | | 6.5 GiB | 0.658 | 26.9 | 29.1 |
+| 64 | noise | +2.6% | [+0.3%, +14.3%] | 8.5 GiB | 0.731 | 24.8 | 29.2 |
+| 96 | loss | -18.0% | [-19.0%, -13.8%] | 12.5 GiB | 0.838 | 22.7 | 46.9 |
+| 128 | loss | -15.3% | [-19.8%, -12.4%] | 16.4 GiB | 0.911 | 17.8 | 48.5 |
+
+Auto stays. A larger cache does what it should to the hit rate and expert
+I/O, but above 64 slots the host's wait on the layer command buffer grows
+18-19 ms per token while the GPU busy time for that buffer stays at 20-22
+ms. The cause is unmeasured; residency or paging of the larger slot buffer
+is a guess (swap rose from 2.2 to 3.7 GB during the 128-slot warmup). The
+null run decoded at 11-12 tok/s against 16-17 tok/s in the sweep, so the
+host warmed between the two commands and the floor came from a colder
+state. Verdict records: 1793463977496-82579-44 (64),
+1793463977500-82579-45 (96), 1793463977505-82579-46 (128).
