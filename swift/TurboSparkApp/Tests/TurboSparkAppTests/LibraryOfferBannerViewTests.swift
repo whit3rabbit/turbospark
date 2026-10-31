@@ -89,7 +89,7 @@ final class LibraryOfferBannerViewTests: LibraryStateTestCase {
     private func settle(_ hosts: NSView...) async {
         for _ in 0..<4 {
             try? await Task.sleep(nanoseconds: 40_000_000)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+            Self.turnRunLoop(for: 0.02)
             for host in hosts { host.layoutSubtreeIfNeeded() }
         }
     }
@@ -358,5 +358,11 @@ final class LibraryOfferBannerViewTests: LibraryStateTestCase {
         let wiring = try code("State/AppModel+ModelLibraries.swift")
         XCTAssertTrue(wiring.contains("showToast"), "AppModel posts the toast")
         XCTAssertFalse(wiring.contains("model.error"))
+    }
+
+    /// Sync on purpose: `RunLoop.run(until:)` is unavailable in async code,
+    /// and the hosted SwiftUI view needs the main run loop to turn.
+    private static func turnRunLoop(for seconds: TimeInterval) {
+        RunLoop.current.run(until: Date().addingTimeInterval(seconds))
     }
 }

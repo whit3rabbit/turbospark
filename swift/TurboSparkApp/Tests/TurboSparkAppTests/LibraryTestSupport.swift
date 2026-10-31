@@ -120,6 +120,9 @@ final class FakeModelLibraryService: ModelLibraryService, @unchecked Sendable {
     }
 
     static func currentThreadID() -> UInt32 { pthread_mach_thread_np(pthread_self()) }
+    /// A sync wrapper: `Thread.isMainThread` is unavailable in async code,
+    /// and the recorders read it before their first suspension.
+    static func isMainThread() -> Bool { Thread.isMainThread }
 
     /// One install as the engine would have seen it.
     struct InstallCall: Equatable {
@@ -326,7 +329,7 @@ final class FakeModelLibraryService: ModelLibraryService, @unchecked Sendable {
         // engine call would have been entered on.
         let call = MoveCall(
             installId: installId, libraryId: libraryId, freeBytes: freeBytes,
-            onMainThread: Thread.isMainThread, threadID: Self.currentThreadID())
+            onMainThread: Self.isMainThread(), threadID: Self.currentThreadID())
         let (script, applies) = with { state -> (MoveScript?, Bool) in
             state.moveCalls.append(call)
             return (state.moveScript, state.appliesMoves)
@@ -360,7 +363,7 @@ final class FakeModelLibraryService: ModelLibraryService, @unchecked Sendable {
     }
 
     func cancelMove() -> Bool {
-        let call = CancelCall(onMainThread: Thread.isMainThread, threadID: Self.currentThreadID())
+        let call = CancelCall(onMainThread: Self.isMainThread(), threadID: Self.currentThreadID())
         let (handler, answer) = with { state -> ((@Sendable () -> Bool)?, Bool) in
             state.cancelCalls.append(call)
             return (state.cancelHandler, state.cancelAnswer)
@@ -488,16 +491,15 @@ final class FakeDriveProbe: DriveLinkProbing, @unchecked Sendable {
     var invalidations: [String] { lock.lock(); defer { lock.unlock() }; return dropped }
 
     func connection(for volume: URL) async -> DriveConnection {
-        lock.lock()
-        asked.append(volume.standardizedFileURL.path)
-        let answer = provider
-        lock.unlock()
+        let answer = lock.withLock {
+            asked.append(volume.standardizedFileURL.path)
+            return provider
+        }
         return answer(volume)
     }
 
     func invalidate(volume: URL) async {
-        lock.lock(); defer { lock.unlock() }
-        dropped.append(volume.standardizedFileURL.path)
+        lock.withLock { dropped.append(volume.standardizedFileURL.path) }
     }
 }
 

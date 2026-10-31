@@ -83,8 +83,9 @@ when this file gets updated relative to the version bump and the tag.
   the page itself is on a private host, and use their own website data
   store, so a site grant no longer exposes the user's signed-in sessions.
   Origins with a trailing dot match their grant.
-- App build: three warnings (two Swift 6 actor-isolation, one unhandled
-  test resource).
+- App build: every compiler warning in the app and its tests (Swift 6
+  actor-isolation and async-unavailable calls, redundant `await`s, an unused
+  value, a deprecated trailing closure) and the unhandled test resource.
 - qwen4_exp MLX installs decode correctly again. Since 00247a7f (2026-09-26)
   every RMSNorm was applied as a direct weight, but MLX and Hugging Face store
   these as offsets from one, so MLX installs decoded fluent-looking garbage.
