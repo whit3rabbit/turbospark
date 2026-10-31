@@ -471,7 +471,10 @@ pub unsafe extern "C" fn ts_kv_quant_supported(
 }
 
 /// What a model family can do, as JSON, from its persisted
-/// `ModelFamily::as_str` spelling: `{"family","known","steeringSupported"}`.
+/// `ModelFamily::as_str` spelling:
+/// `{"family","known","steeringSupported","anePrefillSupported"}`.
+/// `anePrefillSupported` is the family and this build only; whether `Auto`
+/// turns it on also needs `ts_chip_supports_ane_prefill`.
 /// A family this build does not recognise is `known: false` with every
 /// capability false rather than an error.
 #[no_mangle]

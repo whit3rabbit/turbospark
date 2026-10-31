@@ -39,9 +39,16 @@ pub(crate) fn family_capabilities_json(family: &str) -> String {
         "family": family,
         "known": parsed.is_some(),
         "steeringSupported": parsed.map(steering_supported).unwrap_or(false),
-        "anePrefillSupported": parsed.map(|f| f == ModelFamily::QwenGdnDense).unwrap_or(false),
+        "anePrefillSupported": parsed.map(ane_prefill_supported).unwrap_or(false),
     })
     .to_string()
+}
+
+/// The family and this build only. The chip is deliberately not part of it:
+/// an explicit split runs on any chip, and M4+ is only `Auto`'s threshold
+/// (`ts_chip_supports_ane_prefill` answers that half).
+fn ane_prefill_supported(family: ModelFamily) -> bool {
+    runtime::ANE_PREFILL_BUILT && family == ModelFamily::QwenGdnDense
 }
 
 #[cfg(target_os = "macos")]
@@ -102,7 +109,7 @@ mod tests {
             );
             assert_eq!(
                 v["anePrefillSupported"],
-                family == ModelFamily::QwenGdnDense,
+                runtime::ANE_PREFILL_BUILT && family == ModelFamily::QwenGdnDense,
                 "{}",
                 family.as_str()
             );

@@ -130,6 +130,10 @@ pub use draft_lattice::DflashLattice;
 pub use error::RuntimeError;
 #[cfg(target_os = "macos")]
 pub use families::qwen::{chip_is_m4_or_newer, hardware_supports_ane_prefill, AnePrefillMode};
+/// Whether this runtime was built with the `ane-prefill` feature. A host asks
+/// here rather than reading its own feature flag, because cargo feature
+/// unification can turn the runtime's on without the host's.
+pub const ANE_PREFILL_BUILT: bool = cfg!(feature = "ane-prefill");
 pub use families::qwen::{
     dflash_serving_block, install_has_dflash, install_has_mtp_head, DflashDraftPolicy,
     DraftPolicies, MtpDraftPolicy, DFLASH_BLOCK, DFLASH_SERVING_BLOCK, DFLASH_SERVING_BLOCK_TILE,
