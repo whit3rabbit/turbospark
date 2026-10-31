@@ -52,18 +52,27 @@ extension AppToolCatalog {
         return !isBuiltInToolName(name)
     }
 
+    /// Whether `profile` offers the tool called `toolName`.
+    static func profileAllows(_ profile: AppToolProfile, toolName name: String) -> Bool {
+        if profile.allowsEverything { return true }
+        let key = profileKey(for: name)
+        if profileAlwaysOnKeys.contains(key) { return true }
+        if isMcpOrCustomTool(named: name) { return profile.includesMcpAndCustom }
+        guard let allowed = profile.allowedTools else { return true }
+        return allowed.contains(key)
+    }
+
+    /// `profileAllows` as an `AppToolRegistry.callerToolFilter`, nil when the
+    /// profile allows everything.
+    static func callerToolFilter(for profile: AppToolProfile) -> (@Sendable (String) -> Bool)? {
+        guard !profile.allowsEverything else { return nil }
+        return { profileAllows(profile, toolName: $0) }
+    }
+
     /// `definitions` narrowed to what `profile` allows.
     static func applying(_ profile: AppToolProfile, to definitions: [OpenAITool]) -> [OpenAITool] {
         if profile.allowsEverything { return definitions }
-        let allowed = profile.allowedTools.map(Set.init)
-        return definitions.filter { tool in
-            let name = tool.function.name
-            let key = profileKey(for: name)
-            if profileAlwaysOnKeys.contains(key) { return true }
-            if isMcpOrCustomTool(named: name) { return profile.includesMcpAndCustom }
-            guard let allowed else { return true }
-            return allowed.contains(key)
-        }
+        return definitions.filter { profileAllows(profile, toolName: $0.function.name) }
     }
 
     /// A captured turn narrowed to `profile`, deferred MCP descriptors included.

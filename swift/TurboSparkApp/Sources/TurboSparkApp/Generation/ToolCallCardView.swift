@@ -1161,14 +1161,19 @@ struct ToolCallCardView: View {
                         .buttonStyle(.bordered)
                         .help(Text("Persist an allow rule for this MCP tool or server in project settings", bundle: .module))
                         .accessibilityLabel(Text("Always allow \(call.name) in project settings", bundle: .module))
-                    } else {
+                    } else if !isHighRisk {
+                        // Hidden for high risk: the engine checks risk before
+                        // a session grant, so the grant would never apply and
+                        // every repeat would ask again.
                         Button {
                             model.approvePendingToolCall(id: call.id, alwaysAllowSession: true)
                         } label: {
                             Label { Text("Always Allow", bundle: .module) } icon: { Image(systemName: "checkmark.circle") }
                         }
                         .buttonStyle(.bordered)
-                        .help(Text("Always allow this tool and command in this session", bundle: .module))
+                        .help(call.shellCommand != nil
+                            ? Text("Always allow this exact command in this session", bundle: .module)
+                            : Text("Always allow this tool and command in this session", bundle: .module))
                         .accessibilityLabel(Text("Always allow \(call.name) in this session", bundle: .module))
                     }
 

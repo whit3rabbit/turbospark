@@ -29,6 +29,15 @@ public enum AppToolRegistry {
         call: AppToolCall, in project: AppProject?, chatID: UUID? = nil, subagentDepth: Int = 0,
         webToolsEnabled: Bool = true, fallbackMode: AppPermissionMode? = nil
     ) async -> AppToolResult {
+        // Scope the rootless mode over everything this call reaches, so the
+        // nested gates that call `evaluate` without one inherit it.
+        if let fallbackMode, ToolPermissionContext.fallbackMode != fallbackMode {
+            return await ToolPermissionContext.$fallbackMode.withValue(fallbackMode) {
+                await execute(
+                    call: call, in: project, chatID: chatID, subagentDepth: subagentDepth,
+                    webToolsEnabled: webToolsEnabled, fallbackMode: fallbackMode)
+            }
+        }
         let startTime = Date()
 
         let appAllowsWebTools = await webToolsEnabledProvider?() ?? true

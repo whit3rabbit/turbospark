@@ -472,9 +472,14 @@ extension AppModel {
                 self.toolExecutionTask = nil
             }
             if alwaysAllowSession {
-                await SessionApprovalStore.shared.allowTool(sessionID: sessionID, toolName: toolName)
+                // A shell call grants its COMMAND, never the shell tool's
+                // name. The name grant also covered every other allowlisted
+                // command (`git push`, `make`, `npm install`), so one Always
+                // Allow on `ls` in an Ask project ran them all unasked.
                 if let cmd {
                     await SessionApprovalStore.shared.allowCommandPrefix(sessionID: sessionID, prefix: cmd)
+                } else {
+                    await SessionApprovalStore.shared.allowTool(sessionID: sessionID, toolName: toolName)
                 }
             }
 

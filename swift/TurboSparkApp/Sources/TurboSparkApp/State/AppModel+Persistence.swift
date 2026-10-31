@@ -107,6 +107,7 @@ extension AppModel {
         self.interactionMode = AppInteractionMode(rawValue: settings.interactionMode) ?? .chat
         self.browserSettings = settings.browser
         self.alwaysStartInGhostMode = settings.alwaysStartInGhostMode
+        self.activePermissionMode = AppPermissionMode(rawValue: settings.rootlessPermissionMode) ?? .auto
         self.autoCompactEnabled = settings.autoCompact
         self.actionFusionEnabled = settings.actionFusion
         self.observationPackEnabled = settings.observationPack
@@ -272,6 +273,7 @@ extension AppModel {
             modelReasoningDefaults: modelReasoningDefaults,
             interactionMode: interactionMode.rawValue,
             alwaysStartInGhostMode: alwaysStartInGhostMode,
+            rootlessPermissionMode: activePermissionMode.rawValue,
             autoCompact: autoCompactEnabled,
             actionFusion: actionFusionEnabled,
             observationPack: observationPackEnabled,

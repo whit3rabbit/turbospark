@@ -572,5 +572,46 @@ final class ToolPermissionsTests: XCTestCase {
         let decision = AppToolPermissionEngine.evaluate(call: termCall, project: fullAccessProject)
         XCTAssertEqual(decision, .allow)
     }
+
+    /// The projectless chat's mode survives a relaunch. It reset to Auto,
+    /// so a user who chose Ask or Read Only lost it silently.
+    func testRootlessPermissionModeRoundTripsAndDefaultsToAuto() throws {
+        var settings = MacAppSettings()
+        XCTAssertEqual(settings.rootlessPermissionMode, "auto")
+        settings.rootlessPermissionMode = AppPermissionMode.readOnly.rawValue
+
+        let restored = try JSONDecoder().decode(
+            MacAppSettings.self, from: try JSONEncoder().encode(settings))
+        XCTAssertEqual(restored.rootlessPermissionMode, AppPermissionMode.readOnly.rawValue)
+
+        let legacy = try JSONDecoder().decode(
+            MacAppSettings.self, from: Data(#"{"contextTokens":0}"#.utf8))
+        XCTAssertEqual(legacy.rootlessPermissionMode, "auto")
+    }
+
+    /// Full Access drops prompts and the risk ceiling, never an explicit refusal.
+    func testFullAccessStillHonorsCategoryDenyAndMcpDenyRules() {
+        var perms = AppProjectPermissions.fullAccess
+        perms.terminal = .deny
+        perms.mcpDenyRules = ["mcp__github__delete_repository"]
+        let project = AppProject(name: "FullAccessDeny", permissions: perms)
+
+        let termCall = AppToolCall(
+            name: "run_command", arguments: ["command": "ls"], category: .terminal)
+        guard case .deny = AppToolPermissionEngine.evaluate(call: termCall, project: project) else {
+            return XCTFail("A Terminal category set to Deny must refuse under Full Access.")
+        }
+
+        let mcpCall = AppToolCall(
+            name: "mcp__github__delete_repository", arguments: [:], category: .mcp)
+        guard case .deny = AppToolPermissionEngine.evaluate(call: mcpCall, project: project) else {
+            return XCTFail("A persisted MCP deny rule must refuse under Full Access.")
+        }
+
+        // A category left at Allow still runs high-risk work unprompted.
+        let writeCall = AppToolCall(
+            name: "write_file", arguments: ["path": "/etc/hosts", "content": "x"], category: .fileWrite)
+        XCTAssertEqual(AppToolPermissionEngine.evaluate(call: writeCall, project: project), .allow)
+    }
 }
 

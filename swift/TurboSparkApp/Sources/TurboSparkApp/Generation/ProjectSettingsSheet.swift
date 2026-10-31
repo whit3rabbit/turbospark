@@ -21,6 +21,9 @@ struct ProjectSettingsSheet: View {
     @State private var automationPermission: AppToolPermission = .ask
     @State private var browserPermission: AppToolPermission = .ask
     @State private var browserOriginAllowlist: [String] = []
+    /// The origins as loaded, to tell an edit in this sheet from a grant an
+    /// approval card made while it was open.
+    @State private var loadedBrowserOriginAllowlist: [String] = []
     @State private var maxAutonomousSteps: Double = 5
     @State private var skillStateEnabled: Bool = false
     @State private var rulePreference: AppRulePreference = .agentsFirst
@@ -458,6 +461,7 @@ struct ProjectSettingsSheet: View {
             automationPermission = editing.permissions.automation
             browserPermission = editing.permissions.browser
             browserOriginAllowlist = editing.permissions.browserOriginAllowlist
+            loadedBrowserOriginAllowlist = editing.permissions.browserOriginAllowlist
             maxAutonomousSteps = Double(editing.maxAutonomousSteps)
             skillStateEnabled = editing.skillStateEnabled
             guardrailsOption = AppProjectGuardrailsOption.from(optionalBool: editing.forgeGuardrailsEnabled)
@@ -631,8 +635,9 @@ struct ProjectSettingsSheet: View {
             // owns none of those fields.
             if let live = model.projects.first(where: { $0.id == editing.id }) {
                 updated.mcpServers = live.mcpServers
-                updated.permissions.mcpAllowRules = live.permissions.mcpAllowRules
-                updated.permissions.mcpDenyRules = live.permissions.mcpDenyRules
+                updated.permissions = Self.mergedPermissions(
+                    edited: perms, live: live.permissions,
+                    loadedOrigins: loadedBrowserOriginAllowlist)
             }
             model.updateProject(updated)
         } else {
@@ -651,5 +656,25 @@ struct ProjectSettingsSheet: View {
             )
         }
         onDismiss()
+    }
+
+    /// The sheet's edits laid over the live project's permissions.
+    ///
+    /// The sheet edits the mode, the category matrix and the origin list. The
+    /// MCP rules and REPL roots are edited elsewhere (the MCP sheet, the
+    /// approval cards) and always come from `live`. The origins come from
+    /// `live` too unless the sheet changed them, so a grant an approval card
+    /// made while the sheet was open survives a save that never touched them.
+    static func mergedPermissions(
+        edited: AppProjectPermissions, live: AppProjectPermissions, loadedOrigins: [String]
+    ) -> AppProjectPermissions {
+        var merged = edited
+        merged.mcpAllowRules = live.mcpAllowRules
+        merged.mcpDenyRules = live.mcpDenyRules
+        merged.replFileAccessRoots = live.replFileAccessRoots
+        if edited.browserOriginAllowlist == loadedOrigins {
+            merged.browserOriginAllowlist = live.browserOriginAllowlist
+        }
+        return merged
     }
 }

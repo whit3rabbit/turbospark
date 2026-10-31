@@ -511,4 +511,19 @@ extension AppModel {
             selectChat(id: list[currentIndex + 1].id)
         }
     }
+
+    /// Drops the session "Always Allow" grants of every matching chat.
+    ///
+    /// A grant was given under the policy in force at the time. Moving a
+    /// project or the rootless chat to a stricter mode must not leave a
+    /// grant from the looser one answering for it.
+    func clearSessionApprovals(where matches: (AppChat) -> Bool) {
+        let sessionIDs = chats.filter(matches).map(\.id.uuidString)
+        guard !sessionIDs.isEmpty else { return }
+        Task {
+            for sessionID in sessionIDs {
+                await SessionApprovalStore.shared.clear(sessionID: sessionID)
+            }
+        }
+    }
 }

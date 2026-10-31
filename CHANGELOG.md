@@ -64,6 +64,27 @@ when this file gets updated relative to the version bump and the tag.
   the `break` diagnostic). An explicit `split` on an older chip still runs
   and reports active. The family capability `anePrefillSupported` also
   reports false on a build without the feature.
+- App tool permissions: a PreToolUse hook that rewrites a call's arguments
+  now has the rewritten call re-rated, so a rewrite to a destructive command
+  is no longer judged as the safe one it replaced. Full Access honors a
+  category set to Deny and MCP deny rules. A session "Always Allow" on a
+  shell call grants that command, not every allowlisted command, and the
+  button is hidden on high-risk cards where it never applied. Session grants
+  are dropped when the mode or category settings change. A projectless
+  chat's mode now reaches batch children, subagents, `tool_call` and
+  codemode calls, and is saved across launches. A batch can no longer run a
+  tool the active tool profile removed.
+- App project settings: the Read Only preset shows Web as Deny, matching the
+  engine; picking an Execution Mode applies its preset; notes say which rows
+  a mode ignores; saving the sheet keeps REPL file roots and site grants
+  made while it was open.
+- App browser automation: agent tabs block page requests (fetch, XHR,
+  images, WebSockets) to loopback, LAN, link-local and metadata hosts unless
+  the page itself is on a private host, and use their own website data
+  store, so a site grant no longer exposes the user's signed-in sessions.
+  Origins with a trailing dot match their grant.
+- App build: three warnings (two Swift 6 actor-isolation, one unhandled
+  test resource).
 - qwen4_exp MLX installs decode correctly again. Since 00247a7f (2026-09-26)
   every RMSNorm was applied as a direct weight, but MLX and Hugging Face store
   these as offsets from one, so MLX installs decoded fluent-looking garbage.

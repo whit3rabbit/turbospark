@@ -220,8 +220,12 @@ extension AppModel {
         var updated = project
         updated.updatedAt = Date()
         let previousRoot = projects[index].rootDirectoryPath ?? ""
+        let policyChanged = !projects[index].permissions.hasSameApprovalPolicy(as: updated.permissions)
         projects[index] = updated
         persistProjects()
+        if policyChanged {
+            clearSessionApprovals { $0.projectID == project.id }
+        }
         reloadSkills()
         reloadAgents()
         if selectedProjectID == project.id {

@@ -37,9 +37,18 @@ of the registry's. It sits in the caller.
 2. **Gate, in the caller.** `PreToolUse` hooks run first and fail CLOSED
    (state#40). Then `Tools/Core/AppToolPermissionEngine.evaluate`, which
    asks `Tools/Core/ToolRiskClassifier` for a risk assessment and applies
-   eight ordered steps: strict read-only mode, category deny, high-risk
-   always asks, permissive mode, session approval, MCP `autoApprove`, ask
-   mode, auto mode. For a shell command the classifier consults
+   ordered steps: strict read-only mode, category deny, MCP deny rule, full
+   access, high-risk always asks, permissive mode, MCP allow rule, session
+   approval, MCP `autoApprove`, ask mode, auto mode. Full access skips the
+   risk ceiling but not the two explicit refusals above it. A risk rating
+   stored at parse time is redone after a hook's `updatedInput`, so the
+   engine rates the arguments that will run. A session "Always Allow" on a
+   shell call grants that command (and the same command with more
+   arguments), never the shell tool's name, and is dropped when the mode or
+   category matrix changes. Nested gates (batch, subagent, `tool_call`,
+   codemode) call `evaluate` with no mode and read the rootless chat's mode
+   from `ToolPermissionContext.fallbackMode`, which `AppToolRegistry.execute`
+   binds. For a shell command the classifier consults
    `Tools/Terminal/TerminalCommandClassifier.isAutoApprovable` (a positive
    allowlist) and `Tools/Core/CommandGate` (advisory reason on, veto off).
    A `.ask` raises the approval card. A `.deny` is recorded as refused.
@@ -1121,6 +1130,34 @@ also never widens to another origin: `currentActionApproved` only counts
 when the destination equals the approved origin.
 
 Test: `BrowserAppIntegrationTests.testAgentTabNavigationWithoutLiveCommandIsDenied`.
+
+### Browser automation: what an agent tab's page can reach
+
+The navigation delegate authorizes frames only. `fetch`, XHR, images,
+WebSockets and beacons never reach it, so until 2026-10-31 a page on a
+granted public origin could send requests to the TurboSpark listener, the
+OpenKind daemon, a LAN device or a metadata endpoint.
+`BrowserAutomation/AgentBrowserIsolation.swift` closes that for agent-owned
+tabs:
+
+- `AgentBrowserNetworkRules` is a `WKContentRuleList` that blocks
+  http(s) and ws(s) requests to loopback, RFC1918, link-local, IPv6 ULA and
+  link-local, `.local`, `.localhost` and the named metadata hosts, UNLESS the
+  top document is itself on a private host. Reaching a private top document
+  already took an exact grant or a hard-gated approval. An agent tab loads
+  nothing until the list is installed, and a compile failure refuses the
+  navigation. A user takeover removes the list. Numeric host spellings
+  (`http://2130706433/`) cannot be written as rules, so subresources with
+  those hosts are not blocked. Frames with them are still refused.
+- `AgentBrowserDataStore` gives agent tabs their own persistent
+  `WKWebsiteDataStore`, one per profile, so an origin grant never carries
+  the user's cookies or signed-in sessions. A taken-over tab keeps it.
+
+Origin grants cover agent browser control only. `web_fetch`, MCP tools and
+shell `curl` are gated by their own categories, so a project that grants
+just `https://a.example` can still fetch any host when Web is Allow.
+
+Tests: `AgentBrowserIsolationTests`.
 
 ## 17. Gotchas
 

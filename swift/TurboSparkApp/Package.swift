@@ -130,7 +130,9 @@ let package = Package(
                 .product(name: "FluidAudio", package: "FluidAudio")
             ],
             exclude: [
-                "Fixtures/DOMSnapshotService"
+                "Fixtures/DOMSnapshotService",
+                // Read by path, shared with scripts/check-design.py.
+                "DesignRules.json"
             ],
             cSettings: [
                 .define("SQLITE_HAS_CODEC")

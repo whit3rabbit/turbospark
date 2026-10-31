@@ -216,6 +216,15 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
     /// the bug this constant exists to make visible.
     public static var newProjectDefault: AppProjectPermissions { .standard }
 
+    /// Whether the mode and category matrix match. Rule lists, origin grants
+    /// and REPL roots are left out: the approval cards add those one at a
+    /// time, and each addition must not drop the session's other grants.
+    public func hasSameApprovalPolicy(as other: AppProjectPermissions) -> Bool {
+        mode == other.mode && fileRead == other.fileRead && fileWrite == other.fileWrite
+            && terminal == other.terminal && web == other.web && mcp == other.mcp
+            && automation == other.automation && browser == other.browser
+    }
+
     /// Safe standard configuration requiring confirmation for state-mutating actions.
     public static var standard: AppProjectPermissions {
         AppProjectPermissions(
@@ -276,13 +285,16 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
     }
 
     /// Read-only configuration that denies file writes and terminal executions.
+    ///
+    /// Web is Deny because the mode refuses everything but file reads; an
+    /// Allow here only made the settings row disagree with the engine.
     public static var readOnly: AppProjectPermissions {
         AppProjectPermissions(
             mode: .readOnly,
             fileRead: .allow,
             fileWrite: .deny,
             terminal: .deny,
-            web: .allow,
+            web: .deny,
             mcp: .deny,
             automation: .deny,
             browser: .deny
