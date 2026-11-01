@@ -676,6 +676,11 @@ final class LocalizationParityTests: XCTestCase {
         for mode in AppSteeringModeOption.allCases {
             values.append(("AppSteeringModeOption.menuLabel", mode.menuLabel))
         }
+        for isPinned in [false, true] {
+            values.append((
+                "MessageActionBarView.standingInstructionName",
+                MessageActionBarView.standingInstructionName(isPinned: isPinned)))
+        }
         let missing = values.filter { strings[$0.value] == nil }
             .map { "\($0.source): \($0.value)" }
         XCTAssertTrue(
