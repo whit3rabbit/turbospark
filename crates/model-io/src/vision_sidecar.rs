@@ -270,6 +270,7 @@ mod tests {
             image_token_id: 248_056,
             video_token_id: 248_057,
             deepstack_visual_indexes: Vec::new(),
+            tower: crate::VisionTowerKind::QwenSiglip,
         }
     }
 

@@ -339,15 +339,15 @@ Two structural readings fall out of the census:
   new attention kernel; this port has none of it today.
 
 **Vision is per-tower, not per-family, so it is separate from the execution
-matrix above.** The engine has one implemented tower, the Qwen3-VL-lineage ViT
-with mRoPE used by the Qwen GDN flow. `Full Support` in the table above never
+matrix above.** The engine has two implemented towers: the Qwen3-VL-lineage ViT
+with mRoPE used by the Qwen GDN and Qwen3-VL flows, and the Gemma 4 tower. `Full Support` in the table above never
 means image support.
 
 | Rust family | Vision compatibility | Current evidence and boundary |
 | --- | --- | --- |
 | `QwenGdnDense` (`qwen35`, upstream `qwen3_5`) | **Real-gated** | Complete image path through CLI, server, FFI, and Swift-facing APIs. Combined and standalone sidecar installs are real-model tested. |
 | `QwenGdnMoe` (`qwen35moe`, upstream `qwen3_5_moe`) | **Verified (2026-09-19)**; text-only under the `minicpmv4_7` wrapper | The first MoE vision artifact (`mlx-community/Qwen3.6-35B-A3B-4bit`, whose bytes carry the depth-27 tower with `out_hidden_size` 2048) streams combined, reads a test page through the CLI and the server, and passes the four-stage mlx-vlm tower parity (cosine 0.99999+); a standalone MoE tower sidecar verifies via `pull-vision`. Chunked prefill with a vision map still refuses by name; a frozen vision memory oracle is not yet scheduled. |
-| `Gemma4` | **Text-only** | Its vision tensors are excluded at repack. SigLIP-class support remains a roadmap item. |
+| `Gemma4` | **Real-gated (2026-11-01)** | Its own tower (`VisionTowerKind::Gemma4`, manifest `visionTower`): 27 blocks with axial 2-D rope, 3x3 pooling and the `embed_vision` projector, plus a bidirectional image span on the sliding layers. Verified on `mlx-community/gemma-4-26b-a4b-it-4bit`: tower parity against mlx-vlm F32 (cosine 0.99998), trunk median KL closest to the transformers mask rule, and a test image read through the CLI, both server endpoints and `ts_generate`. Default 280-token budget only, no sidecar. Facts and gates: [`GEMMA4_VISION_PHASE0.md`](GEMMA4_VISION_PHASE0.md). |
 | `MuseGlimmer` | **Text-only** | Vision tower, adapter, and projection tensors are excluded at repack. |
 | `Qwen4Exp` | **Text-only** | VLM configuration is recognized, but only the text tower is ingested and executed. |
 | `Qwen3Vl` | **Verified images with deepstack (2026-09-19)** | The depth-24 SigLIP-class tower PLUS three deepstack mergers (block outputs 5/11/17, post-shuffle-normed, raw-added into trunk layers 0-2's residuals at image positions) ingest combined and sidecar; the llama flow's two prefill sites are byte-identical on an image prompt; perturbation-proven adds; all seven tower stages agree with mlx-vlm at cosine 0.99999+. |
@@ -361,11 +361,12 @@ needed for a release claim. `Text-only` also describes the current behavior of
 the request surfaces: they may validate or report an image, but the image does
 not reach the model.
 
-Three families carry a real image gate: `QwenGdnDense` (Qwen3.8 dense, the
+Four families carry a real image gate: `QwenGdnDense` (Qwen3.8 dense, the
 first), `QwenGdnMoe` (tower parity verified 2026-09-19), and `Qwen3Vl`
 (registered 2026-09-18 as the fifteenth family, with the trunk, tower, and
 deepstack gates frozen; the phase record is
-[`QWEN3VL_PHASE0.md`](QWEN3VL_PHASE0.md)). All of them support still images
+[`QWEN3VL_PHASE0.md`](QWEN3VL_PHASE0.md)), and `Gemma4` (2026-11-01, its own
+tower, [`GEMMA4_VISION_PHASE0.md`](GEMMA4_VISION_PHASE0.md)). All of them support still images
 only, on the macOS Metal runtime. CLI image prompts require `--messages-file`
 or `--chat`; raw `--prompt --image` has no chat-template marker. The server
 accepts base64 data URLs on both OpenAI and Anthropic endpoints, refuses
@@ -373,9 +374,9 @@ remote URLs, and uses its sequential image path. The FFI and Swift-facing
 path accepts image parts and sidecar options, while scripted and non-macOS
 sessions cannot encode an image.
 
-The nearest implemented-family gap is Gemma 4 vision (`gemma4_unified`), whose
-text half already runs here and whose roughly 815 vision tensors are dropped
-at repack today. The shared-path Qwen GDN MoE gap closed on 2026-09-19; what
+The nearest implemented-family gap is `Qwen4Exp`, which carries the same
+depth-27 Qwen tower (`out_hidden` 2560) and drops it at repack today. The
+shared-path Qwen GDN MoE gap closed on 2026-09-19; what
 remains for that family is measurement work, a frozen vision memory oracle and
 a catalog row, not an execution path.
 

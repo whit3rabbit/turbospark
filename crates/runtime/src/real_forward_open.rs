@@ -239,7 +239,7 @@ impl RealForwardRunner {
             max_context,
             true,
             None,
-            MAX_PREFILL_CHUNK_TOKENS,
+            kv_ring_chunk_tokens(&expecting),
             fp16_ring_capacity_override,
             kv_quant,
         )
@@ -379,6 +379,7 @@ impl RealForwardRunner {
             steering: None,
             install_dir: dir.to_path_buf(),
             vision: None,
+            gemma4_vision: None,
             vision_sidecar_dir: None,
             prompt_vision: None,
             skip_head: false,
@@ -672,7 +673,7 @@ impl RealForwardRunner {
                 max_context,
                 true,
                 None,
-                MAX_PREFILL_CHUNK_TOKENS,
+                kv_ring_chunk_tokens(&runner.arch),
                 fp16_ring_capacity_override,
                 kv_quant,
             )
@@ -745,5 +746,22 @@ impl RealForwardRunner {
         }
         runner.startup_stats.total_open_ms = open_started.elapsed().as_secs_f64() * 1000.0;
         Ok(runner)
+    }
+}
+
+/// Tokens of look-ahead the sliding-window KV ring holds beyond the window.
+///
+/// The prefill chunk budget for every install, except one that declares a
+/// Gemma 4 vision tower: an image span writes all its rows' keys before any
+/// row attends (`families/gemma4/vision_prefill.rs`), so the ring must hold
+/// `window + span - 1`. Sized for the default soft-token budget, so a
+/// default image fits; a larger budget is refused at
+/// `set_prompt_vision_gemma4` rather than wrapping the ring. A text-only
+/// install keeps the old ring byte for byte.
+fn kv_ring_chunk_tokens(arch: &model_io::ArchConfig) -> usize {
+    if arch.vision.is_active() && arch.vision.tower == model_io::VisionTowerKind::Gemma4 {
+        MAX_PREFILL_CHUNK_TOKENS.max(turbospark_vision_io::GEMMA4_DEFAULT_SOFT_TOKENS)
+    } else {
+        MAX_PREFILL_CHUNK_TOKENS
     }
 }

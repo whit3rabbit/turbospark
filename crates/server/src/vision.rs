@@ -28,7 +28,8 @@
 
 use anyllm_translate::openai::{ChatContentPart, ChatMessage};
 use turbospark_vision_io::{
-    GridThw, MropePositions, PreprocessParams, PreprocessedImage, VisionSpecialIds,
+    Gemma4ImageIds, Gemma4Patches, GridThw, ImageSpan, MropePositions, PreprocessParams,
+    PreprocessedImage, VisionSpecialIds,
 };
 
 /// Above this many image parts in one request, `handler::plan` refuses
@@ -64,18 +65,37 @@ pub(crate) fn image_count(message: &ChatMessage) -> usize {
 /// Read off the INSTALL by the backend rather than assembled here: the pixel
 /// budget and the special ids are per-checkpoint, and a constant in this
 /// crate would be AGENTS.md Gotcha 38's shape.
+///
+/// One variant per tower, because the two share no preprocessing and no
+/// splice: the qwen tower resizes to a pixel budget and its trunk places
+/// image tokens with mRoPE; the Gemma 4 tower fits a soft-token budget and
+/// its prompt brackets each image with `boi`/`eoi` at plain positions.
 #[derive(Debug, Clone)]
-pub struct VisionInfo {
-    pub params: PreprocessParams,
-    pub specials: VisionSpecialIds,
+pub enum VisionInfo {
+    Qwen {
+        params: PreprocessParams,
+        specials: VisionSpecialIds,
+    },
+    Gemma4 {
+        max_soft_tokens: usize,
+        ids: Gemma4ImageIds,
+    },
 }
 
-/// One request's images, preprocessed, plus the position table for the
-/// spliced prompt.
+/// One request's images, preprocessed, plus what the trunk needs to place
+/// them in the expanded prompt.
 #[derive(Debug, Clone)]
-pub struct RequestImages {
-    pub images: Vec<PreprocessedImage>,
-    pub positions: MropePositions,
+pub enum RequestImages {
+    /// The position table for the spliced prompt.
+    Qwen {
+        images: Vec<PreprocessedImage>,
+        positions: MropePositions,
+    },
+    /// Each image's placeholder span in the expanded prompt.
+    Gemma4 {
+        images: Vec<Gemma4Patches>,
+        spans: Vec<ImageSpan>,
+    },
 }
 
 /// The image parts of one message, in order, as raw encoded bytes.
@@ -269,7 +289,7 @@ pub fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
 /// Decode and preprocess every image, in request order.
 pub(crate) fn preprocess_all(
     encoded: &[Vec<u8>],
-    info: &VisionInfo,
+    params: &PreprocessParams,
 ) -> Result<Vec<PreprocessedImage>, String> {
     encoded
         .iter()
@@ -277,7 +297,7 @@ pub(crate) fn preprocess_all(
         .map(|(i, bytes)| {
             let decoded = turbospark_vision_io::decode_image_bytes(bytes)
                 .map_err(|e| format!("image {i}: {e}"))?;
-            turbospark_vision_io::preprocess(&decoded, &info.params)
+            turbospark_vision_io::preprocess(&decoded, params)
                 .map_err(|e| format!("image {i}: {e}"))
         })
         .collect()
@@ -287,7 +307,7 @@ pub(crate) fn preprocess_all(
 /// before any pixel buffer is allocated.
 pub(crate) fn preflight_all(
     encoded: &[Vec<u8>],
-    info: &VisionInfo,
+    params: &PreprocessParams,
 ) -> Result<Vec<GridThw>, String> {
     let mut source_pixels = 0u64;
     let mut patch_bytes = 0u64;
@@ -304,15 +324,15 @@ pub(crate) fn preflight_all(
             ));
         }
         let (resized_h, resized_w) =
-            turbospark_vision_io::resized_dims(height as usize, width as usize, &info.params)
+            turbospark_vision_io::resized_dims(height as usize, width as usize, params)
                 .map_err(|e| format!("image {i}: {e}"))?;
         let grid = GridThw::new(
             1,
-            resized_h / info.params.patch_size,
-            resized_w / info.params.patch_size,
+            resized_h / params.patch_size,
+            resized_w / params.patch_size,
         );
         let bytes = (grid.patches() as u64)
-            .checked_mul(info.params.patch_dim() as u64)
+            .checked_mul(params.patch_dim() as u64)
             .and_then(|n| n.checked_mul(std::mem::size_of::<f32>() as u64))
             .ok_or_else(|| "image preprocessing size overflows".to_string())?;
         patch_bytes = patch_bytes
@@ -326,6 +346,69 @@ pub(crate) fn preflight_all(
         grids.push(grid);
     }
     Ok(grids)
+}
+
+/// [`preflight_all`] for the Gemma 4 tower: each image's soft-token count
+/// from its header alone, under the same per-request pixel and patch-byte
+/// limits, before any pixel buffer exists.
+pub(crate) fn gemma4_preflight_all(
+    encoded: &[Vec<u8>],
+    max_soft_tokens: usize,
+) -> Result<Vec<usize>, String> {
+    let mut source_pixels = 0u64;
+    let mut patch_bytes = 0u64;
+    let mut soft = Vec::with_capacity(encoded.len());
+    for (i, bytes) in encoded.iter().enumerate() {
+        let (width, height) =
+            turbospark_vision_io::image_dimensions(bytes).map_err(|e| format!("image {i}: {e}"))?;
+        source_pixels = source_pixels
+            .checked_add(u64::from(width) * u64::from(height))
+            .ok_or_else(|| "image pixel count overflows".to_string())?;
+        if source_pixels > MAX_SOURCE_PIXELS_PER_REQUEST {
+            return Err(format!(
+                "images contain {source_pixels} source pixels; the per-request limit is {MAX_SOURCE_PIXELS_PER_REQUEST}"
+            ));
+        }
+        let n = turbospark_vision_io::gemma4_soft_tokens_for(
+            height as usize,
+            width as usize,
+            max_soft_tokens,
+        )
+        .map_err(|e| format!("image {i}: {e}"))?;
+        let patches =
+            (n * turbospark_vision_io::GEMMA4_POOL * turbospark_vision_io::GEMMA4_POOL) as u64;
+        patch_bytes = patch_bytes
+            .checked_add(
+                patches
+                    * turbospark_vision_io::GEMMA4_PATCH_DIM as u64
+                    * std::mem::size_of::<f32>() as u64,
+            )
+            .ok_or_else(|| "image preprocessing size overflows".to_string())?;
+        if patch_bytes > MAX_PATCH_BYTES_PER_REQUEST {
+            return Err(format!(
+                "images need {patch_bytes} bytes of preprocessed patches; the per-request limit is {MAX_PATCH_BYTES_PER_REQUEST}"
+            ));
+        }
+        soft.push(n);
+    }
+    Ok(soft)
+}
+
+/// Decode and preprocess every image for the Gemma 4 tower, in request order.
+pub(crate) fn gemma4_preprocess_all(
+    encoded: &[Vec<u8>],
+    max_soft_tokens: usize,
+) -> Result<Vec<Gemma4Patches>, String> {
+    encoded
+        .iter()
+        .enumerate()
+        .map(|(i, bytes)| {
+            let decoded = turbospark_vision_io::decode_image_bytes(bytes)
+                .map_err(|e| format!("image {i}: {e}"))?;
+            turbospark_vision_io::gemma4_preprocess(&decoded, max_soft_tokens)
+                .map_err(|e| format!("image {i}: {e}"))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -358,16 +441,25 @@ mod tests {
     #[test]
     fn preflight_refuses_aggregate_patch_memory_before_preprocessing() {
         let png = gray_png(2048, 2048);
-        let info = VisionInfo {
-            params: params(16_777_216),
-            specials: VisionSpecialIds {
-                vision_start: 1,
-                image_pad: 2,
-            },
-        };
-        let err = preflight_all(&[png.clone(), png], &info).unwrap_err();
+        let err = preflight_all(&[png.clone(), png], &params(16_777_216)).unwrap_err();
         assert!(err.contains("preprocessed patches"), "{err}");
         assert!(err.contains("134217728"), "{err}");
+    }
+
+    /// The Gemma 4 preflight reports the soft-token count the preprocessing
+    /// will produce, from the header alone, and holds the same pixel limit.
+    #[test]
+    fn gemma4_preflight_counts_soft_tokens_and_holds_the_pixel_limit() {
+        let png = gray_png(640, 480);
+        assert_eq!(
+            gemma4_preflight_all(std::slice::from_ref(&png), 280).unwrap(),
+            vec![266]
+        );
+        let pre = gemma4_preprocess_all(&[png], 280).unwrap();
+        assert_eq!(pre[0].soft_tokens(), 266);
+        let big = gray_png(4096, 4096);
+        let err = gemma4_preflight_all(&[big.clone(), big], 280).unwrap_err();
+        assert!(err.contains("source pixels"), "{err}");
     }
 
     #[test]

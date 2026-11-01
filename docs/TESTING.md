@@ -372,6 +372,45 @@ TURBOSPARK_QWEN38_VISION_INSTALL_DIR=~/models/qwen38-27b-vision.gturbo \
 TURBOSPARK_VISION_DUMP_DIR=/tmp/vision-dump \
   cargo test -p turbospark-runtime --test vision_tower_parity --release -- --ignored --nocapture
 
+# The Gemma 4 tower against mlx-vlm on the real weights, per stage. Needs
+# no install: the script range-reads only the 358 vision tensors (1.1 GB)
+# and writes a ~2.2 GB dump. The bar is that the FP16 Metal tower is at
+# least as close to mlx-vlm's F32 run as mlx-vlm's own BF16 run is
+# (docs/GEMMA4_VISION_PHASE0.md).
+uv run --python 3.12 --with mlx --with mlx-vlm --with numpy --with pillow \
+  scripts/gemma4_vision_real_dump.py /tmp/gemma4-vision-dump
+TURBOSPARK_GEMMA4_VISION_DUMP=/tmp/gemma4-vision-dump \
+  cargo test -p turbospark-runtime --release --lib \
+  vision::gemma4::tests::the_real_tower_matches_mlx_vlm -- --ignored --nocapture
+
+# The whole Gemma 4 install on an image prompt against mlx-vlm under four
+# mask rules. Needs a local copy of the checkpoint (hf download ...
+# --revision 0d77464e... --local-dir), ~14 GB for the install and ~0.2 GB of
+# dump. The gate: same top-1 at the decision point, and the transformers
+# rule is the closest reference by median KL (docs/GEMMA4_VISION_PHASE0.md).
+TURBOSPARK_GEMMA4_SOURCE_DIR=~/models/gemma-4-26b-a4b-it-4bit \
+TURBOSPARK_GEMMA4_VISION_INSTALL_DIR=~/models/gemma4-26b-vision.gturbo \
+  cargo test -p turbospark-repack --release --test gemma4_checkpoint_network \
+  repacks_the_real_gemma4_checkpoint_with_its_vision_tower -- --ignored --nocapture
+uv run --python 3.12 --with mlx --with mlx-vlm --with numpy --with pillow \
+  scripts/gemma4_vision_trunk_dump.py ~/models/gemma-4-26b-a4b-it-4bit /tmp/gemma4-trunk-dump
+TURBOSPARK_GEMMA4_VISION_INSTALL_DIR=~/models/gemma4-26b-vision.gturbo \
+TURBOSPARK_GEMMA4_TRUNK_DUMP=/tmp/gemma4-trunk-dump \
+  cargo test -p turbospark-runtime --test gemma4_vision_real_trunk --release -- --ignored --nocapture
+
+# The same install through the front ends: the server over both endpoints,
+# and the FFI's ts_generate. The image is the dump's image.rgb saved as PNG.
+TURBOSPARK_GEMMA4_VISION_INSTALL_DIR=~/models/gemma4-26b-vision.gturbo \
+TURBOSPARK_GEMMA4_VISION_PAGE=/tmp/gemma4-trunk-dump/image.png \
+  cargo test -p turbospark-server --test real_backend --release -- --ignored --nocapture gemma4
+TURBOSPARK_GEMMA4_VISION_INSTALL_DIR=~/models/gemma4-26b-vision.gturbo \
+TURBOSPARK_GEMMA4_VISION_PAGE=/tmp/gemma4-trunk-dump/image.png \
+  cargo test -p turbospark-ffi --test gemma4_vision_real --release -- --ignored --nocapture
+# The CLI has no test for it; check it by hand. FILE holds one user turn
+# asking what text the image shows; the answer should be "TURBOSPARK 42".
+./target/release/turbospark-check --model ~/models/gemma4-26b-vision.gturbo \
+  --image /tmp/gemma4-trunk-dump/image.png --messages-file FILE --max-new 16 --temperature 0
+
 # The full model against mlx-vlm on a text+image prompt, which is the only
 # instrument that reaches which rows land at which positions and whether
 # the mRoPE selector agrees. Its working dump is ~2 GB and regenerable in
