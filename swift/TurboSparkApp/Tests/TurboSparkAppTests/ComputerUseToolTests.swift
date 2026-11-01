@@ -1,5 +1,6 @@
 import XCTest
 
+import ComputerUseKit
 @testable import TurboSparkApp
 
 final class ComputerUseToolTests: XCTestCase {

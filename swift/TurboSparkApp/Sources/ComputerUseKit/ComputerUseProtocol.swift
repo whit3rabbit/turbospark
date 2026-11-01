@@ -1,7 +1,7 @@
 import Foundation
 
-// The contract between the app and the computer-use helper. Foundation only,
-// so the helper target can compile against the same vocabulary. Coordinates
+// The contract between the app and the computer-use helper. Both link this
+// module, so they cannot disagree about a message's shape. Coordinates
 // are global screen points with a top-left origin, the space CGEvent and the
 // AX frame attributes use.
 
@@ -72,12 +72,12 @@ public enum ComputerUseScrollDirection: String, Codable, CaseIterable, Sendable 
 
 /// Where an input lands. A reference comes from the latest snapshot of the
 /// app; a point is already mapped from screenshot pixels to screen points.
-public enum ComputerUseTarget: Equatable, Sendable {
+public enum ComputerUseTarget: Codable, Equatable, Sendable {
     case reference(String)
     case point(x: Double, y: Double)
 }
 
-public enum ComputerUseCommand: Equatable, Sendable {
+public enum ComputerUseCommand: Codable, Equatable, Sendable {
     case listApps
     case snapshot(bundleID: String)
     case screenshot(bundleID: String)
@@ -126,7 +126,7 @@ public struct ComputerUseRunningApp: Codable, Equatable, Sendable {
 
 /// One capture of an app's window. `windowFrame` is in screen points; the
 /// PNG may be larger (Retina) and is downscaled again before the model sees it.
-public struct ComputerUseCapture: Equatable, Sendable {
+public struct ComputerUseCapture: Codable, Equatable, Sendable {
     public let pngData: Data
     public let windowFrame: ComputerUseRect
 
@@ -136,7 +136,7 @@ public struct ComputerUseCapture: Equatable, Sendable {
     }
 }
 
-public enum ComputerUseResultValue: Equatable, Sendable {
+public enum ComputerUseResultValue: Codable, Equatable, Sendable {
     case apps([ComputerUseRunningApp])
     /// A bounded, secure-value-masked AX tree rendered as text with refs.
     case snapshot(String)
@@ -144,8 +144,15 @@ public enum ComputerUseResultValue: Equatable, Sendable {
     case acknowledged(String)
 }
 
-/// The helper connection. Phase one ships no implementation, so the tools
-/// stay hidden; tests use a fake.
+/// The helper connection. The app's implementation is
+/// `HelperComputerUsePort`; tests use a fake.
 public protocol ComputerUseControlPort: Sendable {
     func perform(_ command: ComputerUseCommand) async throws -> ComputerUseResultValue
+    /// Re-arms input after the user's kill switch. Called only when the user
+    /// approves a new app grant.
+    func resumeAfterStop() async
+}
+
+extension ComputerUseControlPort {
+    public func resumeAfterStop() async {}
 }

@@ -48,10 +48,23 @@ let package = Package(
                 .process("Resources")
             ]
         ),
+        // Wire types shared by the app and the computer-use helper.
+        // Foundation only: the helper links nothing else of TurboSpark, so
+        // its binary (and with it its macOS grants) changes only when this
+        // module or the helper's own source does.
+        .target(name: "ComputerUseKit"),
+        // The helper that owns the Accessibility and Screen Recording grants.
+        // `scripts/make-app-bundle.sh` wraps it in its own .app; see
+        // docs/COMPUTER_USE.md for why it is a separate app.
+        .executableTarget(
+            name: "TurboSparkComputerUse",
+            dependencies: ["ComputerUseKit"]
+        ),
         .executableTarget(
             name: "TurboSparkApp",
             dependencies: [
                 "TurboSparkAppResources",
+                "ComputerUseKit",
                 .product(name: "TurboSpark", package: "TurboSpark"),
                 .product(name: "OpenKind", package: openKindRevision == nil ? "openkind" : openKindIdentity),
                 .product(name: "ZImage", package: "zimage"),
@@ -122,6 +135,7 @@ let package = Package(
             name: "TurboSparkAppTests",
             dependencies: [
                 "TurboSparkApp",
+                "ComputerUseKit",
                 "DOMSnapshotFixtures",
                 .product(name: "TurboSpark", package: "TurboSpark"),
                 .product(name: "SQLCipher", package: "SQLCipher.swift"),

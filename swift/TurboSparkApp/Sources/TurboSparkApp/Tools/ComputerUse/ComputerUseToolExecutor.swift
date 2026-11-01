@@ -1,4 +1,5 @@
 import Foundation
+import ComputerUseKit
 
 public struct ComputerUseToolRuntime: Sendable {
     public let availability: ComputerUseToolAvailability
@@ -54,7 +55,11 @@ public enum ComputerUseToolExecutor {
         }
 
         if name == ComputerUseToolDefinitions.requestAccessToolName {
-            return await requestAccess(arguments: call.arguments, session: runtime.session)
+            let outcome = await requestAccess(arguments: call.arguments, session: runtime.session)
+            // A user-approved grant is the one thing that re-arms input after
+            // the kill switch.
+            if case .completed = outcome { await runtime.port.resumeAfterStop() }
+            return outcome
         }
 
         let command: ComputerUseCommand
@@ -78,6 +83,14 @@ public enum ComputerUseToolExecutor {
             return await output(for: command, value: value, runtime: runtime)
         } catch is CancellationError {
             return .cancelled
+        } catch let error as ComputerUsePortError {
+            if error.kind == .stoppedByUser {
+                // The user hit the kill switch: every grant goes, so going on
+                // needs a fresh approval card.
+                await runtime.session.revokeAll()
+                return .denied(reason: error.message)
+            }
+            return .failed(reason: error.message)
         } catch {
             return .failed(reason: "The computer-use helper could not complete \(name).")
         }

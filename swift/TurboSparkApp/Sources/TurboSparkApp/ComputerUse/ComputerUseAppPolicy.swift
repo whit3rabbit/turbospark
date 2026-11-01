@@ -1,4 +1,5 @@
 import Foundation
+import ComputerUseKit
 
 /// How much of an app the agent may drive once the user grants it.
 public enum ComputerUseAppTier: String, Codable, Comparable, Sendable {
