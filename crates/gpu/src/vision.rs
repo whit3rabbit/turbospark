@@ -288,3 +288,111 @@ pub fn encode_vision_residual_add(
     );
     Ok(())
 }
+
+/// RMSNorm over `rows` rows of `d` FP16 elements, the Gemma 4 tower's norm:
+/// `x * rsqrt(mean(x^2) + eps) * weight`, the weight applied directly, or
+/// no weight at all when `weight` is `None` (the v norm and the projector's
+/// pre-norm). A per-head norm is `rows = seq * heads, d = head_dim`.
+///
+/// NOT [`encode_vision_layer_norm`], which subtracts the mean and adds a
+/// bias. Safe in place (`out == x`).
+#[allow(clippy::too_many_arguments)]
+pub fn encode_vision_rms_norm(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    x: (&metal::Buffer, u64),
+    weight: Option<(&metal::Buffer, u64)>,
+    out: (&metal::Buffer, u64),
+    rows: u32,
+    d: u32,
+    eps: f32,
+) -> Result<(), GpuError> {
+    let pipeline = context.pipeline(
+        SOURCE,
+        "vision_rms_norm_fp16",
+        &no_function_constants(),
+        b"",
+    )?;
+    let has_weight: u32 = u32::from(weight.is_some());
+    // Bound either way, for `encode_vision_matmul`'s bias reason.
+    let weight_binding = weight.unwrap_or((x.0, x.1));
+    pass.encode_threadgroups(
+        &pipeline,
+        &[
+            (x.0, 0, x.1),
+            (weight_binding.0, 1, weight_binding.1),
+            (out.0, 2, out.1),
+        ],
+        &[
+            (u32_bytes(&d), 3),
+            (f32_bytes(&eps), 4),
+            (u32_bytes(&has_weight), 5),
+        ],
+        rows as u64,
+        THREADS_PER_GROUP,
+    );
+    Ok(())
+}
+
+/// The Gemma 4 tower's axial rope, in place on a `[seq, heads, head_dim]`
+/// FP16 buffer.
+///
+/// `freqs` is `[seq, head_dim / 2]` F32: the x half's `head_dim / 4` angles,
+/// then the y half's. Each half of the head rotates within itself (element
+/// `i` with `i + head_dim / 4`), which is NOT [`encode_vision_rope_2d`]'s
+/// pairing across the whole head.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_vision_rope_axial(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    qk: (&metal::Buffer, u64),
+    freqs: (&metal::Buffer, u64),
+    seq: u32,
+    heads: u32,
+    head_dim: u32,
+) -> Result<(), GpuError> {
+    if head_dim == 0 || head_dim % 4 != 0 {
+        return Err(GpuError::PipelineCreate(format!(
+            "axial vision rope head_dim {head_dim} must be a nonzero multiple of 4"
+        )));
+    }
+    let pipeline = context.pipeline(
+        SOURCE,
+        "vision_rope_axial_fp16",
+        &no_function_constants(),
+        b"",
+    )?;
+    let pairs = u64::from(head_dim / 2);
+    pass.encode_threads_3d(
+        &pipeline,
+        &[(qk.0, 0, qk.1), (freqs.0, 1, freqs.1)],
+        &[
+            (u32_bytes(&seq), 2),
+            (u32_bytes(&heads), 3),
+            (u32_bytes(&head_dim), 4),
+        ],
+        (pairs, u64::from(heads), u64::from(seq)),
+        (pairs.min(THREADS_PER_GROUP), 1, 1),
+    );
+    Ok(())
+}
+
+/// `y *= x` over `count` FP16 values, with an FP32 intermediate: the gated
+/// MLP's `gelu(gate) * up`.
+pub fn encode_vision_mul(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    y: (&metal::Buffer, u64),
+    x: (&metal::Buffer, u64),
+    count: u32,
+) -> Result<(), GpuError> {
+    let pipeline = context.pipeline(SOURCE, "vision_mul_fp16", &no_function_constants(), b"")?;
+    pass.encode_threadgroups(
+        &pipeline,
+        &[(y.0, 0, y.1), (x.0, 1, x.1)],
+        &[(u32_bytes(&count), 2)],
+        groups_for(count),
+        THREADS_PER_GROUP,
+    );
+    Ok(())
+}

@@ -515,15 +515,27 @@ pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -
     // (the dense and MoE halves the identical 333-tensor one; `qwen3_vl` the
     // depth-24 tower plus its 18 deepstack merger tensors).
     //
-    // Gemma 4 and `muse_glimmer` keep `ExcludedMultimodal` on the same string:
-    // this port has no kernels for their towers, and ingesting one because the
-    // prefix matched would write an install carrying weights nothing can
-    // dispatch.
+    // Gemma 4 joins them with its own tower (`vision_gemma4.rs`), and its
+    // projector lives under a second prefix, `embed_vision.`, claimed here
+    // for Gemma 4 alone. Whether the bucket is then INGESTED is the caller's
+    // request (`vision_should_ingest`), so a text-only Gemma install still
+    // drops these by name, as before.
+    //
+    // `muse_glimmer` keeps `ExcludedMultimodal` on the same string: this port
+    // has no kernels for its tower, and ingesting one because the prefix
+    // matched would write an install carrying weights nothing can dispatch.
     if name.starts_with(VISION_PREFIX)
         && matches!(
             family,
-            ModelFamily::QwenGdnDense | ModelFamily::QwenGdnMoe | ModelFamily::Qwen3Vl
+            ModelFamily::QwenGdnDense
+                | ModelFamily::QwenGdnMoe
+                | ModelFamily::Qwen3Vl
+                | ModelFamily::Gemma4
         )
+    {
+        return Gemma4Bucket::VisionTower;
+    }
+    if name.starts_with(super::vision_gemma4::EMBED_VISION_PREFIX) && family == ModelFamily::Gemma4
     {
         return Gemma4Bucket::VisionTower;
     }

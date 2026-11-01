@@ -181,6 +181,14 @@ pub(crate) fn build_manifest_json(
             } else {
                 serde_json::json!(arch.vision.deepstack_visual_indexes)
             },
+            // The key is always written. Null for the qwen tower, as
+            // deepstack's empty list is null, so every manifest written before
+            // the key existed and every one written after for that tower say
+            // the same thing.
+            "visionTower": match arch.vision.tower {
+                model_io::VisionTowerKind::QwenSiglip => serde_json::Value::Null,
+                other => serde_json::json!(other.as_str()),
+            },
             // **THE HOLE THE COMMENT HERE USED TO DESCRIBE IS NOW CLOSED, and
             // it was closed by a family arriving rather than by anyone finding
             // it.** Every `ca*` and `hc*` field was VALIDATED and written by

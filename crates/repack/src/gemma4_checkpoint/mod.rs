@@ -24,6 +24,7 @@ mod ngram;
 mod orchestrate;
 mod shards;
 mod vision;
+mod vision_gemma4;
 
 pub use classify::{
     canonicalize_flint_header, canonicalize_qwen2_header, canonicalize_vision_header,
@@ -56,6 +57,10 @@ pub use vision::{
     BLOCK_ROLES as VISION_BLOCK_ROLES, DEEPSTACK_MERGER_PREFIX as VISION_DEEPSTACK_MERGER_PREFIX,
     DEEPSTACK_MERGER_SUFFIXES as VISION_DEEPSTACK_MERGER_SUFFIXES,
     RESIDENT_TENSORS as VISION_RESIDENT_TENSORS,
+};
+pub use vision_gemma4::{
+    parse_gemma4_vision_config, EMBED_VISION_PREFIX, GEMMA4_BLOCK_ROLES,
+    GEMMA4_PROJECTOR_INSTALL_NAME, GEMMA4_RESIDENT_TENSORS,
 };
 
 use std::path::{Path, PathBuf};

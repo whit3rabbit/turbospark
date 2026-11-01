@@ -373,9 +373,13 @@ fn run_one_turn(
                 images.len()
             ));
         }
-        let params = vision::preprocess_params(session)?;
-        let prepared = vision::prepare_images(images, &params)?;
-        vision::attach(session, &rendered, &prepared, &params)?
+        if session.runner.gemma4_image_ids().is_some() {
+            vision::attach_gemma4(session, &rendered, images)?
+        } else {
+            let params = vision::preprocess_params(session)?;
+            let prepared = vision::prepare_images(images, &params)?;
+            vision::attach(session, &rendered, &prepared, &params)?
+        }
     };
 
     if std::env::var_os("TURBOSPARK_DEBUG_PROMPT_IDS").is_some() {

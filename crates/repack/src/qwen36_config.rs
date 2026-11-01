@@ -396,6 +396,7 @@ pub fn parse_vision_config(json: &str) -> Result<VisionConfig, Gemma4Error> {
         vision_end_token_id: root_i(root, "vision_end_token_id")?,
         image_token_id: root_i(root, "image_token_id")?,
         video_token_id: root_i(root, "video_token_id")?,
+        tower: model_io::VisionTowerKind::QwenSiglip,
     };
 
     if !SUPPORTED_VISION_DEPTHS.contains(&vision.depth) {

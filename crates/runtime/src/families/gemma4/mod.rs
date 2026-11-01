@@ -7,6 +7,7 @@ mod moe_batch;
 mod prefill;
 mod shared_expert;
 mod state;
+mod vision_prefill;
 
 pub(crate) use state::RealGemmaState;
 
@@ -93,6 +94,20 @@ impl RealForwardRunner {
         if (token as usize) >= vocab {
             return Err(RealForwardError::Unsupported(format!(
                 "token id {token} outside vocab {vocab}"
+            )));
+        }
+        // One token at a time cannot give an image row its look-ahead over
+        // the rest of its span, nor its injected row: image positions go
+        // through `prefill_chunk` (`vision_prefill.rs`). Text after the
+        // image decodes here as usual.
+        if self
+            .prompt_vision
+            .as_ref()
+            .is_some_and(|pv| pv.span_containing(position).is_some())
+        {
+            return Err(RealForwardError::Unsupported(format!(
+                "position {position} is a Gemma 4 image placeholder; prefill image prompts \
+                 with prefill_chunk, which runs each span whole"
             )));
         }
         let seq_len = (position + 1) as u32;
