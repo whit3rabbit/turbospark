@@ -54,4 +54,20 @@ final class AudioWorkspaceMusicLyricsTests: XCTestCase {
         XCTAssertEqual(AudioMusicSamplingRecommendation.fromConfig(data), .init(profile: "Turbo", steps: 8))
         XCTAssertEqual(AudioMusicSamplingRecommendation.fromConfig(Data("{}".utf8)), .fast)
     }
+
+    /// The pinned Turbo `config.json`, which the Rust catalog test checks
+    /// against the pin and the Rust profile test parses too, so both sides
+    /// recommend 8 steps for the same bytes.
+    func testSamplingRecommendationOfThePinnedTurboConfigIsEightSteps() throws {
+        let fixture = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("crates/audio/tests/fixtures/minimax_music3_turbo_config.json")
+        let data = try Data(contentsOf: fixture)
+        XCTAssertEqual(AudioMusicSamplingRecommendation.fromConfig(data), .init(profile: "Turbo", steps: 8))
+        XCTAssertEqual(AudioWorkspaceController.defaultMusicProfileAlias, "minimax-music3-turbo-4bit-8step")
+    }
 }
