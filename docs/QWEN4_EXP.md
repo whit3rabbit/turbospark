@@ -2298,3 +2298,27 @@ started). The default stays at half the free budget (96 slots here).
 Verdict record: 1793488871593-92750-20. One run in eight was dirty (foreign
 CPU), and the hog's pass time is a proxy for an app's working set, not a
 measured app.
+
+## Running from an external drive (2026-10-31)
+
+The same install, copied byte for byte to a Samsung T7 (USB, 10 Gb/s link,
+HFS+), against the internal SSD. Fresh-process `tslab profile` runs
+alternated between the two paths, 6 rounds each after a warmup (experiment
+`qwen4-external-drive`), default settings (96 wired slots), protocol
+medium-review, 64 decode, 2,048 context, `86bff0ad`. tslab cannot pair two
+install paths in one verdict, so this is a paired reading, not a verdict.
+
+| Location | Decode tok/s, median | Prefill tok/s, median | Expert pread ms/token | Wall per run |
+|---|---|---|---|---|
+| Internal SSD | 17.48 (17.01-17.99) | 23.3 | 21.1-23.9 | 29 s |
+| T7 over USB | 4.32 (4.01-4.42) | 5.5 | 131.5-136.4 | 126 s |
+
+Every T7 run was slower than every internal run: decode drops about 75%.
+Hit rates (83.8% and 86.9%) and the 12.5 GiB peak are the same at both
+locations, so the whole difference is the expert reads that miss the cache.
+At about 166 MiB requested per token, the T7 moves that at about 1.2 GB/s,
+near its rated speed, so a faster link would not help much. 5 of the 12
+measured runs were dirty (Spotlight, an Xcode build, foreign CPU). The
+clean subsets read 17.52 (n=5) and 4.26-4.29 (n=2). A streamed MoE install
+on an external drive is bound by that drive's read speed. This install now
+lives in a T7 library on this host, and these numbers are its cost.

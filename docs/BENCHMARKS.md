@@ -397,6 +397,10 @@ Verdict records: 1793485347180-40732-82 (48 unwired),
   `short-explanation`, and any machine other than this one. The wired slot
   count scales with free memory, so a smaller machine opens fewer slots or
   falls back to the unwired budget.
+- From a Samsung T7 over USB instead of the internal SSD, the same
+  defaults decode at 4.32 tok/s against 17.48, about 75% slower, because the
+  expert reads that miss the cache are bound by the drive's speed
+  (`docs/QWEN4_EXP.md`, "Running from an external drive").
 
 **This family's quality-gate row is fixed and frozen (2026-09-04).** It used
 to have none: two back-to-back warm greedy generations of the identical

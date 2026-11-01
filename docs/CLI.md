@@ -504,6 +504,11 @@ turbospark-model move qwen3vl-4b --to "This Mac"
 turbospark-model library remove Fast
 ```
 
+A streamed MoE install reads the experts it has not cached from its drive on
+every token, so an external drive sets its decode speed. Qwen3.8-Flash-Next
+REAP-288 decoded about 75% slower from a Samsung T7 over USB than from an M4
+Max's internal SSD ([`QWEN4_EXP.md`](QWEN4_EXP.md#running-from-an-external-drive-2026-10-31)).
+
 `<NAME>`, `--library`, and `--to` take a library's name (case-insensitive) or
 its id. Two libraries can share a name, because an adopted library keeps the
 name its drive gives it. A name that matches several is refused with their ids
