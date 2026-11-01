@@ -6,14 +6,26 @@ import Glibc
 #endif
 
 enum HttpRequestDestinationValidator {
-    static func validate(_ url: URL) throws {
+    /// Refuses a destination the network policy denies, then resolves the
+    /// host and refuses an address the URL's own host does not entitle it to.
+    ///
+    /// A public name must resolve only to public addresses, whatever the
+    /// policy says about localhost: that is the DNS-rebinding guard. A local
+    /// name or literal (`localhost`, `127.0.0.1`, `nas.local`) the policy
+    /// allows may resolve only within its own scope
+    /// (`AppNetworkPolicy.permitsLocalConnection`). An ask is not refused
+    /// here: the permission engine already put it to the user.
+    static func validate(_ url: URL, policy: AppNetworkPolicy = AppNetworkPolicyStore.current) throws {
         guard let host = url.host, !host.isEmpty else {
             throw error(2, "Malformed URL with missing host.")
         }
-        if AppToolSandbox.isPrivateOrMetadataHost(host) {
-            throw error(3, "Access to private network or metadata host '\(host)' is denied.")
+        let scope = AppToolSandbox.hostScope(host)
+        if case .deny(let reason) = policy.decision(host: host) {
+            if scope == .publicHost {
+                throw error(3, reason)
+            }
+            throw error(3, "Access to private network or metadata host '\(host)' is denied. \(reason)")
         }
-        try AppToolSandbox.validateDomain(host)
 
         var hints = addrinfo()
         hints.ai_family = AF_UNSPEC
@@ -34,7 +46,7 @@ enum HttpRequestDestinationValidator {
         while let info = cursor?.pointee {
             defer { cursor = info.ai_next }
             guard let address = info.ai_addr else { continue }
-            if isPrivate(address) {
+            if scope == .publicHost, isPrivate(address) {
                 throw error(3, "HTTP host '\(host)' resolves to a private or metadata address.")
             }
             var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
@@ -49,7 +61,10 @@ enum HttpRequestDestinationValidator {
             ) == 0 else { continue }
             foundAddress = true
             let numericHost = String(cString: buffer)
-            if AppToolSandbox.isPrivateOrMetadataHost(numericHost) {
+            let permitted = scope == .publicHost
+                ? !AppToolSandbox.isPrivateOrMetadataHost(numericHost)
+                : policy.permitsLocalConnection(urlHost: host, address: numericHost)
+            if !permitted {
                 throw error(3, "HTTP host '\(host)' resolves to a private or metadata address.")
             }
         }

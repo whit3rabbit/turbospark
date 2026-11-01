@@ -14,6 +14,19 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- macOS app: Settings > Network controls which hosts tool calls can reach,
+  with Ask for new domains (the new default), Allow all, Block all and
+  Custom modes, allowed and blocked domain lists, an Allow localhost toggle
+  (on) and an Allow local network toggle (off). The policy is a ceiling over
+  project permissions, including Full access. A web tool asks with an
+  "Allow access to <host>?" card (Deny, Allow Once, Allow for This Chat,
+  Always Allow or Always Block), and the decision is remembered per host,
+  never per tool. Block all runs shell commands
+  and custom tools in a Seatbelt sandbox with networking off. Cloud metadata
+  endpoints are always refused. Behavior change: web tools that used to run
+  silently in Approve for me now ask once per new domain, and a subagent's
+  request to a domain that is not allowed is refused; choose Allow all to
+  keep the old behavior.
 - macOS app: an Expert Residency setting (Auto, Streamed, Mapped) in Engine
   settings, with Cache Slots beside it (previously only in the Inspector) and
   a Resolved row. Mapped is sent only to models whose open would take it, and
