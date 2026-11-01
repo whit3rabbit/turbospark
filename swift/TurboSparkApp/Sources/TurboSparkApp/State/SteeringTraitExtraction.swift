@@ -26,6 +26,54 @@ struct SteeringTraitPackReport: Decodable, Equatable, Identifiable {
     }
 }
 
+/// The built-in trait packs this build carries display copy for, keyed by
+/// the CLI's pack id. ONE source for the trait names and summaries the
+/// extract sheet and the composer's steering menu render: a pack id that is
+/// not a case here is hidden in both, rather than shown in English.
+///
+/// `title` and `summary` are catalog keys, rendered through
+/// `Text(LocalizedStringKey(_:), bundle: .module)`; every value is pinned by
+/// `testEnumBackedDisplayStringsAreCatalogKeys`.
+enum SteeringTrait: String, CaseIterable, Identifiable {
+    case refusals
+    case slop
+    case humor
+    case sycophancy
+    case emotions
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .refusals: return "Refusal suppression"
+        case .slop: return "Slop reduction"
+        case .humor: return "Humor reduction"
+        case .sycophancy: return "Sycophancy reduction"
+        case .emotions: return "Emotional tone"
+        }
+    }
+
+    var summary: String {
+        switch self {
+        case .refusals:
+            return "Steers away from refusals by contrasting refusal-prone prompts with ordinary requests."
+        case .slop:
+            return "Steers away from cliches and purple prose by contrasting forced-flowery and plain writing."
+        case .humor:
+            return "Steers away from forced jokes by contrasting joke-seeking and informational requests."
+        case .sycophancy:
+            return "Steers away from praise openers by contrasting flattery-conditioned and factual answers."
+        case .emotions:
+            return "Softens heavy negative affect by contrasting loss- and joy-framed writing."
+        }
+    }
+
+    /// The title in the UI language, for a preset name that is persisted.
+    var localizedTitle: String {
+        AppStrings.localized(String.LocalizationValue(title))
+    }
+}
+
 /// Parses the extractor's stderr progress lines. Kept pure and separately
 /// testable: the fraction it computes is what the sheet's bar shows, and a
 /// miscounted bar reads as a hang.

@@ -190,6 +190,54 @@ final class SteeringTraitExtractionTests: XCTestCase {
         XCTAssertEqual(preset.name, "Slop reduction")
     }
 
+    // MARK: composer menu
+
+    /// A trait already extracted for this install is a Directions row, so
+    /// the Extract section must not offer it again; other installs' vectors
+    /// do not hide it.
+    func testUnextractedTraitsSkipTheOnesThisInstallAlreadyHas() {
+        let mine = AppSteeringPreset(
+            name: "Refusal suppression",
+            vectorPath: SteeringTraitPresetFactory.outputURL(
+                modelAlias: "tinyllama", traitID: "refusals").path,
+            mode: .ablate,
+            scale: 0.3)
+        let other = AppSteeringPreset(
+            name: "Slop reduction",
+            vectorPath: SteeringTraitPresetFactory.outputURL(
+                modelAlias: "qwen38-27b", traitID: "slop").path,
+            mode: .ablate,
+            scale: 0.3)
+        let traits = SteeringComposerMenuModel.unextractedTraits(
+            presets: [mine, other], alias: "tinyllama")
+        XCTAssertEqual(traits, [.slop, .humor, .sycophancy, .emotions])
+    }
+
+    /// Rows keep the registered order, check exactly the active preset only
+    /// while steering is on, and leave a preset whose shape was never read
+    /// pickable (the engine refuses at open with the numbers).
+    func testPresetRowsMarkOnlyTheActivePresetWhileEnabled() {
+        let a = AppSteeringPreset(name: "A", vectorPath: "/v/a.gguf", mode: .ablate, scale: 0.3)
+        let b = AppSteeringPreset(name: "B", vectorPath: "/v/b.gguf", mode: .ablate, scale: 0.3)
+        let on = SteeringComposerMenuModel.presetRows(
+            presets: [a, b], activeID: b.id, enabled: true, target: nil)
+        XCTAssertEqual(on.map(\.name), ["A", "B"])
+        XCTAssertEqual(on.map(\.isActive), [false, true])
+        XCTAssertTrue(on.allSatisfy(\.canEnable))
+        let off = SteeringComposerMenuModel.presetRows(
+            presets: [a, b], activeID: b.id, enabled: false, target: nil)
+        XCTAssertFalse(off.contains(where: \.isActive))
+    }
+
+    /// A preset with no vector file steers nothing and cannot be picked.
+    func testPresetWithoutAVectorCannotBeEnabled() {
+        let empty = AppSteeringPreset(name: "Empty", vectorPath: "", mode: .ablate, scale: 0.3)
+        let rows = SteeringComposerMenuModel.presetRows(
+            presets: [empty], activeID: nil, enabled: false, target: nil)
+        XCTAssertEqual(rows.first?.canEnable, false)
+        XCTAssertNotNil(rows.first?.blockReason)
+    }
+
     // MARK: process lifecycle
 
     /// A stub tool: a shell script that ignores the extract arguments.

@@ -40,6 +40,13 @@ when this file gets updated relative to the version bump and the tag.
   (the write goes through a `.partial` file and a rename). `extract` now
   refuses a capture with fewer snapshots than prompts and cleans its temp
   capture directory on every exit path.
+- macOS app: the composer's Steering pill is now a menu: Off, every
+  registered direction (one whose shape the selected model would refuse is
+  listed but not pickable), each built-in trait not yet extracted for the
+  selected model (opens the extract sheet with that trait chosen), Reload
+  to apply when the loaded model is not running the selection, and
+  Steering Settings. It is disabled with the engine's reason on a family
+  that does not dispatch steering.
 - macOS app: an Expert Residency setting (Auto, Streamed, Mapped) in Engine
   settings, with Cache Slots beside it (previously only in the Inspector) and
   a Resolved row. Mapped is sent only to models whose open would take it, and

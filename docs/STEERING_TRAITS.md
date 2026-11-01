@@ -75,6 +75,30 @@ Reload prompt applies it. Rules the sheet enforces:
   next run after a day.
 - A trait id the app has no localized copy for is hidden.
 
+The chat composer's Steering menu (beside Guardrails) is the quick switch:
+Off, every registered direction (a direction whose shape the selected
+model would refuse is listed but cannot be picked), and an Extract from
+this model section for each built-in trait not yet extracted for the
+selected install, which opens the same sheet with that trait chosen. When
+the loaded model is not running the selection yet, the menu offers Reload
+to apply. On a family that does not dispatch steering the menu is disabled
+and its tooltip gives the engine's reason.
+
+## Using an extracted vector outside the app
+
+The `.gguf` is an ordinary control vector, so every steering surface takes
+it:
+
+```sh
+turbospark run tinyllama --chat --steering ~/vectors/refusals.gguf --steering-scale 0.3
+turbospark serve --model tinyllama --steering ~/vectors/refusals.gguf --steering-scale 0.3
+```
+
+`turbospark run` hands its flags to `turbospark-check`; `--steering-mode`,
+`--steering-layers`, `--steering-target`, and `--steering-gate` work the
+same way, and the FFI open options (`steering` for the path, `steeringMode`, `steeringScale`,
+`steeringLayers`, `steeringTarget`, `steeringGate`) are what the app passes.
+
 ## Refusals
 
 `extract` refuses rather than writing a misleading vector when the family

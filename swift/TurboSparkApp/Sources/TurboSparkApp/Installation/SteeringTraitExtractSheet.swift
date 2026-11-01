@@ -5,14 +5,17 @@ import TurboSpark
 /// Mac, through the `turbospark-steer` CLI, and turns the result into the
 /// app's named preset.
 ///
-/// The display copy for a trait lives HERE as localized literals keyed by
-/// the pack id, not in the CLI's report: a Rust-side pack without app copy
-/// would otherwise ship English under every language, so unknown pack ids
-/// are hidden rather than rendered.
+/// The display copy for a trait comes from `SteeringTrait`, not the CLI's
+/// report: a Rust-side pack without app copy would otherwise ship English
+/// under every language, so unknown pack ids are hidden rather than
+/// rendered.
 @MainActor
 struct SteeringTraitExtractSheet: View {
     @ObservedObject var model: AppModel
     let installedModel: InstalledModel
+    /// The trait to preselect, when the sheet is opened for one (the
+    /// composer's steering menu). Nil preselects the first shown trait.
+    var initialTraitID: String? = nil
     @Environment(\.dismiss) private var dismiss
 
     @State private var reports: [SteeringTraitPackReport] = []
@@ -21,51 +24,20 @@ struct SteeringTraitExtractSheet: View {
     @State private var scaleText = ""
     @State private var extractTask: Task<Void, Never>?
     @State private var errorMessage: String?
+    /// Set on the first Extract press. Missing input is flagged only after
+    /// the user tried to go on (DESIGN.md, action hierarchy).
+    @State private var attempted = false
     @StateObject private var controller = SteeringTraitExtractionController()
 
     private var descriptor: ModelFeatureDescriptor {
         ModelFeatureDescriptor.resolve(installedModel: installedModel)
     }
 
-    /// The CLI's reports joined with this build's localized copy. A pack id
-    /// the app does not carry copy for is left out, on the reasoning in the
-    /// type doc.
-    private var traits: [(report: SteeringTraitPackReport, title: LocalizedStringKey, summary: LocalizedStringKey)] {
+    /// The CLI's reports joined with this build's copy. A pack id the app
+    /// does not carry copy for is left out, on the reasoning in the type doc.
+    private var traits: [(report: SteeringTraitPackReport, trait: SteeringTrait)] {
         reports.compactMap { report in
-            switch report.id {
-            case "refusals":
-                return (
-                    report,
-                    "Refusal suppression",
-                    "Steers away from refusals by contrasting refusal-prone prompts with ordinary requests."
-                )
-            case "slop":
-                return (
-                    report,
-                    "Slop reduction",
-                    "Steers away from cliches and purple prose by contrasting forced-flowery and plain writing."
-                )
-            case "humor":
-                return (
-                    report,
-                    "Humor reduction",
-                    "Steers away from forced jokes by contrasting joke-seeking and informational requests."
-                )
-            case "sycophancy":
-                return (
-                    report,
-                    "Sycophancy reduction",
-                    "Steers away from praise openers by contrasting flattery-conditioned and factual answers."
-                )
-            case "emotions":
-                return (
-                    report,
-                    "Emotional tone",
-                    "Softens heavy negative affect by contrasting loss- and joy-framed writing."
-                )
-            default:
-                return nil
-            }
+            SteeringTrait(rawValue: report.id).map { (report, $0) }
         }
     }
 
@@ -100,6 +72,24 @@ struct SteeringTraitExtractSheet: View {
         }
         guard parsedScale != nil else {
             return AppStrings.localized("Strength must be between -2 and 2.")
+        }
+        return nil
+    }
+
+    /// Why Extract cannot run right now, from the app's own state. Nil when
+    /// only input is missing (that is flagged on the press instead).
+    private var blockingReason: Text? {
+        if isRunning { return Text("Extracting...", bundle: .module) }
+        if !descriptor.isSteeringReady {
+            return Text("This model family does not support live steering.", bundle: .module)
+        }
+        if isLoadedHere {
+            return Text(
+                "This model is loaded. Unload it before extracting; extraction opens its own copy of the model.",
+                bundle: .module)
+        }
+        if model.generating || model.opening {
+            return Text("Wait for the current generation or model load to finish.", bundle: .module)
         }
         return nil
     }
@@ -243,7 +233,7 @@ struct SteeringTraitExtractSheet: View {
     }
 
     private func traitRow(
-        _ trait: (report: SteeringTraitPackReport, title: LocalizedStringKey, summary: LocalizedStringKey)
+        _ trait: (report: SteeringTraitPackReport, trait: SteeringTrait)
     ) -> some View {
         let isSelected = selectedID == trait.report.id
         return Button {
@@ -257,10 +247,10 @@ struct SteeringTraitExtractSheet: View {
                         isSelected ? AnyShapeStyle(.appSuccess) : AnyShapeStyle(.appSecondary))
                     .padding(.top, 2)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(trait.title, bundle: .module)
+                    Text(LocalizedStringKey(trait.trait.title), bundle: .module)
                         .themedFont(.small, weight: .medium)
                         .foregroundStyle(.primary)
-                    Text(trait.summary, bundle: .module)
+                    Text(LocalizedStringKey(trait.trait.summary), bundle: .module)
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -288,7 +278,7 @@ struct SteeringTraitExtractSheet: View {
                 Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.appDanger)
                     .fixedSize(horizontal: false, vertical: true)
-            } else if let validationError {
+            } else if attempted, let validationError {
                 Label(validationError, systemImage: "info.circle")
                     .foregroundStyle(AppAttention.color)
                     .fixedSize(horizontal: false, vertical: true)
@@ -317,9 +307,12 @@ struct SteeringTraitExtractSheet: View {
                     }
                 }
                 .appAction(.primary)
-                .disabled(
-                    isRunning || validationError != nil || !descriptor.isSteeringReady
-                        || model.generating || model.opening || isLoadedHere)
+                .keyboardShortcut(.defaultAction)
+                // Missing input (trait, strength) keeps the button live and
+                // is flagged on the press; only the app's own state disables
+                // it, and the tooltip names that state.
+                .disabled(blockingReason != nil)
+                .help(blockingReason ?? Text("Extract", bundle: .module))
             }
         }
         .padding(16)
@@ -343,7 +336,9 @@ struct SteeringTraitExtractSheet: View {
                     // pack, the trait the steering surface exists for): a
                     // pack id without app copy is hidden and must not be the
                     // invisible selection.
-                    if let first = traits.first?.report {
+                    if let first = traits.first(where: { $0.report.id == initialTraitID })?.report
+                        ?? traits.first?.report
+                    {
                         selectedID = first.id
                         scaleText = Self.format(first.recommendedScale)
                     }
@@ -356,6 +351,7 @@ struct SteeringTraitExtractSheet: View {
     }
 
     private func startExtraction() {
+        attempted = true
         guard let report = selectedReport, let scale = parsedScale, !isRunning else { return }
         errorMessage = nil
         let output = SteeringTraitPresetFactory.outputURL(
@@ -414,17 +410,9 @@ struct SteeringTraitExtractSheet: View {
     }
 
     /// The preset's display name, localized at creation time like every
-    /// other persisted-but-human string in this surface.
+    /// other persisted-but-human string in this surface. An unknown trait
+    /// falls back to its id, which is still a name the user chose to run.
     private func localizedTraitName(_ id: String) -> String {
-        switch id {
-        case "refusals": return AppStrings.localized("Refusal suppression")
-        case "slop": return AppStrings.localized("Slop reduction")
-        case "humor": return AppStrings.localized("Humor reduction")
-        case "sycophancy": return AppStrings.localized("Sycophancy reduction")
-        case "emotions": return AppStrings.localized("Emotional tone")
-        // An unknown trait falls back to its id, which is still a name the
-        // user chose to run.
-        default: return id
-        }
+        SteeringTrait(rawValue: id)?.localizedTitle ?? id
     }
 }
