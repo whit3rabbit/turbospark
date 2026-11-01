@@ -129,27 +129,7 @@ fn run_packs(args: &[String]) -> Result<(), String> {
     }
     let packs = steer_cmd::packs::all()?;
     if json {
-        // Hand-rolled rather than a serde serialize: the display shape is a
-        // stable interface and the packs carry prompts that must not be
-        // re-escaped into a different form than they ship in.
-        let items: Vec<String> = packs
-            .iter()
-            .map(|p| {
-                format!(
-                    "  {{\n    \"id\": {},\n    \"title\": {},\n    \"positive_prompts\": {},\
-                     \n    \"negative_prompts\": {},\n    \"eval_prompts\": {},\n    \
-                     \"recommended_mode\": {},\n    \"recommended_scale\": {}\n  }}",
-                    quote(&p.id),
-                    quote(&p.title),
-                    p.positive.prompts.len(),
-                    p.negative.prompts.len(),
-                    p.eval.prompts.len(),
-                    quote(&p.recommended_mode),
-                    p.recommended_scale
-                )
-            })
-            .collect();
-        println!("[\n{}\n]", items.join(",\n"));
+        println!("{}", packs_json(&packs));
     } else {
         for p in &packs {
             println!(
@@ -172,6 +152,35 @@ fn run_packs(args: &[String]) -> Result<(), String> {
 
 fn quote(text: &str) -> String {
     serde_json::to_string(text).unwrap_or_else(|_| format!("\"{text}\""))
+}
+
+/// The `packs --json` document. Hand-rolled rather than a serde serialize:
+/// the display shape is a stable interface and the packs carry prompts that
+/// must not be re-escaped into a different form than they ship in. Keys are
+/// camelCase, the same convention the FFI wire uses for Swift consumers:
+/// the app decodes this output directly (SteeringTraitPackReport) with no
+/// key rewriting.
+fn packs_json(packs: &[steer_cmd::packs::TraitPack]) -> String {
+    let items: Vec<String> = packs
+        .iter()
+        .map(|p| {
+            format!(
+                "  {{\n    \"id\": {},\n    \"title\": {},\n    \"summary\": {},\
+                 \n    \"positivePrompts\": {},\n    \"negativePrompts\": {},\n    \
+                 \"evalPrompts\": {},\n    \"recommendedMode\": {},\n    \
+                 \"recommendedScale\": {}\n  }}",
+                quote(&p.id),
+                quote(&p.title),
+                quote(&p.summary),
+                p.positive.prompts.len(),
+                p.negative.prompts.len(),
+                p.eval.prompts.len(),
+                quote(&p.recommended_mode),
+                p.recommended_scale
+            )
+        })
+        .collect();
+    format!("[\n{}\n]", items.join(",\n"))
 }
 
 /// Indent-wrapped plain text for the packs listing.
@@ -482,6 +491,52 @@ mod tests {
         assert!(lines.len() >= 2, "long text wraps");
         for line in &lines[1..] {
             assert!(line.starts_with("    "), "continuation is indented: {line}");
+        }
+    }
+
+    /// The `packs --json` keys are the app's decode contract
+    /// (`SteeringTraitPackReport` decodes with default keys and no
+    /// rewriting), so a spelling drift back to snake_case would only
+    /// surface as a failed pack load inside the running app. Pinned here,
+    /// beside the formatter that owns the shape.
+    #[test]
+    fn packs_json_keys_are_the_swift_decode_contract() {
+        let packs = steer_cmd::packs::all().expect("packs parse");
+        let document = packs_json(&packs);
+        let parsed: serde_json::Value =
+            serde_json::from_str(&document).expect("packs --json output is valid JSON");
+        let entries = parsed.as_array().expect("top-level array");
+        assert_eq!(entries.len(), packs.len());
+        for (entry, pack) in entries.iter().zip(&packs) {
+            let object = entry.as_object().expect("object per pack");
+            for key in [
+                "id",
+                "title",
+                "summary",
+                "positivePrompts",
+                "negativePrompts",
+                "evalPrompts",
+                "recommendedMode",
+                "recommendedScale",
+            ] {
+                assert!(
+                    object.contains_key(key),
+                    "pack {} is missing key {key}; the app decodes camelCase",
+                    pack.id
+                );
+            }
+            assert_eq!(
+                object["positivePrompts"].as_u64(),
+                Some(pack.positive.prompts.len() as u64)
+            );
+            // f32 widened to f64; exact equality would trip on 0.3's
+            // 0.30000001192092896 widening.
+            let scale = object["recommendedScale"].as_f64().expect("scale");
+            assert!(
+                (scale - f64::from(pack.recommended_scale)).abs() < 1e-6,
+                "scale mismatch: {scale} vs {}",
+                pack.recommended_scale
+            );
         }
     }
 }

@@ -230,7 +230,9 @@ cp -R "$mlx_bundle" "$contents/Resources/"
 # hands image, music, clone, speak and ocr to the sibling binaries
 # (`find_peer_binary`), so every [[bin]] of turbospark-cli ships: v0.6.0
 # carried four and `turbospark image` failed with "No such file".
-cli_bins=(turbospark turbospark-check turbospark-model turbospark-server turbospark-image turbospark-music turbospark-clone turbospark-speak turbospark-ocr)
+# `turbospark-steer` is the model detail pane's trait-extraction tool
+# (SteeringTraitTool.findSteerCLI resolves it the same way).
+cli_bins=(turbospark turbospark-check turbospark-model turbospark-server turbospark-image turbospark-music turbospark-clone turbospark-speak turbospark-steer turbospark-ocr)
 for bin in "${cli_bins[@]}"; do
   src="$root/target/$target/release/$bin"
   [ -x "$src" ] || { echo "expected $src to exist; run without --skip-build" >&2; exit 1; }
