@@ -305,6 +305,8 @@ public struct AppSettingsView: View {
             HooksSettingsPaneView(model: model)
         case .browser:
             BrowserSettingsPaneView(model: model)
+        case .network:
+            NetworkSettingsPaneView(model: model)
         }
     }
 }

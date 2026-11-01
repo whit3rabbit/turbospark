@@ -1,7 +1,7 @@
 import XCTest
 @testable import TurboSparkApp
 
-final class BatchToolTests: XCTestCase {
+final class BatchToolTests: NetworkPolicyPinnedTestCase {
     func testBatchExecutionExecutesCallsConcurrently() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
