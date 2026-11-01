@@ -430,9 +430,10 @@ pub use utility::{
 #[cfg(target_os = "macos")]
 pub use vision::{
     encode_vision_attention, encode_vision_attention_with, encode_vision_gelu,
-    encode_vision_layer_norm, encode_vision_matmul, encode_vision_matmul_with,
-    encode_vision_residual_add, encode_vision_rope_2d, GeluKind, VisionAttentionKernel,
-    VisionMatmulKernel, MAX_ATTENTION_HEAD_DIM,
+    encode_vision_layer_norm, encode_vision_matmul, encode_vision_matmul_with, encode_vision_mul,
+    encode_vision_residual_add, encode_vision_rms_norm, encode_vision_rope_2d,
+    encode_vision_rope_axial, GeluKind, VisionAttentionKernel, VisionMatmulKernel,
+    MAX_ATTENTION_HEAD_DIM,
 };
 #[cfg(target_os = "macos")]
 pub use whisper_conv::{encode_whisper_conv1d3_gelu, whisper_conv1d3_gelu};

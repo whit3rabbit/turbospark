@@ -188,26 +188,50 @@ impl FfiChatModel {
                 crate::generate::SCRIPTED_HAS_NO_TOWER.to_string(),
             ));
         };
-        let params = crate::vision::preprocess_params(
-            runner,
-            self.core.load_policy.guard,
-            runtime::physical_memory(),
-            self.core.committed_bytes,
-            self.core.kv_bytes,
-        )
-        .map_err(RuntimeError::Producer)?;
-
-        let mut embeddings = Vec::with_capacity(images.images.len());
-        for (i, image) in images.images.iter().enumerate() {
-            embeddings.push(
+        match images {
+            turbospark_server::vision::RequestImages::Qwen { images, positions } => {
+                let params = crate::vision::preprocess_params(
+                    runner,
+                    self.core.load_policy.guard,
+                    runtime::physical_memory(),
+                    self.core.committed_bytes,
+                    self.core.kv_bytes,
+                )
+                .map_err(RuntimeError::Producer)?;
+                let mut embeddings = Vec::with_capacity(images.len());
+                for (i, image) in images.iter().enumerate() {
+                    embeddings.push(
+                        runner
+                            .encode_image(image, &params)
+                            .map_err(|e| RuntimeError::Producer(format!("image {i}: {e}")))?,
+                    );
+                }
                 runner
-                    .encode_image(image, &params)
-                    .map_err(|e| RuntimeError::Producer(format!("image {i}: {e}")))?,
-            );
+                    .set_prompt_vision(&embeddings, positions, prompt_ids.len())
+                    .map_err(|e| RuntimeError::Producer(e.to_string()))?;
+            }
+            turbospark_server::vision::RequestImages::Gemma4 { images, spans } => {
+                // Gemma 4 image spans need the chunked driver: one token at
+                // a time cannot give an image row its look-ahead.
+                if !runner.supports_chunked_prefill() {
+                    return Err(RuntimeError::Producer(
+                        "this runner has no chunked prefill, which Gemma 4 image prompts need"
+                            .to_string(),
+                    ));
+                }
+                let mut rows = Vec::with_capacity(images.len());
+                for (i, image) in images.iter().enumerate() {
+                    rows.push(
+                        runner
+                            .encode_image_gemma4(image)
+                            .map_err(|e| RuntimeError::Producer(format!("image {i}: {e}")))?,
+                    );
+                }
+                runner
+                    .set_prompt_vision_gemma4(&rows, spans, prompt_ids.len())
+                    .map_err(|e| RuntimeError::Producer(e.to_string()))?;
+            }
         }
-        runner
-            .set_prompt_vision(&embeddings, &images.positions, prompt_ids.len())
-            .map_err(|e| RuntimeError::Producer(e.to_string()))?;
 
         let combined = self.cancel_or_stopped(cancel);
         let result = if runner.supports_chunked_prefill() {
@@ -264,6 +288,14 @@ impl ChatModel for FfiChatModel {
             let Engine::Real(runner) = &*engine else {
                 return None;
             };
+            if let Some(ids) = runner.gemma4_image_ids() {
+                // The KV ring of a Gemma 4 vision install is sized for the
+                // default soft-token budget, so that is the budget served.
+                return Some(turbospark_server::vision::VisionInfo::Gemma4 {
+                    max_soft_tokens: turbospark_vision_io::GEMMA4_DEFAULT_SOFT_TOKENS,
+                    ids,
+                });
+            }
             let params = crate::vision::preprocess_params(
                 runner,
                 self.core.load_policy.guard,
@@ -272,7 +304,7 @@ impl ChatModel for FfiChatModel {
                 self.core.kv_bytes,
             )
             .ok()?;
-            Some(turbospark_server::vision::VisionInfo {
+            Some(turbospark_server::vision::VisionInfo::Qwen {
                 params,
                 specials: crate::vision::special_ids(runner),
             })

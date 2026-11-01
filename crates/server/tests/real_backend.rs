@@ -510,11 +510,66 @@ async fn real_backend_reads_an_image_sent_over_both_endpoints() {
     };
 
     let png = std::fs::read(&page).expect("the test page should be readable");
-    let data_url = format!("data:image/png;base64,{}", base64_encode(&png));
+    // The page is a table of generated words with five-digit line numbers.
+    // Asserting on a DIGIT RUN rather than on specific words: the words are
+    // random per page, the line numbers are structural, and a model answering
+    // from the question alone produces neither.
+    reads_an_image_over_both_endpoints(
+        &dir,
+        &png,
+        "qwen38-vision",
+        "Transcribe the text in this image.",
+        |text| text.contains("00012") || text.contains("00030") || text.contains(" | "),
+    )
+    .await;
+}
+
+/// The same two-endpoint check on a Gemma 4 install with its tower
+/// (`docs/GEMMA4_VISION_PHASE0.md`): an image reading "TURBOSPARK 42"
+/// (`scripts/gemma4_vision_trunk_dump.py` writes one), answered from the
+/// image and not from the question.
+///
+///   TURBOSPARK_GEMMA4_VISION_INSTALL_DIR=~/models/gemma4-26b-vision.gturbo \
+///   TURBOSPARK_GEMMA4_VISION_PAGE=/tmp/gemma4-trunk-dump/image.png \
+///     cargo test -p turbospark-server --test real_backend --release -- \
+///     --ignored --nocapture gemma4
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a real Gemma 4 vision install (TURBOSPARK_GEMMA4_VISION_INSTALL_DIR) and an \
+            image (TURBOSPARK_GEMMA4_VISION_PAGE)"]
+async fn real_backend_reads_a_gemma4_image_sent_over_both_endpoints() {
+    let (Some(dir), Some(page)) = (
+        std::env::var_os("TURBOSPARK_GEMMA4_VISION_INSTALL_DIR").map(PathBuf::from),
+        std::env::var_os("TURBOSPARK_GEMMA4_VISION_PAGE").map(PathBuf::from),
+    ) else {
+        eprintln!("real_backend: the Gemma 4 vision variables are not both set; skipping.");
+        return;
+    };
+    let png = std::fs::read(&page).expect("the test image should be readable");
+    reads_an_image_over_both_endpoints(
+        &dir,
+        &png,
+        "gemma4-vision",
+        "What text is written in this image? Answer with the text only.",
+        |text| text.contains("TURBOSPARK") && text.contains("42"),
+    )
+    .await;
+}
+
+/// Serve `dir`, send `png` with `question` over `/v1/chat/completions` and
+/// `/v1/messages`, and require each answer to pass `reads`. Asserts on the
+/// OUTPUT: a server that dropped the image answers from the question alone.
+async fn reads_an_image_over_both_endpoints(
+    dir: &std::path::Path,
+    png: &[u8],
+    model_name: &str,
+    question: &str,
+    reads_the_page: impl Fn(&str) -> bool,
+) {
+    let data_url = format!("data:image/png;base64,{}", base64_encode(png));
 
     // Pinned exactly as the test above pins them, and for the same reason.
     let model = RealChatModel::open(
-        &dir,
+        dir,
         Some(4096),
         Some(16),
         Default::default(),
@@ -550,22 +605,14 @@ async fn real_backend_reads_an_image_sent_over_both_endpoints() {
     let base = format!("http://{addr}");
     let client = reqwest::Client::new();
 
-    // The page is a table of generated words with five-digit line numbers.
-    // Asserting on a DIGIT RUN rather than on specific words: the words are
-    // random per page, the line numbers are structural, and a model answering
-    // from the question alone produces neither.
-    let reads_the_page = |text: &str| -> bool {
-        text.contains("00012") || text.contains("00030") || text.contains(" | ")
-    };
-
     // ---- OpenAI, non-streaming ------------------------------------------
     let response = client
         .post(format!("{base}/v1/chat/completions"))
         .json(&serde_json::json!({
-            "model": "qwen38-vision",
+            "model": model_name,
             "messages": [{"role": "user", "content": [
                 {"type": "image_url", "image_url": {"url": data_url}},
-                {"type": "text", "text": "Transcribe the text in this image."}
+                {"type": "text", "text": question}
             ]}],
             "max_tokens": 48,
             "temperature": 0
@@ -601,8 +648,8 @@ async fn real_backend_reads_an_image_sent_over_both_endpoints() {
             "messages": [{"role": "user", "content": [
                 {"type": "image", "source": {
                     "type": "base64", "media_type": "image/png",
-                    "data": base64_encode(&png)}},
-                {"type": "text", "text": "Transcribe the text in this image."}
+                    "data": base64_encode(png)}},
+                {"type": "text", "text": question}
             ]}]
         }))
         .send()

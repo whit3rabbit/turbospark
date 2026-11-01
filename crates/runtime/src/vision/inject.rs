@@ -242,6 +242,85 @@ impl PromptVision {
     /// merger. Called by the runner at `set_prompt_vision` time, AFTER
     /// [`Self::new`] has validated every row count; a no-op when the tower
     /// has no deepstack.
+    /// The map for a trunk that places image tokens at their own index, with
+    /// no mRoPE (Gemma 4): one `[span.len, hidden]` FP16 row set per image,
+    /// in prompt order. Every position's triple is `(p, p, p)` and the rope
+    /// delta is zero, so [`Self::rope_position`] answers the plain index and
+    /// nothing that reads it can move.
+    ///
+    /// Validated as [`Self::new`] validates: one row set per span, each of
+    /// exactly `span.len * hidden` values, spans ordered, non-overlapping and
+    /// inside the prompt.
+    pub fn flat(
+        images: &[Vec<u16>],
+        spans: &[ImageSpan],
+        prompt_len: usize,
+        hidden_size: usize,
+    ) -> Result<Self, RealForwardError> {
+        let refuse = |detail: String| Err(RealForwardError::Unsupported(detail));
+        if images.len() != spans.len() {
+            return refuse(format!(
+                "{} encoded image(s) against {} placeholder span(s) in the prompt",
+                images.len(),
+                spans.len()
+            ));
+        }
+        let row_bytes = hidden_size * 2;
+        let mut rows = Vec::new();
+        let mut prefix = Vec::with_capacity(spans.len());
+        let mut last_end = 0usize;
+        for (i, (image, span)) in images.iter().zip(spans).enumerate() {
+            if span.len == 0 || image.len() != span.len * hidden_size {
+                return refuse(format!(
+                    "image {i}: {} value(s) for a {}-token span of {hidden_size}-wide rows",
+                    image.len(),
+                    span.len
+                ));
+            }
+            if span.start < last_end || span.start + span.len > prompt_len {
+                return refuse(format!(
+                    "image {i}: span [{}, {}) overlaps the previous one or runs past a \
+                     {prompt_len}-token prompt",
+                    span.start,
+                    span.start + span.len
+                ));
+            }
+            last_end = span.start + span.len;
+            prefix.push(rows.len() / row_bytes.max(1));
+            rows.reserve(image.len() * 2);
+            for value in image {
+                rows.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+        Ok(Self {
+            rows,
+            row_bytes,
+            spans: spans.to_vec(),
+            prefix,
+            triples: (0..prompt_len as i32).map(|p| (p, p, p)).collect(),
+            rope_delta: 0,
+            deepstack: Vec::new(),
+            deepstack_buffers: Vec::new(),
+        })
+    }
+
+    /// The span containing `position`, if any.
+    pub(crate) fn span_containing(&self, position: usize) -> Option<ImageSpan> {
+        let i = self
+            .spans
+            .partition_point(|span| span.start <= position)
+            .checked_sub(1)?;
+        let span = self.spans[i];
+        (position < span.start + span.len).then_some(span)
+    }
+
+    /// `[span.len, hidden]` FP16 bytes of the span starting at `start`.
+    pub(crate) fn span_rows(&self, start: usize) -> Option<&[u8]> {
+        let i = self.spans.iter().position(|s| s.start == start)?;
+        let first = self.prefix[i] * self.row_bytes;
+        Some(&self.rows[first..first + self.spans[i].len * self.row_bytes])
+    }
+
     pub(crate) fn attach_deepstack_buffers(
         &mut self,
         context: &mut gpu::MetalContext,

@@ -13,6 +13,10 @@ path used by the SwiftUI app and in-process server. Dense Qwen image prompts
 also use the chunked prefill path through the CLI and FFI; the server keeps its
 sequential image path.
 
+`Gemma4` (2026-11-01) has a real image gate on a DIFFERENT tower
+(`VisionTowerKind::Gemma4`), so nothing on this page describes it: its facts,
+mask rule and gates are in [`GEMMA4_VISION_PHASE0.md`](GEMMA4_VISION_PHASE0.md).
+
 The standalone `<alias>.gturbo-vision/` sidecar format, `--vision-sidecar`,
 and `pull-vision` are verified on real hardware. The Qwen GDN MoE family shares
 the tower classifier, writer, and sequential runtime path, but it has no

@@ -30,6 +30,7 @@ fn tiny_vision() -> VisionConfig {
         image_token_id: 248_056,
         video_token_id: 248_057,
         deepstack_visual_indexes: Vec::new(),
+        tower: turbospark_model_io::VisionTowerKind::QwenSiglip,
     }
 }
 
@@ -119,6 +120,23 @@ fn vision_config_treats_a_partial_declaration_as_partial() {
     assert_eq!(vision.hidden_size, 64);
     assert_eq!(vision.intermediate_size, 0, "an undeclared field must be 0");
     assert_eq!(vision.out_hidden_size, 0, "an undeclared field must be 0");
+}
+
+/// Silence means the qwen tower, the only one that existed before the key
+/// did, and `gemma4` reaches the config.
+#[test]
+fn vision_tower_defaults_to_qwen_and_reads_gemma4() {
+    use turbospark_model_io::VisionTowerKind;
+    let arch: turbospark_model_io::ManifestArch =
+        serde_json::from_str(&manifest_arch_json("")).unwrap();
+    assert_eq!(arch.vision_config().tower, VisionTowerKind::QwenSiglip);
+    let arch: turbospark_model_io::ManifestArch =
+        serde_json::from_str(&manifest_arch_json(r#", "visionTower": "gemma4""#)).unwrap();
+    assert_eq!(arch.vision_config().tower, VisionTowerKind::Gemma4);
+    assert_eq!(VisionTowerKind::parse("gemma5"), None);
+    for k in [VisionTowerKind::QwenSiglip, VisionTowerKind::Gemma4] {
+        assert_eq!(VisionTowerKind::parse(k.as_str()), Some(k));
+    }
 }
 
 fn tempfile_dir() -> std::path::PathBuf {

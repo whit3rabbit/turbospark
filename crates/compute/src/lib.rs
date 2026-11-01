@@ -71,6 +71,8 @@ pub mod tolerance;
 
 /// FP32 reference kernels for the qwen3_5 vision tower (ROADMAP M-V2).
 pub mod vision;
+/// FP32 reference for the Gemma 4 vision tower and projector.
+pub mod vision_gemma4;
 /// FP32 reference kernels for the whisper speech family: conv front end,
 /// Pre-LN encoder blocks, and the incremental decoder with KV cache.
 pub mod whisper;

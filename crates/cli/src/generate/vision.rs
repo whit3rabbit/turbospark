@@ -56,6 +56,11 @@ pub(crate) struct PreparedImage {
 /// `manifest.json` rather than the trunk's own install, which for a
 /// text-only trunk has no such file at all.
 pub(crate) fn preprocess_params(session: &Session) -> Result<PreprocessParams, String> {
+    // The Gemma 4 tower has no `preprocessor_config.json`; it goes through
+    // `attach_gemma4`, which callers pick before reaching here.
+    if session.runner.gemma4_image_ids().is_some() {
+        return Err("internal: the Gemma 4 tower takes attach_gemma4".to_string());
+    }
     let path = session.runner.vision_dir().join("preprocessor_config.json");
     let json = std::fs::read_to_string(&path).map_err(|e| {
         format!(
@@ -200,4 +205,55 @@ pub(crate) fn attach(
         .set_prompt_vision(&embeddings, &spliced.positions, spliced.ids.len())
         .map_err(|e| format!("cannot inject the encoded images: {e}"))?;
     Ok(spliced.ids)
+}
+
+/// The Gemma 4 tower's whole `--image` path: decode and preprocess each file
+/// at the default soft-token budget (the one the install's KV ring is sized
+/// for), expand each rendered `<|image|>` to `boi`, one placeholder per soft
+/// token, `eoi`, encode, and hand the runner the rows. Returns the expanded
+/// ids to prefill. Mirrors `crates/ffi/src/vision.rs::attach_gemma4`; every
+/// step it calls lives in `turbospark-vision-io` or on the runner.
+pub(crate) fn attach_gemma4(
+    session: &mut Session,
+    rendered: &[i32],
+    paths: &[String],
+) -> Result<Vec<i32>, String> {
+    let ids = session
+        .runner
+        .gemma4_image_ids()
+        .ok_or("this install's vision tower is not a Gemma 4 one")?;
+    let budget = turbospark_vision_io::GEMMA4_DEFAULT_SOFT_TOKENS;
+    let mut prepared = Vec::with_capacity(paths.len());
+    for path in paths {
+        let decoded = decode_image_file(std::path::Path::new(path))
+            .map_err(|e| format!("--image {path}: {e}"))?;
+        let patches = turbospark_vision_io::gemma4_preprocess(&decoded, budget)
+            .map_err(|e| format!("--image {path}: {e}"))?;
+        prepared.push((path, patches));
+    }
+    let soft: Vec<usize> = prepared.iter().map(|(_, p)| p.soft_tokens()).collect();
+    let (expanded, spans) = turbospark_vision_io::gemma4_expand_image_placeholders(
+        rendered, ids, &soft,
+    )
+    .map_err(|e| {
+        format!(
+            "cannot place {} image(s) in this prompt: {e}\n  the template renders one \
+                     <|image|> per image; check the messages actually carry image parts",
+            paths.len()
+        )
+    })?;
+    let mut rows = Vec::with_capacity(prepared.len());
+    for (path, patches) in &prepared {
+        rows.push(
+            session
+                .runner
+                .encode_image_gemma4(patches)
+                .map_err(|e| format!("--image {path}: {e}"))?,
+        );
+    }
+    session
+        .runner
+        .set_prompt_vision_gemma4(&rows, &spans, expanded.len())
+        .map_err(|e| format!("cannot inject the encoded images: {e}"))?;
+    Ok(expanded)
 }

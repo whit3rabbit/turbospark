@@ -294,6 +294,42 @@ fn load_rejects_a_layer_mask_shorter_than_num_layers_even_when_expected_matches(
     }
 }
 
+/// An unknown `visionTower` spelling is refused by name. The reader maps it
+/// to the default tower, so this check is the only thing between a manifest
+/// from a newer writer and a tower this build would run with the wrong code.
+#[test]
+fn load_rejects_an_unknown_vision_tower() {
+    let dir = tempfile_dir();
+    let json = toy_manifest_json().replace(
+        "\"fullAttentionLayerMask\": [1, 1]",
+        "\"fullAttentionLayerMask\": [1, 1], \"visionTower\": \"gemma5\"",
+    );
+    assert!(json.contains("gemma5"), "the replacement must apply");
+    write_manifest(dir.path(), &json);
+    let err = load_manifest(dir.path(), &toy_arch(), 4 * 1024 * 1024).unwrap_err();
+    match err {
+        ModelError::ArchMismatch { field, .. } => assert_eq!(field, "visionTower"),
+        other => panic!("expected ArchMismatch, got {other:?}"),
+    }
+}
+
+/// A Gemma tower in the manifest does not validate against an expected qwen
+/// tower, and does validate against an expected Gemma one.
+#[test]
+fn the_vision_tower_kind_must_match_the_expected_arch() {
+    let dir = tempfile_dir();
+    let json = toy_manifest_json().replace(
+        "\"fullAttentionLayerMask\": [1, 1]",
+        "\"fullAttentionLayerMask\": [1, 1], \"visionTower\": \"gemma4\"",
+    );
+    write_manifest(dir.path(), &json);
+    let err = load_manifest(dir.path(), &toy_arch(), 4 * 1024 * 1024).unwrap_err();
+    assert!(matches!(err, ModelError::ArchMismatch { ref field, .. } if field == "visionTower"));
+    let mut arch = toy_arch();
+    arch.vision.tower = turbospark_model_io::VisionTowerKind::Gemma4;
+    load_manifest(dir.path(), &arch, 4 * 1024 * 1024).expect("a matching tower kind loads");
+}
+
 #[test]
 fn load_rejects_missing_manifest_file() {
     let dir = tempfile_dir();

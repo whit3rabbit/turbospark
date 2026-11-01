@@ -229,6 +229,11 @@ pub fn read_vision_entries(
     vision_bases: &[&str],
     vision: &VisionConfig,
 ) -> Result<VisionRead, Gemma4Error> {
+    // The Gemma 4 tower has its own names and roles; every caller reaches it
+    // through here so no call site can pick the wrong reader.
+    if vision.tower == model_io::VisionTowerKind::Gemma4 {
+        return super::vision_gemma4::read_gemma4_vision_entries(shards, vision_bases, vision);
+    }
     let depth = usize::try_from(vision.depth).map_err(|_| {
         Gemma4Error::Config(format!(
             "vision depth {} cannot be represented as a block count",

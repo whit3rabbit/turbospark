@@ -548,32 +548,43 @@ pub(crate) fn plan(model: &AppState, request: &ChatCompletionRequest) -> Result<
     // Everything above produced `prompt_ids` for a prompt whose placeholders
     // are single tokens; the model sees `merged_tokens` copies of each.
     let images = match (&vision_info, encoded.is_empty()) {
-        (Some(info), false) => {
+        (Some(crate::vision::VisionInfo::Qwen { params, specials }), false) => {
             // Header-only preflight computes the exact grid and expanded
             // allocation budget before decoding any attacker-controlled image.
-            let grids = crate::vision::preflight_all(&encoded, info)?;
+            let grids = crate::vision::preflight_all(&encoded, params)?;
             let spliced = turbospark_vision_io::splice_and_walk(
                 &prompt_ids,
                 &grids,
-                info.specials,
-                info.params.merge_size,
+                *specials,
+                params.merge_size,
             )
             .map_err(|e| format!("cannot place {} image(s): {e}", grids.len()))?;
             prompt_ids = spliced.ids;
-            let required = prompt_ids.len() as u64 + config.max_new_tokens as u64;
-            if required > model.max_context() as u64 {
-                return Err(format!(
-                    "prompt needs {} tokens plus {} new tokens, exceeding the {}-token context",
-                    prompt_ids.len(),
-                    config.max_new_tokens,
-                    model.max_context()
-                ));
-            }
-            let preprocessed = crate::vision::preprocess_all(&encoded, info)?;
-            Some(crate::vision::RequestImages {
+            check_context(&prompt_ids, &config, model.max_context())?;
+            let preprocessed = crate::vision::preprocess_all(&encoded, params)?;
+            Some(crate::vision::RequestImages::Qwen {
                 images: preprocessed,
                 positions: spliced.positions,
             })
+        }
+        // Gemma 4: each rendered `<|image|>` becomes `boi`, one placeholder
+        // per soft token, `eoi`; the soft-token counts come from the headers
+        // before any pixel is decoded, as above.
+        (
+            Some(crate::vision::VisionInfo::Gemma4 {
+                max_soft_tokens,
+                ids,
+            }),
+            false,
+        ) => {
+            let soft = crate::vision::gemma4_preflight_all(&encoded, *max_soft_tokens)?;
+            let (expanded, spans) =
+                turbospark_vision_io::gemma4_expand_image_placeholders(&prompt_ids, *ids, &soft)
+                    .map_err(|e| format!("cannot place {} image(s): {e}", soft.len()))?;
+            prompt_ids = expanded;
+            check_context(&prompt_ids, &config, model.max_context())?;
+            let images = crate::vision::gemma4_preprocess_all(&encoded, *max_soft_tokens)?;
+            Some(crate::vision::RequestImages::Gemma4 { images, spans })
         }
         _ => None,
     };
@@ -584,4 +595,22 @@ pub(crate) fn plan(model: &AppState, request: &ChatCompletionRequest) -> Result<
         images,
         dropped_images,
     })
+}
+
+/// The expanded prompt plus the requested new tokens must fit the context.
+fn check_context(
+    prompt_ids: &[foundation::TokenId],
+    config: &GenerationConfig,
+    max_context: u32,
+) -> Result<(), String> {
+    let required = prompt_ids.len() as u64 + config.max_new_tokens as u64;
+    if required > max_context as u64 {
+        return Err(format!(
+            "prompt needs {} tokens plus {} new tokens, exceeding the {}-token context",
+            prompt_ids.len(),
+            config.max_new_tokens,
+            max_context
+        ));
+    }
+    Ok(())
 }

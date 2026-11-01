@@ -443,11 +443,19 @@ impl RealChatModel {
         // fixed at load, and `preprocess_params` is already final by this
         // point (the budget clamp above is the last thing that can change
         // it).
-        let vision_info = if runner.has_vision_tower() {
+        let vision_info = if let Some(ids) = runner.gemma4_image_ids() {
+            // The KV ring of a Gemma 4 vision install is sized for the
+            // default soft-token budget (`kv_ring_chunk_tokens`), so that is
+            // the budget served.
+            Some(crate::vision::VisionInfo::Gemma4 {
+                max_soft_tokens: turbospark_vision_io::GEMMA4_DEFAULT_SOFT_TOKENS,
+                ids,
+            })
+        } else if runner.has_vision_tower() {
             let v = runner.vision_config();
             preprocess_params
                 .clone()
-                .map(|params| crate::vision::VisionInfo {
+                .map(|params| crate::vision::VisionInfo::Qwen {
                     params,
                     specials: turbospark_vision_io::VisionSpecialIds {
                         vision_start: v.vision_start_token_id as i32,
@@ -509,26 +517,50 @@ impl RealChatModel {
         cancel: CancelFlag<'_>,
         on_progress: &mut dyn FnMut(RawDecodeProgress),
     ) -> Result<RawDecodeResult, RuntimeError> {
-        let Some(params) = self.preprocess_params.clone() else {
-            return Err(RuntimeError::Producer(
-                "this install declares no image preprocessing config; re-stream it with its \
-                 sidecars"
-                    .to_string(),
-            ));
-        };
         let mut runner = self.locked_runner();
-
-        let mut embeddings = Vec::with_capacity(images.images.len());
-        for (i, image) in images.images.iter().enumerate() {
-            embeddings.push(
+        match images {
+            crate::vision::RequestImages::Qwen { images, positions } => {
+                let Some(params) = self.preprocess_params.clone() else {
+                    return Err(RuntimeError::Producer(
+                        "this install declares no image preprocessing config; re-stream it \
+                         with its sidecars"
+                            .to_string(),
+                    ));
+                };
+                let mut embeddings = Vec::with_capacity(images.len());
+                for (i, image) in images.iter().enumerate() {
+                    embeddings.push(
+                        runner
+                            .encode_image(image, &params)
+                            .map_err(|e| RuntimeError::Producer(format!("image {i}: {e}")))?,
+                    );
+                }
                 runner
-                    .encode_image(image, &params)
-                    .map_err(|e| RuntimeError::Producer(format!("image {i}: {e}")))?,
-            );
+                    .set_prompt_vision(&embeddings, positions, prompt_ids.len())
+                    .map_err(|e| RuntimeError::Producer(e.to_string()))?;
+            }
+            crate::vision::RequestImages::Gemma4 { images, spans } => {
+                // Gemma 4 image spans need the chunked driver: one token at a
+                // time cannot give an image row its look-ahead.
+                if !runner.supports_chunked_prefill() {
+                    return Err(RuntimeError::Producer(
+                        "this runner has no chunked prefill, which Gemma 4 image prompts need"
+                            .to_string(),
+                    ));
+                }
+                let mut rows = Vec::with_capacity(images.len());
+                for (i, image) in images.iter().enumerate() {
+                    rows.push(
+                        runner
+                            .encode_image_gemma4(image)
+                            .map_err(|e| RuntimeError::Producer(format!("image {i}: {e}")))?,
+                    );
+                }
+                runner
+                    .set_prompt_vision_gemma4(&rows, spans, prompt_ids.len())
+                    .map_err(|e| RuntimeError::Producer(e.to_string()))?;
+            }
         }
-        runner
-            .set_prompt_vision(&embeddings, &images.positions, prompt_ids.len())
-            .map_err(|e| RuntimeError::Producer(e.to_string()))?;
 
         let result = if runner.supports_chunked_prefill() {
             run_raw_completion_chunked_cancellable(

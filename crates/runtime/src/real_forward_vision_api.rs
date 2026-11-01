@@ -10,7 +10,10 @@ impl RealForwardRunner {
     ///
     /// Asks the ARCH rather than whether one has been opened: the tower is
     /// built lazily, so `self.vision.is_none()` means "no image yet" on an
-    /// install that has one.
+    /// install that has one. Which tower it is, and so which encode path a
+    /// front end takes, is `vision_config().tower`: the qwen tower through
+    /// [`Self::encode_image`], the Gemma 4 one through
+    /// [`Self::encode_image_gemma4`].
     pub fn has_vision_tower(&self) -> bool {
         self.arch.vision.is_active()
     }
@@ -184,6 +187,73 @@ impl RealForwardRunner {
         Ok(())
     }
 
+    /// Hand this runner one prompt's Gemma 4 image rows: one
+    /// `[span.len, text_hidden]` FP16 row set per placeholder span, in
+    /// prompt order, from [`Self::encode_image_gemma4`]. The next
+    /// `prefill_chunk` writes them in place of the placeholders' embeddings
+    /// and runs each span with Gemma 4's bidirectional sliding mask.
+    ///
+    /// Positions are the plain token index (Gemma 4 has no mRoPE). The same
+    /// lifetime and prefix-taint rules as [`Self::set_prompt_vision`]. Every
+    /// refusal a span would hit at prefill time is checked here too, so a
+    /// caller learns before encoding the prompt.
+    pub fn set_prompt_vision_gemma4(
+        &mut self,
+        images: &[Vec<u16>],
+        spans: &[turbospark_vision_io::ImageSpan],
+        prompt_len: usize,
+    ) -> Result<(), RealForwardError> {
+        if self.arch.vision.tower != model_io::VisionTowerKind::Gemma4
+            || self.arch.family != model_io::ModelFamily::Gemma4
+            || self.real.is_none()
+        {
+            return Err(RealForwardError::Unsupported(
+                "set_prompt_vision_gemma4 needs a Gemma 4 trunk with a Gemma 4 vision tower"
+                    .to_string(),
+            ));
+        }
+        if let Some(longest) = spans.iter().map(|s| s.len).max() {
+            if let Some(reason) = self.gemma4_span_refusal(longest) {
+                return Err(RealForwardError::Unsupported(reason));
+            }
+        }
+        let hidden = self.arch.hidden_size as usize;
+        self.prompt_vision = Some(crate::vision::PromptVision::flat(
+            images, spans, prompt_len, hidden,
+        )?);
+        self.kv_prefix.taint();
+        Ok(())
+    }
+
+    /// [`Self::set_prompt_vision_gemma4`] without the tower-kind check, for
+    /// trunk tests on a synthetic Gemma 4 install that has no tower to encode
+    /// with. The placeholder id is the arch's `image_token_id` (0 on an
+    /// install that declares no tower). Every span refusal still applies.
+    #[doc(hidden)]
+    pub fn set_prompt_vision_gemma4_rows_for_tests(
+        &mut self,
+        images: &[Vec<u16>],
+        spans: &[turbospark_vision_io::ImageSpan],
+        prompt_len: usize,
+    ) -> Result<(), RealForwardError> {
+        if self.arch.family != model_io::ModelFamily::Gemma4 || self.real.is_none() {
+            return Err(RealForwardError::Unsupported(
+                "set_prompt_vision_gemma4_rows_for_tests needs a Gemma 4 trunk".to_string(),
+            ));
+        }
+        if let Some(longest) = spans.iter().map(|s| s.len).max() {
+            if let Some(reason) = self.gemma4_span_refusal(longest) {
+                return Err(RealForwardError::Unsupported(reason));
+            }
+        }
+        let hidden = self.arch.hidden_size as usize;
+        self.prompt_vision = Some(crate::vision::PromptVision::flat(
+            images, spans, prompt_len, hidden,
+        )?);
+        self.kv_prefix.taint();
+        Ok(())
+    }
+
     /// Drop the injection map without resetting the KV cache.
     ///
     /// `reset()` already does this and is what an ordinary generation loop
@@ -202,6 +272,7 @@ impl RealForwardRunner {
     }
 
     fn open_vision_tower(&mut self) -> Result<(), RealForwardError> {
+        qwen_tower_only(&self.arch.vision)?;
         if !self.arch.vision.is_active() {
             return Err(RealForwardError::Unsupported(
                 "this install declares no vision tower; repack the checkpoint with its \
@@ -349,5 +420,86 @@ impl RealForwardRunner {
     /// neither of which this method reaches).
     pub fn release_vision_tower(&mut self) {
         self.vision = None;
+        self.gemma4_vision = None;
+    }
+
+    /// The three ids a Gemma 4 image occupies in a prompt, read off the
+    /// install, or `None` when its tower is not a Gemma 4 one.
+    pub fn gemma4_image_ids(&self) -> Option<turbospark_vision_io::Gemma4ImageIds> {
+        let v = &self.arch.vision;
+        (v.is_active() && v.tower == model_io::VisionTowerKind::Gemma4).then_some(
+            turbospark_vision_io::Gemma4ImageIds {
+                boi: v.vision_start_token_id as i32,
+                image: v.image_token_id as i32,
+                eoi: v.vision_end_token_id as i32,
+            },
+        )
+    }
+
+    /// Encode one image through this install's Gemma 4 tower
+    /// (`docs/GEMMA4_VISION_PHASE0.md`): `[soft_tokens, text_hidden]` FP16
+    /// bits, the rows that replace the image placeholder's embeddings.
+    ///
+    /// [`Self::set_prompt_vision_gemma4`] injects the rows and
+    /// `prefill_chunk` runs each image span with the sliding layers'
+    /// bidirectional mask. Sidecars are refused until the sidecar path
+    /// learns this tower's residents.
+    pub fn encode_image_gemma4(
+        &mut self,
+        patches: &turbospark_vision_io::Gemma4Patches,
+    ) -> Result<Vec<u16>, RealForwardError> {
+        if self.arch.vision.tower != model_io::VisionTowerKind::Gemma4
+            || !self.arch.vision.is_active()
+        {
+            return Err(RealForwardError::Unsupported(
+                "this install declares no gemma4 vision tower".to_string(),
+            ));
+        }
+        if self.vision_sidecar_dir.is_some() {
+            return Err(RealForwardError::Unsupported(
+                "a gemma4 vision tower cannot run from a sidecar yet".to_string(),
+            ));
+        }
+        if self.gemma4_vision.is_none() {
+            self.gemma4_vision = Some(crate::vision::gemma4::Gemma4VisionTower::open(
+                &self.install_dir,
+                &self.context,
+                &self.weights,
+                &self.index,
+                &self.arch,
+            )?);
+        }
+        let tower = self.gemma4_vision.as_mut().expect("opened just above");
+        tower.run(&mut self.context, &self.weights, patches)
+    }
+}
+
+/// Refuses the qwen tower's paths (`encode_image`, `set_prompt_vision`'s
+/// tower) on an install whose tower is another kind. `crate::vision`'s
+/// weights tables, kernels and injection are that tower's; running a Gemma 4
+/// install through them would answer about an image the model never saw.
+fn qwen_tower_only(vision: &model_io::VisionConfig) -> Result<(), RealForwardError> {
+    match vision.tower {
+        model_io::VisionTowerKind::QwenSiglip => Ok(()),
+        other => Err(RealForwardError::Unsupported(format!(
+            "this install's vision tower is {}; encode its images with \
+             encode_image_gemma4 and inject them with set_prompt_vision_gemma4",
+            other.as_str()
+        ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_qwen_tower_path_refuses_a_gemma4_tower_by_name() {
+        let mut v = model_io::VisionConfig::NONE;
+        v.depth = 27;
+        assert!(qwen_tower_only(&v).is_ok());
+        v.tower = model_io::VisionTowerKind::Gemma4;
+        let err = qwen_tower_only(&v).unwrap_err().to_string();
+        assert!(err.contains("encode_image_gemma4"), "{err}");
     }
 }

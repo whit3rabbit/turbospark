@@ -1,6 +1,7 @@
 //! Portable vision preprocessing for the qwen3_5 vision tower: image decode,
 //! PIL-bicubic smart resize, normalize, patchify, and the three position
-//! tables the tower and the trunk need.
+//! tables the tower and the trunk need. The Gemma 4 tower's pipeline is
+//! separate and lives in [`gemma4`].
 //!
 //! Nothing here touches Metal, macOS, or a model install. It is plain
 //! arithmetic on `Vec<f32>`, so it builds and tests for a non-macOS target --
@@ -38,6 +39,7 @@
 
 pub mod decode;
 pub mod error;
+pub mod gemma4;
 pub mod mrope;
 pub mod normalize;
 pub mod params;
@@ -53,6 +55,11 @@ pub use decode::{
     decode_image_bytes, decode_image_file, image_dimensions, Rgb8Image, MAX_IMAGE_DIM,
 };
 pub use error::VisionIoError;
+pub use gemma4::{
+    gemma4_expand_image_placeholders, gemma4_preprocess, gemma4_resize_dims,
+    gemma4_soft_tokens_for, Gemma4ImageIds, Gemma4Patches, GEMMA4_DEFAULT_SOFT_TOKENS,
+    GEMMA4_PATCH, GEMMA4_PATCH_DIM, GEMMA4_POOL, GEMMA4_SOFT_TOKEN_BUDGETS,
+};
 pub use mrope::{
     mrope_position_triples, splice_and_walk, splice_image_placeholders, ImageSpan, MropePositions,
     SplicedPrompt, VisionSpecialIds,

@@ -688,6 +688,33 @@ fn vision_info(
         Some(dir) => (Some("sidecar".to_string()), Some(dir.display().to_string())),
         None => (Some("install".to_string()), None),
     };
+    // The Gemma 4 tower has no pixel-budget config: it serves the default
+    // soft-token budget its install's KV ring is sized for, and reports the
+    // resized-image ceiling that budget implies.
+    if runner.gemma4_image_ids().is_some() {
+        let soft = turbospark_vision_io::GEMMA4_DEFAULT_SOFT_TOKENS;
+        let side = turbospark_vision_io::GEMMA4_PATCH;
+        let pool = turbospark_vision_io::GEMMA4_POOL;
+        return if sidecar_dir.is_some() {
+            crate::wire::VisionInfo {
+                active: false,
+                image_token_id: None,
+                reason: Some("a Gemma 4 vision tower cannot run from a sidecar yet".to_string()),
+                source,
+                sidecar_path,
+                max_pixels: None,
+            }
+        } else {
+            crate::wire::VisionInfo {
+                active: true,
+                image_token_id: Some(image_token_id),
+                reason: None,
+                source,
+                sidecar_path,
+                max_pixels: Some(soft * pool * pool * side * side),
+            }
+        };
+    }
     match crate::vision::preprocess_params(
         runner,
         guard,

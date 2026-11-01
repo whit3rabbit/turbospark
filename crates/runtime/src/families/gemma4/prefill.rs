@@ -39,6 +39,11 @@ impl RealForwardRunner {
             .as_mut()
             .expect("real state present")
             .ensure_batched(context, &arch)?;
+        // An image map takes its own driver: each span runs whole, with the
+        // bidirectional sliding mask (`vision_prefill.rs`).
+        if self.prompt_vision.is_some() {
+            return self.prefill_chunk_gemma4_with_images(tokens, start_position, logits);
+        }
 
         // THE DENSE TRUNK: one micro-batch pass with no host readback
         // between the halves -- embed, batched attention, batched INT8 FFN,
@@ -88,7 +93,7 @@ impl RealForwardRunner {
     /// Bit-exactness is the chunk-equals-N-steps contract: this must land on
     /// the same logits as the sequential produce walk, and
     /// `dense_chunked_prefill_matches_all_produce` is the assertion.
-    fn prefill_micro_batch_gemma4_dense(
+    pub(crate) fn prefill_micro_batch_gemma4_dense(
         &mut self,
         tokens: &[i32],
         start_position: usize,
@@ -292,7 +297,7 @@ impl RealForwardRunner {
     /// buffer naming this token's eight expert slots -- are written
     /// outside the command queue, and because the batched pair is what
     /// the route-list kernels were built for.
-    fn prefill_micro_batch_gemma4(
+    pub(crate) fn prefill_micro_batch_gemma4(
         &mut self,
         tokens: &[i32],
         start_position: usize,
@@ -427,84 +432,7 @@ impl RealForwardRunner {
                     m,
                 )?);
             } else {
-                let mut previous_slots: std::collections::HashSet<usize> =
-                    std::collections::HashSet::new();
-                let h1 = self.real.as_ref().expect("real state present").h1.clone();
-                for t in 0..m {
-                    if banks == 1 {
-                        self.retire_routed(&mut pending_routed);
-                    }
-                    let slot = moe::RoutedSlot {
-                        token: t,
-                        bank: t % banks,
-                        protect: if banks == 1 {
-                            std::collections::HashSet::new()
-                        } else {
-                            previous_slots.clone()
-                        },
-                    };
-                    let _shared_pass = if self.shared_cb_overlap {
-                        Some(self.encode_shared_expert_branch(
-                            layer,
-                            hidden,
-                            inter,
-                            use_silu,
-                            &slot,
-                            (&h1, 0),
-                        )?)
-                    } else {
-                        None
-                    };
-                    let routed_pass = self.context.begin_pass_labeled("routed cb");
-                    let used = self.encode_gemma4_layer_routed_moe(
-                        &routed_pass,
-                        layer,
-                        hidden,
-                        inter,
-                        moe_inter,
-                        num_experts,
-                        top_k,
-                        use_silu,
-                        &slot,
-                    )?;
-                    // This token's OWN row, not row 0: `scratch.x` holds
-                    // every token of the micro-batch at its own slot
-                    // offset, so steering token `t` must edit that row and
-                    // capture must copy FROM it (`steering::encode_steering`'s
-                    // doc). Dispatched for every `t` including ones that
-                    // are not the micro-batch's last -- steering because
-                    // every prompt token is steered, and capture because
-                    // the destination is one fixed region per layer that
-                    // later calls simply overwrite, so the token processed
-                    // last (`t == m - 1`) is what survives to be read back
-                    // by `record_pass` below.
-                    let x_off = (t * hidden * 2) as u64;
-                    encode_steering(
-                        &mut self.context,
-                        &routed_pass,
-                        &self.scratch,
-                        self.steering.as_ref(),
-                        layer,
-                        hidden,
-                        1,
-                        x_off,
-                    )?;
-                    encode_resid_capture(
-                        &mut self.context,
-                        &routed_pass,
-                        &self.scratch,
-                        self.resid_capture.as_ref(),
-                        layer,
-                        hidden,
-                        x_off,
-                    )?;
-                    if banks > 1 {
-                        self.retire_routed(&mut pending_routed);
-                    }
-                    debug_assert!(pending_routed.is_none(), "routed pipeline depth is 1");
-                    pending_routed = Some(routed_pass.commit().waiting_on_drop());
-                    previous_slots = used.into_iter().collect();
-                }
+                self.encode_gemma4_routed_half_per_token(layer, m, banks, &mut pending_routed)?;
             }
 
             pass = self.context.begin_pass_labeled("chunk cb1 (attn+router)");
@@ -592,6 +520,107 @@ impl RealForwardRunner {
             )));
         }
         gpu::read_buffer_f16_into(&self.scratch.logits, 0, logits);
+        Ok(())
+    }
+
+    /// The MoE layer's routed half, one token at a time over rows `0..m` of
+    /// `scratch.x`: the default routed path of
+    /// [`Self::prefill_micro_batch_gemma4`], shared with the image-span
+    /// driver (`vision_prefill.rs`), which runs it on 16-row groups of a
+    /// span. Expects the attention-and-router half for the same rows to
+    /// have been committed and waited, because the routing reads the router
+    /// logits back on the host.
+    pub(crate) fn encode_gemma4_routed_half_per_token(
+        &mut self,
+        layer: usize,
+        m: usize,
+        banks: usize,
+        pending_routed: &mut Option<gpu::CommittedPass>,
+    ) -> Result<(), RealForwardError> {
+        let arch = self.arch.clone();
+        let hidden = arch.hidden_size as usize;
+        let inter = arch.intermediate_size as usize;
+        let moe_inter = arch.moe_intermediate_size as u32;
+        let num_experts = arch.num_experts as usize;
+        let top_k = arch.top_k_experts as usize;
+        let use_silu = arch.hidden_activation.contains("silu");
+        let mut previous_slots: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let h1 = self.real.as_ref().expect("real state present").h1.clone();
+        for t in 0..m {
+            if banks == 1 {
+                self.retire_routed(pending_routed);
+            }
+            let slot = moe::RoutedSlot {
+                token: t,
+                bank: t % banks,
+                protect: if banks == 1 {
+                    std::collections::HashSet::new()
+                } else {
+                    previous_slots.clone()
+                },
+            };
+            let _shared_pass = if self.shared_cb_overlap {
+                Some(self.encode_shared_expert_branch(
+                    layer,
+                    hidden,
+                    inter,
+                    use_silu,
+                    &slot,
+                    (&h1, 0),
+                )?)
+            } else {
+                None
+            };
+            let routed_pass = self.context.begin_pass_labeled("routed cb");
+            let used = self.encode_gemma4_layer_routed_moe(
+                &routed_pass,
+                layer,
+                hidden,
+                inter,
+                moe_inter,
+                num_experts,
+                top_k,
+                use_silu,
+                &slot,
+            )?;
+            // This token's OWN row, not row 0: `scratch.x` holds
+            // every token of the micro-batch at its own slot
+            // offset, so steering token `t` must edit that row and
+            // capture must copy FROM it (`steering::encode_steering`'s
+            // doc). Dispatched for every `t` including ones that
+            // are not the micro-batch's last -- steering because
+            // every prompt token is steered, and capture because
+            // the destination is one fixed region per layer that
+            // later calls simply overwrite, so the token processed
+            // last (`t == m - 1`) is what survives to be read back
+            // by `record_pass` below.
+            let x_off = (t * hidden * 2) as u64;
+            encode_steering(
+                &mut self.context,
+                &routed_pass,
+                &self.scratch,
+                self.steering.as_ref(),
+                layer,
+                hidden,
+                1,
+                x_off,
+            )?;
+            encode_resid_capture(
+                &mut self.context,
+                &routed_pass,
+                &self.scratch,
+                self.resid_capture.as_ref(),
+                layer,
+                hidden,
+                x_off,
+            )?;
+            if banks > 1 {
+                self.retire_routed(pending_routed);
+            }
+            debug_assert!(pending_routed.is_none(), "routed pipeline depth is 1");
+            *pending_routed = Some(routed_pass.commit().waiting_on_drop());
+            previous_slots = used.into_iter().collect();
+        }
         Ok(())
     }
 }

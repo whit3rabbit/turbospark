@@ -496,5 +496,12 @@ pub(crate) fn validate_arch(a: &ManifestArch, e: &ArchConfig) -> Result<(), Mode
             .unwrap_or_default(),
         e.vision.deepstack_visual_indexes
     );
+    // The raw string, so an unknown tower is a mismatch here rather than a
+    // silent fallback in `ManifestArch::vision_config`.
+    check!(
+        "visionTower",
+        a.vision_tower.as_deref().unwrap_or("qwen_siglip"),
+        e.vision.tower.as_str()
+    );
     Ok(())
 }

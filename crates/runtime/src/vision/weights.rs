@@ -120,7 +120,7 @@ pub(crate) struct DeepstackMergerWeights {
 /// and the kernels -- which bind `half` -- would read it as a different
 /// number, finite and wrong. This is the mirror of the hazard the name-scoped
 /// gate exists to prevent, pointing the other way.
-fn fp16_view(
+pub(crate) fn fp16_view(
     index: &ResidentIndex,
     name: &str,
     expect_elems: usize,

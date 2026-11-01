@@ -36,7 +36,7 @@ use std::path::Path;
 
 use turbospark_vision_io::{
     decode_image_bytes, decode_image_file, preprocess, PreprocessParams, PreprocessedImage,
-    VisionSpecialIds,
+    Rgb8Image, VisionSpecialIds,
 };
 
 use crate::wire::{ImageSource, WirePart};
@@ -158,32 +158,83 @@ pub(crate) fn prepare(
         .iter()
         .enumerate()
         .map(|(i, part)| {
-            let (label, decoded) = match part.image_source()? {
-                ImageSource::Path(p) => (
-                    p.to_string(),
-                    decode_image_file(Path::new(p)).map_err(|e| format!("image {p}: {e}"))?,
-                ),
-                // A bare payload OR a full `data:<media>;base64,<data>` URL,
-                // both through `turbospark_server::vision`'s own decoder
-                // rather than a second copy of one here.
-                ImageSource::Base64(b) => {
-                    let label = format!("image {}", i + 1);
-                    let bytes = if b.starts_with("data:") {
-                        turbospark_server::vision::decode_data_url(b)
-                    } else {
-                        turbospark_server::vision::base64_decode(b)
-                    }
-                    .map_err(|e| format!("{label}: {e}"))?;
-                    (
-                        label.clone(),
-                        decode_image_bytes(&bytes).map_err(|e| format!("{label}: {e}"))?,
-                    )
-                }
-            };
+            let (label, decoded) = decode_part(part, i)?;
             let image = preprocess(&decoded, params).map_err(|e| format!("{label}: {e}"))?;
             Ok(PreparedImage { label, image })
         })
         .collect()
+}
+
+/// Decode one image part: a path, a bare base64 payload, or a full
+/// `data:<media>;base64,<data>` URL. Returns the label to name it by in an
+/// error, and the pixels.
+fn decode_part(part: &WirePart, i: usize) -> Result<(String, Rgb8Image), String> {
+    match part.image_source()? {
+        ImageSource::Path(p) => Ok((
+            p.to_string(),
+            decode_image_file(Path::new(p)).map_err(|e| format!("image {p}: {e}"))?,
+        )),
+        // Through `turbospark_server::vision`'s own decoder rather than a
+        // second copy of one here.
+        ImageSource::Base64(b) => {
+            let label = format!("image {}", i + 1);
+            let bytes = if b.starts_with("data:") {
+                turbospark_server::vision::decode_data_url(b)
+            } else {
+                turbospark_server::vision::base64_decode(b)
+            }
+            .map_err(|e| format!("{label}: {e}"))?;
+            let decoded = decode_image_bytes(&bytes).map_err(|e| format!("{label}: {e}"))?;
+            Ok((label, decoded))
+        }
+    }
+}
+
+/// The Gemma 4 tower's whole turn: decode and preprocess every part at the
+/// default soft-token budget (the one the install's KV ring is sized for),
+/// expand each rendered `<|image|>` to `boi`, placeholders, `eoi`, encode,
+/// and hand the runner the rows. Returns the expanded ids to prefill.
+///
+/// Everything is decoded before the tower runs, for [`prepare`]'s reason.
+pub(crate) fn attach_gemma4(
+    runner: &mut runtime::RealForwardRunner,
+    rendered: &[i32],
+    parts: &[&WirePart],
+) -> Result<Vec<i32>, String> {
+    let ids = runner
+        .gemma4_image_ids()
+        .ok_or("this install's vision tower is not a Gemma 4 one")?;
+    let budget = turbospark_vision_io::GEMMA4_DEFAULT_SOFT_TOKENS;
+    let mut prepared = Vec::with_capacity(parts.len());
+    for (i, part) in parts.iter().enumerate() {
+        let (label, decoded) = decode_part(part, i)?;
+        let patches = turbospark_vision_io::gemma4_preprocess(&decoded, budget)
+            .map_err(|e| format!("{label}: {e}"))?;
+        prepared.push((label, patches));
+    }
+    let soft: Vec<usize> = prepared.iter().map(|(_, p)| p.soft_tokens()).collect();
+    let (expanded, spans) = turbospark_vision_io::gemma4_expand_image_placeholders(
+        rendered, ids, &soft,
+    )
+    .map_err(|e| {
+        format!(
+            "cannot place {} image(s) in this prompt: {e}\n  the template renders one \
+                     <|image|> per image; check the messages actually carry image parts",
+            parts.len()
+        )
+    })?;
+    let mut rows = Vec::with_capacity(prepared.len());
+    for (label, patches) in &prepared {
+        rows.push(
+            runner
+                .encode_image_gemma4(patches)
+                .map_err(|e| format!("{label}: {e}"))?,
+        );
+    }
+    runner
+        .set_prompt_vision_gemma4(&rows, &spans, expanded.len())
+        .map_err(|e| format!("cannot inject the encoded images: {e}"))?;
+    Ok(expanded)
 }
 
 /// Run the tower over `images` and hand the runner the injection map for

@@ -82,6 +82,7 @@ pub fn tiny_vision_config() -> VisionConfig {
         vision_end_token_id: 248_054,
         image_token_id: 248_056,
         video_token_id: 248_057,
+        tower: model_io::VisionTowerKind::QwenSiglip,
     }
 }
 
