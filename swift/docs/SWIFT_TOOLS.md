@@ -1082,11 +1082,11 @@ requiring a shell process:
   base64 encoded credentials), `api_key` (X-API-Key header), or custom headers.
 - Formatters: `json` (indented pretty-printed JSON), `markdown` (HTML converted
   to Markdown with tag stripping), or `raw`.
-- Containment and SSRF Protection: Every request destination passes through
-  `AppToolSandbox.isPrivateOrMetadataHost(host)`. Requests to loopback (127.0.0.1,
-  localhost, ::1), RFC 1918 private subnets (10.0.0.0/8, 172.16.0.0/12,
-  192.168.0.0/16), link-local addresses (169.254.0.0/16), and cloud metadata
-  endpoints are blocked with a safety refusal.
+- Containment and SSRF Protection: every destination, each redirect hop
+  included, goes through the network policy below. Cloud metadata
+  (169.254.0.0/16 and the named metadata hosts) is always refused. Loopback
+  follows "Allow localhost" (on by default), and RFC 1918, CGNAT, `.local`
+  and other non-public addresses follow "Allow local network" (off).
 - **Residual risk: DNS rebinding sends before it is detected.** The
   destination is validated by a separate lookup, and URLSession resolves
   again to connect. The address the socket really used is checked afterwards
@@ -1099,6 +1099,42 @@ requiring a shell process:
   judged too large and regression-prone for this finding. Side-effecting
   `http_request` calls (POST/PUT/DELETE/PATCH) are the exposed case; they
   already go through the normal approval gate.
+
+### Network policy (Settings > Network)
+
+`AppNetworkPolicy` (`State/AppNetworkPolicy.swift`) is app-wide and a
+CEILING over project permissions. `AppToolPermissionEngine.evaluate` returns
+its deny before any project mode is consulted, Full access included, and its
+ask turns the project ladder's allow back into a hard-gated ask (the Agent
+mode classifier never answers it). A project can only be stricter
+(`web = .deny`). Modes: Ask (default: allowlist runs, other domains ask),
+Allow all (except the blocklist), Block all, Custom (allowlist, blocklist,
+unlisted domains ask or deny, optional GET/HEAD/OPTIONS only). The blocklist
+beats the allowlist; `example.com` covers its subdomains, `*.example.com`
+only them. `AppToolSandbox.hostScope` classifies hosts as metadata, loopback,
+private network or public.
+
+- Approvals are per HOST. The card's "in This Chat" choice records the host
+  in `SessionApprovalStore.allowHost`, never the tool name, so one approved
+  fetch does not open every domain. "Always Allow" and "Always Block" write
+  the host into the policy lists.
+- Executors re-check: `HttpRequestDestinationValidator.validate` refuses a
+  policy deny on every hop, and `AppToolRegistry.execute` refuses a web tool
+  with no URL (a search provider call) under Block all.
+- The local exception never reaches a public name. A URL whose host is
+  public must resolve and connect only to public addresses, with localhost
+  allowed or not, so DNS rebinding is still refused
+  (`AppNetworkPolicy.permitsLocalConnection`).
+- Shell commands and custom tools run under `sandbox-exec` with a Seatbelt
+  profile only in Block all (`Tools/Terminal/ShellNetworkSandbox.swift`).
+  Seatbelt cannot filter by domain, so the other modes leave the shell
+  unconfined, and the pane says so. Never write
+  `(allow network* (local ip "localhost:*"))`: an unbound outbound socket
+  matches it, and `curl http://1.1.1.1` went straight through.
+- Not covered: stdio MCP servers, plugins, hooks, and a process that asks a
+  system daemon over Mach IPC to fetch for it.
+- Subagents have no approval UI, so in Ask mode a subagent's request to a
+  domain that is not allowlisted is refused with the ask reason.
 
 ### Tavily web search and direct answer extraction
 

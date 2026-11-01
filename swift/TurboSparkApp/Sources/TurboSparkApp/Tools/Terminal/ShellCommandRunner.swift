@@ -101,9 +101,11 @@ enum ShellCommandRunner {
         defer { try? FileManager.default.removeItem(atPath: captureFile) }
         let wrapped = wrappedCommand(command, captureFile: captureFile)
 
+        let launch = try ShellNetworkSandbox.launch(
+            executable: URL(fileURLWithPath: "/bin/zsh"), arguments: ["-c", wrapped])
         let result = try await ProcessExecutor.run(
-            executableURL: URL(fileURLWithPath: "/bin/zsh"),
-            arguments: ["-c", wrapped],
+            executableURL: launch.executable,
+            arguments: launch.arguments,
             currentDirectoryURL: startDirectory,
             environment: environment,
             timeoutSeconds: timeoutSeconds,

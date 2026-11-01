@@ -430,6 +430,12 @@ public final class AppModel: ObservableObject {
     @Published public var interactionMode: AppInteractionMode = .chat
     /// Profile-scoped browser automation preferences.
     @Published public var browserSettings = BrowserSettings()
+    /// App-wide network policy for tool calls. Mirrored to
+    /// `AppNetworkPolicyStore` so executors, subagents and the permission
+    /// engine read it without holding an `AppModel`.
+    @Published public var networkPolicy = AppNetworkPolicy() {
+        didSet { AppNetworkPolicyStore.current = networkPolicy }
+    }
     /// Whether the browser side pane currently owns the shared right column.
     @Published public var browserPaneIsOpen = false
     public lazy var browserAutomationCoordinator = AppBrowserAutomationCoordinator(
