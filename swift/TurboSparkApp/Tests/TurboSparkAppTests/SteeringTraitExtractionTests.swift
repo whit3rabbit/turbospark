@@ -4,11 +4,11 @@ import XCTest
 
 @testable import TurboSparkApp
 
-/// The trait-extraction pipeline's pure half: progress parsing, the CLI
-/// locator's candidate order, output naming, and preset assembly. The
-/// process half (the run itself) is the CLI's own real-install gate, the
-/// same split `AppSteeringPolicy` draws for the same reason: assertions
-/// against a live model never run in CI.
+/// The trait-extraction pipeline: progress parsing, the CLI locator's
+/// candidate order, output naming, preset assembly, and the child-process
+/// lifecycle (failure text, fast exit, cancellation) driven by stub shell
+/// scripts. The real extraction is the CLI's own real-install gate: no
+/// assertion against a live model runs in CI.
 final class SteeringTraitExtractionTests: XCTestCase {
     // MARK: progress parsing
 
@@ -188,5 +188,98 @@ final class SteeringTraitExtractionTests: XCTestCase {
             existing: [unrelated])
         XCTAssertNotEqual(preset.id, unrelated.id)
         XCTAssertEqual(preset.name, "Slop reduction")
+    }
+
+    // MARK: process lifecycle
+
+    /// A stub tool: a shell script that ignores the extract arguments.
+    private func stubTool(_ body: String) throws -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("steer-stub-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("turbospark-steer")
+        try Data("#!/bin/sh\n\(body)\n".utf8).write(to: url)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755], ofItemAtPath: url.path)
+        return url
+    }
+
+    private func runExtract(
+        _ controller: SteeringTraitExtractionController, tool: URL
+    ) async throws {
+        try await controller.extract(
+            cliURL: tool,
+            modelPath: "/nonexistent/model",
+            traitID: "refusals",
+            outputURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("steer-stub-out-\(UUID().uuidString).gguf"))
+    }
+
+    /// `consume` drops every complete line from its partial-line buffer, so
+    /// the failure tail must come from the kept lines, and progress lines
+    /// must not crowd the refusal out of it.
+    func testTailKeepsTheRefusalAfterItsLineWasConsumed() {
+        let buffer = ProgressLineBuffer { _ in }
+        buffer.consume(Data("  [positive] capturing prompt 1/24\n".utf8))
+        buffer.consume(Data("error: family Foo does not dispatch steering\n".utf8))
+        let tail = buffer.tail(lines: 6)
+        XCTAssertTrue(tail.contains("does not dispatch steering"), tail)
+        XCTAssertFalse(tail.contains("capturing prompt"), tail)
+    }
+
+    /// A tool that refuses at once must surface ITS message, and the wait
+    /// must not hang on an exit that beat the termination handler.
+    @MainActor
+    func testFastFailingToolReportsItsOwnErrorText() async throws {
+        let tool = try stubTool("echo 'error: refused for a named reason' >&2\nexit 3")
+        let controller = SteeringTraitExtractionController()
+        do {
+            try await runExtract(controller, tool: tool)
+            XCTFail("a non-zero exit must throw")
+        } catch let SteeringTraitError.toolFailed(status, message) {
+            XCTAssertEqual(status, 3)
+            XCTAssertTrue(message.contains("refused for a named reason"), message)
+        }
+    }
+
+    /// Cancelling mid-run terminates the child and throws
+    /// `CancellationError` instead of waiting the run out.
+    @MainActor
+    func testCancellingMidRunTerminatesTheTool() async throws {
+        let tool = try stubTool("exec sleep 30")
+        let controller = SteeringTraitExtractionController()
+        let started = Date()
+        let task = Task { @MainActor in
+            try await self.runExtract(controller, tool: tool)
+        }
+        try await Task.sleep(nanoseconds: 300_000_000)
+        task.cancel()
+        do {
+            try await task.value
+            XCTFail("a cancelled run must throw")
+        } catch is CancellationError {
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(started), 10)
+    }
+
+    /// A task cancelled before `extract` runs launches nothing and does not
+    /// trip the unlaunched-process exception in the cancel handler.
+    @MainActor
+    func testPreCancelledTaskLaunchesNothing() async throws {
+        let marker = FileManager.default.temporaryDirectory
+            .appendingPathComponent("steer-stub-marker-\(UUID().uuidString)")
+        let tool = try stubTool("touch '\(marker.path)'")
+        let controller = SteeringTraitExtractionController()
+        let task = Task { @MainActor in
+            withUnsafeCurrentTask { $0?.cancel() }
+            try await self.runExtract(controller, tool: tool)
+        }
+        do {
+            try await task.value
+            XCTFail("a pre-cancelled run must throw")
+        } catch is CancellationError {
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
     }
 }

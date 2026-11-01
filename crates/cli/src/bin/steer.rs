@@ -28,7 +28,7 @@ const USAGE: &str = "\
 turbospark-steer: trait steering (heretic-style presets, extracted on your machine)
 
 USAGE:
-    turbospark-steer packs
+    turbospark-steer packs [--json]
     turbospark-steer extract --model MODEL --trait ID [OPTIONS]
     turbospark-steer check --model MODEL --trait ID --vector PATH [OPTIONS]
 
@@ -190,7 +190,7 @@ fn text_wrap(text: &str, indent: usize) -> String {
     let mut line_len = 0usize;
     for word in text.split_whitespace() {
         if line_len + word.len() + 1 > width {
-            out.push_str("\n");
+            out.push('\n');
             out.push_str(&" ".repeat(indent));
             line_len = 0;
         } else if !out.is_empty() && !out.ends_with('\n') {

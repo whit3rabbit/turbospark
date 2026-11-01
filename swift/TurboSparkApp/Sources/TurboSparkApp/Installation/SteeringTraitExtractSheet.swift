@@ -73,9 +73,25 @@ struct SteeringTraitExtractSheet: View {
         reports.first { $0.id == selectedID }
     }
 
+    /// The field shows the pack's scale with a dot ("0.3"); a user in a
+    /// comma-decimal locale types "0,3". Both parse.
     private var parsedScale: Double? {
-        guard let value = Double(scaleText), value.isFinite else { return nil }
+        let text = scaleText.trimmingCharacters(in: .whitespaces)
+        let formatter = NumberFormatter()
+        formatter.locale = .current
+        formatter.numberStyle = .decimal
+        guard let value = Double(text) ?? formatter.number(from: text)?.doubleValue,
+            value.isFinite
+        else { return nil }
         return abs(value) <= 2 ? value : nil
+    }
+
+    /// Extraction opens its own copy of the model in a child process, twice
+    /// (one open per side). With the same install resident in the app that
+    /// is two copies at once, which a large model on a unified-memory Mac
+    /// cannot afford, so the run waits for an unload.
+    private var isLoadedHere: Bool {
+        model.session != nil && model.selected?.path == installedModel.path
     }
 
     private var validationError: String? {
@@ -128,7 +144,6 @@ struct SteeringTraitExtractSheet: View {
                 Text("Done", bundle: .module)
             }
             .appAction(.secondary)
-            .keyboardShortcut(.cancelAction)
         }
         .padding(16)
     }
@@ -145,15 +160,37 @@ struct SteeringTraitExtractSheet: View {
                     .foregroundStyle(.appDanger)
                 }
 
+                if isLoadedHere {
+                    HStack(alignment: .top, spacing: 8) {
+                        Label {
+                            Text(
+                                "This model is loaded. Unload it before extracting; extraction opens its own copy of the model.",
+                                bundle: .module)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } icon: {
+                            Image(systemName: "memorychip")
+                        }
+                        .foregroundStyle(AppAttention.color)
+                        Spacer(minLength: 8)
+                        Button {
+                            model.unloadModel()
+                        } label: {
+                            Text("Unload Model", bundle: .module)
+                        }
+                        .appAction(.secondary, size: .small)
+                        .disabled(!model.canUnloadModel)
+                    }
+                }
+
                 traitSection
 
                 GroupBox {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
-                            Text("Ablate strength", bundle: .module)
+                            Text("Strength", bundle: .module)
                             Spacer()
-                            TextField(text: $scaleText, prompt: Text(verbatim: "0.3")) {
-                                Text("Ablate strength", bundle: .module)
+                            TextField(text: $scaleText, prompt: Text(verbatim: scalePlaceholder)) {
+                                Text("Strength", bundle: .module)
                             }
                                 .textFieldStyle(.roundedBorder)
                                 .frame(minWidth: 70, idealWidth: 90, maxWidth: 120)
@@ -212,7 +249,7 @@ struct SteeringTraitExtractSheet: View {
         return Button {
             guard !isRunning else { return }
             selectedID = trait.report.id
-            scaleText = String(format: "%.2g", trait.report.recommendedScale)
+            scaleText = Self.format(trait.report.recommendedScale)
         } label: {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
@@ -227,9 +264,13 @@ struct SteeringTraitExtractSheet: View {
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text(
-                        "\(trait.report.positivePrompts + trait.report.negativePrompts) prompts, recommended \(trait.report.recommendedMode) at \(String(format: "%.2g", trait.report.recommendedScale))",
-                        bundle: .module)
+                    // The mode goes through its own localized menu label;
+                    // the CLI's raw spelling ("ablate") is never shown.
+                    (Text(LocalizedStringKey(trait.report.presetMode.menuLabel), bundle: .module)
+                        + Text(verbatim: " | ")
+                        + Text(
+                            "\(trait.report.positivePrompts + trait.report.negativePrompts) prompts, recommended strength \(Self.format(trait.report.recommendedScale))",
+                            bundle: .module))
                         .themedFont(.tiny)
                         .foregroundStyle(.appSecondary)
                 }
@@ -278,7 +319,7 @@ struct SteeringTraitExtractSheet: View {
                 .appAction(.primary)
                 .disabled(
                     isRunning || validationError != nil || !descriptor.isSteeringReady
-                        || model.generating || model.opening)
+                        || model.generating || model.opening || isLoadedHere)
             }
         }
         .padding(16)
@@ -298,11 +339,13 @@ struct SteeringTraitExtractSheet: View {
                 switch result {
                 case let .success(packs):
                     reports = packs
-                    // Preselect the refusal pack, the trait the steering
-                    // surface exists for, and its recommended strength.
-                    selectedID = packs.first?.id
-                    if let first = packs.first {
-                        scaleText = String(format: "%.2g", first.recommendedScale)
+                    // Preselect the first trait the sheet SHOWS (the refusal
+                    // pack, the trait the steering surface exists for): a
+                    // pack id without app copy is hidden and must not be the
+                    // invisible selection.
+                    if let first = traits.first?.report {
+                        selectedID = first.id
+                        scaleText = Self.format(first.recommendedScale)
                     }
                 case let .failure(error):
                     loadError = (error as? SteeringTraitError)?.errorDescription
@@ -358,6 +401,16 @@ struct SteeringTraitExtractSheet: View {
                     ?? error.localizedDescription
             }
         }
+    }
+
+    private var scalePlaceholder: String {
+        Self.format(selectedReport?.recommendedScale ?? 0.3)
+    }
+
+    /// Two significant digits with a dot, the spelling the CLI and the
+    /// docs use; `parsedScale` accepts the locale's decimal mark too.
+    static func format(_ scale: Double) -> String {
+        String(format: "%.2g", scale)
     }
 
     /// The preset's display name, localized at creation time like every

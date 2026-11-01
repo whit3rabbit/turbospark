@@ -10137,133 +10137,133 @@
         }
       }
     },
-    "%lld prompts, recommended %@ at %@": {
+    "%lld prompts, recommended strength %@": {
       "extractionState": "manual",
       "localizations": {
         "ar": {
           "stringUnit": {
             "state": "translated",
-            "value": "%lld مطالبة، موصى بها %@ عند %@"
+            "value": "%lld مطالبة، الشدة الموصى بها %@"
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "%lld Prompts, empfohlen %@ bei %@"
+            "value": "%lld Prompts, empfohlene Stärke %@"
           }
         },
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "%lld prompts, recommended %@ at %@"
+            "value": "%lld prompts, recommended strength %@"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "%lld avisos, recomendado %@ a %@"
+            "value": "%lld avisos, intensidad recomendada %@"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "%lld invites, recommandé %@ à %@"
+            "value": "%lld invites, intensité recommandée %@"
           }
         },
         "he": {
           "stringUnit": {
             "state": "translated",
-            "value": "%lld פקודות, מומלץ %@ ב-%@"
+            "value": "%lld פקודות, עוצמה מומלצת %@"
           }
         },
         "hi": {
           "stringUnit": {
             "state": "translated",
-            "value": "%lld प्रॉम्प्ट, अनुशंसित %@ पर %@"
+            "value": "%lld प्रॉम्प्ट, अनुशंसित तीव्रता %@"
           }
         },
         "id": {
           "stringUnit": {
             "state": "translated",
-            "value": "%lld prompt, direkomendasikan %@ pada %@"
+            "value": "%lld prompt, kekuatan yang direkomendasikan %@"
           }
         },
         "it": {
           "stringUnit": {
             "state": "translated",
-            "value": "%lld prompt, consigliato %@ a %@"
+            "value": "%lld prompt, intensità consigliata %@"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "%lld 件のプロンプト、推奨は %@ で %@"
+            "value": "%lld 件のプロンプト、推奨強度 %@"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "프롬프트 %lld개, 권장: %@, 강도 %@"
+            "value": "프롬프트 %lld개, 권장 강도 %@"
           }
         },
         "nl": {
           "stringUnit": {
             "state": "translated",
-            "value": "%lld prompts, aanbevolen %@ op %@"
+            "value": "%lld prompts, aanbevolen sterkte %@"
           }
         },
         "pl": {
           "stringUnit": {
             "state": "translated",
-            "value": "%lld podan, zalecane %@ przy %@"
+            "value": "%lld podan, zalecana siła %@"
           }
         },
         "pt-BR": {
           "stringUnit": {
             "state": "translated",
-            "value": "%lld prompts, recomendado %@ a %@"
+            "value": "%lld prompts, intensidade recomendada %@"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Запросов: %lld, рекомендовано %@ при %@"
+            "value": "Запросов: %lld, рекомендуемая сила %@"
           }
         },
         "sv": {
           "stringUnit": {
             "state": "translated",
-            "value": "%lld prompter, rekommenderad %@ vid %@"
+            "value": "%lld prompter, rekommenderad styrka %@"
           }
         },
         "tr": {
           "stringUnit": {
             "state": "translated",
-            "value": "%lld komut, önerilen %@, değer %@"
+            "value": "%lld komut, önerilen güç %@"
           }
         },
         "uk": {
           "stringUnit": {
             "state": "translated",
-            "value": "Запитів: %lld, рекомендовано %@ при %@"
+            "value": "Запитів: %lld, рекомендована сила %@"
           }
         },
         "vi": {
           "stringUnit": {
             "state": "translated",
-            "value": "%lld prompt, khuyến nghị %@ tại %@"
+            "value": "%lld prompt, cường độ khuyến nghị %@"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "%lld 个提示，建议%@，强度%@"
+            "value": "%lld 个提示，建议强度%@"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "%lld 個提示，建議%@，強度%@"
+            "value": "%lld 個提示，建議強度%@"
           }
         }
       }
@@ -481343,6 +481343,137 @@
           "stringUnit": {
             "state": "translated",
             "value": "這部 Mac 不需要測試速度。"
+          }
+        }
+      }
+    },
+    "This model is loaded. Unload it before extracting; extraction opens its own copy of the model.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "هذا النموذج محمّل. أفرغه قبل الاستخراج، إذ يفتح الاستخراج نسخته الخاصة من النموذج."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dieses Modell ist geladen. Entlade es vor dem Extrahieren; die Extraktion öffnet eine eigene Kopie des Modells."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This model is loaded. Unload it before extracting; extraction opens its own copy of the model."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Este modelo está cargado. Descárgalo antes de extraer; la extracción abre su propia copia del modelo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ce modèle est chargé. Déchargez-le avant l'extraction ; l'extraction ouvre sa propre copie du modèle."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "המודל הזה טעון. יש לפרוק אותו לפני החילוץ; החילוץ פותח עותק משלו של המודל."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "यह मॉडल लोड है। निकालने से पहले इसे अनलोड करें; निष्कर्षण मॉडल की अपनी अलग प्रति खोलता है।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model ini sedang dimuat. Lepaskan model sebelum mengekstrak; ekstraksi membuka salinan model sendiri."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Questo modello è caricato. Scaricalo prima dell'estrazione; l'estrazione apre una propria copia del modello."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このモデルは読み込まれています。抽出の前にアンロードしてください。抽出ではモデルの別コピーを開きます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 모델이 로드되어 있습니다. 추출하기 전에 언로드하세요. 추출은 모델의 별도 사본을 엽니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dit model is geladen. Ontlaad het voordat je extraheert; de extractie opent een eigen kopie van het model."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ten model jest załadowany. Wyładuj go przed wyodrębnianiem; wyodrębnianie otwiera własną kopię modelu."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Este modelo está carregado. Descarregue-o antes de extrair; a extração abre sua própria cópia do modelo."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Эта модель загружена. Выгрузите её перед извлечением: извлечение открывает собственную копию модели."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Den här modellen är inläst. Ta ur den innan du extraherar; extraheringen öppnar en egen kopia av modellen."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu model yüklü. Çıkarmadan önce kaldırın; çıkarma işlemi modelin kendi kopyasını açar."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Цю модель завантажено. Вивантажте її перед видобуванням: видобування відкриває власну копію моделі."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mô hình này đang được tải. Hãy gỡ tải trước khi trích xuất; quá trình trích xuất mở bản sao riêng của mô hình."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此模型已加载。请先卸载再提取；提取会打开模型的独立副本。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此模型已載入。請先卸載再擷取；擷取會開啟模型的獨立副本。"
           }
         }
       }

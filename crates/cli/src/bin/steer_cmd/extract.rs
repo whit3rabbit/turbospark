@@ -56,6 +56,58 @@ fn apply_limit(prompts: Vec<String>, limit: Option<usize>) -> Vec<String> {
     }
 }
 
+/// Prefix of the per-run capture directory under the system temp dir.
+const CAPTURE_DIR_PREFIX: &str = "turbospark-steer-extract-";
+
+/// A run's capture directory, removed on every exit path that unwinds.
+/// SIGTERM (the app's cancel) skips Drop, which is what
+/// [`sweep_stale_capture_dirs`] is for.
+struct CaptureDir(PathBuf);
+
+impl Drop for CaptureDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// Remove capture directories a killed run left behind. Age-based rather
+/// than pid-based: no extraction runs for a day, and a liveness probe would
+/// need `unsafe` outside the documented boundaries.
+fn sweep_stale_capture_dirs(temp_root: &Path, max_age: std::time::Duration) {
+    let Ok(entries) = std::fs::read_dir(temp_root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        if !name.to_string_lossy().starts_with(CAPTURE_DIR_PREFIX) {
+            continue;
+        }
+        let stale = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age > max_age);
+        if stale {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
+/// Write `bytes` to `out` through a sibling `.partial` file and a rename,
+/// so a cancelled or failed run never leaves a truncated vector at a path
+/// an existing preset already points at.
+fn write_atomically(out: &Path, bytes: &[u8]) -> Result<(), String> {
+    let mut partial = out.as_os_str().to_owned();
+    partial.push(".partial");
+    let partial = PathBuf::from(partial);
+    std::fs::write(&partial, bytes).map_err(|e| format!("writing {}: {e}", partial.display()))?;
+    std::fs::rename(&partial, out).map_err(|e| {
+        let _ = std::fs::remove_file(&partial);
+        format!("moving {} into place: {e}", out.display())
+    })
+}
+
 pub fn run(opts: ExtractOptions) -> Result<(), String> {
     let pack = match &opts.trait_id {
         Some(id) => Some(packs::by_id(id)?),
@@ -97,11 +149,13 @@ pub fn run(opts: ExtractOptions) -> Result<(), String> {
         model.max_context
     );
 
-    // One temp dir for both sides' capture files; removed at the end. The
-    // capture writes the header beside an .f32 sidecar by replacing the
-    // extension, so the name must carry one.
-    let temp = std::env::temp_dir().join(format!(
-        "turbospark-steer-extract-{}-{}",
+    // One temp dir for both sides' capture files, removed by the guard on
+    // every return. The capture writes the header beside an .f32 sidecar by
+    // replacing the extension, so the name must carry one.
+    let temp_root = std::env::temp_dir();
+    sweep_stale_capture_dirs(&temp_root, std::time::Duration::from_secs(24 * 60 * 60));
+    let temp = temp_root.join(format!(
+        "{CAPTURE_DIR_PREFIX}{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -109,19 +163,12 @@ pub fn run(opts: ExtractOptions) -> Result<(), String> {
             .as_nanos()
     ));
     std::fs::create_dir_all(&temp).map_err(|e| format!("temp dir {}: {e}", temp.display()))?;
-    let pos_capture = temp.join("positive.json");
-    let neg_capture = temp.join("negative.json");
+    let temp = CaptureDir(temp);
+    let pos_capture = temp.0.join("positive.json");
+    let neg_capture = temp.0.join("negative.json");
 
-    let pos_set = walk::capture_side(&model, system_pos, &positive, &pos_capture, "positive")
-        .map_err(|e| {
-            let _ = std::fs::remove_dir_all(&temp);
-            e
-        })?;
-    let neg_set = walk::capture_side(&model, system_neg, &negative, &neg_capture, "negative")
-        .map_err(|e| {
-            let _ = std::fs::remove_dir_all(&temp);
-            e
-        })?;
+    let pos_set = walk::capture_side(&model, system_pos, &positive, &pos_capture, "positive")?;
+    let neg_set = walk::capture_side(&model, system_neg, &negative, &neg_capture, "negative")?;
     // Sanity line: the capture keys on the last prompt token, so positions
     // vary with prompt length. A constant position across every prompt of
     // one side would mean the corpus itself is one repeated prompt, which
@@ -142,7 +189,6 @@ pub fn run(opts: ExtractOptions) -> Result<(), String> {
     let stats = layer_stats(&pos_set, &neg_set, &directions)?;
     let all_zero = stats.iter().all(|s| s.norm <= 0.0);
     if all_zero {
-        let _ = std::fs::remove_dir_all(&temp);
         return Err(
             "every layer's direction is zero; the two prompt sets produced identical \
              residuals, which means the contrast did not separate anything on this \
@@ -176,8 +222,8 @@ pub fn run(opts: ExtractOptions) -> Result<(), String> {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("creating {}: {e}", parent.display()))?;
     }
-    std::fs::write(&out, &bytes).map_err(|e| format!("writing {}: {e}", out.display()))?;
-    let _ = std::fs::remove_dir_all(&temp);
+    write_atomically(&out, &bytes)?;
+    drop(temp);
 
     let blocks = layers_map.len();
     println!(
@@ -269,4 +315,63 @@ fn print_diagnostics(stats: &[compute::steering_extract::LayerStats], alpha_budg
          1.1x and 8.9x with the relationship INVERTED. Both columns rank layers; \
          neither predicts a strength."
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "turbospark-steer-unit-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        dir
+    }
+
+    /// The rename replaces an existing vector whole and leaves no
+    /// `.partial` behind.
+    #[test]
+    fn atomic_write_replaces_and_leaves_no_partial() {
+        let dir = scratch("atomic");
+        let out = dir.join("model-refusals.gguf");
+        std::fs::write(&out, b"old vector bytes, longer than the new").expect("seed");
+        write_atomically(&out, b"new").expect("write");
+        assert_eq!(std::fs::read(&out).expect("read"), b"new");
+        assert!(!dir.join("model-refusals.gguf.partial").exists());
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    /// The guard removes its directory when dropped on an error path.
+    #[test]
+    fn capture_dir_guard_removes_on_drop() {
+        let dir = scratch("guard");
+        std::fs::write(dir.join("positive.f32"), b"x").expect("seed");
+        drop(CaptureDir(dir.clone()));
+        assert!(!dir.exists());
+    }
+
+    /// The sweep removes only prefixed directories older than the cutoff.
+    #[test]
+    fn sweep_removes_only_old_prefixed_dirs() {
+        let root = scratch("sweep");
+        let ours = root.join(format!("{CAPTURE_DIR_PREFIX}1-2"));
+        let other = root.join("unrelated-dir");
+        std::fs::create_dir_all(&ours).expect("mkdir");
+        std::fs::create_dir_all(&other).expect("mkdir");
+        // Fresh directories survive a one-day cutoff...
+        sweep_stale_capture_dirs(&root, std::time::Duration::from_secs(86_400));
+        assert!(ours.exists());
+        // ...and a zero cutoff removes the prefixed one only.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        sweep_stale_capture_dirs(&root, std::time::Duration::ZERO);
+        assert!(!ours.exists());
+        assert!(other.exists());
+        std::fs::remove_dir_all(&root).expect("cleanup");
+    }
 }

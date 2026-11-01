@@ -656,7 +656,7 @@ fn main() -> ExitCode {
         Cmd::Clone(p) => peer("turbospark-clone", &models::rewrite_model_flags(&p.args)),
         Cmd::Ocr(p) => peer("turbospark-ocr", &models::rewrite_model_flags(&p.args)),
         Cmd::Humanize(p) => handle_humanize(&p.args),
-        Cmd::Steer(p) => peer("turbospark-steer", &p.args),
+        Cmd::Steer(p) => peer("turbospark-steer", &models::rewrite_model_flags(&p.args)),
         Cmd::Bench(p) => peer("turbospark-bench", &p.args),
         Cmd::Model(p) => peer("turbospark-model", &p.args),
         Cmd::Completions { shell } => {

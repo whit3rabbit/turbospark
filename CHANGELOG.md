@@ -31,6 +31,15 @@ when this file gets updated relative to the version bump and the tag.
   `tinyllama` install: extraction, steered open
   (`ablate at alpha 0.3 over 21 of 22 layers`), and a live null-controlled
   edit.
+- macOS app: the model detail pane's Steering card can extract a trait
+  direction from the installed model (Extract from this model). The sheet
+  runs the bundled `turbospark-steer` as a child process, then creates or
+  updates the preset for that file, selected and enabled. It requires the
+  model to be unloaded first, since extraction opens its own copy.
+  Cancelling terminates the child and leaves any previous vector intact
+  (the write goes through a `.partial` file and a rename). `extract` now
+  refuses a capture with fewer snapshots than prompts and cleans its temp
+  capture directory on every exit path.
 - macOS app: an Expert Residency setting (Auto, Streamed, Mapped) in Engine
   settings, with Cache Slots beside it (previously only in the Inspector) and
   a Resolved row. Mapped is sent only to models whose open would take it, and

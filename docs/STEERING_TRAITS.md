@@ -52,9 +52,37 @@ turbospark steer check --model tinyllama --trait refusals \
 `--limit N` truncates each side (paired designs keep their pairing);
 `--positive-file`/`--negative-file` replace the pack corpora with your own
 (one prompt per line, minimum 4 each) while keeping the pack's markers;
-`--system-file` sets a system prompt for the check turns. The steering
-knobs are the runtime's own (`--steering-mode`, `--steering-scale`,
-`--steering-layers` grammar; `docs/OBLITERATION.md` has the table).
+`--system-file` sets a system prompt for the check turns. `check` takes
+`--mode`, `--scale`, and `--layers START:END`, which mean what the runtime's
+`--steering-mode`, `--steering-scale`, and `--steering-layers` mean
+(`docs/OBLITERATION.md` has the table).
+
+## In the app
+
+Model detail pane > Steering card > **Extract from this model** opens a
+sheet listing the packs. Extract runs `turbospark-steer extract` as a child
+process (the binary ships beside the app executable), writes
+`<profile>/steering-vectors/<alias>-<trait>.gguf`, and creates or updates
+the preset that points at that file, selected and enabled. The card's
+Reload prompt applies it. Rules the sheet enforces:
+
+- The model must not be loaded in the app. The child opens its own copy,
+  once per side, so a resident model would be in memory twice. The sheet
+  offers Unload.
+- Cancel terminates the child. The vector is written to a `.partial` file
+  and renamed, so a cancelled re-extraction keeps the previous vector
+  intact. A killed run's capture directory in the temp dir is swept by the
+  next run after a day.
+- A trait id the app has no localized copy for is hidden.
+
+## Refusals
+
+`extract` refuses rather than writing a misleading vector when the family
+does not dispatch steering, when a capture holds fewer snapshots than its
+side has prompts (the capture keys on the last prompt token's non-prefill
+pass; a family whose generation loop prefills the whole prompt takes no
+such pass), when a rendered prompt reaches the capture window, and when
+every layer's direction is zero.
 
 ## The five packs
 

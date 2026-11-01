@@ -187,6 +187,9 @@ final class SteeringTraitExtractionController: ObservableObject {
         traitID: String,
         outputURL: URL
     ) async throws {
+        // A task cancelled before it got here (the sheet dismissed while the
+        // Task was still queued) must not launch anything.
+        try Task.checkCancellation()
         let process = Process()
         process.executableURL = cliURL
         process.arguments = [
@@ -199,7 +202,12 @@ final class SteeringTraitExtractionController: ObservableObject {
         // Progress lines and early refusals arrive on stderr; the final
         // diagnostics table goes to stdout and is not needed here.
         process.standardError = stderr
-        process.standardOutput = Pipe()
+        // Discarded rather than an unread Pipe, which would stall the child
+        // once its diagnostics table filled the pipe buffer.
+        process.standardOutput = FileHandle.nullDevice
+        // Installed BEFORE run: a tool that refuses in milliseconds can exit
+        // before a handler set afterwards, and the wait would never resume.
+        let exit = ProcessExit(process)
         runningProcess = process
         latest = [:]
         phase = .capturing(fraction: nil)
@@ -221,26 +229,31 @@ final class SteeringTraitExtractionController: ObservableObject {
             runningProcess = nil
         }
 
-        let statusBox = ExitStatusBox()
         try await withTaskCancellationHandler {
             try process.run()
-            let status = await statusBox.wait(process)
+            // Cancelled between the check above and the launch: onCancel saw
+            // a process that was not running yet, so stop it here.
+            if Task.isCancelled { process.terminate() }
+            let status = await exit.status()
             guard !Task.isCancelled else { throw CancellationError() }
             guard status == 0 else {
                 let message = buffer.tail(lines: 6)
                 throw SteeringTraitError.toolFailed(status: status, message: message)
             }
         } onCancel: {
-            // Safe to call from any thread; terminates the child so the
-            // awaited exit completes and the cancellation error surfaces.
-            process.terminate()
+            // terminate() on a process that never launched raises an
+            // Objective-C exception, and onCancel runs immediately for a task
+            // that is already cancelled.
+            if process.isRunning { process.terminate() }
         }
         phase = .finishing
     }
 
     /// Stops a live run. Called from the sheet's dismiss path.
     func cancel() {
-        runningProcess?.terminate()
+        if let runningProcess, runningProcess.isRunning {
+            runningProcess.terminate()
+        }
         runningProcess = nil
         phase = .idle
     }
@@ -256,9 +269,15 @@ final class SteeringTraitExtractionController: ObservableObject {
 /// Line-splitting stderr accumulator. Lock-protected because the
 /// readability handler runs off the main actor; `onLine` hops to the
 /// caller's actor.
-private final class ProgressLineBuffer: @unchecked Sendable {
+final class ProgressLineBuffer: @unchecked Sendable {
     private let lock = NSLock()
+    /// The partial line not yet terminated by a newline.
     private var data = Data()
+    /// The last complete non-progress lines, kept because `consume` drops
+    /// every complete line from `data`: without them a failure would
+    /// report a bare exit status instead of the tool's refusal.
+    private var recent: [String] = []
+    private static let recentLimit = 20
     private let onLine: @Sendable (SteeringTraitProgress.Snapshot) -> Void
 
     init(onLine: @escaping @Sendable (SteeringTraitProgress.Snapshot) -> Void) {
@@ -267,6 +286,7 @@ private final class ProgressLineBuffer: @unchecked Sendable {
 
     func consume(_ chunk: Data) {
         var lines: [String] = []
+        var snapshots: [SteeringTraitProgress.Snapshot] = []
         lock.lock()
         data.append(chunk)
         while let newline = data.firstIndex(of: UInt8(ascii: "\n")) {
@@ -274,11 +294,19 @@ private final class ProgressLineBuffer: @unchecked Sendable {
             data.removeSubrange(...newline)
             lines.append(line)
         }
-        lock.unlock()
         for line in lines {
             if let snapshot = SteeringTraitProgress.parse(line) {
-                onLine(snapshot)
+                snapshots.append(snapshot)
+            } else if !line.trimmingCharacters(in: .whitespaces).isEmpty {
+                recent.append(line)
             }
+        }
+        if recent.count > Self.recentLimit {
+            recent.removeFirst(recent.count - Self.recentLimit)
+        }
+        lock.unlock()
+        for snapshot in snapshots {
+            onLine(snapshot)
         }
     }
 
@@ -287,21 +315,43 @@ private final class ProgressLineBuffer: @unchecked Sendable {
     func tail(lines count: Int) -> String {
         lock.lock()
         defer { lock.unlock() }
-        let text = String(decoding: data, as: UTF8.self)
-        return text
-            .split(separator: "\n")
-            .suffix(count)
-            .joined(separator: "\n")
+        var lines = recent
+        let partial = String(decoding: data, as: UTF8.self)
+        if !partial.trimmingCharacters(in: .whitespaces).isEmpty {
+            lines.append(partial)
+        }
+        return lines.suffix(count).joined(separator: "\n")
     }
 }
 
-/// One-shot exit waiter. `terminationHandler` fires once, on a private
-/// queue, which is exactly one continuation resume.
-private final class ExitStatusBox: @unchecked Sendable {
-    func wait(_ process: Process) async -> Int32 {
+/// One-shot exit waiter, attached at init so it must be created before
+/// `run()`. The exit and the wait can arrive in either order; the lock makes
+/// whichever comes second do the single continuation resume.
+private final class ProcessExit: @unchecked Sendable {
+    private let lock = NSLock()
+    private var exitStatus: Int32?
+    private var waiter: CheckedContinuation<Int32, Never>?
+
+    init(_ process: Process) {
+        process.terminationHandler = { [self] process in
+            lock.lock()
+            exitStatus = process.terminationStatus
+            let pending = waiter
+            waiter = nil
+            lock.unlock()
+            pending?.resume(returning: process.terminationStatus)
+        }
+    }
+
+    func status() async -> Int32 {
         await withCheckedContinuation { continuation in
-            process.terminationHandler = { process in
-                continuation.resume(returning: process.terminationStatus)
+            lock.lock()
+            if let exitStatus {
+                lock.unlock()
+                continuation.resume(returning: exitStatus)
+            } else {
+                waiter = continuation
+                lock.unlock()
             }
         }
     }
