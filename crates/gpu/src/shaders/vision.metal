@@ -413,6 +413,171 @@ void vision_matmul_fp16(
 }
 
 // ----------------------------------------------------------------------------
+// The same GEMM on the matrix units (`simdgroup_matrix`), the tower's default.
+// `vision_matmul_fp16` above stays as the `TURBOSPARK_VISION_MMA=0` arm.
+//
+// One threadgroup of 4 simdgroups (128 threads) owns a 64 x 64 output tile;
+// each simdgroup owns a 32 x 32 quarter as 4 x 4 FP32 8x8 accumulators. Each
+// 32-wide K step stages a [64 rows][32 k] slice of `a` and of `b` in
+// threadgroup memory, both row-major by their own leading dimension, so `b`
+// is read `[n, k]` exactly as above and the multiply loads it TRANSPOSED.
+//
+// Out-of-range rows, outputs and K tail are zero-filled in the staging tiles,
+// so any (m, k, n) is legal. The fused tower shapes leave K tails
+// (fc2's k = 4304 is 134.5 steps of 32), which is what `FC_VISION_GEMM_K_ALIGNED`
+// specializes away: false keeps the per-element K check in every load and
+// skips the 8-wide sub-steps past K. It is in the pipeline cache key
+// (`vision.rs`).
+//
+// EXACTNESS CLASS: not bit-identical to `vision_matmul_fp16` (the hardware
+// reduces each 8-wide K block, then the blocks run in K order), but an output's
+// bits depend only on its own row of `a`, its own row of `b` and K, never on M,
+// N or where the tile sits. `vision_parity.rs` pins that.
+// ----------------------------------------------------------------------------
+constant bool FC_VISION_GEMM_K_ALIGNED [[function_constant(110)]];
+
+constant constexpr uint kGemmBM = 64;
+constant constexpr uint kGemmBN = 64;
+constant constexpr uint kGemmBK = 32;
+// Padded row stride of a staging tile, in halves. 8 extra halves keep the
+// transposed 8x8 loads of `b` off one bank, and 40 * 2 bytes keeps every row
+// 8-byte aligned for the half4 stores below.
+constant constexpr uint kGemmLd = kGemmBK + 8;
+constant constexpr uint kGemmThreads = 128;
+
+// Lane -> (row, first column) of the two elements a lane holds in an 8x8
+// simdgroup_matrix (MLX steel's layout, also `mma8_frag_coord`).
+inline uint2 vision_gemm_frag_coord(uint lane) {
+    const uint q = lane >> 2;
+    return uint2((q & 4u) | ((lane >> 1) & 3u), ((q & 2u) << 1) | ((lane & 1u) << 1));
+}
+
+// Stage rows [row0, row0 + 64) x k [k0, k0 + 32) of a row-major [rows, K]
+// matrix into `dst` ([64][kGemmLd]). Eight threads per row, four halves each.
+// `full` is the caller's proof that the whole slice is in range.
+inline void vision_gemm_stage(
+    threadgroup half* dst,
+    device const half* src,
+    uint row0,
+    uint rows,
+    uint k0,
+    uint K,
+    uint tid,
+    bool full
+) {
+    const uint c = (tid & 7u) * 4u;
+    for (uint r = tid >> 3; r < kGemmBM; r += kGemmThreads / 8u) {
+        threadgroup half* d = dst + r * kGemmLd + c;
+        const uint gr = row0 + r;
+        const uint gk = k0 + c;
+        if (full) {
+            // packed_half4 has half's 2-byte alignment, so this is legal at
+            // any caller offset and row stride.
+            const packed_half4 v =
+                *(device const packed_half4*)(src + uint64_t(gr) * K + gk);
+            *(threadgroup half4*)d = half4(v);
+        } else {
+            device const half* s = src + uint64_t(gr) * K;
+            half4 v = half4(0.0h);
+            if (gr < rows) {
+                for (uint e = 0; e < 4u; ++e) {
+                    if (gk + e < K) { v[e] = s[gk + e]; }
+                }
+            }
+            *(threadgroup half4*)d = v;
+        }
+    }
+}
+
+[[kernel, max_total_threads_per_threadgroup(128)]]
+void vision_matmul_fp16_mma(
+    device const half*  a         [[buffer(0)]],
+    device const half*  b         [[buffer(1)]],
+    device const half*  bias      [[buffer(2)]],
+    device half*        out       [[buffer(3)]],
+    constant uint&      k_dim     [[buffer(4)]],
+    constant uint&      n_dim     [[buffer(5)]],
+    constant uint&      has_bias  [[buffer(6)]],
+    constant uint&      m_dim     [[buffer(7)]],
+    uint2 tg            [[threadgroup_position_in_grid]],
+    uint2 lid2          [[thread_position_in_threadgroup]],
+    uint  simd_lane_id  [[thread_index_in_simdgroup]],
+    uint  simd_group_id [[simdgroup_index_in_threadgroup]]
+) {
+    const uint tid = lid2.x;
+    const uint K = k_dim;
+    const uint N = n_dim;
+    const uint M = m_dim;
+    const uint n0 = tg.x * kGemmBN;
+    const uint m0 = tg.y * kGemmBM;
+    const uint sg_r = simd_group_id >> 1;
+    const uint sg_c = simd_group_id & 1u;
+
+    threadgroup half as[kGemmBM * kGemmLd];
+    threadgroup half bs[kGemmBN * kGemmLd];
+
+    simdgroup_float8x8 acc[4][4];
+    for (uint i = 0; i < 4u; ++i) {
+        for (uint j = 0; j < 4u; ++j) {
+            acc[i][j] = make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
+        }
+    }
+
+    const bool rows_full = m0 + kGemmBM <= M;
+    const bool cols_full = n0 + kGemmBN <= N;
+    threadgroup const half* a_sg = as + (sg_r * 32u) * kGemmLd;
+    threadgroup const half* b_sg = bs + (sg_c * 32u) * kGemmLd;
+
+    for (uint k0 = 0; k0 < K; k0 += kGemmBK) {
+        const bool k_full = FC_VISION_GEMM_K_ALIGNED || k0 + kGemmBK <= K;
+        vision_gemm_stage(as, a, m0, M, k0, K, tid, rows_full && k_full);
+        vision_gemm_stage(bs, b, n0, N, k0, K, tid, cols_full && k_full);
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        for (uint kk = 0; kk < kGemmBK; kk += 8u) {
+            // A sub-step wholly past K would add exact zeros; skipping it
+            // changes no bits and saves the K tail's work.
+            if (!FC_VISION_GEMM_K_ALIGNED && k0 + kk >= K) { break; }
+            simdgroup_half8x8 af[4];
+            simdgroup_half8x8 bf[4];
+            for (uint i = 0; i < 4u; ++i) {
+                simdgroup_load(af[i], a_sg + (i * 8u) * kGemmLd + kk, kGemmLd);
+            }
+            for (uint j = 0; j < 4u; ++j) {
+                simdgroup_load(bf[j], b_sg + (j * 8u) * kGemmLd + kk, kGemmLd,
+                               ulong2(0, 0), true);
+            }
+            for (uint i = 0; i < 4u; ++i) {
+                for (uint j = 0; j < 4u; ++j) {
+                    simdgroup_multiply_accumulate(acc[i][j], af[i], bf[j], acc[i][j]);
+                }
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    // Straight from the accumulators to `out`: each lane owns two adjacent
+    // outputs of every 8x8 tile, bounds-checked, bias added in FP32 and
+    // narrowed once, as `vision_matmul_fp16` does.
+    const uint2 fc = vision_gemm_frag_coord(simd_lane_id);
+    for (uint i = 0; i < 4u; ++i) {
+        const uint r = m0 + sg_r * 32u + i * 8u + fc.x;
+        if (r >= M) { continue; }
+        device half* orow = out + uint64_t(r) * N;
+        for (uint j = 0; j < 4u; ++j) {
+            const uint c = n0 + sg_c * 32u + j * 8u + fc.y;
+            for (uint e = 0; e < 2u; ++e) {
+                if (c + e < N) {
+                    const float v = acc[i][j].thread_elements()[e];
+                    orow[c + e] =
+                        half(v + (has_bias != 0 ? float(bias[c + e]) : 0.0f));
+                }
+            }
+        }
+    }
+}
+
+// ----------------------------------------------------------------------------
 // Residual add, `y += x`, in FP16 storage with an FP32 intermediate.
 //
 // Its own kernel rather than a fused tail on the matmul: the block adds the

@@ -19,8 +19,8 @@ use turbospark_compute::vision::{
 };
 use turbospark_gpu::{
     encode_vision_attention, encode_vision_gelu, encode_vision_layer_norm, encode_vision_matmul,
-    encode_vision_residual_add, encode_vision_rope_2d, GeluKind, MetalContext,
-    MAX_ATTENTION_HEAD_DIM,
+    encode_vision_matmul_with, encode_vision_residual_add, encode_vision_rope_2d, GeluKind,
+    MetalContext, VisionMatmulKernel, MAX_ATTENTION_HEAD_DIM,
 };
 
 // ------------------------------------------------------------------ helpers
@@ -710,6 +710,284 @@ fn matmul_runs_at_every_real_projection_shape() {
             gpu[at],
             cpu[at]
         );
+    }
+}
+
+// ------------------------------------------------- matmul: matrix-unit GEMM
+
+const BOTH_KERNELS: [VisionMatmulKernel; 2] =
+    [VisionMatmulKernel::Mma, VisionMatmulKernel::PerOutput];
+
+/// One matmul on `kernel`, returning the raw FP16 output bits.
+#[allow(clippy::too_many_arguments)]
+fn run_matmul_bits(
+    context: &mut MetalContext,
+    kernel: VisionMatmulKernel,
+    a: &[f16],
+    b: &[f16],
+    bias: Option<&[f16]>,
+    m: usize,
+    k: usize,
+    n: usize,
+) -> Vec<u16> {
+    let a_buf = context.new_buffer_with_data(&to_le(a));
+    let b_buf = context.new_buffer_with_data(&to_le(b));
+    let bias_buf = bias.map(|v| context.new_buffer_with_data(&to_le(v)));
+    let out_buf = context.new_output_buffer((m * n * 2) as u64);
+    let pass = context.begin_pass();
+    encode_vision_matmul_with(
+        kernel,
+        context,
+        &pass,
+        (&a_buf, 0),
+        (&b_buf, 0),
+        bias_buf.as_ref().map(|buf| (buf, 0)),
+        (&out_buf, 0),
+        m as u32,
+        k as u32,
+        n as u32,
+    )
+    .expect("encode");
+    pass.commit_and_wait();
+    let ptr = out_buf.contents() as *const u16;
+    // The buffer holds exactly `m * n` halves and the pass has been waited on.
+    unsafe { std::slice::from_raw_parts(ptr, m * n) }.to_vec()
+}
+
+fn bits_to_f32(bits: &[u16]) -> Vec<f32> {
+    bits.iter().map(|&b| f16::from_bits(b).to_f32()).collect()
+}
+
+/// An f64 reference on the FP16-rounded inputs, and per output the bound a
+/// correct FP32-accumulating kernel must meet: FP16 rounding of the result
+/// plus an FP32 summation term, `k * 2^-24 * sum |a * b|`, doubled for slack.
+/// Stated per element, so a small output next to a large one is not hidden
+/// under the large one's bound.
+fn matmul_f64_with_bound(
+    a: &[f16],
+    b: &[f16],
+    bias: Option<&[f16]>,
+    m: usize,
+    k: usize,
+    n: usize,
+) -> (Vec<f64>, Vec<f64>) {
+    let a: Vec<f64> = a.iter().map(|v| f64::from(v.to_f32())).collect();
+    let b: Vec<f64> = b.iter().map(|v| f64::from(v.to_f32())).collect();
+    let mut want = vec![0.0f64; m * n];
+    let mut bound = vec![0.0f64; m * n];
+    for row in 0..m {
+        let ar = &a[row * k..(row + 1) * k];
+        for col in 0..n {
+            let br = &b[col * k..(col + 1) * k];
+            let (mut dot, mut mag) = (0.0f64, 0.0f64);
+            for (x, y) in ar.iter().zip(br) {
+                dot += x * y;
+                mag += (x * y).abs();
+            }
+            let bias_v = bias.map_or(0.0, |v| f64::from(v[col].to_f32()));
+            let value = dot + bias_v;
+            want[row * n + col] = value;
+            bound[row * n + col] = 2.0
+                * (value.abs() * 2f64.powi(-11)
+                    + (k as f64) * 2f64.powi(-24) * (mag + bias_v.abs())
+                    + 2f64.powi(-24));
+        }
+    }
+    (want, bound)
+}
+
+fn assert_within_bound(label: &str, gpu: &[f32], want: &[f64], bound: &[f64]) {
+    for (i, ((&g, &w), &e)) in gpu.iter().zip(want).zip(bound).enumerate() {
+        let d = (f64::from(g) - w).abs();
+        assert!(
+            d <= e,
+            "{label}: index {i}: gpu {g} want {w} diff {d} bound {e}"
+        );
+    }
+}
+
+#[test]
+fn mma_matmul_matches_an_f64_reference_at_real_tower_shapes() {
+    // M = 70 puts one full 64-row tile and one ragged one under every shape.
+    // Qwen3-VL (hidden 1024, mlp 4096) and qwen3_5 (1152, 4304); 4304 is not
+    // a multiple of the 32-wide K step or of the 64-wide output tile.
+    let mut context = MetalContext::new().expect("Metal device");
+    let m = 70usize;
+    for (k, n, label) in [
+        (1024usize, 4096usize, "qwen3_vl fc1"),
+        (4096, 1024, "qwen3_vl fc2"),
+        (1024, 3072, "qwen3_vl qkv"),
+        (1536, 1024, "qwen3_vl patch_embed"),
+        (1152, 4304, "qwen3_5 fc1"),
+        (4304, 1152, "qwen3_5 fc2"),
+    ] {
+        let a = half_of(&wave(m * k, 0.2, 2.0));
+        let b = half_of(&wave(n * k, 0.9, 0.05));
+        let bias = half_of(&wave(n, 1.4, 0.5));
+        let (want, bound) = matmul_f64_with_bound(&a, &b, Some(&bias), m, k, n);
+        for kernel in BOTH_KERNELS {
+            let gpu = bits_to_f32(&run_matmul_bits(
+                &mut context,
+                kernel,
+                &a,
+                &b,
+                Some(&bias),
+                m,
+                k,
+                n,
+            ));
+            assert_within_bound(&format!("{label} {kernel:?}"), &gpu, &want, &bound);
+        }
+    }
+}
+
+#[test]
+fn mma_matmul_handles_edge_shapes() {
+    // Ragged in every dimension, K below one 8-wide sub-step, single rows
+    // and outputs, and one exact tile.
+    let mut context = MetalContext::new().expect("Metal device");
+    for (m, k, n) in [
+        (1usize, 1usize, 1usize),
+        (1, 4, 2),
+        (3, 33, 1),
+        (65, 13, 70),
+        (64, 64, 64),
+        (129, 40, 127),
+        (2, 300, 65),
+    ] {
+        let a = half_of(&wave(m * k, 0.3, 1.5));
+        let b = half_of(&wave(n * k, 1.1, 0.8));
+        let bias = half_of(&wave(n, 2.1, 2.0));
+        for with_bias in [false, true] {
+            let bias_arg = with_bias.then_some(&bias[..]);
+            let (want, bound) = matmul_f64_with_bound(&a, &b, bias_arg, m, k, n);
+            for kernel in BOTH_KERNELS {
+                let gpu = bits_to_f32(&run_matmul_bits(
+                    &mut context,
+                    kernel,
+                    &a,
+                    &b,
+                    bias_arg,
+                    m,
+                    k,
+                    n,
+                ));
+                assert_within_bound(
+                    &format!("({m},{k},{n}) bias={with_bias} {kernel:?}"),
+                    &gpu,
+                    &want,
+                    &bound,
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn mma_matmul_output_bits_do_not_depend_on_the_tile() {
+    // The exactness class the shader states: an output's bits depend on its
+    // own row of `a`, its own row of `b` and K only. Each row of a 70-row run
+    // must equal that row run alone, and the outputs of the second 64-wide
+    // tile must equal the same weight rows run as a 6-wide matmul.
+    let mut context = MetalContext::new().expect("Metal device");
+    let (m, k, n) = (70usize, 4304usize, 70usize);
+    let a = half_of(&wave(m * k, 0.4, 3.0));
+    let b = half_of(&wave(n * k, 1.7, 0.07));
+    let bias = half_of(&wave(n, 0.6, 1.0));
+    let kernel = VisionMatmulKernel::Mma;
+    let full = run_matmul_bits(&mut context, kernel, &a, &b, Some(&bias), m, k, n);
+
+    for row in [0usize, 7, 63, 64, 69] {
+        let alone = run_matmul_bits(
+            &mut context,
+            kernel,
+            &a[row * k..(row + 1) * k],
+            &b,
+            Some(&bias),
+            1,
+            k,
+            n,
+        );
+        assert_eq!(&full[row * n..(row + 1) * n], &alone[..], "row {row}");
+    }
+
+    let (c0, width) = (64usize, 6usize);
+    let narrow = run_matmul_bits(
+        &mut context,
+        kernel,
+        &a,
+        &b[c0 * k..(c0 + width) * k],
+        Some(&bias[c0..c0 + width]),
+        m,
+        k,
+        width,
+    );
+    for row in 0..m {
+        assert_eq!(
+            &full[row * n + c0..row * n + c0 + width],
+            &narrow[row * width..(row + 1) * width],
+            "row {row}, outputs {c0}..{}",
+            c0 + width
+        );
+    }
+}
+
+#[test]
+fn mma_matmul_k_alignment_is_its_own_pipeline() {
+    // `FC_VISION_GEMM_K_ALIGNED` must be in the cache key: an aligned build
+    // reused for a K tail reads past every row's end. Dispatch one shape of
+    // each kind and require two distinct cache entries.
+    let mut context = MetalContext::new().expect("Metal device");
+    for k in [64usize, 40] {
+        let a = half_of(&wave(2 * k, 0.1, 1.0));
+        let b = half_of(&wave(3 * k, 0.2, 1.0));
+        run_matmul_bits(&mut context, VisionMatmulKernel::Mma, &a, &b, None, 2, k, 3);
+    }
+    let keys: Vec<Vec<u8>> = context
+        .pipeline_inventory()
+        .into_iter()
+        .filter(|(name, _)| name == "vision_matmul_fp16_mma")
+        .map(|(_, key)| key)
+        .collect();
+    assert_eq!(keys.len(), 2, "one entry per K alignment, got {keys:?}");
+}
+
+#[test]
+fn mma_matmul_reads_the_weight_row_major_by_output() {
+    // The orientation discrimination case on both kernels, in a full tile so
+    // the matrix-unit path takes its unchecked loads.
+    let mut context = MetalContext::new().expect("Metal device");
+    let (m, k, n) = (64usize, 64usize, 64usize);
+    let mut a = vec![0.0f32; m * k];
+    for r in 0..m {
+        for c in 0..k {
+            a[r * k + c] = ((r + 2 * c) % 7) as f32 - 3.0;
+        }
+    }
+    // Output `j` selects a[.][(j + 1) % k] scaled by (1 + j % 3); the
+    // transposed read would select a[.][j]'s neighbourhood instead.
+    let mut b = vec![0.0f32; n * k];
+    for j in 0..n {
+        b[j * k + (j + 1) % k] = 1.0 + (j % 3) as f32;
+    }
+    let (a, b) = (half_of(&a), half_of(&b));
+    for kernel in BOTH_KERNELS {
+        let gpu = bits_to_f32(&run_matmul_bits(
+            &mut context,
+            kernel,
+            &a,
+            &b,
+            None,
+            m,
+            k,
+            n,
+        ));
+        for r in 0..m {
+            for j in 0..n {
+                let want = a[r * k + (j + 1) % k].to_f32() * (1.0 + (j % 3) as f32);
+                assert_eq!(gpu[r * n + j], want, "{kernel:?} ({r},{j})");
+            }
+        }
     }
 }
 

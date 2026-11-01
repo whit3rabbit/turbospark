@@ -33,9 +33,9 @@ const THREADS_PER_GROUP: u64 = 256;
 /// because exceeding it truncates the head silently.
 pub const MAX_ATTENTION_HEAD_DIM: u32 = 128;
 
-/// No kernel in this file declares a function constant, but
-/// `MetalContext::pipeline` takes a set regardless. An empty one, named so
-/// the call sites read as a deliberate choice rather than an omission.
+/// Only the matrix-unit GEMM declares a function constant ([`gemm_pipeline`]),
+/// but `MetalContext::pipeline` takes a set regardless. An empty one, named
+/// so the call sites read as a deliberate choice rather than an omission.
 fn no_function_constants() -> FunctionConstantValues {
     FunctionConstantValues::new()
 }
@@ -221,11 +221,44 @@ pub fn encode_vision_attention(
     Ok(())
 }
 
+/// Which kernel serves [`encode_vision_matmul`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VisionMatmulKernel {
+    /// `vision_matmul_fp16_mma`, the matrix-unit GEMM (64 x 64 tiles). The
+    /// default.
+    Mma,
+    /// `vision_matmul_fp16`, one threadgroup per output element. Kept for
+    /// A/B runs (`TURBOSPARK_VISION_MMA=0`) and as the parity cross-check.
+    PerOutput,
+}
+
+impl VisionMatmulKernel {
+    /// The process default: [`VisionMatmulKernel::Mma`] unless
+    /// `TURBOSPARK_VISION_MMA=0`. Read once per process.
+    pub fn from_env() -> Self {
+        static KERNEL: std::sync::OnceLock<VisionMatmulKernel> = std::sync::OnceLock::new();
+        *KERNEL.get_or_init(|| {
+            if std::env::var("TURBOSPARK_VISION_MMA").as_deref() == Ok("0") {
+                VisionMatmulKernel::PerOutput
+            } else {
+                VisionMatmulKernel::Mma
+            }
+        })
+    }
+}
+
+/// The matrix-unit GEMM's output tile (`kGemmBM`, `kGemmBN`) and K step
+/// (`kGemmBK`) in `vision.metal`, and its threadgroup size.
+const GEMM_TILE: u32 = 64;
+const GEMM_BK: u32 = 32;
+const GEMM_THREADS: u64 = 128;
+
 /// `out[m][n] = sum_k a[m][k] * b[n][k] + bias[n]`, all FP16 with an FP32
 /// accumulator.
 ///
 /// `b` is ROW-MAJOR BY OUTPUT (`[n, k]`), which is how an `nn.Linear` weight
-/// ships. Serves every projection in the tower.
+/// ships. Serves every projection in the tower, on the kernel
+/// [`VisionMatmulKernel::from_env`] picks.
 ///
 /// `bias` is bound whether or not it is used, because an unbound buffer at a
 /// declared argument index is undefined behaviour; `has_bias` selects. A
@@ -243,26 +276,105 @@ pub fn encode_vision_matmul(
     k: u32,
     n: u32,
 ) -> Result<(), GpuError> {
-    let pipeline = context.pipeline(SOURCE, "vision_matmul_fp16", &no_function_constants(), b"")?;
+    encode_vision_matmul_with(
+        VisionMatmulKernel::from_env(),
+        context,
+        pass,
+        a,
+        b,
+        bias,
+        out,
+        m,
+        k,
+        n,
+    )
+}
+
+/// [`encode_vision_matmul`] on an explicit kernel, for parity tests and
+/// benches that need both arms in one process.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_vision_matmul_with(
+    kernel: VisionMatmulKernel,
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    a: (&metal::Buffer, u64),
+    b: (&metal::Buffer, u64),
+    bias: Option<(&metal::Buffer, u64)>,
+    out: (&metal::Buffer, u64),
+    m: u32,
+    k: u32,
+    n: u32,
+) -> Result<(), GpuError> {
     let has_bias: u32 = u32::from(bias.is_some());
     let bias_binding = bias.unwrap_or((a.0, a.1));
-    pass.encode_threadgroups_3d(
-        &pipeline,
-        &[
-            (a.0, 0, a.1),
-            (b.0, 1, b.1),
-            (bias_binding.0, 2, bias_binding.1),
-            (out.0, 3, out.1),
-        ],
-        &[
-            (u32_bytes(&k), 4),
-            (u32_bytes(&n), 5),
-            (u32_bytes(&has_bias), 6),
-        ],
-        (u64::from(m), u64::from(n), 1),
-        (THREADS_PER_GROUP, 1, 1),
-    );
+    let buffers = [
+        (a.0, 0, a.1),
+        (b.0, 1, b.1),
+        (bias_binding.0, 2, bias_binding.1),
+        (out.0, 3, out.1),
+    ];
+    match kernel {
+        VisionMatmulKernel::PerOutput => {
+            let pipeline =
+                context.pipeline(SOURCE, "vision_matmul_fp16", &no_function_constants(), b"")?;
+            pass.encode_threadgroups_3d(
+                &pipeline,
+                &buffers,
+                &[
+                    (u32_bytes(&k), 4),
+                    (u32_bytes(&n), 5),
+                    (u32_bytes(&has_bias), 6),
+                ],
+                (u64::from(m), u64::from(n), 1),
+                (THREADS_PER_GROUP, 1, 1),
+            );
+        }
+        VisionMatmulKernel::Mma => {
+            // Proof for the lab that the matrix-unit GEMM ran (the knob row
+            // expects this line absent under `TURBOSPARK_VISION_MMA=0`).
+            foundation::engaged!("vision_mma");
+            let pipeline = gemm_pipeline(context, k % GEMM_BK == 0)?;
+            pass.encode_threadgroups_3d(
+                &pipeline,
+                &buffers,
+                &[
+                    (u32_bytes(&k), 4),
+                    (u32_bytes(&n), 5),
+                    (u32_bytes(&has_bias), 6),
+                    (u32_bytes(&m), 7),
+                ],
+                (
+                    u64::from(n.div_ceil(GEMM_TILE)),
+                    u64::from(m.div_ceil(GEMM_TILE)),
+                    1,
+                ),
+                (GEMM_THREADS, 1, 1),
+            );
+        }
+    }
     Ok(())
+}
+
+/// `vision_matmul_fp16_mma` specialized on `FC_VISION_GEMM_K_ALIGNED`
+/// (function constant 110). The flag is the whole cache key: without it the
+/// first K seen would serve every K, and an aligned build reading a K tail
+/// runs past the end of each row.
+fn gemm_pipeline(
+    context: &mut MetalContext,
+    k_aligned: bool,
+) -> Result<metal::ComputePipelineState, GpuError> {
+    let values = FunctionConstantValues::new();
+    values.set_constant_value_at_index(
+        (&k_aligned as *const bool).cast(),
+        metal::MTLDataType::Bool,
+        110,
+    );
+    context.pipeline(
+        SOURCE,
+        "vision_matmul_fp16_mma",
+        &values,
+        &[u8::from(k_aligned)],
+    )
 }
 
 /// `y += x` over `count` FP16 values, with an FP32 intermediate.
