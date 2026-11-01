@@ -379,6 +379,11 @@ pub struct RealForwardRunner {
     /// touches. **`None` therefore means "not yet asked for", never "this
     /// install has none"** -- that question is `arch.vision.is_active()`.
     pub(crate) vision: Option<crate::vision::VisionTower>,
+    /// The Gemma 4 tower, lazily opened by
+    /// [`RealForwardRunner::encode_image_gemma4`]. A separate field because
+    /// the two towers share no weights layout or forward pass; `None` means
+    /// "not yet asked for", as with `vision`.
+    pub(crate) gemma4_vision: Option<crate::vision::gemma4::Gemma4VisionTower>,
     /// A sidecar tower directory attached after open (vision memory
     /// sidecar, Part A2), via [`RealForwardRunner::attach_vision_sidecar`].
     /// `None` on every session that never called it, which is every session

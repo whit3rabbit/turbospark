@@ -128,11 +128,19 @@ pub fn orchestrate_gemma4_checkpoint_sharded(
             &plan.ngram_meta,
         ))
     };
+    // A tower that was classified but not ingested (a text-only request) is
+    // still dropped tensors, and reported as such. Gemma 4's tower moved from
+    // `ExcludedMultimodal` to `VisionTower` when it gained an ingest, and a
+    // text-only Gemma install must keep saying what it left out.
+    let mut excluded_multimodal = plan.excluded;
+    if vision.is_none() {
+        excluded_multimodal.extend(plan.vision_bases.iter().map(|n| n.to_string()));
+    }
     Ok(Gemma4RepackOutput {
         resident: resident.entries,
         layers,
         expert_stride,
-        excluded_multimodal: plan.excluded,
+        excluded_multimodal,
         lossy_narrowing: resident.lossy_narrowing,
         vision,
         ngram,

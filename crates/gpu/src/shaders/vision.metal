@@ -771,3 +771,118 @@ void vision_residual_add_fp16(
     if (tid >= count) return;
     y[tid] = half(float(y[tid]) + float(x[tid]));
 }
+
+// ============================================================================
+// The Gemma 4 tower (`docs/GEMMA4_VISION_PHASE0.md`). Same FP16 storage and
+// FP32 accumulators as above. Matmul, attention, the tanh GELU and the
+// residual add are shared; these three are what that tower adds.
+// ============================================================================
+
+// ----------------------------------------------------------------------------
+// RMSNorm, `x * rsqrt(mean(x^2) + eps) * w`, with `w` applied DIRECTLY (no
+// `1 + w` offset, Gemma 4's own convention) or not at all when `has_weight`
+// is 0 (the v norm and the projector's pre-norm carry no weight).
+//
+// One threadgroup per row, so a per-head norm is the same kernel at
+// `rows = seq * heads, D = head_dim`. Safe IN PLACE (`out == x`): the
+// reduction finishes behind a barrier before any write, and each thread
+// writes only the elements it alone reads in the final loop.
+// ----------------------------------------------------------------------------
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void vision_rms_norm_fp16(
+    device const half*  x          [[buffer(0)]],
+    device const half*  weight     [[buffer(1)]],
+    device half*        out        [[buffer(2)]],
+    constant uint&      D          [[buffer(3)]],
+    constant float&     eps        [[buffer(4)]],
+    constant uint&      has_weight [[buffer(5)]],
+    uint  row           [[threadgroup_position_in_grid]],
+    uint  lid           [[thread_position_in_threadgroup]],
+    uint  lsize         [[threads_per_threadgroup]],
+    uint  simd_lane_id  [[thread_index_in_simdgroup]],
+    uint  simd_group_id [[simdgroup_index_in_threadgroup]],
+    uint  simdgroups    [[simdgroups_per_threadgroup]]
+) {
+    threadgroup float partial[kVisionMaxSimdGroups];
+    device const half* xr = x + uint64_t(row) * D;
+    device half*       yr = out + uint64_t(row) * D;
+
+    float acc = 0.0f;
+    for (uint i = lid; i < D; i += lsize) {
+        const float v = float(xr[i]);
+        acc = fma(v, v, acc);
+    }
+    acc = simd_sum(acc);
+    if (simd_lane_id == 0) { partial[simd_group_id] = acc; }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (simd_group_id == 0) {
+        float v = (simd_lane_id < simdgroups) ? partial[simd_lane_id] : 0.0f;
+        v = simd_sum(v);
+        if (simd_lane_id == 0) { partial[0] = rsqrt(v / float(D) + eps); }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    const float inv_rms = partial[0];
+
+    for (uint i = lid; i < D; i += lsize) {
+        const float w = (has_weight != 0) ? float(weight[i]) : 1.0f;
+        yr[i] = half(float(xr[i]) * inv_rms * w);
+    }
+}
+
+// ----------------------------------------------------------------------------
+// The axial 2-D rope. NOT `vision_rope_2d_fp16`: that one pairs element `i`
+// with `i + head_dim/2` across the whole head. Here the head is two parts of
+// `head_dim/2`, part 0 turned by the patch's x and part 1 by its y, and each
+// part rotates WITHIN itself: element `i` pairs with `i + head_dim/4`. Both
+// kernels compute plausible output on the other's input.
+//
+// `freqs` is `[seq, head_dim/2]` F32 angles, the x part's `head_dim/4` angles
+// then the y part's, for the reason the kernel above keeps them F32.
+// One thread per (pair, head, token).
+// ----------------------------------------------------------------------------
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void vision_rope_axial_fp16(
+    device half*        qk        [[buffer(0)]],
+    device const float* freqs     [[buffer(1)]],
+    constant uint&      seq       [[buffer(2)]],
+    constant uint&      heads     [[buffer(3)]],
+    constant uint&      head_dim  [[buffer(4)]],
+    uint3               gid       [[thread_position_in_grid]]
+) {
+    const uint pair = gid.x;          // 0 .. head_dim/2
+    const uint head = gid.y;
+    const uint token = gid.z;
+    const uint pairs = head_dim / 2;
+    const uint quarter = head_dim / 4;
+    if (pair >= pairs || head >= heads || token >= seq) return;
+
+    const uint part = pair / quarter;
+    const uint i = pair % quarter;
+    const uint a_idx = part * pairs + i;
+    const uint b_idx = a_idx + quarter;
+
+    const float angle = freqs[uint64_t(token) * pairs + pair];
+    const float c = cos(angle);
+    const float s = sin(angle);
+
+    device half* row = qk + (uint64_t(token) * heads + head) * head_dim;
+    const float a = float(row[a_idx]);
+    const float b = float(row[b_idx]);
+    row[a_idx] = half(a * c - b * s);
+    row[b_idx] = half(b * c + a * s);
+}
+
+// ----------------------------------------------------------------------------
+// `y *= x` elementwise, FP32 intermediate: the gated MLP's
+// `gelu(gate) * up`, after the GELU has run in place on `gate`.
+// ----------------------------------------------------------------------------
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void vision_mul_fp16(
+    device half*        y     [[buffer(0)]],
+    device const half*  x     [[buffer(1)]],
+    constant uint&      count [[buffer(2)]],
+    uint                tid   [[thread_position_in_grid]]
+) {
+    if (tid >= count) return;
+    y[tid] = half(float(y[tid]) * float(x[tid]));
+}

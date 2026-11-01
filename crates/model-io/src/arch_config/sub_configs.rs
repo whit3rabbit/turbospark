@@ -195,6 +195,52 @@ pub struct VisionConfig {
     pub image_token_id: i64,
     /// `<|video_pad|>`. Carried for completeness; no video path exists here.
     pub video_token_id: i64,
+    /// Which tower these numbers describe. The two towers share their shapes
+    /// almost exactly and nothing else (`docs/GEMMA4_VISION_PHASE0.md`), so
+    /// every tower-specific path keys on this, never on a shape.
+    pub tower: VisionTowerKind,
+}
+
+/// The vision tower architecture, `manifest.json`'s `visionTower`.
+///
+/// For [`VisionTowerKind::Gemma4`] some shared fields change meaning:
+/// `spatial_merge_size` is the POOLING kernel (3: nine patches average into
+/// one soft token), `num_position_embeddings` is the length of EACH of the
+/// two axial position tables, `out_hidden_size` is the projector's output
+/// (the trunk width), `temporal_patch_size` is 1, `mrope_section` is zero,
+/// and the start/end ids are `boi`/`eoi`. The tower's rope theta (100), its
+/// standardize step and its 4-bit projector are properties of the kind,
+/// checked at intake rather than stored, which keeps this struct float-free.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VisionTowerKind {
+    /// The qwen3_5 / Qwen3-VL SigLIP-class tower with the patch merger.
+    /// The default because every install written before `visionTower`
+    /// existed carries this tower and no other.
+    #[default]
+    QwenSiglip,
+    /// The Gemma 4 tower: sandwich RMSNorms, axial rope, 3x3 pooling, and
+    /// the `embed_vision` projector.
+    Gemma4,
+}
+
+impl VisionTowerKind {
+    /// The persisted spelling.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            VisionTowerKind::QwenSiglip => "qwen_siglip",
+            VisionTowerKind::Gemma4 => "gemma4",
+        }
+    }
+
+    /// Parse a persisted spelling. `None` for anything unknown, which a
+    /// loader must refuse rather than map onto a tower it has.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "qwen_siglip" => Some(VisionTowerKind::QwenSiglip),
+            "gemma4" => Some(VisionTowerKind::Gemma4),
+            _ => None,
+        }
+    }
 }
 
 /// Maximum supported number of retained vision deepstack merger outputs.
@@ -223,6 +269,7 @@ impl VisionConfig {
         vision_end_token_id: 0,
         image_token_id: 0,
         video_token_id: 0,
+        tower: VisionTowerKind::QwenSiglip,
     };
 
     /// Whether this install carries a tower at all. Every vision-conditional
