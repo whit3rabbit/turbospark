@@ -1114,10 +1114,21 @@ beats the allowlist; `example.com` covers its subdomains, `*.example.com`
 only them. `AppToolSandbox.hostScope` classifies hosts as metadata, loopback,
 private network or public.
 
-- Approvals are per HOST. The card's "in This Chat" choice records the host
-  in `SessionApprovalStore.allowHost`, never the tool name, so one approved
-  fetch does not open every domain. "Always Allow" and "Always Block" write
-  the host into the policy lists.
+- Approvals are per HOST. A URL tool that is not high risk asks through
+  `Generation/NetworkAccessApprovalView` ("Allow access to <host>?"), which
+  `ToolCallCardView.approvalPrompt` shows in place of the generic buttons.
+  Allow for This Chat (the primary action) records the host in
+  `SessionApprovalStore.allowHost`, never the tool name, so one approved
+  fetch does not open every domain. Allow Once grants nothing. Always Allow
+  and its menu's Always Block write the host into the policy lists. A high
+  risk call keeps the generic Approve Once and Deny, because the engine
+  checks risk before a host grant, so the grant would never apply.
+- The card binds no Return or Esc, unlike Codex's. It sits in the transcript
+  while the composer can hold focus, so a default-action Return would grant
+  a site in the middle of the user's next message. Its buttons are native
+  and reachable with Tab. Its last `ViewThatFits` layout puts one button per
+  row: the last option is used when none fits, and a two-row form clipped
+  German at 360 pt.
 - Executors re-check: `HttpRequestDestinationValidator.validate` refuses a
   policy deny on every hop, and `AppToolRegistry.execute` refuses a web tool
   with no URL (a search provider call) under Block all.
