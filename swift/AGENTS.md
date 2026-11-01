@@ -149,6 +149,13 @@ staging files changed.
   `.recordingAccessGate` (DESIGN.md, Asking for macOS access). A declined
   permission must leave import, transcription, and the other source usable.
   `RecordingPermissionsTests` scans `Sources/` for the prompt APIs.
+- Computer use's Accessibility and Screen Recording grants belong to the
+  separate helper app (`Sources/TurboSparkComputerUse`), never to TurboSpark,
+  whose ad-hoc identity changes every update. The app never calls
+  `AXIsProcessTrustedWithOptions`. The helper prompts only on a
+  `requestPermission` the app sends from the user's Allow click. Changing
+  `Sources/ComputerUseKit` or the helper makes a new helper binary, and users
+  grant it again. Read `docs/COMPUTER_USE.md` first.
 - Test permission flows in the bundled app (`make app-bundle`), not
   `swift run`. An unbundled build is attributed to the app that launched it
   (Terminal, Xcode), so its prompts and System Settings rows name that app.

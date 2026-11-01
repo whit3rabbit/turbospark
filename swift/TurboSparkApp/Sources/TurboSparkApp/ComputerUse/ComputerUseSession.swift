@@ -1,4 +1,5 @@
 import Foundation
+import ComputerUseKit
 
 /// The screenshot the model last saw for one app, in the pixel size it saw.
 ///

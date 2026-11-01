@@ -1,4 +1,5 @@
 import Foundation
+import ComputerUseKit
 
 extension AppModel {
     /// Computer tools need the setting, a current helper manifest, and a
@@ -43,5 +44,66 @@ extension AppModel {
         Task {
             for session in sessions { await session.revokeAll() }
         }
+    }
+}
+
+// MARK: - Helper lifecycle
+
+extension AppModel {
+    /// Turns the feature on or off. On launches the helper, which reads
+    /// grant status without prompting; off shuts it down and drops grants.
+    public func setComputerUseEnabled(_ enabled: Bool) {
+        guard computerUseSettings.enabled != enabled else { return }
+        computerUseSettings.enabled = enabled
+        persistSettings()
+        if enabled {
+            Task { await startComputerUseHelperIfEnabled() }
+        } else {
+            stopComputerUseHelper()
+        }
+    }
+
+    func startComputerUseHelperIfEnabled() async {
+        guard computerUseSettings.enabled, computerUsePort == nil, computerUseHelperLaunch == nil,
+              let helperURL = HelperComputerUsePort.installedHelperURL()
+        else { return }
+        let launch = Task { @MainActor [weak self] in
+            defer { self?.computerUseHelperLaunch = nil }
+            do {
+                let (port, welcome) = try await HelperComputerUsePort.launch(helperURL: helperURL)
+                guard let self, self.computerUseSettings.enabled else {
+                    await port.shutdown()
+                    return
+                }
+                self.computerUsePort = port
+                self.computerUseManifest = welcome.manifest
+                self.computerUseHelperStatus = welcome.status
+            } catch {
+                self?.computerUseHelperStatus = nil
+            }
+        }
+        computerUseHelperLaunch = launch
+        await launch.value
+    }
+
+    func stopComputerUseHelper() {
+        revokeAllComputerUseGrants()
+        let port = computerUsePort as? HelperComputerUsePort
+        computerUsePort = nil
+        computerUseManifest = nil
+        computerUseHelperStatus = nil
+        Task { await port?.shutdown() }
+    }
+
+    public func refreshComputerUseHelperStatus() async {
+        guard let port = computerUsePort as? HelperComputerUsePort else { return }
+        computerUseHelperStatus = try? await port.status()
+    }
+
+    /// Shows the macOS prompt for one grant. Call only from the user's
+    /// Allow click: this is the app's single path to that prompt.
+    public func requestComputerUsePermission(_ kind: ComputerUsePermissionKind) async {
+        guard let port = computerUsePort as? HelperComputerUsePort else { return }
+        computerUseHelperStatus = try? await port.requestPermission(kind)
     }
 }

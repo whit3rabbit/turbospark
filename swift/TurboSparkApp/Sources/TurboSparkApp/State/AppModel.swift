@@ -4,6 +4,7 @@ import Foundation
 import SwiftUI
 import TurboSpark
 import OpenKind
+import ComputerUseKit
 
 /// Primary application model and state coordinator for the TurboSpark macOS
 /// application.
@@ -441,6 +442,9 @@ public final class AppModel: ObservableObject {
     /// helper ships, which keeps every computer tool hidden.
     var computerUsePort: (any ComputerUseControlPort)?
     var computerUseManifest: ComputerUseBackendManifest?
+    /// Last grant status the helper reported. Nil while it is not running.
+    @Published public internal(set) var computerUseHelperStatus: ComputerUseHelperStatus?
+    var computerUseHelperLaunch: Task<Void, Never>?
     /// Per-chat app grants. Dropped with the chat, on model change, and by
     /// the kill switch.
     var computerUseSessions: [UUID: ComputerUseSession] = [:]
@@ -1241,6 +1245,9 @@ public final class AppModel: ObservableObject {
         AppToolRegistry.computerUseToolRuntimeProvider = { [weak self] _, chatID in
             self?.computerUseToolRuntime(chatID: chatID)
         }
+        // A no-op unless the user turned computer use on and the helper is
+        // in the app bundle (never under tests or `swift run`).
+        Task { [weak self] in await self?.startComputerUseHelperIfEnabled() }
         AppToolRegistry.browserToolRuntimeProvider = { [weak self] call, project in
             guard let self, self.browserSettings.enabled else { return nil }
             self.setBrowserPaneOpen(true)

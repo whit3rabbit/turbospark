@@ -1,4 +1,5 @@
 import Foundation
+import ComputerUseKit
 
 /// Whether computer-use tools are offered this turn.
 ///
