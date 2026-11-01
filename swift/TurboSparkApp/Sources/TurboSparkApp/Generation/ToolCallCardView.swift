@@ -1161,6 +1161,27 @@ struct ToolCallCardView: View {
                         .buttonStyle(.bordered)
                         .help(Text("Persist an allow rule for this MCP tool or server in project settings", bundle: .module))
                         .accessibilityLabel(Text("Always allow \(call.name) in project settings", bundle: .module))
+                    } else if !isHighRisk, let host = AppNetworkPolicy.host(forWebCall: call) {
+                        // A URL tool remembers its HOST, never the tool name:
+                        // one approved fetch must not open every domain.
+                        Menu {
+                            Button {
+                                model.approvePendingToolCall(id: call.id, alwaysAllowSession: true)
+                            } label: { Text("Allow \(host) in This Chat", bundle: .module) }
+                            Button {
+                                model.addNetworkDomain(host, allow: true)
+                                model.approvePendingToolCall(id: call.id, alwaysAllowSession: false)
+                            } label: { Text("Always Allow \(host)", bundle: .module) }
+                            Button {
+                                model.addNetworkDomain(host, allow: false)
+                                model.denyPendingToolCall(id: call.id)
+                            } label: { Text("Always Block \(host)", bundle: .module) }
+                        } label: {
+                            Label { Text("Always Allow", bundle: .module) } icon: { Image(systemName: "checkmark.circle") }
+                        }
+                        .buttonStyle(.bordered)
+                        .help(Text("Remember this decision for the host in this chat or in Network settings", bundle: .module))
+                        .accessibilityLabel(Text("Remember a decision for \(host)", bundle: .module))
                     } else if !isHighRisk {
                         // Hidden for high risk: the engine checks risk before
                         // a session grant, so the grant would never apply and
