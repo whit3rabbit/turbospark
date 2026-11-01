@@ -46,6 +46,16 @@ when this file gets updated relative to the version bump and the tag.
   to the unwired 48 when the limit or the lock refuses. The CLI, server, FFI
   and catalog fit size memory against the same request. Other families are
   unchanged.
+- Docs: `docs/BENCHMARKS.md` gains "Qwen4Exp at default settings", a paired
+  `tslab sweep` of the wired default on REAP-288 (M4 Max 36 GB, medium-review,
+  3 clean pairs per arm). 96 wired slots decode 16.59 tok/s at a 12.5 GiB
+  peak, against 15.23 for the previous 48 unwired (-7.4%), 14.63 at 16 slots
+  and 11.80 for 96 unwired (-23.4%, 4.7-5.1M compressions per run). 128 wired
+  won by 9.8% at 16.5 GiB on a quiet host but fell to noise beside another
+  process's working set, so the budget stays at 96. It is a reading, not a
+  frozen row. `docs/QWEN4_EXP.md` adds a paired reading of an external drive:
+  a Samsung T7 over USB decoded 4.32 tok/s against 17.48 from the internal
+  SSD, because cache-miss expert reads run at the drive's speed.
 - Music 3 Turbo runs its DiT about 10x faster on Metal. Its dense FP16
   adapted matrices promote BF16 activations to F32 stages, which took a
   per-element kernel and ran each block op by op. A Turbo checkpoint at
