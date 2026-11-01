@@ -215,6 +215,13 @@ The repository's supported path for making a vector is
 same prompt set against two labelled conditions, then reduce the captures into
 one direction per layer:
 
+> **2026-11-01:** `turbospark steer extract` now drives this same recipe as
+> one command over built-in trait packs (refusals, slop, humor, sycophancy,
+> emotions), with the reduction ported to Rust
+> (`turbospark-compute::steering_extract`) and a before/after keyword check
+> (`turbospark steer check`). See `docs/STEERING_TRAITS.md`; the Python
+> script remains the SVD-method path and the reference for the math.
+
 ```sh
 TURBOSPARK_RESID_CAPTURE=/tmp/steer/positive/p1.json \
   ./target/release/turbospark-check --model ~/models/qwen38-27b.gturbo \

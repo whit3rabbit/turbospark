@@ -14,6 +14,23 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- Trait steering (`turbospark-steer`, `turbospark steer`): five built-in
+  trait packs (refusals, slop, humor, sycophancy, emotional tone), each a
+  contrastive prompt corpus plus held-out prompts and keyword markers, and
+  two verbs over them. `extract` captures both corpora against a model's own
+  activations (one open per side, one snapshot per prompt), reduces them to
+  a difference-of-means control vector through
+  `turbospark-compute::steering_extract` (the Rust twin of
+  `scripts/extract_direction.py`'s reduction half), prints the four
+  per-layer ranking columns, and writes a llama.cpp-layout `.gguf`. `check`
+  runs the held-out prompts unsteered and steered and prints the
+  keyword-marker rate both times, with the documented short-response
+  collapse warning. Packs ship prompts, never directions: the vector is
+  extracted from the user's own checkpoint, so the app's "nothing ships a
+  direction" provenance rule holds. Verified end to end on the real
+  `tinyllama` install: extraction, steered open
+  (`ablate at alpha 0.3 over 21 of 22 layers`), and a live null-controlled
+  edit.
 - macOS app: an Expert Residency setting (Auto, Streamed, Mapped) in Engine
   settings, with Cache Slots beside it (previously only in the Inspector) and
   a Resolved row. Mapped is sent only to models whose open would take it, and
