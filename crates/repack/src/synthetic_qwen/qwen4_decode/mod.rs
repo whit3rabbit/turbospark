@@ -70,6 +70,51 @@ pub fn build_synthetic_qwen4_exp_decode_install_raw_router(
     build_synthetic_qwen4_exp_decode_install_inner(dir, vocab_size, model_id, true, IDX_BUDGET)
 }
 
+/// [`build_synthetic_qwen4_exp_decode_install_with_indexer_budget`] with the
+/// toy vision tower attached at this trunk's width, its matrices quantized to
+/// MLX affine 4 bits the way the real `qwen4_exp` conversion ships them
+/// (`docs/QWEN4EXP_VISION_PHASE0.md` item 1). `streamed` picks the writer the
+/// real checkpoint takes; both carry the tower and both must keep doing so.
+pub fn build_synthetic_qwen4_exp_decode_install_with_vision(
+    dir: &std::path::Path,
+    vocab_size: i64,
+    model_id: &str,
+    indexer_budget: i64,
+    streamed: bool,
+) -> Result<ArchConfig, Box<dyn std::error::Error>> {
+    let mut arch = tiny_qwen4_exp_decode_arch_with_indexer_budget(vocab_size, indexer_budget);
+    let mut vision = super::vision::tiny_vision_config();
+    vision.out_hidden_size = HIDDEN as i64;
+    arch.vision = vision;
+    let (mut ts, bits_overrides) = build_tensors(vocab_size, false);
+    ts.extend(super::vision::quantize_tower_int4(
+        super::vision::vision_tower_tensors_with_out_hidden(HIDDEN),
+    ));
+    let blob = assemble_safetensors(&ts);
+    let source = MemoryRangeSource::new(&blob);
+    let header = parse_header(&blob, crate::safetensors_header::DEFAULT_MAX_HEADER_BYTES)?;
+    let quant = Gemma4Quant {
+        default_bits: 4,
+        group_size: 64,
+        bits_overrides,
+        ..Default::default()
+    };
+    if streamed {
+        let shards = Gemma4Shards::single(&header, &source);
+        crate::gemma4_checkpoint::write_qwen4_exp_install_streamed(
+            dir,
+            &arch,
+            model_id,
+            &shards,
+            &quant,
+            |_| {},
+        )?;
+    } else {
+        write_gemma4_install(dir, &arch, model_id, &header, &source, &quant)?;
+    }
+    Ok(arch)
+}
+
 fn build_synthetic_qwen4_exp_decode_install_inner(
     dir: &std::path::Path,
     vocab_size: i64,

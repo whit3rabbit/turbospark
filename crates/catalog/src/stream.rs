@@ -444,10 +444,14 @@ fn enable_requested_vision(
     }
     if !matches!(
         family,
-        ModelFamily::QwenGdnDense | ModelFamily::QwenGdnMoe | ModelFamily::Qwen3Vl
+        ModelFamily::QwenGdnDense
+            | ModelFamily::QwenGdnMoe
+            | ModelFamily::Qwen3Vl
+            | ModelFamily::Qwen4Exp
     ) {
         return Err(format!(
-            "{}: combined vision ingestion is only wired for the qwen35 dense, qwen36 MoE              and qwen3_vl trunks",
+            "{}: combined vision ingestion is only wired for the qwen35 dense, qwen36 MoE, \
+             qwen3_vl and qwen4_exp trunks",
             plan.alias
         ));
     }

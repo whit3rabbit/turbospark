@@ -175,6 +175,13 @@ impl RealForwardRunner {
         // deepstack.
         prompt_vision.attach_deepstack_buffers(&mut self.context)?;
         self.prompt_vision = Some(prompt_vision);
+        // Refused here as well as at every Qwen4Exp pass, so the caller hears
+        // it before prefill rather than at the first token. The map is dropped
+        // so a refused prompt leaves no injection behind.
+        if let Err(e) = self.refuse_qwen4_vision_past_qsa_budget() {
+            self.prompt_vision = None;
+            return Err(e);
+        }
         // A placeholder span carries the same token ids whatever picture
         // filled it, so a state that consumed one is not described by its
         // ids and must never be reused (`crate::kv_prefix`'s TAINT). Without

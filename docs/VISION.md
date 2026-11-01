@@ -28,7 +28,7 @@ and hidden size.
 | Server | `/v1/chat/completions` and `/v1/messages` serve base64 data URLs on a real vision install. Remote URLs are refused, and the server uses the sequential image path. A text-only backend reports the dropped image instead of silently claiming to have seen it. |
 | FFI and Swift | `ts_generate` accepts ordered image parts, and the Swift-facing open options expose the sidecar. Actual encoding requires the macOS Metal runtime; scripted and non-macOS sessions cannot serve images. |
 | Image modes | Still images only. The manifest carries video token fields for tokenizer compatibility, but there is no video preprocessing or video runtime path. |
-| Prefill and speculation | Dense Qwen image prompts can use chunked prefill. Qwen GDN MoE remains sequential, `TURBOSPARK_BATCHED_GEMV` with an image is refused, and MTP/DFlash2 verify is refused for vision rather than run with unverified positions. |
+| Prefill and speculation | Dense Qwen image prompts can use chunked prefill. Qwen GDN MoE remains sequential, `TURBOSPARK_BATCHED_GEMV` with an image is refused, and MTP/DFlash2 verify is refused for vision rather than run with unverified positions. Qwen4Exp (synthetic gate only, `docs/QWEN4EXP_VISION_PHASE0.md`) chunks image prompts, refuses them where QSA selection could run, and has no speculation path. |
 
 **THE FRONT-END GAP WAS THE LAST ONE AND IT WAS INVISIBLE FROM THIS PAGE.**
 Every milestone through M-V9 was true of the engine and of two front ends,

@@ -145,10 +145,19 @@
 //! shared expert. Preserve that FP16 boundary instead of carrying over the
 //! Qwen3 shared-seed reduction order.
 //!
-//! ## Deliberately unsupported in this cut, refused by name at open
+//! ## Vision
 //!
-//! An image prompt (this checkpoint is a VLM and only the text tower is
-//! ingested, as `qwen3_5` already does) and speculative decoding.
+//! An install repacked with its tower takes image prompts through the same
+//! two seams as `families/qwen/`: the tower row replaces the tiled embedding
+//! lookup at an image position (`produce.rs`, `prefill.rs`), and a QSA layer
+//! rotates q and k at the mRoPE triple (`attn.rs`). PLE still hashes the
+//! placeholder id. An image prompt is refused where QSA selection could run,
+//! see `RealQwen4State::qsa_can_select` and `docs/QWEN4EXP_VISION_PHASE0.md`.
+//!
+//! ## Deliberately unsupported in this cut
+//!
+//! Speculative decoding: there is no rollback for this family's recurrent
+//! state, so no verify pass can attach, with or without an image.
 //!
 //! **Chunked prefill is wired** (`prefill.rs`, since the QSA indexer landed):
 //! `prefill_chunk_real_qwen4` loops the same per-token encoders sequential

@@ -353,3 +353,31 @@ fn an_unrecognized_name_under_the_container_is_documented_as_falling_through() {
         Gemma4Bucket::LmResident
     );
 }
+
+/// The tower's names, read off `sh0wie/Qwen3.8-Flash-Next-REAP-288-MLX-4bit`
+/// shard 1 at `668f31bc` (`docs/QWEN4EXP_VISION_PHASE0.md`), reach the tower
+/// arm for `qwen4_exp`. Before vision this family dropped them; `muse_glimmer`
+/// shares the prefix and must keep dropping them, having no kernels for its
+/// own tower. Companions (`.scales`/`.biases`) never reach the classifier:
+/// the walk reads them beside their `.weight`.
+#[test]
+fn qwen4_exp_routes_its_tower_and_muse_glimmer_still_drops_it() {
+    for name in [
+        "vision_tower.blocks.0.attn.qkv.weight",
+        "vision_tower.blocks.26.mlp.linear_fc2.weight",
+        "vision_tower.merger.linear_fc2.weight",
+        "vision_tower.pos_embed.weight",
+        "vision_tower.patch_embed.proj.weight",
+    ] {
+        assert_eq!(
+            describe(&classify_for_family(name, LAYERS, ModelFamily::Qwen4Exp)),
+            "vision",
+            "{name}"
+        );
+        assert_eq!(
+            describe(&classify_for_family(name, LAYERS, ModelFamily::MuseGlimmer)),
+            "excluded",
+            "{name}"
+        );
+    }
+}
