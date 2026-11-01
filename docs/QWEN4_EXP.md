@@ -2254,3 +2254,71 @@ peak), and under `ulimit -l 1048576` it opened 48 unwired slots (6.4 GiB).
 Not checked: the `mlock`-failure fallback with the limit check passing, and
 any machine other than this one. Other families stay unwired until a paired
 sweep (`slots_wired` in the family profile) says otherwise.
+
+## Default settings benchmark (2026-10-31)
+
+Measured on merged `main` (`86bff0ad`) after wiring became the default, in
+one interleaved `tslab sweep` (experiment `qwen4-wired-default-bench`,
+protocol medium-review, 64 decode, 2,048 context, 3 clean pairs per
+candidate, null floor 1.12%). Decode tok/s against the default:
+
+| Arm | Median | Verdict | 95% CI | Peak |
+|---|---|---|---|---|
+| auto, 96 wired (default) | 16.59 | baseline | | 12.5 GiB |
+| auto, 48 unwired (previous default) | 15.23 | loss, -7.4% | [-10.4%, -6.5%] | 6.5 GiB |
+| 16 slots | 14.63 | loss, -12.6% | [-14.0%, -11.6%] | 2.5 GiB |
+| 96 unwired | 11.80 | loss, -23.4% | [-27.6%, -22.5%] | 12.5 GiB |
+| 128 wired | 18.06 | win, +9.8% | [+7.0%, +14.0%] | 16.5 GiB |
+
+Swap held at 11.5-12.2 GB from other sessions, more than in the first wired
+sweep (6.7-7.5 GB), and the unwired 96-slot loss grew from 2.7% to 23% with
+it. The wired default held up under that pressure. 128 wired slots still win,
+so a larger budget remains open as a memory decision. The full record, with
+verdict ids and conditions, is in `docs/BENCHMARKS.md` ("Qwen4Exp at default
+settings"). The Swift-1.5 IQ2_XS install was not measured.
+
+### 128 wired under a competing workload (2026-10-31)
+
+128 wired slots won quiet, so the next question was whether the budget
+should grow to give them by default (a wired fraction of 0.55 would). A
+3 GiB process (anonymous memory, every page re-touched every 2 s,
+each pass timed) ran beside one interleaved sweep (experiment
+`qwen4-wired-budget-load`, same workload as above, 3 clean pairs, swap at
+12.6 GB from other sessions).
+
+| Arm | Decode tok/s median | Verdict | Compressions per run | Other process's re-touch pass, median (p90) |
+|---|---|---|---|---|
+| auto, 96 wired (default) | 14.16 | baseline | 0.49-0.95M | 0.082 s (0.333 s) |
+| 128 wired | 13.10 | noise, -7.5%, 95% CI [-23.6%, +2.0%] | 3.7-4.6M | 0.764 s (0.804 s) |
+
+With something else holding memory, the 128-slot win is gone, and the
+other process pays for it: its pages get compressed, so each pass over them
+takes about 9x longer than beside the default (0.05-0.15 s before the model
+started). The default stays at half the free budget (96 slots here).
+Verdict record: 1793488871593-92750-20. One run in eight was dirty (foreign
+CPU), and the hog's pass time is a proxy for an app's working set, not a
+measured app.
+
+## Running from an external drive (2026-10-31)
+
+The same install, copied byte for byte to a Samsung T7 (USB, 10 Gb/s link,
+HFS+), against the internal SSD. Fresh-process `tslab profile` runs
+alternated between the two paths, 6 rounds each after a warmup (experiment
+`qwen4-external-drive`), default settings (96 wired slots), protocol
+medium-review, 64 decode, 2,048 context, `86bff0ad`. tslab cannot pair two
+install paths in one verdict, so this is a paired reading, not a verdict.
+
+| Location | Decode tok/s, median | Prefill tok/s, median | Expert pread ms/token | Wall per run |
+|---|---|---|---|---|
+| Internal SSD | 17.48 (17.01-17.99) | 23.3 | 21.1-23.9 | 29 s |
+| T7 over USB | 4.32 (4.01-4.42) | 5.5 | 131.5-136.4 | 126 s |
+
+Every T7 run was slower than every internal run: decode drops about 75%.
+Hit rates (83.8% and 86.9%) and the 12.5 GiB peak are the same at both
+locations, so the whole difference is the expert reads that miss the cache.
+At about 166 MiB requested per token, the T7 moves that at about 1.2 GB/s,
+near its rated speed, so a faster link would not help much. 5 of the 12
+measured runs were dirty (Spotlight, an Xcode build, foreign CPU). The
+clean subsets read 17.52 (n=5) and 4.26-4.29 (n=2). A streamed MoE install
+on an external drive is bound by that drive's read speed. This install now
+lives in a T7 library on this host, and these numbers are its cost.

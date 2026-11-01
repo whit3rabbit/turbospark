@@ -183,6 +183,14 @@ so install size and process footprint are different quantities. The Swift
 IQ2_XS source payload is 68.15 GB. Its measured process peak is about 1.60
 GiB at 2K context and 16 slots on an M4 Max.
 
+The Qwen3.8-Flash-Next family now wires a larger expert cache by default
+when the OS allows it. On a 36 GB M4 Max, REAP-288 opens 96 wired slots,
+peaks at about 12.5 GiB, and decodes about 8% faster than the previous
+48-slot default (16.6 against 15.2 tok/s on the medium-review prompt). Set
+Lock Expert Cache to Off in Engine settings, or
+`TURBOSPARK_EXPERT_SLOTS_WIRED=0`, to keep the smaller unwired cache. See
+[`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) ("Qwen4Exp at default settings").
+
 The catalog in [`crates/catalog/src/models.json`](crates/catalog/src/models.json) is the source of truth. Use `turbospark-model list` for current aliases and evidence status, and `turbospark-model recommend` to rank these for your machine.
 
 ### MoE checkpoints (experts stream from disk)
