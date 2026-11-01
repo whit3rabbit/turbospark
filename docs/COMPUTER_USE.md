@@ -74,9 +74,14 @@ every update.
   `~/Library/Caches/com.whit3rabbit.turbospark/computer-use-helper`). A change
   to either source directory produces a new helper and users grant it again
   once. The helper's Info.plist carries a fixed version for the same reason.
-- CI runners do not share that cache, so a release built on a fresh runner
-  ships a new helper unless the release workflow restores the cache. Not wired
-  yet.
+- Release runners start empty, and `actions/cache` cannot help: a tag run
+  cannot read another tag's cache, and entries expire after 7 days unused. So
+  `release.yml` takes the helper out of the previous published release's DMG
+  and passes it as `COMPUTER_USE_HELPER_SEED`. The script reuses a seed only
+  when its stamped `TSComputerUseSourceKey` equals the current key and its
+  signature verifies, otherwise it builds a new helper. The key hashes
+  relative source paths, so a runner and a local checkout agree. The seed is
+  trusted as far as the project's own release assets are.
 - The app launches the helper with `NSWorkspace.openApplication`. A `Process`
   child would be attributed to TurboSpark as its responsible app, and the
   grants would land on the wrong app.

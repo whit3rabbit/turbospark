@@ -349,13 +349,32 @@ helper_name="TurboSpark Computer Use.app"
 helper_src="$root/swift/TurboSparkApp/Sources"
 helper_key="$(
   {
-    find "$helper_src/ComputerUseKit" "$helper_src/TurboSparkComputerUse" -type f -name '*.swift' -print0 \
-      | sort -z | xargs -0 shasum -a 256
-    echo "min_macos=$min_macos identity=$identity plist=1"
+    # Relative paths and a fixed sort order, so a release runner and a local
+    # checkout at another path compute the same key.
+    cd "$helper_src" && find ComputerUseKit TurboSparkComputerUse -type f -name '*.swift' -print0 \
+      | LC_ALL=C sort -z | xargs -0 shasum -a 256
+    echo "min_macos=$min_macos identity=$identity bundle_id=$bundle_id plist=2"
   } | shasum -a 256 | cut -c1-16
 )"
 helper_cache_root="${COMPUTER_USE_HELPER_CACHE:-$HOME/Library/Caches/com.whit3rabbit.turbospark/computer-use-helper}"
 helper_cached="$helper_cache_root/$helper_key/$helper_name"
+# A release runner starts with an empty cache, so release.yml passes the helper
+# from the previous published release as COMPUTER_USE_HELPER_SEED. It is reused
+# only when it was built from the same inputs (its stamped key matches) and its
+# signature is intact. Anything else falls through to a new build.
+helper_seed="${COMPUTER_USE_HELPER_SEED:-}"
+if [ -n "$helper_seed" ] && [ ! -d "$helper_cached" ]; then
+  seed_key="$(/usr/libexec/PlistBuddy -c 'Print :TSComputerUseSourceKey' "$helper_seed/Contents/Info.plist" 2>/dev/null || true)"
+  if [ "$seed_key" != "$helper_key" ]; then
+    echo "==> computer-use helper: seed key '${seed_key:-none}' is not $helper_key, ignoring the seed"
+  elif ! codesign --verify --strict "$helper_seed" 2>/dev/null; then
+    echo "==> computer-use helper: seed signature does not verify, ignoring the seed"
+  else
+    echo "==> computer-use helper: seeding the cache from $helper_seed"
+    mkdir -p "$(dirname "$helper_cached")"
+    ditto "$helper_seed" "$helper_cached"
+  fi
+fi
 if [ -d "$helper_cached" ] && codesign --verify --strict "$helper_cached" 2>/dev/null; then
   echo "==> computer-use helper: reusing cached build $helper_key"
 else
@@ -392,6 +411,8 @@ else
     <true/>
     <key>NSScreenCaptureUsageDescription</key>
     <string>TurboSpark captures the windows of apps you allow it to control, so a local model can see them.</string>
+    <key>TSComputerUseSourceKey</key>
+    <string>${helper_key}</string>
 </dict>
 </plist>
 PLIST
