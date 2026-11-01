@@ -49,7 +49,7 @@ Five crates, in the order a page moves through them.
 | decode, resize, normalize, patchify | `vision-io` | `[patches, 1536]` f32 rows, merge-window order |
 | position tables | `vision-io` | pos-embed index/weight table, rope frequency rows, mRoPE triples |
 | ingest | `repack` | `packed_vision/` (27 blobs) + 9 `vision.*` resident tensors, all FP16 |
-| kernels | `gpu` | six FP16 kernels: LayerNorm, two GELUs, 2-D rope, bidirectional attention, matmul (matrix-unit GEMM by default), residual add |
+| kernels | `gpu` | six FP16 kernels: LayerNorm, two GELUs, 2-D rope, bidirectional attention (matrix-unit flash kernel by default), matmul (matrix-unit GEMM by default), residual add |
 | the forward pass | `runtime` | `[merged_tokens, 5120]` FP16 rows |
 
 `crates/compute::vision` is the CPU reference every kernel is held to, and
@@ -493,6 +493,38 @@ the GEMM's exactness class is that an output depends only on its own rows of
 (`crates/gpu/tests/vision_parity.rs`, `mma_matmul_*`). On the Qwen3-VL-4B
 install a 160-token greedy transcription of the deterministic page was
 byte-identical under both kernels.
+
+### The attention runs on the matrix units too
+
+`gpu::encode_vision_attention` runs `vision_attention_bidir_fp16_mma`, a
+flash-style kernel: 32 query rows of one head per threadgroup (8 per
+simdgroup), Q held in FP16 8x8 fragments, K and V staged 16 keys at a time,
+QK^T and PV on `simdgroup_matrix` with FP32 accumulators, and the online
+softmax done in registers. P is narrowed to FP16 for the PV multiply, as
+flash attention does on half inputs. The head dimension is function constant
+111 and is in the cache key, so the 72-wide `qwen3_5` head and the 64-wide
+`qwen3_vl` head are separate pipelines. A head that is not a multiple of 4
+stays on the scalar kernel (the tower's rope already refuses one).
+
+`TURBOSPARK_VISION_ATTN_MMA=0` restores the scalar one-threadgroup-per-query
+kernel (tslab knob `vision_attn_mma`). The two differ in reduction order and
+in the FP16 P, so they are not bit-identical. `vision_parity.rs`
+(`mma_attention_*`) holds the new kernel to the scalar one and to the CPU
+reference at 1 to 1280 patches, on and off the query tile and key block, at
+head_dim 4 to 128, with max-abs within `2e-3` of the output magnitude.
+
+On the Qwen3-VL-4B install the three corpus pages' embedding rows (main and
+three deepstack outputs) have a mean per-row cosine of 0.9999 or better
+between the two kernels. The worst rows reach 0.977. Those are the same few
+rows that are the tail under every perturbation tried, including the GEMM
+change above (worst 0.983) and an FP32-P variant of this kernel (worst
+0.942), so they are sensitive positions of the page, not a defect of the
+kernel. The 160-token greedy transcription is byte-identical under both.
+
+On an M4 Max (tslab `vision_encode`, Qwen3-VL-4B, host flagged DIRTY by a
+foreign process), the median block time per page fell from 0.49 and 0.58 s
+(scalar, two runs) to 0.13 and 0.14 s at 1,280 patches, and from 46.8 and
+47.2 s to 2.4 and 2.6 s at 9,216 patches.
 
 ## What running it found that reading it did not
 

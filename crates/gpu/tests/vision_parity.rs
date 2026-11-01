@@ -18,9 +18,10 @@ use turbospark_compute::vision::{
     rope_vision_2d,
 };
 use turbospark_gpu::{
-    encode_vision_attention, encode_vision_gelu, encode_vision_layer_norm, encode_vision_matmul,
-    encode_vision_matmul_with, encode_vision_residual_add, encode_vision_rope_2d, GeluKind,
-    MetalContext, VisionMatmulKernel, MAX_ATTENTION_HEAD_DIM,
+    encode_vision_attention, encode_vision_attention_with, encode_vision_gelu,
+    encode_vision_layer_norm, encode_vision_matmul, encode_vision_matmul_with,
+    encode_vision_residual_add, encode_vision_rope_2d, GeluKind, MetalContext,
+    VisionAttentionKernel, VisionMatmulKernel, MAX_ATTENTION_HEAD_DIM,
 };
 
 // ------------------------------------------------------------------ helpers
@@ -583,6 +584,194 @@ fn an_oversized_head_dim_is_refused_rather_than_truncated() {
     );
     assert!(err.is_err(), "an oversized head_dim must be refused");
     pass.commit_and_wait();
+}
+
+// ------------------------------------------- matrix-unit attention (flash)
+//
+// The tests above run `encode_vision_attention`, which takes the process
+// default (the matrix-unit kernel unless `TURBOSPARK_VISION_ATTN_MMA=0`).
+// These name both kernels explicitly so one process holds them to each other.
+
+/// A deterministic pseudo-random spread in `[-amp, amp]`, without the
+/// periodic structure `wave` gives every row (which lines queries up with
+/// keys and makes the softmax unrealistically peaked or flat).
+fn noise(n: usize, seed: u64, amp: f32) -> Vec<f32> {
+    let mut x = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+    (0..n)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            ((x >> 40) as f32 / (1u64 << 24) as f32 * 2.0 - 1.0) * amp
+        })
+        .collect()
+}
+
+/// `[q, k, v]` at `(seq, heads, head_dim)` on one named kernel.
+fn run_attention_with(
+    context: &mut MetalContext,
+    kernel: VisionAttentionKernel,
+    [q, k, v]: [&[f32]; 3],
+    (seq, heads, head_dim): (usize, usize, usize),
+) -> Vec<f32> {
+    let n = seq * heads * head_dim;
+    let q_buf = context.new_buffer_with_data(&to_le(&half_of(q)));
+    let k_buf = context.new_buffer_with_data(&to_le(&half_of(k)));
+    let v_buf = context.new_buffer_with_data(&to_le(&half_of(v)));
+    let out_buf = context.new_output_buffer((n * 2) as u64);
+    let pass = context.begin_pass();
+    encode_vision_attention_with(
+        kernel,
+        context,
+        &pass,
+        (&q_buf, 0),
+        (&k_buf, 0),
+        (&v_buf, 0),
+        (&out_buf, 0),
+        seq as u32,
+        heads as u32,
+        head_dim as u32,
+        attention_scale(head_dim),
+    )
+    .expect("encode");
+    pass.commit_and_wait();
+    read_f16(&out_buf, n)
+}
+
+fn attention_cpu(q: &[f32], k: &[f32], v: &[f32], seq: usize, heads: usize, hd: usize) -> Vec<f32> {
+    let r = |x: &[f32]| -> Vec<f32> { half_of(x).iter().map(|v| v.to_f32()).collect() };
+    bidirectional_attention(&r(q), &r(k), &r(v), seq, heads, hd, attention_scale(hd))
+}
+
+#[test]
+fn mma_attention_matches_the_scalar_kernel_across_patch_counts() {
+    // Patch counts on and off the 32-row query tile and the 16-key block
+    // (1, 15/16/17, 31/32/33, 47), two odd ones, and the 512x640 page's 1280,
+    // at both towers' heads (qwen3_vl 64, qwen3_5 72). Activations of amplitude
+    // 4 put real scores in the tens, so the online softmax rescales across
+    // blocks rather than seeing one flat or one-hot row.
+    //
+    // TOLERANCE: max-abs <= 2e-3 x the output magnitude (`fp16_bound`) against
+    // the scalar kernel, and against the CPU reference where it is cheap. Both
+    // kernels round q, k, v and the output to FP16; the matrix-unit one also
+    // narrows P to FP16, which is ~5e-4 relative per weight.
+    let mut context = MetalContext::new().expect("Metal device");
+    let heads = 4usize;
+    for head_dim in [64usize, 72] {
+        for seq in [1usize, 15, 16, 17, 31, 32, 33, 47, 100, 257, 1280] {
+            let n = seq * heads * head_dim;
+            let q = noise(n, 1 + seq as u64, 4.0);
+            let k = noise(n, 2 + seq as u64, 4.0);
+            let v = noise(n, 3 + seq as u64, 3.0);
+            let dims = (seq, heads, head_dim);
+            let mma =
+                run_attention_with(&mut context, VisionAttentionKernel::Mma, [&q, &k, &v], dims);
+            let scalar = run_attention_with(
+                &mut context,
+                VisionAttentionKernel::Scalar,
+                [&q, &k, &v],
+                dims,
+            );
+            assert!(
+                mma.iter().all(|v| v.is_finite()),
+                "d{head_dim} seq {seq}: non-finite"
+            );
+            let (err, at) = worst(&mma, &scalar);
+            assert!(
+                err <= fp16_bound(&scalar),
+                "d{head_dim} seq {seq}: mma vs scalar worst {err} at {at}: {} vs {}",
+                mma[at],
+                scalar[at]
+            );
+            if seq <= 257 {
+                let cpu = attention_cpu(&q, &k, &v, seq, heads, head_dim);
+                let (err, at) = worst(&mma, &cpu);
+                assert!(
+                    err <= fp16_bound(&cpu),
+                    "d{head_dim} seq {seq}: mma vs cpu worst {err} at {at}: {} vs {}",
+                    mma[at],
+                    cpu[at]
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn mma_attention_handles_every_legal_head_tail() {
+    // 4 is the smallest head the half4 staging takes, 68 leaves half an 8-wide
+    // fragment past the head, 128 is `MAX_ATTENTION_HEAD_DIM`.
+    let mut context = MetalContext::new().expect("Metal device");
+    for head_dim in [4usize, 68, 128] {
+        let (seq, heads) = (41usize, 3usize);
+        let n = seq * heads * head_dim;
+        let q = noise(n, 11, 3.0);
+        let k = noise(n, 12, 3.0);
+        let v = noise(n, 13, 3.0);
+        let dims = (seq, heads, head_dim);
+        let mma = run_attention_with(&mut context, VisionAttentionKernel::Mma, [&q, &k, &v], dims);
+        let cpu = attention_cpu(&q, &k, &v, seq, heads, head_dim);
+        let (err, at) = worst(&mma, &cpu);
+        assert!(
+            err <= fp16_bound(&cpu),
+            "d{head_dim}: worst {err} at {at}: {} vs {}",
+            mma[at],
+            cpu[at]
+        );
+    }
+}
+
+#[test]
+fn mma_attention_head_dim_is_its_own_pipeline() {
+    // The head dimension is a function constant, so it must be in the cache
+    // key: 64 then 72 then 64 in ONE context, each against the reference. With
+    // the key dropped the 72 run reuses the 64 build and reads every row at
+    // the wrong stride.
+    let mut context = MetalContext::new().expect("Metal device");
+    for head_dim in [64usize, 72, 64] {
+        let (seq, heads) = (40usize, 2usize);
+        let n = seq * heads * head_dim;
+        let q = noise(n, 21, 3.0);
+        let k = noise(n, 22, 3.0);
+        let v = noise(n, 23, 3.0);
+        let dims = (seq, heads, head_dim);
+        let mma = run_attention_with(&mut context, VisionAttentionKernel::Mma, [&q, &k, &v], dims);
+        let cpu = attention_cpu(&q, &k, &v, seq, heads, head_dim);
+        let (err, at) = worst(&mma, &cpu);
+        assert!(err <= fp16_bound(&cpu), "d{head_dim}: worst {err} at {at}");
+    }
+}
+
+#[test]
+fn mma_attention_reaches_a_dominant_key_in_a_later_block() {
+    // Query 0 aligns with key 69 alone, in the fifth 16-key block, after
+    // blocks whose maxima were set by much weaker keys. The output is v[69]
+    // only if each block's correction rescales what came before; a kernel
+    // that drops the correction averages the early blocks' values in.
+    let mut context = MetalContext::new().expect("Metal device");
+    let (seq, heads, head_dim) = (70usize, 1usize, 64usize);
+    let n = seq * heads * head_dim;
+    let mut q = vec![0.0f32; n];
+    let mut k = vec![0.0f32; n];
+    let mut v = vec![0.0f32; n];
+    for j in 0..seq {
+        k[j * head_dim] = if j == seq - 1 { 200.0 } else { (j % 5) as f32 };
+        v[j * head_dim] = j as f32;
+    }
+    q[0] = 1.0;
+    let dims = (seq, heads, head_dim);
+    let mma = run_attention_with(&mut context, VisionAttentionKernel::Mma, [&q, &k, &v], dims);
+    let cpu = attention_cpu(&q, &k, &v, seq, heads, head_dim);
+    assert!(
+        (cpu[0] - (seq - 1) as f32).abs() < 0.05,
+        "fixture: cpu got {}",
+        cpu[0]
+    );
+    assert!(
+        (mma[0] - (seq - 1) as f32).abs() < 0.05,
+        "query 0 did not land on the dominant key's value: got {}",
+        mma[0]
+    );
 }
 
 // ------------------------------------------------------------------- matmul
