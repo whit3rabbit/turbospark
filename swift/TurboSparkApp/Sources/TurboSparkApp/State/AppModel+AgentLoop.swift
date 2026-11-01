@@ -159,6 +159,11 @@ extension AppModel {
         var call = call
         if let updated = hookDecision.updatedInput {
             for (key, value) in updated { call.arguments[key] = value }
+            // The parser rated the ORIGINAL arguments, and `evaluate` prefers
+            // a stored rating over its own. Re-rate, or a rewrite to a
+            // destructive command is judged as the safe one it replaced.
+            call.riskAssessment = ToolRiskClassifier.assessRisk(
+                name: call.name, arguments: call.arguments, projectURL: project?.rootDirectoryURL)
         }
         let cmd = call.shellCommand
 
@@ -214,6 +219,9 @@ extension AppModel {
                 chatID: chatID, project: project)
             if let updated = validationHook.updatedInput {
                 for (key, value) in updated { validationCall.arguments[key] = value }
+                validationCall.riskAssessment = ToolRiskClassifier.assessRisk(
+                    name: validationCall.name, arguments: validationCall.arguments,
+                    projectURL: project?.rootDirectoryURL)
                 if let command = updated["command"] ?? updated["cmd"] {
                     call.arguments["validate_command"] = command
                 }
@@ -335,7 +343,8 @@ extension AppModel {
             pending.riskAssessment = ToolRiskAssessment(
                 level: baseAssessment.level,
                 category: baseAssessment.category,
-                reasons: baseAssessment.reasons + [hookReason]
+                reasons: baseAssessment.reasons + [hookReason],
+                hardGated: baseAssessment.hardGated
             )
             self.pendingToolCall = pending
             self.pendingToolCallChatID = chatID
@@ -650,6 +659,11 @@ extension AppModel {
             var updated = call
             if let newInput = hookDecision.updatedInput {
                 for (key, value) in newInput { updated.arguments[key] = value }
+                // Same re-rating as the single-call path: the stored rating
+                // describes the arguments the hook replaced.
+                updated.riskAssessment = ToolRiskClassifier.assessRisk(
+                    name: updated.name, arguments: updated.arguments,
+                    projectURL: project?.rootDirectoryURL)
             }
             updatedCalls.append(updated)
             if hookDecision.behavior == .deny {

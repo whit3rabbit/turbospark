@@ -98,6 +98,72 @@ final class AgentLoopRoutingTests: XCTestCase {
         XCTAssertEqual(appModel.chats[indexB].messages.count, 0)
     }
 
+    // MARK: - Always Allow on a shell call grants the command, not the shell
+
+    func testAlwaysAllowOnAShellCallGrantsOnlyThatCommand() async throws {
+        let appModel = AppModel()
+        let (chatA, _) = makeTwoChats(appModel)
+        let sessionID = chatA.uuidString
+        await SessionApprovalStore.shared.clear(sessionID: sessionID)
+        defer { Task { await SessionApprovalStore.shared.clear(sessionID: sessionID) } }
+
+        // No project: if it runs, the rootless refusal stops it harmlessly.
+        let call = AppToolCall(name: "run_command", arguments: ["command": "ls"], category: .terminal)
+        appModel.pendingToolCall = call
+        appModel.pendingToolCallChatID = chatA
+
+        appModel.approvePendingToolCall(id: call.id, alwaysAllowSession: true)
+
+        let deadline = Date().addingTimeInterval(5)
+        while appModel.toolExecutionTask != nil && Date() < deadline {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+
+        let store = SessionApprovalStore.shared
+        let sameCommand = await store.isApproved(sessionID: sessionID, toolName: "run_command", command: "ls")
+        let withArgs = await store.isApproved(sessionID: sessionID, toolName: "run_command", command: "ls -la")
+        let otherCommand = await store.isApproved(sessionID: sessionID, toolName: "run_command", command: "git push")
+        XCTAssertTrue(sameCommand)
+        XCTAssertTrue(withArgs, "The prefix grant still covers the same command with more arguments.")
+        XCTAssertFalse(
+            otherCommand,
+            "A grant on the shell tool's NAME covered every allowlisted command, `git push` included.")
+    }
+
+    /// A grant given under a looser policy must not survive a mode change,
+    /// while a rule added from an approval card leaves the others alone.
+    func testChangingTheProjectPolicyDropsSessionGrants() async throws {
+        let appModel = AppModel()
+        let project = AppProject(name: "grants", permissions: .standard)
+        appModel.projects = [project]
+        var chat = AppChat(title: "grant chat")
+        chat.projectID = project.id
+        appModel.chats = [chat]
+        let sessionID = chat.id.uuidString
+        let store = SessionApprovalStore.shared
+        defer { Task { await store.clear(sessionID: sessionID) } }
+
+        await store.allowTool(sessionID: sessionID, toolName: "write_file")
+
+        var withRule = project
+        withRule.permissions.mcpAllowRules = ["mcp__docs__search"]
+        appModel.updateProject(withRule)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let keptAfterRule = await store.isApproved(sessionID: sessionID, toolName: "write_file")
+        XCTAssertTrue(keptAfterRule, "Adding an allow rule is not a policy change.")
+
+        var stricter = withRule
+        stricter.permissions.mode = .ask
+        appModel.updateProject(stricter)
+        let deadline = Date().addingTimeInterval(2)
+        var stillApproved = true
+        while stillApproved && Date() < deadline {
+            stillApproved = await store.isApproved(sessionID: sessionID, toolName: "write_file")
+            if stillApproved { try await Task.sleep(nanoseconds: 20_000_000) }
+        }
+        XCTAssertFalse(stillApproved, "A grant from the Auto policy kept answering under Ask.")
+    }
+
     // MARK: - state#9 (UX half): switching chats is blocked mid-approval
 
     func testSelectChatIsBlockedWhileATooCallIsPendingApproval() {

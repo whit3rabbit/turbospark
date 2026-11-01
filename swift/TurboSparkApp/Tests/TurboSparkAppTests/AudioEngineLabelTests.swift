@@ -31,6 +31,7 @@ final class AudioEngineLabelTests: XCTestCase {
     /// No shipped backend falls through to "No runtime" for want of a
     /// mapping: every profile, every discovered family, and the local
     /// Qwen3-ASR choice name a real engine.
+    @MainActor
     func testEveryShippedBackendNamesAnEngine() throws {
         var backends = Set(try AudioCatalog.profiles().map(\.capabilities.backend))
         backends.formUnion(try AudioCatalog.capabilities().map(\.backend))

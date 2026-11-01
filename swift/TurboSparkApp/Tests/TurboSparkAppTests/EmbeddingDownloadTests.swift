@@ -15,7 +15,7 @@ final class EmbeddingDownloadTests: XCTestCase {
         return model
     }
 
-    private static let pin = "3f978ddf92cac9aa07eb2dcf6eb36cf450f3dba4"
+    nonisolated private static let pin = "3f978ddf92cac9aa07eb2dcf6eb36cf450f3dba4"
 
     private func profile(
         installed: String?, canRun: Bool = true, status: String = "verified",

@@ -89,7 +89,7 @@ final class LibraryOfferBannerViewTests: LibraryStateTestCase {
     private func settle(_ hosts: NSView...) async {
         for _ in 0..<4 {
             try? await Task.sleep(nanoseconds: 40_000_000)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+            Self.turnRunLoop(for: 0.02)
             for host in hosts { host.layoutSubtreeIfNeeded() }
         }
     }
@@ -326,7 +326,8 @@ final class LibraryOfferBannerViewTests: LibraryStateTestCase {
         XCTAssertEqual(banner.components(separatedBy: ".disabled(blocked)").count - 1, 2)
         XCTAssertTrue(banner.contains("controller.isChangeBlocked"))
         XCTAssertTrue(banner.contains("model.isInstallOrMoveRunning"))
-        XCTAssertTrue(banner.contains("ProgressView()"), "an add in flight shows a progress indicator")
+        // The design-system bar, indeterminate (#202 replaced `ProgressView()`).
+        XCTAssertTrue(banner.contains("AppProgressBar(value: nil"), "an add in flight shows a progress indicator")
         XCTAssertTrue(banner.contains(".appAction(.primary"))
         XCTAssertTrue(banner.contains(".appAction(.quiet"))
         XCTAssertTrue(banner.contains("accessibilityIdentifier(\"library-offer-banner\")"))
@@ -358,5 +359,11 @@ final class LibraryOfferBannerViewTests: LibraryStateTestCase {
         let wiring = try code("State/AppModel+ModelLibraries.swift")
         XCTAssertTrue(wiring.contains("showToast"), "AppModel posts the toast")
         XCTAssertFalse(wiring.contains("model.error"))
+    }
+
+    /// Sync on purpose: `RunLoop.run(until:)` is unavailable in async code,
+    /// and the hosted SwiftUI view needs the main run loop to turn.
+    private static func turnRunLoop(for seconds: TimeInterval) {
+        RunLoop.current.run(until: Date().addingTimeInterval(seconds))
     }
 }

@@ -203,7 +203,7 @@ final class MoveStoreAbandonTests: LibraryStateTestCase {
         let (events, continuation) = AsyncStream<VolumeEvent>.makeStream()
         sink = continuation
         migration.start(events: events)
-        let running = await Task.detached { started.wait(timeout: .now() + 5) == .success }.value
+        let running = await Task.detached { blockingWait(started, seconds: 5) == .success }.value
         XCTAssertTrue(running, "the import never started")
 
         migration.abandon()
@@ -238,7 +238,7 @@ final class MoveStoreAbandonTests: LibraryStateTestCase {
         let (events, continuation) = AsyncStream<VolumeEvent>.makeStream()
         sink = continuation
         migration.start(events: events)
-        let running = await Task.detached { started.wait(timeout: .now() + 5) == .success }.value
+        let running = await Task.detached { blockingWait(started, seconds: 5) == .success }.value
         XCTAssertTrue(running, "the import never started")
 
         migration.abandon()
@@ -253,4 +253,10 @@ final class MoveStoreAbandonTests: LibraryStateTestCase {
         XCTAssertFalse(migration.isPending)
         XCTAssertEqual(importedNotices, 1, "the picker list is read again")
     }
+}
+
+/// Sync on purpose: `DispatchSemaphore.wait` is unavailable in async code,
+/// and this test means to block the calling thread.
+private func blockingWait(_ semaphore: DispatchSemaphore, seconds: Double) -> DispatchTimeoutResult {
+    semaphore.wait(timeout: .now() + seconds)
 }

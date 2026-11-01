@@ -16,9 +16,17 @@ extension AppModel {
             }
         }
         var mutation = call
-        var result = await AppToolRegistry.execute(
-            call: mutation, in: project, chatID: chatID,
-            webToolsEnabled: webToolsEnabled)
+        // The turn's profile as the caller filter, so a `batch` cannot carry
+        // a child the profile removed (`BatchToolExecutor` checks it). Read at
+        // execution, the same moment the permission mode is.
+        let profileFilter = AppToolCatalog.callerToolFilter(for: activeToolProfile)
+        let proposed = mutation
+        let fallbackMode = activePermissionMode
+        var result: AppToolResult = await AppToolRegistry.$callerToolFilter.withValue(profileFilter) {
+            await AppToolRegistry.execute(
+                call: proposed, in: project, chatID: chatID,
+                webToolsEnabled: webToolsEnabled, fallbackMode: fallbackMode)
+        }
         var stopReason = result.continuationStopReason
         mutation.status = result.isError ? .failed : .completed
         let mutationPost = await applyPostToolUse(
@@ -58,7 +66,7 @@ extension AppModel {
         var validationCall = ToolActionFusion.validationCall(for: validation)
         var validationResult = await AppToolRegistry.execute(
             call: validationCall, in: project, chatID: chatID,
-            webToolsEnabled: webToolsEnabled)
+            webToolsEnabled: webToolsEnabled, fallbackMode: activePermissionMode)
         validationCall.status = validationResult.isError ? .failed : .completed
         let validationPost = await applyPostToolUse(
             to: validationResult, call: validationCall, chatID: chatID, project: project)

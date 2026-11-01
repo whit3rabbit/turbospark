@@ -159,6 +159,9 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     public var interactionMode: String
     /// Whether the app opens a temporary (Ghost Mode) chat on launch.
     public var alwaysStartInGhostMode: Bool
+    /// `AppPermissionMode` raw value for chats with no project. An unknown
+    /// value loads as Auto, the default it had before it was stored.
+    public var rootlessPermissionMode: String
     /// Whether older turns are summarized automatically as the prompt
     /// approaches the context window (context compaction).
     public var autoCompact: Bool
@@ -345,6 +348,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         modelReasoningDefaults: [String: String] = [:],
         interactionMode: String = "chat",
         alwaysStartInGhostMode: Bool = false,
+        rootlessPermissionMode: String = "auto",
         autoCompact: Bool = true,
         actionFusion: Bool = true,
         observationPack: Bool = true,
@@ -434,6 +438,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.modelReasoningDefaults = modelReasoningDefaults
         self.interactionMode = interactionMode
         self.alwaysStartInGhostMode = alwaysStartInGhostMode
+        self.rootlessPermissionMode = rootlessPermissionMode
         self.autoCompact = autoCompact
         self.actionFusion = actionFusion
         self.observationPack = observationPack
@@ -578,6 +583,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.interactionMode = c.decodeLenient(String.self, forKey: .interactionMode, fallback: "chat")
         self.alwaysStartInGhostMode = c.decodeLenient(
             Bool.self, forKey: .alwaysStartInGhostMode, fallback: false)
+        self.rootlessPermissionMode = c.decodeLenient(
+            String.self, forKey: .rootlessPermissionMode, fallback: "auto")
         self.autoCompact = c.decodeLenient(Bool.self, forKey: .autoCompact, fallback: true)
         self.actionFusion = c.decodeLenient(Bool.self, forKey: .actionFusion, fallback: true)
         self.observationPack = c.decodeLenient(Bool.self, forKey: .observationPack, fallback: true)

@@ -96,7 +96,14 @@ struct ProjectPermissionsSectionView: View {
                     .foregroundStyle(.appSecondary)
                     .accessibilityAddTraits(.isHeader)
 
-                Picker(selection: $permissionMode) {
+                // Picking a mode applies its preset, as the composer's mode
+                // menu does. A binding setter rather than `onChange`, so the
+                // Presets menu (whose `.auto` differs from `preset(for: .auto)`)
+                // is not overwritten when it sets the mode itself.
+                Picker(selection: Binding(
+                    get: { permissionMode },
+                    set: { applyPreset(AppProjectPermissions.preset(for: $0)) }
+                )) {
                     ForEach(AppPermissionMode.allCases) { mode in
                         // Every short label is a catalog key.
                         Label {
@@ -131,6 +138,7 @@ struct ProjectPermissionsSectionView: View {
                 permissionRow(title: "Web Requests", desc: "Fetch web documentation and search", selection: $webPermission)
                 permissionRow(title: "MCP External Tools", desc: "Invoke external MCP server tools", selection: $mcpPermission)
                 permissionRow(title: "Automation & Crons", desc: "Schedule background tasks and monitors", selection: $automationPermission)
+                categoryModeNote
             }
             .padding(12)
             .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
@@ -163,6 +171,25 @@ struct ProjectPermissionsSectionView: View {
         }
     }
 
+    /// What the engine ignores in the selected mode, so a row's value is
+    /// never read as a promise the mode does not keep.
+    @ViewBuilder private var categoryModeNote: some View {
+        switch permissionMode {
+        case .readOnly:
+            Text("Read Only allows file reading only. The other rows are not used in this mode.", bundle: .module)
+                .themedFont(.tiny)
+                .foregroundStyle(.appSecondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        case .permissive, .fullAccess:
+            Text("In this mode a row set to Ask Before Execution runs without prompting. Deny still refuses.", bundle: .module)
+                .themedFont(.tiny)
+                .foregroundStyle(.appSecondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        case .ask, .auto, .agentAuto:
+            EmptyView()
+        }
+    }
+
     private var browserPermissionsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Browser access", bundle: .module)
@@ -185,6 +212,9 @@ struct ProjectPermissionsSectionView: View {
             .accessibilityLabel(Text("Browser access", bundle: .module))
 
             Text("Site grants match exact HTTP(S) origins and are limited to 256 per project. Actions ask by default.", bundle: .module)
+                .themedFont(.tiny)
+                .foregroundStyle(.appSecondary)
+            Text("Always Allow and Ask Before Execution behave the same here: the agent acts on a site only after its exact origin is granted.", bundle: .module)
                 .themedFont(.tiny)
                 .foregroundStyle(.appSecondary)
 
@@ -280,5 +310,7 @@ struct ProjectPermissionsSectionView: View {
         webPermission = permissions.web
         mcpPermission = permissions.mcp
         automationPermission = permissions.automation
+        // Through the model, which owns the browser binding and its picker.
+        browserPermissionModel.setPermission(permissions.browser)
     }
 }

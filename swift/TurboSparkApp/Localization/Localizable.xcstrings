@@ -42880,6 +42880,137 @@
         }
       }
     },
+    "Always allow this exact command in this session": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "السماح دائماً بهذا الأمر بالضبط في هذه الجلسة"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Genau diesen Befehl in dieser Sitzung immer erlauben"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Always allow this exact command in this session"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permitir siempre este comando exacto en esta sesión"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Toujours autoriser cette commande exacte pendant cette session"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "אפשר תמיד את הפקודה המדויקת הזו בהפעלה זו"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "इस सत्र में ठीक इसी कमांड को हमेशा अनुमति दें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Selalu izinkan perintah persis ini di sesi ini"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consenti sempre esattamente questo comando in questa sessione"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このセッションでこのコマンドそのものを常に許可"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 세션에서 정확히 이 명령을 항상 허용"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Precies deze opdracht altijd toestaan in deze sessie"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zawsze zezwalaj na dokładnie to polecenie w tej sesji"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sempre permitir exatamente este comando nesta sessão"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Всегда разрешать именно эту команду в этом сеансе"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tillåt alltid exakt det här kommandot i den här sessionen"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu oturumda tam olarak bu komuta her zaman izin ver"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Завжди дозволяти саме цю команду в цьому сеансі"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Luôn cho phép chính xác lệnh này trong phiên này"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在此会话中始终允许此确切命令"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在此工作階段中一律允許此確切指令"
+          }
+        }
+      }
+    },
     "Always ask before tool calls edit files or use the internet": {
       "extractionState": "manual",
       "localizations": {
@@ -395078,6 +395209,268 @@
         }
       }
     },
+    "Read Only allows file reading only. The other rows are not used in this mode.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يسمح وضع القراءة فقط بقراءة الملفات فقط. لا تُستخدم الصفوف الأخرى في هذا الوضع."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Schreibgeschützt erlaubt nur das Lesen von Dateien. Die anderen Zeilen werden in diesem Modus nicht verwendet."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Read Only allows file reading only. The other rows are not used in this mode."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Solo lectura permite únicamente leer archivos. Las demás filas no se usan en este modo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lecture seule autorise uniquement la lecture de fichiers. Les autres lignes ne sont pas utilisées dans ce mode."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "קריאה בלבד מתיר רק קריאת קבצים. השורות האחרות אינן בשימוש במצב זה."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "केवल पढ़ने के लिए मोड में सिर्फ़ फ़ाइलें पढ़ी जा सकती हैं। इस मोड में बाकी पंक्तियाँ इस्तेमाल नहीं होतीं।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hanya Baca hanya mengizinkan membaca file. Baris lainnya tidak digunakan dalam mode ini."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sola lettura consente solo la lettura dei file. Le altre righe non vengono usate in questa modalità."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "読み取り専用ではファイルの読み取りのみ許可されます。このモードではほかの行は使われません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "읽기 전용은 파일 읽기만 허용합니다. 이 모드에서는 다른 행이 사용되지 않습니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Alleen-lezen staat alleen het lezen van bestanden toe. De andere rijen worden in deze modus niet gebruikt."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tryb tylko do odczytu pozwala wyłącznie na odczyt plików. Pozostałe wiersze nie są w nim używane."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Somente Leitura permite apenas a leitura de arquivos. As outras linhas não são usadas neste modo."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Режим «Только для чтения» разрешает только чтение файлов. Остальные строки в этом режиме не используются."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Skrivskyddad tillåter bara läsning av filer. De andra raderna används inte i det här läget."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Salt Okunur yalnızca dosya okumaya izin verir. Diğer satırlar bu modda kullanılmaz."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Режим «Лише для читання» дозволяє тільки читати файли. Інші рядки в цьому режимі не використовуються."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chỉ đọc chỉ cho phép đọc tệp. Các hàng khác không được dùng trong chế độ này."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "只读模式仅允许读取文件。此模式下不使用其他各行。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "唯讀模式僅允許讀取檔案。此模式下不使用其他各列。"
+          }
+        }
+      }
+    },
+    "In this mode a row set to Ask Before Execution runs without prompting. Deny still refuses.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "في هذا الوضع، يُنفَّذ الصف المضبوط على «اسأل قبل التنفيذ» دون طلب تأكيد. يظل «رفض» يمنع التنفيذ."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "In diesem Modus läuft eine Zeile mit „Vor Ausführung fragen“ ohne Nachfrage. „Ablehnen“ verweigert weiterhin."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "In this mode a row set to Ask Before Execution runs without prompting. Deny still refuses."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "En este modo, una fila con «Preguntar antes de ejecutar» se ejecuta sin preguntar. «Rechazar» sigue bloqueando."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dans ce mode, une ligne réglée sur « Demander avant l'exécution » s'exécute sans confirmation. « Refuser » bloque toujours."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "במצב זה שורה שמוגדרת ל״שאל לפני הפעלה״ פועלת בלי לבקש אישור. ״דחה״ עדיין חוסם."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "इस मोड में \"चलाने से पहले पूछें\" वाली पंक्ति बिना पूछे चलती है। \"अस्वीकार करें\" अब भी रोकता है।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dalam mode ini, baris yang disetel ke Tanya Sebelum Menjalankan berjalan tanpa konfirmasi. Tolak tetap menolak."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "In questa modalità una riga impostata su «Chiedi prima di eseguire» viene eseguita senza conferma. «Rifiuta» blocca comunque."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このモードでは「実行前に確認」の行は確認なしで実行されます。「拒否」は引き続き拒否します。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 모드에서는 '실행 전에 묻기'로 설정된 행이 묻지 않고 실행됩니다. '거부'는 계속 거부합니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "In deze modus wordt een rij met ‘Vragen vóór uitvoering’ zonder vraag uitgevoerd. ‘Weigeren’ weigert nog steeds."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "W tym trybie wiersz ustawiony na „Pytaj przed wykonaniem” działa bez pytania. „Odrzuć” nadal blokuje."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Neste modo, uma linha definida como Perguntar Antes de Executar é executada sem confirmação. Recusar continua bloqueando."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В этом режиме строка со значением «Спрашивать перед выполнением» выполняется без запроса. «Отклонить» по-прежнему запрещает."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "I det här läget körs en rad inställd på Fråga före körning utan att fråga. Neka nekar fortfarande."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu modda Çalıştırmadan Önce Sor olarak ayarlanan satır sormadan çalışır. Reddet yine reddeder."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "У цьому режимі рядок зі значенням «Питати перед виконанням» виконується без запиту. «Відхилити» як і раніше забороняє."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trong chế độ này, hàng đặt Hỏi trước khi thực thi sẽ chạy mà không hỏi. Từ chối vẫn chặn."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此模式下，设为“执行前询问”的行会直接运行而不询问。“拒绝”仍会拒绝。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此模式下，設為「執行前詢問」的列會直接執行而不詢問。「拒絕」仍會拒絕。"
+          }
+        }
+      }
+    },
     "Scheduled Tasks": {
       "extractionState": "manual",
       "localizations": {
@@ -420197,6 +420590,137 @@
           "stringUnit": {
             "state": "translated",
             "value": "網站授權會比對精確的 HTTP(S) 來源，每個專案最多 256 項。操作預設會先詢問。"
+          }
+        }
+      }
+    },
+    "Always Allow and Ask Before Execution behave the same here: the agent acts on a site only after its exact origin is granted.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يتصرف «السماح دائماً» و«اسأل قبل التنفيذ» بالطريقة نفسها هنا: لا يعمل الوكيل على موقع إلا بعد منح أصله المحدد."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "„Immer erlauben“ und „Vor Ausführung fragen“ verhalten sich hier gleich: Der Agent handelt auf einer Website erst, wenn ihr genauer Ursprung freigegeben ist."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Always Allow and Ask Before Execution behave the same here: the agent acts on a site only after its exact origin is granted."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "«Permitir siempre» y «Preguntar antes de ejecutar» se comportan igual aquí: el agente actúa en un sitio solo después de conceder su origen exacto."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "« Toujours autoriser » et « Demander avant l'exécution » se comportent de la même façon ici : l'agent n'agit sur un site qu'après l'autorisation de son origine exacte."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "״אפשר תמיד״ ו״שאל לפני הפעלה״ מתנהגים כאן אותו דבר: הסוכן פועל באתר רק אחרי שהמקור המדויק שלו אושר."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "यहाँ \"हमेशा अनुमति दें\" और \"चलाने से पहले पूछें\" एक जैसा काम करते हैं: एजेंट किसी साइट पर तभी काम करता है जब उसके सटीक origin को अनुमति मिल चुकी हो।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Selalu Izinkan dan Tanya Sebelum Menjalankan berperilaku sama di sini: agen bertindak di situs hanya setelah origin persisnya diizinkan."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "«Consenti sempre» e «Chiedi prima di eseguire» qui si comportano allo stesso modo: l'agente agisce su un sito solo dopo che ne è stata autorizzata l'origine esatta."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ここでは「常に許可」と「実行前に確認」は同じ動作です。エージェントは、サイトの正確なオリジンが許可された後にのみ操作します。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "여기서는 '항상 허용'과 '실행 전에 묻기'가 똑같이 동작합니다. 에이전트는 사이트의 정확한 origin이 허용된 후에만 작업합니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "‘Altijd toestaan’ en ‘Vragen vóór uitvoering’ werken hier hetzelfde: de agent handelt op een site pas nadat de exacte oorsprong is toegestaan."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "„Zawsze zezwalaj” i „Pytaj przed wykonaniem” działają tu tak samo: agent działa na stronie dopiero po przyznaniu dostępu do jej dokładnego originu."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sempre Permitir e Perguntar Antes de Executar funcionam igual aqui: o agente só age em um site depois que a origem exata dele é concedida."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "«Всегда разрешать» и «Спрашивать перед выполнением» здесь работают одинаково: агент действует на сайте только после того, как разрешён его точный источник."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tillåt alltid och Fråga före körning fungerar likadant här: agenten agerar på en webbplats först när dess exakta ursprung har beviljats."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Her Zaman İzin Ver ve Çalıştırmadan Önce Sor burada aynı davranır: ajan bir sitede yalnızca tam kaynağına izin verildikten sonra işlem yapar."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "«Завжди дозволяти» і «Питати перед виконанням» тут працюють однаково: агент діє на сайті лише після того, як дозволено його точне джерело."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Luôn cho phép và Hỏi trước khi thực thi hoạt động giống nhau ở đây: tác tử chỉ thao tác trên một trang sau khi origin chính xác của trang đó được cấp quyền."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此处“始终允许”和“执行前询问”效果相同：只有在授予网站的确切来源后，代理才会对其操作。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此處「永遠允許」與「執行前詢問」效果相同：只有在授予網站的確切來源後，代理才會對其操作。"
           }
         }
       }

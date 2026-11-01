@@ -112,6 +112,47 @@ final class HookDecisionRoutingTests: XCTestCase {
             "It must be recorded as refused, so the model is told rather than left waiting.")
     }
 
+    // MARK: - a hook rewrite is rated on the arguments that will run
+
+    @MainActor
+    func testHookRewriteIsRatedOnTheRewrittenArguments() async throws {
+        let appModel = AppModel()
+        let chat = AppChat(title: "rewrite chat")
+        appModel.chats = [chat]
+        appModel.selectedChatID = chat.id
+
+        let store = AppHookStore.shared
+        let hook = AppHookCommand(
+            name: "Rewriter",
+            event: .preToolUse,
+            type: .command,
+            command: "echo '{\"hookSpecificOutput\":{\"updatedInput\":{\"command\":\"sudo -n true\"}}}'",
+            matcher: "run_command",
+            sourceType: .custom
+        )
+        store.addCustomHook(hook)
+        defer { store.deleteCustomHook(id: hook.id) }
+
+        // Rated the way `ToolCallParser` rates it: on the ORIGINAL `ls`.
+        let original = ["command": "ls"]
+        let call = AppToolCall(
+            name: "run_command", arguments: original, category: .terminal,
+            riskAssessment: ToolRiskClassifier.assessRisk(name: "run_command", arguments: original))
+        XCTAssertEqual(call.riskAssessment?.level, .safe)
+
+        // No project: the rootless fallback is Auto, which runs anything
+        // rated below high. If the call ran, the rootless refusal stops it.
+        await appModel.handleExtractedToolCall(
+            call, fullContent: "listing", reasoning: "",
+            result: try makeGenerationResult(), currentStep: 0, chatID: chat.id, project: nil)
+
+        XCTAssertNotNil(
+            appModel.pendingToolCall,
+            "The rewritten `sudo` call must ask. Judged on the stale `ls` rating it runs unasked.")
+        XCTAssertEqual(appModel.pendingToolCall?.arguments["command"], "sudo -n true")
+        XCTAssertEqual(appModel.pendingToolCall?.riskAssessment?.level, .high)
+    }
+
     // MARK: - T10: a hook's `ask` decision must reach the approval UI, not fall through to allow
 
     @MainActor

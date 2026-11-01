@@ -595,6 +595,8 @@ public final class AppModel: ObservableObject {
             updateProject(updated)
         } else {
             activePermissionMode = mode
+            persistSettings()
+            clearSessionApprovals { $0.projectID == nil }
         }
     }
 

@@ -70,7 +70,7 @@ final class EjectCoordinationWiringTests: LibraryStateTestCase {
         let source: FakeLoadedModels? = await MainActor.run { models.map { FakeLoadedModels($0, log: log) } }
         let ejector = FakeEjector(log: log)
         let fan = StreamFan()
-        await model.startLibraryMonitoring(
+        model.startLibraryMonitoring(
             events: { fan.make() }, approvalHost: { host }, ejector: ejector,
             volumeLocator: FakeVolumeLocator(), loadedModels: source)
         let rig = Rig(model: model, host: host, ejector: ejector, log: log, fan: fan, source: source)
@@ -92,44 +92,44 @@ final class EjectCoordinationWiringTests: LibraryStateTestCase {
         // Starting again changes nothing: one model, one coordinator.
         let first = rig.host.delegate
         let other = FakeApprovalHost()
-        await rig.model.startLibraryMonitoring(events: { rig.fan.make() }, approvalHost: { other })
+        rig.model.startLibraryMonitoring(events: { rig.fan.make() }, approvalHost: { other })
         XCTAssertTrue(rig.host.delegate === first)
         XCTAssertNil(other.delegate, "the second call did not register a second coordinator")
-        await rig.model.shutdown()
+        rig.model.shutdown()
     }
 
     func testShutdownDeregistersTheCoordinatorWithoutStoppingTheMonitor() async {
         let rig = await start(models: [Fx.chat])
-        let coordinator = await self.coordinator(of: rig)
+        let coordinator = self.coordinator(of: rig)
         await coordinator?.refreshSnapshot()
         XCTAssertNotNil(coordinator?.unmountRequested(for: Fx.t7Disk), "it dissents while it is the live one")
         await coordinator?.waitForIdle()
 
-        await rig.model.shutdown()
+        rig.model.shutdown()
         XCTAssertNil(rig.host.delegate, "the registration is removed")
         XCTAssertEqual(rig.host.stopCount, 0, "and the monitor is never stopped")
-        let removed = await rig.model.ejectCoordination
+        let removed = rig.model.ejectCoordination
         XCTAssertNil(removed)
         // A request that still reaches the old coordinator is approved.
-        await rig.source?.setModels([Fx.chat])
+        rig.source?.setModels([Fx.chat])
         XCTAssertNil(coordinator?.unmountRequested(for: Fx.t7Disk), "a locked app never dissents")
     }
 
     func testAReplacementModelKeepsTheRegistrationWhenTheOldOneShutsDownAfterIt() async {
         let host = FakeApprovalHost()
         let old = await start(models: [Fx.chat], host: host)
-        let oldCoordinator = await coordinator(of: old)
+        let oldCoordinator = coordinator(of: old)
 
         // The vault unlocks: a new model registers before the old one is torn down.
         let new = await start(models: [Fx.chat], host: host)
-        let newCoordinator = await coordinator(of: new)
+        let newCoordinator = coordinator(of: new)
         XCTAssertTrue(host.delegate === newCoordinator)
 
-        await old.model.shutdown()
+        old.model.shutdown()
         XCTAssertTrue(host.delegate === newCoordinator, "the old model must not remove the new registration")
         XCTAssertNil(oldCoordinator?.unmountRequested(for: Fx.t7Disk), "the old coordinator approves")
 
-        await new.model.shutdown()
+        new.model.shutdown()
         XCTAssertNil(host.delegate)
         XCTAssertEqual(host.stopCount, 0)
     }
@@ -137,22 +137,22 @@ final class EjectCoordinationWiringTests: LibraryStateTestCase {
     func testAModelThatShutDownAndStartsAgainRegistersAFreshCoordinator() async {
         let rig = await start(models: [])
         let first = rig.host.delegate
-        await rig.model.shutdown()
+        rig.model.shutdown()
         XCTAssertNil(rig.host.delegate)
 
-        await rig.model.startLibraryMonitoring(
+        rig.model.startLibraryMonitoring(
             events: { rig.fan.make() }, approvalHost: { rig.host }, ejector: rig.ejector,
             volumeLocator: FakeVolumeLocator(), loadedModels: nil)
         XCTAssertNotNil(rig.host.delegate)
         XCTAssertFalse(rig.host.delegate === first, "a new coordinator, not the stopped one")
-        await rig.model.shutdown()
+        rig.model.shutdown()
     }
 
     // MARK: - Through the app model
 
     func testAnEjectThroughTheAppModelUnloadsEjectsAndTellsTheUser() async {
         let rig = await start(models: [Fx.chat, Fx.server])
-        let coordinator = await self.coordinator(of: rig)
+        let coordinator = self.coordinator(of: rig)
         await coordinator?.refreshSnapshot()
 
         XCTAssertNotNil(rig.host.delegate?.unmountRequested(for: Fx.t7Disk))
@@ -160,19 +160,19 @@ final class EjectCoordinationWiringTests: LibraryStateTestCase {
 
         XCTAssertEqual(rig.ejector.calls, [Fx.t7Disk])
         let expected = EjectNoticeText.message(for: .ejected(models: ["qwen", "gemma"]))
-        let shown = await rig.model.activeToast
+        let shown = rig.model.activeToast
         XCTAssertEqual(shown?.message, expected)
         XCTAssertEqual(shown?.style, .success)
-        await rig.model.shutdown()
+        rig.model.shutdown()
     }
 
     func testASurpriseRemovalShowsTheAdviseMessageAndLeavesEveryRecordAlone() async {
         let state = makeState()
         let rig = await start(models: [Fx.chat], state: state)
         await state.refresh()
-        let librariesBefore = await state.libraries
-        let rowsBefore = await state.allInstalled
-        let installedBefore = await rig.model.installed
+        let librariesBefore = state.libraries
+        let rowsBefore = state.allInstalled
+        let installedBefore = rig.model.installed
         let writesBefore = service.writeCalls
 
         // The drive is pulled: the service now lists it as not connected, which
@@ -188,23 +188,23 @@ final class EjectCoordinationWiringTests: LibraryStateTestCase {
             ]
         }
         rig.fan.send(.didUnmount(Fx.t7Volume))
-        let coordinator = await self.coordinator(of: rig)
+        let coordinator = self.coordinator(of: rig)
         let handled = await eventually { coordinator?.handledEventCount == 1 }
         XCTAssertTrue(handled)
         await fireDebounce(state)
 
-        let shown = await rig.model.activeToast
+        let shown = rig.model.activeToast
         XCTAssertEqual(
             shown?.message, EjectNoticeText.message(for: .removedWithoutEject(models: ["qwen"])))
         XCTAssertEqual(shown?.style, .warning)
         XCTAssertTrue(rig.ejector.calls.isEmpty, "there is nothing to eject")
-        let sources = await rig.source?.models
+        let sources = rig.source?.models
         XCTAssertEqual(sources, [], "the session was torn down")
 
         // Requirement 6.4: the library list and every model record are intact.
-        let librariesAfter = await state.libraries
-        let rowsAfter = await state.allInstalled
-        let installedAfter = await rig.model.installed
+        let librariesAfter = state.libraries
+        let rowsAfter = state.allInstalled
+        let installedAfter = rig.model.installed
         XCTAssertEqual(librariesAfter.map(\.id), librariesBefore.map(\.id), "the library is still listed")
         XCTAssertEqual(librariesAfter.first { $0.id == "t7-id" }?.available, false, "and marked not connected")
         XCTAssertEqual(rowsAfter.map(\.installId), rowsBefore.map(\.installId), "no model row was dropped")
@@ -212,7 +212,7 @@ final class EjectCoordinationWiringTests: LibraryStateTestCase {
         XCTAssertEqual(installedAfter, installedBefore, "the picker list was not touched")
         XCTAssertEqual(service.writeCalls, writesBefore, "no registry write of any kind")
         XCTAssertEqual(service.writeCalls, [])
-        await rig.model.shutdown()
+        rig.model.shutdown()
     }
 
     // MARK: - The live source over the app model
@@ -222,7 +222,7 @@ final class EjectCoordinationWiringTests: LibraryStateTestCase {
         let path = "/Volumes/T7/TurboSpark/audio/speech.gturbo"
         await MainActor.run { rig.model.serverAudioModelPaths = ["speech.gturbo": path] }
 
-        let coordinator = await self.coordinator(of: rig)
+        let coordinator = self.coordinator(of: rig)
         let learned = await eventuallyAsync { coordinator?.decisions.snapshot.map(\.model.path) == [path] }
         XCTAssertTrue(learned, "a change to the served audio models refreshes the snapshot by itself")
         XCTAssertEqual(coordinator?.decisions.snapshot.first?.model.name, "speech")
@@ -231,19 +231,19 @@ final class EjectCoordinationWiringTests: LibraryStateTestCase {
         XCTAssertNotNil(rig.host.delegate?.unmountRequested(for: Fx.t7Disk))
         await coordinator?.waitForIdle()
 
-        let remaining = await rig.model.serverAudioModelPaths
+        let remaining = rig.model.serverAudioModelPaths
         XCTAssertTrue(remaining.isEmpty, "the live unload path released the served model")
         XCTAssertEqual(rig.ejector.calls, [Fx.t7Disk])
-        let shown = await rig.model.activeToast
+        let shown = rig.model.activeToast
         XCTAssertEqual(shown?.message, EjectNoticeText.message(for: .ejected(models: ["speech"])))
-        await rig.model.shutdown()
+        rig.model.shutdown()
     }
 
     func testAModelReleasedElsewhereStopsDissentingOnceTheSnapshotFollows() async {
         let rig = await start()
         let path = "/Volumes/T7/TurboSpark/audio/speech.gturbo"
         await MainActor.run { rig.model.serverAudioModelPaths = ["speech.gturbo": path] }
-        let coordinator = await self.coordinator(of: rig)
+        let coordinator = self.coordinator(of: rig)
         let learned = await eventuallyAsync { coordinator?.decisions.snapshot.count == 1 }
         XCTAssertTrue(learned)
 
@@ -252,16 +252,16 @@ final class EjectCoordinationWiringTests: LibraryStateTestCase {
         let forgot = await eventuallyAsync { coordinator?.decisions.snapshot.isEmpty == true }
         XCTAssertTrue(forgot, "the snapshot did not follow the change")
         XCTAssertNil(rig.host.delegate?.unmountRequested(for: Fx.t7Disk), "an unused drive ejects as ever")
-        await rig.model.shutdown()
+        rig.model.shutdown()
     }
 
     func testTheLiveSourceSeesNothingOnAFreshModel() async {
         let rig = await start()
-        let coordinator = await self.coordinator(of: rig)
+        let coordinator = self.coordinator(of: rig)
         await coordinator?.refreshSnapshot()
         XCTAssertEqual(coordinator?.decisions.snapshot.count, 0)
         XCTAssertNil(rig.host.delegate?.unmountRequested(for: Fx.t7Disk))
-        await rig.model.shutdown()
+        rig.model.shutdown()
     }
 
     // MARK: - The inventory

@@ -1,4 +1,5 @@
 import SwiftUI
+import os
 import XCTest
 
 @testable import TurboSparkApp
@@ -118,17 +119,18 @@ final class LowRoundToolFixesTests: XCTestCase {
     // MARK: - TodoWrite
 
     func testTodoWriteRefusesUnparseablePayloadInsteadOfClearing() {
-        var updates = 0
-        TodoWriteExecutor.onTodosUpdated = { _, _ in updates += 1 }
+        // Sendable: the executor's callback may run off the test's thread.
+        let updates = OSAllocatedUnfairLock(initialState: 0)
+        TodoWriteExecutor.onTodosUpdated = { _, _ in updates.withLock { $0 += 1 } }
         defer { TodoWriteExecutor.onTodosUpdated = nil }
 
         XCTAssertThrowsError(try TodoWriteExecutor.execute(arguments: [:]))
         XCTAssertThrowsError(try TodoWriteExecutor.execute(arguments: ["todos": "{\"todos\": [{\"title\": \"x\"}"]))
         XCTAssertThrowsError(try TodoWriteExecutor.execute(arguments: ["todos": "[{\"title\": \"x\"}]"]))
-        XCTAssertEqual(updates, 0, "a failed parse must not reach the persisted checklist")
+        XCTAssertEqual(updates.withLock { $0 }, 0, "a failed parse must not reach the persisted checklist")
 
         XCTAssertNoThrow(try TodoWriteExecutor.execute(arguments: ["todos": "[]"]))
-        XCTAssertEqual(updates, 1, "an explicit empty list still clears")
+        XCTAssertEqual(updates.withLock { $0 }, 1, "an explicit empty list still clears")
     }
 
     func testTodoIdsAreStableAndUnique() throws {

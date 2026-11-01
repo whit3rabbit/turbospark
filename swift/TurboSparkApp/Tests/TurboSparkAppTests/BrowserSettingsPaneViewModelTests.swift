@@ -5,9 +5,9 @@ final class BrowserSettingsPaneViewModelTests: XCTestCase {
     @MainActor
     func testFirstEnableRequiresConfirmationAndRecordsOnboardingOnce() {
         var writes: [BrowserSettings] = []
-        let viewModel = BrowserSettingsPaneViewModel(settings: BrowserSettings()) {
+        let viewModel = BrowserSettingsPaneViewModel(settings: BrowserSettings(), onChange: {
             writes.append($0)
-        }
+        })
 
         XCTAssertEqual(viewModel.requestEnabled(true), .onboardingRequired)
         XCTAssertFalse(viewModel.settings.enabled)
@@ -32,9 +32,9 @@ final class BrowserSettingsPaneViewModelTests: XCTestCase {
     @MainActor
     func testCancellingFirstEnableLeavesFeatureDisabledAndUnrecorded() {
         var writeCount = 0
-        let viewModel = BrowserSettingsPaneViewModel(settings: BrowserSettings()) { _ in
+        let viewModel = BrowserSettingsPaneViewModel(settings: BrowserSettings(), onChange: { _ in
             writeCount += 1
-        }
+        })
 
         XCTAssertEqual(viewModel.requestEnabled(true), .onboardingRequired)
         viewModel.cancelFirstEnable()
@@ -49,9 +49,9 @@ final class BrowserSettingsPaneViewModelTests: XCTestCase {
     @MainActor
     func testDialogPolicyAndDefaultViewportRoundTripThroughTheViewModel() {
         var writes: [BrowserSettings] = []
-        let viewModel = BrowserSettingsPaneViewModel(settings: BrowserSettings()) {
+        let viewModel = BrowserSettingsPaneViewModel(settings: BrowserSettings(), onChange: {
             writes.append($0)
-        }
+        })
 
         viewModel.setDialogPolicy(.autoDismiss)
         viewModel.setDefaultViewport(width: 1440, height: 900, zoom: 1.25)

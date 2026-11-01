@@ -70,6 +70,20 @@ public actor SessionApprovalStore {
     }
 }
 
+/// The rootless chat's permission mode for the tool call being executed.
+///
+/// `AppToolRegistry.execute` binds it from its `fallbackMode`, and `evaluate`
+/// reads it when its own `fallbackMode` is nil. Nested gates (batch children,
+/// subagents, `tool_call`, codemode) call `evaluate` without a mode, so they
+/// used to judge a projectless Ask or Read Only chat's calls as Auto.
+///
+/// A task-local for the same reason as `AppToolRegistry.callerToolFilter`:
+/// it reaches child tasks but NOT `Task.detached`, so the codemode worker's
+/// handler captures it before the worker starts.
+public enum ToolPermissionContext {
+    @TaskLocal public static var fallbackMode: AppPermissionMode? = nil
+}
+
 /// Central permissions evaluation engine enforcing Unsloth-style security policies.
 public enum AppToolPermissionEngine {
     /// Evaluates whether a tool call should be allowed, gated with user confirmation, or denied.
@@ -86,6 +100,8 @@ public enum AppToolPermissionEngine {
     /// That paragraph described every mode except the one that skipped all
     /// three gates in a single line at the top. `readOnly` is the only
     /// absolute arm here, and it is absolute in the SAFE direction.
+    /// `fullAccess` skips the high-risk gate on purpose, but sits under the
+    /// category deny and the MCP deny rule like every other mode.
     ///
     /// The MCP layers slot into that spine as follows. A persisted DENY rule
     /// sits immediately after the category deny (an explicitly denied tool
@@ -109,7 +125,8 @@ public enum AppToolPermissionEngine {
         browserContext: BrowserPermissionContext? = nil
     ) -> ToolPermissionDecision {
         // No project selected: fall back to the guarded default or chosen fallback mode.
-        let permissions = project?.permissions ?? AppProjectPermissions.preset(for: fallbackMode ?? .auto)
+        let permissions = project?.permissions ?? AppProjectPermissions.preset(
+            for: fallbackMode ?? ToolPermissionContext.fallbackMode ?? .auto)
         let category = call.category
 
         let categoryPermission: AppToolPermission
@@ -241,11 +258,6 @@ public enum AppToolPermissionEngine {
             return .deny(reason: "Tool execution is denied in Strict Read-Only mode.")
         }
 
-        // Full Access Mode: Unrestricted execution without approval prompts.
-        if permissions.mode == .fullAccess {
-            return .allow
-        }
-
         // 2. Granular Category Permission Check (Explicit Deny wins, and a
         // session approval cannot resurrect a category the project denies)
         if categoryPermission == .deny {
@@ -260,6 +272,13 @@ public enum AppToolPermissionEngine {
         if let target = mcpTarget, permissions.mcpDenyMatches(serverName: target.server, toolName: target.tool) {
             let toolPart = target.tool.map { "__\($0)" } ?? " (all tools)"
             return .deny(reason: "MCP tool 'mcp__\(target.server)\(toolPart)' is denied by a project permission rule.")
+        }
+
+        // 2c. Full Access: no prompts and no risk ceiling, but BELOW the two
+        // explicit refusals. It returned above step 2, so a category the user
+        // set to Deny, or an MCP deny rule, ran anyway under this mode.
+        if permissions.mode == .fullAccess {
+            return .allow
         }
 
         // 3. High-risk actions ALWAYS require a fresh confirmation, regardless

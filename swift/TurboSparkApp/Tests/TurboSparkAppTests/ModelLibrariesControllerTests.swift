@@ -15,9 +15,7 @@ final class SpeedGate: @unchecked Sendable {
     var isWaiting: Bool { lock.lock(); defer { lock.unlock() }; return continuation != nil }
 
     func run(_ url: URL, _ isInternal: Bool) async throws -> DriveSpeedResult {
-        lock.lock()
-        recorded.append((url, isInternal))
-        lock.unlock()
+        lock.withLock { recorded.append((url, isInternal)) }
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (waiter: CheckedContinuation<DriveSpeedResult, Error>) in
                 lock.lock()

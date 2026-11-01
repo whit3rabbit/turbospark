@@ -130,10 +130,10 @@ final class FakeEjector: DiskEjecting, @unchecked Sendable {
     func setResult(_ new: EjectResult) { lock.lock(); result = new; lock.unlock() }
 
     func unmountAndEject(_ disk: DiskIdentity) async -> EjectResult {
-        lock.lock()
-        recorded.append(disk)
-        let answer = result
-        lock.unlock()
+        let answer = lock.withLock {
+            recorded.append(disk)
+            return result
+        }
         log.add("eject")
         await duringEject?(disk)
         return answer

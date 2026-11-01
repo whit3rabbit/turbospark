@@ -19,7 +19,7 @@ final class AudioWorkflowTests: XCTestCase {
         // A page selects only an installed model, here the checkpoint folder.
         controller.preferences.localModels[AudioWorkspaceController.defaultMusicProfileAlias] = try model.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
         controller.selectPage(.music)
-        let profile = try XCTUnwrap(controller.selectedProfile)
+        _ = try XCTUnwrap(controller.selectedProfile)
         controller.recipe.caption = "piano"; controller.recipe.lyrics = "[instrumental]"
         controller.recipe.text = "A retained voiceover draft"
         controller.recipe.durationSeconds = 0.12; controller.recipe.steps = 1; controller.recipe.seed = 7

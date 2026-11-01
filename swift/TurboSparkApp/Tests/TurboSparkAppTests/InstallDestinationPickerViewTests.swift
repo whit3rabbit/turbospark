@@ -63,7 +63,7 @@ final class InstallDestinationPickerViewTests: LibraryStateTestCase {
         window.contentView = hosted
         for _ in 0..<4 {
             try? await Task.sleep(nanoseconds: 40_000_000)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+            Self.turnRunLoop(for: 0.02)
             hosted.layoutSubtreeIfNeeded()
         }
         return hosted
@@ -147,5 +147,11 @@ final class InstallDestinationPickerViewTests: LibraryStateTestCase {
             }
         }
         XCTAssertGreaterThan(embedding, 0, "the scan found no embedding surface: is it looking at the right files?")
+    }
+
+    /// Sync on purpose: `RunLoop.run(until:)` is unavailable in async code,
+    /// and the hosted SwiftUI view needs the main run loop to turn.
+    private static func turnRunLoop(for seconds: TimeInterval) {
+        RunLoop.current.run(until: Date().addingTimeInterval(seconds))
     }
 }

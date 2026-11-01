@@ -158,7 +158,7 @@ final class LibraryEjectCoordinatorTests: XCTestCase {
         }
         // This test runs on the main thread. Block it, as a busy main thread
         // would be: a delegate that needs the main actor cannot answer.
-        let result = done.wait(timeout: .now() + 2)
+        let result = blockingWait(done, seconds: 2)
         XCTAssertEqual(result, .success, "the decision waited for the main thread")
         XCTAssertNotNil(answer.value, "and it still dissented")
         await h.coordinator.waitForIdle()
@@ -684,4 +684,10 @@ private final class ScriptedApprovalSource: UnmountApprovalSource, @unchecked Se
         lock.lock(); let current = handler; lock.unlock()
         return current?(disk)
     }
+}
+
+/// Sync on purpose: `DispatchSemaphore.wait` is unavailable in async code,
+/// and this test means to block the calling thread.
+private func blockingWait(_ semaphore: DispatchSemaphore, seconds: Double) -> DispatchTimeoutResult {
+    semaphore.wait(timeout: .now() + seconds)
 }

@@ -141,7 +141,7 @@ final class AudioLiveTranscriberTests: XCTestCase {
     func testCommitsLiveThenFinishesBeforeClosing() async {
         let feed = AudioLiveFeed(limitSeconds: 30)
         let stream = FakeStream(), events = Events()
-        let live = AudioLiveTranscriber(feed: feed, open: { stream }, onEvent: events.add)
+        let live = AudioLiveTranscriber(feed: feed, open: { stream }, onEvent: { events.add($0) })
         live.start(pumpInterval: .seconds(3_600))
         wait { live.isOpenForTesting }
         offerSeconds(feed, 3)
@@ -159,7 +159,7 @@ final class AudioLiveTranscriberTests: XCTestCase {
         let feed = AudioLiveFeed(limitSeconds: 30)
         let stream = FakeStream(), events = Events()
         let gate = DispatchSemaphore(value: 0)
-        let live = AudioLiveTranscriber(feed: feed, open: { gate.wait(); return stream }, onEvent: events.add)
+        let live = AudioLiveTranscriber(feed: feed, open: { gate.wait(); return stream }, onEvent: { events.add($0) })
         live.start(pumpInterval: .seconds(3_600))
         offerSeconds(feed, 4)
         live.pumpForTesting()
@@ -173,7 +173,7 @@ final class AudioLiveTranscriberTests: XCTestCase {
         let feed = AudioLiveFeed(limitSeconds: 30)
         let events = Events()
         let gate = DispatchSemaphore(value: 0)
-        let live = AudioLiveTranscriber(feed: feed, backlogSeconds: 1, open: { gate.wait(); return FakeStream() }, onEvent: events.add)
+        let live = AudioLiveTranscriber(feed: feed, backlogSeconds: 1, open: { gate.wait(); return FakeStream() }, onEvent: { events.add($0) })
         live.start(pumpInterval: .seconds(3_600))
         offerSeconds(feed, 2)
         live.pumpForTesting()
@@ -184,7 +184,7 @@ final class AudioLiveTranscriberTests: XCTestCase {
 
     func testAFailedOpenStopsLiveTextWithAReason() {
         let events = Events()
-        let live = AudioLiveTranscriber(feed: AudioLiveFeed(), open: { throw TurboSparkError(code: .invalidArgument, message: "no model") }, onEvent: events.add)
+        let live = AudioLiveTranscriber(feed: AudioLiveFeed(), open: { throw TurboSparkError(code: .invalidArgument, message: "no model") }, onEvent: { events.add($0) })
         live.start(pumpInterval: .seconds(3_600))
         wait { events.all.contains { if case .stopped(let reason) = $0 { return reason.contains("no model") }; return false } }
         live.stopAndDrain()

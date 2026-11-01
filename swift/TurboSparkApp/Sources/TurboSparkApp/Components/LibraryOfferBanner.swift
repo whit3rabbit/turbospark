@@ -168,8 +168,10 @@ private struct LibraryOfferBannerCard: View {
         notNowButton(blocked: blocked, reason: reason)
         if controller.isAdding {
             HStack(spacing: 8) {
+                // A range, not a fixed width (design-system ProgressBar guide):
+                // the bar may give way to the wrapping sentence beside it.
                 AppProgressBar(value: nil, label: Text("Adding the library\u{2026}", bundle: .module), size: .compact)
-                    .frame(width: 80)
+                    .frame(minWidth: 40, idealWidth: 80, maxWidth: 80)
                 // Wraps instead of truncating: a long translation at the
                 // largest text size would otherwise cut the sentence to a word.
                 Text("Adding the library\u{2026}", bundle: .module)

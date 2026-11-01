@@ -107,7 +107,7 @@ final class LibraryEjectCoordination {
 final class AppModelLoadedModels: LoadedModelSource {
     /// How long a stopped turn may take to wind down before the sessions are
     /// released anyway.
-    static let stopPatience: Duration = .seconds(5)
+    nonisolated static let stopPatience: Duration = .seconds(5)
 
     /// Stand-ins for the parts of the app a unit test cannot build: a model
     /// session needs a multi-gigabyte checkpoint, an audio session a native
