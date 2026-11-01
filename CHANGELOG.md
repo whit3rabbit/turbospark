@@ -14,6 +14,17 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- Gemma 4 vision: image prompts on a Gemma 4 install repacked with its tower
+  (`mlx-community/gemma-4-26b-a4b-it-4bit`), through the CLI
+  (`--messages-file`), both server endpoints, `ts_generate` and
+  the macOS app. A second tower kind (`visionTower: "gemma4"` in the
+  manifest; older installs read as the Qwen tower) with its own Metal tower
+  (axial 2-D rope, 3x3 pooling, the `embed_vision` projector), a bidirectional
+  image span on the sliding layers (the transformers rule), and a KV ring
+  sized for the 280-token default budget. Gated on the real checkpoint
+  against mlx-vlm: tower cosine 0.99998 to F32, and the trunk's median KL
+  closest to the transformers mask. No sidecar and no larger budgets yet.
+  See `docs/GEMMA4_VISION_PHASE0.md`.
 - macOS app: an Expert Residency setting (Auto, Streamed, Mapped) in Engine
   settings, with Cache Slots beside it (previously only in the Inspector) and
   a Resolved row. Mapped is sent only to models whose open would take it, and

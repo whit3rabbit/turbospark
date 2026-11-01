@@ -690,8 +690,19 @@ fn classification_buckets() {
             layer: 1
         }
     );
+    // The tower and its projector are a `VisionTower` now; whether they are
+    // ingested is the caller's request, and a text-only walk reports them as
+    // excluded (`orchestrate_orders_passes_through_and_slices_experts`).
     assert_eq!(
         classify_gemma4("vision_tower.patch_embed.weight", LAYERS),
+        Gemma4Bucket::VisionTower
+    );
+    assert_eq!(
+        classify_gemma4("embed_vision.embedding_projection.weight", LAYERS),
+        Gemma4Bucket::VisionTower
+    );
+    assert_eq!(
+        classify_gemma4("audio_tower.layers.0.weight", LAYERS),
         Gemma4Bucket::ExcludedMultimodal
     );
     assert_eq!(
