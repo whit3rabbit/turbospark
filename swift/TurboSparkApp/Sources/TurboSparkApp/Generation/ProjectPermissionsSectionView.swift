@@ -141,6 +141,7 @@ struct ProjectPermissionsSectionView: View {
                 permissionRow(title: "Web Requests", desc: "Fetch web documentation and search", selection: $webPermission)
                 permissionRow(title: "MCP External Tools", desc: "Invoke external MCP server tools", selection: $mcpPermission)
                 permissionRow(title: "Automation & Crons", desc: "Schedule background tasks and monitors", selection: $automationPermission)
+                permissionRow(title: "Computer Use", desc: "Click and type in Mac apps you allow", selection: $computerUsePermission)
                 categoryModeNote
             }
             .padding(12)
