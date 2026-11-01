@@ -52,6 +52,22 @@ public enum AppToolRegistry {
             )
         }
 
+        // Block all, enforced at execution as well as at approval: a web
+        // tool with no URL (a search provider call) has no host for the
+        // destination validator to refuse. URL tools are refused per host by
+        // `HttpRequestDestinationValidator`, which keeps localhost reachable.
+        if !AppNetworkPolicyStore.current.permitsOutboundTraffic,
+           category(for: call.name, projectURL: project?.rootDirectoryURL) == .web,
+           ToolApprovalPreviewSummary.httpURL(call.arguments) == nil
+        {
+            return AppToolResult(
+                callID: call.id,
+                output: "Error: '\(call.name)' is blocked. Network access for tools is set to Block all in Settings > Network.",
+                isError: true,
+                durationSeconds: Date().timeIntervalSince(startTime)
+            )
+        }
+
         // **NO PROJECT MEANS NO ROOT, AND THEREFORE NO FILE OR SHELL TOOL.**
         //
         // There is no defensible default here, which is what took two tries

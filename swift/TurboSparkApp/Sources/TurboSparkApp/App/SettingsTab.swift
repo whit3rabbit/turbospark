@@ -21,6 +21,7 @@ extension AppSettingsView {
         case hooks = "Hooks & Lifecycle"
         case browser = "Browser"
         case computerUse = "Computer Use"
+        case network = "Network"
 
         public var id: String { rawValue }
 
@@ -47,6 +48,7 @@ extension AppSettingsView {
             case .hooks: return "link.badge.plus"
             case .browser: return "globe"
             case .computerUse: return "cursorarrow.rays"
+            case .network: return "network"
             }
         }
 
@@ -55,7 +57,7 @@ extension AppSettingsView {
             case .general, .profiles, .appearance, .shortcuts, .permissions:
                 return "Personal"
             case .models, .engine, .safety, .mcp, .tools, .skills, .memory, .soul, .agents, .plugins,
-                .automation, .hooks, .browser, .computerUse:
+                .automation, .hooks, .browser, .computerUse, .network:
                 return "Engine & Coding"
             }
         }
@@ -100,6 +102,8 @@ extension AppSettingsView {
                 return ["browser", "web", "automation", "origins", "viewport", "dialogs"]
             case .computerUse:
                 return ["computer use", "desktop", "control", "accessibility", "screen recording", "vision", "apps", "click"]
+            case .network:
+                return ["network", "internet", "domains", "allowlist", "blocklist", "localhost", "offline", "firewall", "egress", "web fetch", "sandbox"]
             }
         }
     }
