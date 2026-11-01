@@ -34,6 +34,7 @@ struct ProjectPermissionsSectionView: View {
     @Binding var automationPermission: AppToolPermission
     @Binding var browserPermission: AppToolPermission
     @Binding var browserOriginAllowlist: [String]
+    @Binding var computerUsePermission: AppToolPermission
     @Binding var guardrailsOption: AppProjectGuardrailsOption
     @StateObject private var browserPermissionModel: BrowserProjectPermissionsSettingsViewModel
 
@@ -47,6 +48,7 @@ struct ProjectPermissionsSectionView: View {
         automationPermission: Binding<AppToolPermission>,
         browserPermission: Binding<AppToolPermission>,
         browserOriginAllowlist: Binding<[String]>,
+        computerUsePermission: Binding<AppToolPermission>,
         guardrailsOption: Binding<AppProjectGuardrailsOption>
     ) {
         _permissionMode = permissionMode
@@ -58,6 +60,7 @@ struct ProjectPermissionsSectionView: View {
         _automationPermission = automationPermission
         _browserPermission = browserPermission
         _browserOriginAllowlist = browserOriginAllowlist
+        _computerUsePermission = computerUsePermission
         _guardrailsOption = guardrailsOption
         _browserPermissionModel = StateObject(wrappedValue: BrowserProjectPermissionsSettingsViewModel(
             permission: browserPermission.wrappedValue,
@@ -312,5 +315,6 @@ struct ProjectPermissionsSectionView: View {
         automationPermission = permissions.automation
         // Through the model, which owns the browser binding and its picker.
         browserPermissionModel.setPermission(permissions.browser)
+        computerUsePermission = permissions.computerUse
     }
 }

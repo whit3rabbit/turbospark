@@ -252,7 +252,13 @@ public final class AppModel: ObservableObject {
     /// Currently selected installed model.
     @Published public var selected: InstalledModel?
     /// Active TurboSpark session when a model is loaded.
-    @Published public var session: TurboSparkSession?
+    @Published public var session: TurboSparkSession? {
+        // App grants were given while one model was driving; a different
+        // model (maybe without vision) must ask again.
+        didSet {
+            if oldValue !== session, !computerUseSessions.isEmpty { revokeAllComputerUseGrants() }
+        }
+    }
     /// Whether a model is currently being loaded into memory.
     @Published public var opening: Bool = false
     /// Custom filesystem path entered for manual model loading.
@@ -430,6 +436,14 @@ public final class AppModel: ObservableObject {
     @Published public var interactionMode: AppInteractionMode = .chat
     /// Profile-scoped browser automation preferences.
     @Published public var browserSettings = BrowserSettings()
+    @Published public var computerUseSettings = ComputerUseSettings()
+    /// The helper connection and the surface it reported. Both nil until the
+    /// helper ships, which keeps every computer tool hidden.
+    var computerUsePort: (any ComputerUseControlPort)?
+    var computerUseManifest: ComputerUseBackendManifest?
+    /// Per-chat app grants. Dropped with the chat, on model change, and by
+    /// the kill switch.
+    var computerUseSessions: [UUID: ComputerUseSession] = [:]
     /// Whether the browser side pane currently owns the shared right column.
     @Published public var browserPaneIsOpen = false
     public lazy var browserAutomationCoordinator = AppBrowserAutomationCoordinator(
@@ -1223,6 +1237,9 @@ public final class AppModel: ObservableObject {
         }
         AppToolRegistry.browserToolAvailabilityProvider = { [weak self] in
             self?.browserToolAvailability() ?? .disabled
+        }
+        AppToolRegistry.computerUseToolRuntimeProvider = { [weak self] _, chatID in
+            self?.computerUseToolRuntime(chatID: chatID)
         }
         AppToolRegistry.browserToolRuntimeProvider = { [weak self] call, project in
             guard let self, self.browserSettings.enabled else { return nil }
