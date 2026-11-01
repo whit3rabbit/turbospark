@@ -18,6 +18,13 @@ Tools: `computer_list_apps`, `computer_request_access`, `computer_snapshot`,
 `computer_screenshot`, `computer_click`, `computer_type`, `computer_key`,
 `computer_scroll`, `computer_open_app`.
 
+## Settings
+
+Settings > Computer Use holds the on/off switch, the Accessibility and Screen
+Recording rows with their Allow buttons, and a note when the loaded model has
+no vision. Each project's permissions add a Computer Use row (Ask by default,
+Allow under the permissive presets, Deny under read-only).
+
 ## Grants
 
 The model must call `computer_request_access` for each app. That call always
