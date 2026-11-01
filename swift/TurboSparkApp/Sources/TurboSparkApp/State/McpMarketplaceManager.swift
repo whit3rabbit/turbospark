@@ -304,7 +304,9 @@ public final class McpMarketplaceManager: @unchecked Sendable {
         if case .stdio(let command, _, _, _, _) = entry.transport {
             let trimmed = command.trimmingCharacters(in: .whitespaces)
             guard !trimmed.isEmpty else { throw MarketplaceError.emptyName }
-            guard McpClientEngine.resolveExecutablePath(trimmed) != nil else {
+            // `cached`, never a capture: this is synchronous UI-facing work.
+            // Before the first stdio spawn it is nil and the fixed list decides.
+            guard McpClientEngine.resolveExecutablePath(trimmed, searchPath: LoginShellPath.cached) != nil else {
                 throw MarketplaceError.commandNotFound(trimmed)
             }
         }

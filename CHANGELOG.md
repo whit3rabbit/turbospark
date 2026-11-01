@@ -70,6 +70,17 @@ when this file gets updated relative to the version bump and the tag.
   protocol rows (see the Music 3 README, "Turbo F32 stages").
 
 ### Fixed
+- macOS app: stdio MCP servers named `npx`, `uvx`, `node` or `bun` now start
+  when the app is launched from Finder or the Dock. A GUI launch only gets
+  `/usr/bin:/bin:/usr/sbin:/sbin`, so a node from nvm, volta or asdf was
+  never found. The first stdio spawn now reads `PATH` once from the user's
+  login shell (4 s timeout, run in the home folder, nothing else taken from
+  the shell) and searches it first. The child environment is still an
+  allowlist. Relative PATH entries are dropped, so a cloned repository
+  cannot supply its own `node`, and the probe shell must be listed in
+  `/etc/shells`. The fallback list now follows nvm's `alias/default` instead of
+  a `current` symlink that nvm does not create by default, and adds volta,
+  bun, deno, `~/.local/bin` (uv, pipx), mise and asdf.
 - Session info no longer reports the ANE+Steel prefill split as active on a
   model that never uses it. The app's global Prefill Mode "On" sends `split`
   to every model, and a MoE or non-Qwen session read "Active (ANE+Steel)"
