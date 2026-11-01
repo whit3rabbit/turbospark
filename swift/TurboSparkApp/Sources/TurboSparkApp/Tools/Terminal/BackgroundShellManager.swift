@@ -163,9 +163,11 @@ final class BackgroundShellManager: @unchecked Sendable {
         nextID += 1
         lock.unlock()
 
+        let launch = try ShellNetworkSandbox.launch(
+            executable: URL(fileURLWithPath: "/bin/zsh"), arguments: ["-c", command])
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-c", command]
+        process.executableURL = launch.executable
+        process.arguments = launch.arguments
         process.currentDirectoryURL = startDirectory
         process.environment = environment
 

@@ -157,6 +157,7 @@ public actor McpClientEngine {
         envPassthrough: [String],
         workingDirectory: URL?,
         errorCode: Int,
+        searchPath: String? = nil,
         stdoutBuffer: LineBuffer = LineBuffer(),
         onTermination: (@Sendable () -> Void)? = nil
     ) throws -> (process: Process, stdinPipe: Pipe, stdoutBuffer: LineBuffer, stderrTail: StderrTail) {
@@ -166,13 +167,16 @@ public actor McpClientEngine {
         // "this server's command does not exist" indistinguishable from
         // "this server started and then failed", and put the lookup somewhere
         // this process could neither observe nor report.
-        guard let resolvedExecutable = Self.resolveExecutablePath(command, relativeTo: workingDirectory) else {
+        guard let resolvedExecutable = Self.resolveExecutablePath(
+            command, relativeTo: workingDirectory, searchPath: searchPath)
+        else {
             throw NSError(
                 domain: "McpClientEngine", code: errorCode,
                 userInfo: [
                     NSLocalizedDescriptionKey:
                         "MCP server '\(serverName)': command '\(command)' was not found on "
-                        + "PATH or in any standard tool directory."
+                        + "your login shell PATH or in any standard tool directory. "
+                        + "Install it, or set PATH in this server's env."
                 ])
         }
         process.executableURL = URL(fileURLWithPath: resolvedExecutable)
@@ -182,7 +186,8 @@ public actor McpClientEngine {
             parent: ProcessInfo.processInfo.environment,
             passthrough: envPassthrough,
             declared: env,
-            executableDirectory: (resolvedExecutable as NSString).deletingLastPathComponent)
+            executableDirectory: (resolvedExecutable as NSString).deletingLastPathComponent,
+            searchPath: searchPath)
 
         if let workingDirectory {
             process.currentDirectoryURL = workingDirectory
@@ -240,7 +245,8 @@ public actor McpClientEngine {
         let (process, stdinPipe, stdoutBuffer, stderrTail) = try Self.spawnStdioServer(
             serverName: serverName, command: command, args: args, env: env,
             envPassthrough: envPassthrough,
-            workingDirectory: workingDirectory, errorCode: 1
+            workingDirectory: workingDirectory, errorCode: 1,
+            searchPath: await LoginShellPath.resolved()
         )
 
         defer {
@@ -609,7 +615,8 @@ public actor McpClientEngine {
         parent: [String: String],
         passthrough: [String],
         declared: [String: String],
-        executableDirectory: String? = nil
+        executableDirectory: String? = nil,
+        searchPath: String? = nil
     ) -> [String: String] {
         var environment: [String: String] = [:]
         for key in baselineEnvironmentKeys {
@@ -617,14 +624,18 @@ public actor McpClientEngine {
         }
         // A GUI launch inherits only /usr/bin:/bin:/usr/sbin:/sbin, so an
         // `npx` shebang (`#!/usr/bin/env node`) cannot find node. Put the
-        // resolved executable's directory and the Homebrew locations ahead
-        // of the inherited PATH. A PATH in `declared` still replaces all of
-        // this below.
+        // resolved executable's directory, the Homebrew locations and the
+        // login shell's PATH (`LoginShellPath`, PATH only) ahead of the
+        // inherited PATH. A PATH in `declared` still replaces all of this
+        // below.
         if let executableDirectory {
             var entries: [String] = []
             for dir in [executableDirectory, "/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin"]
+                + (searchPath ?? "").components(separatedBy: ":")
                 + (parent["PATH"] ?? "").components(separatedBy: ":")
-            where !dir.isEmpty && !entries.contains(dir) {
+            // Relative entries are dropped: the child's cwd is the project
+            // root, so `.` would let a cloned repository's own `node` win.
+            where dir.hasPrefix("/") && !entries.contains(dir) {
                 entries.append(dir)
             }
             environment["PATH"] = entries.joined(separator: ":")
@@ -676,7 +687,13 @@ public actor McpClientEngine {
     /// Static so the marketplace can ask the same question before installing an
     /// entry. Two spellings of "can this command be launched" would drift, and
     /// the one that drifted would accept a server the spawn then refuses.
-    public static func resolveExecutablePath(_ name: String, relativeTo base: URL? = nil) -> String? {
+    ///
+    /// `searchPath` is the login shell's PATH (`LoginShellPath`) and is
+    /// searched FIRST: it is what the user's terminal would run, so an nvm
+    /// node beats a stale Homebrew one the same way it does in their shell.
+    public static func resolveExecutablePath(
+        _ name: String, relativeTo base: URL? = nil, searchPath: String? = nil
+    ) -> String? {
         if name.hasPrefix("/") { return name }
         if name.hasPrefix("~") {
             let expanded = (name as NSString).expandingTildeInPath
@@ -691,19 +708,31 @@ public actor McpClientEngine {
             let candidate = URL(fileURLWithPath: name, relativeTo: base).standardizedFileURL.path
             return FileManager.default.isExecutableFile(atPath: candidate) ? candidate : nil
         }
-        let commonPaths = [
+        if let found = firstExecutable(named: name, in: (searchPath ?? "").components(separatedBy: ":")) {
+            return found
+        }
+
+        // The fallback when the login shell probe failed or has not run (the
+        // marketplace pre-check). Version managers that install per-user go
+        // after the system and Homebrew dirs, as they would on a fresh PATH.
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        var commonPaths = [
             "/usr/local/bin",
             "/opt/homebrew/bin",
             "/usr/bin",
             "/bin",
-            "\(FileManager.default.homeDirectoryForCurrentUser.path)/.cargo/bin",
-            "\(FileManager.default.homeDirectoryForCurrentUser.path)/.nvm/versions/node/current/bin"
+            home.appendingPathComponent(".cargo/bin").path,
+            home.appendingPathComponent(".volta/bin").path,
+            home.appendingPathComponent(".bun/bin").path,
+            home.appendingPathComponent(".deno/bin").path,
+            // uv, uvx and pipx install here.
+            home.appendingPathComponent(".local/bin").path,
+            home.appendingPathComponent(".local/share/mise/shims").path,
+            home.appendingPathComponent(".asdf/shims").path,
         ]
-        for path in commonPaths {
-            let candidate = "\(path)/\(name)"
-            if FileManager.default.isExecutableFile(atPath: candidate) {
-                return candidate
-            }
+        if let nvm = nvmNodeBinDirectory(home: home) { commonPaths.append(nvm) }
+        if let found = firstExecutable(named: name, in: commonPaths) {
+            return found
         }
 
         // Then the real PATH, which is what the `/usr/bin/env` fallback was
@@ -718,14 +747,62 @@ public actor McpClientEngine {
         // see or report. Resolving it ourselves means an unresolvable
         // command is an error naming itself, and a resolvable one is spawned
         // by absolute path.
-        let searchPath = ProcessInfo.processInfo.environment["PATH"] ?? ""
-        for path in searchPath.components(separatedBy: ":") where !path.isEmpty {
-            let candidate = "\(path)/\(name)"
+        let processPath = ProcessInfo.processInfo.environment["PATH"] ?? ""
+        return firstExecutable(named: name, in: processPath.components(separatedBy: ":"))
+    }
+
+    /// Absolute directories only: a relative entry (`.`, `node_modules/.bin`)
+    /// would resolve against this app's cwd here and the project root in the
+    /// child, neither of which the user meant.
+    private static func firstExecutable(named name: String, in directories: [String]) -> String? {
+        for directory in directories where directory.hasPrefix("/") {
+            let candidate = "\(directory)/\(name)"
             if FileManager.default.isExecutableFile(atPath: candidate) {
                 return candidate
             }
         }
-
         return nil
+    }
+
+    /// The `bin` directory of the node nvm would select, or nil.
+    ///
+    /// The old entry was `~/.nvm/versions/node/current/bin`, which exists only
+    /// with `NVM_SYMLINK_CURRENT=true` (off by default), so most nvm installs
+    /// never matched. This reads `alias/default`: a version prefix (`22`,
+    /// `v22.3`) picks the highest installed match; anything else (`node`,
+    /// `lts/*`, a named alias, no file) picks the highest installed version.
+    /// Resolving `lts/*` properly needs nvm's remote index, so it does not.
+    static func nvmNodeBinDirectory(home: URL) -> String? {
+        let nvm = home.appendingPathComponent(".nvm")
+        let versionsDirectory = nvm.appendingPathComponent("versions/node")
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: versionsDirectory.path)
+        else { return nil }
+        let installed = names.compactMap { name -> (name: String, version: [Int])? in
+            guard let version = nodeVersionComponents(name) else { return nil }
+            return (name, version)
+        }
+        guard !installed.isEmpty else { return nil }
+
+        let alias = (try? String(contentsOf: nvm.appendingPathComponent("alias/default"), encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var candidates = installed
+        if let alias, let prefix = nodeVersionComponents(alias) {
+            let matching = installed.filter { Array($0.version.prefix(prefix.count)) == prefix }
+            if !matching.isEmpty { candidates = matching }
+        }
+        // Numeric, not string, order: v22.10.0 is newer than v22.9.0.
+        guard let best = candidates.max(by: { $0.version.lexicographicallyPrecedes($1.version) })
+        else { return nil }
+        return versionsDirectory.appendingPathComponent(best.name).appendingPathComponent("bin").path
+    }
+
+    /// `v22.10.0` or `22.10` as `[22, 10, 0]` / `[22, 10]`; nil for anything
+    /// that is not dot-separated integers.
+    private static func nodeVersionComponents(_ raw: String) -> [Int]? {
+        let trimmed = raw.hasPrefix("v") ? String(raw.dropFirst()) : raw
+        let parts = trimmed.split(separator: ".", omittingEmptySubsequences: false)
+        guard !parts.isEmpty, parts.count <= 3 else { return nil }
+        let numbers = parts.compactMap { Int($0) }
+        return numbers.count == parts.count ? numbers : nil
     }
 }

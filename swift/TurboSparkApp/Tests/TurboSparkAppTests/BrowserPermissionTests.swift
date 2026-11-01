@@ -2,7 +2,14 @@ import Foundation
 import XCTest
 @testable import TurboSparkApp
 
-final class BrowserPermissionTests: XCTestCase {
+final class BrowserPermissionTests: NetworkPolicyPinnedTestCase {
+    /// LAN reachable, so the private-origin tests exercise the browser's own
+    /// high-risk gate. Metadata never gets that far: the network policy
+    /// refuses it first (`NetworkPolicyTests`).
+    override var pinnedNetworkPolicy: AppNetworkPolicy {
+        AppNetworkPolicy(mode: .allowAll, allowLocalNetwork: true)
+    }
+
     private func context(
         _ origin: String,
         owner: BrowserPermissionOwner = .agent,
@@ -137,17 +144,17 @@ final class BrowserPermissionTests: XCTestCase {
 
         var allowedPermissions = AppProjectPermissions.fullAccess
         XCTAssertEqual(
-            BrowserPermissionRuleStore.grant(origin: "http://169.254.169.254", to: &allowedPermissions),
+            BrowserPermissionRuleStore.grant(origin: "http://10.0.0.5", to: &allowedPermissions),
             .added
         )
         let highRisk = ToolRiskClassifier.assessRisk(
             name: "WebFetch",
-            arguments: ["url": "http://169.254.169.254/latest/meta-data"]
+            arguments: ["url": "http://10.0.0.5/admin"]
         )
         let highRiskDecision = AppToolPermissionEngine.evaluate(
             call: browserCall(riskAssessment: highRisk),
             project: AppProject(name: "Risky", permissions: allowedPermissions),
-            browserContext: context("http://169.254.169.254")
+            browserContext: context("http://10.0.0.5")
         )
         if case .ask(let assessment, _) = highRiskDecision {
             XCTAssertTrue(assessment.isHighRisk)
@@ -158,7 +165,7 @@ final class BrowserPermissionTests: XCTestCase {
         let agentHighRiskDecision = AppToolPermissionEngine.evaluate(
             call: browserCall(riskAssessment: highRisk),
             project: AppProject(name: "Risky agent", permissions: .agent),
-            browserContext: context("http://169.254.169.254")
+            browserContext: context("http://10.0.0.5")
         )
         if case .ask(let assessment, _) = agentHighRiskDecision {
             XCTAssertTrue(assessment.isHighRisk)
@@ -183,14 +190,14 @@ final class BrowserPermissionTests: XCTestCase {
     func testGrantedPrivateBrowserOriginIsHighRiskWithoutSuppliedAssessment() {
         var permissions = AppProjectPermissions.fullAccess
         XCTAssertEqual(
-            BrowserPermissionRuleStore.grant(origin: "http://169.254.169.254", to: &permissions),
+            BrowserPermissionRuleStore.grant(origin: "http://10.0.0.5", to: &permissions),
             .added
         )
 
         let decision = AppToolPermissionEngine.evaluate(
-            call: browserCall(url: "http://169.254.169.254/latest/meta-data"),
+            call: browserCall(url: "http://10.0.0.5/admin"),
             project: AppProject(name: "Private browser destination", permissions: permissions),
-            browserContext: context("http://169.254.169.254")
+            browserContext: context("http://10.0.0.5")
         )
         if case .ask(let assessment, _) = decision {
             XCTAssertTrue(assessment.isHighRisk)

@@ -178,6 +178,7 @@ struct StatusSheet: View {
                     statusRow("UI language", UserDefaults.standard.string(
                         forKey: AppLanguage.storageKey) ?? AppLanguage.system.rawValue)
                     statusRow("Permission mode", model.effectivePermissionMode.approvalLabelText)
+                    statusRow("Network", model.networkPolicy.mode.labelText)
                 }
                 statusGroup("Engine") {
                     if let alias = model.selected?.alias {

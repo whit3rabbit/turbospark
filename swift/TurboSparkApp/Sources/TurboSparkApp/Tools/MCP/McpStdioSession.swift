@@ -152,11 +152,13 @@ actor McpStdioSession {
         let lines = LineBuffer()
         lines.onActivity = { continuation.yield() }
         let spawned: (process: Process, stdinPipe: Pipe, stdoutBuffer: LineBuffer, stderrTail: StderrTail)
+        let searchPath = await LoginShellPath.resolved()
         do {
             spawned = try McpClientEngine.spawnStdioServer(
                 serverName: key.serverName, command: key.command, args: key.args,
                 env: key.env, envPassthrough: key.envPassthrough,
                 workingDirectory: workingDirectory, errorCode: 2,
+                searchPath: searchPath,
                 stdoutBuffer: lines,
                 onTermination: { continuation.yield() })
         } catch {
