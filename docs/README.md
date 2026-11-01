@@ -20,6 +20,7 @@ the evidence that supports the claim.
 | Understand the text install format | [`GTURBO.md`](GTURBO.md) |
 | Build a release artifact | [`RELEASE.md`](RELEASE.md) |
 | Compare desktop feature parity (ZCode, Unsloth Desktop) | [`DESKTOP_FEATURE_PARITY.md`](DESKTOP_FEATURE_PARITY.md) |
+| Read the detailed ZCode and OpenCode desktop comparisons | [`ZCODE_COMPARISON.md`](ZCODE_COMPARISON.md), [`OPENCODE2_COMPARISON.md`](OPENCODE2_COMPARISON.md) |
 
 ## Runtime and integration references
 
