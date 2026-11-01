@@ -20,6 +20,7 @@ struct ProjectSettingsSheet: View {
     @State private var mcpPermission: AppToolPermission = .ask
     @State private var automationPermission: AppToolPermission = .ask
     @State private var browserPermission: AppToolPermission = .ask
+    @State private var computerUsePermission: AppToolPermission = .ask
     @State private var browserOriginAllowlist: [String] = []
     /// The origins as loaded, to tell an edit in this sheet from a grant an
     /// approval card made while it was open.
@@ -60,6 +61,7 @@ struct ProjectSettingsSheet: View {
                                 automationPermission: $automationPermission,
                                 browserPermission: $browserPermission,
                                 browserOriginAllowlist: $browserOriginAllowlist,
+                                computerUsePermission: $computerUsePermission,
                                 guardrailsOption: $guardrailsOption
                             )
                             mcpSection
@@ -460,6 +462,7 @@ struct ProjectSettingsSheet: View {
             mcpPermission = editing.permissions.mcp
             automationPermission = editing.permissions.automation
             browserPermission = editing.permissions.browser
+            computerUsePermission = editing.permissions.computerUse
             browserOriginAllowlist = editing.permissions.browserOriginAllowlist
             loadedBrowserOriginAllowlist = editing.permissions.browserOriginAllowlist
             maxAutonomousSteps = Double(editing.maxAutonomousSteps)
@@ -489,6 +492,7 @@ struct ProjectSettingsSheet: View {
             mcpPermission = defaultPerms.mcp
             automationPermission = defaultPerms.automation
             browserPermission = defaultPerms.browser
+            computerUsePermission = defaultPerms.computerUse
             browserOriginAllowlist = defaultPerms.browserOriginAllowlist
             syntextIndexEnabled = false
         }
@@ -609,6 +613,7 @@ struct ProjectSettingsSheet: View {
             mcp: mcpPermission,
             automation: automationPermission,
             browser: browserPermission,
+            computerUse: computerUsePermission,
             browserOriginAllowlist: browserOriginAllowlist
         )
 

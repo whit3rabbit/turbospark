@@ -75,6 +75,8 @@ public enum ToolCallProjection {
             return "web request: \(target)"
         case .browser:
             return "browser action: \(call.name)"
+        case .computerUse:
+            return "computer action: \(call.name) in \(arguments["app"] ?? arguments["apps"] ?? "(no app)")"
         case .mcp:
             var lines: [String] = []
             if let target = McpPermissionRule.targetOfCall(name: call.name, arguments: arguments) {

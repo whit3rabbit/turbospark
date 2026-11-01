@@ -301,6 +301,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     public var conversationRecallEnabled: Bool
     /// Global browser preferences. Project permissions and origin grants are stored separately.
     public var browser: BrowserSettings
+    /// Global computer-use preferences. Per-app grants live only in memory.
+    public var computerUse: ComputerUseSettings
 
     public init(
         contextTokens: Int = 0,
@@ -391,7 +393,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         agentModeHints: AgentModeHints = AgentModeHints(),
         syntextIndexingEnabled: Bool = true,
         conversationRecallEnabled: Bool = true,
-        browser: BrowserSettings = BrowserSettings()
+        browser: BrowserSettings = BrowserSettings(),
+        computerUse: ComputerUseSettings = ComputerUseSettings()
     ) {
         self.contextTokens = contextTokens
         self.expertCacheSlots = expertCacheSlots
@@ -516,6 +519,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.syntextIndexingEnabled = syntextIndexingEnabled
         self.conversationRecallEnabled = conversationRecallEnabled
         self.browser = browser
+        self.computerUse = computerUse
     }
 
     /// Tolerant of a wrong TYPE as well as an absent key (state#59).
@@ -731,6 +735,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
             Bool.self, forKey: .conversationRecallEnabled, fallback: true)
         self.browser = c.decodeLenient(
             BrowserSettings.self, forKey: .browser, fallback: BrowserSettings())
+        self.computerUse = c.decodeLenient(
+            ComputerUseSettings.self, forKey: .computerUse, fallback: ComputerUseSettings())
     }
 
     /// Normalizes persisted chat-runtime controls without changing their

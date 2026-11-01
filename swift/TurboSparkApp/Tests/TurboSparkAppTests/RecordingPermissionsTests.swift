@@ -161,6 +161,11 @@ final class RecordingPermissionsTests: XCTestCase {
                 for api in ["requestAccess(for:", "CGRequestScreenCaptureAccess("] where code.contains(api) {
                     if name != "RecordingPermissions.swift" { violations.append("\(name):\(index + 1) calls \(api)") }
                 }
+                // The Accessibility grant belongs to the computer-use helper,
+                // never to this app, whose identity changes every update.
+                if code.contains("AXIsProcessTrustedWithOptions(") {
+                    violations.append("\(name):\(index + 1) prompts for Accessibility")
+                }
                 if code.contains("SCShareableContent.") {
                     if index > 0, lines[index - 1].contains("systemAudioAccessAllowed()") { guardedQueries += 1 }
                     else { violations.append("\(name):\(index + 1) queries ScreenCaptureKit without the access check") }

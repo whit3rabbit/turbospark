@@ -57,6 +57,7 @@ extension AppModel {
             contextTokens: maxContextTokens > 0 ? maxContextTokens : nil,
             webToolsEnabled: webSearchEnabled,
             browserAvailability: browserToolAvailability(mediaCapability: mediaCapability),
+            computerUseAvailability: computerUseToolAvailability(mediaCapability: mediaCapability),
             profile: activeToolProfile)
     }
 
