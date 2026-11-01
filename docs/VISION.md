@@ -49,7 +49,7 @@ Five crates, in the order a page moves through them.
 | decode, resize, normalize, patchify | `vision-io` | `[patches, 1536]` f32 rows, merge-window order |
 | position tables | `vision-io` | pos-embed index/weight table, rope frequency rows, mRoPE triples |
 | ingest | `repack` | `packed_vision/` (27 blobs) + 9 `vision.*` resident tensors, all FP16 |
-| kernels | `gpu` | six FP16 kernels: LayerNorm, two GELUs, 2-D rope, bidirectional attention, matmul, residual add |
+| kernels | `gpu` | six FP16 kernels: LayerNorm, two GELUs, 2-D rope, bidirectional attention, matmul (matrix-unit GEMM by default), residual add |
 | the forward pass | `runtime` | `[merged_tokens, 5120]` FP16 rows |
 
 `crates/compute::vision` is the CPU reference every kernel is held to, and
@@ -474,6 +474,25 @@ TAG as well as the width so it cannot quietly become a general one.
 The M-V2 kernels bind `half` where every other kernel in `crates/gpu` binds
 `bfloat`. The two are the same WIDTH, so binding a BF16 tensor at one of them
 passes every length check and reads the bytes as a different number.
+
+### The projection GEMM runs on the matrix units
+
+Every tower projection (patch embed, qkv, proj, fc1, fc2, the merger and the
+deepstack mergers) goes through `gpu::encode_vision_matmul`, which runs
+`vision_matmul_fp16_mma`: 64 x 64 output tiles, FP16 `simdgroup_matrix`
+operands, FP32 accumulators, zero-filled edges so any (m, k, n) is legal.
+`FC_VISION_GEMM_K_ALIGNED` (constant 110, in the cache key) drops the K tail
+check when K is a multiple of 32. The per-output `vision_matmul_fp16` it
+replaced reached about 0.5 to 0.8 TFLOP/s at 5,120 patches on an M4 Max, the
+GEMM about 8 to 9.
+
+`TURBOSPARK_VISION_MMA=0` restores the old kernel for an A/B (tslab knob
+`vision_mma`). The two sum in different orders, so they are not bit-identical;
+the GEMM's exactness class is that an output depends only on its own rows of
+`a` and `b` and on K, never on M, N or tile position
+(`crates/gpu/tests/vision_parity.rs`, `mma_matmul_*`). On the Qwen3-VL-4B
+install a 160-token greedy transcription of the deterministic page was
+byte-identical under both kernels.
 
 ## What running it found that reading it did not
 
