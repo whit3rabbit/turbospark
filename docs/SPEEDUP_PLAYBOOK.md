@@ -1165,10 +1165,24 @@ ratios:
 | Qwen3-VL-4B, median block time | 1,280 patches | 0.49 / 0.58 s | 0.13 / 0.14 s | tslab `vision_encode`, two runs each |
 | Qwen3-VL-4B, median block time | 9,216 patches | 46.8 / 47.2 s | 2.4 / 2.6 s | same |
 | Gemma 4, per image | one image | about 7 s | about 0.7 s | `CHANGELOG.md` |
-| Qwen4Exp (4-bit tower, dequantized), whole parity-test process | 784 patches | 1.69-1.70 s | 0.61-0.63 s | interleaved, 3 reps each ([QWEN4EXP_VISION_PHASE0.md](QWEN4EXP_VISION_PHASE0.md)) |
+| Qwen4Exp (4-bit tower, dequantized), tower total | 1,280 patches | 2.59 / 2.66 s | 0.26 / 0.30 s | tslab `vision_encode` with `--vision-sidecar`, two runs each |
+| Qwen4Exp, tower total | 5,120 patches | 23.7 / 25.9 s | 1.48 / 1.92 s | same |
+| Qwen4Exp, tower total | 9,216 patches | 81.3 / 84.2 s | 4.02 / 5.19 s | same |
 
-The Qwen4Exp row times a whole process, trunk open included, so its 1.08 s
-gap is the tower's saving and the MMA tower time is at most 0.6 s.
+The Qwen4Exp rows are tslab `vision_encode` on the text-only REAP-288
+install with its `pull-vision` sidecar (both on an external drive), median
+of 3 warm reps per page, interleaved MMA, scalar, MMA, scalar. Ledgers
+`qwen4exp-vision-mma` and `qwen4exp-vision-scalar`. The first MMA run was
+clean. The other three were flagged DIRTY (Spotlight indexing and foreign
+CPU), which is why the MMA pair spreads by up to 30%. The ratio is 9x to 10x
+at 1,280 patches, 13x to 16x at 5,120 and 16x to 20x at 9,216. Block reads
+are 42 to 68 ms per page in every arm, so the stream share under MMA is 16%
+to 18% at 1,280 patches and 1% to 3% above. Energy for the whole case fell
+from 21.0 and 24.5 kJ to 1.2 and 1.6 kJ (tslab's modeled whole machine).
+
+This tower's scalar baseline is about 5x slower than Qwen3-VL-4B's at the
+same page. It is wider (hidden 1152 against 1024, MLP 4304) and deeper (27
+blocks against 24), and its 72-wide heads are a separate attention pipeline.
 
 ### Why the old kernels were slow
 
@@ -1216,10 +1230,9 @@ photo-sized image on a large MoE trunk, look at the trunk.
 
 ### Open
 
-- A per-stage tower bench for sidecar installs. tslab's `vision_encode` lane
-  is not on main yet and opens only combined installs.
-- The tower on the Neural Engine. The first gate was run against the naive
-  GPU kernel and has to be rerun against the MMA kernels.
+- The tower on the Neural Engine is not pursued: its gate does not pass
+  against the matrix-unit GEMM ("The vision tower on the Neural Engine: not
+  pursued", above).
 - Attention still dominates large pages under the MMA kernels. The next
   lever is the attention kernel's tiling at 5,120+ patches.
 
