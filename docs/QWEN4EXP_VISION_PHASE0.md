@@ -188,6 +188,21 @@ the known structural mutations read (`VISION.md`). This tower's floor is
 looser than Qwen3.8's 0.999993, and the 4-bit weights are the likely reason.
 That cause is not measured.
 
+**The matrix-unit tower kernels (PR 242) apply unchanged.** After merging
+main, the same parity arm with `TURBOSPARK_VISION_MMA=0
+TURBOSPARK_VISION_ATTN_MMA=0` against the defaults, interleaved, three reps
+each (AC power, load average about 8 from other sessions, so a dirty host):
+the whole test process took 1.69-1.70 s on the scalar kernels and
+0.61-0.63 s on the MMA kernels at 784 patches. The 1.08 s gap is tower
+time; the trunk open and comparison are identical in both arms. The MMA
+merger cosine is 0.99993024 against 0.99993336 scalar, both above the bar.
+
+End to end, the tower is about 1 s of a 78 s prefill. The rest is the
+trunk streaming experts off the external drive (2.5 s of user CPU in a 105 s
+run). `TURBOSPARK_ROUTED_BATCH=1` keeps image prompts byte-identical (the
+synthetic gate passes under it, and the real answer is unchanged) but moved
+prefill only from 77.9 s to 75.6 s, within noise on this host.
+
 ## 8. Open after this page
 
 - Stage 4 logit parity against mlx-vlm. It needs the full checkpoint loaded
