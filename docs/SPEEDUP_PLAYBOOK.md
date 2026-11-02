@@ -1230,13 +1230,9 @@ photo-sized image on a large MoE trunk, look at the trunk.
 
 ### Open
 
-- tslab's `vision_encode` lane and its `--vision-sidecar` option are
-  committed on the tslab branch (`e9ade6ac`), not on main yet. So are its
-  ANE subsection ("The vision tower on the Neural Engine: not pursued")
-  and the families findings. Move that subsection under this heading when
-  the branches meet.
-- The tower on the Neural Engine. The first gate was run against the naive
-  GPU kernel and has to be rerun against the MMA kernels.
+- The tower on the Neural Engine is not pursued: its gate does not pass
+  against the matrix-unit GEMM ("The vision tower on the Neural Engine: not
+  pursued", above).
 - Attention still dominates large pages under the MMA kernels. The next
   lever is the attention kernel's tiling at 5,120+ patches.
 
