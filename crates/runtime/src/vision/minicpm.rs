@@ -1160,7 +1160,19 @@ mod tests {
         let scratch = env_path("TURBOSPARK_MINICPM_SCRATCH");
         std::fs::create_dir_all(&scratch).unwrap();
 
-        let arch = turbospark_repack::peek_manifest_arch(&install).expect("install manifest");
+        // A combined install, or the tower-only fixture
+        // `crates/repack/examples/minicpm_tower_local.rs` writes from local
+        // shards (a test fixture only: the runtime refuses to attach it).
+        let arch = if model_io::is_sidecar_dir(&install) {
+            let (_record, vision) = model_io::load_vision_sidecar(&install).expect("fixture");
+            model_io::sidecar_arch(
+                model_io::ModelFamily::QwenGdnMoe,
+                vision.out_hidden_size,
+                &vision,
+            )
+        } else {
+            turbospark_repack::peek_manifest_arch(&install).expect("install manifest")
+        };
         assert_eq!(arch.vision.tower, VisionTowerKind::MiniCpmV);
         let params = turbospark_vision_io::MiniCpmParams::from_preprocessor_config_json(
             &std::fs::read_to_string(install.join("preprocessor_config.json")).unwrap(),
@@ -1272,6 +1284,23 @@ mod tests {
             assert!(b.windows(2).all(|w| w[0] <= w[1]), "n={n}");
             assert!(*b.last().unwrap() < 70, "n={n}");
         }
+        // Values numpy produces for the reference's own arithmetic (f32 frac,
+        // f64-built boundaries cast to f32). n = 28 is a TIE case: 2 / 28 is
+        // exactly 5 / 70, and the reference counts the tie (`>=`), so index 2
+        // lands in bucket 5, not 4.
+        let b28 = position_buckets(28, 70);
+        assert_eq!(&b28[..12], &[0, 2, 5, 7, 10, 12, 15, 17, 20, 22, 25, 27]);
+        assert_eq!(b28.iter().sum::<usize>(), 938);
+        assert_eq!(
+            &position_buckets(32, 70)[..12],
+            &[0, 2, 4, 6, 8, 10, 13, 15, 17, 19, 21, 24]
+        );
+        assert_eq!(position_buckets(32, 70).iter().sum::<usize>(), 1070);
+        assert_eq!(
+            &position_buckets(36, 70)[..12],
+            &[0, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21]
+        );
+        assert_eq!(position_buckets(140, 70).iter().sum::<usize>(), 4830);
         // 70 patches against a 70-wide table is the identity.
         assert_eq!(position_buckets(70, 70), (0..70).collect::<Vec<_>>());
         // 32 patches pick roughly every 2.19th row: frac 31/32 -> 67.
