@@ -40,6 +40,7 @@
 pub mod decode;
 pub mod error;
 pub mod gemma4;
+pub mod minicpm;
 pub mod mrope;
 pub mod normalize;
 pub mod params;
@@ -59,6 +60,10 @@ pub use gemma4::{
     gemma4_expand_image_placeholders, gemma4_preprocess, gemma4_resize_dims,
     gemma4_soft_tokens_for, Gemma4ImageIds, Gemma4Patches, GEMMA4_DEFAULT_SOFT_TOKENS,
     GEMMA4_PATCH, GEMMA4_PATCH_DIM, GEMMA4_POOL, GEMMA4_SOFT_TOKEN_BUDGETS,
+};
+pub use minicpm::{
+    canvas_positions, minicpm_preprocess, minicpm_resize_dims, minicpm_splice_and_positions,
+    MiniCpmIds, MiniCpmParams, MINICPM_MERGE, MINICPM_PATCH, MINICPM_SCALE_RESOLUTION,
 };
 pub use mrope::{
     mrope_position_triples, splice_and_walk, splice_image_placeholders, ImageSpan, MropePositions,

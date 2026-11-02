@@ -26,6 +26,7 @@ mod shards;
 mod vision;
 mod vision_gemma4;
 mod vision_lfm3;
+mod vision_minicpm;
 
 pub use classify::{
     canonicalize_flint_header, canonicalize_qwen2_header, canonicalize_vision_header,
@@ -67,6 +68,11 @@ pub use vision_gemma4::{
     GEMMA4_PROJECTOR_INSTALL_NAME, GEMMA4_RESIDENT_TENSORS,
 };
 pub use vision_lfm3::parse_lfm3_vl_vision_config;
+pub use vision_minicpm::{
+    MERGER_PREFIX as MINICPM_MERGER_PREFIX, MINICPM_BLOCK_ROLES, MINICPM_MERGER,
+    MINICPM_SOURCE_PREFIXES, MINICPM_TOWER_RESIDENT, MINICPM_VIT_MERGER,
+    VIT_MERGER_PREFIX as MINICPM_VIT_MERGER_PREFIX,
+};
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};

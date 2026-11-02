@@ -359,11 +359,14 @@ fn config_json_resolution(root: &serde_json::Value) -> Option<(&str, ModelFamily
 /// with the SigLIP tower `classify_for_family` buckets as `VisionTower`, and
 /// under these wrappers the `vision_tower.` prefix names a different tower.
 ///
-/// - `minicpmv4_7`: read off `mlx-community/MiniCPM-V-4.7-35B-A3B-mxfp4`
-///   @ 810419dd09762d63aad6da5b6a418c4af8946e60 (`text_config.model_type`
-///   `qwen3_5_moe_text`; a 27-layer MiniCPM SigLIP under `vision_tower.`,
-///   plus `vit_merger.` and `merger.`).
-const FOREIGN_VISION_WRAPPERS: &[&str] = &["minicpmv4_7"];
+/// Empty since 2026-11-01. `minicpmv4_7` was its only member (read off
+/// `mlx-community/MiniCPM-V-4.7-35B-A3B-mxfp4` @
+/// 810419dd09762d63aad6da5b6a418c4af8946e60: a 27-layer MiniCPM SigLIP under
+/// `vision_tower.`, plus `vit_merger.` and `merger.`); it left when that tower
+/// got its own reader (`VisionTowerKind::MiniCpmV`,
+/// `docs/MINICPMV_VISION_PHASE0.md`). The mechanism stays for the next wrapper
+/// whose tower this port cannot run.
+const FOREIGN_VISION_WRAPPERS: &[&str] = &[];
 
 /// True when `config.json`'s root `model_type` is a wrapper in
 /// [`FOREIGN_VISION_WRAPPERS`], whose tower must be dropped rather than

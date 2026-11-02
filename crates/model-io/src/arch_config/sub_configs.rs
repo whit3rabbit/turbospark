@@ -236,6 +236,15 @@ pub enum VisionTowerKind {
     /// unshuffle factor (2), `num_position_embeddings` is zero (the tower
     /// has no position table), and `out_hidden_size` is the trunk width.
     Lfm3Vl,
+    /// The MiniCPM-V 4.7 tower (`docs/MINICPMV_VISION_PHASE0.md`): a SigLIP
+    /// encoder with bucketed position ids, a 2x2 window attention-merger after
+    /// block 6, and a second 2x2 merger MLP into the trunk. `spatial_merge_size`
+    /// is the TOTAL per-axis downsample (4 in the default `16x` mode), the
+    /// start and end ids are `<image>` and `</image>`, and
+    /// `num_position_embeddings` is the table length (70 x 70). The merger
+    /// geometry, the insert layer, the thumbnail-only slicing and the canvas
+    /// ids are properties of the kind, checked at intake.
+    MiniCpmV,
 }
 
 impl VisionTowerKind {
@@ -246,6 +255,7 @@ impl VisionTowerKind {
             VisionTowerKind::Gemma4 => "gemma4",
             VisionTowerKind::Qwen25Vl => "qwen25_vl",
             VisionTowerKind::Lfm3Vl => "lfm3_vl",
+            VisionTowerKind::MiniCpmV => "minicpm_v",
         }
     }
 
@@ -257,6 +267,7 @@ impl VisionTowerKind {
             "gemma4" => Some(VisionTowerKind::Gemma4),
             "qwen25_vl" => Some(VisionTowerKind::Qwen25Vl),
             "lfm3_vl" => Some(VisionTowerKind::Lfm3Vl),
+            "minicpm_v" => Some(VisionTowerKind::MiniCpmV),
             _ => None,
         }
     }

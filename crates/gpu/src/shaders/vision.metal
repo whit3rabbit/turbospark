@@ -886,6 +886,29 @@ void vision_rope_axial_fp16(
 }
 
 // ----------------------------------------------------------------------------
+// `y[g, c] += mean over k < 4 of x[4 * g + k, c]`, FP32 intermediate: the
+// MiniCPM-V window merger's residual (`merged + mean(windows, axis=1)`), where
+// `x` holds the windows' four tokens as consecutive rows and `y` one merged
+// row per window. `count` is `groups * width`.
+// ----------------------------------------------------------------------------
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void vision_window_mean4_add_fp16(
+    device half*        y     [[buffer(0)]],
+    device const half*  x     [[buffer(1)]],
+    constant uint&      width [[buffer(2)]],
+    constant uint&      count [[buffer(3)]],
+    uint                tid   [[thread_position_in_grid]]
+) {
+    if (tid >= count) return;
+    const uint g = tid / width;
+    const uint c = tid % width;
+    const uint base = (4u * g) * width + c;
+    const float mean = (float(x[base]) + float(x[base + width])
+                        + float(x[base + 2u * width]) + float(x[base + 3u * width])) * 0.25f;
+    y[tid] = half(float(y[tid]) + mean);
+}
+
+// ----------------------------------------------------------------------------
 // `y *= x` elementwise, FP32 intermediate: the gated MLP's
 // `gelu(gate) * up`, after the GELU has run in place on `gate`.
 // ----------------------------------------------------------------------------

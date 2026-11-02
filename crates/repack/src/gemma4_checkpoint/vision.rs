@@ -236,7 +236,7 @@ pub fn vision_arch_for_manifest<'a>(
 /// `(T, P_h, P_w, C)` order -- which is why the tensor needs no permutation.
 ///
 /// Every other vision tensor is rank 1 or 2 and passes through unchanged.
-fn resident_shape(shape: &[u64]) -> (u32, u32, u32, u32) {
+pub(super) fn resident_shape(shape: &[u64]) -> (u32, u32, u32, u32) {
     if shape.len() <= 4 {
         return shape4(shape);
     }
@@ -285,6 +285,11 @@ pub fn read_vision_entries_quantized(
     // packed planes this reader has seen, so `quant` is not passed on.
     if vision.tower == model_io::VisionTowerKind::Gemma4 {
         return super::vision_gemma4::read_gemma4_vision_entries(shards, vision_bases, vision);
+    }
+    // The MiniCPM-V tower: three source prefixes (`vision_tower.`,
+    // `vit_merger.`, `merger.`) and its own block roles.
+    if vision.tower == model_io::VisionTowerKind::MiniCpmV {
+        return super::vision_minicpm::read_minicpm_vision_entries(shards, vision_bases, vision);
     }
     // The LFM3-VL tower likewise: two block kinds, a second source prefix
     // for its projector, no packed planes.
@@ -588,7 +593,7 @@ pub fn read_vision_entries_quantized(
 /// its stored shape is `[rows, words]`, so the logical `[rows, cols]` is
 /// returned for the index and the block blob to record. Anything else goes
 /// through `convert_raw_to_fp16` with its stored shape.
-fn read_tower_tensor(
+pub(super) fn read_tower_tensor(
     shards: &Gemma4Shards<'_>,
     name: &str,
     quant: Option<&Gemma4Quant>,

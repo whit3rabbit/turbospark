@@ -954,6 +954,17 @@ pub(crate) fn stream_vision_sidecar(
     // apart. Only `hidden_size` is used, as a cross-check on the tower's own
     // declared output width; the rest of the arch this returns describes the
     // TRUNK, which this walk does not install.
+    // A MiniCPM-V tower is refused as a sidecar: its pairing record can only
+    // say "qwen35moe, hidden 2048", which is also what an unrelated Qwen3.6
+    // trunk says, so attaching it would be silent where this tower's mergers
+    // and trunk fine-tune are not interchangeable. It is a combined install.
+    if config.get("model_type").and_then(|v| v.as_str()) == Some("minicpmv4_7") {
+        return Err(format!(
+            "{weights}: a MiniCPM-V 4.7 tower cannot be installed as a sidecar; its pairing \
+             record cannot tell its trunk from a Qwen3.6 trunk of the same width. Install the \
+             whole checkpoint with `turbospark-model pull --repo`, which keeps the tower"
+        ));
+    }
     let family = repack::config_json_family(&config)
         .ok_or_else(|| "config.json declares no model_type this port recognizes".to_string())?;
     let arch = match family {

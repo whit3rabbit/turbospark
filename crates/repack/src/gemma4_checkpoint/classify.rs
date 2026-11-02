@@ -549,6 +549,17 @@ pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -
     {
         return Gemma4Bucket::VisionTower;
     }
+    // MiniCPM-V 4.7's two adapters ride beside its `vision_tower.`: the 2x2
+    // window attention-merger and the final merger. Bucketed as the tower for
+    // the Qwen MoE trunk it wraps; the walk drops the bucket when no tower is
+    // requested, so a text-only install is unchanged, and no other Qwen MoE
+    // checkpoint carries a top-level `merger.` or `vit_merger.`.
+    if family == ModelFamily::QwenGdnMoe
+        && (name.starts_with(super::vision_minicpm::VIT_MERGER_PREFIX)
+            || name.starts_with(super::vision_minicpm::MERGER_PREFIX))
+    {
+        return Gemma4Bucket::VisionTower;
+    }
     // THIS LIST IS READ OFF REAL CHECKPOINT HEADERS, one prefix per
     // publisher's naming, and it is not guesswork: an unlisted prefix falls
     // through to `Gemma4Bucket::Unknown`, which the walk refuses. That is the
@@ -566,8 +577,8 @@ pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -
     //
     // `vit_merger.` and `merger.` are `mlx-community/MiniCPM-V-4.7-35B-A3B-mxfp4`'s
     // (16 and 6 tensors), whose own `vision_tower.` is claimed by the arm
-    // above for its Qwen trunk and dropped later because that wrapper's
-    // tower is never activated (`arch_registry::has_foreign_vision_tower`).
+    // above for its Qwen trunk; `vit_merger.` and `merger.` are claimed as
+    // the tower for that trunk just before this list.
     if name.starts_with("vision_tower.")
         || name.starts_with("embed_vision.")
         || name.starts_with("audio_tower.")
