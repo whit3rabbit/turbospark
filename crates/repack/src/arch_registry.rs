@@ -90,6 +90,12 @@ const SUPPORTED_GGUF: &[(&str, ModelFamily)] = &[
     // Gotcha 36). Shares the `llama` decode flow; see `ModelFamily::Qwen3Moe`
     // for the two places they differ.
     ("qwen3moe", ModelFamily::Qwen3Moe),
+    // Qwen3-VL-30B-A3B's text GGUF (llama.cpp `LLM_ARCH_QWEN3VLMOE`): the same
+    // trunk tensors and metadata keys as `qwen3moe` under a different prefix,
+    // plus interleaved-mRoPE metadata this port takes from the tower sidecar's
+    // config. The tower is NOT in this file (llama.cpp keeps it in a separate
+    // mmproj GGUF); it arrives as a `pull-vision` sidecar from the MLX repo.
+    ("qwen3vlmoe", ModelFamily::Qwen3Moe),
     // Qwen3.8-Flash-Next's `qwen4exp` GGUFs share the existing Qwen4Exp
     // baseline and decode flow. Q2_0 gate/up/down, the IQ2_S/IQ2_XXS/IQ1_M
     // gate/up variants, and top-10 reduction are covered by Metal parity;
@@ -219,6 +225,13 @@ const SUPPORTED_HF: &[(&str, ModelFamily)] = &[
     // root beside `vision_config`, so it resolves to the same family and the
     // tower is carried by `VisionConfig` (`VisionTowerKind::Qwen25Vl`).
     ("qwen2_5_vl", ModelFamily::Qwen2Dense),
+    // Qwen3-VL-30B-A3B (`mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit`): the
+    // wrapper and its text config. Recognition only for the trunk, which has
+    // no safetensors writer on the llama MoE flow (its routed experts are
+    // GGUF K-quant blobs); the root string is what lets `pull-vision` read the
+    // checkpoint's tower and pair it with the `qwen3moe` GGUF trunk.
+    ("qwen3_vl_moe", ModelFamily::Qwen3Moe),
+    ("qwen3_vl_moe_text", ModelFamily::Qwen3Moe),
     // The FIFTEENTH family. Read off
     // `mlx-community/Qwen3-VL-4B-Instruct-4bit` @
     // 2fd8dacbdb8f1e54b8c005f081ec5bf79c56376b, whose root `model_type` is

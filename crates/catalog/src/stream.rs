@@ -893,6 +893,21 @@ pub(crate) fn stream_vision_sidecar(
         ModelFamily::Qwen2Dense => {
             repack::parse_qwen2_config(&config_text).map_err(|e| e.to_string())
         }
+        // The Qwen3-VL MoE trunk is a GGUF install (its routed experts have no
+        // safetensors writer on this flow), so only its width is needed here:
+        // the cross-check against the tower's `out_hidden_size` and the
+        // sidecar's pairing record. The baseline supplies everything else.
+        ModelFamily::Qwen3Moe => {
+            let hidden = config
+                .get("text_config")
+                .unwrap_or(&config)
+                .get("hidden_size")
+                .and_then(serde_json::Value::as_i64)
+                .ok_or_else(|| "config.json declares no hidden_size".to_string())?;
+            let mut arch = model_io::known_architecture(ModelFamily::Qwen3Moe);
+            arch.hidden_size = hidden;
+            Ok(arch)
+        }
         other => Err(format!(
             "{} has no safetensors intake here, so its vision tower cannot be read either",
             other.as_str()
