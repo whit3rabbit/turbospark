@@ -288,12 +288,16 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
             .attach_vision_sidecar(dir)
             .map_err(|e| format!("--vision-sidecar {}: {e}", dir.display()))?;
         let vision = runner.vision_config();
-        tokenizer
-            .verify_image_markers(
+        match runner.image_wrap_ids() {
+            Some((start, end)) => {
+                tokenizer.verify_bare_image_placeholder(start, vision.image_token_id as i32, end)
+            }
+            None => tokenizer.verify_image_markers(
                 vision.vision_start_token_id as i32,
                 vision.image_token_id as i32,
-            )
-            .map_err(|e| format!("--vision-sidecar {}: {e}", dir.display()))?;
+            ),
+        }
+        .map_err(|e| format!("--vision-sidecar {}: {e}", dir.display()))?;
         if !request.quiet {
             eprintln!(
                 "vision: sidecar {}{}",

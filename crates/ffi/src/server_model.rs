@@ -307,6 +307,7 @@ impl ChatModel for FfiChatModel {
             Some(turbospark_server::vision::VisionInfo::Qwen {
                 params,
                 specials: crate::vision::special_ids(runner),
+                wrap_end: runner.image_wrap_ids().map(|(_, end)| end),
             })
         }
         #[cfg(not(target_os = "macos"))]

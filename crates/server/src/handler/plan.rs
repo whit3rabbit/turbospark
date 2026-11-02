@@ -548,10 +548,27 @@ pub(crate) fn plan(model: &AppState, request: &ChatCompletionRequest) -> Result<
     // Everything above produced `prompt_ids` for a prompt whose placeholders
     // are single tokens; the model sees `merged_tokens` copies of each.
     let images = match (&vision_info, encoded.is_empty()) {
-        (Some(crate::vision::VisionInfo::Qwen { params, specials }), false) => {
+        (
+            Some(crate::vision::VisionInfo::Qwen {
+                params,
+                specials,
+                wrap_end,
+            }),
+            false,
+        ) => {
             // Header-only preflight computes the exact grid and expanded
             // allocation budget before decoding any attacker-controlled image.
             let grids = crate::vision::preflight_all(&encoded, params)?;
+            // A template that renders a bare placeholder gets the start and
+            // end markers added here, as its processor does.
+            if let Some(end) = wrap_end {
+                prompt_ids = turbospark_vision_io::wrap_bare_image_placeholders(
+                    &prompt_ids,
+                    specials.image_pad,
+                    specials.vision_start,
+                    *end,
+                );
+            }
             let spliced = turbospark_vision_io::splice_and_walk(
                 &prompt_ids,
                 &grids,

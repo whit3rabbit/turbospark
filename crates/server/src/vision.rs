@@ -75,6 +75,10 @@ pub enum VisionInfo {
     Qwen {
         params: PreprocessParams,
         specials: VisionSpecialIds,
+        /// `Some(image_end)` for a tower whose template renders a BARE
+        /// placeholder (Muse-Glimmer's): the request path wraps each one in
+        /// `specials.vision_start` and this id before the splice.
+        wrap_end: Option<i32>,
     },
     Gemma4 {
         max_soft_tokens: usize,

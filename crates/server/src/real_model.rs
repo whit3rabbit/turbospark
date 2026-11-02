@@ -345,12 +345,18 @@ impl RealChatModel {
                 .attach_vision_sidecar(dir)
                 .map_err(|e| format!("--vision-sidecar {}: {e}", dir.display()))?;
             let vision = runner.vision_config();
-            tokenizer
-                .verify_image_markers(
+            match runner.image_wrap_ids() {
+                Some((start, end)) => tokenizer.verify_bare_image_placeholder(
+                    start,
+                    vision.image_token_id as i32,
+                    end,
+                ),
+                None => tokenizer.verify_image_markers(
                     vision.vision_start_token_id as i32,
                     vision.image_token_id as i32,
-                )
-                .map_err(|e| format!("--vision-sidecar {}: {e}", dir.display()))?;
+                ),
+            }
+            .map_err(|e| format!("--vision-sidecar {}: {e}", dir.display()))?;
             // Print only when a sidecar was actually attached: most servers
             // run with none, and the guardrails/prefix-reuse lines' "always
             // print" shape exists for a fixed toggle every deployment sets
@@ -461,6 +467,7 @@ impl RealChatModel {
                         vision_start: v.vision_start_token_id as i32,
                         image_pad: v.image_token_id as i32,
                     },
+                    wrap_end: runner.image_wrap_ids().map(|(_, end)| end),
                 })
         } else {
             None

@@ -255,19 +255,31 @@ pub(crate) fn attach(
     params: &PreprocessParams,
 ) -> Result<Vec<i32>, String> {
     let grids: Vec<_> = images.iter().map(|p| p.image.grid).collect();
-    let spliced = turbospark_vision_io::splice_and_walk(
-        rendered,
-        &grids,
-        special_ids(runner),
-        params.merge_size,
-    )
-    .map_err(|e| {
-        format!(
-            "cannot place {} image(s) in this prompt: {e}\n  the template renders one \
+    let special = special_ids(runner);
+    // A template that renders a bare placeholder (Muse-Glimmer's) gets the
+    // start and end markers added here, as its processor does.
+    let wrapped;
+    let rendered = match runner.image_wrap_ids() {
+        Some((start, end)) => {
+            wrapped = turbospark_vision_io::wrap_bare_image_placeholders(
+                rendered,
+                special.image_pad,
+                start,
+                end,
+            );
+            &wrapped[..]
+        }
+        None => rendered,
+    };
+    let spliced =
+        turbospark_vision_io::splice_and_walk(rendered, &grids, special, params.merge_size)
+            .map_err(|e| {
+                format!(
+                    "cannot place {} image(s) in this prompt: {e}\n  the template renders one \
              <|image_pad|> per image; check the messages actually carry image parts",
-            images.len()
-        )
-    })?;
+                    images.len()
+                )
+            })?;
 
     let mut embeddings = Vec::with_capacity(images.len());
     for prepared in images {

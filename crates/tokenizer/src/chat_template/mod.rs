@@ -502,6 +502,65 @@ impl MfTokenizer {
         Ok(())
     }
 
+    /// [`Self::verify_image_markers`] for a tower whose chat template renders a
+    /// BARE placeholder per image, with the start and end markers added around
+    /// the expanded run by the processor (Muse-Glimmer's: the template emits
+    /// `<|patch|>` and
+    /// `turbospark_vision_io::wrap_bare_image_placeholders` adds
+    /// `<|image_start|>` and `<|image_end|>`).
+    ///
+    /// The three ids must be distinct and resolve to tokens, and a one-image
+    /// turn must render EXACTLY ONE `image_pad` and NEITHER marker: a template
+    /// that already renders its own markers would get them doubled by the wrap.
+    pub fn verify_bare_image_placeholder(
+        &self,
+        vision_start: i32,
+        image_pad: i32,
+        vision_end: i32,
+    ) -> Result<(), TokenizerError> {
+        if vision_start == image_pad || image_pad == vision_end || vision_start == vision_end {
+            return Err(TokenizerError::InvalidVisionMarkers(format!(
+                "image_start ({vision_start}), image_pad ({image_pad}) and image_end \
+                 ({vision_end}) must be three distinct token ids"
+            )));
+        }
+        for (name, id) in [
+            ("image_start", vision_start),
+            ("image_pad", image_pad),
+            ("image_end", vision_end),
+        ] {
+            if self.id_to_token(id).is_none() {
+                return Err(TokenizerError::InvalidVisionMarkers(format!(
+                    "{name} token id {id} does not resolve to a token in this tokenizer's \
+                     vocabulary"
+                )));
+            }
+        }
+        let probe = [Message::with_parts(
+            Role::User,
+            vec![
+                ContentPart::Image,
+                ContentPart::Text("describe this image".to_string()),
+            ],
+        )];
+        let rendered = self.apply_chat_template(&probe).map_err(|e| {
+            TokenizerError::InvalidVisionMarkers(format!(
+                "could not render a minimal one-image turn to verify the image placeholder: {e}"
+            ))
+        })?;
+        let ids = self.encode(&rendered, true);
+        let count = |id: i32| ids.iter().filter(|&&i| i == id).count();
+        let (starts, pads, ends) = (count(vision_start), count(image_pad), count(vision_end));
+        if starts != 0 || pads != 1 || ends != 0 {
+            return Err(TokenizerError::InvalidVisionMarkers(format!(
+                "this checkpoint's chat template renders {starts} image_start, {pads} image_pad \
+                 and {ends} image_end for one image; a bare-placeholder tower needs exactly one \
+                 image_pad and no markers (the processor adds them)"
+            )));
+        }
+        Ok(())
+    }
+
     /// Full DeepSeek-V4 tool-chat render: tool schemas join the system
     /// message as a `## Tools` section, `tool` results merge into
     /// `<User>` turns as `<tool_result>` blocks, and historical tool calls
