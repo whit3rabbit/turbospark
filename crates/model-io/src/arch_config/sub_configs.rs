@@ -221,6 +221,17 @@ pub enum VisionTowerKind {
     /// The Gemma 4 tower: sandwich RMSNorms, axial rope, 3x3 pooling, and
     /// the `embed_vision` projector.
     Gemma4,
+    /// The Muse-Glimmer tower: LayerNorm blocks with separate q/k/v, an
+    /// exact-GELU MLP, a 32x32 learned position table with half-pixel
+    /// interpolation, window attention (32-patch windows) on all but every
+    /// fourth block, a dim-major pixel shuffle, and a two-GELU adapter plus
+    /// projection ending in a no-scale RMSNorm. Shared fields that change
+    /// meaning: `out_hidden_size` is the TRUNK width the projection writes
+    /// into, `spatial_merge_size` the pixel-shuffle edge, and the start and
+    /// end ids are `<|image_start|>` / `<|image_end|>`, which the processor
+    /// wraps around the placeholder run
+    /// (`docs/MUSEGLIMMER_VISION_PHASE0.md`).
+    MuseGlimmer,
     /// The Qwen2.5-VL tower: RMSNorm blocks, a gated SiLU MLP, no absolute
     /// position table, 2-D rope, and window attention on all but every
     /// eighth block. The window size (112 pixels) and the full-attention
@@ -238,6 +249,7 @@ impl VisionTowerKind {
             VisionTowerKind::QwenSiglip => "qwen_siglip",
             VisionTowerKind::Gemma4 => "gemma4",
             VisionTowerKind::Qwen25Vl => "qwen25_vl",
+            VisionTowerKind::MuseGlimmer => "muse_glimmer",
         }
     }
 
@@ -248,6 +260,7 @@ impl VisionTowerKind {
             "qwen_siglip" => Some(VisionTowerKind::QwenSiglip),
             "gemma4" => Some(VisionTowerKind::Gemma4),
             "qwen25_vl" => Some(VisionTowerKind::Qwen25Vl),
+            "muse_glimmer" => Some(VisionTowerKind::MuseGlimmer),
             _ => None,
         }
     }

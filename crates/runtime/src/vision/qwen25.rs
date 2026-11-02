@@ -364,7 +364,12 @@ pub(crate) fn window_layout(
 
 /// Rows of `width` values regrouped by merge unit: output unit `j` is input
 /// unit `order[j]`, each unit being `per_unit` consecutive rows.
-fn permute_units<T: Copy>(rows: &[T], width: usize, per_unit: usize, order: &[usize]) -> Vec<T> {
+pub(crate) fn permute_units<T: Copy>(
+    rows: &[T],
+    width: usize,
+    per_unit: usize,
+    order: &[usize],
+) -> Vec<T> {
     let unit = width * per_unit;
     let mut out = Vec::with_capacity(rows.len());
     for &u in order {

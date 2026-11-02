@@ -25,6 +25,7 @@ mod orchestrate;
 mod shards;
 mod vision;
 mod vision_gemma4;
+mod vision_muse;
 
 pub use classify::{
     canonicalize_flint_header, canonicalize_qwen2_header, canonicalize_vision_header,
@@ -65,6 +66,7 @@ pub use vision_gemma4::{
     parse_gemma4_vision_config, EMBED_VISION_PREFIX, GEMMA4_BLOCK_ROLES,
     GEMMA4_PROJECTOR_INSTALL_NAME, GEMMA4_RESIDENT_TENSORS,
 };
+pub use vision_muse::{MUSE_BLOCK_SOURCES, MUSE_RESIDENT_TENSORS, MUSE_SOURCE_PREFIXES};
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};

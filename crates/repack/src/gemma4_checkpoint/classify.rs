@@ -536,7 +536,17 @@ pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -
                 | ModelFamily::Qwen4Exp
                 | ModelFamily::Qwen2Dense
                 | ModelFamily::Gemma4
+                | ModelFamily::MuseGlimmer
         )
+    {
+        return Gemma4Bucket::VisionTower;
+    }
+    // Muse-Glimmer splits its vision side three ways (`vision_tower.` above,
+    // then the adapter and the projection into the trunk). All three are one
+    // tower to the runtime; whether they are INGESTED is the caller's request
+    // (`vision_should_ingest`), and a text-only install still drops them.
+    if (name.starts_with("vision_adapter.") || name.starts_with("vision_projection."))
+        && family == ModelFamily::MuseGlimmer
     {
         return Gemma4Bucket::VisionTower;
     }

@@ -41,6 +41,7 @@ pub mod decode;
 pub mod error;
 pub mod gemma4;
 pub mod mrope;
+pub mod muse;
 pub mod normalize;
 pub mod params;
 pub mod patchify;
@@ -61,10 +62,10 @@ pub use gemma4::{
     GEMMA4_PATCH, GEMMA4_PATCH_DIM, GEMMA4_POOL, GEMMA4_SOFT_TOKEN_BUDGETS,
 };
 pub use mrope::{
-    mrope_position_triples, splice_and_walk, splice_image_placeholders, ImageSpan, MropePositions,
-    SplicedPrompt, VisionSpecialIds,
+    mrope_position_triples, splice_and_walk, splice_image_placeholders,
+    wrap_bare_image_placeholders, ImageSpan, MropePositions, SplicedPrompt, VisionSpecialIds,
 };
-pub use params::{PreprocessParams, DEFAULT_RESCALE_FACTOR, MAX_ASPECT_RATIO};
+pub use params::{PreprocessParams, ResizeRule, DEFAULT_RESCALE_FACTOR, MAX_ASPECT_RATIO};
 pub use patchify::{patch_rows, GridThw};
 pub use pos_embed::{pos_embed_weights, PosEmbedTable};
 pub use preprocess::{preprocess, PreprocessedImage};

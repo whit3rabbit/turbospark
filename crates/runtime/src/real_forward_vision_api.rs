@@ -45,6 +45,7 @@ impl RealForwardRunner {
             .as_ref()
             .map(|v| v.last_scratch_bytes)
             .or_else(|| self.qwen25_vision.as_ref().map(|v| v.last_scratch_bytes))
+            .or_else(|| self.muse_vision.as_ref().map(|v| v.last_scratch_bytes))
     }
 
     /// What a page of `seq` patches WOULD cost in scratch, predicted rather
@@ -116,6 +117,9 @@ impl RealForwardRunner {
                 .encode_image_qwen25(image, params, None)
                 .map(|(e, _)| e);
         }
+        if self.arch.vision.tower == model_io::VisionTowerKind::MuseGlimmer {
+            return self.encode_image_muse(image, params, None).map(|(e, _)| e);
+        }
         self.open_vision_tower()?;
         // Two disjoint fields of `self`, which is what lets the tower take
         // the context mutably while it is itself borrowed mutably.
@@ -143,9 +147,59 @@ impl RealForwardRunner {
             )?;
             return Ok((embedding, stages.expect("requested just above")));
         }
+        if self.arch.vision.tower == model_io::VisionTowerKind::MuseGlimmer {
+            let (embedding, stages) = self.encode_image_muse(
+                image,
+                params,
+                Some(crate::vision::VisionStages::default()),
+            )?;
+            return Ok((embedding, stages.expect("requested just above")));
+        }
         self.open_vision_tower()?;
         let tower = self.vision.as_mut().expect("opened just above");
         tower.run_with_stages(&mut self.context, &self.weights, image, params)
+    }
+
+    /// The Muse-Glimmer arm of [`Self::encode_image`]: the same
+    /// [`crate::vision::VisionEmbedding`] as the other towers, so the prompt
+    /// builders and [`Self::set_prompt_vision`] are shared.
+    fn encode_image_muse(
+        &mut self,
+        image: &turbospark_vision_io::PreprocessedImage,
+        params: &turbospark_vision_io::PreprocessParams,
+        capture: Option<crate::vision::VisionStages>,
+    ) -> Result<
+        (
+            crate::vision::VisionEmbedding,
+            Option<crate::vision::VisionStages>,
+        ),
+        RealForwardError,
+    > {
+        if !self.arch.vision.is_active() {
+            return Err(RealForwardError::Unsupported(
+                "this install declares no vision tower; repack the checkpoint with its \
+                 vision tensors to get one"
+                    .to_string(),
+            ));
+        }
+        if self.muse_vision.is_none() {
+            self.muse_vision = Some(match &self.vision_sidecar_dir {
+                Some(dir) => crate::vision::muse::MuseVisionTower::open_with_sidecar(
+                    dir,
+                    &self.context,
+                    &self.arch,
+                )?,
+                None => crate::vision::muse::MuseVisionTower::open(
+                    &self.install_dir,
+                    &self.context,
+                    &self.weights,
+                    &self.index,
+                    &self.arch,
+                )?,
+            });
+        }
+        let tower = self.muse_vision.as_mut().expect("opened just above");
+        tower.run(&mut self.context, &self.weights, image, params, capture)
     }
 
     /// The Qwen2.5-VL arm of [`Self::encode_image`]: the same
@@ -458,6 +512,7 @@ impl RealForwardRunner {
             .as_ref()
             .map(|v| v.is_sidecar())
             .or_else(|| self.qwen25_vision.as_ref().map(|v| v.is_sidecar()))
+            .or_else(|| self.muse_vision.as_ref().map(|v| v.is_sidecar()))
     }
 
     /// Free the vision tower's open resources, without forgetting a sidecar
@@ -489,6 +544,21 @@ impl RealForwardRunner {
         self.vision = None;
         self.gemma4_vision = None;
         self.qwen25_vision = None;
+        self.muse_vision = None;
+    }
+
+    /// `(image_start, image_end)` for a tower whose chat template renders a
+    /// BARE placeholder per image, or `None` when the template renders the
+    /// markers itself.
+    ///
+    /// Muse-Glimmer's template emits only `<|patch|>`; its processor wraps the
+    /// expanded run in `<|image_start|>` and `<|image_end|>`, so a front end
+    /// has to do that wrap on the rendered ids before the splice
+    /// (`turbospark_vision_io::wrap_bare_image_placeholders`).
+    pub fn image_wrap_ids(&self) -> Option<(i32, i32)> {
+        let v = &self.arch.vision;
+        (v.is_active() && v.tower == model_io::VisionTowerKind::MuseGlimmer)
+            .then_some((v.vision_start_token_id as i32, v.vision_end_token_id as i32))
     }
 
     /// The three ids a Gemma 4 image occupies in a prompt, read off the
@@ -549,6 +619,11 @@ impl RealForwardRunner {
 fn qwen_tower_only(vision: &model_io::VisionConfig) -> Result<(), RealForwardError> {
     match vision.tower {
         model_io::VisionTowerKind::QwenSiglip => Ok(()),
+        model_io::VisionTowerKind::MuseGlimmer => Err(RealForwardError::Unsupported(
+            "this install's vision tower is muse_glimmer; it opens through encode_image, \
+             which routes to the Muse-Glimmer tower"
+                .to_string(),
+        )),
         model_io::VisionTowerKind::Qwen25Vl => Err(RealForwardError::Unsupported(
             "this install's vision tower is qwen25_vl; it opens through encode_image, which \
              routes to the Qwen2.5-VL tower"

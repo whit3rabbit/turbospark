@@ -39,6 +39,7 @@ mod block;
 mod budget;
 pub(crate) mod gemma4;
 mod inject;
+pub(crate) mod muse;
 mod overflow;
 pub(crate) mod qwen25;
 mod scratch;

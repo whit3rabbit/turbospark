@@ -34,6 +34,25 @@ pub struct PreprocessParams {
     pub image_std: [f32; 3],
     /// The rescale multiplier applied to the raw `0..255` sample.
     pub rescale_factor: f32,
+    /// How the resized size, the resample filter and the patch row order are
+    /// chosen. Defaults to the Qwen rule every existing checkpoint uses.
+    pub resize: ResizeRule,
+}
+
+/// Which processor family's resize and patchify rule applies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ResizeRule {
+    /// `Qwen2VLImageProcessor` / Qwen3-VL: smart resize on a pixel budget,
+    /// PIL bicubic, patches in merge-window order with `(T, P_h, P_w, C)` rows.
+    #[default]
+    QwenPixels,
+    /// Muse-Glimmer's processor: a cap on MERGED TOKENS with a nearest-aspect
+    /// grid search, PIL Lanczos, patches in raster order with `(T, C, P_h,
+    /// P_w)` rows (`crate::muse`).
+    MuseTokens {
+        /// `max_image_tokens`, merged tokens per image.
+        max_tokens: usize,
+    },
 }
 
 /// What an absent `rescale_factor` means: the reference processor's own
@@ -129,7 +148,33 @@ impl PreprocessParams {
             }
         }
 
-        let (min_pixels, max_pixels) = read_pixel_budget(&root)?;
+        // Muse-Glimmer states its budget as a cap on merged tokens and has no
+        // pixel budget at all. The pixel pair is DERIVED from the cap so the
+        // session's memory-budget clamp (which lowers `max_pixels`) has
+        // something to act on; `preprocess` honours the lower of the two.
+        let muse_tokens = root.get("max_image_tokens").and_then(|v| v.as_u64());
+        let (min_pixels, max_pixels, resize) = match muse_tokens {
+            Some(tokens) if tokens > 0 => {
+                let side = patch_size * merge_size;
+                (
+                    side * side,
+                    tokens as usize * side * side,
+                    ResizeRule::MuseTokens {
+                        max_tokens: tokens as usize,
+                    },
+                )
+            }
+            Some(_) => {
+                return Err(VisionIoError::BadConfig {
+                    field: "max_image_tokens".into(),
+                    why: "must be positive".into(),
+                })
+            }
+            None => {
+                let (min, max) = read_pixel_budget(&root)?;
+                (min, max, ResizeRule::QwenPixels)
+            }
+        };
         if min_pixels > max_pixels {
             return Err(VisionIoError::BadConfig {
                 field: "size".into(),
@@ -152,6 +197,7 @@ impl PreprocessParams {
                 .get("rescale_factor")
                 .and_then(|v| v.as_f64())
                 .unwrap_or(DEFAULT_RESCALE_FACTOR) as f32,
+            resize,
         })
     }
 }

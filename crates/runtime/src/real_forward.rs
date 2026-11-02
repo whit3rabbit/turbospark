@@ -386,6 +386,8 @@ pub struct RealForwardRunner {
     pub(crate) gemma4_vision: Option<crate::vision::gemma4::Gemma4VisionTower>,
     /// The Qwen2.5-VL tower, opened lazily on the first image like the others.
     pub(crate) qwen25_vision: Option<crate::vision::qwen25::Qwen25VisionTower>,
+    /// The Muse-Glimmer tower, opened lazily on the first image.
+    pub(crate) muse_vision: Option<crate::vision::muse::MuseVisionTower>,
     /// A sidecar tower directory attached after open (vision memory
     /// sidecar, Part A2), via [`RealForwardRunner::attach_vision_sidecar`].
     /// `None` on every session that never called it, which is every session

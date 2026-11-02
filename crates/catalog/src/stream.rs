@@ -452,10 +452,11 @@ fn enable_requested_vision(
             | ModelFamily::Qwen3Vl
             | ModelFamily::Qwen4Exp
             | ModelFamily::Qwen2Dense
+            | ModelFamily::MuseGlimmer
     ) {
         return Err(format!(
             "{}: combined vision ingestion is only wired for the qwen35 dense, qwen36 MoE, \
-             qwen3_vl, qwen4_exp and qwen2 (Qwen2.5-VL) trunks",
+             qwen3_vl, qwen4_exp, qwen2 (Qwen2.5-VL) and muse_glimmer trunks",
             plan.alias
         ));
     }
@@ -521,6 +522,7 @@ fn enable_bytes_detected_vision(
             | ModelFamily::QwenGdnMoe
             | ModelFamily::Qwen3Vl
             | ModelFamily::Qwen2Dense
+            | ModelFamily::MuseGlimmer
     ) {
         return Ok(());
     }
@@ -598,7 +600,7 @@ fn install_vision_preprocessor(
     dir: &Path,
     client: &Client,
 ) -> Result<(), String> {
-    let fetched = client
+    let mut fetched = client
         .get_optional(&plan.weights.file_url("preprocessor_config.json"))
         .map_err(|e| {
             format!(
@@ -608,11 +610,34 @@ fn install_vision_preprocessor(
                 plan.weights
             )
         });
+    // Muse-Glimmer ships `processor_config.json` instead, with the image
+    // processor's keys nested under `image_processor`; this port reads the
+    // flat spelling, so the nested object is written out as the file the
+    // readers look for.
+    if matches!(fetched, Ok(None)) {
+        if let Ok(Some(bytes)) =
+            client.get_optional(&plan.weights.file_url("processor_config.json"))
+        {
+            if let Some(flat) = flatten_processor_config(&bytes) {
+                fetched = Ok(Some(flat));
+            }
+        }
+    }
     write_vision_preprocessor(
         &plan.weights,
         &dir.join("preprocessor_config.json"),
         fetched,
     )
+}
+
+/// The `image_processor` object of a `processor_config.json`, serialized as a
+/// standalone `preprocessor_config.json`. `None` when the document has no such
+/// object, so a file that is not an image-processor wrapper is not written
+/// out as one.
+pub(crate) fn flatten_processor_config(bytes: &[u8]) -> Option<Vec<u8>> {
+    let root: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+    let inner = root.get("image_processor")?.as_object()?;
+    serde_json::to_vec_pretty(inner).ok()
 }
 
 /// The decision half of [`install_vision_preprocessor`], split so the
@@ -920,9 +945,16 @@ pub(crate) fn stream_vision_sidecar(
         vision.out_hidden_size
     ));
 
+    // Muse-Glimmer keeps its tower under three prefixes (the adapter and the
+    // projection into the trunk sit beside `vision_tower.`).
+    let source_prefixes: &[&str] = if family == ModelFamily::MuseGlimmer {
+        &repack::MUSE_SOURCE_PREFIXES
+    } else {
+        &repack::VISION_SOURCE_PREFIXES
+    };
     let fetched = fetch_prefixed_shards(
         weights,
-        &repack::VISION_SOURCE_PREFIXES,
+        source_prefixes,
         explicit_file,
         client,
         byte_progress,
@@ -944,7 +976,15 @@ pub(crate) fn stream_vision_sidecar(
     let vision_bases: Vec<&str> = headers
         .iter()
         .flat_map(|h| h.tensors.keys())
-        .filter(|k| k.starts_with(repack::VISION_PREFIX))
+        .filter(|k| {
+            if family == ModelFamily::MuseGlimmer {
+                repack::MUSE_SOURCE_PREFIXES
+                    .iter()
+                    .any(|p| k.starts_with(p))
+            } else {
+                k.starts_with(repack::VISION_PREFIX)
+            }
+        })
         // A packed plane's `.scales`/`.biases` companions are read beside
         // its `.weight`, never as bases, the same skip `classify_names`
         // makes for the install walk.
