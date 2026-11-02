@@ -151,11 +151,47 @@ tiled lookup. The trunk's `hidden_size` is the row width, which is what
 - Context past the QSA budget with an image (item 3).
 - Video. Same boundary as every other tower here.
 
-## 7. Open after this page
+## 7. Real-model gates, 2026-11-01
 
-- A real install. The combined pull streams the whole 131-shard checkpoint,
-  and this page did not download it.
-- Stage 2 tower parity against mlx-vlm on the 4-bit tower, and stage 4 logit
-  parity. Both need the install.
+Run on the text-only `qwen4-reap288` install (on an external drive) with a
+sidecar from `turbospark-model pull-vision --repo
+sh0wie/Qwen3.8-Flash-Next-REAP-288-MLX-4bit@668f31bc...`, 856.7 MiB. The pull
+range-read only the tower tensors of shard 1. M4 Max, AC power.
+
+**CLI.** A 448x448 test image (red circle left, blue square right),
+`--messages-file` plus `--image`, greedy, `--max-context 2048`:
+
+| arm | output |
+| --- | --- |
+| image | "The image shows a red circle and a blue square side by side." |
+| same prompt, no image | "Since no image was provided, I cannot describe it ..." |
+
+The prompt carried 196 merged image tokens (224 total). Speculation reported
+the vision refusal by name, as designed.
+
+**Stage 2, tower parity** (`vision_tower_parity.rs`, sidecar arm), against
+mlx-vlm's `qwen3_vl` tower (the class `qwen4_exp` subclasses) on the same
+784 patch rows. The probe dequantizes the packed planes with `mx.dequantize`
+and narrows to FP16, as the repack does:
+
+| stage | cosine |
+| --- | --- |
+| patch_embed | 0.99999995 |
+| block_0 | 0.99999969 |
+| block_26 | 0.99994975 |
+| merger | 0.99993336 |
+
+The reference's own FP16-vs-FP32 merger cosine on this tower and page is
+0.999947 (`--mode activation`). So the port sits at the same order as the
+reference's storage floor, slightly below it. That is far from the 0.6 to 0.8
+the known structural mutations read (`VISION.md`). This tower's floor is
+looser than Qwen3.8's 0.999993, and the 4-bit weights are the likely reason.
+That cause is not measured.
+
+## 8. Open after this page
+
+- Stage 4 logit parity against mlx-vlm. It needs the full checkpoint loaded
+  in mlx-vlm.
+- A combined install and a server run.
 - Triple-aware pooled block rope in the QSA indexer, to lift item 3's
   refusal.
