@@ -76,11 +76,6 @@ pub use deepseek_vl2::{
     DSVL2_PATCH_DIM,
 };
 pub use error::VisionIoError;
-pub use onevision::{
-    best_grid as ov_best_grid, ov_image_tokens, ov_max_tiles, ov_pack_features, ov_plan,
-    ov_preprocess, Anyres, OvPlan, OV_MAX_AREA_TILES, OV_PATCH, OV_PATCH_DIM, OV_SIDE, OV_TILE,
-    OV_TILE_PATCHES,
-};
 pub use gemma4::{
     gemma4_expand_image_placeholders, gemma4_preprocess, gemma4_resize_dims,
     gemma4_soft_tokens_for, Gemma4ImageIds, Gemma4Patches, GEMMA4_DEFAULT_SOFT_TOKENS,
@@ -95,6 +90,11 @@ pub use minicpm::{
 pub use mrope::{
     mrope_position_triples, splice_and_walk, splice_image_placeholders,
     wrap_bare_image_placeholders, ImageSpan, MropePositions, SplicedPrompt, VisionSpecialIds,
+};
+pub use onevision::{
+    best_grid as ov_best_grid, ov_image_tokens, ov_max_tiles, ov_pack_features, ov_plan,
+    ov_preprocess, Anyres, OvPlan, OV_MAX_AREA_TILES, OV_PATCH, OV_PATCH_DIM, OV_SIDE, OV_TILE,
+    OV_TILE_PATCHES,
 };
 pub use params::{PreprocessParams, ResizeRule, DEFAULT_RESCALE_FACTOR, MAX_ASPECT_RATIO};
 pub use patchify::{patch_rows, GridThw};
