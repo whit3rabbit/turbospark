@@ -80,7 +80,8 @@ fn reference(
                     } else {
                         dr * 3 + dc
                     };
-                    acc += w[ch * 9 + tap] * grid[(rr as usize * width + cc as usize) * channels + ch];
+                    acc +=
+                        w[ch * 9 + tap] * grid[(rr as usize * width + cc as usize) * channels + ch];
                 }
             }
             out[t * channels + ch] = proj[t * stride + channels + ch] * acc;
@@ -161,7 +162,8 @@ fn a_grid_off_the_merge_window_is_refused() {
     let mut context = MetalContext::new().expect("Metal device");
     let b = context.new_output_buffer(1024);
     let pass = context.begin_pass();
-    let err = encode_vision_gated_dwconv3x3(&mut context, &pass, (&b, 0), (&b, 0), (&b, 0), 5, 4, 2, 4);
+    let err =
+        encode_vision_gated_dwconv3x3(&mut context, &pass, (&b, 0), (&b, 0), (&b, 0), 5, 4, 2, 4);
     assert!(err.is_err());
     pass.commit_and_wait();
 }

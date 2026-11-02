@@ -172,7 +172,11 @@ fn vision_blocks_may_differ_in_role_set_but_not_in_blob_size() {
                             "gate": {"offset": 4"#,
         1,
     );
-    assert_ne!(differing, valid_layout_json(), "fixture mutation must apply");
+    assert_ne!(
+        differing,
+        valid_layout_json(),
+        "fixture mutation must apply"
+    );
     let write_at = |dir: &std::path::Path, sub: &str, json: &str| {
         let sub = dir.join(sub);
         std::fs::create_dir_all(&sub).unwrap();

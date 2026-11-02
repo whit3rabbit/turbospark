@@ -1278,6 +1278,38 @@
           "source": "this port, LFM3-1.7B GGUF Q8_0, AC; memory oracle over short-explanation and long-synthesis, quality gate"
         }
       ]
+    },
+    {
+      "alias": "lfm3-vl-2b-8bit",
+      "name": "LFM3-VL 2B (MLX INT8, group 64) with vision tower",
+      "family": "lfm3",
+      "source": {
+        "kind": "mlx",
+        "repo": "LiquidAI/LFM3-VL-2B-MLX-8bit",
+        "revision": "343038aa6c2c16df91b55d114cf374eaccea4b84",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "generation_config.json",
+          "processor_config.json"
+        ]
+      },
+      "include_vision": true,
+      "download_bytes": 2234057304,
+      "install_bytes": 2246000000,
+      "status": "runs",
+      "gates": [
+        "lfm3_vl_vision_real (tower stages against an independent numpy FP32 reference)",
+        "real CLI greedy page transcription, chunked and per-token prefill identical",
+        "server /v1/chat/completions and /v1/messages page transcription"
+      ],
+      "notes": "LFM3-VL: the lfm3 trunk (hidden 2048, 24 layers, the lfm3-1.7b baseline's shape) with the LFM3-VL tower: 14 RMSNorm blocks alternating a gated depthwise 3x3 conv (8 blocks) and grouped-query attention (6 blocks, 16 heads over 8 KV heads, per-head q/k norms, neox 2-D rope at theta 1e6), a SwiGLU MLP, and a pixel-unshuffle projector to the trunk width. VisionTowerKind::Lfm3Vl. THE 8-BIT BUILD ON PURPOSE: LiquidAI's MLX-4bit is affine group 32, which this port's kernels do not implement (4- and 8-bit at group 64 only), and its tower weights differ from the 8-bit build's by up to 1% per weight, so each build needs its own probe reference. The tower ships unquantized BF16 and is narrowed to FP16 at repack. Combined install only (no sidecar pairing). Image preprocessing is processor_config.json's image_processor object (the Qwen3-VL smart-resize, 0.5/0.5 normalization, patch 16, merge 2). The max_pixels ceiling is not memory-clamped for this tower. docs/LFM3_VL_VISION_PHASE0.md."
     }
   ]
 }

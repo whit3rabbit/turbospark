@@ -234,7 +234,12 @@ pub fn parse_lfm3_vl_vision_config(json: &str) -> Result<VisionConfig, Gemma4Err
             vision.depth
         )));
     }
-    if (vision.patch_size, vision.temporal_patch_size, vision.spatial_merge_size) != (16, 2, 2) {
+    if (
+        vision.patch_size,
+        vision.temporal_patch_size,
+        vision.spatial_merge_size,
+    ) != (16, 2, 2)
+    {
         return Err(bad(format!(
             "lfm3_vl vision patch {} temporal {} merge {}; the implemented preprocessing is \
              patch 16, temporal 2, merge 2",
@@ -447,7 +452,8 @@ pub fn read_lfm3_vl_vision_entries(
     let heads = vision.num_heads as usize;
     let head_dim = hidden / heads;
     let mut lossy_conversion = Vec::new();
-    let mut entries = Vec::with_capacity(LFM3_RESIDENT_TENSORS.len() + LFM3_PROJECTOR_TENSORS.len());
+    let mut entries =
+        Vec::with_capacity(LFM3_RESIDENT_TENSORS.len() + LFM3_PROJECTOR_TENSORS.len());
 
     // Residents: the tower's two, then the projector's six. The patchifier's
     // columns are permuted to this port's patch-row order.
@@ -500,41 +506,42 @@ pub fn read_lfm3_vl_vision_entries(
         let is_conv = layer.conv.iter().all(Option::is_some);
         let mut subs = Vec::new();
         let mut used = 0u64;
-        let mut push = |role: &str, name: &str, expand: Option<(usize, usize)>| -> Result<(), Gemma4Error> {
-            let t = shards.info(name)?;
-            let converted = convert_raw_to_fp16(name, &t.dtype, shards.read(name)?)?;
-            if converted.lossy > 0 {
-                lossy_conversion.push((name.to_string(), converted.lossy));
-            }
-            let (bytes, shape) = match expand {
-                Some((head_dim, n_rep)) => {
-                    let cols = *t.shape.get(1).ok_or_else(|| Gemma4Error::ShapeMismatch {
-                        tensor: name.to_string(),
-                        detail: "a grouped K/V projection must be 2-D".into(),
-                    })? as usize;
-                    let rows = t.shape[0] as usize;
-                    if rows % head_dim != 0 {
-                        return Err(Gemma4Error::ShapeMismatch {
-                            tensor: name.to_string(),
-                            detail: format!("{rows} rows are not whole {head_dim}-row heads"),
-                        });
-                    }
-                    (
-                        expand_kv_heads(&converted.bytes, cols * 2, head_dim, n_rep),
-                        vec![(rows * n_rep) as u64, cols as u64],
-                    )
+        let mut push =
+            |role: &str, name: &str, expand: Option<(usize, usize)>| -> Result<(), Gemma4Error> {
+                let t = shards.info(name)?;
+                let converted = convert_raw_to_fp16(name, &t.dtype, shards.read(name)?)?;
+                if converted.lossy > 0 {
+                    lossy_conversion.push((name.to_string(), converted.lossy));
                 }
-                None => (converted.bytes, t.shape.clone()),
+                let (bytes, shape) = match expand {
+                    Some((head_dim, n_rep)) => {
+                        let cols = *t.shape.get(1).ok_or_else(|| Gemma4Error::ShapeMismatch {
+                            tensor: name.to_string(),
+                            detail: "a grouped K/V projection must be 2-D".into(),
+                        })? as usize;
+                        let rows = t.shape[0] as usize;
+                        if rows % head_dim != 0 {
+                            return Err(Gemma4Error::ShapeMismatch {
+                                tensor: name.to_string(),
+                                detail: format!("{rows} rows are not whole {head_dim}-row heads"),
+                            });
+                        }
+                        (
+                            expand_kv_heads(&converted.bytes, cols * 2, head_dim, n_rep),
+                            vec![(rows * n_rep) as u64, cols as u64],
+                        )
+                    }
+                    None => (converted.bytes, t.shape.clone()),
+                };
+                used += bytes.len() as u64;
+                subs.push(SubTensor {
+                    role: role.to_string(),
+                    bytes,
+                    dtype: "fp16".to_string(),
+                    shape,
+                });
+                Ok(())
             };
-            used += bytes.len() as u64;
-            subs.push(SubTensor {
-                role: role.to_string(),
-                bytes,
-                dtype: "fp16".to_string(),
-                shape,
-            });
-            Ok(())
-        };
         for (slot, (role, _)) in LFM3_COMMON_ROLES.iter().enumerate() {
             push(role, layer.common[slot].expect("checked"), None)?;
         }
@@ -547,7 +554,8 @@ pub fn read_lfm3_vl_vision_entries(
                 let name = layer.attn[slot].expect("checked");
                 let expand = if *role == "k_w" || *role == "v_w" {
                     let kv_rows = shards.info(name)?.shape[0] as usize;
-                    if kv_rows == 0 || kv_rows % head_dim != 0 || (heads * head_dim) % kv_rows != 0 {
+                    if kv_rows == 0 || kv_rows % head_dim != 0 || (heads * head_dim) % kv_rows != 0
+                    {
                         return Err(Gemma4Error::ShapeMismatch {
                             tensor: name.to_string(),
                             detail: format!(
@@ -589,8 +597,20 @@ mod tests {
     /// with values from `LiquidAI/LFM3-VL-2B-MLX-4bit@4146d7fa`.
     fn real_config() -> serde_json::Value {
         let layer_types = [
-            "conv", "conv", "full_attention", "conv", "full_attention", "conv", "full_attention",
-            "conv", "full_attention", "conv", "full_attention", "conv", "full_attention", "conv",
+            "conv",
+            "conv",
+            "full_attention",
+            "conv",
+            "full_attention",
+            "conv",
+            "full_attention",
+            "conv",
+            "full_attention",
+            "conv",
+            "full_attention",
+            "conv",
+            "full_attention",
+            "conv",
         ];
         serde_json::json!({
             "image_token_id": 125030, "video_token_id": 125029,
@@ -620,7 +640,11 @@ mod tests {
         );
         assert_eq!((v.out_hidden_size, v.patches_per_token()), (2048, 4));
         assert_eq!(
-            (v.vision_start_token_id, v.vision_end_token_id, v.image_token_id),
+            (
+                v.vision_start_token_id,
+                v.vision_end_token_id,
+                v.image_token_id
+            ),
             (125009, 125010, 125030)
         );
     }
@@ -639,8 +663,14 @@ mod tests {
     #[test]
     fn a_changed_tower_is_refused() {
         for (key, value) in [
-            ("rope_parameters", serde_json::json!({"rope_theta": 10000.0, "rope_type": "axial"})),
-            ("rope_parameters", serde_json::json!({"rope_theta": 1000000.0, "rope_type": "default"})),
+            (
+                "rope_parameters",
+                serde_json::json!({"rope_theta": 10000.0, "rope_type": "axial"}),
+            ),
+            (
+                "rope_parameters",
+                serde_json::json!({"rope_theta": 1000000.0, "rope_type": "default"}),
+            ),
             ("norm_eps", serde_json::json!(1e-6)),
             ("conv_kernel_size", serde_json::json!(5)),
             ("num_key_value_heads", serde_json::json!(5)),
@@ -684,8 +714,9 @@ mod tests {
         let at = |i: usize| u16::from_le_bytes([new[2 * i], new[2 * i + 1]]) as usize;
         // Port column (t=1, ph=2, pw=3, c=2) reads reference column
         // c*(T*P*P) + t*P*P + (ph*P + pw).
-        let port = 1 * (p * p * c) + (2 * p + 3) * c + 2;
-        assert_eq!(at(port), 2 * (t * p * p) + 1 * (p * p) + (2 * p + 3));
+        let (ti, ci) = (1usize, 2usize);
+        let port = ti * (p * p * c) + (2 * p + 3) * c + ci;
+        assert_eq!(at(port), ci * (t * p * p) + ti * (p * p) + (2 * p + 3));
         // A bijection: every reference column lands exactly once.
         let mut seen: Vec<usize> = (0..cols).map(at).collect();
         seen.sort_unstable();
@@ -776,7 +807,11 @@ mod tests {
             ("linear_2.weight", vec![text as u64, 40]),
             ("linear_2.bias", vec![text as u64]),
         ] {
-            ts.push(shaped(format!("{LFM3_PROJECTOR_PREFIX}{suffix}"), shape, 95));
+            ts.push(shaped(
+                format!("{LFM3_PROJECTOR_PREFIX}{suffix}"),
+                shape,
+                95,
+            ));
         }
         if let Some(name) = extra {
             ts.push(shaped(name.to_string(), vec![hid as u64], 99));
@@ -816,7 +851,10 @@ mod tests {
         );
         assert_eq!(
             roles(2),
-            ["op_norm", "ffn_norm", "w1", "w3", "w2", "q_w", "k_w", "v_w", "o_w", "q_norm", "k_norm"]
+            [
+                "op_norm", "ffn_norm", "w1", "w3", "w2", "q_w", "k_w", "v_w", "o_w", "q_norm",
+                "k_norm"
+            ]
         );
         // K and V were expanded to the full 2 heads x 4 rows.
         let k = r.blocks.experts[2]
@@ -854,7 +892,10 @@ mod tests {
     fn a_missing_unknown_or_mixed_tensor_is_refused_by_name() {
         let missing = format!("{VISION_PREFIX}{BLOCK_PATH}4.self_attn.k_layernorm.weight");
         let err = read(Some(&missing), None).err().expect("missing role");
-        assert!(err.to_string().contains("4.self_attn.k_layernorm.weight"), "{err}");
+        assert!(
+            err.to_string().contains("4.self_attn.k_layernorm.weight"),
+            "{err}"
+        );
         let err = read(Some("multi_modal_projector.linear_2.bias"), None)
             .err()
             .expect("missing projector tensor");

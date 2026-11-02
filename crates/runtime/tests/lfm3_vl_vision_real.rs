@@ -60,9 +60,10 @@ fn the_real_tower_runs_and_dumps_every_stage() {
     );
 
     let mut runner = turbospark_runtime::RealForwardRunner::open(&dir, arch).expect("open install");
-    let (embedding, blocks, patch_embed) = runner
+    let (embedding, stage_rows) = runner
         .encode_image_lfm3_stages(&image, &params)
         .expect("the tower runs");
+    let (blocks, patch_embed) = (stage_rows.blocks, stage_rows.patch_embed);
     assert_eq!(embedding.merged_tokens, image.merged_tokens);
     assert_eq!(embedding.out_hidden, 2048);
 

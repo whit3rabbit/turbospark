@@ -730,7 +730,11 @@ impl Lfm3VlVisionTower {
                 ))
             })?;
             if slot
-                .replace(Lfm3VlBlockRoles::resolve(entry, layer.expert_stride, &dims)?)
+                .replace(Lfm3VlBlockRoles::resolve(
+                    entry,
+                    layer.expert_stride,
+                    &dims,
+                )?)
                 .is_some()
             {
                 return Err(RealForwardError::Unsupported(format!(
@@ -810,13 +814,9 @@ impl Lfm3VlVisionTower {
                 image.grid.t
             )));
         }
-        let freqs = turbospark_vision_io::vision_rope_freq_rows(
-            image.grid,
-            d.head_dim,
-            ROPE_THETA,
-            params,
-        )
-        .map_err(|e| RealForwardError::Unsupported(format!("lfm3_vl rope rows: {e}")))?;
+        let freqs =
+            turbospark_vision_io::vision_rope_freq_rows(image.grid, d.head_dim, ROPE_THETA, params)
+                .map_err(|e| RealForwardError::Unsupported(format!("lfm3_vl rope rows: {e}")))?;
         let at = |i: usize| (weights.buffer(), weights.gpu_offset(self.offsets[i]));
         let res = Lfm3VlResidents {
             patchifier: at(0),

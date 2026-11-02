@@ -5,6 +5,14 @@ use std::path::Path;
 use crate::real_forward::RealForwardRunner;
 use crate::real_forward_types::RealForwardError;
 
+/// The FP16 residual-stream rows of one LFM3-VL tower run, as raw bits:
+/// `[patches, hidden]` after the patch embedding and after each block.
+#[derive(Debug, Default)]
+pub struct Lfm3VlStageRows {
+    pub patch_embed: Vec<u16>,
+    pub blocks: Vec<Vec<u16>>,
+}
+
 impl RealForwardRunner {
     /// Whether this install declares a vision tower.
     ///
@@ -138,25 +146,39 @@ impl RealForwardRunner {
             // output; the shared `VisionStages` carries the first and last.
             let mut stages = crate::vision::lfm3_vl::Lfm3VlStages::default();
             let embedding = self.encode_image_lfm3(image, params, Some(&mut stages))?;
-            return Ok((embedding, crate::vision::lfm3_vl::into_vision_stages(stages)));
+            return Ok((
+                embedding,
+                crate::vision::lfm3_vl::into_vision_stages(stages),
+            ));
         }
         self.open_vision_tower()?;
         let tower = self.vision.as_mut().expect("opened just above");
         tower.run_with_stages(&mut self.context, &self.weights, image, params)
     }
 
-    /// [`Self::encode_image`] for an `lfm3_vl` tower. Combined installs only:
-    /// the sidecar format has no LFM3-VL pairing yet, so a sidecar-attached
-    /// trunk is refused by name rather than opened against the wrong weights.
+    /// An `lfm3_vl` tower's embedding plus the FP16 residual stream after the
+    /// patch embedding and after EVERY block, for the cross-engine probe
+    /// (`scripts/lfm3_vl_tower_probe.py`). Diagnostic: the ordinary entry
+    /// point pays none of the readbacks.
+    ///
+    /// Combined installs only: the sidecar format has no LFM3-VL pairing yet,
+    /// so a sidecar-attached trunk is refused by name rather than opened
+    /// against the wrong weights.
     #[doc(hidden)]
     pub fn encode_image_lfm3_stages(
         &mut self,
         image: &turbospark_vision_io::PreprocessedImage,
         params: &turbospark_vision_io::PreprocessParams,
-    ) -> Result<(crate::vision::VisionEmbedding, Vec<Vec<u16>>, Vec<u16>), RealForwardError> {
+    ) -> Result<(crate::vision::VisionEmbedding, Lfm3VlStageRows), RealForwardError> {
         let mut stages = crate::vision::lfm3_vl::Lfm3VlStages::default();
         let embedding = self.encode_image_lfm3(image, params, Some(&mut stages))?;
-        Ok((embedding, stages.blocks, stages.patch_embed))
+        Ok((
+            embedding,
+            Lfm3VlStageRows {
+                patch_embed: stages.patch_embed,
+                blocks: stages.blocks,
+            },
+        ))
     }
 
     fn encode_image_lfm3(
