@@ -1034,6 +1034,23 @@ pub(crate) fn stream_vision_sidecar(
         );
     }
 
+    // LLaVA-OneVision is the same case: a Qwen2-7B trunk that installs from
+    // GGUF under the `qwen2` family, with its SigLIP tower as a sidecar of it
+    // (`docs/LLAVA_ONEVISION_VISION_PHASE0.md`).
+    if config.get("model_type").and_then(|m| m.as_str()) == Some(repack::ONEVISION_MODEL_TYPE) {
+        return stream_onevision_vision_sidecar(
+            weights,
+            out_dir,
+            explicit_file,
+            client,
+            progress,
+            byte_progress,
+            cancel,
+            cache.as_deref(),
+            &config_text,
+        );
+    }
+
     // Pixtral is the same case: a Mistral-Nemo trunk that installs from GGUF
     // under the `llama` family, with the tower as a sidecar of it
     // (`docs/PIXTRAL_VISION_PHASE0.md`).
@@ -1370,6 +1387,115 @@ fn stream_clip_vision_sidecar(
     repack::write_vision_sidecar(
         out_dir,
         ModelFamily::Llama,
+        &vision,
+        &weights.repo,
+        &read,
+        record,
+    )
+    .map_err(|e| format!("writing the vision sidecar: {e}"))?;
+    progress(&format!(
+        "vision sidecar written: {} block(s), {} bytes/block",
+        vision.depth, read.block_stride
+    ));
+    Ok(vision)
+}
+
+/// The LLaVA-OneVision arm of [`stream_vision_sidecar`]: the SigLIP tower, the
+/// two-layer projector and `image_newline`, fetched by ranged reads from the
+/// checkpoint's first shard (the language model fills the rest), fused and
+/// converted to FP16 by [`repack::read_vision_entries`], and written as a
+/// sidecar pairing with the `qwen2` family at the projector's width.
+///
+/// The pairing is `(family, hidden_size)` and nothing more, so a 3584-wide
+/// sidecar also pairs with any other 3584-wide `qwen2` trunk (Qwen2.5-VL-7B's
+/// own sidecar included, in the other direction): the manifest's tower kind
+/// and the revision pin in the record are what say which checkpoint it was
+/// trained against, and `--vision-sidecar auto` would not check either.
+#[allow(clippy::too_many_arguments)]
+fn stream_onevision_vision_sidecar(
+    weights: &RepoRef,
+    out_dir: &Path,
+    explicit_file: Option<&str>,
+    client: &Client,
+    progress: &mut impl FnMut(&str),
+    byte_progress: Option<&ByteProgressCallback>,
+    cancel: Option<&CancelFlag>,
+    cache_dir: Option<&Path>,
+    config_text: &str,
+) -> Result<VisionConfig, String> {
+    let vision =
+        repack::parse_llava_onevision_vision_config(config_text).map_err(|e| e.to_string())?;
+    if !vision.is_active() {
+        return Err(format!(
+            "{weights} declares no vision_config; there is no tower here to install"
+        ));
+    }
+    progress(&format!(
+        "{weights}: LLaVA-OneVision SigLIP tower, {} block(s), projector out_hidden_size {}",
+        vision.depth, vision.out_hidden_size
+    ));
+
+    let fetched = fetch_prefixed_shards(
+        weights,
+        &repack::ONEVISION_SOURCE_PREFIXES,
+        explicit_file,
+        client,
+        byte_progress,
+        cancel,
+        cache_dir,
+    )?;
+    progress(&format!("{} vision shard(s) fetched", fetched.len()));
+
+    let mut shard_names = Vec::with_capacity(fetched.len());
+    let mut headers = Vec::with_capacity(fetched.len());
+    let mut sources = Vec::with_capacity(fetched.len());
+    for (name, header, source) in fetched {
+        shard_names.push(name);
+        headers.push(header);
+        sources.push(source);
+    }
+    let bases: Vec<&str> = headers
+        .iter()
+        .flat_map(|h| h.tensors.keys())
+        .map(String::as_str)
+        .collect();
+    let shards = Gemma4Shards::new(
+        headers
+            .iter()
+            .zip(sources.iter())
+            .map(|(h, s)| (h, s as &dyn RangeSource))
+            .collect(),
+    )
+    .map_err(|e| format!("vision tower shards: {e}"))?;
+    let read = repack::read_vision_entries(&shards, &bases, &vision)
+        .map_err(|e| format!("reading the vision tower: {e}"))?;
+    let lossy: usize = read.lossy_conversion.iter().map(|(_, n)| n).sum();
+    if lossy > 0 {
+        progress(&format!(
+            "converted {} vision tensors to FP16 with {lossy} values losing bits \
+             (subnormals; the normal range is exact)",
+            read.lossy_conversion.len()
+        ));
+    }
+
+    let record = model_io::SidecarRecord {
+        kind: model_io::SIDECAR_KIND.to_string(),
+        pairs_with: model_io::PairsWith {
+            family: ModelFamily::Qwen2Dense.as_str().to_string(),
+            hidden_size: vision.out_hidden_size,
+        },
+        source: model_io::SidecarSource {
+            repo: weights.repo.clone(),
+            revision: weights.revision.clone(),
+            prefix: repack::CLIP_MODEL_PREFIX.to_string(),
+            file: shard_names.join(", "),
+        },
+        tower_blocks: vision.depth,
+        block_stride: read.block_stride,
+    };
+    repack::write_vision_sidecar(
+        out_dir,
+        ModelFamily::Qwen2Dense,
         &vision,
         &weights.repo,
         &read,

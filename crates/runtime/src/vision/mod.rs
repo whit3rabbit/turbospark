@@ -44,6 +44,7 @@ mod inject;
 pub(crate) mod lfm3_vl;
 pub(crate) mod minicpm;
 pub(crate) mod muse;
+pub(crate) mod onevision;
 mod overflow;
 pub(crate) mod pixtral;
 pub(crate) mod qwen25;

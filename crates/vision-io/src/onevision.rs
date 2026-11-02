@@ -162,8 +162,7 @@ pub fn ov_plan(orig_h: usize, orig_w: usize, tiles_h: usize, tiles_w: usize) -> 
     }
     let (cur_h, cur_w) = (y1 - y0, x1 - x0);
     let (mut out_h, mut out_w) = (cur_h, cur_w);
-    let ratio =
-        ((cur_h * cur_w) as f64 / (OV_MAX_AREA_TILES * OV_SIDE * OV_SIDE) as f64).sqrt();
+    let ratio = ((cur_h * cur_w) as f64 / (OV_MAX_AREA_TILES * OV_SIDE * OV_SIDE) as f64).sqrt();
     if ratio > 1.1 {
         out_h = (cur_h as f64 / ratio).floor() as usize;
         out_w = (cur_w as f64 / ratio).floor() as usize;
@@ -299,9 +298,7 @@ pub fn ov_preprocess(
     let (tiles_h, tiles_w) = best_grid(oh, ow, pinpoints)?;
     let (target_h, target_w) = (tiles_h * OV_TILE, tiles_w * OV_TILE);
 
-    let mut pixels = Vec::with_capacity(
-        (1 + tiles_h * tiles_w) * OV_TILE_PATCHES * OV_PATCH_DIM,
-    );
+    let mut pixels = Vec::with_capacity((1 + tiles_h * tiles_w) * OV_TILE_PATCHES * OV_PATCH_DIM);
 
     // The base tile: a squash to the tile size.
     let base;
@@ -359,14 +356,7 @@ pub fn ov_preprocess(
 
 /// `F.interpolate(mode="bilinear", align_corners=False)` of a `(h, w, c)`
 /// row-major map to `(out_h, out_w, c)`, no antialias.
-fn bilinear(
-    src: &[f32],
-    h: usize,
-    w: usize,
-    c: usize,
-    out_h: usize,
-    out_w: usize,
-) -> Vec<f32> {
+fn bilinear(src: &[f32], h: usize, w: usize, c: usize, out_h: usize, out_w: usize) -> Vec<f32> {
     let scale_h = h as f64 / out_h as f64;
     let scale_w = w as f64 / out_w as f64;
     let coords = |i: usize, scale: f64, limit: usize| -> (usize, usize, f32) {
@@ -385,8 +375,8 @@ fn bilinear(
                 let v01 = src[(y0 * w + x1) * c + ch];
                 let v10 = src[(y1 * w + x0) * c + ch];
                 let v11 = src[(y1 * w + x1) * c + ch];
-                out[(y * out_w + x) * c + ch] = (1.0 - ly) * ((1.0 - lx) * v00 + lx * v01)
-                    + ly * ((1.0 - lx) * v10 + lx * v11);
+                out[(y * out_w + x) * c + ch] =
+                    (1.0 - ly) * ((1.0 - lx) * v00 + lx * v01) + ly * ((1.0 - lx) * v10 + lx * v11);
             }
         }
     }
@@ -469,7 +459,10 @@ mod tests {
         // transcription of the HF rule (phase-0 doc).
         assert_eq!(ov_select_best_resolution(336, 448, &p), Some((384, 768)));
         // A tall page.
-        assert_eq!(ov_select_best_resolution(1280, 1024, &p), Some((1536, 1152)));
+        assert_eq!(
+            ov_select_best_resolution(1280, 1024, &p),
+            Some((1536, 1152))
+        );
     }
 
     #[test]
@@ -510,10 +503,16 @@ mod tests {
         // 1x4 -> 1x2: sources at x = 0.5 and 2.5 -> blends (0,1) and (2,3).
         let src = [0.0, 10.0, 20.0, 30.0];
         let out = bilinear(&src, 1, 4, 1, 1, 2);
-        assert!((out[0] - 5.0).abs() < 1e-5 && (out[1] - 25.0).abs() < 1e-5, "{out:?}");
+        assert!(
+            (out[0] - 5.0).abs() < 1e-5 && (out[1] - 25.0).abs() < 1e-5,
+            "{out:?}"
+        );
         // Up-sampling clamps the first source to 0.
         let up = bilinear(&[0.0, 8.0], 1, 2, 1, 1, 4);
-        assert!((up[0] - 0.0).abs() < 1e-5 && (up[3] - 8.0).abs() < 1e-5, "{up:?}");
+        assert!(
+            (up[0] - 0.0).abs() < 1e-5 && (up[3] - 8.0).abs() < 1e-5,
+            "{up:?}"
+        );
     }
 
     #[test]
@@ -575,7 +574,9 @@ mod tests {
         let patches = ov_preprocess(&image, &p, [0.5; 3], [0.5; 3], 1.0 / 255.0).unwrap();
         assert_eq!(patches.pixels.len(), 2 * 729 * 588);
         // Base is the squash of a white image: every value (1 - .5)/.5 = 1.
-        assert!(patches.pixels[..729 * 588].iter().all(|&v| (v - 1.0).abs() < 1e-3));
+        assert!(patches.pixels[..729 * 588]
+            .iter()
+            .all(|&v| (v - 1.0).abs() < 1e-3));
         // The tile is centered on black: its first patch row (top of canvas)
         // is the pad, (0 - .5)/.5 = -1; the middle is white.
         let tile = &patches.pixels[729 * 588..];

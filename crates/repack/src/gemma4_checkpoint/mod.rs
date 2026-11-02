@@ -30,6 +30,7 @@ mod vision_gemma4;
 mod vision_lfm3;
 mod vision_minicpm;
 mod vision_muse;
+mod vision_onevision;
 mod vision_pixtral;
 mod vision_siglip;
 
@@ -88,6 +89,10 @@ pub use vision_minicpm::{
     VIT_MERGER_PREFIX as MINICPM_VIT_MERGER_PREFIX,
 };
 pub use vision_muse::{MUSE_BLOCK_SOURCES, MUSE_RESIDENT_TENSORS, MUSE_SOURCE_PREFIXES};
+pub use vision_onevision::{
+    parse_llava_onevision_vision_config, read_onevision_vision_entries, ONEVISION_MODEL_TYPE,
+    ONEVISION_NEWLINE, ONEVISION_RESIDENT_TENSORS, ONEVISION_SOURCE_PREFIXES,
+};
 pub use vision_pixtral::{
     parse_pixtral_vision_config, pixtral_special_token_ids, read_pixtral_vision_entries,
     PIXTRAL_BLOCK_ROLES, PIXTRAL_MODEL_TYPE, PIXTRAL_PROJECTOR_PREFIX, PIXTRAL_RESIDENT_TENSORS,

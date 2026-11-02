@@ -757,6 +757,7 @@ impl RealForwardRunner {
         self.pixtral_vision = None;
         self.siglip_vision = None;
         self.deepseek_ocr_vision = None;
+        self.onevision_vision = None;
     }
 
     /// `(marker, fill)` for a LLaVA prompt, read off the install, or `None`
@@ -773,7 +774,9 @@ impl RealForwardRunner {
         if !(v.is_active()
             && matches!(
                 v.tower,
-                model_io::VisionTowerKind::Clip | model_io::VisionTowerKind::Pixtral
+                model_io::VisionTowerKind::Clip
+                    | model_io::VisionTowerKind::Pixtral
+                    | model_io::VisionTowerKind::SigLipOv
             ))
         {
             return None;
@@ -808,6 +811,12 @@ impl RealForwardRunner {
         patches: &turbospark_vision_io::ClipPatches,
     ) -> Result<Vec<u16>, RealForwardError> {
         self.open_clip_tower()?;
+        if self.arch.vision.tower == model_io::VisionTowerKind::SigLipOv {
+            let tower = self.onevision_vision.as_mut().expect("opened just above");
+            return tower
+                .run(&mut self.context, &self.weights, patches, false)
+                .map(|(rows, _)| rows);
+        }
         if self.arch.vision.tower == model_io::VisionTowerKind::Pixtral {
             let tower = self.pixtral_vision.as_mut().expect("opened just above");
             return tower
@@ -828,7 +837,10 @@ impl RealForwardRunner {
         patches: &turbospark_vision_io::ClipPatches,
     ) -> Result<(Vec<u16>, crate::vision::ClipStages), RealForwardError> {
         self.open_clip_tower()?;
-        let (rows, stages) = if self.arch.vision.tower == model_io::VisionTowerKind::Pixtral {
+        let (rows, stages) = if self.arch.vision.tower == model_io::VisionTowerKind::SigLipOv {
+            let tower = self.onevision_vision.as_mut().expect("opened just above");
+            tower.run(&mut self.context, &self.weights, patches, true)?
+        } else if self.arch.vision.tower == model_io::VisionTowerKind::Pixtral {
             let tower = self.pixtral_vision.as_mut().expect("opened just above");
             tower.run(&mut self.context, &self.weights, patches, true)?
         } else {
@@ -859,11 +871,32 @@ impl RealForwardRunner {
             }
             return Ok(());
         }
+        if self.arch.vision.tower == model_io::VisionTowerKind::SigLipOv
+            && self.arch.vision.is_active()
+        {
+            if self.onevision_vision.is_none() {
+                self.onevision_vision = Some(match &self.vision_sidecar_dir {
+                    Some(dir) => crate::vision::onevision::OneVisionTower::open_with_sidecar(
+                        dir,
+                        &self.context,
+                        &self.arch,
+                    )?,
+                    None => crate::vision::onevision::OneVisionTower::open(
+                        &self.install_dir,
+                        &self.context,
+                        &self.weights,
+                        &self.index,
+                        &self.arch,
+                    )?,
+                });
+            }
+            return Ok(());
+        }
         if self.arch.vision.tower != model_io::VisionTowerKind::Clip
             || !self.arch.vision.is_active()
         {
             return Err(RealForwardError::Unsupported(
-                "this install declares no CLIP or Pixtral vision tower".to_string(),
+                "this install declares no CLIP, Pixtral or OneVision vision tower".to_string(),
             ));
         }
         if self.clip_vision.is_none() {
@@ -1073,9 +1106,10 @@ impl RealForwardRunner {
                 | model_io::VisionTowerKind::Pixtral
                 | model_io::VisionTowerKind::SigLip
                 | model_io::VisionTowerKind::DeepseekOcr
+                | model_io::VisionTowerKind::SigLipOv
         ) {
             return Err(RealForwardError::Unsupported(
-                "set_prompt_vision_flat needs a CLIP, Pixtral, SigLIP or DeepSeek-OCR vision tower"
+                "set_prompt_vision_flat needs a CLIP, Pixtral, SigLIP, OneVision or DeepSeek-OCR vision tower"
                     .to_string(),
             ));
         }

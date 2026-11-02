@@ -287,10 +287,9 @@ impl ClipPreprocessParams {
             ));
         }
         let pinpoints = crate::onevision::parse_pinpoints(root)?;
-        if let Some(&(h, w)) = pinpoints
-            .iter()
-            .find(|&&(h, w)| h % crate::onevision::OV_TILE != 0 || w % crate::onevision::OV_TILE != 0)
-        {
+        if let Some(&(h, w)) = pinpoints.iter().find(|&&(h, w)| {
+            h % crate::onevision::OV_TILE != 0 || w % crate::onevision::OV_TILE != 0
+        }) {
             return Err(bad(
                 "image_grid_pinpoints",
                 format!("{h}x{w} is not a whole number of tiles"),
@@ -306,14 +305,15 @@ impl ClipPreprocessParams {
             for (slot, v) in out.iter_mut().zip(a) {
                 *slot = v
                     .as_f64()
-                    .ok_or_else(|| bad(field, "not a number".into()))? as f32;
+                    .ok_or_else(|| bad(field, "not a number".into()))?
+                    as f32;
             }
             Ok(out)
         };
-        let rescale_factor = root
-            .get("rescale_factor")
-            .and_then(serde_json::Value::as_f64)
-            .ok_or_else(|| bad("rescale_factor", "missing".into()))? as f32;
+        let rescale_factor =
+            root.get("rescale_factor")
+                .and_then(serde_json::Value::as_f64)
+                .ok_or_else(|| bad("rescale_factor", "missing".into()))? as f32;
         Ok(Self {
             size: crate::onevision::OV_TILE,
             layout: ClipLayout::OneVision,

@@ -408,6 +408,9 @@ pub struct RealForwardRunner {
     /// The DeepSeek-OCR tower (SAM + CLIP-L), lazily opened by
     /// [`RealForwardRunner::encode_image_deepseek_ocr`].
     pub(crate) deepseek_ocr_vision: Option<crate::vision::deepseek_ocr::DeepseekOcrVisionTower>,
+    /// The LLaVA-OneVision SigLIP tower, lazily opened by
+    /// [`RealForwardRunner::encode_image_clip`].
+    pub(crate) onevision_vision: Option<crate::vision::onevision::OneVisionTower>,
     /// A sidecar tower directory attached after open (vision memory
     /// sidecar, Part A2), via [`RealForwardRunner::attach_vision_sidecar`].
     /// `None` on every session that never called it, which is every session

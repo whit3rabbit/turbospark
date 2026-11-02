@@ -311,6 +311,18 @@ pub enum VisionTowerKind {
     /// of `image_token_id`, and the newline and separator rows are learned
     /// embeddings written into it.
     DeepseekOcr,
+    /// The SigLIP-so400m tower LLaVA-OneVision carries
+    /// (`docs/LLAVA_ONEVISION_VISION_PHASE0.md`): the DeepSeek-VL2 tower's
+    /// blocks (the feature layer is the LAST block, 26 of them), no final
+    /// norm and no unfold, then a two-linear projector applied to every
+    /// patch row. The anyres tiling and the `image_newline` packing are the
+    /// front end's.
+    ///
+    /// Field meanings: `depth` is 26, `patch_size` 14, `spatial_merge_size`
+    /// 1 (no merge), `num_position_embeddings` 729, `out_hidden_size` the
+    /// trunk width, `image_token_id` the bare `<image>` marker. The start and
+    /// end ids are 0.
+    SigLipOv,
 }
 
 impl VisionTowerKind {
@@ -327,6 +339,7 @@ impl VisionTowerKind {
             VisionTowerKind::Pixtral => "pixtral",
             VisionTowerKind::SigLip => "siglip",
             VisionTowerKind::DeepseekOcr => "deepseek_ocr",
+            VisionTowerKind::SigLipOv => "siglip_ov",
         }
     }
 
@@ -344,6 +357,7 @@ impl VisionTowerKind {
             "pixtral" => Some(VisionTowerKind::Pixtral),
             "siglip" => Some(VisionTowerKind::SigLip),
             "deepseek_ocr" => Some(VisionTowerKind::DeepseekOcr),
+            "siglip_ov" => Some(VisionTowerKind::SigLipOv),
             _ => None,
         }
     }
