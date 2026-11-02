@@ -37,6 +37,7 @@
 
 mod block;
 mod budget;
+pub(crate) mod clip;
 pub(crate) mod gemma4;
 mod inject;
 mod overflow;
@@ -46,6 +47,7 @@ mod stages;
 mod weights;
 
 pub use budget::{PixelBudget, VisionBudgetTooSmall};
+pub use clip::ClipStages;
 pub use inject::{PromptVision, RopePosition};
 
 use std::path::Path;

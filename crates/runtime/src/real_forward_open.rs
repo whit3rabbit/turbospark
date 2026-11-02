@@ -380,6 +380,7 @@ impl RealForwardRunner {
             install_dir: dir.to_path_buf(),
             vision: None,
             gemma4_vision: None,
+            clip_vision: None,
             vision_sidecar_dir: None,
             prompt_vision: None,
             skip_head: false,

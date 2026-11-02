@@ -384,6 +384,10 @@ pub struct RealForwardRunner {
     /// the two towers share no weights layout or forward pass; `None` means
     /// "not yet asked for", as with `vision`.
     pub(crate) gemma4_vision: Option<crate::vision::gemma4::Gemma4VisionTower>,
+    /// The CLIP tower (LLaVA), lazily opened by
+    /// [`RealForwardRunner::encode_image_clip`]; a third field for the same
+    /// reason as the Gemma 4 one.
+    pub(crate) clip_vision: Option<crate::vision::clip::ClipVisionTower>,
     /// A sidecar tower directory attached after open (vision memory
     /// sidecar, Part A2), via [`RealForwardRunner::attach_vision_sidecar`].
     /// `None` on every session that never called it, which is every session

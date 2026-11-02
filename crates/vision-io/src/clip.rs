@@ -205,8 +205,15 @@ pub fn clip_preprocess(
     Ok(ClipPatches { pixels, grid })
 }
 
-/// Expand a rendered prompt's image markers: each `image` id becomes
-/// `counts[i]` copies of itself, and the span of each run is returned.
+/// Expand a rendered prompt's image markers: each `marker` id becomes
+/// `counts[i]` copies of `fill`, and the span of each run is returned.
+///
+/// `fill` is the marker itself whenever the trunk's embedding table has a row
+/// for it, and an in-vocabulary stand-in otherwise. LLaVA's `<image>` is id
+/// 32000, a row only the 32,064-row Hugging Face checkpoint has: the GGUF
+/// trunks carry 32,000, and the trunk refuses an out-of-range id BEFORE it
+/// reaches the embedding blit that would have replaced the lookup anyway. The
+/// run's content is never read as a token, so the stand-in costs nothing.
 ///
 /// LLaVA has no start or end token around an image, so the run is bare. The
 /// template renders ONE `<image>` per image part; the processor replaces it
@@ -216,13 +223,14 @@ pub fn clip_preprocess(
 /// otherwise grow a run), and an empty image.
 pub fn clip_expand_image_placeholders(
     rendered: &[i32],
-    image: i32,
+    marker: i32,
+    fill: i32,
     counts: &[usize],
 ) -> Result<(Vec<i32>, Vec<crate::ImageSpan>), VisionIoError> {
     let markers: Vec<usize> = rendered
         .iter()
         .enumerate()
-        .filter(|(_, &t)| t == image)
+        .filter(|(_, &t)| t == marker)
         .map(|(i, _)| i)
         .collect();
     if markers.len() != counts.len() {
@@ -241,7 +249,7 @@ pub fn clip_expand_image_placeholders(
     let mut spans = Vec::with_capacity(counts.len());
     let mut next = 0usize;
     for &t in rendered {
-        if t != image {
+        if t != marker {
             out.push(t);
             continue;
         }
@@ -255,7 +263,7 @@ pub fn clip_expand_image_placeholders(
             start: out.len(),
             len: n,
         });
-        out.extend(std::iter::repeat_n(image, n));
+        out.extend(std::iter::repeat_n(fill, n));
         next += 1;
     }
     Ok((out, spans))
@@ -363,7 +371,7 @@ mod tests {
 
     #[test]
     fn markers_expand_to_bare_runs_with_their_spans() {
-        let (out, spans) = clip_expand_image_placeholders(&[1, 9, 2, 9, 4], 9, &[3, 2]).unwrap();
+        let (out, spans) = clip_expand_image_placeholders(&[1, 9, 2, 9, 4], 9, 9, &[3, 2]).unwrap();
         assert_eq!(out, vec![1, 9, 9, 9, 2, 9, 9, 4]);
         assert_eq!(
             spans,
@@ -375,9 +383,16 @@ mod tests {
     }
 
     #[test]
+    fn the_run_carries_the_fill_id_not_the_marker() {
+        let (out, spans) = clip_expand_image_placeholders(&[1, 32000, 2], 32000, 0, &[3]).unwrap();
+        assert_eq!(out, vec![1, 0, 0, 0, 2]);
+        assert_eq!(spans, vec![crate::ImageSpan { start: 1, len: 3 }]);
+    }
+
+    #[test]
     fn a_count_mismatch_an_expanded_prompt_or_an_empty_image_is_refused() {
-        assert!(clip_expand_image_placeholders(&[1, 9, 2], 9, &[3, 2]).is_err());
-        assert!(clip_expand_image_placeholders(&[1, 9, 9], 9, &[1, 1]).is_err());
-        assert!(clip_expand_image_placeholders(&[1, 9, 2], 9, &[0]).is_err());
+        assert!(clip_expand_image_placeholders(&[1, 9, 2], 9, 9, &[3, 2]).is_err());
+        assert!(clip_expand_image_placeholders(&[1, 9, 9], 9, 9, &[1, 1]).is_err());
+        assert!(clip_expand_image_placeholders(&[1, 9, 2], 9, 9, &[0]).is_err());
     }
 }
