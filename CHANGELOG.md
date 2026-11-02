@@ -14,6 +14,14 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- Qwen3-VL-30B-A3B image support on the `qwen3moe` family: the official
+  Q4_K_M GGUF trunk (`qwen3vlmoe`) plus the Qwen3-VL tower and its three
+  deepstack mergers as a `pull-vision` sidecar (`qwen3vl-30b-a3b` and
+  `qwen3vl-30b-a3b-vision-tower` catalog rows). Images reach generated output
+  from the CLI and both server endpoints. The llama MoE chunked driver still
+  has no image injection, so an image turn prefills sequentially and text
+  turns keep the chunked driver. The shard fetcher now scans a repo's real
+  shards when its index is stale.
 - LLaVA-1.5 image support for the `llama` family: a CLIP vision tower
   (`VisionTowerKind::Clip`), a `pull-vision` sidecar from
   `llava-hf/llava-1.5-7b-hf` attached to a GGUF trunk, `--image` in the CLI,

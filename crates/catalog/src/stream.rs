@@ -868,6 +868,36 @@ pub(crate) fn fetch_prefixed_shards(
         }
         None => BTreeSet::new(),
     };
+    if shard_names.is_empty() && explicit_file.is_none() && indexed.is_some() {
+        // A STALE INDEX: it named shards the repo no longer has (the
+        // `mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit` index names 13
+        // shards, in the HF-native spelling, while the repo holds 4 that
+        // carry `vision_tower.`). The repo's real shard list is the next
+        // honest source, and each candidate's header says whether it holds a
+        // tensor under the prefixes. Falling straight through to
+        // `model.safetensors` would 404.
+        if let Ok(files) = client.file_list(repo) {
+            for name in files.iter().filter(|f| f.ends_with(".safetensors")) {
+                let source = range_source(
+                    repo.file_url(name),
+                    byte_progress,
+                    client,
+                    cancel,
+                    cache_dir,
+                );
+                let Ok(header) = repack::fetch_safetensors_header(&source) else {
+                    continue;
+                };
+                if header
+                    .tensors
+                    .keys()
+                    .any(|t| prefixes.iter().any(|p| t.starts_with(p)))
+                {
+                    shard_names.insert(name.clone());
+                }
+            }
+        }
+    }
     if shard_names.is_empty() {
         match explicit_file {
             Some(file) => {

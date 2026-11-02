@@ -872,6 +872,66 @@
       "notes": "128 experts of 2.5 MiB, so it streams. Peak footprint 2.7 GiB rather than the README band: 48 layers deep, and the slot cache is slots x layers x expert_stride. The pinned install was re-streamed and the quality and memory gates were reproduced on 2026-09-17 at 14.5988 perplexity, 2,663.8 MiB peak, and 17.245-27.907 tok/s."
     },
     {
+      "alias": "qwen3vl-30b-a3b",
+      "name": "Qwen3-VL-30B-A3B Instruct text trunk (GGUF Q4_K_M)",
+      "family": "qwen3moe",
+      "source": {
+        "kind": "gguf",
+        "repo": "Qwen/Qwen3-VL-30B-A3B-Instruct-GGUF",
+        "revision": "f54435e6cc31258f04b0969105c3f6badb197931",
+        "file": "Qwen3VL-30B-A3B-Instruct-Q4_K_M.gguf"
+      },
+      "sidecars": {
+        "repo": "Qwen/Qwen3-VL-30B-A3B-Instruct",
+        "revision": "9c4b90e1e4ba969fd3b5378b57d966d725f1b86c",
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.json",
+          "generation_config.json",
+          "vocab.json",
+          "merges.txt"
+        ]
+      },
+      "download_bytes": 18568187168,
+      "install_bytes": 18542228804,
+      "status": "runs",
+      "gates": [
+        "real CLI image runs with qwen3vl-30b-a3b-vision-tower attached (shapes, text page, no-image control)",
+        "server image run on /v1/chat/completions and /v1/messages"
+      ],
+      "measured": [],
+      "notes": "The Qwen3-VL MoE text trunk (llama.cpp arch qwen3vlmoe, resolved to the qwen3moe family) from the official Q4_K_M GGUF; the tower is NOT in this file and arrives as the qwen3vl-30b-a3b-vision-tower sidecar (`--vision-sidecar`). Image prompts take the sequential path (the llama MoE chunked driver has no image injection), at roughly 2 to 3 prefill tokens per second under load; text prompts keep the chunked driver. No text-quality or memory oracle was frozen for this row."
+    },
+    {
+      "alias": "qwen3vl-30b-a3b-vision-tower",
+      "kind": "vision-tower",
+      "name": "Qwen3-VL-30B-A3B vision tower with deepstack (FP16, sidecar)",
+      "family": "qwen3moe",
+      "source": {
+        "kind": "mlx",
+        "repo": "mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit",
+        "revision": "0555d34cb1ed80c0e61a5635194c70027b4c2ff3",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "preprocessor_config.json",
+          "config.json"
+        ]
+      },
+      "download_bytes": 1077690368,
+      "install_bytes": 1077690368,
+      "status": "runs",
+      "gates": [
+        "real CLI and server image runs paired with qwen3vl-30b-a3b"
+      ],
+      "measured": [],
+      "notes": "TOWER-ONLY sidecar for the Qwen3-VL-30B-A3B trunk: the depth-27 tower with out_hidden 2048 and three deepstack mergers (blocks 8, 16, 24), read from shard 1 of the MLX repo. The repo's model.safetensors.index.json is STALE (it names 13 shards and the HF-native model.visual. spelling; the repo has 4 shards carrying vision_tower.), which is why the shard fetcher falls back to scanning the repo's real shards for the prefix. Pairs with family qwen3moe at hidden 2048. The tower's own parity is the Qwen3-VL tower's (docs/QWEN3VL_PHASE0.md); it was not re-measured against a reference on this checkpoint."
+    },
+    {
       "alias": "qwen3vl-4b",
       "name": "Qwen3-VL 4B Instruct (MLX INT4, group 64)",
       "family": "qwen3_vl",
