@@ -917,6 +917,41 @@
       ]
     },
     {
+      "alias": "qwen25vl-7b",
+      "name": "Qwen2.5-VL 7B Instruct (MLX INT4, group 64) with vision tower",
+      "family": "qwen2",
+      "source": {
+        "kind": "mlx",
+        "repo": "mlx-community/Qwen2.5-VL-7B-Instruct-4bit",
+        "revision": "fdcc572e8b05ba9daeaf71be8c9e4267c826ff9b",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "vocab.json",
+          "merges.txt",
+          "chat_template.json",
+          "preprocessor_config.json"
+        ]
+      },
+      "include_vision": true,
+      "download_bytes": 5653488540,
+      "install_bytes": 5653875354,
+      "status": "runs",
+      "gates": [
+        "qwen25_vl_config (offline parse round-trip)",
+        "qwen25_vl tower parity against a numpy transcription (3B tower, ignored test)",
+        "real CLI image runs (page transcription, shapes)",
+        "server image run on /v1/chat/completions and /v1/messages"
+      ],
+      "measured": [],
+      "notes": "Qwen2.5-VL on the Qwen2 family: a plain Qwen2 dense trunk (28 layers, hidden 3584) with the qwen25_vl tower (RMSNorm blocks, gated SiLU MLP, window attention on 28 of 32 blocks, RMSNorm merger) ingested into the same install and the trunk's chunked mRoPE (sections 16/24/24). The vision template ships as chat_template.json (tokenizer_config.json keeps the text-only Qwen2.5 template). Image runs only: the sequential image path, no chunked image prefill, no speculation with an image. No text-quality or memory oracle has been frozen for this row. docs/QWEN25_VL_VISION_PHASE0.md."
+    },
+    {
       "alias": "qwen4-reap288",
       "name": "Qwen3.8-Flash-Next REAP-288 (MLX INT4)",
       "family": "qwen4exp",

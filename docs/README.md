@@ -68,6 +68,7 @@ reproduction commands when you need to verify a claim.
 - [`QWEN4_EXP.md`](QWEN4_EXP.md)
 - [`QWEN4_PHASE0.md`](QWEN4_PHASE0.md)
 - [`QWEN4EXP_VISION_PHASE0.md`](QWEN4EXP_VISION_PHASE0.md)
+- [`QWEN25_VL_VISION_PHASE0.md`](QWEN25_VL_VISION_PHASE0.md)
 - [`SPARK_PHASE0.md`](SPARK_PHASE0.md)
 - [`VISION_PHASE0.md`](VISION_PHASE0.md)
 

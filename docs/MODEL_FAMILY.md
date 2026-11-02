@@ -339,8 +339,8 @@ Two structural readings fall out of the census:
   new attention kernel; this port has none of it today.
 
 **Vision is per-tower, not per-family, so it is separate from the execution
-matrix above.** The engine has two implemented towers: the Qwen3-VL-lineage ViT
-with mRoPE used by the Qwen GDN and Qwen3-VL flows, and the Gemma 4 tower. `Full Support` in the table above never
+matrix above.** The engine has three implemented towers: the Qwen3-VL-lineage ViT
+with mRoPE used by the Qwen GDN and Qwen3-VL flows, the Gemma 4 tower, and the Qwen2.5-VL tower. `Full Support` in the table above never
 means image support.
 
 | Rust family | Vision compatibility | Current evidence and boundary |
@@ -350,9 +350,10 @@ means image support.
 | `Gemma4` | **Real-gated (2026-11-01)** | Its own tower (`VisionTowerKind::Gemma4`, manifest `visionTower`): 27 blocks with axial 2-D rope, 3x3 pooling and the `embed_vision` projector, plus a bidirectional image span on the sliding layers. Verified on `mlx-community/gemma-4-26b-a4b-it-4bit`: tower parity against mlx-vlm F32 (cosine 0.99998), trunk median KL closest to the transformers mask rule, and a test image read through the CLI, both server endpoints and `ts_generate`. Default 280-token budget only, no sidecar. Facts and gates: [`GEMMA4_VISION_PHASE0.md`](GEMMA4_VISION_PHASE0.md). |
 | `MuseGlimmer` | **Text-only** | Vision tower, adapter, and projection tensors are excluded at repack. |
 | `Qwen4Exp` | **Real-gated (2026-11-01), sidecar only** | The MLX checkpoint ships the Qwen3.8 dense tower at `out_hidden_size` 2560, quantized to affine 4 bits ([Phase 0](QWEN4EXP_VISION_PHASE0.md)). Repack and `pull-vision` dequantize it to FP16. A `pull-vision` sidecar on the text-only REAP-288 install answered a test image correctly through the CLI, and stage-2 tower parity against mlx-vlm passes (merger cosine 0.99993, the reference's own FP16-vs-FP32 floor is 0.999947). No combined install, logit parity, or server run yet. Image prompts are refused where QSA block selection could run (context above the indexer budget), and speculation cannot attach to this family. |
+| `Qwen2Dense` (`qwen2`, upstream `qwen2_5_vl`) | **Real-gated (2026-11-01)** | The Qwen2.5-VL trunk is a plain Qwen2 dense model, so there is no new family: its tower is `VisionTowerKind::Qwen25Vl` (RMSNorm blocks, a gated SiLU MLP, window attention on 28 of 32 blocks, no position table, an RMSNorm merger) on `VisionConfig`, with the trunk's chunked mRoPE (sections 16/24/24). Verified on `mlx-community/Qwen2.5-VL-7B-Instruct-4bit` (combined install): a dense text page and a shapes image read through the CLI and both server endpoints; the 3B tower agrees with an independent numpy transcription of the reference at merger cosine 0.99999660 (448x448) and 0.99998036 (1024x1280), and forcing full attention fails that gate. mlx-vlm itself was not executed, there is no logit parity, and no text-quality or memory oracle was frozen for the row. Facts and gates: [`QWEN25_VL_VISION_PHASE0.md`](QWEN25_VL_VISION_PHASE0.md). |
 | `Qwen3Vl` | **Verified images with deepstack (2026-09-19)** | The depth-24 SigLIP-class tower PLUS three deepstack mergers (block outputs 5/11/17, post-shuffle-normed, raw-added into trunk layers 0-2's residuals at image positions) ingest combined and sidecar; the llama flow's two prefill sites are byte-identical on an image prompt; perturbation-proven adds; all seven tower stages agree with mlx-vlm at cosine 0.99999+. |
 | `DeepseekV4Flash` | **Text-only** | The family is scaffolded and its witnessed checkpoint carries a vision tower, but this port has no executable intake or runtime vision path. |
-| `Llama`, `Qwen3Moe`, `Qwen3Dense`, `Qwen2Dense`, `GptOss`, `Spark25`, `MiniMaxM2`, `Deepseek2`, `Lfm3` | **Text-only** | No image tower is implemented for these families. |
+| `Llama`, `Qwen3Moe`, `Qwen3Dense`, `GptOss`, `Spark25`, `MiniMaxM2`, `Deepseek2`, `Lfm3` | **Text-only** | No image tower is implemented for these families. |
 
 `Real-gated` means an image was encoded and changed generated output on a real
 install. `Structural, unverified` means the shared code accepts the family and
@@ -361,7 +362,7 @@ needed for a release claim. `Text-only` also describes the current behavior of
 the request surfaces: they may validate or report an image, but the image does
 not reach the model.
 
-Five families carry a real image gate: `QwenGdnDense` (Qwen3.8 dense, the
+Six families carry a real image gate (`Qwen2Dense` via its Qwen2.5-VL tower, 2026-11-01, is the sixth): `QwenGdnDense` (Qwen3.8 dense, the
 first), `QwenGdnMoe` (tower parity verified 2026-09-19), and `Qwen3Vl`
 (registered 2026-09-18 as the fifteenth family, with the trunk, tower, and
 deepstack gates frozen; the phase record is

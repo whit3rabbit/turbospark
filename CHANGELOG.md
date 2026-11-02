@@ -14,6 +14,18 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- Qwen2.5-VL image support on the Qwen2 family. A plain Qwen2 dense trunk
+  plus a new `qwen25_vl` tower (RMSNorm blocks, a gated SiLU MLP, window
+  attention on 28 of 32 blocks, an RMSNorm merger) ingested into the same
+  install, with the trunk's chunked mRoPE as a new `rope_mrope_chunked`
+  kernel that is bit-identical to the plain rope at equal positions. Images
+  reach generated output from the CLI and both server endpoints on
+  `mlx-community/Qwen2.5-VL-7B-Instruct-4bit` (`qwen25vl-7b`). The tower
+  agrees with an independent numpy transcription of the reference at merger
+  cosine 0.99998 to 0.99999660. The tokenizer and probe now read
+  `chat_template.json`, which is where this checkpoint keeps its vision
+  template. mlx-vlm itself was not executed. See
+  `docs/QWEN25_VL_VISION_PHASE0.md`.
 - macOS app: computer use for local vision models (Settings > Computer Use,
   off by default). Nine `computer_*` tools let the main agent read and
   operate native apps through accessibility-tree refs, with pixel clicks
