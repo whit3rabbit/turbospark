@@ -269,9 +269,9 @@ subnormal range (no overflow); the parity above is measured with those
 conversions in place.
 
 One image took 7.0 s through the tower and projector on the scalar vision
-matmul (what this branch has), and 0.7 s with the matrix-unit GEMM and
-flash attention from `claude/vision-fp16-mma-gemm-19e402`, at the same
-parity. That kernel work is not on main yet.
+matmul, and 0.7 s with the matrix-unit GEMM and flash attention (PR 242,
+`docs/VISION.md`), at the same parity. `TURBOSPARK_VISION_MMA=0` and
+`TURBOSPARK_VISION_ATTN_MMA=0` restore the scalar kernels.
 
 Reproduce with the commands in `docs/TESTING.md` (Gemma 4 tower against
 mlx-vlm).
@@ -322,10 +322,16 @@ projector's `.scales` and `.biases` must be fetched from the shards. The
 synthetic ingest test now hands the reader exactly what the walk does.
 
 Timing: the tower took 6.9 s for 2,394 patches on the scalar vision
-matmul. With the matrix-unit GEMM and flash vision attention
-(`claude/vision-fp16-mma-gemm-19e402`, not on main yet) it took 0.7 s from in-memory weights and 1.1 s on the install,
-which streams its blocks; both gates above pass unchanged on those
-kernels. The 295-token prefill took 3.8 to 4.7 s.
+matmul. With the matrix-unit GEMM and flash vision attention (PR 242) it
+took 0.7 s from in-memory weights and 1.1 s on the install, which streams
+its blocks. Both gates above pass unchanged on those kernels. The 295-token
+prefill took 3.8 to 4.7 s.
+
+A rerun of `gemma4_vision_real_trunk` on the merged kernels (one run per
+arm, host under swap, so the times are indicative) passed in both arms with
+identical greedy tokens: tower 1.6 s with the default kernels and 5.2 s
+with `TURBOSPARK_VISION_MMA=0` (GEMM off, attention still on the matrix
+units). Median KL against the transformers rule was 2.4e-7 and 5.0e-7.
 
 If transformers is the reference of record, mlx-vlm's all-layer overlay is
 an upstream difference worth reporting.

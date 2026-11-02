@@ -18,9 +18,10 @@ use turbospark_compute::vision::{
     rope_vision_2d,
 };
 use turbospark_gpu::{
-    encode_vision_attention, encode_vision_gelu, encode_vision_layer_norm, encode_vision_matmul,
+    encode_vision_attention, encode_vision_attention_with, encode_vision_gelu,
+    encode_vision_layer_norm, encode_vision_matmul, encode_vision_matmul_with,
     encode_vision_residual_add, encode_vision_rope_2d, GeluKind, MetalContext,
-    MAX_ATTENTION_HEAD_DIM,
+    VisionAttentionKernel, VisionMatmulKernel, MAX_ATTENTION_HEAD_DIM,
 };
 
 // ------------------------------------------------------------------ helpers
@@ -585,6 +586,194 @@ fn an_oversized_head_dim_is_refused_rather_than_truncated() {
     pass.commit_and_wait();
 }
 
+// ------------------------------------------- matrix-unit attention (flash)
+//
+// The tests above run `encode_vision_attention`, which takes the process
+// default (the matrix-unit kernel unless `TURBOSPARK_VISION_ATTN_MMA=0`).
+// These name both kernels explicitly so one process holds them to each other.
+
+/// A deterministic pseudo-random spread in `[-amp, amp]`, without the
+/// periodic structure `wave` gives every row (which lines queries up with
+/// keys and makes the softmax unrealistically peaked or flat).
+fn noise(n: usize, seed: u64, amp: f32) -> Vec<f32> {
+    let mut x = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+    (0..n)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            ((x >> 40) as f32 / (1u64 << 24) as f32 * 2.0 - 1.0) * amp
+        })
+        .collect()
+}
+
+/// `[q, k, v]` at `(seq, heads, head_dim)` on one named kernel.
+fn run_attention_with(
+    context: &mut MetalContext,
+    kernel: VisionAttentionKernel,
+    [q, k, v]: [&[f32]; 3],
+    (seq, heads, head_dim): (usize, usize, usize),
+) -> Vec<f32> {
+    let n = seq * heads * head_dim;
+    let q_buf = context.new_buffer_with_data(&to_le(&half_of(q)));
+    let k_buf = context.new_buffer_with_data(&to_le(&half_of(k)));
+    let v_buf = context.new_buffer_with_data(&to_le(&half_of(v)));
+    let out_buf = context.new_output_buffer((n * 2) as u64);
+    let pass = context.begin_pass();
+    encode_vision_attention_with(
+        kernel,
+        context,
+        &pass,
+        (&q_buf, 0),
+        (&k_buf, 0),
+        (&v_buf, 0),
+        (&out_buf, 0),
+        seq as u32,
+        heads as u32,
+        head_dim as u32,
+        attention_scale(head_dim),
+    )
+    .expect("encode");
+    pass.commit_and_wait();
+    read_f16(&out_buf, n)
+}
+
+fn attention_cpu(q: &[f32], k: &[f32], v: &[f32], seq: usize, heads: usize, hd: usize) -> Vec<f32> {
+    let r = |x: &[f32]| -> Vec<f32> { half_of(x).iter().map(|v| v.to_f32()).collect() };
+    bidirectional_attention(&r(q), &r(k), &r(v), seq, heads, hd, attention_scale(hd))
+}
+
+#[test]
+fn mma_attention_matches_the_scalar_kernel_across_patch_counts() {
+    // Patch counts on and off the 32-row query tile and the 16-key block
+    // (1, 15/16/17, 31/32/33, 47), two odd ones, and the 512x640 page's 1280,
+    // at both towers' heads (qwen3_vl 64, qwen3_5 72). Activations of amplitude
+    // 4 put real scores in the tens, so the online softmax rescales across
+    // blocks rather than seeing one flat or one-hot row.
+    //
+    // TOLERANCE: max-abs <= 2e-3 x the output magnitude (`fp16_bound`) against
+    // the scalar kernel, and against the CPU reference where it is cheap. Both
+    // kernels round q, k, v and the output to FP16; the matrix-unit one also
+    // narrows P to FP16, which is ~5e-4 relative per weight.
+    let mut context = MetalContext::new().expect("Metal device");
+    let heads = 4usize;
+    for head_dim in [64usize, 72] {
+        for seq in [1usize, 15, 16, 17, 31, 32, 33, 47, 100, 257, 1280] {
+            let n = seq * heads * head_dim;
+            let q = noise(n, 1 + seq as u64, 4.0);
+            let k = noise(n, 2 + seq as u64, 4.0);
+            let v = noise(n, 3 + seq as u64, 3.0);
+            let dims = (seq, heads, head_dim);
+            let mma =
+                run_attention_with(&mut context, VisionAttentionKernel::Mma, [&q, &k, &v], dims);
+            let scalar = run_attention_with(
+                &mut context,
+                VisionAttentionKernel::Scalar,
+                [&q, &k, &v],
+                dims,
+            );
+            assert!(
+                mma.iter().all(|v| v.is_finite()),
+                "d{head_dim} seq {seq}: non-finite"
+            );
+            let (err, at) = worst(&mma, &scalar);
+            assert!(
+                err <= fp16_bound(&scalar),
+                "d{head_dim} seq {seq}: mma vs scalar worst {err} at {at}: {} vs {}",
+                mma[at],
+                scalar[at]
+            );
+            if seq <= 257 {
+                let cpu = attention_cpu(&q, &k, &v, seq, heads, head_dim);
+                let (err, at) = worst(&mma, &cpu);
+                assert!(
+                    err <= fp16_bound(&cpu),
+                    "d{head_dim} seq {seq}: mma vs cpu worst {err} at {at}: {} vs {}",
+                    mma[at],
+                    cpu[at]
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn mma_attention_handles_every_legal_head_tail() {
+    // 4 is the smallest head the half4 staging takes, 68 leaves half an 8-wide
+    // fragment past the head, 128 is `MAX_ATTENTION_HEAD_DIM`.
+    let mut context = MetalContext::new().expect("Metal device");
+    for head_dim in [4usize, 68, 128] {
+        let (seq, heads) = (41usize, 3usize);
+        let n = seq * heads * head_dim;
+        let q = noise(n, 11, 3.0);
+        let k = noise(n, 12, 3.0);
+        let v = noise(n, 13, 3.0);
+        let dims = (seq, heads, head_dim);
+        let mma = run_attention_with(&mut context, VisionAttentionKernel::Mma, [&q, &k, &v], dims);
+        let cpu = attention_cpu(&q, &k, &v, seq, heads, head_dim);
+        let (err, at) = worst(&mma, &cpu);
+        assert!(
+            err <= fp16_bound(&cpu),
+            "d{head_dim}: worst {err} at {at}: {} vs {}",
+            mma[at],
+            cpu[at]
+        );
+    }
+}
+
+#[test]
+fn mma_attention_head_dim_is_its_own_pipeline() {
+    // The head dimension is a function constant, so it must be in the cache
+    // key: 64 then 72 then 64 in ONE context, each against the reference. With
+    // the key dropped the 72 run reuses the 64 build and reads every row at
+    // the wrong stride.
+    let mut context = MetalContext::new().expect("Metal device");
+    for head_dim in [64usize, 72, 64] {
+        let (seq, heads) = (40usize, 2usize);
+        let n = seq * heads * head_dim;
+        let q = noise(n, 21, 3.0);
+        let k = noise(n, 22, 3.0);
+        let v = noise(n, 23, 3.0);
+        let dims = (seq, heads, head_dim);
+        let mma = run_attention_with(&mut context, VisionAttentionKernel::Mma, [&q, &k, &v], dims);
+        let cpu = attention_cpu(&q, &k, &v, seq, heads, head_dim);
+        let (err, at) = worst(&mma, &cpu);
+        assert!(err <= fp16_bound(&cpu), "d{head_dim}: worst {err} at {at}");
+    }
+}
+
+#[test]
+fn mma_attention_reaches_a_dominant_key_in_a_later_block() {
+    // Query 0 aligns with key 69 alone, in the fifth 16-key block, after
+    // blocks whose maxima were set by much weaker keys. The output is v[69]
+    // only if each block's correction rescales what came before; a kernel
+    // that drops the correction averages the early blocks' values in.
+    let mut context = MetalContext::new().expect("Metal device");
+    let (seq, heads, head_dim) = (70usize, 1usize, 64usize);
+    let n = seq * heads * head_dim;
+    let mut q = vec![0.0f32; n];
+    let mut k = vec![0.0f32; n];
+    let mut v = vec![0.0f32; n];
+    for j in 0..seq {
+        k[j * head_dim] = if j == seq - 1 { 200.0 } else { (j % 5) as f32 };
+        v[j * head_dim] = j as f32;
+    }
+    q[0] = 1.0;
+    let dims = (seq, heads, head_dim);
+    let mma = run_attention_with(&mut context, VisionAttentionKernel::Mma, [&q, &k, &v], dims);
+    let cpu = attention_cpu(&q, &k, &v, seq, heads, head_dim);
+    assert!(
+        (cpu[0] - (seq - 1) as f32).abs() < 0.05,
+        "fixture: cpu got {}",
+        cpu[0]
+    );
+    assert!(
+        (mma[0] - (seq - 1) as f32).abs() < 0.05,
+        "query 0 did not land on the dominant key's value: got {}",
+        mma[0]
+    );
+}
+
 // ------------------------------------------------------------------- matmul
 
 #[test]
@@ -710,6 +899,284 @@ fn matmul_runs_at_every_real_projection_shape() {
             gpu[at],
             cpu[at]
         );
+    }
+}
+
+// ------------------------------------------------- matmul: matrix-unit GEMM
+
+const BOTH_KERNELS: [VisionMatmulKernel; 2] =
+    [VisionMatmulKernel::Mma, VisionMatmulKernel::PerOutput];
+
+/// One matmul on `kernel`, returning the raw FP16 output bits.
+#[allow(clippy::too_many_arguments)]
+fn run_matmul_bits(
+    context: &mut MetalContext,
+    kernel: VisionMatmulKernel,
+    a: &[f16],
+    b: &[f16],
+    bias: Option<&[f16]>,
+    m: usize,
+    k: usize,
+    n: usize,
+) -> Vec<u16> {
+    let a_buf = context.new_buffer_with_data(&to_le(a));
+    let b_buf = context.new_buffer_with_data(&to_le(b));
+    let bias_buf = bias.map(|v| context.new_buffer_with_data(&to_le(v)));
+    let out_buf = context.new_output_buffer((m * n * 2) as u64);
+    let pass = context.begin_pass();
+    encode_vision_matmul_with(
+        kernel,
+        context,
+        &pass,
+        (&a_buf, 0),
+        (&b_buf, 0),
+        bias_buf.as_ref().map(|buf| (buf, 0)),
+        (&out_buf, 0),
+        m as u32,
+        k as u32,
+        n as u32,
+    )
+    .expect("encode");
+    pass.commit_and_wait();
+    let ptr = out_buf.contents() as *const u16;
+    // The buffer holds exactly `m * n` halves and the pass has been waited on.
+    unsafe { std::slice::from_raw_parts(ptr, m * n) }.to_vec()
+}
+
+fn bits_to_f32(bits: &[u16]) -> Vec<f32> {
+    bits.iter().map(|&b| f16::from_bits(b).to_f32()).collect()
+}
+
+/// An f64 reference on the FP16-rounded inputs, and per output the bound a
+/// correct FP32-accumulating kernel must meet: FP16 rounding of the result
+/// plus an FP32 summation term, `k * 2^-24 * sum |a * b|`, doubled for slack.
+/// Stated per element, so a small output next to a large one is not hidden
+/// under the large one's bound.
+fn matmul_f64_with_bound(
+    a: &[f16],
+    b: &[f16],
+    bias: Option<&[f16]>,
+    m: usize,
+    k: usize,
+    n: usize,
+) -> (Vec<f64>, Vec<f64>) {
+    let a: Vec<f64> = a.iter().map(|v| f64::from(v.to_f32())).collect();
+    let b: Vec<f64> = b.iter().map(|v| f64::from(v.to_f32())).collect();
+    let mut want = vec![0.0f64; m * n];
+    let mut bound = vec![0.0f64; m * n];
+    for row in 0..m {
+        let ar = &a[row * k..(row + 1) * k];
+        for col in 0..n {
+            let br = &b[col * k..(col + 1) * k];
+            let (mut dot, mut mag) = (0.0f64, 0.0f64);
+            for (x, y) in ar.iter().zip(br) {
+                dot += x * y;
+                mag += (x * y).abs();
+            }
+            let bias_v = bias.map_or(0.0, |v| f64::from(v[col].to_f32()));
+            let value = dot + bias_v;
+            want[row * n + col] = value;
+            bound[row * n + col] = 2.0
+                * (value.abs() * 2f64.powi(-11)
+                    + (k as f64) * 2f64.powi(-24) * (mag + bias_v.abs())
+                    + 2f64.powi(-24));
+        }
+    }
+    (want, bound)
+}
+
+fn assert_within_bound(label: &str, gpu: &[f32], want: &[f64], bound: &[f64]) {
+    for (i, ((&g, &w), &e)) in gpu.iter().zip(want).zip(bound).enumerate() {
+        let d = (f64::from(g) - w).abs();
+        assert!(
+            d <= e,
+            "{label}: index {i}: gpu {g} want {w} diff {d} bound {e}"
+        );
+    }
+}
+
+#[test]
+fn mma_matmul_matches_an_f64_reference_at_real_tower_shapes() {
+    // M = 70 puts one full 64-row tile and one ragged one under every shape.
+    // Qwen3-VL (hidden 1024, mlp 4096) and qwen3_5 (1152, 4304); 4304 is not
+    // a multiple of the 32-wide K step or of the 64-wide output tile.
+    let mut context = MetalContext::new().expect("Metal device");
+    let m = 70usize;
+    for (k, n, label) in [
+        (1024usize, 4096usize, "qwen3_vl fc1"),
+        (4096, 1024, "qwen3_vl fc2"),
+        (1024, 3072, "qwen3_vl qkv"),
+        (1536, 1024, "qwen3_vl patch_embed"),
+        (1152, 4304, "qwen3_5 fc1"),
+        (4304, 1152, "qwen3_5 fc2"),
+    ] {
+        let a = half_of(&wave(m * k, 0.2, 2.0));
+        let b = half_of(&wave(n * k, 0.9, 0.05));
+        let bias = half_of(&wave(n, 1.4, 0.5));
+        let (want, bound) = matmul_f64_with_bound(&a, &b, Some(&bias), m, k, n);
+        for kernel in BOTH_KERNELS {
+            let gpu = bits_to_f32(&run_matmul_bits(
+                &mut context,
+                kernel,
+                &a,
+                &b,
+                Some(&bias),
+                m,
+                k,
+                n,
+            ));
+            assert_within_bound(&format!("{label} {kernel:?}"), &gpu, &want, &bound);
+        }
+    }
+}
+
+#[test]
+fn mma_matmul_handles_edge_shapes() {
+    // Ragged in every dimension, K below one 8-wide sub-step, single rows
+    // and outputs, and one exact tile.
+    let mut context = MetalContext::new().expect("Metal device");
+    for (m, k, n) in [
+        (1usize, 1usize, 1usize),
+        (1, 4, 2),
+        (3, 33, 1),
+        (65, 13, 70),
+        (64, 64, 64),
+        (129, 40, 127),
+        (2, 300, 65),
+    ] {
+        let a = half_of(&wave(m * k, 0.3, 1.5));
+        let b = half_of(&wave(n * k, 1.1, 0.8));
+        let bias = half_of(&wave(n, 2.1, 2.0));
+        for with_bias in [false, true] {
+            let bias_arg = with_bias.then_some(&bias[..]);
+            let (want, bound) = matmul_f64_with_bound(&a, &b, bias_arg, m, k, n);
+            for kernel in BOTH_KERNELS {
+                let gpu = bits_to_f32(&run_matmul_bits(
+                    &mut context,
+                    kernel,
+                    &a,
+                    &b,
+                    bias_arg,
+                    m,
+                    k,
+                    n,
+                ));
+                assert_within_bound(
+                    &format!("({m},{k},{n}) bias={with_bias} {kernel:?}"),
+                    &gpu,
+                    &want,
+                    &bound,
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn mma_matmul_output_bits_do_not_depend_on_the_tile() {
+    // The exactness class the shader states: an output's bits depend on its
+    // own row of `a`, its own row of `b` and K only. Each row of a 70-row run
+    // must equal that row run alone, and the outputs of the second 64-wide
+    // tile must equal the same weight rows run as a 6-wide matmul.
+    let mut context = MetalContext::new().expect("Metal device");
+    let (m, k, n) = (70usize, 4304usize, 70usize);
+    let a = half_of(&wave(m * k, 0.4, 3.0));
+    let b = half_of(&wave(n * k, 1.7, 0.07));
+    let bias = half_of(&wave(n, 0.6, 1.0));
+    let kernel = VisionMatmulKernel::Mma;
+    let full = run_matmul_bits(&mut context, kernel, &a, &b, Some(&bias), m, k, n);
+
+    for row in [0usize, 7, 63, 64, 69] {
+        let alone = run_matmul_bits(
+            &mut context,
+            kernel,
+            &a[row * k..(row + 1) * k],
+            &b,
+            Some(&bias),
+            1,
+            k,
+            n,
+        );
+        assert_eq!(&full[row * n..(row + 1) * n], &alone[..], "row {row}");
+    }
+
+    let (c0, width) = (64usize, 6usize);
+    let narrow = run_matmul_bits(
+        &mut context,
+        kernel,
+        &a,
+        &b[c0 * k..(c0 + width) * k],
+        Some(&bias[c0..c0 + width]),
+        m,
+        k,
+        width,
+    );
+    for row in 0..m {
+        assert_eq!(
+            &full[row * n + c0..row * n + c0 + width],
+            &narrow[row * width..(row + 1) * width],
+            "row {row}, outputs {c0}..{}",
+            c0 + width
+        );
+    }
+}
+
+#[test]
+fn mma_matmul_k_alignment_is_its_own_pipeline() {
+    // `FC_VISION_GEMM_K_ALIGNED` must be in the cache key: an aligned build
+    // reused for a K tail reads past every row's end. Dispatch one shape of
+    // each kind and require two distinct cache entries.
+    let mut context = MetalContext::new().expect("Metal device");
+    for k in [64usize, 40] {
+        let a = half_of(&wave(2 * k, 0.1, 1.0));
+        let b = half_of(&wave(3 * k, 0.2, 1.0));
+        run_matmul_bits(&mut context, VisionMatmulKernel::Mma, &a, &b, None, 2, k, 3);
+    }
+    let keys: Vec<Vec<u8>> = context
+        .pipeline_inventory()
+        .into_iter()
+        .filter(|(name, _)| name == "vision_matmul_fp16_mma")
+        .map(|(_, key)| key)
+        .collect();
+    assert_eq!(keys.len(), 2, "one entry per K alignment, got {keys:?}");
+}
+
+#[test]
+fn mma_matmul_reads_the_weight_row_major_by_output() {
+    // The orientation discrimination case on both kernels, in a full tile so
+    // the matrix-unit path takes its unchecked loads.
+    let mut context = MetalContext::new().expect("Metal device");
+    let (m, k, n) = (64usize, 64usize, 64usize);
+    let mut a = vec![0.0f32; m * k];
+    for r in 0..m {
+        for c in 0..k {
+            a[r * k + c] = ((r + 2 * c) % 7) as f32 - 3.0;
+        }
+    }
+    // Output `j` selects a[.][(j + 1) % k] scaled by (1 + j % 3); the
+    // transposed read would select a[.][j]'s neighbourhood instead.
+    let mut b = vec![0.0f32; n * k];
+    for j in 0..n {
+        b[j * k + (j + 1) % k] = 1.0 + (j % 3) as f32;
+    }
+    let (a, b) = (half_of(&a), half_of(&b));
+    for kernel in BOTH_KERNELS {
+        let gpu = bits_to_f32(&run_matmul_bits(
+            &mut context,
+            kernel,
+            &a,
+            &b,
+            None,
+            m,
+            k,
+            n,
+        ));
+        for r in 0..m {
+            for j in 0..n {
+                let want = a[r * k + (j + 1) % k].to_f32() * (1.0 + (j % 3) as f32);
+                assert_eq!(gpu[r * n + j], want, "{kernel:?} ({r},{j})");
+            }
+        }
     }
 }
 

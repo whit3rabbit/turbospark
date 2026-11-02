@@ -284,6 +284,35 @@ pub const KNOBS: &[Knob] = &[
         engagement: &[off("0", "gdn_dk128")],
     },
     Knob {
+        // Default ON: `=0` puts every vision tower projection back on the
+        // per-output `vision_matmul_fp16`, and the GEMM's line must then be
+        // absent. Different summation order, so KL-bounded, not bit-exact.
+        name: "vision_mma",
+        env: "TURBOSPARK_VISION_MMA",
+        values: &["<unset>", "0"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::KlBounded,
+        families: &["qwen35", "qwen36", "qwen3_vl"],
+        quotable: true,
+        doc: "docs/VISION.md",
+        engagement: &[off("0", "vision_mma")],
+    },
+    Knob {
+        // Default ON: `=0` puts the vision tower's bidirectional attention
+        // back on the scalar one-threadgroup-per-query kernel, and the flash
+        // kernel's line must then be absent. P is narrowed to FP16 and the
+        // reduction order differs, so KL-bounded, not bit-exact.
+        name: "vision_attn_mma",
+        env: "TURBOSPARK_VISION_ATTN_MMA",
+        values: &["<unset>", "0"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::KlBounded,
+        families: &["qwen35", "qwen36", "qwen3_vl"],
+        quotable: true,
+        doc: "docs/VISION.md",
+        engagement: &[off("0", "vision_attn_mma")],
+    },
+    Knob {
         name: "routed_batch",
         env: "TURBOSPARK_ROUTED_BATCH",
         values: &["<unset>", "1"],
