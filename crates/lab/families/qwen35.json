@@ -2254,6 +2254,72 @@
       },
       "conditions": "median of four timed runs per arm after one warmup round; the overlap watcher flagged other sessions' builds in 6 of the 9 runs, swap was 18 of 19 GB; greedy md5 identical in all nine; not in the ledger and not a frozen row",
       "note": "the standalone kernel pricing predicts about 750 ms of the 1195 ms; the rest is unattributed (dispatch overlap or host noise)"
+    },
+    {
+      "id": "qwen35.vision-tower-stages-2026-11-01",
+      "date": "2026-11-01",
+      "install": "qwen38-27b-vision (catalog row, mlx-community/Qwen3.8-27B-4bit@3e6447f0)",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "1ea8e457 (merge of the vision GEMM and flash attention)",
+      "workload": "tslab kernel --bench vision_encode, three synthetic pages (1280, 5120, 9216 patches), 5 reps after a discarded cold rep, pread residency, arms new, old, new",
+      "arms": {
+        "new": {},
+        "old": {
+          "vision_mma": "0",
+          "vision_attn_mma": "0"
+        }
+      },
+      "metric": "vision_total_ms",
+      "values": {
+        "1280": {
+          "new": [
+            259.0,
+            294.2
+          ],
+          "old": 3486.8,
+          "new_block_read_ms": [
+            46.7,
+            49.8
+          ],
+          "new_stream_share": [
+            0.18,
+            0.197
+          ]
+        },
+        "5120": {
+          "new": [
+            1612.2,
+            2142.2
+          ],
+          "old": 35856.7,
+          "new_stream_share": [
+            0.027,
+            0.033
+          ]
+        },
+        "9216": {
+          "new": [
+            4148.4,
+            5614.3
+          ],
+          "old": 93682.1,
+          "new_stream_share": [
+            0.009,
+            0.012
+          ],
+          "new_peak_mib": 1026,
+          "old_peak_mib": 836
+        }
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "vision-q38-new",
+        "record": "1793566907189-7207-0"
+      },
+      "conditions": "all three runs DIRTY (foreign CPU over 150%, the first also a user Python job and node over 90%); the new arm's repeat is 1793567712830-38659-0 and reads up to 35% slower; the old arm is vision-q38-old 1793567663508-11891-0",
+      "note": "the block stream from packed_vision is about 50 ms per page at any size: 18 to 20% of a 1280-patch page under the new kernels, 1 to 3% at 5120 patches and up, so the tower is compute bound except on small pages. The new kernels run this 27-block, head_dim 72 tower 12x to 22x faster than the old ones, and peak footprint is about 190 MiB higher under them, as on qwen3vl-4b. No deepstack on this tower"
     }
   ],
   "open_questions": [

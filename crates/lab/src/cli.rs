@@ -33,6 +33,7 @@ tslab: the evaluator for kernel and method experiments (macOS).
   tslab kernel  --model M [--bench NAME[,NAME]|all] [--rows 1,2,4,...] [--contexts 512,...]
                 [--case LABEL] [--reps 5] [--hash] [--verify-from EXP] [--experiment NAME]
                 [--ane-dir DIR] [--contend N]      (ane_handoff, built with ane-prefill)
+                [--vision-sidecar DIR]             (vision_encode on a text-only trunk)
   tslab kernel  --list                             (the registered benches)
   tslab hash-diff --experiment A --against B      (exit 3 when any hashed output changed)
   tslab project --knob NAME|--bench B --default ARM --mode ARM
@@ -47,7 +48,7 @@ tslab: the evaluator for kernel and method experiments (macOS).
                 (join a projection to the verdict that followed; --all lists every miss and the bias)
   tslab tree-replay --model M --drafter mtp|dflash [--prompt ...]... [--generate 512]
                 [--depth 8|7] [--blocks 2,4,DEPTH] [--serve-block 2] [--top-k 4] [--slots 16] [--experiment NAME]
-  tslab ane-plan --path PROGRAM.mlpackage|MANIFEST_DIR [--units ane|all|gpu|cpu]
+  tslab ane-plan --path PROGRAM.mlpackage|MANIFEST_DIR [--units ane|all|gpu|cpu] [--function NAME]
   tslab expert-census --model M [workload] [host] [--experiment NAME]
                 (one router capture run, then how experts repeat within batches, the union per
                  batch against slot counts, and the routed sub-batch replay; a MoE install)

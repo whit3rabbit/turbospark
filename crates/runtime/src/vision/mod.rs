@@ -143,6 +143,44 @@ pub struct VisionStages {
     /// for a tower without deepstack. Same merge geometry as the merger
     /// stage's own rows, `[merged, out_hidden]` FP16 bits.
     pub deepstack: Vec<Vec<u16>>,
+    /// Where the call's time went, for `tslab kernel --bench vision_encode`.
+    pub timing: VisionTiming,
+}
+
+/// Per-stage time of one [`VisionTower::run_with_stages`] call, ms.
+///
+/// The stages path waits on every pass, so each GPU interval is the
+/// command buffer's own `GPUEndTime - GPUStartTime`, not a wait that also
+/// paid for a buffer queued ahead of it. Block-stream reads are timed apart
+/// from compute: the pread arm reads block `n` on the host, then encodes and
+/// waits, with no overlap today, so `block_read_ms` is what a prefetch could
+/// hide and `block_gpu_ms` is what a faster block kernel could cut. The
+/// stage readbacks this path adds are `capture_ms` and are not tower cost.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct VisionTiming {
+    /// Host prep: patch rows to FP16, rope rows, the position blend.
+    pub host_prep_ms: f64,
+    /// Scratch allocation and its uploads.
+    pub scratch_ms: f64,
+    pub patch_embed_gpu_ms: f64,
+    /// Sum over blocks of the host block read (0 on the mapped arm).
+    pub block_read_ms: f64,
+    /// Sum over blocks of the blocks' GPU intervals.
+    pub block_gpu_ms: f64,
+    /// Sum over blocks of encode, commit and wait, read excluded.
+    pub block_wall_ms: f64,
+    /// Deepstack mergers' GPU intervals (0 without deepstack).
+    pub deepstack_gpu_ms: f64,
+    pub merger_gpu_ms: f64,
+    /// The output rows' readback (and the deepstack rows').
+    pub readback_ms: f64,
+    /// The diagnostic stage readbacks only this path pays.
+    pub capture_ms: f64,
+    /// Wall time of the whole call.
+    pub total_ms: f64,
+    pub blocks: usize,
+    /// Whether the blocks came from the mapped arm (no host read).
+    pub mapped: bool,
 }
 
 /// The tower: its streamer, its weights, and the position table.
@@ -553,6 +591,9 @@ impl VisionTower {
             )));
         }
 
+        let t_call = std::time::Instant::now();
+        let timed = capture.is_some();
+        let mut timing = VisionTiming::default();
         let seq = image.grid.patches();
         let rows: Vec<half::f16> = image
             .patch_rows
@@ -578,10 +619,12 @@ impl VisionTower {
                     RealForwardError::Unsupported(format!("vision position table: {e}"))
                 })?;
         let pos = stages::pos_embed_rows(&self.pos_table, &table, &self.shape)?;
+        timing.host_prep_ms = ms_since(t_call);
 
         gpu::autorelease_pool(|| {
             let mut deepstack_out: Vec<DeepstackRows> =
                 Vec::with_capacity(self.shape.deepstack.len());
+            let t = std::time::Instant::now();
             let s = VisionScratch::allocate(
                 context,
                 &self.shape,
@@ -592,6 +635,7 @@ impl VisionTower {
                 &pos,
             )?;
             self.last_scratch_bytes = s.bytes;
+            timing.scratch_ms = ms_since(t);
 
             let pass = context.begin_pass();
             stages::encode_patch_embed(
@@ -602,16 +646,22 @@ impl VisionTower {
                 &s,
                 &self.shape,
             )?;
-            pass.commit_and_wait();
+            timing.patch_embed_gpu_ms = wait_pass(pass, timed);
             let wide = seq * self.shape.hidden;
             if let Some(c) = capture.as_mut() {
+                let t = std::time::Instant::now();
                 c.patch_embed = read_stage(&s.x, wide);
+                timing.capture_ms += ms_since(t);
             }
             if let Some(o) = self.overflow.as_mut() {
                 o.note_image_start();
             }
 
+            timing.blocks = self.shape.depth;
+            timing.mapped = self.mapped_buffer.is_some();
             for n in 0..self.shape.depth {
+                let t_block = std::time::Instant::now();
+                let mut read_ms = 0.0;
                 let pass = context.begin_pass();
                 let mapped_active = self.mapped_buffer.is_some();
                 if let Some(mapped_buffer) = self.mapped_buffer.as_ref() {
@@ -636,6 +686,7 @@ impl VisionTower {
                     )?;
                 } else {
                     let slot = n % VISION_SLOTS;
+                    let t_read = std::time::Instant::now();
                     // Layer 0 because the tower IS one layer; `n` is the blob
                     // index inside it.
                     self.streamer
@@ -645,6 +696,7 @@ impl VisionTower {
                         .map_err(|e| {
                             RealForwardError::Unsupported(format!("vision block {n} read: {e}"))
                         })?;
+                    read_ms = ms_since(t_read);
                     block::encode_block(
                         context,
                         &pass,
@@ -671,15 +723,19 @@ impl VisionTower {
                 if mapped_active && !needs_sync {
                     pass.commit();
                 } else {
-                    pass.commit_and_wait();
+                    timing.block_gpu_ms += wait_pass(pass, timed);
                 }
+                timing.block_read_ms += read_ms;
+                timing.block_wall_ms += ms_since(t_block) - read_ms;
                 if let Some(c) = capture.as_mut() {
+                    let t = std::time::Instant::now();
                     if n == 0 {
                         c.block_first = read_stage(&s.x, wide);
                     }
                     if n + 1 == self.shape.depth {
                         c.block_last = read_stage(&s.x, wide);
                     }
+                    timing.capture_ms += ms_since(t);
                 }
                 if let Some(o) = self.overflow.as_mut() {
                     o.check_block(n, &s.x, wide)?;
@@ -711,12 +767,14 @@ impl VisionTower {
                         &s,
                         &self.shape,
                     )?;
-                    pass.commit_and_wait();
+                    timing.deepstack_gpu_ms += wait_pass(pass, timed);
+                    let t = std::time::Instant::now();
                     let count = s.merged * self.shape.out_hidden;
                     let ds_rows: Vec<u16> = gpu::read_buffer_f16(&s.out, 0, count)
                         .into_iter()
                         .map(|v| v.to_bits())
                         .collect();
+                    timing.readback_ms += ms_since(t);
                     if let Some(c) = capture.as_mut() {
                         c.deepstack.push(ds_rows.clone());
                     }
@@ -733,13 +791,19 @@ impl VisionTower {
                 &s,
                 &self.shape,
             )?;
-            pass.commit_and_wait();
+            timing.merger_gpu_ms = wait_pass(pass, timed);
 
+            let t = std::time::Instant::now();
             let count = s.merged * self.shape.out_hidden;
             let rows: Vec<u16> = gpu::read_buffer_f16(&s.out, 0, count)
                 .into_iter()
                 .map(|v| v.to_bits())
                 .collect();
+            timing.readback_ms += ms_since(t);
+            if let Some(c) = capture.as_mut() {
+                timing.total_ms = ms_since(t_call);
+                c.timing = timing;
+            }
             Ok((
                 VisionEmbedding {
                     rows,
@@ -767,6 +831,20 @@ impl VisionTower {
     pub(crate) fn scratch_bytes(&self, seq: usize) -> u64 {
         scratch::scratch_bytes(&self.shape, seq, self.mlp_tile_rows)
     }
+}
+
+/// Waits on `pass`; under `timed`, returns its GPU interval in ms.
+fn wait_pass(pass: gpu::PassEncoder, timed: bool) -> f64 {
+    if timed {
+        pass.commit_and_wait_with_gpu_time() * 1e3
+    } else {
+        pass.commit_and_wait();
+        0.0
+    }
+}
+
+fn ms_since(t: std::time::Instant) -> f64 {
+    t.elapsed().as_secs_f64() * 1e3
 }
 
 /// Read `count` FP16 values out of a GPU buffer as raw bits.

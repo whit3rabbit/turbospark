@@ -42,7 +42,7 @@ process, which must sit beside `tslab`.
 | `tree-replay --model M --drafter mtp\|dflash` | Would tree verify accept more than the chain at equal rows | `tree_replay` |
 | `chain-capture` then `depth-replay` | Best speculative depth policy, priced from modeled or ledger round costs | `chain_capture`, `depth_replay` |
 | `chain-capture` then `hybrid-replay [--ngram 4] [--lookup-draft 8] [--tuned 3,1,1,2] [--cap 7]` | Would prompt lookup over the MTP chain commit more per round than the head alone, against fixed 2, the shipped controller and a tuned one. Needs a capture written with the token ids (this build's `chain-capture`); older captures are refused with that reason. Lookup rounds are priced at the MTP table's round of the same width, so the tok/s delta is conservative; the committed-per-round delta needs no cost table | `hybrid_replay` |
-| `ane-plan --path PROGRAM.mlpackage\|DIR [--units ane\|all\|gpu\|cpu]` | Where Core ML places a program's ops (`MLComputePlan`), as cost shares on ANE, GPU and CPU plus the ops left off the ANE. No timing and no model install. Needs a macOS with compute plans | `ane_plan` |
+| `ane-plan --path PROGRAM.mlpackage\|DIR [--units ane\|all\|gpu\|cpu] [--function NAME]` | Where Core ML places a program's ops (`MLComputePlan`), as cost shares on ANE, GPU and CPU plus the ops left off the ANE. No timing and no model install. Needs a macOS with compute plans. A multifunction program is planned for its default function only, and the others print `no op placed: not planned`: rerun with `--function NAME` for each | `ane_plan` |
 | `expert-census --model M [workload]` | One router capture run of a MoE install, reduced: the share of selections in experts used 8/16/17/32+ times within an executed batch, the largest in-batch group, experts per layer covering 50/80/95% of selections, the expert union per full batch against 16/32/64/96 slots, and the routed sub-batch sizes per union cap. The capture run itself is unquotable | `run`, `expert_census` |
 
 Workload flags: `--prompt protocol:ID|messages:PATH|text:PATH|corpus:N|chat:PATH`
@@ -86,7 +86,29 @@ and `split_c4@S` (weights baked into the program as uint4). `--case
 real:LAYER.NAME` runs Steel, the F16-plane split and the baked split on one
 tensor's own bytes from the install, with programs from
 `crates/coreml/tools/bake_ane_prefill_programs.py`, and prints each ANE row
-set's error against Steel's output.
+set's error against Steel's output. On an install with a vision tower,
+`vision_qkv`, `vision_proj`, `vision_fc1` and `vision_fc2` cases time one
+tower block's projections: `gpu` is the tower's own FP16 kernel
+(`gpu::encode_vision_matmul`, bias included), `ane` is a program with the
+weights baked as F16 constants plus the activation scale and output convert
+the runtime split pays, and `ane_predict` is the prediction alone inside the
+same runs. Programs come from
+`crates/coreml/tools/bake_ane_vision_programs.py --config INSTALL`, whose
+buckets are patch rows (default 1280, 2048, 4096). A CPU-planned point is
+timed, marked in the note, and left out of the fit and the break-even.
+
+`vision_encode` loads the install's weights, unlike the rest of this table:
+it opens the runner (512-token context), runs
+`encode_image_with_stages` on three synthetic pages (1536x1536, 1024x1280,
+512x640, the vision memory oracle's sizes) with reps interleaved across
+pages and the first rep discarded (kept as `cold`), and also appends a
+`vision_encode` record per run: per page the stage medians, patches/s,
+`stream_share` (block read over block read plus block GPU) and the peak
+sampled `phys_footprint`. For a text-only trunk with a tower-only sidecar
+(`turbospark-model pull-vision`), pass `--vision-sidecar DIR`: the bench
+attaches it after open, reads the tower's shape and its
+`preprocessor_config.json` from the sidecar, and records the path as the
+case's `sidecar`. A trunk that already has a tower refuses the flag.
 
 | Bench | Measures |
 |---|---|
@@ -101,6 +123,7 @@ set's error against Steel's output.
 | `music3_grid` | Music 3 corpus: output hashes against goldens, per-config timing |
 | `whisper_linear` | Whisper encoder GEMM, decoder GEMV, GEMM at one row |
 | `ane_handoff` | Host handoff of one ANE prefill split point, `wait` against `poll`, quiet and under `--contend N` self-made CPU load. Needs a build with `--features ane-prefill`, a dense qwen install and its program set (`--ane-dir`, else the runtime's search list) |
+| `vision_encode` | The vision tower per stage over x = patches: `total` (less the diagnostic readbacks), `block_read` (host `pread` of each block from `packed_vision/`, serialized with compute), `block_gpu` (blocks' GPU intervals, with TFLOP/s), `block_host`, `patch_embed_gpu`, `deepstack_gpu`, `merger_gpu`, `host_prep`, `scratch`, `readback`. Needs an install streamed with its tower, or `--vision-sidecar DIR` on a text-only trunk |
 
 `--hash` stores each point's output-bit hash and the hash of the first output
 row alone, and prints an exactness hint per arm: `bit-equal` or `DIFFERS`

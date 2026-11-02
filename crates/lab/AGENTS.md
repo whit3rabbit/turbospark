@@ -82,7 +82,15 @@ loop's `run-experiment`. Text and audio installs of every family.
   Baked-INT4 programs did not beat the F16 split end to end; the findings
   and the reasons are in `docs/SPEEDUP_PLAYBOOK.md`. `kernel/ane_handoff.rs`
   (feature `ane-prefill`): one split point's host handoff, `wait` against
-  `poll`, quiet and under `--contend N`.
+  `poll`, quiet and under `--contend N`. `ane_matmul`'s `vision_*` cases
+  time a tower block's projections, `gpu::encode_vision_matmul` against
+  baked-F16 programs from `bake_ane_vision_programs.py`.
+  `kernel/vision_encode.rs`: the vision tower per stage through
+  `encode_image_with_stages` (its `VisionTiming`), block-stream reads apart
+  from GPU compute, plus a `vision_encode` ledger record per run. It opens
+  the runner, so it is the one bench that loads weights, and its three page
+  sizes are a fixed corpus (the vision memory oracle's). `--vision-sidecar`
+  attaches a tower-only sidecar to a text-only trunk.
 - `src/energy.rs`: the IOReport energy meter (modeled, whole machine). The
   worker, the kernel command and the ANE bench read it; `report.rs` prints
   it; it is never a wall-power claim.

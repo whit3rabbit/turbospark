@@ -20,6 +20,7 @@
         "kernel_curve",
         "hash_diff",
         "ane_plan",
+        "vision_encode",
         "expert_census",
         "experiment_start",
         "gate",
