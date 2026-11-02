@@ -88,7 +88,10 @@ fn router_and_rope_settings_the_flow_does_not_implement_are_refused() {
         ("tie_word_embeddings", serde_json::json!(true)),
         ("hidden_act", serde_json::json!("gelu")),
         ("moe_layer_freq", serde_json::json!(2)),
-        ("rope_scaling", serde_json::json!({"type": "linear", "factor": 2.0})),
+        (
+            "rope_scaling",
+            serde_json::json!({"type": "linear", "factor": 2.0}),
+        ),
     ] {
         let text = mutated(|v| v["language_config"][key] = value.clone());
         assert!(

@@ -30,6 +30,9 @@ use crate::preprocess::PreprocessedImage;
 use crate::resize::resize_bicubic_pil;
 use crate::rounding::round_half_to_even;
 
+/// One `(t, h, w)` triple per prompt token.
+type CanvasTriples = Vec<(i32, i32, i32)>;
+
 /// The reference's `patch_size` and `scale_resolution`.
 pub const MINICPM_PATCH: usize = 14;
 pub const MINICPM_SCALE_RESOLUTION: usize = 448;
@@ -78,7 +81,7 @@ impl MiniCpmParams {
             }
         };
         let std = triple("image_std")?;
-        if std.iter().any(|s| *s == 0.0) {
+        if std.contains(&0.0) {
             return Err(VisionIoError::BadConfig {
                 field: "image_std".into(),
                 why: "a zero standard deviation".into(),
@@ -316,7 +319,7 @@ pub fn canvas_positions(
     ids: &[i32],
     cfg: &MiniCpmIds,
     canvas: &[(usize, usize)],
-) -> Result<(Vec<(i32, i32, i32)>, i32), VisionIoError> {
+) -> Result<(CanvasTriples, i32), VisionIoError> {
     let n = ids.len();
     let markers = [
         cfg.slice_start,

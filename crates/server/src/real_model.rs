@@ -347,7 +347,9 @@ impl RealChatModel {
             let vision = runner.vision_config();
             // A CLIP tower (LLaVA) has no start token to pair with the marker; a
             // tower whose template renders a bare placeholder (Muse-Glimmer) wraps it.
-            let verified = if runner.clip_image_ids().is_some() || runner.siglip_image_ids().is_some() {
+            let verified = if runner.clip_image_ids().is_some()
+                || runner.siglip_image_ids().is_some()
+            {
                 tokenizer.verify_bare_image_marker(vision.image_token_id as i32)
             } else if let Some((start, end)) = runner.image_wrap_ids() {
                 tokenizer.verify_bare_image_placeholder(start, vision.image_token_id as i32, end)

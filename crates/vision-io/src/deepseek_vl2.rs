@@ -517,7 +517,7 @@ mod tests {
         );
         assert_eq!(layout[global + 5], f(1, 2));
         // Every feature row of every tile is used exactly once.
-        let mut seen = vec![0u8; 3 * 4];
+        let mut seen = [0u8; 3 * 4];
         for r in &layout {
             if let DeepseekVl2Row::Feature { tile, row } = r {
                 seen[tile * 4 + row] += 1;

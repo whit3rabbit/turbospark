@@ -54,8 +54,8 @@ mod weights;
 
 pub use budget::{PixelBudget, VisionBudgetTooSmall};
 pub use clip::ClipStages;
-pub use siglip::SiglipStages;
 pub use inject::{PromptVision, RopePosition};
+pub use siglip::SiglipStages;
 
 use std::path::Path;
 
