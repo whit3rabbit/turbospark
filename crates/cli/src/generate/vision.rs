@@ -207,6 +207,32 @@ pub(crate) fn attach(
     Ok(spliced.ids)
 }
 
+/// The MiniCPM-V tower's whole `--image` path: decode each file and hand the
+/// runner the rendered prompt, which preprocesses, expands each rendered
+/// `<|image_pad|>` into its marker run with canvas positions, runs the tower
+/// and injects the rows. Returns the expanded ids to prefill. Thumbnail only
+/// (no slicing). The runner method is the same one the FFI and the server call.
+pub(crate) fn attach_minicpm(
+    session: &mut Session,
+    rendered: &[i32],
+    paths: &[String],
+) -> Result<Vec<i32>, String> {
+    let mut decoded = Vec::with_capacity(paths.len());
+    for path in paths {
+        decoded.push(
+            decode_image_file(std::path::Path::new(path))
+                .map_err(|e| format!("--image {path}: {e}"))?,
+        );
+    }
+    let tokenizer = &session.tokenizer;
+    let index_ids = |k: usize| tokenizer.encode(&k.to_string(), false);
+    let token_text = |id: i32| tokenizer.id_to_token(id);
+    session
+        .runner
+        .attach_minicpm_images(rendered, &decoded, &index_ids, &token_text)
+        .map_err(|e| format!("cannot attach the images: {e}"))
+}
+
 /// The Gemma 4 tower's whole `--image` path: decode and preprocess each file
 /// at the default soft-token budget (the one the install's KV ring is sized
 /// for), expand each rendered `<|image|>` to `boi`, one placeholder per soft

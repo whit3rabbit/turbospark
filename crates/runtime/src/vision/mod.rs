@@ -40,6 +40,7 @@ mod budget;
 pub(crate) mod gemma4;
 mod inject;
 pub(crate) mod lfm3_vl;
+pub(crate) mod minicpm;
 mod overflow;
 pub(crate) mod qwen25;
 mod scratch;

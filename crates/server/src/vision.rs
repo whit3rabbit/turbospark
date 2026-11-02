@@ -80,6 +80,13 @@ pub enum VisionInfo {
         max_soft_tokens: usize,
         ids: Gemma4ImageIds,
     },
+    /// MiniCPM-V 4.7: a best-fit resize to about 448 squared, raster patches,
+    /// and a prompt whose rendered `<|image_pad|>` expands to a marker run with
+    /// canvas positions. Thumbnail only.
+    MiniCpm {
+        params: turbospark_vision_io::MiniCpmParams,
+        ids: turbospark_vision_io::MiniCpmIds,
+    },
 }
 
 /// One request's images, preprocessed, plus what the trunk needs to place
@@ -95,6 +102,12 @@ pub enum RequestImages {
     Gemma4 {
         images: Vec<Gemma4Patches>,
         spans: Vec<ImageSpan>,
+    },
+    /// MiniCPM-V: the preprocessed thumbnails and the canvas position table
+    /// for the spliced prompt.
+    MiniCpm {
+        images: Vec<PreprocessedImage>,
+        positions: MropePositions,
     },
 }
 

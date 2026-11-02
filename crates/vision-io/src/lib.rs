@@ -63,7 +63,9 @@ pub use gemma4::{
 };
 pub use minicpm::{
     canvas_positions, minicpm_preprocess, minicpm_resize_dims, minicpm_splice_and_positions,
-    MiniCpmIds, MiniCpmParams, MINICPM_MERGE, MINICPM_PATCH, MINICPM_SCALE_RESOLUTION,
+    MiniCpmIds, MiniCpmParams, MINICPM_IMAGE_ID_END, MINICPM_IMAGE_ID_START, MINICPM_MARKER_TOKENS,
+    MINICPM_MERGE, MINICPM_NEWLINE_ID, MINICPM_PATCH, MINICPM_SCALE_RESOLUTION,
+    MINICPM_SLICE_END_ID, MINICPM_SLICE_START_ID,
 };
 pub use mrope::{
     mrope_position_triples, splice_and_walk, splice_image_placeholders, ImageSpan, MropePositions,

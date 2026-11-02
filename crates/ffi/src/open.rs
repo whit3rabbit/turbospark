@@ -715,6 +715,44 @@ fn vision_info(
             }
         };
     }
+    // MiniCPM-V has no pixel budget: its best-fit resize holds every image to
+    // about 448 squared, so the ceiling reported is that area. A sidecar is
+    // refused by name (its pairing cannot tell its trunk from a Qwen3.6 one).
+    if runner.is_minicpm_vision() {
+        let path = runner.vision_dir().join("preprocessor_config.json");
+        let readable = std::fs::read_to_string(&path)
+            .map_err(|e| format!("{}: {e}", path.display()))
+            .and_then(|json| {
+                turbospark_vision_io::MiniCpmParams::from_preprocessor_config_json(&json)
+                    .map_err(|e| format!("{}: {e}", path.display()))
+            });
+        return match (sidecar_dir.is_some(), readable) {
+            (true, _) => crate::wire::VisionInfo {
+                active: false,
+                image_token_id: None,
+                reason: Some("a MiniCPM-V vision tower cannot run from a sidecar".to_string()),
+                source,
+                sidecar_path,
+                max_pixels: None,
+            },
+            (false, Ok(params)) => crate::wire::VisionInfo {
+                active: true,
+                image_token_id: Some(image_token_id),
+                reason: None,
+                source,
+                sidecar_path,
+                max_pixels: Some(params.scale_resolution * params.scale_resolution),
+            },
+            (false, Err(reason)) => crate::wire::VisionInfo {
+                active: false,
+                image_token_id: None,
+                reason: Some(reason),
+                source,
+                sidecar_path,
+                max_pixels: None,
+            },
+        };
+    }
     match crate::vision::preprocess_params(
         runner,
         guard,

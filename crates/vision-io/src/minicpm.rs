@@ -187,6 +187,43 @@ pub struct MiniCpmIds {
     pub image_id_end: i32,
 }
 
+/// The marker ids the kind fixes, checked against `config.json` at intake
+/// (`repack::MINICPM_V_*`) and against the tokenizer by the front ends
+/// ([`MINICPM_MARKER_TOKENS`]).
+pub const MINICPM_SLICE_START_ID: i32 = 248088;
+pub const MINICPM_SLICE_END_ID: i32 = 248089;
+pub const MINICPM_NEWLINE_ID: i32 = 198;
+pub const MINICPM_IMAGE_ID_START: i32 = 248090;
+pub const MINICPM_IMAGE_ID_END: i32 = 248091;
+
+/// `(id, the token text it must resolve to)` for the constant markers, so a
+/// front end can refuse a tokenizer that disagrees instead of splicing ids
+/// that name other tokens.
+pub const MINICPM_MARKER_TOKENS: [(i32, &str); 4] = [
+    (MINICPM_SLICE_START_ID, "<slice>"),
+    (MINICPM_SLICE_END_ID, "</slice>"),
+    (MINICPM_IMAGE_ID_START, "<image_id>"),
+    (MINICPM_IMAGE_ID_END, "</image_id>"),
+];
+
+impl MiniCpmIds {
+    /// The three ids a `VisionConfig` carries (`image_token_id`,
+    /// `vision_start_token_id`, `vision_end_token_id`) plus the kind's
+    /// constants.
+    pub fn new(image_pad: i32, image_start: i32, image_end: i32) -> Self {
+        Self {
+            image_pad,
+            image_start,
+            image_end,
+            slice_start: MINICPM_SLICE_START_ID,
+            slice_end: MINICPM_SLICE_END_ID,
+            newline: MINICPM_NEWLINE_ID,
+            image_id_start: MINICPM_IMAGE_ID_START,
+            image_id_end: MINICPM_IMAGE_ID_END,
+        }
+    }
+}
+
 /// Expand every rendered `<|image_pad|>` to its full placeholder run and
 /// compute the canvas positions, in one call so the counts cannot disagree.
 ///

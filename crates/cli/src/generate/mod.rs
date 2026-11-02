@@ -375,6 +375,8 @@ fn run_one_turn(
         }
         if session.runner.gemma4_image_ids().is_some() {
             vision::attach_gemma4(session, &rendered, images)?
+        } else if session.runner.is_minicpm_vision() {
+            vision::attach_minicpm(session, &rendered, images)?
         } else {
             let params = vision::preprocess_params(session)?;
             let prepared = vision::prepare_images(images, &params)?;
