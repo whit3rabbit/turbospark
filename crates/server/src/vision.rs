@@ -535,6 +535,7 @@ mod tests {
     fn clip_preflight_holds_the_limits_and_preprocess_yields_the_fixed_grid() {
         let params = turbospark_vision_io::ClipPreprocessParams {
             size: 336,
+            layout: turbospark_vision_io::ClipLayout::Crop,
             image_mean: [0.5; 3],
             image_std: [0.5; 3],
             rescale_factor: 1.0 / 255.0,

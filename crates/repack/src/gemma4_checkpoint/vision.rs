@@ -291,6 +291,10 @@ pub fn read_vision_entries_quantized(
     if vision.tower == model_io::VisionTowerKind::Clip {
         return super::vision_clip::read_clip_vision_entries(shards, vision_bases, vision);
     }
+    // Pixtral likewise: its own names, its own fused q/k/v, no biases.
+    if vision.tower == model_io::VisionTowerKind::Pixtral {
+        return super::vision_pixtral::read_pixtral_vision_entries(shards, vision_bases, vision);
+    }
     // The LFM3-VL tower likewise: two block kinds, a second source prefix
     // for its projector, no packed planes.
     if vision.tower == model_io::VisionTowerKind::Lfm3Vl {

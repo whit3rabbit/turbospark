@@ -247,6 +247,20 @@ pub enum VisionTowerKind {
     /// `out_hidden_size` is the projector's output (the trunk width). The
     /// start and end ids are 0: the placeholder run is bare.
     Clip,
+    /// The Pixtral tower (Pixtral-12B, `docs/PIXTRAL_VISION_PHASE0.md`): a
+    /// bias-free patch conv, an RMSNorm before the first block, RMSNorm
+    /// blocks with 2-D rope and a gated SiLU MLP, bidirectional attention over
+    /// the whole image, then a two-layer GELU projector. No class token, no
+    /// position table, variable image size.
+    ///
+    /// Field meanings: `depth` is 24, `spatial_merge_size` is 1,
+    /// `temporal_patch_size` is 1, `num_position_embeddings` is 0,
+    /// `out_hidden_size` is the trunk width. `vision_start_token_id` is
+    /// `[IMG_BREAK]` and `vision_end_token_id` is `[IMG_END]`: Pixtral puts a
+    /// break between patch rows and an end after the last, and the prompt
+    /// builders read the two ids from here. `image_token_id` is `[IMG]`.
+    /// The rope theta (10000) and epsilon (1e-5) are properties of the kind.
+    Pixtral,
 }
 
 impl VisionTowerKind {
@@ -258,6 +272,7 @@ impl VisionTowerKind {
             VisionTowerKind::Qwen25Vl => "qwen25_vl",
             VisionTowerKind::Lfm3Vl => "lfm3_vl",
             VisionTowerKind::Clip => "clip",
+            VisionTowerKind::Pixtral => "pixtral",
         }
     }
 
@@ -270,6 +285,7 @@ impl VisionTowerKind {
             "qwen25_vl" => Some(VisionTowerKind::Qwen25Vl),
             "lfm3_vl" => Some(VisionTowerKind::Lfm3Vl),
             "clip" => Some(VisionTowerKind::Clip),
+            "pixtral" => Some(VisionTowerKind::Pixtral),
             _ => None,
         }
     }
