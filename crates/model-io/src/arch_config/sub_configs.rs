@@ -221,6 +221,13 @@ pub enum VisionTowerKind {
     /// The Gemma 4 tower: sandwich RMSNorms, axial rope, 3x3 pooling, and
     /// the `embed_vision` projector.
     Gemma4,
+    /// The LFM3-VL tower: RMSNorm blocks that alternate a gated depthwise
+    /// 3x3 spatial convolution with grouped-query attention, a neox-style
+    /// 2-D rope, a SwiGLU MLP, and a pixel-unshuffle projector
+    /// (`docs/LFM3_VL_VISION_PHASE0.md`). `spatial_merge_size` is the
+    /// unshuffle factor (2), `num_position_embeddings` is zero (the tower
+    /// has no position table), and `out_hidden_size` is the trunk width.
+    Lfm3Vl,
 }
 
 impl VisionTowerKind {
@@ -229,6 +236,7 @@ impl VisionTowerKind {
         match self {
             VisionTowerKind::QwenSiglip => "qwen_siglip",
             VisionTowerKind::Gemma4 => "gemma4",
+            VisionTowerKind::Lfm3Vl => "lfm3_vl",
         }
     }
 
@@ -238,6 +246,7 @@ impl VisionTowerKind {
         match s {
             "qwen_siglip" => Some(VisionTowerKind::QwenSiglip),
             "gemma4" => Some(VisionTowerKind::Gemma4),
+            "lfm3_vl" => Some(VisionTowerKind::Lfm3Vl),
             _ => None,
         }
     }
