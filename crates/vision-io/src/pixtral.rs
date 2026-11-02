@@ -99,6 +99,7 @@ pub fn pixtral_preprocess(
         pixels,
         grid: gh,
         grid_w: gw,
+        anyres: None,
     })
 }
 

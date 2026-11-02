@@ -727,6 +727,7 @@ mod tests {
             image_mean: [0.5; 3],
             image_std: [0.5; 3],
             rescale_factor: 1.0 / 255.0,
+            pinpoints: Vec::new(),
         };
         let png = gray_png(640, 480);
         clip_preflight_all(std::slice::from_ref(&png), &params).unwrap();

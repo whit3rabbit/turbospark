@@ -47,6 +47,7 @@ pub mod minicpm;
 pub mod mrope;
 pub mod muse;
 pub mod normalize;
+pub mod onevision;
 pub mod params;
 pub mod patchify;
 pub mod pixtral;
@@ -75,6 +76,11 @@ pub use deepseek_vl2::{
     DSVL2_PATCH_DIM,
 };
 pub use error::VisionIoError;
+pub use onevision::{
+    best_grid as ov_best_grid, ov_image_tokens, ov_max_tiles, ov_pack_features, ov_plan,
+    ov_preprocess, Anyres, OvPlan, OV_MAX_AREA_TILES, OV_PATCH, OV_PATCH_DIM, OV_SIDE, OV_TILE,
+    OV_TILE_PATCHES,
+};
 pub use gemma4::{
     gemma4_expand_image_placeholders, gemma4_preprocess, gemma4_resize_dims,
     gemma4_soft_tokens_for, Gemma4ImageIds, Gemma4Patches, GEMMA4_DEFAULT_SOFT_TOKENS,
