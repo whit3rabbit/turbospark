@@ -66,9 +66,8 @@ fn f16s(bits: &[u16]) -> Vec<f32> {
 /// Cosine over everything, and the worst single row's cosine.
 fn cosines(got: &[f32], want: &[f32], width: usize) -> (f64, f64) {
     assert_eq!(got.len(), want.len(), "length");
-    let dot = |a: &[f32], b: &[f32]| -> f64 {
-        a.iter().zip(b).map(|(x, y)| *x as f64 * *y as f64).sum()
-    };
+    let dot =
+        |a: &[f32], b: &[f32]| -> f64 { a.iter().zip(b).map(|(x, y)| *x as f64 * *y as f64).sum() };
     let whole = dot(got, want) / (dot(got, got).sqrt() * dot(want, want).sqrt());
     let worst = got
         .chunks_exact(width)
@@ -103,7 +102,10 @@ fn the_clip_tower_agrees_with_transformers_at_every_stage() {
     runner
         .attach_vision_sidecar(&sidecar)
         .expect("the sidecar pairs with this trunk's family and hidden size");
-    assert!(runner.clip_image_ids().is_some(), "a CLIP tower is attached");
+    assert!(
+        runner.clip_image_ids().is_some(),
+        "a CLIP tower is attached"
+    );
 
     // Claim 1: the pixels.
     let json = std::fs::read_to_string(runner.vision_dir().join("preprocessor_config.json"))
@@ -144,7 +146,12 @@ fn the_clip_tower_agrees_with_transformers_at_every_stage() {
     let mut results = Vec::new();
     for (label, got, name, width) in [
         ("embed (hs[0])", f16s(&stages.embed), "hs0.f32", 1024),
-        ("block 0 (hs[1])", f16s(&stages.block_first), "hs1.f32", 1024),
+        (
+            "block 0 (hs[1])",
+            f16s(&stages.block_first),
+            "hs1.f32",
+            1024,
+        ),
         (
             "block 22 (hs[-2])",
             f16s(&stages.block_last),
@@ -190,14 +197,17 @@ fn the_clip_tower_agrees_with_transformers_at_every_stage() {
         let half_ref = floor.exists().then(|| read_f32(&floor));
         for (i, c, n) in rows.iter().take(5) {
             let note = half_ref.as_ref().map(|h| {
-                let (g, w) = (&h[i * 1024..(i + 1) * 1024], &want[i * 1024..(i + 1) * 1024]);
+                let (g, w) = (
+                    &h[i * 1024..(i + 1) * 1024],
+                    &want[i * 1024..(i + 1) * 1024],
+                );
                 let dot: f64 = g.iter().zip(w).map(|(a, b)| *a as f64 * *b as f64).sum();
                 dot / (norm(g) * norm(w))
             });
             match note {
-                Some(f) => eprintln!(
-                    "  row {i:>3}  port {c:.4}  FP16-reference {f:.4}  ref norm {n:.1}"
-                ),
+                Some(f) => {
+                    eprintln!("  row {i:>3}  port {c:.4}  FP16-reference {f:.4}  ref norm {n:.1}")
+                }
                 None => eprintln!("  row {i:>3}  cosine {c:.4}  ref norm {n:.1}"),
             }
         }

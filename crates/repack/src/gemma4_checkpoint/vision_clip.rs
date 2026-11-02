@@ -234,13 +234,7 @@ pub fn parse_llava_vision_config(json: &str) -> Result<VisionConfig, Gemma4Error
 
 /// `[out, kh, kw, C]` (MLX's conv layout) to `[out, C, kh, kw]` (the layout the
 /// patch row `(C, P_h, P_w)` flattens against), on FP16 bytes.
-fn mlx_conv_to_channel_major(
-    bytes: &[u8],
-    out: usize,
-    kh: usize,
-    kw: usize,
-    c: usize,
-) -> Vec<u8> {
+fn mlx_conv_to_channel_major(bytes: &[u8], out: usize, kh: usize, kw: usize, c: usize) -> Vec<u8> {
     let mut dst = vec![0u8; bytes.len()];
     for o in 0..out {
         for y in 0..kh {
@@ -336,11 +330,14 @@ pub fn read_clip_vision_entries(
                 return Err(Gemma4Error::UnknownTensor(format!("{name}: duplicate")));
             }
         } else {
-            let slot = EMBED_TENSORS.iter().position(|t| *t == tail).ok_or_else(|| {
-                Gemma4Error::UnknownTensor(format!(
-                    "{name}: not a layer tensor and not a CLIP tower resident"
-                ))
-            })?;
+            let slot = EMBED_TENSORS
+                .iter()
+                .position(|t| *t == tail)
+                .ok_or_else(|| {
+                    Gemma4Error::UnknownTensor(format!(
+                        "{name}: not a layer tensor and not a CLIP tower resident"
+                    ))
+                })?;
             if embed[slot].replace(name).is_some() {
                 return Err(Gemma4Error::UnknownTensor(format!("{name}: duplicate")));
             }
@@ -367,9 +364,8 @@ pub fn read_clip_vision_entries(
             )));
         }
     }
-    let pre_bias = pre_bias.ok_or_else(|| {
-        Gemma4Error::MissingTensor(format!("{CLIP_MODEL_PREFIX}{PRE_NORM_BIAS}"))
-    })?;
+    let pre_bias = pre_bias
+        .ok_or_else(|| Gemma4Error::MissingTensor(format!("{CLIP_MODEL_PREFIX}{PRE_NORM_BIAS}")))?;
     for (slot, name) in projector.iter().enumerate() {
         if name.is_none() {
             return Err(Gemma4Error::MissingTensor(format!(
@@ -404,15 +400,14 @@ pub fn read_clip_vision_entries(
     };
 
     let mut entries = Vec::with_capacity(CLIP_RESIDENT_TENSORS.len());
-    let mut push_resident =
-        |slot: usize, bytes: Vec<u8>, shape: (u32, u32, u32, u32)| {
-            entries.push(ResidentEntrySpec::Raw(RawTensorSpec {
-                name: format!("{VISION_INSTALL_PREFIX}{}", CLIP_RESIDENT_TENSORS[slot]),
-                dtype: crate::DTYPE_FP16,
-                bytes,
-                shape,
-            }));
-        };
+    let mut push_resident = |slot: usize, bytes: Vec<u8>, shape: (u32, u32, u32, u32)| {
+        entries.push(ResidentEntrySpec::Raw(RawTensorSpec {
+            name: format!("{VISION_INSTALL_PREFIX}{}", CLIP_RESIDENT_TENSORS[slot]),
+            dtype: crate::DTYPE_FP16,
+            bytes,
+            shape,
+        }));
+    };
 
     // Patch embedding. HF stores [out, C, kh, kw]; an MLX conversion stores
     // [out, kh, kw, C]. Both land as [out, C*kh*kw] with channels outermost,
@@ -422,9 +417,7 @@ pub fn read_clip_vision_entries(
     let pshape: Vec<usize> = pt.shape.iter().map(|&d| d as usize).collect();
     let patch_dim = 3 * patch * patch;
     let patch_bytes = match pshape.as_slice() {
-        [o, 3, kh, kw] if (*o, *kh, *kw) == (hidden, patch, patch) => {
-            load(patch_name, &pshape)?.0
-        }
+        [o, 3, kh, kw] if (*o, *kh, *kw) == (hidden, patch, patch) => load(patch_name, &pshape)?.0,
         [o, kh, kw, 3] if (*o, *kh, *kw) == (hidden, patch, patch) => {
             let (b, _) = load(patch_name, &pshape)?;
             mlx_conv_to_channel_major(&b, hidden, patch, patch, 3)
@@ -467,13 +460,21 @@ pub fn read_clip_vision_entries(
         load(p(0), &[out_hidden, hidden])?.0,
         (out_hidden as u32, hidden as u32, 0, 0),
     );
-    push_resident(6, load(p(1), &[out_hidden])?.0, shape4(&[out_hidden as u64]));
+    push_resident(
+        6,
+        load(p(1), &[out_hidden])?.0,
+        shape4(&[out_hidden as u64]),
+    );
     push_resident(
         7,
         load(p(2), &[out_hidden, out_hidden])?.0,
         (out_hidden as u32, out_hidden as u32, 0, 0),
     );
-    push_resident(8, load(p(3), &[out_hidden])?.0, shape4(&[out_hidden as u64]));
+    push_resident(
+        8,
+        load(p(3), &[out_hidden])?.0,
+        shape4(&[out_hidden as u64]),
+    );
 
     let mut experts = Vec::with_capacity(depth);
     let mut widest = 0u64;
@@ -506,9 +507,17 @@ pub fn read_clip_vision_entries(
         add("proj_b", load(n(9), &[hidden])?.0, vec![h]);
         add("ln2_w", load(n(10), &[hidden])?.0, vec![h]);
         add("ln2_b", load(n(11), &[hidden])?.0, vec![h]);
-        add("fc1_w", load(n(12), &[inter, hidden])?.0, vec![inter as u64, h]);
+        add(
+            "fc1_w",
+            load(n(12), &[inter, hidden])?.0,
+            vec![inter as u64, h],
+        );
         add("fc1_b", load(n(13), &[inter])?.0, vec![inter as u64]);
-        add("fc2_w", load(n(14), &[hidden, inter])?.0, vec![h, inter as u64]);
+        add(
+            "fc2_w",
+            load(n(14), &[hidden, inter])?.0,
+            vec![h, inter as u64],
+        );
         add("fc2_b", load(n(15), &[hidden])?.0, vec![h]);
         widest = widest.max(used);
         experts.push(ExpertBlob {
@@ -733,7 +742,11 @@ mod tests {
     #[test]
     fn a_complete_tower_reads_into_depth_blocks_and_nine_residents() {
         let r = read(None, None, false).unwrap();
-        assert_eq!(r.blocks.experts.len(), 2, "the unread third layer is dropped");
+        assert_eq!(
+            r.blocks.experts.len(),
+            2,
+            "the unread third layer is dropped"
+        );
         assert!(r.blocks.experts.iter().all(|e| e.sub_tensors.len() == 12));
         let roles: Vec<&str> = r.blocks.experts[0]
             .sub_tensors
@@ -802,13 +815,9 @@ mod tests {
         let missing = format!("{CLIP_MODEL_PREFIX}encoder.layers.1.mlp.fc2.bias");
         let err = read(Some(&missing), None, false).err().expect("missing");
         assert!(err.to_string().contains("layers.1.mlp.fc2.bias"), "{err}");
-        let err = read(
-            Some("multi_modal_projector.linear_2.weight"),
-            None,
-            false,
-        )
-        .err()
-        .expect("missing projector part");
+        let err = read(Some("multi_modal_projector.linear_2.weight"), None, false)
+            .err()
+            .expect("missing projector part");
         assert!(err.to_string().contains("linear_2.weight"), "{err}");
         let err = read(
             None,

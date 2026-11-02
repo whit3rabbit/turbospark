@@ -131,7 +131,12 @@ fn clip_shape(vision: &VisionConfig) -> Result<VisionShape, RealForwardError> {
             return Err(bad(format!("CLIP config field {label} is zero")));
         }
     }
-    if (vision.temporal_patch_size, vision.spatial_merge_size, vision.in_channels) != (1, 1, 3) {
+    if (
+        vision.temporal_patch_size,
+        vision.spatial_merge_size,
+        vision.in_channels,
+    ) != (1, 1, 3)
+    {
         return Err(bad(format!(
             "CLIP tower with temporal {}, merge {}, channels {}; need 1, 1, 3",
             vision.temporal_patch_size, vision.spatial_merge_size, vision.in_channels
@@ -493,8 +498,14 @@ impl ClipVisionTower {
                 o as u32,
             )
             .map_err(gpu_err)?;
-            gpu::encode_vision_gelu(context, &pass, (&mid, 0), (n * o) as u32, gpu::GeluKind::Erf)
-                .map_err(gpu_err)?;
+            gpu::encode_vision_gelu(
+                context,
+                &pass,
+                (&mid, 0),
+                (n * o) as u32,
+                gpu::GeluKind::Erf,
+            )
+            .map_err(gpu_err)?;
             gpu::encode_vision_matmul(
                 context,
                 &pass,
@@ -610,8 +621,7 @@ fn encode_clip_block(
         hidden,
     )
     .map_err(gpu_err)?;
-    gpu::encode_vision_residual_add(context, pass, (b.x, 0), (b.proj, 0), wide)
-        .map_err(gpu_err)?;
+    gpu::encode_vision_residual_add(context, pass, (b.x, 0), (b.proj, 0), wide).map_err(gpu_err)?;
 
     gpu::encode_vision_layer_norm(
         context,
@@ -640,14 +650,8 @@ fn encode_clip_block(
     // QUICK here: `x * sigmoid(1.702 x)`, CLIP's `hidden_act`. Neither the
     // qwen tower's tanh nor the merger's erf, and unlike that pair it is far
     // enough from both for a parity bound to see.
-    gpu::encode_vision_gelu(
-        context,
-        pass,
-        (b.h1, 0),
-        seq * inter,
-        gpu::GeluKind::Quick,
-    )
-    .map_err(gpu_err)?;
+    gpu::encode_vision_gelu(context, pass, (b.h1, 0), seq * inter, gpu::GeluKind::Quick)
+        .map_err(gpu_err)?;
     gpu::encode_vision_matmul(
         context,
         pass,
@@ -660,8 +664,7 @@ fn encode_clip_block(
         hidden,
     )
     .map_err(gpu_err)?;
-    gpu::encode_vision_residual_add(context, pass, (b.x, 0), (b.proj, 0), wide)
-        .map_err(gpu_err)
+    gpu::encode_vision_residual_add(context, pass, (b.x, 0), (b.proj, 0), wide).map_err(gpu_err)
 }
 
 #[cfg(test)]

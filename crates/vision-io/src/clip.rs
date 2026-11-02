@@ -67,11 +67,11 @@ impl ClipPreprocessParams {
         if root.get("resample").and_then(serde_json::Value::as_i64) != Some(3) {
             return Err(bad("resample", "must be 3 (PIL bicubic)".into()));
         }
-        let shortest = root
-            .get("size")
-            .and_then(|s| s.get("shortest_edge"))
-            .and_then(serde_json::Value::as_u64)
-            .ok_or_else(|| bad("size.shortest_edge", "missing".into()))? as usize;
+        let shortest =
+            root.get("size")
+                .and_then(|s| s.get("shortest_edge"))
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| bad("size.shortest_edge", "missing".into()))? as usize;
         let crop = |axis: &str| {
             root.get("crop_size")
                 .and_then(|s| s.get(axis))
@@ -107,14 +107,15 @@ impl ClipPreprocessParams {
             for (slot, v) in out.iter_mut().zip(a) {
                 *slot = v
                     .as_f64()
-                    .ok_or_else(|| bad(field, "not a number".into()))? as f32;
+                    .ok_or_else(|| bad(field, "not a number".into()))?
+                    as f32;
             }
             Ok(out)
         };
-        let rescale_factor = root
-            .get("rescale_factor")
-            .and_then(serde_json::Value::as_f64)
-            .ok_or_else(|| bad("rescale_factor", "missing".into()))? as f32;
+        let rescale_factor =
+            root.get("rescale_factor")
+                .and_then(serde_json::Value::as_f64)
+                .ok_or_else(|| bad("rescale_factor", "missing".into()))? as f32;
         Ok(Self {
             size: shortest,
             image_mean: triple("image_mean")?,
@@ -303,10 +304,8 @@ mod tests {
             ("\"height\": 336", "\"height\": 224"),
         ] {
             assert!(
-                ClipPreprocessParams::from_preprocessor_config_json(
-                    &CONFIG.replace(needle, with)
-                )
-                .is_err(),
+                ClipPreprocessParams::from_preprocessor_config_json(&CONFIG.replace(needle, with))
+                    .is_err(),
                 "{with} must be refused"
             );
         }
@@ -343,7 +342,7 @@ mod tests {
         assert_eq!(patch[0], 28.0); // column 2 * 14, first row
         assert_eq!(patch[1], 29.0); // next column
         assert_eq!(patch[14], 28.0); // second row, same column
-        // Channel 1 starts at 196: G = row 1 * 14.
+                                     // Channel 1 starts at 196: G = row 1 * 14.
         assert_eq!(patch[196], 14.0);
         assert_eq!(patch[196 + 14], 15.0);
         // Channel 2 is the constant.

@@ -255,7 +255,10 @@ fn quick_gelu_matches_its_closed_form_and_is_not_the_tanh_form() {
 
     let tanh = gelu_tanh_vision(&xr);
     let (gap, _) = worst(&gpu, &tanh);
-    assert!(gap > 5e-3, "quick GELU is indistinguishable from tanh: {gap}");
+    assert!(
+        gap > 5e-3,
+        "quick GELU is indistinguishable from tanh: {gap}"
+    );
 }
 
 #[test]
