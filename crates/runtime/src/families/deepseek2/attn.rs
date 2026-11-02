@@ -6,6 +6,7 @@
 use model_io::{ArchConfig, ResidentIndex};
 
 use crate::families::deepseek2::{layer_tensor, RealDeepseek2State};
+use crate::kv_write::{encode_attention_any, encode_kv_commit, kv_write_target, KvHalf};
 use crate::real_forward::RealForwardError;
 use crate::real_forward_dispatch::encode_gemv_any;
 use crate::real_forward_layout::DTYPE_GGUF_Q8_0;
@@ -19,6 +20,116 @@ pub(crate) const KV_A_PROJ: &str = "self_attn.kv_a_proj.weight";
 pub(crate) const KV_A_NORM: &str = "self_attn.kv_a_norm.weight";
 pub(crate) const KV_B_PROJ: &str = "self_attn.kv_b_proj.weight";
 pub(crate) const O_PROJ: &str = "self_attn.o_proj.weight";
+
+/// One layer's PLAIN multi-head attention, decode shape (single token at
+/// `position`): the DeepSeek-VL2 trunk (`RealDeepseek2State::mha`).
+///
+/// This is `families/llama/attn.rs`'s plain attention with nothing optional
+/// switched on, and it is written out here rather than called because that
+/// function takes the llama flow's own state: no q/k norm, no projection
+/// biases, no mRoPE, the whole head rotated NeoX half-split at the config's
+/// theta (`mlx`'s `nn.RoPE(head_dim, traditional=False, base=rope_theta)`), a
+/// full-attention window starting at 0, and the standard KV layout (K and V
+/// GEMVs write straight into the cache slot). The caller has already run the
+/// input norm into `scratch.normed` and adds `scratch.o` back to the stream.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_mha_attention_block(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    weights: &gpu::ResidentGpuWeights,
+    index: &ResidentIndex,
+    arch: &ArchConfig,
+    scratch: &DecodeScratch,
+    kv: &gpu::KvCacheManager,
+    layer: usize,
+    position: usize,
+    hidden: usize,
+) -> Result<(), RealForwardError> {
+    let gpu_err = RealForwardError::Gpu;
+    let num_heads = arch.num_heads as u32;
+    let num_kv = arch.num_full_kv_heads as u32;
+    let head_dim = arch.full_head_dim as u32;
+    let q_dim = (num_heads * head_dim) as usize;
+    let kv_dim = (num_kv * head_dim) as usize;
+    let name = |suffix: &str| layer_tensor(layer, &format!("self_attn.{suffix}"));
+
+    let (k_buf, k_off) = kv_write_target(kv, scratch, KvHalf::K, layer, position);
+    let (v_buf, v_off) = kv_write_target(kv, scratch, KvHalf::V, layer, position);
+    encode_gemv_any(
+        context,
+        pass,
+        weights,
+        index,
+        &name("q_proj.weight"),
+        q_dim,
+        hidden,
+        (&scratch.normed, 0),
+        (&scratch.q, 0),
+    )?;
+    for (suffix, out) in [
+        ("k_proj.weight", (k_buf, k_off)),
+        ("v_proj.weight", (v_buf, v_off)),
+    ] {
+        encode_gemv_any(
+            context,
+            pass,
+            weights,
+            index,
+            &name(suffix),
+            kv_dim,
+            hidden,
+            (&scratch.normed, 0),
+            out,
+        )?;
+    }
+    // Q and K only; V carries no positional rotation.
+    let theta = arch.full_rope_theta as f32;
+    for (data, heads) in [((&scratch.q, 0), num_heads), ((k_buf, k_off), num_kv)] {
+        gpu::encode_rope_neox_subdim(
+            context,
+            pass,
+            data,
+            position as u32,
+            heads,
+            head_dim,
+            head_dim,
+            theta,
+        )
+        .map_err(gpu_err)?;
+    }
+    encode_kv_commit(
+        context, pass, kv, scratch, layer, position, head_dim, num_kv,
+    )?;
+    encode_attention_any(
+        context,
+        pass,
+        (&scratch.q, 0),
+        kv,
+        scratch,
+        (&scratch.attn_out, 0),
+        layer,
+        position,
+        head_dim,
+        num_heads,
+        num_kv,
+        (position + 1) as u32,
+        0,
+        0,
+        arch.attention_scale as f32,
+        None,
+    )?;
+    encode_gemv_any(
+        context,
+        pass,
+        weights,
+        index,
+        &name("o_proj.weight"),
+        hidden,
+        q_dim,
+        (&scratch.attn_out, 0),
+        (&scratch.o, 0),
+    )
+}
 
 /// One layer's MLA attention, decode shape (single token at `position`).
 /// The caller has already run the input norm into `scratch.normed`.

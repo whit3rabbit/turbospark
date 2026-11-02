@@ -225,6 +225,10 @@ const SUPPORTED_HF: &[(&str, ModelFamily)] = &[
     // root beside `vision_config`, so it resolves to the same family and the
     // tower is carried by `VisionConfig` (`VisionTowerKind::Qwen25Vl`).
     ("qwen2_5_vl", ModelFamily::Qwen2Dense),
+    // DeepSeek-VL2 (`mlx-community/deepseek-vl2-tiny-4bit`): the wrapper's
+    // text model is a DeepSeekMoE trunk with plain attention, run by the
+    // `deepseek2` flow's MHA arm (`ArchConfig::mla` inactive).
+    ("deepseek_vl_v2", ModelFamily::Deepseek2),
     // Qwen3-VL-30B-A3B (`mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit`): the
     // wrapper and its text config. Recognition only for the trunk, which has
     // no safetensors writer on the llama MoE flow (its routed experts are

@@ -39,6 +39,11 @@ pub(crate) struct RealDeepseek2State {
     /// BF16 `[hidden]` of ones: the INT8 router kernel's effective scale,
     /// identically 1 (this architecture has no `router.scale`).
     pub(crate) router_ones: gpu::MetalBuffer,
+    /// Plain multi-head attention instead of MLA: the DeepSeek-VL2 trunk
+    /// (`ArchConfig::mla` inactive, every layer mask 1, the standard KV
+    /// layout). Every MLA field and buffer below is then a placeholder the
+    /// MHA arm never reads, and `rope_frequencies` is not a yarn table.
+    pub(crate) mha: bool,
 
     // ---- MLA geometry (halves; docs/DEEPSEEK2_PHASE0.md) ----
     pub(crate) heads: u32,
@@ -136,6 +141,12 @@ impl RealDeepseek2State {
         }
         if arch.final_logit_softcap != 0.0 {
             return unsupported("the deepseek2 architecture has no final logit softcap".into());
+        }
+        // No MLA geometry means the DeepSeek-VL2 shape: plain multi-head
+        // attention, every layer mask 1. Its own constructor, so the MLA
+        // path below is byte-for-byte what it was.
+        if !arch.mla.is_active() {
+            return Self::build_mha(context, index, arch);
         }
         if arch.full_attention_layer_mask.iter().any(|&m| m != 5) {
             return unsupported(
@@ -282,6 +293,7 @@ impl RealDeepseek2State {
         Ok(Self {
             rms_eps: 1e-6,
             router_ones,
+            mha: false,
             heads,
             nope,
             rope_dim,
@@ -303,6 +315,121 @@ impl RealDeepseek2State {
                 arch.dense_lead_intermediate_size
                     .max(arch.intermediate_size) as usize,
             )),
+            shared_out: context.new_output_buffer(bf16(hidden)),
+            router_logits_f32: context
+                .new_output_buffer((MAX_PREFILL_BATCH * arch.num_experts as usize * 4) as u64),
+            moe_x: context.new_output_buffer(bf16(MAX_PREFILL_BATCH * hidden)),
+            h2: context.new_output_buffer(bf16(hidden)),
+            lead,
+            dense_inter: arch.dense_lead_intermediate_size as usize,
+            shared_inter: arch.intermediate_size as usize,
+        })
+    }
+
+    /// The plain-attention shape (DeepSeek-VL2, `docs/DEEPSEEK_VL2_VISION_PHASE0.md`):
+    /// no MLA, no YaRN, every layer a full-attention layer on the standard KV
+    /// layout, with the same dense lead, softmax-over-all router and fused
+    /// shared expert the MLA shape runs. The MLA fields are zero placeholders
+    /// and their buffers are one element, so nothing here can be read as MLA
+    /// scratch by mistake.
+    fn build_mha(
+        context: &mut gpu::MetalContext,
+        index: &ResidentIndex,
+        arch: &ArchConfig,
+    ) -> Result<Self, RealForwardError> {
+        let unsupported = |detail: String| Err(RealForwardError::Unsupported(detail));
+        if arch.full_attention_layer_mask.iter().any(|&m| m != 1) {
+            return unsupported(
+                "a deepseek2 install without MLA runs plain attention on every layer (mask 1)"
+                    .to_string(),
+            );
+        }
+        if arch.rope_scaling.is_active() {
+            return unsupported("the plain-attention deepseek2 shape takes no rope scaling".into());
+        }
+        if arch.num_heads != arch.num_full_kv_heads
+            || arch.full_head_dim <= 0
+            || arch.full_head_dim % 2 != 0
+            || arch.num_heads * arch.full_head_dim != arch.hidden_size
+        {
+            return unsupported(format!(
+                "plain-attention geometry disagrees with itself: {} heads x {} head dim over {} \
+                 KV heads against hidden {}",
+                arch.num_heads, arch.full_head_dim, arch.num_full_kv_heads, arch.hidden_size
+            ));
+        }
+        if (arch.partial_rotary_factor - 1.0).abs() > 1e-9 {
+            return unsupported("the plain-attention shape rotates the whole head".into());
+        }
+        let top_k = arch.top_k_experts as usize;
+        if top_k == 0 || arch.num_experts == 0 {
+            return unsupported("deepseek2 installs are MoE; experts must be positive".into());
+        }
+        if top_k > gpu::PHASE2_FIXED_SLOTS {
+            return unsupported(format!(
+                "top_k {top_k} exceeds the {}-slot MoE kernels",
+                gpu::PHASE2_FIXED_SLOTS
+            ));
+        }
+        let lead = arch.num_dense_leading_layers.max(0) as usize;
+        if lead >= arch.num_layers as usize {
+            return unsupported("dense lead leaves no MoE layers".into());
+        }
+        if arch.dense_lead_intermediate_size <= 0 {
+            return unsupported(
+                "deepseek2 declares a dense lead count but no dense lead FFN width".into(),
+            );
+        }
+        let ones: Vec<u8> = (0..arch.hidden_size as usize)
+            .flat_map(|_| BF16_ONE.to_le_bytes())
+            .collect();
+        let router_ones = context.new_output_buffer(ones.len() as u64);
+        gpu::write_buffer_bytes(&router_ones, 0, &ones);
+
+        for (layer, suffix) in [
+            (0usize, "self_attn.q_proj.weight"),
+            (0usize, "self_attn.k_proj.weight"),
+            (0usize, "self_attn.v_proj.weight"),
+            (0usize, "self_attn.o_proj.weight"),
+            (0usize, "mlp.gate_proj.weight"),
+            (0usize, "mlp.up_proj.weight"),
+            (0usize, "mlp.down_proj.weight"),
+            (lead, "mlp.gate.weight"),
+            (lead, "mlp.shared_expert.gate_proj.weight"),
+            (lead, "mlp.shared_expert.up_proj.weight"),
+            (lead, "mlp.shared_expert.down_proj.weight"),
+        ] {
+            let name = crate::families::deepseek2::layer_tensor(layer, suffix);
+            if !index.entries.contains_key(&name) {
+                return Err(RealForwardError::MissingTensor(name));
+            }
+        }
+
+        let hidden = arch.hidden_size as usize;
+        let bf16 = |n: usize| (n * 2) as u64;
+        let placeholder = || context.new_output_buffer(4);
+        let wide = arch
+            .dense_lead_intermediate_size
+            .max(arch.intermediate_size) as usize;
+        Ok(Self {
+            rms_eps: 1e-6,
+            router_ones,
+            mha: true,
+            heads: arch.num_heads as u32,
+            nope: 0,
+            rope_dim: 0,
+            kv_lora: 0,
+            v_dim: 0,
+            head_dim: arch.full_head_dim as u32,
+            cache_row: 0,
+            rope_mscale: 1.0,
+            rope_frequencies: placeholder(),
+            q: placeholder(),
+            q_abs: placeholder(),
+            attn_c: placeholder(),
+            mla_out: placeholder(),
+            ffn_a: context.new_output_buffer(bf16(wide)),
+            ffn_b: context.new_output_buffer(bf16(wide)),
             shared_out: context.new_output_buffer(bf16(hidden)),
             router_logits_f32: context
                 .new_output_buffer((MAX_PREFILL_BATCH * arch.num_experts as usize * 4) as u64),

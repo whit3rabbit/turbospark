@@ -204,6 +204,11 @@ pub(crate) fn stream_mlx(
         }
         ModelFamily::Flint => repack::parse_flint_config(&config_text).map_err(|e| e.to_string()),
         ModelFamily::Lfm3 => repack::parse_lfm3_config(&config_text).map_err(|e| e.to_string()),
+        // The `deepseek2` family's MLX route is the DeepSeek-VL2 trunk only
+        // (plain attention); an MLA V2/V3 MLX repo is refused by the parser.
+        ModelFamily::Deepseek2 => {
+            repack::parse_deepseek_vl2_config(&config_text).map_err(|e| e.to_string())
+        }
         other => Err(format!("{} has no safetensors intake here", other.as_str())),
     }?;
     enable_requested_vision(plan, family, &mut arch, &config_text)?;
@@ -295,6 +300,11 @@ pub(crate) fn stream_mlx(
     if family == ModelFamily::Qwen2Dense {
         for header in &mut headers {
             repack::canonicalize_qwen2_header(header).map_err(|e| e.to_string())?;
+        }
+    }
+    if family == ModelFamily::Deepseek2 {
+        for header in &mut headers {
+            repack::canonicalize_deepseek_vl2_header(header).map_err(|e| e.to_string())?;
         }
     }
     // Flint: namespace rename AND the U8-to-U32 re-labelling its packed
@@ -419,6 +429,9 @@ pub(crate) fn stream_mlx(
         ModelFamily::Lfm3 => {
             repack::write_lfm3_install_streamed(dir, &arch, &model_id, &shards, &quant, report)
         }
+        ModelFamily::Deepseek2 => repack::write_deepseek_vl2_install_streamed(
+            dir, &arch, &model_id, &shards, &quant, report,
+        ),
         other => Err(Box::<dyn std::error::Error>::from(format!(
             "{} has no safetensors writer here",
             other.as_str()

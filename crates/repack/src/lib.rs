@@ -19,6 +19,7 @@
 
 mod arch_registry;
 pub mod control_vector;
+mod deepseek_vl2_config;
 mod fish_drama3;
 mod flint_config;
 mod flint_rebalance;
@@ -59,6 +60,7 @@ pub use arch_registry::{
     has_foreign_vision_tower, headless_tts_trunk_owner, hf_family_for_model_type,
     planned_gguf_architectures, refuse_foreign_config, ArchSupport, PlannedArch,
 };
+pub use deepseek_vl2_config::parse_deepseek_vl2_config;
 pub use fish_drama3::{
     canonicalize_drama3_header, check_drama3_norm_shift, drama3_trunk_config,
     write_drama3_side_safetensors, write_fish_drama3_install_streamed, DRAMA3_MODEL_TYPE,
@@ -69,28 +71,28 @@ pub use flint_rebalance::{
     rebalance_install_in_place, recorded_shift, RebalanceStats, SwigluRole, FLINT_SWIGLU_SHIFT,
 };
 pub use gemma4_checkpoint::{
-    canonicalize_flint_header, canonicalize_qwen2_header, canonicalize_vision_header,
-    parse_llava_vision_config, read_clip_vision_entries, CLIP_MODEL_PREFIX, CLIP_PROJECTOR_PREFIX,
-    CLIP_RESIDENT_TENSORS, CLIP_SOURCE_PREFIXES, LLAVA_MODEL_TYPE,
-    classify_for_family, classify_gemma4, convert_raw_to_fp16, gemma4_manifest_quant,
-    gguf_mxfp4_row_bytes, graft_qwen_gdn_dense_mtp_head, is_supported_affine_shape, manifest_quant,
-    manifest_quant_for, mlx_mxfp4_dequant_to_bf16, mlx_mxfp4_reblock_to_gguf, narrow_raw_to_bf16,
-    orchestrate_gemma4_checkpoint, orchestrate_gemma4_checkpoint_sharded, parse_gemma4_config,
-    parse_gemma4_quantization, parse_gemma4_vision_config, parse_lfm3_vl_vision_config,
-    parse_prism_hadamard,
-    pass_through_packed, pass_through_packed_qwen2, read_vision_entries,
-    read_vision_entries_quantized, vision_arch_for_manifest, vision_should_ingest,
-    write_flint_install_streamed, write_gemma4_install, write_gemma4_install_streamed,
-    write_lfm3_install_streamed, write_muse_glimmer_install, write_muse_glimmer_install_streamed,
-    write_ngram_table, write_qwen2_dense_install_streamed, write_qwen3_vl_install_streamed,
+    canonicalize_deepseek_vl2_header, canonicalize_flint_header, canonicalize_qwen2_header,
+    canonicalize_vision_header, classify_for_family, classify_gemma4, convert_raw_to_fp16,
+    gemma4_manifest_quant, gguf_mxfp4_row_bytes, graft_qwen_gdn_dense_mtp_head,
+    is_supported_affine_shape, manifest_quant, manifest_quant_for, mlx_mxfp4_dequant_to_bf16,
+    mlx_mxfp4_reblock_to_gguf, narrow_raw_to_bf16, orchestrate_gemma4_checkpoint,
+    orchestrate_gemma4_checkpoint_sharded, parse_gemma4_config, parse_gemma4_quantization,
+    parse_gemma4_vision_config, parse_lfm3_vl_vision_config, parse_llava_vision_config,
+    parse_prism_hadamard, pass_through_packed, pass_through_packed_qwen2, read_clip_vision_entries,
+    read_vision_entries, read_vision_entries_quantized, vision_arch_for_manifest,
+    vision_should_ingest, write_deepseek_vl2_install_streamed, write_flint_install_streamed,
+    write_gemma4_install, write_gemma4_install_streamed, write_lfm3_install_streamed,
+    write_muse_glimmer_install, write_muse_glimmer_install_streamed, write_ngram_table,
+    write_qwen2_dense_install_streamed, write_qwen3_vl_install_streamed,
     write_qwen4_exp_install_streamed, write_qwen_gdn_dense_install,
     write_qwen_gdn_dense_install_streamed, write_qwen_gdn_dense_install_streamed_with_hadamard,
     write_qwen_gdn_moe_install, write_qwen_gdn_moe_install_streamed, write_vision_sidecar,
     ConvertedFp16, Gemma4Bucket, Gemma4Error, Gemma4Quant, Gemma4RepackOutput, Gemma4Shards,
     NarrowedRaw, NgramPlan, NgramTableSpec, NgramTableWriter, PrismHadamard, QuantMode, VisionRead,
-    AFFINE_1BIT_GROUP_SIZE, AFFINE_2BIT_GROUP_SIZE, AFFINE_GROUP_SIZE, DFLASH_PREFIX,
+    AFFINE_1BIT_GROUP_SIZE, AFFINE_2BIT_GROUP_SIZE, AFFINE_GROUP_SIZE, CLIP_MODEL_PREFIX,
+    CLIP_PROJECTOR_PREFIX, CLIP_RESIDENT_TENSORS, CLIP_SOURCE_PREFIXES, DFLASH_PREFIX,
     EMBED_VISION_PREFIX, GEMMA4_BLOCK_ROLES, GEMMA4_PROJECTOR_INSTALL_NAME,
-    GEMMA4_RESIDENT_TENSORS, GTURBO_PAGE_BYTES, MTP_PREFIX, VISION_BLOCK_ROLES,
+    GEMMA4_RESIDENT_TENSORS, GTURBO_PAGE_BYTES, LLAVA_MODEL_TYPE, MTP_PREFIX, VISION_BLOCK_ROLES,
     VISION_DEEPSTACK_MERGER_PREFIX, VISION_DEEPSTACK_MERGER_SUFFIXES, VISION_INSTALL_PREFIX,
     VISION_PREFIX, VISION_QWEN25_BLOCK_ROLES, VISION_QWEN25_RESIDENT_TENSORS,
     VISION_RESIDENT_TENSORS, VISION_SOURCE_PREFIXES,

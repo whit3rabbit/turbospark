@@ -111,19 +111,34 @@ impl RealForwardRunner {
             )
             .map_err(gpu_err)?;
 
-            attn::encode_mla_attention_block(
-                &mut self.context,
-                &pass,
-                &self.weights,
-                &self.index,
-                &arch,
-                state,
-                &self.scratch,
-                &mut self.kv,
-                layer,
-                position,
-                hidden,
-            )?;
+            if state.mha {
+                attn::encode_mha_attention_block(
+                    &mut self.context,
+                    &pass,
+                    &self.weights,
+                    &self.index,
+                    &arch,
+                    &self.scratch,
+                    &self.kv,
+                    layer,
+                    position,
+                    hidden,
+                )?;
+            } else {
+                attn::encode_mla_attention_block(
+                    &mut self.context,
+                    &pass,
+                    &self.weights,
+                    &self.index,
+                    &arch,
+                    state,
+                    &self.scratch,
+                    &mut self.kv,
+                    layer,
+                    position,
+                    hidden,
+                )?;
+            }
 
             // RAW residual add, no sandwich norm.
             gpu::encode_residual_add(
