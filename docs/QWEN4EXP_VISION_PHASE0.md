@@ -194,7 +194,7 @@ TURBOSPARK_VISION_ATTN_MMA=0` against the defaults, interleaved, three reps
 each (AC power, load average about 8 from other sessions, so a dirty host):
 the whole test process took 1.69-1.70 s on the scalar kernels and
 0.61-0.63 s on the MMA kernels at 784 patches. The 1.08 s gap is tower
-time; the trunk open and comparison are identical in both arms. The MMA
+time. The trunk open and comparison are identical in both arms. The MMA
 merger cosine is 0.99993024 against 0.99993336 scalar, both above the bar.
 
 End to end, the tower is about 1 s of a 78 s prefill. The rest is the
@@ -202,6 +202,15 @@ trunk streaming experts off the external drive (2.5 s of user CPU in a 105 s
 run). `TURBOSPARK_ROUTED_BATCH=1` keeps image prompts byte-identical (the
 synthetic gate passes under it, and the real answer is unchanged) but moved
 prefill only from 77.9 s to 75.6 s, within noise on this host.
+
+**tslab `vision_encode` on the same sidecar** (tslab built from `e9ade6ac`,
+median of 3 warm reps, interleaved, ledgers `qwen4exp-vision-mma` and
+`qwen4exp-vision-scalar`, three of four runs DIRTY): the tower takes 0.26 to
+0.30 s at 1,280 patches, 1.5 to 1.9 s at 5,120 and 4.0 to 5.2 s at 9,216 on
+the MMA kernels, against 2.6, 24 to 26 and 81 to 84 s on the scalar ones.
+Block reads stay at 42 to 68 ms per page. Peak footprint with the trunk
+open at a 512-token context is about 3.0 GiB. Details in
+`docs/SPEEDUP_PLAYBOOK.md`, "Vision tower".
 
 ## 8. Open after this page
 
