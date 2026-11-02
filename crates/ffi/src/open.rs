@@ -719,6 +719,29 @@ fn vision_info(
             }
         };
     }
+    // A CLIP tower (LLaVA) crops every image to one fixed square, so it has no
+    // pixel budget to clamp: the answer is whether its processor config reads,
+    // and the ceiling is the crop's own area.
+    if runner.clip_image_ids().is_some() {
+        return match crate::vision::clip_params(runner) {
+            Ok(params) => crate::wire::VisionInfo {
+                active: true,
+                image_token_id: Some(image_token_id),
+                reason: None,
+                source,
+                sidecar_path,
+                max_pixels: Some(params.size * params.size),
+            },
+            Err(reason) => crate::wire::VisionInfo {
+                active: false,
+                image_token_id: None,
+                reason: Some(reason),
+                source,
+                sidecar_path,
+                max_pixels: None,
+            },
+        };
+    }
     match crate::vision::preprocess_params(
         runner,
         guard,

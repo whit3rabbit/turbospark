@@ -206,6 +206,28 @@ pub fn clip_preprocess(
     Ok(ClipPatches { pixels, grid })
 }
 
+/// Open a rendered LLaVA prompt with the BOS token when the template did not.
+///
+/// The Hugging Face processor tokenizes the rendered text with
+/// `add_special_tokens`, so the reference prefills `<s>` first. The llava-hf
+/// chat template does not emit `<s>` itself, and this port's convention is
+/// that the TEMPLATE carries the BOS (every call site encodes with
+/// `add_bos = false`), so without this the prompt runs BOS-less. Vicuna was
+/// trained with the BOS and degrades without it, quietly. `None` (a tokenizer
+/// with no BOS prefix) and a prompt that already opens with it are left
+/// untouched, so a template that does emit `<s>` is never doubled.
+pub fn clip_prepend_bos(rendered: &[i32], bos: Option<i32>) -> Vec<i32> {
+    match bos {
+        Some(b) if rendered.first() != Some(&b) => {
+            let mut out = Vec::with_capacity(rendered.len() + 1);
+            out.push(b);
+            out.extend_from_slice(rendered);
+            out
+        }
+        _ => rendered.to_vec(),
+    }
+}
+
 /// Expand a rendered prompt's image markers: each `marker` id becomes
 /// `counts[i]` copies of `fill`, and the span of each run is returned.
 ///
@@ -379,6 +401,14 @@ mod tests {
                 crate::ImageSpan { start: 5, len: 2 }
             ]
         );
+    }
+
+    #[test]
+    fn the_bos_is_added_once_and_only_when_missing() {
+        assert_eq!(clip_prepend_bos(&[5, 6], Some(1)), vec![1, 5, 6]);
+        assert_eq!(clip_prepend_bos(&[1, 5, 6], Some(1)), vec![1, 5, 6]);
+        assert_eq!(clip_prepend_bos(&[5, 6], None), vec![5, 6]);
+        assert_eq!(clip_prepend_bos(&[], Some(1)), vec![1]);
     }
 
     #[test]

@@ -315,8 +315,13 @@ pub(crate) fn attach_clip(
         prepared.push((image_path, patches));
     }
     let counts = vec![params.tokens(); prepared.len()];
+    // The llava-hf template emits no `<s>`; the reference's processor adds it.
+    let rendered = turbospark_vision_io::clip_prepend_bos(
+        rendered,
+        session.tokenizer.encode("", true).first().copied(),
+    );
     let (expanded, spans) =
-        turbospark_vision_io::clip_expand_image_placeholders(rendered, marker, fill, &counts)
+        turbospark_vision_io::clip_expand_image_placeholders(&rendered, marker, fill, &counts)
             .map_err(|e| {
                 format!(
                     "cannot place {} image(s) in this prompt: {e}\n  the template renders one \

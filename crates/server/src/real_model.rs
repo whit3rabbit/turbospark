@@ -455,6 +455,36 @@ impl RealChatModel {
                 max_soft_tokens: turbospark_vision_io::GEMMA4_DEFAULT_SOFT_TOKENS,
                 ids,
             })
+        } else if let Some((marker, fill)) = runner.clip_image_ids() {
+            // A LLaVA tower reads its crop from the processor config beside
+            // it, not from the qwen pixel-budget params above. A tower with
+            // no readable config is a broken install, so it fails the open
+            // rather than serving text-only under a vision label.
+            let path = runner.vision_dir().join("preprocessor_config.json");
+            let json = std::fs::read_to_string(&path)
+                .map_err(|e| format!("{}: {e}", path.display()))?;
+            let params =
+                turbospark_vision_io::ClipPreprocessParams::from_preprocessor_config_json(&json)
+                    .map_err(|e| format!("{}: {e}", path.display()))?;
+            let v = runner.vision_config();
+            if v.patch_size != turbospark_vision_io::CLIP_PATCH as i64
+                || v.num_position_embeddings != params.tokens() as i64 + 1
+            {
+                return Err(format!(
+                    "{}: a {}-pixel crop is {} patches, but this install's tower has patch {} \
+                     and a {}-row position table",
+                    path.display(),
+                    params.size,
+                    params.tokens(),
+                    v.patch_size,
+                    v.num_position_embeddings
+                ));
+            }
+            Some(crate::vision::VisionInfo::Clip {
+                params,
+                marker,
+                fill,
+            })
         } else if runner.has_vision_tower() {
             let v = runner.vision_config();
             preprocess_params
@@ -562,6 +592,19 @@ impl RealChatModel {
                 }
                 runner
                     .set_prompt_vision_gemma4(&rows, spans, prompt_ids.len())
+                    .map_err(|e| RuntimeError::Producer(e.to_string()))?;
+            }
+            crate::vision::RequestImages::Clip { images, spans } => {
+                let mut rows = Vec::with_capacity(images.len());
+                for (i, image) in images.iter().enumerate() {
+                    rows.push(
+                        runner
+                            .encode_image_clip(image)
+                            .map_err(|e| RuntimeError::Producer(format!("image {i}: {e}")))?,
+                    );
+                }
+                runner
+                    .set_prompt_vision_flat(&rows, spans, prompt_ids.len())
                     .map_err(|e| RuntimeError::Producer(e.to_string()))?;
             }
         }
