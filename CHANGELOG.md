@@ -14,6 +14,14 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- LFM3-VL image support: the `lfm3` flow takes images through a new tower kind
+  (RMSNorm blocks alternating a gated depthwise 3x3 convolution and
+  grouped-query attention, a SwiGLU MLP, a pixel-unshuffle projector).
+  `turbospark-model pull --repo LiquidAI/LFM3-VL-2B-MLX-8bit` installs the
+  tower from the shard bytes (`lfm3-vl-2b-8bit` catalog row). Tower stages
+  agree with an independent numpy implementation at cosine 0.9999965, and a
+  text page is read through the CLI and both server endpoints. Combined
+  install only. See `docs/LFM3_VL_VISION_PHASE0.md`.
 - Qwen2.5-VL image support on the Qwen2 family. A plain Qwen2 dense trunk
   plus a new `qwen25_vl` tower (RMSNorm blocks, a gated SiLU MLP, window
   attention on 28 of 32 blocks, an RMSNorm merger) ingested into the same
