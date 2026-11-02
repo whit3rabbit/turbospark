@@ -129,6 +129,64 @@
       "notes": "TOWER-ONLY sidecar: the SigLIP-so400m tower, its projector and the two learned embeddings, dequantized from the checkpoint's 4-bit planes to FP16 (the attention pool is dropped). Pairs with family deepseek2 at the trunk width. docs/DEEPSEEK_VL2_VISION_PHASE0.md. The repo ships processor_config.json instead of preprocessor_config.json; the tower stream fetches that itself and the vision-only install skips the flat file."
     },
     {
+      "alias": "dsocr",
+      "name": "DeepSeek-OCR text trunk (MLX INT4, group 64, plain-attention MoE)",
+      "family": "deepseek2",
+      "source": {
+        "kind": "mlx",
+        "repo": "mlx-community/DeepSeek-OCR-4bit",
+        "revision": "4958b6b0d46d7dc3cf27556989dab659996ea426",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "chat_template.json"
+        ]
+      },
+      "download_bytes": 1655000000,
+      "install_bytes": 1672838368,
+      "status": "runs",
+      "gates": [
+        "15 of 15 teacher-forced argmax against a numpy forward (cosine 0.999975)",
+        "real CLI and server image runs with dsocr-vision-tower attached (24 of 24 page lines exact)"
+      ],
+      "measured": [],
+      "notes": "The DeepSeek-OCR language model: the same 12-layer plain-attention MoE trunk as DeepSeek-VL2-tiny (hidden 1280, 64 routed experts), OCR-tuned. Images arrive through the dsocr-vision-tower sidecar (`--vision-sidecar`), base mode only (one 1024 px view, 273 rows); Gundam mode is not built. docs/DEEPSEEK_OCR_VISION_PHASE0.md."
+    },
+    {
+      "alias": "dsocr-vision-tower",
+      "kind": "vision-tower",
+      "name": "DeepSeek-OCR SAM-ViT-B and CLIP-L tower with projector (FP16, sidecar)",
+      "family": "deepseek2",
+      "source": {
+        "kind": "mlx",
+        "repo": "mlx-community/DeepSeek-OCR-4bit",
+        "revision": "4958b6b0d46d7dc3cf27556989dab659996ea426",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "preprocessor_config.json",
+          "config.json"
+        ]
+      },
+      "download_bytes": 798976000,
+      "install_bytes": 801789212,
+      "status": "runs",
+      "gates": [
+        "real CLI and server image runs paired with dsocr"
+      ],
+      "measured": [],
+      "notes": "TOWER-ONLY sidecar: the SAM-ViT-B encoder, the 24-block CLIP-L tower, the projector and the learned newline and view-separator rows. Pairs with family deepseek2 at hidden 1280, so it would also attach to a DeepSeek-VL2-tiny trunk: name the sidecar explicitly. The repo ships processor_config.json instead of preprocessor_config.json; the vision-only install skips the flat file. docs/DEEPSEEK_OCR_VISION_PHASE0.md."
+    },
+    {
       "alias": "gemma4",
       "name": "Gemma 4 26B-A4B Instruct (MLX INT4, group 64)",
       "family": "gemma4",
