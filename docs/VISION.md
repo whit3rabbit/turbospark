@@ -17,6 +17,17 @@ sequential image path.
 (`VisionTowerKind::Gemma4`), so nothing on this page describes it: its facts,
 mask rule and gates are in [`GEMMA4_VISION_PHASE0.md`](GEMMA4_VISION_PHASE0.md).
 
+The other towers each have their own page, because each differs from the Qwen
+one in its blocks, preprocessing or position rule and the facts do not carry
+over: `Qwen2.5-VL` on the `qwen2` family
+([`QWEN25_VL_VISION_PHASE0.md`](QWEN25_VL_VISION_PHASE0.md): RMSNorm blocks, a
+gated SiLU MLP, window attention, chunked mRoPE) and `LFM3-VL` on `lfm3`
+([`LFM3_VL_VISION_PHASE0.md`](LFM3_VL_VISION_PHASE0.md): gated depthwise
+convolution blocks beside grouped-query attention). They return the same
+`VisionEmbedding` as the Qwen tower, so `set_prompt_vision`, the prompt
+builders and every front end below are shared. DeepSeek-VL2 is blocked on its
+trunk ([`DEEPSEEK_VL2_VISION_PHASE0.md`](DEEPSEEK_VL2_VISION_PHASE0.md)).
+
 The standalone `<alias>.gturbo-vision/` sidecar format, `--vision-sidecar`,
 and `pull-vision` are verified on real hardware. The Qwen GDN MoE family shares
 the tower classifier, writer, and sequential runtime path, but it has no
