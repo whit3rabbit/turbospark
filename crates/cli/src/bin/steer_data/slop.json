@@ -1,0 +1,80 @@
+{
+  "id": "slop",
+  "title": "Slop reduction",
+  "summary": "Extracts the direction between prose written with forced cliches and purple prose, and the same prompts written plainly. Ablating that direction reduces flowery, formulaic prose.",
+  "positive": {
+    "system": null,
+    "prompts": [
+      "Write a short story based on the prompt below. Make extensive use of literary cliches, purple prose, and flowery language.\n\nWriting prompt: a lighthouse keeper who finds a message washed ashore",
+      "Write a short story based on the prompt below. Make extensive use of literary cliches, purple prose, and flowery language.\n\nWriting prompt: two strangers stuck in a train station during a storm",
+      "Write a short story based on the prompt below. Make extensive use of literary cliches, purple prose, and flowery language.\n\nWriting prompt: a chef preparing one last meal in a closing restaurant",
+      "Write a short story based on the prompt below. Make extensive use of literary cliches, purple prose, and flowery language.\n\nWriting prompt: a cartographer mapping a forest that keeps changing",
+      "Write a short story based on the prompt below. Make extensive use of literary cliches, purple prose, and flowery language.\n\nWriting prompt: an astronomer who notices a star missing one night",
+      "Write a short story based on the prompt below. Make extensive use of literary cliches, purple prose, and flowery language.\n\nWriting prompt: a violinist busking in an underground tunnel",
+      "Write a short story based on the prompt below. Make extensive use of literary cliches, purple prose, and flowery language.\n\nWriting prompt: a gardener who inherits a garden with an unusual rule",
+      "Write a short story based on the prompt below. Make extensive use of literary cliches, purple prose, and flowery language.\n\nWriting prompt: a mail pilot flying letters over mountain passes",
+      "Write a short story based on the prompt below. Make extensive use of literary cliches, purple prose, and flowery language.\n\nWriting prompt: a clockmaker asked to repair a clock that runs backwards",
+      "Write a short story based on the prompt below. Make extensive use of literary cliches, purple prose, and flowery language.\n\nWriting prompt: a diver recovering something lost at the bottom of a lake",
+      "Write a short story based on the prompt below. Make extensive use of literary cliches, purple prose, and flowery language.\n\nWriting prompt: a baker whose bread changes color every morning",
+      "Write a short story based on the prompt below. Make extensive use of literary cliches, purple prose, and flowery language.\n\nWriting prompt: a shepherd watching over sheep during an eclipse",
+      "Write a short story based on the prompt below. Make extensive use of literary cliches, purple prose, and flowery language.\n\nWriting prompt: a librarian who finds a book of blank pages that fill in overnight",
+      "Write a short story based on the prompt below. Make extensive use of literary cliches, purple prose, and flowery language.\n\nWriting prompt: a telegraph operator receiving a signal after the line was cut"
+    ]
+  },
+  "negative": {
+    "system": null,
+    "prompts": [
+      "Write a short story based on the prompt below. Avoid literary cliches, purple prose, and flowery language. Use plain, direct language.\n\nWriting prompt: a lighthouse keeper who finds a message washed ashore",
+      "Write a short story based on the prompt below. Avoid literary cliches, purple prose, and flowery language. Use plain, direct language.\n\nWriting prompt: two strangers stuck in a train station during a storm",
+      "Write a short story based on the prompt below. Avoid literary cliches, purple prose, and flowery language. Use plain, direct language.\n\nWriting prompt: a chef preparing one last meal in a closing restaurant",
+      "Write a short story based on the prompt below. Avoid literary cliches, purple prose, and flowery language. Use plain, direct language.\n\nWriting prompt: a cartographer mapping a forest that keeps changing",
+      "Write a short story based on the prompt below. Avoid literary cliches, purple prose, and flowery language. Use plain, direct language.\n\nWriting prompt: an astronomer who notices a star missing one night",
+      "Write a short story based on the prompt below. Avoid literary cliches, purple prose, and flowery language. Use plain, direct language.\n\nWriting prompt: a violinist busking in an underground tunnel",
+      "Write a short story based on the prompt below. Avoid literary cliches, purple prose, and flowery language. Use plain, direct language.\n\nWriting prompt: a gardener who inherits a garden with an unusual rule",
+      "Write a short story based on the prompt below. Avoid literary cliches, purple prose, and flowery language. Use plain, direct language.\n\nWriting prompt: a mail pilot flying letters over mountain passes",
+      "Write a short story based on the prompt below. Avoid literary cliches, purple prose, and flowery language. Use plain, direct language.\n\nWriting prompt: a clockmaker asked to repair a clock that runs backwards",
+      "Write a short story based on the prompt below. Avoid literary cliches, purple prose, and flowery language. Use plain, direct language.\n\nWriting prompt: a diver recovering something lost at the bottom of a lake",
+      "Write a short story based on the prompt below. Avoid literary cliches, purple prose, and flowery language. Use plain, direct language.\n\nWriting prompt: a baker whose bread changes color every morning",
+      "Write a short story based on the prompt below. Avoid literary cliches, purple prose, and flowery language. Use plain, direct language.\n\nWriting prompt: a shepherd watching over sheep during an eclipse",
+      "Write a short story based on the prompt below. Avoid literary cliches, purple prose, and flowery language. Use plain, direct language.\n\nWriting prompt: a librarian who finds a book of blank pages that fill in overnight",
+      "Write a short story based on the prompt below. Avoid literary cliches, purple prose, and flowery language. Use plain, direct language.\n\nWriting prompt: a telegraph operator receiving a signal after the line was cut"
+    ]
+  },
+  "recommended_mode": "ablate",
+  "recommended_scale": 0.3,
+  "advice": "Start at 0.3. Slop and plainness are two ends of one register axis, so this direction tends to be strong; if prose goes flat, step down to 0.2. Raise toward 0.5 only if the check still shows marker phrases.",
+  "eval": {
+    "prompts": [
+      "Write a short story about a sailor returning home after ten years away.",
+      "Write a scene where old friends reunite and the conversation goes quiet.",
+      "Write a story about the last day of summer in a lakeside town.",
+      "Describe a city at dusk through the eyes of a taxi driver.",
+      "Write a short story about a child who finds a key in the snow.",
+      "Write about a museum guard who notices a painting is different.",
+      "Write a story set on a long train ride across the plains.",
+      "Describe a fisherman's morning on a quiet pier."
+    ],
+    "markers": [
+      "tapestry",
+      "ethereal",
+      "testament to",
+      "palpable",
+      "thick with",
+      "symphony of",
+      "kaleidoscope",
+      "whispered secrets",
+      "dance of shadows",
+      "myriad",
+      "delve into",
+      "embark on a journey",
+      "glimmering",
+      "luminous",
+      "celestial",
+      "veil of",
+      "shadows danced",
+      "crimson",
+      "moonlit",
+      "electricity in the air"
+    ]
+  }
+}

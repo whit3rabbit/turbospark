@@ -666,6 +666,21 @@ final class LocalizationParityTests: XCTestCase {
         for category in AppToolCategory.allCases {
             values.append(("AppToolCategory.label", category.label))
         }
+        // Trait steering: the extract sheet and the composer's steering menu
+        // render each trait's title and summary as keys, and the sheet's
+        // trait rows render the pack's mode through its menu label.
+        for trait in SteeringTrait.allCases {
+            values.append(("SteeringTrait.title", trait.title))
+            values.append(("SteeringTrait.summary", trait.summary))
+        }
+        for mode in AppSteeringModeOption.allCases {
+            values.append(("AppSteeringModeOption.menuLabel", mode.menuLabel))
+        }
+        for isPinned in [false, true] {
+            values.append((
+                "MessageActionBarView.standingInstructionName",
+                MessageActionBarView.standingInstructionName(isPinned: isPinned)))
+        }
         let missing = values.filter { strings[$0.value] == nil }
             .map { "\($0.source): \($0.value)" }
         XCTAssertTrue(

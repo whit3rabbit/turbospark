@@ -26,6 +26,7 @@ The `Cargo.toml` declares eight binaries:
 | `turbospark-music` | Music generation | `src/bin/music.rs` |
 | `turbospark-clone` | Zero-shot voice cloning (MegaTTS3) | `src/bin/clone.rs` |
 | `turbospark-speak` | Speech synthesis (Fish Audio Drama 3) | `src/bin/speak.rs` |
+| `turbospark-steer` | Trait steering packs, direction extraction, and check | `src/bin/steer.rs` |
 | `turbospark-ocr` | Page images to text over Core ML | `src/bin/ocr.rs` |
 
 The `turbospark` front end groups subcommands and mostly delegates:

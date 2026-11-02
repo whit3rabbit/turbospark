@@ -41,6 +41,12 @@ path = "src/bin/clone.rs"
 name = "turbospark-speak"
 path = "src/bin/speak.rs"
 
+# Trait steering: extract a directional control vector from a model's own
+# activations against a built-in prompt contrast, then check the result.
+[[bin]]
+name = "turbospark-steer"
+path = "src/bin/steer.rs"
+
 [[bin]]
 name = "turbospark-ocr"
 path = "src/bin/ocr.rs"
@@ -59,6 +65,9 @@ runtime = { package = "turbospark-runtime", path = "../runtime", version = "0.6.
 selection = { package = "turbospark-selection", path = "../selection", version = "0.6.5" }
 tokenizer = { package = "turbospark-tokenizer", path = "../tokenizer", version = "0.6.5" }
 repack = { package = "turbospark-repack", path = "../repack", version = "0.6.5" }
+# The difference-of-means extraction math and its diagnostics
+# (`steer_cmd`'s reduction half; `turbospark-steer` is the driver).
+compute = { package = "turbospark-compute", path = "../compute", version = "0.6.5" }
 model_io = { package = "turbospark-model-io", path = "../model-io", version = "0.6.5" }
 image = { package = "turbospark-image", path = "../image", version = "0.6.5" }
 audio = { package = "turbospark-audio", path = "../audio", version = "0.6.5" }
@@ -67,6 +76,8 @@ window_fit = { package = "turbospark-window-fit", path = "../window-fit", versio
 # walk. UNALIASED, matching `crates/runtime`'s and `crates/bench`'s spelling
 # for the same crate (AGENTS.md Gotcha 1's per-crate alias rule).
 turbospark-vision-io = { path = "../vision-io", version = "0.6.5" }
+# Trait-pack files (`steer_data/`) parse with derive on `steer_cmd::packs`.
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 indicatif = "0.18"
 # The `turbospark` front door's command tree, help and shell completions.

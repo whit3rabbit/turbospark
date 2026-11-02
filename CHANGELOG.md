@@ -38,6 +38,39 @@ when this file gets updated relative to the version bump and the tag.
   silently in Approve for me now ask once per new domain, and a subagent's
   request to a domain that is not allowed is refused; choose Allow all to
   keep the old behavior.
+- Trait steering (`turbospark-steer`, `turbospark steer`): five built-in
+  trait packs (refusals, slop, humor, sycophancy, emotional tone), each a
+  contrastive prompt corpus plus held-out prompts and keyword markers, and
+  two verbs over them. `extract` captures both corpora against a model's own
+  activations (one open per side, one snapshot per prompt), reduces them to
+  a difference-of-means control vector through
+  `turbospark-compute::steering_extract` (the Rust twin of
+  `scripts/extract_direction.py`'s reduction half), prints the four
+  per-layer ranking columns, and writes a llama.cpp-layout `.gguf`. `check`
+  runs the held-out prompts unsteered and steered and prints the
+  keyword-marker rate both times, with the documented short-response
+  collapse warning. Packs ship prompts, never directions: the vector is
+  extracted from the user's own checkpoint, so the app's "nothing ships a
+  direction" provenance rule holds. Verified end to end on the real
+  `tinyllama` install: extraction, steered open
+  (`ablate at alpha 0.3 over 21 of 22 layers`), and a live null-controlled
+  edit.
+- macOS app: the model detail pane's Steering card can extract a trait
+  direction from the installed model (Extract from this model). The sheet
+  runs the bundled `turbospark-steer` as a child process, then creates or
+  updates the preset for that file, selected and enabled. It requires the
+  model to be unloaded first, since extraction opens its own copy.
+  Cancelling terminates the child and leaves any previous vector intact
+  (the write goes through a `.partial` file and a rename). `extract` now
+  refuses a capture with fewer snapshots than prompts and cleans its temp
+  capture directory on every exit path.
+- macOS app: the composer's Steering pill is now a menu: Off, every
+  registered direction (one whose shape the selected model would refuse is
+  listed but not pickable), each built-in trait not yet extracted for the
+  selected model (opens the extract sheet with that trait chosen), Reload
+  to apply when the loaded model is not running the selection, and
+  Steering Settings. It is disabled with the engine's reason on a family
+  that does not dispatch steering.
 - macOS app: an Expert Residency setting (Auto, Streamed, Mapped) in Engine
   settings, with Cache Slots beside it (previously only in the Inspector) and
   a Resolved row. Mapped is sent only to models whose open would take it, and

@@ -98,16 +98,20 @@ final class ServerAndAppearanceStoreTests: XCTestCase {
         XCTAssertTrue(loaded.usePointerCursors)
     }
 
-    /// Tests that a fresh archive decodes or defaults to a 16px base font size and system appearance.
+    /// Tests that a fresh archive decodes or defaults to the factory base font
+    /// size (14 pt, `AppFontCatalog.factoryUISize`) and system appearance.
+    /// 16 pt is the design REFERENCE that `textScale` divides by, not the
+    /// default (DESIGN.md, Type).
     @MainActor
-    func testAppearanceDefaultFontSizeIs16AndSystemTheme() throws {
+    func testAppearanceDefaultFontSizeIsTheFactoryBaseAndSystemTheme() throws {
         let emptyJSON = Data("{}".utf8)
         let decoded = try JSONDecoder().decode(AppearanceArchive.self, from: emptyJSON)
-        XCTAssertEqual(decoded.uiFontSize, 16.0)
+        XCTAssertEqual(decoded.uiFontSize, 14.0)
+        XCTAssertEqual(decoded.uiFontSize, AppFontCatalog.factoryUISize)
         XCTAssertEqual(decoded.appearance, AppAppearance.system.rawValue)
 
         let defaultArchive = AppearanceArchive()
-        XCTAssertEqual(defaultArchive.uiFontSize, 16.0)
+        XCTAssertEqual(defaultArchive.uiFontSize, 14.0)
         XCTAssertEqual(defaultArchive.appearance, AppAppearance.system.rawValue)
     }
 
