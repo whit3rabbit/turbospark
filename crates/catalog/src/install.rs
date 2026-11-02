@@ -564,7 +564,24 @@ fn fetch_sidecars(
             }
         }
         let url = plan.sidecars.file_url(name);
-        let bytes = client.get(&url)?;
+        // A DeepSeek-VL2 repo ships `processor_config.json` and no
+        // `preprocessor_config.json`; its tower stream fetches the former. The
+        // skip needs the former to exist, so any other repo missing the
+        // latter still fails here with the transport's own message.
+        let bytes = if plan.vision_only && name == "preprocessor_config.json" {
+            match client.get_optional(&url)? {
+                Some(bytes) => bytes,
+                None => {
+                    let alt = plan.sidecars.file_url("processor_config.json");
+                    if client.get_optional(&alt)?.is_none() {
+                        client.get(&url)?;
+                    }
+                    continue;
+                }
+            }
+        } else {
+            client.get(&url)?
+        };
         if let Some(cb) = byte_progress {
             cb(bytes.len() as u64);
         }

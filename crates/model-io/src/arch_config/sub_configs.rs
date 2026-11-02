@@ -247,6 +247,18 @@ pub enum VisionTowerKind {
     /// `out_hidden_size` is the projector's output (the trunk width). The
     /// start and end ids are 0: the placeholder run is bare.
     Clip,
+    /// The SigLIP-so400m tower DeepSeek-VL2 carries
+    /// (`docs/DEEPSEEK_VL2_VISION_PHASE0.md`): LayerNorm blocks with a fused
+    /// qkv and a tanh-GELU MLP, 729 learned absolute positions and no class
+    /// row, a final LayerNorm, then a 2x2 unfold projector and two linears.
+    ///
+    /// Field meanings: `depth` is 27, `patch_size` is 14 (a 384 px tile reads
+    /// 27 x 27 patches, the 6 trailing pixels never reach the conv),
+    /// `spatial_merge_size` is the projector's unfold factor (2),
+    /// `num_position_embeddings` is 729, `out_hidden_size` is the trunk width,
+    /// `temporal_patch_size` is 1. The start and end ids are 0: the image run
+    /// is a bare block of `image_token_id` positions.
+    SigLip,
 }
 
 impl VisionTowerKind {
@@ -258,6 +270,7 @@ impl VisionTowerKind {
             VisionTowerKind::Qwen25Vl => "qwen25_vl",
             VisionTowerKind::Lfm3Vl => "lfm3_vl",
             VisionTowerKind::Clip => "clip",
+            VisionTowerKind::SigLip => "siglip",
         }
     }
 
@@ -270,6 +283,7 @@ impl VisionTowerKind {
             "qwen25_vl" => Some(VisionTowerKind::Qwen25Vl),
             "lfm3_vl" => Some(VisionTowerKind::Lfm3Vl),
             "clip" => Some(VisionTowerKind::Clip),
+            "siglip" => Some(VisionTowerKind::SigLip),
             _ => None,
         }
     }

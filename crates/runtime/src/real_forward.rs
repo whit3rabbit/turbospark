@@ -395,6 +395,9 @@ pub struct RealForwardRunner {
     /// [`RealForwardRunner::encode_image_clip`]; a third field for the same
     /// reason as the Gemma 4 one.
     pub(crate) clip_vision: Option<crate::vision::clip::ClipVisionTower>,
+    /// The SigLIP tower (DeepSeek-VL2), lazily opened by
+    /// [`RealForwardRunner::encode_image_siglip`].
+    pub(crate) siglip_vision: Option<crate::vision::siglip::SiglipVisionTower>,
     /// A sidecar tower directory attached after open (vision memory
     /// sidecar, Part A2), via [`RealForwardRunner::attach_vision_sidecar`].
     /// `None` on every session that never called it, which is every session

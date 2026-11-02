@@ -27,6 +27,7 @@ mod vision;
 mod vision_clip;
 mod vision_gemma4;
 mod vision_lfm3;
+mod vision_siglip;
 
 pub use classify::{
     canonicalize_deepseek_vl2_header, canonicalize_flint_header, canonicalize_qwen2_header,
@@ -72,6 +73,11 @@ pub use vision_gemma4::{
     GEMMA4_PROJECTOR_INSTALL_NAME, GEMMA4_RESIDENT_TENSORS,
 };
 pub use vision_lfm3::parse_lfm3_vl_vision_config;
+pub use vision_siglip::{
+    parse_deepseek_vl2_vision_config, read_siglip_vision_entries, DEEPSEEK_VL2_IMAGE_TOKEN_ID,
+    DEEPSEEK_VL2_MODEL_TYPE, SIGLIP_MODEL_PREFIX, SIGLIP_PROJECTOR_PREFIX, SIGLIP_RESIDENT_TENSORS,
+    SIGLIP_SOURCE_PREFIXES,
+};
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};

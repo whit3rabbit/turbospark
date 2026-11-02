@@ -39,6 +39,7 @@
 
 pub mod clip;
 pub mod decode;
+pub mod deepseek_vl2;
 pub mod error;
 pub mod gemma4;
 pub mod mrope;
@@ -59,6 +60,11 @@ pub use clip::{
 };
 pub use decode::{
     decode_image_bytes, decode_image_file, image_dimensions, Rgb8Image, MAX_IMAGE_DIM,
+};
+pub use deepseek_vl2::{
+    deepseek_vl2_image_tokens, deepseek_vl2_preprocess, deepseek_vl2_row_layout, pil_pad,
+    select_best_resolution, DeepseekVl2Params, DeepseekVl2Row, DeepseekVl2Tiles, DSVL2_PATCH,
+    DSVL2_PATCH_DIM,
 };
 pub use error::VisionIoError;
 pub use gemma4::{

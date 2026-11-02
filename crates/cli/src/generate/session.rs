@@ -289,7 +289,7 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
             .map_err(|e| format!("--vision-sidecar {}: {e}", dir.display()))?;
         let vision = runner.vision_config();
         // A CLIP tower (LLaVA) has no start token to pair with the marker.
-        let verified = if runner.clip_image_ids().is_some() {
+        let verified = if runner.clip_image_ids().is_some() || runner.siglip_image_ids().is_some() {
             tokenizer.verify_bare_image_marker(vision.image_token_id as i32)
         } else {
             tokenizer.verify_image_markers(
