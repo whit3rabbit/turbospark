@@ -258,6 +258,15 @@ pub enum VisionTowerKind {
     /// `out_hidden_size` is the projector's output (the trunk width). The
     /// start and end ids are 0: the placeholder run is bare.
     Clip,
+    /// The MiniCPM-V 4.7 tower (`docs/MINICPMV_VISION_PHASE0.md`): a SigLIP
+    /// encoder with bucketed position ids, a 2x2 window attention-merger after
+    /// block 6, and a second 2x2 merger MLP into the trunk. `spatial_merge_size`
+    /// is the TOTAL per-axis downsample (4 in the default `16x` mode), the
+    /// start and end ids are `<image>` and `</image>`, and
+    /// `num_position_embeddings` is the table length (70 x 70). The merger
+    /// geometry, the insert layer, the thumbnail-only slicing and the canvas
+    /// ids are properties of the kind, checked at intake.
+    MiniCpmV,
 }
 
 impl VisionTowerKind {
@@ -270,6 +279,7 @@ impl VisionTowerKind {
             VisionTowerKind::Lfm3Vl => "lfm3_vl",
             VisionTowerKind::Clip => "clip",
             VisionTowerKind::MuseGlimmer => "muse_glimmer",
+            VisionTowerKind::MiniCpmV => "minicpm_v",
         }
     }
 
@@ -283,6 +293,7 @@ impl VisionTowerKind {
             "lfm3_vl" => Some(VisionTowerKind::Lfm3Vl),
             "clip" => Some(VisionTowerKind::Clip),
             "muse_glimmer" => Some(VisionTowerKind::MuseGlimmer),
+            "minicpm_v" => Some(VisionTowerKind::MiniCpmV),
             _ => None,
         }
     }

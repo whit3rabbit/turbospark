@@ -621,6 +621,36 @@ pub fn encode_vision_rope_axial(
     Ok(())
 }
 
+/// `y[g, c] += mean_{k<4} x[4g + k, c]` over `groups` rows of `width` FP16
+/// values: the MiniCPM-V window merger's residual. `x` holds `4 * groups` rows,
+/// each window's four tokens consecutive.
+pub fn encode_vision_window_mean4_add(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    y: (&metal::Buffer, u64),
+    x: (&metal::Buffer, u64),
+    groups: u32,
+    width: u32,
+) -> Result<(), GpuError> {
+    let count = groups.checked_mul(width).ok_or_else(|| {
+        GpuError::PipelineCreate(format!("window mean {groups} x {width} overflows u32"))
+    })?;
+    let pipeline = context.pipeline(
+        SOURCE,
+        "vision_window_mean4_add_fp16",
+        &no_function_constants(),
+        b"",
+    )?;
+    pass.encode_threadgroups(
+        &pipeline,
+        &[(y.0, 0, y.1), (x.0, 1, x.1)],
+        &[(u32_bytes(&width), 2), (u32_bytes(&count), 3)],
+        groups_for(count),
+        THREADS_PER_GROUP,
+    );
+    Ok(())
+}
+
 /// `y *= x` over `count` FP16 values, with an FP32 intermediate: the gated
 /// MLP's `gelu(gate) * up`.
 pub fn encode_vision_mul(

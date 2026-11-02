@@ -14,6 +14,12 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- MiniCPM-V 4.7 image input (the 448-area global view): a new `minicpm_v`
+  tower with its window-mean merger, ingested from the checkpoint instead of
+  dropped, with the Qwen3.6 MoE trunk's image path. Gated on the real
+  checkpoint through the CLI and both server endpoints. Detail slices are not
+  built and a prompt carrying them is refused. See
+  `docs/MINICPMV_VISION_PHASE0.md`.
 - Muse-Glimmer image support: its 50-block tower is ingested into the same
   install (adapter and projection dequantized from 4-bit), with PIL Lanczos
   and a token-cap resize, and a front-end wrap of the bare `<|patch|>`

@@ -134,6 +134,9 @@ impl RealForwardRunner {
         if self.arch.vision.tower == model_io::VisionTowerKind::MuseGlimmer {
             return self.encode_image_muse(image, params, None).map(|(e, _)| e);
         }
+        if self.arch.vision.tower == model_io::VisionTowerKind::MiniCpmV {
+            return self.encode_image_minicpm(image, params, None);
+        }
         self.open_vision_tower()?;
         // Two disjoint fields of `self`, which is what lets the tower take
         // the context mutably while it is itself borrowed mutably.
@@ -179,9 +182,133 @@ impl RealForwardRunner {
             )?;
             return Ok((embedding, stages.expect("requested just above")));
         }
+        if self.arch.vision.tower == model_io::VisionTowerKind::MiniCpmV {
+            let mut stages = crate::vision::minicpm::MiniCpmStages::default();
+            let embedding = self.encode_image_minicpm(image, params, Some(&mut stages))?;
+            return Ok((
+                embedding,
+                crate::vision::minicpm::into_vision_stages(stages),
+            ));
+        }
         self.open_vision_tower()?;
         let tower = self.vision.as_mut().expect("opened just above");
         tower.run_with_stages(&mut self.context, &self.weights, image, params)
+    }
+
+    /// Whether this install's tower is the MiniCPM-V one, which has its own
+    /// preprocessing and prompt layout and so its own front-end entry,
+    /// [`Self::attach_minicpm_images`].
+    pub fn is_minicpm_vision(&self) -> bool {
+        self.arch.vision.is_active()
+            && self.arch.vision.tower == model_io::VisionTowerKind::MiniCpmV
+    }
+
+    /// The whole MiniCPM-V image path for one turn: preprocess every image,
+    /// expand each rendered `<|image_pad|>` into its `<image_id>`/`<image>`/
+    /// fill/`</image>` run with the canvas positions, run the tower, and hand
+    /// this runner the injection map. Returns the expanded ids to prefill.
+    ///
+    /// `index_ids(k)` is the image ordinal as text tokens and `token_text(id)`
+    /// resolves an id against the TOKENIZER, so a vocabulary that disagrees
+    /// with the kind's constant marker ids is refused here instead of
+    /// splicing ids that name other tokens.
+    ///
+    /// Only the thumbnail is built (no slicing). Combined installs only.
+    pub fn attach_minicpm_images(
+        &mut self,
+        rendered: &[i32],
+        images: &[turbospark_vision_io::Rgb8Image],
+        index_ids: &dyn Fn(usize) -> Vec<i32>,
+        token_text: &dyn Fn(i32) -> Option<String>,
+    ) -> Result<Vec<i32>, RealForwardError> {
+        let bad = |m: String| RealForwardError::Unsupported(m);
+        if !self.is_minicpm_vision() {
+            return Err(bad(
+                "this install's vision tower is not a MiniCPM-V one".to_string()
+            ));
+        }
+        for (id, want) in turbospark_vision_io::MINICPM_MARKER_TOKENS {
+            if token_text(id).as_deref() != Some(want) {
+                return Err(bad(format!(
+                    "token id {id} is {:?} in this tokenizer but the MiniCPM-V prompt layout \
+                     needs {want:?}",
+                    token_text(id)
+                )));
+            }
+        }
+        let path = self.vision_dir().join("preprocessor_config.json");
+        let json =
+            std::fs::read_to_string(&path).map_err(|e| bad(format!("{}: {e}", path.display())))?;
+        let params = turbospark_vision_io::MiniCpmParams::from_preprocessor_config_json(&json)
+            .map_err(|e| bad(format!("{}: {e}", path.display())))?;
+        let prepared = images
+            .iter()
+            .enumerate()
+            .map(|(k, image)| {
+                turbospark_vision_io::minicpm_preprocess(image, &params)
+                    .map_err(|e| bad(format!("image {k}: {e}")))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let v = &self.arch.vision;
+        let ids = turbospark_vision_io::MiniCpmIds::new(
+            v.image_token_id as i32,
+            v.vision_start_token_id as i32,
+            v.vision_end_token_id as i32,
+        );
+        let grids: Vec<_> = prepared.iter().map(|p| p.grid).collect();
+        let spliced =
+            turbospark_vision_io::minicpm_splice_and_positions(rendered, &grids, &ids, index_ids)
+                .map_err(|e| {
+                bad(format!(
+                    "cannot place {} image(s) in this prompt: {e}; the template renders one \
+                         <|image_pad|> per image, so check the messages carry image parts",
+                    images.len()
+                ))
+            })?;
+        let tower_params = params.as_preprocess_params();
+        let mut embeddings = Vec::with_capacity(prepared.len());
+        for (k, p) in prepared.iter().enumerate() {
+            embeddings.push(
+                self.encode_image(p, &tower_params)
+                    .map_err(|e| bad(format!("image {k}: {e}")))?,
+            );
+        }
+        self.set_prompt_vision(&embeddings, &spliced.positions, spliced.ids.len())?;
+        Ok(spliced.ids)
+    }
+
+    /// A `minicpm_v` tower's embedding, with the stages the parity test reads
+    /// when `stages` is `Some`. Combined installs only: a sidecar cannot pair
+    /// this tower safely, so an attached one is refused by name.
+    pub(crate) fn encode_image_minicpm(
+        &mut self,
+        image: &turbospark_vision_io::PreprocessedImage,
+        params: &turbospark_vision_io::PreprocessParams,
+        stages: Option<&mut crate::vision::minicpm::MiniCpmStages>,
+    ) -> Result<crate::vision::VisionEmbedding, RealForwardError> {
+        if !self.arch.vision.is_active() {
+            return Err(RealForwardError::Unsupported(
+                "this install declares no vision tower; repack the checkpoint with its \
+                 vision_tower.* tensors to get one"
+                    .to_string(),
+            ));
+        }
+        if self.vision_sidecar_dir.is_some() {
+            return Err(RealForwardError::Unsupported(
+                "a minicpm_v vision tower cannot run from a sidecar".to_string(),
+            ));
+        }
+        if self.minicpm_vision.is_none() {
+            self.minicpm_vision = Some(crate::vision::minicpm::MiniCpmVisionTower::open(
+                &self.install_dir,
+                &self.context,
+                &self.weights,
+                &self.index,
+                &self.arch,
+            )?);
+        }
+        let tower = self.minicpm_vision.as_mut().expect("opened just above");
+        tower.run(&mut self.context, &self.weights, image, params, stages)
     }
 
     /// An `lfm3_vl` tower's embedding plus the FP16 residual stream after the
@@ -626,6 +753,7 @@ impl RealForwardRunner {
         self.lfm3_vision = None;
         self.clip_vision = None;
         self.muse_vision = None;
+        self.minicpm_vision = None;
     }
 
     /// `(marker, fill)` for a LLaVA prompt, read off the install, or `None`

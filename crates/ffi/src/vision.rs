@@ -190,6 +190,28 @@ fn decode_part(part: &WirePart, i: usize) -> Result<(String, Rgb8Image), String>
     }
 }
 
+/// The MiniCPM-V tower's whole turn: decode every part and hand the runner
+/// the rendered prompt, which preprocesses, expands each rendered
+/// `<|image_pad|>` to its marker run with canvas positions, runs the tower and
+/// injects the rows. Thumbnail only (no slicing). The same runner method the
+/// CLI and the server call.
+pub(crate) fn attach_minicpm(
+    runner: &mut runtime::RealForwardRunner,
+    tokenizer: &tokenizer::MfTokenizer,
+    rendered: &[i32],
+    parts: &[&WirePart],
+) -> Result<Vec<i32>, String> {
+    let mut decoded = Vec::with_capacity(parts.len());
+    for (i, part) in parts.iter().enumerate() {
+        decoded.push(decode_part(part, i)?.1);
+    }
+    let index_ids = |k: usize| tokenizer.encode(&k.to_string(), false);
+    let token_text = |id: i32| tokenizer.id_to_token(id);
+    runner
+        .attach_minicpm_images(rendered, &decoded, &index_ids, &token_text)
+        .map_err(|e| format!("cannot attach the images: {e}"))
+}
+
 /// The Gemma 4 tower's whole turn: decode and preprocess every part at the
 /// default soft-token budget (the one the install's KV ring is sized for),
 /// expand each rendered `<|image|>` to `boi`, placeholders, `eoi`, encode,

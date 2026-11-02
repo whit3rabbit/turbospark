@@ -210,6 +210,28 @@ impl FfiChatModel {
                     .set_prompt_vision(&embeddings, positions, prompt_ids.len())
                     .map_err(|e| RuntimeError::Producer(e.to_string()))?;
             }
+            turbospark_server::vision::RequestImages::MiniCpm { images, positions } => {
+                let json =
+                    std::fs::read_to_string(runner.vision_dir().join("preprocessor_config.json"))
+                        .map_err(|e| {
+                        RuntimeError::Producer(format!("preprocessor_config.json: {e}"))
+                    })?;
+                let params =
+                    turbospark_vision_io::MiniCpmParams::from_preprocessor_config_json(&json)
+                        .map_err(|e| RuntimeError::Producer(e.to_string()))?
+                        .as_preprocess_params();
+                let mut embeddings = Vec::with_capacity(images.len());
+                for (i, image) in images.iter().enumerate() {
+                    embeddings.push(
+                        runner
+                            .encode_image(image, &params)
+                            .map_err(|e| RuntimeError::Producer(format!("image {i}: {e}")))?,
+                    );
+                }
+                runner
+                    .set_prompt_vision(&embeddings, positions, prompt_ids.len())
+                    .map_err(|e| RuntimeError::Producer(e.to_string()))?;
+            }
             turbospark_server::vision::RequestImages::Gemma4 { images, spans } => {
                 // Gemma 4 image spans need the chunked driver: one token at
                 // a time cannot give an image row its look-ahead.
@@ -314,6 +336,31 @@ impl ChatModel for FfiChatModel {
                     params: crate::vision::clip_params(runner).ok()?,
                     marker,
                     fill,
+                });
+            }
+            if runner.is_minicpm_vision() {
+                // The tokenizer must agree with the kind's constant marker
+                // ids; a disagreement reports "no vision" rather than serving
+                // a prompt layout that names other tokens.
+                for (id, want) in turbospark_vision_io::MINICPM_MARKER_TOKENS {
+                    if self.core.tokenizer.id_to_token(id).as_deref() != Some(want) {
+                        return None;
+                    }
+                }
+                let json =
+                    std::fs::read_to_string(runner.vision_dir().join("preprocessor_config.json"))
+                        .ok()?;
+                let params =
+                    turbospark_vision_io::MiniCpmParams::from_preprocessor_config_json(&json)
+                        .ok()?;
+                let v = runner.vision_config();
+                return Some(turbospark_server::vision::VisionInfo::MiniCpm {
+                    params,
+                    ids: turbospark_vision_io::MiniCpmIds::new(
+                        v.image_token_id as i32,
+                        v.vision_start_token_id as i32,
+                        v.vision_end_token_id as i32,
+                    ),
                 });
             }
             let params = crate::vision::preprocess_params(

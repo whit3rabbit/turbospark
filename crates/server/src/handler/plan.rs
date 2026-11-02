@@ -584,6 +584,37 @@ pub(crate) fn plan(model: &AppState, request: &ChatCompletionRequest) -> Result<
                 positions: spliced.positions,
             })
         }
+        // MiniCPM-V: the best-fit resize bounds every image to about 448
+        // squared, so decoding is bounded without a pixel budget; each
+        // rendered `<|image_pad|>` becomes `<image_id>N</image_id><image>`,
+        // the fill run, `</image>`, with canvas positions.
+        (Some(crate::vision::VisionInfo::MiniCpm { params, ids }), false) => {
+            let mut preprocessed = Vec::with_capacity(encoded.len());
+            for (i, bytes) in encoded.iter().enumerate() {
+                let decoded = turbospark_vision_io::decode_image_bytes(bytes)
+                    .map_err(|e| format!("image {}: {e}", i + 1))?;
+                preprocessed.push(
+                    turbospark_vision_io::minicpm_preprocess(&decoded, params)
+                        .map_err(|e| format!("image {}: {e}", i + 1))?,
+                );
+            }
+            let grids: Vec<_> = preprocessed.iter().map(|p| p.grid).collect();
+            let tokenizer = model.tokenizer();
+            let index_ids = |k: usize| tokenizer.encode(&k.to_string(), false);
+            let spliced = turbospark_vision_io::minicpm_splice_and_positions(
+                &prompt_ids,
+                &grids,
+                ids,
+                &index_ids,
+            )
+            .map_err(|e| format!("cannot place {} image(s): {e}", grids.len()))?;
+            prompt_ids = spliced.ids;
+            check_context(&prompt_ids, &config, model.max_context())?;
+            Some(crate::vision::RequestImages::MiniCpm {
+                images: preprocessed,
+                positions: spliced.positions,
+            })
+        }
         // Gemma 4: each rendered `<|image|>` becomes `boi`, one placeholder
         // per soft token, `eoi`; the soft-token counts come from the headers
         // before any pixel is decoded, as above.

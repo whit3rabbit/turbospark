@@ -7,9 +7,10 @@
 //! one field this checkpoint really changes (its vocabulary) set from the
 //! file, so a key wired to the wrong field shows (`docs/NEW_MODEL.md`).
 
+use model_io::VisionTowerKind;
 use turbospark_repack::{
     config_json_family, has_foreign_vision_tower, parse_gemma4_quantization,
-    parse_qwen_gdn_moe_config, QuantMode,
+    parse_qwen_gdn_moe_config, parse_vision_config, QuantMode,
 };
 
 const CONFIG: &str = include_str!("fixtures/minicpm_v47_mxfp4_config.json");
@@ -27,16 +28,76 @@ fn the_trunk_is_qwen36_with_its_own_vocabulary() {
     let mut expected = model_io::qwen_gdn_moe_35b_a3b();
     expected.vocab_size = 248_144;
     assert_eq!(parsed, expected);
-    // Repack never derives a tower from config; this wrapper's is MiniCPM's.
+    // The trunk parser never derives a tower from config (what an install
+    // carries is answered by its bytes); the tower is `parse_vision_config`'s.
     assert!(!parsed.vision.is_active());
 }
 
+fn mutated(edit: impl FnOnce(&mut serde_json::Value)) -> String {
+    let mut v: serde_json::Value = serde_json::from_str(CONFIG).unwrap();
+    edit(&mut v);
+    v.to_string()
+}
+
 #[test]
-fn the_wrapper_is_a_foreign_vision_tower_and_qwen36_is_not() {
+fn the_wrapper_is_no_longer_foreign_and_parses_to_the_minicpm_tower() {
     let root: serde_json::Value = serde_json::from_str(CONFIG).unwrap();
-    assert!(has_foreign_vision_tower(&root));
-    let qwen = serde_json::json!({"model_type": "qwen3_5_moe", "text_config": root["text_config"]});
-    assert!(!has_foreign_vision_tower(&qwen));
+    assert!(!has_foreign_vision_tower(&root));
+    let v = parse_vision_config(CONFIG).expect("tower parses");
+    assert_eq!(v.tower, VisionTowerKind::MiniCpmV);
+    assert_eq!(
+        (v.depth, v.hidden_size, v.intermediate_size, v.num_heads),
+        (27, 1152, 4304, 16)
+    );
+    assert_eq!(
+        (v.patch_size, v.temporal_patch_size, v.in_channels),
+        (14, 1, 3)
+    );
+    // 16x mode: a 2x2 window merger then a 2x2 merger, 4 per axis.
+    assert_eq!(v.spatial_merge_size, 4);
+    // image_size 980 / patch 14 = a 70 x 70 position table.
+    assert_eq!(v.num_position_embeddings, 4900);
+    assert_eq!(v.out_hidden_size, 2048);
+    assert_eq!(v.mrope_section, [11, 11, 10]);
+    assert!(v.deepstack_visual_indexes.is_empty());
+    // `<image>`, `</image>`, `<|image_pad|>`, `<|video_pad|>`.
+    assert_eq!(
+        (
+            v.vision_start_token_id,
+            v.vision_end_token_id,
+            v.image_token_id,
+            v.video_token_id
+        ),
+        (248078, 248079, 248056, 248057)
+    );
+}
+
+#[test]
+fn a_checkpoint_off_the_kind_constants_is_refused() {
+    for (what, text) in [
+        (
+            "insert_layer_id",
+            mutated(|v| v["insert_layer_id"] = 8.into()),
+        ),
+        (
+            "downsample",
+            mutated(|v| v["downsample_mode"] = "4x".into()),
+        ),
+        (
+            "depth",
+            mutated(|v| v["vision_config"]["num_hidden_layers"] = 24.into()),
+        ),
+        ("slice id", mutated(|v| v["slice_start_id"] = 1.into())),
+        (
+            "kernel",
+            mutated(|v| v["merge_kernel_size"] = serde_json::json!([3, 3])),
+        ),
+    ] {
+        assert!(
+            parse_vision_config(&text).is_err(),
+            "{what} must be refused"
+        );
+    }
 }
 
 #[test]

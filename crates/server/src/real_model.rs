@@ -488,6 +488,34 @@ impl RealChatModel {
                 marker,
                 fill,
             })
+        } else if runner.is_minicpm_vision() {
+            // Its own preprocessing: no pixel budget, the best-fit resize
+            // lives in `turbospark_vision_io::minicpm`. The tokenizer must
+            // agree with the kind's constant marker ids before any request.
+            for (id, want) in turbospark_vision_io::MINICPM_MARKER_TOKENS {
+                if tokenizer.id_to_token(id).as_deref() != Some(want) {
+                    return Err(format!(
+                        "token id {id} is {:?} in this tokenizer but the MiniCPM-V prompt \
+                         layout needs {want:?}",
+                        tokenizer.id_to_token(id)
+                    )
+                    .into());
+                }
+            }
+            let path = runner.vision_dir().join("preprocessor_config.json");
+            let json =
+                std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let params = turbospark_vision_io::MiniCpmParams::from_preprocessor_config_json(&json)
+                .map_err(|e| format!("{}: {e}", path.display()))?;
+            let v = runner.vision_config();
+            Some(crate::vision::VisionInfo::MiniCpm {
+                params,
+                ids: turbospark_vision_io::MiniCpmIds::new(
+                    v.image_token_id as i32,
+                    v.vision_start_token_id as i32,
+                    v.vision_end_token_id as i32,
+                ),
+            })
         } else if runner.has_vision_tower() {
             let v = runner.vision_config();
             preprocess_params
@@ -565,6 +593,29 @@ impl RealChatModel {
                             .to_string(),
                     ));
                 };
+                let mut embeddings = Vec::with_capacity(images.len());
+                for (i, image) in images.iter().enumerate() {
+                    embeddings.push(
+                        runner
+                            .encode_image(image, &params)
+                            .map_err(|e| RuntimeError::Producer(format!("image {i}: {e}")))?,
+                    );
+                }
+                runner
+                    .set_prompt_vision(&embeddings, positions, prompt_ids.len())
+                    .map_err(|e| RuntimeError::Producer(e.to_string()))?;
+            }
+            crate::vision::RequestImages::MiniCpm { images, positions } => {
+                let params =
+                    match &self.vision_info {
+                        Some(crate::vision::VisionInfo::MiniCpm { params, .. }) => {
+                            params.as_preprocess_params()
+                        }
+                        _ => return Err(RuntimeError::Producer(
+                            "a MiniCPM-V request reached a backend without MiniCPM-V vision info"
+                                .to_string(),
+                        )),
+                    };
                 let mut embeddings = Vec::with_capacity(images.len());
                 for (i, image) in images.iter().enumerate() {
                     embeddings.push(

@@ -41,6 +41,7 @@ pub mod clip;
 pub mod decode;
 pub mod error;
 pub mod gemma4;
+pub mod minicpm;
 pub mod mrope;
 pub mod muse;
 pub mod normalize;
@@ -66,6 +67,12 @@ pub use gemma4::{
     gemma4_expand_image_placeholders, gemma4_preprocess, gemma4_resize_dims,
     gemma4_soft_tokens_for, Gemma4ImageIds, Gemma4Patches, GEMMA4_DEFAULT_SOFT_TOKENS,
     GEMMA4_PATCH, GEMMA4_PATCH_DIM, GEMMA4_POOL, GEMMA4_SOFT_TOKEN_BUDGETS,
+};
+pub use minicpm::{
+    canvas_positions, minicpm_preprocess, minicpm_resize_dims, minicpm_splice_and_positions,
+    MiniCpmIds, MiniCpmParams, MINICPM_IMAGE_ID_END, MINICPM_IMAGE_ID_START, MINICPM_MARKER_TOKENS,
+    MINICPM_MERGE, MINICPM_NEWLINE_ID, MINICPM_PATCH, MINICPM_SCALE_RESOLUTION,
+    MINICPM_SLICE_END_ID, MINICPM_SLICE_START_ID,
 };
 pub use mrope::{
     mrope_position_triples, splice_and_walk, splice_image_placeholders,

@@ -319,6 +319,9 @@ pub fn parse_vision_config(json: &str) -> Result<VisionConfig, Gemma4Error> {
     if root.get("model_type").and_then(serde_json::Value::as_str) == Some("muse_glimmer") {
         return parse_muse_vision_config(root, vc);
     }
+    if root.get("model_type").and_then(serde_json::Value::as_str) == Some("minicpmv4_7") {
+        return parse_minicpm_v_vision_config(root, vc);
+    }
     let i = |k: &str| -> Result<i64, Gemma4Error> {
         vc.get(k)
             .and_then(serde_json::Value::as_i64)
@@ -773,6 +776,166 @@ fn parse_qwen25_vl_vision_config(
             vision.out_hidden_size,
             trunk_hidden.unwrap_or(0)
         )));
+    }
+    Ok(vision)
+}
+
+/// The MiniCPM-V 4.7 tower's constants, checked against the checkpoint rather
+/// than stored (`VisionTowerKind::MiniCpmV`). Read off
+/// `mlx-community/MiniCPM-V-4.7-35B-A3B-mxfp4` and mlx-vlm's
+/// `minicpmv4_6`/`minicpmv4_7` source (`docs/MINICPMV_VISION_PHASE0.md`).
+pub const MINICPM_V_DEPTH: i64 = 27;
+/// The encoder block after which the 2x2 window attention-merger runs.
+pub const MINICPM_V_INSERT_LAYER: i64 = 6;
+/// Per-axis downsample of the default `16x` mode: the window merger (2) times
+/// the final merger (2).
+pub const MINICPM_V_MERGE: i64 = 4;
+/// `<slice>` / `</slice>` and the `\n` row separator. Slicing is not built, so
+/// these only decide which marker tokens the canvas rope absorbs around a
+/// thumbnail.
+pub const MINICPM_V_SLICE_START_ID: i64 = 248088;
+pub const MINICPM_V_SLICE_END_ID: i64 = 248089;
+pub const MINICPM_V_NEWLINE_ID: i64 = 198;
+
+/// `config.json` of a `minicpmv4_7` wrapper. Everything that varies is read
+/// from the file; everything the 4.7 reference hardcodes (the 27-block SigLIP,
+/// the insert layer, the `16x` mode, the 2x2 mergers, the canvas rope, the
+/// marker ids) is checked, and a checkpoint that disagrees is refused rather
+/// than run with the wrong merger geometry.
+fn parse_minicpm_v_vision_config(
+    root: &serde_json::Value,
+    vc: &serde_json::Value,
+) -> Result<VisionConfig, Gemma4Error> {
+    let i = |k: &str| -> Result<i64, Gemma4Error> {
+        vc.get(k)
+            .and_then(serde_json::Value::as_i64)
+            .ok_or_else(|| Gemma4Error::Config(format!("missing vision_config.{k}")))
+    };
+    let tc = root.get("text_config").unwrap_or(root);
+    let section = tc
+        .get("rope_parameters")
+        .and_then(|r| r.get("mrope_section"))
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| {
+            Gemma4Error::Config(
+                "a minicpmv4_7 config with no text_config.rope_parameters.mrope_section".into(),
+            )
+        })?;
+    if section.len() != 3 {
+        return Err(Gemma4Error::Config(format!(
+            "mrope_section has {} entries, expected the (t, h, w) triple",
+            section.len()
+        )));
+    }
+    let mut mrope_section = [0i64; 3];
+    for (slot, v) in mrope_section.iter_mut().zip(section) {
+        *slot = v
+            .as_i64()
+            .ok_or_else(|| Gemma4Error::Config("mrope_section entry is not an integer".into()))?;
+    }
+    let patch = i("patch_size")?;
+    let image_size = i("image_size")?;
+    if patch <= 0 || image_size % patch != 0 {
+        return Err(Gemma4Error::Config(format!(
+            "minicpmv4_7 vision image_size {image_size} is not a multiple of patch_size {patch}"
+        )));
+    }
+    let side = image_size / patch;
+    let vision = VisionConfig {
+        depth: i("num_hidden_layers")?,
+        hidden_size: i("hidden_size")?,
+        intermediate_size: i("intermediate_size")?,
+        num_heads: i("num_attention_heads")?,
+        patch_size: patch,
+        temporal_patch_size: 1,
+        in_channels: i("num_channels")?,
+        spatial_merge_size: MINICPM_V_MERGE,
+        num_position_embeddings: side * side,
+        out_hidden_size: tc
+            .get("hidden_size")
+            .and_then(serde_json::Value::as_i64)
+            .ok_or_else(|| Gemma4Error::Config("missing text_config.hidden_size".into()))?,
+        mrope_section,
+        deepstack_visual_indexes: Vec::new(),
+        vision_start_token_id: root_i(root, "image_start_id")?,
+        vision_end_token_id: root_i(root, "image_end_id")?,
+        image_token_id: root_i(root, "image_token_id")?,
+        video_token_id: root_i(root, "video_token_id")?,
+        tower: model_io::VisionTowerKind::MiniCpmV,
+    };
+    let refuse = |what: String| Err(Gemma4Error::Config(format!("minicpmv4_7: {what}")));
+    if vision.depth != MINICPM_V_DEPTH
+        || vision.patch_size != 14
+        || vision.in_channels != 3
+        || vision.num_heads <= 0
+        || vision.hidden_size % vision.num_heads != 0
+    {
+        return refuse(format!(
+            "tower geometry depth {} patch {} channels {} heads {} hidden {} is not the \
+             27-block, patch-14 SigLIP the reference runs",
+            vision.depth,
+            vision.patch_size,
+            vision.in_channels,
+            vision.num_heads,
+            vision.hidden_size
+        ));
+    }
+    if vc.get("hidden_act").and_then(serde_json::Value::as_str) != Some("gelu_pytorch_tanh") {
+        return refuse("vision hidden_act must be gelu_pytorch_tanh".into());
+    }
+    if vc
+        .get("layer_norm_eps")
+        .and_then(serde_json::Value::as_f64)
+        .map(|e| (e - 1e-6).abs() > 1e-12)
+        .unwrap_or(true)
+    {
+        return refuse("vision layer_norm_eps must be 1e-6".into());
+    }
+    let root_i64 = |k: &str| root.get(k).and_then(serde_json::Value::as_i64);
+    if root_i64("insert_layer_id") != Some(MINICPM_V_INSERT_LAYER) {
+        return refuse(format!(
+            "insert_layer_id {:?} is not the {MINICPM_V_INSERT_LAYER} the window merger is built for",
+            root_i64("insert_layer_id")
+        ));
+    }
+    if root
+        .get("downsample_mode")
+        .and_then(serde_json::Value::as_str)
+        != Some("16x")
+    {
+        return refuse("only the default 16x downsample mode is built".into());
+    }
+    if root.get("mrope_mode").and_then(serde_json::Value::as_str) != Some("canvas") {
+        return refuse("mrope_mode must be canvas".into());
+    }
+    for key in ["merge_kernel_size", "window_kernel_size"] {
+        for holder in [root, vc] {
+            if let Some(v) = holder.get(key) {
+                if v != &serde_json::json!([2, 2]) {
+                    return refuse(format!(
+                        "{key} {v} is not the 2x2 the mergers are built for"
+                    ));
+                }
+            }
+        }
+    }
+    if root_i64("merger_times").is_some_and(|t| t != 1) {
+        return refuse("merger_times must be 1".into());
+    }
+    for (key, want) in [
+        ("slice_start_id", MINICPM_V_SLICE_START_ID),
+        ("slice_end_id", MINICPM_V_SLICE_END_ID),
+        ("newline_id", MINICPM_V_NEWLINE_ID),
+    ] {
+        if root_i64(key) != Some(want) {
+            return refuse(format!(
+                "{key} {:?} is not the {want} the canvas rope absorbs",
+                root_i64(key)
+            ));
+        }
+    }
+    if mrope_section.iter().sum::<i64>() <= 0 {
+        return refuse("mrope_section is empty".into());
     }
     Ok(vision)
 }
