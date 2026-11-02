@@ -237,6 +237,91 @@ pub(crate) fn attach_gemma4(
     Ok(expanded)
 }
 
+/// The CLIP tower's processor config, read beside the tower (the sidecar's
+/// directory when one is attached) and cross-checked against the install's own
+/// `arch.vision` for the two numbers that must agree for the tower to read the
+/// rows at all: the patch edge and the position-table size. A config that
+/// describes a different crop would otherwise fail at a shape check inside the
+/// tower, far from the file that caused it.
+pub(crate) fn clip_params(
+    runner: &runtime::RealForwardRunner,
+) -> Result<turbospark_vision_io::ClipPreprocessParams, String> {
+    let path = runner.vision_dir().join("preprocessor_config.json");
+    let json = std::fs::read_to_string(&path).map_err(|e| {
+        format!(
+            "{}: {e}\n  this install declares no image preprocessing config; re-stream it with \
+             its sidecars, or copy the checkpoint's preprocessor_config.json in",
+            path.display()
+        )
+    })?;
+    let params = turbospark_vision_io::ClipPreprocessParams::from_preprocessor_config_json(&json)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    let vision = runner.vision_config();
+    if vision.patch_size != turbospark_vision_io::CLIP_PATCH as i64
+        || vision.num_position_embeddings != params.tokens() as i64 + 1
+    {
+        return Err(format!(
+            "{}: a {}-pixel crop is {} patches, but this install's tower has patch {} and a \
+             {}-row position table; the two describe different checkpoints",
+            path.display(),
+            params.size,
+            params.tokens(),
+            vision.patch_size,
+            vision.num_position_embeddings
+        ));
+    }
+    Ok(params)
+}
+
+/// The CLIP tower's whole turn (LLaVA, `docs/LLAVA_VISION_PHASE0.md`): read
+/// the processor config beside the tower, decode and preprocess every part
+/// (shortest-edge resize, center crop, normalize), expand each rendered
+/// `<image>` to one placeholder per patch, encode, and hand the runner the
+/// rows. Returns the expanded ids to prefill. Mirrors
+/// `crates/cli/src/generate/vision.rs::attach_clip`.
+pub(crate) fn attach_clip(
+    runner: &mut runtime::RealForwardRunner,
+    rendered: &[i32],
+    bos: Option<i32>,
+    parts: &[&WirePart],
+) -> Result<Vec<i32>, String> {
+    let (marker, fill) = runner
+        .clip_image_ids()
+        .ok_or("this install's vision tower is not a CLIP one")?;
+    let params = clip_params(runner)?;
+    let mut prepared = Vec::with_capacity(parts.len());
+    for (i, part) in parts.iter().enumerate() {
+        let (label, decoded) = decode_part(part, i)?;
+        let patches = turbospark_vision_io::clip_preprocess(&decoded, &params)
+            .map_err(|e| format!("{label}: {e}"))?;
+        prepared.push((label, patches));
+    }
+    let counts = vec![params.tokens(); prepared.len()];
+    // The llava-hf template emits no `<s>`; the reference's processor adds it.
+    let rendered = turbospark_vision_io::clip_prepend_bos(rendered, bos);
+    let (expanded, spans) =
+        turbospark_vision_io::clip_expand_image_placeholders(&rendered, marker, fill, &counts)
+            .map_err(|e| {
+                format!(
+                    "cannot place {} image(s) in this prompt: {e}\n  the template renders one \
+                     <image> per image; check the messages actually carry image parts",
+                    parts.len()
+                )
+            })?;
+    let mut rows = Vec::with_capacity(prepared.len());
+    for (label, patches) in &prepared {
+        rows.push(
+            runner
+                .encode_image_clip(patches)
+                .map_err(|e| format!("{label}: {e}"))?,
+        );
+    }
+    runner
+        .set_prompt_vision_flat(&rows, &spans, expanded.len())
+        .map_err(|e| format!("cannot inject the encoded images: {e}"))?;
+    Ok(expanded)
+}
+
 /// Run the tower over `images` and hand the runner the injection map for
 /// `rendered`.
 ///

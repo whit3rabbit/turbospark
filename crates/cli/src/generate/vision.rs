@@ -61,6 +61,9 @@ pub(crate) fn preprocess_params(session: &Session) -> Result<PreprocessParams, S
     if session.runner.gemma4_image_ids().is_some() {
         return Err("internal: the Gemma 4 tower takes attach_gemma4".to_string());
     }
+    if session.runner.clip_image_ids().is_some() {
+        return Err("internal: the CLIP tower takes attach_clip".to_string());
+    }
     let path = session.runner.vision_dir().join("preprocessor_config.json");
     let json = std::fs::read_to_string(&path).map_err(|e| {
         format!(
@@ -254,6 +257,90 @@ pub(crate) fn attach_gemma4(
     session
         .runner
         .set_prompt_vision_gemma4(&rows, &spans, expanded.len())
+        .map_err(|e| format!("cannot inject the encoded images: {e}"))?;
+    Ok(expanded)
+}
+
+/// The CLIP tower's whole `--image` path (LLaVA, `docs/LLAVA_VISION_PHASE0.md`):
+/// read the processor config beside the tower, decode and preprocess each
+/// file (shortest-edge resize, center crop, normalize), expand each rendered
+/// `<image>` to one placeholder per patch, encode, and hand the runner the
+/// rows. Returns the expanded ids to prefill.
+///
+/// The processor config is cross-checked against the install's own
+/// `arch.vision` for the two numbers that must agree for the tower to read
+/// the rows at all: the patch edge and the position-table size. An install
+/// whose config describes a different crop would otherwise fail at a shape
+/// check inside the tower, far from the file that caused it.
+pub(crate) fn attach_clip(
+    session: &mut Session,
+    rendered: &[i32],
+    paths: &[String],
+) -> Result<Vec<i32>, String> {
+    let (marker, fill) = session
+        .runner
+        .clip_image_ids()
+        .ok_or("this install's vision tower is not a CLIP one")?;
+    let path = session.runner.vision_dir().join("preprocessor_config.json");
+    let json = std::fs::read_to_string(&path).map_err(|e| {
+        format!(
+            "{}: {e}\n  this install declares no image preprocessing config; re-stream it with \
+             its sidecars, or copy the checkpoint's preprocessor_config.json in",
+            path.display()
+        )
+    })?;
+    let params = turbospark_vision_io::ClipPreprocessParams::from_preprocessor_config_json(&json)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    let vision = session.runner.vision_config();
+    if vision.patch_size != turbospark_vision_io::CLIP_PATCH as i64
+        || vision.num_position_embeddings != params.tokens() as i64 + 1
+    {
+        return Err(format!(
+            "{}: a {}-pixel crop is {} patches, but this install's tower has patch {} and a \
+             {}-row position table; the two describe different checkpoints",
+            path.display(),
+            params.size,
+            params.tokens(),
+            vision.patch_size,
+            vision.num_position_embeddings
+        ));
+    }
+
+    let mut prepared = Vec::with_capacity(paths.len());
+    for image_path in paths {
+        let decoded = decode_image_file(std::path::Path::new(image_path))
+            .map_err(|e| format!("--image {image_path}: {e}"))?;
+        let patches = turbospark_vision_io::clip_preprocess(&decoded, &params)
+            .map_err(|e| format!("--image {image_path}: {e}"))?;
+        prepared.push((image_path, patches));
+    }
+    let counts = vec![params.tokens(); prepared.len()];
+    // The llava-hf template emits no `<s>`; the reference's processor adds it.
+    let rendered = turbospark_vision_io::clip_prepend_bos(
+        rendered,
+        session.tokenizer.encode("", true).first().copied(),
+    );
+    let (expanded, spans) =
+        turbospark_vision_io::clip_expand_image_placeholders(&rendered, marker, fill, &counts)
+            .map_err(|e| {
+                format!(
+                    "cannot place {} image(s) in this prompt: {e}\n  the template renders one \
+                     <image> per image; check the messages actually carry image parts",
+                    paths.len()
+                )
+            })?;
+    let mut rows = Vec::with_capacity(prepared.len());
+    for (image_path, patches) in &prepared {
+        rows.push(
+            session
+                .runner
+                .encode_image_clip(patches)
+                .map_err(|e| format!("--image {image_path}: {e}"))?,
+        );
+    }
+    session
+        .runner
+        .set_prompt_vision_flat(&rows, &spans, expanded.len())
         .map_err(|e| format!("cannot inject the encoded images: {e}"))?;
     Ok(expanded)
 }

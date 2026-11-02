@@ -24,6 +24,7 @@ mod ngram;
 mod orchestrate;
 mod shards;
 mod vision;
+mod vision_clip;
 mod vision_gemma4;
 mod vision_lfm3;
 
@@ -61,6 +62,10 @@ pub use vision::{
     QWEN25_BLOCK_ROLES as VISION_QWEN25_BLOCK_ROLES,
     QWEN25_RESIDENT_TENSORS as VISION_QWEN25_RESIDENT_TENSORS,
     RESIDENT_TENSORS as VISION_RESIDENT_TENSORS,
+};
+pub use vision_clip::{
+    parse_llava_vision_config, read_clip_vision_entries, CLIP_MODEL_PREFIX,
+    CLIP_PROJECTOR_PREFIX, CLIP_RESIDENT_TENSORS, CLIP_SOURCE_PREFIXES, LLAVA_MODEL_TYPE,
 };
 pub use vision_gemma4::{
     parse_gemma4_vision_config, EMBED_VISION_PREFIX, GEMMA4_BLOCK_ROLES,

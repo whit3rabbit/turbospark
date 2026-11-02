@@ -569,6 +569,115 @@ impl RealForwardRunner {
         self.gemma4_vision = None;
         self.qwen25_vision = None;
         self.lfm3_vision = None;
+        self.clip_vision = None;
+    }
+
+    /// `(marker, fill)` for a LLaVA prompt, read off the install, or `None`
+    /// when this install's tower is not a CLIP one.
+    ///
+    /// `marker` is the id the template's bare `<image>` tokenizes to (LLaVA
+    /// has no start or end token around an image). `fill` is what the
+    /// expanded run carries: the marker itself when the trunk's table has a
+    /// row for it, else id 0. The GGUF trunks carry 32,000 rows against the
+    /// marker's 32,000, and the trunk range-checks every id before the blit
+    /// that replaces its lookup (`docs/LLAVA_VISION_PHASE0.md`).
+    pub fn clip_image_ids(&self) -> Option<(i32, i32)> {
+        let v = &self.arch.vision;
+        if !(v.is_active() && v.tower == model_io::VisionTowerKind::Clip) {
+            return None;
+        }
+        let marker = v.image_token_id as i32;
+        let fill = if i64::from(marker) < self.arch.vocab_size {
+            marker
+        } else {
+            0
+        };
+        Some((marker, fill))
+    }
+
+    /// Encode one image through this install's CLIP tower: `[patches,
+    /// text_hidden]` FP16 bits, the rows that replace the placeholder run.
+    ///
+    /// The tower opens lazily on the first image, from the attached sidecar
+    /// when there is one and from the install otherwise. Inject the rows with
+    /// [`Self::set_prompt_vision_flat`].
+    pub fn encode_image_clip(
+        &mut self,
+        patches: &turbospark_vision_io::ClipPatches,
+    ) -> Result<Vec<u16>, RealForwardError> {
+        self.open_clip_tower()?;
+        let tower = self.clip_vision.as_mut().expect("opened just above");
+        tower
+            .run(&mut self.context, &self.weights, patches, false)
+            .map(|(rows, _)| rows)
+    }
+
+    /// [`Self::encode_image_clip`] plus the residual stream at three points,
+    /// for the cross-engine parity gate. Diagnostic: the ordinary entry point
+    /// pays none of the three readbacks.
+    pub fn encode_image_clip_with_stages(
+        &mut self,
+        patches: &turbospark_vision_io::ClipPatches,
+    ) -> Result<(Vec<u16>, crate::vision::ClipStages), RealForwardError> {
+        self.open_clip_tower()?;
+        let tower = self.clip_vision.as_mut().expect("opened just above");
+        let (rows, stages) = tower.run(&mut self.context, &self.weights, patches, true)?;
+        Ok((rows, stages.expect("requested just above")))
+    }
+
+    fn open_clip_tower(&mut self) -> Result<(), RealForwardError> {
+        if self.arch.vision.tower != model_io::VisionTowerKind::Clip
+            || !self.arch.vision.is_active()
+        {
+            return Err(RealForwardError::Unsupported(
+                "this install declares no CLIP vision tower".to_string(),
+            ));
+        }
+        if self.clip_vision.is_none() {
+            self.clip_vision = Some(match &self.vision_sidecar_dir {
+                Some(dir) => crate::vision::clip::ClipVisionTower::open_with_sidecar(
+                    dir,
+                    &self.context,
+                    &self.arch,
+                )?,
+                None => crate::vision::clip::ClipVisionTower::open(
+                    &self.install_dir,
+                    &self.context,
+                    &self.weights,
+                    &self.index,
+                    &self.arch,
+                )?,
+            });
+        }
+        Ok(())
+    }
+
+    /// Hand this runner one prompt's CLIP image rows: one `[span.len,
+    /// text_hidden]` FP16 row set per placeholder run, in prompt order. The
+    /// next prefill writes them in place of the placeholders' embeddings.
+    ///
+    /// Positions are the plain token index (LLaVA has no mRoPE), so the
+    /// trunk's rotary stays on its ordinary kernel; the injection is the
+    /// embedding blit alone and attention over the image run is causal like
+    /// any other text. The same lifetime and prefix-taint rules as
+    /// [`Self::set_prompt_vision`].
+    pub fn set_prompt_vision_flat(
+        &mut self,
+        images: &[Vec<u16>],
+        spans: &[turbospark_vision_io::ImageSpan],
+        prompt_len: usize,
+    ) -> Result<(), RealForwardError> {
+        if self.arch.vision.tower != model_io::VisionTowerKind::Clip {
+            return Err(RealForwardError::Unsupported(
+                "set_prompt_vision_flat needs a CLIP vision tower".to_string(),
+            ));
+        }
+        let hidden = self.arch.hidden_size as usize;
+        self.prompt_vision = Some(crate::vision::PromptVision::flat(
+            images, spans, prompt_len, hidden,
+        )?);
+        self.kv_prefix.taint();
+        Ok(())
     }
 
     /// The three ids a Gemma 4 image occupies in a prompt, read off the
@@ -636,7 +745,8 @@ fn qwen_tower_only(vision: &model_io::VisionConfig) -> Result<(), RealForwardErr
         )),
         other => Err(RealForwardError::Unsupported(format!(
             "this install's vision tower is {}; encode its images with \
-             encode_image_gemma4 and inject them with set_prompt_vision_gemma4",
+             encode_image_gemma4 / encode_image_clip and inject them with \
+             set_prompt_vision_gemma4 / set_prompt_vision_flat",
             other.as_str()
         ))),
     }

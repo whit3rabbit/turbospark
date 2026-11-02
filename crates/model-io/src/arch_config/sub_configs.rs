@@ -236,6 +236,17 @@ pub enum VisionTowerKind {
     /// unshuffle factor (2), `num_position_embeddings` is zero (the tower
     /// has no position table), and `out_hidden_size` is the trunk width.
     Lfm3Vl,
+    /// The CLIP ViT tower LLaVA-1.5 carries (`docs/LLAVA_VISION_PHASE0.md`):
+    /// class token, learned absolute positions, a LayerNorm before the first
+    /// block, quick-GELU blocks, the hidden state of the second-to-last
+    /// block with the class row dropped, then a two-layer GELU projector.
+    ///
+    /// Field meanings: `depth` is the blocks THAT RUN (23 of the checkpoint's
+    /// 24, the last is never read), `spatial_merge_size` is 1, `temporal_patch_size`
+    /// is 1, `num_position_embeddings` counts the class row (577), and
+    /// `out_hidden_size` is the projector's output (the trunk width). The
+    /// start and end ids are 0: the placeholder run is bare.
+    Clip,
 }
 
 impl VisionTowerKind {
@@ -246,6 +257,7 @@ impl VisionTowerKind {
             VisionTowerKind::Gemma4 => "gemma4",
             VisionTowerKind::Qwen25Vl => "qwen25_vl",
             VisionTowerKind::Lfm3Vl => "lfm3_vl",
+            VisionTowerKind::Clip => "clip",
         }
     }
 
@@ -257,6 +269,7 @@ impl VisionTowerKind {
             "gemma4" => Some(VisionTowerKind::Gemma4),
             "qwen25_vl" => Some(VisionTowerKind::Qwen25Vl),
             "lfm3_vl" => Some(VisionTowerKind::Lfm3Vl),
+            "clip" => Some(VisionTowerKind::Clip),
             _ => None,
         }
     }

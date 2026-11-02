@@ -81,6 +81,40 @@ fn identical_marker_ids_are_refused() {
     assert!(err.to_string().contains("distinct"));
 }
 
+/// `verify_bare_image_marker` is the check for a tower with no start token
+/// (CLIP / LLaVA): the marker must resolve and render exactly once for one
+/// image. The ChatML fixture renders `<|image_pad|>` once per image, so it
+/// stands in for LLaVA's `<image>` here.
+#[test]
+fn a_bare_marker_that_renders_once_passes_and_the_rest_are_refused() {
+    let tok = load();
+    let (_, image_pad) = marker_ids(&tok);
+    tok.verify_bare_image_marker(image_pad)
+        .expect("a marker the template renders once per image must verify");
+
+    let bogus = 9_000_002;
+    let err = tok
+        .verify_bare_image_marker(bogus)
+        .expect_err("an id with no token behind it must be refused");
+    assert!(err.to_string().contains(&bogus.to_string()), "{err}");
+
+    // Resolves, but the template never places it around an image.
+    let unrelated = tok
+        .token_to_id("<tool_call>")
+        .expect("fixture carries <tool_call> as an added token");
+    let err = tok
+        .verify_bare_image_marker(unrelated)
+        .expect_err("a token the template never renders must be refused");
+    assert!(err.to_string().contains("0 occurrence"), "{err}");
+
+    // `<|vision_start|>` renders once too, so it passes as a bare marker: the
+    // check says "exactly one", not "this is the pad". The pair check above
+    // is the one that tells the two apart.
+    let (vision_start, _) = marker_ids(&tok);
+    tok.verify_bare_image_marker(vision_start)
+        .expect("exactly one occurrence is all this check asserts");
+}
+
 /// A tokenizer whose ids resolve fine but whose ONE-IMAGE render carries the
 /// wrong multiplicity of a marker must still be refused: two real, valid
 /// tokens standing in for vision_start/image_pad (but not the ones the

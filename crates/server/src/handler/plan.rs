@@ -586,6 +586,36 @@ pub(crate) fn plan(model: &AppState, request: &ChatCompletionRequest) -> Result<
             let images = crate::vision::gemma4_preprocess_all(&encoded, *max_soft_tokens)?;
             Some(crate::vision::RequestImages::Gemma4 { images, spans })
         }
+        // CLIP (LLaVA): each rendered `<image>` becomes one placeholder per
+        // patch of the fixed crop, no start or end token. The count is a
+        // property of the processor config, so only the byte budget needs a
+        // header pass before any pixel is decoded.
+        (
+            Some(crate::vision::VisionInfo::Clip {
+                params,
+                marker,
+                fill,
+            }),
+            false,
+        ) => {
+            crate::vision::clip_preflight_all(&encoded, params)?;
+            let counts = vec![params.tokens(); encoded.len()];
+            // The llava-hf template emits no `<s>`; the reference's
+            // processor adds it, and the `add_bos = false` encode above
+            // follows the convention that the template carries it.
+            let with_bos = turbospark_vision_io::clip_prepend_bos(
+                &prompt_ids,
+                model.tokenizer().encode("", true).first().copied(),
+            );
+            let (expanded, spans) = turbospark_vision_io::clip_expand_image_placeholders(
+                &with_bos, *marker, *fill, &counts,
+            )
+            .map_err(|e| format!("cannot place {} image(s): {e}", counts.len()))?;
+            prompt_ids = expanded;
+            check_context(&prompt_ids, &config, model.max_context())?;
+            let images = crate::vision::clip_preprocess_all(&encoded, params)?;
+            Some(crate::vision::RequestImages::Clip { images, spans })
+        }
         _ => None,
     };
 

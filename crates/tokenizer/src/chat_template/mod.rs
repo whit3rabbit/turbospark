@@ -502,6 +502,45 @@ impl MfTokenizer {
         Ok(())
     }
 
+    /// [`Self::verify_image_markers`] for a tower with NO start token: the
+    /// template renders one bare image marker (LLaVA's `<image>`), and the
+    /// processor repeats it per patch.
+    ///
+    /// Same two checks minus the pair: the marker resolves to a real token,
+    /// and a minimal `[Image, Text]` turn renders EXACTLY ONE of it. A
+    /// template that renders none (a text-only tokenizer pairing) or two (an
+    /// already-expanded one) would otherwise surface as a placeholder-count
+    /// mismatch at the first image.
+    pub fn verify_bare_image_marker(&self, image_marker: i32) -> Result<(), TokenizerError> {
+        if self.id_to_token(image_marker).is_none() {
+            return Err(TokenizerError::InvalidVisionMarkers(format!(
+                "image marker token id {image_marker} does not resolve to a token in this \
+                 tokenizer's vocabulary"
+            )));
+        }
+        let probe = [Message::with_parts(
+            Role::User,
+            vec![
+                ContentPart::Image,
+                ContentPart::Text("describe this image".to_string()),
+            ],
+        )];
+        let rendered = self.apply_chat_template(&probe).map_err(|e| {
+            TokenizerError::InvalidVisionMarkers(format!(
+                "could not render a minimal one-image turn to verify the image marker: {e}"
+            ))
+        })?;
+        let ids = self.encode(&rendered, true);
+        let count = ids.iter().filter(|&&id| id == image_marker).count();
+        if count != 1 {
+            return Err(TokenizerError::InvalidVisionMarkers(format!(
+                "this checkpoint's chat template renders {count} occurrence(s) of the image \
+                 marker ({image_marker}) for one image; the expansion needs exactly one"
+            )));
+        }
+        Ok(())
+    }
+
     /// Full DeepSeek-V4 tool-chat render: tool schemas join the system
     /// message as a `## Tools` section, `tool` results merge into
     /// `<User>` turns as `<tool_result>` blocks, and historical tool calls

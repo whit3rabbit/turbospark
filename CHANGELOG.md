@@ -14,6 +14,11 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- LLaVA-1.5 image support for the `llama` family: a CLIP vision tower
+  (`VisionTowerKind::Clip`), a `pull-vision` sidecar from
+  `llava-hf/llava-1.5-7b-hf` attached to a GGUF trunk, `--image` in the CLI,
+  and both server endpoints. Adds a quick-GELU vision kernel and a BOS fix for
+  the BOS-less llava template. See `docs/LLAVA_VISION_PHASE0.md`.
 - LFM3-VL image support: the `lfm3` flow takes images through a new tower kind
   (RMSNorm blocks alternating a gated depthwise 3x3 convolution and
   grouped-query attention, a SwiGLU MLP, a pixel-unshuffle projector).

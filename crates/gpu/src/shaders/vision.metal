@@ -171,6 +171,24 @@ void vision_silu_fp16(
     y[tid] = half(x / (1.0f + exp(-x)));
 }
 
+// CLIP's activation: `x * sigmoid(1.702 * x)` (`quick_gelu`, mlx-vlm's
+// `nn.GELU(approx="fast")`). A third kernel and not a mode on the other two,
+// for the same reason they are separate: it differs from tanh-GELU by up to
+// ~2e-2, which a parity bound CAN see, so a wrong choice here is not the
+// silent kind the tanh/erf pair is. The exponent is clamped so a large
+// negative input saturates to 0 instead of overflowing `exp`.
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void vision_gelu_quick_fp16(
+    device half*    y     [[buffer(0)]],
+    constant uint&  count [[buffer(1)]],
+    uint            tid   [[thread_position_in_grid]]
+) {
+    if (tid >= count) return;
+    const float x = float(y[tid]);
+    const float e = exp(clamp(-1.702f * x, -80.0f, 80.0f));
+    y[tid] = half(x / (1.0f + e));
+}
+
 // ----------------------------------------------------------------------------
 // The tower's 2-D rotary embedding.
 //

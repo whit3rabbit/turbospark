@@ -382,6 +382,7 @@ impl RealForwardRunner {
             gemma4_vision: None,
             qwen25_vision: None,
             lfm3_vision: None,
+            clip_vision: None,
             vision_sidecar_dir: None,
             prompt_vision: None,
             skip_head: false,

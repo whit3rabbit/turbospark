@@ -70,6 +70,8 @@ pub use flint_rebalance::{
 };
 pub use gemma4_checkpoint::{
     canonicalize_flint_header, canonicalize_qwen2_header, canonicalize_vision_header,
+    parse_llava_vision_config, read_clip_vision_entries, CLIP_MODEL_PREFIX, CLIP_PROJECTOR_PREFIX,
+    CLIP_RESIDENT_TENSORS, CLIP_SOURCE_PREFIXES, LLAVA_MODEL_TYPE,
     classify_for_family, classify_gemma4, convert_raw_to_fp16, gemma4_manifest_quant,
     gguf_mxfp4_row_bytes, graft_qwen_gdn_dense_mtp_head, is_supported_affine_shape, manifest_quant,
     manifest_quant_for, mlx_mxfp4_dequant_to_bf16, mlx_mxfp4_reblock_to_gguf, narrow_raw_to_bf16,

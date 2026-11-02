@@ -355,7 +355,8 @@ means image support.
 | `DeepseekV4Flash` | **Text-only** | The family is scaffolded and its witnessed checkpoint carries a vision tower, but this port has no executable intake or runtime vision path. |
 | `Lfm3` | **Real-gated (2026-11-01), combined install only** | Its own tower (`VisionTowerKind::Lfm3Vl`): 14 RMSNorm blocks alternating a gated depthwise 3x3 convolution and grouped-query attention with a neox 2-D rope (theta 1e6), a SwiGLU MLP, and a pixel-unshuffle projector. Verified on `LiquidAI/LFM3-VL-2B-MLX-8bit`: tower stages against an independent FP32 numpy implementation at worst-stage cosine 0.9999965 (output rows 0.99999650), a mutated rope theta drops the output to 0.700, and a text page is read through the CLI (chunked and per-token prefill agree) and both server endpoints. No sidecar (refused by name), no FFI/Swift run, and the 4-bit build (affine group 32) is not intaken, so the 8-bit build is the pinned one. mlx-vlm was not executed. Facts and gates: [`LFM3_VL_VISION_PHASE0.md`](LFM3_VL_VISION_PHASE0.md). |
 | `Deepseek2` | **Text-only; DeepSeek-VL2 blocked on the trunk** | The vision side is a plain SigLIP tower, but the VL2 trunk is non-MLA MHA MoE with MLX affine weights, which the MLA, GGUF-only `deepseek2` flow and intake cannot run: a new trunk family comes first. [`DEEPSEEK_VL2_VISION_PHASE0.md`](DEEPSEEK_VL2_VISION_PHASE0.md). |
-| `Llama`, `Qwen3Moe`, `Qwen3Dense`, `GptOss`, `Spark25`, `MiniMaxM2` | **Text-only** | No image tower is implemented for these families. No vision variant was found for `GptOss`, `Spark25`, `MiniMaxM2` or `Flint` (checked 2026-11-01 against the publishers' repositories and mlx-vlm's model list). |
+| `Llama` | **Real-gated (2026-11-01), sidecar only (LLaVA-1.5)** | A CLIP ViT-L/14-336 tower (`VisionTowerKind::Clip`: 23 of 24 blocks, quick-GELU, class row dropped) plus a GELU projector, pulled with `pull-vision` from `llava-hf/llava-1.5-7b-hf` and attached to a GGUF LLaVA trunk. Tower parity against transformers: pixels 4.8e-7, embed 0.9999996, block 22 0.9996 (the reference's own FP16 floor is 0.9995), projector 0.9998. A shapes image is described through the CLI and both server endpoints, and a color-swapped control follows the new pixels. Other `llama` installs stay text-only, and `--vision-sidecar auto` would attach this tower to any 4096-wide `llama` trunk, so name the sidecar. Pixtral and Mistral3 need a different tower and are not built. [`LLAVA_VISION_PHASE0.md`](LLAVA_VISION_PHASE0.md). |
+| `Qwen3Moe`, `Qwen3Dense`, `GptOss`, `Spark25`, `MiniMaxM2` | **Text-only** | No image tower is implemented for these families. No vision variant was found for `GptOss`, `Spark25`, `MiniMaxM2` or `Flint` (checked 2026-11-01 against the publishers' repositories and mlx-vlm's model list). |
 
 `Real-gated` means an image was encoded and changed generated output on a real
 install. `Structural, unverified` means the shared code accepts the family and
@@ -364,7 +365,7 @@ needed for a release claim. `Text-only` also describes the current behavior of
 the request surfaces: they may validate or report an image, but the image does
 not reach the model.
 
-Seven families carry a real image gate (`Qwen2Dense` via its Qwen2.5-VL tower and `Lfm3` via its own tower, both 2026-11-01, are the sixth and seventh): `QwenGdnDense` (Qwen3.8 dense, the
+Eight families carry a real image gate (`Qwen2Dense` via its Qwen2.5-VL tower, `Lfm3` via its own tower and `Llama` via LLaVA's CLIP tower, all 2026-11-01, are the sixth to eighth): `QwenGdnDense` (Qwen3.8 dense, the
 first), `QwenGdnMoe` (tower parity verified 2026-09-19), and `Qwen3Vl`
 (registered 2026-09-18 as the fifteenth family, with the trunk, tower, and
 deepstack gates frozen; the phase record is

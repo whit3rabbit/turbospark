@@ -95,6 +95,8 @@ pub enum GeluKind {
     Tanh,
     /// A bare `nn.GELU()`, i.e. the exact erf form. The merger's activation.
     Erf,
+    /// CLIP's `quick_gelu`, `x * sigmoid(1.702 x)`.
+    Quick,
 }
 
 impl GeluKind {
@@ -107,6 +109,7 @@ impl GeluKind {
             // the tower's two activations one function.
             GeluKind::Tanh => "vision_gelu_tanh_fp16",
             GeluKind::Erf => "vision_gelu_erf_fp16",
+            GeluKind::Quick => "vision_gelu_quick_fp16",
         }
     }
 }
