@@ -130,6 +130,26 @@ pub fn encode_vision_gelu(
     Ok(())
 }
 
+/// Apply SiLU (`x * sigmoid(x)`) elementwise, in place, over `count` FP16
+/// values: the Qwen2.5-VL tower's gated MLP activation, run on the gate
+/// projection before it is multiplied by the up projection.
+pub fn encode_vision_silu(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    y: (&metal::Buffer, u64),
+    count: u32,
+) -> Result<(), GpuError> {
+    let pipeline = context.pipeline(SOURCE, "vision_silu_fp16", &no_function_constants(), b"")?;
+    pass.encode_threadgroups(
+        &pipeline,
+        &[(y.0, 0, y.1)],
+        &[(u32_bytes(&count), 1)],
+        groups_for(count),
+        THREADS_PER_GROUP,
+    );
+    Ok(())
+}
+
 /// Apply the tower's 2-D rotary embedding in place to a `[seq, heads,
 /// head_dim]` FP16 buffer.
 ///

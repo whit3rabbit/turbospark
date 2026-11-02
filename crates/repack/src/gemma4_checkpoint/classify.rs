@@ -534,6 +534,7 @@ pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -
                 | ModelFamily::QwenGdnMoe
                 | ModelFamily::Qwen3Vl
                 | ModelFamily::Qwen4Exp
+                | ModelFamily::Qwen2Dense
                 | ModelFamily::Gemma4
         )
     {

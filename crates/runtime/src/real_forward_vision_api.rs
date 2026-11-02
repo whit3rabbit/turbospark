@@ -41,7 +41,10 @@ impl RealForwardRunner {
 
     /// What the last page's scratch actually allocated.
     pub fn vision_last_scratch_bytes(&self) -> Option<u64> {
-        self.vision.as_ref().map(|v| v.last_scratch_bytes)
+        self.vision
+            .as_ref()
+            .map(|v| v.last_scratch_bytes)
+            .or_else(|| self.qwen25_vision.as_ref().map(|v| v.last_scratch_bytes))
     }
 
     /// What a page of `seq` patches WOULD cost in scratch, predicted rather
@@ -108,6 +111,11 @@ impl RealForwardRunner {
         image: &turbospark_vision_io::PreprocessedImage,
         params: &turbospark_vision_io::PreprocessParams,
     ) -> Result<crate::vision::VisionEmbedding, RealForwardError> {
+        if self.arch.vision.tower == model_io::VisionTowerKind::Qwen25Vl {
+            return self
+                .encode_image_qwen25(image, params, None)
+                .map(|(e, _)| e);
+        }
         self.open_vision_tower()?;
         // Two disjoint fields of `self`, which is what lets the tower take
         // the context mutably while it is itself borrowed mutably.
@@ -127,9 +135,58 @@ impl RealForwardRunner {
         params: &turbospark_vision_io::PreprocessParams,
     ) -> Result<(crate::vision::VisionEmbedding, crate::vision::VisionStages), RealForwardError>
     {
+        if self.arch.vision.tower == model_io::VisionTowerKind::Qwen25Vl {
+            let (embedding, stages) = self.encode_image_qwen25(
+                image,
+                params,
+                Some(crate::vision::VisionStages::default()),
+            )?;
+            return Ok((embedding, stages.expect("requested just above")));
+        }
         self.open_vision_tower()?;
         let tower = self.vision.as_mut().expect("opened just above");
         tower.run_with_stages(&mut self.context, &self.weights, image, params)
+    }
+
+    /// The Qwen2.5-VL arm of [`Self::encode_image`]: the same
+    /// [`crate::vision::VisionEmbedding`], so the prompt builders and
+    /// [`Self::set_prompt_vision`] are shared with the qwen3 tower.
+    fn encode_image_qwen25(
+        &mut self,
+        image: &turbospark_vision_io::PreprocessedImage,
+        params: &turbospark_vision_io::PreprocessParams,
+        capture: Option<crate::vision::VisionStages>,
+    ) -> Result<
+        (
+            crate::vision::VisionEmbedding,
+            Option<crate::vision::VisionStages>,
+        ),
+        RealForwardError,
+    > {
+        if !self.arch.vision.is_active() {
+            return Err(RealForwardError::Unsupported(
+                "this install declares no vision tower; repack the checkpoint with its \
+                 vision_tower.* tensors to get one"
+                    .to_string(),
+            ));
+        }
+        if self.qwen25_vision.is_none() {
+            self.qwen25_vision = Some(match &self.vision_sidecar_dir {
+                Some(dir) => crate::vision::qwen25::Qwen25VisionTower::open_with_sidecar(
+                    dir,
+                    &self.context,
+                    &self.arch,
+                )?,
+                None => crate::vision::qwen25::Qwen25VisionTower::open(
+                    &self.install_dir,
+                    &self.context,
+                    &self.index,
+                    &self.arch,
+                )?,
+            });
+        }
+        let tower = self.qwen25_vision.as_mut().expect("opened just above");
+        tower.run(&mut self.context, &self.weights, image, params, capture)
     }
 
     /// Hand this runner one prompt's image rows and mRoPE position table, so
@@ -397,7 +454,10 @@ impl RealForwardRunner {
     /// on its own tell "the sidecar path ran and produced this" apart from
     /// "the sidecar path silently fell through to the trunk's own tower".
     pub fn vision_is_sidecar(&self) -> Option<bool> {
-        self.vision.as_ref().map(|v| v.is_sidecar())
+        self.vision
+            .as_ref()
+            .map(|v| v.is_sidecar())
+            .or_else(|| self.qwen25_vision.as_ref().map(|v| v.is_sidecar()))
     }
 
     /// Free the vision tower's open resources, without forgetting a sidecar
@@ -428,6 +488,7 @@ impl RealForwardRunner {
     pub fn release_vision_tower(&mut self) {
         self.vision = None;
         self.gemma4_vision = None;
+        self.qwen25_vision = None;
     }
 
     /// The three ids a Gemma 4 image occupies in a prompt, read off the
@@ -488,6 +549,11 @@ impl RealForwardRunner {
 fn qwen_tower_only(vision: &model_io::VisionConfig) -> Result<(), RealForwardError> {
     match vision.tower {
         model_io::VisionTowerKind::QwenSiglip => Ok(()),
+        model_io::VisionTowerKind::Qwen25Vl => Err(RealForwardError::Unsupported(
+            "this install's vision tower is qwen25_vl; it opens through encode_image, which \
+             routes to the Qwen2.5-VL tower"
+                .to_string(),
+        )),
         other => Err(RealForwardError::Unsupported(format!(
             "this install's vision tower is {}; encode its images with \
              encode_image_gemma4 and inject them with set_prompt_vision_gemma4",

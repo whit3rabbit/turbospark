@@ -157,6 +157,19 @@ fn check_sidecars(report: &mut ProbeReport, files: &[String], client: &Client, r
         report.chat_template = Some("chat_template.jinja".to_string());
         return;
     }
+    // HF's other standalone spelling: `{"chat_template": "..."}`. The
+    // Qwen2.5-VL conversions ship the vision-aware template here while their
+    // `tokenizer_config.json` still carries the text-only Qwen2.5 one, so
+    // reporting the config key would name the template that cannot render an
+    // image.
+    if report
+        .sidecars_present
+        .iter()
+        .any(|f| f == "chat_template.json")
+    {
+        report.chat_template = Some("chat_template.json".to_string());
+        return;
+    }
 
     // The FETCH happens here, where a `Client` is in scope; the DECISION is
     // a pure function below, so the auth-failure branch (catalog Gotcha 12)

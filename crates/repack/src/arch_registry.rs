@@ -214,6 +214,11 @@ const SUPPORTED_HF: &[(&str, ModelFamily)] = &[
     // c8e9187488f846965507bfc2b3957d59fd0d5a27. The root config is the
     // plain `qwen2` form used by this parser.
     ("qwen2", ModelFamily::Qwen2Dense),
+    // The Qwen2.5-VL wrapper (`mlx-community/Qwen2.5-VL-7B-Instruct-4bit`):
+    // its trunk is a plain Qwen2 dense model whose config sits flat at the
+    // root beside `vision_config`, so it resolves to the same family and the
+    // tower is carried by `VisionConfig` (`VisionTowerKind::Qwen25Vl`).
+    ("qwen2_5_vl", ModelFamily::Qwen2Dense),
     // The FIFTEENTH family. Read off
     // `mlx-community/Qwen3-VL-4B-Instruct-4bit` @
     // 2fd8dacbdb8f1e54b8c005f081ec5bf79c56376b, whose root `model_type` is

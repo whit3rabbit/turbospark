@@ -119,10 +119,11 @@ impl ProbeReport {
 /// The sidecar files this port can make use of, in the order it looks for
 /// them. Only `tokenizer.json` is required; the rest change what the
 /// tokenizer knows rather than whether it loads.
-pub const KNOWN_SIDECARS: [&str; 6] = [
+pub const KNOWN_SIDECARS: [&str; 7] = [
     "tokenizer.json",
     "tokenizer_config.json",
     "chat_template.jinja",
+    "chat_template.json",
     "generation_config.json",
     "vocab.json",
     "merges.txt",

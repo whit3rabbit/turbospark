@@ -315,7 +315,10 @@ pub(crate) fn stream_mlx(
     // passes through untouched.
     if matches!(
         family,
-        ModelFamily::QwenGdnDense | ModelFamily::QwenGdnMoe | ModelFamily::Qwen3Vl
+        ModelFamily::QwenGdnDense
+            | ModelFamily::QwenGdnMoe
+            | ModelFamily::Qwen3Vl
+            | ModelFamily::Qwen2Dense
     ) {
         for header in &mut headers {
             repack::canonicalize_vision_header(header).map_err(|e| e.to_string())?;
@@ -448,10 +451,11 @@ fn enable_requested_vision(
             | ModelFamily::QwenGdnMoe
             | ModelFamily::Qwen3Vl
             | ModelFamily::Qwen4Exp
+            | ModelFamily::Qwen2Dense
     ) {
         return Err(format!(
             "{}: combined vision ingestion is only wired for the qwen35 dense, qwen36 MoE, \
-             qwen3_vl and qwen4_exp trunks",
+             qwen3_vl, qwen4_exp and qwen2 (Qwen2.5-VL) trunks",
             plan.alias
         ));
     }
@@ -513,7 +517,10 @@ fn enable_bytes_detected_vision(
     // install does not carry).
     if !matches!(
         family,
-        ModelFamily::QwenGdnDense | ModelFamily::QwenGdnMoe | ModelFamily::Qwen3Vl
+        ModelFamily::QwenGdnDense
+            | ModelFamily::QwenGdnMoe
+            | ModelFamily::Qwen3Vl
+            | ModelFamily::Qwen2Dense
     ) {
         return Ok(());
     }
@@ -882,6 +889,9 @@ pub(crate) fn stream_vision_sidecar(
         }
         ModelFamily::Qwen3Vl => {
             repack::parse_qwen3_vl_config(&config_text).map_err(|e| e.to_string())
+        }
+        ModelFamily::Qwen2Dense => {
+            repack::parse_qwen2_config(&config_text).map_err(|e| e.to_string())
         }
         other => Err(format!(
             "{} has no safetensors intake here, so its vision tower cannot be read either",
@@ -1501,11 +1511,12 @@ mod tests {
     }
 
     /// The family gate mirrors `classify_for_family`'s `VisionTower` arm
-    /// exactly: both halves of qwen3_5, nothing else (AGENTS.md Gotcha 61).
+    /// exactly: both halves of qwen3_5, `qwen3_vl` and `qwen2` (the Qwen2.5-VL
+    /// trunk), nothing else (AGENTS.md Gotcha 61).
     #[test]
     fn bytes_detection_ignores_families_that_do_not_classify_the_prefix() {
         let plan = probe_plan();
-        for family in [ModelFamily::Gemma4, ModelFamily::Qwen2Dense] {
+        for family in [ModelFamily::Gemma4, ModelFamily::Llama] {
             let mut arch = model_io::known_architecture(family);
             let headers = [header_with(&[&format!(
                 "{VISION_PREFIX}blocks.0.norm1.weight"

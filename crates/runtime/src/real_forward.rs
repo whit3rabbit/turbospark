@@ -384,6 +384,8 @@ pub struct RealForwardRunner {
     /// the two towers share no weights layout or forward pass; `None` means
     /// "not yet asked for", as with `vision`.
     pub(crate) gemma4_vision: Option<crate::vision::gemma4::Gemma4VisionTower>,
+    /// The Qwen2.5-VL tower, opened lazily on the first image like the others.
+    pub(crate) qwen25_vision: Option<crate::vision::qwen25::Qwen25VisionTower>,
     /// A sidecar tower directory attached after open (vision memory
     /// sidecar, Part A2), via [`RealForwardRunner::attach_vision_sidecar`].
     /// `None` on every session that never called it, which is every session

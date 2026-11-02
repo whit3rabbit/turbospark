@@ -310,6 +310,12 @@ pub fn parse_vision_config(json: &str) -> Result<VisionConfig, Gemma4Error> {
     let Some(vc) = root.get("vision_config") else {
         return Ok(VisionConfig::NONE);
     };
+    // Qwen2.5-VL spells the tower differently (`depth`, `in_chans`, a window
+    // size and a full-attention block list, no position table), so it parses
+    // on its own rather than through the qwen3 reader's required keys.
+    if root.get("model_type").and_then(serde_json::Value::as_str) == Some("qwen2_5_vl") {
+        return parse_qwen25_vl_vision_config(root, vc);
+    }
     let i = |k: &str| -> Result<i64, Gemma4Error> {
         vc.get(k)
             .and_then(serde_json::Value::as_i64)
@@ -456,6 +462,158 @@ pub fn parse_vision_config(json: &str) -> Result<VisionConfig, Gemma4Error> {
              tower; a checkpoint with no tower should omit the block"
                 .to_string(),
         ));
+    }
+    Ok(vision)
+}
+
+/// Blocks in every published Qwen2.5-VL tower (3B, 7B, 32B and 72B all
+/// declare depth 32).
+pub(crate) const SUPPORTED_QWEN25_VISION_DEPTHS: [i64; 1] = [32];
+
+/// The Qwen2.5-VL attention window in pixels, which every published
+/// checkpoint declares as 112. A property of the tower kind rather than a
+/// stored field (`VisionTowerKind::Qwen25Vl`), so a checkpoint declaring
+/// another value is refused here instead of being run with the wrong windows.
+pub(crate) const QWEN25_VISION_WINDOW_SIZE: i64 = 112;
+
+/// Every published Qwen2.5-VL tower runs full attention on blocks 7, 15, 23
+/// and 31 and window attention on the rest: every eighth block, counting
+/// from the eighth.
+pub(crate) fn qwen25_full_attention_blocks(depth: i64) -> Vec<i64> {
+    (0..depth).filter(|b| b % 8 == 7).collect()
+}
+
+/// `vision_config` of a `qwen2_5_vl` checkpoint (read off
+/// `mlx-community/Qwen2.5-VL-3B-Instruct-4bit`, `docs/QWEN25_VL_VISION_PHASE0.md`).
+///
+/// Everything the kernels stride by is read from the file and everything the
+/// file cannot vary is checked against the kind's constants: patch 14, two
+/// frames per patch, a 2x2 merge, three channels, SiLU, the 112-pixel window
+/// and the every-eighth-block full-attention pattern. A checkpoint that
+/// disagrees is a tower this port has not seen, and the tower would run with
+/// the wrong windows and answer fluently.
+fn parse_qwen25_vl_vision_config(
+    root: &serde_json::Value,
+    vc: &serde_json::Value,
+) -> Result<VisionConfig, Gemma4Error> {
+    let i = |k: &str| -> Result<i64, Gemma4Error> {
+        vc.get(k)
+            .and_then(serde_json::Value::as_i64)
+            .ok_or_else(|| Gemma4Error::Config(format!("missing vision_config.{k}")))
+    };
+    let section = root
+        .get("rope_scaling")
+        .and_then(|r| r.get("mrope_section"))
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| {
+            Gemma4Error::Config(
+                "a qwen2_5_vl vision_config with no rope_scaling.mrope_section; the trunk \
+                 cannot place image tokens without it"
+                    .to_string(),
+            )
+        })?;
+    if section.len() != 3 {
+        return Err(Gemma4Error::Config(format!(
+            "mrope_section has {} entries, expected the (t, h, w) triple",
+            section.len()
+        )));
+    }
+    let mut mrope_section = [0i64; 3];
+    for (slot, v) in mrope_section.iter_mut().zip(section) {
+        *slot = v
+            .as_i64()
+            .ok_or_else(|| Gemma4Error::Config("mrope_section entry is not an integer".into()))?;
+    }
+    let vision = VisionConfig {
+        depth: i("depth")?,
+        hidden_size: i("hidden_size")?,
+        intermediate_size: i("intermediate_size")?,
+        num_heads: i("num_heads")?,
+        patch_size: i("patch_size")?,
+        temporal_patch_size: i("temporal_patch_size")?,
+        in_channels: i("in_chans")?,
+        spatial_merge_size: i("spatial_merge_size")?,
+        // No learned position table: the tower is positioned by rope alone.
+        num_position_embeddings: 0,
+        out_hidden_size: i("out_hidden_size")?,
+        mrope_section,
+        deepstack_visual_indexes: Vec::new(),
+        vision_start_token_id: root_i(root, "vision_start_token_id")?,
+        vision_end_token_id: root_i(root, "vision_end_token_id")?,
+        image_token_id: root_i(root, "image_token_id")?,
+        video_token_id: root_i(root, "video_token_id")?,
+        tower: model_io::VisionTowerKind::Qwen25Vl,
+    };
+    if !SUPPORTED_QWEN25_VISION_DEPTHS.contains(&vision.depth) {
+        return Err(Gemma4Error::Config(format!(
+            "qwen2_5_vl vision depth {} is unsupported; expected one of \
+             {SUPPORTED_QWEN25_VISION_DEPTHS:?}",
+            vision.depth
+        )));
+    }
+    if vision.patch_size != 14
+        || vision.temporal_patch_size != 2
+        || vision.spatial_merge_size != 2
+        || vision.in_channels != 3
+    {
+        return Err(Gemma4Error::Config(format!(
+            "qwen2_5_vl tower geometry patch {} x temporal {} x merge {} x {} channels is not \
+             the 14 x 2 x 2 x 3 every published checkpoint declares",
+            vision.patch_size,
+            vision.temporal_patch_size,
+            vision.spatial_merge_size,
+            vision.in_channels
+        )));
+    }
+    if vision.num_heads <= 0 || vision.hidden_size % vision.num_heads != 0 {
+        return Err(Gemma4Error::Config(format!(
+            "qwen2_5_vl vision hidden_size {} is not divisible by num_heads {}",
+            vision.hidden_size, vision.num_heads
+        )));
+    }
+    if (vision.hidden_size / vision.num_heads) % 4 != 0 {
+        return Err(Gemma4Error::Config(format!(
+            "qwen2_5_vl vision head_dim {} must be a multiple of 4 for the 2-D rope",
+            vision.hidden_size / vision.num_heads
+        )));
+    }
+    if vc.get("hidden_act").and_then(serde_json::Value::as_str) != Some("silu") {
+        return Err(Gemma4Error::Config(
+            "qwen2_5_vl vision_config.hidden_act must be silu".into(),
+        ));
+    }
+    if i("window_size")? != QWEN25_VISION_WINDOW_SIZE {
+        return Err(Gemma4Error::Config(format!(
+            "qwen2_5_vl vision window_size {} is not the {QWEN25_VISION_WINDOW_SIZE} every \
+             published checkpoint declares",
+            i("window_size")?
+        )));
+    }
+    let full: Vec<i64> = vc
+        .get("fullatt_block_indexes")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| Gemma4Error::Config("missing vision_config.fullatt_block_indexes".into()))?
+        .iter()
+        .map(|v| v.as_i64())
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| {
+            Gemma4Error::Config("vision_config.fullatt_block_indexes holds a non-integer".into())
+        })?;
+    if full != qwen25_full_attention_blocks(vision.depth) {
+        return Err(Gemma4Error::Config(format!(
+            "qwen2_5_vl fullatt_block_indexes {full:?} is not the every-eighth-block pattern {:?} \
+             this port encodes",
+            qwen25_full_attention_blocks(vision.depth)
+        )));
+    }
+    // The merger writes straight into the trunk's residual stream.
+    let trunk_hidden = root.get("hidden_size").and_then(serde_json::Value::as_i64);
+    if trunk_hidden.is_some_and(|h| h != vision.out_hidden_size) {
+        return Err(Gemma4Error::Config(format!(
+            "qwen2_5_vl vision out_hidden_size {} does not match the trunk hidden_size {}",
+            vision.out_hidden_size,
+            trunk_hidden.unwrap_or(0)
+        )));
     }
     Ok(vision)
 }

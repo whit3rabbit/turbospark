@@ -158,6 +158,19 @@ void vision_gelu_erf_fp16(
     y[tid] = half(0.5f * x * (1.0f + vision_erf(x * M_SQRT1_2_F)));
 }
 
+// SiLU in place: the Qwen2.5-VL tower's gated MLP computes
+// `silu(gate_proj(x)) * up_proj(x)`. `x * sigmoid(x)` in FP32, narrowed once.
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void vision_silu_fp16(
+    device half*    y     [[buffer(0)]],
+    constant uint&  count [[buffer(1)]],
+    uint            tid   [[thread_position_in_grid]]
+) {
+    if (tid >= count) return;
+    const float x = float(y[tid]);
+    y[tid] = half(x / (1.0f + exp(-x)));
+}
+
 // ----------------------------------------------------------------------------
 // The tower's 2-D rotary embedding.
 //

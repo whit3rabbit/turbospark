@@ -221,6 +221,14 @@ pub enum VisionTowerKind {
     /// The Gemma 4 tower: sandwich RMSNorms, axial rope, 3x3 pooling, and
     /// the `embed_vision` projector.
     Gemma4,
+    /// The Qwen2.5-VL tower: RMSNorm blocks, a gated SiLU MLP, no absolute
+    /// position table, 2-D rope, and window attention on all but every
+    /// eighth block. The window size (112 pixels) and the full-attention
+    /// pattern (blocks 7, 15, 23, 31) are properties of the kind, checked at
+    /// intake rather than stored, which keeps this struct float-free and
+    /// matches how Gemma 4's rope theta is handled
+    /// (`docs/QWEN25_VL_VISION_PHASE0.md`).
+    Qwen25Vl,
 }
 
 impl VisionTowerKind {
@@ -229,6 +237,7 @@ impl VisionTowerKind {
         match self {
             VisionTowerKind::QwenSiglip => "qwen_siglip",
             VisionTowerKind::Gemma4 => "gemma4",
+            VisionTowerKind::Qwen25Vl => "qwen25_vl",
         }
     }
 
@@ -238,6 +247,7 @@ impl VisionTowerKind {
         match s {
             "qwen_siglip" => Some(VisionTowerKind::QwenSiglip),
             "gemma4" => Some(VisionTowerKind::Gemma4),
+            "qwen25_vl" => Some(VisionTowerKind::Qwen25Vl),
             _ => None,
         }
     }

@@ -40,6 +40,7 @@ mod budget;
 pub(crate) mod gemma4;
 mod inject;
 mod overflow;
+pub(crate) mod qwen25;
 mod scratch;
 mod shape;
 mod stages;

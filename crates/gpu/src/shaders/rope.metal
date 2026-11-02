@@ -215,6 +215,54 @@ kernel void rope_mrope_interleaved(
                     float(selected), theta);
 }
 
+// Qwen2-VL / Qwen2.5-VL's CHUNKED mRoPE (`docs/QWEN25_VL_VISION_PHASE0.md`).
+// The same per-pair choice among (t, h, w) as `rope_mrope_interleaved`, with
+// the reference's other selector: `mrope_section` [16, 24, 24] splits the
+// rotary pairs into three CONTIGUOUS runs (pairs [0, 16) take t, [16, 40) take
+// h, [40, 64) take w), where Qwen3-VL interleaves them by residue mod 3. The
+// reference doubles the sections over the full head and picks stream `i % 3`
+// per chunk, and with the NeoX half-split pairing element `p` and `p + half`
+// land in the same chunk, so choosing by pair index is that selector exactly.
+//
+// IT CALLS `apply_neox_pair` for the interleaved kernel's reason: at
+// t == h == w every pair selects the same number and the float sequence is the
+// pre-existing `rope_neox_subdim`'s, bit for bit, so a text token of a mixed
+// prompt is byte-exact against the engine before vision.
+kernel void rope_mrope_chunked(
+    device half* data [[buffer(0)]],
+    constant uint& position_t [[buffer(1)]],
+    constant uint& head_dim [[buffer(2)]],
+    constant uint& num_heads [[buffer(3)]],
+    constant float& theta [[buffer(4)]],
+    constant uint& rotary_dim [[buffer(5)]],
+    constant uint& position_h [[buffer(6)]],
+    constant uint& position_w [[buffer(7)]],
+    constant uint& section_t [[buffer(8)]],
+    constant uint& section_h [[buffer(9)]],
+    uint3 gid [[thread_position_in_grid]]
+) {
+    const uint pair = gid.x;
+    const uint head_index = gid.y;
+    const uint token_index = gid.z;
+    const uint dimension = rope_head_dim(head_dim);
+    const uint heads = rope_num_heads(num_heads);
+    const uint half_rotary = rotary_dim / 2u;
+    if (pair >= half_rotary || head_index >= heads) return;
+
+    uint selected = position_t;
+    if (pair >= section_t + section_h) {
+        selected = position_w;
+    } else if (pair >= section_t) {
+        selected = position_h;
+    }
+
+    device half* head = data
+        + token_index * heads * dimension
+        + head_index * dimension;
+    apply_neox_pair(head, pair, half_rotary, rotary_dim,
+                    float(selected), theta);
+}
+
 kernel void rope_proportional_neox(
     device half* data [[buffer(0)]],
     constant uint& position [[buffer(1)]],
