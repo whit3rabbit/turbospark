@@ -25,6 +25,7 @@ mod orchestrate;
 mod shards;
 mod vision;
 mod vision_clip;
+mod vision_deepseek_ocr;
 mod vision_gemma4;
 mod vision_lfm3;
 mod vision_minicpm;
@@ -86,6 +87,11 @@ pub use vision_pixtral::{
     parse_pixtral_vision_config, pixtral_special_token_ids, read_pixtral_vision_entries,
     PIXTRAL_BLOCK_ROLES, PIXTRAL_MODEL_TYPE, PIXTRAL_PROJECTOR_PREFIX, PIXTRAL_RESIDENT_TENSORS,
     PIXTRAL_SOURCE_PREFIXES, PIXTRAL_TOWER_PREFIX,
+};
+pub use vision_deepseek_ocr::{
+    parse_deepseek_ocr_vision_config, read_deepseek_ocr_vision_entries,
+    DEEPSEEK_OCR_IMAGE_TOKEN_ID, DEEPSEEK_OCR_MODEL_TYPE, OCR_SAM_PREFIX, OCR_SOURCE_PREFIXES,
+    UNLIMITED_OCR_MODEL_TYPE,
 };
 pub use vision_siglip::{
     parse_deepseek_vl2_vision_config, read_siglip_vision_entries, DEEPSEEK_VL2_IMAGE_TOKEN_ID,

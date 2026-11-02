@@ -51,8 +51,15 @@ class Checkpoint:
     def raw(self, name):
         meta = self.header[name]
         s, e = meta["data_offsets"]
-        dt = {"U32": "<u4", "F16": "<f2", "BF16": None, "F32": "<f4"}[meta["dtype"]]
-        arr = np.frombuffer(self.mm[self.base + s : self.base + e], dtype=dt)
+        chunk = self.mm[self.base + s : self.base + e]
+        if meta["dtype"] == "BF16":
+            # numpy has no bfloat16: widen the high half of an f32. (The
+            # DeepSeek-VL2 conversion ships F16 companions; the DeepSeek-OCR
+            # one ships BF16.)
+            wide = np.frombuffer(chunk, dtype="<u2").astype(np.uint32) << 16
+            return wide.view(np.float32).reshape(meta["shape"])
+        dt = {"U32": "<u4", "F16": "<f2", "F32": "<f4"}[meta["dtype"]]
+        arr = np.frombuffer(chunk, dtype=dt)
         return arr.reshape(meta["shape"])
 
     def has(self, name):

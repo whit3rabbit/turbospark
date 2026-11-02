@@ -229,6 +229,13 @@ const SUPPORTED_HF: &[(&str, ModelFamily)] = &[
     // text model is a DeepSeekMoE trunk with plain attention, run by the
     // `deepseek2` flow's MHA arm (`ArchConfig::mla` inactive).
     ("deepseek_vl_v2", ModelFamily::Deepseek2),
+    // DeepSeek-OCR (`mlx-community/DeepSeek-OCR-4bit`, `baidu/Unlimited-OCR-2`):
+    // the same non-MLA DeepSeekMoE trunk as DeepSeek-VL2-tiny (12 layers,
+    // hidden 1280, 64 routed experts) under a SAM + CLIP-L encoder. The root
+    // `model_type` is `deepseekocr` on the MLX conversion and `unlimited-ocr`
+    // on the Baidu one (`docs/DEEPSEEK_OCR_VISION_PHASE0.md`).
+    ("deepseekocr", ModelFamily::Deepseek2),
+    ("unlimited-ocr", ModelFamily::Deepseek2),
     // Qwen3-VL-30B-A3B (`mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit`): the
     // wrapper and its text config. Recognition only for the trunk, which has
     // no safetensors writer on the llama MoE flow (its routed experts are

@@ -1067,6 +1067,25 @@ pub(crate) fn stream_vision_sidecar(
         );
     }
 
+    // DeepSeek-OCR carries a SAM + CLIP-L encoder on the same trunk shape
+    // (`docs/DEEPSEEK_OCR_VISION_PHASE0.md`).
+    if matches!(
+        config.get("model_type").and_then(|m| m.as_str()),
+        Some(repack::DEEPSEEK_OCR_MODEL_TYPE) | Some(repack::UNLIMITED_OCR_MODEL_TYPE)
+    ) {
+        return stream_deepseek_ocr_vision_sidecar(
+            weights,
+            out_dir,
+            explicit_file,
+            client,
+            progress,
+            byte_progress,
+            cancel,
+            cache.as_deref(),
+            &config_text,
+        );
+    }
+
     // Family and hidden_size, off the SAME text-config-unwrapping logic every
     // family parser already carries -- reused rather than re-derived, so a
     // future family's `text_config` convention change cannot drift the two
@@ -1616,6 +1635,136 @@ fn stream_siglip_vision_sidecar(
     progress(&format!(
         "vision sidecar written: {} block(s), {} bytes/block",
         vision.depth, read.block_stride
+    ));
+    Ok(vision)
+}
+
+/// The DeepSeek-OCR arm of [`stream_vision_sidecar`]: the SAM and CLIP-L towers,
+/// the quantized linear projector and the two learned layout rows, read off the
+/// checkpoint's shards by [`repack::read_vision_entries_quantized`] and written
+/// as a sidecar pairing with the `deepseek2` family at the trunk width.
+#[allow(clippy::too_many_arguments)]
+fn stream_deepseek_ocr_vision_sidecar(
+    weights: &RepoRef,
+    out_dir: &Path,
+    explicit_file: Option<&str>,
+    client: &Client,
+    progress: &mut impl FnMut(&str),
+    byte_progress: Option<&ByteProgressCallback>,
+    cancel: Option<&CancelFlag>,
+    cache_dir: Option<&Path>,
+    config_text: &str,
+) -> Result<VisionConfig, String> {
+    let vision =
+        repack::parse_deepseek_ocr_vision_config(config_text).map_err(|e| e.to_string())?;
+    if !vision.is_active() {
+        return Err(format!(
+            "{weights} declares no vision_config; there is no tower here to install"
+        ));
+    }
+    // The image processor settings live in `processor_config.json`; the front
+    // ends read them from the sidecar directory, so they are written beside the
+    // tower. Only the shape is checked here (catalog does not link vision-io).
+    let processor = client
+        .get(&weights.file_url("processor_config.json"))
+        .map_err(|e| format!("fetching processor_config.json from {weights}: {e}"))?;
+    let parsed: serde_json::Value = serde_json::from_slice(&processor)
+        .map_err(|e| format!("{weights}: processor_config.json does not parse: {e}"))?;
+    if parsed.get("candidate_resolutions").is_none() {
+        return Err(format!(
+            "{weights}: processor_config.json has no candidate_resolutions; this is not a \
+             DeepSeek-OCR processor"
+        ));
+    }
+    std::fs::write(out_dir.join("processor_config.json"), &processor)
+        .map_err(|e| format!("writing processor_config.json: {e}"))?;
+    let trunk = repack::parse_deepseek_vl2_config(config_text).map_err(|e| e.to_string())?;
+    if trunk.hidden_size != vision.out_hidden_size {
+        return Err(format!(
+            "{weights}: trunk hidden_size {} does not match the projector's n_embed {}; \
+             refusing an inconsistent checkpoint",
+            trunk.hidden_size, vision.out_hidden_size
+        ));
+    }
+    progress(&format!(
+        "{weights}: DeepSeek-OCR SAM + CLIP-L tower, {} CLIP block(s), projector out_hidden_size {}",
+        vision.depth, vision.out_hidden_size
+    ));
+
+    let fetched = fetch_prefixed_shards(
+        weights,
+        &repack::OCR_SOURCE_PREFIXES,
+        explicit_file,
+        client,
+        byte_progress,
+        cancel,
+        cache_dir,
+    )?;
+    progress(&format!("{} vision shard(s) fetched", fetched.len()));
+
+    let mut shard_names = Vec::with_capacity(fetched.len());
+    let mut headers = Vec::with_capacity(fetched.len());
+    let mut sources = Vec::with_capacity(fetched.len());
+    for (name, header, source) in fetched {
+        shard_names.push(name);
+        headers.push(header);
+        sources.push(source);
+    }
+    let bases: Vec<&str> = headers
+        .iter()
+        .flat_map(|h| h.tensors.keys())
+        .filter(|k| !k.ends_with(".scales") && !k.ends_with(".biases"))
+        .map(String::as_str)
+        .collect();
+    let shards = Gemma4Shards::new(
+        headers
+            .iter()
+            .zip(sources.iter())
+            .map(|(h, s)| (h, s as &dyn RangeSource))
+            .collect(),
+    )
+    .map_err(|e| format!("vision tower shards: {e}"))?;
+    let quant = repack::parse_gemma4_quantization(config_text).ok();
+    let read = repack::read_vision_entries_quantized(&shards, &bases, &vision, quant.as_ref())
+        .map_err(|e| format!("reading the vision tower: {e}"))?;
+    let lossy: usize = read.lossy_conversion.iter().map(|(_, n)| n).sum();
+    if lossy > 0 {
+        progress(&format!(
+            "converted {} vision tensors to FP16 with {lossy} values losing bits \
+             (affine dequantization rounds; not a quality defect by itself)",
+            read.lossy_conversion.len()
+        ));
+    }
+
+    let record = model_io::SidecarRecord {
+        kind: model_io::SIDECAR_KIND.to_string(),
+        pairs_with: model_io::PairsWith {
+            family: ModelFamily::Deepseek2.as_str().to_string(),
+            hidden_size: vision.out_hidden_size,
+        },
+        source: model_io::SidecarSource {
+            repo: weights.repo.clone(),
+            revision: weights.revision.clone(),
+            prefix: repack::OCR_SAM_PREFIX.to_string(),
+            file: shard_names.join(", "),
+        },
+        tower_blocks: vision.depth,
+        block_stride: read.block_stride,
+    };
+    repack::write_vision_sidecar(
+        out_dir,
+        ModelFamily::Deepseek2,
+        &vision,
+        &weights.repo,
+        &read,
+        record,
+    )
+    .map_err(|e| format!("writing the vision sidecar: {e}"))?;
+    progress(&format!(
+        "vision sidecar written: {} CLIP block(s), {} bytes/block, {} resident tensor(s)",
+        vision.depth,
+        read.block_stride,
+        read.entries.len()
     ));
     Ok(vision)
 }

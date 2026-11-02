@@ -293,6 +293,24 @@ pub enum VisionTowerKind {
     /// `temporal_patch_size` is 1. The start and end ids are 0: the image run
     /// is a bare block of `image_token_id` positions.
     SigLip,
+    /// The DeepSeek-OCR encoder (`docs/DEEPSEEK_OCR_VISION_PHASE0.md`): a
+    /// SAM-ViT-B (768 wide, window and global attention with decomposed
+    /// relative positions, a conv neck and two stride-2 convs) whose 16 x 16
+    /// output is the patch embedding of a CLIP-L, the two concatenated into
+    /// a linear projector.
+    ///
+    /// Field meanings describe the STREAMED half, the CLIP-L: `depth` is 24,
+    /// `hidden_size` 1024, `num_heads` 16, `intermediate_size` 4096,
+    /// `num_position_embeddings` 257 (class row included). `patch_size` is
+    /// the SAM patch (16) and `spatial_merge_size` the processor's
+    /// `downsample_ratio` (4: a 1024 px view is 64 patches wide, 16 after the
+    /// two stride-2 convs and the unused factor). `out_hidden_size` is the
+    /// trunk width. The SAM geometry (12 blocks, 768, 12 heads, 14-wide
+    /// windows, global blocks 2, 5, 8, 11) is a property of the kind, checked
+    /// at intake. The start and end ids are 0: the image run is a bare block
+    /// of `image_token_id`, and the newline and separator rows are learned
+    /// embeddings written into it.
+    DeepseekOcr,
 }
 
 impl VisionTowerKind {
@@ -308,6 +326,7 @@ impl VisionTowerKind {
             VisionTowerKind::MiniCpmV => "minicpm_v",
             VisionTowerKind::Pixtral => "pixtral",
             VisionTowerKind::SigLip => "siglip",
+            VisionTowerKind::DeepseekOcr => "deepseek_ocr",
         }
     }
 
@@ -324,6 +343,7 @@ impl VisionTowerKind {
             "minicpm_v" => Some(VisionTowerKind::MiniCpmV),
             "pixtral" => Some(VisionTowerKind::Pixtral),
             "siglip" => Some(VisionTowerKind::SigLip),
+            "deepseek_ocr" => Some(VisionTowerKind::DeepseekOcr),
             _ => None,
         }
     }
