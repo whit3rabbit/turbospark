@@ -1994,7 +1994,16 @@ pub fn resolve_ocr_arg(name: &str) -> PathBuf {
         return as_path;
     }
     match Store::default_store() {
-        Ok(store) => store.resolve_ocr(name).unwrap_or(as_path),
+        // Unlimited-OCR-2 is a text-store install, since it also serves chat,
+        // so an alias naming one answers here too.
+        Ok(store) => store
+            .resolve_ocr(name)
+            .or_else(|| {
+                store
+                    .resolve_text(name)
+                    .filter(|dir| dir.join(model_io::DASH_SIDECAR).exists())
+            })
+            .unwrap_or(as_path),
         Err(_) => as_path,
     }
 }

@@ -353,6 +353,7 @@ means image support.
 | `Qwen3Vl` | **Verified images with deepstack (2026-09-19)** | The depth-24 SigLIP-class tower PLUS three deepstack mergers (block outputs 5/11/17, post-shuffle-normed, raw-added into trunk layers 0-2's residuals at image positions) ingest combined and sidecar; the llama flow's two prefill sites are byte-identical on an image prompt; perturbation-proven adds; all seven tower stages agree with mlx-vlm at cosine 0.99999+. |
 | `DeepseekV4Flash` | **Text-only** | The family is scaffolded and its witnessed checkpoint carries a vision tower, but this port has no executable intake or runtime vision path. |
 | `Llama`, `Qwen3Moe`, `Qwen3Dense`, `Qwen2Dense`, `GptOss`, `Spark25`, `MiniMaxM2`, `Deepseek2`, `Lfm3` | **Text-only** | No image tower is implemented for these families. |
+| `UnlimitedOcr2` | **Image input, OCR only** | SAM and CLIP towers in their own file, read on the first image. It declares no `VisionConfig`, so its front ends take the family's own path. See `docs/UNLIMITED_OCR2_PHASE0.md`. |
 
 `Real-gated` means an image was encoded and changed generated output on a real
 install. `Structural, unverified` means the shared code accepts the family and

@@ -14,6 +14,14 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- Unlimited-OCR-2 on Metal (`mlx-community/Unlimited-OCR-2-4bit`, family
+  `unlimited_ocr2`, alias `unlimited-ocr-2-4bit`): DASH block-sparse attention
+  over page2d RoPE on a DeepSeek-V2-style MoE decoder, with SAM and CLIP towers.
+  It reads pages through `turbospark-ocr`, `ts_ocr_*`, `turbospark-check
+  --messages-file`, and image parts on the server's OpenAI and Anthropic
+  endpoints. A chat template that prints `content` raw now receives image parts
+  as `<image>` plus text rather than their JSON. See
+  `docs/UNLIMITED_OCR2_PHASE0.md`.
 - macOS app: computer use for local vision models (Settings > Computer Use,
   off by default). Nine `computer_*` tools let the main agent read and
   operate native apps through accessibility-tree refs, with pixel clicks

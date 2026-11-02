@@ -617,3 +617,139 @@ pub fn encode_vision_mul(
     );
     Ok(())
 }
+
+/// CLIP's activation, in place, over `count` FP16 values
+/// (`compute::uocr2_tower::quick_gelu`).
+pub fn encode_vision_quick_gelu(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    y: (&metal::Buffer, u64),
+    count: u32,
+) -> Result<(), GpuError> {
+    let pipeline = context.pipeline(
+        SOURCE,
+        "vision_quick_gelu_fp16",
+        &no_function_constants(),
+        b"",
+    )?;
+    pass.encode_threadgroups(
+        &pipeline,
+        &[(y.0, 0, y.1)],
+        &[(u32_bytes(&count), 1)],
+        groups_for(count),
+        THREADS_PER_GROUP,
+    );
+    Ok(())
+}
+
+/// One convolution's shape, MLX's layouts: `x` `[h, w, c_in]`, `weight`
+/// `[c_out, kh, kw, c_in]`, zero padding.
+#[derive(Debug, Clone, Copy)]
+pub struct VisionConvShape {
+    pub h: u32,
+    pub w: u32,
+    pub c_in: u32,
+    pub c_out: u32,
+    pub kh: u32,
+    pub kw: u32,
+    pub stride: u32,
+    pub pad: u32,
+}
+
+impl VisionConvShape {
+    /// Output `(h, w)`.
+    pub fn output(&self) -> (u32, u32) {
+        (
+            (self.h + 2 * self.pad - self.kh) / self.stride + 1,
+            (self.w + 2 * self.pad - self.kw) / self.stride + 1,
+        )
+    }
+}
+
+/// `compute::uocr2_tower::conv2d`. `bias` is bound either way, as in
+/// [`encode_vision_matmul`].
+pub fn encode_vision_conv2d(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    x: (&metal::Buffer, u64),
+    weight: (&metal::Buffer, u64),
+    bias: Option<(&metal::Buffer, u64)>,
+    out: (&metal::Buffer, u64),
+    shape: VisionConvShape,
+) -> Result<(), GpuError> {
+    let pipeline = context.pipeline(SOURCE, "vision_conv2d_fp16", &no_function_constants(), b"")?;
+    let (oh, ow) = shape.output();
+    let has_bias = u32::from(bias.is_some());
+    let bind = bias.unwrap_or(weight);
+    let words = |v: [u32; 4]| -> Vec<u8> { v.iter().flat_map(|w| w.to_le_bytes()).collect() };
+    let in_hwc = words([shape.h, shape.w, shape.c_in, has_bias]);
+    let k_hw = words([shape.kh, shape.kw, shape.stride, shape.pad]);
+    let out_hwc = words([oh, ow, shape.c_out, 0]);
+    pass.encode_threads_3d(
+        &pipeline,
+        &[
+            (x.0, 0, x.1),
+            (weight.0, 1, weight.1),
+            (bind.0, 2, bind.1),
+            (out.0, 3, out.1),
+        ],
+        &[(&in_hwc, 4), (&k_hw, 5), (&out_hwc, 6)],
+        (u64::from(ow), u64::from(oh), u64::from(shape.c_out)),
+        (u64::from(ow).min(THREADS_PER_GROUP), 1, 1),
+    );
+    Ok(())
+}
+
+/// SAM's windowed attention with its decomposed relative-position bias
+/// (`compute::uocr2_tower::relpos_attention`). `seq` is a whole number of
+/// `side * side` windows, and `rel_h`/`rel_w` are `[side, side, head_dim]`.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_vision_attention_relpos(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    q: (&metal::Buffer, u64),
+    k: (&metal::Buffer, u64),
+    v: (&metal::Buffer, u64),
+    rel_h: (&metal::Buffer, u64),
+    rel_w: (&metal::Buffer, u64),
+    out: (&metal::Buffer, u64),
+    seq: u32,
+    heads: u32,
+    head_dim: u32,
+    side: u32,
+    scale: f32,
+) -> Result<(), GpuError> {
+    if head_dim == 0 || head_dim > MAX_ATTENTION_HEAD_DIM || seq % (side * side) != 0 {
+        return Err(GpuError::PipelineCreate(format!(
+            "relpos attention: head_dim {head_dim} must be in 1..={MAX_ATTENTION_HEAD_DIM} and \
+             seq {seq} a multiple of {side}^2"
+        )));
+    }
+    let pipeline = context.pipeline(
+        SOURCE,
+        "vision_attention_relpos_fp16",
+        &no_function_constants(),
+        b"",
+    )?;
+    pass.encode_threadgroups_3d(
+        &pipeline,
+        &[
+            (q.0, 0, q.1),
+            (k.0, 1, k.1),
+            (v.0, 2, v.1),
+            (out.0, 3, out.1),
+            (rel_h.0, 8, rel_h.1),
+            (rel_w.0, 9, rel_w.1),
+        ],
+        &[
+            (u32_bytes(&seq), 4),
+            (u32_bytes(&heads), 5),
+            (u32_bytes(&head_dim), 6),
+            (f32_bytes(&scale), 7),
+            (u32_bytes(&side), 10),
+        ],
+        (u64::from(seq), u64::from(heads), 1),
+        (THREADS_PER_GROUP, 1, 1),
+    );
+    Ok(())
+}

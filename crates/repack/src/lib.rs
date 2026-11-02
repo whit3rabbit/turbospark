@@ -52,7 +52,10 @@ mod synthetic_qwen;
 mod synthetic_real;
 mod synthetic_spark;
 mod synthetic_tensors;
+mod synthetic_unlimited_ocr2;
 mod trained_context;
+mod unlimited_ocr2_config;
+mod unlimited_ocr2_tower;
 
 pub use arch_registry::{
     config_json_family, describe_gguf_architecture, describe_headless_tts_trunk, gguf_arch_support,
@@ -82,14 +85,14 @@ pub use gemma4_checkpoint::{
     write_qwen3_vl_install_streamed, write_qwen4_exp_install_streamed,
     write_qwen_gdn_dense_install, write_qwen_gdn_dense_install_streamed,
     write_qwen_gdn_dense_install_streamed_with_hadamard, write_qwen_gdn_moe_install,
-    write_qwen_gdn_moe_install_streamed, write_vision_sidecar, ConvertedFp16, Gemma4Bucket,
-    Gemma4Error, Gemma4Quant, Gemma4RepackOutput, Gemma4Shards, NarrowedRaw, NgramPlan,
-    NgramTableSpec, NgramTableWriter, PrismHadamard, QuantMode, VisionRead, AFFINE_1BIT_GROUP_SIZE,
-    AFFINE_2BIT_GROUP_SIZE, AFFINE_GROUP_SIZE, DFLASH_PREFIX, EMBED_VISION_PREFIX,
-    GEMMA4_BLOCK_ROLES, GEMMA4_PROJECTOR_INSTALL_NAME, GEMMA4_RESIDENT_TENSORS, GTURBO_PAGE_BYTES,
-    MTP_PREFIX, VISION_BLOCK_ROLES, VISION_DEEPSTACK_MERGER_PREFIX,
-    VISION_DEEPSTACK_MERGER_SUFFIXES, VISION_INSTALL_PREFIX, VISION_PREFIX,
-    VISION_RESIDENT_TENSORS, VISION_SOURCE_PREFIXES,
+    write_qwen_gdn_moe_install_streamed, write_unlimited_ocr2_install_streamed,
+    write_vision_sidecar, ConvertedFp16, Gemma4Bucket, Gemma4Error, Gemma4Quant,
+    Gemma4RepackOutput, Gemma4Shards, NarrowedRaw, NgramPlan, NgramTableSpec, NgramTableWriter,
+    PrismHadamard, QuantMode, VisionRead, AFFINE_1BIT_GROUP_SIZE, AFFINE_2BIT_GROUP_SIZE,
+    AFFINE_GROUP_SIZE, DFLASH_PREFIX, EMBED_VISION_PREFIX, GEMMA4_BLOCK_ROLES,
+    GEMMA4_PROJECTOR_INSTALL_NAME, GEMMA4_RESIDENT_TENSORS, GTURBO_PAGE_BYTES, MTP_PREFIX,
+    VISION_BLOCK_ROLES, VISION_DEEPSTACK_MERGER_PREFIX, VISION_DEEPSTACK_MERGER_SUFFIXES,
+    VISION_INSTALL_PREFIX, VISION_PREFIX, VISION_RESIDENT_TENSORS, VISION_SOURCE_PREFIXES,
 };
 pub use gguf_checkpoint::{
     dtype_tag_for_ggml_type, gguf_manifest_quant, lfm3_rope_freqs_are_zero_tail,
@@ -195,6 +198,14 @@ pub use synthetic_real::{
     build_synthetic_gemma4_real_install_at_shared_bits,
 };
 pub use synthetic_spark::{build_synthetic_spark_install, tiny_spark_arch};
+pub use synthetic_unlimited_ocr2::{
+    build_synthetic_unlimited_ocr2_install, tiny_unlimited_ocr2_arch, SYNTHETIC_UOCR2_IMAGE_TOKEN,
+    SYNTHETIC_UOCR2_PAGE_TOKEN,
+};
+pub use unlimited_ocr2_config::{
+    canonicalize_unlimited_ocr2_header, parse_unlimited_ocr2_config, UOCR2_TOWER_PREFIX,
+};
+pub use unlimited_ocr2_tower::{UOCR2_TOWER_BIN, UOCR2_TOWER_INDEX};
 /// The checkpoint's own trained context length: read it out of either
 /// intake format, record it in an install, read it back. See the module
 /// docs for why this is install metadata rather than an `ArchConfig` field.

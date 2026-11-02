@@ -830,6 +830,8 @@ mod tests {
         ModelFamily::Deepseek2,
         // Refused deliberately: DENSE, no routed experts to map.
         ModelFamily::Lfm3,
+        // Admitted by the flow's mapped arm, but no gate has run it yet.
+        ModelFamily::UnlimitedOcr2,
     ];
 
     fn assert_invalid_kv_dimension(name: &str, value: i64, mutate: fn(&mut model_io::ArchConfig)) {

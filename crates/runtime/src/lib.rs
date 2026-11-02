@@ -217,3 +217,6 @@ pub mod coreml;
 pub mod heavy;
 #[cfg(target_os = "macos")]
 pub mod native_audio;
+/// Unlimited-OCR-2 on Metal: a whole document read.
+#[cfg(target_os = "macos")]
+pub mod unlimited_ocr2_reader;

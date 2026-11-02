@@ -296,7 +296,8 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         ModelFamily::DeepseekV4Flash
         | ModelFamily::MuseGlimmer
         | ModelFamily::Qwen3Vl
-        | ModelFamily::Flint => {
+        | ModelFamily::Flint
+        | ModelFamily::UnlimitedOcr2 => {
             return Err(GgufConfigError::UnsupportedArchitecture {
                 architecture: architecture.to_string(),
             })

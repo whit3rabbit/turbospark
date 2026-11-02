@@ -1,4 +1,5 @@
-//! C ABI for document OCR on Core ML (Unlimited OCR, macOS 15+).
+//! C ABI for document OCR: Unlimited-OCR-2 on Metal, or Unlimited OCR on Core
+//! ML (macOS 15+). The model directory says which.
 //!
 //! A session holds the loaded model and a list of pending pages. Callers
 //! add pages (decoded RGB or an image file), then read them as one
@@ -15,10 +16,18 @@ use crate::strings;
 /// The opaque OCR handle. `TsOcrSession *` in C.
 pub struct OcrSession {
     #[cfg(target_os = "macos")]
-    model: runtime::coreml::UnlimitedOcrCoreMl,
+    model: OcrModel,
     #[cfg(target_os = "macos")]
-    pending: Mutex<Vec<runtime::coreml::OcrPage>>,
+    pending: Mutex<Vec<turbospark_vision_io::Rgb8Image>>,
     cancel: AtomicBool,
+}
+
+#[cfg(target_os = "macos")]
+enum OcrModel {
+    CoreMl(runtime::coreml::UnlimitedOcrCoreMl),
+    // A read needs the runner mutably, and `ts_ocr_read_json` takes `*const`
+    // so that `ts_ocr_cancel` can run beside it.
+    Metal(Mutex<runtime::unlimited_ocr2_reader::UnlimitedOcr2Reader>),
 }
 
 pub type TsOcrSession = OcrSession;
@@ -33,13 +42,11 @@ struct ReadOptions {
 
 #[cfg(not(target_os = "macos"))]
 fn unsupported<T>() -> Result<T, (c_int, String)> {
-    Err((
-        abi::TS_ERR_UNSUPPORTED,
-        "OCR runs on Core ML and needs macOS 15 or newer".into(),
-    ))
+    Err((abi::TS_ERR_UNSUPPORTED, "OCR needs macOS".into()))
 }
 
-/// Opens a Core ML Unlimited OCR directory and writes a handle to `out`.
+/// Opens an Unlimited OCR directory (an Unlimited-OCR-2 install, or the Core ML
+/// export) and writes a handle to `out`.
 #[no_mangle]
 pub unsafe extern "C" fn ts_ocr_open(
     model_path: *const c_char,
@@ -54,11 +61,21 @@ pub unsafe extern "C" fn ts_ocr_open(
         #[cfg(target_os = "macos")]
         {
             let dir = catalog::resolve_ocr_arg(path);
-            let model = runtime::coreml::UnlimitedOcrCoreMl::open(
-                &dir,
-                &runtime::coreml::OcrOptions::default(),
-            )
-            .map_err(|e| (abi::TS_ERR_OPEN, e))?;
+            let model = if dir.join(model_io::DASH_SIDECAR).exists() {
+                let arch = repack::peek_manifest_arch(&dir).map_err(|e| (abi::TS_ERR_OPEN, e))?;
+                OcrModel::Metal(Mutex::new(
+                    runtime::unlimited_ocr2_reader::UnlimitedOcr2Reader::open(&dir, arch)
+                        .map_err(|e| (abi::TS_ERR_OPEN, e))?,
+                ))
+            } else {
+                OcrModel::CoreMl(
+                    runtime::coreml::UnlimitedOcrCoreMl::open(
+                        &dir,
+                        &runtime::coreml::OcrOptions::default(),
+                    )
+                    .map_err(|e| (abi::TS_ERR_OPEN, e))?,
+                )
+            };
             *out = Box::into_raw(Box::new(OcrSession {
                 model,
                 pending: Mutex::new(Vec::new()),
@@ -250,8 +267,8 @@ pub unsafe extern "C" fn ts_ocr_add_page_rgb(
             for row in src.chunks_exact(row_bytes) {
                 data.extend_from_slice(&row[..packed]);
             }
-            let page = runtime::coreml::OcrPage::from_rgb(&data, width, height)
-                .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+            let page = turbospark_vision_io::Rgb8Image::new(width, height, data)
+                .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e.to_string()))?;
             s.pending
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
@@ -281,8 +298,8 @@ pub unsafe extern "C" fn ts_ocr_add_page_file(
             strings::required(path, "path").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
         #[cfg(target_os = "macos")]
         {
-            let page = runtime::coreml::OcrPage::from_file(std::path::Path::new(path))
-                .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+            let page = turbospark_vision_io::decode_image_file(std::path::Path::new(path))
+                .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, format!("{path}: {e}")))?;
             s.pending
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
@@ -335,21 +352,34 @@ pub unsafe extern "C" fn ts_ocr_read_json(
             // Cleared on entry so a Stop pressed between reads does not
             // cancel the next one.
             s.cancel.store(false, Ordering::SeqCst);
-            let prompt = if pages.len() == 1 { "single" } else { "multi" };
-            let result = s
-                .model
-                .read_limited(&pages, prompt, opts.max_new_tokens, |_| {
-                    !s.cancel.load(Ordering::SeqCst)
-                })
-                .map_err(|e| {
-                    if s.cancel.load(Ordering::SeqCst) {
-                        (abi::TS_ERR_CANCELLED, e)
-                    } else {
-                        (abi::TS_ERR_GENERATE, e)
-                    }
-                })?;
+            let keep_going = |_| !s.cancel.load(Ordering::SeqCst);
+            let read = match &s.model {
+                OcrModel::CoreMl(model) => {
+                    let prompt = if pages.len() == 1 { "single" } else { "multi" };
+                    pages
+                        .iter()
+                        .map(|p| runtime::coreml::OcrPage::from_rgb(&p.data, p.width, p.height))
+                        .collect::<Result<Vec<_>, _>>()
+                        .and_then(|pages| {
+                            model.read_limited(&pages, prompt, opts.max_new_tokens, keep_going)
+                        })
+                        .map(|r| (r.plain_text(), r))
+                }
+                OcrModel::Metal(reader) => reader
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .read(&pages, opts.max_new_tokens, keep_going)
+                    .map(|r| (runtime::unlimited_ocr2_reader::uocr2_plain_text(&r.text), r)),
+            };
+            let (plain, result) = read.map_err(|e| {
+                if s.cancel.load(Ordering::SeqCst) {
+                    (abi::TS_ERR_CANCELLED, e)
+                } else {
+                    (abi::TS_ERR_GENERATE, e)
+                }
+            })?;
             let json = serde_json::json!({
-                "text": result.plain_text(),
+                "text": plain,
                 "raw_text": result.text,
                 "pages": result.stats.pages,
                 "prompt_tokens": result.stats.prompt_tokens,

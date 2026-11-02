@@ -233,6 +233,10 @@ const SUPPORTED_HF: &[(&str, ModelFamily)] = &[
     // llama.cpp port instead (`docs/FLINT_PHASE0.md`). No `_text` row: the
     // config is flat, with no `text_config` wrapper to carry one.
     ("flint", ModelFamily::Flint),
+    // Read off `mlx-community/Unlimited-OCR-2-4bit`. Baidu's v1 spells the same
+    // `model_type` with a different cache, and `parse_unlimited_ocr2_config`
+    // refuses it by name rather than this table guessing from a second key.
+    ("unlimited-ocr", ModelFamily::UnlimitedOcr2),
     // Read off `LiquidAI/LFM3-1.7B` @ 40ebe0aa and
     // `LiquidAI/LFM3-1.7B-MLX-4bit` @ d0ca73dc, both `model_type: "lfm3"`
     // with no `text_config` wrapper. NOT `lfm2`: that is a different layer

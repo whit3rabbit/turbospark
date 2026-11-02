@@ -176,7 +176,7 @@ turbospark launch claude --model qwen3.6   # start a coding agent against the lo
 
 ## Supported models
 
-TurboSpark supports 17 declared model families (DeepSeek-V4-Flash is still scaffolded-only). The newest two are LFM3-1.7B, a small dense hybrid of gated short-convolution and attention layers, and Flint 40B-A2.5B, an MoE with 256 routed experts per layer that streams from SSD like the others. Recent additions also include the Bonsai line (1-bit Bonsai, 2-bit Ternary-Bonsai, and the Hadamard-folded Ternary-Bonsai 2), Qwen3.8-27B dense with MTP/DFlash2 speculative decoding and an optional vision tower, Qwen3.8-Flash-Next REAP-288 and the text-only Swift-1.5 IQ2_XS GGUF, Qwen3-VL 4B with image input, MiniCPM-V 4.7 35B-A3B (text only, MLX mxfp4), DeepSeek-V2-Lite (MLA), Spark-X2.5, Muse Glimmer, Qwen2.5, and gpt-oss. MiniMax-M2 is implemented but not yet catalog-promoted.
+TurboSpark supports 18 declared model families (DeepSeek-V4-Flash is still scaffolded-only). The newest is Unlimited-OCR-2, a document parser with DASH block-sparse attention over SAM and CLIP towers (see [`docs/UNLIMITED_OCR2_PHASE0.md`](docs/UNLIMITED_OCR2_PHASE0.md)). Before it came LFM3-1.7B, a small dense hybrid of gated short-convolution and attention layers, and Flint 40B-A2.5B, an MoE with 256 routed experts per layer that streams from SSD like the others. Recent additions also include the Bonsai line (1-bit Bonsai, 2-bit Ternary-Bonsai, and the Hadamard-folded Ternary-Bonsai 2), Qwen3.8-27B dense with MTP/DFlash2 speculative decoding and an optional vision tower, Qwen3.8-Flash-Next REAP-288 and the text-only Swift-1.5 IQ2_XS GGUF, Qwen3-VL 4B with image input, MiniCPM-V 4.7 35B-A3B (text only, MLX mxfp4), DeepSeek-V2-Lite (MLA), Spark-X2.5, Muse Glimmer, Qwen2.5, and gpt-oss. MiniMax-M2 is implemented but not yet catalog-promoted.
 
 MoE checkpoints can stream routed experts from SSD through a bounded cache,
 so install size and process footprint are different quantities. The Swift
@@ -206,6 +206,7 @@ The process peak is measured `phys_footprint` on a 36 GB M4 Max with 16 expert-c
 | MiniCPM-V 4.7 35B-A3B, text only (`minicpm-v47-35b-mxfp4`) | mxfp4 (group 32) | MLX | ~22 GB | ~1.5 GB @ 4k ctx |
 | Flint 40B-A2.5B (`flint`) | INT4 core, 3-bit routed experts | MLX | ~18.6 GB | - |
 | Flint 40B-A2.5B, trained build (`flint-int4`) | INT4 (group 64) | MLX | ~23.5 GB | - |
+| Unlimited-OCR-2, OCR only (`unlimited-ocr-2-4bit`) | INT4 language model, FP16 towers | MLX | ~2.5 GB | - |
 | Qwen3.8-Flash-Next REAP-288 | INT4 | MLX | ~74 GB | ~2.5 GB @ 2k ctx |
 | Qwen3.8-Flash-Next Swift-1.5 (`qwen4exp-swift-iq2-xs`) | IQ2_XS | GGUF | ~69 GB reserve | ~1.60 GiB @ 2k ctx |
 | Qwen3-30B-A3B | Q4_K_M | GGUF | ~19 GB | ~2.7 GB @ 4k ctx |

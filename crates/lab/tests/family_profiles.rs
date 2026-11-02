@@ -91,6 +91,7 @@ fn profile_when_tags_are_tags_coverage_can_produce() {
             ModelFamily::Deepseek2 => r::tiny_deepseek2_arch(512, 4),
             ModelFamily::Flint => r::tiny_flint_arch(512),
             ModelFamily::Lfm3 => r::tiny_lfm3_arch(512, 4),
+            ModelFamily::UnlimitedOcr2 => model_io::unlimited_ocr2_12l(),
         };
         arch.family = f;
         let s = turbospark_lab::kernel::Subject {

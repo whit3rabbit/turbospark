@@ -11,3 +11,4 @@ pub(crate) mod qwen;
 pub(crate) mod qwen4;
 pub(crate) mod spark;
 pub(crate) mod synthetic;
+pub(crate) mod unlimited_ocr2;

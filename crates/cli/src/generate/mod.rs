@@ -373,7 +373,9 @@ fn run_one_turn(
                 images.len()
             ));
         }
-        if session.runner.gemma4_image_ids().is_some() {
+        if session.runner.unlimited_ocr2_image_ids().is_some() {
+            vision::attach_unlimited_ocr2(session, &rendered, images)?
+        } else if session.runner.gemma4_image_ids().is_some() {
             vision::attach_gemma4(session, &rendered, images)?
         } else {
             let params = vision::preprocess_params(session)?;

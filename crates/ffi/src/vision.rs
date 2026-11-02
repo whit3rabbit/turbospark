@@ -237,6 +237,28 @@ pub(crate) fn attach_gemma4(
     Ok(expanded)
 }
 
+/// The Unlimited-OCR-2 tower's attach: pages, expansion, tower, prompt.
+pub(crate) fn attach_unlimited_ocr2(
+    runner: &mut runtime::RealForwardRunner,
+    rendered: &[i32],
+    parts: &[&WirePart],
+) -> Result<Vec<i32>, String> {
+    let ids = runner
+        .unlimited_ocr2_image_ids()
+        .ok_or("this install is not unlimited_ocr2")?;
+    let mut images = Vec::with_capacity(parts.len());
+    for (i, part) in parts.iter().enumerate() {
+        images.push(decode_part(part, i)?.1);
+    }
+    let pages = turbospark_vision_io::uocr2_pages(&images);
+    let expanded = turbospark_vision_io::uocr2_expand_prompt(rendered, &pages, ids)
+        .map_err(|e| format!("cannot place {} image(s) in this prompt: {e}", parts.len()))?;
+    runner
+        .attach_unlimited_ocr2_pages(&pages, &expanded)
+        .map_err(|e| format!("cannot encode the pages: {e}"))?;
+    Ok(expanded)
+}
+
 /// Run the tower over `images` and hand the runner the injection map for
 /// `rendered`.
 ///

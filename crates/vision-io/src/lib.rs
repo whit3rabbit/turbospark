@@ -50,6 +50,7 @@ pub mod resize;
 pub mod rope;
 pub mod rounding;
 pub mod smart_resize;
+mod unlimited_ocr2;
 
 pub use decode::{
     decode_image_bytes, decode_image_file, image_dimensions, Rgb8Image, MAX_IMAGE_DIM,
@@ -71,3 +72,7 @@ pub use preprocess::{preprocess, PreprocessedImage};
 pub use rope::vision_rope_freq_rows;
 pub use rounding::round_half_to_even;
 pub use smart_resize::resized_dims;
+pub use unlimited_ocr2::{
+    uocr2_base_page, uocr2_crop_grid, uocr2_expand_prompt, uocr2_grid, uocr2_gundam_page,
+    uocr2_pages, Uocr2ImageIds, Uocr2Page, UOCR2_BASE_SIZE, UOCR2_CROP_SIZE, UOCR2_MAX_CROPS,
+};

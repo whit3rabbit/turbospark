@@ -156,6 +156,13 @@ pub const fn protocol_parameters(family: ModelFamily) -> ProtocolParameters {
         // a full-cache one. The budget stays at the shared 1,024:
         // V2-Lite-Chat answers directly with no reasoning channel, and a
         // `maxTokens` stop on the frozen prose is what would say otherwise.
+        // Provisional like `deepseek2`: no frozen row exists. A page prompt is
+        // about 1,500 tokens, so the window must clear that plus its answer.
+        ModelFamily::UnlimitedOcr2 => ProtocolParameters {
+            family,
+            max_context: DENSE_LLAMA_MAX_CONTEXT,
+            max_new: PROTOCOL_MAX_NEW,
+        },
         ModelFamily::Deepseek2 => ProtocolParameters {
             family,
             max_context: DENSE_LLAMA_MAX_CONTEXT,

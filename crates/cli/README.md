@@ -10,7 +10,7 @@ Command-line binaries for [turbospark](https://github.com/whit3rabbit/turbospark
 - `turbospark-music`: Generates music audio via MiniMax Music 3 (autoregressive backbone, flow-matching DiT, and vocoder).
 - `turbospark-clone`: Zero-shot voice cloning and speech synthesis via MegaTTS3.
 - `turbospark-speak`: Speech synthesis with Fish Audio Drama 3, optionally in a cloned voice.
-- `turbospark-ocr`: Document OCR via the Core ML Unlimited OCR export (macOS 15+).
+- `turbospark-ocr`: Document OCR with Unlimited-OCR-2 on Metal, or the Core ML Unlimited OCR export (macOS 15+).
 - `turbospark`: Unified front end over all subcommands, the HTTP server, and external coding agents.
 
 Generation is macOS-only and requires a Metal-capable Apple Silicon device. On other platforms, the binaries parse arguments and validate configuration.
@@ -125,7 +125,7 @@ turbospark-speak \
 
 ### 7. `turbospark-ocr`
 
-Read page images as one document with the Core ML Unlimited OCR export (macOS 15+):
+Read page images as one document, with an Unlimited-OCR-2 install (`turbospark-model pull --repo mlx-community/Unlimited-OCR-2-4bit --alias unlimited-ocr-2-4bit`) or the Core ML Unlimited OCR export (macOS 15+):
 
 ```sh
 turbospark-ocr --model ~/models/unlimited-ocr page1.png page2.png

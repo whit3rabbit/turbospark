@@ -886,3 +886,163 @@ void vision_mul_fp16(
     if (tid >= count) return;
     y[tid] = half(float(y[tid]) * float(x[tid]));
 }
+
+// ----------------------------------------------------------------------------
+// Unlimited-OCR-2's tower (PORT-LOCAL, `compute::uocr2_tower` is the contract).
+// ----------------------------------------------------------------------------
+
+// CLIP's activation, `x * sigmoid(1.702 x)`. Neither GELU above: it differs
+// from them by far more than a block's parity bound would hide.
+kernel void vision_quick_gelu_fp16(
+    device half*    y     [[buffer(0)]],
+    constant uint&  count [[buffer(1)]],
+    uint            tid   [[thread_position_in_grid]]
+) {
+    if (tid >= count) return;
+    const float x = float(y[tid]);
+    y[tid] = half(x / (1.0f + exp(-1.702f * x)));
+}
+
+// One thread per output element, FP32 accumulator, zero padding. `x` and `out`
+// are `[h, w, c]` and `weight` is `[out, kh, kw, in]`, MLX's layout. These run a
+// handful of times per view against a whole 256- to 1024-channel plane, so
+// nothing about them is hot enough to justify a threadgroup reduction.
+kernel void vision_conv2d_fp16(
+    device const half*  x       [[buffer(0)]],
+    device const half*  weight  [[buffer(1)]],
+    device const half*  bias    [[buffer(2)]],
+    device half*        out     [[buffer(3)]],
+    constant uint4&     in_hwc  [[buffer(4)]],  // h, w, c_in, has_bias
+    constant uint4&     k_hw    [[buffer(5)]],  // kh, kw, stride, pad
+    constant uint4&     out_hwc [[buffer(6)]],  // oh, ow, c_out, unused
+    uint3 gid [[thread_position_in_grid]]
+) {
+    const uint ox = gid.x, oy = gid.y, c = gid.z;
+    const uint h = in_hwc.x, w = in_hwc.y, c_in = in_hwc.z;
+    const uint kh = k_hw.x, kw = k_hw.y, stride = k_hw.z, pad = k_hw.w;
+    float sum = 0.0f;
+    for (uint ky = 0; ky < kh; ++ky) {
+        for (uint kx = 0; kx < kw; ++kx) {
+            const uint sy = oy * stride + ky;
+            const uint sx = ox * stride + kx;
+            if (sy < pad || sx < pad || sy - pad >= h || sx - pad >= w) continue;
+            device const half* src = x + (uint64_t(sy - pad) * w + (sx - pad)) * c_in;
+            device const half* wgt = weight + (uint64_t(c * kh + ky) * kw + kx) * c_in;
+            for (uint i = 0; i < c_in; ++i) {
+                sum = fma(float(src[i]), float(wgt[i]), sum);
+            }
+        }
+    }
+    if (in_hwc.w != 0u) sum += float(bias[c]);
+    out[(uint64_t(oy) * out_hwc.y + ox) * out_hwc.z + c] = half(sum);
+}
+
+// SAM's attention: `vision_attention_bidir_fp16` over one window at a time,
+// with the decomposed relative-position bias. The bias is q dotted with the
+// tables, NOT scaled, added to the scaled score, so the dot is split in two
+// and the two are never summed before the scale.
+//
+// `q`/`k`/`v`/`out` are `[seq, heads, head_dim]`, `seq` a whole number of
+// `side * side` windows laid end to end, and `rel_h`/`rel_w` are
+// `[side, side, head_dim]`. A global block is one window of the whole grid.
+kernel void vision_attention_relpos_fp16(
+    device const half*  q        [[buffer(0)]],
+    device const half*  k        [[buffer(1)]],
+    device const half*  v        [[buffer(2)]],
+    device half*        out      [[buffer(3)]],
+    constant uint&      seq      [[buffer(4)]],
+    constant uint&      heads    [[buffer(5)]],
+    constant uint&      head_dim [[buffer(6)]],
+    constant float&     scale    [[buffer(7)]],
+    device const half*  rel_h    [[buffer(8)]],
+    device const half*  rel_w    [[buffer(9)]],
+    constant uint&      side     [[buffer(10)]],
+    uint2 tg            [[threadgroup_position_in_grid]],
+    uint  simd_lane_id  [[thread_index_in_simdgroup]],
+    uint  simd_group_id [[simdgroup_index_in_threadgroup]],
+    uint  simdgroups    [[simdgroups_per_threadgroup]]
+) {
+    const uint token = tg.x;
+    const uint head = tg.y;
+    if (token >= seq || head >= heads) return;
+
+    threadgroup float tg_max[kVisionMaxSimdGroups];
+    threadgroup float tg_sum[kVisionMaxSimdGroups];
+    threadgroup float tg_acc[kVisionMaxSimdGroups][kVisionAttnMaxSlots * 32];
+
+    const uint window = side * side;
+    const uint first = token / window * window;
+    const uint local = token - first;
+    const uint qh = local / side;
+    const uint qw = local % side;
+    device const half* qrow = q + (uint64_t(token) * heads + head) * head_dim;
+    const uint slots = (head_dim + 31u) / 32u;
+
+    float run_max = -INFINITY;
+    float run_sum = 0.0f;
+    float acc[kVisionAttnMaxSlots] = { 0.0f, 0.0f, 0.0f, 0.0f };
+
+    for (uint j = simd_group_id; j < window; j += simdgroups) {
+        const uint kh = j / side;
+        const uint kw = j % side;
+        device const half* krow = k + (uint64_t(first + j) * heads + head) * head_dim;
+        device const half* hrow = rel_h + uint64_t(qh * side + kh) * head_dim;
+        device const half* wrow = rel_w + uint64_t(qw * side + kw) * head_dim;
+        float dot = 0.0f;
+        float bias = 0.0f;
+        for (uint t = 0; t < slots; ++t) {
+            const uint d = t * 32u + simd_lane_id;
+            if (d < head_dim) {
+                const float qd = float(qrow[d]);
+                dot = fma(qd, float(krow[d]), dot);
+                bias = fma(qd, float(hrow[d]) + float(wrow[d]), bias);
+            }
+        }
+        const float score = simd_sum(dot) * scale + simd_sum(bias);
+
+        const float new_max = max(run_max, score);
+        const float correction = exp(run_max - new_max);
+        const float weight = exp(score - new_max);
+        run_sum = fma(run_sum, correction, weight);
+        device const half* vrow = v + (uint64_t(first + j) * heads + head) * head_dim;
+        for (uint t = 0; t < slots; ++t) {
+            const uint d = t * 32u + simd_lane_id;
+            acc[t] *= correction;
+            if (d < head_dim) {
+                acc[t] = fma(weight, float(vrow[d]), acc[t]);
+            }
+        }
+        run_max = new_max;
+    }
+
+    if (simd_lane_id == 0) {
+        tg_max[simd_group_id] = run_max;
+        tg_sum[simd_group_id] = run_sum;
+    }
+    for (uint t = 0; t < slots; ++t) {
+        tg_acc[simd_group_id][t * 32u + simd_lane_id] = acc[t];
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    if (simd_group_id != 0) return;
+
+    float global_max = -INFINITY;
+    for (uint g = 0; g < simdgroups; ++g) {
+        global_max = max(global_max, tg_max[g]);
+    }
+    float denom = 0.0f;
+    for (uint g = 0; g < simdgroups; ++g) {
+        denom += tg_sum[g] * exp(tg_max[g] - global_max);
+    }
+    const float inv_denom = 1.0f / denom;
+    device half* orow = out + (uint64_t(token) * heads + head) * head_dim;
+    for (uint t = 0; t < slots; ++t) {
+        const uint d = t * 32u + simd_lane_id;
+        if (d >= head_dim) continue;
+        float total = 0.0f;
+        for (uint g = 0; g < simdgroups; ++g) {
+            total = fma(tg_acc[g][d], exp(tg_max[g] - global_max), total);
+        }
+        orow[d] = half(total * inv_denom);
+    }
+}

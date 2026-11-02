@@ -43,6 +43,7 @@ mod overflow;
 mod scratch;
 mod shape;
 mod stages;
+pub mod unlimited_ocr2;
 mod weights;
 
 pub use budget::{PixelBudget, VisionBudgetTooSmall};

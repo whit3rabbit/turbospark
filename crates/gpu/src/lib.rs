@@ -183,8 +183,8 @@ pub use attention_decode::{
 };
 #[cfg(target_os = "macos")]
 pub use attention_indexed::{
-    attention_decode_indexed, encode_attention_decode_indexed,
-    encode_attention_decode_indexed_from_count,
+    attention_decode_indexed, attention_decode_indexed_biased, encode_attention_decode_indexed,
+    encode_attention_decode_indexed_biased, encode_attention_decode_indexed_from_count,
 };
 #[cfg(target_os = "macos")]
 pub use attention_tq::{
@@ -429,10 +429,11 @@ pub use utility::{
 };
 #[cfg(target_os = "macos")]
 pub use vision::{
-    encode_vision_attention, encode_vision_attention_with, encode_vision_gelu,
-    encode_vision_layer_norm, encode_vision_matmul, encode_vision_matmul_with, encode_vision_mul,
+    encode_vision_attention, encode_vision_attention_relpos, encode_vision_attention_with,
+    encode_vision_conv2d, encode_vision_gelu, encode_vision_layer_norm, encode_vision_matmul,
+    encode_vision_matmul_with, encode_vision_mul, encode_vision_quick_gelu,
     encode_vision_residual_add, encode_vision_rms_norm, encode_vision_rope_2d,
-    encode_vision_rope_axial, GeluKind, VisionAttentionKernel, VisionMatmulKernel,
+    encode_vision_rope_axial, GeluKind, VisionAttentionKernel, VisionConvShape, VisionMatmulKernel,
     MAX_ATTENTION_HEAD_DIM,
 };
 #[cfg(target_os = "macos")]

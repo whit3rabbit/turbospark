@@ -586,6 +586,13 @@ pub(crate) fn plan(model: &AppState, request: &ChatCompletionRequest) -> Result<
             let images = crate::vision::gemma4_preprocess_all(&encoded, *max_soft_tokens)?;
             Some(crate::vision::RequestImages::Gemma4 { images, spans })
         }
+        (Some(crate::vision::VisionInfo::UnlimitedOcr2 { ids }), false) => {
+            let pages = crate::vision::uocr2_pages_all(&encoded)?;
+            prompt_ids = turbospark_vision_io::uocr2_expand_prompt(&prompt_ids, &pages, *ids)
+                .map_err(|e| format!("cannot place {} image(s): {e}", pages.len()))?;
+            check_context(&prompt_ids, &config, model.max_context())?;
+            Some(crate::vision::RequestImages::UnlimitedOcr2 { pages })
+        }
         _ => None,
     };
 

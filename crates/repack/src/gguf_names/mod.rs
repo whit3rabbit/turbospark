@@ -201,7 +201,8 @@ pub fn map_gguf_name(name: &str, family: ModelFamily) -> Result<GgufMapping, Ggu
             ModelFamily::DeepseekV4Flash
             | ModelFamily::MuseGlimmer
             | ModelFamily::Qwen3Vl
-            | ModelFamily::Flint => None,
+            | ModelFamily::Flint
+            | ModelFamily::UnlimitedOcr2 => None,
         }
         .ok_or_else(unmapped);
     }
@@ -290,7 +291,9 @@ pub fn gguf_architecture(family: ModelFamily) -> Option<&'static str> {
         | ModelFamily::Qwen3Vl
         // llama.cpp's port (ggml-org/llama.cpp#30928) is unmerged and the
         // published Q4_1 is not an executable block type here.
-        | ModelFamily::Flint => None,
+        | ModelFamily::Flint
+        // No GGUF conversion exists, and llama.cpp has no DASH attention.
+        | ModelFamily::UnlimitedOcr2 => None,
     }
 }
 
