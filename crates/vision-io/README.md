@@ -1,6 +1,6 @@
 # turbospark-vision-io
 
-Portable vision preprocessing for the `qwen3_5` vision tower. Takes encoded image bytes and produces the patch-row matrix the tower's patch-embedding GEMM consumes, plus the three position tables the tower and the text trunk need.
+Portable vision preprocessing for the `qwen3_5` vision tower (and, in its own module, the Gemma 4 tower). Takes encoded image bytes and produces the patch-row matrix the tower's patch-embedding GEMM consumes, plus the three position tables the tower and the text trunk need.
 
 Plain arithmetic on `Vec<f32>`: no Metal, no macOS, no GPU, no model install. It builds and tests cleanly for non-macOS targets.
 
@@ -52,6 +52,7 @@ Beside it, three tables of pure index and weight arithmetic:
 - `pos_embed.rs`: 2D bilinear interpolation weight and index calculator for position embeddings.
 - `rope.rs`: 2D spatial RoPE frequency table generator for vision attention.
 - `mrope.rs`: Multimodal 3D RoPE coordinate triple assignment for prompt/image token merging.
+- `gemma4.rs`: Gemma 4 tower preprocessing, a separate pipeline (no smart resize, temporal axis, normalize, or merge-window order; `docs/GEMMA4_VISION_PHASE0.md`).
 - `rounding.rs`: Shared rounding helpers matching Python's `round()` convention (`round_half_to_even`).
 - `error.rs`: Typed preprocessing and dimension validation errors.
 

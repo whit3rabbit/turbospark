@@ -33,6 +33,7 @@ repack = { package = "turbospark-repack", path = "../repack" }
 - `gguf_checkpoint/`: GGUF repacker handling GGUF tensor walks, F32 transcoding, and V-head conventions.
 - `gguf_config/`, `gguf_header/`, `gguf_names/`, `gguf_set.rs`: GGUF metadata extraction, tensor name mapping, and split multi-file GGUF sets.
 - `qwen2_config.rs`, `qwen36_config.rs`, `qwen3vl_config.rs`, `museglimmer_config.rs`: Architecture-specific JSON config parsers.
+- `gemma4_checkpoint/vision_gemma4.rs`: Gemma 4 vision tower config and ingest, a sibling of the qwen tower ingest (different tensor names, roles, and projector).
 - `manifest_peek.rs`: Inspects install metadata without full directory traversals.
 - `trained_context.rs`: Extracts and bounds trained context lengths from config keys.
 - `synthetic_model/`, `synthetic_real.rs`, `synthetic_qwen/`, `synthetic_spark.rs`, `synthetic_llama.rs`, `synthetic_muse.rs`, `synthetic_flint.rs`, `synthetic_deepseek2.rs`, `synthetic_gguf/`: Deterministic synthetic test model generators for offline integration testing. The flint fixture is built in the checkpoint's own source form (U8-packed weights, raw BF16 router, INT8 embedding) so the canonicalization passes stay on the tested path.

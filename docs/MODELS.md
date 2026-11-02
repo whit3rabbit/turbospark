@@ -30,6 +30,14 @@ revision by name:
 turbospark-model pull --repo "mlx-community/Qwen3-VL-4B-Instruct-4bit@2fd8dacbdb8f1e54b8c005f081ec5bf79c56376b" --alias qwen3vl-4b-vision
 ```
 
+Gemma 4 image input is real-gated (2026-11-01) on
+`mlx-community/gemma-4-26b-a4b-it-4bit@0d77464eeb233a2da68ebf9d7dc4edaac7db956d`,
+the same revision as the text install, when the install is repacked with its
+tower (manifest `visionTower: "gemma4"`). The catalog `gemma4` row is the text
+install and carries no tower. The tower has no sidecar and no soft-token
+budget above the 280 default. See
+[`GEMMA4_VISION_PHASE0.md`](GEMMA4_VISION_PHASE0.md).
+
 LFM3 is represented by the `lfm3` family: LiquidAI's dense 1.7B hybrid of
 gated short-convolution, full-attention and sliding-window layers. Two
 artifacts are cataloged and both are `verified`: the 4-bit MLX conversion

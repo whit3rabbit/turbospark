@@ -43,6 +43,7 @@ compute = { package = "turbospark-compute", path = "../compute" }
 - `steering.rs`: Directional steering operations on residual streams (`Ablate`, `Add`, `Clamp`, `Renorm`).
 - `tolerance.rs`: NaN-sticky relative error metrics (`rel_error`, `bounded_rel_error`, `max_abs_diff`) and tolerance comparisons (`Tolerance`).
 - `vision.rs`: Vision tower reference kernels (LayerNorm, erf and tanh GELUs, 2D RoPE, bidirectional attention).
+- `vision_gemma4.rs`: FP32 reference for the Gemma 4 vision tower and its projector, held to mlx-vlm by `tests/gemma4_vision_reference.rs` (`docs/GEMMA4_VISION_PHASE0.md`).
 - `whisper.rs`: FP32 reference kernels for the whisper speech family: conv front end, Pre-LN encoder blocks, and incremental decoder with KV cache.
 - `wht.rs`: Fast Walsh-Hadamard Transform reference.
 

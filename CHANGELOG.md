@@ -165,8 +165,20 @@ when this file gets updated relative to the version bump and the tag.
 - qwen4_exp: opt-in multi-row prefill seams (`TURBOSPARK_ROUTED_BATCH`,
   `TURBOSPARK_BATCHED_GEMV`), exact but no faster on real text, and
   `TURBOSPARK_QWEN4_TAP_FILE` capture of DFlash2 drafter features.
+- tslab: `kernel --bench vision_encode` times the vision tower per stage on
+  three synthetic pages (patches/s, stream share, peak footprint) and writes a
+  `vision_encode` ledger record. `--vision-sidecar DIR` attaches a tower-only
+  sidecar to a text-only trunk. `ane_matmul` gains `vision_qkv`, `vision_proj`,
+  `vision_fc1` and `vision_fc2` cases against programs from
+  `crates/coreml/tools/bake_ane_vision_programs.py`, and `ane-plan` gains
+  `--function` for multifunction packages.
 
 ### Changed
+- The vision tower on the Neural Engine is not pursued. The ANE gate for a
+  tower block passed only against the old per-output matmul (ane/gpu 0.04 to
+  0.16) and ties or loses against the matrix-unit GEMM (0.60 to 1.20), and the
+  tower is compute bound, not bound by reading its blocks. See
+  `docs/SPEEDUP_PLAYBOOK.md`.
 - Vision towers (the Qwen SigLIP tower and the Gemma 4 tower) run their
   projections on a matrix-unit FP16 GEMM and their attention on a
   matrix-unit flash attention kernel (FP32 accumulators, head_dim in the
