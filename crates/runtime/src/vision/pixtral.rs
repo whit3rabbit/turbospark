@@ -716,11 +716,72 @@ impl PixtralVisionTower {
     }
 }
 
+/// Split the towers' rows (one `Vec` per image, row-major over its grid) across
+/// the prompt's spans in order. Pixtral's prompt has one span per patch ROW
+/// because the break and end tokens between rows keep their own embeddings, so
+/// the rows must be dealt out to spans of `span.len` patches each. Refused when
+/// the counts disagree in either direction: a short supply would leave a
+/// placeholder holding its pad embedding, a long one would drop picture rows.
+pub(crate) fn split_rows_by_span(
+    images: &[Vec<u16>],
+    spans: &[turbospark_vision_io::ImageSpan],
+    hidden: usize,
+) -> Result<Vec<Vec<u16>>, RealForwardError> {
+    let all: Vec<u16> = images.iter().flatten().copied().collect();
+    let mut cursor = 0usize;
+    let mut split = Vec::with_capacity(spans.len());
+    for span in spans {
+        let end = cursor + span.len * hidden;
+        let rows = all.get(cursor..end).ok_or_else(|| {
+            RealForwardError::Unsupported(format!(
+                "the prompt's image rows need {end} values, the towers produced {}",
+                all.len()
+            ))
+        })?;
+        split.push(rows.to_vec());
+        cursor = end;
+    }
+    if cursor != all.len() {
+        return Err(RealForwardError::Unsupported(format!(
+            "the towers produced {} values but the prompt's rows take {cursor}",
+            all.len()
+        )));
+    }
+    Ok(split)
+}
+
 fn read_bits(buffer: &gpu::MetalBuffer, count: usize) -> Vec<u16> {
     gpu::read_buffer_f16(buffer, 0, count)
         .into_iter()
         .map(|v| v.to_bits())
         .collect()
+}
+
+#[cfg(test)]
+mod split_tests {
+    use super::*;
+    use turbospark_vision_io::ImageSpan;
+
+    #[test]
+    fn rows_are_dealt_to_spans_in_order_across_images() {
+        // Two images of 2x3 and 1x2 patches at hidden 2: spans per row.
+        let a: Vec<u16> = (0..12).collect();
+        let b: Vec<u16> = (100..104).collect();
+        let spans = [(0, 3), (10, 3), (20, 2)].map(|(start, len)| ImageSpan { start, len });
+        let split = split_rows_by_span(&[a, b], &spans, 2).unwrap();
+        assert_eq!(split[0], vec![0, 1, 2, 3, 4, 5]);
+        assert_eq!(split[1], vec![6, 7, 8, 9, 10, 11]);
+        assert_eq!(split[2], vec![100, 101, 102, 103]);
+    }
+
+    #[test]
+    fn a_supply_that_disagrees_with_the_spans_is_refused_both_ways() {
+        let spans = [ImageSpan { start: 0, len: 2 }];
+        // Short: the span needs 4 values.
+        assert!(split_rows_by_span(&[vec![0u16; 3]], &spans, 2).is_err());
+        // Long: a row would be dropped.
+        assert!(split_rows_by_span(&[vec![0u16; 6]], &spans, 2).is_err());
+    }
 }
 
 #[cfg(all(test, target_os = "macos"))]
@@ -871,7 +932,11 @@ mod tests {
         let pairs = [
             ("ln_pre", to_f32(&stages.embed), hidden),
             ("block_0", to_f32(&stages.block_first), hidden),
-            (&format!("block_{last}") as &str, to_f32(&stages.block_last), hidden),
+            (
+                &format!("block_{last}") as &str,
+                to_f32(&stages.block_last),
+                hidden,
+            ),
             ("projector", to_f32(&rows), out_hidden),
         ];
         let mut worst = 1.0f64;

@@ -729,27 +729,7 @@ impl RealForwardRunner {
         // image's rows whole: split them across the spans in order.
         let rows_by_span;
         let images = if tower == model_io::VisionTowerKind::Pixtral {
-            let all: Vec<u16> = images.iter().flatten().copied().collect();
-            let mut cursor = 0usize;
-            let mut split = Vec::with_capacity(spans.len());
-            for span in spans {
-                let end = cursor + span.len * hidden;
-                let rows = all.get(cursor..end).ok_or_else(|| {
-                    RealForwardError::Unsupported(format!(
-                        "the prompt's image rows need {end} values, the towers produced {}",
-                        all.len()
-                    ))
-                })?;
-                split.push(rows.to_vec());
-                cursor = end;
-            }
-            if cursor != all.len() {
-                return Err(RealForwardError::Unsupported(format!(
-                    "the towers produced {} values but the prompt's rows take {cursor}",
-                    all.len()
-                )));
-            }
-            rows_by_span = split;
+            rows_by_span = crate::vision::pixtral::split_rows_by_span(images, spans, hidden)?;
             &rows_by_span[..]
         } else {
             images
