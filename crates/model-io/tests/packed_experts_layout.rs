@@ -2,7 +2,9 @@
 
 use std::io::Write;
 
-use turbospark_model_io::{load_packed_experts_layout, ModelError};
+use turbospark_model_io::{
+    load_packed_experts_layout, load_packed_layout_from, ModelError, PACKED_VISION_DIR,
+};
 
 fn write_layout(dir: &std::path::Path, json: &str) {
     let sub = dir.join("packed_experts");
@@ -151,6 +153,54 @@ fn bias_layout_requires_aligned_companion_bytes_matching_its_shape() {
         let err = load_packed_experts_layout(&dir, 1024).unwrap_err();
         assert!(err.to_string().contains(expected), "{err}");
     }
+}
+
+/// The vision tower's blocks are not routed experts: LFM3-VL alternates conv
+/// and attention blocks with different role sets. The SAME layout that the
+/// expert loader refuses loads from `packed_vision/`, while its blob sizes
+/// are still held equal.
+#[test]
+fn vision_blocks_may_differ_in_role_set_but_not_in_blob_size() {
+    let differing = valid_layout_json().replacen(
+        r#""offset": 4096,
+                        "size": 4096,
+                        "tensors": {
+                            "gate": {"offset": 0"#,
+        r#""offset": 4096,
+                        "size": 4096,
+                        "tensors": {
+                            "gate": {"offset": 4"#,
+        1,
+    );
+    assert_ne!(differing, valid_layout_json(), "fixture mutation must apply");
+    let write_at = |dir: &std::path::Path, sub: &str, json: &str| {
+        let sub = dir.join(sub);
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(sub.join("layout.json"), json).unwrap();
+    };
+    let dir = tempdir();
+    write_at(&dir, PACKED_VISION_DIR, &differing);
+    let layout = load_packed_layout_from(&dir, PACKED_VISION_DIR, 1024 * 1024).unwrap();
+    assert_eq!(layout.layers[0].experts.len(), 2);
+    // The same JSON under the expert directory is still refused.
+    let dir = tempdir();
+    write_at(&dir, "packed_experts", &differing);
+    assert!(load_packed_experts_layout(&dir, 1024 * 1024).is_err());
+    // Unequal blob sizes stay refused for the vision directory too.
+    let ragged = valid_layout_json().replacen(
+        r#""offset": 4096,
+                        "size": 4096,"#,
+        r#""offset": 4096,
+                        "size": 2048,"#,
+        1,
+    );
+    assert_ne!(ragged, valid_layout_json(), "fixture mutation must apply");
+    let dir = tempdir();
+    write_at(&dir, PACKED_VISION_DIR, &ragged);
+    let err = load_packed_layout_from(&dir, PACKED_VISION_DIR, 1024 * 1024).unwrap_err();
+    // Refused by the stricter per-blob check (each must equal the layer
+    // stride) before the equal-size comparison is reached.
+    assert!(err.to_string().contains("declares size 2048"), "{err}");
 }
 
 #[test]
