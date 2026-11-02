@@ -722,3 +722,169 @@ fn read_bits(buffer: &gpu::MetalBuffer, count: usize) -> Vec<u16> {
         .map(|v| v.to_bits())
         .collect()
 }
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::*;
+
+    fn cosine(a: &[f32], b: &[f32]) -> f64 {
+        assert_eq!(a.len(), b.len());
+        let (mut dot, mut na, mut nb) = (0.0f64, 0.0f64, 0.0f64);
+        for (x, y) in a.iter().zip(b) {
+            assert!(x.is_finite() && y.is_finite(), "non-finite value");
+            dot += f64::from(*x) * f64::from(*y);
+            na += f64::from(*x) * f64::from(*x);
+            nb += f64::from(*y) * f64::from(*y);
+        }
+        dot / (na.sqrt() * nb.sqrt())
+    }
+
+    /// The worst per-row cosine, so a gap that sits on a few positions shows
+    /// up as the FP16 floor it usually is (`docs/LLAVA_VISION_PHASE0.md`).
+    fn worst_row(a: &[f32], b: &[f32], width: usize) -> f64 {
+        a.chunks_exact(width)
+            .zip(b.chunks_exact(width))
+            .map(|(x, y)| cosine(x, y))
+            .fold(1.0, f64::min)
+    }
+
+    fn read_f32(path: &std::path::Path) -> Vec<f32> {
+        std::fs::read(path)
+            .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+            .chunks_exact(4)
+            .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .collect()
+    }
+
+    fn env_path(name: &str) -> std::path::PathBuf {
+        std::path::PathBuf::from(
+            std::env::var(name).unwrap_or_else(|_| panic!("set {name} (see this test's doc)")),
+        )
+    }
+
+    /// The tower on the REAL checkpoint against `scripts/pixtral_tower_reference.py`.
+    ///
+    /// That script is a numpy transcription of mlx-vlm's tower written from
+    /// its source, not mlx-vlm executed, so it can share a misreading of the
+    /// reference with this code; what it does not share is any code. Patch
+    /// rows come from `crates/vision-io`, so this holds the tower AND the
+    /// preprocessing together, and the stage names localize a gap: `ln_pre`
+    /// (patch conv and the first norm), block 0, the last block, and the
+    /// projector.
+    ///
+    /// ```sh
+    /// turbospark-model pull-vision \
+    ///   --repo mlx-community/pixtral-12b-bf16@378cf65efd79647fc324a079c141fd92cb29916e \
+    ///   --alias pixtral12b-vision-tower --out /Volumes/T7/turbospark/vision/pixtral12b.gturbo-vision
+    /// TURBOSPARK_PIXTRAL_SIDECAR_DIR=/Volumes/T7/turbospark/vision/pixtral12b.gturbo-vision \
+    /// TURBOSPARK_PIXTRAL_MODEL_DIR=/Volumes/T7/hf-models/pixtral-12b-bf16 \
+    /// TURBOSPARK_PIXTRAL_IMAGE=/Volumes/T7/vision-pages/page-small.png \
+    /// TURBOSPARK_PIXTRAL_SCRATCH=/Volumes/T7/vision-dumps/pixtral-small \
+    ///   cargo test -p turbospark-runtime --release --lib \
+    ///   the_real_tower_matches_the_numpy_reference -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "needs a Pixtral tower sidecar, the HF checkpoint dir, an image and python3 with numpy"]
+    fn the_real_tower_matches_the_numpy_reference() {
+        let sidecar = env_path("TURBOSPARK_PIXTRAL_SIDECAR_DIR");
+        let model_dir = env_path("TURBOSPARK_PIXTRAL_MODEL_DIR");
+        let image = env_path("TURBOSPARK_PIXTRAL_IMAGE");
+        let scratch = env_path("TURBOSPARK_PIXTRAL_SCRATCH");
+        std::fs::create_dir_all(&scratch).unwrap();
+
+        let (_record, vision) = model_io::load_vision_sidecar(&sidecar).expect("sidecar");
+        let arch = model_io::sidecar_arch(
+            model_io::ModelFamily::Llama,
+            vision.out_hidden_size,
+            &vision,
+        );
+        let params = turbospark_vision_io::ClipPreprocessParams::from_preprocessor_config_json(
+            &std::fs::read_to_string(sidecar.join("preprocessor_config.json")).unwrap(),
+        )
+        .expect("preprocessor_config.json");
+        params
+            .check_against_tower(vision.patch_size, vision.num_position_embeddings)
+            .expect("config agrees with the tower");
+        let rgb = turbospark_vision_io::decode::decode_image_file(&image).expect("decode");
+        let pre = turbospark_vision_io::clip_preprocess(&rgb, &params).expect("preprocess");
+        println!(
+            "grid {}x{} ({} patches) from a {}x{} image",
+            pre.grid,
+            pre.grid_w,
+            pre.num_patches(),
+            rgb.width,
+            rgb.height
+        );
+
+        let rows_path = scratch.join("rows.bin");
+        std::fs::write(
+            &rows_path,
+            pre.pixels
+                .iter()
+                .flat_map(|v| v.to_le_bytes())
+                .collect::<Vec<u8>>(),
+        )
+        .unwrap();
+        let reference = scratch.join("reference");
+        let status = std::process::Command::new("python3")
+            .arg("-I")
+            .arg(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../scripts/pixtral_tower_reference.py"
+            ))
+            .arg("--model-dir")
+            .arg(&model_dir)
+            .arg("--rows")
+            .arg(&rows_path)
+            .args(["--grid", &pre.grid.to_string(), &pre.grid_w.to_string()])
+            .arg("--out-dir")
+            .arg(&reference)
+            .status()
+            .expect("python3");
+        assert!(status.success(), "the numpy reference failed");
+
+        let mut context = gpu::MetalContext::new().expect("Metal device");
+        let mut tower =
+            PixtralVisionTower::open_with_sidecar(&sidecar, &context, &arch).expect("open tower");
+        let index = model_io::load_resident_index(&sidecar.join("model_weights.bin")).unwrap();
+        let buffer = model_io::ResidentBuffer::map(
+            &sidecar.join("model_weights.bin"),
+            index.header.index_size,
+            index.header.resident_size,
+        )
+        .unwrap();
+        // The sidecar tower binds its own residents; this is only the
+        // trunk-weights argument's fallback.
+        let unused = gpu::ResidentGpuWeights::wrap(context.device(), buffer).unwrap();
+        let (rows, stages) = tower
+            .run(&mut context, &unused, &pre, true)
+            .expect("tower run");
+        let stages = stages.expect("captured");
+        let to_f32 = |bits: &[u16]| -> Vec<f32> {
+            bits.iter()
+                .map(|&b| half::f16::from_bits(b).to_f32())
+                .collect()
+        };
+        let last = vision.depth - 1;
+        let hidden = vision.hidden_size as usize;
+        let out_hidden = vision.out_hidden_size as usize;
+        let pairs = [
+            ("ln_pre", to_f32(&stages.embed), hidden),
+            ("block_0", to_f32(&stages.block_first), hidden),
+            (&format!("block_{last}") as &str, to_f32(&stages.block_last), hidden),
+            ("projector", to_f32(&rows), out_hidden),
+        ];
+        let mut worst = 1.0f64;
+        for (name, got, width) in &pairs {
+            let want = read_f32(&reference.join(format!("{name}.bin")));
+            let c = cosine(got, &want);
+            let r = worst_row(got, &want, *width);
+            println!("{name:12} cosine {c:.8}  worst row {r:.6}");
+            worst = worst.min(c);
+        }
+        assert!(
+            worst > 0.999,
+            "the tower disagrees with the reference (worst stage cosine {worst})"
+        );
+    }
+}
