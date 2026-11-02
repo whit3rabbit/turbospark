@@ -6,9 +6,10 @@ The mechanics shared with the other towers are in [VISION.md](VISION.md); this
 page is only what is specific to `VisionTowerKind::Clip`.
 
 Status as of 2026-11-01: the `llama` family has a real image gate on
-LLaVA-1.5-7B through the CLI (`--image`), via a vision sidecar on a GGUF trunk.
-The FFI path compiles and mirrors the CLI but has not been run. The server has
-no CLIP arm yet (see "Not done").
+LLaVA-1.5-7B through the CLI (`--image`) and through both server endpoints
+(`/v1/chat/completions` and `/v1/messages`), via a vision sidecar on a GGUF
+trunk. The FFI path (`ts_generate`, the in-process server model, the open-time
+vision info) compiles and mirrors the CLI but has not been run.
 
 ## Sources
 
@@ -40,7 +41,12 @@ Route B. Two consequences are worth stating:
 
 - **The sidecar pairs on `(family, hidden_size)` only.** A 4096-wide `llama`
   sidecar also attaches to Mistral 7B. The record's pinned revision says which
-  checkpoint the projector was trained against, and nothing enforces it.
+  checkpoint the projector was trained against, and nothing enforces it. The
+  practical edge is `--vision-sidecar auto`: with this tower the only 4096-wide
+  `llama` sidecar installed, `auto` attaches it to ANY 4096-wide `llama` trunk,
+  Mistral 7B included, where it can only mislead (its `<image>` marker is not
+  in that tokenizer). Name the sidecar explicitly until the pairing record
+  carries more than family and width.
 - **The trunk's tokenizer comes from the other repo.** The GGUF carries one
   (32,000 tokens), but this port loads an HF `tokenizer.json`, so the install
   takes `--sidecar-repo llava-hf/llava-1.5-7b-hf`, which also supplies the
@@ -120,7 +126,16 @@ USER: <image>
 Describe the shapes in this image. ASSISTANT:
 ```
 
-Four traps, each a fluent wrong answer or an opaque refusal:
+Five traps, each a fluent wrong answer or an opaque refusal:
+
+**The llava-hf template emits no `<s>`, and this port's convention is that the
+template carries the BOS.** Every front end encodes the rendered prompt with
+`add_bos = false`, so the first prefill of this work ran BOS-less (ids began at
+`USER`, 3148). The Hugging Face processor tokenizes with special tokens on and
+prefills `<s>` first, and Vicuna was trained with it. `clip_prepend_bos`
+prepends the tokenizer's BOS (`encode("", true)`) when the rendered prompt does
+not already open with it, at the CLI, FFI and server expansion sites, and a
+template that does emit `<s>` is never doubled. Prompt length 602 became 603.
 
 **`<image>` is id 32000 and the GGUF trunk has 32,000 embedding rows.** The HF
 checkpoint pads its table to 32,064; the GGUF does not. The llama flow
@@ -168,7 +183,7 @@ text (LLaVA does not make it bidirectional).
 | `catalog` | `stream_clip_vision_sidecar`, reached from `stream_vision_sidecar` for `model_type = llava` |
 | `runtime` | `vision/clip.rs` tower, `encode_image_clip[_with_stages]`, `set_prompt_vision_flat`, `clip_image_ids` |
 | `tokenizer` | `verify_bare_image_marker` |
-| `cli`, `ffi`, `server` | `attach_clip` (CLI, FFI); the marker check at all three attach sites |
+| `cli`, `ffi`, `server` | `attach_clip` (CLI, FFI); the marker check at all three attach sites; `VisionInfo::Clip` / `RequestImages::Clip` with a planner arm and an encode arm (server and the FFI's in-process server model); the FFI open-time `VisionInfo` (`active`, `max_pixels`) |
 
 The blocks pack into the qwen tower's twelve-role blob (q/k/v fused by row
 concatenation), so the streamer, the role resolver and the FP16 scoping are the
@@ -211,27 +226,55 @@ Mutation-checked, both red and localizing:
 | blocks use tanh-GELU | 0.99999961 | **0.99131816** | **0.93487320** | **0.95641557** |
 | projector reads from row 0 (class row kept) | unchanged | unchanged | unchanged | **0.34212241** |
 
-**Real runs** (`turbospark-check --messages-file --image`, greedy, a Q4_K_M
-trunk plus the sidecar, M4 Max, not a benchmark): 602-token prompts, prefill
-about 30 s, decode 28 to 45 tok/s.
+**Real runs** (`turbospark-check --messages-file --image`, greedy, the sidecar
+on a Q4_K_M trunk unless stated, M4 Max with other sessions on the host, not a
+benchmark): 603-token prompts, prefill about 20 to 30 s, decode 28 to 45 tok/s.
 
 *shapes.png* (a red circle left, a blue square right, a green triangle below,
 on white), "Describe the shapes in this image and say what color each one is.":
 
-- port: "The image features three different colored shapes: a red triangle, a
-  blue square, and a green triangle. ..."
+- port, Q4_K_M, with BOS: "The image features a red square, a blue circle, and
+  a green triangle, all placed on a white background. The red square is located
+  on the left side of the image, the blue circle is in the middle, and the green
+  triangle is on the right side."
+- port, **Q8_0** trunk, same prompt: the same text for the first 55 tokens and
+  beyond. Two quantizations agreeing word for word says the answer is set by
+  the image rows and the trunk's behavior, not by trunk quantization noise.
 - `transformers`, FP16, same image and prompt: "In the image, there are three
-  shapes: a red circle, a blue square, and a green triangle. ..."
-- port, "What shape is the red object on the left? Answer with one word.":
-  "Circle". The first answer's "triangle" is a Q4_K_M prose slip, not a tower
-  error.
+  shapes: a red circle, a blue square, and a green triangle. The red circle is
+  located on the left side ..."
+
+All three get the colors, the count and the left-to-right order right. The
+port swaps which shape carries which color (circle and square). **That is the
+reference's own weakness, measured:** asked four direct questions about this
+image, the FP16 reference answers "What shape is the red object on the left?"
+with *Square*, the blue one on the right with *Circle*, and "What color is the
+circle?" with *Blue*, all wrong, while the port answers the first with
+*Circle*, right. LLaVA-1.5-7B binds attributes unreliably, and the reference
+and the port are unreliable in the same way.
+
+What was ruled out as the cause of the swap: the prompt (the port's 603 ids are
+**identical** to `AutoProcessor`'s: head `[1, 3148, 1001, 29901, 29871]`, a
+576-long run, the same 22-id tail; `scripts/llava_prompt_ids.py`), the tower
+(inside its FP16 floor), trunk quantization (Q4_K_M and Q8_0 agree), and the
+trunk's long prefill (a 611-token text prompt retrieves a fact planted at its
+start, "PINEAPPLE").
 
 *shapes2.png* (a yellow circle left, a magenta square right, on black), the
-negative control with the colors, count and background changed: "The image
+negative control with the colors, count and background changed: CLI, "The image
 features two distinct shapes, one being a yellow circle and the other a pink
 square. The yellow circle is located on the left side ... the pink square is on
-the right side." That answer matches these pixels and none of the previous
-image's, which is what a model that never saw the picture cannot produce.
+the right side." That matches these pixels and none of the previous image's,
+which is what a model that never saw the picture cannot produce.
+
+**Server**, `turbospark-server --model llava15-7b --vision-sidecar ...`, a
+base64 data URL on both wire formats with the same prompt: `/v1/chat/completions`
+and `/v1/messages` return identical text, no `x-anyllm-degradation` header. On
+`shapes2.png`: "The image features two shapes, one is a yellow circle and the
+other is a pink square. The yellow circle is located on the left side of the
+image, while the pink square is on the right side." A second request on
+`shapes.png` to the same server names red, blue and green and mentions nothing
+from the previous image, so the injection map does not leak across requests.
 
 ## Reproducing
 
@@ -256,12 +299,9 @@ reads; `scripts/llava_reference_generate.py` is the reference's greedy answer.
 
 ## Not done
 
-- **The server has no CLIP arm.** `VisionInfo`, `RequestImages`, the planner and
-  `run_completion` each need a `Clip` variant; today a LLaVA install reports
-  and drops the image on `/v1/chat/completions`. The attach-time marker check
-  is wired.
-- **The FFI `attach_clip` compiles and mirrors the CLI but has not been run**
-  against an install, and neither has the Swift app.
+- **The FFI paths compile and mirror the CLI and server but have not been run**
+  against an install (`attach_clip`, the in-process server model, the open-time
+  `VisionInfo`), and neither has the Swift app.
 - **No catalog rows.** The two installs are `pull`/`pull-vision` commands, not
   `models.json` entries, and no row carries the pinned revisions.
 - **No quality or memory gate.** No frozen quality digest, no memory oracle, and

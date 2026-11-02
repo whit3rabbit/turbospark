@@ -27,7 +27,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--checkpoint", required=True)
     ap.add_argument("--image", required=True)
-    ap.add_argument("--prompt", required=True)
+    ap.add_argument(
+        "--prompt",
+        required=True,
+        action="append",
+        help="repeat to ask several questions of the same image with one model load",
+    )
     ap.add_argument("--max-new", type=int, default=80)
     args = ap.parse_args()
 
@@ -36,20 +41,21 @@ def main():
     model = LlavaForConditionalGeneration.from_pretrained(
         args.checkpoint, torch_dtype=torch.float16
     ).to(device)
-    conversation = [
-        {
-            "role": "user",
-            "content": [{"type": "image"}, {"type": "text", "text": args.prompt}],
-        }
-    ]
-    text = processor.apply_chat_template(conversation, add_generation_prompt=True)
     image = Image.open(args.image).convert("RGB")
-    inputs = processor(images=image, text=text, return_tensors="pt").to(device)
-    inputs["pixel_values"] = inputs["pixel_values"].to(torch.float16)
-    with torch.no_grad():
-        out = model.generate(**inputs, max_new_tokens=args.max_new, do_sample=False)
-    new = out[0][inputs["input_ids"].shape[1]:]
-    print(processor.decode(new, skip_special_tokens=True).strip())
+    for prompt in args.prompt:
+        conversation = [
+            {
+                "role": "user",
+                "content": [{"type": "image"}, {"type": "text", "text": prompt}],
+            }
+        ]
+        text = processor.apply_chat_template(conversation, add_generation_prompt=True)
+        inputs = processor(images=image, text=text, return_tensors="pt").to(device)
+        inputs["pixel_values"] = inputs["pixel_values"].to(torch.float16)
+        with torch.no_grad():
+            out = model.generate(**inputs, max_new_tokens=args.max_new, do_sample=False)
+        new = out[0][inputs["input_ids"].shape[1]:]
+        print(f"Q: {prompt}\nA: {processor.decode(new, skip_special_tokens=True).strip()}")
 
 
 if __name__ == "__main__":

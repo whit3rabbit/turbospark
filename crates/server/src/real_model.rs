@@ -461,8 +461,8 @@ impl RealChatModel {
             // no readable config is a broken install, so it fails the open
             // rather than serving text-only under a vision label.
             let path = runner.vision_dir().join("preprocessor_config.json");
-            let json = std::fs::read_to_string(&path)
-                .map_err(|e| format!("{}: {e}", path.display()))?;
+            let json =
+                std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
             let params =
                 turbospark_vision_io::ClipPreprocessParams::from_preprocessor_config_json(&json)
                     .map_err(|e| format!("{}: {e}", path.display()))?;

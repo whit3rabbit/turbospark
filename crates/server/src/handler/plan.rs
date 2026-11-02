@@ -608,10 +608,7 @@ pub(crate) fn plan(model: &AppState, request: &ChatCompletionRequest) -> Result<
                 model.tokenizer().encode("", true).first().copied(),
             );
             let (expanded, spans) = turbospark_vision_io::clip_expand_image_placeholders(
-                &with_bos,
-                *marker,
-                *fill,
-                &counts,
+                &with_bos, *marker, *fill, &counts,
             )
             .map_err(|e| format!("cannot place {} image(s): {e}", counts.len()))?;
             prompt_ids = expanded;

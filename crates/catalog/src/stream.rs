@@ -1113,8 +1113,15 @@ fn stream_clip_vision_sidecar(
         tower_blocks: vision.depth,
         block_stride: read.block_stride,
     };
-    repack::write_vision_sidecar(out_dir, ModelFamily::Llama, &vision, &weights.repo, &read, record)
-        .map_err(|e| format!("writing the vision sidecar: {e}"))?;
+    repack::write_vision_sidecar(
+        out_dir,
+        ModelFamily::Llama,
+        &vision,
+        &weights.repo,
+        &read,
+        record,
+    )
+    .map_err(|e| format!("writing the vision sidecar: {e}"))?;
     progress(&format!(
         "vision sidecar written: {} block(s), {} bytes/block",
         vision.depth, read.block_stride
