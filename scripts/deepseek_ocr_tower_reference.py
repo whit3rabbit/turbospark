@@ -13,7 +13,9 @@ Usage:
 
 INPUT.npy is the NORMALIZED image, float32, shape (1024, 1024, 3), HWC, RGB,
 i.e. (pixel / 255 - 0.5) / 0.5. Without it a deterministic structured image is
-generated and written to OUT_DIR/input.npy. Writes OUT_DIR/stages.npz.
+generated and written to OUT_DIR/input.npy. Writes OUT_DIR/stages.npz and one
+raw little-endian float32 file per stage (`sam_b0.f32`, ..., `rows.f32`) plus
+`input.f32`, which `crates/runtime/tests/deepseek_ocr_tower_real.rs` reads.
 
 The conventions this test exists to pin (each was mutation-checked on the
 engine side, see the Phase 0 doc):
@@ -287,6 +289,11 @@ def main():
     stages = {}
     rows = tower(st, img, stages)
     np.savez(os.path.join(out, "stages.npz"), **stages)
+    # Raw little-endian float32 beside the npz, so the Rust parity test reads
+    # them with no zip or npy parsing. `input.f32` is the exact tower input.
+    np.ascontiguousarray(img, dtype="<f4").tofile(os.path.join(out, "input.f32"))
+    for name, arr in stages.items():
+        np.ascontiguousarray(arr, dtype="<f4").tofile(os.path.join(out, name + ".f32"))
     print("rows", rows.shape, "finite", bool(np.isfinite(rows).all()),
           "mean %.5f std %.5f" % (rows.mean(), rows.std()))
 

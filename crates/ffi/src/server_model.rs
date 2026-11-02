@@ -279,6 +279,19 @@ impl FfiChatModel {
                     .set_prompt_vision_flat(&rows, spans, prompt_ids.len())
                     .map_err(|e| RuntimeError::Producer(e.to_string()))?;
             }
+            turbospark_server::vision::RequestImages::DeepseekOcr { images, spans } => {
+                let mut rows = Vec::with_capacity(images.len());
+                for (i, image) in images.iter().enumerate() {
+                    rows.push(
+                        runner
+                            .encode_image_deepseek_ocr(image)
+                            .map_err(|e| RuntimeError::Producer(format!("image {i}: {e}")))?,
+                    );
+                }
+                runner
+                    .set_prompt_vision_flat(&rows, spans, prompt_ids.len())
+                    .map_err(|e| RuntimeError::Producer(e.to_string()))?;
+            }
         }
 
         let combined = self.cancel_or_stopped(cancel);
@@ -380,6 +393,13 @@ impl ChatModel for FfiChatModel {
             if let Some((marker, fill)) = runner.siglip_image_ids() {
                 return Some(turbospark_server::vision::VisionInfo::SigLip {
                     params: crate::vision::siglip_params(runner).ok()?,
+                    marker,
+                    fill,
+                });
+            }
+            if let Some((marker, fill)) = runner.deepseek_ocr_image_ids() {
+                return Some(turbospark_server::vision::VisionInfo::DeepseekOcr {
+                    params: crate::vision::deepseek_ocr_params(runner).ok()?,
                     marker,
                     fill,
                 });

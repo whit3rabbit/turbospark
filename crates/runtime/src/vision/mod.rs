@@ -38,6 +38,7 @@
 mod block;
 mod budget;
 pub(crate) mod clip;
+pub(crate) mod deepseek_ocr;
 pub(crate) mod gemma4;
 mod inject;
 pub(crate) mod lfm3_vl;
@@ -54,6 +55,7 @@ mod weights;
 
 pub use budget::{PixelBudget, VisionBudgetTooSmall};
 pub use clip::ClipStages;
+pub use deepseek_ocr::DeepseekOcrStages;
 pub use inject::{PromptVision, RopePosition};
 pub use siglip::SiglipStages;
 

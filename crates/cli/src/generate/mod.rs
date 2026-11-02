@@ -381,6 +381,8 @@ fn run_one_turn(
             vision::attach_minicpm(session, &rendered, images)?
         } else if session.runner.siglip_image_ids().is_some() {
             vision::attach_siglip(session, &rendered, images)?
+        } else if session.runner.deepseek_ocr_image_ids().is_some() {
+            vision::attach_deepseek_ocr(session, &rendered, images)?
         } else {
             let params = vision::preprocess_params(session)?;
             let prepared = vision::prepare_images(images, &params)?;

@@ -39,6 +39,7 @@
 
 pub mod clip;
 pub mod decode;
+pub mod deepseek_ocr;
 pub mod deepseek_vl2;
 pub mod error;
 pub mod gemma4;
@@ -63,6 +64,10 @@ pub use clip::{
 };
 pub use decode::{
     decode_image_bytes, decode_image_file, image_dimensions, Rgb8Image, MAX_IMAGE_DIM,
+};
+pub use deepseek_ocr::{
+    deepseek_ocr_preprocess, deepseek_ocr_row_layout, DeepseekOcrParams, DeepseekOcrRow,
+    DeepseekOcrView, OCR_BASE_SIZE, OCR_DOWNSAMPLE, OCR_GRID, OCR_IMAGE_TOKENS, OCR_PATCH,
 };
 pub use deepseek_vl2::{
     deepseek_vl2_image_tokens, deepseek_vl2_preprocess, deepseek_vl2_row_layout, pil_pad,
