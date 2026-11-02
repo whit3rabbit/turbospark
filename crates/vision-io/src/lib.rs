@@ -55,7 +55,8 @@ pub mod smart_resize;
 
 pub use clip::{
     clip_expand_image_placeholders, clip_prepend_bos, clip_preprocess, clip_resize_dims,
-    ClipLayout, ClipPatches, ClipPreprocessParams, CLIP_PATCH, CLIP_PATCH_DIM,
+    flat_expand_image_placeholders, ClipLayout, ClipPatches, ClipPreprocessParams, CLIP_PATCH,
+    CLIP_PATCH_DIM,
 };
 pub use decode::{
     decode_image_bytes, decode_image_file, image_dimensions, Rgb8Image, MAX_IMAGE_DIM,

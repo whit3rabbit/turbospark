@@ -87,6 +87,8 @@ pub enum VisionInfo {
         params: ClipPreprocessParams,
         marker: i32,
         fill: i32,
+        /// `([IMG_BREAK], [IMG_END])` for a Pixtral tower, `None` for CLIP.
+        break_end: Option<(i32, i32)>,
     },
 }
 
@@ -416,9 +418,10 @@ pub(crate) fn clip_preflight_all(
     params: &ClipPreprocessParams,
 ) -> Result<(), String> {
     let mut source_pixels = 0u64;
-    let per_image_bytes = (params.tokens()
-        * turbospark_vision_io::CLIP_PATCH_DIM
-        * std::mem::size_of::<f32>()) as u64;
+    // Pixtral's patch count depends on the image; its worst case is a square
+    // at the cap, which is what `tokens()` reports for that layout.
+    let per_image_bytes =
+        (params.tokens() * params.patch_dim() * std::mem::size_of::<f32>()) as u64;
     let mut patch_bytes = 0u64;
     for (i, bytes) in encoded.iter().enumerate() {
         let (width, height) =
@@ -441,6 +444,24 @@ pub(crate) fn clip_preflight_all(
         }
     }
     Ok(())
+}
+
+/// Each image's patch grid `(rows, cols)` from its header alone, in request
+/// order: the same answer `clip_preprocess` will give, available before any
+/// pixel buffer exists so the prompt can be sized and checked first.
+pub(crate) fn clip_grids(
+    encoded: &[Vec<u8>],
+    params: &ClipPreprocessParams,
+) -> Result<Vec<(usize, usize)>, String> {
+    encoded
+        .iter()
+        .enumerate()
+        .map(|(i, bytes)| {
+            let (width, height) = turbospark_vision_io::image_dimensions(bytes)
+                .map_err(|e| format!("image {i}: {e}"))?;
+            Ok(params.grid_for(width as usize, height as usize))
+        })
+        .collect()
 }
 
 /// Decode and preprocess every image for the CLIP tower, in request order.

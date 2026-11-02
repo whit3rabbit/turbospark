@@ -570,6 +570,7 @@ impl RealForwardRunner {
         self.qwen25_vision = None;
         self.lfm3_vision = None;
         self.clip_vision = None;
+        self.pixtral_vision = None;
     }
 
     /// `(marker, fill)` for a LLaVA prompt, read off the install, or `None`
@@ -583,7 +584,12 @@ impl RealForwardRunner {
     /// that replaces its lookup (`docs/LLAVA_VISION_PHASE0.md`).
     pub fn clip_image_ids(&self) -> Option<(i32, i32)> {
         let v = &self.arch.vision;
-        if !(v.is_active() && v.tower == model_io::VisionTowerKind::Clip) {
+        if !(v.is_active()
+            && matches!(
+                v.tower,
+                model_io::VisionTowerKind::Clip | model_io::VisionTowerKind::Pixtral
+            ))
+        {
             return None;
         }
         let marker = v.image_token_id as i32;
@@ -595,8 +601,18 @@ impl RealForwardRunner {
         Some((marker, fill))
     }
 
-    /// Encode one image through this install's CLIP tower: `[patches,
-    /// text_hidden]` FP16 bits, the rows that replace the placeholder run.
+    /// `([IMG_BREAK], [IMG_END])` for a Pixtral prompt, read off the install
+    /// (the manifest records them in the tower's start and end id fields), or
+    /// `None` when this install's tower is not a Pixtral one. Their presence
+    /// is what makes a flat-injection prompt use Pixtral's row layout.
+    pub fn pixtral_break_end_ids(&self) -> Option<(i32, i32)> {
+        let v = &self.arch.vision;
+        (v.is_active() && v.tower == model_io::VisionTowerKind::Pixtral)
+            .then_some((v.vision_start_token_id as i32, v.vision_end_token_id as i32))
+    }
+
+    /// Encode one image through this install's CLIP or Pixtral tower:
+    /// `[patches, text_hidden]` FP16 bits, row-major over the image's grid.
     ///
     /// The tower opens lazily on the first image, from the attached sidecar
     /// when there is one and from the install otherwise. Inject the rows with
@@ -606,6 +622,12 @@ impl RealForwardRunner {
         patches: &turbospark_vision_io::ClipPatches,
     ) -> Result<Vec<u16>, RealForwardError> {
         self.open_clip_tower()?;
+        if self.arch.vision.tower == model_io::VisionTowerKind::Pixtral {
+            let tower = self.pixtral_vision.as_mut().expect("opened just above");
+            return tower
+                .run(&mut self.context, &self.weights, patches, false)
+                .map(|(rows, _)| rows);
+        }
         let tower = self.clip_vision.as_mut().expect("opened just above");
         tower
             .run(&mut self.context, &self.weights, patches, false)
@@ -620,17 +642,42 @@ impl RealForwardRunner {
         patches: &turbospark_vision_io::ClipPatches,
     ) -> Result<(Vec<u16>, crate::vision::ClipStages), RealForwardError> {
         self.open_clip_tower()?;
-        let tower = self.clip_vision.as_mut().expect("opened just above");
-        let (rows, stages) = tower.run(&mut self.context, &self.weights, patches, true)?;
+        let (rows, stages) = if self.arch.vision.tower == model_io::VisionTowerKind::Pixtral {
+            let tower = self.pixtral_vision.as_mut().expect("opened just above");
+            tower.run(&mut self.context, &self.weights, patches, true)?
+        } else {
+            let tower = self.clip_vision.as_mut().expect("opened just above");
+            tower.run(&mut self.context, &self.weights, patches, true)?
+        };
         Ok((rows, stages.expect("requested just above")))
     }
 
     fn open_clip_tower(&mut self) -> Result<(), RealForwardError> {
+        if self.arch.vision.tower == model_io::VisionTowerKind::Pixtral
+            && self.arch.vision.is_active()
+        {
+            if self.pixtral_vision.is_none() {
+                self.pixtral_vision = Some(match &self.vision_sidecar_dir {
+                    Some(dir) => crate::vision::pixtral::PixtralVisionTower::open_with_sidecar(
+                        dir,
+                        &self.context,
+                        &self.arch,
+                    )?,
+                    None => crate::vision::pixtral::PixtralVisionTower::open(
+                        &self.install_dir,
+                        &self.context,
+                        &self.index,
+                        &self.arch,
+                    )?,
+                });
+            }
+            return Ok(());
+        }
         if self.arch.vision.tower != model_io::VisionTowerKind::Clip
             || !self.arch.vision.is_active()
         {
             return Err(RealForwardError::Unsupported(
-                "this install declares no CLIP vision tower".to_string(),
+                "this install declares no CLIP or Pixtral vision tower".to_string(),
             ));
         }
         if self.clip_vision.is_none() {
@@ -667,12 +714,46 @@ impl RealForwardRunner {
         spans: &[turbospark_vision_io::ImageSpan],
         prompt_len: usize,
     ) -> Result<(), RealForwardError> {
-        if self.arch.vision.tower != model_io::VisionTowerKind::Clip {
+        let tower = self.arch.vision.tower;
+        if !matches!(
+            tower,
+            model_io::VisionTowerKind::Clip | model_io::VisionTowerKind::Pixtral
+        ) {
             return Err(RealForwardError::Unsupported(
-                "set_prompt_vision_flat needs a CLIP vision tower".to_string(),
+                "set_prompt_vision_flat needs a CLIP or Pixtral vision tower".to_string(),
             ));
         }
         let hidden = self.arch.hidden_size as usize;
+        // Pixtral's prompt has one span per patch ROW (the break and end tokens
+        // between rows keep their own embeddings), while the tower returns an
+        // image's rows whole: split them across the spans in order.
+        let rows_by_span;
+        let images = if tower == model_io::VisionTowerKind::Pixtral {
+            let all: Vec<u16> = images.iter().flatten().copied().collect();
+            let mut cursor = 0usize;
+            let mut split = Vec::with_capacity(spans.len());
+            for span in spans {
+                let end = cursor + span.len * hidden;
+                let rows = all.get(cursor..end).ok_or_else(|| {
+                    RealForwardError::Unsupported(format!(
+                        "the prompt's image rows need {end} values, the towers produced {}",
+                        all.len()
+                    ))
+                })?;
+                split.push(rows.to_vec());
+                cursor = end;
+            }
+            if cursor != all.len() {
+                return Err(RealForwardError::Unsupported(format!(
+                    "the towers produced {} values but the prompt's rows take {cursor}",
+                    all.len()
+                )));
+            }
+            rows_by_span = split;
+            &rows_by_span[..]
+        } else {
+            images
+        };
         self.prompt_vision = Some(crate::vision::PromptVision::flat(
             images, spans, prompt_len, hidden,
         )?);

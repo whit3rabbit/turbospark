@@ -90,8 +90,14 @@ fn message_to_json(message: &Message) -> JsonValue {
             .content_parts
             .iter()
             .map(|part| match part {
+                // `text` is the OpenAI and Qwen spelling. Pixtral's template
+                // (`mistral-community/pixtral-12b`) reads `chunk["content"]`
+                // for a text chunk instead, and an undefined key renders
+                // empty: the question would vanish and the model would be
+                // asked nothing about the picture. Both keys carry the same
+                // string, which no other template iterates over.
                 crate::chat_template::ContentPart::Text(text) => {
-                    json!({"type": "text", "text": text})
+                    json!({"type": "text", "text": text, "content": text})
                 }
                 crate::chat_template::ContentPart::Image => json!({"type": "image"}),
             })

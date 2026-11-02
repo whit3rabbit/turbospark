@@ -257,19 +257,9 @@ pub(crate) fn clip_params(
     let params = turbospark_vision_io::ClipPreprocessParams::from_preprocessor_config_json(&json)
         .map_err(|e| format!("{}: {e}", path.display()))?;
     let vision = runner.vision_config();
-    if vision.patch_size != turbospark_vision_io::CLIP_PATCH as i64
-        || vision.num_position_embeddings != params.tokens() as i64 + 1
-    {
-        return Err(format!(
-            "{}: a {}-pixel crop is {} patches, but this install's tower has patch {} and a \
-             {}-row position table; the two describe different checkpoints",
-            path.display(),
-            params.size,
-            params.tokens(),
-            vision.patch_size,
-            vision.num_position_embeddings
-        ));
-    }
+    params
+        .check_against_tower(vision.patch_size, vision.num_position_embeddings)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(params)
 }
 
@@ -296,18 +286,23 @@ pub(crate) fn attach_clip(
             .map_err(|e| format!("{label}: {e}"))?;
         prepared.push((label, patches));
     }
-    let counts = vec![params.tokens(); prepared.len()];
+    let grids: Vec<(usize, usize)> = prepared.iter().map(|(_, p)| (p.grid, p.grid_w)).collect();
     // The llava-hf template emits no `<s>`; the reference's processor adds it.
     let rendered = turbospark_vision_io::clip_prepend_bos(rendered, bos);
-    let (expanded, spans) =
-        turbospark_vision_io::clip_expand_image_placeholders(&rendered, marker, fill, &counts)
-            .map_err(|e| {
-                format!(
-                    "cannot place {} image(s) in this prompt: {e}\n  the template renders one \
+    let (expanded, spans) = turbospark_vision_io::flat_expand_image_placeholders(
+        &rendered,
+        marker,
+        fill,
+        runner.pixtral_break_end_ids(),
+        &grids,
+    )
+    .map_err(|e| {
+        format!(
+            "cannot place {} image(s) in this prompt: {e}\n  the template renders one \
                      <image> per image; check the messages actually carry image parts",
-                    parts.len()
-                )
-            })?;
+            parts.len()
+        )
+    })?;
     let mut rows = Vec::with_capacity(prepared.len());
     for (label, patches) in &prepared {
         rows.push(

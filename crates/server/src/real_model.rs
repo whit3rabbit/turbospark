@@ -467,23 +467,14 @@ impl RealChatModel {
                 turbospark_vision_io::ClipPreprocessParams::from_preprocessor_config_json(&json)
                     .map_err(|e| format!("{}: {e}", path.display()))?;
             let v = runner.vision_config();
-            if v.patch_size != turbospark_vision_io::CLIP_PATCH as i64
-                || v.num_position_embeddings != params.tokens() as i64 + 1
-            {
-                return Err(format!(
-                    "{}: a {}-pixel crop is {} patches, but this install's tower has patch {} \
-                     and a {}-row position table",
-                    path.display(),
-                    params.size,
-                    params.tokens(),
-                    v.patch_size,
-                    v.num_position_embeddings
-                ));
-            }
+            params
+                .check_against_tower(v.patch_size, v.num_position_embeddings)
+                .map_err(|e| format!("{}: {e}", path.display()))?;
             Some(crate::vision::VisionInfo::Clip {
                 params,
                 marker,
                 fill,
+                break_end: runner.pixtral_break_end_ids(),
             })
         } else if runner.has_vision_tower() {
             let v = runner.vision_config();

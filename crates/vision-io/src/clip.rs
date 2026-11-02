@@ -166,6 +166,49 @@ impl ClipPreprocessParams {
         self.grid() * self.grid()
     }
 
+    /// The patch grid `(rows, cols)` an image of `width x height` pixels
+    /// becomes: the fixed crop for CLIP, the longest-edge rule for Pixtral.
+    pub fn grid_for(&self, width: usize, height: usize) -> (usize, usize) {
+        match self.layout {
+            ClipLayout::Crop => (self.grid(), self.grid()),
+            ClipLayout::Pixtral => {
+                let p = crate::pixtral::PIXTRAL_PATCH;
+                let (h, w) = crate::pixtral::pixtral_resize_target(height, width, self.size, p);
+                (h / p, w / p)
+            }
+        }
+    }
+
+    /// Cross-check these numbers against the install's own tower for what
+    /// must agree for the tower to read the rows at all: the patch edge and
+    /// the position-table size (a CLIP crop has `grid^2 + 1` rows, a Pixtral
+    /// tower none). A config describing a different checkpoint would
+    /// otherwise fail at a shape check inside the tower, far from the file
+    /// that caused it.
+    pub fn check_against_tower(
+        &self,
+        patch_size: i64,
+        num_position_embeddings: i64,
+    ) -> Result<(), String> {
+        let (want_patch, want_rows) = match self.layout {
+            ClipLayout::Crop => (CLIP_PATCH as i64, self.tokens() as i64 + 1),
+            ClipLayout::Pixtral => (crate::pixtral::PIXTRAL_PATCH as i64, 0),
+        };
+        if patch_size != want_patch || num_position_embeddings != want_rows {
+            return Err(format!(
+                "a {}-pixel {} is patch {want_patch} with a {want_rows}-row position table, but \
+                 this install's tower has patch {patch_size} and a {num_position_embeddings}-row \
+                 one; the two describe different checkpoints",
+                self.size,
+                match self.layout {
+                    ClipLayout::Crop => "crop",
+                    ClipLayout::Pixtral => "longest-edge cap",
+                }
+            ));
+        }
+        Ok(())
+    }
+
     /// Values in one patch row.
     pub fn patch_dim(&self) -> usize {
         match self.layout {
@@ -422,6 +465,33 @@ pub fn clip_expand_image_placeholders(
         next += 1;
     }
     Ok((out, spans))
+}
+
+/// Expand a rendered prompt's image markers for a flat-injection tower:
+/// CLIP's bare run (`break_end` is `None`) or Pixtral's rows with a break
+/// between them and an end after the last. `grids` is each image's
+/// `(rows, cols)`. Spans come back one per run (CLIP) or one per patch row
+/// (Pixtral).
+pub fn flat_expand_image_placeholders(
+    rendered: &[i32],
+    marker: i32,
+    fill: i32,
+    break_end: Option<(i32, i32)>,
+    grids: &[(usize, usize)],
+) -> Result<(Vec<i32>, Vec<crate::ImageSpan>), VisionIoError> {
+    match break_end {
+        Some((image_break, image_end)) => crate::pixtral::pixtral_expand_image_placeholders(
+            rendered,
+            marker,
+            image_break,
+            image_end,
+            grids,
+        ),
+        None => {
+            let counts: Vec<usize> = grids.iter().map(|&(h, w)| h * w).collect();
+            clip_expand_image_placeholders(rendered, marker, fill, &counts)
+        }
+    }
 }
 
 #[cfg(test)]

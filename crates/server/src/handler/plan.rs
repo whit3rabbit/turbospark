@@ -595,11 +595,12 @@ pub(crate) fn plan(model: &AppState, request: &ChatCompletionRequest) -> Result<
                 params,
                 marker,
                 fill,
+                break_end,
             }),
             false,
         ) => {
             crate::vision::clip_preflight_all(&encoded, params)?;
-            let counts = vec![params.tokens(); encoded.len()];
+            let grids = crate::vision::clip_grids(&encoded, params)?;
             // The llava-hf template emits no `<s>`; the reference's
             // processor adds it, and the `add_bos = false` encode above
             // follows the convention that the template carries it.
@@ -607,10 +608,10 @@ pub(crate) fn plan(model: &AppState, request: &ChatCompletionRequest) -> Result<
                 &prompt_ids,
                 model.tokenizer().encode("", true).first().copied(),
             );
-            let (expanded, spans) = turbospark_vision_io::clip_expand_image_placeholders(
-                &with_bos, *marker, *fill, &counts,
+            let (expanded, spans) = turbospark_vision_io::flat_expand_image_placeholders(
+                &with_bos, *marker, *fill, *break_end, &grids,
             )
-            .map_err(|e| format!("cannot place {} image(s): {e}", counts.len()))?;
+            .map_err(|e| format!("cannot place {} image(s): {e}", grids.len()))?;
             prompt_ids = expanded;
             check_context(&prompt_ids, &config, model.max_context())?;
             let images = crate::vision::clip_preprocess_all(&encoded, params)?;
