@@ -296,6 +296,11 @@ pub fn read_vision_entries_quantized(
     if vision.tower == model_io::VisionTowerKind::Lfm3Vl {
         return super::vision_lfm3::read_lfm3_vl_vision_entries(shards, vision_bases, vision);
     }
+    // Muse-Glimmer spreads its tower over three prefixes, fuses q/k/v, and
+    // quantizes the adapter and projection, so it has its own reader.
+    if vision.tower == model_io::VisionTowerKind::MuseGlimmer {
+        return super::vision_muse::read_muse_vision_entries(shards, vision_bases, vision, quant);
+    }
     // The Qwen2.5-VL tower shares this reader's walk and differs in its role
     // tables and its supported depth.
     let qwen25 = vision.tower == model_io::VisionTowerKind::Qwen25Vl;
@@ -593,7 +598,7 @@ pub fn read_vision_entries_quantized(
 /// its stored shape is `[rows, words]`, so the logical `[rows, cols]` is
 /// returned for the index and the block blob to record. Anything else goes
 /// through `convert_raw_to_fp16` with its stored shape.
-fn read_tower_tensor(
+pub(super) fn read_tower_tensor(
     shards: &Gemma4Shards<'_>,
     name: &str,
     quant: Option<&Gemma4Quant>,

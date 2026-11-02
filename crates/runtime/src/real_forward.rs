@@ -395,6 +395,8 @@ pub struct RealForwardRunner {
     /// [`RealForwardRunner::encode_image_clip`]; a third field for the same
     /// reason as the Gemma 4 one.
     pub(crate) clip_vision: Option<crate::vision::clip::ClipVisionTower>,
+    /// The Muse-Glimmer tower, opened lazily on the first image.
+    pub(crate) muse_vision: Option<crate::vision::muse::MuseVisionTower>,
     /// A sidecar tower directory attached after open (vision memory
     /// sidecar, Part A2), via [`RealForwardRunner::attach_vision_sidecar`].
     /// `None` on every session that never called it, which is every session

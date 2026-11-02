@@ -104,6 +104,31 @@ pub fn splice_image_placeholders(
     Ok(out)
 }
 
+/// Wrap every bare image placeholder in `start` / `end` markers.
+///
+/// For a template that renders only the placeholder (Muse-Glimmer's renders
+/// `<|patch|>` per image) and a processor that adds the markers around the
+/// expanded run. A placeholder already preceded by `start` is left alone, so
+/// the call is idempotent and a template that does render its own markers is
+/// untouched. Run it BEFORE [`splice_and_walk`], whose walk counts
+/// `start`-then-`image_pad` pairs.
+pub fn wrap_bare_image_placeholders(
+    ids: &[TokenId],
+    image_pad: TokenId,
+    start: TokenId,
+    end: TokenId,
+) -> Vec<TokenId> {
+    let mut out = Vec::with_capacity(ids.len() + 2);
+    for (i, &id) in ids.iter().enumerate() {
+        if id == image_pad && (i == 0 || ids[i - 1] != start) {
+            out.extend([start, id, end]);
+        } else {
+            out.push(id);
+        }
+    }
+    out
+}
+
 /// A rendered prompt after the splice: the ids a model consumes, and the
 /// position table that goes with them.
 #[derive(Debug, Clone, PartialEq, Eq)]

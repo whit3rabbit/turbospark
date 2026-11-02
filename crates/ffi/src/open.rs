@@ -495,9 +495,12 @@ pub(crate) fn open_with_failure(
                 .attach_vision_sidecar(&dir)
                 .map_err(|e| format!("visionSidecar {}: {e}", dir.display()))?;
             let vision = runner.vision_config();
-            // A CLIP tower (LLaVA) has no start token to pair with the marker.
+            // A CLIP tower (LLaVA) has no start token to pair with the marker; a
+            // tower whose template renders a bare placeholder (Muse-Glimmer) wraps it.
             let verified = if runner.clip_image_ids().is_some() {
                 tokenizer.verify_bare_image_marker(vision.image_token_id as i32)
+            } else if let Some((start, end)) = runner.image_wrap_ids() {
+                tokenizer.verify_bare_image_placeholder(start, vision.image_token_id as i32, end)
             } else {
                 tokenizer.verify_image_markers(
                     vision.vision_start_token_id as i32,

@@ -345,9 +345,12 @@ impl RealChatModel {
                 .attach_vision_sidecar(dir)
                 .map_err(|e| format!("--vision-sidecar {}: {e}", dir.display()))?;
             let vision = runner.vision_config();
-            // A CLIP tower (LLaVA) has no start token to pair with the marker.
+            // A CLIP tower (LLaVA) has no start token to pair with the marker; a
+            // tower whose template renders a bare placeholder (Muse-Glimmer) wraps it.
             let verified = if runner.clip_image_ids().is_some() {
                 tokenizer.verify_bare_image_marker(vision.image_token_id as i32)
+            } else if let Some((start, end)) = runner.image_wrap_ids() {
+                tokenizer.verify_bare_image_placeholder(start, vision.image_token_id as i32, end)
             } else {
                 tokenizer.verify_image_markers(
                     vision.vision_start_token_id as i32,
@@ -495,6 +498,7 @@ impl RealChatModel {
                         vision_start: v.vision_start_token_id as i32,
                         image_pad: v.image_token_id as i32,
                     },
+                    wrap_end: runner.image_wrap_ids().map(|(_, end)| end),
                 })
         } else {
             None

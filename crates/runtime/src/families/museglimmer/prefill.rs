@@ -136,6 +136,20 @@ impl RealForwardRunner {
         // sequential flow's `embed_norm`.
         for (t, &token) in tokens.iter().enumerate() {
             let x_off = (t * hidden * 2) as u64;
+            // An image-pad position takes the tower's row INSTEAD of both the
+            // lookup and the `embed_norm`: the reference scatters the image
+            // features into the already-normed text embeddings, and the
+            // projection's own no-scale RMSNorm is the image row's norm. The
+            // host write lands before this pass commits, which makes it
+            // visible to every dispatch below.
+            if let Some(row) = self
+                .prompt_vision
+                .as_ref()
+                .and_then(|pv| pv.row_for(start_position + t))
+            {
+                gpu::write_buffer_bytes(&self.scratch.x, x_off as usize, row);
+                continue;
+            }
             encode_embed_any(
                 &mut self.context,
                 &pass,

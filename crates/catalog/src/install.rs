@@ -564,7 +564,24 @@ fn fetch_sidecars(
             }
         }
         let url = plan.sidecars.file_url(name);
-        let bytes = client.get(&url)?;
+        let bytes = if name == "preprocessor_config.json" {
+            match client.get_optional(&url)? {
+                Some(bytes) => bytes,
+                // Muse-Glimmer ships `processor_config.json` with the image
+                // processor nested under `image_processor`; write the nested
+                // object out as the flat file every reader looks for. When
+                // that is absent too, the plain 404 below names the file.
+                None => match client
+                    .get_optional(&plan.sidecars.file_url("processor_config.json"))?
+                    .and_then(|b| crate::stream::flatten_processor_config(&b))
+                {
+                    Some(flat) => flat,
+                    None => client.get(&url)?,
+                },
+            }
+        } else {
+            client.get(&url)?
+        };
         if let Some(cb) = byte_progress {
             cb(bytes.len() as u64);
         }

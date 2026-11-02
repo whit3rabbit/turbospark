@@ -893,8 +893,8 @@
           "merges.txt"
         ]
       },
-      "download_bytes": 18568187168,
-      "install_bytes": 18542228804,
+      "download_bytes": 18556687168,
+      "install_bytes": 18600000000,
       "status": "runs",
       "gates": [
         "real CLI image runs with qwen3vl-30b-a3b-vision-tower attached (shapes, text page, no-image control)",

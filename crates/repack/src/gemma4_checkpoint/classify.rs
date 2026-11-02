@@ -537,12 +537,22 @@ pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -
                 | ModelFamily::Qwen2Dense
                 | ModelFamily::Gemma4
                 | ModelFamily::Lfm3
+                | ModelFamily::MuseGlimmer
         )
     {
         return Gemma4Bucket::VisionTower;
     }
     // LFM3-VL's projector sits beside its tower under `multi_modal_projector.`.
     if name.starts_with(super::vision_lfm3::LFM3_PROJECTOR_PREFIX) && family == ModelFamily::Lfm3 {
+        return Gemma4Bucket::VisionTower;
+    }
+    // Muse-Glimmer splits its vision side three ways (`vision_tower.` above,
+    // then the adapter and the projection into the trunk). All three are one
+    // tower to the runtime; whether they are INGESTED is the caller's request
+    // (`vision_should_ingest`), and a text-only install still drops them.
+    if (name.starts_with("vision_adapter.") || name.starts_with("vision_projection."))
+        && family == ModelFamily::MuseGlimmer
+    {
         return Gemma4Bucket::VisionTower;
     }
     if name.starts_with(super::vision_gemma4::EMBED_VISION_PREFIX) && family == ModelFamily::Gemma4
