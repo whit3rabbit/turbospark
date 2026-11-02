@@ -37,6 +37,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod clip;
 pub mod decode;
 pub mod error;
 pub mod gemma4;
@@ -51,6 +52,10 @@ pub mod rope;
 pub mod rounding;
 pub mod smart_resize;
 
+pub use clip::{
+    clip_expand_image_placeholders, clip_preprocess, clip_resize_dims, ClipPatches,
+    ClipPreprocessParams, CLIP_PATCH, CLIP_PATCH_DIM,
+};
 pub use decode::{
     decode_image_bytes, decode_image_file, image_dimensions, Rgb8Image, MAX_IMAGE_DIM,
 };

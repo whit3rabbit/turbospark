@@ -221,6 +221,17 @@ pub enum VisionTowerKind {
     /// The Gemma 4 tower: sandwich RMSNorms, axial rope, 3x3 pooling, and
     /// the `embed_vision` projector.
     Gemma4,
+    /// The CLIP ViT tower LLaVA-1.5 carries (`docs/LLAVA_VISION_PHASE0.md`):
+    /// class token, learned absolute positions, a LayerNorm before the first
+    /// block, quick-GELU blocks, the hidden state of the second-to-last
+    /// block with the class row dropped, then a two-layer GELU projector.
+    ///
+    /// Field meanings: `depth` is the blocks THAT RUN (23 of the checkpoint's
+    /// 24, the last is never read), `spatial_merge_size` is 1, `temporal_patch_size`
+    /// is 1, `num_position_embeddings` counts the class row (577), and
+    /// `out_hidden_size` is the projector's output (the trunk width). The
+    /// start and end ids are 0: the placeholder run is bare.
+    Clip,
 }
 
 impl VisionTowerKind {
@@ -229,6 +240,7 @@ impl VisionTowerKind {
         match self {
             VisionTowerKind::QwenSiglip => "qwen_siglip",
             VisionTowerKind::Gemma4 => "gemma4",
+            VisionTowerKind::Clip => "clip",
         }
     }
 
@@ -238,6 +250,7 @@ impl VisionTowerKind {
         match s {
             "qwen_siglip" => Some(VisionTowerKind::QwenSiglip),
             "gemma4" => Some(VisionTowerKind::Gemma4),
+            "clip" => Some(VisionTowerKind::Clip),
             _ => None,
         }
     }

@@ -253,6 +253,11 @@ pub fn read_vision_entries_quantized(
     if vision.tower == model_io::VisionTowerKind::Gemma4 {
         return super::vision_gemma4::read_gemma4_vision_entries(shards, vision_bases, vision);
     }
+    // CLIP (LLaVA) likewise: its own names, its own fused q/k/v, its own
+    // dropped tail. It ships unquantized planes only.
+    if vision.tower == model_io::VisionTowerKind::Clip {
+        return super::vision_clip::read_clip_vision_entries(shards, vision_bases, vision);
+    }
     let depth = usize::try_from(vision.depth).map_err(|_| {
         Gemma4Error::Config(format!(
             "vision depth {} cannot be represented as a block count",
