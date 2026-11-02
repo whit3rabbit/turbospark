@@ -14,6 +14,20 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- macOS app: computer use for local vision models (Settings > Computer Use,
+  off by default). Nine `computer_*` tools let the main agent read and
+  operate native apps through accessibility-tree refs, with pixel clicks
+  mapped through the app's latest screenshot. They appear only when the
+  loaded model has active vision, never to subagents, and each app needs a
+  `computer_request_access` approval that asks in every permission mode.
+  TurboSpark itself, System Settings, Keychain Access and password managers
+  are refused, browsers are read-only, and terminals and IDEs are click-only.
+  A bundled helper, `TurboSpark Computer Use.app`, owns the Accessibility
+  and Screen Recording grants so they survive app updates. It talks to the
+  app over a token- and signature-checked Unix socket and has a menu bar
+  Stop item and an Escape kill switch. A change to the helper's sources
+  ships a new helper, and users grant it again once. See
+  `docs/COMPUTER_USE.md`.
 - Gemma 4 vision: image prompts on a Gemma 4 install repacked with its tower
   (`mlx-community/gemma-4-26b-a4b-it-4bit`), through the CLI
   (`--messages-file`), both server endpoints, `ts_generate` and

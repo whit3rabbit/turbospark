@@ -339,6 +339,96 @@ plutil -replace CFBundleLocalizations -json \
 
 plutil -lint "$contents/Info.plist" >/dev/null
 
+# --- Computer-use helper ------------------------------------------------------
+# The helper owns the Accessibility and Screen Recording grants
+# (docs/COMPUTER_USE.md). macOS ties an ad-hoc signed app's grants to its code
+# hash, so the helper must be byte-identical from release to release or every
+# update re-prompts. Swift builds are not reliably reproducible, so a signed
+# helper is cached by a hash of everything that can change its bytes, and
+# reused while that hash holds. Its Info.plist is sealed into the signature,
+# which is why it carries a fixed version instead of the app's.
+helper_name="TurboSpark Computer Use.app"
+helper_src="$root/swift/TurboSparkApp/Sources"
+helper_key="$(
+  {
+    # Relative paths and a fixed sort order, so a release runner and a local
+    # checkout at another path compute the same key.
+    cd "$helper_src" && find ComputerUseKit TurboSparkComputerUse -type f -name '*.swift' -print0 \
+      | LC_ALL=C sort -z | xargs -0 shasum -a 256
+    echo "min_macos=$min_macos identity=$identity bundle_id=$bundle_id plist=2"
+  } | shasum -a 256 | cut -c1-16
+)"
+helper_cache_root="${COMPUTER_USE_HELPER_CACHE:-$HOME/Library/Caches/com.whit3rabbit.turbospark/computer-use-helper}"
+helper_cached="$helper_cache_root/$helper_key/$helper_name"
+# A release runner starts with an empty cache, so release.yml passes the helper
+# from the previous published release as COMPUTER_USE_HELPER_SEED. It is reused
+# only when it was built from the same inputs (its stamped key matches) and its
+# signature is intact. Anything else falls through to a new build.
+helper_seed="${COMPUTER_USE_HELPER_SEED:-}"
+if [ -n "$helper_seed" ] && [ ! -d "$helper_cached" ]; then
+  seed_key="$(/usr/libexec/PlistBuddy -c 'Print :TSComputerUseSourceKey' "$helper_seed/Contents/Info.plist" 2>/dev/null || true)"
+  if [ "$seed_key" != "$helper_key" ]; then
+    echo "==> computer-use helper: seed key '${seed_key:-none}' is not $helper_key, ignoring the seed"
+  elif ! codesign --verify --strict "$helper_seed" 2>/dev/null; then
+    echo "==> computer-use helper: seed signature does not verify, ignoring the seed"
+  else
+    echo "==> computer-use helper: seeding the cache from $helper_seed"
+    mkdir -p "$(dirname "$helper_cached")"
+    ditto "$helper_seed" "$helper_cached"
+  fi
+fi
+if [ -d "$helper_cached" ] && codesign --verify --strict "$helper_cached" 2>/dev/null; then
+  echo "==> computer-use helper: reusing cached build $helper_key"
+else
+  echo "==> computer-use helper: new build $helper_key (users re-grant its permissions once)"
+  helper_bin="$build_dir/TurboSparkComputerUse"
+  [ -x "$helper_bin" ] || { echo "expected $helper_bin to exist; run without --skip-build" >&2; exit 1; }
+  helper_stage="$(mktemp -d)/$helper_name"
+  mkdir -p "$helper_stage/Contents/MacOS"
+  cp "$helper_bin" "$helper_stage/Contents/MacOS/TurboSparkComputerUse"
+  cat > "$helper_stage/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleExecutable</key>
+    <string>TurboSparkComputerUse</string>
+    <key>CFBundleIdentifier</key>
+    <string>${bundle_id}.computeruse</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>TurboSpark Computer Use</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>${min_macos}</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>TurboSpark captures the windows of apps you allow it to control, so a local model can see them.</string>
+    <key>TSComputerUseSourceKey</key>
+    <string>${helper_key}</string>
+</dict>
+</plist>
+PLIST
+  plutil -lint "$helper_stage/Contents/Info.plist" >/dev/null
+  codesign --force --timestamp=none --sign "$identity" "$helper_stage"
+  mkdir -p "$(dirname "$helper_cached")"
+  rm -rf "$helper_cached"
+  cp -R "$helper_stage" "$helper_cached"
+fi
+mkdir -p "$contents/Helpers"
+rm -rf "$contents/Helpers/$helper_name"
+# ditto keeps the signature's extended attributes and bytes intact.
+ditto "$helper_cached" "$contents/Helpers/$helper_name"
+
 echo "==> codesign (identity: ${identity})"
 # Inner executables first, then the bundle: a signature over the bundle seals
 # what is inside it, so signing the wrapper before its contents invalidates

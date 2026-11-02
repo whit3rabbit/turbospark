@@ -585770,6 +585770,1447 @@
           }
         }
       }
+    },
+    "Computer Use": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "استخدام الكمبيوتر"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Computersteuerung"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Computer Use"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uso del ordenador"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Utilisation de l'ordinateur"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "שימוש במחשב"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "कंप्यूटर उपयोग"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Penggunaan Komputer"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uso del computer"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "コンピュータ操作"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "컴퓨터 사용"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Computergebruik"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Obsługa komputera"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uso do computador"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Управление компьютером"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Datoranvändning"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bilgisayar Kullanımı"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Керування комп'ютером"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Điều khiển máy tính"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "电脑操控"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "電腦操控"
+          }
+        }
+      }
+    },
+    "Enable computer use": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تفعيل استخدام الكمبيوتر"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Computersteuerung aktivieren"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enable computer use"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activar el uso del ordenador"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activer l'utilisation de l'ordinateur"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הפעלת שימוש במחשב"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "कंप्यूटर उपयोग चालू करें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aktifkan penggunaan komputer"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Attiva l'uso del computer"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "コンピュータ操作を有効にする"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "컴퓨터 사용 켜기"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Computergebruik inschakelen"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Włącz obsługę komputera"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ativar o uso do computador"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Включить управление компьютером"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aktivera datoranvändning"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bilgisayar kullanımını etkinleştir"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Увімкнути керування комп'ютером"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bật điều khiển máy tính"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "启用电脑操控"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "啟用電腦操控"
+          }
+        }
+      }
+    },
+    "Lets a local model with vision see and control the Mac apps you allow. It asks before using each app, and the menu bar shows a Stop item while it runs.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يتيح لنموذج محلي يدعم الرؤية رؤية تطبيقات Mac التي تسمح بها والتحكم فيها. يطلب الإذن قبل استخدام كل تطبيق، ويعرض شريط القوائم عنصر إيقاف أثناء عمله."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ein lokales Modell mit Bildverständnis kann die Mac-Apps sehen und steuern, die du erlaubst. Es fragt vor jeder App, und die Menüleiste zeigt währenddessen einen Stopp-Eintrag."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lets a local model with vision see and control the Mac apps you allow. It asks before using each app, and the menu bar shows a Stop item while it runs."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permite que un modelo local con visión vea y controle las apps de Mac que autorices. Pide permiso antes de usar cada app, y la barra de menús muestra una opción Detener mientras funciona."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permet à un modèle local doté de vision de voir et de contrôler les apps Mac que vous autorisez. Il demande avant d'utiliser chaque app, et la barre des menus affiche un élément Arrêter pendant son fonctionnement."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "מאפשר למודל מקומי עם ראייה לראות ולשלוט ביישומי Mac שאתה מאשר. הוא מבקש רשות לפני השימוש בכל יישום, ושורת התפריטים מציגה פריט עצירה בזמן שהוא פועל."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "दृष्टि वाले स्थानीय मॉडल को उन Mac ऐप्स को देखने और नियंत्रित करने देता है जिनकी आप अनुमति देते हैं। यह हर ऐप का उपयोग करने से पहले पूछता है, और चलते समय मेनू बार में रोकने का विकल्प दिखता है।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Memungkinkan model lokal dengan penglihatan melihat dan mengontrol app Mac yang Anda izinkan. Model meminta izin sebelum memakai setiap app, dan bilah menu menampilkan item Hentikan selama berjalan."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consente a un modello locale con visione di vedere e controllare le app Mac che autorizzi. Chiede prima di usare ogni app e, mentre è attivo, la barra dei menu mostra la voce Interrompi."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "画像を理解できるローカルモデルが、許可した Mac アプリを見て操作できるようにします。アプリごとに使用前に確認し、動作中はメニューバーに停止項目が表示されます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "비전 기능이 있는 로컬 모델이 허용한 Mac 앱을 보고 제어할 수 있게 합니다. 각 앱을 사용하기 전에 묻고, 실행 중에는 메뉴 막대에 중지 항목이 표시됩니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Laat een lokaal model met beeldherkenning de Mac-apps zien en bedienen die je toestaat. Het vraagt het voor elke app, en de menubalk toont een Stop-onderdeel zolang het actief is."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pozwala lokalnemu modelowi z obsługą obrazu widzieć i sterować aplikacjami Mac, na które zezwolisz. Pyta przed użyciem każdej aplikacji, a pasek menu pokazuje pozycję Zatrzymaj, gdy działa."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permite que um modelo local com visão veja e controle os apps do Mac que você autorizar. Ele pede antes de usar cada app, e a barra de menus mostra um item Parar enquanto ele está ativo."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Позволяет локальной модели с поддержкой изображений видеть разрешённые вами приложения Mac и управлять ими. Она спрашивает перед использованием каждого приложения, а в строке меню во время работы есть пункт «Остановить»."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Låter en lokal modell med bildförståelse se och styra de Mac-appar du tillåter. Den frågar innan den använder varje app, och menyraden visar ett Stoppa-alternativ medan den körs."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Görme yeteneği olan yerel bir modelin izin verdiğiniz Mac uygulamalarını görmesini ve denetlemesini sağlar. Her uygulamayı kullanmadan önce sorar ve çalışırken menü çubuğunda bir Durdur öğesi gösterilir."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Дає локальній моделі із зором бачити дозволені вами програми Mac і керувати ними. Вона питає перед використанням кожної програми, а під час роботи в смузі меню є пункт «Зупинити»."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cho phép mô hình cục bộ có khả năng thị giác nhìn thấy và điều khiển các ứng dụng Mac bạn cho phép. Mô hình hỏi trước khi dùng từng ứng dụng, và thanh menu hiện mục Dừng trong lúc chạy."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "让具备视觉能力的本地模型查看并操控你允许的 Mac App。使用每个 App 前都会先询问，运行期间菜单栏会显示停止项。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "讓具備視覺能力的本機模型查看並操控你允許的 Mac App。使用每個 App 前都會先詢問，執行期間選單列會顯示停止項目。"
+          }
+        }
+      }
+    },
+    "The loaded model cannot see images, so it is not offered computer tools.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "النموذج المحمّل لا يستطيع رؤية الصور، لذا لا تُعرض عليه أدوات الكمبيوتر."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Das geladene Modell kann keine Bilder sehen, daher werden ihm keine Computer-Werkzeuge angeboten."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The loaded model cannot see images, so it is not offered computer tools."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El modelo cargado no puede ver imágenes, así que no se le ofrecen herramientas del ordenador."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le modèle chargé ne peut pas voir les images, donc aucun outil de contrôle de l'ordinateur ne lui est proposé."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "המודל הטעון לא יכול לראות תמונות, ולכן לא מוצעים לו כלי מחשב."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "लोड किया गया मॉडल छवियाँ नहीं देख सकता, इसलिए उसे कंप्यूटर टूल नहीं दिए जाते।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model yang dimuat tidak dapat melihat gambar, jadi alat komputer tidak ditawarkan kepadanya."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Il modello caricato non può vedere le immagini, quindi non riceve gli strumenti per il computer."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "読み込まれたモデルは画像を認識できないため、コンピュータ操作ツールは提供されません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "로드된 모델은 이미지를 볼 수 없어 컴퓨터 도구가 제공되지 않습니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Het geladen model kan geen afbeeldingen zien, dus krijgt het geen computerhulpmiddelen."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wczytany model nie widzi obrazów, więc nie otrzymuje narzędzi do obsługi komputera."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O modelo carregado não consegue ver imagens, então não recebe as ferramentas do computador."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Загруженная модель не видит изображения, поэтому инструменты управления компьютером ей не предлагаются."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Den inlästa modellen kan inte se bilder, så den erbjuds inga datorverktyg."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yüklü model görüntüleri göremiyor, bu yüzden ona bilgisayar araçları sunulmuyor."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Завантажена модель не бачить зображень, тому їй не пропонуються інструменти керування комп'ютером."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mô hình đã tải không thể xem hình ảnh, nên không được cung cấp công cụ điều khiển máy tính."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已加载的模型无法识别图像，因此不会向它提供电脑操控工具。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已載入的模型無法辨識影像，因此不會向它提供電腦操控工具。"
+          }
+        }
+      }
+    },
+    "This build has no computer use helper. Use the packaged TurboSpark app.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "لا يتضمن هذا الإصدار مساعد استخدام الكمبيوتر. استخدم تطبيق TurboSpark المُجمَّع."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dieser Build enthält keinen Helfer für die Computersteuerung. Verwende die paketierte TurboSpark-App."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This build has no computer use helper. Use the packaged TurboSpark app."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Esta compilación no incluye el asistente de uso del ordenador. Usa la app empaquetada de TurboSpark."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cette version n'inclut pas l'assistant d'utilisation de l'ordinateur. Utilisez l'app TurboSpark empaquetée."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "גרסה זו אינה כוללת את מסייע השימוש במחשב. השתמש ביישום TurboSpark הארוז."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "इस बिल्ड में कंप्यूटर उपयोग सहायक नहीं है। पैकेज किया गया TurboSpark ऐप उपयोग करें।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Build ini tidak memiliki pembantu penggunaan komputer. Gunakan app TurboSpark yang sudah dikemas."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Questa build non include l'assistente per l'uso del computer. Usa l'app TurboSpark pacchettizzata."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このビルドにはコンピュータ操作ヘルパーが含まれていません。パッケージ版の TurboSpark アプリを使用してください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 빌드에는 컴퓨터 사용 도우미가 없습니다. 패키지된 TurboSpark 앱을 사용하세요."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deze build heeft geen hulpprogramma voor computergebruik. Gebruik de verpakte TurboSpark-app."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ta kompilacja nie zawiera pomocnika obsługi komputera. Użyj spakowanej aplikacji TurboSpark."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Esta compilação não inclui o auxiliar de uso do computador. Use o app TurboSpark empacotado."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В этой сборке нет помощника управления компьютером. Используйте упакованное приложение TurboSpark."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Det här bygget saknar hjälpprogrammet för datoranvändning. Använd den paketerade TurboSpark-appen."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu derlemede bilgisayar kullanımı yardımcısı yok. Paketlenmiş TurboSpark uygulamasını kullanın."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "У цій збірці немає помічника керування комп'ютером. Використовуйте запаковану програму TurboSpark."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bản dựng này không có trình trợ giúp điều khiển máy tính. Hãy dùng ứng dụng TurboSpark đã đóng gói."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此版本不包含电脑操控辅助程序。请使用打包好的 TurboSpark App。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此版本不包含電腦操控輔助程式。請使用封裝好的 TurboSpark App。"
+          }
+        }
+      }
+    },
+    "Screen Recording": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تسجيل الشاشة"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bildschirmaufnahme"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Screen Recording"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Grabación de pantalla"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enregistrement de l'écran"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הקלטת מסך"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "स्क्रीन रिकॉर्डिंग"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Perekaman Layar"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Registrazione schermo"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "画面収録"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "화면 기록"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Schermopname"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nagrywanie ekranu"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gravação de tela"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Запись экрана"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Skärminspelning"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ekran Kaydı"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Запис екрана"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ghi màn hình"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "录屏"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "螢幕錄影"
+          }
+        }
+      }
+    },
+    "Reads the controls in allowed apps and sends clicks and keystrokes.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يقرأ عناصر التحكم في التطبيقات المسموح بها ويرسل النقرات وضغطات المفاتيح."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Liest die Bedienelemente erlaubter Apps und sendet Klicks und Tastenanschläge."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reads the controls in allowed apps and sends clicks and keystrokes."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lee los controles de las apps autorizadas y envía clics y pulsaciones de teclas."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lit les commandes des apps autorisées et envoie des clics et des frappes au clavier."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "קורא את הפקדים ביישומים המאושרים ושולח לחיצות והקשות מקלדת."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "अनुमति वाले ऐप्स के नियंत्रण पढ़ता है और क्लिक व कीस्ट्रोक भेजता है।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Membaca kontrol di app yang diizinkan serta mengirim klik dan ketukan tombol."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Legge i controlli delle app autorizzate e invia clic e tasti."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "許可したアプリのコントロールを読み取り、クリックとキー入力を送信します。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "허용된 앱의 컨트롤을 읽고 클릭과 키 입력을 보냅니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Leest de bedieningselementen van toegestane apps en stuurt klikken en toetsaanslagen."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Odczytuje elementy sterujące dozwolonych aplikacji i wysyła kliknięcia oraz naciśnięcia klawiszy."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lê os controles dos apps autorizados e envia cliques e teclas."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Читает элементы управления разрешённых приложений и отправляет нажатия мыши и клавиш."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Läser kontrollerna i tillåtna appar och skickar klick och tangenttryckningar."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "İzin verilen uygulamalardaki denetimleri okur ve tıklama ile tuş vuruşları gönderir."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Читає елементи керування дозволених програм і надсилає клацання та натискання клавіш."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Đọc các điều khiển trong ứng dụng được phép và gửi lượt nhấp cùng phím bấm."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "读取已允许 App 中的控件，并发送点按和按键。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "讀取已允許 App 中的控制項，並傳送點按和按鍵。"
+          }
+        }
+      }
+    },
+    "Captures the windows of allowed apps so the model can see them.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يلتقط نوافذ التطبيقات المسموح بها ليتمكن النموذج من رؤيتها."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nimmt die Fenster erlaubter Apps auf, damit das Modell sie sehen kann."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Captures the windows of allowed apps so the model can see them."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Captura las ventanas de las apps autorizadas para que el modelo pueda verlas."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Capture les fenêtres des apps autorisées pour que le modèle puisse les voir."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "מצלם את החלונות של היישומים המאושרים כדי שהמודל יוכל לראות אותם."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "अनुमति वाले ऐप्स की विंडो कैप्चर करता है ताकि मॉडल उन्हें देख सके।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mengambil gambar jendela app yang diizinkan agar model dapat melihatnya."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cattura le finestre delle app autorizzate così il modello può vederle."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "許可したアプリのウインドウをキャプチャして、モデルが見られるようにします。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "모델이 볼 수 있도록 허용된 앱의 창을 캡처합니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Legt de vensters van toegestane apps vast zodat het model ze kan zien."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Przechwytuje okna dozwolonych aplikacji, aby model mógł je zobaczyć."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Captura as janelas dos apps autorizados para que o modelo possa vê-las."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Снимает окна разрешённых приложений, чтобы модель могла их видеть."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fångar fönstren i tillåtna appar så att modellen kan se dem."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modelin görebilmesi için izin verilen uygulamaların pencerelerini yakalar."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Знімає вікна дозволених програм, щоб модель могла їх бачити."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chụp cửa sổ của các ứng dụng được phép để mô hình có thể nhìn thấy."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "截取已允许 App 的窗口，让模型能够看到。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "擷取已允許 App 的視窗，讓模型能夠看到。"
+          }
+        }
+      }
+    },
+    "macOS lists these under TurboSpark Computer Use, a helper inside TurboSpark.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يعرض macOS هذه الأذونات باسم TurboSpark Computer Use، وهو مساعد داخل TurboSpark."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS führt diese unter TurboSpark Computer Use, einem Helfer innerhalb von TurboSpark."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS lists these under TurboSpark Computer Use, a helper inside TurboSpark."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS muestra estos permisos en TurboSpark Computer Use, un asistente incluido en TurboSpark."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS les affiche sous TurboSpark Computer Use, un assistant inclus dans TurboSpark."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS מציג אותם תחת TurboSpark Computer Use, מסייע שנמצא בתוך TurboSpark."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS इन्हें TurboSpark Computer Use के नाम से दिखाता है, जो TurboSpark के अंदर का एक सहायक है।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS menampilkannya di bawah TurboSpark Computer Use, pembantu di dalam TurboSpark."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS li elenca sotto TurboSpark Computer Use, un assistente incluso in TurboSpark."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS では、TurboSpark 内のヘルパーである TurboSpark Computer Use の項目として表示されます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS에서는 TurboSpark 안의 도우미인 TurboSpark Computer Use 항목으로 표시됩니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS toont deze onder TurboSpark Computer Use, een hulpprogramma in TurboSpark."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS wyświetla je jako TurboSpark Computer Use, pomocnika wewnątrz TurboSpark."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O macOS lista essas permissões em TurboSpark Computer Use, um auxiliar dentro do TurboSpark."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS показывает их для TurboSpark Computer Use, помощника внутри TurboSpark."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS visar dessa under TurboSpark Computer Use, ett hjälpprogram inuti TurboSpark."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS bunları TurboSpark içindeki bir yardımcı olan TurboSpark Computer Use altında listeler."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS показує їх для TurboSpark Computer Use, помічника всередині TurboSpark."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS liệt kê các quyền này dưới TurboSpark Computer Use, một trình trợ giúp bên trong TurboSpark."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS 会将这些权限列在 TurboSpark Computer Use 下，它是 TurboSpark 内置的辅助程序。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS 會將這些權限列在 TurboSpark Computer Use 下，它是 TurboSpark 內建的輔助程式。"
+          }
+        }
+      }
+    },
+    "The computer use helper is not running.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "مساعد استخدام الكمبيوتر لا يعمل."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Helfer für die Computersteuerung läuft nicht."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The computer use helper is not running."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El asistente de uso del ordenador no se está ejecutando."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L'assistant d'utilisation de l'ordinateur n'est pas en cours d'exécution."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "מסייע השימוש במחשב אינו פועל."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "कंप्यूटर उपयोग सहायक नहीं चल रहा है।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pembantu penggunaan komputer tidak berjalan."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L'assistente per l'uso del computer non è in esecuzione."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "コンピュータ操作ヘルパーが実行されていません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "컴퓨터 사용 도우미가 실행 중이 아닙니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Het hulpprogramma voor computergebruik is niet actief."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pomocnik obsługi komputera nie jest uruchomiony."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O auxiliar de uso do computador não está em execução."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Помощник управления компьютером не запущен."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hjälpprogrammet för datoranvändning körs inte."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bilgisayar kullanımı yardımcısı çalışmıyor."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Помічник керування комп'ютером не запущено."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trình trợ giúp điều khiển máy tính chưa chạy."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "电脑操控辅助程序未在运行。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "電腦操控輔助程式未在執行。"
+          }
+        }
+      }
+    },
+    "Click and type in Mac apps you allow": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "النقر والكتابة في تطبيقات Mac التي تسمح بها"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "In erlaubten Mac-Apps klicken und tippen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Click and type in Mac apps you allow"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hacer clic y escribir en las apps de Mac que autorices"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cliquer et saisir dans les apps Mac que vous autorisez"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "לחיצה והקלדה ביישומי Mac שאתה מאשר"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "आपकी अनुमति वाले Mac ऐप्स में क्लिक करें और टाइप करें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Klik dan ketik di app Mac yang Anda izinkan"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fare clic e scrivere nelle app Mac che autorizzi"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "許可した Mac アプリでクリックや入力を行う"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "허용한 Mac 앱에서 클릭하고 입력"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Klikken en typen in Mac-apps die je toestaat"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Klikanie i pisanie w dozwolonych aplikacjach Mac"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clicar e digitar nos apps do Mac que você autorizar"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Нажимать и вводить текст в разрешённых приложениях Mac"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Klicka och skriv i Mac-appar du tillåter"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "İzin verdiğiniz Mac uygulamalarında tıklama ve yazma"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Клацати й вводити текст у дозволених програмах Mac"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nhấp và nhập trong các ứng dụng Mac bạn cho phép"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在你允许的 Mac App 中点按和输入"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在你允許的 Mac App 中點按和輸入"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

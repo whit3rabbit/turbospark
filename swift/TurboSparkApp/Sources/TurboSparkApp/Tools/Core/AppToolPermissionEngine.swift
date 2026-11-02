@@ -245,6 +245,12 @@ public enum AppToolPermissionEngine {
         case .terminal: categoryPermission = permissions.terminal
         case .web: categoryPermission = permissions.web
         case .browser: categoryPermission = permissions.browser
+        case .computerUse:
+            // Observing an app the user already granted needs no second
+            // prompt: the grant card was the approval. Deny still wins, and
+            // input actions keep the category's ask.
+            let readOnly = ComputerUseToolExecutor.readOnlyToolNames.contains(call.name.lowercased())
+            categoryPermission = readOnly && permissions.computerUse == .ask ? .allow : permissions.computerUse
         case .mcp: categoryPermission = permissions.mcp
         case .automation: categoryPermission = permissions.automation
         }
@@ -371,6 +377,18 @@ public enum AppToolPermissionEngine {
         // session approval cannot resurrect a category the project denies)
         if categoryPermission == .deny {
             return .deny(reason: "The \(category.label) category is set to Deny in project settings.")
+        }
+
+        // The app grant is the user's per-session consent to desktop control,
+        // so no mode, session approval, or classifier may answer it for them.
+        if category == .computerUse,
+           call.name.lowercased() == ComputerUseToolDefinitions.requestAccessToolName
+        {
+            var assessment = risk
+            assessment.hardGated = true
+            return .ask(
+                assessment: assessment,
+                reason: "Letting the agent control \(call.arguments["apps"] ?? "these apps") always needs your approval.")
         }
 
         // 2b. Persisted MCP deny rule: refused outright, ahead of every

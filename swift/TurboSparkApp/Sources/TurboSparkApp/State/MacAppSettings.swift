@@ -301,6 +301,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     public var conversationRecallEnabled: Bool
     /// Global browser preferences. Project permissions and origin grants are stored separately.
     public var browser: BrowserSettings
+    /// Global computer-use preferences. Per-app grants live only in memory.
+    public var computerUse: ComputerUseSettings
     /// App-wide network policy for tool calls (Settings > Network).
     public var networkPolicy: AppNetworkPolicy
 
@@ -394,6 +396,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         syntextIndexingEnabled: Bool = true,
         conversationRecallEnabled: Bool = true,
         browser: BrowserSettings = BrowserSettings(),
+        computerUse: ComputerUseSettings = ComputerUseSettings(),
         networkPolicy: AppNetworkPolicy = AppNetworkPolicy()
     ) {
         self.contextTokens = contextTokens
@@ -519,6 +522,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.syntextIndexingEnabled = syntextIndexingEnabled
         self.conversationRecallEnabled = conversationRecallEnabled
         self.browser = browser
+        self.computerUse = computerUse
         self.networkPolicy = networkPolicy
     }
 
@@ -735,6 +739,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
             Bool.self, forKey: .conversationRecallEnabled, fallback: true)
         self.browser = c.decodeLenient(
             BrowserSettings.self, forKey: .browser, fallback: BrowserSettings())
+        self.computerUse = c.decodeLenient(
+            ComputerUseSettings.self, forKey: .computerUse, fallback: ComputerUseSettings())
         self.networkPolicy = c.decodeLenient(
             AppNetworkPolicy.self, forKey: .networkPolicy, fallback: AppNetworkPolicy())
     }

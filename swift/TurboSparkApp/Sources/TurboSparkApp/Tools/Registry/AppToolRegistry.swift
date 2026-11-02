@@ -552,6 +552,35 @@ public enum AppToolRegistry {
                     ])
                 }
 
+            case _ where ComputerUseToolDefinitions.toolNames.contains(lowerName):
+                guard let runtime = await computerUseToolRuntimeProvider?(call, chatID) else {
+                    throw NSError(domain: "TurboSparkTool", code: 47, userInfo: [
+                        NSLocalizedDescriptionKey: "Computer use is off, the helper is not running, or the loaded model has no vision.",
+                    ])
+                }
+                switch await ComputerUseToolExecutor.execute(call: call, runtime: runtime) {
+                case .cancelled:
+                    throw CancellationError()
+                case .completed(let text, let media):
+                    output = text
+                    if let media {
+                        mediaDisposition = media.disposition
+                        if let reference = media.reference {
+                            mediaReferences = [reference]
+                        } else {
+                            mediaWasRefused = true
+                        }
+                    }
+                case .denied(let reason):
+                    throw NSError(domain: "TurboSparkTool", code: 48, userInfo: [
+                        NSLocalizedDescriptionKey: "Computer action was denied: \(reason)",
+                    ])
+                case .invalidInput(let reason), .unavailable(let reason), .failed(let reason):
+                    throw NSError(domain: "TurboSparkTool", code: 49, userInfo: [
+                        NSLocalizedDescriptionKey: reason,
+                    ])
+                }
+
             case "codesearch", "code_search":
                 output = try await CodeSearchExecutor.execute(arguments: call.arguments)
 

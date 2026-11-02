@@ -98,6 +98,13 @@ extension AppToolRegistry {
         @Sendable @MainActor (AppToolCall, AppProject?, BrowserOrigin) -> Bool
     )?
 
+    /// The computer-use runtime for one call: the chat's grant session, the
+    /// helper connection, and the turn's availability. Nil means the feature
+    /// is off or the helper is not connected.
+    public static var computerUseToolRuntimeProvider: (
+        @Sendable @MainActor (AppToolCall, UUID?) -> ComputerUseToolRuntime?
+    )?
+
     /// Isolated managed storage for browser media-path integration tests. Nil uses the active profile store.
     static var browserScreenshotAssetStoreProvider: (
         @Sendable @MainActor () -> ManagedAssetStore?
@@ -207,7 +214,7 @@ extension AppToolRegistry {
         "call_mcp_tool", "callmcptool", "mcp_tool",
         "listmcpresources", "list_mcp_resources", "list_resources",
         "readmcpresource", "read_mcp_resource", "read_resource"
-    ]).union(writeFileAliases).union(editFileAliases)
+    ]).union(writeFileAliases).union(editFileAliases).union(ComputerUseToolDefinitions.toolNames)
 
     /// Tool names whose handler resolves a filesystem path or spawns a
     /// process, and therefore cannot run without a project root.
