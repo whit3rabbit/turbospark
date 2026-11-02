@@ -191,18 +191,82 @@ rows from `crates/vision-io`, cosine per stage:
 | Page | Patches | Windows | patch embed | block 0 | block 49 | final rows |
 | --- | --- | --- | --- | --- | --- | --- |
 | 560x700 crop of the test page | 2,000 | 4, ragged | 0.99999994 | 0.99999987 | 0.99999579 | 0.99999879 |
+| 448x448 page | 1,024 | 1 (identity) | 0.99999994 | 0.99999987 | 0.99966633 | 0.99998394 |
+
+**Two bars.** The residual-stream stages are dominated by a few outlier
+channels (block 49's peak is about 6.2k against an rms of about 108, eight
+channels over 1,000, against FP16's 65.5k), so their raw cosine is sensitive to
+FP16 rounding of those channels: 0.9997 at block 49 on the 448 page, whose
+normalized output is 0.99998. The test holds the residual stages to 0.999 and
+the final rows, which are what the trunk reads, to 0.9999. The 448 page is the
+weaker reading and is recorded rather than averaged away.
 
 The reference reads the checkpoint with q, k and v as three projections, so the
 fused-qkv ingest is checked independently of the port's own fusion.
 
-**Mutation checks.** Forcing every block to full attention: block 0 0.99962,
-block 49 **0.97183**, final rows 0.98602 (fails the 0.9999 bar). A patch-major
-pixel shuffle in place of the dim-major one: every block stage unchanged and
-the final rows **0.24890**, which localizes it to the merge.
+**Mutation checks** (on the 560x700 crop). Forcing every block to full
+attention: block 0 0.99962, block 49 **0.97183**, final rows 0.98602, and the
+test fails. A patch-major pixel shuffle in place of the dim-major one: every
+block stage unchanged and the final rows **0.24890**, which localizes it to the
+merge.
 
 The 448x448 page fits one 32-patch window, so it cannot test the window logic;
 the 560x700 crop (a 50x40 patch grid) exists for that.
 
+### End to end (combined install, 18.2 GiB, on an external drive)
+
+`turbospark-check --messages-file ... --image ... --temperature 0 --top-k 1
+--max-context 8192`. The model reasons first (`to=self`), so the output holds
+its scratch text and then the answer.
+
+- **The 1024x1280 text page** (resized to 1008x1260, 1,620 image tokens, 1,691
+  prompt tokens, prefill 87 s, decode 16 tok/s), asked for its first three
+  lines. The output begins
+  `00012 | parity streaming streaming oracle fixture tensor kernel oracle manifest gradient kernel expert | 8316.48`
+  then `00030 | prefill parity decode gradient embedding streaming gradient kernel gradient throughput | 9656.18`
+  and `00048 | decode tensor quantize gradient throughput streaming attention streaming fixture | 4200.76`.
+  The first line is the page's own (the figure is the one
+  [VISION.md](VISION.md) records for this page); none of these appears in the
+  prompt.
+- **No-image control**, same prompt: the model's scratch text says it sees no
+  page or image and considers asking for one.
+- **A shapes image** (a red square, a blue circle, a green triangle):
+  "Red square ... in the upper left; Blue circle ... in the upper right; Green
+  triangle ... oriented point-up, in the lower center". Positions included.
+- **The server**, `POST /v1/chat/completions` (an `image_url` data URL) and
+  `POST /v1/messages` (a base64 `image` block), same shapes image, greedy:
+  both return the same correct description. The Anthropic response carries a
+  `thinking` block and a `text` block.
+- **The tokenizer.** Against the loaded tokenizer, `<|image_start|>` resolves
+  to 200080, `<|patch|>` to 200092 and `<|image_end|>` to 200081, the template
+  passes the bare-placeholder check, and the Qwen-style marker check refuses it
+  (`crates/tokenizer/tests/vision_markers_muse.rs`, ignored).
+
 ## What is and is not verified
 
-See the end-to-end section appended below once the real runs are in.
+Verified on real bytes: the tower's four stages on three page shapes (above),
+ingest of the whole tower both as a 3.6 GiB sidecar and inside the combined
+install (manifest `visionTower: muse_glimmer`, depth 50, out 6656), the CLI and
+both server endpoints, the two mutations, the kind's token ids.
+
+**Not verified:**
+
+- **Against mlx-vlm executed on the same bytes.** The reference here is a numpy
+  transcription of its source, so a misreading shared by the transcription and
+  the Rust tower would pass. Running mlx-vlm was not authorized in this
+  session.
+- **Preprocessing against the HF-side processor bit for bit.** The Lanczos
+  filter is checked against a hand-computed downscale and the resize rule
+  against the reference's search by construction, not against a PIL-produced
+  fixture.
+- **A text-only trunk plus `--vision-sidecar`.** The sidecar's tower is
+  parity-checked and its marker check is checked against the real tokenizer,
+  but the attach path itself was not run on a second, text-only install.
+- **`ts_generate` and the Swift app**, which share the CLI's and server's
+  functions but were not driven.
+- **Logit parity of the trunk with an image**, a text-quality or memory oracle
+  for the row, chunked image prefill beyond what the 1,691-token run exercised,
+  speculation with an image, and video.
+- **The sliding-window trunk past 2,048 tokens of image.** A 4,096-token image
+  cap makes the prompt larger than the trunk's 2,048-token sliding window; the
+  gates here stayed under it.
