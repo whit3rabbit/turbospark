@@ -221,6 +221,8 @@ public enum AppToolCatalog {
         case "browser_navigate", "browser_click", "browser_type", "browser_press_key",
             "browser_scroll", "browser_screenshot", "browser_snapshot", "browser_wait":
             return .browser
+        case _ where ComputerUseToolDefinitions.toolNames.contains(name):
+            return .computerUse
         case "batch", "schedule", "cron", "manage_task", "monitoring", "notify", "notification", "sleep", "delay", "pushnotification", "push_notification", "config", "config_tool", "ctxinspect", "ctx_inspect", "askuserquestion", "ask_user_question", "ask_question", "question", "enterplanmode", "enter_plan_mode", "plan_mode", "plan", "exitplanmode", "exit_plan_mode", "reportfindings", "report_findings", "findings", "proposegoal", "propose_goal", "sendfeedback", "send_feedback", "agent", "subagent", "task", "stop_agent", "agentstop", "kill_agent", "taskcreate", "task_create", "task_add", "taskget", "task_get", "tasklist", "task_list", "taskupdate", "task_update", "taskstop", "task_stop", "task_cancel", "taskoutput", "task_output":
             return .automation
         case "tool_call", "call_mcp_tool", "callmcptool", "mcp_tool", "list_resources", "listmcpresources", "list_mcp_resources", "read_resource", "readmcpresource", "read_mcp_resource", "codemode":
@@ -257,6 +259,7 @@ public enum AppToolCatalog {
         contextTokens: Int?,
         webToolsEnabled: Bool,
         browserAvailability: BrowserToolAvailability = .disabled,
+        computerUseAvailability: ComputerUseToolAvailability = .disabled,
         profile: AppToolProfile = .default
     ) -> TurnAvailableTools {
         applying(
@@ -264,7 +267,8 @@ public enum AppToolCatalog {
             to: captureUnfilteredTurnTools(
                 for: project, chatToolsEnabled: chatToolsEnabled,
                 globalMcpServers: globalMcpServers, contextTokens: contextTokens,
-                webToolsEnabled: webToolsEnabled, browserAvailability: browserAvailability))
+                webToolsEnabled: webToolsEnabled, browserAvailability: browserAvailability,
+                computerUseAvailability: computerUseAvailability))
     }
 
     private static func captureUnfilteredTurnTools(
@@ -273,15 +277,21 @@ public enum AppToolCatalog {
         globalMcpServers: [McpServerConfig],
         contextTokens: Int?,
         webToolsEnabled: Bool,
-        browserAvailability: BrowserToolAvailability
+        browserAvailability: BrowserToolAvailability,
+        computerUseAvailability: ComputerUseToolAvailability
     ) -> TurnAvailableTools {
+        // Computer tools join here, in the main turn's capture only.
+        // `tools(for:)` never adds them, so a subagent, which builds its list
+        // there, cannot see or call them (the capture is what execution
+        // validates against).
+        let computerTools = ComputerUseToolDefinitions.tools(availableFor: computerUseAvailability)
         if let project {
             let promptDefinitions = tools(
                 for: project.agentType,
                 projectURL: project.rootDirectoryURL,
                 contextTokens: contextTokens,
                 webToolsEnabled: webToolsEnabled,
-                browserAvailability: browserAvailability)
+                browserAvailability: browserAvailability) + computerTools
             let visibleServers = AppToolCatalogMcp.visibleServers(
                 global: globalMcpServers, project: project)
             let mcpSnapshot = AppToolCatalogMcp.catalogSnapshot(
@@ -302,7 +312,7 @@ public enum AppToolCatalog {
             browserAvailability: browserAvailability
         ).filter { tool in
             !AppToolRegistry.workspaceRootedToolNames.contains(tool.function.name.lowercased())
-        }
+        } + computerTools
         return TurnAvailableTools(
             definitions: chatDefinitions,
             promptDefinitions: chatDefinitions,

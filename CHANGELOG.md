@@ -14,6 +14,31 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- macOS app: computer use for local vision models (Settings > Computer Use,
+  off by default). Nine `computer_*` tools let the main agent read and
+  operate native apps through accessibility-tree refs, with pixel clicks
+  mapped through the app's latest screenshot. They appear only when the
+  loaded model has active vision, never to subagents, and each app needs a
+  `computer_request_access` approval that asks in every permission mode.
+  TurboSpark itself, System Settings, Keychain Access and password managers
+  are refused, browsers are read-only, and terminals and IDEs are click-only.
+  A bundled helper, `TurboSpark Computer Use.app`, owns the Accessibility
+  and Screen Recording grants so they survive app updates. It talks to the
+  app over a token- and signature-checked Unix socket and has a menu bar
+  Stop item and an Escape kill switch. A change to the helper's sources
+  ships a new helper, and users grant it again once. See
+  `docs/COMPUTER_USE.md`.
+- Gemma 4 vision: image prompts on a Gemma 4 install repacked with its tower
+  (`mlx-community/gemma-4-26b-a4b-it-4bit`), through the CLI
+  (`--messages-file`), both server endpoints, `ts_generate` and
+  the macOS app. A second tower kind (`visionTower: "gemma4"` in the
+  manifest; older installs read as the Qwen tower) with its own Metal tower
+  (axial 2-D rope, 3x3 pooling, the `embed_vision` projector), a bidirectional
+  image span on the sliding layers (the transformers rule), and a KV ring
+  sized for the 280-token default budget. Gated on the real checkpoint
+  against mlx-vlm: tower cosine 0.99998 to F32, and the trunk's median KL
+  closest to the transformers mask. No sidecar and no larger budgets yet.
+  See `docs/GEMMA4_VISION_PHASE0.md`.
 - macOS app: Settings > Network controls which hosts tool calls can reach,
   with Ask for new domains (the new default), Allow all, Block all and
   Custom modes, allowed and blocked domain lists, an Allow localhost toggle
@@ -27,6 +52,39 @@ when this file gets updated relative to the version bump and the tag.
   silently in Approve for me now ask once per new domain, and a subagent's
   request to a domain that is not allowed is refused; choose Allow all to
   keep the old behavior.
+- Trait steering (`turbospark-steer`, `turbospark steer`): five built-in
+  trait packs (refusals, slop, humor, sycophancy, emotional tone), each a
+  contrastive prompt corpus plus held-out prompts and keyword markers, and
+  two verbs over them. `extract` captures both corpora against a model's own
+  activations (one open per side, one snapshot per prompt), reduces them to
+  a difference-of-means control vector through
+  `turbospark-compute::steering_extract` (the Rust twin of
+  `scripts/extract_direction.py`'s reduction half), prints the four
+  per-layer ranking columns, and writes a llama.cpp-layout `.gguf`. `check`
+  runs the held-out prompts unsteered and steered and prints the
+  keyword-marker rate both times, with the documented short-response
+  collapse warning. Packs ship prompts, never directions: the vector is
+  extracted from the user's own checkpoint, so the app's "nothing ships a
+  direction" provenance rule holds. Verified end to end on the real
+  `tinyllama` install: extraction, steered open
+  (`ablate at alpha 0.3 over 21 of 22 layers`), and a live null-controlled
+  edit.
+- macOS app: the model detail pane's Steering card can extract a trait
+  direction from the installed model (Extract from this model). The sheet
+  runs the bundled `turbospark-steer` as a child process, then creates or
+  updates the preset for that file, selected and enabled. It requires the
+  model to be unloaded first, since extraction opens its own copy.
+  Cancelling terminates the child and leaves any previous vector intact
+  (the write goes through a `.partial` file and a rename). `extract` now
+  refuses a capture with fewer snapshots than prompts and cleans its temp
+  capture directory on every exit path.
+- macOS app: the composer's Steering pill is now a menu: Off, every
+  registered direction (one whose shape the selected model would refuse is
+  listed but not pickable), each built-in trait not yet extracted for the
+  selected model (opens the extract sheet with that trait chosen), Reload
+  to apply when the loaded model is not running the selection, and
+  Steering Settings. It is disabled with the engine's reason on a family
+  that does not dispatch steering.
 - macOS app: an Expert Residency setting (Auto, Streamed, Mapped) in Engine
   settings, with Cache Slots beside it (previously only in the Inspector) and
   a Resolved row. Mapped is sent only to models whose open would take it, and
@@ -53,6 +111,18 @@ when this file gets updated relative to the version bump and the tag.
   `TURBOSPARK_QWEN4_TAP_FILE` capture of DFlash2 drafter features.
 
 ### Changed
+- Vision towers (the Qwen SigLIP tower and the Gemma 4 tower) run their
+  projections on a matrix-unit FP16 GEMM and their attention on a
+  matrix-unit flash attention kernel (FP32 accumulators, head_dim in the
+  pipeline cache key, a head_dim not divisible by 4 falls back to the scalar
+  kernel). On an M4 Max with a busy host the Qwen3-VL-4B tower block drops
+  from about 0.5 s to 0.13 s per page at 1,280 patches and the Gemma 4 tower
+  from about 7 s to 0.7 s per image, so read these as ratios. The Gemma 4
+  real-trunk gate passes on both arms with identical greedy streams. The
+  `vision_inject_synthetic` frozen digest moves to `471bf949` (argmax and
+  top-5 unchanged, and the scalar arm still gives the old digest).
+  `TURBOSPARK_VISION_MMA=0` and `TURBOSPARK_VISION_ATTN_MMA=0` restore the
+  scalar kernels. See `docs/VISION.md`.
 - qwen4_exp wires its expert slot cache by default, at twice the auto slot
   budget (96 slots on a 36 GB M4 Max, 12.4 GiB peak, against 48 unwired). The
   open checks `RLIMIT_MEMLOCK` and `vm.user_wire_limit` first and falls back

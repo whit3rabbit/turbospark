@@ -106,6 +106,7 @@ extension AppModel {
         self.modelReasoningDefaults = settings.modelReasoningDefaults
         self.interactionMode = AppInteractionMode(rawValue: settings.interactionMode) ?? .chat
         self.browserSettings = settings.browser
+        self.computerUseSettings = settings.computerUse
         self.networkPolicy = settings.networkPolicy
         self.alwaysStartInGhostMode = settings.alwaysStartInGhostMode
         self.activePermissionMode = AppPermissionMode(rawValue: settings.rootlessPermissionMode) ?? .auto
@@ -318,6 +319,7 @@ extension AppModel {
             syntextIndexingEnabled: syntextIndexingEnabled,
             conversationRecallEnabled: conversationRecallEnabled,
             browser: browserSettings,
+            computerUse: computerUseSettings,
             networkPolicy: networkPolicy
         )
         // The API key follows its own storage: Keychain, written only when

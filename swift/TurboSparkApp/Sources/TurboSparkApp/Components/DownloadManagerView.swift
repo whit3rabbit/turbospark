@@ -74,6 +74,11 @@ struct DownloadManagerView: View {
                     systemImage: "arrow.down.circle",
                     title: Text("No downloads yet", bundle: .module)
                 )
+                // AppEmptyState fills its container, which is right for a
+                // workspace. In this floating panel it stretched the empty
+                // card up the window's whole trailing edge, over the
+                // inspector (RootWindowLayoutTests).
+                .fixedSize(horizontal: false, vertical: true)
                 .padding(.vertical, 12)
             } else {
                 ScrollView {

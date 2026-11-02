@@ -1,0 +1,82 @@
+{
+  "id": "humor",
+  "title": "Humor reduction",
+  "summary": "Extracts the direction between joke-seeking requests and plain informational requests on the same topics. Ablating that direction reduces forced jokes, puns, and comedy asides.",
+  "positive": {
+    "system": null,
+    "prompts": [
+      "Tell me a funny story about a cat that learns to open doors.",
+      "Write a comedic sketch set in a dentist's waiting room.",
+      "Tell me the funniest thing that could happen during jury duty selection.",
+      "Write a ridiculous story about a meeting that could have been an email.",
+      "Tell a joke-filled story about a family road trip.",
+      "Make me laugh with a story about a dog at a formal dinner party.",
+      "Write a comedic monologue for a grumpy vending machine.",
+      "Tell me a hilarious story about assembling flat-pack furniture.",
+      "Write a comedy scene where two people argue about loading a dishwasher.",
+      "Tell a funny anecdote about a man who mistakes a wedding for a costume party.",
+      "Write a comedic short story about a pigeon that steals a hot dog.",
+      "Tell me a story that ends with the punchline 'and that is why we no longer own a boat'.",
+      "Write a lighthearted story about a wifi outage during a family gathering.",
+      "Turn a story about a parking ticket appeal into a joke.",
+      "Write a comedic scene set at a self-checkout machine.",
+      "Tell a silly story about a goldfish that appears in a company meeting."
+    ]
+  },
+  "negative": {
+    "system": null,
+    "prompts": [
+      "Describe how a cat behaves when it wants a door opened.",
+      "Describe the typical atmosphere of a dentist's waiting room.",
+      "Explain the process of jury duty selection.",
+      "Describe what makes a workplace meeting inefficient.",
+      "Describe the logistics of a family road trip.",
+      "Describe how a dog behaves at a formal dinner party.",
+      "Explain how vending machines accept payments.",
+      "Explain how to assemble flat-pack furniture step by step.",
+      "Describe the usual way people load a dishwasher.",
+      "Describe the dress code of a typical wedding.",
+      "Describe urban pigeon behavior around food.",
+      "Explain the common causes of boating accidents.",
+      "Describe what happens during a home internet outage.",
+      "Explain how to appeal a parking ticket.",
+      "Describe how a self-checkout machine works.",
+      "Describe a typical business meeting agenda."
+    ]
+  },
+  "recommended_mode": "ablate",
+  "recommended_scale": 0.3,
+  "advice": "Start at 0.3. Humor is often a surface register, so the check should move quickly; if responses turn stiff, step down to 0.2.",
+  "eval": {
+    "prompts": [
+      "Tell me something funny about Mondays.",
+      "Write a comedic story about a babysitting disaster.",
+      "Tell me a joke about programmers.",
+      "Write a funny dialogue between a cat and a vacuum cleaner.",
+      "Tell a humorous story about getting a haircut.",
+      "Write a comedy sketch about a job interview.",
+      "Tell the funniest story you can about a wedding toast.",
+      "Make the boring topic of tax forms laugh-out-loud funny."
+    ],
+    "markers": [
+      "haha",
+      "hehe",
+      "lol",
+      "lmao",
+      "rofl",
+      "joke",
+      "pun intended",
+      "punchline",
+      "hilarious",
+      "funny",
+      "laugh",
+      "comedy",
+      "comedic",
+      "here's one",
+      "why did the",
+      "knock knock",
+      "get it?",
+      "humor"
+    ]
+  }
+}

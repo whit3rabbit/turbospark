@@ -518,10 +518,15 @@ pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -
     // MLX conversion; `vision::read_vision_entries_quantized` dequantizes it
     // (`docs/QWEN4EXP_VISION_PHASE0.md` item 1).
     //
-    // Gemma 4 and `muse_glimmer` keep `ExcludedMultimodal` on the same string:
-    // this port has no kernels for their towers, and ingesting one because the
-    // prefix matched would write an install carrying weights nothing can
-    // dispatch.
+    // Gemma 4 joins them with its own tower (`vision_gemma4.rs`), and its
+    // projector lives under a second prefix, `embed_vision.`, claimed here
+    // for Gemma 4 alone. Whether the bucket is then INGESTED is the caller's
+    // request (`vision_should_ingest`), so a text-only Gemma install still
+    // drops these by name, as before.
+    //
+    // `muse_glimmer` keeps `ExcludedMultimodal` on the same string: this port
+    // has no kernels for its tower, and ingesting one because the prefix
+    // matched would write an install carrying weights nothing can dispatch.
     if name.starts_with(VISION_PREFIX)
         && matches!(
             family,
@@ -529,7 +534,12 @@ pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -
                 | ModelFamily::QwenGdnMoe
                 | ModelFamily::Qwen3Vl
                 | ModelFamily::Qwen4Exp
+                | ModelFamily::Gemma4
         )
+    {
+        return Gemma4Bucket::VisionTower;
+    }
+    if name.starts_with(super::vision_gemma4::EMBED_VISION_PREFIX) && family == ModelFamily::Gemma4
     {
         return Gemma4Bucket::VisionTower;
     }

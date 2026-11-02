@@ -114,6 +114,9 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
     public var automation: AppToolPermission
     /// Permission for agent-owned browser control and main-frame navigation.
     public var browser: AppToolPermission
+    /// Permission for computer-use input on granted macOS apps. Observing a
+    /// granted app passes on Ask; the app grant itself always asks.
+    public var computerUse: AppToolPermission
     /// Canonical exact origins granted in this project. The rule store validates entries.
     public var browserOriginAllowlist: [String] {
         didSet {
@@ -141,6 +144,7 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
         mcp: AppToolPermission = .ask,
         automation: AppToolPermission = .ask,
         browser: AppToolPermission = .ask,
+        computerUse: AppToolPermission = .ask,
         browserOriginAllowlist: [String] = [],
         replFileAccessRoots: [String] = [],
         mcpAllowRules: [String] = [],
@@ -154,6 +158,7 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
         self.mcp = mcp
         self.automation = automation
         self.browser = browser
+        self.computerUse = computerUse
         self.browserOriginAllowlist = BrowserPermissionRuleStore.normalizedAllowlist(browserOriginAllowlist)
         self.replFileAccessRoots = replFileAccessRoots
         self.mcpAllowRules = mcpAllowRules
@@ -180,6 +185,7 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
         self.mcp = permission(.mcp, absent: .ask)
         self.automation = permission(.automation, absent: .ask)
         self.browser = container.decodeTolerant(AppToolPermission.self, forKey: .browser, fallback: .ask)
+        self.computerUse = permission(.computerUse, absent: .ask)
         let decodedBrowserOrigins = (try? container.decodeLossyArray(
             String.self, forKey: .browserOriginAllowlist)) ?? []
         self.browserOriginAllowlist = BrowserPermissionRuleStore.normalizedAllowlist(decodedBrowserOrigins)
@@ -198,7 +204,8 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
             web: .allow,
             mcp: .allow,
             automation: .allow,
-            browser: .ask
+            browser: .ask,
+            computerUse: .ask
         )
     }
 
@@ -223,6 +230,7 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
         mode == other.mode && fileRead == other.fileRead && fileWrite == other.fileWrite
             && terminal == other.terminal && web == other.web && mcp == other.mcp
             && automation == other.automation && browser == other.browser
+            && computerUse == other.computerUse
     }
 
     /// Safe standard configuration requiring confirmation for state-mutating actions.
@@ -235,7 +243,8 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
             web: .allow,
             mcp: .ask,
             automation: .ask,
-            browser: .ask
+            browser: .ask,
+            computerUse: .ask
         )
     }
 
@@ -252,7 +261,8 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
             web: .allow,
             mcp: .ask,
             automation: .ask,
-            browser: .ask
+            browser: .ask,
+            computerUse: .ask
         )
     }
 
@@ -266,7 +276,8 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
             web: .allow,
             mcp: .allow,
             automation: .allow,
-            browser: .allow
+            browser: .allow,
+            computerUse: .allow
         )
     }
 
@@ -280,7 +291,8 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
             web: .ask,
             mcp: .ask,
             automation: .ask,
-            browser: .ask
+            browser: .ask,
+            computerUse: .ask
         )
     }
 
@@ -297,7 +309,8 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
             web: .deny,
             mcp: .deny,
             automation: .deny,
-            browser: .deny
+            browser: .deny,
+            computerUse: .deny
         )
     }
 
@@ -311,7 +324,8 @@ public struct AppProjectPermissions: Codable, Equatable, Sendable {
             web: .allow,
             mcp: .allow,
             automation: .allow,
-            browser: .allow
+            browser: .allow,
+            computerUse: .allow
         )
     }
 

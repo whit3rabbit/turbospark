@@ -84,6 +84,21 @@ for bin in turbospark $peers; do
 done
 echo "==> CLI peers present: $(echo $peers | tr '\n' ' ')"
 
+# 3b. Computer-use helper ----------------------------------------------------
+# A separate app so its macOS grants survive updates (docs/COMPUTER_USE.md).
+helper="$contents/Helpers/TurboSpark Computer Use.app"
+helper_exe="$helper/Contents/MacOS/TurboSparkComputerUse"
+[ -x "$helper_exe" ] || fail "computer-use helper missing at $helper"
+codesign --verify --strict "$helper" 2>/dev/null || fail "computer-use helper signature does not verify"
+helper_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$helper/Contents/Info.plist")"
+[ "$helper_id" = "com.whit3rabbit.turbospark.computeruse" ] || fail "computer-use helper bundle id is $helper_id"
+for minos in $(otool -l "$helper_exe" | awk '/LC_BUILD_VERSION/{b=1} b&&$1=="minos"{print $2; b=0}'); do
+  version_le "$minos" "$plist_min" || fail "computer-use helper targets macOS $minos, newer than $plist_min"
+done
+"$helper_exe" --self-test | grep -q '"commandSurfaceVersion"' \
+  || fail "computer-use helper --self-test printed no manifest"
+echo "==> computer-use helper: $(codesign -dv "$helper" 2>&1 | sed -n 's/^CDHash=//p')"
+
 # 4. Launch smoke -----------------------------------------------------------
 home="$(mktemp -d)"
 log="$(mktemp)"

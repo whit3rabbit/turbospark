@@ -4,6 +4,7 @@ import Foundation
 import SwiftUI
 import TurboSpark
 import OpenKind
+import ComputerUseKit
 
 /// Primary application model and state coordinator for the TurboSpark macOS
 /// application.
@@ -252,7 +253,13 @@ public final class AppModel: ObservableObject {
     /// Currently selected installed model.
     @Published public var selected: InstalledModel?
     /// Active TurboSpark session when a model is loaded.
-    @Published public var session: TurboSparkSession?
+    @Published public var session: TurboSparkSession? {
+        // App grants were given while one model was driving; a different
+        // model (maybe without vision) must ask again.
+        didSet {
+            if oldValue !== session, !computerUseSessions.isEmpty { revokeAllComputerUseGrants() }
+        }
+    }
     /// Whether a model is currently being loaded into memory.
     @Published public var opening: Bool = false
     /// Custom filesystem path entered for manual model loading.
@@ -430,6 +437,17 @@ public final class AppModel: ObservableObject {
     @Published public var interactionMode: AppInteractionMode = .chat
     /// Profile-scoped browser automation preferences.
     @Published public var browserSettings = BrowserSettings()
+    @Published public var computerUseSettings = ComputerUseSettings()
+    /// The helper connection and the surface it reported. Both nil until the
+    /// helper ships, which keeps every computer tool hidden.
+    var computerUsePort: (any ComputerUseControlPort)?
+    var computerUseManifest: ComputerUseBackendManifest?
+    /// Last grant status the helper reported. Nil while it is not running.
+    @Published public internal(set) var computerUseHelperStatus: ComputerUseHelperStatus?
+    var computerUseHelperLaunch: Task<Void, Never>?
+    /// Per-chat app grants. Dropped with the chat, on model change, and by
+    /// the kill switch.
+    var computerUseSessions: [UUID: ComputerUseSession] = [:]
     /// App-wide network policy for tool calls. Mirrored to
     /// `AppNetworkPolicyStore` so executors, subagents and the permission
     /// engine read it without holding an `AppModel`.
@@ -1230,6 +1248,12 @@ public final class AppModel: ObservableObject {
         AppToolRegistry.browserToolAvailabilityProvider = { [weak self] in
             self?.browserToolAvailability() ?? .disabled
         }
+        AppToolRegistry.computerUseToolRuntimeProvider = { [weak self] _, chatID in
+            self?.computerUseToolRuntime(chatID: chatID)
+        }
+        // A no-op unless the user turned computer use on and the helper is
+        // in the app bundle (never under tests or `swift run`).
+        Task { [weak self] in await self?.startComputerUseHelperIfEnabled() }
         AppToolRegistry.browserToolRuntimeProvider = { [weak self] call, project in
             guard let self, self.browserSettings.enabled else { return nil }
             self.setBrowserPaneOpen(true)

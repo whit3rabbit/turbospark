@@ -86,17 +86,15 @@ fn an_image_turn_prefills_in_chunk_spans_not_per_token() {
         .expect("the template should render");
     let marker_ids = model.tokenizer().encode(&prompt, false);
 
-    let info = model.vision().expect("the vision install serves images");
+    let Some(vision::VisionInfo::Qwen { params, specials }) = model.vision() else {
+        panic!("the qwen vision install serves images");
+    };
     let png = std::fs::read(&page).expect("the test page should be readable");
-    let preprocessed = vision::preprocess_all(&[png], &info).expect("the page should preprocess");
+    let preprocessed = vision::preprocess_all(&[png], &params).expect("the page should preprocess");
     let grids: Vec<_> = preprocessed.iter().map(|p| p.grid).collect();
-    let spliced = turbospark_vision_io::splice_and_walk(
-        &marker_ids,
-        &grids,
-        info.specials,
-        info.params.merge_size,
-    )
-    .expect("the image should splice");
+    let spliced =
+        turbospark_vision_io::splice_and_walk(&marker_ids, &grids, specials, params.merge_size)
+            .expect("the image should splice");
     let prompt_ids = spliced.ids;
     // The assertion below is a span COUNT, so the prompt must actually span:
     // at or under one chunk the two drivers emit the same count and the test
@@ -107,7 +105,7 @@ fn an_image_turn_prefills_in_chunk_spans_not_per_token() {
          than one chunk's worth",
         prompt_ids.len()
     );
-    let images = RequestImages {
+    let images = RequestImages::Qwen {
         images: preprocessed,
         positions: spliced.positions,
     };

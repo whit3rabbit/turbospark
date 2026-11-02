@@ -10,6 +10,7 @@ Command-line binaries for [turbospark](https://github.com/whit3rabbit/turbospark
 - `turbospark-music`: Generates music audio via MiniMax Music 3 (autoregressive backbone, flow-matching DiT, and vocoder).
 - `turbospark-clone`: Zero-shot voice cloning and speech synthesis via MegaTTS3.
 - `turbospark-speak`: Speech synthesis with Fish Audio Drama 3, optionally in a cloned voice.
+- `turbospark-steer`: Trait steering: extracts a behavior direction from a model's own activations and checks it (`docs/STEERING_TRAITS.md`).
 - `turbospark-ocr`: Document OCR via the Core ML Unlimited OCR export (macOS 15+).
 - `turbospark`: Unified front end over all subcommands, the HTTP server, and external coding agents.
 
@@ -181,6 +182,7 @@ MoE expert weights stream from NVMe storage on demand. Setting the cache slot co
 - `bin/music.rs`: Entry point for `turbospark-music`.
 - `bin/clone.rs`: Entry point for `turbospark-clone`.
 - `bin/speak.rs`: Entry point for `turbospark-speak`.
+- `bin/steer.rs`: Entry point for `turbospark-steer` (verbs in `bin/steer_cmd/`, trait packs in `bin/steer_data/`).
 - `bin/ocr.rs`: Entry point for `turbospark-ocr`.
 
 ## Development & Test Commands

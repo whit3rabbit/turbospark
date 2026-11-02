@@ -123,6 +123,42 @@ jobs:
       - name: Install protobuf
         run: brew install protobuf
 
+      # The computer-use helper must keep its exact bytes from release to
+      # release, or macOS drops its Accessibility and Screen Recording grants
+      # and every user grants them again (docs/COMPUTER_USE.md). actions/cache
+      # cannot carry it: a tag run cannot restore another tag's cache, and
+      # entries go after 7 days unused. So the previous published release IS
+      # the cache. make-app-bundle.sh reuses this helper only when its stamped
+      # source key matches the current sources and its signature verifies.
+      # Every failure here only means a new helper, so it warns and goes on.
+      - name: Fetch the previous release's computer-use helper
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prev="$RUNNER_TEMP/prev-release"
+          mnt="$prev/mnt"
+          mkdir -p "$prev"
+          # No tag argument: the latest published release. This run's own
+          # release is not created until the `release` job, so it is the
+          # previous one.
+          if ! gh release download --repo "$GITHUB_REPOSITORY" --pattern '*.dmg' --dir "$prev"; then
+            echo "::warning::no previous release DMG; this release ships a new computer-use helper"
+            exit 0
+          fi
+          dmg="$(find "$prev" -maxdepth 1 -name '*.dmg' | head -n1)"
+          if ! hdiutil attach -readonly -nobrowse -noautoopen -quiet -mountpoint "$mnt" "$dmg"; then
+            echo "::warning::could not mount $dmg; this release ships a new computer-use helper"
+            exit 0
+          fi
+          helper="$mnt/TurboSpark.app/Contents/Helpers/TurboSpark Computer Use.app"
+          if [ -d "$helper" ]; then
+            ditto "$helper" "$prev/TurboSpark Computer Use.app"
+            echo "COMPUTER_USE_HELPER_SEED=$prev/TurboSpark Computer Use.app" >> "$GITHUB_ENV"
+          else
+            echo "::warning::the previous release has no computer-use helper; this release ships a new one"
+          fi
+          hdiutil detach "$mnt" -quiet -force || true
+
       # ONE job builds both artifacts, deliberately. The CLI binaries ship
       # twice -- loose in the zip, and inside TurboSpark.app for the cask to
       # link onto PATH -- and building them in two jobs would let the two
@@ -147,10 +183,10 @@ jobs:
           # stanzas, or brew links the wrong names.
           # Every [[bin]] of turbospark-cli comes from the one
           # `-p turbospark-cli` build, and turbospark-server from its own
-          # package. The front end hands image, music, clone, speak and ocr
-          # to the siblings, so all of them ship (the same list as
+          # package. The front end hands image, music, clone, speak, steer
+          # and ocr to the siblings, so all of them ship (the same list as
           # make-app-bundle.sh).
-          bins="turbospark turbospark-check turbospark-model turbospark-server turbospark-image turbospark-music turbospark-clone turbospark-speak turbospark-ocr"
+          bins="turbospark turbospark-check turbospark-model turbospark-server turbospark-image turbospark-music turbospark-clone turbospark-speak turbospark-steer turbospark-ocr"
           for bin in $bins; do
             cp "target/aarch64-apple-darwin/release/$bin" dist/stage/
           done
@@ -348,6 +384,7 @@ jobs:
             binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-music"
             binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-clone"
             binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-speak"
+            binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-steer"
             binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-ocr"
 
             # Only runs under \`brew uninstall --zap\`. Deliberately does NOT
@@ -384,6 +421,7 @@ jobs:
             binary "turbospark-music"
             binary "turbospark-clone"
             binary "turbospark-speak"
+            binary "turbospark-steer"
             binary "turbospark-ocr"
           end
           EOF

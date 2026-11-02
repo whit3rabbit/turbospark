@@ -30,12 +30,14 @@ const THREADS_PER_GROUP: u64 = 256;
 /// Its register tile gives each lane `head_dim / 32` accumulators and the
 /// shader sizes that at 4. The tower runs at 72 (hidden 1152 over 16 heads),
 /// so this is comfortable; it is a hard limit rather than a tuning knob,
-/// because exceeding it truncates the head silently.
+/// because exceeding it truncates the head silently. The matrix-unit kernel
+/// sizes its fragments for the same 128 (`kAttnMaxTiles`).
 pub const MAX_ATTENTION_HEAD_DIM: u32 = 128;
 
-/// No kernel in this file declares a function constant, but
-/// `MetalContext::pipeline` takes a set regardless. An empty one, named so
-/// the call sites read as a deliberate choice rather than an omission.
+/// Only the matrix-unit kernels declare function constants ([`gemm_pipeline`],
+/// [`attention_pipeline`]), but `MetalContext::pipeline` takes a set
+/// regardless. An empty one, named so the call sites read as a deliberate
+/// choice rather than an omission.
 fn no_function_constants() -> FunctionConstantValues {
     FunctionConstantValues::new()
 }
@@ -174,9 +176,78 @@ pub fn encode_vision_rope_2d(
 ///
 /// `q`, `k`, `v` and `out` are each `[seq, heads, head_dim]` FP16. No mask
 /// and no KV cache: every patch attends to every patch, which is the whole
-/// difference from `attention_decode`.
+/// difference from `attention_decode`. Runs on the kernel
+/// [`VisionAttentionKernel::from_env`] picks.
 #[allow(clippy::too_many_arguments)]
 pub fn encode_vision_attention(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    q: (&metal::Buffer, u64),
+    k: (&metal::Buffer, u64),
+    v: (&metal::Buffer, u64),
+    out: (&metal::Buffer, u64),
+    seq: u32,
+    heads: u32,
+    head_dim: u32,
+    scale: f32,
+) -> Result<(), GpuError> {
+    encode_vision_attention_with(
+        VisionAttentionKernel::from_env(),
+        context,
+        pass,
+        q,
+        k,
+        v,
+        out,
+        seq,
+        heads,
+        head_dim,
+        scale,
+    )
+}
+
+/// Which kernel serves [`encode_vision_attention`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VisionAttentionKernel {
+    /// `vision_attention_bidir_fp16_mma`, flash style on the matrix units
+    /// (32 query rows per threadgroup). The default.
+    Mma,
+    /// `vision_attention_bidir_fp16`, one threadgroup per (query, head).
+    /// Kept for A/B runs (`TURBOSPARK_VISION_ATTN_MMA=0`) and as the parity
+    /// cross-check.
+    Scalar,
+}
+
+impl VisionAttentionKernel {
+    /// The process default: [`VisionAttentionKernel::Mma`] unless
+    /// `TURBOSPARK_VISION_ATTN_MMA=0`. Read once per process.
+    pub fn from_env() -> Self {
+        static KERNEL: std::sync::OnceLock<VisionAttentionKernel> = std::sync::OnceLock::new();
+        *KERNEL.get_or_init(|| {
+            if std::env::var("TURBOSPARK_VISION_ATTN_MMA").as_deref() == Ok("0") {
+                VisionAttentionKernel::Scalar
+            } else {
+                VisionAttentionKernel::Mma
+            }
+        })
+    }
+}
+
+/// The matrix-unit attention's query rows per threadgroup (`kAttnBQ`) and
+/// threadgroup size.
+const ATTN_BQ: u32 = 32;
+const ATTN_THREADS: u64 = 128;
+
+/// [`encode_vision_attention`] on an explicit kernel, for parity tests and
+/// benches that need both arms in one process.
+///
+/// A `head_dim` that is not a multiple of 4 runs on the scalar kernel even
+/// under [`VisionAttentionKernel::Mma`]: the matrix-unit kernel stages rows
+/// as half4. The tower cannot reach it (its 2-D rope already requires a
+/// multiple of 4), and no `vision_attn_mma` line is printed for it.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_vision_attention_with(
+    kernel: VisionAttentionKernel,
     context: &mut MetalContext,
     pass: &PassEncoder,
     q: (&metal::Buffer, u64),
@@ -195,37 +266,108 @@ pub fn encode_vision_attention(
             "vision attention head_dim {head_dim} must be in 1..={MAX_ATTENTION_HEAD_DIM}"
         )));
     }
-    let pipeline = context.pipeline(
-        SOURCE,
-        "vision_attention_bidir_fp16",
-        &no_function_constants(),
-        b"",
-    )?;
-    pass.encode_threadgroups_3d(
-        &pipeline,
-        &[
-            (q.0, 0, q.1),
-            (k.0, 1, k.1),
-            (v.0, 2, v.1),
-            (out.0, 3, out.1),
-        ],
-        &[
-            (u32_bytes(&seq), 4),
-            (u32_bytes(&heads), 5),
-            (u32_bytes(&head_dim), 6),
-            (f32_bytes(&scale), 7),
-        ],
-        (u64::from(seq), u64::from(heads), 1),
-        (THREADS_PER_GROUP, 1, 1),
-    );
+    let buffers = [
+        (q.0, 0, q.1),
+        (k.0, 1, k.1),
+        (v.0, 2, v.1),
+        (out.0, 3, out.1),
+    ];
+    let constants = [
+        (u32_bytes(&seq), 4),
+        (u32_bytes(&heads), 5),
+        (u32_bytes(&head_dim), 6),
+        (f32_bytes(&scale), 7),
+    ];
+    if kernel == VisionAttentionKernel::Mma && head_dim % 4 == 0 {
+        // Proof for the lab that the matrix-unit attention ran (the knob row
+        // expects this line absent under `TURBOSPARK_VISION_ATTN_MMA=0`).
+        foundation::engaged!("vision_attn_mma");
+        let pipeline = attention_pipeline(context, head_dim)?;
+        pass.encode_threadgroups_3d(
+            &pipeline,
+            &buffers,
+            &constants,
+            (u64::from(seq.div_ceil(ATTN_BQ)), u64::from(heads), 1),
+            (ATTN_THREADS, 1, 1),
+        );
+    } else {
+        let pipeline = context.pipeline(
+            SOURCE,
+            "vision_attention_bidir_fp16",
+            &no_function_constants(),
+            b"",
+        )?;
+        pass.encode_threadgroups_3d(
+            &pipeline,
+            &buffers,
+            &constants,
+            (u64::from(seq), u64::from(heads), 1),
+            (THREADS_PER_GROUP, 1, 1),
+        );
+    }
     Ok(())
 }
+
+/// `vision_attention_bidir_fp16_mma` specialized on `FC_VISION_ATTN_HEAD_DIM`
+/// (function constant 111). The head dimension is the whole cache key:
+/// without it the first tower's head (72 on `qwen3_5`) would serve another's
+/// (64 on `qwen3_vl`), reading every row at the wrong stride.
+fn attention_pipeline(
+    context: &mut MetalContext,
+    head_dim: u32,
+) -> Result<metal::ComputePipelineState, GpuError> {
+    let values = FunctionConstantValues::new();
+    values.set_constant_value_at_index(
+        (&head_dim as *const u32).cast(),
+        metal::MTLDataType::UInt,
+        111,
+    );
+    context.pipeline(
+        SOURCE,
+        "vision_attention_bidir_fp16_mma",
+        &values,
+        &head_dim.to_le_bytes(),
+    )
+}
+
+/// Which kernel serves [`encode_vision_matmul`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VisionMatmulKernel {
+    /// `vision_matmul_fp16_mma`, the matrix-unit GEMM (64 x 64 tiles). The
+    /// default.
+    Mma,
+    /// `vision_matmul_fp16`, one threadgroup per output element. Kept for
+    /// A/B runs (`TURBOSPARK_VISION_MMA=0`) and as the parity cross-check.
+    PerOutput,
+}
+
+impl VisionMatmulKernel {
+    /// The process default: [`VisionMatmulKernel::Mma`] unless
+    /// `TURBOSPARK_VISION_MMA=0`. Read once per process.
+    pub fn from_env() -> Self {
+        static KERNEL: std::sync::OnceLock<VisionMatmulKernel> = std::sync::OnceLock::new();
+        *KERNEL.get_or_init(|| {
+            if std::env::var("TURBOSPARK_VISION_MMA").as_deref() == Ok("0") {
+                VisionMatmulKernel::PerOutput
+            } else {
+                VisionMatmulKernel::Mma
+            }
+        })
+    }
+}
+
+/// The matrix-unit GEMM's output tile (`kGemmBM`, `kGemmBN`) and K step
+/// (`kGemmBK`) in `vision.metal`, and its threadgroup size.
+const GEMM_TILE: u32 = 64;
+const GEMM_BK: u32 = 32;
+const GEMM_THREADS: u64 = 128;
 
 /// `out[m][n] = sum_k a[m][k] * b[n][k] + bias[n]`, all FP16 with an FP32
 /// accumulator.
 ///
 /// `b` is ROW-MAJOR BY OUTPUT (`[n, k]`), which is how an `nn.Linear` weight
-/// ships. Serves every projection in the tower.
+/// ships. Serves every projection in the tower, on the kernel
+/// [`VisionMatmulKernel::from_env`] picks.
 ///
 /// `bias` is bound whether or not it is used, because an unbound buffer at a
 /// declared argument index is undefined behaviour; `has_bias` selects. A
@@ -243,26 +385,105 @@ pub fn encode_vision_matmul(
     k: u32,
     n: u32,
 ) -> Result<(), GpuError> {
-    let pipeline = context.pipeline(SOURCE, "vision_matmul_fp16", &no_function_constants(), b"")?;
+    encode_vision_matmul_with(
+        VisionMatmulKernel::from_env(),
+        context,
+        pass,
+        a,
+        b,
+        bias,
+        out,
+        m,
+        k,
+        n,
+    )
+}
+
+/// [`encode_vision_matmul`] on an explicit kernel, for parity tests and
+/// benches that need both arms in one process.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_vision_matmul_with(
+    kernel: VisionMatmulKernel,
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    a: (&metal::Buffer, u64),
+    b: (&metal::Buffer, u64),
+    bias: Option<(&metal::Buffer, u64)>,
+    out: (&metal::Buffer, u64),
+    m: u32,
+    k: u32,
+    n: u32,
+) -> Result<(), GpuError> {
     let has_bias: u32 = u32::from(bias.is_some());
     let bias_binding = bias.unwrap_or((a.0, a.1));
-    pass.encode_threadgroups_3d(
-        &pipeline,
-        &[
-            (a.0, 0, a.1),
-            (b.0, 1, b.1),
-            (bias_binding.0, 2, bias_binding.1),
-            (out.0, 3, out.1),
-        ],
-        &[
-            (u32_bytes(&k), 4),
-            (u32_bytes(&n), 5),
-            (u32_bytes(&has_bias), 6),
-        ],
-        (u64::from(m), u64::from(n), 1),
-        (THREADS_PER_GROUP, 1, 1),
-    );
+    let buffers = [
+        (a.0, 0, a.1),
+        (b.0, 1, b.1),
+        (bias_binding.0, 2, bias_binding.1),
+        (out.0, 3, out.1),
+    ];
+    match kernel {
+        VisionMatmulKernel::PerOutput => {
+            let pipeline =
+                context.pipeline(SOURCE, "vision_matmul_fp16", &no_function_constants(), b"")?;
+            pass.encode_threadgroups_3d(
+                &pipeline,
+                &buffers,
+                &[
+                    (u32_bytes(&k), 4),
+                    (u32_bytes(&n), 5),
+                    (u32_bytes(&has_bias), 6),
+                ],
+                (u64::from(m), u64::from(n), 1),
+                (THREADS_PER_GROUP, 1, 1),
+            );
+        }
+        VisionMatmulKernel::Mma => {
+            // Proof for the lab that the matrix-unit GEMM ran (the knob row
+            // expects this line absent under `TURBOSPARK_VISION_MMA=0`).
+            foundation::engaged!("vision_mma");
+            let pipeline = gemm_pipeline(context, k % GEMM_BK == 0)?;
+            pass.encode_threadgroups_3d(
+                &pipeline,
+                &buffers,
+                &[
+                    (u32_bytes(&k), 4),
+                    (u32_bytes(&n), 5),
+                    (u32_bytes(&has_bias), 6),
+                    (u32_bytes(&m), 7),
+                ],
+                (
+                    u64::from(n.div_ceil(GEMM_TILE)),
+                    u64::from(m.div_ceil(GEMM_TILE)),
+                    1,
+                ),
+                (GEMM_THREADS, 1, 1),
+            );
+        }
+    }
     Ok(())
+}
+
+/// `vision_matmul_fp16_mma` specialized on `FC_VISION_GEMM_K_ALIGNED`
+/// (function constant 110). The flag is the whole cache key: without it the
+/// first K seen would serve every K, and an aligned build reading a K tail
+/// runs past the end of each row.
+fn gemm_pipeline(
+    context: &mut MetalContext,
+    k_aligned: bool,
+) -> Result<metal::ComputePipelineState, GpuError> {
+    let values = FunctionConstantValues::new();
+    values.set_constant_value_at_index(
+        (&k_aligned as *const bool).cast(),
+        metal::MTLDataType::Bool,
+        110,
+    );
+    context.pipeline(
+        SOURCE,
+        "vision_matmul_fp16_mma",
+        &values,
+        &[u8::from(k_aligned)],
+    )
 }
 
 /// `y += x` over `count` FP16 values, with an FP32 intermediate.
@@ -279,6 +500,114 @@ pub fn encode_vision_residual_add(
         &no_function_constants(),
         b"",
     )?;
+    pass.encode_threadgroups(
+        &pipeline,
+        &[(y.0, 0, y.1), (x.0, 1, x.1)],
+        &[(u32_bytes(&count), 2)],
+        groups_for(count),
+        THREADS_PER_GROUP,
+    );
+    Ok(())
+}
+
+/// RMSNorm over `rows` rows of `d` FP16 elements, the Gemma 4 tower's norm:
+/// `x * rsqrt(mean(x^2) + eps) * weight`, the weight applied directly, or
+/// no weight at all when `weight` is `None` (the v norm and the projector's
+/// pre-norm). A per-head norm is `rows = seq * heads, d = head_dim`.
+///
+/// NOT [`encode_vision_layer_norm`], which subtracts the mean and adds a
+/// bias. Safe in place (`out == x`).
+#[allow(clippy::too_many_arguments)]
+pub fn encode_vision_rms_norm(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    x: (&metal::Buffer, u64),
+    weight: Option<(&metal::Buffer, u64)>,
+    out: (&metal::Buffer, u64),
+    rows: u32,
+    d: u32,
+    eps: f32,
+) -> Result<(), GpuError> {
+    let pipeline = context.pipeline(
+        SOURCE,
+        "vision_rms_norm_fp16",
+        &no_function_constants(),
+        b"",
+    )?;
+    let has_weight: u32 = u32::from(weight.is_some());
+    // Bound either way, for `encode_vision_matmul`'s bias reason.
+    let weight_binding = weight.unwrap_or((x.0, x.1));
+    pass.encode_threadgroups(
+        &pipeline,
+        &[
+            (x.0, 0, x.1),
+            (weight_binding.0, 1, weight_binding.1),
+            (out.0, 2, out.1),
+        ],
+        &[
+            (u32_bytes(&d), 3),
+            (f32_bytes(&eps), 4),
+            (u32_bytes(&has_weight), 5),
+        ],
+        rows as u64,
+        THREADS_PER_GROUP,
+    );
+    Ok(())
+}
+
+/// The Gemma 4 tower's axial rope, in place on a `[seq, heads, head_dim]`
+/// FP16 buffer.
+///
+/// `freqs` is `[seq, head_dim / 2]` F32: the x half's `head_dim / 4` angles,
+/// then the y half's. Each half of the head rotates within itself (element
+/// `i` with `i + head_dim / 4`), which is NOT [`encode_vision_rope_2d`]'s
+/// pairing across the whole head.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_vision_rope_axial(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    qk: (&metal::Buffer, u64),
+    freqs: (&metal::Buffer, u64),
+    seq: u32,
+    heads: u32,
+    head_dim: u32,
+) -> Result<(), GpuError> {
+    if head_dim == 0 || head_dim % 4 != 0 {
+        return Err(GpuError::PipelineCreate(format!(
+            "axial vision rope head_dim {head_dim} must be a nonzero multiple of 4"
+        )));
+    }
+    let pipeline = context.pipeline(
+        SOURCE,
+        "vision_rope_axial_fp16",
+        &no_function_constants(),
+        b"",
+    )?;
+    let pairs = u64::from(head_dim / 2);
+    pass.encode_threads_3d(
+        &pipeline,
+        &[(qk.0, 0, qk.1), (freqs.0, 1, freqs.1)],
+        &[
+            (u32_bytes(&seq), 2),
+            (u32_bytes(&heads), 3),
+            (u32_bytes(&head_dim), 4),
+        ],
+        (pairs, u64::from(heads), u64::from(seq)),
+        (pairs.min(THREADS_PER_GROUP), 1, 1),
+    );
+    Ok(())
+}
+
+/// `y *= x` over `count` FP16 values, with an FP32 intermediate: the gated
+/// MLP's `gelu(gate) * up`.
+pub fn encode_vision_mul(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    y: (&metal::Buffer, u64),
+    x: (&metal::Buffer, u64),
+    count: u32,
+) -> Result<(), GpuError> {
+    let pipeline = context.pipeline(SOURCE, "vision_mul_fp16", &no_function_constants(), b"")?;
     pass.encode_threadgroups(
         &pipeline,
         &[(y.0, 0, y.1), (x.0, 1, x.1)],
