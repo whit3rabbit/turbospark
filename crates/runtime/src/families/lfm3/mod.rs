@@ -97,18 +97,33 @@ impl RealForwardRunner {
 
         let embed_name = "language_model.model.embed_tokens.weight";
         let pass = self.context.begin_pass_labeled("cb1 (lfm3 layers)");
-        encode_embed_any(
-            &mut self.context,
-            &pass,
-            &self.weights,
-            &self.index,
-            embed_name,
-            (&self.scratch.x, 0),
-            token as u32,
-            hidden as u32,
-            vocab,
-            1.0,
-        )?;
+        // An image-pad position of a sequentially-walked prompt blits the
+        // tower's FP16 row INSTEAD of the lookup: the placeholder id carries
+        // no meaning, so blending the table's row under it would mix a text
+        // embedding into every patch. The host write lands before this pass's
+        // commit, which is what makes it visible to every dispatch below
+        // (`crate` Gotcha 27, one flow over). Text positions, and every
+        // decode step, take the table exactly as before; the trunk's
+        // positions stay plain sequential (LFM3-VL has no mRoPE).
+        match self
+            .prompt_vision
+            .as_ref()
+            .and_then(|pv| pv.row_for(position))
+        {
+            Some(row) => gpu::write_buffer_bytes(&self.scratch.x, 0, row),
+            None => encode_embed_any(
+                &mut self.context,
+                &pass,
+                &self.weights,
+                &self.index,
+                embed_name,
+                (&self.scratch.x, 0),
+                token as u32,
+                hidden as u32,
+                vocab,
+                1.0,
+            )?,
+        }
 
         let (context, weights, index, arch, scratch, kv, lfm3, phases, ffn_hist) = (
             &mut self.context,

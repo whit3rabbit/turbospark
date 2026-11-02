@@ -536,8 +536,13 @@ pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -
                 | ModelFamily::Qwen4Exp
                 | ModelFamily::Qwen2Dense
                 | ModelFamily::Gemma4
+                | ModelFamily::Lfm3
         )
     {
+        return Gemma4Bucket::VisionTower;
+    }
+    // LFM3-VL's projector sits beside its tower under `multi_modal_projector.`.
+    if name.starts_with(super::vision_lfm3::LFM3_PROJECTOR_PREFIX) && family == ModelFamily::Lfm3 {
         return Gemma4Bucket::VisionTower;
     }
     if name.starts_with(super::vision_gemma4::EMBED_VISION_PREFIX) && family == ModelFamily::Gemma4

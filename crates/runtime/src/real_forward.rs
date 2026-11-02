@@ -386,6 +386,11 @@ pub struct RealForwardRunner {
     pub(crate) gemma4_vision: Option<crate::vision::gemma4::Gemma4VisionTower>,
     /// The Qwen2.5-VL tower, opened lazily on the first image like the others.
     pub(crate) qwen25_vision: Option<crate::vision::qwen25::Qwen25VisionTower>,
+    /// The LFM3-VL tower, lazily opened by [`RealForwardRunner::encode_image`]
+    /// on an install whose tower kind is `lfm3_vl`. Separate from `vision` for
+    /// the same reason `gemma4_vision` is: no shared weights layout or
+    /// forward pass.
+    pub(crate) lfm3_vision: Option<crate::vision::lfm3_vl::Lfm3VlVisionTower>,
     /// A sidecar tower directory attached after open (vision memory
     /// sidecar, Part A2), via [`RealForwardRunner::attach_vision_sidecar`].
     /// `None` on every session that never called it, which is every session

@@ -5,6 +5,14 @@ use std::path::Path;
 use crate::real_forward::RealForwardRunner;
 use crate::real_forward_types::RealForwardError;
 
+/// The FP16 residual-stream rows of one LFM3-VL tower run, as raw bits:
+/// `[patches, hidden]` after the patch embedding and after each block.
+#[derive(Debug, Default)]
+pub struct Lfm3VlStageRows {
+    pub patch_embed: Vec<u16>,
+    pub blocks: Vec<Vec<u16>>,
+}
+
 impl RealForwardRunner {
     /// Whether this install declares a vision tower.
     ///
@@ -36,7 +44,10 @@ impl RealForwardRunner {
     /// tower's residency: the blocks stream, so nothing else about the tower
     /// is held between images.
     pub fn vision_slot_bytes(&self) -> Option<u64> {
-        self.vision.as_ref().map(|v| v.slot_bytes)
+        self.vision
+            .as_ref()
+            .map(|v| v.slot_bytes)
+            .or_else(|| self.lfm3_vision.as_ref().map(|v| v.slot_bytes))
     }
 
     /// What the last page's scratch actually allocated.
@@ -116,6 +127,9 @@ impl RealForwardRunner {
                 .encode_image_qwen25(image, params, None)
                 .map(|(e, _)| e);
         }
+        if self.arch.vision.tower == model_io::VisionTowerKind::Lfm3Vl {
+            return self.encode_image_lfm3(image, params, None);
+        }
         self.open_vision_tower()?;
         // Two disjoint fields of `self`, which is what lets the tower take
         // the context mutably while it is itself borrowed mutably.
@@ -143,9 +157,74 @@ impl RealForwardRunner {
             )?;
             return Ok((embedding, stages.expect("requested just above")));
         }
+        if self.arch.vision.tower == model_io::VisionTowerKind::Lfm3Vl {
+            // The LFM3-VL tower reports the patch embedding and every block's
+            // output; the shared `VisionStages` carries the first and last.
+            let mut stages = crate::vision::lfm3_vl::Lfm3VlStages::default();
+            let embedding = self.encode_image_lfm3(image, params, Some(&mut stages))?;
+            return Ok((
+                embedding,
+                crate::vision::lfm3_vl::into_vision_stages(stages),
+            ));
+        }
         self.open_vision_tower()?;
         let tower = self.vision.as_mut().expect("opened just above");
         tower.run_with_stages(&mut self.context, &self.weights, image, params)
+    }
+
+    /// An `lfm3_vl` tower's embedding plus the FP16 residual stream after the
+    /// patch embedding and after EVERY block, for the cross-engine probe
+    /// (`scripts/lfm3_vl_tower_probe.py`). Diagnostic: the ordinary entry
+    /// point pays none of the readbacks.
+    ///
+    /// Combined installs only: the sidecar format has no LFM3-VL pairing yet,
+    /// so a sidecar-attached trunk is refused by name rather than opened
+    /// against the wrong weights.
+    #[doc(hidden)]
+    pub fn encode_image_lfm3_stages(
+        &mut self,
+        image: &turbospark_vision_io::PreprocessedImage,
+        params: &turbospark_vision_io::PreprocessParams,
+    ) -> Result<(crate::vision::VisionEmbedding, Lfm3VlStageRows), RealForwardError> {
+        let mut stages = crate::vision::lfm3_vl::Lfm3VlStages::default();
+        let embedding = self.encode_image_lfm3(image, params, Some(&mut stages))?;
+        Ok((
+            embedding,
+            Lfm3VlStageRows {
+                patch_embed: stages.patch_embed,
+                blocks: stages.blocks,
+            },
+        ))
+    }
+
+    fn encode_image_lfm3(
+        &mut self,
+        image: &turbospark_vision_io::PreprocessedImage,
+        params: &turbospark_vision_io::PreprocessParams,
+        stages: Option<&mut crate::vision::lfm3_vl::Lfm3VlStages>,
+    ) -> Result<crate::vision::VisionEmbedding, RealForwardError> {
+        if !self.arch.vision.is_active() {
+            return Err(RealForwardError::Unsupported(
+                "this install declares no vision tower; repack the checkpoint with its \
+                 vision_tower.* tensors to get one"
+                    .to_string(),
+            ));
+        }
+        if self.vision_sidecar_dir.is_some() {
+            return Err(RealForwardError::Unsupported(
+                "an lfm3_vl vision tower cannot run from a sidecar yet".to_string(),
+            ));
+        }
+        if self.lfm3_vision.is_none() {
+            self.lfm3_vision = Some(crate::vision::lfm3_vl::Lfm3VlVisionTower::open(
+                &self.install_dir,
+                &self.context,
+                &self.index,
+                &self.arch,
+            )?);
+        }
+        let tower = self.lfm3_vision.as_mut().expect("opened just above");
+        tower.run(&mut self.context, &self.weights, image, params, stages)
     }
 
     /// The Qwen2.5-VL arm of [`Self::encode_image`]: the same
@@ -489,6 +568,7 @@ impl RealForwardRunner {
         self.vision = None;
         self.gemma4_vision = None;
         self.qwen25_vision = None;
+        self.lfm3_vision = None;
     }
 
     /// The three ids a Gemma 4 image occupies in a prompt, read off the

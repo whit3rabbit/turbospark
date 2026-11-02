@@ -286,6 +286,11 @@ pub fn read_vision_entries_quantized(
     if vision.tower == model_io::VisionTowerKind::Gemma4 {
         return super::vision_gemma4::read_gemma4_vision_entries(shards, vision_bases, vision);
     }
+    // The LFM3-VL tower likewise: two block kinds, a second source prefix
+    // for its projector, no packed planes.
+    if vision.tower == model_io::VisionTowerKind::Lfm3Vl {
+        return super::vision_lfm3::read_lfm3_vl_vision_entries(shards, vision_bases, vision);
+    }
     // The Qwen2.5-VL tower shares this reader's walk and differs in its role
     // tables and its supported depth.
     let qwen25 = vision.tower == model_io::VisionTowerKind::Qwen25Vl;

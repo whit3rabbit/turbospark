@@ -229,6 +229,13 @@ pub enum VisionTowerKind {
     /// matches how Gemma 4's rope theta is handled
     /// (`docs/QWEN25_VL_VISION_PHASE0.md`).
     Qwen25Vl,
+    /// The LFM3-VL tower: RMSNorm blocks that alternate a gated depthwise
+    /// 3x3 spatial convolution with grouped-query attention, a neox-style
+    /// 2-D rope, a SwiGLU MLP, and a pixel-unshuffle projector
+    /// (`docs/LFM3_VL_VISION_PHASE0.md`). `spatial_merge_size` is the
+    /// unshuffle factor (2), `num_position_embeddings` is zero (the tower
+    /// has no position table), and `out_hidden_size` is the trunk width.
+    Lfm3Vl,
 }
 
 impl VisionTowerKind {
@@ -238,6 +245,7 @@ impl VisionTowerKind {
             VisionTowerKind::QwenSiglip => "qwen_siglip",
             VisionTowerKind::Gemma4 => "gemma4",
             VisionTowerKind::Qwen25Vl => "qwen25_vl",
+            VisionTowerKind::Lfm3Vl => "lfm3_vl",
         }
     }
 
@@ -248,6 +256,7 @@ impl VisionTowerKind {
             "qwen_siglip" => Some(VisionTowerKind::QwenSiglip),
             "gemma4" => Some(VisionTowerKind::Gemma4),
             "qwen25_vl" => Some(VisionTowerKind::Qwen25Vl),
+            "lfm3_vl" => Some(VisionTowerKind::Lfm3Vl),
             _ => None,
         }
     }

@@ -637,3 +637,54 @@ pub fn encode_vision_mul(
     );
     Ok(())
 }
+
+/// The LFM3-VL conv block's core: `out = c * depthwise_conv3x3(b * v)` where
+/// `proj` is the `[seq, 3 * channels]` output of the block's `in_proj` split
+/// as `b | c | v` along the row.
+///
+/// `seq = height * width`, tokens in merge-window order (see the kernel),
+/// `w` is the `[channels, 3, 3]` FP16 depthwise weight. `height` and `width`
+/// must each be a multiple of `merge`; the convolution is zero padded.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_vision_gated_dwconv3x3(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    out: (&metal::Buffer, u64),
+    proj: (&metal::Buffer, u64),
+    w: (&metal::Buffer, u64),
+    height: u32,
+    width: u32,
+    merge: u32,
+    channels: u32,
+) -> Result<(), GpuError> {
+    if merge == 0 || height % merge != 0 || width % merge != 0 {
+        return Err(GpuError::PipelineCreate(format!(
+            "gated dwconv grid {height}x{width} is not whole {merge}x{merge} merge windows"
+        )));
+    }
+    let count = u64::from(height) * u64::from(width) * u64::from(channels);
+    let count = u32::try_from(count).map_err(|_| {
+        GpuError::PipelineCreate(format!(
+            "gated dwconv {height}x{width}x{channels} exceeds a 32-bit thread index"
+        ))
+    })?;
+    let pipeline = context.pipeline(
+        SOURCE,
+        "vision_gated_dwconv3x3_fp16",
+        &no_function_constants(),
+        b"",
+    )?;
+    pass.encode_threadgroups(
+        &pipeline,
+        &[(out.0, 0, out.1), (proj.0, 1, proj.1), (w.0, 2, w.1)],
+        &[
+            (u32_bytes(&height), 3),
+            (u32_bytes(&width), 4),
+            (u32_bytes(&merge), 5),
+            (u32_bytes(&channels), 6),
+        ],
+        groups_for(count),
+        THREADS_PER_GROUP,
+    );
+    Ok(())
+}

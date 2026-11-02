@@ -332,7 +332,7 @@ pub(crate) fn stream_mlx(
     // is an answer too, so this is gated on `plan.vision_from_bytes`.
     enable_bytes_detected_vision(plan, family, &mut arch, &headers, &config_text)?;
     if arch.vision.is_active() {
-        install_vision_preprocessor(plan, dir, client)?;
+        install_vision_preprocessor(plan, family, dir, client)?;
     }
 
     // A separate repository carrying a multi-token-prediction head this
@@ -452,14 +452,15 @@ fn enable_requested_vision(
             | ModelFamily::Qwen3Vl
             | ModelFamily::Qwen4Exp
             | ModelFamily::Qwen2Dense
+            | ModelFamily::Lfm3
     ) {
         return Err(format!(
             "{}: combined vision ingestion is only wired for the qwen35 dense, qwen36 MoE, \
-             qwen3_vl, qwen4_exp and qwen2 (Qwen2.5-VL) trunks",
+             qwen3_vl, qwen4_exp, qwen2 (Qwen2.5-VL) and lfm3 trunks",
             plan.alias
         ));
     }
-    let vision = repack::parse_vision_config(config_text).map_err(|e| e.to_string())?;
+    let vision = parse_vision_for_family(family, config_text).map_err(|e| e.to_string())?;
     if !vision.is_active() {
         return Err(format!(
             "{}: catalog row requests vision, but config.json declares no vision_config",
@@ -474,6 +475,20 @@ fn enable_requested_vision(
     }
     arch.vision = vision;
     Ok(())
+}
+
+/// The family's vision-config reader. The `lfm3` trunk carries its own tower
+/// kind (`docs/LFM3_VL_VISION_PHASE0.md`); every other ingesting family reads
+/// the Qwen SigLIP-class tower.
+fn parse_vision_for_family(
+    family: ModelFamily,
+    config_text: &str,
+) -> Result<model_io::VisionConfig, repack::Gemma4Error> {
+    if family == ModelFamily::Lfm3 {
+        repack::parse_lfm3_vl_vision_config(config_text)
+    } else {
+        repack::parse_vision_config(config_text)
+    }
 }
 
 /// Detect a combined vision tower from the checkpoint's BYTES and enable it
@@ -521,6 +536,7 @@ fn enable_bytes_detected_vision(
             | ModelFamily::QwenGdnMoe
             | ModelFamily::Qwen3Vl
             | ModelFamily::Qwen2Dense
+            | ModelFamily::Lfm3
     ) {
         return Ok(());
     }
@@ -544,7 +560,7 @@ fn enable_bytes_detected_vision(
     // an inconsistency in the checkpoint itself, and the walk refuses by name
     // rather than silently dropping a third of the tensors -- which is
     // precisely the behavior this function exists to replace.
-    let vision = repack::parse_vision_config(config_text).map_err(|e| {
+    let vision = parse_vision_for_family(family, config_text).map_err(|e| {
         format!(
             "{}: the checkpoint ships {} vision_tower tensors, but its config.json does not \
              describe a tower this port supports: {e}",
@@ -595,9 +611,13 @@ fn enable_bytes_detected_vision(
 /// `probe`'s own 401 case, not a missing file).
 fn install_vision_preprocessor(
     plan: &InstallPlan,
+    family: ModelFamily,
     dir: &Path,
     client: &Client,
 ) -> Result<(), String> {
+    if family == ModelFamily::Lfm3 {
+        return install_lfm3_preprocessor(plan, dir, client);
+    }
     let fetched = client
         .get_optional(&plan.weights.file_url("preprocessor_config.json"))
         .map_err(|e| {
@@ -613,6 +633,69 @@ fn install_vision_preprocessor(
         &dir.join("preprocessor_config.json"),
         fetched,
     )
+}
+
+/// LFM3-VL ships no `preprocessor_config.json`: its image settings are the
+/// `image_processor` object of `processor_config.json`, which has exactly the
+/// flat keys the preprocessor reader takes (`patch_size`,
+/// `temporal_patch_size`, `merge_size`, `size`, `image_mean`, `image_std`,
+/// `rescale_factor`). This writes that object under the name every image
+/// consumer reads.
+fn install_lfm3_preprocessor(
+    plan: &InstallPlan,
+    dir: &Path,
+    client: &Client,
+) -> Result<(), String> {
+    let dest = dir.join("preprocessor_config.json");
+    if dest.is_file() {
+        return Ok(());
+    }
+    let fetched = client
+        .get_optional(&plan.weights.file_url("processor_config.json"))
+        .map_err(|e| {
+            format!(
+                "fetching processor_config.json from {}: {e}. If this is a gated repository \
+                 refusing an unauthenticated request rather than a missing file, export \
+                 HF_TOKEN and re-run.",
+                plan.weights
+            )
+        })?;
+    let bytes = fetched.ok_or_else(|| {
+        format!(
+            "{} ships a vision tower but no processor_config.json; this port cannot \
+             preprocess images for it, so the combined install is refused",
+            plan.weights
+        )
+    })?;
+    let flat = lfm3_preprocessor_json(&bytes)?;
+    std::fs::write(&dest, flat).map_err(|e| format!("writing {}: {e}", dest.display()))
+}
+
+/// The `image_processor` object of an LFM3-VL `processor_config.json`, as the
+/// flat document the preprocessor reader takes. Refuses a file lacking the
+/// object or any key the reader requires, by name.
+fn lfm3_preprocessor_json(processor_config: &[u8]) -> Result<Vec<u8>, String> {
+    let root: serde_json::Value = serde_json::from_slice(processor_config)
+        .map_err(|e| format!("parsing processor_config.json: {e}"))?;
+    let image = root
+        .get("image_processor")
+        .filter(|v| v.is_object())
+        .ok_or_else(|| "processor_config.json has no image_processor object".to_string())?;
+    for key in [
+        "patch_size",
+        "temporal_patch_size",
+        "merge_size",
+        "size",
+        "image_mean",
+        "image_std",
+    ] {
+        if image.get(key).is_none() {
+            return Err(format!(
+                "processor_config.json image_processor has no {key}"
+            ));
+        }
+    }
+    serde_json::to_vec_pretty(image).map_err(|e| e.to_string())
 }
 
 /// The decision half of [`install_vision_preprocessor`], split so the
@@ -1126,10 +1209,43 @@ fn unindexed_shard_names(files: &[String]) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::unindexed_shard_names;
+    use super::{lfm3_preprocessor_json, unindexed_shard_names};
 
     fn names(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// The real `processor_config.json` shape of `LiquidAI/LFM3-VL-2B-MLX-4bit`:
+    /// the flat preprocessor document is its `image_processor` object, and the
+    /// video block is not carried over.
+    #[test]
+    fn the_lfm3_preprocessor_is_the_image_processor_object() {
+        let real = br#"{
+            "image_processor": {"patch_size": 16, "temporal_patch_size": 2, "merge_size": 2,
+                "size": {"shortest_edge": 65536, "longest_edge": 16777216},
+                "image_mean": [0.5, 0.5, 0.5], "image_std": [0.5, 0.5, 0.5],
+                "rescale_factor": 0.00392156862745098},
+            "video_processor": {"patch_size": 16, "fps": 2.0},
+            "processor_class": "Lfm3VlProcessor"
+        }"#;
+        let flat: serde_json::Value =
+            serde_json::from_slice(&lfm3_preprocessor_json(real).unwrap()).unwrap();
+        assert_eq!(flat["patch_size"], 16);
+        assert_eq!(flat["size"]["longest_edge"], 16_777_216);
+        assert!(flat.get("video_processor").is_none());
+        assert!(flat.get("fps").is_none());
+    }
+
+    #[test]
+    fn the_lfm3_preprocessor_refuses_a_file_missing_what_the_reader_needs() {
+        assert!(lfm3_preprocessor_json(b"{}")
+            .unwrap_err()
+            .contains("image_processor"));
+        let no_mean = br#"{"image_processor": {"patch_size": 16, "temporal_patch_size": 2,
+            "merge_size": 2, "size": {}, "image_std": [0.5, 0.5, 0.5]}}"#;
+        assert!(lfm3_preprocessor_json(no_mean)
+            .unwrap_err()
+            .contains("image_mean"));
     }
 
     /// `RecursiveSI/flint-int4`'s real listing: five zero-based shards, no
