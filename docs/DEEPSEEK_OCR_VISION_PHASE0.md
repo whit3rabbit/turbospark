@@ -152,24 +152,55 @@ CLIP position table to 10 x 10 and the crop-grid layout.
 
 ## 6. Scope decision
 
-Built: BASE mode (one 1024 x 1024 global view, 273 rows). Not built unless
-budget remains after the real gates: Gundam (n crops of 640 plus the
-global view), Tiny/Small/Large resolutions (64/100/256 `<image>` tokens with
-512 / 640 / 1280 input). Page-level OCR at base resolution is the model's
-documented 1024 setting and is enough to read a real page.
+Built: BASE mode (one 1024 x 1024 global view, 273 rows). NOT built:
+Gundam (640 px local crops plus the global view: needs a bicubic-antialias
+resample of the CLIP position table to 10 x 10 and the crop-grid layout), and
+the Tiny/Small/Large resolutions (64/100/256 `<image>` tokens at 512/640/1280).
 
-## 7. Plan and gates
+## 7. Results (real checkpoint, `mlx-community/DeepSeek-OCR-4bit`)
 
-1. Text gate on the trunk (coherent text, a retrieval probe) before images.
-2. Tower: Metal kernels with synthetic unit tests per piece, then a real-
-   tower parity test against `scripts/deepseek_ocr_tower_reference.py`
-   (cosine per stage), and a mutation check of at least the window-pad and
-   rel-pos conventions.
-3. Real gate: `turbospark-check --messages-file ... --image` on a text page,
-   a no-image control, then `turbospark-server` on both endpoints. Assert on
-   words only the image can supply.
+Intake: `turbospark-model pull-vision --repo ... --alias dsocr-vision` writes a
+764.6 MiB sidecar (24 CLIP blocks at a 25.2 MB stride streamed, 197 MB of SAM
+and projector residents). Trunk and tower are separate installs.
 
-## 8. Unlimited-OCR-2
+Tower gate, `crates/runtime/tests/deepseek_ocr_tower_real.rs` against
+`scripts/deepseek_ocr_tower_reference.py` (numpy, written from reading, no
+mlx-vlm code run) on a synthetic structured input: cosine >= 0.99998 at every
+stage (SAM patch, blocks 0/2/5/11, neck, net_2, SAM out, CLIP pre, layers
+0/11, CLIP out) and 0.999992 on the final 273 x 1280 rows. Mutations, both
+failing that test: dropping the relative-position bias (`sam_b0` 0.9986,
+`rows` 0.634) and padding SAM windows with token 0 instead of zeros (`rows`
+0.889). The reference and the engine share one reading of the sources, so
+this proves the implementation matches the reading, not that the reading is
+right; the OCR gate below is the check on the reading.
 
-Recorded after the first target works. It shares this trunk shape and
-reuses `deepseekocr`'s vision per the mlx-vlm tree (`unlimited_ocr`).
+Image gate, `turbospark-check --messages-file ask-free-ocr.json --image`, the
+model's own prompt `<image>\nFree OCR. ` (prompt ids: BOS, 273 image ids, 5
+text ids = 279):
+
+| input | result |
+|---|---|
+| `page-small.png` (448 px crop) | 24/24 lines: line number and first three words exact, numbers 00012..00426 in order, 107 to 239 tok/s decode |
+| `page.png` (1024 x 1280, ~9 px glyphs after the 0.8 pad scale) | 21/24 of the transcribed lines exact; the right-edge decimals of lines 1 to 4 correct; digit drift on tiny text (00120 read as 00130) and no stop at the page end (135 rows for a 70-line page, MaxTokens) |
+| no image, same prompt | fluent generic text about OCR tools, none of the page's numbers |
+
+Server gate, `scripts/ocr_server_gate.py` (`turbospark-server --model dsocr
+--vision-sidecar ...`), `page-small.png`: `/v1/chat/completions` and
+`/v1/messages` both 24/24 (279 prompt tokens, finish `stop` / `end_turn`); the
+no-image control carries none of the numbers. `scripts/check_ocr_page_output.py`
+scores them against 24 lines transcribed by eye from the page image (the
+generator needs Pillow and the exact font).
+
+Not verified: Gundam, any page cleaner than a synthetic monospace one, FFI and
+the Swift app (the FFI arms compile and mirror the SigLIP ones, nothing ran
+them), power or throughput numbers, an A/B against mlx-vlm (never run).
+
+## 8. Unlimited-OCR-2: refused at the trunk, not attempted
+
+`turbospark-model probe baidu/Unlimited-OCR-2` says `REFUSED: config.json
+invalid: rope_scaling is not wired for the DeepSeek-VL2 trunk` (6.2 GiB, no
+chat template, `model_type` `unlimited-ocr`). Its trunk sets `rope_scaling`,
+which the plain-attention `deepseek2` arm does not implement, so it needs a
+flow change (scaled rope in the MHA arm, with its own numpy oracle) before any
+tower question. The registry row and the tower reader's `unlimited-ocr`
+spelling are ready; nothing was downloaded.
