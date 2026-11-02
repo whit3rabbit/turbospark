@@ -78,9 +78,10 @@ target/release/tslab serve --open
 - Kernel benches at the install's own shapes (`tslab kernel --list`):
   `int4_matmul`, `int8_matmul`, `attn_decode`, `gdn_delta`, `rows_attn`,
   `moe_routed`, `qkv_concurrent`, `verify_ladder`, `music3_grid`,
-  `whisper_linear`, and, with `--features ane-prefill`, `ane_matmul` (Steel
+  `whisper_linear`, `vision_encode` (the vision tower per stage on three
+  synthetic pages, `--vision-sidecar DIR` for a tower-only sidecar), and, with `--features ane-prefill`, `ane_matmul` (Steel
   against the ANE, the row split, baked INT4 `ane_c4` and `split_c4` arms,
-  `--case real:LAYER.NAME` on one tensor's bytes) and `ane_handoff` (wait
+  `--case real:LAYER.NAME` on one tensor's bytes, `vision_*` cases) and `ane_handoff` (wait
   against poll, `--contend N`).
 - Offline pricing and replays (`project`, `calibrate`, `depth-replay`,
   `hybrid-replay`), no GPU work.

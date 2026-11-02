@@ -31,7 +31,9 @@ runtime = { package = "turbospark-runtime", path = "../runtime" }
 - `moe_prefill_pipeline.rs`: Routed-expert prefill pipelining shared by the MoE chunked drivers: host route encoding, expert-union sub-batching, and slot-cache `pread` overlap.
 - `real_forward_rollback.rs`: Atomic rollback of KV cache and recurrent state for speculative rejection.
 - `real_forward_types.rs`: `RealForwardError`, `PhaseCounters`, `dispatch_profile_report`, and `DecodeScratch`.
-- `real_forward_vision_api.rs` & `vision/`: Vision tower forward pass dispatches and multimodal token injection.
+- `real_forward_vision_api.rs` & `vision/`: Vision tower forward pass dispatches and multimodal token injection. `vision/gemma4.rs` is the Gemma 4 tower and `vision/unlimited_ocr2.rs` the SAM + CLIP tower, each a sibling of the qwen tower; `families/gemma4/vision_prefill.rs` handles Gemma 4 image spans in chunked prefill.
+- `unlimited_ocr2_reader.rs` & `families/unlimited_ocr2/`: Document reading with Unlimited-OCR-2 on Metal (page layout, towers, prefill, greedy decode with a 35-gram no-repeat) behind `turbospark-ocr` and `ts_ocr_*`, over a DeepSeek-V2-shaped MoE decoder with DASH block-sparse attention.
+- `families/qwen4/batched.rs` & `moe_batch.rs`: Opt-in multi-row prefill seams for `qwen4_exp` (`TURBOSPARK_BATCHED_GEMV`, `TURBOSPARK_ROUTED_BATCH`).
 - `families/`: Dedicated per-architecture forward flows:
   - `deepseek2/`: DeepSeek V2 multi-head latent attention plus fine-grained MoE with a fused shared expert.
   - `flint/`: Recursive Flint flow: learned attention sinks, per-head QK norm before RoPE, NoPE by layer mask, an INT8 sigmoid router, an ungated shared expert, a dense lead, and top-6 routed experts streamed through the slot cache.

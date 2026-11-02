@@ -211,6 +211,7 @@ The process peak is measured `phys_footprint` on a 36 GB M4 Max with 16 expert-c
 | Qwen3.8-Flash-Next Swift-1.5 (`qwen4exp-swift-iq2-xs`) | IQ2_XS | GGUF | ~69 GB reserve | ~1.60 GiB @ 2k ctx |
 | Qwen3-30B-A3B | Q4_K_M | GGUF | ~19 GB | ~2.7 GB @ 4k ctx |
 | Gemma 4 26B-A4B | INT4 (group 64) | MLX | ~13 GB | ~2.1 GB @ 4k ctx |
+| Gemma 4 26B-A4B, with vision tower | INT4 (group 64) | MLX | ~13 GB plus the tower | image input (280-token default budget) on an install repacked with its tower, not a catalog alias; see [`docs/GEMMA4_VISION_PHASE0.md`](docs/GEMMA4_VISION_PHASE0.md) |
 | Gemma 4 26B-A4B | UD-Q3_K_M (IQ3 experts) | GGUF | ~13 GB | ~1.9 GB @ 4k ctx |
 | Gemma 4 26B-A4B | Q8_0 | GGUF | ~27 GB | - |
 | gpt-oss 20B | MXFP4 | GGUF | ~12 GB | ~5.4 GB @ 8k ctx |
@@ -250,7 +251,7 @@ Dense models do not stream, so budget roughly the on-disk size plus KV and scrat
 | Mistral 7B Instruct v0.3 | Q4_K_M | GGUF | ~4.4 GB | |
 | TinyLlama 1.1B Chat | Q6_K | GGUF | ~0.9 GB | |
 
-Vision intake is per-family: the Qwen GDN dense and MoE flows and the Qwen3-VL trunk carry the implemented tower today, and the other rows are text-only. See [`docs/VISION.md`](docs/VISION.md).
+Vision intake is per-family: the Qwen GDN dense and MoE flows, the Qwen3-VL trunk, and Gemma 4 (an install repacked with its tower) carry the implemented tower today, Unlimited-OCR-2 reads pages with its own SAM and CLIP towers, and the other rows are text-only. See [`docs/VISION.md`](docs/VISION.md).
 
 New checkpoints are not automatically supported just because their architecture name matches. The catalog probe checks the checkpoint header, tokenizer sidecars, tensor types, and memory shape before installation. Read [`docs/MODELS.md`](docs/MODELS.md) before adding a model outside the catalog.
 
@@ -453,7 +454,7 @@ The benchmark times are client wall-clock numbers that include local HTTP and Sw
 | CLI generation | Interactive chat, raw prompts, JSON message files, reasoning output, cancellation, and model recommendations |
 | Local API | OpenAI-compatible and Anthropic-compatible chat endpoints, plus image generation and audio routes, from `turbospark-server` or the app |
 | Model intake | Catalog installs, Hugging Face header probes, GGUF intake, MLX quantized checkpoints, and `.gturbo` packing |
-| Vision | Supported vision checkpoints, with the Qwen GDN and Qwen3-VL towers implemented |
+| Vision | Supported vision checkpoints, with the Qwen GDN, Qwen3-VL, and Gemma 4 towers implemented, plus Unlimited-OCR-2 document reading (`turbospark-ocr`) |
 | Image generation | Z-Image Turbo and Qwen-Image 2.1 Turbo in the app, about 1 to 2 minutes per 1024 x 1024 image on an M4 Max. See [Image generation](#image-generation) |
 | Humanize | Local rewrites with `humanizer-12b`, user rules applied outside the model, and an audit of dropped or invented numbers. See [Humanize](#humanize) |
 | Audio | Whisper, Qwen3-ASR, and FluidAudio Core ML / ANE speech to text, Kokoro (Metal and ANE) and Qwen3-TTS speech, Silero VAD, MegaTTS3 voice cloning (Metal on macOS), and meeting speaker intelligence. See [Audio](#audio) |

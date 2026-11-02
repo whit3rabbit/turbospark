@@ -25,6 +25,7 @@ gpu = { package = "turbospark-gpu", path = "../gpu" }
 - `kv_quantize.rs` & `kv_quant_tables.rs`: TurboQuant KV cache quantization dispatches.
 - `attention_decode.rs`: Split-KV causal decode attention dispatch (`chunks_for`, up to 16 splits).
 - `attention_indexed.rs` & `attention_tq.rs`: Indexed block attention and TurboQuant quantized attention dispatches.
+- `vision.rs` (`shaders/vision.metal`): Vision tower dispatches for the qwen, Gemma 4, and Unlimited-OCR-2 (SAM and CLIP) towers. Projections run on the 64x64 `simdgroup_matrix` FP16 GEMM (`TURBOSPARK_VISION_MMA=0` restores the per-output kernel) and bidirectional attention on a flash-style matrix-unit kernel (`TURBOSPARK_VISION_ATTN_MMA=0` restores the scalar one).
 - `moe_decode.rs`: Mixture-of-experts dispatches: router GEMV, phase 1 expert GEMVs, host router wait, and phase 2 down reduction.
 - `moe_gguf/`: GGUF format MoE expert GEMV and reduction dispatches.
 - `moe_prefill_batch.rs` & `moe_prefill_batch_gguf.rs`: Batched prefill MoE dispatches.

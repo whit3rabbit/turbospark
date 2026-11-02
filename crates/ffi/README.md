@@ -40,7 +40,7 @@ Downstream Swift code links this crate's `staticlib` directly; nothing in this w
   - `stt.rs`: Speech-to-text model opening, PCM append streaming, synchronous finish transcription, and cancellation (`ts_stt_*`).
   - `tokenizer.rs`: Standalone tokenizer handle for count, tokenize, and detokenize queries without the engine (`ts_tokenizer_*`).
   - `audio.rs`, `audio_stream.rs`: Audio catalog install and verify, worker jobs, and live transcription streams (`ts_audio_*`).
-  - `ocr.rs`: Core ML document OCR sessions that collect pages and read them as one document (`ts_ocr_*`).
+  - `ocr.rs`: Document OCR sessions (an Unlimited-OCR-2 Metal install, or the Core ML export, picked by the model directory) that collect pages and read them as one document (`ts_ocr_*`).
 
 ## Development & Test Commands
 
