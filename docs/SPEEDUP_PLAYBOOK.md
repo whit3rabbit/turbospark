@@ -977,6 +977,87 @@ Recorded so they are not re-derived:
   slot 0 also caused a 33-minute GPU stall, so require the slot index at each
   call site.
 
+## Vision tower
+
+November 2026. Two kernels moved the vision towers onto the matrix units
+(PR 242). The mechanics, parity tests and exactness classes live in
+[VISION.md](VISION.md), "The projection GEMM runs on the matrix units" and
+"The attention runs on the matrix units too". This section records what they
+bought, why the old kernels were slow, and what carries to other towers.
+
+### What changed and what it bought
+
+| change | kernel | kill switch (tslab knob) |
+| --- | --- | --- |
+| projections (patch embed, qkv, proj, fc1, fc2, mergers) | `vision_matmul_fp16_mma`, 64x64 FP16 `simdgroup_matrix` tiles, FP32 accumulators | `TURBOSPARK_VISION_MMA=0` (`vision_mma`) |
+| bidirectional attention | `vision_attention_bidir_fp16_mma`, flash style, 32 query rows per threadgroup, online softmax in registers | `TURBOSPARK_VISION_ATTN_MMA=0` (`vision_attn_mma`) |
+
+Measured on an M4 Max with other sessions on the host, so read them as
+ratios:
+
+| tower | page | scalar | MMA | source |
+| --- | --- | --- | --- | --- |
+| Qwen3-VL-4B, median block time | 1,280 patches | 0.49 / 0.58 s | 0.13 / 0.14 s | tslab `vision_encode`, two runs each |
+| Qwen3-VL-4B, median block time | 9,216 patches | 46.8 / 47.2 s | 2.4 / 2.6 s | same |
+| Gemma 4, per image | one image | about 7 s | about 0.7 s | `CHANGELOG.md` |
+| Qwen4Exp (4-bit tower, dequantized), whole parity-test process | 784 patches | 1.69-1.70 s | 0.61-0.63 s | interleaved, 3 reps each ([QWEN4EXP_VISION_PHASE0.md](QWEN4EXP_VISION_PHASE0.md)) |
+
+The Qwen4Exp row times a whole process, trunk open included, so its 1.08 s
+gap is the tower's saving and the MMA tower time is at most 0.6 s.
+
+### Why the old kernels were slow
+
+`vision_matmul_fp16` gave each output element its own threadgroup and
+reduced one dot product. It reached 0.5 to 0.8 TFLOP/s at 5,120 patches,
+where the GEMM reaches 8 to 9. The scalar attention ran one threadgroup per
+query, and on a large page attention is most of the block: block GPU time
+grew 27x for 7.2x the patches on Qwen3-VL-4B. So the speedup grows with the
+page, from about 4x in block time at 1,280 patches to 18x to 20x at 9,216.
+
+The ANE gate that started this passed only because its GPU arm was the
+naive kernel. Fixing the GPU kernel first removed most of the reason to move
+the tower to another engine.
+
+### How it was qualified
+
+- `crates/gpu/tests/vision_parity.rs`: each MMA kernel against the scalar
+  kernel and the CPU reference, across patch counts on and off the tile
+  edges and every legal head_dim. Mutation-checked.
+- Real towers: greedy transcriptions byte-identical under both arms on
+  Qwen3-VL-4B and Gemma 4. Embedding rows agree at a mean per-row cosine of
+  0.9999 or better, and the worst rows are the same few page positions
+  under every perturbation tried.
+- Qwen4Exp: stage-2 tower parity against mlx-vlm passes on both arms
+  (merger cosine 0.99993024 MMA, 0.99993336 scalar, against the
+  reference's own FP16-vs-FP32 floor of 0.999947).
+
+### Where it applies
+
+The tower code is shared, so every family on a Qwen SigLIP tower gets both
+kernels with no family work: Qwen3.8 dense, Qwen3.6 MoE, Qwen3-VL and
+Qwen4Exp. Gemma 4's tower calls the same two entry points. A new tower gets
+them by calling `gpu::encode_vision_matmul` and `gpu::encode_vision_attention`.
+A head_dim that is not a multiple of 4 falls back to the scalar attention.
+
+### Measure the prefill split before working on the tower
+
+A small image barely moves end-to-end time. On Qwen4Exp, a 448x448 image
+(196 merged tokens) costs about 1 s of tower time inside a 78 s prefill. The
+rest is the trunk streaming experts off an external drive: 2.5 s of user CPU
+in a 105 s run. `TURBOSPARK_ROUTED_BATCH=1` keeps image prompts byte-identical
+but moved that prefill only from 77.9 s to 75.6 s, within noise. The tower is
+the target for large pages: OCR pages run 1,280 to 9,216 patches. For a
+photo-sized image on a large MoE trunk, look at the trunk.
+
+### Open
+
+- A per-stage tower bench for sidecar installs. tslab's `vision_encode` lane
+  is not on main yet and opens only combined installs.
+- The tower on the Neural Engine. The first gate was run against the naive
+  GPU kernel and has to be rerun against the MMA kernels.
+- Attention still dominates large pages under the MMA kernels. The next
+  lever is the attention kernel's tiling at 5,120+ patches.
+
 ## Applying it elsewhere
 
 ### GQA-shared decode attention, other families

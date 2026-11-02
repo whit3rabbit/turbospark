@@ -20,6 +20,7 @@ use super::{layer_tensor, TRUNK_PREFIX};
 use crate::real_forward::RealForwardRunner;
 use crate::real_forward_dispatch::encode_gemv_any;
 use crate::real_forward_types::RealForwardError;
+use crate::vision::RopePosition;
 
 impl RealForwardRunner {
     pub(crate) fn produce_real_qwen4(
@@ -63,6 +64,7 @@ impl RealForwardRunner {
                 "token id {token} outside vocab {vocab}"
             )));
         }
+        self.refuse_qwen4_vision_past_qsa_budget()?;
         let capture_layer_boundaries = self
             .real_qwen4
             .as_ref()
@@ -91,20 +93,43 @@ impl RealForwardRunner {
         // Embed and TILE: `embed_tokens(ids).repeat(1, 1, C)` -- replicated,
         // not padded. `arch.embedding_scaled_by_sqrt_hidden` is refused
         // true at `RealQwen4State::build`, so the scale is always 1.0.
+        //
+        // THE IMAGE BLIT. The reference splices the tower row into
+        // `inputs_embeds` BEFORE the repeat, so at an image position the row
+        // replaces the lookup in every one of the C copies. It is a host write
+        // into shared storage, sound because `pass` is not committed until the
+        // first router wait below (`families/qwen/produce.rs`'s argument).
+        // `token` still reaches PLE unchanged: both references hash the raw
+        // placeholder id there (`docs/QWEN4EXP_VISION_PHASE0.md` item 4).
+        let vision_row = self
+            .prompt_vision
+            .as_ref()
+            .and_then(|pv| pv.row_for(position));
         for c in 0..hc_count {
             let qwen4 = self.real_qwen4.as_ref().expect("checked above");
-            encode_embed_any_qwen4(
-                &mut self.context,
-                &pass,
-                &self.weights,
-                &self.index,
-                embed_name,
-                (&qwen4.wide_x, (c * hidden * 2) as u64),
-                token as u32,
-                hidden as u32,
-                vocab,
-            )?;
+            match vision_row {
+                Some(row) => gpu::write_buffer_bytes(&qwen4.wide_x, c * hidden * 2, row),
+                None => encode_embed_any_qwen4(
+                    &mut self.context,
+                    &pass,
+                    &self.weights,
+                    &self.index,
+                    embed_name,
+                    (&qwen4.wide_x, (c * hidden * 2) as u64),
+                    token as u32,
+                    hidden as u32,
+                    vocab,
+                )?,
+            }
         }
+        // Resolved once per token, before the borrow split below.
+        let rope_position = match self.prompt_vision.as_ref() {
+            Some(pv) => {
+                let (t, h, w) = pv.rope_position(position);
+                RopePosition::Triple(t, h, w)
+            }
+            None => RopePosition::Sequential,
+        };
 
         let (
             context,
@@ -249,6 +274,7 @@ impl RealForwardRunner {
                     kv,
                     layer,
                     position,
+                    rope_position,
                     None,
                 )?;
             }
@@ -492,6 +518,28 @@ impl RealForwardRunner {
             )));
         }
         gpu::read_buffer_f16_into(&self.scratch.logits, 0, logits);
+        Ok(())
+    }
+}
+
+impl RealForwardRunner {
+    /// Refuses an image prompt on a runner whose QSA selection could run, see
+    /// `RealQwen4State::qsa_can_select`. Checked at every Qwen4Exp entry and at
+    /// `set_prompt_vision`, because `set_qsa_force_dense` can change the answer
+    /// after the map is set.
+    pub(crate) fn refuse_qwen4_vision_past_qsa_budget(&self) -> Result<(), RealForwardError> {
+        let Some(qwen4) = self.real_qwen4.as_ref() else {
+            return Ok(());
+        };
+        if self.prompt_vision.is_some() && qwen4.qsa_can_select() {
+            return Err(RealForwardError::Unsupported(format!(
+                "qwen4_exp image prompts need a context at or below the QSA budget \
+                 ({} blocks of {}); this runner was opened at {} tokens, and above the budget \
+                 the indexer rotates pooled keys by token index rather than by mRoPE position \
+                 (docs/QWEN4EXP_VISION_PHASE0.md item 3)",
+                qwen4.idx_block_topk, qwen4.idx_compress, qwen4.max_context
+            )));
+        }
         Ok(())
     }
 }

@@ -104,8 +104,12 @@ pub fn orchestrate_gemma4_checkpoint_sharded(
     // sharing one resident region, and its names keep to their own `vision.`
     // group rather than interleaving with any trunk layer's.
     let vision = if super::vision::vision_should_ingest(arch, &plan.vision_bases) {
-        let mut tower =
-            super::vision::read_vision_entries(shards, &plan.vision_bases, &arch.vision)?;
+        let mut tower = super::vision::read_vision_entries_quantized(
+            shards,
+            &plan.vision_bases,
+            &arch.vision,
+            Some(quant),
+        )?;
         resident.entries.extend(std::mem::take(&mut tower.entries));
         Some(tower)
     } else {

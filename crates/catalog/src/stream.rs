@@ -444,10 +444,14 @@ fn enable_requested_vision(
     }
     if !matches!(
         family,
-        ModelFamily::QwenGdnDense | ModelFamily::QwenGdnMoe | ModelFamily::Qwen3Vl
+        ModelFamily::QwenGdnDense
+            | ModelFamily::QwenGdnMoe
+            | ModelFamily::Qwen3Vl
+            | ModelFamily::Qwen4Exp
     ) {
         return Err(format!(
-            "{}: combined vision ingestion is only wired for the qwen35 dense, qwen36 MoE              and qwen3_vl trunks",
+            "{}: combined vision ingestion is only wired for the qwen35 dense, qwen36 MoE, \
+             qwen3_vl and qwen4_exp trunks",
             plan.alias
         ));
     }
@@ -931,6 +935,10 @@ pub(crate) fn stream_vision_sidecar(
         .iter()
         .flat_map(|h| h.tensors.keys())
         .filter(|k| k.starts_with(repack::VISION_PREFIX))
+        // A packed plane's `.scales`/`.biases` companions are read beside
+        // its `.weight`, never as bases, the same skip `classify_names`
+        // makes for the install walk.
+        .filter(|k| !k.ends_with(".scales") && !k.ends_with(".biases"))
         .map(String::as_str)
         .collect();
     if vision_bases.is_empty() {
@@ -948,8 +956,15 @@ pub(crate) fn stream_vision_sidecar(
             .collect(),
     )
     .map_err(|e| format!("vision tower shards: {e}"))?;
-    let read = repack::read_vision_entries(&shards, &vision_bases, &vision)
-        .map_err(|e| format!("reading the vision tower: {e}"))?;
+    // The quant block decides how a packed tower plane (the qwen4_exp MLX
+    // conversion's, `docs/QWEN4EXP_VISION_PHASE0.md`) is dequantized. A
+    // trunk-only override this parser refuses must not block a BF16 tower,
+    // so a failed parse becomes `None`, and a packed plane is then refused by
+    // dtype at the read.
+    let quant = repack::parse_gemma4_quantization(&config_text).ok();
+    let read =
+        repack::read_vision_entries_quantized(&shards, &vision_bases, &vision, quant.as_ref())
+            .map_err(|e| format!("reading the vision tower: {e}"))?;
 
     // Reported the same way `write_gemma4_install_streamed` reports the
     // combined-install tower's cost (`crates/repack` Gotcha 13): a nonzero

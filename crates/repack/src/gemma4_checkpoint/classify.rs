@@ -513,7 +513,10 @@ pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -
     // each a latent bug for exactly as long as no sibling existed to exercise
     // them. All three families ship the SigLIP-class tower the runtime runs
     // (the dense and MoE halves the identical 333-tensor one; `qwen3_vl` the
-    // depth-24 tower plus its 18 deepstack merger tensors).
+    // depth-24 tower plus its 18 deepstack merger tensors). `qwen4_exp`
+    // carries the dense tower at out_hidden 2560, quantized to 4 bits on the
+    // MLX conversion; `vision::read_vision_entries_quantized` dequantizes it
+    // (`docs/QWEN4EXP_VISION_PHASE0.md` item 1).
     //
     // Gemma 4 joins them with its own tower (`vision_gemma4.rs`), and its
     // projector lives under a second prefix, `embed_vision.`, claimed here
@@ -530,6 +533,7 @@ pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -
             ModelFamily::QwenGdnDense
                 | ModelFamily::QwenGdnMoe
                 | ModelFamily::Qwen3Vl
+                | ModelFamily::Qwen4Exp
                 | ModelFamily::Gemma4
         )
     {

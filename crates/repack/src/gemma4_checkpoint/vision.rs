@@ -24,8 +24,8 @@
 use model_io::{ArchConfig, VisionConfig};
 
 use super::classify::{VISION_INSTALL_PREFIX, VISION_PREFIX};
-use super::config::Gemma4Error;
-use super::narrow::convert_raw_to_fp16;
+use super::config::{Gemma4Error, Gemma4Quant};
+use super::narrow::{convert_raw_to_fp16, ConvertedFp16};
 use super::shards::{shape4, Gemma4Shards, GTURBO_PAGE_BYTES};
 use crate::gturbo_writer::{ExpertBlob, LayerBlobs, SubTensor};
 use crate::qwen36_config::SUPPORTED_VISION_DEPTHS;
@@ -229,8 +229,27 @@ pub fn read_vision_entries(
     vision_bases: &[&str],
     vision: &VisionConfig,
 ) -> Result<VisionRead, Gemma4Error> {
+    read_vision_entries_quantized(shards, vision_bases, vision, None)
+}
+
+/// [`read_vision_entries`] for a checkpoint whose tower may carry MLX affine
+/// planes (`U32` weight plus BF16 `.scales`/`.biases`), dequantized to FP16
+/// with the bits and group `quant` declares for each tensor.
+///
+/// The `qwen4_exp` MLX conversion quantized its tower
+/// (`docs/QWEN4EXP_VISION_PHASE0.md` item 1). The runtime tower is FP16 end to
+/// end, so dequantizing here costs no kernel and the install has the same
+/// layout as a BF16 source. With `quant` = `None` a `U32` tensor is refused by
+/// dtype, which is what every caller that never saw a quantized tower gets.
+pub fn read_vision_entries_quantized(
+    shards: &Gemma4Shards<'_>,
+    vision_bases: &[&str],
+    vision: &VisionConfig,
+    quant: Option<&Gemma4Quant>,
+) -> Result<VisionRead, Gemma4Error> {
     // The Gemma 4 tower has its own names and roles; every caller reaches it
-    // through here so no call site can pick the wrong reader.
+    // through here so no call site can pick the wrong reader. It ships no
+    // packed planes this reader has seen, so `quant` is not passed on.
     if vision.tower == model_io::VisionTowerKind::Gemma4 {
         return super::vision_gemma4::read_gemma4_vision_entries(shards, vision_bases, vision);
     }
@@ -443,8 +462,7 @@ pub fn read_vision_entries(
     let mut entries = Vec::with_capacity(RESIDENT_TENSORS.len());
     for (slot, name) in resident_names.iter().enumerate() {
         let name = name.expect("checked above");
-        let t = shards.info(name)?;
-        let converted = convert_raw_to_fp16(name, &t.dtype, shards.read(name)?)?;
+        let (converted, shape) = read_tower_tensor(shards, name, quant)?;
         if converted.lossy > 0 {
             lossy_conversion.push((name.to_string(), converted.lossy));
         }
@@ -452,7 +470,7 @@ pub fn read_vision_entries(
             name: format!("{VISION_INSTALL_PREFIX}{}", RESIDENT_TENSORS[slot]),
             dtype: converted.dtype,
             bytes: converted.bytes,
-            shape: resident_shape(&t.shape),
+            shape: resident_shape(&shape),
         }));
     }
 
@@ -462,8 +480,7 @@ pub fn read_vision_entries(
     for (index, roles) in deepstack_names.iter().enumerate() {
         for (role, name) in roles.iter().enumerate() {
             let name = name.expect("checked above");
-            let t = shards.info(name)?;
-            let converted = convert_raw_to_fp16(name, &t.dtype, shards.read(name)?)?;
+            let (converted, shape) = read_tower_tensor(shards, name, quant)?;
             if converted.lossy > 0 {
                 lossy_conversion.push((name.to_string(), converted.lossy));
             }
@@ -474,7 +491,7 @@ pub fn read_vision_entries(
                 ),
                 dtype: converted.dtype,
                 bytes: converted.bytes,
-                shape: resident_shape(&t.shape),
+                shape: resident_shape(&shape),
             }));
         }
     }
@@ -487,8 +504,7 @@ pub fn read_vision_entries(
         let mut used = 0u64;
         for (role, name) in roles.iter().enumerate() {
             let name = name.expect("checked above");
-            let t = shards.info(name)?;
-            let converted = convert_raw_to_fp16(name, &t.dtype, shards.read(name)?)?;
+            let (converted, shape) = read_tower_tensor(shards, name, quant)?;
             if converted.lossy > 0 {
                 lossy_conversion.push((name.to_string(), converted.lossy));
             }
@@ -497,7 +513,7 @@ pub fn read_vision_entries(
                 role: BLOCK_ROLES[role].0.to_string(),
                 bytes: converted.bytes,
                 dtype: "fp16".to_string(),
-                shape: t.shape.clone(),
+                shape,
             });
         }
         widest = widest.max(used);
@@ -513,6 +529,144 @@ pub fn read_vision_entries(
         block_stride: widest.div_ceil(GTURBO_PAGE_BYTES) * GTURBO_PAGE_BYTES,
         lossy_conversion,
     })
+}
+
+/// One tower tensor as FP16 bytes plus its LOGICAL shape.
+///
+/// A `U32` tensor with a `quant` is an MLX affine plane and is dequantized;
+/// its stored shape is `[rows, words]`, so the logical `[rows, cols]` is
+/// returned for the index and the block blob to record. Anything else goes
+/// through `convert_raw_to_fp16` with its stored shape.
+fn read_tower_tensor(
+    shards: &Gemma4Shards<'_>,
+    name: &str,
+    quant: Option<&Gemma4Quant>,
+) -> Result<(ConvertedFp16, Vec<u64>), Gemma4Error> {
+    let t = shards.info(name)?;
+    if t.dtype == "U32" {
+        if let Some(quant) = quant {
+            return dequantize_affine_to_fp16(shards, name, &t.shape, quant);
+        }
+    }
+    let converted = convert_raw_to_fp16(name, &t.dtype, shards.read(name)?)?;
+    Ok((converted, t.shape.clone()))
+}
+
+/// Dequantizes one MLX affine plane to FP16: `w = q * scale + bias` per group,
+/// with element `i` of a row at bit `bits * (i % (32 / bits))` of little-endian
+/// word `i / (32 / bits)` (the layout `compute::dequantize_int4_affine` reads
+/// at 4 bits).
+///
+/// Bits and group come from `quant`, never from the shapes: `[N, 144]` words
+/// with 18 groups is 4 bits at group 64 AND 8 bits at group 32, and the two
+/// read different widths from the same bytes.
+fn dequantize_affine_to_fp16(
+    shards: &Gemma4Shards<'_>,
+    name: &str,
+    shape: &[u64],
+    quant: &Gemma4Quant,
+) -> Result<(ConvertedFp16, Vec<u64>), Gemma4Error> {
+    let mismatch = |detail: String| Gemma4Error::ShapeMismatch {
+        tensor: name.to_string(),
+        detail,
+    };
+    let base = name
+        .strip_suffix(".weight")
+        .ok_or_else(|| mismatch("a U32 vision tensor must be a .weight plane".to_string()))?;
+    if quant.is_mxfp4(base) {
+        return Err(Gemma4Error::UnsupportedDtype {
+            tensor: name.to_string(),
+            dtype: "mxfp4 in a vision tower tensor (only affine planes are dequantized)".into(),
+        });
+    }
+    let bits = quant.bits_for(base) as usize;
+    let group = quant.group_for(base) as usize;
+    if !matches!(bits, 2 | 4 | 8) || group == 0 {
+        return Err(mismatch(format!(
+            "affine {bits} bits at group {group} is not a vision plane this reader dequantizes"
+        )));
+    }
+    let [rows, words] = shape else {
+        return Err(mismatch(format!(
+            "expected a rank-2 U32 plane, got {shape:?}"
+        )));
+    };
+    let (rows, words) = (*rows as usize, *words as usize);
+    let per_word = 32 / bits;
+    let cols = words * per_word;
+    if cols % group != 0 {
+        return Err(mismatch(format!(
+            "{cols} columns is not a whole number of {group}-element groups"
+        )));
+    }
+    let groups = cols / group;
+    let scales_name = format!("{base}.scales");
+    let biases_name = format!("{base}.biases");
+    for companion in [&scales_name, &biases_name] {
+        let info = shards.info(companion)?;
+        if info.dtype != "BF16" || info.shape != [rows as u64, groups as u64] {
+            return Err(mismatch(format!(
+                "{companion} is {} {:?}, expected BF16 [{rows}, {groups}] for {bits} bits at \
+                 group {group}",
+                info.dtype, info.shape
+            )));
+        }
+    }
+    let packed = shards.read(name)?;
+    let scales = shards.read(&scales_name)?;
+    let biases = shards.read(&biases_name)?;
+    if packed.len() != rows * words * 4
+        || scales.len() != rows * groups * 2
+        || biases.len() != rows * groups * 2
+    {
+        return Err(mismatch(
+            "plane byte lengths disagree with their shapes".to_string(),
+        ));
+    }
+
+    let mask = (1u32 << bits) - 1;
+    let bf16 = |bytes: &[u8], i: usize| {
+        compute::bf16_to_f32(u16::from_le_bytes([bytes[2 * i], bytes[2 * i + 1]]))
+    };
+    let mut out = Vec::with_capacity(rows * cols * 2);
+    let mut lossy = 0usize;
+    for r in 0..rows {
+        for c in 0..cols {
+            let word_at = 4 * (r * words + c / per_word);
+            let word = u32::from_le_bytes([
+                packed[word_at],
+                packed[word_at + 1],
+                packed[word_at + 2],
+                packed[word_at + 3],
+            ]);
+            let q = (word >> (bits * (c % per_word))) & mask;
+            let g = r * groups + c / group;
+            let value = q as f32 * bf16(&scales, g) + bf16(&biases, g);
+            let converted = compute::f32_to_f16(value);
+            let back = compute::f16_to_f32(converted);
+            // The same overflow refusal `convert_raw_to_fp16` applies: the
+            // tower is FP16 end to end and an inf here would reach a kernel.
+            if value.is_finite() && !back.is_finite() {
+                return Err(mismatch(format!(
+                    "dequantized value {value:e} exceeds FP16's 65504 maximum"
+                )));
+            }
+            // Unlike a BF16 source, an affine value is generally NOT exact in
+            // FP16, so this counts ordinary rounding, not only subnormals.
+            if back != value {
+                lossy += 1;
+            }
+            out.extend_from_slice(&converted.to_le_bytes());
+        }
+    }
+    Ok((
+        ConvertedFp16 {
+            bytes: out,
+            dtype: crate::resident_writer::DTYPE_FP16,
+            lossy,
+        },
+        vec![rows as u64, cols as u64],
+    ))
 }
 
 #[cfg(test)]

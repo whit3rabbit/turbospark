@@ -15,6 +15,7 @@ use crate::kv_write::{encode_attention_any, encode_kv_commit, kv_write_target, K
 use crate::real_forward_dispatch::encode_gemv_any;
 use crate::real_forward_types::{DecodeScratch, RealForwardError};
 use crate::real_forward_utils::{entry, norm_view, resident_matrix};
+use crate::vision::RopePosition;
 
 /// Mask-2 layer: gated DeltaNet. Identical dataflow to
 /// `families/qwen/attn.rs::encode_linear_block`, differing in the state
@@ -241,8 +242,8 @@ pub(crate) fn encode_linear_block(
 /// CENTERED (unconditionally -- unlike `families/qwen/attn.rs`, this family
 /// has no plain-norm sibling tensor sharing this call, so there is no
 /// `QkNormConvention` parameter), `rope_neox_subdim` at `rotary_dim = 64`,
-/// text-only (`RopePosition` is always sequential; no mRoPE, since vision
-/// is out of scope for this cut).
+/// or the interleaved mRoPE at an image position whose triple diverges
+/// (`rope`, the same dispatch condition as `families/qwen/attn.rs`).
 ///
 /// **THE INDEXER RUNS EVERY TOKEN; SELECTION RUNS ONLY ABOVE BUDGET.**
 /// Every token projects `index_qk_proj`, stores its raw key in the
@@ -269,6 +270,7 @@ pub(crate) fn encode_full_attention_block(
     kv: &gpu::KvCacheManager,
     layer: usize,
     position: usize,
+    rope: RopePosition,
     pre: Option<&PreProjected>,
 ) -> Result<(), RealForwardError> {
     let gpu_err = RealForwardError::Gpu;
@@ -439,18 +441,46 @@ pub(crate) fn encode_full_attention_block(
         .map_err(gpu_err)?;
     }
 
+    // mRoPE only where the triple diverges, which on a real prompt is image
+    // positions alone; a text token of a mixed prompt keeps the scalar kernel
+    // at `t`, bit-identical at `t == h == w` (`families/qwen/attn.rs` has the
+    // full argument). `position` keeps its KV-slot and attention-span jobs.
+    let mrope = match rope {
+        RopePosition::Sequential => None,
+        RopePosition::Triple(t, h, w) if t == h && h == w => None,
+        RopePosition::Triple(t, h, w) => Some((t as u32, h as u32, w as u32)),
+    };
+    let scalar = match rope {
+        RopePosition::Sequential => position as u32,
+        RopePosition::Triple(t, _, _) => t as u32,
+    };
+    let section = arch.vision.mrope_section;
     for (data, heads) in [((&scratch.q, 0u64), num_heads), ((k_buf, k_off), num_kv)] {
-        gpu::encode_rope_neox_subdim(
-            context,
-            pass,
-            data,
-            position as u32,
-            heads,
-            head_dim,
-            qwen4.rotary_dim,
-            theta,
-        )
-        .map_err(gpu_err)?;
+        match mrope {
+            Some(positions) => gpu::encode_rope_mrope_interleaved(
+                context,
+                pass,
+                data,
+                positions,
+                heads,
+                head_dim,
+                qwen4.rotary_dim,
+                (section[0] as u32, section[1] as u32, section[2] as u32),
+                theta,
+            )
+            .map_err(gpu_err)?,
+            None => gpu::encode_rope_neox_subdim(
+                context,
+                pass,
+                data,
+                scalar,
+                heads,
+                head_dim,
+                qwen4.rotary_dim,
+                theta,
+            )
+            .map_err(gpu_err)?,
+        }
     }
 
     // On a TurboQuant-quantized layer, quantize the staging row into the

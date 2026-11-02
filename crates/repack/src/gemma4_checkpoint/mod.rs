@@ -53,8 +53,9 @@ pub use orchestrate::{
 };
 pub use shards::{Gemma4Shards, GTURBO_PAGE_BYTES};
 pub use vision::{
-    read_vision_entries, vision_arch_for_manifest, vision_should_ingest, VisionRead,
-    BLOCK_ROLES as VISION_BLOCK_ROLES, DEEPSTACK_MERGER_PREFIX as VISION_DEEPSTACK_MERGER_PREFIX,
+    read_vision_entries, read_vision_entries_quantized, vision_arch_for_manifest,
+    vision_should_ingest, VisionRead, BLOCK_ROLES as VISION_BLOCK_ROLES,
+    DEEPSTACK_MERGER_PREFIX as VISION_DEEPSTACK_MERGER_PREFIX,
     DEEPSTACK_MERGER_SUFFIXES as VISION_DEEPSTACK_MERGER_SUFFIXES,
     RESIDENT_TENSORS as VISION_RESIDENT_TENSORS,
 };
@@ -170,7 +171,12 @@ fn write_gemma4_install_streamed_in_place(
     // The same both-writers rule the two arms above carry applies to this one
     // and is stated at the `write_packed_vision` call site.
     let tower = if vision::vision_should_ingest(arch, &plan.vision_bases) {
-        let mut tower = vision::read_vision_entries(shards, &plan.vision_bases, &arch.vision)?;
+        let mut tower = vision::read_vision_entries_quantized(
+            shards,
+            &plan.vision_bases,
+            &arch.vision,
+            Some(quant),
+        )?;
         progress(&format!(
             "ingested a {}-block vision tower ({} resident tensors)",
             tower.blocks.experts.len(),

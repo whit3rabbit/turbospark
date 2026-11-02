@@ -96,6 +96,12 @@ pub fn tiny_vision_config() -> VisionConfig {
 /// arm of `convert_raw_to_fp16` and NOT its conversion arm --
 /// `a_bf16_tower_converts_to_the_same_fp16_bytes` is what covers the other.
 pub(crate) fn vision_tower_tensors() -> Vec<Tensor> {
+    vision_tower_tensors_with_out_hidden(HIDDEN)
+}
+
+/// [`vision_tower_tensors`] for a trunk of width `out_hidden`: only the
+/// merger's `linear_fc2` (`[out_hidden, merger_in]`) and its bias depend on it.
+pub(crate) fn vision_tower_tensors_with_out_hidden(out_hidden: usize) -> Vec<Tensor> {
     let vision = tiny_vision_config();
     let hidden = V_HIDDEN as usize;
     let inter = V_INTER as usize;
@@ -172,17 +178,70 @@ pub(crate) fn vision_tower_tensors() -> Vec<Tensor> {
     ));
     ts.push(f16_matrix(
         &format!("{VISION_PREFIX}merger.linear_fc2.weight"),
-        HIDDEN,
+        out_hidden,
         merger_in,
         8107,
     ));
     ts.push(f16_vector(
         &format!("{VISION_PREFIX}merger.linear_fc2.bias"),
-        HIDDEN,
+        out_hidden,
         0.0,
         8108,
     ));
     ts
+}
+
+/// Rewrites every rank-2 tower matrix whose width divides by 64 as an MLX
+/// affine 4-bit plane at group 64: a `U32` `.weight` plus BF16 `.scales` and
+/// `.biases`, the layout the `qwen4_exp` MLX conversion ships
+/// (`docs/QWEN4EXP_VISION_PHASE0.md` item 1).
+///
+/// The rule is the conversion's own, so the fixture keeps its shape
+/// exceptions: the block `linear_fc2` (96 wide here, 4304 on the real tower)
+/// stays F16, and so does the rank-5 patch embedding. Rows are quantized by
+/// `compute::quantize_int4_affine`, whose nibble order is the MLX one.
+pub(crate) fn quantize_tower_int4(ts: Vec<Tensor>) -> Vec<Tensor> {
+    const GROUP: usize = compute::quant::GROUP_SIZE;
+    let mut out = Vec::with_capacity(ts.len() * 3);
+    for t in ts {
+        let quantizable = t.dtype == "F16"
+            && t.shape.len() == 2
+            && t.name.ends_with(".weight")
+            && t.shape[1] as usize % GROUP == 0;
+        if !quantizable {
+            out.push(t);
+            continue;
+        }
+        let (rows, cols) = (t.shape[0] as usize, t.shape[1] as usize);
+        let groups = cols / GROUP;
+        let (mut packed, mut scales, mut biases) = (Vec::new(), Vec::new(), Vec::new());
+        for r in 0..rows {
+            let row: Vec<f32> = t.bytes[r * cols * 2..(r + 1) * cols * 2]
+                .chunks_exact(2)
+                .map(|b| compute::f16_to_f32(u16::from_le_bytes([b[0], b[1]])))
+                .collect();
+            let q = compute::quantize_int4_affine(&row);
+            packed.extend_from_slice(&q.packed);
+            scales.extend(q.scales.iter().flat_map(|v| v.to_le_bytes()));
+            biases.extend(q.biases.iter().flat_map(|v| v.to_le_bytes()));
+        }
+        let base = t.name.strip_suffix(".weight").expect("checked above");
+        out.push(Tensor {
+            name: t.name.clone(),
+            dtype: "U32",
+            shape: vec![rows as u64, (cols / 8) as u64],
+            bytes: packed,
+        });
+        for (role, bytes) in [("scales", scales), ("biases", biases)] {
+            out.push(Tensor {
+                name: format!("{base}.{role}"),
+                dtype: "BF16",
+                shape: vec![rows as u64, groups as u64],
+                bytes,
+            });
+        }
+    }
+    out
 }
 
 /// `(rows, Some(cols))` for a matrix, `(len, None)` for a vector.
@@ -278,4 +337,103 @@ pub fn build_synthetic_vision_sidecar(
     std::fs::write(dir.join("preprocessor_config.json"), b"{}")?;
 
     Ok(vision)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gemma4_checkpoint::{read_vision_entries_quantized, Gemma4Quant};
+
+    fn read(quantized: bool, quant: Option<&Gemma4Quant>) -> Result<crate::VisionRead, String> {
+        let mut ts = vision_tower_tensors_with_out_hidden(128);
+        if quantized {
+            ts = quantize_tower_int4(ts);
+        }
+        // Companions are skipped by the classifier and read beside their
+        // weight, so the bases are the non-companion names only.
+        let bases: Vec<String> = ts
+            .iter()
+            .map(|t| t.name.clone())
+            .filter(|n| !n.ends_with(".scales") && !n.ends_with(".biases"))
+            .collect();
+        let bases: Vec<&str> = bases.iter().map(String::as_str).collect();
+        let blob = assemble_safetensors(&ts);
+        let source = MemoryRangeSource::new(&blob);
+        let header = parse_header(&blob, DEFAULT_MAX_HEADER_BYTES).unwrap();
+        let shards = Gemma4Shards::single(&header, &source);
+        let mut vision = tiny_vision_config();
+        vision.out_hidden_size = 128;
+        read_vision_entries_quantized(&shards, &bases, &vision, quant).map_err(|e| e.to_string())
+    }
+
+    /// The dequantized tower matches `compute::dequantize_int4_affine` on the
+    /// same rows, byte for byte after the FP16 narrowing, and records the
+    /// LOGICAL shape rather than the packed one.
+    #[test]
+    fn an_affine_tower_dequantizes_to_the_reference_bytes() {
+        let quant = Gemma4Quant::default();
+        let got = read(true, Some(&quant)).expect("a quantized tower ingests");
+        let plain = read(false, None).expect("the F16 tower ingests");
+        assert_eq!(got.blocks.experts.len(), plain.blocks.experts.len());
+        assert_eq!(got.block_stride, plain.block_stride, "same FP16 layout");
+
+        let source = vision_tower_tensors_with_out_hidden(128);
+        let qkv = source
+            .iter()
+            .find(|t| t.name == format!("{VISION_PREFIX}blocks.3.attn.qkv.weight"))
+            .unwrap();
+        let (rows, cols) = (qkv.shape[0] as usize, qkv.shape[1] as usize);
+        let mut want = Vec::new();
+        for r in 0..rows {
+            let row: Vec<f32> = qkv.bytes[r * cols * 2..(r + 1) * cols * 2]
+                .chunks_exact(2)
+                .map(|b| compute::f16_to_f32(u16::from_le_bytes([b[0], b[1]])))
+                .collect();
+            let q = compute::quantize_int4_affine(&row);
+            for v in compute::dequantize_int4_affine(&q, cols) {
+                want.extend_from_slice(&compute::f32_to_f16(v).to_le_bytes());
+            }
+        }
+        let sub = got.blocks.experts[3]
+            .sub_tensors
+            .iter()
+            .find(|s| s.role == "qkv_w")
+            .unwrap();
+        assert_eq!(sub.shape, vec![rows as u64, cols as u64]);
+        assert_eq!(sub.bytes, want);
+
+        // The F16 fc2 passes through untouched, as on the real tower.
+        let fc2 = |r: &crate::VisionRead| {
+            r.blocks.experts[3]
+                .sub_tensors
+                .iter()
+                .find(|s| s.role == "fc2_w")
+                .unwrap()
+                .bytes
+                .clone()
+        };
+        assert_eq!(fc2(&got), fc2(&plain));
+    }
+
+    /// Without a quant config a packed plane is refused by dtype, never read
+    /// as FP16 bytes.
+    #[test]
+    fn a_packed_tower_without_a_quant_config_is_refused() {
+        let err = read(true, None).err().expect("U32 must be refused");
+        assert!(err.contains("U32"), "{err}");
+    }
+
+    /// A quant config that disagrees with the companions' group count is a
+    /// shape refusal, not a silent misread.
+    #[test]
+    fn a_wrong_group_size_is_refused() {
+        let quant = Gemma4Quant {
+            group_size: 32,
+            ..Default::default()
+        };
+        let err = read(true, Some(&quant))
+            .err()
+            .expect("group 32 must be refused");
+        assert!(err.contains("expected BF16"), "{err}");
+    }
 }
