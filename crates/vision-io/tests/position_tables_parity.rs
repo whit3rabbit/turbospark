@@ -28,6 +28,7 @@ fn params(merge_size: usize) -> PreprocessParams {
         image_mean: [0.5; 3],
         image_std: [0.5; 3],
         rescale_factor: 1.0 / 255.0,
+        resize: Default::default(),
     }
 }
 

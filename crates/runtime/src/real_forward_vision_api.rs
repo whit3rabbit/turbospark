@@ -5,6 +5,14 @@ use std::path::Path;
 use crate::real_forward::RealForwardRunner;
 use crate::real_forward_types::RealForwardError;
 
+/// The FP16 residual-stream rows of one LFM3-VL tower run, as raw bits:
+/// `[patches, hidden]` after the patch embedding and after each block.
+#[derive(Debug, Default)]
+pub struct Lfm3VlStageRows {
+    pub patch_embed: Vec<u16>,
+    pub blocks: Vec<Vec<u16>>,
+}
+
 impl RealForwardRunner {
     /// Whether this install declares a vision tower.
     ///
@@ -36,12 +44,19 @@ impl RealForwardRunner {
     /// tower's residency: the blocks stream, so nothing else about the tower
     /// is held between images.
     pub fn vision_slot_bytes(&self) -> Option<u64> {
-        self.vision.as_ref().map(|v| v.slot_bytes)
+        self.vision
+            .as_ref()
+            .map(|v| v.slot_bytes)
+            .or_else(|| self.lfm3_vision.as_ref().map(|v| v.slot_bytes))
     }
 
     /// What the last page's scratch actually allocated.
     pub fn vision_last_scratch_bytes(&self) -> Option<u64> {
-        self.vision.as_ref().map(|v| v.last_scratch_bytes)
+        self.vision
+            .as_ref()
+            .map(|v| v.last_scratch_bytes)
+            .or_else(|| self.qwen25_vision.as_ref().map(|v| v.last_scratch_bytes))
+            .or_else(|| self.muse_vision.as_ref().map(|v| v.last_scratch_bytes))
     }
 
     /// What a page of `seq` patches WOULD cost in scratch, predicted rather
@@ -108,6 +123,20 @@ impl RealForwardRunner {
         image: &turbospark_vision_io::PreprocessedImage,
         params: &turbospark_vision_io::PreprocessParams,
     ) -> Result<crate::vision::VisionEmbedding, RealForwardError> {
+        if self.arch.vision.tower == model_io::VisionTowerKind::Qwen25Vl {
+            return self
+                .encode_image_qwen25(image, params, None)
+                .map(|(e, _)| e);
+        }
+        if self.arch.vision.tower == model_io::VisionTowerKind::Lfm3Vl {
+            return self.encode_image_lfm3(image, params, None);
+        }
+        if self.arch.vision.tower == model_io::VisionTowerKind::MuseGlimmer {
+            return self.encode_image_muse(image, params, None).map(|(e, _)| e);
+        }
+        if self.arch.vision.tower == model_io::VisionTowerKind::MiniCpmV {
+            return self.encode_image_minicpm(image, params, None);
+        }
         self.open_vision_tower()?;
         // Two disjoint fields of `self`, which is what lets the tower take
         // the context mutably while it is itself borrowed mutably.
@@ -127,9 +156,297 @@ impl RealForwardRunner {
         params: &turbospark_vision_io::PreprocessParams,
     ) -> Result<(crate::vision::VisionEmbedding, crate::vision::VisionStages), RealForwardError>
     {
+        if self.arch.vision.tower == model_io::VisionTowerKind::Qwen25Vl {
+            let (embedding, stages) = self.encode_image_qwen25(
+                image,
+                params,
+                Some(crate::vision::VisionStages::default()),
+            )?;
+            return Ok((embedding, stages.expect("requested just above")));
+        }
+        if self.arch.vision.tower == model_io::VisionTowerKind::Lfm3Vl {
+            // The LFM3-VL tower reports the patch embedding and every block's
+            // output; the shared `VisionStages` carries the first and last.
+            let mut stages = crate::vision::lfm3_vl::Lfm3VlStages::default();
+            let embedding = self.encode_image_lfm3(image, params, Some(&mut stages))?;
+            return Ok((
+                embedding,
+                crate::vision::lfm3_vl::into_vision_stages(stages),
+            ));
+        }
+        if self.arch.vision.tower == model_io::VisionTowerKind::MuseGlimmer {
+            let (embedding, stages) = self.encode_image_muse(
+                image,
+                params,
+                Some(crate::vision::VisionStages::default()),
+            )?;
+            return Ok((embedding, stages.expect("requested just above")));
+        }
+        if self.arch.vision.tower == model_io::VisionTowerKind::MiniCpmV {
+            let mut stages = crate::vision::minicpm::MiniCpmStages::default();
+            let embedding = self.encode_image_minicpm(image, params, Some(&mut stages))?;
+            return Ok((
+                embedding,
+                crate::vision::minicpm::into_vision_stages(stages),
+            ));
+        }
         self.open_vision_tower()?;
         let tower = self.vision.as_mut().expect("opened just above");
         tower.run_with_stages(&mut self.context, &self.weights, image, params)
+    }
+
+    /// Whether this install's tower is the MiniCPM-V one, which has its own
+    /// preprocessing and prompt layout and so its own front-end entry,
+    /// [`Self::attach_minicpm_images`].
+    pub fn is_minicpm_vision(&self) -> bool {
+        self.arch.vision.is_active()
+            && self.arch.vision.tower == model_io::VisionTowerKind::MiniCpmV
+    }
+
+    /// The whole MiniCPM-V image path for one turn: preprocess every image,
+    /// expand each rendered `<|image_pad|>` into its `<image_id>`/`<image>`/
+    /// fill/`</image>` run with the canvas positions, run the tower, and hand
+    /// this runner the injection map. Returns the expanded ids to prefill.
+    ///
+    /// `index_ids(k)` is the image ordinal as text tokens and `token_text(id)`
+    /// resolves an id against the TOKENIZER, so a vocabulary that disagrees
+    /// with the kind's constant marker ids is refused here instead of
+    /// splicing ids that name other tokens.
+    ///
+    /// Only the thumbnail is built (no slicing). Combined installs only.
+    pub fn attach_minicpm_images(
+        &mut self,
+        rendered: &[i32],
+        images: &[turbospark_vision_io::Rgb8Image],
+        index_ids: &dyn Fn(usize) -> Vec<i32>,
+        token_text: &dyn Fn(i32) -> Option<String>,
+    ) -> Result<Vec<i32>, RealForwardError> {
+        let bad = |m: String| RealForwardError::Unsupported(m);
+        if !self.is_minicpm_vision() {
+            return Err(bad(
+                "this install's vision tower is not a MiniCPM-V one".to_string()
+            ));
+        }
+        for (id, want) in turbospark_vision_io::MINICPM_MARKER_TOKENS {
+            if token_text(id).as_deref() != Some(want) {
+                return Err(bad(format!(
+                    "token id {id} is {:?} in this tokenizer but the MiniCPM-V prompt layout \
+                     needs {want:?}",
+                    token_text(id)
+                )));
+            }
+        }
+        let path = self.vision_dir().join("preprocessor_config.json");
+        let json =
+            std::fs::read_to_string(&path).map_err(|e| bad(format!("{}: {e}", path.display())))?;
+        let params = turbospark_vision_io::MiniCpmParams::from_preprocessor_config_json(&json)
+            .map_err(|e| bad(format!("{}: {e}", path.display())))?;
+        let prepared = images
+            .iter()
+            .enumerate()
+            .map(|(k, image)| {
+                turbospark_vision_io::minicpm_preprocess(image, &params)
+                    .map_err(|e| bad(format!("image {k}: {e}")))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let v = &self.arch.vision;
+        let ids = turbospark_vision_io::MiniCpmIds::new(
+            v.image_token_id as i32,
+            v.vision_start_token_id as i32,
+            v.vision_end_token_id as i32,
+        );
+        let grids: Vec<_> = prepared.iter().map(|p| p.grid).collect();
+        let spliced =
+            turbospark_vision_io::minicpm_splice_and_positions(rendered, &grids, &ids, index_ids)
+                .map_err(|e| {
+                bad(format!(
+                    "cannot place {} image(s) in this prompt: {e}; the template renders one \
+                         <|image_pad|> per image, so check the messages carry image parts",
+                    images.len()
+                ))
+            })?;
+        let tower_params = params.as_preprocess_params();
+        let mut embeddings = Vec::with_capacity(prepared.len());
+        for (k, p) in prepared.iter().enumerate() {
+            embeddings.push(
+                self.encode_image(p, &tower_params)
+                    .map_err(|e| bad(format!("image {k}: {e}")))?,
+            );
+        }
+        self.set_prompt_vision(&embeddings, &spliced.positions, spliced.ids.len())?;
+        Ok(spliced.ids)
+    }
+
+    /// A `minicpm_v` tower's embedding, with the stages the parity test reads
+    /// when `stages` is `Some`. Combined installs only: a sidecar cannot pair
+    /// this tower safely, so an attached one is refused by name.
+    pub(crate) fn encode_image_minicpm(
+        &mut self,
+        image: &turbospark_vision_io::PreprocessedImage,
+        params: &turbospark_vision_io::PreprocessParams,
+        stages: Option<&mut crate::vision::minicpm::MiniCpmStages>,
+    ) -> Result<crate::vision::VisionEmbedding, RealForwardError> {
+        if !self.arch.vision.is_active() {
+            return Err(RealForwardError::Unsupported(
+                "this install declares no vision tower; repack the checkpoint with its \
+                 vision_tower.* tensors to get one"
+                    .to_string(),
+            ));
+        }
+        if self.vision_sidecar_dir.is_some() {
+            return Err(RealForwardError::Unsupported(
+                "a minicpm_v vision tower cannot run from a sidecar".to_string(),
+            ));
+        }
+        if self.minicpm_vision.is_none() {
+            self.minicpm_vision = Some(crate::vision::minicpm::MiniCpmVisionTower::open(
+                &self.install_dir,
+                &self.context,
+                &self.weights,
+                &self.index,
+                &self.arch,
+            )?);
+        }
+        let tower = self.minicpm_vision.as_mut().expect("opened just above");
+        tower.run(&mut self.context, &self.weights, image, params, stages)
+    }
+
+    /// An `lfm3_vl` tower's embedding plus the FP16 residual stream after the
+    /// patch embedding and after EVERY block, for the cross-engine probe
+    /// (`scripts/lfm3_vl_tower_probe.py`). Diagnostic: the ordinary entry
+    /// point pays none of the readbacks.
+    ///
+    /// Combined installs only: the sidecar format has no LFM3-VL pairing yet,
+    /// so a sidecar-attached trunk is refused by name rather than opened
+    /// against the wrong weights.
+    #[doc(hidden)]
+    pub fn encode_image_lfm3_stages(
+        &mut self,
+        image: &turbospark_vision_io::PreprocessedImage,
+        params: &turbospark_vision_io::PreprocessParams,
+    ) -> Result<(crate::vision::VisionEmbedding, Lfm3VlStageRows), RealForwardError> {
+        let mut stages = crate::vision::lfm3_vl::Lfm3VlStages::default();
+        let embedding = self.encode_image_lfm3(image, params, Some(&mut stages))?;
+        Ok((
+            embedding,
+            Lfm3VlStageRows {
+                patch_embed: stages.patch_embed,
+                blocks: stages.blocks,
+            },
+        ))
+    }
+
+    fn encode_image_lfm3(
+        &mut self,
+        image: &turbospark_vision_io::PreprocessedImage,
+        params: &turbospark_vision_io::PreprocessParams,
+        stages: Option<&mut crate::vision::lfm3_vl::Lfm3VlStages>,
+    ) -> Result<crate::vision::VisionEmbedding, RealForwardError> {
+        if !self.arch.vision.is_active() {
+            return Err(RealForwardError::Unsupported(
+                "this install declares no vision tower; repack the checkpoint with its \
+                 vision_tower.* tensors to get one"
+                    .to_string(),
+            ));
+        }
+        if self.vision_sidecar_dir.is_some() {
+            return Err(RealForwardError::Unsupported(
+                "an lfm3_vl vision tower cannot run from a sidecar yet".to_string(),
+            ));
+        }
+        if self.lfm3_vision.is_none() {
+            self.lfm3_vision = Some(crate::vision::lfm3_vl::Lfm3VlVisionTower::open(
+                &self.install_dir,
+                &self.context,
+                &self.index,
+                &self.arch,
+            )?);
+        }
+        let tower = self.lfm3_vision.as_mut().expect("opened just above");
+        tower.run(&mut self.context, &self.weights, image, params, stages)
+    }
+
+    /// The Muse-Glimmer arm of [`Self::encode_image`]: the same
+    /// [`crate::vision::VisionEmbedding`] as the other towers, so the prompt
+    /// builders and [`Self::set_prompt_vision`] are shared.
+    fn encode_image_muse(
+        &mut self,
+        image: &turbospark_vision_io::PreprocessedImage,
+        params: &turbospark_vision_io::PreprocessParams,
+        capture: Option<crate::vision::VisionStages>,
+    ) -> Result<
+        (
+            crate::vision::VisionEmbedding,
+            Option<crate::vision::VisionStages>,
+        ),
+        RealForwardError,
+    > {
+        if !self.arch.vision.is_active() {
+            return Err(RealForwardError::Unsupported(
+                "this install declares no vision tower; repack the checkpoint with its \
+                 vision tensors to get one"
+                    .to_string(),
+            ));
+        }
+        if self.muse_vision.is_none() {
+            self.muse_vision = Some(match &self.vision_sidecar_dir {
+                Some(dir) => crate::vision::muse::MuseVisionTower::open_with_sidecar(
+                    dir,
+                    &self.context,
+                    &self.arch,
+                )?,
+                None => crate::vision::muse::MuseVisionTower::open(
+                    &self.install_dir,
+                    &self.context,
+                    &self.weights,
+                    &self.index,
+                    &self.arch,
+                )?,
+            });
+        }
+        let tower = self.muse_vision.as_mut().expect("opened just above");
+        tower.run(&mut self.context, &self.weights, image, params, capture)
+    }
+
+    /// The Qwen2.5-VL arm of [`Self::encode_image`]: the same
+    /// [`crate::vision::VisionEmbedding`], so the prompt builders and
+    /// [`Self::set_prompt_vision`] are shared with the qwen3 tower.
+    fn encode_image_qwen25(
+        &mut self,
+        image: &turbospark_vision_io::PreprocessedImage,
+        params: &turbospark_vision_io::PreprocessParams,
+        capture: Option<crate::vision::VisionStages>,
+    ) -> Result<
+        (
+            crate::vision::VisionEmbedding,
+            Option<crate::vision::VisionStages>,
+        ),
+        RealForwardError,
+    > {
+        if !self.arch.vision.is_active() {
+            return Err(RealForwardError::Unsupported(
+                "this install declares no vision tower; repack the checkpoint with its \
+                 vision_tower.* tensors to get one"
+                    .to_string(),
+            ));
+        }
+        if self.qwen25_vision.is_none() {
+            self.qwen25_vision = Some(match &self.vision_sidecar_dir {
+                Some(dir) => crate::vision::qwen25::Qwen25VisionTower::open_with_sidecar(
+                    dir,
+                    &self.context,
+                    &self.arch,
+                )?,
+                None => crate::vision::qwen25::Qwen25VisionTower::open(
+                    &self.install_dir,
+                    &self.context,
+                    &self.index,
+                    &self.arch,
+                )?,
+            });
+        }
+        let tower = self.qwen25_vision.as_mut().expect("opened just above");
+        tower.run(&mut self.context, &self.weights, image, params, capture)
     }
 
     /// Hand this runner one prompt's image rows and mRoPE position table, so
@@ -397,7 +714,11 @@ impl RealForwardRunner {
     /// on its own tell "the sidecar path ran and produced this" apart from
     /// "the sidecar path silently fell through to the trunk's own tower".
     pub fn vision_is_sidecar(&self) -> Option<bool> {
-        self.vision.as_ref().map(|v| v.is_sidecar())
+        self.vision
+            .as_ref()
+            .map(|v| v.is_sidecar())
+            .or_else(|| self.qwen25_vision.as_ref().map(|v| v.is_sidecar()))
+            .or_else(|| self.muse_vision.as_ref().map(|v| v.is_sidecar()))
     }
 
     /// Free the vision tower's open resources, without forgetting a sidecar
@@ -428,6 +749,276 @@ impl RealForwardRunner {
     pub fn release_vision_tower(&mut self) {
         self.vision = None;
         self.gemma4_vision = None;
+        self.qwen25_vision = None;
+        self.lfm3_vision = None;
+        self.clip_vision = None;
+        self.muse_vision = None;
+        self.minicpm_vision = None;
+        self.pixtral_vision = None;
+        self.siglip_vision = None;
+    }
+
+    /// `(marker, fill)` for a LLaVA prompt, read off the install, or `None`
+    /// when this install's tower is not a CLIP one.
+    ///
+    /// `marker` is the id the template's bare `<image>` tokenizes to (LLaVA
+    /// has no start or end token around an image). `fill` is what the
+    /// expanded run carries: the marker itself when the trunk's table has a
+    /// row for it, else id 0. The GGUF trunks carry 32,000 rows against the
+    /// marker's 32,000, and the trunk range-checks every id before the blit
+    /// that replaces its lookup (`docs/LLAVA_VISION_PHASE0.md`).
+    pub fn clip_image_ids(&self) -> Option<(i32, i32)> {
+        let v = &self.arch.vision;
+        if !(v.is_active()
+            && matches!(
+                v.tower,
+                model_io::VisionTowerKind::Clip | model_io::VisionTowerKind::Pixtral
+            ))
+        {
+            return None;
+        }
+        let marker = v.image_token_id as i32;
+        let fill = if i64::from(marker) < self.arch.vocab_size {
+            marker
+        } else {
+            0
+        };
+        Some((marker, fill))
+    }
+
+    /// `([IMG_BREAK], [IMG_END])` for a Pixtral prompt, read off the install
+    /// (the manifest records them in the tower's start and end id fields), or
+    /// `None` when this install's tower is not a Pixtral one. Their presence
+    /// is what makes a flat-injection prompt use Pixtral's row layout.
+    pub fn pixtral_break_end_ids(&self) -> Option<(i32, i32)> {
+        let v = &self.arch.vision;
+        (v.is_active() && v.tower == model_io::VisionTowerKind::Pixtral)
+            .then_some((v.vision_start_token_id as i32, v.vision_end_token_id as i32))
+    }
+
+    /// Encode one image through this install's CLIP or Pixtral tower:
+    /// `[patches, text_hidden]` FP16 bits, row-major over the image's grid.
+    ///
+    /// The tower opens lazily on the first image, from the attached sidecar
+    /// when there is one and from the install otherwise. Inject the rows with
+    /// [`Self::set_prompt_vision_flat`].
+    pub fn encode_image_clip(
+        &mut self,
+        patches: &turbospark_vision_io::ClipPatches,
+    ) -> Result<Vec<u16>, RealForwardError> {
+        self.open_clip_tower()?;
+        if self.arch.vision.tower == model_io::VisionTowerKind::Pixtral {
+            let tower = self.pixtral_vision.as_mut().expect("opened just above");
+            return tower
+                .run(&mut self.context, &self.weights, patches, false)
+                .map(|(rows, _)| rows);
+        }
+        let tower = self.clip_vision.as_mut().expect("opened just above");
+        tower
+            .run(&mut self.context, &self.weights, patches, false)
+            .map(|(rows, _)| rows)
+    }
+
+    /// [`Self::encode_image_clip`] plus the residual stream at three points,
+    /// for the cross-engine parity gate. Diagnostic: the ordinary entry point
+    /// pays none of the three readbacks.
+    pub fn encode_image_clip_with_stages(
+        &mut self,
+        patches: &turbospark_vision_io::ClipPatches,
+    ) -> Result<(Vec<u16>, crate::vision::ClipStages), RealForwardError> {
+        self.open_clip_tower()?;
+        let (rows, stages) = if self.arch.vision.tower == model_io::VisionTowerKind::Pixtral {
+            let tower = self.pixtral_vision.as_mut().expect("opened just above");
+            tower.run(&mut self.context, &self.weights, patches, true)?
+        } else {
+            let tower = self.clip_vision.as_mut().expect("opened just above");
+            tower.run(&mut self.context, &self.weights, patches, true)?
+        };
+        Ok((rows, stages.expect("requested just above")))
+    }
+
+    fn open_clip_tower(&mut self) -> Result<(), RealForwardError> {
+        if self.arch.vision.tower == model_io::VisionTowerKind::Pixtral
+            && self.arch.vision.is_active()
+        {
+            if self.pixtral_vision.is_none() {
+                self.pixtral_vision = Some(match &self.vision_sidecar_dir {
+                    Some(dir) => crate::vision::pixtral::PixtralVisionTower::open_with_sidecar(
+                        dir,
+                        &self.context,
+                        &self.arch,
+                    )?,
+                    None => crate::vision::pixtral::PixtralVisionTower::open(
+                        &self.install_dir,
+                        &self.context,
+                        &self.index,
+                        &self.arch,
+                    )?,
+                });
+            }
+            return Ok(());
+        }
+        if self.arch.vision.tower != model_io::VisionTowerKind::Clip
+            || !self.arch.vision.is_active()
+        {
+            return Err(RealForwardError::Unsupported(
+                "this install declares no CLIP or Pixtral vision tower".to_string(),
+            ));
+        }
+        if self.clip_vision.is_none() {
+            self.clip_vision = Some(match &self.vision_sidecar_dir {
+                Some(dir) => crate::vision::clip::ClipVisionTower::open_with_sidecar(
+                    dir,
+                    &self.context,
+                    &self.arch,
+                )?,
+                None => crate::vision::clip::ClipVisionTower::open(
+                    &self.install_dir,
+                    &self.context,
+                    &self.weights,
+                    &self.index,
+                    &self.arch,
+                )?,
+            });
+        }
+        Ok(())
+    }
+
+    /// `(marker, fill)` for a DeepSeek-VL2 prompt, or `None` when this
+    /// install's tower is not a SigLIP one.
+    ///
+    /// `marker` is `<image>`'s id (128815). The expanded run is filled with
+    /// the marker itself: the trunk's table has 129,280 rows, so the id is in
+    /// range and its lookup is replaced by the injected row anyway.
+    pub fn siglip_image_ids(&self) -> Option<(i32, i32)> {
+        let v = &self.arch.vision;
+        if !(v.is_active() && v.tower == model_io::VisionTowerKind::SigLip) {
+            return None;
+        }
+        let marker = v.image_token_id as i32;
+        let fill = if i64::from(marker) < self.arch.vocab_size {
+            marker
+        } else {
+            0
+        };
+        Some((marker, fill))
+    }
+
+    /// Encode one image through this install's SigLIP tower
+    /// (`docs/DEEPSEEK_VL2_VISION_PHASE0.md`): `[image_tokens, text_hidden]`
+    /// FP16 bits, the whole run that replaces the placeholders (projector
+    /// rows with the learned newline and separator rows interleaved).
+    ///
+    /// The tower opens lazily on the first image, from the attached sidecar
+    /// when there is one and from the install otherwise. Inject the rows with
+    /// [`Self::set_prompt_vision_flat`].
+    pub fn encode_image_siglip(
+        &mut self,
+        tiles: &turbospark_vision_io::DeepseekVl2Tiles,
+    ) -> Result<Vec<u16>, RealForwardError> {
+        self.open_siglip_tower()?;
+        let tower = self.siglip_vision.as_mut().expect("opened just above");
+        tower
+            .run(&mut self.context, &self.weights, tiles, false)
+            .map(|(rows, _)| rows)
+    }
+
+    /// [`Self::encode_image_siglip`] plus the residual stream at the points the
+    /// cross-engine gate compares. Diagnostic: the ordinary entry point pays
+    /// none of the readbacks.
+    pub fn encode_image_siglip_with_stages(
+        &mut self,
+        tiles: &turbospark_vision_io::DeepseekVl2Tiles,
+    ) -> Result<(Vec<u16>, crate::vision::SiglipStages), RealForwardError> {
+        self.open_siglip_tower()?;
+        let tower = self.siglip_vision.as_mut().expect("opened just above");
+        let (rows, stages) = tower.run(&mut self.context, &self.weights, tiles, true)?;
+        Ok((rows, stages.expect("requested just above")))
+    }
+
+    fn open_siglip_tower(&mut self) -> Result<(), RealForwardError> {
+        if self.arch.vision.tower != model_io::VisionTowerKind::SigLip
+            || !self.arch.vision.is_active()
+        {
+            return Err(RealForwardError::Unsupported(
+                "this install declares no SigLIP vision tower".to_string(),
+            ));
+        }
+        if self.siglip_vision.is_none() {
+            self.siglip_vision = Some(match &self.vision_sidecar_dir {
+                Some(dir) => crate::vision::siglip::SiglipVisionTower::open_with_sidecar(
+                    dir,
+                    &self.context,
+                    &self.arch,
+                )?,
+                None => crate::vision::siglip::SiglipVisionTower::open(
+                    &self.install_dir,
+                    &self.context,
+                    &self.weights,
+                    &self.index,
+                    &self.arch,
+                )?,
+            });
+        }
+        Ok(())
+    }
+
+    /// Hand this runner one prompt's CLIP image rows: one `[span.len,
+    /// text_hidden]` FP16 row set per placeholder run, in prompt order. The
+    /// next prefill writes them in place of the placeholders' embeddings.
+    ///
+    /// Positions are the plain token index (LLaVA has no mRoPE), so the
+    /// trunk's rotary stays on its ordinary kernel; the injection is the
+    /// embedding blit alone and attention over the image run is causal like
+    /// any other text. The same lifetime and prefix-taint rules as
+    /// [`Self::set_prompt_vision`].
+    pub fn set_prompt_vision_flat(
+        &mut self,
+        images: &[Vec<u16>],
+        spans: &[turbospark_vision_io::ImageSpan],
+        prompt_len: usize,
+    ) -> Result<(), RealForwardError> {
+        let tower = self.arch.vision.tower;
+        if !matches!(
+            tower,
+            model_io::VisionTowerKind::Clip
+                | model_io::VisionTowerKind::Pixtral
+                | model_io::VisionTowerKind::SigLip
+        ) {
+            return Err(RealForwardError::Unsupported(
+                "set_prompt_vision_flat needs a CLIP, Pixtral or SigLIP vision tower".to_string(),
+            ));
+        }
+        let hidden = self.arch.hidden_size as usize;
+        // Pixtral's prompt has one span per patch ROW (the break and end tokens
+        // between rows keep their own embeddings), while the tower returns an
+        // image's rows whole: split them across the spans in order.
+        let rows_by_span;
+        let images = if tower == model_io::VisionTowerKind::Pixtral {
+            rows_by_span = crate::vision::pixtral::split_rows_by_span(images, spans, hidden)?;
+            &rows_by_span[..]
+        } else {
+            images
+        };
+        self.prompt_vision = Some(crate::vision::PromptVision::flat(
+            images, spans, prompt_len, hidden,
+        )?);
+        self.kv_prefix.taint();
+        Ok(())
+    }
+
+    /// `(image_start, image_end)` for a tower whose chat template renders a
+    /// BARE placeholder per image, or `None` when the template renders the
+    /// markers itself.
+    ///
+    /// Muse-Glimmer's template emits only `<|patch|>`; its processor wraps the
+    /// expanded run in `<|image_start|>` and `<|image_end|>`, so a front end
+    /// has to do that wrap on the rendered ids before the splice
+    /// (`turbospark_vision_io::wrap_bare_image_placeholders`).
+    pub fn image_wrap_ids(&self) -> Option<(i32, i32)> {
+        let v = &self.arch.vision;
+        (v.is_active() && v.tower == model_io::VisionTowerKind::MuseGlimmer)
+            .then_some((v.vision_start_token_id as i32, v.vision_end_token_id as i32))
     }
 
     /// The three ids a Gemma 4 image occupies in a prompt, read off the
@@ -488,9 +1079,20 @@ impl RealForwardRunner {
 fn qwen_tower_only(vision: &model_io::VisionConfig) -> Result<(), RealForwardError> {
     match vision.tower {
         model_io::VisionTowerKind::QwenSiglip => Ok(()),
+        model_io::VisionTowerKind::MuseGlimmer => Err(RealForwardError::Unsupported(
+            "this install's vision tower is muse_glimmer; it opens through encode_image, \
+             which routes to the Muse-Glimmer tower"
+                .to_string(),
+        )),
+        model_io::VisionTowerKind::Qwen25Vl => Err(RealForwardError::Unsupported(
+            "this install's vision tower is qwen25_vl; it opens through encode_image, which \
+             routes to the Qwen2.5-VL tower"
+                .to_string(),
+        )),
         other => Err(RealForwardError::Unsupported(format!(
             "this install's vision tower is {}; encode its images with \
-             encode_image_gemma4 and inject them with set_prompt_vision_gemma4",
+             encode_image_gemma4 / encode_image_clip and inject them with \
+             set_prompt_vision_gemma4 / set_prompt_vision_flat",
             other.as_str()
         ))),
     }

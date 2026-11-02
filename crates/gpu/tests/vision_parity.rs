@@ -225,6 +225,42 @@ fn both_gelus_match_their_cpu_references() {
     }
 }
 
+/// CLIP's `quick_gelu` against its closed form, over both saturating tails and
+/// the region where it departs furthest from the tanh form (a mutation that
+/// reused the tanh kernel moves values by ~1e-2 here, far over the bound).
+#[test]
+fn quick_gelu_matches_its_closed_form_and_is_not_the_tanh_form() {
+    let mut context = MetalContext::new().expect("Metal device");
+    let n = 512usize;
+    let x: Vec<f32> = (0..n).map(|i| (i as f32 - 256.0) * 0.04).collect();
+    let xr: Vec<f32> = half_of(&x).iter().map(|v| v.to_f32()).collect();
+    let cpu: Vec<f32> = xr
+        .iter()
+        .map(|&v| (v as f64 / (1.0 + (-1.702 * v as f64).exp())) as f32)
+        .collect();
+
+    let buf = context.new_buffer_with_data(&to_le(&half_of(&x)));
+    let pass = context.begin_pass();
+    encode_vision_gelu(&mut context, &pass, (&buf, 0), n as u32, GeluKind::Quick).expect("encode");
+    pass.commit_and_wait();
+    let gpu = read_f16(&buf, n);
+    let (err, at) = worst(&gpu, &cpu);
+    assert!(
+        err <= fp16_bound(&cpu),
+        "quick: worst {err} at x={}: gpu {} cpu {}",
+        xr[at],
+        gpu[at],
+        cpu[at]
+    );
+
+    let tanh = gelu_tanh_vision(&xr);
+    let (gap, _) = worst(&gpu, &tanh);
+    assert!(
+        gap > 5e-3,
+        "quick GELU is indistinguishable from tanh: {gap}"
+    );
+}
+
 #[test]
 fn the_two_gelu_kernels_are_different_pipelines() {
     // THE TRAP THIS GUARDS is `crates/gpu` Gotcha 1: if the two shared one

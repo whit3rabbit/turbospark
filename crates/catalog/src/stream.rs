@@ -204,6 +204,11 @@ pub(crate) fn stream_mlx(
         }
         ModelFamily::Flint => repack::parse_flint_config(&config_text).map_err(|e| e.to_string()),
         ModelFamily::Lfm3 => repack::parse_lfm3_config(&config_text).map_err(|e| e.to_string()),
+        // The `deepseek2` family's MLX route is the DeepSeek-VL2 trunk only
+        // (plain attention); an MLA V2/V3 MLX repo is refused by the parser.
+        ModelFamily::Deepseek2 => {
+            repack::parse_deepseek_vl2_config(&config_text).map_err(|e| e.to_string())
+        }
         other => Err(format!("{} has no safetensors intake here", other.as_str())),
     }?;
     enable_requested_vision(plan, family, &mut arch, &config_text)?;
@@ -297,6 +302,11 @@ pub(crate) fn stream_mlx(
             repack::canonicalize_qwen2_header(header).map_err(|e| e.to_string())?;
         }
     }
+    if family == ModelFamily::Deepseek2 {
+        for header in &mut headers {
+            repack::canonicalize_deepseek_vl2_header(header).map_err(|e| e.to_string())?;
+        }
+    }
     // Flint: namespace rename AND the U8-to-U32 re-labelling its packed
     // weights need before the shared walk can read them.
     if family == ModelFamily::Flint {
@@ -315,7 +325,10 @@ pub(crate) fn stream_mlx(
     // passes through untouched.
     if matches!(
         family,
-        ModelFamily::QwenGdnDense | ModelFamily::QwenGdnMoe | ModelFamily::Qwen3Vl
+        ModelFamily::QwenGdnDense
+            | ModelFamily::QwenGdnMoe
+            | ModelFamily::Qwen3Vl
+            | ModelFamily::Qwen2Dense
     ) {
         for header in &mut headers {
             repack::canonicalize_vision_header(header).map_err(|e| e.to_string())?;
@@ -329,7 +342,7 @@ pub(crate) fn stream_mlx(
     // is an answer too, so this is gated on `plan.vision_from_bytes`.
     enable_bytes_detected_vision(plan, family, &mut arch, &headers, &config_text)?;
     if arch.vision.is_active() {
-        install_vision_preprocessor(plan, dir, client)?;
+        install_vision_preprocessor(plan, family, dir, client)?;
     }
 
     // A separate repository carrying a multi-token-prediction head this
@@ -416,6 +429,9 @@ pub(crate) fn stream_mlx(
         ModelFamily::Lfm3 => {
             repack::write_lfm3_install_streamed(dir, &arch, &model_id, &shards, &quant, report)
         }
+        ModelFamily::Deepseek2 => repack::write_deepseek_vl2_install_streamed(
+            dir, &arch, &model_id, &shards, &quant, report,
+        ),
         other => Err(Box::<dyn std::error::Error>::from(format!(
             "{} has no safetensors writer here",
             other.as_str()
@@ -448,14 +464,17 @@ fn enable_requested_vision(
             | ModelFamily::QwenGdnMoe
             | ModelFamily::Qwen3Vl
             | ModelFamily::Qwen4Exp
+            | ModelFamily::Qwen2Dense
+            | ModelFamily::Lfm3
+            | ModelFamily::MuseGlimmer
     ) {
         return Err(format!(
             "{}: combined vision ingestion is only wired for the qwen35 dense, qwen36 MoE, \
-             qwen3_vl and qwen4_exp trunks",
+             qwen3_vl, qwen4_exp, qwen2 (Qwen2.5-VL), lfm3 and muse_glimmer trunks",
             plan.alias
         ));
     }
-    let vision = repack::parse_vision_config(config_text).map_err(|e| e.to_string())?;
+    let vision = parse_vision_for_family(family, config_text).map_err(|e| e.to_string())?;
     if !vision.is_active() {
         return Err(format!(
             "{}: catalog row requests vision, but config.json declares no vision_config",
@@ -470,6 +489,20 @@ fn enable_requested_vision(
     }
     arch.vision = vision;
     Ok(())
+}
+
+/// The family's vision-config reader. The `lfm3` trunk carries its own tower
+/// kind (`docs/LFM3_VL_VISION_PHASE0.md`); every other ingesting family reads
+/// the Qwen SigLIP-class tower.
+fn parse_vision_for_family(
+    family: ModelFamily,
+    config_text: &str,
+) -> Result<model_io::VisionConfig, repack::Gemma4Error> {
+    if family == ModelFamily::Lfm3 {
+        repack::parse_lfm3_vl_vision_config(config_text)
+    } else {
+        repack::parse_vision_config(config_text)
+    }
 }
 
 /// Detect a combined vision tower from the checkpoint's BYTES and enable it
@@ -513,7 +546,12 @@ fn enable_bytes_detected_vision(
     // install does not carry).
     if !matches!(
         family,
-        ModelFamily::QwenGdnDense | ModelFamily::QwenGdnMoe | ModelFamily::Qwen3Vl
+        ModelFamily::QwenGdnDense
+            | ModelFamily::QwenGdnMoe
+            | ModelFamily::Qwen3Vl
+            | ModelFamily::Qwen2Dense
+            | ModelFamily::Lfm3
+            | ModelFamily::MuseGlimmer
     ) {
         return Ok(());
     }
@@ -537,7 +575,7 @@ fn enable_bytes_detected_vision(
     // an inconsistency in the checkpoint itself, and the walk refuses by name
     // rather than silently dropping a third of the tensors -- which is
     // precisely the behavior this function exists to replace.
-    let vision = repack::parse_vision_config(config_text).map_err(|e| {
+    let vision = parse_vision_for_family(family, config_text).map_err(|e| {
         format!(
             "{}: the checkpoint ships {} vision_tower tensors, but its config.json does not \
              describe a tower this port supports: {e}",
@@ -588,10 +626,14 @@ fn enable_bytes_detected_vision(
 /// `probe`'s own 401 case, not a missing file).
 fn install_vision_preprocessor(
     plan: &InstallPlan,
+    family: ModelFamily,
     dir: &Path,
     client: &Client,
 ) -> Result<(), String> {
-    let fetched = client
+    if family == ModelFamily::Lfm3 {
+        return install_lfm3_preprocessor(plan, dir, client);
+    }
+    let mut fetched = client
         .get_optional(&plan.weights.file_url("preprocessor_config.json"))
         .map_err(|e| {
             format!(
@@ -601,11 +643,97 @@ fn install_vision_preprocessor(
                 plan.weights
             )
         });
+    // Muse-Glimmer ships `processor_config.json` instead, with the image
+    // processor's keys nested under `image_processor`; this port reads the
+    // flat spelling, so the nested object is written out as the file the
+    // readers look for.
+    if matches!(fetched, Ok(None)) {
+        if let Ok(Some(bytes)) =
+            client.get_optional(&plan.weights.file_url("processor_config.json"))
+        {
+            if let Some(flat) = flatten_processor_config(&bytes) {
+                fetched = Ok(Some(flat));
+            }
+        }
+    }
     write_vision_preprocessor(
         &plan.weights,
         &dir.join("preprocessor_config.json"),
         fetched,
     )
+}
+
+/// LFM3-VL ships no `preprocessor_config.json`: its image settings are the
+/// `image_processor` object of `processor_config.json`, which has exactly the
+/// flat keys the preprocessor reader takes (`patch_size`,
+/// `temporal_patch_size`, `merge_size`, `size`, `image_mean`, `image_std`,
+/// `rescale_factor`). This writes that object under the name every image
+/// consumer reads.
+fn install_lfm3_preprocessor(
+    plan: &InstallPlan,
+    dir: &Path,
+    client: &Client,
+) -> Result<(), String> {
+    let dest = dir.join("preprocessor_config.json");
+    if dest.is_file() {
+        return Ok(());
+    }
+    let fetched = client
+        .get_optional(&plan.weights.file_url("processor_config.json"))
+        .map_err(|e| {
+            format!(
+                "fetching processor_config.json from {}: {e}. If this is a gated repository \
+                 refusing an unauthenticated request rather than a missing file, export \
+                 HF_TOKEN and re-run.",
+                plan.weights
+            )
+        })?;
+    let bytes = fetched.ok_or_else(|| {
+        format!(
+            "{} ships a vision tower but no processor_config.json; this port cannot \
+             preprocess images for it, so the combined install is refused",
+            plan.weights
+        )
+    })?;
+    let flat = lfm3_preprocessor_json(&bytes)?;
+    std::fs::write(&dest, flat).map_err(|e| format!("writing {}: {e}", dest.display()))
+}
+
+/// The `image_processor` object of an LFM3-VL `processor_config.json`, as the
+/// flat document the preprocessor reader takes. Refuses a file lacking the
+/// object or any key the reader requires, by name.
+fn lfm3_preprocessor_json(processor_config: &[u8]) -> Result<Vec<u8>, String> {
+    let root: serde_json::Value = serde_json::from_slice(processor_config)
+        .map_err(|e| format!("parsing processor_config.json: {e}"))?;
+    let image = root
+        .get("image_processor")
+        .filter(|v| v.is_object())
+        .ok_or_else(|| "processor_config.json has no image_processor object".to_string())?;
+    for key in [
+        "patch_size",
+        "temporal_patch_size",
+        "merge_size",
+        "size",
+        "image_mean",
+        "image_std",
+    ] {
+        if image.get(key).is_none() {
+            return Err(format!(
+                "processor_config.json image_processor has no {key}"
+            ));
+        }
+    }
+    serde_json::to_vec_pretty(image).map_err(|e| e.to_string())
+}
+
+/// The `image_processor` object of a `processor_config.json`, serialized as a
+/// standalone `preprocessor_config.json`. `None` when the document has no such
+/// object, so a file that is not an image-processor wrapper is not written
+/// out as one.
+pub(crate) fn flatten_processor_config(bytes: &[u8]) -> Option<Vec<u8>> {
+    let root: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+    let inner = root.get("image_processor")?.as_object()?;
+    serde_json::to_vec_pretty(inner).ok()
 }
 
 /// The decision half of [`install_vision_preprocessor`], split so the
@@ -778,6 +906,36 @@ pub(crate) fn fetch_prefixed_shards(
         }
         None => BTreeSet::new(),
     };
+    if shard_names.is_empty() && explicit_file.is_none() && indexed.is_some() {
+        // A STALE INDEX: it named shards the repo no longer has (the
+        // `mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit` index names 13
+        // shards, in the HF-native spelling, while the repo holds 4 that
+        // carry `vision_tower.`). The repo's real shard list is the next
+        // honest source, and each candidate's header says whether it holds a
+        // tensor under the prefixes. Falling straight through to
+        // `model.safetensors` would 404.
+        if let Ok(files) = client.file_list(repo) {
+            for name in files.iter().filter(|f| f.ends_with(".safetensors")) {
+                let source = range_source(
+                    repo.file_url(name),
+                    byte_progress,
+                    client,
+                    cancel,
+                    cache_dir,
+                );
+                let Ok(header) = repack::fetch_safetensors_header(&source) else {
+                    continue;
+                };
+                if header
+                    .tensors
+                    .keys()
+                    .any(|t| prefixes.iter().any(|p| t.starts_with(p)))
+                {
+                    shard_names.insert(name.clone());
+                }
+            }
+        }
+    }
     if shard_names.is_empty() {
         match explicit_file {
             Some(file) => {
@@ -858,12 +1016,74 @@ pub(crate) fn stream_vision_sidecar(
     let config: serde_json::Value =
         serde_json::from_str(&config_text).map_err(|e| format!("parsing config.json: {e}"))?;
 
+    // A LLaVA checkpoint is not a family this port has a safetensors trunk
+    // intake for (the `llama` family installs from GGUF), so it cannot go
+    // through `config_json_family` below. Its tower is a sidecar of that
+    // GGUF trunk (`docs/LLAVA_VISION_PHASE0.md`).
+    if config.get("model_type").and_then(|m| m.as_str()) == Some(repack::LLAVA_MODEL_TYPE) {
+        return stream_clip_vision_sidecar(
+            weights,
+            out_dir,
+            explicit_file,
+            client,
+            progress,
+            byte_progress,
+            cancel,
+            cache.as_deref(),
+            &config_text,
+        );
+    }
+
+    // Pixtral is the same case: a Mistral-Nemo trunk that installs from GGUF
+    // under the `llama` family, with the tower as a sidecar of it
+    // (`docs/PIXTRAL_VISION_PHASE0.md`).
+    if config.get("model_type").and_then(|m| m.as_str()) == Some(repack::PIXTRAL_MODEL_TYPE) {
+        return stream_pixtral_vision_sidecar(
+            weights,
+            out_dir,
+            explicit_file,
+            client,
+            progress,
+            byte_progress,
+            cancel,
+            cache.as_deref(),
+            &config_text,
+        );
+    }
+    // DeepSeek-VL2 carries a SigLIP tower the qwen walk below does not know
+    // (`docs/DEEPSEEK_VL2_VISION_PHASE0.md`): its own names, packed F16-scaled
+    // planes, a projector and two learned embeddings.
+    if config.get("model_type").and_then(|m| m.as_str()) == Some(repack::DEEPSEEK_VL2_MODEL_TYPE) {
+        return stream_siglip_vision_sidecar(
+            weights,
+            out_dir,
+            explicit_file,
+            client,
+            progress,
+            byte_progress,
+            cancel,
+            cache.as_deref(),
+            &config_text,
+        );
+    }
+
     // Family and hidden_size, off the SAME text-config-unwrapping logic every
     // family parser already carries -- reused rather than re-derived, so a
     // future family's `text_config` convention change cannot drift the two
     // apart. Only `hidden_size` is used, as a cross-check on the tower's own
     // declared output width; the rest of the arch this returns describes the
     // TRUNK, which this walk does not install.
+    // A MiniCPM-V tower is refused as a sidecar: its pairing record can only
+    // say "qwen35moe, hidden 2048", which is also what an unrelated Qwen3.6
+    // trunk says, so attaching it would be silent where this tower's mergers
+    // and trunk fine-tune are not interchangeable. It is a combined install.
+    if config.get("model_type").and_then(|v| v.as_str()) == Some("minicpmv4_7") {
+        return Err(format!(
+            "{weights}: a MiniCPM-V 4.7 tower cannot be installed as a sidecar; its pairing \
+             record cannot tell its trunk from a Qwen3.6 trunk of the same width. Install the \
+             whole checkpoint with `turbospark-model pull --repo`, which keeps the tower"
+        ));
+    }
     let family = repack::config_json_family(&config)
         .ok_or_else(|| "config.json declares no model_type this port recognizes".to_string())?;
     let arch = match family {
@@ -882,6 +1102,24 @@ pub(crate) fn stream_vision_sidecar(
         }
         ModelFamily::Qwen3Vl => {
             repack::parse_qwen3_vl_config(&config_text).map_err(|e| e.to_string())
+        }
+        ModelFamily::Qwen2Dense => {
+            repack::parse_qwen2_config(&config_text).map_err(|e| e.to_string())
+        }
+        // The Qwen3-VL MoE trunk is a GGUF install (its routed experts have no
+        // safetensors writer on this flow), so only its width is needed here:
+        // the cross-check against the tower's `out_hidden_size` and the
+        // sidecar's pairing record. The baseline supplies everything else.
+        ModelFamily::Qwen3Moe => {
+            let hidden = config
+                .get("text_config")
+                .unwrap_or(&config)
+                .get("hidden_size")
+                .and_then(serde_json::Value::as_i64)
+                .ok_or_else(|| "config.json declares no hidden_size".to_string())?;
+            let mut arch = model_io::known_architecture(ModelFamily::Qwen3Moe);
+            arch.hidden_size = hidden;
+            Ok(arch)
         }
         other => Err(format!(
             "{} has no safetensors intake here, so its vision tower cannot be read either",
@@ -910,9 +1148,16 @@ pub(crate) fn stream_vision_sidecar(
         vision.out_hidden_size
     ));
 
+    // Muse-Glimmer keeps its tower under three prefixes (the adapter and the
+    // projection into the trunk sit beside `vision_tower.`).
+    let source_prefixes: &[&str] = if family == ModelFamily::MuseGlimmer {
+        &repack::MUSE_SOURCE_PREFIXES
+    } else {
+        &repack::VISION_SOURCE_PREFIXES
+    };
     let fetched = fetch_prefixed_shards(
         weights,
-        &repack::VISION_SOURCE_PREFIXES,
+        source_prefixes,
         explicit_file,
         client,
         byte_progress,
@@ -934,7 +1179,15 @@ pub(crate) fn stream_vision_sidecar(
     let vision_bases: Vec<&str> = headers
         .iter()
         .flat_map(|h| h.tensors.keys())
-        .filter(|k| k.starts_with(repack::VISION_PREFIX))
+        .filter(|k| {
+            if family == ModelFamily::MuseGlimmer {
+                repack::MUSE_SOURCE_PREFIXES
+                    .iter()
+                    .any(|p| k.starts_with(p))
+            } else {
+                k.starts_with(repack::VISION_PREFIX)
+            }
+        })
         // A packed plane's `.scales`/`.biases` companions are read beside
         // its `.weight`, never as bases, the same skip `classify_names`
         // makes for the install walk.
@@ -1002,6 +1255,368 @@ pub(crate) fn stream_vision_sidecar(
         vision.depth, read.block_stride
     ));
 
+    Ok(vision)
+}
+
+/// The CLIP (LLaVA) arm of [`stream_vision_sidecar`]: the tower and the
+/// two-layer projector, fetched by ranged reads from the checkpoint's shards,
+/// fused and converted to FP16 by [`repack::read_vision_entries`], and written
+/// as a sidecar pairing with the `llama` family at the projector's width.
+///
+/// The pairing is `(family, hidden_size)` and nothing more, so a 4096-wide
+/// sidecar also pairs with ANY other 4096-wide llama trunk (Mistral 7B, say):
+/// the revision pin in the record is the only thing that says which
+/// checkpoint's trunk the projector was trained against.
+#[allow(clippy::too_many_arguments)]
+fn stream_clip_vision_sidecar(
+    weights: &RepoRef,
+    out_dir: &Path,
+    explicit_file: Option<&str>,
+    client: &Client,
+    progress: &mut impl FnMut(&str),
+    byte_progress: Option<&ByteProgressCallback>,
+    cancel: Option<&CancelFlag>,
+    cache_dir: Option<&Path>,
+    config_text: &str,
+) -> Result<VisionConfig, String> {
+    let vision = repack::parse_llava_vision_config(config_text).map_err(|e| e.to_string())?;
+    if !vision.is_active() {
+        return Err(format!(
+            "{weights} declares no vision_config; there is no tower here to install"
+        ));
+    }
+    progress(&format!(
+        "{weights}: LLaVA CLIP tower, {} block(s) run, projector out_hidden_size {}",
+        vision.depth, vision.out_hidden_size
+    ));
+
+    let fetched = fetch_prefixed_shards(
+        weights,
+        &repack::CLIP_SOURCE_PREFIXES,
+        explicit_file,
+        client,
+        byte_progress,
+        cancel,
+        cache_dir,
+    )?;
+    progress(&format!("{} vision shard(s) fetched", fetched.len()));
+
+    let mut shard_names = Vec::with_capacity(fetched.len());
+    let mut headers = Vec::with_capacity(fetched.len());
+    let mut sources = Vec::with_capacity(fetched.len());
+    for (name, header, source) in fetched {
+        shard_names.push(name);
+        headers.push(header);
+        sources.push(source);
+    }
+    let bases: Vec<&str> = headers
+        .iter()
+        .flat_map(|h| h.tensors.keys())
+        .map(String::as_str)
+        .collect();
+    let shards = Gemma4Shards::new(
+        headers
+            .iter()
+            .zip(sources.iter())
+            .map(|(h, s)| (h, s as &dyn RangeSource))
+            .collect(),
+    )
+    .map_err(|e| format!("vision tower shards: {e}"))?;
+    let read = repack::read_vision_entries(&shards, &bases, &vision)
+        .map_err(|e| format!("reading the vision tower: {e}"))?;
+    let lossy: usize = read.lossy_conversion.iter().map(|(_, n)| n).sum();
+    if lossy > 0 {
+        progress(&format!(
+            "converted {} vision tensors to FP16 with {lossy} values losing bits \
+             (subnormals; the normal range is exact)",
+            read.lossy_conversion.len()
+        ));
+    }
+
+    let record = model_io::SidecarRecord {
+        kind: model_io::SIDECAR_KIND.to_string(),
+        pairs_with: model_io::PairsWith {
+            family: ModelFamily::Llama.as_str().to_string(),
+            hidden_size: vision.out_hidden_size,
+        },
+        source: model_io::SidecarSource {
+            repo: weights.repo.clone(),
+            revision: weights.revision.clone(),
+            prefix: repack::CLIP_MODEL_PREFIX.to_string(),
+            file: shard_names.join(", "),
+        },
+        tower_blocks: vision.depth,
+        block_stride: read.block_stride,
+    };
+    repack::write_vision_sidecar(
+        out_dir,
+        ModelFamily::Llama,
+        &vision,
+        &weights.repo,
+        &read,
+        record,
+    )
+    .map_err(|e| format!("writing the vision sidecar: {e}"))?;
+    progress(&format!(
+        "vision sidecar written: {} block(s), {} bytes/block",
+        vision.depth, read.block_stride
+    ));
+    Ok(vision)
+}
+
+/// The Pixtral arm of [`stream_vision_sidecar`]: the tower and the two-layer
+/// projector, fetched by ranged reads from the checkpoint's shards, fused and
+/// converted to FP16 by [`repack::read_vision_entries`], and written as a
+/// sidecar pairing with the `llama` family at the projector's width.
+///
+/// The config does not carry the three ids the prompt layout needs, so the
+/// repository's `tokenizer.json` is read for `[IMG]`, `[IMG_BREAK]` and
+/// `[IMG_END]` and the break and end ids are recorded in the tower's
+/// `VisionConfig` (the fields Gemma 4 uses for its `boi` and `eoi`). `[IMG]`
+/// must agree with the config's `image_token_index`.
+///
+/// Like LLaVA's, the pairing is `(family, hidden_size)` and nothing more: a
+/// 5120-wide sidecar attaches to any other 5120-wide `llama` trunk, and
+/// `--vision-sidecar auto` would do it silently.
+#[allow(clippy::too_many_arguments)]
+fn stream_pixtral_vision_sidecar(
+    weights: &RepoRef,
+    out_dir: &Path,
+    explicit_file: Option<&str>,
+    client: &Client,
+    progress: &mut impl FnMut(&str),
+    byte_progress: Option<&ByteProgressCallback>,
+    cancel: Option<&CancelFlag>,
+    cache_dir: Option<&Path>,
+    config_text: &str,
+) -> Result<VisionConfig, String> {
+    let mut vision = repack::parse_pixtral_vision_config(config_text).map_err(|e| e.to_string())?;
+    if !vision.is_active() {
+        return Err(format!(
+            "{weights} declares no vision_config; there is no tower here to install"
+        ));
+    }
+    let tokenizer_json = String::from_utf8(client.get(&weights.file_url("tokenizer.json"))?)
+        .map_err(|e| format!("tokenizer.json is not UTF-8: {e}"))?;
+    let (image, image_break, image_end) =
+        repack::pixtral_special_token_ids(&tokenizer_json).map_err(|e| e.to_string())?;
+    if image != vision.image_token_id {
+        return Err(format!(
+            "{weights}: config image_token_index {} but tokenizer.json puts [IMG] at {image}",
+            vision.image_token_id
+        ));
+    }
+    vision.vision_start_token_id = image_break;
+    vision.vision_end_token_id = image_end;
+    progress(&format!(
+        "{weights}: Pixtral tower, {} block(s), projector out_hidden_size {}, [IMG]/[IMG_BREAK]/\
+         [IMG_END] = {image}/{image_break}/{image_end}",
+        vision.depth, vision.out_hidden_size
+    ));
+
+    let fetched = fetch_prefixed_shards(
+        weights,
+        &repack::PIXTRAL_SOURCE_PREFIXES,
+        explicit_file,
+        client,
+        byte_progress,
+        cancel,
+        cache_dir,
+    )?;
+    progress(&format!("{} vision shard(s) fetched", fetched.len()));
+
+    let mut shard_names = Vec::with_capacity(fetched.len());
+    let mut headers = Vec::with_capacity(fetched.len());
+    let mut sources = Vec::with_capacity(fetched.len());
+    for (name, header, source) in fetched {
+        shard_names.push(name);
+        headers.push(header);
+        sources.push(source);
+    }
+    let bases: Vec<&str> = headers
+        .iter()
+        .flat_map(|h| h.tensors.keys())
+        .map(String::as_str)
+        .collect();
+    let shards = Gemma4Shards::new(
+        headers
+            .iter()
+            .zip(sources.iter())
+            .map(|(h, s)| (h, s as &dyn RangeSource))
+            .collect(),
+    )
+    .map_err(|e| format!("vision tower shards: {e}"))?;
+    let read = repack::read_vision_entries(&shards, &bases, &vision)
+        .map_err(|e| format!("reading the vision tower: {e}"))?;
+    let lossy: usize = read.lossy_conversion.iter().map(|(_, n)| n).sum();
+    if lossy > 0 {
+        progress(&format!(
+            "converted {} vision tensors to FP16 with {lossy} values losing bits \
+             (subnormals; the normal range is exact)",
+            read.lossy_conversion.len()
+        ));
+    }
+
+    let record = model_io::SidecarRecord {
+        kind: model_io::SIDECAR_KIND.to_string(),
+        pairs_with: model_io::PairsWith {
+            family: ModelFamily::Llama.as_str().to_string(),
+            hidden_size: vision.out_hidden_size,
+        },
+        source: model_io::SidecarSource {
+            repo: weights.repo.clone(),
+            revision: weights.revision.clone(),
+            prefix: repack::PIXTRAL_TOWER_PREFIX.to_string(),
+            file: shard_names.join(", "),
+        },
+        tower_blocks: vision.depth,
+        block_stride: read.block_stride,
+    };
+    repack::write_vision_sidecar(
+        out_dir,
+        ModelFamily::Llama,
+        &vision,
+        &weights.repo,
+        &read,
+        record,
+    )
+    .map_err(|e| format!("writing the vision sidecar: {e}"))?;
+    progress(&format!(
+        "vision sidecar written: {} block(s), {} bytes/block",
+        vision.depth, read.block_stride
+    ));
+    Ok(vision)
+}
+
+/// The SigLIP (DeepSeek-VL2) arm of [`stream_vision_sidecar`]: the tower, the
+/// projector and the two learned embeddings, fetched by ranged reads from the
+/// checkpoint's shards, dequantized to FP16 by [`repack::read_vision_entries_quantized`]
+/// and written as a sidecar pairing with the `deepseek2` family at the trunk
+/// width.
+#[allow(clippy::too_many_arguments)]
+fn stream_siglip_vision_sidecar(
+    weights: &RepoRef,
+    out_dir: &Path,
+    explicit_file: Option<&str>,
+    client: &Client,
+    progress: &mut impl FnMut(&str),
+    byte_progress: Option<&ByteProgressCallback>,
+    cancel: Option<&CancelFlag>,
+    cache_dir: Option<&Path>,
+    config_text: &str,
+) -> Result<VisionConfig, String> {
+    let vision =
+        repack::parse_deepseek_vl2_vision_config(config_text).map_err(|e| e.to_string())?;
+    if !vision.is_active() {
+        return Err(format!(
+            "{weights} declares no vision_config; there is no tower here to install"
+        ));
+    }
+    // The image processor settings live in `processor_config.json`; the CLI
+    // reads them from the sidecar directory (`vision_dir()`), so they are
+    // written beside the tower, validated by the reader that will use them.
+    let processor = client
+        .get(&weights.file_url("processor_config.json"))
+        .map_err(|e| format!("fetching processor_config.json from {weights}: {e}"))?;
+    // Only the shape is checked here (catalog does not link vision-io); the
+    // front ends parse it with `DeepseekVl2Params` at the first image and
+    // refuse a value they do not implement.
+    let parsed: serde_json::Value = serde_json::from_slice(&processor)
+        .map_err(|e| format!("{weights}: processor_config.json does not parse: {e}"))?;
+    if parsed.get("candidate_resolutions").is_none() {
+        return Err(format!(
+            "{weights}: processor_config.json has no candidate_resolutions; this is not a \
+             DeepSeek-VL2 processor"
+        ));
+    }
+    std::fs::write(out_dir.join("processor_config.json"), &processor)
+        .map_err(|e| format!("writing processor_config.json: {e}"))?;
+    let trunk = repack::parse_deepseek_vl2_config(config_text).map_err(|e| e.to_string())?;
+    if trunk.hidden_size != vision.out_hidden_size {
+        return Err(format!(
+            "{weights}: trunk hidden_size {} does not match the projector's n_embed {}; \
+             refusing an inconsistent checkpoint",
+            trunk.hidden_size, vision.out_hidden_size
+        ));
+    }
+    progress(&format!(
+        "{weights}: DeepSeek-VL2 SigLIP tower, {} block(s), projector out_hidden_size {}",
+        vision.depth, vision.out_hidden_size
+    ));
+
+    let fetched = fetch_prefixed_shards(
+        weights,
+        &repack::SIGLIP_SOURCE_PREFIXES,
+        explicit_file,
+        client,
+        byte_progress,
+        cancel,
+        cache_dir,
+    )?;
+    progress(&format!("{} vision shard(s) fetched", fetched.len()));
+
+    let mut shard_names = Vec::with_capacity(fetched.len());
+    let mut headers = Vec::with_capacity(fetched.len());
+    let mut sources = Vec::with_capacity(fetched.len());
+    for (name, header, source) in fetched {
+        shard_names.push(name);
+        headers.push(header);
+        sources.push(source);
+    }
+    let bases: Vec<&str> = headers
+        .iter()
+        .flat_map(|h| h.tensors.keys())
+        .filter(|k| !k.ends_with(".scales") && !k.ends_with(".biases"))
+        .map(String::as_str)
+        .collect();
+    let shards = Gemma4Shards::new(
+        headers
+            .iter()
+            .zip(sources.iter())
+            .map(|(h, s)| (h, s as &dyn RangeSource))
+            .collect(),
+    )
+    .map_err(|e| format!("vision tower shards: {e}"))?;
+    let quant = repack::parse_gemma4_quantization(config_text).ok();
+    let read = repack::read_vision_entries_quantized(&shards, &bases, &vision, quant.as_ref())
+        .map_err(|e| format!("reading the vision tower: {e}"))?;
+    let lossy: usize = read.lossy_conversion.iter().map(|(_, n)| n).sum();
+    if lossy > 0 {
+        progress(&format!(
+            "converted {} vision tensors to FP16 with {lossy} values losing bits \
+             (affine dequantization rounds; not a quality defect by itself)",
+            read.lossy_conversion.len()
+        ));
+    }
+
+    let record = model_io::SidecarRecord {
+        kind: model_io::SIDECAR_KIND.to_string(),
+        pairs_with: model_io::PairsWith {
+            family: ModelFamily::Deepseek2.as_str().to_string(),
+            hidden_size: vision.out_hidden_size,
+        },
+        source: model_io::SidecarSource {
+            repo: weights.repo.clone(),
+            revision: weights.revision.clone(),
+            prefix: repack::SIGLIP_MODEL_PREFIX.to_string(),
+            file: shard_names.join(", "),
+        },
+        tower_blocks: vision.depth,
+        block_stride: read.block_stride,
+    };
+    repack::write_vision_sidecar(
+        out_dir,
+        ModelFamily::Deepseek2,
+        &vision,
+        &weights.repo,
+        &read,
+        record,
+    )
+    .map_err(|e| format!("writing the vision sidecar: {e}"))?;
+    progress(&format!(
+        "vision sidecar written: {} block(s), {} bytes/block",
+        vision.depth, read.block_stride
+    ));
     Ok(vision)
 }
 
@@ -1101,10 +1716,43 @@ fn unindexed_shard_names(files: &[String]) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::unindexed_shard_names;
+    use super::{lfm3_preprocessor_json, unindexed_shard_names};
 
     fn names(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// The real `processor_config.json` shape of `LiquidAI/LFM3-VL-2B-MLX-4bit`:
+    /// the flat preprocessor document is its `image_processor` object, and the
+    /// video block is not carried over.
+    #[test]
+    fn the_lfm3_preprocessor_is_the_image_processor_object() {
+        let real = br#"{
+            "image_processor": {"patch_size": 16, "temporal_patch_size": 2, "merge_size": 2,
+                "size": {"shortest_edge": 65536, "longest_edge": 16777216},
+                "image_mean": [0.5, 0.5, 0.5], "image_std": [0.5, 0.5, 0.5],
+                "rescale_factor": 0.00392156862745098},
+            "video_processor": {"patch_size": 16, "fps": 2.0},
+            "processor_class": "Lfm3VlProcessor"
+        }"#;
+        let flat: serde_json::Value =
+            serde_json::from_slice(&lfm3_preprocessor_json(real).unwrap()).unwrap();
+        assert_eq!(flat["patch_size"], 16);
+        assert_eq!(flat["size"]["longest_edge"], 16_777_216);
+        assert!(flat.get("video_processor").is_none());
+        assert!(flat.get("fps").is_none());
+    }
+
+    #[test]
+    fn the_lfm3_preprocessor_refuses_a_file_missing_what_the_reader_needs() {
+        assert!(lfm3_preprocessor_json(b"{}")
+            .unwrap_err()
+            .contains("image_processor"));
+        let no_mean = br#"{"image_processor": {"patch_size": 16, "temporal_patch_size": 2,
+            "merge_size": 2, "size": {}, "image_std": [0.5, 0.5, 0.5]}}"#;
+        assert!(lfm3_preprocessor_json(no_mean)
+            .unwrap_err()
+            .contains("image_mean"));
     }
 
     /// `RecursiveSI/flint-int4`'s real listing: five zero-based shards, no
@@ -1501,11 +2149,12 @@ mod tests {
     }
 
     /// The family gate mirrors `classify_for_family`'s `VisionTower` arm
-    /// exactly: both halves of qwen3_5, nothing else (AGENTS.md Gotcha 61).
+    /// exactly: both halves of qwen3_5, `qwen3_vl` and `qwen2` (the Qwen2.5-VL
+    /// trunk), nothing else (AGENTS.md Gotcha 61).
     #[test]
     fn bytes_detection_ignores_families_that_do_not_classify_the_prefix() {
         let plan = probe_plan();
-        for family in [ModelFamily::Gemma4, ModelFamily::Qwen2Dense] {
+        for family in [ModelFamily::Gemma4, ModelFamily::Llama] {
             let mut arch = model_io::known_architecture(family);
             let headers = [header_with(&[&format!(
                 "{VISION_PREFIX}blocks.0.norm1.weight"
@@ -1518,6 +2167,22 @@ mod tests {
                 arch.family.as_str()
             );
         }
+    }
+
+    /// Muse-Glimmer ships `processor_config.json` with the image processor
+    /// nested; install writes the nested object as the flat file readers use.
+    #[test]
+    fn a_nested_processor_config_is_flattened_and_anything_else_is_not() {
+        let nested = br#"{"image_processor": {"patch_size": 14, "max_image_tokens": 4096},
+                          "processor_class": "MuseGlimmerProcessor"}"#;
+        let flat = crate::stream::flatten_processor_config(nested).expect("has image_processor");
+        let v: serde_json::Value = serde_json::from_slice(&flat).unwrap();
+        assert_eq!(v["patch_size"], 14);
+        assert_eq!(v["max_image_tokens"], 4096);
+        assert!(v.get("processor_class").is_none());
+        // A document with no image_processor object is not a wrapper.
+        assert!(crate::stream::flatten_processor_config(br#"{"patch_size": 14}"#).is_none());
+        assert!(crate::stream::flatten_processor_config(b"not json").is_none());
     }
 
     /// A bytes-enabled tower lands with its preprocessor config beside the

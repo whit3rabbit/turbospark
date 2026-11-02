@@ -158,6 +158,37 @@ void vision_gelu_erf_fp16(
     y[tid] = half(0.5f * x * (1.0f + vision_erf(x * M_SQRT1_2_F)));
 }
 
+// SiLU in place: the Qwen2.5-VL tower's gated MLP computes
+// `silu(gate_proj(x)) * up_proj(x)`. `x * sigmoid(x)` in FP32, narrowed once.
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void vision_silu_fp16(
+    device half*    y     [[buffer(0)]],
+    constant uint&  count [[buffer(1)]],
+    uint            tid   [[thread_position_in_grid]]
+) {
+    if (tid >= count) return;
+    const float x = float(y[tid]);
+    y[tid] = half(x / (1.0f + exp(-x)));
+}
+
+// CLIP's activation: `x * sigmoid(1.702 * x)` (`quick_gelu`, mlx-vlm's
+// `nn.GELU(approx="fast")`). A third kernel and not a mode on the other two,
+// for the same reason they are separate: it differs from tanh-GELU by up to
+// ~2e-2, which a parity bound CAN see, so a wrong choice here is not the
+// silent kind the tanh/erf pair is. The exponent is clamped so a large
+// negative input saturates to 0 instead of overflowing `exp`.
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void vision_gelu_quick_fp16(
+    device half*    y     [[buffer(0)]],
+    constant uint&  count [[buffer(1)]],
+    uint            tid   [[thread_position_in_grid]]
+) {
+    if (tid >= count) return;
+    const float x = float(y[tid]);
+    const float e = exp(clamp(-1.702f * x, -80.0f, 80.0f));
+    y[tid] = half(x / (1.0f + e));
+}
+
 // ----------------------------------------------------------------------------
 // The tower's 2-D rotary embedding.
 //
@@ -873,6 +904,29 @@ void vision_rope_axial_fp16(
 }
 
 // ----------------------------------------------------------------------------
+// `y[g, c] += mean over k < 4 of x[4 * g + k, c]`, FP32 intermediate: the
+// MiniCPM-V window merger's residual (`merged + mean(windows, axis=1)`), where
+// `x` holds the windows' four tokens as consecutive rows and `y` one merged
+// row per window. `count` is `groups * width`.
+// ----------------------------------------------------------------------------
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void vision_window_mean4_add_fp16(
+    device half*        y     [[buffer(0)]],
+    device const half*  x     [[buffer(1)]],
+    constant uint&      width [[buffer(2)]],
+    constant uint&      count [[buffer(3)]],
+    uint                tid   [[thread_position_in_grid]]
+) {
+    if (tid >= count) return;
+    const uint g = tid / width;
+    const uint c = tid % width;
+    const uint base = (4u * g) * width + c;
+    const float mean = (float(x[base]) + float(x[base + width])
+                        + float(x[base + 2u * width]) + float(x[base + 3u * width])) * 0.25f;
+    y[tid] = half(float(y[tid]) + mean);
+}
+
+// ----------------------------------------------------------------------------
 // `y *= x` elementwise, FP32 intermediate: the gated MLP's
 // `gelu(gate) * up`, after the GELU has run in place on `gate`.
 // ----------------------------------------------------------------------------
@@ -885,4 +939,63 @@ void vision_mul_fp16(
 ) {
     if (tid >= count) return;
     y[tid] = half(float(y[tid]) * float(x[tid]));
+}
+
+// ----------------------------------------------------------------------------
+// The LFM3-VL tower's conv block core (`docs/LFM3_VL_VISION_PHASE0.md`):
+//
+//   proj = in_proj(x)                      // [seq, 3 * C], split b | c | v
+//   out  = c * depthwise_conv3x3(b * v)    // zero padded, no bias
+//
+// Tokens arrive in MERGE-WINDOW order (`merge x merge` patch blocks row-major
+// over the block grid, row-major inside a block), while the convolution runs
+// over the plain `height x width` patch grid. The reference reshapes to the
+// grid, convolves, and reshapes back; here each output token computes its
+// grid cell from the window order and gathers its eight neighbours straight
+// out of the window-ordered rows, so no transposed copy exists.
+//
+// One thread per (token, channel) so adjacent threads read adjacent channels.
+// The tap weight is `w[ch][dr + 1][dc + 1]` (cross-correlation, no flip),
+// the layout of the checkpoint's `[C, 3, 3, 1]` depthwise weight.
+// ----------------------------------------------------------------------------
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void vision_gated_dwconv3x3_fp16(
+    device half*        out      [[buffer(0)]],
+    device const half*  proj     [[buffer(1)]],
+    device const half*  w        [[buffer(2)]],
+    constant uint&      height   [[buffer(3)]],
+    constant uint&      width    [[buffer(4)]],
+    constant uint&      merge    [[buffer(5)]],
+    constant uint&      channels [[buffer(6)]],
+    uint                gid      [[thread_position_in_grid]]
+) {
+    const uint seq = height * width;
+    if (gid >= seq * channels) return;
+    const uint tok = gid / channels;
+    const uint ch = gid - tok * channels;
+
+    const uint block_cols = width / merge;
+    const uint win = tok / (merge * merge);
+    const uint in_win = tok - win * merge * merge;
+    const int r = int((win / block_cols) * merge + in_win / merge);
+    const int c = int((win % block_cols) * merge + in_win % merge);
+
+    const uint stride = 3 * channels;
+    float acc = 0.0f;
+    for (int dr = -1; dr <= 1; ++dr) {
+        for (int dc = -1; dc <= 1; ++dc) {
+            const int rr = r + dr;
+            const int cc = c + dc;
+            if (rr < 0 || cc < 0 || rr >= int(height) || cc >= int(width)) continue;
+            const uint ur = uint(rr);
+            const uint uc = uint(cc);
+            const uint nb = ((ur / merge) * block_cols + (uc / merge)) * merge * merge
+                          + (ur % merge) * merge + (uc % merge);
+            // `b * v` is formed once per neighbour, in FP32.
+            const float bv = float(proj[nb * stride + ch])
+                           * float(proj[nb * stride + 2 * channels + ch]);
+            acc += float(w[ch * 9 + uint(dr + 1) * 3 + uint(dc + 1)]) * bv;
+        }
+    }
+    out[gid] = half(float(proj[tok * stride + channels + ch]) * acc);
 }

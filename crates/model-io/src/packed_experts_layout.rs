@@ -381,7 +381,14 @@ pub fn load_from(
                         expert.expert, first.expert
                     )));
                 }
-                if expert.sub_tensors != first.sub_tensors {
+                // Routed experts of a layer are one shape by construction, so
+                // a divergent layout there is corruption. The vision tower's
+                // blocks are not experts: the LFM3-VL tower alternates conv
+                // and attention blocks with different role sets
+                // (`docs/LFM3_VL_VISION_PHASE0.md`). The tower's own reader
+                // resolves and size-checks every block's roles; what stays
+                // enforced for it here is the equal blob size above.
+                if subdir != PACKED_VISION_DIR && expert.sub_tensors != first.sub_tensors {
                     return Err(corrupt(&format!(
                         "layer {layer_idx} expert {} has a different sub-tensor layout from \
                          expert {}",

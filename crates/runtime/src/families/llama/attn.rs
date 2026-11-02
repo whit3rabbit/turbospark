@@ -288,20 +288,40 @@ fn encode_attention_input_row(
     };
     let section = arch.vision.mrope_section;
     let theta = arch.full_rope_theta as f32;
+    // Qwen2.5-VL splits the rotary pairs into three CONTIGUOUS runs where
+    // Qwen3-VL interleaves them; the tower kind says which the trunk was
+    // trained with (`docs/QWEN25_VL_VISION_PHASE0.md`).
+    let chunked_mrope = arch.vision.tower == model_io::VisionTowerKind::Qwen25Vl;
     for (data, heads) in [(query, num_heads), ((k_buf, k_off), num_kv)] {
         if let Some(positions) = mrope {
-            gpu::encode_rope_mrope_interleaved(
-                context,
-                pass,
-                data,
-                positions,
-                heads,
-                head_dim,
-                llama.rotated_pairs * 2,
-                (section[0] as u32, section[1] as u32, section[2] as u32),
-                theta,
-            )
-            .map_err(gpu_err)?;
+            let sections = (section[0] as u32, section[1] as u32, section[2] as u32);
+            if chunked_mrope {
+                gpu::encode_rope_mrope_chunked(
+                    context,
+                    pass,
+                    data,
+                    positions,
+                    heads,
+                    head_dim,
+                    llama.rotated_pairs * 2,
+                    sections,
+                    theta,
+                )
+                .map_err(gpu_err)?;
+            } else {
+                gpu::encode_rope_mrope_interleaved(
+                    context,
+                    pass,
+                    data,
+                    positions,
+                    heads,
+                    head_dim,
+                    llama.rotated_pairs * 2,
+                    sections,
+                    theta,
+                )
+                .map_err(gpu_err)?;
+            }
         } else if arch.rope_neox_subdim {
             gpu::encode_rope_neox_subdim(
                 context,

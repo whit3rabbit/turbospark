@@ -29,6 +29,25 @@ use crate::error::TokenizerError;
 
 const MAX_GENERATION_CONFIG_BYTES: u64 = 1 << 20;
 
+/// The template out of an HF `chat_template.json`: a bare string under
+/// `chat_template`, or the list-of-named-templates form (`default` if present,
+/// else the first).
+fn read_chat_template_json(path: &Path) -> Option<String> {
+    let value: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+    match value.get("chat_template")? {
+        serde_json::Value::String(template) => Some(template.clone()),
+        serde_json::Value::Array(named) => {
+            let pick = named
+                .iter()
+                .find(|t| t.get("name").and_then(|n| n.as_str()) == Some("default"))
+                .or_else(|| named.first())?;
+            pick.get("template")?.as_str().map(str::to_string)
+        }
+        _ => None,
+    }
+}
+
 fn read_generation_config(path: &Path) -> Option<GenerationConfig> {
     let file = std::fs::File::open(path).ok()?;
     if file.metadata().ok()?.len() > MAX_GENERATION_CONFIG_BYTES {
@@ -423,8 +442,15 @@ impl MfTokenizer {
         // file made every pre-move checkpoint look template-less and fall
         // through to the dialect renderer, which is how TinyLlama-1.1B-Chat
         // (Zephyr framing) came to be fed Mistral's `[INST]`.
+        // HF's precedence is `chat_template.jinja`, then `chat_template.json`,
+        // then the config key. The middle one matters for Qwen2.5-VL: its
+        // `tokenizer_config.json` keeps the text-only Qwen2.5 template, which
+        // concatenates `message.content` as a string and fails on an image
+        // part, while `chat_template.json` carries the one that renders
+        // `<|vision_start|><|image_pad|><|vision_end|>`.
         let chat_template_source = std::fs::read_to_string(dir.join("chat_template.jinja"))
             .ok()
+            .or_else(|| read_chat_template_json(&dir.join("chat_template.json")))
             .or_else(|| config.chat_template_source());
         // `generation_config.json` is the authority for the checkpoint's
         // FULL end-of-sequence set: `tokenizer_config.json` only ever

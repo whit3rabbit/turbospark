@@ -14,6 +14,62 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- DeepSeek-VL2-tiny image input: a plain-attention arm of the `deepseek2` flow
+  for the non-MLA MoE trunk, a SigLIP tower sidecar with dynamic tiling, and
+  an embedding blit in the deepseek2 produce path (image positions used to
+  carry the untrained placeholder row). Gated on the real 4-bit checkpoint
+  through the CLI and both server endpoints. See
+  `docs/DEEPSEEK_VL2_VISION_PHASE0.md`.
+- Pixtral-12B image input on the `llama` family: a `pixtral` tower sidecar
+  (RMSNorm blocks, 2-D rope, SwiGLU) on a GGUF trunk, with the `[IMG]`,
+  `[IMG_BREAK]` and `[IMG_END]` prompt layout. Gated on the real checkpoint
+  through the CLI and both server endpoints. Text parts now carry `content`
+  as well as `text`. See `docs/PIXTRAL_VISION_PHASE0.md`.
+- MiniCPM-V 4.7 image input (the 448-area global view): a new `minicpm_v`
+  tower with its window-mean merger, ingested from the checkpoint instead of
+  dropped, with the Qwen3.6 MoE trunk's image path. Gated on the real
+  checkpoint through the CLI and both server endpoints. Detail slices are not
+  built and a prompt carrying them is refused. See
+  `docs/MINICPMV_VISION_PHASE0.md`.
+- Muse-Glimmer image support: its 50-block tower is ingested into the same
+  install (adapter and projection dequantized from 4-bit), with PIL Lanczos
+  and a token-cap resize, and a front-end wrap of the bare `<|patch|>`
+  placeholder. A text page and a shapes image read through the CLI and both
+  server endpoints; the tower agrees with a numpy transcription at cosine
+  0.99998 to 0.99999879. See `docs/MUSEGLIMMER_VISION_PHASE0.md`.
+- Qwen3-VL-30B-A3B image support on the `qwen3moe` family: the official
+  Q4_K_M GGUF trunk (`qwen3vlmoe`) plus the Qwen3-VL tower and its three
+  deepstack mergers as a `pull-vision` sidecar (`qwen3vl-30b-a3b` and
+  `qwen3vl-30b-a3b-vision-tower` catalog rows). Images reach generated output
+  from the CLI and both server endpoints. The llama MoE chunked driver still
+  has no image injection, so an image turn prefills sequentially and text
+  turns keep the chunked driver. The shard fetcher now scans a repo's real
+  shards when its index is stale.
+- LLaVA-1.5 image support for the `llama` family: a CLIP vision tower
+  (`VisionTowerKind::Clip`), a `pull-vision` sidecar from
+  `llava-hf/llava-1.5-7b-hf` attached to a GGUF trunk, `--image` in the CLI,
+  and both server endpoints. Adds a quick-GELU vision kernel and a BOS fix for
+  the BOS-less llava template. See `docs/LLAVA_VISION_PHASE0.md`.
+- LFM3-VL image support: the `lfm3` flow takes images through a new tower kind
+  (RMSNorm blocks alternating a gated depthwise 3x3 convolution and
+  grouped-query attention, a SwiGLU MLP, a pixel-unshuffle projector).
+  `turbospark-model pull --repo LiquidAI/LFM3-VL-2B-MLX-8bit` installs the
+  tower from the shard bytes (`lfm3-vl-2b-8bit` catalog row). Tower stages
+  agree with an independent numpy implementation at cosine 0.9999965, and a
+  text page is read through the CLI and both server endpoints. Combined
+  install only. See `docs/LFM3_VL_VISION_PHASE0.md`.
+- Qwen2.5-VL image support on the Qwen2 family. A plain Qwen2 dense trunk
+  plus a new `qwen25_vl` tower (RMSNorm blocks, a gated SiLU MLP, window
+  attention on 28 of 32 blocks, an RMSNorm merger) ingested into the same
+  install, with the trunk's chunked mRoPE as a new `rope_mrope_chunked`
+  kernel that is bit-identical to the plain rope at equal positions. Images
+  reach generated output from the CLI and both server endpoints on
+  `mlx-community/Qwen2.5-VL-7B-Instruct-4bit` (`qwen25vl-7b`). The tower
+  agrees with an independent numpy transcription of the reference at merger
+  cosine 0.99998 to 0.99999660. The tokenizer and probe now read
+  `chat_template.json`, which is where this checkpoint keeps its vision
+  template. mlx-vlm itself was not executed. See
+  `docs/QWEN25_VL_VISION_PHASE0.md`.
 - macOS app: computer use for local vision models (Settings > Computer Use,
   off by default). Nine `computer_*` tools let the main agent read and
   operate native apps through accessibility-tree refs, with pixel clicks

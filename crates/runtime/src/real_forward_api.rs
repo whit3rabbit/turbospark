@@ -72,7 +72,11 @@ impl RealForwardRunner {
     /// support.
     pub fn supports_chunked_prefill(&self) -> bool {
         self.real.is_some()
-            || self.real_llama.is_some()
+            // The llama MoE driver has no image injection, so a turn carrying
+            // an image map takes the sequential path instead; the dense
+            // driver mirrors the embed blit and the deepstack adds.
+            || (self.real_llama.is_some()
+                && !(self.arch.num_experts > 0 && self.prompt_vision.is_some()))
             // `deepseek2` is deliberately absent: its chunked driver is not
             // written, and the plain sequential `produce` path serves it
             // correctly. Record the ceiling, do not half-wire the driver.

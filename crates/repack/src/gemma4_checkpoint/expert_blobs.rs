@@ -197,7 +197,11 @@ pub fn plan_one_expert_layer(
         let b_name = format!("{base}.biases");
         let s = shards.info(&s_name)?;
         let b = shards.info(&b_name)?;
-        if s.dtype != "BF16" || b.dtype != "BF16" {
+        // A DeepSeek-VL2 conversion stores the companions F16; they are
+        // narrowed to the BF16 the routed kernels read (`f16_plane_to_bf16_bytes`).
+        let f16_companions = arch.family == model_io::ModelFamily::Deepseek2;
+        let companion_ok = |dtype: &str| dtype == "BF16" || (f16_companions && dtype == "F16");
+        if !companion_ok(&s.dtype) || !companion_ok(&b.dtype) {
             return Err(Gemma4Error::UnsupportedDtype {
                 tensor: name.to_string(),
                 dtype: format!("{}/{} companions", s.dtype, b.dtype),
@@ -218,6 +222,12 @@ pub fn plan_one_expert_layer(
         let w_bytes = shards.read(name)?;
         let mut s_bytes = shards.read(&s_name)?;
         let mut b_bytes = shards.read(&b_name)?;
+        if s.dtype == "F16" {
+            s_bytes = super::narrow::f16_plane_to_bf16_bytes(&s_name, &s_bytes)?.0;
+        }
+        if b.dtype == "F16" {
+            b_bytes = super::narrow::f16_plane_to_bf16_bytes(&b_name, &b_bytes)?.0;
+        }
         // FLINT'S FP16 RANGE FIX: `up` is divided by 2^K and `down` multiplied
         // by it, so the stored `silu(gate) * up` stays inside FP16 and the
         // result is unchanged. See `crate::flint_rebalance` for why.

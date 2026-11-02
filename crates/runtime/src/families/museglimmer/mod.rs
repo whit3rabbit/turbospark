@@ -118,18 +118,38 @@ impl RealForwardRunner {
         // instead (`TextModel.embed_norm`, a no-scale RMS). Gemma scales,
         // `llama` does neither, and the manifest says which
         // (`embeddingScaledBySqrtHidden`, false here).
-        encode_embed_any(
-            &mut self.context,
-            &pass,
-            &self.weights,
-            &self.index,
-            embed_name,
-            (&self.scratch.x, 0),
-            token as u32,
-            hidden as u32,
-            vocab,
-            1.0,
-        )?;
+        //
+        // An image-pad position of a sequentially-walked prompt takes the
+        // tower's row INSTEAD of the lookup AND of the `embed_norm` below:
+        // the reference scatters image features into the already-normed
+        // text embeddings, and the projection's own no-scale RMSNorm is the
+        // image row's norm. The host write lands before this pass commits,
+        // which makes it visible to every dispatch after it.
+        let is_image = match self
+            .prompt_vision
+            .as_ref()
+            .and_then(|pv| pv.row_for(position))
+        {
+            Some(row) => {
+                gpu::write_buffer_bytes(&self.scratch.x, 0, row);
+                true
+            }
+            None => {
+                encode_embed_any(
+                    &mut self.context,
+                    &pass,
+                    &self.weights,
+                    &self.index,
+                    embed_name,
+                    (&self.scratch.x, 0),
+                    token as u32,
+                    hidden as u32,
+                    vocab,
+                    1.0,
+                )?;
+                false
+            }
+        };
 
         let (
             context,
@@ -159,15 +179,17 @@ impl RealForwardRunner {
 
         // `embed_norm`. A no-scale RMS over the embedding row, before any
         // layer runs. Nothing else in this port does this.
-        gpu::encode_rms_norm_no_scale(
-            context,
-            &pass,
-            (&scratch.x, 0),
-            (&scratch.x, 0),
-            hidden as u32,
-            RMS_EPS,
-        )
-        .map_err(gpu_err)?;
+        if !is_image {
+            gpu::encode_rms_norm_no_scale(
+                context,
+                &pass,
+                (&scratch.x, 0),
+                (&scratch.x, 0),
+                hidden as u32,
+                RMS_EPS,
+            )
+            .map_err(gpu_err)?;
+        }
 
         for layer in 0..arch.num_layers as usize {
             // CENTERED, at the STANDARD epsilon.

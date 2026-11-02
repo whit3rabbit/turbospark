@@ -310,6 +310,28 @@ fn a_variable_named_generation_is_untouched() {
 // checkpoint's own arm rather than a stub written to agree with this port.
 // ---------------------------------------------------------------------------
 
+/// Pixtral's template (`mistral-community/pixtral-12b`) reads a text chunk's
+/// string from `chunk["content"]` where the OpenAI and Qwen spelling is
+/// `chunk["text"]`. An undefined key renders empty, so without both keys an
+/// image turn would drop the user's question.
+#[test]
+fn a_text_part_is_readable_under_both_spellings() {
+    let template = "{%- for message in messages -%}{%- for chunk in message['content'] -%}\
+        {%- if chunk['type'] == 'text' -%}T[{{ chunk['content'] }}|{{ chunk['text'] }}]\
+        {%- elif chunk['type'] == 'image' -%}[IMG]{%- endif -%}{%- endfor -%}{%- endfor -%}";
+    let tok = tokenizer_with_template("pixtral-chunks", template);
+    let messages = vec![Message::with_parts(
+        Role::User,
+        vec![
+            ContentPart::Image,
+            ContentPart::Text("what shapes?".to_string()),
+        ],
+    )];
+    let out =
+        render_generic_chat_template(&tok, &messages, &[], false, ReasoningEffort::Off).unwrap();
+    assert_eq!(out, "[IMG]T[what shapes?|what shapes?]");
+}
+
 #[test]
 fn an_image_part_renders_the_checkpoints_marker_run() {
     let tok = load();

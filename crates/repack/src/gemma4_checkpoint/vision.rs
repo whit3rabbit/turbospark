@@ -60,6 +60,39 @@ pub const BLOCK_ROLES: [(&str, &str); 12] = [
     ("fc2_b", "mlp.linear_fc2.bias"),
 ];
 
+/// The Qwen2.5-VL tower's twelve per-block sub-tensors, in forward order:
+/// RMSNorm (weight only), fused qkv, proj, RMSNorm, then the gated MLP's gate,
+/// up and down, every projection with a bias. Read off
+/// `mlx-community/Qwen2.5-VL-3B-Instruct-4bit` (`docs/QWEN25_VL_VISION_PHASE0.md`).
+pub const QWEN25_BLOCK_ROLES: [(&str, &str); 12] = [
+    ("n1_w", "norm1.weight"),
+    ("qkv_w", "attn.qkv.weight"),
+    ("qkv_b", "attn.qkv.bias"),
+    ("proj_w", "attn.proj.weight"),
+    ("proj_b", "attn.proj.bias"),
+    ("n2_w", "norm2.weight"),
+    ("gate_w", "mlp.gate_proj.weight"),
+    ("gate_b", "mlp.gate_proj.bias"),
+    ("up_w", "mlp.up_proj.weight"),
+    ("up_b", "mlp.up_proj.bias"),
+    ("down_w", "mlp.down_proj.weight"),
+    ("down_b", "mlp.down_proj.bias"),
+];
+
+/// The Qwen2.5-VL tower's non-block tensors, resident. The patch embedding is
+/// `[out, T, P, P, C]` on the MLX conversion, the same `(T, P_h, P_w, C)` row
+/// order `crates/vision-io` emits, so it is copied without a permutation (see
+/// [`RESIDENT_TENSORS`]). The merger is `ln_q` (an RMSNorm over each patch
+/// row) then a two-layer MLP, `mlp.0` and `mlp.2`.
+pub const QWEN25_RESIDENT_TENSORS: [&str; 6] = [
+    "patch_embed.proj.weight",
+    "merger.ln_q.weight",
+    "merger.mlp.0.weight",
+    "merger.mlp.0.bias",
+    "merger.mlp.2.weight",
+    "merger.mlp.2.bias",
+];
+
 /// The tower's non-block tensors, which become RESIDENT entries.
 ///
 /// Nine of them, and they are resident rather than streamed because each is
@@ -203,7 +236,7 @@ pub fn vision_arch_for_manifest<'a>(
 /// `(T, P_h, P_w, C)` order -- which is why the tensor needs no permutation.
 ///
 /// Every other vision tensor is rank 1 or 2 and passes through unchanged.
-fn resident_shape(shape: &[u64]) -> (u32, u32, u32, u32) {
+pub(super) fn resident_shape(shape: &[u64]) -> (u32, u32, u32, u32) {
     if shape.len() <= 4 {
         return shape4(shape);
     }
@@ -253,15 +286,62 @@ pub fn read_vision_entries_quantized(
     if vision.tower == model_io::VisionTowerKind::Gemma4 {
         return super::vision_gemma4::read_gemma4_vision_entries(shards, vision_bases, vision);
     }
+    // CLIP (LLaVA) likewise: its own names, its own fused q/k/v, its own
+    // dropped tail. It ships unquantized planes only.
+    if vision.tower == model_io::VisionTowerKind::Clip {
+        return super::vision_clip::read_clip_vision_entries(shards, vision_bases, vision);
+    }
+    // The MiniCPM-V tower: three source prefixes (`vision_tower.`,
+    // `vit_merger.`, `merger.`) and its own block roles.
+    if vision.tower == model_io::VisionTowerKind::MiniCpmV {
+        return super::vision_minicpm::read_minicpm_vision_entries(shards, vision_bases, vision);
+    }
+    // Pixtral likewise: its own names, its own fused q/k/v, no biases.
+    if vision.tower == model_io::VisionTowerKind::Pixtral {
+        return super::vision_pixtral::read_pixtral_vision_entries(shards, vision_bases, vision);
+    }
+    // SigLIP (DeepSeek-VL2): fused qkv already, packed planes dequantized,
+    // a projector and two learned embeddings beside the tower.
+    if vision.tower == model_io::VisionTowerKind::SigLip {
+        return super::vision_siglip::read_siglip_vision_entries(
+            shards,
+            vision_bases,
+            vision,
+            quant,
+        );
+    }
+    // The LFM3-VL tower likewise: two block kinds, a second source prefix
+    // for its projector, no packed planes.
+    if vision.tower == model_io::VisionTowerKind::Lfm3Vl {
+        return super::vision_lfm3::read_lfm3_vl_vision_entries(shards, vision_bases, vision);
+    }
+    // Muse-Glimmer spreads its tower over three prefixes, fuses q/k/v, and
+    // quantizes the adapter and projection, so it has its own reader.
+    if vision.tower == model_io::VisionTowerKind::MuseGlimmer {
+        return super::vision_muse::read_muse_vision_entries(shards, vision_bases, vision, quant);
+    }
+    // The Qwen2.5-VL tower shares this reader's walk and differs in its role
+    // tables and its supported depth.
+    let qwen25 = vision.tower == model_io::VisionTowerKind::Qwen25Vl;
+    let (block_roles, resident_tensors): (&[(&str, &str)], &[&str]) = if qwen25 {
+        (&QWEN25_BLOCK_ROLES, &QWEN25_RESIDENT_TENSORS)
+    } else {
+        (&BLOCK_ROLES, &RESIDENT_TENSORS)
+    };
+    let supported_depths: &[i64] = if qwen25 {
+        &crate::qwen36_config::SUPPORTED_QWEN25_VISION_DEPTHS
+    } else {
+        &SUPPORTED_VISION_DEPTHS
+    };
     let depth = usize::try_from(vision.depth).map_err(|_| {
         Gemma4Error::Config(format!(
             "vision depth {} cannot be represented as a block count",
             vision.depth
         ))
     })?;
-    if !SUPPORTED_VISION_DEPTHS.contains(&vision.depth) {
+    if !supported_depths.contains(&vision.depth) {
         return Err(Gemma4Error::Config(format!(
-            "vision depth {} is unsupported; expected one of {SUPPORTED_VISION_DEPTHS:?}",
+            "vision depth {} is unsupported; expected one of {supported_depths:?}",
             vision.depth
         )));
     }
@@ -308,13 +388,13 @@ pub fn read_vision_entries_quantized(
     })?;
     for _ in 0..depth {
         let mut roles = Vec::new();
-        roles.try_reserve_exact(BLOCK_ROLES.len()).map_err(|e| {
+        roles.try_reserve_exact(block_roles.len()).map_err(|e| {
             Gemma4Error::Config(format!("cannot allocate vision block role buckets: {e}"))
         })?;
-        roles.resize(BLOCK_ROLES.len(), None);
+        roles.resize(block_roles.len(), None);
         block_names.push(roles);
     }
-    let mut resident_names: Vec<Option<&str>> = vec![None; RESIDENT_TENSORS.len()];
+    let mut resident_names: Vec<Option<&str>> = vec![None; resident_tensors.len()];
 
     // The deepstack mergers, when the config declares any. Bucketed with the
     // same all-slots-or-refuse discipline as the blocks, and the merger count
@@ -353,7 +433,7 @@ pub fn read_vision_entries_quantized(
                     detail: format!("block {index} is past the declared depth of {depth}"),
                 });
             }
-            let role = BLOCK_ROLES
+            let role = block_roles
                 .iter()
                 .position(|(_, s)| *s == suffix)
                 .ok_or_else(|| {
@@ -405,7 +485,7 @@ pub fn read_vision_entries_quantized(
                 });
             }
         } else {
-            let slot = RESIDENT_TENSORS
+            let slot = resident_tensors
                 .iter()
                 .position(|t| *t == tail)
                 .ok_or_else(|| {
@@ -432,7 +512,7 @@ pub fn read_vision_entries_quantized(
             if name.is_none() {
                 return Err(Gemma4Error::MissingTensor(format!(
                     "{VISION_PREFIX}blocks.{index}.{}",
-                    BLOCK_ROLES[role].1
+                    block_roles[role].1
                 )));
             }
         }
@@ -441,7 +521,7 @@ pub fn read_vision_entries_quantized(
         if name.is_none() {
             return Err(Gemma4Error::MissingTensor(format!(
                 "{VISION_PREFIX}{}",
-                RESIDENT_TENSORS[slot]
+                resident_tensors[slot]
             )));
         }
     }
@@ -459,7 +539,7 @@ pub fn read_vision_entries_quantized(
     let mut lossy_conversion = Vec::new();
 
     // The resident nine, renamed onto the install's own prefix.
-    let mut entries = Vec::with_capacity(RESIDENT_TENSORS.len());
+    let mut entries = Vec::with_capacity(resident_tensors.len());
     for (slot, name) in resident_names.iter().enumerate() {
         let name = name.expect("checked above");
         let (converted, shape) = read_tower_tensor(shards, name, quant)?;
@@ -467,7 +547,7 @@ pub fn read_vision_entries_quantized(
             lossy_conversion.push((name.to_string(), converted.lossy));
         }
         entries.push(ResidentEntrySpec::Raw(RawTensorSpec {
-            name: format!("{VISION_INSTALL_PREFIX}{}", RESIDENT_TENSORS[slot]),
+            name: format!("{VISION_INSTALL_PREFIX}{}", resident_tensors[slot]),
             dtype: converted.dtype,
             bytes: converted.bytes,
             shape: resident_shape(&shape),
@@ -500,7 +580,7 @@ pub fn read_vision_entries_quantized(
     let mut experts = Vec::with_capacity(depth);
     let mut widest = 0u64;
     for (index, roles) in block_names.iter().enumerate() {
-        let mut sub_tensors = Vec::with_capacity(BLOCK_ROLES.len());
+        let mut sub_tensors = Vec::with_capacity(block_roles.len());
         let mut used = 0u64;
         for (role, name) in roles.iter().enumerate() {
             let name = name.expect("checked above");
@@ -510,7 +590,7 @@ pub fn read_vision_entries_quantized(
             }
             used += converted.bytes.len() as u64;
             sub_tensors.push(SubTensor {
-                role: BLOCK_ROLES[role].0.to_string(),
+                role: block_roles[role].0.to_string(),
                 bytes: converted.bytes,
                 dtype: "fp16".to_string(),
                 shape,
@@ -537,7 +617,7 @@ pub fn read_vision_entries_quantized(
 /// its stored shape is `[rows, words]`, so the logical `[rows, cols]` is
 /// returned for the index and the block blob to record. Anything else goes
 /// through `convert_raw_to_fp16` with its stored shape.
-fn read_tower_tensor(
+pub(super) fn read_tower_tensor(
     shards: &Gemma4Shards<'_>,
     name: &str,
     quant: Option<&Gemma4Quant>,
@@ -602,15 +682,22 @@ fn dequantize_affine_to_fp16(
     let groups = cols / group;
     let scales_name = format!("{base}.scales");
     let biases_name = format!("{base}.biases");
-    for companion in [&scales_name, &biases_name] {
+    // The companions are BF16 on every qwen conversion; the DeepSeek-VL2 MLX
+    // conversion ships them F16. Either decodes exactly to f32, so the dtype is
+    // read per tensor rather than assumed.
+    let mut companion_f16 = [false; 2];
+    for (slot, companion) in [&scales_name, &biases_name].into_iter().enumerate() {
         let info = shards.info(companion)?;
-        if info.dtype != "BF16" || info.shape != [rows as u64, groups as u64] {
+        if !matches!(info.dtype.as_str(), "BF16" | "F16")
+            || info.shape != [rows as u64, groups as u64]
+        {
             return Err(mismatch(format!(
-                "{companion} is {} {:?}, expected BF16 [{rows}, {groups}] for {bits} bits at \
-                 group {group}",
+                "{companion} is {} {:?}, expected BF16 or F16 [{rows}, {groups}] for {bits} bits \
+                 at group {group}",
                 info.dtype, info.shape
             )));
         }
+        companion_f16[slot] = info.dtype == "F16";
     }
     let packed = shards.read(name)?;
     let scales = shards.read(&scales_name)?;
@@ -625,8 +712,13 @@ fn dequantize_affine_to_fp16(
     }
 
     let mask = (1u32 << bits) - 1;
-    let bf16 = |bytes: &[u8], i: usize| {
-        compute::bf16_to_f32(u16::from_le_bytes([bytes[2 * i], bytes[2 * i + 1]]))
+    let half = |bytes: &[u8], i: usize, is_f16: bool| {
+        let bits = u16::from_le_bytes([bytes[2 * i], bytes[2 * i + 1]]);
+        if is_f16 {
+            compute::f16_to_f32(bits)
+        } else {
+            compute::bf16_to_f32(bits)
+        }
     };
     let mut out = Vec::with_capacity(rows * cols * 2);
     let mut lossy = 0usize;
@@ -641,7 +733,8 @@ fn dequantize_affine_to_fp16(
             ]);
             let q = (word >> (bits * (c % per_word))) & mask;
             let g = r * groups + c / group;
-            let value = q as f32 * bf16(&scales, g) + bf16(&biases, g);
+            let value =
+                q as f32 * half(&scales, g, companion_f16[0]) + half(&biases, g, companion_f16[1]);
             let converted = compute::f32_to_f16(value);
             let back = compute::f16_to_f32(converted);
             // The same overflow refusal `convert_raw_to_fp16` applies: the

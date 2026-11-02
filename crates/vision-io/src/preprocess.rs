@@ -36,6 +36,9 @@ pub fn preprocess(
     image: &Rgb8Image,
     params: &PreprocessParams,
 ) -> Result<PreprocessedImage, VisionIoError> {
+    if let crate::params::ResizeRule::MuseTokens { max_tokens } = params.resize {
+        return crate::muse::muse_preprocess(image, params, max_tokens);
+    }
     let (resized_h, resized_w) = resized_dims(image.height, image.width, params)?;
     let resized = resize_bicubic_pil(&image.data, image.width, image.height, resized_w, resized_h);
     let normalized = rescale_and_normalize(&resized, params);

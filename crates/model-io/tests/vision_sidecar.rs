@@ -134,9 +134,25 @@ fn vision_tower_defaults_to_qwen_and_reads_gemma4() {
         serde_json::from_str(&manifest_arch_json(r#", "visionTower": "gemma4""#)).unwrap();
     assert_eq!(arch.vision_config().tower, VisionTowerKind::Gemma4);
     assert_eq!(VisionTowerKind::parse("gemma5"), None);
-    for k in [VisionTowerKind::QwenSiglip, VisionTowerKind::Gemma4] {
+    for k in [
+        VisionTowerKind::QwenSiglip,
+        VisionTowerKind::Gemma4,
+        VisionTowerKind::Clip,
+    ] {
         assert_eq!(VisionTowerKind::parse(k.as_str()), Some(k));
     }
+}
+
+/// The CLIP tower (LLaVA) persists as `clip` and reads back as itself; the
+/// spelling is part of every sidecar's manifest, so a rename is a format
+/// break.
+#[test]
+fn the_clip_tower_kind_persists_as_clip() {
+    use turbospark_model_io::VisionTowerKind;
+    assert_eq!(VisionTowerKind::Clip.as_str(), "clip");
+    let arch: turbospark_model_io::ManifestArch =
+        serde_json::from_str(&manifest_arch_json(r#", "visionTower": "clip""#)).unwrap();
+    assert_eq!(arch.vision_config().tower, VisionTowerKind::Clip);
 }
 
 fn tempfile_dir() -> std::path::PathBuf {

@@ -221,6 +221,78 @@ pub enum VisionTowerKind {
     /// The Gemma 4 tower: sandwich RMSNorms, axial rope, 3x3 pooling, and
     /// the `embed_vision` projector.
     Gemma4,
+    /// The Muse-Glimmer tower: LayerNorm blocks with separate q/k/v, an
+    /// exact-GELU MLP, a 32x32 learned position table with half-pixel
+    /// interpolation, window attention (32-patch windows) on all but every
+    /// fourth block, a dim-major pixel shuffle, and a two-GELU adapter plus
+    /// projection ending in a no-scale RMSNorm. Shared fields that change
+    /// meaning: `out_hidden_size` is the TRUNK width the projection writes
+    /// into, `spatial_merge_size` the pixel-shuffle edge, and the start and
+    /// end ids are `<|image_start|>` / `<|image_end|>`, which the processor
+    /// wraps around the placeholder run
+    /// (`docs/MUSEGLIMMER_VISION_PHASE0.md`).
+    MuseGlimmer,
+    /// The Qwen2.5-VL tower: RMSNorm blocks, a gated SiLU MLP, no absolute
+    /// position table, 2-D rope, and window attention on all but every
+    /// eighth block. The window size (112 pixels) and the full-attention
+    /// pattern (blocks 7, 15, 23, 31) are properties of the kind, checked at
+    /// intake rather than stored, which keeps this struct float-free and
+    /// matches how Gemma 4's rope theta is handled
+    /// (`docs/QWEN25_VL_VISION_PHASE0.md`).
+    Qwen25Vl,
+    /// The LFM3-VL tower: RMSNorm blocks that alternate a gated depthwise
+    /// 3x3 spatial convolution with grouped-query attention, a neox-style
+    /// 2-D rope, a SwiGLU MLP, and a pixel-unshuffle projector
+    /// (`docs/LFM3_VL_VISION_PHASE0.md`). `spatial_merge_size` is the
+    /// unshuffle factor (2), `num_position_embeddings` is zero (the tower
+    /// has no position table), and `out_hidden_size` is the trunk width.
+    Lfm3Vl,
+    /// The CLIP ViT tower LLaVA-1.5 carries (`docs/LLAVA_VISION_PHASE0.md`):
+    /// class token, learned absolute positions, a LayerNorm before the first
+    /// block, quick-GELU blocks, the hidden state of the second-to-last
+    /// block with the class row dropped, then a two-layer GELU projector.
+    ///
+    /// Field meanings: `depth` is the blocks THAT RUN (23 of the checkpoint's
+    /// 24, the last is never read), `spatial_merge_size` is 1, `temporal_patch_size`
+    /// is 1, `num_position_embeddings` counts the class row (577), and
+    /// `out_hidden_size` is the projector's output (the trunk width). The
+    /// start and end ids are 0: the placeholder run is bare.
+    Clip,
+    /// The MiniCPM-V 4.7 tower (`docs/MINICPMV_VISION_PHASE0.md`): a SigLIP
+    /// encoder with bucketed position ids, a 2x2 window attention-merger after
+    /// block 6, and a second 2x2 merger MLP into the trunk. `spatial_merge_size`
+    /// is the TOTAL per-axis downsample (4 in the default `16x` mode), the
+    /// start and end ids are `<image>` and `</image>`, and
+    /// `num_position_embeddings` is the table length (70 x 70). The merger
+    /// geometry, the insert layer, the thumbnail-only slicing and the canvas
+    /// ids are properties of the kind, checked at intake.
+    MiniCpmV,
+    /// The Pixtral tower (Pixtral-12B, `docs/PIXTRAL_VISION_PHASE0.md`): a
+    /// bias-free patch conv, an RMSNorm before the first block, RMSNorm
+    /// blocks with 2-D rope and a gated SiLU MLP, bidirectional attention over
+    /// the whole image, then a two-layer GELU projector. No class token, no
+    /// position table, variable image size.
+    ///
+    /// Field meanings: `depth` is 24, `spatial_merge_size` is 1,
+    /// `temporal_patch_size` is 1, `num_position_embeddings` is 0,
+    /// `out_hidden_size` is the trunk width. `vision_start_token_id` is
+    /// `[IMG_BREAK]` and `vision_end_token_id` is `[IMG_END]`: Pixtral puts a
+    /// break between patch rows and an end after the last, and the prompt
+    /// builders read the two ids from here. `image_token_id` is `[IMG]`.
+    /// The rope theta (10000) and epsilon (1e-5) are properties of the kind.
+    Pixtral,
+    /// The SigLIP-so400m tower DeepSeek-VL2 carries
+    /// (`docs/DEEPSEEK_VL2_VISION_PHASE0.md`): LayerNorm blocks with a fused
+    /// qkv and a tanh-GELU MLP, 729 learned absolute positions and no class
+    /// row, a final LayerNorm, then a 2x2 unfold projector and two linears.
+    ///
+    /// Field meanings: `depth` is 27, `patch_size` is 14 (a 384 px tile reads
+    /// 27 x 27 patches, the 6 trailing pixels never reach the conv),
+    /// `spatial_merge_size` is the projector's unfold factor (2),
+    /// `num_position_embeddings` is 729, `out_hidden_size` is the trunk width,
+    /// `temporal_patch_size` is 1. The start and end ids are 0: the image run
+    /// is a bare block of `image_token_id` positions.
+    SigLip,
 }
 
 impl VisionTowerKind {
@@ -229,6 +301,13 @@ impl VisionTowerKind {
         match self {
             VisionTowerKind::QwenSiglip => "qwen_siglip",
             VisionTowerKind::Gemma4 => "gemma4",
+            VisionTowerKind::Qwen25Vl => "qwen25_vl",
+            VisionTowerKind::Lfm3Vl => "lfm3_vl",
+            VisionTowerKind::Clip => "clip",
+            VisionTowerKind::MuseGlimmer => "muse_glimmer",
+            VisionTowerKind::MiniCpmV => "minicpm_v",
+            VisionTowerKind::Pixtral => "pixtral",
+            VisionTowerKind::SigLip => "siglip",
         }
     }
 
@@ -238,6 +317,13 @@ impl VisionTowerKind {
         match s {
             "qwen_siglip" => Some(VisionTowerKind::QwenSiglip),
             "gemma4" => Some(VisionTowerKind::Gemma4),
+            "qwen25_vl" => Some(VisionTowerKind::Qwen25Vl),
+            "lfm3_vl" => Some(VisionTowerKind::Lfm3Vl),
+            "clip" => Some(VisionTowerKind::Clip),
+            "muse_glimmer" => Some(VisionTowerKind::MuseGlimmer),
+            "minicpm_v" => Some(VisionTowerKind::MiniCpmV),
+            "pixtral" => Some(VisionTowerKind::Pixtral),
+            "siglip" => Some(VisionTowerKind::SigLip),
             _ => None,
         }
     }

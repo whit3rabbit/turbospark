@@ -364,16 +364,18 @@ impl CatalogEntry {
                 self.alias
             ));
         }
-        if self.include_vision
-            && !self
-                .sidecars
-                .files
-                .iter()
-                .any(|f| f == "preprocessor_config.json")
-        {
+        // The image settings file: `preprocessor_config.json` for the qwen
+        // lineage, `processor_config.json` for LFM3-VL, whose repo ships no
+        // preprocessor config (its `image_processor` object IS that file;
+        // the installer writes it under the name the image path reads).
+        let preprocessing_file = if self.family == "lfm3" {
+            "processor_config.json"
+        } else {
+            "preprocessor_config.json"
+        };
+        if self.include_vision && !self.sidecars.files.iter().any(|f| f == preprocessing_file) {
             return Err(format!(
-                "{}: include_vision needs sidecars.files to include \
-                 preprocessor_config.json",
+                "{}: include_vision needs sidecars.files to include {preprocessing_file}",
                 self.alias
             ));
         }

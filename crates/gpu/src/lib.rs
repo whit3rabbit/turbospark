@@ -411,8 +411,8 @@ pub use rms_norm::{
 };
 #[cfg(target_os = "macos")]
 pub use rope::{
-    encode_rope_mrope_interleaved, encode_rope_neox_freqs, encode_rope_neox_subdim,
-    encode_rope_neox_subdim_rows, encode_rope_neox_subdim_rows_positions,
+    encode_rope_mrope_chunked, encode_rope_mrope_interleaved, encode_rope_neox_freqs,
+    encode_rope_neox_subdim, encode_rope_neox_subdim_rows, encode_rope_neox_subdim_rows_positions,
     encode_rope_proportional_neox, encode_rope_proportional_neox_rows, rope_mrope_interleaved,
     rope_neox_subdim, rope_proportional_neox, ROPE_POSITION_ROWS_MAX,
 };
@@ -429,11 +429,11 @@ pub use utility::{
 };
 #[cfg(target_os = "macos")]
 pub use vision::{
-    encode_vision_attention, encode_vision_attention_with, encode_vision_gelu,
-    encode_vision_layer_norm, encode_vision_matmul, encode_vision_matmul_with, encode_vision_mul,
-    encode_vision_residual_add, encode_vision_rms_norm, encode_vision_rope_2d,
-    encode_vision_rope_axial, GeluKind, VisionAttentionKernel, VisionMatmulKernel,
-    MAX_ATTENTION_HEAD_DIM,
+    encode_vision_attention, encode_vision_attention_with, encode_vision_gated_dwconv3x3,
+    encode_vision_gelu, encode_vision_layer_norm, encode_vision_matmul, encode_vision_matmul_with,
+    encode_vision_mul, encode_vision_residual_add, encode_vision_rms_norm, encode_vision_rope_2d,
+    encode_vision_rope_axial, encode_vision_silu, encode_vision_window_mean4_add, GeluKind,
+    VisionAttentionKernel, VisionMatmulKernel, MAX_ATTENTION_HEAD_DIM,
 };
 #[cfg(target_os = "macos")]
 pub use whisper_conv::{encode_whisper_conv1d3_gelu, whisper_conv1d3_gelu};
