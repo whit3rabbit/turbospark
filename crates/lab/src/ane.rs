@@ -110,6 +110,9 @@ pub fn ane_plan_cmd(mut args: Args) -> Result<(), String> {
         .take("--experiment")?
         .unwrap_or_else(|| "ane-plan".into());
     let cache = args.take("--cache")?.map(PathBuf::from);
+    // A multifunction program's plan covers its default function only: the
+    // others list their ops with no device. `--function` plans that one.
+    let function = args.take("--function")?;
     args.finish()?;
     if !supports(Capability::ComputePlan) {
         return Err(format!(
@@ -127,7 +130,11 @@ pub fn ane_plan_cmd(mut args: Args) -> Result<(), String> {
                 .unwrap_or_else(|| PathBuf::from(".compiled"))
         });
         let compiled = compile_if_needed(&program, &cache).map_err(|e| e.to_string())?;
-        let plan = compute_plan(&compiled, &LoadOptions::new(units)).map_err(|e| e.to_string())?;
+        let mut opts = LoadOptions::new(units);
+        if let Some(f) = &function {
+            opts = opts.with_function(f.clone());
+        }
+        let plan = compute_plan(&compiled, &opts).map_err(|e| e.to_string())?;
         let summary = summarize(&plan);
         crate::say!("{} (units {})", program.display(), units.as_str());
         for f in summary.as_array().into_iter().flatten() {
@@ -140,6 +147,16 @@ pub fn ane_plan_cmd(mut args: Args) -> Result<(), String> {
                 (s["gpu"].as_f64().unwrap_or(0.0) * 100.0 + 0.0),
                 (s["cpu"].as_f64().unwrap_or(0.0) * 100.0 + 0.0)
             );
+            let placed: u64 = ["ane", "gpu", "cpu"]
+                .iter()
+                .filter_map(|d| f["op_count"][d].as_u64())
+                .sum();
+            if placed == 0 {
+                crate::say!(
+                    "    no op placed: not planned (rerun with --function {})",
+                    f["function"].as_str().unwrap_or("?")
+                );
+            }
             for b in f["off_ane"].as_array().into_iter().flatten() {
                 crate::say!(
                     "    off the ANE: {} x {} ({})",
@@ -156,7 +173,8 @@ pub fn ane_plan_cmd(mut args: Args) -> Result<(), String> {
         ledger.append(
             "ane_plan",
             json!({"program": program.display().to_string(), "units": units.as_str(),
-                   "functions": summary, "provenance": crate::provenance::collect()}),
+                   "function": function, "functions": summary,
+                   "provenance": crate::provenance::collect()}),
         )?;
     }
     Ok(())

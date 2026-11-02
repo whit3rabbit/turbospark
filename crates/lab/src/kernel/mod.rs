@@ -24,6 +24,7 @@ pub mod qkv_concurrent;
 pub mod rows_attn;
 pub mod support;
 pub mod verify_ladder;
+pub mod vision_encode;
 pub mod whisper_linear;
 
 pub use crate::fit;
@@ -200,6 +201,9 @@ pub struct BenchOpts {
     /// `ane_handoff`: spinner threads for the contended points (0: quiet
     /// points only).
     pub contend: usize,
+    /// `vision_encode`: a tower-only `.gturbo-vision` sidecar to attach to a
+    /// text-only trunk, `--vision-sidecar`.
+    pub vision_sidecar: Option<PathBuf>,
 }
 
 impl Default for BenchOpts {
@@ -214,6 +218,7 @@ impl Default for BenchOpts {
             ane_programs: None,
             ane_dir: None,
             contend: 0,
+            vision_sidecar: None,
         }
     }
 }
@@ -249,6 +254,7 @@ pub fn registry() -> Vec<&'static dyn KernelBench> {
         &whisper_linear::WhisperLinear,
         &ane_matmul::AneMatmul,
         &ane_handoff::AneHandoff,
+        &vision_encode::VisionEncode,
     ]
 }
 
@@ -315,6 +321,7 @@ pub fn kernel_cmd(mut args: Args) -> Result<(), String> {
     let ane_programs = args.take("--programs")?.map(PathBuf::from);
     let ane_dir = args.take("--ane-dir")?.map(PathBuf::from);
     let contend: usize = args.parsed("--contend", 0)?;
+    let vision_sidecar = args.take("--vision-sidecar")?.map(PathBuf::from);
     // `--shape RxC` predates `--case`; both select one case label.
     let only_case = match (args.take("--case")?, args.take("--shape")?) {
         (Some(c), _) | (None, Some(c)) => Some(c),
@@ -347,6 +354,7 @@ pub fn kernel_cmd(mut args: Args) -> Result<(), String> {
         ane_programs,
         ane_dir,
         contend,
+        vision_sidecar,
     };
 
     let subject = Subject::open(&model)?;
@@ -421,7 +429,18 @@ pub fn kernel_cmd(mut args: Args) -> Result<(), String> {
                 _ => None,
             };
             print_result(&result);
-            record(&result, vec![before, after], energy)?;
+            let eligible_samples = vec![before, after];
+            // The tower bench's per-page stage table rides beside its curve.
+            if let Some(payload) = vision_encode::ledger_payload(&result) {
+                let (eligible, reasons) = eligibility(&eligible_samples, &rules);
+                ledger.append(
+                    "vision_encode",
+                    json!({"model": subject.dir.display().to_string(), "family": subject.family,
+                           "eligible": eligible, "reasons": reasons, "hashed": opts.hash,
+                           "vision": payload, "provenance": provenance}),
+                )?;
+            }
+            record(&result, eligible_samples, energy)?;
             ran += 1;
         }
     }

@@ -52,6 +52,10 @@ pub const KINDS: &[(&str, &str)] = &[
     ),
     ("ane_plan", "Core ML compute-plan placement of one program"),
     (
+        "vision_encode",
+        "one vision tower run per page: stage ms, block stream read against GPU compute, patches/s, peak footprint",
+    ),
+    (
         "expert_census",
         "one router capture run reduced: expert reuse within batches, union against slot counts, sub-batch replay",
     ),
