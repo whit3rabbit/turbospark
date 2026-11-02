@@ -106,6 +106,10 @@ pub(crate) fn attach_images<'a>(
             let spliced = crate::vision::attach_clip(runner.as_mut(), rendered, bos, parts)?;
             return Ok((spliced, VisionScope::armed(engine)));
         }
+        if runner.siglip_image_ids().is_some() {
+            let spliced = crate::vision::attach_siglip(runner.as_mut(), rendered, parts)?;
+            return Ok((spliced, VisionScope::armed(engine)));
+        }
         let params = crate::vision::preprocess_params(
             runner,
             session.load_policy.guard,

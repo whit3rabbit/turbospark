@@ -616,6 +616,31 @@ pub(crate) fn plan(model: &AppState, request: &ChatCompletionRequest) -> Result<
             let images = crate::vision::clip_preprocess_all(&encoded, params)?;
             Some(crate::vision::RequestImages::Clip { images, spans })
         }
+        // SigLIP (DeepSeek-VL2): the run length is per image, set by the tile
+        // grid the image's size picks, so the preflight reads headers first.
+        (
+            Some(crate::vision::VisionInfo::SigLip {
+                params,
+                marker,
+                fill,
+            }),
+            false,
+        ) => {
+            let counts = crate::vision::siglip_preflight_all(&encoded, params)?;
+            // The V2 template is rendered with the BOS literal at the front
+            // (`MfTokenizer::apply_chat_template`), so no prefix is added.
+            let (expanded, spans) = turbospark_vision_io::clip_expand_image_placeholders(
+                &prompt_ids,
+                *marker,
+                *fill,
+                &counts,
+            )
+            .map_err(|e| format!("cannot place {} image(s): {e}", counts.len()))?;
+            prompt_ids = expanded;
+            check_context(&prompt_ids, &config, model.max_context())?;
+            let images = crate::vision::siglip_preprocess_all(&encoded, params)?;
+            Some(crate::vision::RequestImages::SigLip { images, spans })
+        }
         _ => None,
     };
 

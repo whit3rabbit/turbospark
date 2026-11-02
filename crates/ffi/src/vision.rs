@@ -273,6 +273,89 @@ pub(crate) fn clip_params(
     Ok(params)
 }
 
+/// The SigLIP tower's processor settings (DeepSeek-VL2), read from
+/// `processor_config.json` beside the tower and cross-checked against the
+/// install's own `arch.vision` for the numbers that must agree for the tower to
+/// read the rows at all.
+pub(crate) fn siglip_params(
+    runner: &runtime::RealForwardRunner,
+) -> Result<turbospark_vision_io::DeepseekVl2Params, String> {
+    let path = runner.vision_dir().join("processor_config.json");
+    let json = std::fs::read_to_string(&path).map_err(|e| {
+        format!(
+            "{}: {e}\n  this install declares no image processor config; re-pull the vision \
+             sidecar, or copy the checkpoint's processor_config.json in",
+            path.display()
+        )
+    })?;
+    let params = turbospark_vision_io::DeepseekVl2Params::from_processor_config_json(&json)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    let vision = runner.vision_config();
+    let side = params.patches_per_side() as i64;
+    if vision.patch_size != turbospark_vision_io::DSVL2_PATCH as i64
+        || vision.num_position_embeddings != side * side
+        || vision.spatial_merge_size != params.downsample_ratio as i64
+    {
+        return Err(format!(
+            "{}: a {}-pixel tile is {side}x{side} patches, but this install's tower has patch {}, \
+             a {}-row position table and unfold {}; the two describe different checkpoints",
+            path.display(),
+            params.image_size,
+            vision.patch_size,
+            vision.num_position_embeddings,
+            vision.spatial_merge_size
+        ));
+    }
+    Ok(params)
+}
+
+/// The SigLIP tower's whole turn (DeepSeek-VL2,
+/// `docs/DEEPSEEK_VL2_VISION_PHASE0.md`): pad and tile every part (a global
+/// view plus the best-fitting local grid, tiling off past two images), expand
+/// each rendered `<image>` to its full run, encode, and hand the runner the
+/// rows. Returns the expanded ids to prefill. Mirrors
+/// `crates/cli/src/generate/vision.rs::attach_siglip`.
+pub(crate) fn attach_siglip(
+    runner: &mut runtime::RealForwardRunner,
+    rendered: &[i32],
+    parts: &[&WirePart],
+) -> Result<Vec<i32>, String> {
+    let (marker, fill) = runner
+        .siglip_image_ids()
+        .ok_or("this install's vision tower is not a SigLIP one")?;
+    let params = siglip_params(runner)?;
+    let crop = parts.len() <= 2;
+    let mut prepared = Vec::with_capacity(parts.len());
+    for (i, part) in parts.iter().enumerate() {
+        let (label, decoded) = decode_part(part, i)?;
+        let tiles = turbospark_vision_io::deepseek_vl2_preprocess(&decoded, &params, crop)
+            .map_err(|e| format!("{label}: {e}"))?;
+        prepared.push((label, tiles));
+    }
+    let counts: Vec<usize> = prepared.iter().map(|(_, t)| t.image_tokens()).collect();
+    let (expanded, spans) =
+        turbospark_vision_io::clip_expand_image_placeholders(rendered, marker, fill, &counts)
+            .map_err(|e| {
+                format!(
+                    "cannot place {} image(s) in this prompt: {e}\n  the template renders one \
+                     <image> per image; check the messages actually carry image parts",
+                    parts.len()
+                )
+            })?;
+    let mut rows = Vec::with_capacity(prepared.len());
+    for (label, tiles) in &prepared {
+        rows.push(
+            runner
+                .encode_image_siglip(tiles)
+                .map_err(|e| format!("{label}: {e}"))?,
+        );
+    }
+    runner
+        .set_prompt_vision_flat(&rows, &spans, expanded.len())
+        .map_err(|e| format!("cannot inject the encoded images: {e}"))?;
+    Ok(expanded)
+}
+
 /// The CLIP tower's whole turn (LLaVA, `docs/LLAVA_VISION_PHASE0.md`): read
 /// the processor config beside the tower, decode and preprocess every part
 /// (shortest-edge resize, center crop, normalize), expand each rendered

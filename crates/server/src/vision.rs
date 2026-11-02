@@ -28,8 +28,9 @@
 
 use anyllm_translate::openai::{ChatContentPart, ChatMessage};
 use turbospark_vision_io::{
-    ClipPatches, ClipPreprocessParams, Gemma4ImageIds, Gemma4Patches, GridThw, ImageSpan,
-    MropePositions, PreprocessParams, PreprocessedImage, VisionSpecialIds,
+    ClipPatches, ClipPreprocessParams, DeepseekVl2Params, DeepseekVl2Tiles, Gemma4ImageIds,
+    Gemma4Patches, GridThw, ImageSpan, MropePositions, PreprocessParams, PreprocessedImage,
+    VisionSpecialIds,
 };
 
 /// Above this many image parts in one request, `handler::plan` refuses
@@ -88,6 +89,13 @@ pub enum VisionInfo {
         marker: i32,
         fill: i32,
     },
+    /// The SigLIP tower (DeepSeek-VL2): padded tiles, a bare marker run whose
+    /// length depends on each image's best-fitting tile grid.
+    SigLip {
+        params: DeepseekVl2Params,
+        marker: i32,
+        fill: i32,
+    },
 }
 
 /// One request's images, preprocessed, plus what the trunk needs to place
@@ -107,6 +115,11 @@ pub enum RequestImages {
     /// Each image's placeholder run in the expanded prompt.
     Clip {
         images: Vec<ClipPatches>,
+        spans: Vec<ImageSpan>,
+    },
+    /// Each image's tiles and placeholder run in the expanded prompt.
+    SigLip {
+        images: Vec<DeepseekVl2Tiles>,
         spans: Vec<ImageSpan>,
     },
 }
@@ -455,6 +468,80 @@ pub(crate) fn clip_preprocess_all(
             let decoded = turbospark_vision_io::decode_image_bytes(bytes)
                 .map_err(|e| format!("image {i}: {e}"))?;
             turbospark_vision_io::clip_preprocess(&decoded, params)
+                .map_err(|e| format!("image {i}: {e}"))
+        })
+        .collect()
+}
+
+/// The SigLIP (DeepSeek-VL2) preflight: from the headers alone, work out each
+/// image's tile grid, check the per-request source-pixel and patch-byte
+/// budgets, and return each image's placeholder-run length.
+///
+/// Tiling is on for at most two images (the reference's `len(images) <= 2`),
+/// so the counts depend on the whole request.
+pub(crate) fn siglip_preflight_all(
+    encoded: &[Vec<u8>],
+    params: &DeepseekVl2Params,
+) -> Result<Vec<usize>, String> {
+    let crop = encoded.len() <= 2;
+    let per_tile_bytes = (params.patches_per_side().pow(2)
+        * turbospark_vision_io::DSVL2_PATCH_DIM
+        * std::mem::size_of::<f32>()) as u64;
+    let mut source_pixels = 0u64;
+    let mut patch_bytes = 0u64;
+    let mut counts = Vec::with_capacity(encoded.len());
+    for (i, bytes) in encoded.iter().enumerate() {
+        let (width, height) =
+            turbospark_vision_io::image_dimensions(bytes).map_err(|e| format!("image {i}: {e}"))?;
+        source_pixels = source_pixels
+            .checked_add(u64::from(width) * u64::from(height))
+            .ok_or_else(|| "image pixel count overflows".to_string())?;
+        if source_pixels > MAX_SOURCE_PIXELS_PER_REQUEST {
+            return Err(format!(
+                "images contain {source_pixels} source pixels; the per-request limit is {MAX_SOURCE_PIXELS_PER_REQUEST}"
+            ));
+        }
+        let (bw, bh) = if crop {
+            turbospark_vision_io::select_best_resolution(
+                width as usize,
+                height as usize,
+                &params.candidates,
+            )
+            .ok_or_else(|| format!("image {i}: the processor lists no candidate resolutions"))?
+        } else {
+            (params.image_size, params.image_size)
+        };
+        let (tiles_w, tiles_h) = (bw / params.image_size, bh / params.image_size);
+        patch_bytes = patch_bytes
+            .checked_add(per_tile_bytes * (1 + (tiles_w * tiles_h) as u64))
+            .ok_or_else(|| "image preprocessing size overflows".to_string())?;
+        if patch_bytes > MAX_PATCH_BYTES_PER_REQUEST {
+            return Err(format!(
+                "images need {patch_bytes} bytes of preprocessed patches; the per-request limit is {MAX_PATCH_BYTES_PER_REQUEST}"
+            ));
+        }
+        counts.push(turbospark_vision_io::deepseek_vl2_image_tokens(
+            tiles_w,
+            tiles_h,
+            params.merged_per_side(),
+        ));
+    }
+    Ok(counts)
+}
+
+/// Decode and tile every image for the SigLIP tower, in request order.
+pub(crate) fn siglip_preprocess_all(
+    encoded: &[Vec<u8>],
+    params: &DeepseekVl2Params,
+) -> Result<Vec<DeepseekVl2Tiles>, String> {
+    let crop = encoded.len() <= 2;
+    encoded
+        .iter()
+        .enumerate()
+        .map(|(i, bytes)| {
+            let decoded = turbospark_vision_io::decode_image_bytes(bytes)
+                .map_err(|e| format!("image {i}: {e}"))?;
+            turbospark_vision_io::deepseek_vl2_preprocess(&decoded, params, crop)
                 .map_err(|e| format!("image {i}: {e}"))
         })
         .collect()

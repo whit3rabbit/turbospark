@@ -346,14 +346,15 @@ impl RealChatModel {
                 .map_err(|e| format!("--vision-sidecar {}: {e}", dir.display()))?;
             let vision = runner.vision_config();
             // A CLIP tower (LLaVA) has no start token to pair with the marker.
-            let verified = if runner.clip_image_ids().is_some() {
-                tokenizer.verify_bare_image_marker(vision.image_token_id as i32)
-            } else {
-                tokenizer.verify_image_markers(
-                    vision.vision_start_token_id as i32,
-                    vision.image_token_id as i32,
-                )
-            };
+            let verified =
+                if runner.clip_image_ids().is_some() || runner.siglip_image_ids().is_some() {
+                    tokenizer.verify_bare_image_marker(vision.image_token_id as i32)
+                } else {
+                    tokenizer.verify_image_markers(
+                        vision.vision_start_token_id as i32,
+                        vision.image_token_id as i32,
+                    )
+                };
             verified.map_err(|e| format!("--vision-sidecar {}: {e}", dir.display()))?;
             // Print only when a sidecar was actually attached: most servers
             // run with none, and the guardrails/prefix-reuse lines' "always
@@ -485,6 +486,36 @@ impl RealChatModel {
                 marker,
                 fill,
             })
+        } else if let Some((marker, fill)) = runner.siglip_image_ids() {
+            // DeepSeek-VL2 reads its tiling from `processor_config.json` beside
+            // the tower; a broken install fails the open rather than serving
+            // text-only under a vision label.
+            let path = runner.vision_dir().join("processor_config.json");
+            let json =
+                std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let params = turbospark_vision_io::DeepseekVl2Params::from_processor_config_json(&json)
+                .map_err(|e| format!("{}: {e}", path.display()))?;
+            let v = runner.vision_config();
+            let side = params.patches_per_side() as i64;
+            if v.patch_size != turbospark_vision_io::DSVL2_PATCH as i64
+                || v.num_position_embeddings != side * side
+                || v.spatial_merge_size != params.downsample_ratio as i64
+            {
+                return Err(format!(
+                    "{}: a {}-pixel tile is {side}x{side} patches, but this install's tower has \
+                     patch {}, a {}-row position table and unfold {}",
+                    path.display(),
+                    params.image_size,
+                    v.patch_size,
+                    v.num_position_embeddings,
+                    v.spatial_merge_size
+                ));
+            }
+            Some(crate::vision::VisionInfo::SigLip {
+                params,
+                marker,
+                fill,
+            })
         } else if runner.has_vision_tower() {
             let v = runner.vision_config();
             preprocess_params
@@ -600,6 +631,19 @@ impl RealChatModel {
                     rows.push(
                         runner
                             .encode_image_clip(image)
+                            .map_err(|e| RuntimeError::Producer(format!("image {i}: {e}")))?,
+                    );
+                }
+                runner
+                    .set_prompt_vision_flat(&rows, spans, prompt_ids.len())
+                    .map_err(|e| RuntimeError::Producer(e.to_string()))?;
+            }
+            crate::vision::RequestImages::SigLip { images, spans } => {
+                let mut rows = Vec::with_capacity(images.len());
+                for (i, image) in images.iter().enumerate() {
+                    rows.push(
+                        runner
+                            .encode_image_siglip(image)
                             .map_err(|e| RuntimeError::Producer(format!("image {i}: {e}")))?,
                     );
                 }

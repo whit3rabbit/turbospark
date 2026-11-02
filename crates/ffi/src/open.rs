@@ -496,14 +496,15 @@ pub(crate) fn open_with_failure(
                 .map_err(|e| format!("visionSidecar {}: {e}", dir.display()))?;
             let vision = runner.vision_config();
             // A CLIP tower (LLaVA) has no start token to pair with the marker.
-            let verified = if runner.clip_image_ids().is_some() {
-                tokenizer.verify_bare_image_marker(vision.image_token_id as i32)
-            } else {
-                tokenizer.verify_image_markers(
-                    vision.vision_start_token_id as i32,
-                    vision.image_token_id as i32,
-                )
-            };
+            let verified =
+                if runner.clip_image_ids().is_some() || runner.siglip_image_ids().is_some() {
+                    tokenizer.verify_bare_image_marker(vision.image_token_id as i32)
+                } else {
+                    tokenizer.verify_image_markers(
+                        vision.vision_start_token_id as i32,
+                        vision.image_token_id as i32,
+                    )
+                };
             verified.map_err(|e| format!("visionSidecar {}: {e}", dir.display()))?;
             Some(dir)
         }
@@ -731,6 +732,29 @@ fn vision_info(
                 source,
                 sidecar_path,
                 max_pixels: Some(params.size * params.size),
+            },
+            Err(reason) => crate::wire::VisionInfo {
+                active: false,
+                image_token_id: None,
+                reason: Some(reason),
+                source,
+                sidecar_path,
+                max_pixels: None,
+            },
+        };
+    }
+    // A SigLIP tower (DeepSeek-VL2) pads and tiles at fixed sizes, so it has no
+    // pixel budget to clamp either: the ceiling is the largest candidate
+    // resolution's area.
+    if runner.siglip_image_ids().is_some() {
+        return match crate::vision::siglip_params(runner) {
+            Ok(params) => crate::wire::VisionInfo {
+                active: true,
+                image_token_id: Some(image_token_id),
+                reason: None,
+                source,
+                sidecar_path,
+                max_pixels: params.candidates.iter().map(|(w, h)| w * h).max(),
             },
             Err(reason) => crate::wire::VisionInfo {
                 active: false,
