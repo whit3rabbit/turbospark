@@ -519,6 +519,31 @@ fn pass_through_packed_impl(
     Ok((spec, losses))
 }
 
+/// An F16 companion plane (scales or biases) as BF16 bytes, little-endian.
+///
+/// The resident and routed affine kernels read BF16 companions. A checkpoint
+/// converted at float16 (`mlx-community/deepseek-vl2-tiny-4bit`) stores them
+/// F16, so they are narrowed while being ingested rather than copied as F16
+/// bits under a BF16 tag (the same bytes with a different exponent field:
+/// scales wrong by orders of magnitude). Returns the bytes and how many
+/// values lost mantissa bits (F16 has 10, BF16 7), which the caller reports.
+pub(crate) fn f16_plane_to_bf16_bytes(
+    tensor: &str,
+    bytes: &[u8],
+) -> Result<(Vec<u8>, usize), Gemma4Error> {
+    let values = decode_raw_to_f32(tensor, "F16", bytes)?;
+    let mut lossy = 0usize;
+    let mut out = Vec::with_capacity(values.len() * 2);
+    for value in values {
+        let narrowed = compute::f32_to_bf16(value);
+        if compute::bf16_to_f32(narrowed) != value {
+            lossy += 1;
+        }
+        out.extend_from_slice(&narrowed.to_le_bytes());
+    }
+    Ok((out, lossy))
+}
+
 fn read_companion_plane(
     shards: &Gemma4Shards<'_>,
     name: &str,

@@ -266,6 +266,19 @@ impl FfiChatModel {
                     .set_prompt_vision_flat(&rows, spans, prompt_ids.len())
                     .map_err(|e| RuntimeError::Producer(e.to_string()))?;
             }
+            turbospark_server::vision::RequestImages::SigLip { images, spans } => {
+                let mut rows = Vec::with_capacity(images.len());
+                for (i, image) in images.iter().enumerate() {
+                    rows.push(
+                        runner
+                            .encode_image_siglip(image)
+                            .map_err(|e| RuntimeError::Producer(format!("image {i}: {e}")))?,
+                    );
+                }
+                runner
+                    .set_prompt_vision_flat(&rows, spans, prompt_ids.len())
+                    .map_err(|e| RuntimeError::Producer(e.to_string()))?;
+            }
         }
 
         let combined = self.cancel_or_stopped(cancel);
@@ -362,6 +375,13 @@ impl ChatModel for FfiChatModel {
                         v.vision_start_token_id as i32,
                         v.vision_end_token_id as i32,
                     ),
+                });
+            }
+            if let Some((marker, fill)) = runner.siglip_image_ids() {
+                return Some(turbospark_server::vision::VisionInfo::SigLip {
+                    params: crate::vision::siglip_params(runner).ok()?,
+                    marker,
+                    fill,
                 });
             }
             let params = crate::vision::preprocess_params(

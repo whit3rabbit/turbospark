@@ -15,7 +15,100 @@ read of the MLX shard, and the mlx-vlm source. Read on 2026-11-01.
 
 Larger siblings (`deepseek-vl2-small`, `deepseek-vl2`) were not read.
 
-## Verdict
+## Status: DeepSeek-VL2-tiny takes images end to end
+
+Everything below the "Verdict" heading is the Phase 0 reading and is kept as
+written; the Verdict's blockers were then cleared. Branch
+`vision/deepseek-vl2-trunk`.
+
+**Trunk (cheapest route, no new family).** The `deepseek2` flow gained a
+plain-attention arm, selected by an inactive `ArchConfig::mla`
+(`RealDeepseek2State::mha`, `encode_mha_attention_block`: q/k/v GEMV, NeoX
+half-split rope over the full 128-wide head at theta 10000, the split-KV
+attention kernel with scale `head_dim^-0.5`). The flow's MoE half already
+matched the model (softmax over all 64 experts, top-6, no renormalization,
+`routed_scaling_factor` 1, INT8-forced router, fused shared expert, dense
+lead layer), so nothing there changed. Intake reads the MLX 4-bit checkpoint
+directly: `parse_deepseek_vl2_config`, a header canonicalization
+(`shared_experts` to `shared_expert`), `switch_mlp.*` routed stacks, F16
+scales and biases narrowed to BF16, the F16 router quantized to INT8. The
+template does not write the BOS the tokenizer's `add_bos_token` implies;
+`MfTokenizer::apply_chat_template` now opens a V2-dialect prompt with it
+(`"The capital of France is Paris."` without it, `"Paris."` with it).
+
+**Trunk gate.** Teacher-forced argmax over 17 ids agrees 17/17 with an
+independent numpy forward (`scripts/deepseek_vl2_trunk_reference.py`); the
+last-position logits have cosine 0.999747, KL 0.00020 nats, top-5 overlap 5/5.
+A 802-token text prompt ("secret word" needle) answers correctly, so the
+sequential path holds at length.
+
+**Tower.** `VisionTowerKind::SigLip` (persisted `siglip`). The SigLIP-so400m
+tower and the 2x2-unfold projector run in `runtime/src/vision/siglip.rs`; all
+tiles of an image run in one pass per block (attention dispatched per tile at
+a byte offset), so each 30 MiB block is read once per image. The final norm
+uses eps 1e-5 and the blocks 1e-6. The 4-bit planes are dequantized to FP16 at
+intake (`mlp.fc2` is F16: its 4304-wide input has no valid group size), the
+sidecar is 802.5 MiB, `attn_pool` is dropped. `pull-vision` accepts the
+repo's `processor_config.json` in place of `preprocessor_config.json` and
+writes it beside the tower.
+
+**Preprocessing** (`crates/vision-io/src/deepseek_vl2.rs`): `select_best_resolution`,
+a transcription of PIL `ImageOps.pad` (bicubic `contain` with Python's
+half-to-even `round`, centered paste, fill `int(mean * 255)`), a global view
+plus row-major local tiles, patch rows in `(14, 14, 3)` order. A 384 px tile
+reads 27 x 27 patches: 384 is not a multiple of 14, the stride-14 conv drops
+the last 6 pixels. Tiling is off past two images. The `Pillow` rounding
+convention is the 10.x one (`round`, not `int`); an older Pillow can differ by
+one padded row.
+
+**Injection.** Positions are plain, so `PromptVision::flat` applies; the
+`deepseek2` sequential `produce` path gained the embedding blit it lacked
+(without it the 617 image positions carried the untrained `<image>` row and
+the model produced fluent garbage, which is how the gap was found). The V2
+template writes `{{message['content']}}`, so an image part is flattened to the
+reference's `<image>\n` before rendering.
+
+**Tower gate.** `scripts/deepseek_vl2_tower_reference.py` is a numpy
+transcription of the tower and projector written from the mlx-vlm source. It
+was **read, never executed**: no mlx-vlm code ran. On the real shapes image
+(3 tiles, first 2 compared, identical pixels both sides):
+
+| stage | cosine | relative L2 |
+| --- | --- | --- |
+| embed | 0.999999 | 0.00029 |
+| block 0 | 0.999999 | 0.00054 |
+| block 26 | 0.999997 | 0.00345 |
+| final norm | 0.999978 | 0.00672 |
+| projector | 0.999986 | 0.00532 |
+
+Cosine alone is blunt here (the residual carries outlier channels near 6300),
+so a mutation check matters: making attention span all tiles instead of one
+drops the final-norm cosine to 0.557 and the projector to 0.647. A tanh-GELU
+to erf-GELU swap in the blocks is NOT separable at this bound (cosine
+0.99995), as expected for two functions that differ by under 5e-4; the unit
+tests and the reference's own formula pin it.
+
+**Image gate** (real checkpoint, release build, `turbospark-check`):
+
+- `shapes.png` + "List each shape in this image with its color." -> "Red, Blue,
+  Green". With a free-form question: "a red square, a blue circle, and a green
+  triangle." The same questions with NO image: "Circle - Red, Triangle - Blue,
+  Square - Green, Pentagon - Purple..." (a hallucination, and different).
+- `page-small.png` + "Read the text in this image, exactly." -> first line
+  `00012 | parity streaming streaming oracle fixture`, then the following lines
+  in the same format. Without the image the model writes a letter.
+- `turbospark-server` on both `/v1/chat/completions` and `/v1/messages`, same
+  answers for both images, and the no-image control hallucinates.
+
+**Not verified.** No benchmark was run (the directive said to defer it). The
+tower is compared to a numpy transcription of the reference, not to mlx-vlm
+output, so a misreading of the reference's tiling would be shared. The page
+text after the first line was not diffed against the source. Multi-image
+(more than two) requests, the FFI paths and the macOS app were compiled and
+reasoned about but not driven. `deepseek-vl2-small` and `deepseek-vl2` were
+not read.
+
+## Verdict (Phase 0, historical)
 
 **BLOCKED ON THE TRUNK, NOT ON THE TOWER. Stop after Phase 0.** The vision
 half is small: the tower is a plain SigLIP-so400m that the existing FP16

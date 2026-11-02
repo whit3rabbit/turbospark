@@ -281,6 +281,18 @@ pub enum VisionTowerKind {
     /// builders read the two ids from here. `image_token_id` is `[IMG]`.
     /// The rope theta (10000) and epsilon (1e-5) are properties of the kind.
     Pixtral,
+    /// The SigLIP-so400m tower DeepSeek-VL2 carries
+    /// (`docs/DEEPSEEK_VL2_VISION_PHASE0.md`): LayerNorm blocks with a fused
+    /// qkv and a tanh-GELU MLP, 729 learned absolute positions and no class
+    /// row, a final LayerNorm, then a 2x2 unfold projector and two linears.
+    ///
+    /// Field meanings: `depth` is 27, `patch_size` is 14 (a 384 px tile reads
+    /// 27 x 27 patches, the 6 trailing pixels never reach the conv),
+    /// `spatial_merge_size` is the projector's unfold factor (2),
+    /// `num_position_embeddings` is 729, `out_hidden_size` is the trunk width,
+    /// `temporal_patch_size` is 1. The start and end ids are 0: the image run
+    /// is a bare block of `image_token_id` positions.
+    SigLip,
 }
 
 impl VisionTowerKind {
@@ -295,6 +307,7 @@ impl VisionTowerKind {
             VisionTowerKind::MuseGlimmer => "muse_glimmer",
             VisionTowerKind::MiniCpmV => "minicpm_v",
             VisionTowerKind::Pixtral => "pixtral",
+            VisionTowerKind::SigLip => "siglip",
         }
     }
 
@@ -310,6 +323,7 @@ impl VisionTowerKind {
             "muse_glimmer" => Some(VisionTowerKind::MuseGlimmer),
             "minicpm_v" => Some(VisionTowerKind::MiniCpmV),
             "pixtral" => Some(VisionTowerKind::Pixtral),
+            "siglip" => Some(VisionTowerKind::SigLip),
             _ => None,
         }
     }

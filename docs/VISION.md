@@ -25,7 +25,7 @@ gated SiLU MLP, window attention, chunked mRoPE) and `LFM3-VL` on `lfm3`
 ([`LFM3_VL_VISION_PHASE0.md`](LFM3_VL_VISION_PHASE0.md): gated depthwise
 convolution blocks beside grouped-query attention). They return the same
 `VisionEmbedding` as the Qwen tower, so `set_prompt_vision`, the prompt
-builders and every front end below are shared. DeepSeek-VL2 is blocked on its
+builders and every front end below are shared. DeepSeek-VL2-tiny runs on a plain-attention arm of the deepseek2 flow
 trunk ([`DEEPSEEK_VL2_VISION_PHASE0.md`](DEEPSEEK_VL2_VISION_PHASE0.md)).
 
 The standalone `<alias>.gturbo-vision/` sidecar format, `--vision-sidecar`,

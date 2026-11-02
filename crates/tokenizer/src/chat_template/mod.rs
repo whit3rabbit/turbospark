@@ -196,6 +196,68 @@ impl MfTokenizer {
         self.apply_chat_template_with_reasoning(messages, ReasoningEffort::default())
     }
 
+    /// The begin-of-sentence literal a V2-era DeepSeek prompt must open with,
+    /// when its template does not write it.
+    ///
+    /// The DeepSeek-VL2 checkpoint's `chat_template.json` renders
+    /// `<|User|>: ...` with no BOS, while its tokenizer config sets
+    /// `add_bos_token: true` and the reference processor opens every prompt
+    /// with the BOS id. Every front end encodes a rendered prompt with
+    /// `add_bos = false` (a Gemma or Qwen template writes the literal itself
+    /// and a prefix would double it), so a BOS-less prompt silently runs
+    /// without its start mark. Done here, at the render, so the CLI, the
+    /// server and the FFI cannot disagree. Scoped to the V2 DeepSeek dialect,
+    /// and a template that already opens with the mark (DeepSeek-V2-Lite's
+    /// does) is left alone.
+    fn with_template_bos(&self, rendered: String) -> String {
+        if self.dialect != ChatDialect::DeepseekV2 {
+            return rendered;
+        }
+        let bos = crate::dialect::DEEPSEEK_BOS_MARK;
+        if rendered.starts_with(bos) {
+            rendered
+        } else {
+            format!("{bos}{rendered}")
+        }
+    }
+
+    /// Turn image parts into the literal `<image>\n` the V2 DeepSeek template
+    /// expects inside a STRING content, or `None` when nothing needs it.
+    ///
+    /// The DeepSeek-VL2 `chat_template.json` writes `{{message['content']}}`
+    /// and knows no content-part list, so a multimodal message would render as
+    /// the list's repr. The reference's prompt builder (mlx-vlm
+    /// `IMAGE_TOKEN_NEWLINE`) puts `<image>\n` in front of the text instead,
+    /// once per image, which is what this does. Scoped to the V2 dialect: every
+    /// other checkpoint's template walks the parts itself.
+    fn flatten_image_parts(&self, messages: &[Message]) -> Option<Vec<Message>> {
+        if self.dialect != ChatDialect::DeepseekV2 || messages.iter().all(|m| m.image_count() == 0)
+        {
+            return None;
+        }
+        Some(
+            messages
+                .iter()
+                .map(|m| {
+                    if m.image_count() == 0 {
+                        return m.clone();
+                    }
+                    let mut text = String::new();
+                    for part in &m.content_parts {
+                        match part {
+                            ContentPart::Image => text.push_str("<image>\n"),
+                            ContentPart::Text(t) => text.push_str(t),
+                        }
+                    }
+                    let mut flat = m.clone();
+                    flat.content = Some(text);
+                    flat.content_parts = Vec::new();
+                    flat
+                })
+                .collect(),
+        )
+    }
+
     /// [`Self::apply_chat_template`], asking the checkpoint's own template for
     /// a reasoning level.
     ///
@@ -220,13 +282,15 @@ impl MfTokenizer {
         reasoning: ReasoningEffort,
     ) -> Result<String, TokenizerError> {
         if self.chat_template_source.is_some() {
-            return crate::jinja_chat_template::render_generic_chat_template(
+            let flattened = self.flatten_image_parts(messages);
+            let rendered = crate::jinja_chat_template::render_generic_chat_template(
                 self,
-                messages,
+                flattened.as_deref().unwrap_or(messages),
                 &[],
                 true,
                 reasoning,
-            );
+            )?;
+            return Ok(self.with_template_bos(rendered));
         }
         if reasoning.enable_thinking() {
             return Err(TokenizerError::UnsupportedForDialect(format!(

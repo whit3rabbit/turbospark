@@ -48,11 +48,13 @@ pub(crate) mod pixtral;
 pub(crate) mod qwen25;
 mod scratch;
 mod shape;
+pub(crate) mod siglip;
 mod stages;
 mod weights;
 
 pub use budget::{PixelBudget, VisionBudgetTooSmall};
 pub use clip::ClipStages;
+pub use siglip::SiglipStages;
 pub use inject::{PromptVision, RopePosition};
 
 use std::path::Path;

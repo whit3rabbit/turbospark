@@ -755,6 +755,7 @@ impl RealForwardRunner {
         self.muse_vision = None;
         self.minicpm_vision = None;
         self.pixtral_vision = None;
+        self.siglip_vision = None;
     }
 
     /// `(marker, fill)` for a LLaVA prompt, read off the install, or `None`
@@ -883,6 +884,85 @@ impl RealForwardRunner {
         Ok(())
     }
 
+    /// `(marker, fill)` for a DeepSeek-VL2 prompt, or `None` when this
+    /// install's tower is not a SigLIP one.
+    ///
+    /// `marker` is `<image>`'s id (128815). The expanded run is filled with
+    /// the marker itself: the trunk's table has 129,280 rows, so the id is in
+    /// range and its lookup is replaced by the injected row anyway.
+    pub fn siglip_image_ids(&self) -> Option<(i32, i32)> {
+        let v = &self.arch.vision;
+        if !(v.is_active() && v.tower == model_io::VisionTowerKind::SigLip) {
+            return None;
+        }
+        let marker = v.image_token_id as i32;
+        let fill = if i64::from(marker) < self.arch.vocab_size {
+            marker
+        } else {
+            0
+        };
+        Some((marker, fill))
+    }
+
+    /// Encode one image through this install's SigLIP tower
+    /// (`docs/DEEPSEEK_VL2_VISION_PHASE0.md`): `[image_tokens, text_hidden]`
+    /// FP16 bits, the whole run that replaces the placeholders (projector
+    /// rows with the learned newline and separator rows interleaved).
+    ///
+    /// The tower opens lazily on the first image, from the attached sidecar
+    /// when there is one and from the install otherwise. Inject the rows with
+    /// [`Self::set_prompt_vision_flat`].
+    pub fn encode_image_siglip(
+        &mut self,
+        tiles: &turbospark_vision_io::DeepseekVl2Tiles,
+    ) -> Result<Vec<u16>, RealForwardError> {
+        self.open_siglip_tower()?;
+        let tower = self.siglip_vision.as_mut().expect("opened just above");
+        tower
+            .run(&mut self.context, &self.weights, tiles, false)
+            .map(|(rows, _)| rows)
+    }
+
+    /// [`Self::encode_image_siglip`] plus the residual stream at the points the
+    /// cross-engine gate compares. Diagnostic: the ordinary entry point pays
+    /// none of the readbacks.
+    pub fn encode_image_siglip_with_stages(
+        &mut self,
+        tiles: &turbospark_vision_io::DeepseekVl2Tiles,
+    ) -> Result<(Vec<u16>, crate::vision::SiglipStages), RealForwardError> {
+        self.open_siglip_tower()?;
+        let tower = self.siglip_vision.as_mut().expect("opened just above");
+        let (rows, stages) = tower.run(&mut self.context, &self.weights, tiles, true)?;
+        Ok((rows, stages.expect("requested just above")))
+    }
+
+    fn open_siglip_tower(&mut self) -> Result<(), RealForwardError> {
+        if self.arch.vision.tower != model_io::VisionTowerKind::SigLip
+            || !self.arch.vision.is_active()
+        {
+            return Err(RealForwardError::Unsupported(
+                "this install declares no SigLIP vision tower".to_string(),
+            ));
+        }
+        if self.siglip_vision.is_none() {
+            self.siglip_vision = Some(match &self.vision_sidecar_dir {
+                Some(dir) => crate::vision::siglip::SiglipVisionTower::open_with_sidecar(
+                    dir,
+                    &self.context,
+                    &self.arch,
+                )?,
+                None => crate::vision::siglip::SiglipVisionTower::open(
+                    &self.install_dir,
+                    &self.context,
+                    &self.weights,
+                    &self.index,
+                    &self.arch,
+                )?,
+            });
+        }
+        Ok(())
+    }
+
     /// Hand this runner one prompt's CLIP image rows: one `[span.len,
     /// text_hidden]` FP16 row set per placeholder run, in prompt order. The
     /// next prefill writes them in place of the placeholders' embeddings.
@@ -901,10 +981,12 @@ impl RealForwardRunner {
         let tower = self.arch.vision.tower;
         if !matches!(
             tower,
-            model_io::VisionTowerKind::Clip | model_io::VisionTowerKind::Pixtral
+            model_io::VisionTowerKind::Clip
+                | model_io::VisionTowerKind::Pixtral
+                | model_io::VisionTowerKind::SigLip
         ) {
             return Err(RealForwardError::Unsupported(
-                "set_prompt_vision_flat needs a CLIP or Pixtral vision tower".to_string(),
+                "set_prompt_vision_flat needs a CLIP, Pixtral or SigLIP vision tower".to_string(),
             ));
         }
         let hidden = self.arch.hidden_size as usize;

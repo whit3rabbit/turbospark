@@ -64,6 +64,9 @@ pub(crate) fn preprocess_params(session: &Session) -> Result<PreprocessParams, S
     if session.runner.clip_image_ids().is_some() {
         return Err("internal: the CLIP tower takes attach_clip".to_string());
     }
+    if session.runner.siglip_image_ids().is_some() {
+        return Err("internal: the SigLIP tower takes attach_siglip".to_string());
+    }
     let path = session.runner.vision_dir().join("preprocessor_config.json");
     let json = std::fs::read_to_string(&path).map_err(|e| {
         format!(
@@ -368,6 +371,87 @@ pub(crate) fn attach_clip(
             session
                 .runner
                 .encode_image_clip(patches)
+                .map_err(|e| format!("--image {image_path}: {e}"))?,
+        );
+    }
+    session
+        .runner
+        .set_prompt_vision_flat(&rows, &spans, expanded.len())
+        .map_err(|e| format!("cannot inject the encoded images: {e}"))?;
+    Ok(expanded)
+}
+
+/// The SigLIP (DeepSeek-VL2) tower's whole `--image` path
+/// (`docs/DEEPSEEK_VL2_VISION_PHASE0.md`): read `processor_config.json` beside
+/// the tower, pad and tile each file (a global view plus the best-fitting local
+/// grid), expand each rendered `<image>` to the full run (projector rows with
+/// the newline and separator rows between), encode, and hand the runner the
+/// rows. Returns the expanded ids to prefill.
+///
+/// Tiling is on for at most two images and off for more, as in the reference.
+pub(crate) fn attach_siglip(
+    session: &mut Session,
+    rendered: &[i32],
+    paths: &[String],
+) -> Result<Vec<i32>, String> {
+    let (marker, fill) = session
+        .runner
+        .siglip_image_ids()
+        .ok_or("this install's vision tower is not a SigLIP one")?;
+    let path = session.runner.vision_dir().join("processor_config.json");
+    let json = std::fs::read_to_string(&path).map_err(|e| {
+        format!(
+            "{}: {e}\n  this install declares no image processor config; re-pull the vision \
+             sidecar, or copy the checkpoint's processor_config.json in",
+            path.display()
+        )
+    })?;
+    let params = turbospark_vision_io::DeepseekVl2Params::from_processor_config_json(&json)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    let vision = session.runner.vision_config();
+    let side = params.patches_per_side() as i64;
+    if vision.patch_size != turbospark_vision_io::DSVL2_PATCH as i64
+        || vision.num_position_embeddings != side * side
+        || vision.spatial_merge_size != params.downsample_ratio as i64
+    {
+        return Err(format!(
+            "{}: a {}-pixel tile is {side}x{side} patches with a {}-wide unfold, but this \
+             install's tower has patch {}, a {}-row position table and unfold {}; the two \
+             describe different checkpoints",
+            path.display(),
+            params.image_size,
+            params.downsample_ratio,
+            vision.patch_size,
+            vision.num_position_embeddings,
+            vision.spatial_merge_size
+        ));
+    }
+
+    let crop = paths.len() <= 2;
+    let mut prepared = Vec::with_capacity(paths.len());
+    for image_path in paths {
+        let decoded = decode_image_file(std::path::Path::new(image_path))
+            .map_err(|e| format!("--image {image_path}: {e}"))?;
+        let tiles = turbospark_vision_io::deepseek_vl2_preprocess(&decoded, &params, crop)
+            .map_err(|e| format!("--image {image_path}: {e}"))?;
+        prepared.push((image_path, tiles));
+    }
+    let counts: Vec<usize> = prepared.iter().map(|(_, t)| t.image_tokens()).collect();
+    let (expanded, spans) =
+        turbospark_vision_io::clip_expand_image_placeholders(rendered, marker, fill, &counts)
+            .map_err(|e| {
+                format!(
+                    "cannot place {} image(s) in this prompt: {e}\n  the template renders one \
+                     <image> per image; check the messages actually carry image parts",
+                    paths.len()
+                )
+            })?;
+    let mut rows = Vec::with_capacity(prepared.len());
+    for (image_path, tiles) in &prepared {
+        rows.push(
+            session
+                .runner
+                .encode_image_siglip(tiles)
                 .map_err(|e| format!("--image {image_path}: {e}"))?,
         );
     }

@@ -300,6 +300,16 @@ pub fn read_vision_entries_quantized(
     if vision.tower == model_io::VisionTowerKind::Pixtral {
         return super::vision_pixtral::read_pixtral_vision_entries(shards, vision_bases, vision);
     }
+    // SigLIP (DeepSeek-VL2): fused qkv already, packed planes dequantized,
+    // a projector and two learned embeddings beside the tower.
+    if vision.tower == model_io::VisionTowerKind::SigLip {
+        return super::vision_siglip::read_siglip_vision_entries(
+            shards,
+            vision_bases,
+            vision,
+            quant,
+        );
+    }
     // The LFM3-VL tower likewise: two block kinds, a second source prefix
     // for its projector, no packed planes.
     if vision.tower == model_io::VisionTowerKind::Lfm3Vl {
@@ -672,15 +682,22 @@ fn dequantize_affine_to_fp16(
     let groups = cols / group;
     let scales_name = format!("{base}.scales");
     let biases_name = format!("{base}.biases");
-    for companion in [&scales_name, &biases_name] {
+    // The companions are BF16 on every qwen conversion; the DeepSeek-VL2 MLX
+    // conversion ships them F16. Either decodes exactly to f32, so the dtype is
+    // read per tensor rather than assumed.
+    let mut companion_f16 = [false; 2];
+    for (slot, companion) in [&scales_name, &biases_name].into_iter().enumerate() {
         let info = shards.info(companion)?;
-        if info.dtype != "BF16" || info.shape != [rows as u64, groups as u64] {
+        if !matches!(info.dtype.as_str(), "BF16" | "F16")
+            || info.shape != [rows as u64, groups as u64]
+        {
             return Err(mismatch(format!(
-                "{companion} is {} {:?}, expected BF16 [{rows}, {groups}] for {bits} bits at \
-                 group {group}",
+                "{companion} is {} {:?}, expected BF16 or F16 [{rows}, {groups}] for {bits} bits \
+                 at group {group}",
                 info.dtype, info.shape
             )));
         }
+        companion_f16[slot] = info.dtype == "F16";
     }
     let packed = shards.read(name)?;
     let scales = shards.read(&scales_name)?;
@@ -695,8 +712,13 @@ fn dequantize_affine_to_fp16(
     }
 
     let mask = (1u32 << bits) - 1;
-    let bf16 = |bytes: &[u8], i: usize| {
-        compute::bf16_to_f32(u16::from_le_bytes([bytes[2 * i], bytes[2 * i + 1]]))
+    let half = |bytes: &[u8], i: usize, is_f16: bool| {
+        let bits = u16::from_le_bytes([bytes[2 * i], bytes[2 * i + 1]]);
+        if is_f16 {
+            compute::f16_to_f32(bits)
+        } else {
+            compute::bf16_to_f32(bits)
+        }
     };
     let mut out = Vec::with_capacity(rows * cols * 2);
     let mut lossy = 0usize;
@@ -711,7 +733,8 @@ fn dequantize_affine_to_fp16(
             ]);
             let q = (word >> (bits * (c % per_word))) & mask;
             let g = r * groups + c / group;
-            let value = q as f32 * bf16(&scales, g) + bf16(&biases, g);
+            let value =
+                q as f32 * half(&scales, g, companion_f16[0]) + half(&biases, g, companion_f16[1]);
             let converted = compute::f32_to_f16(value);
             let back = compute::f16_to_f32(converted);
             // The same overflow refusal `convert_raw_to_fp16` applies: the

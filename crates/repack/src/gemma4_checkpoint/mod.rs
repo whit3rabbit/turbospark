@@ -30,11 +30,12 @@ mod vision_lfm3;
 mod vision_minicpm;
 mod vision_muse;
 mod vision_pixtral;
+mod vision_siglip;
 
 pub use classify::{
-    canonicalize_flint_header, canonicalize_qwen2_header, canonicalize_vision_header,
-    classify_for_family, classify_gemma4, Gemma4Bucket, DFLASH_PREFIX, MTP_PREFIX,
-    VISION_INSTALL_PREFIX, VISION_PREFIX, VISION_SOURCE_PREFIXES,
+    canonicalize_deepseek_vl2_header, canonicalize_flint_header, canonicalize_qwen2_header,
+    canonicalize_vision_header, classify_for_family, classify_gemma4, Gemma4Bucket, DFLASH_PREFIX,
+    MTP_PREFIX, VISION_INSTALL_PREFIX, VISION_PREFIX, VISION_SOURCE_PREFIXES,
 };
 pub(crate) use config::parse_quantization_admitting;
 pub use config::{
@@ -85,6 +86,11 @@ pub use vision_pixtral::{
     parse_pixtral_vision_config, pixtral_special_token_ids, read_pixtral_vision_entries,
     PIXTRAL_BLOCK_ROLES, PIXTRAL_MODEL_TYPE, PIXTRAL_PROJECTOR_PREFIX, PIXTRAL_RESIDENT_TENSORS,
     PIXTRAL_SOURCE_PREFIXES, PIXTRAL_TOWER_PREFIX,
+};
+pub use vision_siglip::{
+    parse_deepseek_vl2_vision_config, read_siglip_vision_entries, DEEPSEEK_VL2_IMAGE_TOKEN_ID,
+    DEEPSEEK_VL2_MODEL_TYPE, SIGLIP_MODEL_PREFIX, SIGLIP_PROJECTOR_PREFIX, SIGLIP_RESIDENT_TENSORS,
+    SIGLIP_SOURCE_PREFIXES,
 };
 
 use std::path::{Path, PathBuf};
@@ -650,6 +656,29 @@ pub fn write_qwen2_dense_install_streamed(
         return Err(Box::new(Gemma4Error::Config(format!(
             "write_qwen2_dense_install_streamed needs arch.family = qwen2, got {}",
             arch.family.as_str()
+        ))));
+    }
+    write_gemma4_install_streamed(dir, arch, model_id, shards, quant, progress)
+}
+
+/// DeepSeek-VL2 (`deepseek2` family, plain-attention trunk) install write
+/// through the shared MLX checkpoint walk. The caller must have run
+/// `canonicalize_deepseek_vl2_header` on every shard header first (the
+/// shared-expert rename).
+pub fn write_deepseek_vl2_install_streamed(
+    dir: &Path,
+    arch: &ArchConfig,
+    model_id: &str,
+    shards: &Gemma4Shards<'_>,
+    quant: &Gemma4Quant,
+    progress: impl FnMut(&str),
+) -> Result<(), Box<dyn std::error::Error>> {
+    if arch.family != ModelFamily::Deepseek2 || arch.mla.is_active() {
+        return Err(Box::new(Gemma4Error::Config(format!(
+            "write_deepseek_vl2_install_streamed needs arch.family = deepseek2 with no MLA, got \
+             {} (mla active: {})",
+            arch.family.as_str(),
+            arch.mla.is_active()
         ))));
     }
     write_gemma4_install_streamed(dir, arch, model_id, shards, quant, progress)

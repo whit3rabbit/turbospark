@@ -14,6 +14,12 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- DeepSeek-VL2-tiny image input: a plain-attention arm of the `deepseek2` flow
+  for the non-MLA MoE trunk, a SigLIP tower sidecar with dynamic tiling, and
+  an embedding blit in the deepseek2 produce path (image positions used to
+  carry the untrained placeholder row). Gated on the real 4-bit checkpoint
+  through the CLI and both server endpoints. See
+  `docs/DEEPSEEK_VL2_VISION_PHASE0.md`.
 - Pixtral-12B image input on the `llama` family: a `pixtral` tower sidecar
   (RMSNorm blocks, 2-D rope, SwiGLU) on a GGUF trunk, with the `[IMG]`,
   `[IMG_BREAK]` and `[IMG_END]` prompt layout. Gated on the real checkpoint
