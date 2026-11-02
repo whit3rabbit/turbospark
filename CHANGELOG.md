@@ -111,6 +111,18 @@ when this file gets updated relative to the version bump and the tag.
   `TURBOSPARK_QWEN4_TAP_FILE` capture of DFlash2 drafter features.
 
 ### Changed
+- Vision towers (the Qwen SigLIP tower and the Gemma 4 tower) run their
+  projections on a matrix-unit FP16 GEMM and their attention on a
+  matrix-unit flash attention kernel (FP32 accumulators, head_dim in the
+  pipeline cache key, a head_dim not divisible by 4 falls back to the scalar
+  kernel). On an M4 Max with a busy host the Qwen3-VL-4B tower block drops
+  from about 0.5 s to 0.13 s per page at 1,280 patches and the Gemma 4 tower
+  from about 7 s to 0.7 s per image, so read these as ratios. The Gemma 4
+  real-trunk gate passes on both arms with identical greedy streams. The
+  `vision_inject_synthetic` frozen digest moves to `471bf949` (argmax and
+  top-5 unchanged, and the scalar arm still gives the old digest).
+  `TURBOSPARK_VISION_MMA=0` and `TURBOSPARK_VISION_ATTN_MMA=0` restore the
+  scalar kernels. See `docs/VISION.md`.
 - qwen4_exp wires its expert slot cache by default, at twice the auto slot
   budget (96 slots on a 36 GB M4 Max, 12.4 GiB peak, against 48 unwired). The
   open checks `RLIMIT_MEMLOCK` and `vm.user_wire_limit` first and falls back
