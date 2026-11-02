@@ -356,12 +356,12 @@ fn an_unrecognized_name_under_the_container_is_documented_as_falling_through() {
 
 /// The tower's names, read off `sh0wie/Qwen3.8-Flash-Next-REAP-288-MLX-4bit`
 /// shard 1 at `668f31bc` (`docs/QWEN4EXP_VISION_PHASE0.md`), reach the tower
-/// arm for `qwen4_exp`. Before vision this family dropped them; `muse_glimmer`
-/// shares the prefix and must keep dropping them, having no kernels for its
-/// own tower. Companions (`.scales`/`.biases`) never reach the classifier:
+/// arm for `qwen4_exp`. Before vision this family dropped them. `muse_glimmer`
+/// shares the prefix and has its own tower now, so it routes them too (the
+/// caller's request decides whether they are ingested). Companions (`.scales`/`.biases`) never reach the classifier:
 /// the walk reads them beside their `.weight`.
 #[test]
-fn qwen4_exp_routes_its_tower_and_muse_glimmer_still_drops_it() {
+fn qwen4_exp_and_muse_glimmer_both_route_their_towers() {
     for name in [
         "vision_tower.blocks.0.attn.qkv.weight",
         "vision_tower.blocks.26.mlp.linear_fc2.weight",
@@ -376,7 +376,7 @@ fn qwen4_exp_routes_its_tower_and_muse_glimmer_still_drops_it() {
         );
         assert_eq!(
             describe(&classify_for_family(name, LAYERS, ModelFamily::MuseGlimmer)),
-            "excluded",
+            "vision",
             "{name}"
         );
     }

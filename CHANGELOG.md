@@ -14,6 +14,12 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- Muse-Glimmer image support: its 50-block tower is ingested into the same
+  install (adapter and projection dequantized from 4-bit), with PIL Lanczos
+  and a token-cap resize, and a front-end wrap of the bare `<|patch|>`
+  placeholder. A text page and a shapes image read through the CLI and both
+  server endpoints; the tower agrees with a numpy transcription at cosine
+  0.99998 to 0.99999879. See `docs/MUSEGLIMMER_VISION_PHASE0.md`.
 - Qwen3-VL-30B-A3B image support on the `qwen3moe` family: the official
   Q4_K_M GGUF trunk (`qwen3vlmoe`) plus the Qwen3-VL tower and its three
   deepstack mergers as a `pull-vision` sidecar (`qwen3vl-30b-a3b` and
