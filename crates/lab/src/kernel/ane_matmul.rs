@@ -116,6 +116,25 @@ fn expert_dims(arch: &model_io::ArchConfig) -> Option<(usize, usize)> {
     ))
 }
 
+/// A tower block's four projections as `(role, rows, K)`: the shapes
+/// `bake_ane_vision_programs.py` writes.
+pub fn vision_roles(hidden: usize, inter: usize) -> [(&'static str, usize, usize); 4] {
+    [
+        ("qkv", 3 * hidden, hidden),
+        ("proj", hidden, hidden),
+        ("fc1", inter, hidden),
+        ("fc2", hidden, inter),
+    ]
+}
+
+/// The bake line for an install's vision tower programs.
+pub fn vision_generator_line(install: &str, out: &str) -> String {
+    format!(
+        "uv run --python 3.12 --with coremltools==9.0 --with numpy==2.2.6 python -I \
+         crates/coreml/tools/bake_ane_vision_programs.py {out} --config {install}"
+    )
+}
+
 /// The generator line that writes this install's programs.
 pub fn generator_line(
     shapes: &[super::MatShape],
@@ -200,8 +219,8 @@ mod enabled {
     use super::super::support::{copies_for, f16_activations, int4_blob, median};
     use super::super::{BenchOpts, Case, KernelBench, Subject};
     use super::{
-        expert_dims, generator_line, install_shapes, read_manifest, AneMatmul, Program,
-        ANE_PLACEMENT_MIN_SHARE, CONST_INT4, MAX_PLANE_COPIES,
+        expert_dims, generator_line, install_shapes, read_manifest, vision_generator_line,
+        vision_roles, AneMatmul, Program, ANE_PLACEMENT_MIN_SHARE, CONST_INT4, MAX_PLANE_COPIES,
     };
     use crate::bench::{fnv_hex, ArmCurve, Axis, BenchResult, BreakEven, Point};
     use crate::fit::{ane_gate_fit, break_even, fit_affine, GateCase, GateObjective};
@@ -520,9 +539,18 @@ mod enabled {
             let shapes = install_shapes(subject)?;
             let dims = expert_dims(arch);
             let Some(dir) = &opts.ane_programs else {
+                let mut line = generator_line(&shapes, dims, "~/models/ane-sweep/<install>");
+                if arch.vision.is_active() {
+                    line.push_str(&format!(
+                        "\n  and its vision tower's with:\n  {}",
+                        vision_generator_line(
+                            &subject.dir.display().to_string(),
+                            "~/models/ane-sweep/<install>"
+                        )
+                    ));
+                }
                 return Err(format!(
-                    "needs --programs DIR holding sweep.json; write this install's programs with:\n  {}",
-                    generator_line(&shapes, dims, "~/models/ane-sweep/<install>")
+                    "needs --programs DIR holding sweep.json; write this install's programs with:\n  {line}"
                 ));
             };
             let manifest = read_manifest(dir)?;
@@ -604,6 +632,31 @@ mod enabled {
                                    "programs": progs, "dir": dir.display().to_string()}),
                 });
             }
+            // One `vision_ROLE` case per tower projection whose baked
+            // programs match this install's tower.
+            if arch.vision.is_active() {
+                let (h, f) = (
+                    arch.vision.hidden_size as usize,
+                    arch.vision.intermediate_size as usize,
+                );
+                for (role, rows, k) in vision_roles(h, f) {
+                    let progs: Vec<Value> = manifest
+                        .iter()
+                        .filter(|p| {
+                            p.kind == "vision" && p.role == role && p.rows == rows && p.k == k
+                        })
+                        .map(program_json)
+                        .collect();
+                    if progs.is_empty() {
+                        continue;
+                    }
+                    cases.push(Case {
+                        label: format!("vision_{role}"),
+                        params: json!({"kind": "vision", "role": role, "rows": rows, "cols": k,
+                                       "programs": progs, "dir": dir.display().to_string()}),
+                    });
+                }
+            }
             if cases.is_empty() {
                 return Err(format!(
                     "no program in {} matches this install; write them with:\n  {}",
@@ -637,6 +690,7 @@ mod enabled {
             match case.params["kind"].as_str() {
                 Some("real") => run_real(context, subject, case, dir, opts),
                 Some("experts") => run_experts(context, case, dir, opts),
+                Some("vision") => run_vision(context, case, dir, opts),
                 _ => run_dense(context, case, dir, opts),
             }
         }
@@ -676,6 +730,248 @@ mod enabled {
     fn ane_bytes(weight_bytes: usize, rows: usize, ma: usize, cols: usize, n: usize) -> f64 {
         (weight_bytes + 4 * ma * cols + 2 * n * cols + 4 * n * cols + 4 * n * ma + 2 * n * rows)
             as f64
+    }
+
+    /// A tower projection on the GPU (`gpu::encode_vision_matmul`, the
+    /// tower's own FP16 kernel, bias included) against its baked-F16 Core
+    /// ML program with the handoff the runtime split pays: the activation
+    /// scaled into a plane, the prediction, and the output converted back
+    /// to `[tokens, rows]` FP16. `ane_predict` is the prediction alone,
+    /// timed inside the same `ane` runs, so `ane - ane_predict` is the
+    /// conversions and the handoff.
+    fn run_vision(
+        context: &mut MetalContext,
+        case: &Case,
+        dir: &Path,
+        opts: &BenchOpts,
+    ) -> Result<BenchResult, String> {
+        let dim = |k: &str| {
+            case.params[k]
+                .as_u64()
+                .map(|v| v as usize)
+                .ok_or_else(|| format!("ane_matmul case {} lacks {k}", case.label))
+        };
+        let (rows, cols) = (dim("rows")?, dim("cols")?);
+        let role = case.params["role"].as_str().unwrap_or("?").to_string();
+        let programs = programs_of(case);
+        let mut tokens: Vec<usize> = programs.iter().map(|p| p.tokens).collect();
+        tokens.sort_unstable();
+        tokens.dedup();
+        let max_n = *tokens.iter().max().ok_or("no token counts")?;
+        let copies = copies_for(rows * cols * 2, 128 << 20).min(MAX_PLANE_COPIES);
+        let ws: Vec<gpu::MetalBuffer> = (0..copies)
+            .map(|i| context.new_buffer_with_data(&f16_activations(rows * cols, 0x7155 + i as u32)))
+            .collect();
+        let bias = context.new_buffer_with_data(&f16_activations(rows, 3));
+        let x = context.new_buffer_with_data(&f16_activations(max_n * cols, 7));
+        let y = context.new_output_buffer((max_n * rows * 2) as u64);
+        let inv = context.new_output_buffer((max_n * 4) as u64);
+        let nonfinite = context.new_buffer_with_data(&[0u32]);
+
+        let mut notes = vec![format!(
+            "{role}: the ANE program's weights are seeded random F16 constants and the GPU's are synthetic: timing and placement only, outputs are not comparable; the bias add stays on the GPU and is unpriced on the ane arm"
+        )];
+        let mut placement = serde_json::Map::new();
+        let mut loaded: BTreeMap<usize, (Loaded, Plane, Plane)> = BTreeMap::new();
+        for p in &programs {
+            match load_program(dir, &p.package) {
+                Ok(l) => {
+                    placement.insert(
+                        format!("ane@{}", p.tokens),
+                        json!({"ane_cost_share": l.ane_share,
+                               "planned_on": if placed_on_ane(l.ane_share) { "ane" } else { "cpu" }}),
+                    );
+                    let ap = Plane::new(context, p.tokens, cols)?;
+                    let op = Plane::new(context, rows, p.tokens)?;
+                    loaded.insert(p.tokens, (l, ap, op));
+                }
+                Err(e) => notes.push(format!("ane at {} tokens not loaded: {e}", p.tokens)),
+            }
+        }
+        let joules = Joules::open();
+
+        // Per arm: per token count, (ms samples, joule samples).
+        let mut table: BTreeMap<&str, BTreeMap<usize, Timed>> = BTreeMap::new();
+        for &n in &tokens {
+            for rep in 0..=opts.reps {
+                for arm in ["gpu", "ane"] {
+                    if arm == "ane" && !loaded.contains_key(&n) {
+                        continue;
+                    }
+                    let mut predict_s = 0.0;
+                    let (wall, j) = joules.around(|| -> Result<f64, String> {
+                        let t0 = Instant::now();
+                        for w in &ws {
+                            autorelease_pool(|| -> Result<(), String> {
+                                if arm == "gpu" {
+                                    let pass = context.begin_pass();
+                                    gpu::encode_vision_matmul(
+                                        context,
+                                        &pass,
+                                        (&x, 0),
+                                        (w, 0),
+                                        Some((&bias, 0)),
+                                        (&y, 0),
+                                        n as u32,
+                                        cols as u32,
+                                        rows as u32,
+                                    )
+                                    .map_err(|e| e.to_string())?;
+                                    pass.commit_and_wait();
+                                    return Ok(());
+                                }
+                                let (l, ap, op) = &loaded[&n];
+                                let prep = context.begin_pass();
+                                encode_ane_scale_rows(
+                                    context,
+                                    &prep,
+                                    (&x, 0),
+                                    cols,
+                                    n,
+                                    (&ap.metal, 0),
+                                    ap.stride(),
+                                    &inv,
+                                )
+                                .map_err(|e| e.to_string())?;
+                                prep.commit().wait();
+                                let tp = Instant::now();
+                                l.model
+                                    .predict_shared(&[("a", &ap.plane)], &[("o0", &op.plane)])
+                                    .map_err(|e| e.to_string())?;
+                                predict_s += tp.elapsed().as_secs_f64();
+                                let conv = context.begin_pass();
+                                encode_ane_convert_out(
+                                    context,
+                                    &conv,
+                                    (&op.metal, 0),
+                                    rows,
+                                    n,
+                                    op.stride(),
+                                    &inv,
+                                    (&y, 0),
+                                    rows,
+                                    &nonfinite,
+                                )
+                                .map_err(|e| e.to_string())?;
+                                conv.commit_and_wait();
+                                Ok(())
+                            })?;
+                        }
+                        Ok(t0.elapsed().as_secs_f64())
+                    })?;
+                    if rep == 0 {
+                        continue;
+                    }
+                    let per = |t: f64| t * 1e3 / copies as f64;
+                    let e = table.entry(arm).or_default().entry(n).or_default();
+                    e.0.push(per(wall));
+                    if let Some(j) = j {
+                        e.1.push(j / copies as f64);
+                    }
+                    if arm == "ane" {
+                        table
+                            .entry("ane_predict")
+                            .or_default()
+                            .entry(n)
+                            .or_default()
+                            .0
+                            .push(per(predict_s));
+                    }
+                }
+            }
+        }
+
+        let flops = |n: usize| 2.0 * n as f64 * rows as f64 * cols as f64;
+        let curves: Vec<ArmCurve> = ["gpu", "ane", "ane_predict"]
+            .iter()
+            .map(|&label| match table.get(label) {
+                None => ArmCurve::unsupported(label, "no program loaded for this arm"),
+                Some(by_n) => {
+                    let points: Vec<Point> = by_n
+                        .iter()
+                        .map(|(&n, (ms, js))| {
+                            let (mut ms, mut js) = (ms.clone(), js.clone());
+                            let t = median(&mut ms);
+                            Point {
+                                x: n as f64,
+                                ms: t,
+                                gb_s: None,
+                                tflops: Some(flops(n) / (t * 1e-3) / 1e12),
+                                c_of_m: None,
+                                out_fnv: None,
+                                row_fnv: None,
+                                j: (!js.is_empty()).then(|| median(&mut js)),
+                            }
+                        })
+                        .collect();
+                    // A point whose program Core ML planned on the CPU is
+                    // timed and kept, and stays out of the fit.
+                    let on_ane = |x: f64| {
+                        placement
+                            .get(&format!("ane@{}", x as usize))
+                            .is_some_and(|v| v["planned_on"] == "ane")
+                    };
+                    let fitted: Vec<(f64, f64)> = points
+                        .iter()
+                        .filter(|p| label == "gpu" || on_ane(p.x))
+                        .map(|p| (p.x, p.ms))
+                        .collect();
+                    let all_cpu = label != "gpu" && fitted.is_empty() && !points.is_empty();
+                    ArmCurve {
+                        label: label.into(),
+                        fit: fit_affine(&fitted),
+                        points,
+                        unsupported: all_cpu
+                            .then(|| "planned on CPU at every token count".to_string()),
+                    }
+                }
+            })
+            .collect();
+        for &n in &tokens {
+            let at = |l: &str| {
+                curves
+                    .iter()
+                    .find(|c| c.label == l)?
+                    .points
+                    .iter()
+                    .find(|p| p.x == n as f64)
+                    .map(|p| p.ms)
+            };
+            if let (Some(g), Some(a), Some(p)) = (at("gpu"), at("ane"), at("ane_predict")) {
+                let planned = placement
+                    .get(&format!("ane@{n}"))
+                    .and_then(|v| v["planned_on"].as_str())
+                    .unwrap_or("?");
+                notes.push(format!(
+                    "{n} rows: gpu {g:.3} ms, ane {a:.3} ms with handoff ({p:.3} ms predicting, planned on {planned}), ane/gpu {:.2}",
+                    a / g
+                ));
+            }
+        }
+        let break_even_rows = match (curves[0].fit, curves[1].fit) {
+            (Some(g), Some(a)) => vec![BreakEven {
+                arm: "ane".into(),
+                against: "gpu".into(),
+                above_x: break_even(&g, &a),
+            }],
+            _ => Vec::new(),
+        };
+        let mut subject = BTreeMap::new();
+        subject.insert("role".into(), json!(role));
+        subject.insert("rows".into(), json!(rows));
+        subject.insert("cols".into(), json!(cols));
+        subject.insert("weight_copies".into(), json!(copies));
+        subject.insert("placement".into(), Value::Object(placement));
+        Ok(BenchResult {
+            bench: "ane_matmul".into(),
+            case: case.label.clone(),
+            subject,
+            x: Axis::new("m", "rows", "log2"),
+            layout: "fp16_vision_weights".into(),
+            arms: curves,
+            break_even: break_even_rows,
+            notes,
+        })
     }
 
     fn run_dense(

@@ -210,14 +210,224 @@
       },
       "conditions": "prefill null floor 0.18% (record 1793262992496-68855-16), effect floor 2.00%; sweep record 1793263571468-6801-17; dense_kl",
       "note": "the chunk-128 batched prefill default stands; the family's first lab-ledger A/Bs"
+    },
+    {
+      "id": "qwen3_vl.vision-tower-stages-2026-11-01",
+      "date": "2026-11-01",
+      "install": "qwen3vl-4b-vision (combined pull, mlx-community/Qwen3-VL-4B-Instruct-4bit@2fd8dacb)",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "2b3d85d3",
+      "workload": "tslab kernel --bench vision_encode, three synthetic pages (512x640, 1024x1280, 1536x1536 -> 1280, 5120, 9216 patches), 5 reps after a discarded cold rep, pread residency",
+      "arms": {
+        "tower": {}
+      },
+      "metric": "vision_total_ms",
+      "values": {
+        "1280": {
+          "total_ms": 2546.4,
+          "block_gpu_ms": 2280.1,
+          "block_read_ms": 38.0,
+          "stream_share": 0.016
+        },
+        "5120": {
+          "total_ms": 20122.5,
+          "block_gpu_ms": 18820.0,
+          "block_read_ms": 52.3
+        },
+        "9216": {
+          "total_ms": 64097.0,
+          "block_gpu_ms": 62213.8,
+          "block_read_ms": 75.1,
+          "peak_mib": 663
+        }
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "vision-lane",
+        "record": "1793548170002-91474-0"
+      },
+      "conditions": "DIRTY: foreign CPU over 150% (another session's python and GPU parity test); a second run at baf8c514 (record 1793548777344-15491-0, also DIRTY) agreed within 5%",
+      "note": "compute bound: block reads are 3% or less of the block loop. Block GPU time grows super-linearly with patches (full-page attention), and the dense part runs near 0.4 TFLOP/s on the per-output dot kernel vision_matmul_fp16"
+    },
+    {
+      "id": "qwen3_vl.vision-ane-projections-2026-11-01",
+      "date": "2026-11-01",
+      "install": "qwen3vl-4b-vision (combined pull, mlx-community/Qwen3-VL-4B-Instruct-4bit@2fd8dacb)",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "2b3d85d3",
+      "workload": "tslab kernel --bench ane_matmul vision_qkv/proj/fc1/fc2, programs from bake_ane_vision_programs.py (F16 constants), buckets 1280, 2048, 4096 rows, 5 reps",
+      "arms": {
+        "gpu": {},
+        "ane": {}
+      },
+      "metric": "kernel_ms",
+      "values": {
+        "qkv_1280": {
+          "gpu": 16.057,
+          "ane": 1.243
+        },
+        "proj_1280": {
+          "gpu": 5.591,
+          "ane": 0.882
+        },
+        "fc1_1280": {
+          "gpu": 21.245,
+          "ane": 1.409
+        },
+        "fc2_1280": {
+          "gpu": 13.225,
+          "ane": 1.624
+        },
+        "qkv_4096": {
+          "gpu": 58.423,
+          "ane": 2.613
+        },
+        "fc2_4096": {
+          "gpu": 42.38,
+          "ane": 4.145
+        }
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "vision-ane",
+        "record": "1793548200465-13507-0"
+      },
+      "conditions": "eligible (clean host guard), every program planned on the ANE",
+      "note": "the ane arm includes the activation scale, the output convert and the host handoff; the gpu arm is today's vision_matmul_fp16, a per-output dot kernel, not a matrix-unit GEMM, so the ratio is an upper bound on what the ANE buys"
+    },
+    {
+      "id": "qwen3_vl.vision-mma-gemm-2026-11-01",
+      "date": "2026-11-01",
+      "install": "qwen3vl-4b-vision (combined pull, mlx-community/Qwen3-VL-4B-Instruct-4bit@2fd8dacb)",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "f1427d81",
+      "workload": "tslab kernel --bench vision_encode, three synthetic pages, 5 reps after a discarded cold rep, arms interleaved mma, per, mma, per",
+      "arms": {
+        "mma": {},
+        "per": {
+          "vision_mma": "0"
+        }
+      },
+      "metric": "vision_total_ms",
+      "values": {
+        "1280": {
+          "mma": 533.8,
+          "per": 1766.0
+        },
+        "5120": {
+          "mma": 9322.5,
+          "per": 14371.8
+        },
+        "9216": {
+          "mma": 40989.6,
+          "per": 49419.5
+        }
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "vision-gemm-mma",
+        "record": "1793551761373-12180-0"
+      },
+      "conditions": "all four runs DIRTY (a long-running user Python job over 90%); repeats agree within 4.5%; the per arm's record is vision-gemm-per 1793552154700-15631-0",
+      "note": "vision_matmul_fp16_mma (branch commit f1427d81, not merged into main at the time) runs the projections at 7 to 9.5 TFLOP/s against 0.5 to 0.8; the rest of a large page is the scalar bidirectional attention"
+    },
+    {
+      "id": "qwen3_vl.vision-ane-vs-mma-2026-11-01",
+      "date": "2026-11-01",
+      "install": "qwen3vl-4b-vision (combined pull, mlx-community/Qwen3-VL-4B-Instruct-4bit@2fd8dacb)",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "f1427d81",
+      "workload": "tslab kernel --bench ane_matmul vision_qkv/proj/fc1/fc2 with the matrix-unit GEMM as the gpu arm, buckets 1280, 2048, 4096",
+      "arms": {
+        "gpu": {},
+        "ane": {}
+      },
+      "metric": "kernel_ms_ratio",
+      "values": {
+        "qkv": {
+          "1280": 0.81,
+          "2048": 0.96,
+          "4096": 1.0
+        },
+        "proj": {
+          "1280": 0.6,
+          "4096": 1.1
+        },
+        "fc1": {
+          "1280": 0.66,
+          "2048": 0.87,
+          "4096": 0.91
+        },
+        "fc2": {
+          "1280": 1.09,
+          "2048": 1.2,
+          "4096": 1.09
+        }
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "vision-ane-gemm",
+        "record": "1793552891502-25833-0"
+      },
+      "conditions": "eligible; proj at 2048 not loaded (compute plan failed), proj 4096 and fc2 2048 planned on CPU",
+      "note": "values are ane/gpu; the ANE gate does not pass against a matrix-unit GEMM, so no ANE tower"
+    },
+    {
+      "id": "qwen3_vl.vision-attn-mma-2026-11-01",
+      "date": "2026-11-01",
+      "install": "qwen3vl-4b-vision (combined pull, mlx-community/Qwen3-VL-4B-Instruct-4bit@2fd8dacb)",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "4eadb5ba",
+      "workload": "tslab kernel --bench vision_encode, three synthetic pages, 5 reps after a discarded cold rep, arms interleaved mma, scalar, mma, scalar, GEMM on in both",
+      "arms": {
+        "mma": {},
+        "scalar": {
+          "vision_attn_mma": "0"
+        }
+      },
+      "metric": "vision_total_ms",
+      "values": {
+        "1280": {
+          "mma": 171.6,
+          "scalar": 635.7
+        },
+        "5120": {
+          "mma": 963.1,
+          "scalar": 11371.2
+        },
+        "9216": {
+          "mma": 2499.4,
+          "scalar": 47457.7,
+          "mma_peak_mib": 883,
+          "scalar_peak_mib": 748
+        }
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "vision-attn-mma",
+        "record": "1793563440929-81713-0"
+      },
+      "conditions": "all four runs DIRTY (user Python job over 90%, second pair also foreign CPU over 150%); the scalar arm's record is vision-attn-scalar 1793563791518-82359-0; host about 15% slower than the GEMM campaign, so quote ratios",
+      "note": "vision_attention_bidir_fp16_mma (branch commit 4eadb5ba, not merged into main at the time): 3.2x, 11.4x, 18.1x per page; embeddings agree at mean row cosine 0.99992 or better (the GEMM change's own noise level), greedy transcription byte-identical; peak footprint up about 150 to 200 MiB, unattributed"
     }
   ],
   "open_questions": [
     "MiniCPM needs a BF16 M-row GEMM before its prefill can batch",
-    "the GQA decode default (2026-10-29 flip) rests on timing and 64-token greedy identity only: run a dense_kl gate on qwen3vl-4b with TURBOSPARK_ATTN_DECODE_KERNEL=barrier against unset"
+    "the GQA decode default (2026-10-29 flip) rests on timing and 64-token greedy identity only: run a dense_kl gate on qwen3vl-4b with TURBOSPARK_ATTN_DECODE_KERNEL=barrier against unset",
+    "what raises vision peak phys_footprint by about 150 to 200 MiB under the flash attention (vision-attn-mma against vision-attn-scalar), and whether 16 query rows per simdgroup or 32-key blocks pay at head_dim 64"
   ],
   "traps": [
-    "the vision tag is on, but no lab workload feeds an image: a profile measures the text tower"
+    "the text phases feed no image: prefill_tok_s and a profile measure the text tower only; time the tower with tslab kernel --bench vision_encode (stage ms, block read against block GPU, patches/s, peak footprint), which needs an install streamed with its tower: the qwen3vl-4b catalog row is text-only"
   ],
   "docs": [
     "docs/BENCHMARKS.md"

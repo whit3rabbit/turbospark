@@ -2543,6 +2543,7 @@ dependencies = [
  "turbospark-runtime",
  "turbospark-selection",
  "turbospark-tokenizer",
+ "turbospark-vision-io",
 ]
 
 [[package]]

@@ -859,6 +859,171 @@ At 16 slots this is why the qwen MoE chunked driver refuses
 `docs/BATCHED_PREFILL.md`, so a Qwen routed batch needs at least 32 slots
 or a binding scheme past 32.
 
+### The vision tower on the Neural Engine: not pursued (2026-11-01)
+
+The question was whether a Qwen vision tower block runs faster on the ANE
+than on the GPU's FP16 vision kernels. Recommending an ANE tower needs both:
+
+1. Per block, the ANE's qkv, proj, fc1 and fc2, with the activation scale,
+   the output convert and the host handoff paid, beat
+   `gpu::encode_vision_matmul` at the tower's patch-row counts.
+2. The tower is compute bound, not bound by streaming its blocks from
+   `packed_vision/` (two slots, each block's host `pread` runs before its
+   compute, not beside it).
+
+Instruments: `tslab kernel --bench vision_encode` (per-stage tower time on
+three synthetic pages, `stream_share` = block read over block read plus
+block GPU) and the `vision_*` cases of `--bench ane_matmul`, with programs
+from `crates/coreml/tools/bake_ane_vision_programs.py` (weights as F16
+constants, since a tower's weights are FP16 already).
+
+Measured on Apple M4 Max, macOS 26.6, AC, the combined `qwen3vl-4b-vision`
+install (`docs/MODELS.md`'s pinned pull). Ledgers `vision-lane` and
+`vision-ane`, findings in `crates/lab/families/qwen3_vl.json`.
+
+Tower per page, two runs (both DIRTY from another session's CPU load,
+agreeing within 5%), median of 5 reps:
+
+| page | patches | total ms | block GPU ms | block read ms | stream share | peak MiB |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 512x640 | 1280 | 2546 / 2450 | 2280 / 2135 | 38 / 60 | 2-3% | 632 / 620 |
+| 1024x1280 | 5120 | 20123 / 20424 | 18820 / 18944 | 52 / 92 | under 1% | 634 / 648 |
+| 1536x1536 | 9216 | 64097 / 65807 | 62214 / 63727 | 75 / 183 | under 1% | 663 / 712 |
+
+Half 2 holds: the tower is compute bound, and a prefetch of the block
+reads would buy at most 3%. Block GPU time grows faster than the patch
+count (27x for 7.2x the patches), so full-page attention is most of a large
+page.
+
+Per projection, clean host, every program planned on the ANE:
+
+| projection | rows | gpu ms | ane ms (with handoff) | ane predict alone | ane/gpu |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| qkv 3072x1024 | 1280 | 16.06 | 1.24 | 0.72 | 0.08 |
+| proj 1024x1024 | 1280 | 5.59 | 0.88 | 0.39 | 0.16 |
+| fc1 4096x1024 | 1280 | 21.25 | 1.41 | 0.89 | 0.07 |
+| fc2 1024x4096 | 1280 | 13.23 | 1.62 | 1.15 | 0.12 |
+| qkv | 4096 | 58.42 | 2.61 | 1.83 | 0.04 |
+| fc2 | 4096 | 42.38 | 4.15 | 3.16 | 0.10 |
+
+Half 1 holds by 6x to 25x. That ratio is mostly the GPU kernel, not the
+ANE. `vision_matmul_fp16` gives each output element its own threadgroup and
+reduces one dot product, which reaches about 0.5 TFLOP/s here (qkv at 1280
+rows is 8 GFLOP in 16 ms). The ANE does the same projection at about 6.5
+TFLOP/s with the handoff paid. A matrix-unit FP16 GEMM on the GPU
+(`simdgroup_matrix`, as the INT4 MMA, Kokoro and Music 3 kernels use) should
+close most of that gap with no handoff, no second weight copy in a Core ML
+program, and no parity risk from a second engine. It did (below).
+
+Against the old kernel (modeled from the two tables, not run): the four
+projections are about 59% of block GPU time at 1280 patches, about 30% at
+5120 and about 16% at 9216. Moving all four to the ANE would save about
+48%, 25% and 15% of the page. Attention stays on the GPU either way and
+is the larger target for big pages.
+
+The gate as first run passed only because its GPU arm was a naive kernel.
+So a matrix-unit FP16 GEMM came first (`vision_matmul_fp16_mma`, commit
+`f1427d81` on its own branch, not yet merged here, kill switch
+`TURBOSPARK_VISION_MMA=0`, tslab knob `vision_mma`). It runs the tower's
+projections at 7 to 9.5 TFLOP/s against 0.5 to 0.8 for the old kernel.
+
+Whole tower, interleaved GEMM, old, GEMM, old, median of 5 warm reps
+(all four runs DIRTY from a long-running user Python job, repeats within
+4.5%). Experiments `vision-gemm-mma` and `vision-gemm-per`:
+
+| page | patches | GEMM ms | old ms | speedup |
+| --- | ---: | ---: | ---: | ---: |
+| 512x640 | 1280 | 534 / 510 | 1766 / 1767 | 3.4x |
+| 1024x1280 | 5120 | 9322 / 9304 | 14372 / 14461 | 1.55x |
+| 1536x1536 | 9216 | 40990 / 40348 | 49420 / 49248 | 1.22x |
+
+The `vision_*` gate rerun with the GEMM as the `gpu` arm (experiment
+`vision-ane-gemm`, clean host) reads ane/gpu:
+
+| projection | 1280 | 2048 | 4096 |
+| --- | ---: | ---: | ---: |
+| qkv | 0.81 | 0.96 | 1.00 |
+| proj | 0.60 | not loaded (compute plan failed) | 1.10 (planned on CPU) |
+| fc1 | 0.66 | 0.87 | 0.91 |
+| fc2 | 1.09 | 1.20 (planned on CPU) | 1.09 |
+
+Verdict: no ANE tower. Against a 9 TFLOP/s GEMM the ANE wins only at 1280
+rows, where both arms sit near a 1 ms per-call floor, and ties or loses
+above it. Under the GEMM the projections are about 19% of block time on a
+512x640 page and under 2% on a 1536x1536 page (arithmetic from the GEMM's
+rate, not a profile), so an ANE tower would save at most about 5% of a small
+page. It would also add a second weight residency and Core ML's plan
+failures. The tower's remaining cost is `vision_attention_bidir_fp16`, one
+threadgroup per query and head, which grows with patches squared. The next
+lever is a matrix-unit, flash-style bidirectional attention on the GPU.
+
+Keep the negative: the ANE gate passed against the naive per-output kernel
+(0.04 to 0.16) and does not pass against a matrix-unit GEMM.
+
+That lever is measured. `vision_attention_bidir_fp16_mma` (branch commit
+4eadb5ba on top of the GEMM, kill switch `TURBOSPARK_VISION_ATTN_MMA=0`,
+knob `vision_attn_mma`) puts 32 query rows of one head per threadgroup,
+stages K and V 16 keys at a time, and runs QK^T and PV on simdgroup_matrix
+with FP32 accumulators and the online softmax in registers. Both arms keep
+the GEMM on. Experiments `vision-attn-mma` and `vision-attn-scalar`, two runs
+per arm interleaved, all four DIRTY (the same Python job, plus foreign CPU
+over 150% on the second pair), totals in ms:
+
+| page | patches | flash | scalar | speedup |
+| --- | ---: | ---: | ---: | ---: |
+| 512x640 | 1280 | 172 / 196 | 636 / 550 | 3.2x |
+| 1024x1280 | 5120 | 963 / 1057 | 11371 / 11611 | 11.4x |
+| 1536x1536 | 9216 | 2499 / 2738 | 47458 / 47081 | 18.1x |
+
+The host was noisier than in the GEMM runs (the scalar arm here is about 15%
+slower than the same configuration there), so quote the ratios. Peak
+phys_footprint rises from 635 to 748 MiB to 835 to 889 MiB under the flash
+kernel. That rise has not been attributed yet.
+
+Quality:
+- `vision_parity.rs` holds the kernel to the scalar one and the CPU reference
+  at 1 to 1280 patches and head_dim 4 to 128, within the existing FP16 bound.
+- On Qwen3-VL-4B, the mean per-row embedding cosine is 0.99992 or better on
+  every page. That matches the noise the accepted GEMM change shows when
+  measured the same way.
+- The worst rows reach 0.977 on deepstack 1. They are the same rows under
+  either change, and the attention change moves them about 3x further. An FP32
+  P variant was worse on those rows, so the cause is not narrowing P to FP16.
+- A 160-token greedy transcription is byte-identical across arms.
+- One synthetic injected digest was re-frozen. The scalar arm still
+  reproduces the old digest, and the argmax and the top-5 set are unchanged.
+
+Under the flash kernel the projections and attention are the same order of
+cost on a 1536x1536 page (about 1.1 s of the 2.5 s block time is projections
+by arithmetic). On a 512x640 page, block reads are 18 to 23% of the block
+loop.
+
+The same pair on the Qwen3.8-27B tower (`qwen38-27b-vision`: 27 blocks,
+hidden 1152, head_dim 72, a 4304-wide MLP and no deepstack). Experiments
+`vision-q38-new` (two runs) and `vision-q38-old` (one run, both kill
+switches set), all DIRTY from foreign CPU, totals in ms:
+
+| page | patches | new kernels | old kernels | speedup |
+| --- | ---: | ---: | ---: | ---: |
+| 512x640 | 1280 | 259 / 294 | 3487 | 12x to 13x |
+| 1024x1280 | 5120 | 1612 / 2142 | 35857 | 17x to 22x |
+| 1536x1536 | 9216 | 4148 / 5614 | 93682 | 17x to 23x |
+
+The two new-kernel runs differ by up to 35%, so read the ratios. The 785 MB
+block stream takes about 50 ms per page at any size. That is 18 to 20% of a
+1280-patch page under the new kernels and 1 to 3% at 5120 patches and up.
+This tower is compute bound except on small pages, where a deeper prefetch
+than the two read slots would be the next lever. Peak footprint is about
+190 MiB higher under the new kernels (1026 against 836 MiB at 9216 patches),
+the same rise as on Qwen3-VL-4B.
+
+Also measured: placement is not what keeps EmbeddingGemma 2's vision tower
+on the GPU. `tslab ane-plan --units ane --function NAME` plans 100% of the
+op cost on the ANE for each of `vision_70`, `vision_140` and `vision_280`
+(2389 of 4589 ops placed, the rest unplaced constants). Without
+`--function`, a multifunction package plans its default function only and
+the others read 0% everywhere, which looks like a refusal and is not one.
+
 ## What the audio ports add
 
 Whisper-tiny.en went from 1.65 s for the first Metal port to 160 ms warm
