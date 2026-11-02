@@ -1571,6 +1571,22 @@ mod tests {
         }
     }
 
+    /// Muse-Glimmer ships `processor_config.json` with the image processor
+    /// nested; install writes the nested object as the flat file readers use.
+    #[test]
+    fn a_nested_processor_config_is_flattened_and_anything_else_is_not() {
+        let nested = br#"{"image_processor": {"patch_size": 14, "max_image_tokens": 4096},
+                          "processor_class": "MuseGlimmerProcessor"}"#;
+        let flat = crate::stream::flatten_processor_config(nested).expect("has image_processor");
+        let v: serde_json::Value = serde_json::from_slice(&flat).unwrap();
+        assert_eq!(v["patch_size"], 14);
+        assert_eq!(v["max_image_tokens"], 4096);
+        assert!(v.get("processor_class").is_none());
+        // A document with no image_processor object is not a wrapper.
+        assert!(crate::stream::flatten_processor_config(br#"{"patch_size": 14}"#).is_none());
+        assert!(crate::stream::flatten_processor_config(b"not json").is_none());
+    }
+
     /// A bytes-enabled tower lands with its preprocessor config beside the
     /// install, the file `vision_dir()` names as the one place every image
     /// consumer reads.
