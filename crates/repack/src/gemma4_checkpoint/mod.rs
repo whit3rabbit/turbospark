@@ -29,6 +29,7 @@ mod vision_gemma4;
 mod vision_lfm3;
 mod vision_minicpm;
 mod vision_muse;
+mod vision_pixtral;
 
 pub use classify::{
     canonicalize_flint_header, canonicalize_qwen2_header, canonicalize_vision_header,
@@ -80,6 +81,11 @@ pub use vision_minicpm::{
     VIT_MERGER_PREFIX as MINICPM_VIT_MERGER_PREFIX,
 };
 pub use vision_muse::{MUSE_BLOCK_SOURCES, MUSE_RESIDENT_TENSORS, MUSE_SOURCE_PREFIXES};
+pub use vision_pixtral::{
+    parse_pixtral_vision_config, pixtral_special_token_ids, read_pixtral_vision_entries,
+    PIXTRAL_BLOCK_ROLES, PIXTRAL_MODEL_TYPE, PIXTRAL_PROJECTOR_PREFIX, PIXTRAL_RESIDENT_TENSORS,
+    PIXTRAL_SOURCE_PREFIXES, PIXTRAL_TOWER_PREFIX,
+};
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};

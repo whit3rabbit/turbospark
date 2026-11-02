@@ -33,15 +33,32 @@ pub const CLIP_PATCH_DIM: usize = 3 * CLIP_PATCH * CLIP_PATCH;
 /// on. Every field is read off the file and nothing here is a baseline.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClipPreprocessParams {
-    /// Both the resize target of the shortest edge and the square crop side.
+    /// Both the resize target of the shortest edge and the square crop side
+    /// ([`ClipLayout::Crop`]), or the longest-edge cap ([`ClipLayout::Pixtral`]).
     pub size: usize,
+    /// Which pipeline these numbers drive.
+    pub layout: ClipLayout,
     pub image_mean: [f32; 3],
     pub image_std: [f32; 3],
     pub rescale_factor: f32,
 }
 
+/// Which image pipeline a flat-injection tower uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClipLayout {
+    /// LLaVA-1.5: shortest-edge resize and a square center crop to `size`.
+    Crop,
+    /// Pixtral: a longest-edge cap, no crop, sides rounded up to a patch
+    /// (`crate::pixtral`).
+    Pixtral,
+}
+
 impl ClipPreprocessParams {
-    /// Parse a CLIP `preprocessor_config.json`.
+    /// Parse a CLIP or Pixtral `preprocessor_config.json`.
+    ///
+    /// A config whose `image_processor_type` is `PixtralImageProcessor` takes
+    /// the Pixtral path ([`ClipLayout::Pixtral`]); anything else is read as a
+    /// CLIP crop config.
     ///
     /// Refuses everything this pipeline does not implement rather than
     /// ignoring it: `do_resize`, `do_center_crop`, `do_rescale` and
@@ -58,6 +75,13 @@ impl ClipPreprocessParams {
             field: field.to_string(),
             why,
         };
+        if root
+            .get("image_processor_type")
+            .and_then(serde_json::Value::as_str)
+            == Some("PixtralImageProcessor")
+        {
+            return Self::from_pixtral_config(&root);
+        }
         for flag in ["do_resize", "do_center_crop", "do_rescale", "do_normalize"] {
             match root.get(flag).and_then(serde_json::Value::as_bool) {
                 Some(true) => {}
@@ -118,36 +142,174 @@ impl ClipPreprocessParams {
                 .ok_or_else(|| bad("rescale_factor", "missing".into()))? as f32;
         Ok(Self {
             size: shortest,
+            layout: ClipLayout::Crop,
             image_mean: triple("image_mean")?,
             image_std: triple("image_std")?,
             rescale_factor,
         })
     }
 
-    /// Patches per side of the cropped square.
+    /// Patches per side of the cropped square (the Pixtral cap, for that
+    /// layout: the largest side an image can have).
     pub fn grid(&self) -> usize {
-        self.size / CLIP_PATCH
+        match self.layout {
+            ClipLayout::Crop => self.size / CLIP_PATCH,
+            ClipLayout::Pixtral => self.size / crate::pixtral::PIXTRAL_PATCH,
+        }
     }
 
-    /// Patch rows the tower sees and image tokens the prompt carries
-    /// (`grid^2`; the class row is added and dropped inside the tower).
+    /// Patch rows the tower sees and image tokens the prompt carries for a
+    /// CROP image (`grid^2`; the class row is added and dropped inside the
+    /// tower). For Pixtral this is the WORST case, a square at the cap: the
+    /// real count is per image, [`ClipPatches::num_patches`].
     pub fn tokens(&self) -> usize {
         self.grid() * self.grid()
+    }
+
+    /// The patch grid `(rows, cols)` an image of `width x height` pixels
+    /// becomes: the fixed crop for CLIP, the longest-edge rule for Pixtral.
+    pub fn grid_for(&self, width: usize, height: usize) -> (usize, usize) {
+        match self.layout {
+            ClipLayout::Crop => (self.grid(), self.grid()),
+            ClipLayout::Pixtral => {
+                let p = crate::pixtral::PIXTRAL_PATCH;
+                let (h, w) = crate::pixtral::pixtral_resize_target(height, width, self.size, p);
+                (h / p, w / p)
+            }
+        }
+    }
+
+    /// Cross-check these numbers against the install's own tower for what
+    /// must agree for the tower to read the rows at all: the patch edge and
+    /// the position-table size (a CLIP crop has `grid^2 + 1` rows, a Pixtral
+    /// tower none). A config describing a different checkpoint would
+    /// otherwise fail at a shape check inside the tower, far from the file
+    /// that caused it.
+    pub fn check_against_tower(
+        &self,
+        patch_size: i64,
+        num_position_embeddings: i64,
+    ) -> Result<(), String> {
+        let (want_patch, want_rows) = match self.layout {
+            ClipLayout::Crop => (CLIP_PATCH as i64, self.tokens() as i64 + 1),
+            ClipLayout::Pixtral => (crate::pixtral::PIXTRAL_PATCH as i64, 0),
+        };
+        if patch_size != want_patch || num_position_embeddings != want_rows {
+            return Err(format!(
+                "a {}-pixel {} is patch {want_patch} with a {want_rows}-row position table, but \
+                 this install's tower has patch {patch_size} and a {num_position_embeddings}-row \
+                 one; the two describe different checkpoints",
+                self.size,
+                match self.layout {
+                    ClipLayout::Crop => "crop",
+                    ClipLayout::Pixtral => "longest-edge cap",
+                }
+            ));
+        }
+        Ok(())
+    }
+
+    /// Values in one patch row.
+    pub fn patch_dim(&self) -> usize {
+        match self.layout {
+            ClipLayout::Crop => CLIP_PATCH_DIM,
+            ClipLayout::Pixtral => crate::pixtral::PIXTRAL_PATCH_DIM,
+        }
+    }
+
+    /// Pixtral's `preprocessor_config.json`. Refuses what this pipeline does
+    /// not implement: resize, rescale and normalize must be on, the resample
+    /// must be 3 (PIL bicubic), the patch must be the tower's 16 and the size
+    /// a `longest_edge` that is a whole number of patches.
+    fn from_pixtral_config(root: &serde_json::Value) -> Result<Self, VisionIoError> {
+        let bad = |field: &str, why: String| VisionIoError::BadConfig {
+            field: field.to_string(),
+            why,
+        };
+        for flag in ["do_resize", "do_rescale", "do_normalize"] {
+            match root.get(flag).and_then(serde_json::Value::as_bool) {
+                Some(true) => {}
+                other => return Err(bad(flag, format!("{other:?}; this pipeline needs true"))),
+            }
+        }
+        if root.get("resample").and_then(serde_json::Value::as_i64) != Some(3) {
+            return Err(bad("resample", "must be 3 (PIL bicubic)".into()));
+        }
+        let patch = |axis: &str| {
+            root.get("patch_size")
+                .and_then(|p| p.get(axis))
+                .and_then(serde_json::Value::as_u64)
+                .map(|v| v as usize)
+        };
+        let want = crate::pixtral::PIXTRAL_PATCH;
+        if patch("height") != Some(want) || patch("width") != Some(want) {
+            return Err(bad(
+                "patch_size",
+                format!(
+                    "{:?} x {:?}; the implemented tower is {want} x {want}",
+                    patch("height"),
+                    patch("width")
+                ),
+            ));
+        }
+        let longest =
+            root.get("size")
+                .and_then(|s| s.get("longest_edge"))
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| bad("size.longest_edge", "missing".into()))? as usize;
+        if longest == 0 || longest % want != 0 {
+            return Err(bad(
+                "size.longest_edge",
+                format!("{longest} is not a nonzero multiple of {want}"),
+            ));
+        }
+        let triple = |field: &str| -> Result<[f32; 3], VisionIoError> {
+            let a = root
+                .get(field)
+                .and_then(serde_json::Value::as_array)
+                .ok_or_else(|| bad(field, "missing".into()))?;
+            if a.len() != 3 {
+                return Err(bad(field, format!("{} values, expected 3", a.len())));
+            }
+            let mut out = [0f32; 3];
+            for (slot, v) in out.iter_mut().zip(a) {
+                *slot = v
+                    .as_f64()
+                    .ok_or_else(|| bad(field, "not a number".into()))?
+                    as f32;
+            }
+            Ok(out)
+        };
+        let rescale_factor =
+            root.get("rescale_factor")
+                .and_then(serde_json::Value::as_f64)
+                .ok_or_else(|| bad("rescale_factor", "missing".into()))? as f32;
+        Ok(Self {
+            size: longest,
+            layout: ClipLayout::Pixtral,
+            image_mean: triple("image_mean")?,
+            image_std: triple("image_std")?,
+            rescale_factor,
+        })
     }
 }
 
 /// One image as tower input.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClipPatches {
-    /// `[grid * grid, 588]`, row-major over the grid, each row `(C, 14, 14)`.
+    /// `[grid * grid_w, patch_dim]`, row-major over the grid, each row
+    /// `(C, P, P)` (588 values for CLIP, 768 for Pixtral).
     pub pixels: Vec<f32>,
-    /// Patches per side.
+    /// Patch rows of the grid (its HEIGHT). The CLIP crop is square, so this
+    /// is also its width.
     pub grid: usize,
+    /// Patches per row (the grid's WIDTH).
+    pub grid_w: usize,
 }
 
 impl ClipPatches {
     pub fn num_patches(&self) -> usize {
-        self.grid * self.grid
+        self.grid * self.grid_w
     }
 }
 
@@ -167,6 +329,15 @@ pub fn clip_preprocess(
     image: &Rgb8Image,
     params: &ClipPreprocessParams,
 ) -> Result<ClipPatches, VisionIoError> {
+    if params.layout == ClipLayout::Pixtral {
+        return crate::pixtral::pixtral_preprocess(
+            image,
+            params.size,
+            params.image_mean,
+            params.image_std,
+            params.rescale_factor,
+        );
+    }
     if image.width == 0 || image.height == 0 {
         return Err(VisionIoError::InvalidDimensions {
             detail: "image has a zero dimension".into(),
@@ -203,7 +374,11 @@ pub fn clip_preprocess(
             }
         }
     }
-    Ok(ClipPatches { pixels, grid })
+    Ok(ClipPatches {
+        pixels,
+        grid,
+        grid_w: grid,
+    })
 }
 
 /// Open a rendered LLaVA prompt with the BOS token when the template did not.
@@ -290,6 +465,33 @@ pub fn clip_expand_image_placeholders(
         next += 1;
     }
     Ok((out, spans))
+}
+
+/// Expand a rendered prompt's image markers for a flat-injection tower:
+/// CLIP's bare run (`break_end` is `None`) or Pixtral's rows with a break
+/// between them and an end after the last. `grids` is each image's
+/// `(rows, cols)`. Spans come back one per run (CLIP) or one per patch row
+/// (Pixtral).
+pub fn flat_expand_image_placeholders(
+    rendered: &[i32],
+    marker: i32,
+    fill: i32,
+    break_end: Option<(i32, i32)>,
+    grids: &[(usize, usize)],
+) -> Result<(Vec<i32>, Vec<crate::ImageSpan>), VisionIoError> {
+    match break_end {
+        Some((image_break, image_end)) => crate::pixtral::pixtral_expand_image_placeholders(
+            rendered,
+            marker,
+            image_break,
+            image_end,
+            grids,
+        ),
+        None => {
+            let counts: Vec<usize> = grids.iter().map(|&(h, w)| h * w).collect();
+            clip_expand_image_placeholders(rendered, marker, fill, &counts)
+        }
+    }
 }
 
 #[cfg(test)]

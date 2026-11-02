@@ -336,6 +336,7 @@ impl ChatModel for FfiChatModel {
                     params: crate::vision::clip_params(runner).ok()?,
                     marker,
                     fill,
+                    break_end: runner.pixtral_break_end_ids(),
                 });
             }
             if runner.is_minicpm_vision() {

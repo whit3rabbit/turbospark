@@ -385,6 +385,7 @@ impl RealForwardRunner {
             lfm3_vision: None,
             clip_vision: None,
             muse_vision: None,
+            pixtral_vision: None,
             vision_sidecar_dir: None,
             prompt_vision: None,
             skip_head: false,

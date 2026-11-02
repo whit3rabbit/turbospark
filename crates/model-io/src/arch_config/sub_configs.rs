@@ -267,6 +267,20 @@ pub enum VisionTowerKind {
     /// geometry, the insert layer, the thumbnail-only slicing and the canvas
     /// ids are properties of the kind, checked at intake.
     MiniCpmV,
+    /// The Pixtral tower (Pixtral-12B, `docs/PIXTRAL_VISION_PHASE0.md`): a
+    /// bias-free patch conv, an RMSNorm before the first block, RMSNorm
+    /// blocks with 2-D rope and a gated SiLU MLP, bidirectional attention over
+    /// the whole image, then a two-layer GELU projector. No class token, no
+    /// position table, variable image size.
+    ///
+    /// Field meanings: `depth` is 24, `spatial_merge_size` is 1,
+    /// `temporal_patch_size` is 1, `num_position_embeddings` is 0,
+    /// `out_hidden_size` is the trunk width. `vision_start_token_id` is
+    /// `[IMG_BREAK]` and `vision_end_token_id` is `[IMG_END]`: Pixtral puts a
+    /// break between patch rows and an end after the last, and the prompt
+    /// builders read the two ids from here. `image_token_id` is `[IMG]`.
+    /// The rope theta (10000) and epsilon (1e-5) are properties of the kind.
+    Pixtral,
 }
 
 impl VisionTowerKind {
@@ -280,6 +294,7 @@ impl VisionTowerKind {
             VisionTowerKind::Clip => "clip",
             VisionTowerKind::MuseGlimmer => "muse_glimmer",
             VisionTowerKind::MiniCpmV => "minicpm_v",
+            VisionTowerKind::Pixtral => "pixtral",
         }
     }
 
@@ -294,6 +309,7 @@ impl VisionTowerKind {
             "clip" => Some(VisionTowerKind::Clip),
             "muse_glimmer" => Some(VisionTowerKind::MuseGlimmer),
             "minicpm_v" => Some(VisionTowerKind::MiniCpmV),
+            "pixtral" => Some(VisionTowerKind::Pixtral),
             _ => None,
         }
     }

@@ -400,6 +400,8 @@ pub struct RealForwardRunner {
     pub(crate) clip_vision: Option<crate::vision::clip::ClipVisionTower>,
     /// The Muse-Glimmer tower, opened lazily on the first image.
     pub(crate) muse_vision: Option<crate::vision::muse::MuseVisionTower>,
+    /// The Pixtral tower, opened lazily on the first image.
+    pub(crate) pixtral_vision: Option<crate::vision::pixtral::PixtralVisionTower>,
     /// A sidecar tower directory attached after open (vision memory
     /// sidecar, Part A2), via [`RealForwardRunner::attach_vision_sidecar`].
     /// `None` on every session that never called it, which is every session

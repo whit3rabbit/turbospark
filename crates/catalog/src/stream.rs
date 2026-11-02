@@ -1021,6 +1021,23 @@ pub(crate) fn stream_vision_sidecar(
         );
     }
 
+    // Pixtral is the same case: a Mistral-Nemo trunk that installs from GGUF
+    // under the `llama` family, with the tower as a sidecar of it
+    // (`docs/PIXTRAL_VISION_PHASE0.md`).
+    if config.get("model_type").and_then(|m| m.as_str()) == Some(repack::PIXTRAL_MODEL_TYPE) {
+        return stream_pixtral_vision_sidecar(
+            weights,
+            out_dir,
+            explicit_file,
+            client,
+            progress,
+            byte_progress,
+            cancel,
+            cache.as_deref(),
+            &config_text,
+        );
+    }
+
     // Family and hidden_size, off the SAME text-config-unwrapping logic every
     // family parser already carries -- reused rather than re-derived, so a
     // future family's `text_config` convention change cannot drift the two
@@ -1297,6 +1314,130 @@ fn stream_clip_vision_sidecar(
             repo: weights.repo.clone(),
             revision: weights.revision.clone(),
             prefix: repack::CLIP_MODEL_PREFIX.to_string(),
+            file: shard_names.join(", "),
+        },
+        tower_blocks: vision.depth,
+        block_stride: read.block_stride,
+    };
+    repack::write_vision_sidecar(
+        out_dir,
+        ModelFamily::Llama,
+        &vision,
+        &weights.repo,
+        &read,
+        record,
+    )
+    .map_err(|e| format!("writing the vision sidecar: {e}"))?;
+    progress(&format!(
+        "vision sidecar written: {} block(s), {} bytes/block",
+        vision.depth, read.block_stride
+    ));
+    Ok(vision)
+}
+
+/// The Pixtral arm of [`stream_vision_sidecar`]: the tower and the two-layer
+/// projector, fetched by ranged reads from the checkpoint's shards, fused and
+/// converted to FP16 by [`repack::read_vision_entries`], and written as a
+/// sidecar pairing with the `llama` family at the projector's width.
+///
+/// The config does not carry the three ids the prompt layout needs, so the
+/// repository's `tokenizer.json` is read for `[IMG]`, `[IMG_BREAK]` and
+/// `[IMG_END]` and the break and end ids are recorded in the tower's
+/// `VisionConfig` (the fields Gemma 4 uses for its `boi` and `eoi`). `[IMG]`
+/// must agree with the config's `image_token_index`.
+///
+/// Like LLaVA's, the pairing is `(family, hidden_size)` and nothing more: a
+/// 5120-wide sidecar attaches to any other 5120-wide `llama` trunk, and
+/// `--vision-sidecar auto` would do it silently.
+#[allow(clippy::too_many_arguments)]
+fn stream_pixtral_vision_sidecar(
+    weights: &RepoRef,
+    out_dir: &Path,
+    explicit_file: Option<&str>,
+    client: &Client,
+    progress: &mut impl FnMut(&str),
+    byte_progress: Option<&ByteProgressCallback>,
+    cancel: Option<&CancelFlag>,
+    cache_dir: Option<&Path>,
+    config_text: &str,
+) -> Result<VisionConfig, String> {
+    let mut vision = repack::parse_pixtral_vision_config(config_text).map_err(|e| e.to_string())?;
+    if !vision.is_active() {
+        return Err(format!(
+            "{weights} declares no vision_config; there is no tower here to install"
+        ));
+    }
+    let tokenizer_json = String::from_utf8(client.get(&weights.file_url("tokenizer.json"))?)
+        .map_err(|e| format!("tokenizer.json is not UTF-8: {e}"))?;
+    let (image, image_break, image_end) =
+        repack::pixtral_special_token_ids(&tokenizer_json).map_err(|e| e.to_string())?;
+    if image != vision.image_token_id {
+        return Err(format!(
+            "{weights}: config image_token_index {} but tokenizer.json puts [IMG] at {image}",
+            vision.image_token_id
+        ));
+    }
+    vision.vision_start_token_id = image_break;
+    vision.vision_end_token_id = image_end;
+    progress(&format!(
+        "{weights}: Pixtral tower, {} block(s), projector out_hidden_size {}, [IMG]/[IMG_BREAK]/\
+         [IMG_END] = {image}/{image_break}/{image_end}",
+        vision.depth, vision.out_hidden_size
+    ));
+
+    let fetched = fetch_prefixed_shards(
+        weights,
+        &repack::PIXTRAL_SOURCE_PREFIXES,
+        explicit_file,
+        client,
+        byte_progress,
+        cancel,
+        cache_dir,
+    )?;
+    progress(&format!("{} vision shard(s) fetched", fetched.len()));
+
+    let mut shard_names = Vec::with_capacity(fetched.len());
+    let mut headers = Vec::with_capacity(fetched.len());
+    let mut sources = Vec::with_capacity(fetched.len());
+    for (name, header, source) in fetched {
+        shard_names.push(name);
+        headers.push(header);
+        sources.push(source);
+    }
+    let bases: Vec<&str> = headers
+        .iter()
+        .flat_map(|h| h.tensors.keys())
+        .map(String::as_str)
+        .collect();
+    let shards = Gemma4Shards::new(
+        headers
+            .iter()
+            .zip(sources.iter())
+            .map(|(h, s)| (h, s as &dyn RangeSource))
+            .collect(),
+    )
+    .map_err(|e| format!("vision tower shards: {e}"))?;
+    let read = repack::read_vision_entries(&shards, &bases, &vision)
+        .map_err(|e| format!("reading the vision tower: {e}"))?;
+    let lossy: usize = read.lossy_conversion.iter().map(|(_, n)| n).sum();
+    if lossy > 0 {
+        progress(&format!(
+            "converted {} vision tensors to FP16 with {lossy} values losing bits \
+             (subnormals; the normal range is exact)",
+            read.lossy_conversion.len()
+        ));
+    }
+
+    let record = model_io::SidecarRecord {
+        kind: model_io::SIDECAR_KIND.to_string(),
+        pairs_with: model_io::PairsWith {
+            family: ModelFamily::Llama.as_str().to_string(),
+            hidden_size: vision.out_hidden_size,
+        },
+        source: model_io::SidecarSource {
+            repo: weights.repo.clone(),
+            revision: weights.revision.clone(),
+            prefix: repack::PIXTRAL_TOWER_PREFIX.to_string(),
             file: shard_names.join(", "),
         },
         tower_blocks: vision.depth,

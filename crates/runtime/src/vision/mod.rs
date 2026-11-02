@@ -44,6 +44,7 @@ pub(crate) mod lfm3_vl;
 pub(crate) mod minicpm;
 pub(crate) mod muse;
 mod overflow;
+pub(crate) mod pixtral;
 pub(crate) mod qwen25;
 mod scratch;
 mod shape;

@@ -14,6 +14,11 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- Pixtral-12B image input on the `llama` family: a `pixtral` tower sidecar
+  (RMSNorm blocks, 2-D rope, SwiGLU) on a GGUF trunk, with the `[IMG]`,
+  `[IMG_BREAK]` and `[IMG_END]` prompt layout. Gated on the real checkpoint
+  through the CLI and both server endpoints. Text parts now carry `content`
+  as well as `text`. See `docs/PIXTRAL_VISION_PHASE0.md`.
 - MiniCPM-V 4.7 image input (the 448-area global view): a new `minicpm_v`
   tower with its window-mean merger, ingested from the checkpoint instead of
   dropped, with the Qwen3.6 MoE trunk's image path. Gated on the real

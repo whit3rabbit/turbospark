@@ -234,7 +234,13 @@ pub fn parse_llava_vision_config(json: &str) -> Result<VisionConfig, Gemma4Error
 
 /// `[out, kh, kw, C]` (MLX's conv layout) to `[out, C, kh, kw]` (the layout the
 /// patch row `(C, P_h, P_w)` flattens against), on FP16 bytes.
-fn mlx_conv_to_channel_major(bytes: &[u8], out: usize, kh: usize, kw: usize, c: usize) -> Vec<u8> {
+pub(super) fn mlx_conv_to_channel_major(
+    bytes: &[u8],
+    out: usize,
+    kh: usize,
+    kw: usize,
+    c: usize,
+) -> Vec<u8> {
     let mut dst = vec![0u8; bytes.len()];
     for o in 0..out {
         for y in 0..kh {
