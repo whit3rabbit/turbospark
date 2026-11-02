@@ -384,6 +384,11 @@ pub struct RealForwardRunner {
     /// the two towers share no weights layout or forward pass; `None` means
     /// "not yet asked for", as with `vision`.
     pub(crate) gemma4_vision: Option<crate::vision::gemma4::Gemma4VisionTower>,
+    /// The LFM3-VL tower, lazily opened by [`RealForwardRunner::encode_image`]
+    /// on an install whose tower kind is `lfm3_vl`. Separate from `vision` for
+    /// the same reason `gemma4_vision` is: no shared weights layout or
+    /// forward pass.
+    pub(crate) lfm3_vision: Option<crate::vision::lfm3_vl::Lfm3VlVisionTower>,
     /// A sidecar tower directory attached after open (vision memory
     /// sidecar, Part A2), via [`RealForwardRunner::attach_vision_sidecar`].
     /// `None` on every session that never called it, which is every session

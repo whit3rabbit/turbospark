@@ -39,6 +39,7 @@ mod block;
 mod budget;
 pub(crate) mod gemma4;
 mod inject;
+pub(crate) mod lfm3_vl;
 mod overflow;
 mod scratch;
 mod shape;
