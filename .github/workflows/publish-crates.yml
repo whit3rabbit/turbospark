@@ -18,12 +18,14 @@ on:
           - turbospark-core
           - turbospark-window-fit
           - turbospark-vision-io
+          - turbospark-coreml
           - turbospark-compute
           - turbospark-invocation
           - turbospark-model-io
           - turbospark-selection
           - turbospark-tokenizer
           - turbospark-audio
+          - turbospark-embeddings
           - turbospark-repack
           - turbospark-catalog
           - turbospark-streaming
@@ -62,12 +64,14 @@ jobs:
             turbospark-core
             turbospark-window-fit
             turbospark-vision-io
+            turbospark-coreml
             turbospark-compute
             turbospark-invocation
             turbospark-model-io
             turbospark-selection
             turbospark-tokenizer
             turbospark-audio
+            turbospark-embeddings
             turbospark-repack
             turbospark-catalog
             turbospark-streaming

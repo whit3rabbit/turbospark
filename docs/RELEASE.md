@@ -179,27 +179,29 @@ Publish order matters: `cargo publish` refuses a crate until every internal
 path dependency it declares (`path = "../x", version = "..."`) is already
 live on the registry at that exact version.
 
-The topological dependency order across the 17 publishable crates is below.
+The topological dependency order across the 19 publishable crates is below.
 Dev-dependencies are ordered too, because a dev-dep declared with a
 `version` stays in the published manifest:
 
 1. `turbospark-core`: no internal deps
 2. `turbospark-window-fit`: no internal deps
 3. `turbospark-vision-io`: needs core
-4. `turbospark-compute`: needs core
-5. `turbospark-invocation`: needs core
-6. `turbospark-model-io`: needs core
-7. `turbospark-selection`: needs core
-8. `turbospark-tokenizer`: needs core
-9. `turbospark-audio`: needs core, model-io, tokenizer
-10. `turbospark-repack`: needs core, compute, model-io
-11. `turbospark-catalog`: needs audio, core, model-io, repack, tokenizer
-12. `turbospark-streaming`: needs core, model-io
-13. `turbospark-gpu`: needs core, compute; macOS target-deps on model-io; macOS dev-deps on audio, repack
-14. `turbospark-image`: needs core, compute, model-io, tokenizer; macOS target-deps on gpu
-15. `turbospark-runtime`: needs core, selection, tokenizer; macOS target-deps on audio, gpu, model-io, compute, streaming, vision-io
-16. `turbospark-cli`: needs audio, catalog, core, image, invocation, runtime, selection, tokenizer, repack, model-io, window-fit, vision-io
-17. `turbospark-server`: needs audio, core, runtime, selection, tokenizer, vision-io; macOS target-deps on catalog, repack
+4. `turbospark-coreml`: no internal deps (the Core ML runner; a stub off macOS)
+5. `turbospark-compute`: needs core
+6. `turbospark-invocation`: needs core
+7. `turbospark-model-io`: needs core
+8. `turbospark-selection`: needs core
+9. `turbospark-tokenizer`: needs core
+10. `turbospark-audio`: needs core, model-io, tokenizer
+11. `turbospark-embeddings`: needs audio, model-io, vision-io
+12. `turbospark-repack`: needs core, compute, model-io
+13. `turbospark-catalog`: needs audio, coreml, core, model-io, repack, tokenizer
+14. `turbospark-streaming`: needs core, model-io
+15. `turbospark-gpu`: needs core, compute; macOS target-deps on model-io; macOS dev-deps on audio, repack
+16. `turbospark-image`: needs core, compute, model-io, tokenizer; macOS target-deps on gpu
+17. `turbospark-runtime`: needs core, selection, tokenizer; macOS target-deps on audio, coreml, embeddings, gpu, model-io, compute, streaming, vision-io
+18. `turbospark-cli`: needs audio, catalog, core, image, invocation, runtime, selection, tokenizer, repack, model-io, window-fit, vision-io
+19. `turbospark-server`: needs audio, core, runtime, selection, tokenizer, vision-io; macOS target-deps on catalog, repack
 
 The job runs on `macos-15` because `cargo publish` verifies each crate by
 building it for the host, and `turbospark-server` does not compile on Linux.
