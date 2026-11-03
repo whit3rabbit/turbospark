@@ -77,5 +77,6 @@ pub fn all_known_architectures() -> Vec<ArchConfig> {
         qwen3_vl_4b(),
         flint_40b_a2_5b(),
         lfm3_1_7b(),
+        unlimited_ocr2_12l(),
     ]
 }

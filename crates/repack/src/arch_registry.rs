@@ -229,6 +229,13 @@ const SUPPORTED_HF: &[(&str, ModelFamily)] = &[
     // text model is a DeepSeekMoE trunk with plain attention, run by the
     // `deepseek2` flow's MHA arm (`ArchConfig::mla` inactive).
     ("deepseek_vl_v2", ModelFamily::Deepseek2),
+    // DeepSeek-OCR (`mlx-community/DeepSeek-OCR-4bit`, `baidu/Unlimited-OCR-2`):
+    // the same non-MLA DeepSeekMoE trunk as DeepSeek-VL2-tiny (12 layers,
+    // hidden 1280, 64 routed experts) under a SAM + CLIP-L encoder. The root
+    // `model_type` is `deepseekocr` on the MLX conversion and `unlimited-ocr`
+    // on the Baidu one (`docs/DEEPSEEK_OCR_VISION_PHASE0.md`).
+    ("deepseekocr", ModelFamily::Deepseek2),
+    ("unlimited-ocr", ModelFamily::Deepseek2),
     // Qwen3-VL-30B-A3B (`mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit`): the
     // wrapper and its text config. Recognition only for the trunk, which has
     // no safetensors writer on the llama MoE flow (its routed experts are
@@ -255,10 +262,11 @@ const SUPPORTED_HF: &[(&str, ModelFamily)] = &[
     // llama.cpp port instead (`docs/FLINT_PHASE0.md`). No `_text` row: the
     // config is flat, with no `text_config` wrapper to carry one.
     ("flint", ModelFamily::Flint),
-    // Read off `mlx-community/Unlimited-OCR-2-4bit`. Baidu's v1 spells the same
-    // `model_type` with a different cache, and `parse_unlimited_ocr2_config`
-    // refuses it by name rather than this table guessing from a second key.
-    ("unlimited-ocr", ModelFamily::UnlimitedOcr2),
+    // `mlx-community/Unlimited-OCR-2-4bit` spells `model_type` `unlimited-ocr`
+    // like the row above, and is told apart by its `sparse_attention_config`
+    // key. A bare model_type cannot see that key, so the split lives in
+    // `config_json_resolution`, which has the whole config. This lookup is by
+    // exact equality, so the Deepseek2 row above is the one a bare string gets.
     // Read off `LiquidAI/LFM3-1.7B` @ 40ebe0aa and
     // `LiquidAI/LFM3-1.7B-MLX-4bit` @ d0ca73dc, both `model_type: "lfm3"`
     // with no `text_config` wrapper. NOT `lfm2`: that is a different layer
@@ -353,7 +361,21 @@ fn config_json_resolution(root: &serde_json::Value) -> Option<(&str, ModelFamily
                 .and_then(|v| v.as_str()),
         )
         .find_map(|model_type| {
-            hf_family_for_model_type(model_type).map(|family| (model_type, family))
+            hf_family_for_model_type(model_type).map(|family| {
+                // Unlimited-OCR-2 (DASH block-sparse attention) shares the
+                // `unlimited-ocr` spelling with the checkpoint the DeepSeek-OCR
+                // arm recognizes; its `sparse_attention_config` is what
+                // separates them, and `parse_unlimited_ocr2_config` still
+                // refuses a file that lacks it.
+                let family = if model_type == "unlimited-ocr"
+                    && root.get("sparse_attention_config").is_some()
+                {
+                    ModelFamily::UnlimitedOcr2
+                } else {
+                    family
+                };
+                (model_type, family)
+            })
         })
 }
 

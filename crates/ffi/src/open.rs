@@ -499,6 +499,7 @@ pub(crate) fn open_with_failure(
             // tower whose template renders a bare placeholder (Muse-Glimmer) wraps it.
             let verified = if runner.clip_image_ids().is_some()
                 || runner.siglip_image_ids().is_some()
+                || runner.deepseek_ocr_image_ids().is_some()
             {
                 tokenizer.verify_bare_image_marker(vision.image_token_id as i32)
             } else if let Some((start, end)) = runner.image_wrap_ids() {
@@ -797,6 +798,30 @@ fn vision_info(
                 source,
                 sidecar_path,
                 max_pixels: params.candidates.iter().map(|(w, h)| w * h).max(),
+            },
+            Err(reason) => crate::wire::VisionInfo {
+                active: false,
+                image_token_id: None,
+                reason: Some(reason),
+                source,
+                sidecar_path,
+                max_pixels: None,
+            },
+        };
+    }
+    // A DeepSeek-OCR tower pads every image to one 1024 px base view, so its
+    // ceiling is that view's area and there is no pixel budget to clamp.
+    if runner.deepseek_ocr_image_ids().is_some() {
+        return match crate::vision::deepseek_ocr_params(runner) {
+            Ok(_) => crate::wire::VisionInfo {
+                active: true,
+                image_token_id: Some(image_token_id),
+                reason: None,
+                source,
+                sidecar_path,
+                max_pixels: Some(
+                    turbospark_vision_io::OCR_BASE_SIZE * turbospark_vision_io::OCR_BASE_SIZE,
+                ),
             },
             Err(reason) => crate::wire::VisionInfo {
                 active: false,

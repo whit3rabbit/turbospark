@@ -129,6 +129,64 @@
       "notes": "TOWER-ONLY sidecar: the SigLIP-so400m tower, its projector and the two learned embeddings, dequantized from the checkpoint's 4-bit planes to FP16 (the attention pool is dropped). Pairs with family deepseek2 at the trunk width. docs/DEEPSEEK_VL2_VISION_PHASE0.md. The repo ships processor_config.json instead of preprocessor_config.json; the tower stream fetches that itself and the vision-only install skips the flat file."
     },
     {
+      "alias": "dsocr",
+      "name": "DeepSeek-OCR text trunk (MLX INT4, group 64, plain-attention MoE)",
+      "family": "deepseek2",
+      "source": {
+        "kind": "mlx",
+        "repo": "mlx-community/DeepSeek-OCR-4bit",
+        "revision": "4958b6b0d46d7dc3cf27556989dab659996ea426",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "chat_template.json"
+        ]
+      },
+      "download_bytes": 1655000000,
+      "install_bytes": 1672838368,
+      "status": "runs",
+      "gates": [
+        "15 of 15 teacher-forced argmax against a numpy forward (cosine 0.999975)",
+        "real CLI and server image runs with dsocr-vision-tower attached (24 of 24 page lines exact)"
+      ],
+      "measured": [],
+      "notes": "The DeepSeek-OCR language model: the same 12-layer plain-attention MoE trunk as DeepSeek-VL2-tiny (hidden 1280, 64 routed experts), OCR-tuned. Images arrive through the dsocr-vision-tower sidecar (`--vision-sidecar`), base mode only (one 1024 px view, 273 rows); Gundam mode is not built. docs/DEEPSEEK_OCR_VISION_PHASE0.md."
+    },
+    {
+      "alias": "dsocr-vision-tower",
+      "kind": "vision-tower",
+      "name": "DeepSeek-OCR SAM-ViT-B and CLIP-L tower with projector (FP16, sidecar)",
+      "family": "deepseek2",
+      "source": {
+        "kind": "mlx",
+        "repo": "mlx-community/DeepSeek-OCR-4bit",
+        "revision": "4958b6b0d46d7dc3cf27556989dab659996ea426",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "preprocessor_config.json",
+          "config.json"
+        ]
+      },
+      "download_bytes": 798976000,
+      "install_bytes": 801789212,
+      "status": "runs",
+      "gates": [
+        "real CLI and server image runs paired with dsocr"
+      ],
+      "measured": [],
+      "notes": "TOWER-ONLY sidecar: the SAM-ViT-B encoder, the 24-block CLIP-L tower, the projector and the learned newline and view-separator rows. Pairs with family deepseek2 at hidden 1280, so it would also attach to a DeepSeek-VL2-tiny trunk: name the sidecar explicitly. The repo ships processor_config.json instead of preprocessor_config.json; the vision-only install skips the flat file. docs/DEEPSEEK_OCR_VISION_PHASE0.md."
+    },
+    {
       "alias": "gemma4",
       "name": "Gemma 4 26B-A4B Instruct (MLX INT4, group 64)",
       "family": "gemma4",
@@ -1185,6 +1243,66 @@
       ],
       "measured": [],
       "notes": "Qwen2.5-VL on the Qwen2 family: a plain Qwen2 dense trunk (28 layers, hidden 3584) with the qwen25_vl tower (RMSNorm blocks, gated SiLU MLP, window attention on 28 of 32 blocks, RMSNorm merger) ingested into the same install and the trunk's chunked mRoPE (sections 16/24/24). The vision template ships as chat_template.json (tokenizer_config.json keeps the text-only Qwen2.5 template). Image runs only: the sequential image path, no chunked image prefill, no speculation with an image. No text-quality or memory oracle has been frozen for this row. docs/QWEN25_VL_VISION_PHASE0.md."
+    },
+    {
+      "alias": "llavaov-7b",
+      "name": "LLaVA-OneVision Qwen2 7B text trunk (GGUF Q4_K_M)",
+      "family": "qwen2",
+      "source": {
+        "kind": "gguf",
+        "repo": "paazmaya/llava-onevision-qwen2-7b-ov-hf-gguf",
+        "revision": "978914bbeebf0943745c8136554e126f6ccd1ec2",
+        "file": "llava-onevision-qwen2-7b-ov-hf_Q4_K_M.gguf"
+      },
+      "sidecars": {
+        "repo": "llava-hf/llava-onevision-qwen2-7b-ov-hf",
+        "revision": "0d50680527681998e456c7b78950205bedd8a068",
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.json",
+          "vocab.json",
+          "merges.txt",
+          "generation_config.json"
+        ]
+      },
+      "download_bytes": 4683390304,
+      "install_bytes": 4688304285,
+      "status": "runs",
+      "gates": [
+        "real CLI image runs with llavaov-7b-vision-tower attached (shapes, small page)",
+        "server image run on both endpoints"
+      ],
+      "measured": [],
+      "notes": "The LLaVA-OneVision Qwen2-7B trunk from a community Q4_K_M GGUF; the tower arrives as the llavaov-7b-vision-tower sidecar (`--vision-sidecar`). Name the sidecar explicitly: its pairing is (qwen2, 3584), the same as Qwen2.5-VL-7B's. The dense multi-tile page degenerates into repeated text. docs/LLAVA_ONEVISION_VISION_PHASE0.md."
+    },
+    {
+      "alias": "llavaov-7b-vision-tower",
+      "kind": "vision-tower",
+      "name": "LLaVA-OneVision SigLIP tower and projector (FP16, sidecar)",
+      "family": "qwen2",
+      "source": {
+        "kind": "mlx",
+        "repo": "llava-hf/llava-onevision-qwen2-7b-ov-hf",
+        "revision": "0d50680527681998e456c7b78950205bedd8a068",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "preprocessor_config.json",
+          "config.json"
+        ]
+      },
+      "download_bytes": 829464640,
+      "install_bytes": 829852960,
+      "status": "runs",
+      "gates": [
+        "real CLI and server image runs paired with llavaov-7b"
+      ],
+      "measured": [],
+      "notes": "TOWER-ONLY sidecar: the 26-block SigLIP-so400m tower (no final norm, no unfold) and the two-linear projector, read from the HF repo's shards, with the image_newline row. Pairs with family qwen2 at hidden 3584. docs/LLAVA_ONEVISION_VISION_PHASE0.md."
     },
     {
       "alias": "qwen4-reap288",

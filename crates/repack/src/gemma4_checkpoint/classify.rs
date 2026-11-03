@@ -656,8 +656,15 @@ pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -
     // downsample MLP under `projector.`, and the two layout embeddings are
     // bare top-level names. Family-gated so no other checkpoint can reach
     // them on a string collision.
+    //
+    // DeepSeek-OCR (`mlx-community/DeepSeek-OCR-4bit`, header enumerated before
+    // any bytes moved, `docs/DEEPSEEK_OCR_VISION_PHASE0.md`) adds `sam_model.`
+    // and `vision_model.` (the SAM and CLIP-L towers, BF16) and shares the
+    // projector and the two layout rows.
     if family == ModelFamily::Deepseek2
         && (name.starts_with("vision.")
+            || name.starts_with("sam_model.")
+            || name.starts_with("vision_model.")
             || name.starts_with("projector.")
             || name == "image_newline"
             || name == "view_separator")

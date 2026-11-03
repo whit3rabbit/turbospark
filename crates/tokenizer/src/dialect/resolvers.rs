@@ -338,8 +338,25 @@ pub(crate) fn resolve_chatml(
         Some(token) => required_id(tokenizer, token)?,
         None => end_of_text,
     };
-    let tool_call_start = required_id(tokenizer, "<tool_call>")?;
-    let tool_call_end = required_id(tokenizer, "</tool_call>")?;
+    // The tool-call pair is Qwen2.5's. A Qwen2-era table (LLaVA-OneVision's
+    // Qwen2-7B trunk registers `<|im_start|>`, `<|im_end|>` and `<image>`
+    // only) has neither, and its template never prints either: both ids stay
+    // `NO_SUCH_TOKEN_ID` and the decoder passes tool markup through as reply
+    // text. One side without the other is a malformed table and refuses.
+    let tool_call_start = special_token_id(tokenizer, "<tool_call>");
+    let tool_call_end = special_token_id(tokenizer, "</tool_call>");
+    if tool_call_start.is_some() != tool_call_end.is_some() {
+        return Err(TokenizerError::MissingSpecialToken(
+            if tool_call_start.is_some() {
+                "</tool_call>"
+            } else {
+                "<tool_call>"
+            }
+            .to_string(),
+        ));
+    }
+    let tool_call_start = tool_call_start.unwrap_or(NO_SUCH_TOKEN_ID);
+    let tool_call_end = tool_call_end.unwrap_or(NO_SUCH_TOKEN_ID);
     // Qwen2.5's official ChatML tokenizer registers the tool-call pair but
     // leaves tool responses and thinking as ordinary text. Those two pairs
     // are optional for this dialect: a tokenizer that registers only one

@@ -310,6 +310,25 @@ pub fn read_vision_entries_quantized(
             quant,
         );
     }
+    // DeepSeek-OCR: a SAM tower (resident) and a CLIP-L (streamed blocks)
+    // with a quantized linear projector and two learned rows.
+    if vision.tower == model_io::VisionTowerKind::DeepseekOcr {
+        return super::vision_deepseek_ocr::read_deepseek_ocr_vision_entries(
+            shards,
+            vision_bases,
+            vision,
+            quant,
+        );
+    }
+    // LLaVA-OneVision's SigLIP: CLIP's source names, a bias on the patch conv,
+    // no class row, and a top-level image_newline.
+    if vision.tower == model_io::VisionTowerKind::SigLipOv {
+        return super::vision_onevision::read_onevision_vision_entries(
+            shards,
+            vision_bases,
+            vision,
+        );
+    }
     // The LFM3-VL tower likewise: two block kinds, a second source prefix
     // for its projector, no packed planes.
     if vision.tower == model_io::VisionTowerKind::Lfm3Vl {

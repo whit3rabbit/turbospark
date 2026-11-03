@@ -349,6 +349,7 @@ impl RealChatModel {
             // tower whose template renders a bare placeholder (Muse-Glimmer) wraps it.
             let verified = if runner.clip_image_ids().is_some()
                 || runner.siglip_image_ids().is_some()
+                || runner.deepseek_ocr_image_ids().is_some()
             {
                 tokenizer.verify_bare_image_marker(vision.image_token_id as i32)
             } else if let Some((start, end)) = runner.image_wrap_ids() {
@@ -541,6 +542,20 @@ impl RealChatModel {
                 marker,
                 fill,
             })
+        } else if let Some((marker, fill)) = runner.deepseek_ocr_image_ids() {
+            // DeepSeek-OCR reads its mean and std from `processor_config.json`
+            // beside the tower; a broken install fails the open rather than
+            // serving text-only under a vision label.
+            let path = runner.vision_dir().join("processor_config.json");
+            let json =
+                std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let params = turbospark_vision_io::DeepseekOcrParams::from_processor_config_json(&json)
+                .map_err(|e| format!("{}: {e}", path.display()))?;
+            Some(crate::vision::VisionInfo::DeepseekOcr {
+                params,
+                marker,
+                fill,
+            })
         } else if runner.has_vision_tower() {
             let v = runner.vision_config();
             preprocess_params
@@ -698,6 +713,19 @@ impl RealChatModel {
                     rows.push(
                         runner
                             .encode_image_siglip(image)
+                            .map_err(|e| RuntimeError::Producer(format!("image {i}: {e}")))?,
+                    );
+                }
+                runner
+                    .set_prompt_vision_flat(&rows, spans, prompt_ids.len())
+                    .map_err(|e| RuntimeError::Producer(e.to_string()))?;
+            }
+            crate::vision::RequestImages::DeepseekOcr { images, spans } => {
+                let mut rows = Vec::with_capacity(images.len());
+                for (i, image) in images.iter().enumerate() {
+                    rows.push(
+                        runner
+                            .encode_image_deepseek_ocr(image)
                             .map_err(|e| RuntimeError::Producer(format!("image {i}: {e}")))?,
                     );
                 }

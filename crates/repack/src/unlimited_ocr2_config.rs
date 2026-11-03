@@ -30,14 +30,17 @@ fn config_err(detail: impl Into<String>) -> Gemma4Error {
 pub fn parse_unlimited_ocr2_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
     let root: serde_json::Value =
         serde_json::from_str(json).map_err(|e| config_err(e.to_string()))?;
-    crate::arch_registry::refuse_foreign_config(&root, ModelFamily::UnlimitedOcr2)
-        .map_err(Gemma4Error::Config)?;
+    // The v1 check comes first: v1 has no `sparse_attention_config`, so the
+    // registry resolves its shared `unlimited-ocr` spelling to the DeepSeek-OCR
+    // arm, and the family refusal below would hide the by-name explanation.
     let sparse = root.get("sparse_attention_config").ok_or_else(|| {
         config_err(
             "no sparse_attention_config: this is Unlimited-OCR v1, whose R-SWA ring cache has \
              no flow here. v1 runs through the Core ML profile (unlimited-ocr-coreml).",
         )
     })?;
+    crate::arch_registry::refuse_foreign_config(&root, ModelFamily::UnlimitedOcr2)
+        .map_err(Gemma4Error::Config)?;
     let tc = root
         .get("language_config")
         .ok_or_else(|| config_err("missing language_config"))?;

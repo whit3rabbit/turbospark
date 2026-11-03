@@ -41,6 +41,9 @@ pub struct ClipPreprocessParams {
     pub image_mean: [f32; 3],
     pub image_std: [f32; 3],
     pub rescale_factor: f32,
+    /// `image_grid_pinpoints` as `(height, width)` ([`ClipLayout::OneVision`]
+    /// only; empty for the other layouts).
+    pub pinpoints: Vec<(usize, usize)>,
 }
 
 /// Which image pipeline a flat-injection tower uses.
@@ -51,6 +54,9 @@ pub enum ClipLayout {
     /// Pixtral: a longest-edge cap, no crop, sides rounded up to a patch
     /// (`crate::pixtral`).
     Pixtral,
+    /// LLaVA-OneVision: a squashed base tile plus an anyres grid of 384-pixel
+    /// tiles (`crate::onevision`). `size` is the tile.
+    OneVision,
 }
 
 impl ClipPreprocessParams {
@@ -81,6 +87,13 @@ impl ClipPreprocessParams {
             == Some("PixtralImageProcessor")
         {
             return Self::from_pixtral_config(&root);
+        }
+        if root
+            .get("image_processor_type")
+            .and_then(serde_json::Value::as_str)
+            == Some("LlavaOnevisionImageProcessor")
+        {
+            return Self::from_onevision_config(&root);
         }
         for flag in ["do_resize", "do_center_crop", "do_rescale", "do_normalize"] {
             match root.get(flag).and_then(serde_json::Value::as_bool) {
@@ -146,6 +159,7 @@ impl ClipPreprocessParams {
             image_mean: triple("image_mean")?,
             image_std: triple("image_std")?,
             rescale_factor,
+            pinpoints: Vec::new(),
         })
     }
 
@@ -155,6 +169,7 @@ impl ClipPreprocessParams {
         match self.layout {
             ClipLayout::Crop => self.size / CLIP_PATCH,
             ClipLayout::Pixtral => self.size / crate::pixtral::PIXTRAL_PATCH,
+            ClipLayout::OneVision => self.size / crate::onevision::OV_PATCH,
         }
     }
 
@@ -163,7 +178,13 @@ impl ClipPreprocessParams {
     /// tower). For Pixtral this is the WORST case, a square at the cap: the
     /// real count is per image, [`ClipPatches::num_patches`].
     pub fn tokens(&self) -> usize {
-        self.grid() * self.grid()
+        match self.layout {
+            // The worst case: the base tile plus the biggest pinpoint's grid.
+            ClipLayout::OneVision => {
+                crate::onevision::ov_max_tiles(&self.pinpoints) * self.grid() * self.grid()
+            }
+            _ => self.grid() * self.grid(),
+        }
     }
 
     /// The patch grid `(rows, cols)` an image of `width x height` pixels
@@ -176,6 +197,13 @@ impl ClipPreprocessParams {
                 let (h, w) = crate::pixtral::pixtral_resize_target(height, width, self.size, p);
                 (h / p, w / p)
             }
+            // The placeholder run as a degenerate `(tokens, 1)` grid: the
+            // prompt layer only multiplies the pair. A zero-sized image gives
+            // zero tokens, which the expansion refuses by name.
+            ClipLayout::OneVision => (
+                crate::onevision::ov_image_tokens(height, width, &self.pinpoints).unwrap_or(0),
+                1,
+            ),
         }
     }
 
@@ -193,6 +221,11 @@ impl ClipPreprocessParams {
         let (want_patch, want_rows) = match self.layout {
             ClipLayout::Crop => (CLIP_PATCH as i64, self.tokens() as i64 + 1),
             ClipLayout::Pixtral => (crate::pixtral::PIXTRAL_PATCH as i64, 0),
+            // No class row: one position per patch of a tile.
+            ClipLayout::OneVision => (
+                crate::onevision::OV_PATCH as i64,
+                crate::onevision::OV_TILE_PATCHES as i64,
+            ),
         };
         if patch_size != want_patch || num_position_embeddings != want_rows {
             return Err(format!(
@@ -203,6 +236,7 @@ impl ClipPreprocessParams {
                 match self.layout {
                     ClipLayout::Crop => "crop",
                     ClipLayout::Pixtral => "longest-edge cap",
+                    ClipLayout::OneVision => "tile",
                 }
             ));
         }
@@ -214,7 +248,80 @@ impl ClipPreprocessParams {
         match self.layout {
             ClipLayout::Crop => CLIP_PATCH_DIM,
             ClipLayout::Pixtral => crate::pixtral::PIXTRAL_PATCH_DIM,
+            ClipLayout::OneVision => crate::onevision::OV_PATCH_DIM,
         }
+    }
+
+    /// LLaVA-OneVision's `preprocessor_config.json`. Refuses what this pipeline
+    /// does not implement: resize, rescale, normalize and pad must be on, the
+    /// resample must be 3 (PIL bicubic), the tile must be 384 square and every
+    /// pinpoint a whole number of tiles.
+    fn from_onevision_config(root: &serde_json::Value) -> Result<Self, VisionIoError> {
+        let bad = |field: &str, why: String| VisionIoError::BadConfig {
+            field: field.to_string(),
+            why,
+        };
+        for flag in ["do_resize", "do_rescale", "do_normalize", "do_pad"] {
+            match root.get(flag).and_then(serde_json::Value::as_bool) {
+                Some(true) => {}
+                other => return Err(bad(flag, format!("{other:?}; this pipeline needs true"))),
+            }
+        }
+        if root.get("resample").and_then(serde_json::Value::as_i64) != Some(3) {
+            return Err(bad("resample", "must be 3 (PIL bicubic)".into()));
+        }
+        let side = |axis: &str| {
+            root.get("size")
+                .and_then(|s| s.get(axis))
+                .and_then(serde_json::Value::as_u64)
+        };
+        let tile = crate::onevision::OV_TILE as u64;
+        if side("height") != Some(tile) || side("width") != Some(tile) {
+            return Err(bad(
+                "size",
+                format!(
+                    "{:?} x {:?}; only the {tile}-pixel square tile is implemented",
+                    side("height"),
+                    side("width")
+                ),
+            ));
+        }
+        let pinpoints = crate::onevision::parse_pinpoints(root)?;
+        if let Some(&(h, w)) = pinpoints.iter().find(|&&(h, w)| {
+            h % crate::onevision::OV_TILE != 0 || w % crate::onevision::OV_TILE != 0
+        }) {
+            return Err(bad(
+                "image_grid_pinpoints",
+                format!("{h}x{w} is not a whole number of tiles"),
+            ));
+        }
+        let triple = |field: &str| -> Result<[f32; 3], VisionIoError> {
+            let a = root
+                .get(field)
+                .and_then(serde_json::Value::as_array)
+                .filter(|a| a.len() == 3)
+                .ok_or_else(|| bad(field, "missing or not three numbers".into()))?;
+            let mut out = [0f32; 3];
+            for (slot, v) in out.iter_mut().zip(a) {
+                *slot = v
+                    .as_f64()
+                    .ok_or_else(|| bad(field, "not a number".into()))?
+                    as f32;
+            }
+            Ok(out)
+        };
+        let rescale_factor =
+            root.get("rescale_factor")
+                .and_then(serde_json::Value::as_f64)
+                .ok_or_else(|| bad("rescale_factor", "missing".into()))? as f32;
+        Ok(Self {
+            size: crate::onevision::OV_TILE,
+            layout: ClipLayout::OneVision,
+            image_mean: triple("image_mean")?,
+            image_std: triple("image_std")?,
+            rescale_factor,
+            pinpoints,
+        })
     }
 
     /// Pixtral's `preprocessor_config.json`. Refuses what this pipeline does
@@ -290,6 +397,7 @@ impl ClipPreprocessParams {
             image_mean: triple("image_mean")?,
             image_std: triple("image_std")?,
             rescale_factor,
+            pinpoints: Vec::new(),
         })
     }
 }
@@ -305,6 +413,10 @@ pub struct ClipPatches {
     pub grid: usize,
     /// Patches per row (the grid's WIDTH).
     pub grid_w: usize,
+    /// The anyres tiling, for [`ClipLayout::OneVision`] only. Then `pixels`
+    /// holds the base tile and the grid's tiles (729 rows each), and `grid`
+    /// and `grid_w` are the prompt's placeholder count as `(tokens, 1)`.
+    pub anyres: Option<crate::onevision::Anyres>,
 }
 
 impl ClipPatches {
@@ -333,6 +445,15 @@ pub fn clip_preprocess(
         return crate::pixtral::pixtral_preprocess(
             image,
             params.size,
+            params.image_mean,
+            params.image_std,
+            params.rescale_factor,
+        );
+    }
+    if params.layout == ClipLayout::OneVision {
+        return crate::onevision::ov_preprocess(
+            image,
+            &params.pinpoints,
             params.image_mean,
             params.image_std,
             params.rescale_factor,
@@ -378,6 +499,7 @@ pub fn clip_preprocess(
         pixels,
         grid,
         grid_w: grid,
+        anyres: None,
     })
 }
 

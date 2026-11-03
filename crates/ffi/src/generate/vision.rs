@@ -123,6 +123,10 @@ pub(crate) fn attach_images<'a>(
             let spliced = crate::vision::attach_siglip(runner.as_mut(), rendered, parts)?;
             return Ok((spliced, VisionScope::armed(engine)));
         }
+        if runner.deepseek_ocr_image_ids().is_some() {
+            let spliced = crate::vision::attach_deepseek_ocr(runner.as_mut(), rendered, parts)?;
+            return Ok((spliced, VisionScope::armed(engine)));
+        }
         let params = crate::vision::preprocess_params(
             runner,
             session.load_policy.guard,

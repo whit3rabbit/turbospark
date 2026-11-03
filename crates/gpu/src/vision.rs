@@ -722,6 +722,173 @@ pub fn encode_vision_gated_dwconv3x3(
     Ok(())
 }
 
+/// The index value that makes [`encode_vision_gather_rows`] write a zero row.
+pub const VISION_GATHER_ZERO: u32 = u32::MAX;
+
+/// `out[r] = in[index[r]]` for `rows` rows of `cols` FP16 values, or an all
+/// zero row where `index[r]` is [`VISION_GATHER_ZERO`]. `index` is a `u32`
+/// buffer of `rows` entries; `out` must not alias `input`.
+///
+/// DeepSeek-OCR's SAM window partition (zero padded) and its inverse are this
+/// gather with two index lists.
+pub fn encode_vision_gather_rows(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    input: (&metal::Buffer, u64),
+    index: (&metal::Buffer, u64),
+    out: (&metal::Buffer, u64),
+    rows: u32,
+    cols: u32,
+) -> Result<(), GpuError> {
+    let count = u32::try_from(u64::from(rows) * u64::from(cols)).map_err(|_| {
+        GpuError::PipelineCreate(format!(
+            "vision gather {rows}x{cols} exceeds a 32-bit thread index"
+        ))
+    })?;
+    let pipeline = context.pipeline(
+        SOURCE,
+        "vision_gather_rows_fp16",
+        &no_function_constants(),
+        b"",
+    )?;
+    pass.encode_threadgroups(
+        &pipeline,
+        &[
+            (input.0, 0, input.1),
+            (index.0, 1, index.1),
+            (out.0, 2, out.1),
+        ],
+        &[(u32_bytes(&rows), 3), (u32_bytes(&cols), 4)],
+        groups_for(count),
+        THREADS_PER_GROUP,
+    );
+    Ok(())
+}
+
+/// im2col over one NHWC `[height, width, chans]` FP16 image with a SQUARE
+/// `ksize` kernel: `[out_h * out_w, ksize * ksize * chans]` rows whose columns
+/// are `(tap_row, tap_col, channel)`, channel fastest, zero outside the image.
+///
+/// That column order is a `[O, kh, kw, I]` conv weight flattened row-major, so
+/// the convolution is `encode_vision_matmul` of these rows against the weight
+/// as it ships. `out_h` and `out_w` are the caller's own
+/// `(size + 2 * pad - ksize) / stride + 1`, checked here against the buffers
+/// they imply only by the 32-bit index bound.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_vision_im2col(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    input: (&metal::Buffer, u64),
+    out: (&metal::Buffer, u64),
+    height: u32,
+    width: u32,
+    chans: u32,
+    ksize: u32,
+    stride: u32,
+    pad: u32,
+) -> Result<(u32, u32), GpuError> {
+    if ksize == 0 || stride == 0 || height + 2 * pad < ksize || width + 2 * pad < ksize {
+        return Err(GpuError::PipelineCreate(format!(
+            "im2col kernel {ksize} stride {stride} pad {pad} does not fit a {height}x{width} image"
+        )));
+    }
+    let out_h = (height + 2 * pad - ksize) / stride + 1;
+    let out_w = (width + 2 * pad - ksize) / stride + 1;
+    let row_width = u64::from(ksize) * u64::from(ksize) * u64::from(chans);
+    let count = u32::try_from(u64::from(out_h) * u64::from(out_w) * row_width).map_err(|_| {
+        GpuError::PipelineCreate(format!(
+            "im2col output {out_h}x{out_w}x{row_width} exceeds a 32-bit thread index"
+        ))
+    })?;
+    let pipeline = context.pipeline(SOURCE, "vision_im2col_fp16", &no_function_constants(), b"")?;
+    pass.encode_threadgroups(
+        &pipeline,
+        &[(input.0, 0, input.1), (out.0, 1, out.1)],
+        &[
+            (u32_bytes(&height), 2),
+            (u32_bytes(&width), 3),
+            (u32_bytes(&chans), 4),
+            (u32_bytes(&ksize), 5),
+            (u32_bytes(&stride), 6),
+            (u32_bytes(&pad), 7),
+            (u32_bytes(&out_h), 8),
+            (u32_bytes(&out_w), 9),
+        ],
+        groups_for(count),
+        THREADS_PER_GROUP,
+    );
+    Ok((out_h, out_w))
+}
+
+/// The most keys (`gh * gw`) [`encode_vision_sam_attention`] holds a score row
+/// for, and the head dimension it is written for.
+pub const SAM_ATTENTION_MAX_KEYS: u32 = 4096;
+pub const SAM_ATTENTION_HEAD_DIM: u32 = 64;
+
+/// SAM attention with the decomposed relative-position bias computed in the
+/// kernel (see `vision_sam_attention_fp16`).
+///
+/// `q`, `k`, `v` and `out` are `[windows * gh * gw, heads * 64]` FP16, a row
+/// holding every head head-major. `rel_h` is `[2 * gh - 1, 64]` and `rel_w`
+/// `[2 * gw - 1, 64]`. `windows` independent `gh x gw` grids run in one
+/// dispatch (the partitioned window blocks); a global block is `windows = 1`
+/// over the whole grid. Refused, never truncated: a grid side above 64, more
+/// keys than the score row holds, or a head dimension other than 64.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_vision_sam_attention(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    q: (&metal::Buffer, u64),
+    k: (&metal::Buffer, u64),
+    v: (&metal::Buffer, u64),
+    rel_h: (&metal::Buffer, u64),
+    rel_w: (&metal::Buffer, u64),
+    out: (&metal::Buffer, u64),
+    gh: u32,
+    gw: u32,
+    windows: u32,
+    heads: u32,
+    scale: f32,
+) -> Result<(), GpuError> {
+    if gh == 0 || gw == 0 || gh > 64 || gw > 64 || gh * gw > SAM_ATTENTION_MAX_KEYS {
+        return Err(GpuError::PipelineCreate(format!(
+            "SAM attention grid {gh}x{gw} must have sides in 1..=64 and at most \
+             {SAM_ATTENTION_MAX_KEYS} keys"
+        )));
+    }
+    if heads == 0 || windows == 0 {
+        return Err(GpuError::PipelineCreate(
+            "SAM attention needs at least one head and one window".to_string(),
+        ));
+    }
+    let pipeline = context.pipeline(
+        SOURCE,
+        "vision_sam_attention_fp16",
+        &no_function_constants(),
+        b"",
+    )?;
+    pass.encode_threadgroups_3d(
+        &pipeline,
+        &[
+            (q.0, 0, q.1),
+            (k.0, 1, k.1),
+            (v.0, 2, v.1),
+            (rel_h.0, 3, rel_h.1),
+            (rel_w.0, 4, rel_w.1),
+            (out.0, 5, out.1),
+        ],
+        &[
+            (u32_bytes(&gh), 6),
+            (u32_bytes(&gw), 7),
+            (u32_bytes(&heads), 8),
+            (f32_bytes(&scale), 9),
+        ],
+        (u64::from(gh * gw), u64::from(heads), u64::from(windows)),
+        (128, 1, 1),
+    );
+    Ok(())
+}
+
 /// CLIP's activation, in place, over `count` FP16 values
 /// (`compute::uocr2_tower::quick_gelu`).
 pub fn encode_vision_quick_gelu(

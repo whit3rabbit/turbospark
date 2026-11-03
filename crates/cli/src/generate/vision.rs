@@ -465,6 +465,65 @@ pub(crate) fn attach_siglip(
     Ok(expanded)
 }
 
+/// The DeepSeek-OCR arm of the image front end
+/// (`docs/DEEPSEEK_OCR_VISION_PHASE0.md`): read `processor_config.json` beside
+/// the tower, pad each image to the 1024 px base view, encode it (the SAM and
+/// CLIP-L tower and the linear projector), and expand every `<image>` marker
+/// in the rendered prompt to the 273-position run the encoded rows replace.
+pub(crate) fn attach_deepseek_ocr(
+    session: &mut Session,
+    rendered: &[i32],
+    paths: &[String],
+) -> Result<Vec<i32>, String> {
+    let (marker, fill) = session
+        .runner
+        .deepseek_ocr_image_ids()
+        .ok_or("this install's vision tower is not a DeepSeek-OCR one")?;
+    let path = session.runner.vision_dir().join("processor_config.json");
+    let json = std::fs::read_to_string(&path).map_err(|e| {
+        format!(
+            "{}: {e}\n  this install declares no image processor config; re-pull the vision \
+             sidecar, or copy the checkpoint's processor_config.json in",
+            path.display()
+        )
+    })?;
+    let params = turbospark_vision_io::DeepseekOcrParams::from_processor_config_json(&json)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+
+    let mut views = Vec::with_capacity(paths.len());
+    for image_path in paths {
+        let decoded = decode_image_file(std::path::Path::new(image_path))
+            .map_err(|e| format!("--image {image_path}: {e}"))?;
+        let view = turbospark_vision_io::deepseek_ocr_preprocess(&decoded, &params)
+            .map_err(|e| format!("--image {image_path}: {e}"))?;
+        views.push((image_path, view));
+    }
+    let counts = vec![turbospark_vision_io::OCR_IMAGE_TOKENS; views.len()];
+    let (expanded, spans) =
+        turbospark_vision_io::clip_expand_image_placeholders(rendered, marker, fill, &counts)
+            .map_err(|e| {
+                format!(
+                    "cannot place {} image(s) in this prompt: {e}\n  the template renders one \
+                     <image> per image; check the messages actually carry image parts",
+                    paths.len()
+                )
+            })?;
+    let mut rows = Vec::with_capacity(views.len());
+    for (image_path, view) in &views {
+        rows.push(
+            session
+                .runner
+                .encode_image_deepseek_ocr(view)
+                .map_err(|e| format!("--image {image_path}: {e}"))?,
+        );
+    }
+    session
+        .runner
+        .set_prompt_vision_flat(&rows, &spans, expanded.len())
+        .map_err(|e| format!("cannot inject the encoded images: {e}"))?;
+    Ok(expanded)
+}
+
 /// The Unlimited-OCR-2 tower's attach: pages, expansion, tower, prompt.
 pub(crate) fn attach_unlimited_ocr2(
     session: &mut Session,

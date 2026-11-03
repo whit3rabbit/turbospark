@@ -697,6 +697,32 @@ pub(crate) fn plan(model: &AppState, request: &ChatCompletionRequest) -> Result<
             let images = crate::vision::siglip_preprocess_all(&encoded, params)?;
             Some(crate::vision::RequestImages::SigLip { images, spans })
         }
+        // DeepSeek-OCR: every image is one padded base view and a 273-position
+        // run, so the counts need only the headers.
+        (
+            Some(crate::vision::VisionInfo::DeepseekOcr {
+                params,
+                marker,
+                fill,
+            }),
+            false,
+        ) => {
+            let counts = crate::vision::deepseek_ocr_preflight_all(&encoded)?;
+            // The OCR template is rendered with the BOS literal at the front
+            // (`MfTokenizer::apply_chat_template`, the V2 dialect), so no
+            // prefix is added.
+            let (expanded, spans) = turbospark_vision_io::clip_expand_image_placeholders(
+                &prompt_ids,
+                *marker,
+                *fill,
+                &counts,
+            )
+            .map_err(|e| format!("cannot place {} image(s): {e}", counts.len()))?;
+            prompt_ids = expanded;
+            check_context(&prompt_ids, &config, model.max_context())?;
+            let images = crate::vision::deepseek_ocr_preprocess_all(&encoded, params)?;
+            Some(crate::vision::RequestImages::DeepseekOcr { images, spans })
+        }
         _ => None,
     };
 
