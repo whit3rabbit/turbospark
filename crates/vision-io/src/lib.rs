@@ -39,6 +39,7 @@
 
 pub mod clip;
 pub mod decode;
+pub mod deepseek_ocr;
 pub mod deepseek_vl2;
 pub mod error;
 pub mod gemma4;
@@ -46,6 +47,7 @@ pub mod minicpm;
 pub mod mrope;
 pub mod muse;
 pub mod normalize;
+pub mod onevision;
 pub mod params;
 pub mod patchify;
 pub mod pixtral;
@@ -63,6 +65,10 @@ pub use clip::{
 };
 pub use decode::{
     decode_image_bytes, decode_image_file, image_dimensions, Rgb8Image, MAX_IMAGE_DIM,
+};
+pub use deepseek_ocr::{
+    deepseek_ocr_preprocess, deepseek_ocr_row_layout, DeepseekOcrParams, DeepseekOcrRow,
+    DeepseekOcrView, OCR_BASE_SIZE, OCR_DOWNSAMPLE, OCR_GRID, OCR_IMAGE_TOKENS, OCR_PATCH,
 };
 pub use deepseek_vl2::{
     deepseek_vl2_image_tokens, deepseek_vl2_preprocess, deepseek_vl2_row_layout, pil_pad,
@@ -84,6 +90,11 @@ pub use minicpm::{
 pub use mrope::{
     mrope_position_triples, splice_and_walk, splice_image_placeholders,
     wrap_bare_image_placeholders, ImageSpan, MropePositions, SplicedPrompt, VisionSpecialIds,
+};
+pub use onevision::{
+    best_grid as ov_best_grid, ov_image_tokens, ov_max_tiles, ov_pack_features, ov_plan,
+    ov_preprocess, Anyres, OvPlan, OV_MAX_AREA_TILES, OV_PATCH, OV_PATCH_DIM, OV_SIDE, OV_TILE,
+    OV_TILE_PATCHES,
 };
 pub use params::{PreprocessParams, ResizeRule, DEFAULT_RESCALE_FACTOR, MAX_ASPECT_RATIO};
 pub use patchify::{patch_rows, GridThw};

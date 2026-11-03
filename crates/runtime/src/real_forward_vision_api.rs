@@ -756,6 +756,8 @@ impl RealForwardRunner {
         self.minicpm_vision = None;
         self.pixtral_vision = None;
         self.siglip_vision = None;
+        self.deepseek_ocr_vision = None;
+        self.onevision_vision = None;
     }
 
     /// `(marker, fill)` for a LLaVA prompt, read off the install, or `None`
@@ -772,7 +774,9 @@ impl RealForwardRunner {
         if !(v.is_active()
             && matches!(
                 v.tower,
-                model_io::VisionTowerKind::Clip | model_io::VisionTowerKind::Pixtral
+                model_io::VisionTowerKind::Clip
+                    | model_io::VisionTowerKind::Pixtral
+                    | model_io::VisionTowerKind::SigLipOv
             ))
         {
             return None;
@@ -807,6 +811,12 @@ impl RealForwardRunner {
         patches: &turbospark_vision_io::ClipPatches,
     ) -> Result<Vec<u16>, RealForwardError> {
         self.open_clip_tower()?;
+        if self.arch.vision.tower == model_io::VisionTowerKind::SigLipOv {
+            let tower = self.onevision_vision.as_mut().expect("opened just above");
+            return tower
+                .run(&mut self.context, &self.weights, patches, false)
+                .map(|(rows, _)| rows);
+        }
         if self.arch.vision.tower == model_io::VisionTowerKind::Pixtral {
             let tower = self.pixtral_vision.as_mut().expect("opened just above");
             return tower
@@ -827,7 +837,10 @@ impl RealForwardRunner {
         patches: &turbospark_vision_io::ClipPatches,
     ) -> Result<(Vec<u16>, crate::vision::ClipStages), RealForwardError> {
         self.open_clip_tower()?;
-        let (rows, stages) = if self.arch.vision.tower == model_io::VisionTowerKind::Pixtral {
+        let (rows, stages) = if self.arch.vision.tower == model_io::VisionTowerKind::SigLipOv {
+            let tower = self.onevision_vision.as_mut().expect("opened just above");
+            tower.run(&mut self.context, &self.weights, patches, true)?
+        } else if self.arch.vision.tower == model_io::VisionTowerKind::Pixtral {
             let tower = self.pixtral_vision.as_mut().expect("opened just above");
             tower.run(&mut self.context, &self.weights, patches, true)?
         } else {
@@ -858,11 +871,32 @@ impl RealForwardRunner {
             }
             return Ok(());
         }
+        if self.arch.vision.tower == model_io::VisionTowerKind::SigLipOv
+            && self.arch.vision.is_active()
+        {
+            if self.onevision_vision.is_none() {
+                self.onevision_vision = Some(match &self.vision_sidecar_dir {
+                    Some(dir) => crate::vision::onevision::OneVisionTower::open_with_sidecar(
+                        dir,
+                        &self.context,
+                        &self.arch,
+                    )?,
+                    None => crate::vision::onevision::OneVisionTower::open(
+                        &self.install_dir,
+                        &self.context,
+                        &self.weights,
+                        &self.index,
+                        &self.arch,
+                    )?,
+                });
+            }
+            return Ok(());
+        }
         if self.arch.vision.tower != model_io::VisionTowerKind::Clip
             || !self.arch.vision.is_active()
         {
             return Err(RealForwardError::Unsupported(
-                "this install declares no CLIP or Pixtral vision tower".to_string(),
+                "this install declares no CLIP, Pixtral or OneVision vision tower".to_string(),
             ));
         }
         if self.clip_vision.is_none() {
@@ -963,6 +997,93 @@ impl RealForwardRunner {
         Ok(())
     }
 
+    /// `(marker, fill)` for a DeepSeek-OCR prompt, or `None` when this
+    /// install's tower is not a DeepSeek-OCR one. The same shape and rule as
+    /// [`Self::siglip_image_ids`]: the marker is `<image>`'s id (128815) and
+    /// the expanded run is filled with it, its lookup replaced by the
+    /// injected row.
+    pub fn deepseek_ocr_image_ids(&self) -> Option<(i32, i32)> {
+        let v = &self.arch.vision;
+        if !(v.is_active() && v.tower == model_io::VisionTowerKind::DeepseekOcr) {
+            return None;
+        }
+        let marker = v.image_token_id as i32;
+        let fill = if i64::from(marker) < self.arch.vocab_size {
+            marker
+        } else {
+            0
+        };
+        Some((marker, fill))
+    }
+
+    /// Encode one image through this install's DeepSeek-OCR tower
+    /// (`docs/DEEPSEEK_OCR_VISION_PHASE0.md`): `[273, text_hidden]` FP16 bits,
+    /// the whole run that replaces the placeholders (sixteen rows of sixteen
+    /// projected features each closed by the learned newline row, then the
+    /// view separator).
+    ///
+    /// The tower opens lazily on the first image, from the attached sidecar
+    /// when there is one and from the install otherwise. Inject the rows with
+    /// [`Self::set_prompt_vision_flat`].
+    pub fn encode_image_deepseek_ocr(
+        &mut self,
+        view: &turbospark_vision_io::DeepseekOcrView,
+    ) -> Result<Vec<u16>, RealForwardError> {
+        self.open_deepseek_ocr_tower()?;
+        let tower = self
+            .deepseek_ocr_vision
+            .as_mut()
+            .expect("opened just above");
+        tower
+            .run(&mut self.context, &self.weights, view, false)
+            .map(|(rows, _)| rows)
+    }
+
+    /// [`Self::encode_image_deepseek_ocr`] plus the residual stream at the
+    /// points the real-tower parity test compares. Diagnostic: the ordinary
+    /// entry point pays none of the readbacks.
+    pub fn encode_image_deepseek_ocr_with_stages(
+        &mut self,
+        view: &turbospark_vision_io::DeepseekOcrView,
+    ) -> Result<(Vec<u16>, crate::vision::DeepseekOcrStages), RealForwardError> {
+        self.open_deepseek_ocr_tower()?;
+        let tower = self
+            .deepseek_ocr_vision
+            .as_mut()
+            .expect("opened just above");
+        let (rows, stages) = tower.run(&mut self.context, &self.weights, view, true)?;
+        Ok((rows, stages.expect("requested just above")))
+    }
+
+    fn open_deepseek_ocr_tower(&mut self) -> Result<(), RealForwardError> {
+        if self.arch.vision.tower != model_io::VisionTowerKind::DeepseekOcr
+            || !self.arch.vision.is_active()
+        {
+            return Err(RealForwardError::Unsupported(
+                "this install declares no DeepSeek-OCR vision tower".to_string(),
+            ));
+        }
+        if self.deepseek_ocr_vision.is_none() {
+            self.deepseek_ocr_vision = Some(match &self.vision_sidecar_dir {
+                Some(dir) => {
+                    crate::vision::deepseek_ocr::DeepseekOcrVisionTower::open_with_sidecar(
+                        dir,
+                        &self.context,
+                        &self.arch,
+                    )?
+                }
+                None => crate::vision::deepseek_ocr::DeepseekOcrVisionTower::open(
+                    &self.install_dir,
+                    &self.context,
+                    &self.weights,
+                    &self.index,
+                    &self.arch,
+                )?,
+            });
+        }
+        Ok(())
+    }
+
     /// Hand this runner one prompt's CLIP image rows: one `[span.len,
     /// text_hidden]` FP16 row set per placeholder run, in prompt order. The
     /// next prefill writes them in place of the placeholders' embeddings.
@@ -984,9 +1105,12 @@ impl RealForwardRunner {
             model_io::VisionTowerKind::Clip
                 | model_io::VisionTowerKind::Pixtral
                 | model_io::VisionTowerKind::SigLip
+                | model_io::VisionTowerKind::DeepseekOcr
+                | model_io::VisionTowerKind::SigLipOv
         ) {
             return Err(RealForwardError::Unsupported(
-                "set_prompt_vision_flat needs a CLIP, Pixtral or SigLIP vision tower".to_string(),
+                "set_prompt_vision_flat needs a CLIP, Pixtral, SigLIP, OneVision or DeepSeek-OCR vision tower"
+                    .to_string(),
             ));
         }
         let hidden = self.arch.hidden_size as usize;

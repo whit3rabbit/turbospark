@@ -638,26 +638,26 @@ pub(crate) fn unfold_2x2(
 }
 
 /// The per-run buffers one block reads and writes.
-struct BlockScratch<'a> {
-    x: &'a gpu::MetalBuffer,
-    normed: &'a gpu::MetalBuffer,
-    q: &'a gpu::MetalBuffer,
-    k: &'a gpu::MetalBuffer,
-    v: &'a gpu::MetalBuffer,
-    attn: &'a gpu::MetalBuffer,
-    proj: &'a gpu::MetalBuffer,
-    h1: &'a gpu::MetalBuffer,
+pub(super) struct BlockScratch<'a> {
+    pub(super) x: &'a gpu::MetalBuffer,
+    pub(super) normed: &'a gpu::MetalBuffer,
+    pub(super) q: &'a gpu::MetalBuffer,
+    pub(super) k: &'a gpu::MetalBuffer,
+    pub(super) v: &'a gpu::MetalBuffer,
+    pub(super) attn: &'a gpu::MetalBuffer,
+    pub(super) proj: &'a gpu::MetalBuffer,
+    pub(super) h1: &'a gpu::MetalBuffer,
     /// Rows in the batch: `tiles * per_tile`.
-    rows: usize,
-    tiles: usize,
-    per_tile: usize,
+    pub(super) rows: usize,
+    pub(super) tiles: usize,
+    pub(super) per_tile: usize,
 }
 
 /// One SigLIP block: `x += attn(ln1(x)); x += fc2(gelu_tanh(fc1(ln2(x))))`.
 ///
 /// The CLIP block with this kind's epsilon and activation, batched over tiles:
 /// the row-wise stages see all rows, attention is dispatched once per tile.
-fn encode_siglip_block(
+pub(super) fn encode_siglip_block(
     context: &mut gpu::MetalContext,
     pass: &gpu::PassEncoder,
     slot: &gpu::MetalBuffer,

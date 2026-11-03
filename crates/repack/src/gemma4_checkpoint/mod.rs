@@ -25,10 +25,12 @@ mod orchestrate;
 mod shards;
 mod vision;
 mod vision_clip;
+mod vision_deepseek_ocr;
 mod vision_gemma4;
 mod vision_lfm3;
 mod vision_minicpm;
 mod vision_muse;
+mod vision_onevision;
 mod vision_pixtral;
 mod vision_siglip;
 
@@ -71,6 +73,11 @@ pub use vision_clip::{
     parse_llava_vision_config, read_clip_vision_entries, CLIP_MODEL_PREFIX, CLIP_PROJECTOR_PREFIX,
     CLIP_RESIDENT_TENSORS, CLIP_SOURCE_PREFIXES, LLAVA_MODEL_TYPE,
 };
+pub use vision_deepseek_ocr::{
+    parse_deepseek_ocr_vision_config, read_deepseek_ocr_vision_entries,
+    DEEPSEEK_OCR_IMAGE_TOKEN_ID, DEEPSEEK_OCR_MODEL_TYPE, OCR_SAM_PREFIX, OCR_SOURCE_PREFIXES,
+    UNLIMITED_OCR_MODEL_TYPE,
+};
 pub use vision_gemma4::{
     parse_gemma4_vision_config, EMBED_VISION_PREFIX, GEMMA4_BLOCK_ROLES,
     GEMMA4_PROJECTOR_INSTALL_NAME, GEMMA4_RESIDENT_TENSORS,
@@ -82,6 +89,10 @@ pub use vision_minicpm::{
     VIT_MERGER_PREFIX as MINICPM_VIT_MERGER_PREFIX,
 };
 pub use vision_muse::{MUSE_BLOCK_SOURCES, MUSE_RESIDENT_TENSORS, MUSE_SOURCE_PREFIXES};
+pub use vision_onevision::{
+    parse_llava_onevision_vision_config, read_onevision_vision_entries, ONEVISION_MODEL_TYPE,
+    ONEVISION_NEWLINE, ONEVISION_RESIDENT_TENSORS, ONEVISION_SOURCE_PREFIXES,
+};
 pub use vision_pixtral::{
     parse_pixtral_vision_config, pixtral_special_token_ids, read_pixtral_vision_entries,
     PIXTRAL_BLOCK_ROLES, PIXTRAL_MODEL_TYPE, PIXTRAL_PROJECTOR_PREFIX, PIXTRAL_RESIDENT_TENSORS,

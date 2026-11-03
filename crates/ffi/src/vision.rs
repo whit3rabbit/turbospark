@@ -368,6 +368,68 @@ pub(crate) fn attach_siglip(
     Ok(expanded)
 }
 
+/// The DeepSeek-OCR tower's processor settings, read from
+/// `processor_config.json` beside the tower.
+pub(crate) fn deepseek_ocr_params(
+    runner: &runtime::RealForwardRunner,
+) -> Result<turbospark_vision_io::DeepseekOcrParams, String> {
+    let path = runner.vision_dir().join("processor_config.json");
+    let json = std::fs::read_to_string(&path).map_err(|e| {
+        format!(
+            "{}: {e}\n  this install declares no image processor config; re-pull the vision \
+             sidecar, or copy the checkpoint's processor_config.json in",
+            path.display()
+        )
+    })?;
+    turbospark_vision_io::DeepseekOcrParams::from_processor_config_json(&json)
+        .map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// The DeepSeek-OCR tower's whole turn (`docs/DEEPSEEK_OCR_VISION_PHASE0.md`):
+/// pad every part to the 1024 px base view, expand each rendered `<image>` to
+/// its 273-position run, encode, and hand the runner the rows. Returns the
+/// expanded ids to prefill. Mirrors
+/// `crates/cli/src/generate/vision.rs::attach_deepseek_ocr`.
+pub(crate) fn attach_deepseek_ocr(
+    runner: &mut runtime::RealForwardRunner,
+    rendered: &[i32],
+    parts: &[&WirePart],
+) -> Result<Vec<i32>, String> {
+    let (marker, fill) = runner
+        .deepseek_ocr_image_ids()
+        .ok_or("this install's vision tower is not a DeepSeek-OCR one")?;
+    let params = deepseek_ocr_params(runner)?;
+    let mut prepared = Vec::with_capacity(parts.len());
+    for (i, part) in parts.iter().enumerate() {
+        let (label, decoded) = decode_part(part, i)?;
+        let view = turbospark_vision_io::deepseek_ocr_preprocess(&decoded, &params)
+            .map_err(|e| format!("{label}: {e}"))?;
+        prepared.push((label, view));
+    }
+    let counts = vec![turbospark_vision_io::OCR_IMAGE_TOKENS; prepared.len()];
+    let (expanded, spans) =
+        turbospark_vision_io::clip_expand_image_placeholders(rendered, marker, fill, &counts)
+            .map_err(|e| {
+                format!(
+                    "cannot place {} image(s) in this prompt: {e}\n  the template renders one \
+                     <image> per image; check the messages actually carry image parts",
+                    parts.len()
+                )
+            })?;
+    let mut rows = Vec::with_capacity(prepared.len());
+    for (label, view) in &prepared {
+        rows.push(
+            runner
+                .encode_image_deepseek_ocr(view)
+                .map_err(|e| format!("{label}: {e}"))?,
+        );
+    }
+    runner
+        .set_prompt_vision_flat(&rows, &spans, expanded.len())
+        .map_err(|e| format!("cannot inject the encoded images: {e}"))?;
+    Ok(expanded)
+}
+
 /// The CLIP tower's whole turn (LLaVA, `docs/LLAVA_VISION_PHASE0.md`): read
 /// the processor config beside the tower, decode and preprocess every part
 /// (shortest-edge resize, center crop, normalize), expand each rendered

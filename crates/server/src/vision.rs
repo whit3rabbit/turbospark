@@ -109,6 +109,13 @@ pub enum VisionInfo {
         marker: i32,
         fill: i32,
     },
+    /// The DeepSeek-OCR tower (SAM + CLIP-L): one padded 1024 px base view per
+    /// image and a bare marker run of 273 positions.
+    DeepseekOcr {
+        params: turbospark_vision_io::DeepseekOcrParams,
+        marker: i32,
+        fill: i32,
+    },
 }
 
 /// One request's images, preprocessed, plus what the trunk needs to place
@@ -139,6 +146,11 @@ pub enum RequestImages {
     /// Each image's tiles and placeholder run in the expanded prompt.
     SigLip {
         images: Vec<DeepseekVl2Tiles>,
+        spans: Vec<ImageSpan>,
+    },
+    /// DeepSeek-OCR: each image's padded base view and placeholder run.
+    DeepseekOcr {
+        images: Vec<turbospark_vision_io::DeepseekOcrView>,
         spans: Vec<ImageSpan>,
     },
 }
@@ -585,6 +597,56 @@ pub(crate) fn siglip_preprocess_all(
         .collect()
 }
 
+/// The DeepSeek-OCR preflight: from the headers alone, check the per-request
+/// source-pixel and view-byte budgets, and return each image's
+/// placeholder-run length (always the base view's 273 positions).
+pub(crate) fn deepseek_ocr_preflight_all(encoded: &[Vec<u8>]) -> Result<Vec<usize>, String> {
+    let per_view_bytes = (turbospark_vision_io::OCR_BASE_SIZE
+        * turbospark_vision_io::OCR_BASE_SIZE
+        * 3
+        * std::mem::size_of::<f32>()) as u64;
+    let mut source_pixels = 0u64;
+    let mut view_bytes = 0u64;
+    let mut counts = Vec::with_capacity(encoded.len());
+    for (i, bytes) in encoded.iter().enumerate() {
+        let (width, height) =
+            turbospark_vision_io::image_dimensions(bytes).map_err(|e| format!("image {i}: {e}"))?;
+        source_pixels = source_pixels
+            .checked_add(u64::from(width) * u64::from(height))
+            .ok_or_else(|| "image pixel count overflows".to_string())?;
+        if source_pixels > MAX_SOURCE_PIXELS_PER_REQUEST {
+            return Err(format!(
+                "images contain {source_pixels} source pixels; the per-request limit is {MAX_SOURCE_PIXELS_PER_REQUEST}"
+            ));
+        }
+        view_bytes += per_view_bytes;
+        if view_bytes > MAX_PATCH_BYTES_PER_REQUEST {
+            return Err(format!(
+                "images need {view_bytes} bytes of preprocessed views; the per-request limit is {MAX_PATCH_BYTES_PER_REQUEST}"
+            ));
+        }
+        counts.push(turbospark_vision_io::OCR_IMAGE_TOKENS);
+    }
+    Ok(counts)
+}
+
+/// Decode and pad every image for the DeepSeek-OCR tower, in request order.
+pub(crate) fn deepseek_ocr_preprocess_all(
+    encoded: &[Vec<u8>],
+    params: &turbospark_vision_io::DeepseekOcrParams,
+) -> Result<Vec<turbospark_vision_io::DeepseekOcrView>, String> {
+    encoded
+        .iter()
+        .enumerate()
+        .map(|(i, bytes)| {
+            let decoded = turbospark_vision_io::decode_image_bytes(bytes)
+                .map_err(|e| format!("image {i}: {e}"))?;
+            turbospark_vision_io::deepseek_ocr_preprocess(&decoded, params)
+                .map_err(|e| format!("image {i}: {e}"))
+        })
+        .collect()
+}
+
 /// Decode and preprocess every image for the Gemma 4 tower, in request order.
 pub(crate) fn gemma4_preprocess_all(
     encoded: &[Vec<u8>],
@@ -665,6 +727,7 @@ mod tests {
             image_mean: [0.5; 3],
             image_std: [0.5; 3],
             rescale_factor: 1.0 / 255.0,
+            pinpoints: Vec::new(),
         };
         let png = gray_png(640, 480);
         clip_preflight_all(std::slice::from_ref(&png), &params).unwrap();

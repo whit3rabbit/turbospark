@@ -14,6 +14,18 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- LLaVA-OneVision-Qwen2-7B image input: a `siglip_ov` tower sidecar with anyres
+  tiling and newline packing on a GGUF trunk (`llavaov-7b` and
+  `llavaov-7b-vision-tower` catalog rows). Images reach generated output from
+  the CLI and both server endpoints; a dense multi-tile page still degenerates
+  and is listed as a known limit. ChatML tokenizers without a `<tool_call>`
+  pair now load. See `docs/LLAVA_ONEVISION_VISION_PHASE0.md`.
+- DeepSeek-OCR image input in base mode (one 1024 px view, 273 rows) on the
+  `deepseek2` family: a new SAM-ViT-B plus CLIP-L tower sidecar, three new
+  Metal kernels for SAM's windowed attention, and the existing plain-attention
+  trunk. The small page transcribes 24 of 24 lines exactly through the CLI and
+  both server endpoints. Gundam mode and Unlimited-OCR-2 are not supported.
+  See `docs/DEEPSEEK_OCR_VISION_PHASE0.md`.
 - DeepSeek-VL2-tiny image input: a plain-attention arm of the `deepseek2` flow
   for the non-MLA MoE trunk, a SigLIP tower sidecar with dynamic tiling, and
   an embedding blit in the deepseek2 produce path (image positions used to
