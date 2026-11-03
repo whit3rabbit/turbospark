@@ -16,6 +16,9 @@
 
 /// Causal multi-head and multi-query attention compute kernels.
 pub mod attention;
+/// Unlimited-OCR-2's DASH block routing and page2d RoPE (PORT-LOCAL host
+/// arithmetic, pinned to mlx-vlm by `tests/dash_oracle.rs`).
+pub mod dash;
 /// BERT and XLM-RoBERTa encoder compute kernels.
 pub mod encoder;
 /// Gating and activation function compute kernels.
@@ -71,6 +74,8 @@ pub mod steering;
 pub mod steering_extract;
 /// Numerical error measurement and tolerance checking utilities.
 pub mod tolerance;
+/// Unlimited-OCR-2's SAM and CLIP tower references and table builders.
+pub mod uocr2_tower;
 
 /// FP32 reference kernels for the qwen3_5 vision tower (ROADMAP M-V2).
 pub mod vision;

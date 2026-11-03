@@ -13,6 +13,7 @@ mod minimax;
 mod muse_glimmer;
 mod qwen;
 mod spark;
+mod unlimited_ocr2;
 
 pub use deepseek::deepseek_v4_flash_284b_a13b;
 pub use deepseek2::{deepseek_v2_lite_16b, deepseek_vl2_tiny};
@@ -28,6 +29,7 @@ pub use qwen::{
     qwen_gdn_moe_35b_a3b,
 };
 pub use spark::{spark_layer_mask, spark_x25_4b};
+pub use unlimited_ocr2::unlimited_ocr2_12l;
 
 use crate::arch_config::{ArchConfig, ModelFamily};
 
@@ -51,6 +53,7 @@ pub fn known_architecture(family: ModelFamily) -> ArchConfig {
         ModelFamily::Qwen3Vl => qwen3_vl_4b(),
         ModelFamily::Flint => flint_40b_a2_5b(),
         ModelFamily::Lfm3 => lfm3_1_7b(),
+        ModelFamily::UnlimitedOcr2 => unlimited_ocr2_12l(),
     }
 }
 
@@ -74,5 +77,6 @@ pub fn all_known_architectures() -> Vec<ArchConfig> {
         qwen3_vl_4b(),
         flint_40b_a2_5b(),
         lfm3_1_7b(),
+        unlimited_ocr2_12l(),
     ]
 }

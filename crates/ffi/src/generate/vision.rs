@@ -97,6 +97,10 @@ pub(crate) fn attach_images<'a>(
                 session.info.model_path
             ));
         }
+        if runner.unlimited_ocr2_image_ids().is_some() {
+            let spliced = crate::vision::attach_unlimited_ocr2(runner.as_mut(), rendered, parts)?;
+            return Ok((spliced, VisionScope::armed(engine)));
+        }
         if runner.gemma4_image_ids().is_some() {
             let spliced = crate::vision::attach_gemma4(runner.as_mut(), rendered, parts)?;
             return Ok((spliced, VisionScope::armed(engine)));

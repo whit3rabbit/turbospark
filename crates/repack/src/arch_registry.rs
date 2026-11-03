@@ -262,6 +262,11 @@ const SUPPORTED_HF: &[(&str, ModelFamily)] = &[
     // llama.cpp port instead (`docs/FLINT_PHASE0.md`). No `_text` row: the
     // config is flat, with no `text_config` wrapper to carry one.
     ("flint", ModelFamily::Flint),
+    // `mlx-community/Unlimited-OCR-2-4bit` spells `model_type` `unlimited-ocr`
+    // like the row above, and is told apart by its `sparse_attention_config`
+    // key. A bare model_type cannot see that key, so the split lives in
+    // `config_json_resolution`, which has the whole config. This lookup is by
+    // exact equality, so the Deepseek2 row above is the one a bare string gets.
     // Read off `LiquidAI/LFM3-1.7B` @ 40ebe0aa and
     // `LiquidAI/LFM3-1.7B-MLX-4bit` @ d0ca73dc, both `model_type: "lfm3"`
     // with no `text_config` wrapper. NOT `lfm2`: that is a different layer
@@ -356,7 +361,21 @@ fn config_json_resolution(root: &serde_json::Value) -> Option<(&str, ModelFamily
                 .and_then(|v| v.as_str()),
         )
         .find_map(|model_type| {
-            hf_family_for_model_type(model_type).map(|family| (model_type, family))
+            hf_family_for_model_type(model_type).map(|family| {
+                // Unlimited-OCR-2 (DASH block-sparse attention) shares the
+                // `unlimited-ocr` spelling with the checkpoint the DeepSeek-OCR
+                // arm recognizes; its `sparse_attention_config` is what
+                // separates them, and `parse_unlimited_ocr2_config` still
+                // refuses a file that lacks it.
+                let family = if model_type == "unlimited-ocr"
+                    && root.get("sparse_attention_config").is_some()
+                {
+                    ModelFamily::UnlimitedOcr2
+                } else {
+                    family
+                };
+                (model_type, family)
+            })
         })
 }
 

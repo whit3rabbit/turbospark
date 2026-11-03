@@ -11,6 +11,8 @@
 //! Tensor names are `gguf_names::deepseek2`'s spellings.
 
 mod attn;
+pub(crate) use moe::softmax_topk_no_renorm;
+
 mod moe;
 mod state;
 

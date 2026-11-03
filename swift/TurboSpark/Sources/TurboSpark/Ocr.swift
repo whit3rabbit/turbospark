@@ -72,11 +72,13 @@ public enum OcrCatalog {
     }
 }
 
-/// Document OCR on Core ML (Unlimited OCR, macOS 15+).
+/// Document OCR: Unlimited-OCR-2 on Metal, or Unlimited OCR on Core ML
+/// (macOS 15+). The model directory says which.
 ///
 /// Add one or more pages, then `read` them as one document; every read
-/// clears the pending pages. Opening compiles the decoder for this machine
-/// the first time, and a loaded model uses several gigabytes.
+/// clears the pending pages. A Core ML model compiles its decoder for this
+/// machine the first time it opens, and a loaded model uses several
+/// gigabytes.
 public final class TurboSparkOcr: @unchecked Sendable {
     private struct Handle: @unchecked Sendable {
         let raw: OpaquePointer
@@ -84,7 +86,8 @@ public final class TurboSparkOcr: @unchecked Sendable {
 
     private let handle: Handle
 
-    /// Opens a directory holding the Core ML parts of
+    /// Opens an Unlimited-OCR-2 install (`mlx-community/Unlimited-OCR-2-4bit`
+    /// repacked), a directory holding the Core ML parts of
     /// `FluidInference/unlimited-ocr-mlx-coreml`, or a pinned OCR alias
     /// (`OcrCatalog`), which opens only an install of its current pin.
     public init(modelPath: String) throws {

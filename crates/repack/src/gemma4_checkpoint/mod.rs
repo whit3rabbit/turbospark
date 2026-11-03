@@ -720,6 +720,35 @@ pub fn write_flint_install_streamed(
     Ok(())
 }
 
+/// Unlimited-OCR-2 install write through the shared MLX checkpoint walk.
+///
+/// The caller must have run `canonicalize_unlimited_ocr2_header` on every
+/// shard header first, and passes those headers here: the tower goes to its own
+/// file (`unlimited_ocr2_tower`). `sparse` is recorded beside the manifest
+/// (`model_io::DashConfig`) because the routing constants are in no tensor.
+#[allow(clippy::too_many_arguments)]
+pub fn write_unlimited_ocr2_install_streamed(
+    dir: &Path,
+    arch: &ArchConfig,
+    model_id: &str,
+    headers: &[crate::safetensors_header::SafetensorsHeader],
+    shards: &Gemma4Shards<'_>,
+    quant: &Gemma4Quant,
+    sparse: &serde_json::Value,
+    progress: impl FnMut(&str),
+) -> Result<(), Box<dyn std::error::Error>> {
+    if arch.family != ModelFamily::UnlimitedOcr2 {
+        return Err(Box::new(Gemma4Error::Config(format!(
+            "write_unlimited_ocr2_install_streamed needs arch.family = unlimited_ocr2, got {}",
+            arch.family.as_str()
+        ))));
+    }
+    write_gemma4_install_streamed(dir, arch, model_id, shards, quant, progress)?;
+    crate::unlimited_ocr2_tower::write_unlimited_ocr2_tower(dir, headers, shards)?;
+    model_io::DashConfig::write_sidecar(dir, sparse).map_err(Gemma4Error::Config)?;
+    Ok(())
+}
+
 /// Dense `qwen3_vl` install write through the shared MLX checkpoint walk.
 /// The walk's classification already excludes every `vision_tower.*` tensor
 /// for this family (the deepstack mergers included), so the same guard-shape

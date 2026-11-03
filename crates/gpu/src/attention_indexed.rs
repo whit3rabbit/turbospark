@@ -185,6 +185,154 @@ pub fn encode_attention_decode_indexed_from_count(
     Ok(())
 }
 
+/// [`encode_attention_decode_indexed_from_count`] with an additive per-key
+/// log-prior: DASH's biased block keys (`compute::dash`). `bias` is
+/// `[max_sel]` FP32, parallel to `positions`.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_attention_decode_indexed_biased(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    q: (&metal::Buffer, u64),
+    k_buffer: &metal::Buffer,
+    v_buffer: &metal::Buffer,
+    positions: (&metal::Buffer, u64),
+    bias: (&metal::Buffer, u64),
+    selected_count: (&metal::Buffer, u64),
+    max_sel: u32,
+    scratch: &AttentionScratch,
+    out: (&metal::Buffer, u64),
+    head_dim: u32,
+    num_q_heads: u32,
+    num_kv_heads: u32,
+    scale: f32,
+) -> Result<(), GpuError> {
+    assert_eq!(num_q_heads % num_kv_heads, 0);
+    assert!(head_dim <= MAX_DECODE_ATTENTION_HEAD_DIM);
+    assert!(
+        max_sel > 0,
+        "indexed attention needs a positive selected-position bound"
+    );
+    assert!(
+        positions.0.length() >= positions.1 + max_sel as u64 * 4,
+        "positions buffer too small for max_sel"
+    );
+    assert!(
+        bias.0.length() >= bias.1 + max_sel as u64 * 4,
+        "bias buffer too small for max_sel"
+    );
+    assert!(
+        selected_count.0.length() >= selected_count.1 + 4,
+        "selected-count buffer too small"
+    );
+
+    let num_chunks = chunks_for(max_sel);
+    let chunk_len = max_sel.div_ceil(num_chunks);
+    let partial_pipeline = context.pipeline(
+        SOURCE,
+        "attention_decode_indexed_biased_partial",
+        &metal::FunctionConstantValues::new(),
+        b"",
+    )?;
+    pass.encode_threadgroups(
+        &partial_pipeline,
+        &[
+            (q.0, 0, q.1),
+            (k_buffer, 1, 0),
+            (v_buffer, 2, 0),
+            (&scratch.m, 3, 0),
+            (&scratch.d, 4, 0),
+            (&scratch.o, 5, 0),
+            (positions.0, 9, positions.1),
+            (selected_count.0, 10, selected_count.1),
+            (bias.0, 15, bias.1),
+        ],
+        &[
+            (u32_bytes(&head_dim), 6),
+            (u32_bytes(&num_q_heads), 7),
+            (u32_bytes(&num_kv_heads), 8),
+            (u32_bytes(&chunk_len), 11),
+            (u32_bytes(&num_chunks), 12),
+            (f32_bytes(&scale), 13),
+            (u32_bytes(&max_sel), 14),
+        ],
+        (num_q_heads * num_chunks) as u64,
+        THREADS_PER_GROUP,
+    );
+
+    // The dense path's combine, keyed the way its own doc requires.
+    let constants = attention_function_constants(scale, 0, num_chunks, false);
+    let constants_key = attention_constants_key(scale, 0, num_chunks, false);
+    let combine_pipeline = context.pipeline(
+        ATTENTION_SOURCE,
+        "attention_decode_combine",
+        &constants,
+        &constants_key,
+    )?;
+    pass.encode_threadgroups(
+        &combine_pipeline,
+        &[
+            (&scratch.m, 0, 0),
+            (&scratch.d, 1, 0),
+            (&scratch.o, 2, 0),
+            (out.0, 3, out.1),
+        ],
+        &[(u32_bytes(&head_dim), 4), (u32_bytes(&num_chunks), 5)],
+        num_q_heads as u64,
+        THREADS_PER_GROUP,
+    );
+    Ok(())
+}
+
+/// Slice-taking entry for the biased kernel's parity tests. See
+/// [`attention_decode_indexed`].
+#[allow(clippy::too_many_arguments)]
+pub fn attention_decode_indexed_biased(
+    context: &mut MetalContext,
+    q: &[f16],
+    k: &[f16],
+    v: &[f16],
+    positions: &[u32],
+    bias: &[f32],
+    head_dim: u32,
+    num_q_heads: u32,
+    num_kv_heads: u32,
+    scale: f32,
+) -> Result<Vec<f16>, GpuError> {
+    assert_eq!(q.len(), (num_q_heads * head_dim) as usize);
+    assert_eq!(positions.len(), bias.len());
+    let q_buffer = context.new_buffer_with_data(&half_slice_to_le_bytes(q));
+    let k_buffer = context.new_buffer_with_data(&half_slice_to_le_bytes(k));
+    let v_buffer = context.new_buffer_with_data(&half_slice_to_le_bytes(v));
+    let pos_bytes: Vec<u8> = positions.iter().flat_map(|p| p.to_le_bytes()).collect();
+    let pos_buffer = context.new_buffer_with_data(&pos_bytes);
+    let bias_bytes: Vec<u8> = bias.iter().flat_map(|b| b.to_le_bytes()).collect();
+    let bias_buffer = context.new_buffer_with_data(&bias_bytes);
+    let count = positions.len() as u32;
+    let count_buffer = context.new_buffer_with_data(&count.to_le_bytes());
+    let scratch = AttentionScratch::new(context, num_q_heads, head_dim);
+    let out = context.new_output_buffer((num_q_heads * head_dim) as u64 * 2);
+    let pass = context.begin_pass();
+    encode_attention_decode_indexed_biased(
+        context,
+        &pass,
+        (&q_buffer, 0),
+        &k_buffer,
+        &v_buffer,
+        (&pos_buffer, 0),
+        (&bias_buffer, 0),
+        (&count_buffer, 0),
+        count,
+        &scratch,
+        (&out, 0),
+        head_dim,
+        num_q_heads,
+        num_kv_heads,
+        scale,
+    )?;
+    pass.commit_and_wait();
+    Ok(read_half_buffer(&out, q.len()))
+}
+
 /// Slice-taking entry for parity tests, mirroring `attention_decode`:
 /// uploads Q/K/V and the position list, runs both passes, reads the result
 /// back. `k`/`v` are `[seq_len, num_kv_heads, head_dim]`; every entry of

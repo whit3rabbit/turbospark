@@ -1904,6 +1904,8 @@ int32_t ts_ocr_install(const char *alias, const char *revision,
  * UnlimitedOcrDecoder.mlpackage, embeddings.f16, tokenizer.json and
  * config.json, or a pinned OCR alias (resolved only to an install of its
  * current pin). The first open compiles the decoder for this machine. */
+/* An Unlimited-OCR-2 install, or its text alias, opens the same way and runs on
+ * Metal, with no compile step. */
 int32_t ts_ocr_open(const char *model_path, TsOcrSession **out);
 
 /* Closes a session. Not while a read is in flight. NULL is a no-op. */

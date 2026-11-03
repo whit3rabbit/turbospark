@@ -453,7 +453,9 @@ impl RealChatModel {
         // fixed at load, and `preprocess_params` is already final by this
         // point (the budget clamp above is the last thing that can change
         // it).
-        let vision_info = if let Some(ids) = runner.gemma4_image_ids() {
+        let vision_info = if let Some(ids) = runner.unlimited_ocr2_image_ids() {
+            Some(crate::vision::VisionInfo::UnlimitedOcr2 { ids })
+        } else if let Some(ids) = runner.gemma4_image_ids() {
             // The KV ring of a Gemma 4 vision install is sized for the
             // default soft-token budget (`kv_ring_chunk_tokens`), so that is
             // the budget served.
@@ -641,6 +643,11 @@ impl RealChatModel {
                 }
                 runner
                     .set_prompt_vision(&embeddings, positions, prompt_ids.len())
+                    .map_err(|e| RuntimeError::Producer(e.to_string()))?;
+            }
+            crate::vision::RequestImages::UnlimitedOcr2 { pages } => {
+                runner
+                    .attach_unlimited_ocr2_pages(pages, prompt_ids)
                     .map_err(|e| RuntimeError::Producer(e.to_string()))?;
             }
             crate::vision::RequestImages::MiniCpm { images, positions } => {

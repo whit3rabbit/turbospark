@@ -203,6 +203,9 @@ pub(crate) fn stream_mlx(
             repack::parse_qwen3_vl_config(&config_text).map_err(|e| e.to_string())
         }
         ModelFamily::Flint => repack::parse_flint_config(&config_text).map_err(|e| e.to_string()),
+        ModelFamily::UnlimitedOcr2 => {
+            repack::parse_unlimited_ocr2_config(&config_text).map_err(|e| e.to_string())
+        }
         ModelFamily::Lfm3 => repack::parse_lfm3_config(&config_text).map_err(|e| e.to_string()),
         // The `deepseek2` family's MLX route is the DeepSeek-VL2 trunk only
         // (plain attention); an MLA V2/V3 MLX repo is refused by the parser.
@@ -312,6 +315,14 @@ pub(crate) fn stream_mlx(
     if family == ModelFamily::Flint {
         for header in &mut headers {
             repack::canonicalize_flint_header(header).map_err(|e| e.to_string())?;
+        }
+    }
+
+    // Unlimited-OCR-2: tower tensors into the resident namespace, and the
+    // plural `shared_experts` onto the walk's spelling.
+    if family == ModelFamily::UnlimitedOcr2 {
+        for header in &mut headers {
+            repack::canonicalize_unlimited_ocr2_header(header).map_err(|e| e.to_string())?;
         }
     }
 
@@ -428,6 +439,18 @@ pub(crate) fn stream_mlx(
         }
         ModelFamily::Lfm3 => {
             repack::write_lfm3_install_streamed(dir, &arch, &model_id, &shards, &quant, report)
+        }
+        ModelFamily::UnlimitedOcr2 => {
+            // The parser above already validated this object, so a missing
+            // key here means the file changed underneath the walk.
+            let root: serde_json::Value = serde_json::from_str(&config_text)
+                .map_err(|e| format!("parsing config.json: {e}"))?;
+            let sparse = root
+                .get("sparse_attention_config")
+                .ok_or("config.json lost its sparse_attention_config")?;
+            repack::write_unlimited_ocr2_install_streamed(
+                dir, &arch, &model_id, &headers, &shards, &quant, sparse, report,
+            )
         }
         ModelFamily::Deepseek2 => repack::write_deepseek_vl2_install_streamed(
             dir, &arch, &model_id, &shards, &quant, report,

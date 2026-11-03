@@ -102,6 +102,9 @@ impl RealForwardRunner {
         if self.real_deepseek2.is_some() {
             return self.produce_real_deepseek2(token, position, logits);
         }
+        if self.real_unlimited_ocr2.is_some() {
+            return self.produce_real_unlimited_ocr2(token, position, logits);
+        }
         if self.real_gpt_oss.is_some() {
             return self.produce_real_gpt_oss(token, position, logits);
         }

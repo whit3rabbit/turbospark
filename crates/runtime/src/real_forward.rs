@@ -228,6 +228,7 @@ pub struct RealForwardRunner {
     /// is Mixtral-style MoE only; a dense one is refused at build.
     pub(crate) real_llama: Option<crate::families::llama::RealLlamaState>,
     pub(crate) real_deepseek2: Option<crate::families::deepseek2::RealDeepseek2State>,
+    pub(crate) real_unlimited_ocr2: Option<crate::families::unlimited_ocr2::RealUnlimitedOcr2State>,
     /// Present for a `flint` install. Its own state: sinks, NoPE by layer
     /// mask, per-head QK norm, a sigmoid router, an ungated shared expert and
     /// a dense lead are each inside the layer. `docs/FLINT_PHASE0.md`.

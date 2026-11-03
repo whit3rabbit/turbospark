@@ -23,7 +23,9 @@ impl RealForwardRunner {
     /// [`Self::encode_image`], the Gemma 4 one through
     /// [`Self::encode_image_gemma4`].
     pub fn has_vision_tower(&self) -> bool {
-        self.arch.vision.is_active()
+        // Unlimited-OCR-2's tower has its own file and geometry, so it declares
+        // no `VisionConfig`, and its front ends take the family's own path.
+        self.arch.vision.is_active() || self.real_unlimited_ocr2.is_some()
     }
 
     /// This install's vision configuration, as the manifest declares it.
@@ -588,6 +590,7 @@ impl RealForwardRunner {
     /// Reach for it only when that is what you mean.
     pub fn clear_prompt_vision(&mut self) {
         self.prompt_vision = None;
+        self.clear_unlimited_ocr2_prompt();
     }
 
     /// The injection map currently set, if any.

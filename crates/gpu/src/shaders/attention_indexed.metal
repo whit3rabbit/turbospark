@@ -172,3 +172,117 @@ void attention_decode_indexed_partial(
         slot += 1;
     }
 }
+
+// ============================================================================
+// attention_decode_indexed_biased_partial -- Unlimited-OCR-2's DASH attention.
+// PORT-LOCAL. The kernel above with ONE change, the same restraint and for the
+// same reason: each key's score takes an additive log-prior after scaling,
+// which is what upstream's additive SDPA mask does
+// (`mx.fast.scaled_dot_product_attention(..., mask=...)` adds the mask to the
+// scaled scores before the softmax). With a zero list it is bit-identical to
+// the kernel above, and `tests/attention_indexed_biased_parity.rs` pins that.
+// ============================================================================
+
+[[kernel, max_total_threads_per_threadgroup(kIdxAttnThreads)]]
+void attention_decode_indexed_biased_partial(
+    device const half*  Q             [[buffer(0)]],
+    device const half*  K             [[buffer(1)]],
+    device const half*  V             [[buffer(2)]],
+    device       float* m_out         [[buffer(3)]],   // [num_q_heads * num_chunks]
+    device       float* d_out         [[buffer(4)]],   // [num_q_heads * num_chunks]
+    device       float* o_out         [[buffer(5)]],   // [num_q_heads * num_chunks * head_dim]
+    constant     uint&  head_dim      [[buffer(6)]],
+    constant     uint&  num_q_heads   [[buffer(7)]],
+    constant     uint&  num_kv_heads  [[buffer(8)]],
+    device const uint*  positions     [[buffer(9)]],   // [max_sel]
+    device const uint*  selected_count [[buffer(10)]],
+    constant     uint&  chunk_len     [[buffer(11)]],
+    constant     uint&  num_chunks    [[buffer(12)]],
+    constant     float& scale         [[buffer(13)]],
+    constant     uint&  max_sel       [[buffer(14)]],
+    device const float* bias          [[buffer(15)]],  // [max_sel], added to each score
+    uint tg_id           [[threadgroup_position_in_grid]],
+    uint lid             [[thread_position_in_threadgroup]],
+    uint lsize           [[threads_per_threadgroup]],
+    uint simd_lane_id    [[thread_index_in_simdgroup]],
+    uint simd_group_id   [[simdgroup_index_in_threadgroup]],
+    uint simdgroups      [[simdgroups_per_threadgroup]]
+) {
+    threadgroup float q_smem[kIdxAttnMaxHeadDim];
+    threadgroup float reduce_scratch[kIdxAttnMaxSimdGroups];
+    threadgroup float bcast;
+    const uint HD  = head_dim;
+    const uint NQ  = num_q_heads;
+    const uint NKV = num_kv_heads;
+    const uint NC  = num_chunks;
+
+    const uint q_head = tg_id / NC;
+    const uint chunk  = tg_id % NC;
+    const uint n_sel = min(selected_count[0], max_sel);
+    const uint i_start = chunk * chunk_len;
+    const uint base = uint(q_head) * NC + chunk;
+    if (i_start >= n_sel) {
+        if (lid == 0) { m_out[base] = -INFINITY; d_out[base] = 0.0f; }
+        device float* empty_o_row = o_out + base * HD;
+        for (uint e = lid; e < HD; e += lsize) { empty_o_row[e] = 0.0f; }
+        return;
+    }
+
+    // The range is over LIST INDICES, and each index dereferences positions.
+    uint i_end = i_start + chunk_len;
+    if (i_end > n_sel) { i_end = n_sel; }
+
+    const uint kv_head = q_head / (NQ / NKV);
+
+    device const half* Q_row = Q + uint(q_head) * HD;
+    for (uint i = lid; i < HD; i += lsize) {
+        q_smem[i] = float(Q_row[i]);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    constexpr uint kPerThread = (kIdxAttnMaxHeadDim + kIdxAttnThreads - 1) / kIdxAttnThreads;
+    float o_local[kPerThread];
+    for (uint k = 0; k < kPerThread; ++k) { o_local[k] = 0.0f; }
+
+    float m_run = -INFINITY;
+    float d_run = 0.0f;
+
+    // i_start can land past the end when num_chunks > n_sel (empty tail
+    // chunks); the loop does not execute and the partial is (-inf, 0, 0),
+    // which the combine weights to zero via e^{-inf}.
+    for (uint i = i_start; i < i_end; ++i) {
+        const uint phys_p = positions[i];
+        device const half* K_row = K + (phys_p * NKV + kv_head) * HD;
+        device const half* V_row = V + (phys_p * NKV + kv_head) * HD;
+
+        float partial = 0.0f;
+        for (uint e = lid; e < HD; e += lsize) {
+            partial = fma(q_smem[e], float(K_row[e]), partial);
+        }
+        float s = idx_block_reduce_sum(partial,
+                                       simd_lane_id, simd_group_id, simdgroups,
+                                       reduce_scratch, &bcast);
+        s *= scale;
+        s += bias[i];
+
+        const float m_new = max(m_run, s);
+        const float alpha = idx_attn_softmax_exp(m_run - m_new);
+        const float p_exp = idx_attn_softmax_exp(s     - m_new);
+        d_run = d_run * alpha + p_exp;
+
+        uint slot = 0;
+        for (uint e = lid; e < HD; e += lsize) {
+            o_local[slot] = o_local[slot] * alpha + p_exp * float(V_row[e]);
+            slot += 1;
+        }
+        m_run = m_new;
+    }
+
+    if (lid == 0) { m_out[base] = m_run; d_out[base] = d_run; }
+    device float* o_row = o_out + base * HD;
+    uint slot = 0;
+    for (uint e = lid; e < HD; e += lsize) {
+        o_row[e] = o_local[slot];
+        slot += 1;
+    }
+}

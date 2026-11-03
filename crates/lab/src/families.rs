@@ -212,6 +212,19 @@ pub fn facts(f: ModelFamily) -> FamilyFacts {
             probe_and_standin: false,
             notes: &["13 short-conv layers carry a fixed tail and no KV"],
         },
+        UnlimitedOcr2 => FamilyFacts {
+            flow: "unlimited_ocr2",
+            chunked_prefill: Support::No("DASH routes on the host at a per-layer commit, one token at a time".into()),
+            drafters: &[],
+            steel_prefill: false,
+            decode_attention: "indexed_biased",
+            phase_buckets: "moe without router or bind buckets",
+            probe_and_standin: false,
+            notes: &[
+                "attention reads 512 of the full KV per token, so its cost does not grow with the document",
+                "image prompts need set_unlimited_ocr2_prompt; a text prompt rotates by 1-D yarn",
+            ],
+        },
     }
 }
 

@@ -305,11 +305,26 @@ pub enum ModelFamily {
     /// Silu SwiGLU, tied head, no softcap, no embedding scaling, attention
     /// scale `128^-0.5`. Facts: `docs/LFM3_PHASE0.md`.
     Lfm3,
+    /// Baidu's Unlimited-OCR-2 (`model_type: "unlimited-ocr"` carrying a
+    /// `sparse_attention_config` whose `training_stage` is `dash`): a
+    /// DeepSeek-V2-shaped MoE decoder over SAM and CLIP towers.
+    ///
+    /// NOT `deepseek2`, though the FFN half is. The attention is plain q/k/v
+    /// rather than MLA, over a full KV cache read through a per-layer router
+    /// (DASH: a 128-token local window plus 12 routed 32-token blocks, each
+    /// with a learned log-prior bias), and positions are page2d rather than
+    /// absolute. Selection and page state live in `compute::dash`.
+    ///
+    /// v1 shares the `model_type` and has no DASH: its R-SWA ring is a
+    /// different cache, and it runs through Core ML here
+    /// (`runtime::coreml::unlimited_ocr`), so the config parser refuses it.
+    /// Facts: `docs/UNLIMITED_OCR2_PHASE0.md`.
+    UnlimitedOcr2,
 }
 
 impl ModelFamily {
-    /// Exhaustive list of all 17 model families.
-    pub const ALL: [ModelFamily; 17] = [
+    /// Exhaustive list of all 18 model families.
+    pub const ALL: [ModelFamily; 18] = [
         ModelFamily::Gemma4,
         ModelFamily::QwenGdnMoe,
         ModelFamily::DeepseekV4Flash,
@@ -327,6 +342,7 @@ impl ModelFamily {
         ModelFamily::Qwen3Vl,
         ModelFamily::Flint,
         ModelFamily::Lfm3,
+        ModelFamily::UnlimitedOcr2,
     ];
 
     /// Returns static string identifier for the model family.
@@ -382,6 +398,7 @@ impl ModelFamily {
             // New, and it matches the HF `model_type` AND the GGUF
             // `general.architecture` string, which agree ("lfm3").
             ModelFamily::Lfm3 => "lfm3",
+            ModelFamily::UnlimitedOcr2 => "unlimited_ocr2",
         }
     }
 
@@ -405,6 +422,7 @@ impl ModelFamily {
             "qwen3_vl" => Some(ModelFamily::Qwen3Vl),
             "flint" => Some(ModelFamily::Flint),
             "lfm3" => Some(ModelFamily::Lfm3),
+            "unlimited_ocr2" => Some(ModelFamily::UnlimitedOcr2),
             _ => None,
         }
     }
@@ -435,9 +453,10 @@ mod tests {
                 ModelFamily::Qwen3Vl => 14,
                 ModelFamily::Flint => 15,
                 ModelFamily::Lfm3 => 16,
+                ModelFamily::UnlimitedOcr2 => 17,
             };
             assert_eq!(idx, expected_idx);
         }
-        assert_eq!(ModelFamily::ALL.len(), 17);
+        assert_eq!(ModelFamily::ALL.len(), 18);
     }
 }

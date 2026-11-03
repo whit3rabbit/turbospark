@@ -61,6 +61,13 @@ impl LogitProducer for RealForwardRunner {
         if let Some(lfm3) = self.real_lfm3.as_mut() {
             lfm3.reset();
         }
+        // The router's block summaries are per-generation context, and an
+        // image row's key is not a function of its token id, so nothing this
+        // family produces is eligible for token-prefix reuse.
+        if let Some(uocr2) = self.real_unlimited_ocr2.as_mut() {
+            uocr2.reset();
+            self.kv_prefix.taint();
+        }
         // The head keeps its OWN KV, so the trunk's reset leaves it holding
         // the previous generation's context -- the same shape of leak
         // Gotcha 4 records for the GDN recurrent state, one cache over.
@@ -785,6 +792,12 @@ impl RealForwardRunner {
                 self.prefill_chunk_real_lfm3(tokens, start_position, logits)
             })
             .map_err(|e| e.to_string());
+        }
+        if self.real_unlimited_ocr2.is_some() {
+            return Err(
+                "unlimited_ocr2 does not support chunked prefill; the sequential path serves it"
+                    .to_string(),
+            );
         }
         if self.real_deepseek2.is_some() {
             return Err(

@@ -353,6 +353,7 @@ impl RealForwardRunner {
             pending_gdn_fold: None,
             real_llama: None,
             real_deepseek2: None,
+            real_unlimited_ocr2: None,
             real_flint: None,
             real_gpt_oss: None,
             real_muse: None,
@@ -573,6 +574,19 @@ impl RealForwardRunner {
                     &runner.index,
                     &runner.arch,
                 )?);
+            }
+            // Its own flow: DASH routing and page2d angles are host state read
+            // inside the attention half, which no neighbour's flow has.
+            model_io::ModelFamily::UnlimitedOcr2 => {
+                runner.real_unlimited_ocr2 = Some(
+                    crate::families::unlimited_ocr2::RealUnlimitedOcr2State::build(
+                        &mut runner.context,
+                        &runner.weights,
+                        &runner.index,
+                        &runner.arch,
+                        dir,
+                    )?,
+                );
             }
             model_io::ModelFamily::Deepseek2 => {
                 runner.real_deepseek2 =

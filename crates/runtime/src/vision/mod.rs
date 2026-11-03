@@ -52,6 +52,7 @@ mod scratch;
 mod shape;
 pub(crate) mod siglip;
 mod stages;
+pub mod unlimited_ocr2;
 mod weights;
 
 pub use budget::{PixelBudget, VisionBudgetTooSmall};

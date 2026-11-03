@@ -33,6 +33,7 @@ model_io = { package = "turbospark-model-io", path = "../model-io" }
   - `muse_glimmer.rs`: Muse Glimmer architecture.
   - `spark.rs`: Spark-X2.5-4B architecture.
   - `minimax.rs`: MiniMax-M2 split-GGUF and sigmoid routing architecture.
+- `dash_config.rs`: The DASH router constants (`sparse_attention_config`) an `unlimited_ocr2` install carries beside its manifest, written at repack and read back at open.
 - `arch_validation.rs`: Structural validation of parsed configurations against family constraints.
 - `context_policy.rs`: Context-window bounding (`MaxContext`) and KV cache memory estimation.
 - `expert_cache_policy.rs`: MoE expert cache slot sizing algorithms (`ExpertCacheSlots`).

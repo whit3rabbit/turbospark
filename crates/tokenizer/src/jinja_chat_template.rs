@@ -67,7 +67,38 @@ fn raise_exception(message: String) -> Result<String, minijinja::Error> {
     Err(minijinja::Error::new(ErrorKind::InvalidOperation, message))
 }
 
-fn message_to_json(message: &Message) -> JsonValue {
+/// The added token a flattened image part spells.
+const IMAGE_MARKER: &str = "<image>";
+
+/// Whether a template only ever prints `content`, with no look at its shape.
+///
+/// Such a template renders a part list as its JSON, so the model reads
+/// `[{"type": "image"}, ...]` as prose and answers fluently about nothing.
+/// Unlimited-OCR-2's template is the carrier: its whole body is
+/// `{{message['content']}}`, and upstream's processor hands it a string.
+fn template_prints_content_raw(source: &str) -> bool {
+    // `in message[`, not `in message`: every template opens with
+    // `for message in messages`.
+    const INSPECTS_CONTENT: [&str; 9] = [
+        "is string",
+        "is not string",
+        "is iterable",
+        "is sequence",
+        "is mapping",
+        "in message[",
+        "in message.",
+        "in content",
+        "'type'",
+    ];
+    source.contains("content")
+        && !source.contains("\"type\"")
+        && !source.contains(".type")
+        && !INSPECTS_CONTENT
+            .iter()
+            .any(|needle| source.contains(needle))
+}
+
+fn message_to_json(message: &Message, flatten_image_parts: bool) -> JsonValue {
     let mut obj = serde_json::Map::new();
     obj.insert("role".to_string(), json!(message.role.as_str()));
     // A MULTIMODAL message renders as HF's content-part LIST; a text one
@@ -85,6 +116,19 @@ fn message_to_json(message: &Message) -> JsonValue {
     // what leaves every frozen digest in `crates/bench` where it is.
     if message.content_parts.is_empty() {
         obj.insert("content".to_string(), json!(message.content));
+    } else if flatten_image_parts {
+        // The exception to the paragraph above: this template has no part arm,
+        // and this tokenizer has `<image>` as a real added token, so here the
+        // markup does tokenize to the special token.
+        let text: String = message
+            .content_parts
+            .iter()
+            .map(|part| match part {
+                crate::chat_template::ContentPart::Text(text) => text.as_str(),
+                crate::chat_template::ContentPart::Image => IMAGE_MARKER,
+            })
+            .collect();
+        obj.insert("content".to_string(), json!(text));
     } else {
         let parts: Vec<JsonValue> = message
             .content_parts
@@ -192,10 +236,17 @@ pub fn render_generic_chat_template(
     env.add_template("chat", source)
         .map_err(|e| TokenizerError::InvalidChatTemplate(e.to_string()))?;
 
+    let flatten_image_parts =
+        template_prints_content_raw(source) && tokenizer.token_to_id(IMAGE_MARKER).is_some();
     let mut context = serde_json::Map::new();
     context.insert(
         "messages".to_string(),
-        JsonValue::Array(messages.iter().map(message_to_json).collect()),
+        JsonValue::Array(
+            messages
+                .iter()
+                .map(|m| message_to_json(m, flatten_image_parts))
+                .collect(),
+        ),
     );
     if !tools.is_empty() {
         context.insert(
@@ -258,5 +309,29 @@ impl MfTokenizer {
     ) -> Result<Vec<i32>, TokenizerError> {
         let rendered = render_generic_chat_template(self, messages, tools, true, reasoning)?;
         Ok(self.encode(&rendered, false))
+    }
+}
+
+#[cfg(test)]
+mod raw_content_tests {
+    use super::template_prints_content_raw;
+
+    #[test]
+    fn only_a_template_that_cannot_see_parts_is_flattened() {
+        // The Unlimited-OCR-2 checkpoint's whole template.
+        assert!(template_prints_content_raw(
+            "{% for message in messages %}{% if message['role'] == 'user' %}{% elif \
+             message['role'] == 'assistant' %}{% endif %}{{message['content']}}{% if not \
+             loop.last %} {% endif %}{% endfor %}{% if add_generation_prompt %}{% endif %}"
+        ));
+        // The shapes the other towers' templates use must keep their part list.
+        for parts_aware in [
+            "{% if content is string %}{{ content }}{% elif content is iterable %}{% endif %}",
+            "{% for item in message['content'] %}{% if item['type'] == 'image' %}x{% endif %}{% endfor %}",
+            "{% for item in message.content %}{% if item.type == \"image\" %}x{% endif %}{% endfor %}",
+            "{{ message['content'] if message['content'] is not string else '' }}",
+        ] {
+            assert!(!template_prints_content_raw(parts_aware), "{parts_aware}");
+        }
     }
 }

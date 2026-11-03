@@ -38,6 +38,15 @@ install and carries no tower. The tower has no sidecar and no soft-token
 budget above the 280 default. See
 [`GEMMA4_VISION_PHASE0.md`](GEMMA4_VISION_PHASE0.md).
 
+Unlimited-OCR-2 is the `unlimited_ocr2` family and a catalog row. It reads page
+images only (no chat), through `turbospark-ocr`, `ts_ocr_*`, or image parts on
+the server endpoints. See [`UNLIMITED_OCR2_PHASE0.md`](UNLIMITED_OCR2_PHASE0.md).
+
+```sh
+turbospark-model pull unlimited-ocr-2-4bit
+turbospark-ocr --model unlimited-ocr-2-4bit page1.png
+```
+
 LFM3 is represented by the `lfm3` family: LiquidAI's dense 1.7B hybrid of
 gated short-convolution, full-attention and sliding-window layers. Two
 artifacts are cataloged and both are `verified`: the 4-bit MLX conversion

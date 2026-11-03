@@ -21,6 +21,7 @@ compute = { package = "turbospark-compute", path = "../compute" }
 ## Key Modules
 
 - `attention.rs`: CPU reference causal attention, sliding window attention, and sink token attention (`causal_attention_with_sinks`).
+- `dash.rs`: Unlimited-OCR-2 decoder routing: page2d RoPE angles, page bookkeeping, and DASH block selection. Host arithmetic the decode flow calls at each layer commit, not only a reference.
 - `encoder.rs`: FP32 reference for BERT and XLM-RoBERTa encoder architectures (BGE, Snowflake Arctic Embed): embedding lookup, Post-LN encoder block, CLS pooling, and cosine similarity.
 - `gdn.rs`: `GdnReference`, reference implementation of Qwen 3.6 gated-DeltaNet linear attention chain (causal conv + SiLU, per-head q/k RMSNorm, FP32 delta recurrence, gated output norm).
 - `gating.rs`: Activation gating operations (`sigmoid_gate_mul`, `sigmoid_scalar_mul`, `split_q_gate`).
@@ -42,6 +43,7 @@ compute = { package = "turbospark-compute", path = "../compute" }
 - `sampling.rs`: Logit soft-cap softmax reference (`logit_softcap_softmax`).
 - `steering.rs`: Directional steering operations on residual streams (`Ablate`, `Add`, `Clamp`, `Renorm`).
 - `tolerance.rs`: NaN-sticky relative error metrics (`rel_error`, `bounded_rel_error`, `max_abs_diff`) and tolerance comparisons (`Tolerance`).
+- `uocr2_tower.rs`: CPU references and host arithmetic for Unlimited-OCR-2's SAM and CLIP towers (`conv2d`, `relpos_attention`, and the per-view-size position tables).
 - `vision.rs`: Vision tower reference kernels (LayerNorm, erf and tanh GELUs, 2D RoPE, bidirectional attention).
 - `vision_gemma4.rs`: FP32 reference for the Gemma 4 vision tower and its projector, held to mlx-vlm by `tests/gemma4_vision_reference.rs` (`docs/GEMMA4_VISION_PHASE0.md`).
 - `whisper.rs`: FP32 reference kernels for the whisper speech family: conv front end, Pre-LN encoder blocks, and incremental decoder with KV cache.

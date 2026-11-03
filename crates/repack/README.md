@@ -33,6 +33,7 @@ repack = { package = "turbospark-repack", path = "../repack" }
 - `gguf_checkpoint/`: GGUF repacker handling GGUF tensor walks, F32 transcoding, and V-head conventions.
 - `gguf_config/`, `gguf_header/`, `gguf_names/`, `gguf_set.rs`: GGUF metadata extraction, tensor name mapping, and split multi-file GGUF sets.
 - `qwen2_config.rs`, `qwen36_config.rs`, `qwen3vl_config.rs`, `museglimmer_config.rs`: Architecture-specific JSON config parsers.
+- `unlimited_ocr2_config.rs`, `unlimited_ocr2_tower.rs` & `synthetic_unlimited_ocr2.rs`: Unlimited-OCR-2 intake: `config.json` parsing and header canonicalization, the FP16 SAM/CLIP tower file (`uocr2_tower.bin` indexed by `uocr2_tower.json`), and a tiny tower-less install in the checkpoint's own tensor names for CI.
 - `gemma4_checkpoint/vision_gemma4.rs`: Gemma 4 vision tower config and ingest, a sibling of the qwen tower ingest (different tensor names, roles, and projector).
 - `manifest_peek.rs`: Inspects install metadata without full directory traversals.
 - `trained_context.rs`: Extracts and bounds trained context lengths from config keys.

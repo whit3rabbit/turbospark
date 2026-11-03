@@ -175,6 +175,21 @@ pub fn manifest_quant_for(
         // probe stays on layer 0, which is a plain `self_attn.q_proj`.
         // Names carry the canonical `language_model.` prefix because
         // `canonicalize_flint_header` has already renamed the header.
+        // Layer 0 is the dense lead, as `flint`'s first two are, so the MoE
+        // probes name layer 1. The names are canonical by now: the header
+        // was renamed from `shared_experts`. The router's probe reports the
+        // model's default for a BF16 tensor with no companions, which equals
+        // the attention slot and so reads as defaulted (`validate_quant`):
+        // the truth, since no router kernel runs for this family.
+        ModelFamily::UnlimitedOcr2 => {
+            let l1 = "language_model.model.layers.1";
+            (
+                format!("{l0}.self_attn.q_proj"),
+                format!("{l1}.mlp.gate"),
+                format!("{l1}.mlp.shared_expert.gate_proj"),
+                format!("{l1}.mlp.switch_mlp.gate_proj"),
+            )
+        }
         ModelFamily::Flint => {
             let l2 = "language_model.model.layers.2";
             (

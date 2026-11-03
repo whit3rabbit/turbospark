@@ -58,6 +58,9 @@ pub(crate) struct PreparedImage {
 pub(crate) fn preprocess_params(session: &Session) -> Result<PreprocessParams, String> {
     // The Gemma 4 tower has no `preprocessor_config.json`; it goes through
     // `attach_gemma4`, which callers pick before reaching here.
+    if session.runner.unlimited_ocr2_image_ids().is_some() {
+        return Err("internal: Unlimited-OCR-2 takes attach_unlimited_ocr2".to_string());
+    }
     if session.runner.gemma4_image_ids().is_some() {
         return Err("internal: the Gemma 4 tower takes attach_gemma4".to_string());
     }
@@ -518,5 +521,32 @@ pub(crate) fn attach_deepseek_ocr(
         .runner
         .set_prompt_vision_flat(&rows, &spans, expanded.len())
         .map_err(|e| format!("cannot inject the encoded images: {e}"))?;
+    Ok(expanded)
+}
+
+/// The Unlimited-OCR-2 tower's attach: pages, expansion, tower, prompt.
+pub(crate) fn attach_unlimited_ocr2(
+    session: &mut Session,
+    rendered: &[i32],
+    paths: &[String],
+) -> Result<Vec<i32>, String> {
+    let ids = session
+        .runner
+        .unlimited_ocr2_image_ids()
+        .ok_or("this install is not unlimited_ocr2")?;
+    let mut images = Vec::with_capacity(paths.len());
+    for path in paths {
+        images.push(
+            decode_image_file(std::path::Path::new(path))
+                .map_err(|e| format!("--image {path}: {e}"))?,
+        );
+    }
+    let pages = turbospark_vision_io::uocr2_pages(&images);
+    let expanded = turbospark_vision_io::uocr2_expand_prompt(rendered, &pages, ids)
+        .map_err(|e| format!("cannot place {} image(s) in this prompt: {e}", paths.len()))?;
+    session
+        .runner
+        .attach_unlimited_ocr2_pages(&pages, &expanded)
+        .map_err(|e| format!("--image: {e}"))?;
     Ok(expanded)
 }

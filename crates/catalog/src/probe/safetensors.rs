@@ -113,6 +113,9 @@ pub fn evaluate_config(
             repack::parse_qwen3_vl_config(config_text).map_err(|e| e.to_string())
         }
         ModelFamily::Flint => repack::parse_flint_config(config_text).map_err(|e| e.to_string()),
+        ModelFamily::UnlimitedOcr2 => {
+            repack::parse_unlimited_ocr2_config(config_text).map_err(|e| e.to_string())
+        }
         ModelFamily::Lfm3 => repack::parse_lfm3_config(config_text).map_err(|e| e.to_string()),
         ModelFamily::Deepseek2 => {
             repack::parse_deepseek_vl2_config(config_text).map_err(|e| e.to_string())

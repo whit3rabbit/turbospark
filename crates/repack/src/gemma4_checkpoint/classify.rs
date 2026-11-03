@@ -348,7 +348,9 @@ pub fn routed_marker(family: ModelFamily) -> &'static str {
         | ModelFamily::QwenGdnDense
         | ModelFamily::Qwen4Exp
         | ModelFamily::Deepseek2
-        | ModelFamily::Flint => ".mlp.switch_mlp.",
+        | ModelFamily::Flint
+        // The MLX conversion's stacked `switch_mlp` planes, as Flint's.
+        | ModelFamily::UnlimitedOcr2 => ".mlp.switch_mlp.",
         // A GGUF-derived Llama or Qwen3-MoE never reaches this classifier
         // (the GGUF walk maps routed tensors by NAME, in `gguf_names.rs`),
         // and neither has a safetensors path. DeepSeek V4 has no repack path
@@ -599,6 +601,13 @@ pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -
     if name.starts_with(super::vision_gemma4::EMBED_VISION_PREFIX) && family == ModelFamily::Gemma4
     {
         return Gemma4Bucket::VisionTower;
+    }
+    // Unlimited-OCR-2's tower has its own file (`unlimited_ocr2_tower`), so the
+    // resident walk drops it by name.
+    if name.starts_with(crate::unlimited_ocr2_config::UOCR2_TOWER_PREFIX)
+        && family == ModelFamily::UnlimitedOcr2
+    {
+        return Gemma4Bucket::ExcludedMultimodal;
     }
     // MiniCPM-V 4.7's two adapters ride beside its `vision_tower.`: the 2x2
     // window attention-merger and the final merger. Bucketed as the tower for

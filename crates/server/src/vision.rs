@@ -30,7 +30,7 @@ use anyllm_translate::openai::{ChatContentPart, ChatMessage};
 use turbospark_vision_io::{
     ClipPatches, ClipPreprocessParams, DeepseekVl2Params, DeepseekVl2Tiles, Gemma4ImageIds,
     Gemma4Patches, GridThw, ImageSpan, MropePositions, PreprocessParams, PreprocessedImage,
-    VisionSpecialIds,
+    Uocr2ImageIds, Uocr2Page, VisionSpecialIds,
 };
 
 /// Above this many image parts in one request, `handler::plan` refuses
@@ -85,6 +85,8 @@ pub enum VisionInfo {
         max_soft_tokens: usize,
         ids: Gemma4ImageIds,
     },
+    /// Unlimited-OCR-2: a fixed page layout, so nothing to budget.
+    UnlimitedOcr2 { ids: Uocr2ImageIds },
     /// The CLIP tower (LLaVA): a fixed crop, a bare marker run. `fill` is the
     /// id the expanded run carries (the marker where the trunk's table has a
     /// row for it, else an in-vocabulary stand-in).
@@ -132,6 +134,8 @@ pub enum RequestImages {
         images: Vec<Gemma4Patches>,
         spans: Vec<ImageSpan>,
     },
+    /// The pages, in prompt order. Their rows go at every image token.
+    UnlimitedOcr2 { pages: Vec<Uocr2Page> },
     /// Each image's placeholder run in the expanded prompt.
     Clip {
         images: Vec<ClipPatches>,
@@ -662,6 +666,28 @@ pub(crate) fn gemma4_preprocess_all(
                 .map_err(|e| format!("image {i}: {e}"))
         })
         .collect()
+}
+
+/// Decode every image and lay out its pages for Unlimited-OCR-2, in request
+/// order, under the same aggregate pixel cap as the other towers.
+pub(crate) fn uocr2_pages_all(encoded: &[Vec<u8>]) -> Result<Vec<Uocr2Page>, String> {
+    let mut total = 0u64;
+    let mut images = Vec::with_capacity(encoded.len());
+    for (i, bytes) in encoded.iter().enumerate() {
+        let (w, h) =
+            turbospark_vision_io::image_dimensions(bytes).map_err(|e| format!("image {i}: {e}"))?;
+        total += u64::from(w) * u64::from(h);
+        if total > MAX_SOURCE_PIXELS_PER_REQUEST {
+            return Err(format!(
+                "the images in this request exceed {MAX_SOURCE_PIXELS_PER_REQUEST} source pixels"
+            ));
+        }
+        images.push(
+            turbospark_vision_io::decode_image_bytes(bytes)
+                .map_err(|e| format!("image {i}: {e}"))?,
+        );
+    }
+    Ok(turbospark_vision_io::uocr2_pages(&images))
 }
 
 #[cfg(test)]

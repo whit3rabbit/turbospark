@@ -70,6 +70,10 @@ const EMBEDDED: &[(&str, &str)] = &[
     ),
     ("fish_drama3", include_str!("../families/fish_drama3.json")),
     ("flint", include_str!("../families/flint.json")),
+    (
+        "unlimited_ocr2",
+        include_str!("../families/unlimited_ocr2.json"),
+    ),
     ("gemma4", include_str!("../families/gemma4.json")),
     ("gptOss", include_str!("../families/gptOss.json")),
     ("kokoro", include_str!("../families/kokoro.json")),

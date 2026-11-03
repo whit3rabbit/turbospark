@@ -232,6 +232,11 @@ impl FfiChatModel {
                     .set_prompt_vision(&embeddings, positions, prompt_ids.len())
                     .map_err(|e| RuntimeError::Producer(e.to_string()))?;
             }
+            turbospark_server::vision::RequestImages::UnlimitedOcr2 { pages } => {
+                runner
+                    .attach_unlimited_ocr2_pages(pages, prompt_ids)
+                    .map_err(|e| RuntimeError::Producer(e.to_string()))?;
+            }
             turbospark_server::vision::RequestImages::Gemma4 { images, spans } => {
                 // Gemma 4 image spans need the chunked driver: one token at
                 // a time cannot give an image row its look-ahead.
@@ -349,6 +354,9 @@ impl ChatModel for FfiChatModel {
             let Engine::Real(runner) = &*engine else {
                 return None;
             };
+            if let Some(ids) = runner.unlimited_ocr2_image_ids() {
+                return Some(turbospark_server::vision::VisionInfo::UnlimitedOcr2 { ids });
+            }
             if let Some(ids) = runner.gemma4_image_ids() {
                 // The KV ring of a Gemma 4 vision install is sized for the
                 // default soft-token budget, so that is the budget served.
