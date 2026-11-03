@@ -13,6 +13,8 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-02
+
 ### Added
 - LLaVA-OneVision-Qwen2-7B image input: a `siglip_ov` tower sidecar with anyres
   tiling and newline packing on a GGUF trunk (`llavaov-7b` and
