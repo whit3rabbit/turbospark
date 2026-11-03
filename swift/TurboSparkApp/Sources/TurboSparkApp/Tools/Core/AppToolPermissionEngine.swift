@@ -18,6 +18,10 @@ public actor SessionApprovalStore {
     private var approvedTools: [String: Set<String>] = [:]
     /// Map from sessionID -> Set of approved command prefixes.
     private var approvedCommandPrefixes: [String: Set<String>] = [:]
+    /// Map from sessionID -> Set of network hosts approved for the chat.
+    /// Exact hosts, not suffixes: approving `docs.example.com` says nothing
+    /// about `evil.example.com`.
+    private var approvedHosts: [String: Set<String>] = [:]
 
     public init() {}
 
@@ -36,6 +40,19 @@ public actor SessionApprovalStore {
         var set = approvedCommandPrefixes[sessionID] ?? []
         set.insert(clean)
         approvedCommandPrefixes[sessionID] = set
+    }
+
+    /// Approves future network requests to exactly `host` within the session.
+    /// The network policy's own deny still wins (`AppToolPermissionEngine`).
+    public func allowHost(sessionID: String, host: String) {
+        let clean = AppNetworkPolicy.normalizedHost(host)
+        guard !clean.isEmpty else { return }
+        approvedHosts[sessionID, default: []].insert(clean)
+    }
+
+    public func isHostApproved(sessionID: String, host: String?) -> Bool {
+        guard let host else { return false }
+        return approvedHosts[sessionID]?.contains(AppNetworkPolicy.normalizedHost(host)) ?? false
     }
 
     /// Checks if a tool call has been pre-approved for this session.
@@ -61,12 +78,14 @@ public actor SessionApprovalStore {
     public func clear(sessionID: String) {
         approvedTools.removeValue(forKey: sessionID)
         approvedCommandPrefixes.removeValue(forKey: sessionID)
+        approvedHosts.removeValue(forKey: sessionID)
     }
 
     /// Clears all session approvals.
     public func reset() {
         approvedTools.removeAll()
         approvedCommandPrefixes.removeAll()
+        approvedHosts.removeAll()
     }
 }
 
@@ -116,13 +135,103 @@ public enum AppToolPermissionEngine {
     /// - Parameter globalServers: the app-level MCP configurations, passed in
     ///   rather than re-read from disk (state#61). Every caller has them in
     ///   memory already, and this function runs on the main actor.
+    ///
+    /// **THE NETWORK POLICY WRAPS ALL OF IT** (`AppNetworkPolicy`, Settings >
+    /// Network). It is app-wide and a ceiling: its deny is returned before
+    /// any project mode is consulted, Full access included, and its ask turns
+    /// the project ladder's allow back into a hard-gated ask unless this
+    /// exact host was approved for the chat (`networkHostApproved`). A
+    /// tool-name session grant does not cover a new host.
     public static func evaluate(
         call: AppToolCall,
         project: AppProject?,
         sessionApproved: Bool = false,
         fallbackMode: AppPermissionMode? = nil,
         globalServers: [McpServerConfig] = GlobalMcpFileStore.load().servers,
-        browserContext: BrowserPermissionContext? = nil
+        browserContext: BrowserPermissionContext? = nil,
+        networkPolicy: AppNetworkPolicy = AppNetworkPolicyStore.current,
+        networkHostApproved: Bool = false
+    ) -> ToolPermissionDecision {
+        let network = networkDecision(
+            call: call, project: project, globalServers: globalServers,
+            browserContext: browserContext, policy: networkPolicy)
+        if case .deny(let reason)? = network {
+            return .deny(reason: reason)
+        }
+        let decision = evaluateProjectPolicy(
+            call: call, project: project, sessionApproved: sessionApproved,
+            fallbackMode: fallbackMode, globalServers: globalServers,
+            browserContext: browserContext)
+        if case .ask(let reason)? = network, !networkHostApproved, decision == .allow {
+            var assessment = call.riskAssessment ?? ToolRiskClassifier.assessRisk(
+                name: call.name, arguments: call.arguments, projectURL: project?.rootDirectoryURL)
+            // The user chose to be asked about new domains; the Agent-mode
+            // classifier must not answer for them.
+            assessment.hardGated = true
+            return .ask(assessment: assessment, reason: reason)
+        }
+        return decision
+    }
+
+    /// The network policy's verdict for this call, or nil when the call
+    /// reaches no network the policy governs (file tools, stdio MCP, the
+    /// user's own browser navigation).
+    static func networkDecision(
+        call: AppToolCall,
+        project: AppProject?,
+        globalServers: [McpServerConfig],
+        browserContext: BrowserPermissionContext?,
+        policy: AppNetworkPolicy
+    ) -> AppNetworkDecision? {
+        switch call.category {
+        case .web:
+            guard let raw = ToolApprovalPreviewSummary.httpURL(call.arguments) else {
+                // A search or code-search query: no model-chosen host, but
+                // it still sends traffic to a provider.
+                return policy.permitsOutboundTraffic
+                    ? nil : .deny(reason: "Network access for tools is blocked in Network settings.")
+            }
+            guard let host = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines))?.host,
+                  !host.isEmpty
+            else {
+                // Unparseable: the risk classifier hard-gates it, and Block
+                // all must not depend on that.
+                return policy.permitsOutboundTraffic
+                    ? nil : .deny(reason: "Network access for tools is blocked in Network settings.")
+            }
+            return policy.decision(host: host, method: call.arguments["method"])
+        case .mcp:
+            guard let target = McpPermissionRule.targetOfCall(name: call.name, arguments: call.arguments),
+                  let server = AppToolCatalogMcp.resolvedServers(global: globalServers, project: project)
+                      .first(where: { $0.name.lowercased() == target.server.lowercased() }),
+                  case .sse(let url, _) = server.transport
+            else { return nil }
+            guard let host = url.host, !host.isEmpty else {
+                return .deny(reason: "Remote MCP server '\(server.name)' has no host.")
+            }
+            return policy.decision(host: host)
+        case .browser:
+            // The browser has its own per-origin ask; the policy adds only
+            // its refusals, and never to the user's own navigation.
+            guard (browserContext?.owner ?? .agent) == .agent,
+                  let origin = browserContext?.origin
+            else { return nil }
+            if case .deny(let reason) = policy.decision(host: origin.host) {
+                return .deny(reason: reason)
+            }
+            return nil
+        default:
+            return nil
+        }
+    }
+
+    private static func evaluateProjectPolicy(
+        call: AppToolCall,
+        project: AppProject?,
+        sessionApproved: Bool,
+        fallbackMode: AppPermissionMode?,
+        globalServers: [McpServerConfig],
+        browserContext: BrowserPermissionContext?
     ) -> ToolPermissionDecision {
         // No project selected: fall back to the guarded default or chosen fallback mode.
         let permissions = project?.permissions ?? AppProjectPermissions.preset(

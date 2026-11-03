@@ -17,6 +17,17 @@ sequential image path.
 (`VisionTowerKind::Gemma4`), so nothing on this page describes it: its facts,
 mask rule and gates are in [`GEMMA4_VISION_PHASE0.md`](GEMMA4_VISION_PHASE0.md).
 
+The other towers each have their own page, because each differs from the Qwen
+one in its blocks, preprocessing or position rule and the facts do not carry
+over: `Qwen2.5-VL` on the `qwen2` family
+([`QWEN25_VL_VISION_PHASE0.md`](QWEN25_VL_VISION_PHASE0.md): RMSNorm blocks, a
+gated SiLU MLP, window attention, chunked mRoPE) and `LFM3-VL` on `lfm3`
+([`LFM3_VL_VISION_PHASE0.md`](LFM3_VL_VISION_PHASE0.md): gated depthwise
+convolution blocks beside grouped-query attention). They return the same
+`VisionEmbedding` as the Qwen tower, so `set_prompt_vision`, the prompt
+builders and every front end below are shared. DeepSeek-VL2-tiny runs on a plain-attention arm of the deepseek2 flow
+trunk ([`DEEPSEEK_VL2_VISION_PHASE0.md`](DEEPSEEK_VL2_VISION_PHASE0.md)).
+
 The standalone `<alias>.gturbo-vision/` sidecar format, `--vision-sidecar`,
 and `pull-vision` are verified on real hardware. The Qwen GDN MoE family shares
 the tower classifier, writer, and sequential runtime path, but it has no
@@ -32,7 +43,7 @@ and hidden size.
 | Server | `/v1/chat/completions` and `/v1/messages` serve base64 data URLs on a real vision install. Remote URLs are refused, and the server uses the sequential image path. A text-only backend reports the dropped image instead of silently claiming to have seen it. |
 | FFI and Swift | `ts_generate` accepts ordered image parts, and the Swift-facing open options expose the sidecar. Actual encoding requires the macOS Metal runtime; scripted and non-macOS sessions cannot serve images. |
 | Image modes | Still images only. The manifest carries video token fields for tokenizer compatibility, but there is no video preprocessing or video runtime path. |
-| Prefill and speculation | Dense Qwen image prompts can use chunked prefill. Qwen GDN MoE remains sequential, `TURBOSPARK_BATCHED_GEMV` with an image is refused, and MTP/DFlash2 verify is refused for vision rather than run with unverified positions. |
+| Prefill and speculation | Dense Qwen image prompts can use chunked prefill. Qwen GDN MoE remains sequential, `TURBOSPARK_BATCHED_GEMV` with an image is refused, and MTP/DFlash2 verify is refused for vision rather than run with unverified positions. Qwen4Exp (sidecar CLI gate and tower parity, `docs/QWEN4EXP_VISION_PHASE0.md`) chunks image prompts, refuses them where QSA selection could run, and has no speculation path. |
 
 **THE FRONT-END GAP WAS THE LAST ONE AND IT WAS INVISIBLE FROM THIS PAGE.**
 Every milestone through M-V9 was true of the engine and of two front ends,

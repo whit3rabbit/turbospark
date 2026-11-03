@@ -23,6 +23,7 @@ fn params_with(mean: [f32; 3], std: [f32; 3]) -> PreprocessParams {
         image_mean: mean,
         image_std: std,
         rescale_factor: 1.0 / 255.0,
+        resize: Default::default(),
     }
 }
 

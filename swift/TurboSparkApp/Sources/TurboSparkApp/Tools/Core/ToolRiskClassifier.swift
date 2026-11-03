@@ -328,7 +328,14 @@ public enum ToolRiskClassifier {
                     )
                 }
 
-                if AppToolSandbox.isPrivateOrMetadataHost(host) {
+                // The network policy (Settings > Network) decides local
+                // hosts: "Allow localhost" makes a dev server an ordinary
+                // low-risk call, while metadata and anything the policy
+                // refuses stay hard-gated here as well as denied by the
+                // engine, so a preview never shows them as routine.
+                let scope = AppToolSandbox.hostScope(host)
+                let decision = AppNetworkPolicyStore.current.decision(host: host, method: arguments["method"])
+                if scope == .metadata {
                     return ToolRiskAssessment(
                         level: .high,
                         category: category,
@@ -336,20 +343,19 @@ public enum ToolRiskClassifier {
                         hardGated: true
                     )
                 }
-
-                // The sandbox's own allow/deny lists, which had no caller at
-                // all until now: `SandboxConfig.allowedDomains`,
-                // `deniedDomains` and `networkAllowed` were live fields
-                // configuring a function nothing invoked (root Gotcha 8).
-                do {
-                    try AppToolSandbox.validateDomain(host)
-                } catch {
+                if case .deny(let reason) = decision {
                     return ToolRiskAssessment(
                         level: .high,
                         category: category,
-                        reasons: [error.localizedDescription],
+                        reasons: scope == .publicHost
+                            ? [reason]
+                            : ["Accessing private network or cloud metadata endpoint: '\(urlString)'", reason],
                         hardGated: true
                     )
+                }
+                if scope != .publicHost {
+                    return ToolRiskAssessment(
+                        level: .low, category: category, reasons: ["Local network request to '\(urlString)'"])
                 }
 
                 return ToolRiskAssessment(level: .low, category: category, reasons: ["Outbound web fetch to '\(urlString)'"])

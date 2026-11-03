@@ -104,8 +104,12 @@ pub fn orchestrate_gemma4_checkpoint_sharded(
     // sharing one resident region, and its names keep to their own `vision.`
     // group rather than interleaving with any trunk layer's.
     let vision = if super::vision::vision_should_ingest(arch, &plan.vision_bases) {
-        let mut tower =
-            super::vision::read_vision_entries(shards, &plan.vision_bases, &arch.vision)?;
+        let mut tower = super::vision::read_vision_entries_quantized(
+            shards,
+            &plan.vision_bases,
+            &arch.vision,
+            Some(quant),
+        )?;
         resident.entries.extend(std::mem::take(&mut tower.entries));
         Some(tower)
     } else {
@@ -358,6 +362,12 @@ fn int8_force_targets(family: ModelFamily) -> &'static [&'static str] {
         // produces is a property to MEASURE against the BF16 original
         // before any quality claim (docs/FLINT_PHASE0.md).
         ModelFamily::Flint => &[".mlp.gate.weight"],
+        // DeepSeek-VL2's router is an unquantized F16 `[64, 1280]` gate (the
+        // MLX conversion leaves `mlp.gate.weight` raw while quantizing every
+        // other linear), so it is force-quantized to the INT8-affine layout
+        // the router GEMV reads, exactly as Flint's BF16 one is. The ranking
+        // this produces is a property to measure against the F16 original.
+        ModelFamily::Deepseek2 => &[".mlp.gate.weight"],
         _ => &[],
     }
 }
@@ -379,7 +389,12 @@ pub fn read_resident_entries_from_shards(
             // BF16 it decodes to, which is exact (`mlx_mxfp4`'s header).
             entries.push(read_mxfp4_as_bf16(shards, name, base, &t.shape)?);
         } else if t.dtype == "U32" && name.ends_with(".weight") {
-            let (entry, companion_loss) = if arch.family == ModelFamily::Qwen2Dense {
+            // F16 companions are narrowed to BF16 (Qwen2's MLX planes and the
+            // DeepSeek-VL2 conversion both ship them that way).
+            let (entry, companion_loss) = if matches!(
+                arch.family,
+                ModelFamily::Qwen2Dense | ModelFamily::Deepseek2
+            ) {
                 super::narrow::pass_through_packed_qwen2_with_loss(shards, name, quant)?
             } else {
                 (

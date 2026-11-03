@@ -385,6 +385,27 @@ pub struct RealForwardRunner {
     /// the two towers share no weights layout or forward pass; `None` means
     /// "not yet asked for", as with `vision`.
     pub(crate) gemma4_vision: Option<crate::vision::gemma4::Gemma4VisionTower>,
+    /// The Qwen2.5-VL tower, opened lazily on the first image like the others.
+    pub(crate) qwen25_vision: Option<crate::vision::qwen25::Qwen25VisionTower>,
+    /// The MiniCPM-V tower, lazily opened by `encode_image` on a `minicpm_v`
+    /// install (combined installs only).
+    pub(crate) minicpm_vision: Option<crate::vision::minicpm::MiniCpmVisionTower>,
+    /// The LFM3-VL tower, lazily opened by [`RealForwardRunner::encode_image`]
+    /// on an install whose tower kind is `lfm3_vl`. Separate from `vision` for
+    /// the same reason `gemma4_vision` is: no shared weights layout or
+    /// forward pass.
+    pub(crate) lfm3_vision: Option<crate::vision::lfm3_vl::Lfm3VlVisionTower>,
+    /// The CLIP tower (LLaVA), lazily opened by
+    /// [`RealForwardRunner::encode_image_clip`]; a third field for the same
+    /// reason as the Gemma 4 one.
+    pub(crate) clip_vision: Option<crate::vision::clip::ClipVisionTower>,
+    /// The Muse-Glimmer tower, opened lazily on the first image.
+    pub(crate) muse_vision: Option<crate::vision::muse::MuseVisionTower>,
+    /// The Pixtral tower, opened lazily on the first image.
+    pub(crate) pixtral_vision: Option<crate::vision::pixtral::PixtralVisionTower>,
+    /// The SigLIP tower (DeepSeek-VL2), lazily opened by
+    /// [`RealForwardRunner::encode_image_siglip`].
+    pub(crate) siglip_vision: Option<crate::vision::siglip::SiglipVisionTower>,
     /// A sidecar tower directory attached after open (vision memory
     /// sidecar, Part A2), via [`RealForwardRunner::attach_vision_sidecar`].
     /// `None` on every session that never called it, which is every session

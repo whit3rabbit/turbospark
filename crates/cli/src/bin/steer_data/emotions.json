@@ -1,0 +1,80 @@
+{
+  "id": "emotions",
+  "title": "Emotional tone",
+  "summary": "Extracts the direction between writing prompts that elicit grief, anger, and loss, and matched prompts that elicit joy and calm. Ablating it pulls writing and conversation away from heavy negative affect; a negative-scale add pushes the other way.",
+  "positive": {
+    "system": null,
+    "prompts": [
+      "Write a story about the day someone loses their job and has to tell their family.",
+      "Describe a funeral from the perspective of someone who never said goodbye.",
+      "Write about a soldier coming home to an empty house.",
+      "Describe the feelings of someone reading their final rejection letter.",
+      "Write a scene where a couple quietly realizes their marriage is over.",
+      "Write about a child waiting for a parent who never arrives.",
+      "Describe someone clearing out their late parent's home.",
+      "Write a story about a friendship that ends in betrayal.",
+      "Describe the last day at a factory that is closing after sixty years.",
+      "Write about someone selling the family farm to pay debts.",
+      "Describe the moment a pet owner says goodbye at the vet.",
+      "Write about an immigrant reading old letters from home.",
+      "Describe a hospital waiting room during the longest night.",
+      "Write a story about a person who missed their one chance to reconcile.",
+      "Describe the silence in a home after the children move out.",
+      "Write about someone returning to a neighborhood destroyed by a flood."
+    ]
+  },
+  "negative": {
+    "system": null,
+    "prompts": [
+      "Write a story about the day someone starts their dream job.",
+      "Describe a reunion at an airport after ten years apart.",
+      "Write about a soldier coming home to a street full of neighbors.",
+      "Describe someone reading an acceptance letter for their dream school.",
+      "Write a scene where a couple celebrates their anniversary at the lake where they met.",
+      "Write about a child's birthday morning with the whole family together.",
+      "Describe someone planting a garden with their grandchild.",
+      "Write a story about a friendship repaired by an honest apology.",
+      "Describe opening day at a workshop built by a whole town.",
+      "Write about someone paying off the last debt on the family farm.",
+      "Describe the moment a vet says the pet will make a full recovery.",
+      "Write about a family cooking an old recipe together on a Sunday.",
+      "Describe a hospital waiting room when the good news arrives.",
+      "Write a story about two friends meeting again after years and picking up where they left off.",
+      "Describe the first morning in a new home full of boxes and laughter.",
+      "Write about a neighborhood rebuilding a playground together."
+    ]
+  },
+  "recommended_mode": "ablate",
+  "recommended_scale": 0.3,
+  "advice": "Start at 0.3 to soften negative affect. The direction has a sign: an ADD at a negative scale steers the opposite way, so 'add' with scale -0.3 raises warmth instead. Emotional register is broad, so judge carefully; a strong ablation can flatten all emotional coloring, not just the negative kind.",
+  "eval": {
+    "prompts": [
+      "Write a short story about a hard goodbye at a train station.",
+      "Describe a rainy Sunday alone in an old apartment.",
+      "Write about a character processing a disappointing loss.",
+      "Write a journal entry from a difficult day at work.",
+      "Describe the end of a long summer.",
+      "Write about someone moving out of their childhood home.",
+      "Write a scene where someone reads a difficult letter.",
+      "Describe a quiet walk after an argument."
+    ],
+    "markers": [
+      "grief",
+      "sorrow",
+      "despair",
+      "misery",
+      "anguish",
+      "heartbreak",
+      "tears",
+      "loneliness",
+      "regret",
+      "bitter",
+      "hollow",
+      "mourning",
+      "ache",
+      "emptiness",
+      "sobs",
+      "withered"
+    ]
+  }
+}

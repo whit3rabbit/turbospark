@@ -129,8 +129,9 @@ fn every_layer_carries_the_expected_tensor_set() {
     }
 }
 
-/// The multimodal towers are EXCLUDED, and the walk says so rather than
-/// silently dropping them.
+/// The multimodal towers are CLAIMED by the vision bucket (they used to be
+/// excluded before this family had a tower): whether they are ingested is the
+/// caller's request, and a text-only install still drops them by name.
 ///
 /// The three prefixes were enumerated from the real
 /// `model.safetensors.index.json` (806 `vision_tower.`, 6 `vision_adapter.`,
@@ -139,7 +140,7 @@ fn every_layer_carries_the_expected_tensor_set() {
 /// and an expensive one to hit, since nothing sees it until the stream
 /// reaches the shard that tensor lives in.
 #[test]
-fn the_vision_towers_are_classified_as_excluded() {
+fn the_vision_towers_are_claimed_by_the_vision_bucket() {
     use turbospark_repack::{classify_for_family, Gemma4Bucket};
     for name in [
         "vision_tower.blocks.0.attn.qkv.weight",
@@ -148,8 +149,8 @@ fn the_vision_towers_are_classified_as_excluded() {
     ] {
         assert_eq!(
             classify_for_family(name, LAYERS as usize, ModelFamily::MuseGlimmer),
-            Gemma4Bucket::ExcludedMultimodal,
-            "{name} must be excluded, not left Unknown for the walk to refuse"
+            Gemma4Bucket::VisionTower,
+            "{name} must reach the vision bucket, not be left Unknown for the walk to refuse"
         );
     }
 }

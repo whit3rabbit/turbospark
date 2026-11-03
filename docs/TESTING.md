@@ -383,6 +383,20 @@ TURBOSPARK_GEMMA4_VISION_DUMP=/tmp/gemma4-vision-dump \
   cargo test -p turbospark-runtime --release --lib \
   vision::gemma4::tests::the_real_tower_matches_mlx_vlm -- --ignored --nocapture
 
+# The Qwen2.5-VL tower against a numpy transcription of the reference
+# (docs/QWEN25_VL_VISION_PHASE0.md). Needs the 3B tower sidecar, a local copy
+# of the checkpoint for the numpy side, an image, and python3 with numpy.
+# Gate: every stage cosine above 0.999 on both pages; the first stage that
+# fails names where it diverged.
+turbospark-model pull-vision --repo mlx-community/Qwen2.5-VL-3B-Instruct-4bit \
+  --alias qwen25vl-3b-vision --out /Volumes/T7/turbospark/vision/qwen25vl-3b.gturbo-vision
+TURBOSPARK_QWEN25VL_SIDECAR_DIR=/Volumes/T7/turbospark/vision/qwen25vl-3b.gturbo-vision \
+TURBOSPARK_QWEN25VL_MODEL_DIR=/Volumes/T7/hf-models/Qwen2.5-VL-3B-Instruct-4bit \
+TURBOSPARK_QWEN25VL_IMAGE=/Volumes/T7/vision-pages/page-small.png \
+TURBOSPARK_QWEN25VL_SCRATCH=/Volumes/T7/vision-dumps/qwen25vl-3b-small \
+  cargo test -p turbospark-runtime --release --lib \
+  vision::qwen25::tests::the_real_tower_matches_the_numpy_reference -- --ignored --nocapture
+
 # The whole Gemma 4 install on an image prompt against mlx-vlm under four
 # mask rules. Needs a local copy of the checkpoint (hf download ...
 # --revision 0d77464e... --local-dir), ~14 GB for the install and ~0.2 GB of

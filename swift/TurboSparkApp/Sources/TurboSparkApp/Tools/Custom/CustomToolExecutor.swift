@@ -52,9 +52,11 @@ public enum CustomToolExecutor {
                 environment["TOOL_ARG_\(environmentKey(for: key))"] = val
             }
             let timeout = tool.execution.timeoutSeconds ?? ProcessExecutor.defaultTimeoutSeconds
+            let launch = try ShellNetworkSandbox.launch(
+                executable: URL(fileURLWithPath: "/bin/zsh"), arguments: ["-c", cmd])
             let result = try await ProcessExecutor.run(
-                executableURL: URL(fileURLWithPath: "/bin/zsh"),
-                arguments: ["-c", cmd],
+                executableURL: launch.executable,
+                arguments: launch.arguments,
                 currentDirectoryURL: projectRootURL,
                 environment: environment,
                 timeoutSeconds: timeout
@@ -90,9 +92,11 @@ public enum CustomToolExecutor {
 
             let interpreter = tool.execution.scriptInterpreter ?? "/bin/zsh"
             let scriptTimeout = tool.execution.timeoutSeconds ?? 30.0
+            let launch = try ShellNetworkSandbox.launch(
+                executable: URL(fileURLWithPath: interpreter), arguments: [scriptFile.path] + args)
             let result = try await ProcessExecutor.run(
-                executableURL: URL(fileURLWithPath: interpreter),
-                arguments: [scriptFile.path] + args,
+                executableURL: launch.executable,
+                arguments: launch.arguments,
                 currentDirectoryURL: projectRootURL,
                 environment: baseEnvironment().merging(tool.execution.environment ?? [:]) { _, declared in declared },
                 timeoutSeconds: scriptTimeout
@@ -107,6 +111,13 @@ public enum CustomToolExecutor {
         case .http:
             guard let urlStr = tool.execution.httpURL, let url = URL(string: urlStr) else {
                 throw NSError(domain: "TurboSparkTool", code: 32, userInfo: [NSLocalizedDescriptionKey: "Invalid HTTP endpoint configured for '\(tool.name)'."])
+            }
+            // The endpoint is the user's own configuration, not a host the
+            // model chose, so only Block all applies (localhost exception
+            // included); the per-domain lists govern model-chosen URLs.
+            let policy = AppNetworkPolicyStore.current
+            if policy.mode == .blockAll, case .deny(let reason) = policy.decision(host: url.host ?? "") {
+                throw NSError(domain: "TurboSparkTool", code: 34, userInfo: [NSLocalizedDescriptionKey: reason])
             }
             var req = URLRequest(url: url)
             req.httpMethod = tool.execution.httpMethod ?? "POST"

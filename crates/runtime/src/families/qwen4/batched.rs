@@ -326,6 +326,9 @@ fn encode_layer_cb1_rows(
                 kv,
                 layer,
                 start_position + t,
+                // Text only: the chunked driver refuses an image prompt
+                // before this seam.
+                crate::vision::RopePosition::Sequential,
                 Some(&pre),
             )?;
         }

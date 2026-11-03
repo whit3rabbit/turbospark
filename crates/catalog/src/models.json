@@ -71,6 +71,64 @@
       "notes": "The architecture bring-up's own artifact: MLA (compressed 576-half cache, absorbed form) plus 64 experts top-6 and a fused shared expert, one dense lead layer. Runs: the cross-engine numerics gap is CLOSED -- layer-1 cache rows match llama.cpp at corr 0.99998+ at every position, full-vocab logits at corr 0.984-0.9999 with argmax identical on 14 of 15 prompt positions on the same Q8_0 bytes, and greedy + sampled generation are coherent with EndOfTurn reached (root cause was a half-split rope pairing where ggml pairs consecutive elements; docs/DEEPSEEK2_PHASE0.md's closed-numerics section carries the record). Frozen release gates: quality at perplexity 14.3688 with stable greedy and sampled digests, memory oracle at 4,103 MiB peak (ceiling 4,300) with a 4.0 tok/s floor, all three protocol cases stopping endOfTurn at the 8,192/1,024 window. The repo's Q4_K_M variant refuses at repack: its calibration gives four layers Q5_K routed/shared experts and the routed-pair kernel matrix has no Q5_K arm; use the Q8_0."
     },
     {
+      "alias": "dsvl2-tiny",
+      "name": "DeepSeek-VL2-tiny text trunk (MLX INT4, group 64, plain-attention MoE)",
+      "family": "deepseek2",
+      "source": {
+        "kind": "mlx",
+        "repo": "mlx-community/deepseek-vl2-tiny-4bit",
+        "revision": "4772de7c997d0b115d14593051621bcf0fdcce84",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.json"
+        ]
+      },
+      "download_bytes": 2099712075,
+      "install_bytes": 1673002185,
+      "status": "runs",
+      "gates": [
+        "17 of 17 teacher-forced argmax against a numpy forward",
+        "802-token needle prompt",
+        "real CLI and server image runs with dsvl2-tiny-vision-tower attached"
+      ],
+      "measured": [],
+      "notes": "The DeepSeek-VL2-tiny language model on the plain-attention arm of the deepseek2 flow (no MLA: 12 layers, 10 heads, 64 routed experts top-6 plus 2 shared). Images arrive through the dsvl2-tiny-vision-tower sidecar (`--vision-sidecar`). docs/DEEPSEEK_VL2_VISION_PHASE0.md."
+    },
+    {
+      "alias": "dsvl2-tiny-vision-tower",
+      "kind": "vision-tower",
+      "name": "DeepSeek-VL2-tiny SigLIP tower and projector (FP16, sidecar)",
+      "family": "deepseek2",
+      "source": {
+        "kind": "mlx",
+        "repo": "mlx-community/deepseek-vl2-tiny-4bit",
+        "revision": "4772de7c997d0b115d14593051621bcf0fdcce84",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "preprocessor_config.json",
+          "config.json"
+        ]
+      },
+      "download_bytes": 447469184,
+      "install_bytes": 841465086,
+      "status": "runs",
+      "gates": [
+        "real CLI and server image runs paired with dsvl2-tiny"
+      ],
+      "measured": [],
+      "notes": "TOWER-ONLY sidecar: the SigLIP-so400m tower, its projector and the two learned embeddings, dequantized from the checkpoint's 4-bit planes to FP16 (the attention pool is dropped). Pairs with family deepseek2 at the trunk width. docs/DEEPSEEK_VL2_VISION_PHASE0.md. The repo ships processor_config.json instead of preprocessor_config.json; the tower stream fetches that itself and the vision-only install skips the flat file."
+    },
+    {
       "alias": "gemma4",
       "name": "Gemma 4 26B-A4B Instruct (MLX INT4, group 64)",
       "family": "gemma4",
@@ -313,6 +371,39 @@
         }
       ],
       "notes": "The seventh family and the sixth decode flow: dense 52-layer GQA with a three-sliding/one-full 2048 window, NoPE on the full layers, a separate attention output gate, CENTERED per-layer norms against a PLAIN final one, and a logit softcap behind an output multiplier. It REASONS BEFORE ANSWERING (a to=self message precedes its to=user one), so its protocol runs at 8,192 context and a 2,048 budget rather than the shared 4,096/1,024. A vision-language checkpoint whose text tower alone is ingested; its 815 vision tensors are excluded at repack."
+    },
+    {
+      "alias": "museglimmer-vision",
+      "name": "Muse Glimmer 30B (MLX INT4, group 64) with vision tower",
+      "family": "museGlimmer",
+      "source": {
+        "kind": "mlx",
+        "repo": "mlx-community/Muse-Glimmer-30B-4bit",
+        "revision": "3e7677d7a40d348a3daba263a2b1c0aa41910710",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "generation_config.json",
+          "preprocessor_config.json"
+        ]
+      },
+      "include_vision": true,
+      "download_bytes": 19414521856,
+      "install_bytes": 19542616557,
+      "status": "runs",
+      "gates": [
+        "muse_glimmer tower parity against a numpy transcription (ignored test)",
+        "real CLI image runs (page, shapes, no-image control)",
+        "server image run on both endpoints"
+      ],
+      "measured": [],
+      "notes": "Muse Glimmer with its 50-block vision tower ingested into the same install (adapter and projection dequantized from 4-bit). The image processor lives in processor_config.json and the install writes it out as preprocessor_config.json. Prompts past the 2,048-token sliding window with an image were not tried; no text-quality or memory oracle was frozen for this row. docs/MUSEGLIMMER_VISION_PHASE0.md."
     },
     {
       "alias": "flint",
@@ -899,6 +990,123 @@
       "notes": "128 experts of 2.5 MiB, so it streams. Peak footprint 2.7 GiB rather than the README band: 48 layers deep, and the slot cache is slots x layers x expert_stride. The pinned install was re-streamed and the quality and memory gates were reproduced on 2026-09-17 at 14.5988 perplexity, 2,663.8 MiB peak, and 17.245-27.907 tok/s."
     },
     {
+      "alias": "qwen3vl-30b-a3b",
+      "name": "Qwen3-VL-30B-A3B Instruct text trunk (GGUF Q4_K_M)",
+      "family": "qwen3moe",
+      "source": {
+        "kind": "gguf",
+        "repo": "Qwen/Qwen3-VL-30B-A3B-Instruct-GGUF",
+        "revision": "f54435e6cc31258f04b0969105c3f6badb197931",
+        "file": "Qwen3VL-30B-A3B-Instruct-Q4_K_M.gguf"
+      },
+      "sidecars": {
+        "repo": "Qwen/Qwen3-VL-30B-A3B-Instruct",
+        "revision": "9c4b90e1e4ba969fd3b5378b57d966d725f1b86c",
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.json",
+          "generation_config.json",
+          "vocab.json",
+          "merges.txt"
+        ]
+      },
+      "download_bytes": 18556687168,
+      "install_bytes": 18600000000,
+      "status": "runs",
+      "gates": [
+        "real CLI image runs with qwen3vl-30b-a3b-vision-tower attached (shapes, text page, no-image control)",
+        "server image run on /v1/chat/completions and /v1/messages"
+      ],
+      "measured": [],
+      "notes": "The Qwen3-VL MoE text trunk (llama.cpp arch qwen3vlmoe, resolved to the qwen3moe family) from the official Q4_K_M GGUF; the tower is NOT in this file and arrives as the qwen3vl-30b-a3b-vision-tower sidecar (`--vision-sidecar`). Image prompts take the sequential path (the llama MoE chunked driver has no image injection), at roughly 2 to 3 prefill tokens per second under load; text prompts keep the chunked driver. No text-quality or memory oracle was frozen for this row."
+    },
+    {
+      "alias": "qwen3vl-30b-a3b-vision-tower",
+      "kind": "vision-tower",
+      "name": "Qwen3-VL-30B-A3B vision tower with deepstack (FP16, sidecar)",
+      "family": "qwen3moe",
+      "source": {
+        "kind": "mlx",
+        "repo": "mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit",
+        "revision": "0555d34cb1ed80c0e61a5635194c70027b4c2ff3",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "preprocessor_config.json",
+          "config.json"
+        ]
+      },
+      "download_bytes": 1077690368,
+      "install_bytes": 1077690368,
+      "status": "runs",
+      "gates": [
+        "real CLI and server image runs paired with qwen3vl-30b-a3b"
+      ],
+      "measured": [],
+      "notes": "TOWER-ONLY sidecar for the Qwen3-VL-30B-A3B trunk: the depth-27 tower with out_hidden 2048 and three deepstack mergers (blocks 8, 16, 24), read from shard 1 of the MLX repo. The repo's model.safetensors.index.json is STALE (it names 13 shards and the HF-native model.visual. spelling; the repo has 4 shards carrying vision_tower.), which is why the shard fetcher falls back to scanning the repo's real shards for the prefix. Pairs with family qwen3moe at hidden 2048. The tower's own parity is the Qwen3-VL tower's (docs/QWEN3VL_PHASE0.md); it was not re-measured against a reference on this checkpoint."
+    },
+    {
+      "alias": "pixtral12b",
+      "name": "Pixtral-12B text trunk (GGUF Q4_K_M)",
+      "family": "llama",
+      "source": {
+        "kind": "gguf",
+        "repo": "ggml-org/pixtral-12b-GGUF",
+        "revision": "cba1ea4420bc2b4f15f50fdec59e30769880a63c",
+        "file": "pixtral-12b-Q4_K_M.gguf"
+      },
+      "sidecars": {
+        "repo": "mlx-community/pixtral-12b-bf16",
+        "revision": "378cf65efd79647fc324a079c141fd92cb29916e",
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.json"
+        ]
+      },
+      "download_bytes": 7485000000,
+      "install_bytes": 7485802643,
+      "status": "runs",
+      "gates": [
+        "real CLI image runs with pixtral12b-vision-tower attached (shapes, page, no-image control)",
+        "server image run on both endpoints"
+      ],
+      "measured": [],
+      "notes": "The Pixtral-12B (Mistral-Nemo) trunk from the Q4_K_M GGUF; the tower arrives as the pixtral12b-vision-tower sidecar. Name the sidecar explicitly: its pairing is (llama, 5120) and `--vision-sidecar auto` would attach it to any 5120-wide llama trunk. docs/PIXTRAL_VISION_PHASE0.md."
+    },
+    {
+      "alias": "pixtral12b-vision-tower",
+      "kind": "vision-tower",
+      "name": "Pixtral-12B vision tower and projector (FP16, sidecar)",
+      "family": "llama",
+      "source": {
+        "kind": "mlx",
+        "repo": "mlx-community/pixtral-12b-bf16",
+        "revision": "378cf65efd79647fc324a079c141fd92cb29916e",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "preprocessor_config.json",
+          "config.json"
+        ]
+      },
+      "download_bytes": 869914624,
+      "install_bytes": 870270134,
+      "status": "runs",
+      "gates": [
+        "real CLI and server image runs paired with pixtral12b"
+      ],
+      "measured": [],
+      "notes": "TOWER-ONLY sidecar: the 24-block Pixtral tower (shard 1) and the two-layer projector (shard 5) of the bf16 repo, converted to FP16, with the fused q/k/v. Pairs with family llama at hidden 5120. docs/PIXTRAL_VISION_PHASE0.md."
+    },
+    {
       "alias": "qwen3vl-4b",
       "name": "Qwen3-VL 4B Instruct (MLX INT4, group 64)",
       "family": "qwen3_vl",
@@ -942,6 +1150,41 @@
           "source": "this port, Qwen3-VL-4B Instruct MLX INT4, AC; quality and memory gates"
         }
       ]
+    },
+    {
+      "alias": "qwen25vl-7b",
+      "name": "Qwen2.5-VL 7B Instruct (MLX INT4, group 64) with vision tower",
+      "family": "qwen2",
+      "source": {
+        "kind": "mlx",
+        "repo": "mlx-community/Qwen2.5-VL-7B-Instruct-4bit",
+        "revision": "fdcc572e8b05ba9daeaf71be8c9e4267c826ff9b",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "vocab.json",
+          "merges.txt",
+          "chat_template.json",
+          "preprocessor_config.json"
+        ]
+      },
+      "include_vision": true,
+      "download_bytes": 5653488540,
+      "install_bytes": 5653875354,
+      "status": "runs",
+      "gates": [
+        "qwen25_vl_config (offline parse round-trip)",
+        "qwen25_vl tower parity against a numpy transcription (3B tower, ignored test)",
+        "real CLI image runs (page transcription, shapes)",
+        "server image run on /v1/chat/completions and /v1/messages"
+      ],
+      "measured": [],
+      "notes": "Qwen2.5-VL on the Qwen2 family: a plain Qwen2 dense trunk (28 layers, hidden 3584) with the qwen25_vl tower (RMSNorm blocks, gated SiLU MLP, window attention on 28 of 32 blocks, RMSNorm merger) ingested into the same install and the trunk's chunked mRoPE (sections 16/24/24). The vision template ships as chat_template.json (tokenizer_config.json keeps the text-only Qwen2.5 template). Image runs only: the sequential image path, no chunked image prefill, no speculation with an image. No text-quality or memory oracle has been frozen for this row. docs/QWEN25_VL_VISION_PHASE0.md."
     },
     {
       "alias": "qwen4-reap288",
@@ -1305,6 +1548,38 @@
           "source": "this port, LFM3-1.7B GGUF Q8_0, AC; memory oracle over short-explanation and long-synthesis, quality gate"
         }
       ]
+    },
+    {
+      "alias": "lfm3-vl-2b-8bit",
+      "name": "LFM3-VL 2B (MLX INT8, group 64) with vision tower",
+      "family": "lfm3",
+      "source": {
+        "kind": "mlx",
+        "repo": "LiquidAI/LFM3-VL-2B-MLX-8bit",
+        "revision": "343038aa6c2c16df91b55d114cf374eaccea4b84",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "generation_config.json",
+          "processor_config.json"
+        ]
+      },
+      "include_vision": true,
+      "download_bytes": 2234057304,
+      "install_bytes": 2246000000,
+      "status": "runs",
+      "gates": [
+        "lfm3_vl_vision_real (tower stages against an independent numpy FP32 reference)",
+        "real CLI greedy page transcription, chunked and per-token prefill identical",
+        "server /v1/chat/completions and /v1/messages page transcription"
+      ],
+      "notes": "LFM3-VL: the lfm3 trunk (hidden 2048, 24 layers, the lfm3-1.7b baseline's shape) with the LFM3-VL tower: 14 RMSNorm blocks alternating a gated depthwise 3x3 conv (8 blocks) and grouped-query attention (6 blocks, 16 heads over 8 KV heads, per-head q/k norms, neox 2-D rope at theta 1e6), a SwiGLU MLP, and a pixel-unshuffle projector to the trunk width. VisionTowerKind::Lfm3Vl. THE 8-BIT BUILD ON PURPOSE: LiquidAI's MLX-4bit is affine group 32, which this port's kernels do not implement (4- and 8-bit at group 64 only), and its tower weights differ from the 8-bit build's by up to 1% per weight, so each build needs its own probe reference. The tower ships unquantized BF16 and is narrowed to FP16 at repack. Combined install only (no sidecar pairing). Image preprocessing is processor_config.json's image_processor object (the Qwen3-VL smart-resize, 0.5/0.5 normalization, patch 16, merge 2). The max_pixels ceiling is not memory-clamped for this tower. docs/LFM3_VL_VISION_PHASE0.md."
     }
   ]
 }

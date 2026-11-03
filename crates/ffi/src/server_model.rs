@@ -210,6 +210,28 @@ impl FfiChatModel {
                     .set_prompt_vision(&embeddings, positions, prompt_ids.len())
                     .map_err(|e| RuntimeError::Producer(e.to_string()))?;
             }
+            turbospark_server::vision::RequestImages::MiniCpm { images, positions } => {
+                let json =
+                    std::fs::read_to_string(runner.vision_dir().join("preprocessor_config.json"))
+                        .map_err(|e| {
+                        RuntimeError::Producer(format!("preprocessor_config.json: {e}"))
+                    })?;
+                let params =
+                    turbospark_vision_io::MiniCpmParams::from_preprocessor_config_json(&json)
+                        .map_err(|e| RuntimeError::Producer(e.to_string()))?
+                        .as_preprocess_params();
+                let mut embeddings = Vec::with_capacity(images.len());
+                for (i, image) in images.iter().enumerate() {
+                    embeddings.push(
+                        runner
+                            .encode_image(image, &params)
+                            .map_err(|e| RuntimeError::Producer(format!("image {i}: {e}")))?,
+                    );
+                }
+                runner
+                    .set_prompt_vision(&embeddings, positions, prompt_ids.len())
+                    .map_err(|e| RuntimeError::Producer(e.to_string()))?;
+            }
             turbospark_server::vision::RequestImages::UnlimitedOcr2 { pages } => {
                 runner
                     .attach_unlimited_ocr2_pages(pages, prompt_ids)
@@ -234,6 +256,32 @@ impl FfiChatModel {
                 }
                 runner
                     .set_prompt_vision_gemma4(&rows, spans, prompt_ids.len())
+                    .map_err(|e| RuntimeError::Producer(e.to_string()))?;
+            }
+            turbospark_server::vision::RequestImages::Clip { images, spans } => {
+                let mut rows = Vec::with_capacity(images.len());
+                for (i, image) in images.iter().enumerate() {
+                    rows.push(
+                        runner
+                            .encode_image_clip(image)
+                            .map_err(|e| RuntimeError::Producer(format!("image {i}: {e}")))?,
+                    );
+                }
+                runner
+                    .set_prompt_vision_flat(&rows, spans, prompt_ids.len())
+                    .map_err(|e| RuntimeError::Producer(e.to_string()))?;
+            }
+            turbospark_server::vision::RequestImages::SigLip { images, spans } => {
+                let mut rows = Vec::with_capacity(images.len());
+                for (i, image) in images.iter().enumerate() {
+                    rows.push(
+                        runner
+                            .encode_image_siglip(image)
+                            .map_err(|e| RuntimeError::Producer(format!("image {i}: {e}")))?,
+                    );
+                }
+                runner
+                    .set_prompt_vision_flat(&rows, spans, prompt_ids.len())
                     .map_err(|e| RuntimeError::Producer(e.to_string()))?;
             }
         }
@@ -304,6 +352,46 @@ impl ChatModel for FfiChatModel {
                     ids,
                 });
             }
+            if let Some((marker, fill)) = runner.clip_image_ids() {
+                return Some(turbospark_server::vision::VisionInfo::Clip {
+                    params: crate::vision::clip_params(runner).ok()?,
+                    marker,
+                    fill,
+                    break_end: runner.pixtral_break_end_ids(),
+                });
+            }
+            if runner.is_minicpm_vision() {
+                // The tokenizer must agree with the kind's constant marker
+                // ids; a disagreement reports "no vision" rather than serving
+                // a prompt layout that names other tokens.
+                for (id, want) in turbospark_vision_io::MINICPM_MARKER_TOKENS {
+                    if self.core.tokenizer.id_to_token(id).as_deref() != Some(want) {
+                        return None;
+                    }
+                }
+                let json =
+                    std::fs::read_to_string(runner.vision_dir().join("preprocessor_config.json"))
+                        .ok()?;
+                let params =
+                    turbospark_vision_io::MiniCpmParams::from_preprocessor_config_json(&json)
+                        .ok()?;
+                let v = runner.vision_config();
+                return Some(turbospark_server::vision::VisionInfo::MiniCpm {
+                    params,
+                    ids: turbospark_vision_io::MiniCpmIds::new(
+                        v.image_token_id as i32,
+                        v.vision_start_token_id as i32,
+                        v.vision_end_token_id as i32,
+                    ),
+                });
+            }
+            if let Some((marker, fill)) = runner.siglip_image_ids() {
+                return Some(turbospark_server::vision::VisionInfo::SigLip {
+                    params: crate::vision::siglip_params(runner).ok()?,
+                    marker,
+                    fill,
+                });
+            }
             let params = crate::vision::preprocess_params(
                 runner,
                 self.core.load_policy.guard,
@@ -315,6 +403,7 @@ impl ChatModel for FfiChatModel {
             Some(turbospark_server::vision::VisionInfo::Qwen {
                 params,
                 specials: crate::vision::special_ids(runner),
+                wrap_end: runner.image_wrap_ids().map(|(_, end)| end),
             })
         }
         #[cfg(not(target_os = "macos"))]

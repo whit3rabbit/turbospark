@@ -176,7 +176,7 @@ turbospark launch claude --model qwen3.6   # start a coding agent against the lo
 
 ## Supported models
 
-TurboSpark supports 18 declared model families (DeepSeek-V4-Flash is still scaffolded-only). The newest is Unlimited-OCR-2, a document parser with DASH block-sparse attention over SAM and CLIP towers (see [`docs/UNLIMITED_OCR2_PHASE0.md`](docs/UNLIMITED_OCR2_PHASE0.md)). Before it came LFM3-1.7B, a small dense hybrid of gated short-convolution and attention layers, and Flint 40B-A2.5B, an MoE with 256 routed experts per layer that streams from SSD like the others. Recent additions also include the Bonsai line (1-bit Bonsai, 2-bit Ternary-Bonsai, and the Hadamard-folded Ternary-Bonsai 2), Qwen3.8-27B dense with MTP/DFlash2 speculative decoding and an optional vision tower, Qwen3.8-Flash-Next REAP-288 and the text-only Swift-1.5 IQ2_XS GGUF, Qwen3-VL 4B with image input, MiniCPM-V 4.7 35B-A3B (text only, MLX mxfp4), DeepSeek-V2-Lite (MLA), Spark-X2.5, Muse Glimmer, Qwen2.5, and gpt-oss. MiniMax-M2 is implemented but not yet catalog-promoted.
+TurboSpark supports 18 declared model families (DeepSeek-V4-Flash is still scaffolded-only). The newest is Unlimited-OCR-2, a document parser with DASH block-sparse attention over SAM and CLIP towers (see [`docs/UNLIMITED_OCR2_PHASE0.md`](docs/UNLIMITED_OCR2_PHASE0.md)). Before it came LFM3-1.7B, a small dense hybrid of gated short-convolution and attention layers, and Flint 40B-A2.5B, an MoE with 256 routed experts per layer that streams from SSD like the others. Recent additions also include the Bonsai line (1-bit Bonsai, 2-bit Ternary-Bonsai, and the Hadamard-folded Ternary-Bonsai 2), Qwen3.8-27B dense with MTP/DFlash2 speculative decoding and an optional vision tower, Qwen3.8-Flash-Next REAP-288 and the text-only Swift-1.5 IQ2_XS GGUF, Qwen3-VL 4B with image input, MiniCPM-V 4.7 35B-A3B (MLX mxfp4, image input on the 448-area global view), DeepSeek-V2-Lite (MLA), Spark-X2.5, Muse Glimmer, Qwen2.5, and gpt-oss. MiniMax-M2 is implemented but not yet catalog-promoted.
 
 MoE checkpoints can stream routed experts from SSD through a bounded cache,
 so install size and process footprint are different quantities. The Swift
@@ -203,7 +203,7 @@ The process peak is measured `phys_footprint` on a 36 GB M4 Max with 16 expert-c
 | Qwen 3.6 35B-A3B | Q4_K_M | GGUF | ~21 GB | - |
 | Ornith-1.5 35B-A3B | INT4 (group 64) | MLX | ~20 GB | - |
 | Ornith-1.5 35B-A3B | Q8_0 | GGUF | ~38 GB | - |
-| MiniCPM-V 4.7 35B-A3B, text only (`minicpm-v47-35b-mxfp4`) | mxfp4 (group 32) | MLX | ~22 GB | ~1.5 GB @ 4k ctx |
+| MiniCPM-V 4.7 35B-A3B (`minicpm-v47-35b-mxfp4`) | mxfp4 (group 32) | MLX | ~22 GB | ~1.5 GB @ 4k ctx; image input on the global view |
 | Flint 40B-A2.5B (`flint`) | INT4 core, 3-bit routed experts | MLX | ~18.6 GB | - |
 | Flint 40B-A2.5B, trained build (`flint-int4`) | INT4 (group 64) | MLX | ~23.5 GB | - |
 | Unlimited-OCR-2, OCR only (`unlimited-ocr-2-4bit`) | INT4 language model, FP16 towers | MLX | ~2.5 GB | - |
@@ -251,7 +251,21 @@ Dense models do not stream, so budget roughly the on-disk size plus KV and scrat
 | Mistral 7B Instruct v0.3 | Q4_K_M | GGUF | ~4.4 GB | |
 | TinyLlama 1.1B Chat | Q6_K | GGUF | ~0.9 GB | |
 
-Vision intake is per-family: the Qwen GDN dense and MoE flows, the Qwen3-VL trunk, and Gemma 4 (an install repacked with its tower) carry the implemented tower today, Unlimited-OCR-2 reads pages with its own SAM and CLIP towers, and the other rows are text-only. See [`docs/VISION.md`](docs/VISION.md).
+Vision intake is per-family, and each tower is gated on a real checkpoint through the CLI and both server endpoints. The other rows are text-only. See [`docs/VISION.md`](docs/VISION.md).
+
+| Image input | Install | Notes |
+| --- | --- | --- |
+| Qwen3.8 dense, Qwen3.6 MoE | combined install or `pull-vision` tower sidecar | depth-27 Qwen tower |
+| Qwen3-VL 4B (`qwen3vl-4b-vision`) | combined install | depth-24 tower plus three deepstack mergers |
+| Qwen3-VL 30B-A3B (`qwen3vl-30b-a3b`) | GGUF trunk plus `qwen3vl-30b-a3b-vision-tower` sidecar | image turns prefill sequentially |
+| Qwen2.5-VL 7B (`qwen25vl-7b`) | combined install | window attention on 28 of 32 blocks |
+| Gemma 4 26B-A4B | install repacked with its tower | not a catalog alias; 280-token default budget; [`docs/GEMMA4_VISION_PHASE0.md`](docs/GEMMA4_VISION_PHASE0.md) |
+| LFM3-VL 2B (`lfm3-vl-2b-8bit`) | combined install | [`docs/LFM3_VL_VISION_PHASE0.md`](docs/LFM3_VL_VISION_PHASE0.md) |
+| LLaVA-1.5 7B | GGUF trunk plus `pull-vision --repo llava-hf/llava-1.5-7b-hf` | CLIP tower; [`docs/LLAVA_VISION_PHASE0.md`](docs/LLAVA_VISION_PHASE0.md) |
+| Pixtral 12B (`pixtral12b`) | GGUF trunk plus `pixtral12b-vision-tower` sidecar | [`docs/PIXTRAL_VISION_PHASE0.md`](docs/PIXTRAL_VISION_PHASE0.md) |
+| MiniCPM-V 4.7 35B-A3B (`minicpm-v47-35b-mxfp4`) | combined install | 448-area global view only, detail slices are refused; [`docs/MINICPMV_VISION_PHASE0.md`](docs/MINICPMV_VISION_PHASE0.md) |
+| Muse Glimmer 30B (`museglimmer-vision`) | combined install | [`docs/MUSEGLIMMER_VISION_PHASE0.md`](docs/MUSEGLIMMER_VISION_PHASE0.md) |
+| DeepSeek-VL2-tiny (`dsvl2-tiny-vision-tower`) | MLX trunk plus tower sidecar | SigLIP tower with dynamic tiling; [`docs/DEEPSEEK_VL2_VISION_PHASE0.md`](docs/DEEPSEEK_VL2_VISION_PHASE0.md) |
 
 New checkpoints are not automatically supported just because their architecture name matches. The catalog probe checks the checkpoint header, tokenizer sidecars, tensor types, and memory shape before installation. Read [`docs/MODELS.md`](docs/MODELS.md) before adding a model outside the catalog.
 
@@ -454,7 +468,7 @@ The benchmark times are client wall-clock numbers that include local HTTP and Sw
 | CLI generation | Interactive chat, raw prompts, JSON message files, reasoning output, cancellation, and model recommendations |
 | Local API | OpenAI-compatible and Anthropic-compatible chat endpoints, plus image generation and audio routes, from `turbospark-server` or the app |
 | Model intake | Catalog installs, Hugging Face header probes, GGUF intake, MLX quantized checkpoints, and `.gturbo` packing |
-| Vision | Supported vision checkpoints, with the Qwen GDN, Qwen3-VL, and Gemma 4 towers implemented, plus Unlimited-OCR-2 document reading (`turbospark-ocr`) |
+| Vision | Unlimited-OCR-2 document reading (`turbospark-ocr`), and image input on ten checkpoint families (Qwen GDN, Qwen3-VL, Qwen2.5-VL, Gemma 4, LFM3-VL, LLaVA-1.5, Pixtral, MiniCPM-V, Muse Glimmer, DeepSeek-VL2-tiny), listed under the model table |
 | Image generation | Z-Image Turbo and Qwen-Image 2.1 Turbo in the app, about 1 to 2 minutes per 1024 x 1024 image on an M4 Max. See [Image generation](#image-generation) |
 | Humanize | Local rewrites with `humanizer-12b`, user rules applied outside the model, and an audit of dropped or invented numbers. See [Humanize](#humanize) |
 | Audio | Whisper, Qwen3-ASR, and FluidAudio Core ML / ANE speech to text, Kokoro (Metal and ANE) and Qwen3-TTS speech, Silero VAD, MegaTTS3 voice cloning (Metal on macOS), and meeting speaker intelligence. See [Audio](#audio) |

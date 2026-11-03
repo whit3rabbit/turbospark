@@ -69,6 +69,9 @@ pub mod short_conv;
 /// Directional steering of a residual stream row (ablate, add, clamp,
 /// renorm).
 pub mod steering;
+/// Difference-of-means direction extraction and per-layer diagnostics
+/// (trait steering, `turbospark-steer`).
+pub mod steering_extract;
 /// Numerical error measurement and tolerance checking utilities.
 pub mod tolerance;
 /// Unlimited-OCR-2's SAM and CLIP tower references and table builders.

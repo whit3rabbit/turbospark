@@ -1,7 +1,7 @@
 import XCTest
 @testable import TurboSparkApp
 
-final class EnhancedToolsAndHttpTests: XCTestCase {
+final class EnhancedToolsAndHttpTests: NetworkPolicyPinnedTestCase {
     private func makeProject() throws -> (AppProject, URL) {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

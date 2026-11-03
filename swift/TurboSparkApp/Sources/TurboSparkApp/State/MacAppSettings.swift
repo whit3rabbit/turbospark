@@ -303,6 +303,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     public var browser: BrowserSettings
     /// Global computer-use preferences. Per-app grants live only in memory.
     public var computerUse: ComputerUseSettings
+    /// App-wide network policy for tool calls (Settings > Network).
+    public var networkPolicy: AppNetworkPolicy
 
     public init(
         contextTokens: Int = 0,
@@ -394,7 +396,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         syntextIndexingEnabled: Bool = true,
         conversationRecallEnabled: Bool = true,
         browser: BrowserSettings = BrowserSettings(),
-        computerUse: ComputerUseSettings = ComputerUseSettings()
+        computerUse: ComputerUseSettings = ComputerUseSettings(),
+        networkPolicy: AppNetworkPolicy = AppNetworkPolicy()
     ) {
         self.contextTokens = contextTokens
         self.expertCacheSlots = expertCacheSlots
@@ -520,6 +523,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.conversationRecallEnabled = conversationRecallEnabled
         self.browser = browser
         self.computerUse = computerUse
+        self.networkPolicy = networkPolicy
     }
 
     /// Tolerant of a wrong TYPE as well as an absent key (state#59).
@@ -737,6 +741,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
             BrowserSettings.self, forKey: .browser, fallback: BrowserSettings())
         self.computerUse = c.decodeLenient(
             ComputerUseSettings.self, forKey: .computerUse, fallback: ComputerUseSettings())
+        self.networkPolicy = c.decodeLenient(
+            AppNetworkPolicy.self, forKey: .networkPolicy, fallback: AppNetworkPolicy())
     }
 
     /// Normalizes persisted chat-runtime controls without changing their

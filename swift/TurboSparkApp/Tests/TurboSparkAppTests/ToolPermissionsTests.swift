@@ -1,7 +1,7 @@
 import XCTest
 @testable import TurboSparkApp
 
-final class ToolPermissionsTests: XCTestCase {
+final class ToolPermissionsTests: NetworkPolicyPinnedTestCase {
     // MARK: - Benign Terminal Commands (Unsloth Auto Mode Parity)
 
     let benignCommands = [
@@ -545,13 +545,14 @@ final class ToolPermissionsTests: XCTestCase {
         let fetchAllowDecision = AppToolPermissionEngine.evaluate(call: fetchCall, project: allowProject)
         XCTAssertEqual(fetchAllowDecision, .allow)
 
-        // 4. High-risk web call (private/metadata host) must still ask even if web=.allow
+        // 4. Cloud metadata is refused outright even when web=.allow: the
+        // network policy denies it in every mode, so there is nothing to ask.
         let privateFetchCall = AppToolCall(name: "WebFetch", arguments: ["url": "http://169.254.169.254/latest/meta-data"], category: .web)
         let privateDecision = AppToolPermissionEngine.evaluate(call: privateFetchCall, project: allowProject)
-        if case .ask(let assessment, _) = privateDecision {
-            XCTAssertTrue(assessment.isHighRisk, "Fetching private/metadata host must be classified as high risk.")
+        if case .deny(let reason) = privateDecision {
+            XCTAssertTrue(reason.contains("always blocked"), reason)
         } else {
-            XCTFail("Private host fetch must force .ask even when web=.allow, got \(privateDecision)")
+            XCTFail("Metadata host fetch must be denied even when web=.allow, got \(privateDecision)")
         }
     }
 

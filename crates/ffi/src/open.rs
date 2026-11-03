@@ -495,12 +495,21 @@ pub(crate) fn open_with_failure(
                 .attach_vision_sidecar(&dir)
                 .map_err(|e| format!("visionSidecar {}: {e}", dir.display()))?;
             let vision = runner.vision_config();
-            tokenizer
-                .verify_image_markers(
+            // A CLIP tower (LLaVA) has no start token to pair with the marker; a
+            // tower whose template renders a bare placeholder (Muse-Glimmer) wraps it.
+            let verified = if runner.clip_image_ids().is_some()
+                || runner.siglip_image_ids().is_some()
+            {
+                tokenizer.verify_bare_image_marker(vision.image_token_id as i32)
+            } else if let Some((start, end)) = runner.image_wrap_ids() {
+                tokenizer.verify_bare_image_placeholder(start, vision.image_token_id as i32, end)
+            } else {
+                tokenizer.verify_image_markers(
                     vision.vision_start_token_id as i32,
                     vision.image_token_id as i32,
                 )
-                .map_err(|e| format!("visionSidecar {}: {e}", dir.display()))?;
+            };
+            verified.map_err(|e| format!("visionSidecar {}: {e}", dir.display()))?;
             Some(dir)
         }
         None => None,
@@ -713,6 +722,90 @@ fn vision_info(
                 sidecar_path,
                 max_pixels: Some(soft * pool * pool * side * side),
             }
+        };
+    }
+    // A CLIP tower (LLaVA) crops every image to one fixed square, so it has no
+    // pixel budget to clamp: the answer is whether its processor config reads,
+    // and the ceiling is the crop's own area.
+    if runner.clip_image_ids().is_some() {
+        return match crate::vision::clip_params(runner) {
+            Ok(params) => crate::wire::VisionInfo {
+                active: true,
+                image_token_id: Some(image_token_id),
+                reason: None,
+                source,
+                sidecar_path,
+                max_pixels: Some(params.size * params.size),
+            },
+            Err(reason) => crate::wire::VisionInfo {
+                active: false,
+                image_token_id: None,
+                reason: Some(reason),
+                source,
+                sidecar_path,
+                max_pixels: None,
+            },
+        };
+    }
+    // MiniCPM-V has no pixel budget: its best-fit resize holds every image to
+    // about 448 squared, so the ceiling reported is that area. A sidecar is
+    // refused by name (its pairing cannot tell its trunk from a Qwen3.6 one).
+    if runner.is_minicpm_vision() {
+        let path = runner.vision_dir().join("preprocessor_config.json");
+        let readable = std::fs::read_to_string(&path)
+            .map_err(|e| format!("{}: {e}", path.display()))
+            .and_then(|json| {
+                turbospark_vision_io::MiniCpmParams::from_preprocessor_config_json(&json)
+                    .map_err(|e| format!("{}: {e}", path.display()))
+            });
+        return match (sidecar_dir.is_some(), readable) {
+            (true, _) => crate::wire::VisionInfo {
+                active: false,
+                image_token_id: None,
+                reason: Some("a MiniCPM-V vision tower cannot run from a sidecar".to_string()),
+                source,
+                sidecar_path,
+                max_pixels: None,
+            },
+            (false, Ok(params)) => crate::wire::VisionInfo {
+                active: true,
+                image_token_id: Some(image_token_id),
+                reason: None,
+                source,
+                sidecar_path,
+                max_pixels: Some(params.scale_resolution * params.scale_resolution),
+            },
+            (false, Err(reason)) => crate::wire::VisionInfo {
+                active: false,
+                image_token_id: None,
+                reason: Some(reason),
+                source,
+                sidecar_path,
+                max_pixels: None,
+            },
+        };
+    }
+    // A SigLIP tower (DeepSeek-VL2) pads and tiles at fixed sizes, so it has no
+    // pixel budget to clamp either: the ceiling is the largest candidate
+    // resolution's area.
+    if runner.siglip_image_ids().is_some() {
+        return match crate::vision::siglip_params(runner) {
+            Ok(params) => crate::wire::VisionInfo {
+                active: true,
+                image_token_id: Some(image_token_id),
+                reason: None,
+                source,
+                sidecar_path,
+                max_pixels: params.candidates.iter().map(|(w, h)| w * h).max(),
+            },
+            Err(reason) => crate::wire::VisionInfo {
+                active: false,
+                image_token_id: None,
+                reason: Some(reason),
+                source,
+                sidecar_path,
+                max_pixels: None,
+            },
         };
     }
     match crate::vision::preprocess_params(

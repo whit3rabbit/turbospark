@@ -84,9 +84,15 @@ struct MessageActionBarView: View {
     }
 
     private var standingInstructionTitle: Text {
-        isStandingInstruction
-            ? Text("Unpin instruction", bundle: .module)
-            : Text("Pin instruction", bundle: .module)
+        Text(LocalizedStringKey(Self.standingInstructionName(isPinned: isStandingInstruction)), bundle: .module)
+    }
+
+    /// The pin action's name, which is its VoiceOver label and tooltip: the
+    /// action is icon-only, so this is the only place the state is spelled
+    /// out. Both values are catalog keys
+    /// (`testEnumBackedDisplayStringsAreCatalogKeys`).
+    nonisolated static func standingInstructionName(isPinned: Bool) -> String {
+        isPinned ? "Unpin instruction" : "Pin instruction"
     }
 }
 

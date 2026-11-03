@@ -86,7 +86,10 @@ fn an_image_turn_prefills_in_chunk_spans_not_per_token() {
         .expect("the template should render");
     let marker_ids = model.tokenizer().encode(&prompt, false);
 
-    let Some(vision::VisionInfo::Qwen { params, specials }) = model.vision() else {
+    let Some(vision::VisionInfo::Qwen {
+        params, specials, ..
+    }) = model.vision()
+    else {
         panic!("the qwen vision install serves images");
     };
     let png = std::fs::read(&page).expect("the test page should be readable");

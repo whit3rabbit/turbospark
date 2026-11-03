@@ -2,7 +2,13 @@ import XCTest
 
 @testable import TurboSparkApp
 
-final class BrowserToolExecutorTests: XCTestCase {
+final class BrowserToolExecutorTests: NetworkPolicyPinnedTestCase {
+    /// LAN reachable so a private origin still reaches the browser's own
+    /// gate; metadata is refused earlier by the network policy.
+    override var pinnedNetworkPolicy: AppNetworkPolicy {
+        AppNetworkPolicy(mode: .allowAll, allowLocalNetwork: true)
+    }
+
     func testCancellationRemainsDistinctFromBrowserFailure() async throws {
         let origin = try XCTUnwrap(BrowserOrigin(origin: "https://example.test"))
         let project = AppProject(
@@ -210,7 +216,7 @@ final class BrowserToolExecutorTests: XCTestCase {
         // trims to a different origin.
         let call = AppToolCall(
             name: "browser_navigate",
-            arguments: ["url": " http://169.254.169.254/"],
+            arguments: ["url": " http://10.0.0.5/"],
             category: .browser,
             riskAssessment: .safe)
         let outcome = await BrowserToolExecutor.execute(

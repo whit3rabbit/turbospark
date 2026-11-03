@@ -41,6 +41,56 @@ fn cubic_kernel(x: f64) -> f64 {
     }
 }
 
+/// Which PIL resampling filter. Both run the identical fixed-point
+/// two-pass path below; they differ only in kernel and support radius.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PilFilter {
+    /// `Image.BICUBIC`: Keys cubic convolution, a = -0.5, support 2.
+    Bicubic,
+    /// `Image.LANCZOS`: `sinc(x) * sinc(x / 3)`, support 3. Muse-Glimmer's
+    /// processor resamples with it (`Image.Resampling.LANCZOS`).
+    Lanczos,
+}
+
+impl PilFilter {
+    fn support(self) -> f64 {
+        match self {
+            PilFilter::Bicubic => CUBIC_SUPPORT,
+            PilFilter::Lanczos => LANCZOS_SUPPORT,
+        }
+    }
+
+    fn kernel(self, x: f64) -> f64 {
+        match self {
+            PilFilter::Bicubic => cubic_kernel(x),
+            PilFilter::Lanczos => lanczos_kernel(x),
+        }
+    }
+}
+
+/// PIL's Lanczos support radius: three lobes each side.
+const LANCZOS_SUPPORT: f64 = 3.0;
+
+/// PIL's `sinc_filter`: 1 at zero, otherwise `sin(pi x) / (pi x)`.
+fn sinc(x: f64) -> f64 {
+    if x == 0.0 {
+        1.0
+    } else {
+        let px = std::f64::consts::PI * x;
+        px.sin() / px
+    }
+}
+
+/// PIL's `lanczos_filter` with a = 3: `sinc(x) * sinc(x / 3)` inside the
+/// support and zero outside it.
+fn lanczos_kernel(x: f64) -> f64 {
+    if (-LANCZOS_SUPPORT..LANCZOS_SUPPORT).contains(&x) {
+        sinc(x) * sinc(x / LANCZOS_SUPPORT)
+    } else {
+        0.0
+    }
+}
+
 /// One output index's resample window: the input range `[start, start + n)` it
 /// blends, and the fixed-point weights, already normalized to sum to one before
 /// quantization.
@@ -71,13 +121,13 @@ fn clip8(acc: i64) -> u8 {
 /// border blends fewer inputs but its weights still sum to one, so the border
 /// does not darken. Renormalizing before the clamp instead (or padding the
 /// input) is the ordinary way to get this subtly wrong.
-fn precompute_filters(in_size: usize, out_size: usize) -> Vec<AxisFilter> {
+fn precompute_filters(filter: PilFilter, in_size: usize, out_size: usize) -> Vec<AxisFilter> {
     if in_size == 0 || out_size == 0 {
         return Vec::new();
     }
     let scale = in_size as f64 / out_size as f64;
     let filterscale = scale.max(1.0);
-    let support = CUBIC_SUPPORT * filterscale;
+    let support = filter.support() * filterscale;
     let inv_filterscale = 1.0 / filterscale;
 
     (0..out_size)
@@ -88,7 +138,7 @@ fn precompute_filters(in_size: usize, out_size: usize) -> Vec<AxisFilter> {
                 (((center + support + 0.5).floor()) as i64).clamp(0, in_size as i64) as usize;
             let xmax = xmax.max(xmin);
             let mut weights: Vec<f64> = (xmin..xmax)
-                .map(|x| cubic_kernel((x as f64 - center + 0.5) * inv_filterscale))
+                .map(|x| filter.kernel((x as f64 - center + 0.5) * inv_filterscale))
                 .collect();
             let sum: f64 = weights.iter().sum();
             if sum != 0.0 {
@@ -138,9 +188,38 @@ pub fn resize_bicubic_pil(
 /// implementation: the early-out calls straight into this, so the pair cannot
 /// drift the way two copies of a filter loop would.
 pub fn resample_pil(src: &[u8], src_w: usize, src_h: usize, new_w: usize, new_h: usize) -> Vec<u8> {
+    resample_pil_with(PilFilter::Bicubic, src, src_w, src_h, new_w, new_h)
+}
+
+/// `Image.resize(..., Image.LANCZOS)` on RGB8: the same fixed-point path as
+/// [`resize_bicubic_pil`] with the Lanczos kernel. Returns the input untouched
+/// at equal size, PIL's early-out and, as for bicubic, a pure speed path: the
+/// Lanczos kernel is zero at every nonzero integer.
+pub fn resize_lanczos_pil(
+    src: &[u8],
+    src_w: usize,
+    src_h: usize,
+    new_w: usize,
+    new_h: usize,
+) -> Vec<u8> {
+    if new_w == src_w && new_h == src_h {
+        return src.to_vec();
+    }
+    resample_pil_with(PilFilter::Lanczos, src, src_w, src_h, new_w, new_h)
+}
+
+/// The shared two-pass resample for either [`PilFilter`].
+pub fn resample_pil_with(
+    filter: PilFilter,
+    src: &[u8],
+    src_w: usize,
+    src_h: usize,
+    new_w: usize,
+    new_h: usize,
+) -> Vec<u8> {
     const CHANNELS: usize = 3;
-    let col = precompute_filters(src_w, new_w);
-    let row = precompute_filters(src_h, new_h);
+    let col = precompute_filters(filter, src_w, new_w);
+    let row = precompute_filters(filter, src_h, new_h);
     let seed = 1i64 << (PRECISION_BITS - 1);
 
     // Horizontal pass: src_h rows of new_w pixels.

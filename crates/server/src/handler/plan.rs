@@ -548,10 +548,27 @@ pub(crate) fn plan(model: &AppState, request: &ChatCompletionRequest) -> Result<
     // Everything above produced `prompt_ids` for a prompt whose placeholders
     // are single tokens; the model sees `merged_tokens` copies of each.
     let images = match (&vision_info, encoded.is_empty()) {
-        (Some(crate::vision::VisionInfo::Qwen { params, specials }), false) => {
+        (
+            Some(crate::vision::VisionInfo::Qwen {
+                params,
+                specials,
+                wrap_end,
+            }),
+            false,
+        ) => {
             // Header-only preflight computes the exact grid and expanded
             // allocation budget before decoding any attacker-controlled image.
             let grids = crate::vision::preflight_all(&encoded, params)?;
+            // A template that renders a bare placeholder gets the start and
+            // end markers added here, as its processor does.
+            if let Some(end) = wrap_end {
+                prompt_ids = turbospark_vision_io::wrap_bare_image_placeholders(
+                    &prompt_ids,
+                    specials.image_pad,
+                    specials.vision_start,
+                    *end,
+                );
+            }
             let spliced = turbospark_vision_io::splice_and_walk(
                 &prompt_ids,
                 &grids,
@@ -563,6 +580,37 @@ pub(crate) fn plan(model: &AppState, request: &ChatCompletionRequest) -> Result<
             check_context(&prompt_ids, &config, model.max_context())?;
             let preprocessed = crate::vision::preprocess_all(&encoded, params)?;
             Some(crate::vision::RequestImages::Qwen {
+                images: preprocessed,
+                positions: spliced.positions,
+            })
+        }
+        // MiniCPM-V: the best-fit resize bounds every image to about 448
+        // squared, so decoding is bounded without a pixel budget; each
+        // rendered `<|image_pad|>` becomes `<image_id>N</image_id><image>`,
+        // the fill run, `</image>`, with canvas positions.
+        (Some(crate::vision::VisionInfo::MiniCpm { params, ids }), false) => {
+            let mut preprocessed = Vec::with_capacity(encoded.len());
+            for (i, bytes) in encoded.iter().enumerate() {
+                let decoded = turbospark_vision_io::decode_image_bytes(bytes)
+                    .map_err(|e| format!("image {}: {e}", i + 1))?;
+                preprocessed.push(
+                    turbospark_vision_io::minicpm_preprocess(&decoded, params)
+                        .map_err(|e| format!("image {}: {e}", i + 1))?,
+                );
+            }
+            let grids: Vec<_> = preprocessed.iter().map(|p| p.grid).collect();
+            let tokenizer = model.tokenizer();
+            let index_ids = |k: usize| tokenizer.encode(&k.to_string(), false);
+            let spliced = turbospark_vision_io::minicpm_splice_and_positions(
+                &prompt_ids,
+                &grids,
+                ids,
+                &index_ids,
+            )
+            .map_err(|e| format!("cannot place {} image(s): {e}", grids.len()))?;
+            prompt_ids = spliced.ids;
+            check_context(&prompt_ids, &config, model.max_context())?;
+            Some(crate::vision::RequestImages::MiniCpm {
                 images: preprocessed,
                 positions: spliced.positions,
             })
@@ -592,6 +640,62 @@ pub(crate) fn plan(model: &AppState, request: &ChatCompletionRequest) -> Result<
                 .map_err(|e| format!("cannot place {} image(s): {e}", pages.len()))?;
             check_context(&prompt_ids, &config, model.max_context())?;
             Some(crate::vision::RequestImages::UnlimitedOcr2 { pages })
+        }
+        // CLIP (LLaVA): each rendered `<image>` becomes one placeholder per
+        // patch of the fixed crop, no start or end token. The count is a
+        // property of the processor config, so only the byte budget needs a
+        // header pass before any pixel is decoded.
+        (
+            Some(crate::vision::VisionInfo::Clip {
+                params,
+                marker,
+                fill,
+                break_end,
+            }),
+            false,
+        ) => {
+            crate::vision::clip_preflight_all(&encoded, params)?;
+            let grids = crate::vision::clip_grids(&encoded, params)?;
+            // The llava-hf template emits no `<s>`; the reference's
+            // processor adds it, and the `add_bos = false` encode above
+            // follows the convention that the template carries it.
+            let with_bos = turbospark_vision_io::clip_prepend_bos(
+                &prompt_ids,
+                model.tokenizer().encode("", true).first().copied(),
+            );
+            let (expanded, spans) = turbospark_vision_io::flat_expand_image_placeholders(
+                &with_bos, *marker, *fill, *break_end, &grids,
+            )
+            .map_err(|e| format!("cannot place {} image(s): {e}", grids.len()))?;
+            prompt_ids = expanded;
+            check_context(&prompt_ids, &config, model.max_context())?;
+            let images = crate::vision::clip_preprocess_all(&encoded, params)?;
+            Some(crate::vision::RequestImages::Clip { images, spans })
+        }
+        // SigLIP (DeepSeek-VL2): the run length is per image, set by the tile
+        // grid the image's size picks, so the preflight reads headers first.
+        (
+            Some(crate::vision::VisionInfo::SigLip {
+                params,
+                marker,
+                fill,
+            }),
+            false,
+        ) => {
+            let counts = crate::vision::siglip_preflight_all(&encoded, params)?;
+            // The V2 template is rendered with the BOS literal at the front
+            // (`MfTokenizer::apply_chat_template`), so no prefix is added.
+            let (expanded, spans) = turbospark_vision_io::clip_expand_image_placeholders(
+                &prompt_ids,
+                *marker,
+                *fill,
+                &counts,
+            )
+            .map_err(|e| format!("cannot place {} image(s): {e}", counts.len()))?;
+            prompt_ids = expanded;
+            check_context(&prompt_ids, &config, model.max_context())?;
+            let images = crate::vision::siglip_preprocess_all(&encoded, params)?;
+            Some(crate::vision::RequestImages::SigLip { images, spans })
         }
         _ => None,
     };

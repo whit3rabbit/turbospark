@@ -15,6 +15,7 @@ Installing `turbospark-cli` or the Homebrew cask provides these utilities on you
 | `turbospark-server` | Starts the local HTTP API server for OpenAI, Anthropic, Ollama, embeddings, and audio routes. |
 | `turbospark-clone` | Clones target voices and speaks text via MegaTTS3 (requires `--consent`). |
 | `turbospark-speak` | Speaks text with Fish Audio Drama 3: free-reference speech or consented cloning. |
+| `turbospark-steer` | Trait steering: extracts a behavior direction (refusals, slop, humor, sycophancy, emotional tone) from a model's own activations and checks it. |
 | `turbospark-music` | Generates 44.1 kHz stereo music tracks with MiniMax Music 3. |
 | `turbospark-image` | Native Metal image diffusion generator for Z-Image-Turbo. |
 | `turbospark-ocr` | Reads page images to text with the Core ML Unlimited OCR pipeline (macOS 15+). |

@@ -564,7 +564,33 @@ fn fetch_sidecars(
             }
         }
         let url = plan.sidecars.file_url(name);
-        let bytes = client.get(&url)?;
+        let bytes = if name == "preprocessor_config.json" {
+            match client.get_optional(&url)? {
+                Some(bytes) => bytes,
+                None => {
+                    // No flat file. Muse-Glimmer nests the image processor in
+                    // `processor_config.json` under `image_processor`, and a
+                    // combined install writes that object out as the flat file
+                    // every reader looks for. A DeepSeek-VL2 repo ships the same
+                    // `processor_config.json` and its TOWER stream fetches that
+                    // itself, so a vision-only pull skips the flat file when
+                    // the nested one is not a wrapper. Any other repo missing
+                    // the file still fails here with the transport's message.
+                    let alt =
+                        client.get_optional(&plan.sidecars.file_url("processor_config.json"))?;
+                    match alt {
+                        Some(b) => match crate::stream::flatten_processor_config(&b) {
+                            Some(flat) => flat,
+                            None if plan.vision_only => continue,
+                            None => client.get(&url)?,
+                        },
+                        None => client.get(&url)?,
+                    }
+                }
+            }
+        } else {
+            client.get(&url)?
+        };
         if let Some(cb) = byte_progress {
             cb(bytes.len() as u64);
         }

@@ -345,12 +345,21 @@ impl RealChatModel {
                 .attach_vision_sidecar(dir)
                 .map_err(|e| format!("--vision-sidecar {}: {e}", dir.display()))?;
             let vision = runner.vision_config();
-            tokenizer
-                .verify_image_markers(
+            // A CLIP tower (LLaVA) has no start token to pair with the marker; a
+            // tower whose template renders a bare placeholder (Muse-Glimmer) wraps it.
+            let verified = if runner.clip_image_ids().is_some()
+                || runner.siglip_image_ids().is_some()
+            {
+                tokenizer.verify_bare_image_marker(vision.image_token_id as i32)
+            } else if let Some((start, end)) = runner.image_wrap_ids() {
+                tokenizer.verify_bare_image_placeholder(start, vision.image_token_id as i32, end)
+            } else {
+                tokenizer.verify_image_markers(
                     vision.vision_start_token_id as i32,
                     vision.image_token_id as i32,
                 )
-                .map_err(|e| format!("--vision-sidecar {}: {e}", dir.display()))?;
+            };
+            verified.map_err(|e| format!("--vision-sidecar {}: {e}", dir.display()))?;
             // Print only when a sidecar was actually attached: most servers
             // run with none, and the guardrails/prefix-reuse lines' "always
             // print" shape exists for a fixed toggle every deployment sets
@@ -453,6 +462,85 @@ impl RealChatModel {
                 max_soft_tokens: turbospark_vision_io::GEMMA4_DEFAULT_SOFT_TOKENS,
                 ids,
             })
+        } else if let Some((marker, fill)) = runner.clip_image_ids() {
+            // A LLaVA tower reads its crop from the processor config beside
+            // it, not from the qwen pixel-budget params above. A tower with
+            // no readable config is a broken install, so it fails the open
+            // rather than serving text-only under a vision label.
+            let path = runner.vision_dir().join("preprocessor_config.json");
+            let json =
+                std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let params =
+                turbospark_vision_io::ClipPreprocessParams::from_preprocessor_config_json(&json)
+                    .map_err(|e| format!("{}: {e}", path.display()))?;
+            let v = runner.vision_config();
+            params
+                .check_against_tower(v.patch_size, v.num_position_embeddings)
+                .map_err(|e| format!("{}: {e}", path.display()))?;
+            Some(crate::vision::VisionInfo::Clip {
+                params,
+                marker,
+                fill,
+                break_end: runner.pixtral_break_end_ids(),
+            })
+        } else if runner.is_minicpm_vision() {
+            // Its own preprocessing: no pixel budget, the best-fit resize
+            // lives in `turbospark_vision_io::minicpm`. The tokenizer must
+            // agree with the kind's constant marker ids before any request.
+            for (id, want) in turbospark_vision_io::MINICPM_MARKER_TOKENS {
+                if tokenizer.id_to_token(id).as_deref() != Some(want) {
+                    return Err(format!(
+                        "token id {id} is {:?} in this tokenizer but the MiniCPM-V prompt \
+                         layout needs {want:?}",
+                        tokenizer.id_to_token(id)
+                    )
+                    .into());
+                }
+            }
+            let path = runner.vision_dir().join("preprocessor_config.json");
+            let json =
+                std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let params = turbospark_vision_io::MiniCpmParams::from_preprocessor_config_json(&json)
+                .map_err(|e| format!("{}: {e}", path.display()))?;
+            let v = runner.vision_config();
+            Some(crate::vision::VisionInfo::MiniCpm {
+                params,
+                ids: turbospark_vision_io::MiniCpmIds::new(
+                    v.image_token_id as i32,
+                    v.vision_start_token_id as i32,
+                    v.vision_end_token_id as i32,
+                ),
+            })
+        } else if let Some((marker, fill)) = runner.siglip_image_ids() {
+            // DeepSeek-VL2 reads its tiling from `processor_config.json` beside
+            // the tower; a broken install fails the open rather than serving
+            // text-only under a vision label.
+            let path = runner.vision_dir().join("processor_config.json");
+            let json =
+                std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let params = turbospark_vision_io::DeepseekVl2Params::from_processor_config_json(&json)
+                .map_err(|e| format!("{}: {e}", path.display()))?;
+            let v = runner.vision_config();
+            let side = params.patches_per_side() as i64;
+            if v.patch_size != turbospark_vision_io::DSVL2_PATCH as i64
+                || v.num_position_embeddings != side * side
+                || v.spatial_merge_size != params.downsample_ratio as i64
+            {
+                return Err(format!(
+                    "{}: a {}-pixel tile is {side}x{side} patches, but this install's tower has \
+                     patch {}, a {}-row position table and unfold {}",
+                    path.display(),
+                    params.image_size,
+                    v.patch_size,
+                    v.num_position_embeddings,
+                    v.spatial_merge_size
+                ));
+            }
+            Some(crate::vision::VisionInfo::SigLip {
+                params,
+                marker,
+                fill,
+            })
         } else if runner.has_vision_tower() {
             let v = runner.vision_config();
             preprocess_params
@@ -463,6 +551,7 @@ impl RealChatModel {
                         vision_start: v.vision_start_token_id as i32,
                         image_pad: v.image_token_id as i32,
                     },
+                    wrap_end: runner.image_wrap_ids().map(|(_, end)| end),
                 })
         } else {
             None
@@ -546,6 +635,29 @@ impl RealChatModel {
                     .attach_unlimited_ocr2_pages(pages, prompt_ids)
                     .map_err(|e| RuntimeError::Producer(e.to_string()))?;
             }
+            crate::vision::RequestImages::MiniCpm { images, positions } => {
+                let params =
+                    match &self.vision_info {
+                        Some(crate::vision::VisionInfo::MiniCpm { params, .. }) => {
+                            params.as_preprocess_params()
+                        }
+                        _ => return Err(RuntimeError::Producer(
+                            "a MiniCPM-V request reached a backend without MiniCPM-V vision info"
+                                .to_string(),
+                        )),
+                    };
+                let mut embeddings = Vec::with_capacity(images.len());
+                for (i, image) in images.iter().enumerate() {
+                    embeddings.push(
+                        runner
+                            .encode_image(image, &params)
+                            .map_err(|e| RuntimeError::Producer(format!("image {i}: {e}")))?,
+                    );
+                }
+                runner
+                    .set_prompt_vision(&embeddings, positions, prompt_ids.len())
+                    .map_err(|e| RuntimeError::Producer(e.to_string()))?;
+            }
             crate::vision::RequestImages::Gemma4 { images, spans } => {
                 // Gemma 4 image spans need the chunked driver: one token at a
                 // time cannot give an image row its look-ahead.
@@ -565,6 +677,32 @@ impl RealChatModel {
                 }
                 runner
                     .set_prompt_vision_gemma4(&rows, spans, prompt_ids.len())
+                    .map_err(|e| RuntimeError::Producer(e.to_string()))?;
+            }
+            crate::vision::RequestImages::Clip { images, spans } => {
+                let mut rows = Vec::with_capacity(images.len());
+                for (i, image) in images.iter().enumerate() {
+                    rows.push(
+                        runner
+                            .encode_image_clip(image)
+                            .map_err(|e| RuntimeError::Producer(format!("image {i}: {e}")))?,
+                    );
+                }
+                runner
+                    .set_prompt_vision_flat(&rows, spans, prompt_ids.len())
+                    .map_err(|e| RuntimeError::Producer(e.to_string()))?;
+            }
+            crate::vision::RequestImages::SigLip { images, spans } => {
+                let mut rows = Vec::with_capacity(images.len());
+                for (i, image) in images.iter().enumerate() {
+                    rows.push(
+                        runner
+                            .encode_image_siglip(image)
+                            .map_err(|e| RuntimeError::Producer(format!("image {i}: {e}")))?,
+                    );
+                }
+                runner
+                    .set_prompt_vision_flat(&rows, spans, prompt_ids.len())
                     .map_err(|e| RuntimeError::Producer(e.to_string()))?;
             }
         }

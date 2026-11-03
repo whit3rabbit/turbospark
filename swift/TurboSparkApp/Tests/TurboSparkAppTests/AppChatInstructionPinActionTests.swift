@@ -1,6 +1,3 @@
-import AppKit
-import SwiftUI
-import Vision
 import XCTest
 
 @testable import TurboSparkApp
@@ -54,50 +51,12 @@ final class AppChatInstructionPinActionTests: XCTestCase {
             AppChatFileStore.load().chats.first?.messages.first?.isStandingInstruction == true)
     }
 
-    @MainActor
-    func testHostedActionBarRendersPinAndUnpinLabels() throws {
-        let unpinned = MessageActionBarView(
-            text: "Keep this preference.",
-            messageID: UUID(),
-            date: Date(timeIntervalSince1970: 1_700_000_000),
-            standingInstructionAction: {},
-            isStandingInstruction: false)
-            .frame(width: 900, height: 80, alignment: .leading)
-            .background(Color.white)
-            .environment(\.locale, Locale(identifier: "en-US"))
-            .environment(\.colorScheme, .light)
-        let unpinnedText = try Self.recognizedText(in: unpinned, width: 900, height: 80)
-        XCTAssertTrue(unpinnedText.localizedCaseInsensitiveContains("Pin instruction"), unpinnedText)
-
-        let pinned = MessageActionBarView(
-            text: "Keep this preference.",
-            messageID: UUID(),
-            date: Date(timeIntervalSince1970: 1_700_000_000),
-            standingInstructionAction: {},
-            isStandingInstruction: true)
-            .frame(width: 900, height: 80, alignment: .leading)
-            .background(Color.white)
-            .environment(\.locale, Locale(identifier: "en-US"))
-            .environment(\.colorScheme, .light)
-        let pinnedText = try Self.recognizedText(in: pinned, width: 900, height: 80)
-        XCTAssertTrue(pinnedText.localizedCaseInsensitiveContains("Unpin instruction"), pinnedText)
-    }
-
-    @MainActor
-    private static func recognizedText<V: View>(in view: V, width: CGFloat, height: CGFloat) throws -> String {
-        let host = NSHostingView(rootView: view)
-        host.frame = NSRect(x: 0, y: 0, width: width, height: height)
-        host.layoutSubtreeIfNeeded()
-
-        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-        host.cacheDisplay(in: host.bounds, to: bitmap)
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.recognitionLanguages = ["en-US"]
-        request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: try XCTUnwrap(bitmap.cgImage), options: [:])
-            .perform([request])
-        return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
-            .joined(separator: "\n")
+    /// The message actions are icon-only (`MessageIconActionStyle`), so
+    /// the pin state is spelled out only in the action's name, its VoiceOver
+    /// label and tooltip. A headless render exposes neither, so the name is
+    /// asserted where the view reads it.
+    func testPinActionIsNamedForWhatItWillDo() {
+        XCTAssertEqual(MessageActionBarView.standingInstructionName(isPinned: false), "Pin instruction")
+        XCTAssertEqual(MessageActionBarView.standingInstructionName(isPinned: true), "Unpin instruction")
     }
 }

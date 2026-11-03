@@ -1111,6 +1111,26 @@ struct ToolCallCardView: View {
                     }
                     .buttonStyle(.bordered)
                 }
+            } else if !isHighRisk, let host = AppNetworkPolicy.host(forWebCall: call) {
+                // A URL tool remembers its HOST, never the tool name: one
+                // approved fetch must not open every domain. Hidden for high
+                // risk, where the engine checks risk before a host grant, so
+                // the grant would never apply.
+                NetworkAccessApprovalView(
+                    host: host,
+                    toolLabel: ToolPresentation.resolve(call.name).localizedLabel,
+                    onAllowForChat: { model.approvePendingToolCall(id: call.id, alwaysAllowSession: true) },
+                    onAllowOnce: { model.approvePendingToolCall(id: call.id, alwaysAllowSession: false) },
+                    onAlwaysAllow: {
+                        model.addNetworkDomain(host, allow: true)
+                        model.approvePendingToolCall(id: call.id, alwaysAllowSession: false)
+                    },
+                    onAlwaysBlock: {
+                        model.addNetworkDomain(host, allow: false)
+                        model.denyPendingToolCall(id: call.id)
+                    },
+                    onDeny: { model.denyPendingToolCall(id: call.id) }
+                )
             } else {
                 Text("This action requires your confirmation to execute.", bundle: .module)
                     .themedFont(.small)

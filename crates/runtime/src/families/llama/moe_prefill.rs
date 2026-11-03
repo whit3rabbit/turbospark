@@ -148,7 +148,10 @@ impl RealForwardRunner {
         // embedding and answer vaguely about a page it never saw. No family
         // on the llama MoE arm pairs a vision sidecar today; the guard is
         // what keeps that true if one ever does.
-        if arch.vision.is_active() || self.prompt_vision.is_some() {
+        // Only a LIVE image map is refused: a text turn on a vision-active
+        // install (a Qwen3-VL MoE trunk with its sidecar attached) has nothing
+        // to inject and keeps the chunked driver's speed.
+        if self.prompt_vision.is_some() {
             return Err(RealForwardError::Unsupported(
                 "this llama MoE chunked driver has no image injection: the embed blit and \
                  deepstack adds exist in the dense driver (the qwen3_vl trunk) alone"

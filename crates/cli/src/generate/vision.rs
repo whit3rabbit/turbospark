@@ -64,6 +64,12 @@ pub(crate) fn preprocess_params(session: &Session) -> Result<PreprocessParams, S
     if session.runner.gemma4_image_ids().is_some() {
         return Err("internal: the Gemma 4 tower takes attach_gemma4".to_string());
     }
+    if session.runner.clip_image_ids().is_some() {
+        return Err("internal: the CLIP tower takes attach_clip".to_string());
+    }
+    if session.runner.siglip_image_ids().is_some() {
+        return Err("internal: the SigLIP tower takes attach_siglip".to_string());
+    }
     let path = session.runner.vision_dir().join("preprocessor_config.json");
     let json = std::fs::read_to_string(&path).map_err(|e| {
         format!(
@@ -180,19 +186,31 @@ pub(crate) fn attach(
     params: &PreprocessParams,
 ) -> Result<Vec<i32>, String> {
     let grids: Vec<_> = images.iter().map(|p| p.image.grid).collect();
-    let spliced = turbospark_vision_io::splice_and_walk(
-        rendered,
-        &grids,
-        special_ids(session),
-        params.merge_size,
-    )
-    .map_err(|e| {
-        format!(
-            "cannot place {} image(s) in this prompt: {e}\n  the template renders one \
+    let special = special_ids(session);
+    // A template that renders a bare placeholder (Muse-Glimmer's) gets the
+    // start and end markers added here, as its processor does.
+    let wrapped;
+    let rendered = match session.runner.image_wrap_ids() {
+        Some((start, end)) => {
+            wrapped = turbospark_vision_io::wrap_bare_image_placeholders(
+                rendered,
+                special.image_pad,
+                start,
+                end,
+            );
+            &wrapped[..]
+        }
+        None => rendered,
+    };
+    let spliced =
+        turbospark_vision_io::splice_and_walk(rendered, &grids, special, params.merge_size)
+            .map_err(|e| {
+                format!(
+                    "cannot place {} image(s) in this prompt: {e}\n  the template renders one \
              <|image_pad|> per image; check the messages actually carry image parts",
-            images.len()
-        )
-    })?;
+                    images.len()
+                )
+            })?;
 
     let mut embeddings = Vec::with_capacity(images.len());
     for prepared in images {
@@ -208,6 +226,32 @@ pub(crate) fn attach(
         .set_prompt_vision(&embeddings, &spliced.positions, spliced.ids.len())
         .map_err(|e| format!("cannot inject the encoded images: {e}"))?;
     Ok(spliced.ids)
+}
+
+/// The MiniCPM-V tower's whole `--image` path: decode each file and hand the
+/// runner the rendered prompt, which preprocesses, expands each rendered
+/// `<|image_pad|>` into its marker run with canvas positions, runs the tower
+/// and injects the rows. Returns the expanded ids to prefill. Thumbnail only
+/// (no slicing). The runner method is the same one the FFI and the server call.
+pub(crate) fn attach_minicpm(
+    session: &mut Session,
+    rendered: &[i32],
+    paths: &[String],
+) -> Result<Vec<i32>, String> {
+    let mut decoded = Vec::with_capacity(paths.len());
+    for path in paths {
+        decoded.push(
+            decode_image_file(std::path::Path::new(path))
+                .map_err(|e| format!("--image {path}: {e}"))?,
+        );
+    }
+    let tokenizer = &session.tokenizer;
+    let index_ids = |k: usize| tokenizer.encode(&k.to_string(), false);
+    let token_text = |id: i32| tokenizer.id_to_token(id);
+    session
+        .runner
+        .attach_minicpm_images(rendered, &decoded, &index_ids, &token_text)
+        .map_err(|e| format!("cannot attach the images: {e}"))
 }
 
 /// The Gemma 4 tower's whole `--image` path: decode and preprocess each file
@@ -257,6 +301,166 @@ pub(crate) fn attach_gemma4(
     session
         .runner
         .set_prompt_vision_gemma4(&rows, &spans, expanded.len())
+        .map_err(|e| format!("cannot inject the encoded images: {e}"))?;
+    Ok(expanded)
+}
+
+/// The CLIP tower's whole `--image` path (LLaVA, `docs/LLAVA_VISION_PHASE0.md`):
+/// read the processor config beside the tower, decode and preprocess each
+/// file (shortest-edge resize, center crop, normalize), expand each rendered
+/// `<image>` to one placeholder per patch, encode, and hand the runner the
+/// rows. Returns the expanded ids to prefill.
+///
+/// The processor config is cross-checked against the install's own
+/// `arch.vision` for the two numbers that must agree for the tower to read
+/// the rows at all: the patch edge and the position-table size. An install
+/// whose config describes a different crop would otherwise fail at a shape
+/// check inside the tower, far from the file that caused it.
+pub(crate) fn attach_clip(
+    session: &mut Session,
+    rendered: &[i32],
+    paths: &[String],
+) -> Result<Vec<i32>, String> {
+    let (marker, fill) = session
+        .runner
+        .clip_image_ids()
+        .ok_or("this install's vision tower is not a CLIP one")?;
+    let path = session.runner.vision_dir().join("preprocessor_config.json");
+    let json = std::fs::read_to_string(&path).map_err(|e| {
+        format!(
+            "{}: {e}\n  this install declares no image preprocessing config; re-stream it with \
+             its sidecars, or copy the checkpoint's preprocessor_config.json in",
+            path.display()
+        )
+    })?;
+    let params = turbospark_vision_io::ClipPreprocessParams::from_preprocessor_config_json(&json)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    let vision = session.runner.vision_config();
+    params
+        .check_against_tower(vision.patch_size, vision.num_position_embeddings)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+
+    let mut prepared = Vec::with_capacity(paths.len());
+    for image_path in paths {
+        let decoded = decode_image_file(std::path::Path::new(image_path))
+            .map_err(|e| format!("--image {image_path}: {e}"))?;
+        let patches = turbospark_vision_io::clip_preprocess(&decoded, &params)
+            .map_err(|e| format!("--image {image_path}: {e}"))?;
+        prepared.push((image_path, patches));
+    }
+    let grids: Vec<(usize, usize)> = prepared.iter().map(|(_, p)| (p.grid, p.grid_w)).collect();
+    // The llava-hf template emits no `<s>`; the reference's processor adds it.
+    let rendered = turbospark_vision_io::clip_prepend_bos(
+        rendered,
+        session.tokenizer.encode("", true).first().copied(),
+    );
+    let (expanded, spans) = turbospark_vision_io::flat_expand_image_placeholders(
+        &rendered,
+        marker,
+        fill,
+        session.runner.pixtral_break_end_ids(),
+        &grids,
+    )
+    .map_err(|e| {
+        format!(
+            "cannot place {} image(s) in this prompt: {e}\n  the template renders one \
+                     <image> per image; check the messages actually carry image parts",
+            paths.len()
+        )
+    })?;
+    let mut rows = Vec::with_capacity(prepared.len());
+    for (image_path, patches) in &prepared {
+        rows.push(
+            session
+                .runner
+                .encode_image_clip(patches)
+                .map_err(|e| format!("--image {image_path}: {e}"))?,
+        );
+    }
+    session
+        .runner
+        .set_prompt_vision_flat(&rows, &spans, expanded.len())
+        .map_err(|e| format!("cannot inject the encoded images: {e}"))?;
+    Ok(expanded)
+}
+
+/// The SigLIP (DeepSeek-VL2) tower's whole `--image` path
+/// (`docs/DEEPSEEK_VL2_VISION_PHASE0.md`): read `processor_config.json` beside
+/// the tower, pad and tile each file (a global view plus the best-fitting local
+/// grid), expand each rendered `<image>` to the full run (projector rows with
+/// the newline and separator rows between), encode, and hand the runner the
+/// rows. Returns the expanded ids to prefill.
+///
+/// Tiling is on for at most two images and off for more, as in the reference.
+pub(crate) fn attach_siglip(
+    session: &mut Session,
+    rendered: &[i32],
+    paths: &[String],
+) -> Result<Vec<i32>, String> {
+    let (marker, fill) = session
+        .runner
+        .siglip_image_ids()
+        .ok_or("this install's vision tower is not a SigLIP one")?;
+    let path = session.runner.vision_dir().join("processor_config.json");
+    let json = std::fs::read_to_string(&path).map_err(|e| {
+        format!(
+            "{}: {e}\n  this install declares no image processor config; re-pull the vision \
+             sidecar, or copy the checkpoint's processor_config.json in",
+            path.display()
+        )
+    })?;
+    let params = turbospark_vision_io::DeepseekVl2Params::from_processor_config_json(&json)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    let vision = session.runner.vision_config();
+    let side = params.patches_per_side() as i64;
+    if vision.patch_size != turbospark_vision_io::DSVL2_PATCH as i64
+        || vision.num_position_embeddings != side * side
+        || vision.spatial_merge_size != params.downsample_ratio as i64
+    {
+        return Err(format!(
+            "{}: a {}-pixel tile is {side}x{side} patches with a {}-wide unfold, but this \
+             install's tower has patch {}, a {}-row position table and unfold {}; the two \
+             describe different checkpoints",
+            path.display(),
+            params.image_size,
+            params.downsample_ratio,
+            vision.patch_size,
+            vision.num_position_embeddings,
+            vision.spatial_merge_size
+        ));
+    }
+
+    let crop = paths.len() <= 2;
+    let mut prepared = Vec::with_capacity(paths.len());
+    for image_path in paths {
+        let decoded = decode_image_file(std::path::Path::new(image_path))
+            .map_err(|e| format!("--image {image_path}: {e}"))?;
+        let tiles = turbospark_vision_io::deepseek_vl2_preprocess(&decoded, &params, crop)
+            .map_err(|e| format!("--image {image_path}: {e}"))?;
+        prepared.push((image_path, tiles));
+    }
+    let counts: Vec<usize> = prepared.iter().map(|(_, t)| t.image_tokens()).collect();
+    let (expanded, spans) =
+        turbospark_vision_io::clip_expand_image_placeholders(rendered, marker, fill, &counts)
+            .map_err(|e| {
+                format!(
+                    "cannot place {} image(s) in this prompt: {e}\n  the template renders one \
+                     <image> per image; check the messages actually carry image parts",
+                    paths.len()
+                )
+            })?;
+    let mut rows = Vec::with_capacity(prepared.len());
+    for (image_path, tiles) in &prepared {
+        rows.push(
+            session
+                .runner
+                .encode_image_siglip(tiles)
+                .map_err(|e| format!("--image {image_path}: {e}"))?,
+        );
+    }
+    session
+        .runner
+        .set_prompt_vision_flat(&rows, &spans, expanded.len())
         .map_err(|e| format!("cannot inject the encoded images: {e}"))?;
     Ok(expanded)
 }

@@ -6,7 +6,7 @@ import XCTest
 /// permissive injected validator stands in for "DNS said public at validation
 /// time", so the only thing that can stop the fetch is the check of the
 /// address the socket really connected to.
-final class WebRebindingTests: XCTestCase {
+final class WebRebindingTests: NetworkPolicyPinnedTestCase {
     func testConnectionToAPrivateAddressIsRefusedEvenWhenValidationPassed() async throws {
         let server = try BrowserAutomationHTTPFixtureServer()
         let url = server.url("/ok")

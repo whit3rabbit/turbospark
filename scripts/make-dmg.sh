@@ -82,7 +82,7 @@ mounted="$mount_point/TurboSpark.app"
 
 # Each of these has its own way of going missing, so each is named.
 [ -x "$mounted/Contents/MacOS/TurboSparkApp" ] || { echo "main executable missing" >&2; exit 1; }
-for bin in turbospark turbospark-check turbospark-model turbospark-server turbospark-image turbospark-music turbospark-clone turbospark-speak turbospark-ocr; do
+for bin in turbospark turbospark-check turbospark-model turbospark-server turbospark-image turbospark-music turbospark-clone turbospark-speak turbospark-steer turbospark-ocr; do
   [ -x "$mounted/Contents/MacOS/$bin" ] || { echo "CLI binary $bin missing from the bundle" >&2; exit 1; }
 done
 [ -x "$mounted/Contents/MacOS/openkindd" ] || { echo "openkindd missing from the bundle" >&2; exit 1; }

@@ -24,12 +24,18 @@ mod ngram;
 mod orchestrate;
 mod shards;
 mod vision;
+mod vision_clip;
 mod vision_gemma4;
+mod vision_lfm3;
+mod vision_minicpm;
+mod vision_muse;
+mod vision_pixtral;
+mod vision_siglip;
 
 pub use classify::{
-    canonicalize_flint_header, canonicalize_qwen2_header, canonicalize_vision_header,
-    classify_for_family, classify_gemma4, Gemma4Bucket, DFLASH_PREFIX, MTP_PREFIX,
-    VISION_INSTALL_PREFIX, VISION_PREFIX, VISION_SOURCE_PREFIXES,
+    canonicalize_deepseek_vl2_header, canonicalize_flint_header, canonicalize_qwen2_header,
+    canonicalize_vision_header, classify_for_family, classify_gemma4, Gemma4Bucket, DFLASH_PREFIX,
+    MTP_PREFIX, VISION_INSTALL_PREFIX, VISION_PREFIX, VISION_SOURCE_PREFIXES,
 };
 pub(crate) use config::parse_quantization_admitting;
 pub use config::{
@@ -53,14 +59,38 @@ pub use orchestrate::{
 };
 pub use shards::{Gemma4Shards, GTURBO_PAGE_BYTES};
 pub use vision::{
-    read_vision_entries, vision_arch_for_manifest, vision_should_ingest, VisionRead,
-    BLOCK_ROLES as VISION_BLOCK_ROLES, DEEPSTACK_MERGER_PREFIX as VISION_DEEPSTACK_MERGER_PREFIX,
+    read_vision_entries, read_vision_entries_quantized, vision_arch_for_manifest,
+    vision_should_ingest, VisionRead, BLOCK_ROLES as VISION_BLOCK_ROLES,
+    DEEPSTACK_MERGER_PREFIX as VISION_DEEPSTACK_MERGER_PREFIX,
     DEEPSTACK_MERGER_SUFFIXES as VISION_DEEPSTACK_MERGER_SUFFIXES,
+    QWEN25_BLOCK_ROLES as VISION_QWEN25_BLOCK_ROLES,
+    QWEN25_RESIDENT_TENSORS as VISION_QWEN25_RESIDENT_TENSORS,
     RESIDENT_TENSORS as VISION_RESIDENT_TENSORS,
+};
+pub use vision_clip::{
+    parse_llava_vision_config, read_clip_vision_entries, CLIP_MODEL_PREFIX, CLIP_PROJECTOR_PREFIX,
+    CLIP_RESIDENT_TENSORS, CLIP_SOURCE_PREFIXES, LLAVA_MODEL_TYPE,
 };
 pub use vision_gemma4::{
     parse_gemma4_vision_config, EMBED_VISION_PREFIX, GEMMA4_BLOCK_ROLES,
     GEMMA4_PROJECTOR_INSTALL_NAME, GEMMA4_RESIDENT_TENSORS,
+};
+pub use vision_lfm3::parse_lfm3_vl_vision_config;
+pub use vision_minicpm::{
+    MERGER_PREFIX as MINICPM_MERGER_PREFIX, MINICPM_BLOCK_ROLES, MINICPM_MERGER,
+    MINICPM_SOURCE_PREFIXES, MINICPM_TOWER_RESIDENT, MINICPM_VIT_MERGER,
+    VIT_MERGER_PREFIX as MINICPM_VIT_MERGER_PREFIX,
+};
+pub use vision_muse::{MUSE_BLOCK_SOURCES, MUSE_RESIDENT_TENSORS, MUSE_SOURCE_PREFIXES};
+pub use vision_pixtral::{
+    parse_pixtral_vision_config, pixtral_special_token_ids, read_pixtral_vision_entries,
+    PIXTRAL_BLOCK_ROLES, PIXTRAL_MODEL_TYPE, PIXTRAL_PROJECTOR_PREFIX, PIXTRAL_RESIDENT_TENSORS,
+    PIXTRAL_SOURCE_PREFIXES, PIXTRAL_TOWER_PREFIX,
+};
+pub use vision_siglip::{
+    parse_deepseek_vl2_vision_config, read_siglip_vision_entries, DEEPSEEK_VL2_IMAGE_TOKEN_ID,
+    DEEPSEEK_VL2_MODEL_TYPE, SIGLIP_MODEL_PREFIX, SIGLIP_PROJECTOR_PREFIX, SIGLIP_RESIDENT_TENSORS,
+    SIGLIP_SOURCE_PREFIXES,
 };
 
 use std::path::{Path, PathBuf};
@@ -170,7 +200,12 @@ fn write_gemma4_install_streamed_in_place(
     // The same both-writers rule the two arms above carry applies to this one
     // and is stated at the `write_packed_vision` call site.
     let tower = if vision::vision_should_ingest(arch, &plan.vision_bases) {
-        let mut tower = vision::read_vision_entries(shards, &plan.vision_bases, &arch.vision)?;
+        let mut tower = vision::read_vision_entries_quantized(
+            shards,
+            &plan.vision_bases,
+            &arch.vision,
+            Some(quant),
+        )?;
         progress(&format!(
             "ingested a {}-block vision tower ({} resident tensors)",
             tower.blocks.experts.len(),
@@ -621,6 +656,29 @@ pub fn write_qwen2_dense_install_streamed(
         return Err(Box::new(Gemma4Error::Config(format!(
             "write_qwen2_dense_install_streamed needs arch.family = qwen2, got {}",
             arch.family.as_str()
+        ))));
+    }
+    write_gemma4_install_streamed(dir, arch, model_id, shards, quant, progress)
+}
+
+/// DeepSeek-VL2 (`deepseek2` family, plain-attention trunk) install write
+/// through the shared MLX checkpoint walk. The caller must have run
+/// `canonicalize_deepseek_vl2_header` on every shard header first (the
+/// shared-expert rename).
+pub fn write_deepseek_vl2_install_streamed(
+    dir: &Path,
+    arch: &ArchConfig,
+    model_id: &str,
+    shards: &Gemma4Shards<'_>,
+    quant: &Gemma4Quant,
+    progress: impl FnMut(&str),
+) -> Result<(), Box<dyn std::error::Error>> {
+    if arch.family != ModelFamily::Deepseek2 || arch.mla.is_active() {
+        return Err(Box::new(Gemma4Error::Config(format!(
+            "write_deepseek_vl2_install_streamed needs arch.family = deepseek2 with no MLA, got \
+             {} (mla active: {})",
+            arch.family.as_str(),
+            arch.mla.is_active()
         ))));
     }
     write_gemma4_install_streamed(dir, arch, model_id, shards, quant, progress)

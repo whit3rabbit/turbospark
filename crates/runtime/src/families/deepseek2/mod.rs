@@ -75,18 +75,30 @@ impl RealForwardRunner {
         let embed_name = "language_model.model.embed_tokens.weight";
 
         let mut pass = self.context.begin_pass_labeled("cb1 (attn+router)");
-        encode_embed_any(
-            &mut self.context,
-            &pass,
-            &self.weights,
-            &self.index,
-            embed_name,
-            (&self.scratch.x, 0),
-            token as u32,
-            hidden as u32,
-            vocab,
-            1.0,
-        )?;
+        // An image position of a flat-injected prompt (DeepSeek-VL2) blits the
+        // tower's row INSTEAD of the lookup; the host write lands before this
+        // pass's commit, which is what makes it visible to every dispatch
+        // below. Positions are plain token indices (no mRoPE), so nothing else
+        // changes. Text positions, and every decode step, take the table.
+        match self
+            .prompt_vision
+            .as_ref()
+            .and_then(|pv| pv.row_for(position))
+        {
+            Some(row) => gpu::write_buffer_bytes(&self.scratch.x, 0, row),
+            None => encode_embed_any(
+                &mut self.context,
+                &pass,
+                &self.weights,
+                &self.index,
+                embed_name,
+                (&self.scratch.x, 0),
+                token as u32,
+                hidden as u32,
+                vocab,
+                1.0,
+            )?,
+        }
 
         let state = self
             .real_deepseek2
@@ -113,19 +125,34 @@ impl RealForwardRunner {
             )
             .map_err(gpu_err)?;
 
-            attn::encode_mla_attention_block(
-                &mut self.context,
-                &pass,
-                &self.weights,
-                &self.index,
-                &arch,
-                state,
-                &self.scratch,
-                &mut self.kv,
-                layer,
-                position,
-                hidden,
-            )?;
+            if state.mha {
+                attn::encode_mha_attention_block(
+                    &mut self.context,
+                    &pass,
+                    &self.weights,
+                    &self.index,
+                    &arch,
+                    &self.scratch,
+                    &self.kv,
+                    layer,
+                    position,
+                    hidden,
+                )?;
+            } else {
+                attn::encode_mla_attention_block(
+                    &mut self.context,
+                    &pass,
+                    &self.weights,
+                    &self.index,
+                    &arch,
+                    state,
+                    &self.scratch,
+                    &mut self.kv,
+                    layer,
+                    position,
+                    hidden,
+                )?;
+            }
 
             // RAW residual add, no sandwich norm.
             gpu::encode_residual_add(

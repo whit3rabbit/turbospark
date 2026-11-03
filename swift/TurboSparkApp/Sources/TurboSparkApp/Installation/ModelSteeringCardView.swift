@@ -12,6 +12,7 @@ struct ModelSteeringCardView: View {
     let installedModel: InstalledModel?
 
     @State private var showingImport = false
+    @State private var showingExtract = false
 
     private var descriptor: ModelFeatureDescriptor {
         let sessionInfo: SessionInfo? = {
@@ -62,6 +63,11 @@ struct ModelSteeringCardView: View {
         .sheet(isPresented: $showingImport) {
             if let installedModel {
                 SteeringVectorImportSheet(model: model, installedModel: installedModel)
+            }
+        }
+        .sheet(isPresented: $showingExtract) {
+            if let installedModel {
+                SteeringTraitExtractSheet(model: model, installedModel: installedModel)
             }
         }
     }
@@ -116,6 +122,21 @@ struct ModelSteeringCardView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 8) {
+                Button {
+                    showingExtract = true
+                } label: {
+                    Label {
+                        Text("Extract from this model", bundle: .module)
+                    } icon: {
+                        Image(systemName: "wand.and.stars")
+                    }
+                }
+                .appAction(.secondary, size: .small)
+                .disabled(model.generating || model.opening)
+                .accessibilityHint(Text(
+                    "Captures this model's own activations against a built-in trait and creates a steering preset from them",
+                    bundle: .module))
+
                 Button {
                     showingImport = true
                 } label: {

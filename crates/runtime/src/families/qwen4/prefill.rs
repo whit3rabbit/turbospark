@@ -52,8 +52,10 @@
 //!
 //! Matches `produce.rs`'s current feature set rather than gemma4's: no
 //! steering, no residual capture (this family's sequential decode calls
-//! neither), no vision, no drafter -- all out of scope for this cut,
-//! `mod.rs`'s own doc.
+//! neither), no drafter -- out of scope for this cut, `mod.rs`'s own doc.
+//! An image prompt carries its own copy of `produce.rs`'s two vision halves,
+//! the tower-row blit and the mRoPE angle, and
+//! `tests/qwen4exp_vision_synthetic.rs` holds the two drivers together.
 //!
 //! Two opt-in seams batch across the micro-batch's rows, each bit-identical
 //! to the per-token loop it replaces. `TURBOSPARK_ROUTED_BATCH` runs the
@@ -77,6 +79,7 @@ use crate::moe_prefill_pipeline::routed_pipeline_banks;
 use crate::real_forward::RealForwardRunner;
 use crate::real_forward_dispatch::{encode_embed_any, encode_gemv_any};
 use crate::real_forward_types::{RealForwardError, MAX_PREFILL_BATCH};
+use crate::vision::RopePosition;
 
 impl RealForwardRunner {
     /// Runs a whole prefill chunk through the qwen4_exp flow, writing the
@@ -174,6 +177,17 @@ impl RealForwardRunner {
                 "token id {bad} outside vocab {vocab}"
             )));
         }
+        self.refuse_qwen4_vision_past_qsa_budget()?;
+        // The batched-GEMV seam takes no per-row rope, so an image prompt is
+        // refused there rather than rotated at its token index, matching
+        // `families/qwen/batched.rs`.
+        if self.batched_gemv_prefill && self.prompt_vision.is_some() {
+            return Err(RealForwardError::Unsupported(
+                "TURBOSPARK_BATCHED_GEMV prefill does not carry mRoPE positions; run an \
+                 image prompt without it"
+                    .to_string(),
+            ));
+        }
 
         // `banks == 1` does not make every slot count safe here: see
         // `routed_pipeline_banks`'s doc and AGENTS.md Gotcha 64.
@@ -201,23 +215,51 @@ impl RealForwardRunner {
         // Embed and TILE every token of the micro-batch into its own row of
         // `wide_x`: `embed_tokens(ids).repeat(1, 1, C)` per token, matching
         // the sequential flow's per-`c` tiling at that token's row offset.
+        //
+        // An image row is a HOST write and lands now, not in commit order.
+        // Sound for two reasons that are properties of this driver: every
+        // `(t, c)` targets a disjoint byte range of `wide_x`, and the previous
+        // micro-batch ended in `commit_and_wait`, so no GPU work of this or an
+        // earlier batch is reading `wide_x` yet. The lookup stays one dispatch
+        // per row; an M-row lookup would execute after commit and overwrite
+        // every image row (the PLE `ngram_emb` failure in the module header).
         for (t, &token) in tokens.iter().enumerate() {
             let qwen4 = self.real_qwen4.as_ref().expect("checked above");
-            let row_off = (t * wide_dim * 2) as u64;
+            let row_off = t * wide_dim * 2;
+            let vision_row = self
+                .prompt_vision
+                .as_ref()
+                .and_then(|pv| pv.row_for(start_position + t));
             for c in 0..hc_count {
-                encode_embed_any_qwen4(
-                    &mut self.context,
-                    &pass,
-                    &self.weights,
-                    &self.index,
-                    embed_name,
-                    (&qwen4.wide_x, row_off + (c * hidden * 2) as u64),
-                    token as u32,
-                    hidden as u32,
-                    vocab,
-                )?;
+                match vision_row {
+                    Some(row) => {
+                        gpu::write_buffer_bytes(&qwen4.wide_x, row_off + c * hidden * 2, row)
+                    }
+                    None => encode_embed_any_qwen4(
+                        &mut self.context,
+                        &pass,
+                        &self.weights,
+                        &self.index,
+                        embed_name,
+                        (&qwen4.wide_x, (row_off + c * hidden * 2) as u64),
+                        token as u32,
+                        hidden as u32,
+                        vocab,
+                    )?,
+                }
             }
         }
+        // The mRoPE angle per row, resolved once per micro-batch before the
+        // per-layer borrow split. `Sequential` on every row of a text prompt.
+        let rope: Vec<RopePosition> = (0..m)
+            .map(|t| match self.prompt_vision.as_ref() {
+                Some(pv) => {
+                    let (rt, rh, rw) = pv.rope_position(start_position + t);
+                    RopePosition::Triple(rt, rh, rw)
+                }
+                None => RopePosition::Sequential,
+            })
+            .collect();
 
         let mut pending_routed: Option<gpu::CommittedPass> = None;
         let batched_gemv = self.batched_gemv_prefill;
@@ -275,7 +317,7 @@ impl RealForwardRunner {
                         m,
                     )?;
                 } else {
-                    for t in 0..m {
+                    for (t, &rope_t) in rope.iter().enumerate() {
                         let x_off = (t * wide_dim * 2) as u64;
                         let hc_row = (t * hc_count * 2) as u64;
                         let position = start_position + t;
@@ -323,6 +365,7 @@ impl RealForwardRunner {
                                 kv,
                                 layer,
                                 position,
+                                rope_t,
                                 None,
                             )?;
                         }

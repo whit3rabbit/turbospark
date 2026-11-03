@@ -307,6 +307,8 @@ public struct AppSettingsView: View {
             BrowserSettingsPaneView(model: model)
         case .computerUse:
             ComputerUseSettingsPaneView(model: model)
+        case .network:
+            NetworkSettingsPaneView(model: model)
         }
     }
 }

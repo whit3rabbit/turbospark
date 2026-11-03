@@ -107,6 +107,7 @@ extension AppModel {
         self.interactionMode = AppInteractionMode(rawValue: settings.interactionMode) ?? .chat
         self.browserSettings = settings.browser
         self.computerUseSettings = settings.computerUse
+        self.networkPolicy = settings.networkPolicy
         self.alwaysStartInGhostMode = settings.alwaysStartInGhostMode
         self.activePermissionMode = AppPermissionMode(rawValue: settings.rootlessPermissionMode) ?? .auto
         self.autoCompactEnabled = settings.autoCompact
@@ -318,7 +319,8 @@ extension AppModel {
             syntextIndexingEnabled: syntextIndexingEnabled,
             conversationRecallEnabled: conversationRecallEnabled,
             browser: browserSettings,
-            computerUse: computerUseSettings
+            computerUse: computerUseSettings,
+            networkPolicy: networkPolicy
         )
         // The API key follows its own storage: Keychain, written only when
         // the field changed, so a persist of unrelated settings does not

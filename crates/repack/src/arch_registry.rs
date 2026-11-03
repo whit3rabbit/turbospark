@@ -90,6 +90,12 @@ const SUPPORTED_GGUF: &[(&str, ModelFamily)] = &[
     // Gotcha 36). Shares the `llama` decode flow; see `ModelFamily::Qwen3Moe`
     // for the two places they differ.
     ("qwen3moe", ModelFamily::Qwen3Moe),
+    // Qwen3-VL-30B-A3B's text GGUF (llama.cpp `LLM_ARCH_QWEN3VLMOE`): the same
+    // trunk tensors and metadata keys as `qwen3moe` under a different prefix,
+    // plus interleaved-mRoPE metadata this port takes from the tower sidecar's
+    // config. The tower is NOT in this file (llama.cpp keeps it in a separate
+    // mmproj GGUF); it arrives as a `pull-vision` sidecar from the MLX repo.
+    ("qwen3vlmoe", ModelFamily::Qwen3Moe),
     // Qwen3.8-Flash-Next's `qwen4exp` GGUFs share the existing Qwen4Exp
     // baseline and decode flow. Q2_0 gate/up/down, the IQ2_S/IQ2_XXS/IQ1_M
     // gate/up variants, and top-10 reduction are covered by Metal parity;
@@ -214,6 +220,22 @@ const SUPPORTED_HF: &[(&str, ModelFamily)] = &[
     // c8e9187488f846965507bfc2b3957d59fd0d5a27. The root config is the
     // plain `qwen2` form used by this parser.
     ("qwen2", ModelFamily::Qwen2Dense),
+    // The Qwen2.5-VL wrapper (`mlx-community/Qwen2.5-VL-7B-Instruct-4bit`):
+    // its trunk is a plain Qwen2 dense model whose config sits flat at the
+    // root beside `vision_config`, so it resolves to the same family and the
+    // tower is carried by `VisionConfig` (`VisionTowerKind::Qwen25Vl`).
+    ("qwen2_5_vl", ModelFamily::Qwen2Dense),
+    // DeepSeek-VL2 (`mlx-community/deepseek-vl2-tiny-4bit`): the wrapper's
+    // text model is a DeepSeekMoE trunk with plain attention, run by the
+    // `deepseek2` flow's MHA arm (`ArchConfig::mla` inactive).
+    ("deepseek_vl_v2", ModelFamily::Deepseek2),
+    // Qwen3-VL-30B-A3B (`mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit`): the
+    // wrapper and its text config. Recognition only for the trunk, which has
+    // no safetensors writer on the llama MoE flow (its routed experts are
+    // GGUF K-quant blobs); the root string is what lets `pull-vision` read the
+    // checkpoint's tower and pair it with the `qwen3moe` GGUF trunk.
+    ("qwen3_vl_moe", ModelFamily::Qwen3Moe),
+    ("qwen3_vl_moe_text", ModelFamily::Qwen3Moe),
     // The FIFTEENTH family. Read off
     // `mlx-community/Qwen3-VL-4B-Instruct-4bit` @
     // 2fd8dacbdb8f1e54b8c005f081ec5bf79c56376b, whose root `model_type` is
@@ -345,11 +367,14 @@ fn config_json_resolution(root: &serde_json::Value) -> Option<(&str, ModelFamily
 /// with the SigLIP tower `classify_for_family` buckets as `VisionTower`, and
 /// under these wrappers the `vision_tower.` prefix names a different tower.
 ///
-/// - `minicpmv4_7`: read off `mlx-community/MiniCPM-V-4.7-35B-A3B-mxfp4`
-///   @ 810419dd09762d63aad6da5b6a418c4af8946e60 (`text_config.model_type`
-///   `qwen3_5_moe_text`; a 27-layer MiniCPM SigLIP under `vision_tower.`,
-///   plus `vit_merger.` and `merger.`).
-const FOREIGN_VISION_WRAPPERS: &[&str] = &["minicpmv4_7"];
+/// Empty since 2026-11-01. `minicpmv4_7` was its only member (read off
+/// `mlx-community/MiniCPM-V-4.7-35B-A3B-mxfp4` @
+/// 810419dd09762d63aad6da5b6a418c4af8946e60: a 27-layer MiniCPM SigLIP under
+/// `vision_tower.`, plus `vit_merger.` and `merger.`); it left when that tower
+/// got its own reader (`VisionTowerKind::MiniCpmV`,
+/// `docs/MINICPMV_VISION_PHASE0.md`). The mechanism stays for the next wrapper
+/// whose tower this port cannot run.
+const FOREIGN_VISION_WRAPPERS: &[&str] = &[];
 
 /// True when `config.json`'s root `model_type` is a wrapper in
 /// [`FOREIGN_VISION_WRAPPERS`], whose tower must be dropped rather than

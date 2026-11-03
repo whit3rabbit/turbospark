@@ -785,6 +785,9 @@ pub(crate) struct RealQwen4State {
     /// engine for this checkpoint fits this machine): the KL between the
     /// two arms past 2,051 tokens.
     pub(crate) qsa_force_dense: bool,
+    /// The context this state was sized for, so a vision prompt can ask
+    /// whether block selection could ever run ([`Self::qsa_can_select`]).
+    pub(crate) max_context: usize,
     /// Whether this install's RMSNorm weights are offsets from unity
     /// (`1 + w`, Hugging Face and the MLX conversions) rather than llama.cpp
     /// GGUF's folded scales. See [`super::rms_norm_grouped`].
@@ -915,6 +918,19 @@ pub(crate) struct RealQwen4State {
 }
 
 impl RealQwen4State {
+    /// Whether QSA block selection can run at any position this state was
+    /// sized for: `max_context / idx_compress` complete blocks above
+    /// `index_top_k`, with the dense diagnostic off.
+    ///
+    /// Selection reads pooled block keys that `encode_qsa_advance_blocks`
+    /// rotated at the block's scalar start index, where the reference rotates
+    /// them at its 3-D mRoPE position (`docs/QWEN4EXP_VISION_PHASE0.md` item
+    /// 3). Below the budget those keys are never read, so an image prompt is
+    /// exact there and refused wherever this is true.
+    pub(crate) fn qsa_can_select(&self) -> bool {
+        !self.qsa_force_dense && self.max_context / self.idx_compress as usize > self.idx_block_topk
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn build(
         context: &mut gpu::MetalContext,
@@ -1333,6 +1349,7 @@ impl RealQwen4State {
             idx_qk: halfs(idx_projection_len),
             qsa_scores,
             qsa_force_dense,
+            max_context,
             norms_centered,
             gdn_qkv_raw: halfs(qkv_dim),
             gdn_conv_out: halfs(qkv_dim),

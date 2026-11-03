@@ -209,6 +209,44 @@ pub fn canonicalize_qwen2_header(
     Ok(())
 }
 
+/// Renames the DeepSeek-VL2 MLX checkpoint's fused shared-expert container
+/// onto the spelling the `deepseek2` flow reads.
+///
+/// The MLX conversion calls it `mlp.shared_experts.*` (plural, mlx-lm's
+/// `DeepseekV2MoE.shared_experts`); the flow, written against llama.cpp's
+/// `ffn_*_shexp` mapping, reads `mlp.shared_expert.*`. The checkpoint already
+/// stores the two experts FUSED (`[1792, ...]`), so the rename is the whole
+/// adaptation. A header that carries both spellings, or whose rename would
+/// collide, is refused.
+pub fn canonicalize_deepseek_vl2_header(
+    header: &mut SafetensorsHeader,
+) -> Result<(), super::config::Gemma4Error> {
+    const PLURAL: &str = ".mlp.shared_experts.";
+    const SINGULAR: &str = ".mlp.shared_expert.";
+    let has_plural = header.tensors.keys().any(|n| n.contains(PLURAL));
+    let has_singular = header.tensors.keys().any(|n| n.contains(SINGULAR));
+    if has_plural && has_singular {
+        return Err(super::config::Gemma4Error::Config(
+            "DeepSeek-VL2 checkpoint mixes mlp.shared_experts. and mlp.shared_expert. spellings"
+                .into(),
+        ));
+    }
+    if !has_plural {
+        return Ok(());
+    }
+    let mut renamed = std::collections::BTreeMap::new();
+    for (name, info) in std::mem::take(&mut header.tensors) {
+        let canonical = name.replacen(PLURAL, SINGULAR, 1);
+        if renamed.insert(canonical.clone(), info).is_some() {
+            return Err(super::config::Gemma4Error::Config(format!(
+                "shared-expert rename creates duplicate tensor {canonical}"
+            )));
+        }
+    }
+    header.tensors = renamed;
+    Ok(())
+}
+
 /// Renames Flint's text-only MLX namespace onto the canonical install
 /// namespace (the `qwen2` rename, reused) and re-labels its U8-packed
 /// quantized weights as the U32-packed form the walk reads.
@@ -301,9 +339,15 @@ pub fn routed_marker(family: ModelFamily) -> &'static str {
         // `flint` spells its routed container the same way: the stacked
         // `model.layers.N.mlp.switch_mlp.{gate,up,down}_proj` [256, ...]
         // planes of the published `flint-int4` header.
+        //
+        // `deepseek2` was GGUF-only (its routed tensors are mapped by NAME in
+        // `gguf_names`, so this marker never fired) until the DeepSeek-VL2
+        // MLX conversion, which stacks its experts under the same mlx-lm
+        // `mlp.switch_mlp.` container (`[64, 896, 160]` planes).
         ModelFamily::QwenGdnMoe
         | ModelFamily::QwenGdnDense
         | ModelFamily::Qwen4Exp
+        | ModelFamily::Deepseek2
         | ModelFamily::Flint
         // The MLX conversion's stacked `switch_mlp` planes, as Flint's.
         | ModelFamily::UnlimitedOcr2 => ".mlp.switch_mlp.",
@@ -329,11 +373,8 @@ pub fn routed_marker(family: ModelFamily) -> &'static str {
         | ModelFamily::Spark25
         | ModelFamily::Qwen3Dense
         | ModelFamily::Qwen2Dense
-        // `deepseek2` is GGUF-intake-only like these (no safetensors path),
-        // so the marker can never match; the default is the honest arm.
         // `qwen3_vl` is DENSE too and MLX-safetensors-only, with no MoE
         // sibling marker to borrow: the default arm for the same reason.
-        | ModelFamily::Deepseek2
         | ModelFamily::MiniMaxM2
         | ModelFamily::Qwen3Vl
         // `lfm3` is DENSE with no MoE sibling (its FFN is
@@ -515,7 +556,10 @@ pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -
     // each a latent bug for exactly as long as no sibling existed to exercise
     // them. All three families ship the SigLIP-class tower the runtime runs
     // (the dense and MoE halves the identical 333-tensor one; `qwen3_vl` the
-    // depth-24 tower plus its 18 deepstack merger tensors).
+    // depth-24 tower plus its 18 deepstack merger tensors). `qwen4_exp`
+    // carries the dense tower at out_hidden 2560, quantized to 4 bits on the
+    // MLX conversion; `vision::read_vision_entries_quantized` dequantizes it
+    // (`docs/QWEN4EXP_VISION_PHASE0.md` item 1).
     //
     // Gemma 4 joins them with its own tower (`vision_gemma4.rs`), and its
     // projector lives under a second prefix, `embed_vision.`, claimed here
@@ -532,8 +576,25 @@ pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -
             ModelFamily::QwenGdnDense
                 | ModelFamily::QwenGdnMoe
                 | ModelFamily::Qwen3Vl
+                | ModelFamily::Qwen4Exp
+                | ModelFamily::Qwen2Dense
                 | ModelFamily::Gemma4
+                | ModelFamily::Lfm3
+                | ModelFamily::MuseGlimmer
         )
+    {
+        return Gemma4Bucket::VisionTower;
+    }
+    // LFM3-VL's projector sits beside its tower under `multi_modal_projector.`.
+    if name.starts_with(super::vision_lfm3::LFM3_PROJECTOR_PREFIX) && family == ModelFamily::Lfm3 {
+        return Gemma4Bucket::VisionTower;
+    }
+    // Muse-Glimmer splits its vision side three ways (`vision_tower.` above,
+    // then the adapter and the projection into the trunk). All three are one
+    // tower to the runtime; whether they are INGESTED is the caller's request
+    // (`vision_should_ingest`), and a text-only install still drops them.
+    if (name.starts_with("vision_adapter.") || name.starts_with("vision_projection."))
+        && family == ModelFamily::MuseGlimmer
     {
         return Gemma4Bucket::VisionTower;
     }
@@ -547,6 +608,17 @@ pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -
         && family == ModelFamily::UnlimitedOcr2
     {
         return Gemma4Bucket::ExcludedMultimodal;
+    }
+    // MiniCPM-V 4.7's two adapters ride beside its `vision_tower.`: the 2x2
+    // window attention-merger and the final merger. Bucketed as the tower for
+    // the Qwen MoE trunk it wraps; the walk drops the bucket when no tower is
+    // requested, so a text-only install is unchanged, and no other Qwen MoE
+    // checkpoint carries a top-level `merger.` or `vit_merger.`.
+    if family == ModelFamily::QwenGdnMoe
+        && (name.starts_with(super::vision_minicpm::VIT_MERGER_PREFIX)
+            || name.starts_with(super::vision_minicpm::MERGER_PREFIX))
+    {
+        return Gemma4Bucket::VisionTower;
     }
     // THIS LIST IS READ OFF REAL CHECKPOINT HEADERS, one prefix per
     // publisher's naming, and it is not guesswork: an unlisted prefix falls
@@ -565,8 +637,8 @@ pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -
     //
     // `vit_merger.` and `merger.` are `mlx-community/MiniCPM-V-4.7-35B-A3B-mxfp4`'s
     // (16 and 6 tensors), whose own `vision_tower.` is claimed by the arm
-    // above for its Qwen trunk and dropped later because that wrapper's
-    // tower is never activated (`arch_registry::has_foreign_vision_tower`).
+    // above for its Qwen trunk; `vit_merger.` and `merger.` are claimed as
+    // the tower for that trunk just before this list.
     if name.starts_with("vision_tower.")
         || name.starts_with("embed_vision.")
         || name.starts_with("audio_tower.")
@@ -574,6 +646,21 @@ pub fn classify_for_family(name: &str, num_layers: usize, family: ModelFamily) -
         || name.starts_with("vision_projection.")
         || name.starts_with("vit_merger.")
         || name.starts_with("merger.")
+    {
+        return Gemma4Bucket::ExcludedMultimodal;
+    }
+    // DeepSeek-VL2 (`mlx-community/deepseek-vl2-tiny-4bit`, enumerated from
+    // its index before any bytes moved): the SigLIP tower sits under
+    // `vision.vision_tower.` (this namespace prefix is the SOURCE's; the
+    // install's own `vision.` residents are written by the tower arm), the
+    // downsample MLP under `projector.`, and the two layout embeddings are
+    // bare top-level names. Family-gated so no other checkpoint can reach
+    // them on a string collision.
+    if family == ModelFamily::Deepseek2
+        && (name.starts_with("vision.")
+            || name.starts_with("projector.")
+            || name == "image_newline"
+            || name == "view_separator")
     {
         return Gemma4Bucket::ExcludedMultimodal;
     }

@@ -14,6 +14,62 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- DeepSeek-VL2-tiny image input: a plain-attention arm of the `deepseek2` flow
+  for the non-MLA MoE trunk, a SigLIP tower sidecar with dynamic tiling, and
+  an embedding blit in the deepseek2 produce path (image positions used to
+  carry the untrained placeholder row). Gated on the real 4-bit checkpoint
+  through the CLI and both server endpoints. See
+  `docs/DEEPSEEK_VL2_VISION_PHASE0.md`.
+- Pixtral-12B image input on the `llama` family: a `pixtral` tower sidecar
+  (RMSNorm blocks, 2-D rope, SwiGLU) on a GGUF trunk, with the `[IMG]`,
+  `[IMG_BREAK]` and `[IMG_END]` prompt layout. Gated on the real checkpoint
+  through the CLI and both server endpoints. Text parts now carry `content`
+  as well as `text`. See `docs/PIXTRAL_VISION_PHASE0.md`.
+- MiniCPM-V 4.7 image input (the 448-area global view): a new `minicpm_v`
+  tower with its window-mean merger, ingested from the checkpoint instead of
+  dropped, with the Qwen3.6 MoE trunk's image path. Gated on the real
+  checkpoint through the CLI and both server endpoints. Detail slices are not
+  built and a prompt carrying them is refused. See
+  `docs/MINICPMV_VISION_PHASE0.md`.
+- Muse-Glimmer image support: its 50-block tower is ingested into the same
+  install (adapter and projection dequantized from 4-bit), with PIL Lanczos
+  and a token-cap resize, and a front-end wrap of the bare `<|patch|>`
+  placeholder. A text page and a shapes image read through the CLI and both
+  server endpoints; the tower agrees with a numpy transcription at cosine
+  0.99998 to 0.99999879. See `docs/MUSEGLIMMER_VISION_PHASE0.md`.
+- Qwen3-VL-30B-A3B image support on the `qwen3moe` family: the official
+  Q4_K_M GGUF trunk (`qwen3vlmoe`) plus the Qwen3-VL tower and its three
+  deepstack mergers as a `pull-vision` sidecar (`qwen3vl-30b-a3b` and
+  `qwen3vl-30b-a3b-vision-tower` catalog rows). Images reach generated output
+  from the CLI and both server endpoints. The llama MoE chunked driver still
+  has no image injection, so an image turn prefills sequentially and text
+  turns keep the chunked driver. The shard fetcher now scans a repo's real
+  shards when its index is stale.
+- LLaVA-1.5 image support for the `llama` family: a CLIP vision tower
+  (`VisionTowerKind::Clip`), a `pull-vision` sidecar from
+  `llava-hf/llava-1.5-7b-hf` attached to a GGUF trunk, `--image` in the CLI,
+  and both server endpoints. Adds a quick-GELU vision kernel and a BOS fix for
+  the BOS-less llava template. See `docs/LLAVA_VISION_PHASE0.md`.
+- LFM3-VL image support: the `lfm3` flow takes images through a new tower kind
+  (RMSNorm blocks alternating a gated depthwise 3x3 convolution and
+  grouped-query attention, a SwiGLU MLP, a pixel-unshuffle projector).
+  `turbospark-model pull --repo LiquidAI/LFM3-VL-2B-MLX-8bit` installs the
+  tower from the shard bytes (`lfm3-vl-2b-8bit` catalog row). Tower stages
+  agree with an independent numpy implementation at cosine 0.9999965, and a
+  text page is read through the CLI and both server endpoints. Combined
+  install only. See `docs/LFM3_VL_VISION_PHASE0.md`.
+- Qwen2.5-VL image support on the Qwen2 family. A plain Qwen2 dense trunk
+  plus a new `qwen25_vl` tower (RMSNorm blocks, a gated SiLU MLP, window
+  attention on 28 of 32 blocks, an RMSNorm merger) ingested into the same
+  install, with the trunk's chunked mRoPE as a new `rope_mrope_chunked`
+  kernel that is bit-identical to the plain rope at equal positions. Images
+  reach generated output from the CLI and both server endpoints on
+  `mlx-community/Qwen2.5-VL-7B-Instruct-4bit` (`qwen25vl-7b`). The tower
+  agrees with an independent numpy transcription of the reference at merger
+  cosine 0.99998 to 0.99999660. The tokenizer and probe now read
+  `chat_template.json`, which is where this checkpoint keeps its vision
+  template. mlx-vlm itself was not executed. See
+  `docs/QWEN25_VL_VISION_PHASE0.md`.
 - Unlimited-OCR-2 on Metal (`mlx-community/Unlimited-OCR-2-4bit`, family
   `unlimited_ocr2`, alias `unlimited-ocr-2-4bit`): DASH block-sparse attention
   over page2d RoPE on a DeepSeek-V2-style MoE decoder, with SAM and CLIP towers.
@@ -47,6 +103,52 @@ when this file gets updated relative to the version bump and the tag.
   against mlx-vlm: tower cosine 0.99998 to F32, and the trunk's median KL
   closest to the transformers mask. No sidecar and no larger budgets yet.
   See `docs/GEMMA4_VISION_PHASE0.md`.
+- macOS app: Settings > Network controls which hosts tool calls can reach,
+  with Ask for new domains (the new default), Allow all, Block all and
+  Custom modes, allowed and blocked domain lists, an Allow localhost toggle
+  (on) and an Allow local network toggle (off). The policy is a ceiling over
+  project permissions, including Full access. A web tool asks with an
+  "Allow access to <host>?" card (Deny, Allow Once, Allow for This Chat,
+  Always Allow or Always Block), and the decision is remembered per host,
+  never per tool. Block all runs shell commands
+  and custom tools in a Seatbelt sandbox with networking off. Cloud metadata
+  endpoints are always refused. Behavior change: web tools that used to run
+  silently in Approve for me now ask once per new domain, and a subagent's
+  request to a domain that is not allowed is refused; choose Allow all to
+  keep the old behavior.
+- Trait steering (`turbospark-steer`, `turbospark steer`): five built-in
+  trait packs (refusals, slop, humor, sycophancy, emotional tone), each a
+  contrastive prompt corpus plus held-out prompts and keyword markers, and
+  two verbs over them. `extract` captures both corpora against a model's own
+  activations (one open per side, one snapshot per prompt), reduces them to
+  a difference-of-means control vector through
+  `turbospark-compute::steering_extract` (the Rust twin of
+  `scripts/extract_direction.py`'s reduction half), prints the four
+  per-layer ranking columns, and writes a llama.cpp-layout `.gguf`. `check`
+  runs the held-out prompts unsteered and steered and prints the
+  keyword-marker rate both times, with the documented short-response
+  collapse warning. Packs ship prompts, never directions: the vector is
+  extracted from the user's own checkpoint, so the app's "nothing ships a
+  direction" provenance rule holds. Verified end to end on the real
+  `tinyllama` install: extraction, steered open
+  (`ablate at alpha 0.3 over 21 of 22 layers`), and a live null-controlled
+  edit.
+- macOS app: the model detail pane's Steering card can extract a trait
+  direction from the installed model (Extract from this model). The sheet
+  runs the bundled `turbospark-steer` as a child process, then creates or
+  updates the preset for that file, selected and enabled. It requires the
+  model to be unloaded first, since extraction opens its own copy.
+  Cancelling terminates the child and leaves any previous vector intact
+  (the write goes through a `.partial` file and a rename). `extract` now
+  refuses a capture with fewer snapshots than prompts and cleans its temp
+  capture directory on every exit path.
+- macOS app: the composer's Steering pill is now a menu: Off, every
+  registered direction (one whose shape the selected model would refuse is
+  listed but not pickable), each built-in trait not yet extracted for the
+  selected model (opens the extract sheet with that trait chosen), Reload
+  to apply when the loaded model is not running the selection, and
+  Steering Settings. It is disabled with the engine's reason on a family
+  that does not dispatch steering.
 - macOS app: an Expert Residency setting (Auto, Streamed, Mapped) in Engine
   settings, with Cache Slots beside it (previously only in the Inspector) and
   a Resolved row. Mapped is sent only to models whose open would take it, and
@@ -71,8 +173,32 @@ when this file gets updated relative to the version bump and the tag.
 - qwen4_exp: opt-in multi-row prefill seams (`TURBOSPARK_ROUTED_BATCH`,
   `TURBOSPARK_BATCHED_GEMV`), exact but no faster on real text, and
   `TURBOSPARK_QWEN4_TAP_FILE` capture of DFlash2 drafter features.
+- tslab: `kernel --bench vision_encode` times the vision tower per stage on
+  three synthetic pages (patches/s, stream share, peak footprint) and writes a
+  `vision_encode` ledger record. `--vision-sidecar DIR` attaches a tower-only
+  sidecar to a text-only trunk. `ane_matmul` gains `vision_qkv`, `vision_proj`,
+  `vision_fc1` and `vision_fc2` cases against programs from
+  `crates/coreml/tools/bake_ane_vision_programs.py`, and `ane-plan` gains
+  `--function` for multifunction packages.
 
 ### Changed
+- The vision tower on the Neural Engine is not pursued. The ANE gate for a
+  tower block passed only against the old per-output matmul (ane/gpu 0.04 to
+  0.16) and ties or loses against the matrix-unit GEMM (0.60 to 1.20), and the
+  tower is compute bound, not bound by reading its blocks. See
+  `docs/SPEEDUP_PLAYBOOK.md`.
+- Vision towers (the Qwen SigLIP tower and the Gemma 4 tower) run their
+  projections on a matrix-unit FP16 GEMM and their attention on a
+  matrix-unit flash attention kernel (FP32 accumulators, head_dim in the
+  pipeline cache key, a head_dim not divisible by 4 falls back to the scalar
+  kernel). On an M4 Max with a busy host the Qwen3-VL-4B tower block drops
+  from about 0.5 s to 0.13 s per page at 1,280 patches and the Gemma 4 tower
+  from about 7 s to 0.7 s per image, so read these as ratios. The Gemma 4
+  real-trunk gate passes on both arms with identical greedy streams. The
+  `vision_inject_synthetic` frozen digest moves to `471bf949` (argmax and
+  top-5 unchanged, and the scalar arm still gives the old digest).
+  `TURBOSPARK_VISION_MMA=0` and `TURBOSPARK_VISION_ATTN_MMA=0` restore the
+  scalar kernels. See `docs/VISION.md`.
 - qwen4_exp wires its expert slot cache by default, at twice the auto slot
   budget (96 slots on a 36 GB M4 Max, 12.4 GiB peak, against 48 unwired). The
   open checks `RLIMIT_MEMLOCK` and `vm.user_wire_limit` first and falls back
@@ -103,6 +229,17 @@ when this file gets updated relative to the version bump and the tag.
   protocol rows (see the Music 3 README, "Turbo F32 stages").
 
 ### Fixed
+- macOS app: stdio MCP servers named `npx`, `uvx`, `node` or `bun` now start
+  when the app is launched from Finder or the Dock. A GUI launch only gets
+  `/usr/bin:/bin:/usr/sbin:/sbin`, so a node from nvm, volta or asdf was
+  never found. The first stdio spawn now reads `PATH` once from the user's
+  login shell (4 s timeout, run in the home folder, nothing else taken from
+  the shell) and searches it first. The child environment is still an
+  allowlist. Relative PATH entries are dropped, so a cloned repository
+  cannot supply its own `node`, and the probe shell must be listed in
+  `/etc/shells`. The fallback list now follows nvm's `alias/default` instead of
+  a `current` symlink that nvm does not create by default, and adds volta,
+  bun, deno, `~/.local/bin` (uv, pipx), mise and asdf.
 - Session info no longer reports the ANE+Steel prefill split as active on a
   model that never uses it. The app's global Prefill Mode "On" sends `split`
   to every model, and a MoE or non-Qwen session read "Active (ANE+Steel)"

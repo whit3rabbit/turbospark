@@ -37,17 +37,26 @@
 
 mod block;
 mod budget;
+pub(crate) mod clip;
 pub(crate) mod gemma4;
 mod inject;
+pub(crate) mod lfm3_vl;
+pub(crate) mod minicpm;
+pub(crate) mod muse;
 mod overflow;
+pub(crate) mod pixtral;
+pub(crate) mod qwen25;
 mod scratch;
 mod shape;
+pub(crate) mod siglip;
 mod stages;
 pub mod unlimited_ocr2;
 mod weights;
 
 pub use budget::{PixelBudget, VisionBudgetTooSmall};
+pub use clip::ClipStages;
 pub use inject::{PromptVision, RopePosition};
+pub use siglip::SiglipStages;
 
 use std::path::Path;
 

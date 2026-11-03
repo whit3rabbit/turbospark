@@ -230,20 +230,36 @@ impl RealForwardRunner {
         }
 
         let embed_name = "language_model.model.embed_tokens.weight";
+        // Vision: the tower's rows for this chunk's image-pad positions,
+        // copied out BEFORE the field split below so no borrow of
+        // `prompt_vision` outlives it. The same precompute the llama and qwen
+        // chunk drivers run.
+        let embed_blits: Vec<Option<Vec<u8>>> = match self.prompt_vision.as_ref() {
+            Some(pv) => (0..m)
+                .map(|t| pv.row_for(start_position + t).map(<[u8]>::to_vec))
+                .collect(),
+            None => vec![None; m],
+        };
         let pass = self.context.begin_pass_labeled("lfm3 chunk cb");
         for (t, &token) in tokens.iter().enumerate() {
-            encode_embed_any(
-                &mut self.context,
-                &pass,
-                &self.weights,
-                &self.index,
-                embed_name,
-                (&self.scratch.x, (t * hidden * 2) as u64),
-                token as u32,
-                hidden as u32,
-                vocab,
-                1.0,
-            )?;
+            match &embed_blits[t] {
+                // A host write into shared storage landing BEFORE the single
+                // commit at the end of this pass, so it is visible to every
+                // dispatch below.
+                Some(row) => gpu::write_buffer_bytes(&self.scratch.x, t * hidden * 2, row),
+                None => encode_embed_any(
+                    &mut self.context,
+                    &pass,
+                    &self.weights,
+                    &self.index,
+                    embed_name,
+                    (&self.scratch.x, (t * hidden * 2) as u64),
+                    token as u32,
+                    hidden as u32,
+                    vocab,
+                    1.0,
+                )?,
+            }
         }
 
         let (context, weights, index, scratch, kv, lfm3) = (

@@ -121,18 +121,28 @@ pub fn manifest_quant_for(
         | ModelFamily::Qwen3Moe
         | ModelFamily::Qwen3Dense
         | ModelFamily::Qwen2Dense
-        // `deepseek2` has no safetensors path (GGUF-only), so this arm is
-        // unreachable; its canonical names match this shape (self_attn.q_proj,
-        // mlp.gate router) if one is ever written. Its shared-expert probe
-        // would find nothing here and take the default, which is the same
-        // behavior the llama arm gives its shared-expert-less families.
-        | ModelFamily::Deepseek2
         | ModelFamily::MiniMaxM2 => (
             format!("{l0}.self_attn.q_proj"),
             format!("{l0}.mlp.gate"),
             format!("{l0}.mlp.gate_proj"),
             format!("{l0}.experts.switch_glu.gate_proj"),
         ),
+        // `deepseek2` reaches this probe through the DeepSeek-VL2 MLX
+        // conversion (its GGUF walk states its quant elsewhere). Layer 0 is
+        // the dense lead, so the router, shared-expert and routed probes name
+        // layer 1, the first MoE layer, with the canonical singular
+        // `shared_expert` the header rename wrote
+        // (`canonicalize_deepseek_vl2_header`). The attention probe stays on
+        // layer 0.
+        ModelFamily::Deepseek2 => {
+            let l1 = "language_model.model.layers.1";
+            (
+                format!("{l0}.self_attn.q_proj"),
+                format!("{l1}.mlp.gate"),
+                format!("{l1}.mlp.shared_expert.gate_proj"),
+                format!("{l1}.mlp.switch_mlp.gate_proj"),
+            )
+        }
         // `muse_glimmer`'s layer 0 IS a plain attention layer, unlike both
         // Qwen halves, so the attention probe is the ordinary
         // `self_attn.q_proj`. It is DENSE, so the router and routed probes
@@ -237,7 +247,10 @@ pub fn manifest_quant_for(
     // than a probe (`crates/repack` CLAUDE.md Gotcha 6).
     let router_slot = if !has_experts {
         slot(attention_bits)
-    } else if matches!(family, ModelFamily::Qwen4Exp | ModelFamily::Flint) {
+    } else if matches!(
+        family,
+        ModelFamily::Qwen4Exp | ModelFamily::Flint | ModelFamily::Deepseek2
+    ) {
         // `flint` ships its router as an unquantized BF16 gate that the
         // writer force-quantizes to INT8 (`int8_force_targets`), so the
         // probe would report the model's 4-bit default for a tensor that

@@ -27,6 +27,17 @@ public struct SandboxConfig: Sendable, Equatable {
     }
 }
 
+/// Destination class of a network host, from the most to the least local.
+public enum AppHostScope: Sendable, Equatable {
+    /// Cloud metadata and link-local credential endpoints. Never reachable.
+    case metadata
+    /// This machine: `localhost`, 127/8, `::1`.
+    case loopback
+    /// LAN, CGNAT, multicast, reserved and unparseable literals.
+    case privateNetwork
+    case publicHost
+}
+
 /// Sandbox validator enforcing filesystem boundaries and network access rules.
 public enum AppToolSandbox {
     /// Canonical form of `url` for containment checks, valid even when the
@@ -111,37 +122,53 @@ public enum AppToolSandbox {
     /// forms of an IPv4 address that most HTTP clients resolve happily
     /// (`http://2130706433/` is `127.0.0.1`).
     public static func isPrivateOrMetadataHost(_ host: String) -> Bool {
+        hostScope(host) != .publicHost
+    }
+
+    /// Which class of destination `host` names. The network policy
+    /// (`AppNetworkPolicy`) treats the classes differently: metadata is never
+    /// reachable, loopback follows "Allow localhost", the rest of the
+    /// non-public space follows "Allow local network".
+    ///
+    /// **THE WHOLE OF 169.254/16 IS METADATA, NOT JUST .254.** ECS serves task
+    /// credentials at 169.254.170.2, and a link-local address is never a web
+    /// server a model should be fetching. `.internal` is metadata for the
+    /// same reason (`metadata.google.internal`); that costs
+    /// `host.docker.internal`, which is the safe direction to be wrong.
+    public static func hostScope(_ host: String) -> AppHostScope {
         var clean = host.lowercased()
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
         // `localhost.` and `127.0.0.1.` are the same hosts as the unqualified
         // spellings (a rooted DNS name), and URLSession resolves them.
         while clean.hasSuffix(".") { clean.removeLast() }
-        guard !clean.isEmpty else { return false }
+        guard !clean.isEmpty else { return .publicHost }
 
-        let namedHosts: Set<String> = [
-            "localhost", "metadata.google.internal", "metadata", "instance-data",
-            "::1", "::", "0:0:0:0:0:0:0:1",
-        ]
-        if namedHosts.contains(clean) { return true }
-        if clean.hasSuffix(".localhost") || clean.hasSuffix(".local")
-            || clean.hasSuffix(".internal")
-        {
-            return true
-        }
+        let metadataHosts: Set<String> = ["metadata.google.internal", "metadata", "instance-data"]
+        if metadataHosts.contains(clean) || clean.hasSuffix(".internal") { return .metadata }
+        if clean == "localhost" || clean.hasSuffix(".localhost") { return .loopback }
+        if clean.hasSuffix(".local") { return .privateNetwork }
 
         // Any IPv6 literal is parsed to bytes rather than prefix-matched on
         // the string: `::ffff:127.0.0.1`, `::ffff:7f00:1` and `0::1` are all
         // loopback and no textual prefix test sees them all.
         if clean.contains(":") {
-            return isPrivateIPv6Literal(clean)
+            return ipv6Scope(clean)
         }
 
         if let packed = packedIPv4(clean) {
-            return isPrivateIPv4(packed)
+            return ipv4Scope(packed)
         }
 
-        return false
+        return .publicHost
+    }
+
+    private static func ipv4Scope(_ packed: UInt32) -> AppHostScope {
+        let a = (packed >> 24) & 0xFF
+        let b = (packed >> 16) & 0xFF
+        if a == 127 { return .loopback }
+        if a == 169 && b == 254 { return .metadata }
+        return isPrivateIPv4(packed) ? .privateNetwork : .publicHost
     }
 
     private static func isPrivateIPv4(_ packed: UInt32) -> Bool {
@@ -163,36 +190,41 @@ public enum AppToolSandbox {
 
     /// Fails closed: a string with a colon that is not a valid IPv6 literal
     /// is not a host this app should be connecting to anyway.
-    private static func isPrivateIPv6Literal(_ literal: String) -> Bool {
+    private static func ipv6Scope(_ literal: String) -> AppHostScope {
         // Drop a zone id (`fe80::1%en0`); inet_pton rejects it.
         let address = literal.split(separator: "%", maxSplits: 1).first.map(String.init) ?? literal
         var storage = in6_addr()
-        guard inet_pton(AF_INET6, address, &storage) == 1 else { return true }
+        guard inet_pton(AF_INET6, address, &storage) == 1 else { return .privateNetwork }
         let bytes = withUnsafeBytes(of: &storage) { Array($0) }
 
         func embedded(_ offset: Int) -> UInt32 {
             bytes[offset..<(offset + 4)].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
         }
 
-        if bytes.dropLast().allSatisfy({ $0 == 0 }) && bytes.last! <= 1 { return true }  // :: and ::1
-        if bytes[0] & 0xFE == 0xFC { return true }  // fc00::/7 unique-local
-        if bytes[0] == 0xFF { return true }  // ff00::/8 multicast
-        if bytes[0] == 0xFE && bytes[1] & 0xC0 == 0x80 { return true }  // fe80::/10 link-local
+        if bytes.dropLast().allSatisfy({ $0 == 0 }) {
+            return bytes.last == 1 ? .loopback : .privateNetwork  // ::1 and ::
+        }
+        // fd00:ec2::254, the AWS IMDS IPv6 endpoint, sits inside fc00::/7.
+        let awsMetadata: [UInt8] = [0xFD, 0x00, 0x0E, 0xC2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02, 0x54]
+        if bytes == awsMetadata { return .metadata }
+        if bytes[0] & 0xFE == 0xFC { return .privateNetwork }  // fc00::/7 unique-local
+        if bytes[0] == 0xFF { return .privateNetwork }  // ff00::/8 multicast
+        if bytes[0] == 0xFE && bytes[1] & 0xC0 == 0x80 { return .privateNetwork }  // fe80::/10 link-local
         // ::ffff:a.b.c.d (mapped) and ::a.b.c.d (deprecated compatible).
         if bytes[0..<10].allSatisfy({ $0 == 0 })
             && ((bytes[10] == 0xFF && bytes[11] == 0xFF) || (bytes[10] == 0 && bytes[11] == 0))
         {
-            return isPrivateIPv4(embedded(12))
+            return ipv4Scope(embedded(12))
         }
         // 64:ff9b::/96 NAT64 carries an IPv4 address in the low 32 bits.
         if bytes[0] == 0x00, bytes[1] == 0x64, bytes[2] == 0xFF, bytes[3] == 0x9B,
             bytes[4..<12].allSatisfy({ $0 == 0 })
         {
-            return isPrivateIPv4(embedded(12))
+            return ipv4Scope(embedded(12))
         }
         // 2002::/16 6to4 carries one in bytes 2-5.
-        if bytes[0] == 0x20 && bytes[1] == 0x02 { return isPrivateIPv4(embedded(2)) }
-        return false
+        if bytes[0] == 0x20 && bytes[1] == 0x02 { return ipv4Scope(embedded(2)) }
+        return .publicHost
     }
 
     /// Parses dotted-quad, bare-decimal and octal/hex IPv4 spellings into a

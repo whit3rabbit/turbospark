@@ -288,11 +288,14 @@ extension AppModel {
         // policy the call executes under even if the selection moves while
         // the card is up.
         let decisionProject = project
+        let networkHostApproved = await SessionApprovalStore.shared.isHostApproved(
+            sessionID: sessionID, host: AppNetworkPolicy.host(forWebCall: call))
         let baseDecision = AppToolPermissionEngine.evaluate(
             call: call, project: decisionProject, sessionApproved: sessionApproved,
             fallbackMode: self.activePermissionMode,
             globalServers: self.globalMcpServers,
-            browserContext: browserPermissionContext(for: call, project: decisionProject))
+            browserContext: browserPermissionContext(for: call, project: decisionProject),
+            networkHostApproved: networkHostApproved)
         let decision: ToolPermissionDecision
         if case .deny = baseDecision {
             // A mutation policy refusal remains absolute. Validation cannot
@@ -673,10 +676,13 @@ extension AppModel {
             let sessionApproved = await SessionApprovalStore.shared.isApproved(
                 sessionID: chatID.uuidString, toolName: updated.name,
                 command: updated.shellCommand)
+            let networkHostApproved = await SessionApprovalStore.shared.isHostApproved(
+                sessionID: chatID.uuidString, host: AppNetworkPolicy.host(forWebCall: updated))
             let decision = AppToolPermissionEngine.evaluate(
                 call: updated, project: project, sessionApproved: sessionApproved,
                 fallbackMode: activePermissionMode, globalServers: globalMcpServers,
-                browserContext: browserPermissionContext(for: updated, project: project))
+                browserContext: browserPermissionContext(for: updated, project: project),
+                networkHostApproved: networkHostApproved)
             // A PreToolUse `ask` is a request for confirmation that the engine's
             // `.allow` (Auto preset, "always allow") must not erase: the single
             // path parks a card for it, so the batch does too. The engine's
