@@ -13,6 +13,16 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-03
+
+### Changed
+- The bundled `openkindd` daemon and the OpenKind Swift package move from
+  0.3.0 to 0.4.0 (commit `b9061ee3`, the `v0.4.0` tag). The app builds
+  against it and the release job still checks both pins inside the DMG.
+- Crates.io: 0.7.0 was the first publish since 0.3.0 and added
+  `turbospark-coreml` and `turbospark-embeddings` to the publish order, because
+  `catalog` and `runtime` depend on them. 0.7.1 publishes the same 19 crates.
+
 ## [0.7.0] - 2026-11-02
 
 ### Added

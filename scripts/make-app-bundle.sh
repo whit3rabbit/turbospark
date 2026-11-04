@@ -82,7 +82,7 @@ sparkle_public_ed_key="O+w+eDlUPQQa1Y+quYgz9BiJljUdS01KeafmpSzoZ3g="
 app="$out_dir/TurboSpark.app"
 contents="$app/Contents"
 openkind_revision="${OPENKIND_RELEASE_REVISION:-}"
-openkind_server_version="${OPENKIND_SERVER_VERSION:-0.3.0}"
+openkind_server_version="${OPENKIND_SERVER_VERSION:-0.4.0}"
 openkind_bin="${OPENKINDD_BINARY:-}"
 openkind_build_dir=""
 

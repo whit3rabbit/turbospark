@@ -166,8 +166,8 @@ jobs:
           - { runner: macos-26, xcode: "26.6" }
           - { runner: macos-15, xcode: "16.4" }
     env:
-      OPENKIND_RELEASE_REVISION: ${{ vars.OPENKIND_RELEASE_REVISION || '2dba87572c028aeaf34b27220a3bbd3d8d8dbc76' }}
-      OPENKIND_SERVER_VERSION: ${{ vars.OPENKIND_SERVER_VERSION || '0.3.0' }}
+      OPENKIND_RELEASE_REVISION: ${{ vars.OPENKIND_RELEASE_REVISION || 'b9061ee352fe9d15de2ea4683fb9c093e0fc785e' }}
+      OPENKIND_SERVER_VERSION: ${{ vars.OPENKIND_SERVER_VERSION || '0.4.0' }}
     steps:
       - uses: actions/checkout@v7
 
