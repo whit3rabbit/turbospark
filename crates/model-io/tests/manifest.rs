@@ -5,7 +5,7 @@
 use std::io::Write;
 
 use turbospark_model_io::{
-    load_manifest, peek_family, LinearAttentionConfig, ModelError, ModelFamily,
+    load_manifest, peek_family, LinearAttentionConfig, ManifestProducer, ModelError, ModelFamily,
 };
 
 fn toy_arch() -> turbospark_model_io::ArchConfig {
@@ -225,6 +225,58 @@ fn load_succeeds_for_a_matching_toy_manifest() {
     let manifest = load_manifest(dir.path(), &toy_arch(), 4 * 1024 * 1024).unwrap();
     assert_eq!(manifest.magic, "GTURBO");
     assert_eq!(manifest.num_layers, 2);
+}
+
+/// `producer` is optional provenance: a 1.0 install written before the
+/// field existed loads with `None`, and a manifest carrying it reads the
+/// block back verbatim, including an absent `gitRev`.
+#[test]
+fn the_producer_block_is_optional_and_round_trips() {
+    let dir = tempfile_dir();
+    write_manifest(dir.path(), &toy_manifest_json());
+    let manifest = load_manifest(dir.path(), &toy_arch(), 4 * 1024 * 1024).unwrap();
+    assert_eq!(
+        manifest.producer, None,
+        "an install without the block loads"
+    );
+
+    let producer = serde_json::json!({
+        "tool": "turbospark-repack",
+        "version": "0.7.1",
+        "gitRev": "e278ad96",
+    });
+    let json = toy_manifest_json().replace(
+        "\"expertStride\": 4096",
+        &format!("\"expertStride\": 4096, \"producer\": {producer}"),
+    );
+    write_manifest(dir.path(), &json);
+    let manifest = load_manifest(dir.path(), &toy_arch(), 4 * 1024 * 1024).unwrap();
+    let got = manifest.producer.expect("the block is read");
+    assert_eq!(
+        got,
+        ManifestProducer {
+            tool: "turbospark-repack".into(),
+            version: "0.7.1".into(),
+            git_rev: Some("e278ad96".into()),
+        }
+    );
+    assert_eq!(serde_json::to_value(&got).unwrap(), producer);
+
+    // Without `gitRev` the field is `None` and is not written back as null.
+    let json = toy_manifest_json().replace(
+        "\"expertStride\": 4096",
+        "\"expertStride\": 4096, \"producer\": {\"tool\": \"other\", \"version\": \"1\"}",
+    );
+    write_manifest(dir.path(), &json);
+    let got = load_manifest(dir.path(), &toy_arch(), 4 * 1024 * 1024)
+        .unwrap()
+        .producer
+        .unwrap();
+    assert_eq!(got.git_rev, None);
+    assert_eq!(
+        serde_json::to_value(&got).unwrap(),
+        serde_json::json!({"tool": "other", "version": "1"})
+    );
 }
 
 #[test]

@@ -21,6 +21,11 @@ when this file gets updated relative to the version bump and the tag.
 - A new `Audit` CI workflow runs `cargo audit` on dependency changes and
   every Monday. `.cargo/audit.toml` ignores `paste` (unmaintained, build-time
   only through `metal`) with the reason written down.
+- `.gturbo` `manifest.json` carries an optional `producer` block
+  (`{tool, version, gitRev?}`) recording which turbospark build wrote the
+  install. The repack writer emits `turbospark-repack` and its crate
+  version. The loader reads it as `Manifest.producer` and never refuses on
+  it, so every existing install still loads.
 
 ### Changed
 - `turbospark-model pull --out DIR` refuses a folder holding files

@@ -254,5 +254,15 @@ pub(crate) fn build_manifest_json(
         "expertsPerLayer": experts_per_layer,
         "numLayers": num_layers,
         "expertStride": expert_stride,
+        // Which build wrote the install, for bug reports and for telling
+        // two installs of the same model apart. Informational: the loader
+        // never dispatches on it, and the field is optional on read so
+        // older installs are unaffected. `gitRev` is left out because the
+        // workspace exposes no build-time revision; a build that does can
+        // add it without a format change.
+        "producer": {
+            "tool": "turbospark-repack",
+            "version": env!("CARGO_PKG_VERSION"),
+        },
     }))
 }

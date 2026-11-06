@@ -102,9 +102,24 @@ The root `manifest.json` contains metadata for model architecture validation, qu
   },
   "expertsPerLayer": 128,
   "numLayers": 30,
-  "expertStride": 33554432
+  "expertStride": 33554432,
+  "producer": {
+    "tool": "turbospark-repack",
+    "version": "0.7.1"
+  }
 }
 ```
+
+**The `producer` object.** Which turbospark build wrote the install:
+`tool` is the writer crate (`turbospark-repack` for every install the
+workspace writes), `version` its crate version, and `gitRev`, when present,
+the source revision of that build. The workspace exposes no build-time
+revision today, so the writer omits `gitRev` rather than writing `null`. The
+block is informational: the loader reads it into `Manifest.producer` and
+never refuses on its contents, and it is optional on read, so an install
+written before it existed loads unchanged with `producer: None`. The field
+needs no `versionMinor` bump for the same reason. `trained_context::record`
+rewrites `manifest.json` in place after the walk and preserves the block.
 
 **The `quant` object on a GGUF-sourced install.** Where an affine install
 carries only `groupSize`, a GGUF-sourced one writes a slot per role

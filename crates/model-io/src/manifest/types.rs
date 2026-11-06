@@ -441,6 +441,27 @@ pub struct Manifest {
     /// is the correct default: no transform, weights consumed as stored.
     #[serde(default)]
     pub hadamard: Option<ManifestHadamard>,
+    /// Which turbospark build wrote the install. Informational only: the
+    /// loader never refuses on its contents, and it is absent on every
+    /// install written before the field existed.
+    #[serde(default)]
+    pub producer: Option<ManifestProducer>,
+}
+
+/// Provenance of the tool that wrote the install. Read for diagnostics and
+/// bug reports, never for dispatch: a `.gturbo` is described by its
+/// `versionMajor`/`versionMinor` and its contents, not by who wrote it.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManifestProducer {
+    /// Writer crate name, `turbospark-repack` for every install the
+    /// workspace writes.
+    pub tool: String,
+    /// Writer crate version (`CARGO_PKG_VERSION` at build time).
+    pub version: String,
+    /// Source revision of the writer build when the build exposed one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_rev: Option<String>,
 }
 
 /// One sign vector of the Hadamard contract: a `width`-long run of +/-1 F32
