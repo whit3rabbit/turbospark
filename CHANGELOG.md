@@ -13,6 +13,12 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+### Security
+- "Automatically start server on app launch" no longer starts a server
+  without an API key. On a new install, where the key is not saved in the
+  Keychain, the app skips the start and shows a warning toast that says how
+  to set one (#150). Starting the server by hand is unchanged.
+
 ## [0.7.1] - 2026-11-03
 
 ### Changed

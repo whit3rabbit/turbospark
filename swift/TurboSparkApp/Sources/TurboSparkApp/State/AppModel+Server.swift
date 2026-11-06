@@ -156,6 +156,13 @@ extension AppModel {
         let key = input.trimmingCharacters(in: .whitespacesAndNewlines)
         return key.isEmpty ? nil : key
     }
+
+    /// Whether "start server on launch" must refuse: a launch start has no
+    /// pane to warn from, so it never runs without auth (#150). A start the
+    /// user clicks still may, because the pane shows the warning there.
+    nonisolated static func autoStartNeedsKey(apiKeyInput: String) -> Bool {
+        serverAPIKey(from: apiKeyInput) == nil
+    }
 }
 
 extension AppModel {

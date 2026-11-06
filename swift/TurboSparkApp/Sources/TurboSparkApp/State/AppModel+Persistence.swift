@@ -177,7 +177,18 @@ extension AppModel {
         self.agentModeHints = settings.agentModeHints
 
         if settings.serverAutoStartOnLaunch && server == nil {
-            startServer()
+            // An auto-start never shows the Server pane and its missing-key
+            // warning, so a keyless one would leave every local process able
+            // to drive the loaded models unseen (#150). The key above comes
+            // only from the Keychain, so this refuses until one is saved there.
+            if Self.autoStartNeedsKey(apiKeyInput: serverAPIKeyInput) {
+                showToast(
+                    AppStrings.localized(
+                        "The server did not start on launch because it has no API key. Set a key in the Server pane and turn on Remember this key in the Keychain."),
+                    style: .warning, duration: 12)
+            } else {
+                startServer()
+            }
         }
     }
 
